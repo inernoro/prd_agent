@@ -45,12 +45,12 @@ export const HERO_GRADIENT = `linear-gradient(135deg, ${HERO_GRADIENT_STOPS[0]} 
  * 陶土底配深墨字才是这套配色的正解，三档分别 4.74 / 5.49 / 7.68:1；起点 #C8623A
  * 抬到 #CE6B41 就是为了让最暗那档也过 4.5。
  *
- * 直接复用 --button-primary-fg（暗浅两主题同为深墨），而不是再写一个深色 hex：
- * 主操作面的文字色只该有一个来源，多一个就多一处会各自漂移的判据。
- * 守卫：themeSystem 逐档算「渐变色标 x 两主题的 button-primary-fg」是否过 4.5，
+ * 走专用 token --hero-gradient-fg（两主题同为深墨）。原来复用 --button-primary-fg，
+ * 2026-09-24 浅色主按钮改成「深陶土底 + 白字」后两者分道：这条渐变更亮，白字不达标。
+ * 守卫：themeSystem 逐档算「渐变色标 x 两主题的该 token」是否过 4.5，
  * inkPalette 拦「HERO_GRADIENT 当底再配浅色字」。
  */
-export const HERO_GRADIENT_FG = 'var(--button-primary-fg)';
+export const HERO_GRADIENT_FG = 'var(--hero-gradient-fg)';
 export const HERO_GRADIENT_TEXT = {
   background: HERO_GRADIENT,
   WebkitBackgroundClip: 'text' as const,

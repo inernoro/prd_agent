@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
@@ -230,6 +231,110 @@ public class HostedSiteService : IHostedSiteService
         return AttachDerivedFields(site)!;
     }
 
+    public byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html") =>
+        RewritePublishedEntryHtml(htmlBytes, entryFile);
+
+    public async Task<HostedSite> CreateFromHtmlIdempotentAsync(
+        string userId,
+        byte[] htmlBytes,
+        string fileName,
+        string? title,
+        string? description,
+        string? folder,
+        List<string>? tags,
+        string sourceType,
+        string sourceRef,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId)
+            || string.IsNullOrWhiteSpace(sourceType)
+            || string.IsNullOrWhiteSpace(sourceRef))
+            throw new InvalidOperationException("幂等站点来源信息不完整");
+
+        var normalizedSourceType = sourceType.Trim();
+        var normalizedSourceRef = sourceRef.Trim();
+        var siteId = BuildIdempotentHtmlSiteId(userId, normalizedSourceRef);
+        var existing = await _db.HostedSites.Find(site => site.Id == siteId).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            EnsureIdempotentHtmlSiteOwner(existing, userId, normalizedSourceType, normalizedSourceRef);
+            return AttachDerivedFields(existing)!;
+        }
+
+        var now = DateTime.UtcNow;
+        var rewritten = PrepareHtmlForHosting(htmlBytes, "index.html");
+        var cosKey = _storage.BuildSiteKey(siteId, "index.html");
+        await _storage.UploadToKeyAsync(
+            cosKey,
+            rewritten,
+            "text/html; charset=utf-8",
+            CancellationToken.None,
+            SiteCacheControl);
+
+        var site = new HostedSite
+        {
+            Id = siteId,
+            Title = title?.Trim() ?? Path.GetFileNameWithoutExtension(fileName),
+            Description = description?.Trim(),
+            SourceType = normalizedSourceType,
+            SourceRef = normalizedSourceRef,
+            CosPrefix = $"web-hosting/sites/{siteId}/",
+            EntryFile = "index.html",
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(cosKey), now),
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            Files =
+            [
+                new HostedSiteFile
+                {
+                    Path = "index.html",
+                    CosKey = cosKey,
+                    Size = rewritten.Length,
+                    MimeType = "text/html",
+                },
+            ],
+            TotalSize = rewritten.Length,
+            Tags = tags ?? new List<string>(),
+            Folder = folder?.Trim(),
+            OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion,
+            IsSlideDeck = DetectSlideDeck(rewritten),
+        };
+
+        try
+        {
+            await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
+            return AttachDerivedFields(site)!;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            existing = await _db.HostedSites.Find(item => item.Id == siteId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (existing == null) throw;
+            EnsureIdempotentHtmlSiteOwner(existing, userId, normalizedSourceType, normalizedSourceRef);
+            return AttachDerivedFields(existing)!;
+        }
+    }
+
+    internal static string BuildIdempotentHtmlSiteId(string userId, string sourceRef)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes($"{userId.Trim()}\n{sourceRef.Trim()}");
+        return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()[..32];
+    }
+
+    private static void EnsureIdempotentHtmlSiteOwner(
+        HostedSite site,
+        string userId,
+        string sourceType,
+        string sourceRef)
+    {
+        if (!string.Equals(site.OwnerUserId, userId, StringComparison.Ordinal)
+            || !string.Equals(site.SourceType, sourceType, StringComparison.Ordinal)
+            || !string.Equals(site.SourceRef, sourceRef, StringComparison.Ordinal))
+            throw new InvalidOperationException("幂等站点标识已被其他来源占用");
+    }
+
     public async Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
@@ -345,6 +450,261 @@ public class HostedSiteService : IHostedSiteService
         return AttachDerivedFields(site)!;
     }
 
+    private static readonly string[] RequiredVerifiedGeneratedSitePaths =
+    [
+        "index.html",
+        "manifest.json",
+    ];
+
+    // 生成附带的四份报告不是发布授权或完整性凭据，普通编辑也不要求伪造它们。
+    // Broker 已按清单逐个核验全部文件；这里继续校验每个文件及入口安全策略。
+
+    // 只扩展资源文件的保存，不扩大入口 HTML 的执行权限；SVG/HTML/XML 仍不允许作为附加文档。
+    private static readonly HashSet<string> VerifiedGeneratedResourceExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".css", ".js", ".mjs", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+        ".woff", ".woff2", ".ttf", ".otf",
+    };
+
+    public async Task<HostedSite> CreateFromVerifiedFilesAsync(
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string? title,
+        string? description,
+        string sourceType,
+        string sourceRef,
+        List<string>? tags,
+        string? folder,
+        string leaseOwnerId,
+        CancellationToken ct = default)
+    {
+        if (!string.Equals(sourceType, "design-agent", StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(sourceRef))
+            throw new InvalidOperationException("已验证文件包只允许由设计任务创建新站点");
+
+        var ordered = ValidateVerifiedGeneratedFiles(files);
+        var indexFile = ordered.Single(file => file.Path == "index.html");
+
+        // 站点身份绑定 Run，而对象仍按发布尝试隔离。这样完成建站但尚未回写 Produced
+        // 时可以认领原站，旧尝试的晚到上传/补偿也不会触碰新尝试的对象。
+        var publishingRun = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == sourceRef && run.UserId == userId
+                && run.Status == RunStatuses.Committing && run.LeaseOwnerId == leaseOwnerId
+                && run.LeaseExpiresAt > DateTime.UtcNow && run.CleanupLeaseOwnerId == null))
+            .FirstOrDefaultAsync(ct);
+        if (publishingRun == null)
+            throw new InvalidOperationException("设计产物发布租约或补偿账本已变化，不能认领站点");
+        // 兼容升级前已写入的随机站点身份，补偿账本是该 Run 已保留的发布意图。
+        var siteId = !string.IsNullOrWhiteSpace(publishingRun.CleanupArtifactSiteId)
+            ? publishingRun.CleanupArtifactSiteId
+            : BuildIdempotentHtmlSiteId(userId, $"design-agent-files:{sourceRef}");
+        var existing = await _db.HostedSites.Find(site => site.Id == siteId).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            await ValidateGeneratedSiteReplayAsync(existing, userId, sourceRef, leaseOwnerId, ordered, ct);
+            return AttachDerivedFields(existing)!;
+        }
+
+        var publishAttemptId = Guid.NewGuid().ToString("N");
+        var objectKeysByPath = ordered.ToDictionary(
+            file => file.Path,
+            file => _storage.BuildSiteKey(siteId, $".generated/{publishAttemptId}/{file.Path}"),
+            StringComparer.Ordinal);
+        var objectKeys = ordered
+            .Select(file => objectKeysByPath[file.Path])
+            .ToList();
+        var plannedAt = DateTime.UtcNow;
+        var cleanupPlan = await _db.DesignArtifactRuns.UpdateOneAsync(
+            run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == sourceRef
+                   && run.UserId == userId
+                   && run.Status == RunStatuses.Committing
+                   && run.LeaseOwnerId == leaseOwnerId
+                   && run.LeaseExpiresAt > plannedAt
+                   && !run.CleanupPending
+                   && run.CleanupLeaseOwnerId == null),
+            Builders<DesignArtifactRun>.Update
+                .Set(run => run.CleanupPending, true)
+                .Set(run => run.CleanupArtifactSiteId, siteId)
+                .Set(run => run.CleanupPublishAttemptId, publishAttemptId)
+                .Set(run => run.CleanupAssetKeys, objectKeys)
+                .Set(run => run.CleanupSiteRecordDeleted, false)
+                .Set(run => run.CleanupAttemptedAt, plannedAt)
+                .Set(run => run.CleanupLastError, null),
+            cancellationToken: CancellationToken.None);
+        if (cleanupPlan.MatchedCount != 1)
+            throw new InvalidOperationException("设计产物补偿计划登记失败，请重试");
+
+        var hostedFiles = new List<HostedSiteFile>(ordered.Length);
+        for (var index = 0; index < ordered.Length; index++)
+        {
+            var file = ordered[index];
+            var key = objectKeys[index];
+            ct.ThrowIfCancellationRequested();
+            await _storage.UploadToKeyAsync(
+                key,
+                file.Content,
+                file.MimeType,
+                ct,
+                SiteCacheControl);
+            if (!await HasCurrentPublishFenceAsync(
+                    sourceRef,
+                    userId,
+                    leaseOwnerId,
+                    publishAttemptId,
+                    CancellationToken.None))
+            {
+                await PersistAndTryCleanupLateGeneratedAssetAsync(
+                    publishAttemptId,
+                    userId,
+                    key,
+                    CancellationToken.None);
+                throw new InvalidOperationException("设计产物发布租约已失效，已停止晚到写入");
+            }
+            hostedFiles.Add(new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = key,
+                Size = file.Content.LongLength,
+                MimeType = file.MimeType,
+            });
+        }
+
+        var now = DateTime.UtcNow;
+        var site = new HostedSite
+        {
+            Id = siteId,
+            Title = title?.Trim() ?? "未命名站点",
+            Description = description?.Trim(),
+            SourceType = sourceType,
+            SourceRef = sourceRef.Trim(),
+            CosPrefix = $"web-hosting/sites/{siteId}/",
+            EntryFile = "index.html",
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(objectKeysByPath["index.html"]), now),
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            Files = hostedFiles,
+            TotalSize = hostedFiles.Sum(file => file.Size),
+            IsSlideDeck = DetectSlideDeck(indexFile.Content),
+            Tags = tags ?? new(),
+            Folder = folder?.Trim(),
+            OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion,
+        };
+
+        if (!await HasCurrentPublishFenceAsync(sourceRef, userId, leaseOwnerId,
+                publishAttemptId, CancellationToken.None))
+            throw new InvalidOperationException("设计产物发布租约已失效，已停止站点提交");
+        await _db.HostedSites.InsertOneAsync(site, cancellationToken: CancellationToken.None);
+        if (!await HasCurrentPublishFenceAsync(
+                sourceRef,
+                userId,
+                leaseOwnerId,
+                publishAttemptId,
+                CancellationToken.None))
+        {
+            await CompensateGeneratedSiteCoreAsync(site.Id, sourceRef, userId, null,
+                CancellationToken.None, leaseOwnerId, publishAttemptId);
+            throw new InvalidOperationException("设计产物发布租约已失效，站点将由当前任务恢复处理");
+        }
+        _logger.LogInformation(
+            "用户 {UserId} 通过 {SourceType} 创建多资产托管站点 {SiteId}: {Title}, {FileCount} 个文件, {TotalSize} bytes",
+            userId,
+            site.SourceType,
+            siteId,
+            site.Title,
+            site.Files.Count,
+            site.TotalSize);
+        return AttachDerivedFields(site)!;
+    }
+
+    private async Task ValidateGeneratedSiteReplayAsync(
+        HostedSite site,
+        string userId,
+        string runId,
+        string leaseOwnerId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        CancellationToken ct)
+    {
+        EnsureIdempotentHtmlSiteOwner(site, userId, "design-agent", runId);
+        if (site.EntryFile != "index.html" || site.Files.Count != files.Count)
+            throw new InvalidOperationException("设计任务已有站点与待发布文件包不一致，不能认领");
+        foreach (var file in files)
+        {
+            var stored = site.Files.SingleOrDefault(item => item.Path == file.Path);
+            if (stored == null || stored.Size != file.Content.LongLength
+                || !string.Equals(stored.MimeType, file.MimeType, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("设计任务已有站点与待发布文件包不一致，不能认领");
+            var bytes = await _storage.TryDownloadBytesAsync(stored.CosKey, ct);
+            if (bytes == null || !SHA256.HashData(bytes).AsSpan().SequenceEqual(SHA256.HashData(file.Content)))
+                throw new InvalidOperationException("设计任务已有站点的对象内容不一致，不能认领");
+        }
+
+        // 校验完外部对象后再确认租约和补偿账本，禁止越权或与清理任务并发认领。
+        var now = DateTime.UtcNow;
+        var claim = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId && run.UserId == userId
+                && run.Status == RunStatuses.Committing
+                && run.LeaseOwnerId == leaseOwnerId && run.LeaseExpiresAt > now
+                && run.CleanupPending && run.CleanupArtifactSiteId == site.Id
+                && run.CleanupLeaseOwnerId == null))
+            .FirstOrDefaultAsync(ct);
+        if (claim == null || !claim.CleanupAssetKeys.OrderBy(key => key, StringComparer.Ordinal)
+                .SequenceEqual(site.Files.Select(file => file.CosKey).OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal))
+            throw new InvalidOperationException("设计产物发布租约或补偿账本已变化，不能认领站点");
+    }
+
+    private Task<bool> HasCurrentPublishFenceAsync(
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        string publishAttemptId,
+        CancellationToken ct) =>
+        _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
+                && run.UserId == userId
+                && run.Status == RunStatuses.Committing
+                && run.LeaseOwnerId == leaseOwnerId
+                && run.LeaseExpiresAt > DateTime.UtcNow
+                && run.CleanupPending
+                && run.CleanupLeaseOwnerId == null
+                && run.CleanupPublishAttemptId == publishAttemptId))
+            .AnyAsync(ct);
+
+    private async Task PersistAndTryCleanupLateGeneratedAssetAsync(
+        string publishAttemptId,
+        string userId,
+        string objectKey,
+        CancellationToken ct)
+    {
+        var keyFingerprint = Convert.ToHexString(SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(objectKey))).ToLowerInvariant();
+        var taskId = $"orphan-asset-{publishAttemptId}-{keyFingerprint[..16]}";
+        var now = DateTime.UtcNow;
+        await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+            task => task.Id == taskId,
+            Builders<HostedSiteDeletionTask>.Update
+                .SetOnInsert(task => task.Id, taskId)
+                .SetOnInsert(task => task.SiteId, taskId)
+                .SetOnInsert(task => task.SiteOwnerUserId, userId)
+                .SetOnInsert(task => task.RequestedByUserId, userId)
+                .SetOnInsert(task => task.SiteTitle, "设计产物晚到对象")
+                .SetOnInsert(task => task.SharedTeamIds, new List<string>())
+                .SetOnInsert(task => task.ObjectKeys, new List<string> { objectKey })
+                .SetOnInsert(task => task.RequestedAt, now)
+                .SetOnInsert(task => task.SiteRecordDeletedAt, now)
+                .SetOnInsert(task => task.NextAttemptAt, now)
+                .SetOnInsert(task => task.AttemptCount, 0),
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        var cleanup = await TryRunHostedSiteDeletionAsync(taskId, now, ignoreSchedule: true, ct);
+        if (!cleanup.Completed)
+        {
+            _logger.LogWarning(
+                "设计产物晚到对象已进入持久清理队列: taskId={TaskId} attempt={AttemptCount}",
+                taskId,
+                cleanup.AttemptCount);
+        }
+    }
+
     // ─────────────────────────────────────────────
     // 重新上传
     // ─────────────────────────────────────────────
@@ -365,10 +725,8 @@ public class HostedSiteService : IHostedSiteService
         if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
             throw new KeyNotFoundException("站点不存在"); // 不可见/无编辑权一并按不存在处理，不泄露存在性
 
-        // P1 + URL 稳定 + 无孤儿：先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用），
-        // 校验通过前绝不写任何 COS 对象。校验失败直接抛错——旧 siteId 前缀文件零改动、
-        // DB 未动、也没有任何 staging 残留，原页面与既有 web-hosting/sites/{siteId}/... URL
-        // 继续可用。校验通过后才写入「稳定的 siteId 前缀」（覆盖同名、URL 不变）。
+        // 先在内存里完整校验（ZIP 元数据校验 / HTML 直接可用）。校验通过后写入不可变版本目录，
+        // 最后用 ContentVersion CAS 原子切换站点指针；旧版本在切换后进入持久清理账本。
         var oldFiles = site.Files ?? new List<HostedSiteFile>();
 
         var ext = Path.GetExtension(fileName).ToLowerInvariant();
@@ -376,45 +734,74 @@ public class HostedSiteService : IHostedSiteService
         string entryFile;
         long totalSize;
         var replacedIsSlideDeck = false;
+        var versionRoot = $".versions/{Guid.NewGuid():N}";
+        var expectedContentVersion = EffectiveContentVersion(site);
+        string[] newKeys;
 
         if (ext == ".zip")
         {
             var validationError = ValidateZip(siteId, fileBytes);
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
-            // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
-            var result = await ExtractAndUploadZip(siteId, fileBytes, uploadId);
-            if (result.Error != null)
-                throw new InvalidOperationException(result.Error);
-            siteFiles = result.Files;
-            entryFile = result.EntryFile;
-            totalSize = result.TotalSize;
-            replacedIsSlideDeck = result.IsSlideDeck;
+            newKeys = GetValidatedZipPaths(fileBytes, siteId)
+                .Select(path => _storage.BuildSiteKey(siteId, $"{versionRoot}/{path}"))
+                .ToArray();
         }
         else if (ext is ".html" or ".htm")
         {
-            var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
-            replacedIsSlideDeck = DetectSlideDeck(rewritten);
-            var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
-            siteFiles = new List<HostedSiteFile>
-            {
-                new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
-            };
-            entryFile = "index.html";
-            totalSize = rewritten.Length;
+            var cosKey = _storage.BuildSiteKey(siteId, $"{versionRoot}/index.html");
+            newKeys = [cosKey];
         }
         else
         {
             throw new InvalidOperationException("仅支持 .html/.htm/.zip 文件");
         }
 
-        // siteId 前缀保持不变 → COS key 稳定，既有书签 / 公开主页 / 知识库引用不会 404。
-        // 但 index.html 是原地覆盖（同 key），URL 字符串若也保持不变，浏览器/CDN 会继续吐
-        // 旧缓存 →「替换网页不生效」。因此在 URL 上追加 ?v={UpdatedAt.Ticks} 版本指纹：
-        // 重新上传 → UpdatedAt 变化 → URL 变化 → 击穿缓存；没有重新上传则 URL 恒定 → 命中缓存。
+        var publishStartedAt = DateTime.UtcNow;
+        await ReservePublishKeysAsync(siteId, expectedContentVersion, newKeys, publishStartedAt);
+        try
+        {
+            if (ext == ".zip")
+            {
+                var result = await ExtractAndUploadZip(siteId, fileBytes, uploadId, versionRoot);
+                if (result.Error != null)
+                    throw new InvalidOperationException(result.Error);
+                siteFiles = result.Files;
+                entryFile = result.EntryFile;
+                totalSize = result.TotalSize;
+                replacedIsSlideDeck = result.IsSlideDeck;
+            }
+            else
+            {
+                var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
+                replacedIsSlideDeck = DetectSlideDeck(rewritten);
+                await _storage.UploadToKeyAsync(
+                    newKeys[0], rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
+                siteFiles =
+                [
+                    new HostedSiteFile
+                    {
+                        Path = "index.html",
+                        CosKey = newKeys[0],
+                        Size = rewritten.Length,
+                        MimeType = "text/html",
+                    },
+                ];
+                entryFile = "index.html";
+                totalSize = rewritten.Length;
+            }
+        }
+        catch
+        {
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
+            throw;
+        }
+
+        // SiteUrl 指向新入口的真实不可变 key，并附 ContentVersion 版本指纹。
         var now = DateTime.UtcNow;
-        var siteUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile)), now);
+        var nextEntry = siteFiles.Single(file =>
+            string.Equals(file.Path, entryFile, StringComparison.OrdinalIgnoreCase));
+        var siteUrl = AppendVersion(_storage.BuildUrlForKey(nextEntry.CosKey), now);
 
         // wrappedAssetType 必须显式覆盖（包括清空）：
         // - 用户把 PDF 重传到原 HTML 站，应写入 "pdf" 让分享/缩略走 PDF 路径
@@ -424,6 +811,7 @@ public class HostedSiteService : IHostedSiteService
         var normalizedReuploadRef = string.IsNullOrWhiteSpace(reuploadRef)
             ? null : reuploadRef.Trim();
 
+        var obsoleteKeys = ComputeObsoleteAssetKeys(oldFiles, siteFiles);
         var update = Builders<HostedSite>.Update
             .Set(x => x.EntryFile, entryFile)
             .Set(x => x.SiteUrl, siteUrl)
@@ -433,9 +821,12 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.LastReuploadRef, normalizedReuploadRef)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.ContentVersion, now)
+            .Set(x => x.PublishedRevisionId, null)
             .Set(x => x.SlideNavCompatVersion, SlideNavVersion) // 重传内容已注入当前版垫片
             // 换了内容就要重判形态：HTML 站换成 deck 要变、deck 换成普通页也要变回去
-            .Set(x => x.IsSlideDeck, replacedIsSlideDeck);
+            .Set(x => x.IsSlideDeck, replacedIsSlideDeck)
+            .AddToSetEach(x => x.PendingAssetCleanupKeys, obsoleteKeys)
+            .Set(x => x.AssetCleanupNextAttemptAt, now);
 
         // 重传成不支持提问的形态（如 HTML 站换成视频）时，**不要**去改 AskEnabled。
         //
@@ -446,17 +837,20 @@ public class HostedSiteService : IHostedSiteService
         // 形态恢复支持了，这个 false 却留在库里，提问永久关闭，而他从没关过。
         // 「系统当前不支持」和「主人不想开」是两件事，不能共用一个格子。
 
-        await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
-
-        // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
-        // 原地覆盖，不能删——否则会删掉刚写入的文件。
-        var newKeys = siteFiles.Select(f => f.CosKey).ToHashSet();
-        foreach (var f in oldFiles)
+        var replaced = await _db.HostedSites.UpdateOneAsync(
+            BuildExpectedContentVersionFilter(siteId, expectedContentVersion)
+            & Builders<HostedSite>.Filter.All(x => x.AssetPublishInProgressKeys, newKeys),
+            update,
+            cancellationToken: ct);
+        if (replaced.ModifiedCount != 1)
         {
-            if (newKeys.Contains(f.CosKey)) continue;
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
+            throw new InvalidOperationException("站点在重传期间已经发生变化，请刷新后重试");
         }
+        await ReleasePublishKeysAsync(siteId, newKeys, keepPending: false);
+
+        try { await TryRunHostedSiteAssetCleanupAsync(siteId, now, ignoreSchedule: true); }
+        catch (Exception ex) { _logger.LogWarning(ex, "重传已切换到不可变对象，旧文件将由持久清理器重试: siteId={SiteId}", siteId); }
 
         var reloaded = (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
         var askOwnerPreferences = await _db.UserPreferences
@@ -469,6 +863,465 @@ public class HostedSiteService : IHostedSiteService
         _askOpeners.QueueEnsure(reloaded, askOwnerPreferences?.WebPageAskEnabled);
 
         return AttachDerivedFields(reloaded)!;
+    }
+
+    private const int MaxEditableEntryBytes = 2 * 1024 * 1024;
+
+    public Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
+        string siteId,
+        string userId,
+        CancellationToken ct = default) =>
+        GetEntryHtmlAsync(siteId, userId, allowMarkdownWrapper: true, ct);
+
+    public Task<HostedSiteEditableEntry> GetRevisionEntryHtmlAsync(
+        string siteId,
+        string userId,
+        CancellationToken ct = default) =>
+        GetEntryHtmlAsync(siteId, userId, allowMarkdownWrapper: true, ct);
+
+    internal static bool IsRevisionReadableWrapper(string? wrappedAssetType) =>
+        string.IsNullOrWhiteSpace(wrappedAssetType)
+        || string.Equals(wrappedAssetType, "markdown", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 这个用户能不能编辑这个站点。与「谁建了那条分享链接」是两件事：后端明确允许团队
+    /// 编辑者创建分享，所以拿 createdBy 当编辑权判据会把真正的站点主人挡在外面、又把
+    /// 只建过链接的人放进来。
+    ///
+    /// 抽成公开的唯一判定源，是因为分享页要据此决定显不显示「站点编辑坞」，而那个结论
+    /// 只有服务端算得出来。前端不许再用任何代理量自己推一遍——那正是判据分裂的起点，
+    /// 同一个 DTO 的注释里已经为「提问入口」写过一次同样的话。
+    /// </summary>
+    public async Task<bool> CanEditSiteAsync(HostedSite site, string userId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return false;
+        var role = await ResolveSiteRoleAsync(site, userId, ct);
+        return WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId);
+    }
+
+    private async Task<HostedSiteEditableEntry> GetEntryHtmlAsync(
+        string siteId,
+        string userId,
+        bool allowMarkdownWrapper,
+        CancellationToken ct)
+    {
+        var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        if (site == null)
+            throw new KeyNotFoundException("站点不存在");
+
+        if (!await CanEditSiteAsync(site, userId, ct))
+            throw new KeyNotFoundException("站点不存在");
+
+        if (!string.IsNullOrWhiteSpace(site.WrappedAssetType)
+            && (!allowMarkdownWrapper || !IsRevisionReadableWrapper(site.WrappedAssetType)))
+            throw new InvalidOperationException("PDF、视频包装站暂不支持直接微调，请先转换为普通 HTML 站点");
+
+        var extension = Path.GetExtension(site.EntryFile).ToLowerInvariant();
+        if (extension is not ".html" and not ".htm")
+            throw new InvalidOperationException("该站点的入口不是 HTML，暂不支持直接微调");
+
+        var entry = (site.Files ?? new List<HostedSiteFile>())
+            .FirstOrDefault(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        if (entry == null || string.IsNullOrWhiteSpace(entry.CosKey))
+            throw new InvalidOperationException("站点入口文件缺失，请重新上传后再试");
+        if (entry.Size > MaxEditableEntryBytes)
+            throw new InvalidOperationException("站点入口 HTML 超过 2MB，暂不支持直接微调");
+
+        var bytes = await _storage.TryDownloadBytesAsync(entry.CosKey, ct);
+        if (bytes == null)
+            throw new InvalidOperationException("站点入口文件读取失败，请稍后重试");
+        if (bytes.Length > MaxEditableEntryBytes)
+            throw new InvalidOperationException("站点入口 HTML 超过 2MB，暂不支持直接微调");
+
+        var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+            ? System.Text.Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
+            : System.Text.Encoding.UTF8.GetString(bytes);
+        if (string.IsNullOrWhiteSpace(html))
+            throw new InvalidOperationException("站点入口 HTML 为空，请重新上传后再试");
+
+        return new HostedSiteEditableEntry(site, html, EffectiveContentVersion(site));
+    }
+
+    public async Task<HostedSite> ReplaceEntryHtmlAsync(
+        string siteId,
+        string userId,
+        string html,
+        DateTime? expectedContentVersion = null,
+        string? publishedRevisionId = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            throw new InvalidOperationException("待发布的 HTML 为空");
+
+        var current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (expectedContentVersion.HasValue && current.ContentVersion != expectedContentVersion.Value)
+            throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
+
+        var site = current.Site;
+        var bytes = System.Text.Encoding.UTF8.GetBytes(html);
+        if (bytes.Length > MaxEditableEntryBytes)
+            throw new InvalidOperationException("待发布的入口 HTML 超过 2MB");
+
+        var entry = site.Files.First(x => string.Equals(x.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
+        var rewritten = RewritePublishedEntryHtml(bytes, site.EntryFile);
+        var isSlideDeck = DetectSlideDeck(rewritten);
+        // 不覆盖当前线上对象：先写同目录下的新入口，再通过 Mongo 条件更新原子切换指针。
+        // 若并发发布输掉 CAS，只留下一个未引用对象，不会把赢家的线上正文反向覆盖。
+        var now = DateTime.UtcNow;
+        var nextEntryKey = BuildVersionedEntryKey(entry.CosKey, site.EntryFile);
+        await ReservePublishKeysAsync(siteId, current.ContentVersion, [nextEntryKey], now);
+        try
+        {
+            await _storage.UploadToKeyAsync(
+                nextEntryKey,
+                rewritten,
+                "text/html; charset=utf-8",
+                CancellationToken.None,
+                SiteCacheControl);
+        }
+        catch
+        {
+            await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: true);
+            throw;
+        }
+        var nextEntry = new HostedSiteFile
+        {
+            Path = site.EntryFile,
+            CosKey = nextEntryKey,
+            Size = rewritten.LongLength,
+            MimeType = "text/html",
+        };
+        var removeGeneratedSidecars = HostedSiteContentShapeRules.IsSelfContainedHtml(site)
+                                      && site.Files.Count > 1;
+        var updatedFiles = removeGeneratedSidecars
+            ? new List<HostedSiteFile> { nextEntry }
+            : site.Files.Select(file =>
+                string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
+                    ? nextEntry
+                    : file).ToList();
+        var obsoleteKeys = ComputeObsoleteAssetKeys(site.Files, updatedFiles);
+        var totalSize = updatedFiles.Sum(file => file.Size);
+        var siteUrl = AppendVersion(_storage.BuildUrlForKey(nextEntryKey), now);
+
+        var filter = Builders<HostedSite>.Filter.Eq(x => x.Id, siteId);
+        {
+            filter &= Builders<HostedSite>.Filter.Or(
+                Builders<HostedSite>.Filter.Eq(x => x.ContentVersion, current.ContentVersion),
+                Builders<HostedSite>.Filter.And(
+                    Builders<HostedSite>.Filter.Eq(x => x.ContentVersion, default(DateTime)),
+                    Builders<HostedSite>.Filter.Eq(x => x.CreatedAt, current.ContentVersion)));
+        }
+
+        var updates = new List<UpdateDefinition<HostedSite>>
+        {
+            Builders<HostedSite>.Update
+            .Set(x => x.Files, updatedFiles)
+            .Set(x => x.TotalSize, totalSize)
+            .Set(x => x.SiteUrl, siteUrl)
+            .Set(x => x.IsSlideDeck, isSlideDeck)
+            .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
+            .Set(x => x.ContentVersion, now)
+            .Set(x => x.PublishedRevisionId, publishedRevisionId)
+            .Set(x => x.UpdatedAt, now),
+        };
+        if (obsoleteKeys.Count > 0)
+        {
+            updates.Add(Builders<HostedSite>.Update.AddToSetEach(x => x.PendingAssetCleanupKeys, obsoleteKeys));
+            updates.Add(Builders<HostedSite>.Update.Set(x => x.AssetCleanupNextAttemptAt, now));
+            updates.Add(Builders<HostedSite>.Update.Set(x => x.AssetCleanupLastErrorCode, null));
+        }
+        var update = Builders<HostedSite>.Update.Combine(updates);
+        var result = await _db.HostedSites.UpdateOneAsync(filter, update, cancellationToken: CancellationToken.None);
+        if (result.ModifiedCount == 0)
+        {
+            await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: true);
+            throw new InvalidOperationException("站点在发布时已经发生变化，请刷新后重试");
+        }
+        await ReleasePublishKeysAsync(siteId, [nextEntryKey], keepPending: false);
+
+        if (obsoleteKeys.Count > 0)
+        {
+            try
+            {
+                await TryRunHostedSiteAssetCleanupAsync(siteId, now, ignoreSchedule: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "网页发布已切换到新入口，旧入口与随之作废的 sidecar 将由持久清理器重试: siteId={SiteId}", siteId);
+            }
+        }
+
+        var reloaded = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(CancellationToken.None)
+            ?? throw new KeyNotFoundException("站点不存在");
+        _askOpeners.QueueEnsure(reloaded);
+        return AttachDerivedFields(reloaded)!;
+    }
+
+    public async Task<HostedSite> ReplaceWithVerifiedFilesAsync(
+        string siteId,
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        DateTime expectedContentVersion,
+        string publishedRevisionId,
+        CancellationToken ct = default)
+    {
+        var current = await GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (current.ContentVersion != expectedContentVersion)
+            throw new InvalidOperationException("站点在草稿生成后已经发布过其他内容，请基于最新版本重新修改");
+        var ordered = ValidateVerifiedGeneratedFiles(files);
+        var indexFile = ordered.Single(file => file.Path == "index.html");
+        var now = DateTime.UtcNow;
+        var versionRoot = $".versions/{Guid.NewGuid():N}";
+        var keysByPath = ordered.ToDictionary(
+            file => file.Path,
+            file => _storage.BuildSiteKey(siteId, $"{versionRoot}/{file.Path}"),
+            StringComparer.Ordinal);
+        var newKeys = keysByPath.Values.ToArray();
+        await ReservePublishKeysAsync(siteId, expectedContentVersion, newKeys, now);
+        try
+        {
+            foreach (var file in ordered)
+            {
+                await _storage.UploadToKeyAsync(
+                    keysByPath[file.Path], file.Content, file.MimeType,
+                    CancellationToken.None, SiteCacheControl);
+            }
+        }
+        catch
+        {
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
+            throw;
+        }
+
+        var hostedFiles = ordered.Select(file => new HostedSiteFile
+        {
+            Path = file.Path,
+            CosKey = keysByPath[file.Path],
+            Size = file.Content.LongLength,
+            MimeType = file.MimeType,
+        }).ToList();
+        var obsoleteKeys = ComputeObsoleteAssetKeys(current.Site.Files, hostedFiles);
+        var filter = BuildExpectedContentVersionFilter(siteId, expectedContentVersion)
+                     & Builders<HostedSite>.Filter.All(x => x.AssetPublishInProgressKeys, newKeys);
+        var updates = new List<UpdateDefinition<HostedSite>>
+        {
+            Builders<HostedSite>.Update
+                .Set(x => x.Files, hostedFiles)
+                .Set(x => x.EntryFile, "index.html")
+                .Set(x => x.TotalSize, hostedFiles.Sum(file => file.Size))
+                .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(keysByPath["index.html"]), now))
+                .Set(x => x.IsSlideDeck, DetectSlideDeck(indexFile.Content))
+                .Set(x => x.ContentVersion, now)
+                .Set(x => x.PublishedRevisionId, publishedRevisionId)
+                .Set(x => x.UpdatedAt, now)
+        };
+        if (obsoleteKeys.Count > 0)
+        {
+            updates.Add(Builders<HostedSite>.Update.AddToSetEach(x => x.PendingAssetCleanupKeys, obsoleteKeys));
+            updates.Add(Builders<HostedSite>.Update.Set(x => x.AssetCleanupNextAttemptAt, now));
+        }
+        var switched = await _db.HostedSites.UpdateOneAsync(
+            filter,
+            Builders<HostedSite>.Update.Combine(updates),
+            cancellationToken: CancellationToken.None);
+        if (switched.ModifiedCount != 1)
+        {
+            await ReleasePublishKeysAsync(siteId, newKeys, keepPending: true);
+            throw new InvalidOperationException("站点在发布时已经发生变化，请刷新后重试");
+        }
+        await ReleasePublishKeysAsync(siteId, newKeys, keepPending: false);
+        try
+        {
+            await TryRunHostedSiteAssetCleanupAsync(siteId, now, ignoreSchedule: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "网页完整产物已发布，旧资产将由持久清理器重试: siteId={SiteId}", siteId);
+        }
+        var reloaded = await _db.HostedSites.Find(x => x.Id == siteId).FirstAsync(CancellationToken.None);
+        _askOpeners.QueueEnsure(reloaded);
+        return AttachDerivedFields(reloaded)!;
+    }
+
+    private async Task ReservePublishKeysAsync(
+        string siteId,
+        DateTime expectedContentVersion,
+        IReadOnlyCollection<string> keys,
+        DateTime now)
+    {
+        var result = await _db.HostedSites.UpdateOneAsync(
+            BuildExpectedContentVersionFilter(siteId, expectedContentVersion),
+            Builders<HostedSite>.Update
+                .AddToSetEach(x => x.PendingAssetCleanupKeys, keys)
+                .AddToSetEach(x => x.AssetPublishInProgressKeys, keys)
+                .Set(x => x.AssetPublishLeaseExpiresAt, now.AddMinutes(5))
+                .Set(x => x.AssetCleanupNextAttemptAt, now),
+            cancellationToken: CancellationToken.None);
+        if (result.MatchedCount != 1)
+            throw new InvalidOperationException("站点在发布时已经发生变化，请刷新后重试");
+    }
+
+    private static FilterDefinition<HostedSite> BuildExpectedContentVersionFilter(
+        string siteId,
+        DateTime expectedContentVersion)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        return fb.Eq(x => x.Id, siteId)
+               & fb.Or(
+                   fb.Eq(x => x.ContentVersion, expectedContentVersion),
+                   fb.And(
+                       fb.Eq(x => x.ContentVersion, default(DateTime)),
+                       fb.Eq(x => x.CreatedAt, expectedContentVersion)));
+    }
+
+    private Task ReleasePublishKeysAsync(
+        string siteId,
+        IReadOnlyCollection<string> keys,
+        bool keepPending)
+    {
+        var updates = new List<UpdateDefinition<HostedSite>>
+        {
+            Builders<HostedSite>.Update.PullAll(x => x.AssetPublishInProgressKeys, keys),
+        };
+        if (!keepPending)
+            updates.Add(Builders<HostedSite>.Update.PullAll(x => x.PendingAssetCleanupKeys, keys));
+        return _db.HostedSites.UpdateOneAsync(
+            x => x.Id == siteId,
+            Builders<HostedSite>.Update.Combine(updates),
+            cancellationToken: CancellationToken.None);
+    }
+
+    private async Task ReleaseBorrowedCurrentKeysAsync(
+        string siteId,
+        IReadOnlyCollection<string> keys)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        var stillCurrent = fb.Eq(x => x.Id, siteId);
+        foreach (var key in keys)
+            stillCurrent &= fb.ElemMatch(x => x.Files, file => file.CosKey == key);
+        var releasedCurrent = await _db.HostedSites.UpdateOneAsync(
+            stillCurrent,
+            Builders<HostedSite>.Update
+                .PullAll(x => x.AssetPublishInProgressKeys, keys)
+                .PullAll(x => x.PendingAssetCleanupKeys, keys),
+            cancellationToken: CancellationToken.None);
+        if (releasedCurrent.MatchedCount == 0)
+            await ReleasePublishKeysAsync(siteId, keys, keepPending: true);
+    }
+
+    internal static HostedSiteVerifiedFile[] ValidateVerifiedGeneratedFiles(
+        IReadOnlyList<HostedSiteVerifiedFile> files)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count < RequiredVerifiedGeneratedSitePaths.Length || files.Count > 100)
+            throw new InvalidOperationException("设计产物文件数量不符合要求，请重新生成");
+        var ordered = files.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in ordered)
+        {
+            if (!DesignArtifactPublicPath.TryNormalize(file.Path, out var path)
+                || !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(path, includeInternalManifest: true)
+                || !paths.Add(path))
+                throw new InvalidOperationException("设计产物文件路径无效或重复，请重新生成");
+        }
+        foreach (var path in paths)
+            for (var separator = path.IndexOf('/'); separator >= 0; separator = path.IndexOf('/', separator + 1))
+                if (paths.Contains(path[..separator]))
+                    throw new InvalidOperationException("设计产物文件与目录路径冲突，请重新生成");
+        if (!RequiredVerifiedGeneratedSitePaths.All(required => ordered.Any(file => file.Path == required)))
+            throw new InvalidOperationException("设计产物文件包不完整，请重新生成");
+
+        long totalBytes = 0;
+        var utf8 = new System.Text.UTF8Encoding(false, true);
+        foreach (var file in ordered)
+        {
+            totalBytes += file.Content.LongLength;
+            if (totalBytes > 6 * 1024 * 1024)
+                throw new InvalidOperationException("设计产物文件包超过大小上限，请精简后重试");
+            var actualHash = Convert.ToHexString(SHA256.HashData(file.Content)).ToLowerInvariant();
+            if (file.Content.LongLength == 0 || !string.Equals(actualHash, file.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("设计产物文件校验失败，请重新生成");
+
+            var extension = Path.GetExtension(file.Path);
+            if (file.Path != "index.html" && file.Path != "manifest.json"
+                && !VerifiedGeneratedResourceExtensions.Contains(extension))
+                throw new InvalidOperationException("设计产物包含不能公开托管的文件类型，请重新生成");
+            var expectedMime = GetMimeType(extension);
+            if (!System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(file.MimeType, out var declaredMime)
+                || !(string.Equals(declaredMime.MediaType, expectedMime, StringComparison.OrdinalIgnoreCase)
+                     || expectedMime == "application/javascript"
+                     && string.Equals(declaredMime.MediaType, "text/javascript", StringComparison.OrdinalIgnoreCase))
+                || declaredMime.Parameters.Any(parameter =>
+                    !string.Equals(parameter.Name, "charset", StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(parameter.Value?.Trim('"'), "utf-8", StringComparison.OrdinalIgnoreCase))
+                || declaredMime.Parameters.Count > 1)
+                throw new InvalidOperationException("设计产物文件类型与内容声明不匹配，请重新生成");
+
+            if (expectedMime.StartsWith("text/", StringComparison.Ordinal)
+                || expectedMime is "application/javascript" or "application/json")
+            {
+                try
+                {
+                    var text = utf8.GetString(file.Content);
+                    if (expectedMime == "application/json")
+                    {
+                        using var document = System.Text.Json.JsonDocument.Parse(text);
+                    }
+                }
+                catch (Exception ex) when (ex is System.Text.DecoderFallbackException or System.Text.Json.JsonException)
+                {
+                    throw new InvalidOperationException("设计产物文本文件格式不正确，请重新生成");
+                }
+            }
+        }
+        var index = ordered.Single(file => file.Path == "index.html");
+        if (!index.MimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("设计产物入口类型不正确，请重新生成");
+        var indexHtml = System.Text.Encoding.UTF8.GetString(index.Content);
+        var trustedPayload = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(indexHtml);
+        var interactiveHardened = HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+            trustedPayload,
+            ordered.Select(file => file.Path).ToArray());
+        if (!string.Equals(interactiveHardened, indexHtml, StringComparison.Ordinal))
+        {
+            var legacyStaticHardened = HostedSiteRevisionRules.HardenGeneratedHtml(trustedPayload);
+            if (!string.Equals(legacyStaticHardened, indexHtml, StringComparison.Ordinal))
+                throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
+        }
+        return ordered;
+    }
+
+    /// <summary>
+    /// 换版之后不再被站点引用的对象键。
+    ///
+    /// 判据只有一条：旧文件表里有、新文件表里没有。不要按「这次删没删 sidecar」去分支——
+    /// 单文件站点每次发布也会换一个带版本号的新入口 key，旧入口同样成了孤儿；
+    /// 漏掉它就等于每发布一次，就在对象存储里留下一份永远不会被回收的旧正文。
+    /// 反过来，仍被新文件表引用的键（局部换入口时原样留下的 sidecar）一律不能排进回收队列。
+    /// </summary>
+    internal static List<string> ComputeObsoleteAssetKeys(
+        IEnumerable<HostedSiteFile> previousFiles,
+        IEnumerable<HostedSiteFile> nextFiles)
+    {
+        var retained = nextFiles
+            .Select(file => file.CosKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .ToHashSet(StringComparer.Ordinal);
+        return previousFiles
+            .Select(file => file.CosKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key) && !retained.Contains(key))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static string BuildVersionedEntryKey(string currentKey, string entryFile)
+    {
+        var slash = currentKey.LastIndexOf('/');
+        var directory = slash >= 0 ? currentKey[..(slash + 1)] : string.Empty;
+        var fileName = Path.GetFileName(entryFile);
+        var extension = Path.GetExtension(fileName);
+        var stem = Path.GetFileNameWithoutExtension(fileName);
+        return $"{directory}{stem}.v{Guid.NewGuid():N}{extension}";
     }
 
     // ─────────────────────────────────────────────
@@ -637,8 +1490,148 @@ public class HostedSiteService : IHostedSiteService
         return AttachDerivedFields(updated);
     }
 
+    public async Task<bool> ResumeNextPendingAssetCleanupAsync(
+        DateTime? now = null,
+        CancellationToken ct = default)
+    {
+        var outcome = await TryRunHostedSiteAssetCleanupAsync(
+            null,
+            now ?? DateTime.UtcNow,
+            ignoreSchedule: false,
+            ct);
+        return outcome.Claimed;
+    }
+
+    internal async Task<(bool Claimed, bool Completed, int AttemptCount)> TryRunHostedSiteAssetCleanupAsync(
+        string? siteId,
+        DateTime now,
+        bool ignoreSchedule,
+        CancellationToken ct = default)
+    {
+        var leaseOwner = Guid.NewGuid().ToString("N");
+        var fb = Builders<HostedSite>.Filter;
+        var filter = fb.Exists("PendingAssetCleanupKeys.0", true)
+                     & (fb.Eq(x => x.AssetCleanupLeaseExpiresAt, null)
+                        | fb.Lte(x => x.AssetCleanupLeaseExpiresAt, now));
+        if (!string.IsNullOrWhiteSpace(siteId)) filter &= fb.Eq(x => x.Id, siteId);
+        if (!ignoreSchedule)
+        {
+            filter &= fb.Or(
+                fb.Eq(x => x.AssetCleanupNextAttemptAt, null),
+                fb.Lte(x => x.AssetCleanupNextAttemptAt, now));
+        }
+
+        var site = await _db.HostedSites.FindOneAndUpdateAsync(
+            filter,
+            Builders<HostedSite>.Update
+                .Set(x => x.AssetCleanupLeaseOwnerId, leaseOwner)
+                .Set(x => x.AssetCleanupLeaseExpiresAt, now.AddMinutes(2))
+                .Inc(x => x.AssetCleanupAttemptCount, 1),
+            new FindOneAndUpdateOptions<HostedSite, HostedSite>
+            {
+                Sort = Builders<HostedSite>.Sort.Ascending(x => x.AssetCleanupNextAttemptAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (site == null) return (false, false, 0);
+
+        var referencedKeys = site.Files
+            .Select(file => file.CosKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var activePublishKeys = site.AssetPublishLeaseExpiresAt > now
+            ? site.AssetPublishInProgressKeys.ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        var candidates = site.PendingAssetCleanupKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key)
+                          && !referencedKeys.Contains(key)
+                          && !activePublishKeys.Contains(key))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        try
+        {
+            var cleanupKeys = new List<string>();
+            var globallyReferencedKeys = new List<string>();
+            foreach (var key in candidates)
+            {
+                var globallyReferenced = await _db.HostedSites.CountDocumentsAsync(
+                    Builders<HostedSite>.Filter.ElemMatch(x => x.Files, file => file.CosKey == key),
+                    cancellationToken: CancellationToken.None) > 0;
+                if (globallyReferenced)
+                {
+                    globallyReferencedKeys.Add(key);
+                    continue;
+                }
+                await _storage.DeleteByKeyAsync(key, CancellationToken.None);
+                cleanupKeys.Add(key);
+            }
+            var resolvedCurrentKeys = site.PendingAssetCleanupKeys
+                .Where(referencedKeys.Contains)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var hasActivePublishKeys = activePublishKeys.Count > 0;
+            var hasDeferredKeys = globallyReferencedKeys.Count > 0 || hasActivePublishKeys;
+            var deferredUntil = hasActivePublishKeys && site.AssetPublishLeaseExpiresAt.HasValue
+                ? site.AssetPublishLeaseExpiresAt.Value
+                : now.AddMinutes(5);
+            if (globallyReferencedKeys.Count > 0 && deferredUntil < now.AddMinutes(5))
+                deferredUntil = now.AddMinutes(5);
+            var updates = new List<UpdateDefinition<HostedSite>>
+            {
+                Builders<HostedSite>.Update
+                    .Set(x => x.AssetCleanupLeaseOwnerId, null)
+                    .Set(x => x.AssetCleanupLeaseExpiresAt, null)
+                    .Set(x => x.AssetCleanupLastErrorCode,
+                        globallyReferencedKeys.Count > 0
+                            ? "asset_still_referenced"
+                            : hasActivePublishKeys ? "asset_publish_in_progress" : null)
+                    .Set(x => x.AssetCleanupNextAttemptAt,
+                        hasDeferredKeys ? deferredUntil : null),
+            };
+            var resolvedKeys = cleanupKeys.Concat(resolvedCurrentKeys).Distinct(StringComparer.Ordinal).ToArray();
+            if (resolvedKeys.Length > 0)
+                updates.Add(Builders<HostedSite>.Update.PullAll(x => x.PendingAssetCleanupKeys, resolvedKeys));
+            if (site.AssetPublishLeaseExpiresAt <= now && site.AssetPublishInProgressKeys.Count > 0)
+                updates.Add(Builders<HostedSite>.Update.Set(x => x.AssetPublishInProgressKeys, new List<string>()));
+            var completed = await _db.HostedSites.UpdateOneAsync(
+                x => x.Id == site.Id && x.AssetCleanupLeaseOwnerId == leaseOwner,
+                Builders<HostedSite>.Update.Combine(updates),
+                cancellationToken: CancellationToken.None);
+            if (completed.MatchedCount != 1)
+                throw new InvalidOperationException("旧网页资产清理租约已失效");
+            return (true, !hasDeferredKeys, site.AssetCleanupAttemptCount);
+        }
+        catch (Exception ex)
+        {
+            var retryAt = DateTime.UtcNow + HostedSiteDeletionRetryDelay(site.AssetCleanupAttemptCount);
+            _logger.LogWarning(
+                ex,
+                "旧网页资产清理失败，已进入持久重试: siteId={SiteId} attempt={AttemptCount}",
+                site.Id,
+                site.AssetCleanupAttemptCount);
+            await _db.HostedSites.UpdateOneAsync(
+                x => x.Id == site.Id && x.AssetCleanupLeaseOwnerId == leaseOwner,
+                Builders<HostedSite>.Update
+                    .Set(x => x.AssetCleanupLastErrorCode, "asset_cleanup_failed")
+                    .Set(x => x.AssetCleanupNextAttemptAt, retryAt)
+                    .Set(x => x.AssetCleanupLeaseOwnerId, null)
+                    .Set(x => x.AssetCleanupLeaseExpiresAt, null),
+                cancellationToken: CancellationToken.None);
+            return (true, false, site.AssetCleanupAttemptCount);
+        }
+    }
+
     public async Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct)
     {
+        var existingTask = await _db.HostedSiteDeletionTasks
+            .Find(x => x.Id == siteId && x.RequestedByUserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (existingTask != null)
+        {
+            var resumed = await TryRunHostedSiteDeletionAsync(siteId, DateTime.UtcNow, ignoreSchedule: true);
+            if (resumed.Completed) return true;
+            throw new HostedSiteDeletionPendingException(siteId, resumed.AttemptCount);
+        }
+
         // 角色门控：删除只给文件夹所有者(owner)或站点创建者；editor 不能删别人的站点，viewer 全拒
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null) return false;
@@ -646,24 +1639,461 @@ public class HostedSiteService : IHostedSiteService
         if (!WebHostingPermission.Can(role, WebHostingAction.Delete, site.OwnerUserId == userId))
             return false;
 
-        foreach (var f in site.Files)
-        {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "删除 COS 文件失败: {CosKey}", f.CosKey); }
-        }
-
-        await _db.HostedSites.DeleteOneAsync(x => x.Id == siteId, ct);
-        // 个人分享链接清理仍按创建者本人（团队成员不应删别人的分享链接）
-        await _db.WebPageShareLinks.DeleteManyAsync(x => x.SiteId == siteId && x.CreatedBy == userId, ct);
-
-        if (site.SharedTeamIds.Count > 0)
-        {
-            await _teamActivity.LogForTeamsAsync(
-                site.SharedTeamIds, TeamAppKey.WebHosting, userId,
-                TeamActivityAction.SiteDeleted, "site", site.Id, site.Title, ct);
-        }
-        return true;
+        await PersistHostedSiteDeletionIntentAsync(site, userId, ct);
+        var outcome = await TryRunHostedSiteDeletionAsync(siteId, DateTime.UtcNow, ignoreSchedule: true);
+        if (outcome.Completed) return true;
+        throw new HostedSiteDeletionPendingException(siteId, outcome.AttemptCount);
     }
+
+    /// <summary>
+    /// 后台恢复一条到期的站点删除任务。返回 true 表示本轮领取过任务（无论本次是否清理成功）。
+    /// </summary>
+    public async Task<bool> ResumeNextPendingDeletionAsync(
+        DateTime? now = null,
+        CancellationToken ct = default)
+    {
+        var attemptedAt = now ?? DateTime.UtcNow;
+        var outcome = await TryRunHostedSiteDeletionAsync(null, attemptedAt, ignoreSchedule: false, ct);
+        return outcome.Claimed;
+    }
+
+    private async Task PersistHostedSiteDeletionIntentAsync(
+        HostedSite site,
+        string requestedByUserId,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var objectKeys = site.Files
+            .Select(x => x.CosKey?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Concat(site.PendingAssetCleanupKeys ?? new List<string>())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+            x => x.Id == site.Id,
+            Builders<HostedSiteDeletionTask>.Update
+                .SetOnInsert(x => x.Id, site.Id)
+                .SetOnInsert(x => x.SiteId, site.Id)
+                .SetOnInsert(x => x.SiteOwnerUserId, site.OwnerUserId)
+                .SetOnInsert(x => x.RequestedByUserId, requestedByUserId)
+                .SetOnInsert(x => x.SiteTitle, site.Title)
+                .SetOnInsert(x => x.SharedTeamIds, site.SharedTeamIds)
+                .SetOnInsert(x => x.ObjectKeys, objectKeys)
+                .SetOnInsert(x => x.RequestedAt, now)
+                .SetOnInsert(x => x.NextAttemptAt, now)
+                .SetOnInsert(x => x.AttemptCount, 0),
+            new UpdateOptions { IsUpsert = true },
+            ct);
+    }
+
+    private async Task<(bool Claimed, bool Completed, int AttemptCount)> TryRunHostedSiteDeletionAsync(
+        string? siteId,
+        DateTime now,
+        bool ignoreSchedule,
+        CancellationToken ct = default)
+    {
+        var leaseOwner = Guid.NewGuid().ToString("N");
+        var fb = Builders<HostedSiteDeletionTask>.Filter;
+        var filter = fb.Or(
+            fb.Eq(x => x.LeaseExpiresAt, null),
+            fb.Lte(x => x.LeaseExpiresAt, now));
+        if (!string.IsNullOrWhiteSpace(siteId)) filter &= fb.Eq(x => x.Id, siteId);
+        if (!ignoreSchedule) filter &= fb.Lte(x => x.NextAttemptAt, now);
+
+        var task = await _db.HostedSiteDeletionTasks.FindOneAndUpdateAsync(
+            filter,
+            Builders<HostedSiteDeletionTask>.Update
+                .Set(x => x.LeaseOwnerId, leaseOwner)
+                .Set(x => x.LeaseExpiresAt, now.AddMinutes(2))
+                .Set(x => x.LastAttemptAt, now)
+                .Inc(x => x.AttemptCount, 1),
+            new FindOneAndUpdateOptions<HostedSiteDeletionTask>
+            {
+                Sort = Builders<HostedSiteDeletionTask>.Sort.Ascending(x => x.NextAttemptAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (task == null) return (false, false, 0);
+
+        var failureCode = "site_record_cleanup_failed";
+        try
+        {
+            await EnsureHostedSiteRecordDeletedAsync(task, leaseOwner);
+
+            failureCode = "asset_cleanup_failed";
+            foreach (var key in task.ObjectKeys)
+            {
+                // 历史 saved-share 可能仍引用原站对象。删除原站时只移除无人引用的对象；
+                // 已被其他站点引用的 key 由最后一个引用者的删除任务负责回收。
+                var stillReferenced = await _db.HostedSites.CountDocumentsAsync(
+                    Builders<HostedSite>.Filter.ElemMatch(x => x.Files, file => file.CosKey == key),
+                    cancellationToken: CancellationToken.None) > 0;
+                if (!stillReferenced)
+                    await _storage.DeleteByKeyAsync(key, CancellationToken.None);
+            }
+
+            failureCode = "cleanup_ledger_finalize_failed";
+            var removed = await _db.HostedSiteDeletionTasks.DeleteOneAsync(
+                x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+                CancellationToken.None);
+            if (removed.DeletedCount != 1)
+                throw new InvalidOperationException("站点删除清理账本终态写入失败");
+
+            if (task.SharedTeamIds.Count > 0)
+            {
+                try
+                {
+                    await _teamActivity.LogForTeamsAsync(
+                        task.SharedTeamIds,
+                        TeamAppKey.WebHosting,
+                        task.RequestedByUserId,
+                        TeamActivityAction.SiteDeleted,
+                        "site",
+                        task.SiteId,
+                        task.SiteTitle,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "站点删除完成，但团队动态写入失败: siteId={SiteId}", task.SiteId);
+                }
+            }
+
+            return (true, true, task.AttemptCount);
+        }
+        catch (Exception ex)
+        {
+            var retryAt = DateTime.UtcNow + HostedSiteDeletionRetryDelay(task.AttemptCount);
+            _logger.LogWarning(
+                ex,
+                "站点文件清理失败，已进入持久重试: siteId={SiteId} attempt={AttemptCount} retryAt={RetryAt}",
+                task.SiteId,
+                task.AttemptCount,
+                retryAt);
+            await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+                x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+                Builders<HostedSiteDeletionTask>.Update
+                    .Set(x => x.LastErrorCode, failureCode)
+                    .Set(x => x.NextAttemptAt, retryAt)
+                    .Set(x => x.LeaseOwnerId, null)
+                    .Set(x => x.LeaseExpiresAt, null),
+                cancellationToken: CancellationToken.None);
+            return (true, false, task.AttemptCount);
+        }
+    }
+
+    /// <summary>
+    /// 站点记录删除的原子围栏。
+    /// </summary>
+    /// <remarks>
+    /// 内容版本与更新时间只挡得住「删除期间内容被改写」。借用与发布登记
+    /// （<see cref="ReservePublishKeysAsync"/>）只写租约与两个键数组，**不碰**
+    /// ContentVersion 与 UpdatedAt，所以「读站点」与「登记键」一交错，删除就会拿着
+    /// 读取时那一刻的清单成功执行：发布方随后把对象传上去，站点已经没了，键也释放不掉，
+    /// 那批对象既不在删除任务的清单里也没有人认领。
+    ///
+    /// 读取时本来就有一道租约判断，它是对的，缺的只是「与删除在同一次原子操作里成立」——
+    /// 典型的 check-then-act。所以这里把那道判断原样并进围栏，判据逐字一致：
+    /// 租约未过期 **且** 有发布中的键，才算「正在进行中」。
+    ///
+    /// 刻意不改键清单：借用场景里那批键恰恰是源站自己的当前文件，把它们并进删除清单
+    /// 等于在别人读取途中删源文件。租约的语义是让删除**等**，不是让删除**跳过**这些键。
+    ///
+    /// <paramref name="now"/> 必须与读取时那道判断用同一个值：两者之间租约若恰好过期，
+    /// 用旧值会判成「仍在进行中」从而推迟删除——偏向推迟是安全的那一侧。
+    /// </remarks>
+    internal static FilterDefinition<HostedSite> BuildHostedSiteDeletionFence(
+        string siteId,
+        string ownerUserId,
+        DateTime contentVersion,
+        DateTime updatedAt,
+        DateTime now)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        return fb.Eq(x => x.Id, siteId)
+               & fb.Eq(x => x.OwnerUserId, ownerUserId)
+               & fb.Eq(x => x.ContentVersion, contentVersion)
+               & fb.Eq(x => x.UpdatedAt, updatedAt)
+               & fb.Or(
+                   // 租约字段缺失或为空 = 从来没有人登记过
+                   fb.Eq(x => x.AssetPublishLeaseExpiresAt, null),
+                   fb.Lte(x => x.AssetPublishLeaseExpiresAt, now),
+                   // 释放登记只清空键数组、不回拨租约时间戳，所以「键空了」也算不在进行中
+                   fb.Size(x => x.AssetPublishInProgressKeys, 0),
+                   fb.Exists(x => x.AssetPublishInProgressKeys, false));
+    }
+
+    private async Task EnsureHostedSiteRecordDeletedAsync(
+        HostedSiteDeletionTask task,
+        string leaseOwner)
+    {
+        if (task.SiteRecordDeletedAt != null) return;
+
+        var current = await _db.HostedSites
+            .Find(x => x.Id == task.SiteId && x.OwnerUserId == task.SiteOwnerUserId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var fenceNow = DateTime.UtcNow;
+        if (current != null)
+        {
+            if (current.AssetPublishLeaseExpiresAt > fenceNow
+                && current.AssetPublishInProgressKeys.Count > 0)
+                throw new InvalidOperationException("站点仍有内容操作进行中，将在租约结束后重试删除");
+
+            var currentKeys = current.Files
+                .Select(x => x.CosKey?.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x!)
+                .Concat(current.PendingAssetCleanupKeys ?? new List<string>())
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var mergedKeys = task.ObjectKeys
+                .Concat(currentKeys)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var snapshot = await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+                x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+                Builders<HostedSiteDeletionTask>.Update.Set(x => x.ObjectKeys, mergedKeys),
+                cancellationToken: CancellationToken.None);
+            if (snapshot.MatchedCount != 1)
+                throw new InvalidOperationException("站点删除对象清单持久化失败");
+            task.ObjectKeys = mergedKeys;
+
+            var deleted = await _db.HostedSites.DeleteOneAsync(
+                BuildHostedSiteDeletionFence(
+                    task.SiteId,
+                    task.SiteOwnerUserId,
+                    current.ContentVersion,
+                    current.UpdatedAt,
+                    fenceNow),
+                CancellationToken.None);
+            if (deleted.DeletedCount != 1)
+            {
+                var stillExists = await _db.HostedSites
+                    .Find(x => x.Id == task.SiteId && x.OwnerUserId == task.SiteOwnerUserId)
+                    .AnyAsync(CancellationToken.None);
+                if (stillExists)
+                    throw new InvalidOperationException("站点内容在删除期间发生变化，将使用新快照重试");
+            }
+        }
+
+        await _db.HostedSiteRevisions.DeleteManyAsync(
+            x => x.SiteId == task.SiteId,
+            CancellationToken.None);
+        await _db.WebPageShareLinks.DeleteManyAsync(
+            x => x.SiteId == task.SiteId,
+            CancellationToken.None);
+
+        var marked = await _db.HostedSiteDeletionTasks.UpdateOneAsync(
+            x => x.Id == task.Id && x.LeaseOwnerId == leaseOwner,
+            Builders<HostedSiteDeletionTask>.Update.Set(x => x.SiteRecordDeletedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (marked.MatchedCount != 1)
+            throw new InvalidOperationException("站点删除墓碑状态写入失败");
+        task.SiteRecordDeletedAt = DateTime.UtcNow;
+    }
+
+    private static TimeSpan HostedSiteDeletionRetryDelay(int attemptCount) =>
+        TimeSpan.FromMinutes(Math.Min(60, Math.Pow(2, Math.Clamp(attemptCount - 1, 0, 6))));
+
+    public async Task<bool> CompensateGeneratedSiteAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        CancellationToken ct = default) =>
+        await CompensateGeneratedSiteCoreAsync(siteId, runId, userId, null, ct);
+
+    public Task<bool> CompensateGeneratedSiteWithLeaseAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaseOwnerId))
+            throw new ArgumentException("发布租约归属不能为空", nameof(leaseOwnerId));
+        return CompensateGeneratedSiteCoreAsync(siteId, runId, userId, null, ct, leaseOwnerId);
+    }
+
+    public Task<bool> RecoverGeneratedSiteCleanupAsync(
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(leaseOwnerId))
+            throw new ArgumentException("恢复租约归属不能为空", nameof(leaseOwnerId));
+        return CompensateGeneratedSiteCoreAsync(
+            null, runId, userId, null, ct, leaseOwnerId, requireExpiredExecutionLease: true);
+    }
+
+    internal async Task<bool> CompensateGeneratedSiteCoreAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        Func<Task>? afterPlanPersisted,
+        CancellationToken ct,
+        string? expectedLeaseOwnerId = null,
+        string? expectedPublishAttemptId = null,
+        bool requireExpiredExecutionLease = false)
+    {
+        var cleanupOwner = Guid.NewGuid().ToString("N");
+        var claimedAt = DateTime.UtcNow;
+        var runFb = Builders<DesignArtifactRun>.Filter;
+        var cleanupClaimFilter = runFb.Eq(x => x.Id, runId)
+                                 & runFb.Eq(x => x.UserId, userId)
+                                 & runFb.In(x => x.Status, new[] { RunStatuses.Committing, RunStatuses.Error })
+                                 & (runFb.Eq(x => x.CleanupLeaseExpiresAt, null)
+                                    | runFb.Lte(x => x.CleanupLeaseExpiresAt, claimedAt));
+        if (expectedLeaseOwnerId != null)
+            cleanupClaimFilter &= runFb.Eq(x => x.LeaseOwnerId, expectedLeaseOwnerId);
+        if (expectedPublishAttemptId != null)
+            cleanupClaimFilter &= runFb.Eq(x => x.CleanupPublishAttemptId, expectedPublishAttemptId);
+        if (requireExpiredExecutionLease)
+            cleanupClaimFilter &= runFb.Eq(x => x.Status, RunStatuses.Committing)
+                                  & runFb.Eq(x => x.Operation, DesignArtifactOperations.Generate)
+                                  & runFb.Eq(x => x.CleanupPending, true)
+                                  & (runFb.Ne(x => x.CleanupStartedAt, null)
+                                     | runFb.Ne(x => x.CleanupLeaseOwnerId, null))
+                                  & runFb.Ne(x => x.LeaseExpiresAt, null)
+                                  & runFb.Lte(x => x.LeaseExpiresAt, claimedAt)
+                                  & runFb.Eq(x => x.ProducedArtifactSiteId, null)
+                                  & runFb.Eq(x => x.ProducedArtifactRevisionId, null);
+        var run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (cleanupClaimFilter),
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.CleanupPending, true)
+                .Set(x => x.CleanupLeaseOwnerId, cleanupOwner)
+                .Set(x => x.CleanupStartedAt, claimedAt)
+                .Set(x => x.CleanupLeaseExpiresAt, claimedAt.AddMinutes(1)),
+            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (run == null)
+        {
+            var existing = await _db.DesignArtifactRuns
+                .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.UserId == userId))
+                .FirstOrDefaultAsync(ct);
+            if (existing != null
+                && (existing.Status == RunStatuses.Committing || existing.Status == RunStatuses.Error)
+                && existing.CleanupLeaseExpiresAt > claimedAt)
+                throw new InvalidOperationException("设计产物清理正在由其他实例执行");
+            return false;
+        }
+
+        try
+        {
+            var fb = Builders<HostedSite>.Filter;
+            var ownershipFence = fb.Eq(x => x.OwnerUserId, userId)
+                                 & fb.Eq(x => x.SourceType, "design-agent")
+                                 & fb.Eq(x => x.SourceRef, runId)
+                                 & fb.Eq(x => x.Visibility, "private")
+                                 & fb.Eq(x => x.PublishedAt, null)
+                                 & fb.Eq(x => x.PublishedRevisionId, null)
+                                 & fb.Size(x => x.SharedTeamIds, 0);
+            if (!string.IsNullOrWhiteSpace(siteId))
+                ownershipFence &= fb.Eq(x => x.Id, siteId);
+
+            var cleanupSiteId = run.CleanupArtifactSiteId;
+            var cleanupKeys = run.CleanupAssetKeys ?? new List<string>();
+            var siteRecordDeleted = run.CleanupSiteRecordDeleted;
+            if (string.IsNullOrWhiteSpace(cleanupSiteId))
+            {
+                var candidate = await _db.HostedSites.Find(ownershipFence).FirstOrDefaultAsync(ct);
+                if (candidate == null)
+                {
+                    await ClearGeneratedSiteCleanupPlanAsync(runId, userId, cleanupOwner, DateTime.UtcNow);
+                    return false;
+                }
+
+                cleanupSiteId = candidate.Id;
+                cleanupKeys = candidate.Files
+                    .Select(x => x.CosKey)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                var planWrite = await _db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner),
+                    Builders<DesignArtifactRun>.Update
+                        .Set(x => x.CleanupPending, true)
+                        .Set(x => x.CleanupArtifactSiteId, cleanupSiteId)
+                        .Set(x => x.CleanupAssetKeys, cleanupKeys)
+                        .Set(x => x.CleanupSiteRecordDeleted, false)
+                        .Set(x => x.CleanupAttemptedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                if (planWrite.ModifiedCount != 1)
+                    throw new InvalidOperationException("设计产物清理计划持久化失败，将在下一轮重试");
+
+                if (afterPlanPersisted != null)
+                    await afterPlanPersisted();
+            }
+
+            if (!siteRecordDeleted)
+            {
+                var exactFence = ownershipFence & fb.Eq(x => x.Id, cleanupSiteId);
+                // Run 账本只能删除它登记的那一包对象对应的站点，不能删除相同站点 ID
+                // 被另一发布尝试写入的新版本。
+                exactFence &= fb.Size(x => x.Files, cleanupKeys.Count);
+                foreach (var key in cleanupKeys)
+                    exactFence &= fb.ElemMatch(x => x.Files, file => file.CosKey == key);
+                var deleted = await _db.HostedSites.DeleteOneAsync(exactFence, ct);
+                if (deleted.DeletedCount != 1)
+                {
+                    var stillExists = await _db.HostedSites
+                        .Find(x => x.Id == cleanupSiteId)
+                        .AnyAsync(ct);
+                    if (stillExists)
+                    {
+                        // 计划持久化后若站点已公开、分享或来源变化，视为用户已采用，绝不删除其对象。
+                        await ClearGeneratedSiteCleanupPlanAsync(runId, userId, cleanupOwner, DateTime.UtcNow);
+                        return false;
+                    }
+                }
+
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
+                         && x.UserId == userId
+                         && x.CleanupArtifactSiteId == cleanupSiteId
+                         && x.CleanupLeaseOwnerId == cleanupOwner),
+                    Builders<DesignArtifactRun>.Update.Set(x => x.CleanupSiteRecordDeleted, true),
+                    cancellationToken: CancellationToken.None);
+            }
+
+            foreach (var key in cleanupKeys)
+                await _storage.DeleteByKeyAsync(key, CancellationToken.None);
+
+            await _db.HostedSiteRevisions.DeleteManyAsync(x => x.SiteId == cleanupSiteId, ct);
+            await _db.WebPageShareLinks.DeleteManyAsync(x => x.SiteId == cleanupSiteId, ct);
+            await ClearGeneratedSiteCleanupPlanAsync(runId, userId, cleanupOwner, DateTime.UtcNow);
+            return true;
+        }
+        finally
+        {
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.CleanupLeaseOwnerId == cleanupOwner),
+                Builders<DesignArtifactRun>.Update
+                    .Set(x => x.CleanupLeaseOwnerId, null)
+                    .Set(x => x.CleanupLeaseExpiresAt, null),
+                cancellationToken: CancellationToken.None);
+        }
+    }
+
+    private Task ClearGeneratedSiteCleanupPlanAsync(
+        string runId,
+        string userId,
+        string cleanupOwner,
+        DateTime attemptedAt) =>
+        _db.DesignArtifactRuns.UpdateOneAsync(
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner),
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.CleanupPending, false)
+                .Set(x => x.CleanupStartedAt, null)
+                .Set(x => x.CleanupArtifactSiteId, null)
+                .Set(x => x.CleanupPublishAttemptId, null)
+                .Set(x => x.CleanupAssetKeys, new List<string>())
+                .Set(x => x.CleanupSiteRecordDeleted, false)
+                .Set(x => x.CleanupAttemptedAt, attemptedAt)
+                .Set(x => x.CleanupLastError, null),
+            cancellationToken: CancellationToken.None);
 
     public async Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct)
     {
@@ -678,21 +2108,66 @@ public class HostedSiteService : IHostedSiteService
             return WebHostingPermission.Can(role, WebHostingAction.Delete, isOwner);
         }).ToList();
 
+        var completedCount = 0;
+        var pendingCount = 0;
+        var lastPendingSiteId = string.Empty;
+        var lastAttemptCount = 0;
         foreach (var site in sites)
-        foreach (var f in site.Files)
         {
-            try { await _storage.DeleteByKeyAsync(f.CosKey, CancellationToken.None); }
-            catch (Exception ex) { _logger.LogWarning(ex, "批量删除 COS 文件失败: {CosKey}", f.CosKey); }
+            try
+            {
+                if (await DeleteAsync(site.Id, userId, ct)) completedCount++;
+            }
+            catch (HostedSiteDeletionPendingException ex)
+            {
+                pendingCount++;
+                lastPendingSiteId = ex.SiteId;
+                lastAttemptCount = ex.AttemptCount;
+            }
         }
 
-        var deletableIds = sites.Select(s => s.Id).ToList();
-        if (deletableIds.Count == 0) return 0;
+        if (pendingCount > 0)
+        {
+            throw new HostedSiteDeletionPendingException(
+                lastPendingSiteId,
+                lastAttemptCount,
+                completedCount,
+                pendingCount);
+        }
 
-        var result = await _db.HostedSites.DeleteManyAsync(fb.In(x => x.Id, deletableIds), ct);
-        await _db.WebPageShareLinks.DeleteManyAsync(
-            x => deletableIds.Contains(x.SiteId!) && x.CreatedBy == userId, ct);
+        return completedCount;
+    }
 
-        return result.DeletedCount;
+    private static bool HasTeamPublishRole(IReadOnlyDictionary<string, string> roles, string teamId) =>
+        roles.TryGetValue(teamId, out var role)
+        && (role == WebHostingRoles.Owner || role == WebHostingRoles.Editor);
+
+    /// <summary>
+    /// 这个用户能不能把网页放进这个团队空间（owner / editor，viewer 与非成员不行）。
+    ///
+    /// 与 <see cref="SetSharedTeamsAsync"/> 共用同一条判据：生成任务把目标空间冻结进请求时，
+    /// 必须在**用户还在场**的那一刻就用同一把尺子量一次，否则要么把校验推迟到用户已经离开、
+    /// 只能静默落回个人空间，要么在两处各写一套，下一次只改好其中一个。
+    /// </summary>
+    public async Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(teamId)) return false;
+        var forbidden = await GetTeamsNotPublishableAsync(userId, [teamId], ct);
+        return forbidden.Count == 0;
+    }
+
+    /// <summary>
+    /// 批量判定：成员关系（GetMyWebHostingTeamRolesAsync）对整批团队只加载一次，
+    /// 每个团队仍走 <see cref="HasTeamPublishRole"/> 这一条判据——单个版本也由它实现，判据只有一处。
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetTeamsNotPublishableAsync(
+        string userId, IReadOnlyCollection<string> teamIds, CancellationToken ct = default)
+    {
+        var requested = teamIds.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.Ordinal).ToList();
+        if (requested.Count == 0) return [];
+        if (string.IsNullOrWhiteSpace(userId)) return requested;
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        return requested.Where(t => !HasTeamPublishRole(roles, t)).ToList();
     }
 
     public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
@@ -715,10 +2190,7 @@ public class HostedSiteService : IHostedSiteService
         // 移除团队也始终允许（move 对话框仅改文件夹时会把当前团队原样回传，不应 403）。
         // 只有把站点投进一个我无编辑权的新团队才需要拦截。
         var newlyAdded = requested.Where(t => !site.SharedTeamIds.Contains(t)).ToList();
-        var forbidden = newlyAdded
-            .Where(t => !(roles.TryGetValue(t, out var r)
-                          && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor)))
-            .ToList();
+        var forbidden = newlyAdded.Where(t => !HasTeamPublishRole(roles, t)).ToList();
         if (forbidden.Count > 0)
             throw new UnauthorizedAccessException("无权将网页分享到部分团队：你在这些团队是只读或非成员角色");
         var sanitized = requested;
@@ -733,9 +2205,25 @@ public class HostedSiteService : IHostedSiteService
 
         if (added.Count > 0)
         {
-            await _teamActivity.LogForTeamsAsync(
-                added, TeamAppKey.WebHosting, userId,
-                TeamActivityAction.SiteShared, "site", site.Id, site.Title, ct);
+            // 活动流是提交之后的尽力而为记录，不是这次归属的一部分。
+            // 让它抛出去，会把一次**已经写进库**的归属报告成失败：
+            // controller 那条路给用户 500，生成任务那条路把 DestinationApplyError 记上，
+            // 于是终态事件告诉用户「网页留在个人空间」，而它其实已经在团队里了。
+            // 所以吞掉——但不静默（predicate-and-wiring-discipline 形状 10），留一条日志。
+            try
+            {
+                await _teamActivity.LogForTeamsAsync(
+                    added, TeamAppKey.WebHosting, userId,
+                    TeamActivityAction.SiteShared, "site", site.Id, site.Title, ct);
+            }
+            catch (Exception activityError)
+            {
+                _logger.LogWarning(
+                    activityError,
+                    "站点已归属团队，但团队活动流留痕失败 siteId={SiteId} teams={Teams}",
+                    site.Id,
+                    string.Join(",", added));
+            }
         }
 
         site.SharedTeamIds = sanitized;
@@ -776,7 +2264,7 @@ public class HostedSiteService : IHostedSiteService
         }
 
         // 物理复制 COS 文件：副本与原件彻底独立（删除/重传互不影响），
-        // 与 SaveSharedSiteAsync 的「引用复用」刻意不同 —— 团队副本的规则与团队内新建站点一致。
+        // 与 SaveSharedSiteAsync 使用相同的独立对象生命周期。
         var newSiteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
         var newFiles = new List<HostedSiteFile>();
@@ -1560,26 +3048,32 @@ public class HostedSiteService : IHostedSiteService
             siteIds.Insert(0, share.SiteId);
 
         var rawSites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
-        var sites = rawSites.Select(s => new SharedSiteInfo
+        var sites = new List<SharedSiteInfo>(rawSites.Count);
+        foreach (var s in rawSites)
         {
-            Id = s.Id,
-            Title = s.Title,
-            Description = s.Description,
-            SiteUrl = s.SiteUrl,
-            EntryFile = s.EntryFile,
-            TotalSize = s.TotalSize,
-            // 入口那一份自己的大小。前端拿它判「取正文的代理装不装得下」——
-            // 拿 TotalSize 近似只对单文件站成立，多文件站里入口超 2MB 的会漏（Codex 第四轮 P2）。
-            // 路径比对要忽略大小写：Files 里的 Path 与 EntryFile 都来自上传时的相对路径，
-            // 同一条链路上的大小写差异在别处已经按 OrdinalIgnoreCase 处理过。
-            EntrySize = s.Files.FirstOrDefault(f =>
-                string.Equals(f.Path, s.EntryFile, StringComparison.OrdinalIgnoreCase))?.Size ?? 0,
-            FileCount = s.Files.Count,
-            CoverImageUrl = s.CoverImageUrl,
-            PdfAssetUrl = TryBuildPdfAssetUrl(s),
-            // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
-            WrappedAssetType = s.WrappedAssetType,
-        }).ToList();
+            sites.Add(new SharedSiteInfo
+            {
+                Id = s.Id,
+                Title = s.Title,
+                Description = s.Description,
+                SiteUrl = s.SiteUrl,
+                EntryFile = s.EntryFile,
+                TotalSize = s.TotalSize,
+                // 入口那一份自己的大小。前端拿它判「取正文的代理装不装得下」——
+                // 拿 TotalSize 近似只对单文件站成立，多文件站里入口超 2MB 的会漏（Codex 第四轮 P2）。
+                // 路径比对要忽略大小写：Files 里的 Path 与 EntryFile 都来自上传时的相对路径，
+                // 同一条链路上的大小写差异在别处已经按 OrdinalIgnoreCase 处理过。
+                EntrySize = s.Files.FirstOrDefault(f =>
+                    string.Equals(f.Path, s.EntryFile, StringComparison.OrdinalIgnoreCase))?.Size ?? 0,
+                FileCount = s.Files.Count,
+                CoverImageUrl = s.CoverImageUrl,
+                PdfAssetUrl = TryBuildPdfAssetUrl(s),
+                // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
+                WrappedAssetType = s.WrappedAssetType,
+                // 编辑权只有服务端算得出来，走编辑端点那同一道角色门；匿名访问恒为 false。
+                ViewerCanEdit = viewerUserId != null && await CanEditSiteAsync(s, viewerUserId, ct),
+            });
+        }
 
         await _db.HostedSites.UpdateManyAsync(
             x => siteIds.Contains(x.Id),
@@ -1660,6 +3154,14 @@ public class HostedSiteService : IHostedSiteService
     {
         if (site is null) return null;
         site.PdfAssetUrl = TryBuildPdfAssetUrl(site);
+        site.ContentShape = HostedSiteContentShapeRules.Resolve(site);
+        var version = EffectiveContentVersion(site);
+        foreach (var file in site.Files ?? new List<HostedSiteFile>())
+        {
+            file.Url = string.IsNullOrWhiteSpace(file.CosKey)
+                ? null
+                : AppendVersion(_storage.BuildUrlForKey(file.CosKey), version);
+        }
         return site;
     }
 
@@ -1803,7 +3305,8 @@ public class HostedSiteService : IHostedSiteService
     /// 让用户上传该功能之前的旧 PPT、以及垫片代码升级后的存量站点都自动获得最新垫片，
     /// 无需用户重新上传。注入保持在隔离的对象存储域名上（不改变 iframe 跨域隔离的安全模型）。
     /// 幂等：内容无变化不重写 COS；处理成功才升级版本号（下载瞬时失败则保持旧版下次重试）。
-    /// saved-share 引用副本只升级版本号、不重写其指向原站的 COS key / SiteUrl（由原站回填覆盖）。
+    /// 存量 saved-share 引用副本只升级版本号、不重写其指向原站的 COS key；
+    /// 新 saved-share 已拥有独立对象，按普通站点原地回填。
     /// </summary>
     public async Task<int> BackfillSlideNavCompatAsync(CancellationToken ct = default)
     {
@@ -1815,7 +3318,7 @@ public class HostedSiteService : IHostedSiteService
 
         var candidates = await _db.HostedSites.Find(filter).ToListAsync(ct);
 
-        // 先处理原站(非 saved-share)、后处理引用副本：保证副本刷新 ?v= 时共享 COS 对象已是当前版，
+        // 先处理原站(非 saved-share)、后处理副本：保证存量引用副本刷新 ?v= 时共享 COS 对象已是当前版，
         // 避免「副本先于原站被刷新 → 客户端/CDN 在窗口内把旧字节缓存到新版本号下，而原站后续重写
         // 不会再 bump 已标记当前版的副本」这一竞态（Codex P2 反馈）。
         candidates = candidates
@@ -1828,12 +3331,20 @@ public class HostedSiteService : IHostedSiteService
             if (ct.IsCancellationRequested) break;
             try
             {
-                // saved-share 是引用副本：Files/SiteUrl/EntryFile 全部照搬原站（CosKey 指向 {originalId}），
+                // 存量 saved-share 是引用副本：Files/SiteUrl/EntryFile 全部照搬原站（CosKey 指向 {originalId}），
                 // 自身 Id 是新 GUID。绝不下载后回写 COS（避免跨租户写 + 按 savedId 重建 404）——共享对象由原站回填升级。
                 // 这里只在「读取共享对象、确认它确实已含当前版 shim」之后，才给副本刷 ?v= + 标版本：检验地面真值
                 // （直接比对对象字节），而非靠版本号 / 处理顺序推断。这样对任意回填顺序、原站 deferred / 下载失败都正确，
                 // 杜绝「副本被提前标当前版后再不刷新」的整类竞态；确认不了就 defer（不标版本），下次启动重试。
-                if (string.Equals(site.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase))
+                var isLegacySavedReference = string.Equals(
+                                                 site.SourceType,
+                                                 "saved-share",
+                                                 StringComparison.OrdinalIgnoreCase)
+                                             && !string.Equals(
+                                                 site.CosPrefix,
+                                                 $"web-hosting/sites/{site.Id}/",
+                                                 StringComparison.Ordinal);
+                if (isLegacySavedReference)
                 {
                     var savedEntryKey = (site.Files ?? new List<HostedSiteFile>())
                         .FirstOrDefault(f => !string.IsNullOrEmpty(f.CosKey) &&
@@ -1859,7 +3370,8 @@ public class HostedSiteService : IHostedSiteService
                         Builders<HostedSite>.Update
                             .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
                             .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
-                            .Set(x => x.ContentVersion, savedNow),
+                            .Set(x => x.ContentVersion, savedNow)
+                            .Set(x => x.PublishedRevisionId, null),
                         cancellationToken: ct);
                     continue;
                 }
@@ -1902,6 +3414,7 @@ public class HostedSiteService : IHostedSiteService
                         var newUrl = AppendVersion(_storage.BuildUrlForKey(entryKey), now);
                         update = update.Set(x => x.SiteUrl, newUrl)
                                        .Set(x => x.ContentVersion, now)
+                                       .Set(x => x.PublishedRevisionId, null)
                                        .Set(x => x.UpdatedAt, now);
                     }
                     injectedSites++;
@@ -2634,43 +4147,186 @@ public class HostedSiteService : IHostedSiteService
         if (originalSites.Count == 0)
             return new SaveSharedSiteResult { Error = "分享的站点已被删除", HttpStatus = 404 };
 
-        // 4. 为用户创建引用副本（复用 COS 文件，不重复上传）
+        // 4. 为用户创建独立对象副本。保存后的生命周期不能继续依赖原站对象，
+        // 否则原站发布或删除时会把副本仍引用的 key 一并清掉。
         var savedSites = new List<HostedSite>();
-        foreach (var original in originalSites)
+        var copiedKeys = new List<string>();
+        var saveAttemptId = Guid.NewGuid().ToString("N");
+
+        // 这个循环的每一次离开，都可能发生在「前面几个站点已经上传完对象」之后，而它们全都
+        // 排在 InsertManyAsync 之前——也就是说此刻这些对象没有任何 HostedSite 认领，不做登记
+        // 就再也没人知道它们存在。去重那一关看的是 HostedSite，插入没发生就不算数，于是用户
+        // 每重试一次就多一批孤儿对象。所有离开共用同一个收尾，不许各写各的。
+        //
+        // 「离开」不止 return：finally 里释放借用围栏那一步（写 Mongo）抛出来的话，异常会
+        // 直接穿过整个方法，一个 return 都不经过。所以循环外面还罩了一层 catch → 收尾 → 重抛，
+        // 让「任何方式离开复制阶段都会收尾」成为结构上成立的事，而不是逐个出口数出来的。
+        async Task DiscardCopiedObjectsAsync()
         {
-            var saved = new HostedSite
+            foreach (var key in copiedKeys)
             {
-                Title = original.Title,
-                Description = original.Description,
-                SourceType = "saved-share",
-                SourceRef = token,
-                CosPrefix = original.CosPrefix,
-                EntryFile = original.EntryFile,
-                SiteUrl = original.SiteUrl,
-                // 复用原站 COS 文件，内容版本也照搬，保证 pdfAssetUrl 的 ?v 与原站一致（缓存命中）
-                ContentVersion = original.ContentVersion,
-                Files = original.Files.Select(f => new HostedSiteFile
-                {
-                    Path = f.Path,
-                    CosKey = f.CosKey,
-                    Size = f.Size,
-                    MimeType = f.MimeType,
-                }).ToList(),
-                TotalSize = original.TotalSize,
-                Tags = original.Tags.ToList(),
-                Folder = original.Folder,
-                CoverImageUrl = original.CoverImageUrl,
-                WrappedAssetType = original.WrappedAssetType,
-                OwnerUserId = userId,
-            };
-            savedSites.Add(saved);
+                await PersistAndTryCleanupLateGeneratedAssetAsync(
+                    saveAttemptId,
+                    userId,
+                    key,
+                    CancellationToken.None);
+            }
         }
 
-        await _db.HostedSites.InsertManyAsync(savedSites, cancellationToken: ct);
+        try
+        {
+            foreach (var original in originalSites)
+            {
+                if (original.Files.Count(file =>
+                        string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)) != 1)
+                {
+                    await DiscardCopiedObjectsAsync();
+                    return new SaveSharedSiteResult { Error = "分享源内容不完整，请联系分享者重新发布", HttpStatus = 409 };
+                }
+                var savedSiteId = Guid.NewGuid().ToString("N");
+                var savedFiles = new List<HostedSiteFile>();
+                var sourceKeys = original.Files
+                    .Select(file => file.CosKey)
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                try
+                {
+                    // 把当前源对象借用登记到原站的持久发布围栏。原站即使在复制期间完成发布，
+                    // 其旧对象清理器也必须等本次复制释放围栏；进程崩溃则由租约到期自动解锁。
+                    if (sourceKeys.Length > 0)
+                    {
+                        await ReservePublishKeysAsync(
+                            original.Id,
+                            EffectiveContentVersion(original),
+                            sourceKeys,
+                            DateTime.UtcNow);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    await DiscardCopiedObjectsAsync();
+                    return new SaveSharedSiteResult { Error = "分享内容正在变化，请刷新后重试", HttpStatus = 409 };
+                }
+                try
+                {
+                    foreach (var file in original.Files)
+                    {
+                        var bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct)
+                                    ?? throw new IOException("分享源文件暂时不可用");
+                        var key = _storage.BuildSiteKey(savedSiteId, file.Path);
+                        await _storage.UploadToKeyAsync(key, bytes, file.MimeType, ct, SiteCacheControl);
+                        copiedKeys.Add(key);
+                        savedFiles.Add(new HostedSiteFile
+                        {
+                            Path = file.Path,
+                            CosKey = key,
+                            Size = bytes.LongLength,
+                            MimeType = file.MimeType,
+                        });
+                    }
+                }
+                catch
+                {
+                    await DiscardCopiedObjectsAsync();
+                    return new SaveSharedSiteResult { Error = "保存分享内容失败，请稍后重试", HttpStatus = 503 };
+                }
+                finally
+                {
+                    // 若对象仍是原站当前文件，可原子移除借用产生的 pending；若并发发布已经切换
+                    // Files，则只释放 active，保留发布事务写入的 pending 让清理器重新裁决。
+                    if (sourceKeys.Length > 0)
+                        await ReleaseBorrowedCurrentKeysAsync(original.Id, sourceKeys);
+                }
+                var saved = new HostedSite
+                {
+                    Id = savedSiteId,
+                    Title = original.Title,
+                    Description = original.Description,
+                    SourceType = "saved-share",
+                    SourceRef = token,
+                    CosPrefix = $"web-hosting/sites/{savedSiteId}/",
+                    EntryFile = original.EntryFile,
+                    SiteUrl = AppendVersion(
+                        _storage.BuildUrlForKey(savedFiles.Single(file =>
+                            string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)).CosKey),
+                        original.ContentVersion),
+                    ContentVersion = original.ContentVersion,
+                    Files = savedFiles,
+                    TotalSize = savedFiles.Sum(file => file.Size),
+                    Tags = original.Tags.ToList(),
+                    Folder = original.Folder,
+                    CoverImageUrl = original.CoverImageUrl,
+                    WrappedAssetType = original.WrappedAssetType,
+                    IsSlideDeck = original.IsSlideDeck,
+                    SlideNavCompatVersion = original.SlideNavCompatVersion,
+                    OwnerUserId = userId,
+                };
+                savedSites.Add(saved);
+            }
+        }
+        catch
+        {
+            try
+            {
+                await DiscardCopiedObjectsAsync();
+            }
+            catch (Exception cleanupError)
+            {
+                // 收尾自己也炸了就只记一笔：把它抛出去会盖掉真正有信息量的那个异常。
+                _logger.LogWarning(cleanupError, "保存分享失败后清理已复制对象未完成: saveAttemptId={SaveAttemptId}", saveAttemptId);
+            }
+            throw;
+        }
+
+        try
+        {
+            await _db.HostedSites.InsertManyAsync(savedSites, cancellationToken: ct);
+        }
+        catch
+        {
+            var savedSiteIds = savedSites.Select(item => item.Id).ToArray();
+            var insertedCopies = await _db.HostedSites
+                .Find(site => savedSiteIds.Contains(site.Id))
+                .ToListAsync(CancellationToken.None);
+            var keysOwnedByInsertedCopies = insertedCopies
+                .SelectMany(site => site.Files)
+                .Select(file => file.CosKey)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var insertedCopy in insertedCopies)
+            {
+                try
+                {
+                    await PersistHostedSiteDeletionIntentAsync(insertedCopy, userId, CancellationToken.None);
+                    await TryRunHostedSiteDeletionAsync(
+                        insertedCopy.Id,
+                        DateTime.UtcNow,
+                        ignoreSchedule: true,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "保存分享部分写入后的站点补偿已留在持久账本: siteId={SiteId}", insertedCopy.Id);
+                }
+            }
+            foreach (var key in copiedKeys.Where(key => !keysOwnedByInsertedCopies.Contains(key)))
+            {
+                await PersistAndTryCleanupLateGeneratedAssetAsync(
+                    saveAttemptId,
+                    userId,
+                    key,
+                    CancellationToken.None);
+            }
+            return new SaveSharedSiteResult { Error = "保存分享内容失败，请稍后重试", HttpStatus = 503 };
+        }
         _logger.LogInformation("用户 {UserId} 保存了分享 {Token} 的 {Count} 个站点",
             userId, token, savedSites.Count);
 
-        return new SaveSharedSiteResult { Saved = true, Sites = savedSites };
+        return new SaveSharedSiteResult
+        {
+            Saved = true,
+            Sites = savedSites.Select(site => AttachDerivedFields(site)!).ToList(),
+        };
     }
 
     // ─────────────────────────────────────────────
@@ -2776,7 +4432,11 @@ public class HostedSiteService : IHostedSiteService
            ?? items.FirstOrDefault(i => i.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase)).Path
            ?? items.FirstOrDefault(i => i.MimeType == "text/html").Path;
 
-    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes, string? uploadId = null)
+    private async Task<ZipExtractResult> ExtractAndUploadZip(
+        string siteId,
+        byte[] zipBytes,
+        string? uploadId = null,
+        string? versionRoot = null)
     {
         var isSlideDeck = false;
 
@@ -2834,7 +4494,10 @@ public class HostedSiteService : IHostedSiteService
                         isSlideDeck = DetectSlideDeck(entryBytes);
                 }
 
-                var cosKey = _storage.BuildSiteKey(siteId, relativePath);
+                var storagePath = string.IsNullOrWhiteSpace(versionRoot)
+                    ? relativePath
+                    : $"{versionRoot}/{relativePath}";
+                var cosKey = _storage.BuildSiteKey(siteId, storagePath);
                 await _storage.UploadToKeyAsync(cosKey, entryBytes,
                     mimeType == "text/html" ? "text/html; charset=utf-8" : mimeType, CancellationToken.None, SiteCacheControl);
 
@@ -2878,6 +4541,18 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
+    // PlanZipEntries 现在要 siteId 才能算出每个条目的对象键（主干把站点隔离并进了这一层）。
+    // 这里只取相对路径，但仍须把 siteId 透传下去，不能用空串糊过去——那会让键前缀失去站点作用域。
+    private string[] GetValidatedZipPaths(byte[] zipBytes, string siteId)
+    {
+        using var zipStream = new MemoryStream(zipBytes);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        var plan = PlanZipEntries(archive, siteId);
+        if (plan.Error != null)
+            throw new InvalidOperationException(plan.Error);
+        return plan.Items.Select(item => item.RelativePath).ToArray();
+    }
+
     private static string? DetectRootPrefix(ZipArchive archive)
     {
         string? commonPrefix = null;
@@ -2909,6 +4584,12 @@ public class HostedSiteService : IHostedSiteService
             RegexOptions.IgnoreCase);
         return System.Text.Encoding.UTF8.GetBytes(html);
     }
+
+    /// <summary>
+    /// 发布入口的唯一重写路径。声明式安全产物仍执行相对路径改写，但绝不重新引入脚本。
+    /// </summary>
+    internal static byte[] RewritePublishedEntryHtml(byte[] htmlBytes, string entryFile) =>
+        InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, entryFile));
 
     // ─────────────────────────────────────────────
     // 幻灯片翻页方向兼容垫片
@@ -3004,6 +4685,12 @@ public class HostedSiteService : IHostedSiteService
                 : html.Remove(start, SlideNavMarker.Length); // 只有裸 marker 没脚本，删掉 marker
         }
 
+        // 安全生成产物以声明式 HTML/CSS 为边界。严格 CSP 已禁止 script 时继续塞入垫片，
+        // 即使浏览器不执行，也会破坏“产物不含可执行内容”的可审计合同。
+        // 先剥离历史垫片再返回，保证曾被旧版本污染的页面下一次发布也能恢复干净。
+        if (HasDeclarativeOnlyPolicy(html))
+            return System.Text.Encoding.UTF8.GetBytes(html);
+
         // 2) 插入当前版本注入块（剥离后重新定位锚点）
         var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
@@ -3013,6 +4700,55 @@ public class HostedSiteService : IHostedSiteService
                             : html + SlideNavCompatScript);
 
         return System.Text.Encoding.UTF8.GetBytes(injected);
+    }
+
+    internal static bool HasDeclarativeOnlyPolicy(string html)
+    {
+        if (Regex.IsMatch(
+                html,
+                @"\bdata-map-artifact-mode\s*=\s*([""'])declarative-only\1",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return true;
+
+        foreach (Match meta in Regex.Matches(
+                     html,
+                     @"<meta\b[^>]*>",
+                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var tag = meta.Value;
+            var httpEquiv = ReadQuotedAttribute(tag, "http-equiv");
+            if (!string.Equals(httpEquiv, "content-security-policy", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var content = ReadQuotedAttribute(tag, "content");
+            if (string.IsNullOrWhiteSpace(content)) continue;
+
+            string? defaultSource = null;
+            string? scriptSource = null;
+            foreach (var directive in content.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var parts = directive.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 0) continue;
+                if (parts[0].Equals("default-src", StringComparison.OrdinalIgnoreCase))
+                    defaultSource = string.Join(' ', parts.Skip(1));
+                else if (parts[0].Equals("script-src", StringComparison.OrdinalIgnoreCase))
+                    scriptSource = string.Join(' ', parts.Skip(1));
+            }
+
+            // script-src 会覆盖 default-src：只有唯一来源为 'none' 才能证明脚本被禁用。
+            var effective = scriptSource ?? defaultSource;
+            if (string.Equals(effective, "'none'", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static string? ReadQuotedAttribute(string tag, string attribute)
+    {
+        var match = Regex.Match(
+            tag,
+            $@"\b{Regex.Escape(attribute)}\s*=\s*([""'])(.*?)\1",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        return match.Success ? match.Groups[2].Value.Trim() : null;
     }
 
     // 注入的运行时脚本：自包含 IIFE，全部用单引号避免 C# verbatim 字符串的双引号转义。

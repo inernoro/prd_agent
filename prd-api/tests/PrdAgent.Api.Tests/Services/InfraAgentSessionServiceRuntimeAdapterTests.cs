@@ -1,4 +1,5 @@
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AgentRuntime;
 using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 using Shouldly;
@@ -9,6 +10,70 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class InfraAgentSessionServiceRuntimeAdapterTests
 {
+    [Fact]
+    public async Task RuntimeCancelFailure_ShouldBeLoggedWithoutBlockingSessionCleanup()
+    {
+        Exception? logged = null;
+
+        var result = await InfraAgentSessionService.RunBestEffortRuntimeCancelAsync(
+            () => throw new InvalidOperationException("runtime cancel rejected"),
+            ex => logged = ex);
+
+        result.ShouldBeNull();
+        logged.ShouldBeOfType<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task RuntimeCancelSuccess_ShouldRemainObservable()
+    {
+        var expected = new InfraAgentRuntimeCancelResult(true, AdapterKind: "open-design");
+
+        var result = await InfraAgentSessionService.RunBestEffortRuntimeCancelAsync(
+            () => Task.FromResult(expected),
+            _ => throw new InvalidOperationException("failure callback must not run"));
+
+        result.ShouldBeSameAs(expected);
+    }
+
+    [Theory]
+    [InlineData(InfraAgentSessionStatuses.Idle, true)]
+    [InlineData(InfraAgentSessionStatuses.Stopped, true)]
+    [InlineData(InfraAgentSessionStatuses.Failed, false)]
+    [InlineData(InfraAgentSessionStatuses.Running, false)]
+    public void CdsFollowWaitsForDetailedErrorAfterFailedStatus(string status, bool expected)
+    {
+        Assert.Equal(expected, InfraAgentSessionService.ShouldEndCdsFollowOnStatus(status));
+    }
+
+    [Fact]
+    public void WorkspaceTransferRequest_ShouldSerializeWithTheCdsCamelCaseContract()
+    {
+        var transfer = new InfraAgentWorkspaceTransferRequest(
+            "map-design-workspace-v1",
+            "https://map.example/workspace/input",
+            "input-sha",
+            "https://map.example/workspace/result",
+            "short-transfer-ticket",
+            "base-revision",
+            1024,
+            2048,
+            ["index.html", "manifest.json"]);
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new { workspaceTransfer = transfer }));
+        var payload = document.RootElement.GetProperty("workspaceTransfer");
+
+        payload.GetProperty("schemaVersion").GetString().ShouldBe("map-design-workspace-v1");
+        payload.GetProperty("inputPackageUrl").GetString().ShouldBe("https://map.example/workspace/input");
+        payload.GetProperty("inputSha256").GetString().ShouldBe("input-sha");
+        payload.GetProperty("resultCommitUrl").GetString().ShouldBe("https://map.example/workspace/result");
+        payload.GetProperty("transferToken").GetString().ShouldBe("short-transfer-ticket");
+        payload.GetProperty("baseRevision").GetString().ShouldBe("base-revision");
+        payload.GetProperty("maxInputBytes").GetInt64().ShouldBe(1024);
+        payload.GetProperty("maxOutputBytes").GetInt64().ShouldBe(2048);
+        payload.GetProperty("allowedOutputPaths")[0].GetString().ShouldBe("index.html");
+        payload.TryGetProperty("SchemaVersion", out _).ShouldBeFalse();
+    }
+
     [Fact]
     public void ResolveSidecarRuntimeAdapter_ShouldPreferOfficialSdkByDefault()
     {

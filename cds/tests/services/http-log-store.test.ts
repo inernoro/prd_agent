@@ -7,6 +7,7 @@ import {
   isBinaryContentType,
   isTextualContentType,
   redactBodyText,
+  selectRequestBodyForHttpLog,
 } from '../../src/services/http-log-store.js';
 
 describe('http log body redaction', () => {
@@ -53,6 +54,19 @@ describe('http log body redaction', () => {
   it('redacts bearer tokens in plain text', () => {
     expect(redactBodyText('Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456'))
       .toBe('Authorization: Bearer [redacted]');
+  });
+
+  it('route-controlled omission keeps byte count but drops an arbitrary canary', () => {
+    const canary = 'arbitrary-client-canary';
+    const selected = selectRequestBodyForHttpLog(
+      { bodyPreview: canary, bodyBytes: Buffer.byteLength(canary) },
+      { bodyPreview: canary, bodyBytes: Buffer.byteLength(canary) },
+      true,
+    );
+
+    expect(selected.bodyBytes).toBe(Buffer.byteLength(canary));
+    expect(selected.bodyPreview).toBe('[cds request body omitted]');
+    expect(JSON.stringify(selected)).not.toContain(canary);
   });
 
   it('omits image body previews while preserving byte counts', () => {

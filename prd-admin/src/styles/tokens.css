@@ -93,6 +93,21 @@
   --accent-fg-amber: #fbbf24;
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
+  /* AI 资讯分类色（更新中心「AI 大事」、首页挂件）。暗色沿用原 400 档亮色；
+     浅色压到 700/800 档，否则亮琥珀/亮青落在暖纸底上只有 1.5~2:1。 */
+  --news-label-indigo-soft: #a5b4fc;
+  --news-label-green: #4ade80;
+  --news-label-rose: #fb7185;
+  --news-label-cyan: #22d3ee;
+  --news-label-amber: #fbbf24;
+  --news-label-indigo: #818cf8;
+  --news-label-gold: #f59e0b;
+  --news-label-emerald: #34d399;
+  --news-label-sky: #38bdf8;
+  --news-label-purple: #c084fc;
+  --news-label-pink: #f472b6;
+  --news-label-orange: #fb923c;
+  --news-label-slate: #94a3b8;
 
   /* ── 公共藏书阁（/bookshelf）：粗野骨架 + 五色分卷 ──────────────────
      七卷身份色直接复用上面的 --accent-fg-* 与 --accent-gold，这里只补三样
@@ -428,6 +443,7 @@
   --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent.webp');
   --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi.webp');
   --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent.webp');
+  --agent-card-artwork-web-pages: url('../assets/agent-card-art/web-pages.webp');
   --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares.webp');
   --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center.webp');
   --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester.webp');
@@ -547,6 +563,8 @@
   --button-primary-bg-hover: #E08A6B;
   --button-primary-fg: #241915;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
+  /* 首页 HERO 渐变（亮陶土三档）上的文字色：两个主题都是深墨，不跟主按钮走 */
+  --hero-gradient-fg: #241915;
   --button-secondary-bg: rgba(255, 255, 255, 0.05);
   --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
   --button-secondary-border: rgba(255, 255, 255, 0.10);
@@ -813,7 +831,7 @@
   --avatar-bg-warm: #EADFD6;
   --avatar-bg-cool: #DCE2EA;
   --thumb-gradient: linear-gradient(160deg, #FFFFFF, #F1EDE6);
-  --ring-focus: 0 0 0 3px rgba(166, 75, 53, 0.12);
+  --ring-focus: 0 0 0 3px rgba(63, 93, 69, 0.12);
   --shadow-input-inset: inset 0 1px 2px rgba(26, 26, 31, 0.05);
   /* 浅色档改用纸面阴影替代描边（设计稿 1·B 的原话） */
   --shadow-site-card: 0 2px 6px rgba(26, 26, 31, 0.07);
@@ -846,7 +864,7 @@
   --shadow-nav: inset 0 1px 0 rgba(252, 250, 247, 0.86), 0 8px 22px -16px rgba(89, 65, 50, 0.20);
   --shadow-glass-panel: 0 12px 30px -20px rgba(89, 65, 50, 0.28);
   --shadow-glass-bar: 0 8px 22px -18px rgba(89, 65, 50, 0.20);
-  --shadow-glass-bar-gold: 0 8px 22px -18px rgba(166, 75, 53, 0.20);
+  --shadow-glass-bar-gold: 0 8px 22px -18px rgba(63, 93, 69, 0.20);
   --shadow-glass-sidebar: 0 10px 28px -22px rgba(89, 65, 50, 0.24);
   --shadow-glass-tooltip: 0 8px 20px -12px rgba(89, 65, 50, 0.24);
   --shadow-glass-toolbar: 0 8px 22px -16px rgba(89, 65, 50, 0.22);
@@ -872,7 +890,7 @@
   --border-subtle: rgba(26, 26, 31, 0.12);
   --border-default: rgba(26, 26, 31, 0.18);
   --border-hover: rgba(26, 26, 31, 0.28);
-  --border-focus: rgba(166, 75, 53, 0.48);
+  --border-focus: rgba(63, 93, 69, 0.48);
 
   /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
   /*
@@ -900,6 +918,20 @@
   --accent-fg-amber: #92400e;
   --accent-fg-danger: #b91c1c;
   --accent-fg-emerald: #166534;
+  /* AI 资讯分类色浅色档（700/800），与暗色档逐项对应 */
+  --news-label-indigo-soft: #4338ca;
+  --news-label-green: #166534;
+  --news-label-rose: #be123c;
+  --news-label-cyan: #155e75;
+  --news-label-amber: #92400e;
+  --news-label-indigo: #4f46e5;
+  --news-label-gold: #854d0e;
+  --news-label-emerald: #065f46;
+  --news-label-sky: #075985;
+  --news-label-purple: #7e22ce;
+  --news-label-pink: #9d174d;
+  --news-label-orange: #c2410c;
+  --news-label-slate: #475569;
 
   /* ── 公共藏书阁（/bookshelf）浅色档，逐项对应 :root 的同名 token ── */
   --shelf-edge: #1C1C1E;
@@ -995,13 +1027,13 @@
   --workflow-accent-text-lightness: 30%;
 
   /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
-  --accent-primary: #A64B35;
-  --accent-primary-rgb: 166, 75, 53;
-  --accent-primary-solid: #A64B35;   /* 浅色档本身已够深，白字 5.71:1 */
-  --accent-gold: #A64B35;
+  --accent-primary: #3F5D45;
+  --accent-primary-rgb: 63, 93, 69;
+  --accent-primary-solid: #3F5D45;   /* 浅色档本身已够深，白字 7.33:1 */
+  --accent-gold: #3F5D45;
   --accent-on-gold: #FBF8F2;   /* 浅色档按暖纸美学不用纯白（themeSystem 契约会拦纯白字面量）：暖白压深赭 gold 仍有 5.38:1 */
   --fg-on-bright-fill: #0a0a0c;   /* 底两档同色，故前景也两档同值（见 :root 处注释） */
-  --accent-gold-2: #C36F52;
+  --accent-gold-2: #6A8A6E;
 
   /* 首页背景浅色档（暗色档与说明见 :root 同名处）。
      渐晕在浅色下反过来做：边缘压黑会把奶白纸面弄脏，改成中心一圈更亮的暖白，
@@ -1024,24 +1056,29 @@
   /* 浅色档的玻璃底色 = --bg-elevated #E4DED5 / --bg-card #F8F5EF 带同一个 0.618。 */
   --glass-surface: rgba(228, 222, 213, 0.618);
   --glass-surface-sub: rgba(248, 245, 239, 0.618);
-  --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
-  --selection-bg: rgba(166, 75, 53, 0.10);
-  --selection-icon-bg: rgba(166, 75, 53, 0.14);
-  --selection-border: rgba(166, 75, 53, 0.34);
-  --selection-text: #8F3F2B;
+  --gold-gradient: linear-gradient(135deg, #B7C9B0 0%, #3F5D45 52%, #6E8C6F 100%);
+  --selection-bg: rgba(63, 93, 69, 0.10);
+  --selection-icon-bg: rgba(63, 93, 69, 0.14);
+  --selection-border: rgba(63, 93, 69, 0.34);
+  --selection-text: #2F4834;
   /* 划词浮层浅色档：暖纸面 + 深赭描边。半透明深底叠在纸面上就是「白底浮暗卡」。 */
   --selection-overlay-bg: rgba(252, 250, 247, 0.95);
-  --selection-overlay-border: rgba(166, 75, 53, 0.22);
-  --selection-highlight-bg: rgba(166, 75, 53, 0.18);
-  --selection-highlight-underline: rgba(166, 75, 53, 0.72);
+  --selection-overlay-border: rgba(63, 93, 69, 0.22);
+  --selection-highlight-bg: rgba(63, 93, 69, 0.18);
+  --selection-highlight-underline: rgba(63, 93, 69, 0.72);
   --selection-checkbox-bg: var(--bg-card);
 
-  --button-primary-bg: #CC785C;
-  /* hover 往亮走而不是往暗走：主按钮是「陶土底 + 深墨字」，压暗会把字压进 4.18:1
-     （新加的暗浅双向对比守卫抓到的存量问题），提亮反而对比更高。 */
-  --button-primary-bg-hover: #D4855F;
-  --button-primary-fg: #241915;
-  --button-primary-shadow: 0 2px 6px rgba(204, 120, 92, 0.22), 0 1px 2px rgba(89, 65, 50, 0.06);
+  /* 白天的主按钮是「深色实底 + 白字」（2026-09-24 用户：原来的「亮陶土底 + 深墨字」
+     在纸面上像刚从夜间模式穿越过来——亮彩底配黑字是暗色界面的写法）。
+     同日用户选定浅色档品牌色改为暖调苔绿 #3F5D45（色相 132°、低饱和，贴合暖纸底），
+     与 --accent-primary 同值，白字 7.33:1；hover 往暗走（白字对比只升不降）。
+     深色档仍是陶土色，未动。
+     首页渐变 CTA 另走 --hero-gradient-fg（那条渐变偏亮，白字只有 2.2~3.6:1）。 */
+  --button-primary-bg: #3F5D45;
+  --button-primary-bg-hover: #33503A;
+  --button-primary-fg: #FFFFFF;
+  --hero-gradient-fg: #241915;
+  --button-primary-shadow: 0 1px 2px rgba(34, 48, 38, 0.18), 0 2px 8px rgba(63, 93, 69, 0.16);
   --button-secondary-bg: var(--bg-card);
   --button-secondary-bg-hover: var(--bg-card-hover);
   --button-secondary-border: var(--hairline);
@@ -1050,7 +1087,7 @@
   --button-danger-border: rgba(220, 38, 38, 0.30);
   --button-danger-fg: #b91c1c;
   --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
-  --section-label-text: #8F3F2B;
+  --section-label-text: #2F4834;
 
   /* 弹窗「控制台」形态的浅色档。面板走纸面卡，分隔线与动作条底走墨色低透明度。
      --dialog-danger-fg 不在这里重写：填色红上的白字两个主题共用。 */
@@ -1104,6 +1141,7 @@
   --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent-light.webp');
   --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi-light.webp');
   --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent-light.webp');
+  --agent-card-artwork-web-pages: url('../assets/agent-card-art/web-pages-light.webp');
   --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares-light.webp');
   --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center-light.webp');
   --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester-light.webp');
@@ -1122,12 +1160,12 @@
   --media-card-tag-border: rgba(15, 23, 42, 0.11);
   --media-card-tag-text: rgba(15, 23, 42, 0.76);
   --media-card-border: rgba(15, 23, 42, 0.13);
-  --media-card-border-hover: rgba(166, 75, 53, 0.46);
+  --media-card-border-hover: rgba(63, 93, 69, 0.46);
   --media-card-edge: rgba(15, 23, 42, 0.10);
   --media-card-overlay: linear-gradient(90deg, rgba(224, 216, 205, 0.34) 0%, rgba(224, 216, 205, 0.06) 38%, transparent 74%), linear-gradient(180deg, transparent 0%, transparent 64%, rgba(218, 209, 197, 0.20) 82%, rgba(231, 224, 214, 0.38) 100%);
   --media-card-overlay-compact: linear-gradient(90deg, rgba(224, 216, 205, 0.38) 0%, rgba(224, 216, 205, 0.05) 40%, transparent 76%), linear-gradient(180deg, transparent 0%, transparent 60%, rgba(218, 209, 197, 0.22) 80%, rgba(231, 224, 214, 0.42) 100%);
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(116, 101, 82, 0.12);
-  --media-card-task: #8F3F2B;
+  --media-card-task: #2F4834;
   --media-card-task-muted: rgba(15, 23, 42, 0.58);
   --text-on-media: #172033;
   --text-on-media-muted: rgba(15, 23, 42, 0.68);
@@ -1137,8 +1175,8 @@
   --home-panel-bg: #FDFBF7;
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
-  --launcher-theme-icon: #A64B35;
-  --launcher-theme-icon-bg: rgba(166, 75, 53, 0.12);
+  --launcher-theme-icon: #3F5D45;
+  --launcher-theme-icon-bg: rgba(63, 93, 69, 0.12);
   --home-ambient-background:
     radial-gradient(54% 92% at 7% -8%, rgba(200, 98, 58, 0.20) 0%, transparent 70%),
     radial-gradient(48% 82% at 92% 0%, rgba(176, 124, 62, 0.16) 0%, transparent 72%),
@@ -1218,10 +1256,10 @@
   --mobile-sheet-close-bg: var(--bg-card-hover);
   --mobile-sheet-close-border: 1px solid var(--border-subtle);
   --mobile-sheet-close-icon: var(--text-secondary);
-  --mobile-fab-from: #B8684C;
-  --mobile-fab-to: #A64B35;
+  --mobile-fab-from: #587A5E;
+  --mobile-fab-to: #3F5D45;
   --mobile-fab-text: #FCFAF7;
-  --mobile-fab-shadow: rgba(166, 75, 53, 0.30);
+  --mobile-fab-shadow: rgba(63, 93, 69, 0.30);
 
   /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。 */
   --hairline:             rgba(15, 23, 42, 0.08);
@@ -1321,6 +1359,20 @@
   --accent-fg-amber: #fbbf24;
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
+  /* 暗岛内 AI 资讯分类色翻回亮档（同上面 --accent-fg-* 的理由） */
+  --news-label-indigo-soft: #a5b4fc;
+  --news-label-green: #4ade80;
+  --news-label-rose: #fb7185;
+  --news-label-cyan: #22d3ee;
+  --news-label-amber: #fbbf24;
+  --news-label-indigo: #818cf8;
+  --news-label-gold: #f59e0b;
+  --news-label-emerald: #34d399;
+  --news-label-sky: #38bdf8;
+  --news-label-purple: #c084fc;
+  --news-label-pink: #f472b6;
+  --news-label-orange: #fb923c;
+  --news-label-slate: #94a3b8;
   /*
    * 表面族必须**整族**覆盖，缺一个就翻车。
    * Codex 在 PR #1374 抓到：arena 的两个下拉用 var(--bg-elevated)，
@@ -1357,6 +1409,8 @@
   --accent-primary: #D97757;
   --accent-primary-rgb: 217, 119, 87;
   --button-primary-bg: #D97757;
+  /* 岛内是亮陶土底，文字必须钉回深墨：否则浅色页里会继承页面的白字（3.1:1） */
+  --button-primary-fg: #241915;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
   /*
    * 次要 / 危险 / ghost 按钮的底色边框。漏了它们的后果在真机上是「模型设置」
@@ -1475,4 +1529,26 @@ html, body {
    素色材质的底色由 legacy.css 的 data-material 规则接管(Codex P2)。 */
 html[data-perf-mode="performance"] .app-aurora {
   animation: none !important;
+}
+
+/* 生图等待态（GenDevelopLoader）的「跟随主题」档。
+   上面 --gen-wait-* 一族故意恒为暗色，因为视觉创作画布舞台被钉死成暗色。
+   但同一个组件也用在会翻浅色的普通页面上（文学创作的配图卡片与正文占位，
+   调用方传 tone="adaptive"），那里若沿用暗色档就是「纸面上浮一块黑砖」。
+   所以只在带 .gen-dev--adaptive 的实例上、浅色主题下覆盖这一族；画布上的实例不受影响。 */
+[data-theme="light"] .gen-dev--adaptive {
+  --gen-wait-veil: rgba(26, 26, 31, 0.03);
+  --gen-wait-surface: repeating-linear-gradient(45deg,
+    rgba(26, 26, 31, 0.035) 0 6px,
+    transparent 6px 13px);
+  --gen-wait-core: radial-gradient(58% 44% at 50% 52%, rgba(166, 75, 53, 0.08) 0%, rgba(217, 119, 87, 0.04) 45%, transparent 72%);
+  --gen-wait-develop: linear-gradient(108deg, transparent 0%, rgba(253, 251, 248, 0.05) 18%, rgba(253, 251, 248, 0.7) 50%, rgba(253, 251, 248, 0.05) 82%, transparent 100%);
+  --gen-wait-scrim: linear-gradient(to top, rgba(248, 245, 239, 0.94) 0%, rgba(248, 245, 239, 0.5) 55%, transparent 100%);
+  --gen-wait-text: var(--text-primary);
+  --gen-wait-text-dim: var(--text-secondary);
+  --gen-wait-dot: rgba(26, 26, 31, 0.28);
+  --gen-wait-progress: #A64B35;
+  --gen-wait-progress-halo: rgba(166, 75, 53, 0.16);
+  --gen-wait-progress-over: #b45309;
+  --gen-wait-head: #D97757;
 }

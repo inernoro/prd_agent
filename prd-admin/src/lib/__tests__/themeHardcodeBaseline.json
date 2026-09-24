@@ -23,17 +23,11 @@
     "darkRgbaBg": 0,
     "lightFg": 0
   },
-  "/components/ai-news/aiNewsShared.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 21
-  },
   "/components/ai-news/AiNewsTimeline.tsx": {
     "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 9
+    "lightFg": 0
   },
   "/components/ai-news/UpdateCenterNewsTeaser.tsx": {
     "whiteAlpha": 0,
@@ -131,12 +125,6 @@
     "darkRgbaBg": 4,
     "lightFg": 8
   },
-  "/components/doc-browser/AudioWavePlayer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/doc-browser/BulkActionBar.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
@@ -168,12 +156,6 @@
     "lightFg": 0
   },
   "/components/doc-browser/InteractiveTranscriptDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/doc-browser/TranscriptKaraoke.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
@@ -261,7 +243,7 @@
     "whiteAlpha": 1,
     "darkHex": 2,
     "darkRgbaBg": 1,
-    "lightFg": 7
+    "lightFg": 6
   },
   "/components/llm-logs/LlmGenerationsView.tsx": {
     "whiteAlpha": 1,
@@ -360,10 +342,10 @@
     "lightFg": 4
   },
   "/components/PdfThumbnail.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 3,
+    "whiteAlpha": 0,
+    "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 0
   },
   "/components/prd-preview/PrdPreviewPage.tsx": {
     "whiteAlpha": 0,
@@ -479,12 +461,6 @@
     "darkRgbaBg": 0,
     "lightFg": 1
   },
-  "/components/ui/Dialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
   "/components/ui/GlobalDefectSubmitDialog.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
@@ -521,12 +497,6 @@
     "darkRgbaBg": 1,
     "lightFg": 8
   },
-  "/components/ui/SystemDialogHost.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
   "/components/ui/UpdateTimeline.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
@@ -544,12 +514,6 @@
     "darkHex": 7,
     "darkRgbaBg": 0,
     "lightFg": 0
-  },
-  "/components/ui/WorkflowProgressBar.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
   },
   "/components/visual-agent/DrawingBoardDialog.tsx": {
     "whiteAlpha": 39,
@@ -645,7 +609,7 @@
     "whiteAlpha": 1,
     "darkHex": 3,
     "darkRgbaBg": 4,
-    "lightFg": 2
+    "lightFg": 1
   },
   "/lib/appStoreTokens.ts": {
     "whiteAlpha": 3,
@@ -696,10 +660,10 @@
     "lightFg": 0
   },
   "/pages/ai-chat/AdvancedVisualAgentTab.tsx": {
-    "whiteAlpha": 73,
+    "whiteAlpha": 69,
     "darkHex": 2,
-    "darkRgbaBg": 10,
-    "lightFg": 48
+    "darkRgbaBg": 9,
+    "lightFg": 47
   },
   "/pages/ai-chat/components/ChatMessageItem.tsx": {
     "whiteAlpha": 1,
@@ -1023,7 +987,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 3,
-    "lightFg": 5
+    "lightFg": 2
   },
   "/pages/document-store/ReprocessChatDrawer.tsx": {
     "whiteAlpha": 4,
@@ -1272,10 +1236,10 @@
     "lightFg": 4
   },
   "/pages/literary-agent/ArticleIllustrationEditorPage.tsx": {
-    "whiteAlpha": 32,
+    "whiteAlpha": 7,
     "darkHex": 0,
-    "darkRgbaBg": 8,
-    "lightFg": 43
+    "darkRgbaBg": 7,
+    "lightFg": 12
   },
   "/pages/literary-agent/LiteraryAgentWorkspaceListPage.tsx": {
     "whiteAlpha": 0,
@@ -2058,10 +2022,10 @@
     "lightFg": 1
   },
   "/pages/ShareViewPage.tsx": {
-    "whiteAlpha": 18,
+    "whiteAlpha": 17,
     "darkHex": 4,
-    "darkRgbaBg": 6,
-    "lightFg": 24
+    "darkRgbaBg": 5,
+    "lightFg": 20
   },
   "/pages/shitu-agent/ShituHelpDrawer.tsx": {
     "whiteAlpha": 0,
@@ -2226,10 +2190,10 @@
     "lightFg": 1
   },
   "/pages/visual-agent/VisualAgentWorkspaceListPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 5,
-    "lightFg": 7
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 1
   },
   "/pages/visual-storyboard/VisualStoryboardPage.tsx": {
     "whiteAlpha": 14,
@@ -2238,10 +2202,10 @@
     "lightFg": 9
   },
   "/pages/WebPagesPage.tsx": {
-    "whiteAlpha": 3,
+    "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 7,
-    "lightFg": 16
+    "darkRgbaBg": 3,
+    "lightFg": 12
   },
   "/pages/weekly-poster/PosterDesignerPage.tsx": {
     "whiteAlpha": 97,
@@ -2340,9 +2304,9 @@
     "lightFg": 0
   },
   "/styles/legacy.css": {
-    "whiteAlpha": 19,
+    "whiteAlpha": 15,
     "darkHex": 2,
-    "darkRgbaBg": 8,
+    "darkRgbaBg": 2,
     "lightFg": 2
   },
   "/styles/motion.css": {
@@ -2352,10 +2316,10 @@
     "lightFg": 15
   },
   "/styles/recording-design-palette.css": {
+    "whiteAlpha": 0,
     "darkHex": 11,
     "darkRgbaBg": 0,
-    "lightFg": 0,
-    "whiteAlpha": 0
+    "lightFg": 0
   },
   "/styles/surface.css": {
     "whiteAlpha": 69,

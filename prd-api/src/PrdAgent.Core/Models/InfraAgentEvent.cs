@@ -25,6 +25,12 @@ public class InfraAgentEvent
     /// </summary>
     public long? CdsSeq { get; set; }
 
+    /// <summary>产生该事件的 CDS 会话 ID；远端会话重建后 seq 会从头开始，必须按代隔离水位。</summary>
+    public string? CdsSourceSessionId { get; set; }
+
+    /// <summary>CDS 来源事件的稳定去重键；最终 claim 由基于此键生成的 Mongo _id 保证。</summary>
+    public string? SourceDedupKey { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

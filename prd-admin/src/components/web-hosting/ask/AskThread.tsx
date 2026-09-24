@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { StreamingText } from '@/components/streaming/StreamingText';
+import { Square } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AskMarkdown } from './AskMarkdown';
 import { AskRefusalCard, type AskRefusalKey } from './askRefusal';
@@ -20,6 +21,8 @@ interface Props {
   onRetry: () => void;
   isBusy: boolean;
   phaseMessage: string;
+  elapsedSeconds: number;
+  onCancel: () => void;
   /** 起手态（长条）下不渲染开场白那段引导——长条自己已经写了「只依据本页正文」 */
   hideIntro?: boolean;
 }
@@ -37,7 +40,7 @@ interface Props {
 export default function AskThread({
   messages, welcome, title, openingQuestions, onPick,
   refusal, refusalServerMessage, onLogin, onRetry,
-  isBusy, phaseMessage, hideIntro,
+  isBusy, phaseMessage, elapsedSeconds, onCancel, hideIntro,
 }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
 
@@ -137,7 +140,22 @@ export default function AskThread({
       {isBusy && !messages.some((m) => m.streaming && m.content) && (
         <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
           <MapSpinner size={14} />
-          {phaseMessage || '正在思考…'}
+          <span style={{ flex: 1 }}>
+            {phaseMessage || '正在思考…'}
+            {elapsedSeconds > 0 ? ` · 已等待 ${elapsedSeconds} 秒` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="停止回答"
+            style={{
+              minWidth: 44, minHeight: 32, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+              border: '1px solid var(--border-subtle)', borderRadius: 8, background: 'var(--bg-card)',
+              color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11,
+            }}
+          >
+            <Square size={10} fill="currentColor" />停止
+          </button>
         </div>
       )}
     </div>

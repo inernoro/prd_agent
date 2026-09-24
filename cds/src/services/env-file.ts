@@ -16,7 +16,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 export interface EnvLine {
   /** `export` declaration, comment, or blank line. */
@@ -27,6 +28,63 @@ export interface EnvLine {
   key?: string;
   /** Extracted value with outer quotes stripped (only present for `export` lines). */
   value?: string;
+}
+
+export class EnvFileBusyError extends Error {
+  constructor() {
+    super('环境文件正由另一进程更新，系统已拒绝并发覆盖。');
+    this.name = 'EnvFileBusyError';
+  }
+}
+
+interface EnvFileLock {
+  lockDir: string;
+  ownerPath: string;
+  nonce: string;
+  dev: number;
+  ino: number;
+}
+
+export function withEnvFileLock<T>(envFilePath: string, action: () => T): T {
+  fs.mkdirSync(path.dirname(envFilePath), { recursive: true });
+  const lockDir = `${envFilePath}.write.lock`;
+  try {
+    fs.mkdirSync(lockDir, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    // EEXIST 一律 fail-closed。用户态无法以 CAS 方式证明眼前仍是先前检查
+    // 的旧锁；自动 rename “死锁”会让延迟接管者误删新 owner 的锁并双写。
+    // 残留锁只允许停机后的单写者运维流程显式清理。
+    throw new EnvFileBusyError();
+  }
+  const nonce = crypto.randomBytes(32).toString('hex');
+  const ownerPath = path.join(lockDir, 'owner');
+  try {
+    const ownerFd = fs.openSync(ownerPath, 'wx', 0o600);
+    try {
+      fs.writeFileSync(ownerFd, `${process.pid}\n${nonce}\n`, 'utf8');
+      fs.fsyncSync(ownerFd);
+    } finally {
+      fs.closeSync(ownerFd);
+    }
+  } catch (error) {
+    try { fs.rmdirSync(lockDir); } catch { /* best effort */ }
+    throw error;
+  }
+  const owned = fs.statSync(lockDir);
+  const lock: EnvFileLock = { lockDir, ownerPath, nonce, dev: owned.dev, ino: owned.ino };
+  try {
+    return action();
+  } finally {
+    try {
+      const current = fs.statSync(lock.lockDir);
+      const owner = fs.readFileSync(lock.ownerPath, 'utf8').split('\n')[1];
+      if (current.dev === lock.dev && current.ino === lock.ino && owner === lock.nonce) {
+        fs.rmSync(lock.ownerPath);
+        fs.rmdirSync(lock.lockDir);
+      }
+    } catch { /* fail closed: never delete an unverified replacement lock */ }
+  }
 }
 
 /** Parse a `.cds.env` file into a structured line list. */
@@ -44,9 +102,9 @@ export function parseEnvFile(content: string): EnvLine[] {
     // Match both `export KEY="value"` and `export KEY=value`. The quoted form
     // permits `\"` and `\\` escape sequences inside the value so round-tripping
     // through `applyEnvUpdates` + `serializeEnvFile` preserves the payload.
-    const match = raw.match(/^\s*export\s+([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|(\S*))\s*$/);
+    const match = raw.match(/^\s*export\s+([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S*))\s*$/);
     if (match) {
-      const rawValue = match[2] !== undefined ? match[2] : (match[3] ?? '');
+      const rawValue = match[2] ?? match[3] ?? match[4] ?? '';
       // Unescape `\"` → `"` and `\\` → `\` inside the quoted form. Unquoted
       // values are passed through unchanged.
       const value = match[2] !== undefined ? unescapeShellDouble(rawValue) : rawValue;
@@ -127,16 +185,17 @@ export function applyEnvUpdates(
   return result;
 }
 
-/** Escape a value for `export KEY="value"` — only need to escape `"` and `\`. */
+/** Escape a value for a shell-sourced `export KEY="value"` declaration. */
 function escapeShellDouble(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // Inside shell double quotes, backslash, quote, dollar and backtick retain
+  // special meaning. Escape all four so a persisted secret can never trigger
+  // parameter expansion or command substitution when `.cds.env` is sourced.
+  return value.replace(/([\\"$`])/g, '\\$1');
 }
 
 /** Inverse of `escapeShellDouble`. Applied on parse for round-trip fidelity. */
 function unescapeShellDouble(value: string): string {
-  // Two passes: `\"` → `"` first, then `\\` → `\`. Order matters so that
-  // `\\"` (a literal backslash followed by a quote-escape) comes out as `\"`.
-  return value.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  return value.replace(/\\([\\"$`])/g, '$1');
 }
 
 /**
@@ -173,18 +232,52 @@ export function writeEnvFileAtomic(envFilePath: string, content: string): void {
   // the bootstrap/permanent token to other users on a multi-user system.
   if (fs.existsSync(envFilePath)) {
     const backupPath = `${envFilePath}.bak`;
+    const backupTmp = `${backupPath}.tmp.${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+    let backupFd: number | null = null;
     try {
-      fs.copyFileSync(envFilePath, backupPath);
+      backupFd = fs.openSync(backupTmp, 'wx', 0o600);
+      fs.writeFileSync(backupFd, fs.readFileSync(envFilePath));
+      fs.fsyncSync(backupFd);
+      fs.closeSync(backupFd);
+      backupFd = null;
+      fs.renameSync(backupTmp, backupPath);
       fs.chmodSync(backupPath, 0o600);
+      const persistedBackupFd = fs.openSync(backupPath, 'r');
+      try { fs.fsyncSync(persistedBackupFd); } finally { fs.closeSync(persistedBackupFd); }
     } catch {
       // Best-effort backup; continue with the write regardless.
+      if (backupFd !== null) {
+        try { fs.closeSync(backupFd); } catch { /* best effort */ }
+      }
+      try { fs.rmSync(backupTmp, { force: true }); } catch { /* best effort */ }
     }
   }
 
   // Write to a sibling temp file, then rename.
-  const tmpPath = `${envFilePath}.tmp.${process.pid}.${Date.now()}`;
-  fs.writeFileSync(tmpPath, content, { mode: 0o600 });
-  fs.renameSync(tmpPath, envFilePath);
+  const tmpPath = `${envFilePath}.tmp.${process.pid}.${crypto.randomBytes(8).toString('hex')}`;
+  let tmpFd: number | null = null;
+  try {
+    tmpFd = fs.openSync(tmpPath, 'wx', 0o600);
+    fs.writeFileSync(tmpFd, content, 'utf8');
+    fs.fsyncSync(tmpFd);
+    fs.closeSync(tmpFd);
+    tmpFd = null;
+    fs.renameSync(tmpPath, envFilePath);
+    fs.chmodSync(envFilePath, 0o600);
+    if (process.platform !== 'win32') {
+      const dirFd = fs.openSync(dir, 'r');
+      try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+    }
+  } catch (error) {
+    // A failed rename/write must not leave a plaintext secret in a sibling
+    // temp file. The original target is still intact because replacement only
+    // happens at rename time.
+    if (tmpFd !== null) {
+      try { fs.closeSync(tmpFd); } catch { /* best effort */ }
+    }
+    try { fs.rmSync(tmpPath, { force: true }); } catch { /* best effort */ }
+    throw error;
+  }
 }
 
 /**
@@ -197,17 +290,52 @@ export function updateEnvFile(
   envFilePath: string,
   updates: Record<string, string | null>,
 ): void {
+  withEnvFileLock(envFilePath, () => updateEnvFileWhileLocked(envFilePath, updates));
+}
+
+/** Caller must already hold `withEnvFileLock` for this exact path. */
+export function updateEnvFileWhileLocked(
+  envFilePath: string,
+  updates: Record<string, string | null>,
+): void {
   const lines = readEnvFile(envFilePath);
   const updated = applyEnvUpdates(lines, updates);
   writeEnvFileAtomic(envFilePath, serializeEnvFile(updated));
 }
 
-/** Default `.cds.env` path resolution — prefer CDS_ENV_FILE env override. */
+/** Startup-only override shared by the loader, server routes and shell entry. */
+export function explicitCdsEnvFilePath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const configured = String(env.CDS_ENV_FILE || '').trim();
+  return configured ? path.resolve(configured) : null;
+}
+
+/**
+ * 唯一的 `.cds.env` 候选顺序。启动 loader 与全部 Node 写入端必须共用；
+ * 禁止依赖数据库可热更新的 repoRoot，也禁止各自维护不同 fallback。
+ */
+export function cdsEnvFileCandidates(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): string[] {
+  const explicit = explicitCdsEnvFilePath(env);
+  if (explicit) return [explicit];
+  const candidates = [
+    path.resolve(cwd, '.cds.env'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '.cds.env'),
+  ];
+  return [...new Set(candidates)];
+}
+
+/** Existing candidate wins; a fresh install writes the first canonical candidate. */
+export function resolveCdsEnvFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): string {
+  const candidates = cdsEnvFileCandidates(env, cwd);
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+/** Backward-compatible name for existing writers; delegates to the shared SSOT. */
 export function defaultEnvFilePath(): string {
-  if (process.env.CDS_ENV_FILE) return process.env.CDS_ENV_FILE;
-  // When CDS is started from `cds/` (via exec_cds.sh), process.cwd() = cds/
-  const candidate = path.resolve(process.cwd(), '.cds.env');
-  if (fs.existsSync(candidate)) return candidate;
-  // Fallback: $HOME/.cds.env (for edge-case non-container installs)
-  return path.join(os.homedir(), '.cds.env');
+  return resolveCdsEnvFilePath();
 }

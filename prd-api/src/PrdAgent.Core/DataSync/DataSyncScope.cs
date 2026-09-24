@@ -295,10 +295,13 @@ public static class DataSyncScope
         }),
         new DataSyncGroup("hosting", "网页托管", new[]
         {
+            // 网页生成设置（风格预设、三段提示词、默认执行器）：团队级配置，没有任何凭据字段。
+            new DataSyncCollection("design_generation_settings", System.Array.Empty<string>()),
             new DataSyncCollection("hosted_site_comments", new[] { "ShareToken" }),
             // HostedSite 上没有任何令牌字段——分享令牌在 web_page_share_links，那个集合整个不导出。
             // 这里原本登记了一个并不存在的 "Token"，是一次空转的脱敏，由「登记的脱敏字段必须真实存在」查出。
             new DataSyncCollection("hosted_sites", System.Array.Empty<string>()),
+            new DataSyncCollection("hosted_site_revisions", System.Array.Empty<string>()),
             new DataSyncCollection("project_route_plans", System.Array.Empty<string>()),
             new DataSyncCollection("project_route_site_specs", System.Array.Empty<string>()),
             new DataSyncCollection("web_folders", System.Array.Empty<string>()),
@@ -384,6 +387,8 @@ public static class DataSyncScope
         ["chat_agent_sessions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["console_sso_tickets"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["defect_automation_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
+        ["design_artifact_runs"] = "运行时会话与审计投影：绑定当前实例的租约、工作区和执行器事实，跨实例复制会制造不可恢复的在途任务",
+        ["design_artifact_runs_v2"] = "部署范围内的设计任务：绑定项目、分支、revision 与执行租约，不能跨实例复制",
         ["data_sync_grants"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["data_sync_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["defect_share_links"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
@@ -401,6 +406,7 @@ public static class DataSyncScope
         ["external_authorizations"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["github_user_connections"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["group_message_counters"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
+        ["hosted_site_deletion_tasks"] = "运行时清理任务：只对源站对象与删除围栏有效，跨实例复制可能误删目标站内容",
         ["hosted_site_ask_messages"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["hosted_site_ask_sessions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["hosted_site_optimization_sessions"] = "运行时上传与预览会话：包含私有源包引用且会自动过期，跨实例没有意义",

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "map-design-workspace-v1",
+  "runId": "run-direction-golden",
+  "artifactType": "web-page",
+  "operation": "generate",
+  "sourceSurface": "web-hosting",
+  "input": {
+    "userSupplied": {
+      "instruction": "做一张方案介绍页",
+      "contentHash": null,
+      "authority": "user-supplied"
+    },
+    "serverKnowledge": {
+      "authority": "server-authoritative-snapshot",
+      "references": [
+        {
+          "entryId": "entry-1",
+          "storeId": null,
+          "contentHash": "source-hash"
+        }
+      ]
+    },
+    "currentHtml": null
+  },
+  "inputAuthority": "user-supplied",
+  "title": "网页标题",
+  "baseRevision": "3811c6f2af58f572fcb1d7a59f3f76f04db8fe49554416d3a7df0408beff903e",
+  "responseContract": {
+    "requiredFile": "index.html",
+    "manifestFile": "manifest.json",
+    "writeback": "external"
+  },
+  "qualityContract": {
+    "schemaVersion": "map-design-artifact-quality-v1",
+    "factualSources": [
+      "server-knowledge"
+    ],
+    "userSuppliedInputsAreFactualProvenance": false,
+    "measuredClaimsRequireSource": true,
+    "sensitiveFactsRequireSource": true,
+    "contextBoundMetricsReviewRequired": true,
+    "visibleDraftMarkersAllowed": false,
+    "emptyOrMissingFragmentTargetsAllowed": false,
+    "inertEnabledButtonsAllowed": false,
+    "finalReviewRequired": true,
+    "visibleTextOccurrenceConstraints": []
+  },
+  "designDirection": {
+    "schemaVersion": "map-design-direction-v1",
+    "styleId": "minimal",
+    "styleName": "极简",
+    "styleDescription": "黑白灰为主，只用一种强调色，信息密度高、干净克制",
+    "designSystemId": "minimal",
+    "reviewMode": "light",
+    "prompts": {
+      "generate": "你是资深网页设计师，要把 MAP 知识内容做成一张好看、可信的单页网页。\n\n一、读什么（只读这些，别的不要浏览）\n- /workspace/brief/task.json；\n- task.json 列出的每一个知识文件；\n- 如果本次指定了设计系统，严格使用它的配色、字体、间距与组件语言。\n不要反复列目录，不要逐个打开与任务无关的示例文件。\n\n二、怎么写（一次写成）\n想清楚信息结构后，直接把完整页面写入 /workspace/index.html。不要先写草稿再整页重写，也不要把页面只贴在回复里。\n\n三、视觉要求\n- 首屏一句话讲清这份内容最重要的结论，并配一组来自原文的关键数字；\n- 层级分明：标题与正文字号至少三档，正文每行 60–75 个字符，区块间距统一；\n- 至少用一种能表达内容结构的版式：时间线、对比表、分步流程、指标卡或架构分层，不要整页都是同一种卡片；\n- 避免 AI 味：不要紫蓝渐变大底、不要用表情符号当图标、不要每块都居中、不要千篇一律的圆角阴影卡片；\n- 手机 390px 宽度下可读，不出现横向滚动。\n\n四、内容\n事实、数字、日期、名称都来自知识文件，逐字引用，不编造、不外推。",
+      "edit": "你在修改一张已经发布的网页。\n\n- 只改用户点名的部分；没点名的文字、数字、结构与样式逐字保留；\n- 用小范围的定点编辑，不要整页重写；\n- 如果附带了截图（/workspace/reference/ 下的图片），先看截图找到用户指出的位置，再到 index.html 里定位对应元素修改；截图只是视觉参考，不是事实来源；\n- 如果附带了知识文件，修改涉及的事实以知识文件为准；\n- 改完重读 index.html，确认用户要求的每一处都已生效。",
+      "review": "在平台规则之外，再按这份审美清单检查一遍，发现问题当场改：\n- 首屏能不能一眼看出页面主题和最重要的结论；\n- 标题层级是否清楚，有没有没有层次的大段文字；\n- 配色是否统一（主色、强调色、中性色各一组以内），文字与背景对比是否足够；\n- 相邻区块是否在重复同一种卡片样式；\n- 手机 390px 宽度下有没有元素溢出或文字过小。\n只做必要修改，不要重写页面。"
+    },
+    "promptFingerprint": "01917af1d028"
+  }
+}

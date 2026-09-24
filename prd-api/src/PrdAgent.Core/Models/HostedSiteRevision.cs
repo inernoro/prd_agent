@@ -1,0 +1,995 @@
+using System.Text.Json.Serialization;
+
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 托管站点的不可变版本。
+///
+/// 常规微调只版本化入口 HTML；经 OpenDesign 验证的产物会连同完整 manifest/sidecar 一起版本化。
+/// 草稿发布与历史回退都会追加一条新记录，不覆盖历史记录。
+/// </summary>
+public class HostedSiteRevision
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public string SiteId { get; set; } = string.Empty;
+
+    public string CreatedByUserId { get; set; } = string.Empty;
+
+    /// <summary>draft | publishing | published | rejected</summary>
+    public string Status { get; set; } = HostedSiteRevisionStatuses.Draft;
+
+    /// <summary>baseline | ai-edit | rollback</summary>
+    public string Source { get; set; } = HostedSiteRevisionSources.AiEdit;
+
+    /// <summary>生成该版本所依据的上一版本；首个基线为空。</summary>
+    public string? ParentRevisionId { get; set; }
+
+    /// <summary>回退版本明确指向被选择的历史版本；与 ParentRevisionId 的回退前当前版本语义分离。</summary>
+    public string? RollbackTargetRevisionId { get; set; }
+
+    /// <summary>回退 HTTP 请求的幂等键；同站点、同操作者范围内唯一。</summary>
+    public string? RollbackIdempotencyKey { get; set; }
+
+    /// <summary>生成草稿的 Run，用于从版本追溯模型交互过程。</summary>
+    public string? SourceRunId { get; set; }
+
+    /// <summary>用户给出的修改要求；基线版本为空。</summary>
+    public string? Instruction { get; set; }
+
+    /// <summary>实际执行引擎，例如 map-gateway、codex。</summary>
+    public string Runtime { get; set; } = HostedSiteEditRuntimes.MapGateway;
+
+    /// <summary>生成该版本时引用的知识库条目，正文以任务创建时的快照参与生成。</summary>
+    public List<string> KnowledgeEntryIds { get; set; } = new();
+
+    /// <summary>完整入口 HTML。控制在 2MB 以内，不向版本列表接口返回。</summary>
+    public string Html { get; set; } = string.Empty;
+
+    /// <summary>OpenDesign 已验证的完整公开包；发布时必须整包原子切换。</summary>
+    [JsonIgnore]
+    public List<HostedSiteRevisionFile> VerifiedFiles { get; set; } = new();
+
+    /// <summary>
+    /// 建这条版本时线上站点的内容形态（取值见 <see cref="HostedSiteContentShapes"/>）。
+    ///
+    /// 它回答的是「这条版本自己的内容够不够还原当时的站点」：单文件站点只要一份入口
+    /// HTML 就够；多文件站点还有 CSS、图片等旁挂对象，而没带 VerifiedFiles 的版本一份
+    /// 都没存下来。存量数据没有这个字段，为空表示形态未知。
+    /// </summary>
+    public string? CapturedContentShape { get; set; }
+
+    /// <summary>该版本生成时所依据的线上 ContentVersion。</summary>
+    public DateTime BasedOnContentVersion { get; set; }
+
+    /// <summary>发布后对应的新线上 ContentVersion；草稿为空。</summary>
+    public DateTime? PublishedContentVersion { get; set; }
+
+    /// <summary>当前发布尝试的 fencing token；仅 publishing 状态存在。</summary>
+    public string? PublishAttemptId { get; set; }
+
+    /// <summary>当前发布尝试开始时间。进程退出后，过期尝试可由后续请求安全接管。</summary>
+    public DateTime? PublishAttemptStartedAt { get; set; }
+
+    /// <summary>最近一次发布尝试的稳定失败码；不得保存原始异常或外部服务信息。</summary>
+    public string? LastPublishFailureCode { get; set; }
+
+    public DateTime? LastPublishFailedAt { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public DateTime? PublishedAt { get; set; }
+
+    /// <summary>草稿被明确拒绝的时间；仅 rejected 状态存在。</summary>
+    public DateTime? RejectedAt { get; set; }
+
+    /// <summary>拒绝草稿的用户；仅 rejected 状态存在。</summary>
+    public string? RejectedByUserId { get; set; }
+
+    /// <summary>经长度限制和敏感信息脱敏后的可选拒绝原因。</summary>
+    public string? RejectionReason { get; set; }
+}
+
+public class HostedSiteRevisionFile
+{
+    public string Path { get; set; } = string.Empty;
+    public byte[] Content { get; set; } = Array.Empty<byte>();
+    public string Sha256 { get; set; } = string.Empty;
+    public string MimeType { get; set; } = string.Empty;
+}
+
+public static class HostedSiteRevisionStatuses
+{
+    public const string Draft = "draft";
+    public const string Publishing = "publishing";
+    public const string Published = "published";
+    public const string Rejected = "rejected";
+}
+
+public static class HostedSiteRevisionSources
+{
+    public const string Baseline = "baseline";
+    public const string AiEdit = "ai-edit";
+    public const string Rollback = "rollback";
+}
+
+public static class HostedSiteEditRuntimes
+{
+    public const string MapGateway = "map-gateway";
+    public const string OpenDesign = "open-design";
+    public const string Codex = "codex";
+    public const string Manual = "manual";
+}
+
+public static class HostedSiteRevisionRules
+{
+    public const int MaxHtmlBytes = 2 * 1024 * 1024;
+    public const int MaxRejectionReasonLength = 500;
+    public const string GeneratedArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src data:; font-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'";
+    public const string VerifiedPackageArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'self' blob:; manifest-src 'none'";
+    private const string DocumentRootPattern = @"^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
+    private const string DocumentHeadPattern = @"^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
+    private static readonly string TrustedSystemCspMeta =
+        $"<meta http-equiv=\"Content-Security-Policy\" content=\"{GeneratedArtifactCsp}\">";
+    private static readonly string TrustedSystemCspEnvelope =
+        $"<head>{TrustedSystemCspMeta}</head>";
+    private static readonly string TrustedVerifiedPackageCspMeta =
+        $"<meta http-equiv=\"Content-Security-Policy\" content=\"{VerifiedPackageArtifactCsp}\">";
+    private static readonly string TrustedVerifiedPackageCspEnvelope =
+        $"<head>{TrustedVerifiedPackageCspMeta}</head>";
+
+    public static string NormalizeGeneratedHtml(string raw)
+    {
+        var value = (raw ?? string.Empty)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
+        if (value.StartsWith('\uFEFF')) value = value[1..];
+        value = TrimHtmlWhitespace(value);
+        if (!value.StartsWith("```", StringComparison.Ordinal)) return value;
+        var firstLine = value.IndexOf('\n');
+        if (firstLine >= 0) value = value[(firstLine + 1)..];
+        var closing = value.LastIndexOf("```", StringComparison.Ordinal);
+        if (closing >= 0) value = value[..closing];
+        return TrimHtmlWhitespace(value);
+    }
+
+    private static string TrimHtmlWhitespace(string value) =>
+        value.Trim(' ', '\t', '\n', '\f', '\r');
+
+    public static string? NormalizeRejectionReason(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var value = raw.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        if (value.Length > MaxRejectionReasonLength)
+            throw new InvalidOperationException($"拒绝原因不能超过 {MaxRejectionReasonLength} 个字符");
+
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
+            "Bearer ***",
+            RegexOptions);
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"(?ix)\b(authorization|proxy-authorization|x-api-key|api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|password|secret|cookie|set-cookie)\b\s*[:=]\s*(?:Bearer\s+)?(?:[\""'][^\""'\r\n]*[\""']|[^\s,;}\]]+)",
+            "$1=***",
+            RegexOptions);
+        value = System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"(?i)\bsk-[A-Za-z0-9_-]{8,}\b",
+            "***",
+            RegexOptions);
+        return value;
+    }
+
+    public static void ValidateHtml(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+            throw new InvalidOperationException("生成的 HTML 为空");
+        if (System.Text.Encoding.UTF8.GetByteCount(html) > MaxHtmlBytes)
+            throw new InvalidOperationException("生成的 HTML 超过 2MB，无法保存为草稿");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(html, DocumentRootPattern, RegexOptions))
+            throw new InvalidOperationException("生成结果必须包含显式 html 根元素，以便注入安全策略");
+    }
+
+    public static string HardenGeneratedHtml(string raw)
+    {
+        var html = NormalizeGeneratedHtml(raw);
+        ValidateHtml(html);
+        EnsureNoUnresolvedTemplatePlaceholders(html);
+        html = ConvertRelativeKnowledgeAnchors(html);
+
+        foreach (var tag in ScanHtmlStartTags(html).Where(item => !item.IsClosing))
+        {
+            if (tag.Name.Equals("script", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("生成页面包含可执行脚本，当前安全模式只允许声明式 HTML 与 CSS");
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    tag.Name,
+                    @"^(?:animate|set|animateMotion|animateTransform)$",
+                    RegexOptions,
+                    TimeSpan.FromSeconds(1)))
+                throw new InvalidOperationException("生成页面包含不能证明为离线安全的 SVG 动画能力");
+            foreach (var attribute in new[] { "src", "href" })
+            {
+                var reference = ReadHtmlAttribute(tag.Attributes, attribute);
+                if (reference != null) EnsureInlineReference(tag.Name, reference);
+            }
+            var attributes = ParseHtmlAttributes(tag.Attributes);
+            if (attributes.Keys.Any(name =>
+                    name.Equals("srcset", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("srcdoc", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("background", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("poster", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("ping", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("formaction", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("xlink:href", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("on", StringComparison.OrdinalIgnoreCase))
+                || System.Text.RegularExpressions.Regex.IsMatch(
+                    tag.Name,
+                    @"^(?:applet|base|iframe|frame|object|embed|form)$",
+                    RegexOptions,
+                    TimeSpan.FromSeconds(1))
+                || (tag.Name.Equals("meta", StringComparison.OrdinalIgnoreCase)
+                    && attributes.ContainsKey("http-equiv")))
+                throw new InvalidOperationException("生成页面包含不能证明为离线安全的导航或嵌入能力");
+        }
+
+        if (System.Text.RegularExpressions.Regex.IsMatch(html, @"@import\s+(?:url\s*\()?", RegexOptions))
+            throw new InvalidOperationException("生成页面包含不能证明为离线安全的导航或嵌入能力");
+
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     html,
+                     @"url\(\s*([""']?)(.*?)\1\s*\)",
+                     RegexOptions))
+        {
+            var value = match.Groups[2].Value.Trim();
+            if (value.Length > 0 && !value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) && !value.StartsWith('#'))
+                throw new InvalidOperationException("生成页面的 CSS 引用了外部资源");
+        }
+
+        var root = System.Text.RegularExpressions.Regex.Match(
+            html,
+            DocumentRootPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var afterRoot = root.Index + root.Length;
+        var head = System.Text.RegularExpressions.Regex.Match(
+            html[afterRoot..],
+            DocumentHeadPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (head.Success)
+        {
+            var insertionIndex = afterRoot + head.Index + head.Length;
+            return html.Insert(insertionIndex, TrustedSystemCspMeta);
+        }
+        return html.Insert(afterRoot, TrustedSystemCspEnvelope);
+    }
+
+    /// <summary>
+    /// 加固已经通过工作区清单与逐文件哈希校验的网页包。与单文件安全模式不同，
+    /// 这里只允许入口引用同一受信包内的资源；外链、网络请求、嵌套页面仍然关闭。
+    /// </summary>
+    public static string HardenVerifiedPackageHtml(string raw, IReadOnlyCollection<string> packagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(packagePaths);
+        var allowedPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in packagePaths)
+        {
+            if (!DesignArtifactPublicPath.TryNormalize(candidate, out var normalized)
+                || !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(normalized, includeInternalManifest: true)
+                || !allowedPaths.Add(normalized))
+                throw new InvalidOperationException("设计产物文件路径无效或重复，请重新生成");
+        }
+        if (!allowedPaths.Contains("index.html"))
+            throw new InvalidOperationException("设计产物入口缺失，请重新生成");
+
+        var html = NormalizeGeneratedHtml(raw);
+        ValidateHtml(html);
+        EnsureNoUnresolvedTemplatePlaceholders(html);
+        html = ConvertRelativeKnowledgeAnchors(html);
+
+        foreach (var tag in ScanHtmlStartTags(html).Where(item => !item.IsClosing))
+        {
+            var attributes = ParseHtmlAttributes(tag.Attributes);
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    tag.Name,
+                    @"^(?:applet|base|iframe|frame|object|embed)$",
+                    RegexOptions,
+                    TimeSpan.FromSeconds(1))
+                || (tag.Name.Equals("meta", StringComparison.OrdinalIgnoreCase)
+                    && attributes.ContainsKey("http-equiv"))
+                || attributes.Keys.Any(name =>
+                    name.Equals("srcdoc", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("ping", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("formaction", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("xlink:href", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("srcset", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("生成页面包含不能在隔离资源包中运行的导航或嵌入能力");
+
+            foreach (var attribute in new[] { "src", "href", "poster", "background" })
+            {
+                var reference = ReadHtmlAttribute(tag.Attributes, attribute);
+                if (reference == null) continue;
+                EnsureVerifiedPackageReference(tag.Name, attribute, reference, allowedPaths);
+            }
+        }
+
+        if (System.Text.RegularExpressions.Regex.IsMatch(html, @"@import\s+(?:url\s*\()?", RegexOptions))
+            throw new InvalidOperationException("生成页面不能通过 CSS 导入其他资源");
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     html,
+                     @"url\(\s*([""']?)(.*?)\1\s*\)",
+                     RegexOptions))
+        {
+            var value = match.Groups[2].Value.Trim();
+            if (value.Length == 0 || value.StartsWith('#') || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!TryResolveVerifiedPackagePath(value, allowedPaths, out _))
+                throw new InvalidOperationException("生成页面的 CSS 引用了资源包以外的文件");
+        }
+
+        var root = System.Text.RegularExpressions.Regex.Match(
+            html,
+            DocumentRootPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var afterRoot = root.Index + root.Length;
+        var head = System.Text.RegularExpressions.Regex.Match(
+            html[afterRoot..],
+            DocumentHeadPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (head.Success)
+        {
+            var insertionIndex = afterRoot + head.Index + head.Length;
+            return html.Insert(insertionIndex, TrustedVerifiedPackageCspMeta);
+        }
+        return html.Insert(afterRoot, TrustedVerifiedPackageCspEnvelope);
+    }
+
+    /// <summary>
+    /// 对已经通过离线安全校验的 AI 产物执行可发布质量闸门。
+    /// evidenceText 必须由任务指令、知识快照和编辑前页面的可见正文组成，不能包含 CSS 或脚本。
+    /// </summary>
+    public static void ValidateGeneratedContentQuality(
+        string html,
+        string evidenceText,
+        bool allowScriptedControls = false)
+    {
+        ValidateHtml(html);
+        var visibleText = ExtractVisibleText(html);
+        EnsureNoVisibleDraftMarkers(html, visibleText);
+        EnsureStaticControlsHaveBehavior(html, allowScriptedControls);
+        EnsureNumericClaimsAreSupported(visibleText, evidenceText ?? string.Empty);
+        EnsureSensitiveFactsAreSupported(visibleText, evidenceText ?? string.Empty);
+    }
+
+    public static string ExtractVisibleText(string html)
+    {
+        var value = System.Text.RegularExpressions.Regex.Replace(
+            html ?? string.Empty,
+            @"<!--[\s\S]*?-->|<head\b[^>]*>[\s\S]*?</head\s*>|<style\b[^>]*>[\s\S]*?</style\s*>|<script\b[^>]*>[\s\S]*?</script\s*>|<template\b[^>]*>[\s\S]*?</template\s*>|<noscript\b[^>]*>[\s\S]*?</noscript\s*>",
+            " ",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        value = ExtractVisibleTextFromMarkup(value);
+        value = System.Net.WebUtility.HtmlDecode(value);
+        return System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"\s+",
+            " ",
+            RegexOptions,
+            TimeSpan.FromSeconds(1)).Trim();
+    }
+
+    private static void EnsureNoVisibleDraftMarkers(string html, string visibleText)
+    {
+        var hasVisibleDraftMarker = System.Text.RegularExpressions.Regex.IsMatch(
+            visibleText,
+            @"(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (hasVisibleDraftMarker)
+        {
+            throw new InvalidOperationException(
+                "生成页面仍包含占位或待补内容，已停止保存。请让执行器替换为真实内容，或删除无法完成的区块后重试。");
+        }
+    }
+
+    private static void EnsureStaticControlsHaveBehavior(string html, bool allowScriptedControls)
+    {
+        var targets = new HashSet<string>(StringComparer.Ordinal);
+        var popoverTargets = new HashSet<string>(StringComparer.Ordinal);
+        var tags = ScanHtmlStartTags(html).ToList();
+        foreach (var tag in tags.Where(item => !item.IsClosing))
+        {
+            var attrs = tag.Attributes;
+            var target = System.Net.WebUtility.HtmlDecode(
+                (ReadHtmlAttribute(attrs, "id") ?? ReadHtmlAttribute(attrs, "name") ?? string.Empty).Trim());
+            if (target.Length > 0)
+            {
+                targets.Add(target);
+                if (HasHtmlAttribute(attrs, "popover")) popoverTargets.Add(target);
+            }
+        }
+
+        foreach (var tag in tags.Where(item => !item.IsClosing && item.Name.Equals("a", StringComparison.OrdinalIgnoreCase)))
+        {
+            var attrs = tag.Attributes;
+            var href = ReadHtmlAttribute(attrs, "href");
+            if (href == null)
+                throw new InvalidOperationException("生成页面包含没有目标的链接，已停止保存。请改为普通元素或提供真实页内目标。");
+
+            var decoded = System.Net.WebUtility.HtmlDecode(href.Trim());
+            if (decoded.Length == 0 || decoded == "#")
+                throw new InvalidOperationException("生成页面包含空链接，已停止保存。请改为普通文本或提供真实页内目标。");
+            if (!decoded.StartsWith('#')) continue;
+            string fragment;
+            try
+            {
+                fragment = Uri.UnescapeDataString(decoded[1..]);
+            }
+            catch (UriFormatException)
+            {
+                throw new InvalidOperationException("生成页面包含格式错误的页内链接，已停止保存。请改为普通文本或提供真实页内目标。");
+            }
+            if (fragment.Length == 0 || !targets.Contains(fragment))
+                throw new InvalidOperationException($"生成页面的页内链接目标不存在：#{fragment}");
+        }
+
+        foreach (var tag in tags.Where(item => !item.IsClosing && item.Name.Equals("button", StringComparison.OrdinalIgnoreCase)))
+        {
+            var attrs = tag.Attributes;
+            if (HasHtmlAttribute(attrs, "disabled")) continue;
+            var popoverTarget = System.Net.WebUtility.HtmlDecode((ReadHtmlAttribute(attrs, "popovertarget") ?? string.Empty).Trim());
+            if (popoverTarget.Length > 0 && popoverTargets.Contains(popoverTarget)) continue;
+            if (allowScriptedControls && tags.Any(item => !item.IsClosing
+                    && item.Name.Equals("script", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            throw new InvalidOperationException(
+                "生成页面包含无法执行动作的按钮，已停止保存。声明式页面请使用指向真实区块的链接，或移除该按钮。");
+        }
+    }
+
+    private static void EnsureNumericClaimsAreSupported(string visibleText, string evidenceText)
+    {
+        var supported = ExtractMeasuredClaimContexts(evidenceText);
+        foreach (var claim in ExtractMeasuredClaimContexts(visibleText))
+        {
+            if (claim.IsStructural) continue;
+            var candidates = supported
+                .Where(item => item.Token.Equals(claim.Token, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (candidates.Count == 0
+                || !candidates.Any(candidate => HasClaimContextOverlap(
+                    candidate.Context,
+                    claim.Context,
+                    claim.RequiresContext,
+                    candidate.EntityKeys,
+                    claim.EntityKeys)))
+            {
+                var parts = claim.Token.Split('|', 2);
+                throw new InvalidOperationException(
+                    $"生成页面包含知识与指令未支持的数值陈述：{parts[0]}{parts[1]}（原句「{claim.Excerpt}」）。已停止保存，请删除或改回来源中的准确数值。");
+            }
+        }
+    }
+
+    private sealed record MeasuredClaimContext(
+        string Token,
+        string Context,
+        bool RequiresContext,
+        bool IsStructural,
+        HashSet<string> EntityKeys,
+        string Excerpt);
+
+    /// <summary>拒收时引用的原句：只说「1个」读者不知道去改哪一句。</summary>
+    private static string ClaimExcerpt(string segment)
+    {
+        var trimmed = segment.Trim();
+        return trimmed.Length <= 40 ? trimmed : trimmed[..40] + "…";
+    }
+
+    private static List<MeasuredClaimContext> ExtractMeasuredClaimContexts(string text)
+    {
+        var claims = new List<MeasuredClaimContext>();
+        foreach (var segment in System.Text.RegularExpressions.Regex.Split(text ?? string.Empty, @"[\r\n。！？!?；;，,：:]+"))
+        {
+            var patterns = new[]
+            {
+                // 「1 个月」「2 个小时」是时长，和「1 月」「2 小时」同一件事，不能当成「1 个（计数）」。
+                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])",
+                @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
+                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))",
+            };
+            foreach (var pattern in patterns)
+            {
+                foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(segment, pattern, RegexOptions))
+                {
+                    var number = match.Groups["number"].Value.Replace(",", string.Empty, StringComparison.Ordinal);
+                    if (decimal.TryParse(
+                            number,
+                            System.Globalization.NumberStyles.AllowDecimalPoint,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out var parsed))
+                        number = parsed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var rawUnit = match.Groups["unit"].Value;
+                    var requiresContext = IsCountUnit(rawUnit);
+                    var entityKeys = ExtractClaimEntityKeys(segment, rawUnit);
+                    var unit = NormalizeClaimUnit(rawUnit, entityKeys);
+                    claims.Add(new MeasuredClaimContext(
+                        $"{number}|{unit}",
+                        NormalizeClaimContext(segment),
+                        requiresContext,
+                        requiresContext && IsStructuralCount(segment),
+                        entityKeys,
+                        ClaimExcerpt(segment)));
+                }
+            }
+        }
+        return claims;
+    }
+
+    private static string NormalizeClaimContext(string value) =>
+        System.Text.RegularExpressions.Regex.Replace(
+            value,
+            @"\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字|人|家|项|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around",
+            string.Empty,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+
+    private static bool HasClaimContextOverlap(
+        string left,
+        string right,
+        bool requiresContext,
+        HashSet<string> leftEntities,
+        HashSet<string> rightEntities)
+    {
+        if (!requiresContext) return true;
+        var comparableLeftEntities = leftEntities.Where(key => key != "PERSON").ToHashSet(StringComparer.Ordinal);
+        var comparableRightEntities = rightEntities.Where(key => key != "PERSON").ToHashSet(StringComparer.Ordinal);
+        if (requiresContext && comparableLeftEntities.Count > 0 && comparableRightEntities.Count > 0)
+            return comparableRightEntities.Any(comparableLeftEntities.Contains);
+        var leftTokens = ClaimContextTokens(left);
+        if (leftTokens.Count == 0) return !requiresContext;
+        var rightTokens = ClaimContextTokens(right);
+        if (rightTokens.Count == 0) return false;
+        var overlap = rightTokens.Count(leftTokens.Contains);
+        return Math.Min(leftTokens.Count, rightTokens.Count) <= 1 ? overlap == 1 : overlap >= 2;
+    }
+
+    private static string NormalizeClaimUnit(string value, HashSet<string> entityKeys)
+    {
+        if (value == "％") return "%";
+        if (value is "￥" or "¥" or "元" or "人民币") return "CNY";
+        if (value is "$" or "美元") return "USD";
+        if (value is "人" or "位" || value == "个" && entityKeys.Overlaps(["CUSTOMER", "USER", "CONSUMER", "READER", "EMPLOYEE"])) return "PERSON";
+        if (value == "篇" || value == "个" && entityKeys.Contains("ARTICLE")) return "ARTICLE";
+        if (value == "家" || value == "个" && entityKeys.Contains("ORGANIZATION")) return "ORGANIZATION";
+        if (value is "章" or "节" || value == "个" && entityKeys.Contains("SECTION")) return "SECTION";
+        if (value == "页") return "PAGE";
+        if (value == "个" && entityKeys.Count == 1) return entityKeys.Single();
+        return value.ToUpperInvariant();
+    }
+
+    private static bool IsCountUnit(string unit) =>
+        "个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页"
+            .Split('|')
+            .Contains(unit, StringComparer.Ordinal);
+
+    private static bool IsStructuralCount(string segment) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            segment,
+            @"(?:第\s*\d+\s*(?:步|章|节)(?:\b|。|，|,|：|:|$))|(?:(?:本文|本页|下文|以下|使用方式|操作流程|阅读路径|页面内容)[^\r\n。！？!?；;]{0,16}(?:分为|包括|包含|共有)\s*\d+(?:[.,]\d+)*\s*(?:个|条|项|种|类|层|步|章|节)?\s*(?:步骤|阶段|部分|章节|要点|原则|方式|层级|类别|模块|区块|栏目|操作)(?:\b|。|，|,|：|:|$))",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+
+    private static HashSet<string> ExtractClaimEntityKeys(string segment, string unit)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (key, pattern) in new[]
+                 {
+                     ("PROJECT", @"项目"),
+                     ("CUSTOMER", @"客户"),
+                     ("USER", @"用户"),
+                     ("CONSUMER", @"消费者"),
+                     ("READER", @"读者"),
+                     ("EMPLOYEE", @"员工|成员"),
+                     ("CASE", @"案例|样例"),
+                     ("ARTICLE", @"文章|文档|知识|内容"),
+                     ("MODULE", @"模块|功能"),
+                     ("CATEGORY", @"类别|分类|种类"),
+                     ("OPERATION", @"操作|流程|步骤"),
+                     ("SECTION", @"章节|章|节"),
+                     ("COLUMN", @"栏目|专栏"),
+                     ("ORGANIZATION", @"企业|公司|机构|商家"),
+                 })
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(segment, pattern, RegexOptions, TimeSpan.FromSeconds(1)))
+                keys.Add(key);
+        }
+        if (unit is "人" or "位") keys.Add("PERSON");
+        if (unit == "篇") keys.Add("ARTICLE");
+        if (unit is "章" or "节") keys.Add("SECTION");
+        if (unit == "家") keys.Add("ORGANIZATION");
+        if (unit == "页") keys.Add("PAGE");
+        return keys;
+    }
+
+    private static HashSet<string> ClaimContextTokens(string value)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Text.RegularExpressions.Match word in System.Text.RegularExpressions.Regex.Matches(
+                     value,
+                     @"[A-Za-z][A-Za-z0-9_-]{2,}",
+                     RegexOptions))
+            tokens.Add(word.Value);
+        var chinese = string.Concat(value.Where(character => character >= '\u4e00' && character <= '\u9fff'));
+        for (var index = 0; index + 1 < chinese.Length; index++) tokens.Add(chinese.Substring(index, 2));
+        return tokens;
+    }
+
+    private sealed record HtmlStartTag(string Name, string Attributes, int Start, int End, bool IsClosing, bool IsSelfClosing);
+
+    private static List<HtmlStartTag> ScanHtmlStartTags(string html)
+    {
+        var tags = new List<HtmlStartTag>();
+        for (var index = 0; index < html.Length; index++)
+        {
+            if (html[index] != '<' || index + 1 >= html.Length) continue;
+            var cursor = index + 1;
+            var isClosing = cursor < html.Length && html[cursor] == '/';
+            if (isClosing) cursor++;
+            if (cursor >= html.Length || !char.IsLetter(html[cursor])) continue;
+            var nameStart = cursor;
+            while (cursor < html.Length && (char.IsLetterOrDigit(html[cursor]) || html[cursor] is '-' or ':')) cursor++;
+            var name = html[nameStart..cursor];
+            var attributesStart = cursor;
+            char? quote = null;
+            while (cursor < html.Length)
+            {
+                var current = html[cursor];
+                if (quote.HasValue)
+                {
+                    if (current == quote.Value) quote = null;
+                }
+                else if (current is '"' or '\'')
+                {
+                    quote = current;
+                }
+                else if (current == '>')
+                {
+                    var attributes = html[attributesStart..cursor];
+                    tags.Add(new HtmlStartTag(name, attributes, index, cursor + 1, isClosing, attributes.TrimEnd().EndsWith('/')));
+                    index = cursor;
+                    break;
+                }
+                cursor++;
+            }
+        }
+        return tags;
+    }
+
+    private static string ExtractVisibleTextFromMarkup(string html)
+    {
+        var tags = ScanHtmlStartTags(html);
+        if (tags.Count == 0) return html;
+        var builder = new System.Text.StringBuilder(html.Length);
+        var stack = new List<(string Name, bool Suppressed)>();
+        var suppressedDepth = 0;
+        var cursor = 0;
+        foreach (var tag in tags)
+        {
+            if (tag.Start > cursor && suppressedDepth == 0) builder.Append(html, cursor, tag.Start - cursor);
+            var block = IsBlockElement(tag.Name);
+            if (tag.IsClosing)
+            {
+                for (var index = stack.Count - 1; index >= 0; index--)
+                {
+                    var frame = stack[index];
+                    stack.RemoveAt(index);
+                    if (frame.Suppressed) suppressedDepth--;
+                    if (frame.Name.Equals(tag.Name, StringComparison.OrdinalIgnoreCase)) break;
+                }
+                if (block && suppressedDepth == 0) builder.Append('。');
+            }
+            else
+            {
+                if (block && suppressedDepth == 0) builder.Append('。');
+                var suppressed = IsHiddenElement(tag.Attributes);
+                if (!tag.IsSelfClosing && !IsVoidElement(tag.Name))
+                {
+                    stack.Add((tag.Name, suppressed));
+                    if (suppressed) suppressedDepth++;
+                }
+            }
+            cursor = tag.End;
+        }
+        if (cursor < html.Length && suppressedDepth == 0) builder.Append(html, cursor, html.Length - cursor);
+        return builder.ToString();
+    }
+
+    private static bool IsHiddenElement(string attributes)
+    {
+        if (HasHtmlAttribute(attributes, "hidden")) return true;
+        if (string.Equals(ReadHtmlAttribute(attributes, "aria-hidden")?.Trim(), "true", StringComparison.OrdinalIgnoreCase)) return true;
+        var style = System.Net.WebUtility.HtmlDecode(ReadHtmlAttribute(attributes, "style") ?? string.Empty);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            style,
+            @"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+    }
+
+    private static bool IsBlockElement(string name) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            name,
+            @"^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|section|table|tbody|td|tfoot|th|thead|tr|ul)$",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+
+    private static bool IsVoidElement(string name) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            name,
+            @"^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+
+
+    private static void EnsureSensitiveFactsAreSupported(string visibleText, string evidenceText)
+    {
+        var supported = ExtractSensitiveFacts(evidenceText, asEvidence: true);
+        foreach (var fact in ExtractSensitiveFacts(visibleText))
+        {
+            if (!supported.Contains(fact))
+                throw new InvalidOperationException(
+                    $"生成页面包含知识与指令未支持的日期、联系方式或网址：{fact}。已停止保存，请删除或改回来源中的准确内容。");
+        }
+    }
+
+    /// <summary>
+    /// 日期统一成「年-月[-日]」再比：「2026/9/24」与「2026-09-24」是同一天。作证据时，完整日期
+    /// 同时支撑它的「年-月」（页面写「2026-09」取自来源里的 9 月 24 日），中文写法
+    /// 「2026 年 9 月 24 日」也算证据——此前两者都被判成来源里没有的日期（2026-09-24 真人验收）。
+    /// 页面侧仍只认数字写法，判据范围不扩大；只是证据不再比真实来源窄。
+    /// </summary>
+    private static HashSet<string> ExtractSensitiveFacts(string text, bool asEvidence = false)
+    {
+        var facts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     text ?? string.Empty,
+                     @"https?://[^\s<>\""']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)",
+                     RegexOptions))
+        {
+            var value = match.Value.TrimEnd('.', ',', ';', ':', '，', '。', '；', '：', ')', ']', '}', '>', '`').ToLowerInvariant();
+            var date = System.Text.RegularExpressions.Regex.Match(value, @"^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$");
+            if (!date.Success)
+            {
+                facts.Add(value);
+                continue;
+            }
+            AddDateFacts(facts, date.Groups[1].Value, date.Groups[2].Value, date.Groups[3].Success ? date.Groups[3].Value : null, asEvidence);
+        }
+        if (asEvidence)
+        {
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                         text ?? string.Empty,
+                         @"((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日号])?",
+                         RegexOptions))
+            {
+                AddDateFacts(facts, match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Success ? match.Groups[3].Value : null, asEvidence: true);
+            }
+        }
+        return facts;
+    }
+
+    private static void AddDateFacts(HashSet<string> facts, string year, string month, string? day, bool asEvidence)
+    {
+        var yearMonth = $"{year}-{int.Parse(month):00}";
+        if (day == null)
+        {
+            facts.Add(yearMonth);
+            return;
+        }
+        facts.Add($"{yearMonth}-{int.Parse(day):00}");
+        if (asEvidence) facts.Add(yearMonth);
+    }
+
+    private static string? ReadHtmlAttribute(string attributes, string name)
+        => ParseHtmlAttributes(attributes).TryGetValue(name, out var value) ? value : null;
+
+    private static bool HasHtmlAttribute(string attributes, string name) =>
+        ParseHtmlAttributes(attributes).ContainsKey(name);
+
+    private static Dictionary<string, string?> ParseHtmlAttributes(string attributes)
+    {
+        var parsed = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var index = 0;
+        while (index < attributes.Length)
+        {
+            while (index < attributes.Length && (char.IsWhiteSpace(attributes[index]) || attributes[index] == '/')) index++;
+            var nameStart = index;
+            while (index < attributes.Length
+                   && !char.IsWhiteSpace(attributes[index])
+                   && attributes[index] != '='
+                   && attributes[index] != '>') index++;
+            if (index == nameStart)
+            {
+                index++;
+                continue;
+            }
+            var attributeName = attributes[nameStart..index];
+            while (index < attributes.Length && char.IsWhiteSpace(attributes[index])) index++;
+            string? value = null;
+            if (index < attributes.Length && attributes[index] == '=')
+            {
+                index++;
+                while (index < attributes.Length && char.IsWhiteSpace(attributes[index])) index++;
+                if (index < attributes.Length && attributes[index] is '"' or '\'')
+                {
+                    var quote = attributes[index++];
+                    var valueStart = index;
+                    while (index < attributes.Length && attributes[index] != quote) index++;
+                    value = attributes[valueStart..Math.Min(index, attributes.Length)];
+                    if (index < attributes.Length) index++;
+                }
+                else
+                {
+                    var valueStart = index;
+                    while (index < attributes.Length
+                           && !char.IsWhiteSpace(attributes[index])
+                           && attributes[index] != '>') index++;
+                    value = attributes[valueStart..index];
+                }
+            }
+            parsed.TryAdd(attributeName, value);
+        }
+        return parsed;
+    }
+
+    private static void EnsureNoUnresolvedTemplatePlaceholders(string html)
+    {
+        var visibleMarkup = System.Text.RegularExpressions.Regex.Replace(
+            html,
+            @"<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?</style\s*>",
+            string.Empty,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var hasReplaceSentinel = System.Text.RegularExpressions.Regex.IsMatch(
+            visibleMarkup,
+            @"\[\s*replace\s*\]",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var hasProtectedEmailSentinel = System.Text.RegularExpressions.Regex.IsMatch(
+            visibleMarkup,
+            @"\[\s*email(?:\s|&(?:nbsp|#0*160|#x0*a0);)+protected\s*\]",
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (hasReplaceSentinel || hasProtectedEmailSentinel)
+        {
+            throw new InvalidOperationException(
+                "生成的页面仍包含未替换的模板占位内容，已停止保存。请明确品牌与主操作文案后重新生成；若仍出现，请改用其他可用执行器。");
+        }
+    }
+
+    /// <summary>
+    /// 只供已通过 CDS 工作区 token、哈希与 manifest 校验的边界调用。
+    /// 仅移除紧随安全 html 根、字节内容完全匹配 MAP 严格策略的单个系统包装；
+    /// 其他位置、拼写、实体、自定义值或重复块都保留，随后由 HardenGeneratedHtml 拒绝。
+    /// </summary>
+    public static string StripSingleTrustedSystemCspEnvelope(string html)
+    {
+        if (string.IsNullOrEmpty(html)) return html;
+        var root = System.Text.RegularExpressions.Regex.Match(
+            html,
+            DocumentRootPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (!root.Success) return html;
+        var envelopeStart = root.Index + root.Length;
+        var envelope = html.AsSpan(envelopeStart).StartsWith(TrustedSystemCspEnvelope, StringComparison.Ordinal)
+            ? TrustedSystemCspEnvelope
+            : html.AsSpan(envelopeStart).StartsWith(TrustedVerifiedPackageCspEnvelope, StringComparison.Ordinal)
+                ? TrustedVerifiedPackageCspEnvelope
+                : null;
+        if (envelope == null)
+        {
+            var head = System.Text.RegularExpressions.Regex.Match(
+                html[envelopeStart..],
+                DocumentHeadPattern,
+                RegexOptions,
+                TimeSpan.FromSeconds(1));
+            if (!head.Success) return html;
+            var metaStart = envelopeStart + head.Index + head.Length;
+            var meta = html.AsSpan(metaStart).StartsWith(TrustedSystemCspMeta, StringComparison.Ordinal)
+                ? TrustedSystemCspMeta
+                : html.AsSpan(metaStart).StartsWith(TrustedVerifiedPackageCspMeta, StringComparison.Ordinal)
+                    ? TrustedVerifiedPackageCspMeta
+                    : null;
+            if (meta == null)
+                return html;
+            return html.Remove(metaStart, meta.Length);
+        }
+        return html.Remove(envelopeStart, envelope.Length);
+    }
+
+    private static readonly System.Text.RegularExpressions.RegexOptions RegexOptions =
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        | System.Text.RegularExpressions.RegexOptions.CultureInvariant
+        | System.Text.RegularExpressions.RegexOptions.Singleline;
+
+    private static void EnsureInlineReference(string tag, string rawValue)
+    {
+        var value = rawValue.Trim();
+        if (value.Length == 0 || value.StartsWith('#')) return;
+        if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            && !tag.Equals("a", StringComparison.OrdinalIgnoreCase)
+            && !tag.Equals("area", StringComparison.OrdinalIgnoreCase)) return;
+        throw new InvalidOperationException($"生成页面的 <{tag.ToLowerInvariant()}> 引用了外部资源");
+    }
+
+    private static void EnsureVerifiedPackageReference(
+        string tag,
+        string attribute,
+        string rawValue,
+        IReadOnlySet<string> allowedPaths)
+    {
+        var value = System.Net.WebUtility.HtmlDecode(rawValue).Trim();
+        if (value.Length == 0 || value.StartsWith('#')) return;
+        if (tag.Equals("a", StringComparison.OrdinalIgnoreCase)
+            || tag.Equals("area", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("生成页面的链接只能指向当前页面中的真实区块");
+        if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            if (attribute.Equals("src", StringComparison.OrdinalIgnoreCase)
+                && !tag.Equals("script", StringComparison.OrdinalIgnoreCase))
+                return;
+            throw new InvalidOperationException("生成页面把可执行资源内联到了不允许的位置");
+        }
+        if (!TryResolveVerifiedPackagePath(value, allowedPaths, out _))
+            throw new InvalidOperationException($"生成页面的 <{tag.ToLowerInvariant()}> 引用了资源包以外的文件");
+    }
+
+    private static bool TryResolveVerifiedPackagePath(
+        string rawValue,
+        IReadOnlySet<string> allowedPaths,
+        out string normalized)
+    {
+        normalized = string.Empty;
+        var value = rawValue.Trim();
+        if (value.Length == 0
+            || value.StartsWith('/')
+            || value.StartsWith("//", StringComparison.Ordinal)
+            || value.Contains('\\'))
+            return false;
+        var suffix = value.IndexOfAny(['?', '#']);
+        if (suffix >= 0) value = value[..suffix];
+        while (value.StartsWith("./", StringComparison.Ordinal)) value = value[2..];
+        try
+        {
+            value = Uri.UnescapeDataString(value);
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+        if (!DesignArtifactPublicPath.TryNormalize(value, out normalized)) return false;
+        return normalized.StartsWith("assets/", StringComparison.Ordinal)
+               && allowedPaths.Contains(normalized);
+    }
+
+    private static string ConvertRelativeKnowledgeAnchors(string html)
+    {
+        const string quoted = @"<a\b[^>]*\bhref\s*=\s*([""'])(\./[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_.:-]+)?)\1[^>]*>(.*?)</a\s*>";
+        const string unquoted = @"<a\b[^>]*\bhref\s*=\s*(\./[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_.:-]+)?)[^\s""'`=<>]*[^>]*>(.*?)</a\s*>";
+        string Replace(System.Text.RegularExpressions.Match match, int valueGroup, int bodyGroup)
+        {
+            var value = match.Groups[valueGroup].Value;
+            if (System.Text.RegularExpressions.Regex.IsMatch(value, @"(?:^|/)\.\.(?:/|$)", RegexOptions)) return match.Value;
+            return $"<span data-cds-source-reference=\"{value}\">{match.Groups[bodyGroup].Value}</span>";
+        }
+        html = System.Text.RegularExpressions.Regex.Replace(html, quoted, match => Replace(match, 2, 3), RegexOptions);
+        return System.Text.RegularExpressions.Regex.Replace(html, unquoted, match => Replace(match, 1, 2), RegexOptions);
+    }
+}

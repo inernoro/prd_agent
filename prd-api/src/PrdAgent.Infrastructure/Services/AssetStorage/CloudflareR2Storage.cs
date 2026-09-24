@@ -98,6 +98,24 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
     }
 
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null)
+    {
+        ThrowIfDisposed();
+        if (bytes == null || bytes.Length == 0) return null;
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
+        var sha = Sha256Hex(bytes);
+        var d = string.IsNullOrWhiteSpace(domain) ? AppDomainPaths.DomainVisualAgent : AppDomainPaths.NormDomain(domain);
+        var t = string.IsNullOrWhiteSpace(type) ? AppDomainPaths.TypeImg : AppDomainPaths.NormType(type);
+        return BuildObjectKey(d, t, sha, ext);
+    }
+
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         ThrowIfDisposed();
@@ -239,7 +257,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (!IsSafeDeleteAllowed(k, out var reason))
         {
             _logger.LogWarning("R2 delete blocked. bucket={Bucket} key={Key} reason={Reason}", _bucket, k, reason);
-            throw new InvalidOperationException("R2 删除被安全策略拦截：仅允许删除 _it 测试目录下对象，或启用受控删除并命中白名单前缀");
+            throw new InvalidOperationException("R2 删除被安全策略拦截：仅允许受保护的单对象键，或启用受控删除并命中白名单前缀");
         }
 
         try
@@ -553,6 +571,17 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             reason = "owned_generated_image";
             return true;
         }
+        if (AssetStorageDeletePolicy.IsContentAddressedDesignWorkspaceMetadataKey(normalizedKey, _prefix))
+        {
+            reason = "owned_design_workspace_metadata";
+            return true;
+        }
+        if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_file";
+            return true;
+        }
+
         if (AssetStorageDeletePolicy.IsHostedSiteOptimizationTemporaryKey(normalizedKey, _prefix))
         {
             reason = "owned_hosted_site_optimization_temp";

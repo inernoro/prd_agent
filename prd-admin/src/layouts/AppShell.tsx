@@ -45,6 +45,8 @@ import {
   BarChart3,
   Droplets,
   ExternalLink,
+  GraduationCap,
+  Megaphone,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -77,7 +79,16 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { isMenuKeyboardActivation, resolveAccountAvatarAction } from './accountAvatarAction';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
-import { LearningCenterMenuBody } from '@/components/daily-tips/LearningCenterTeaser';
+import { LearningCenterMenuHint } from '@/components/daily-tips/LearningCenterTeaser';
+import {
+  ACCOUNT_MENU_ROW_CLASS,
+  ACCOUNT_MENU_ROW_TOUCH_CLASS,
+  ACCOUNT_MENU_SEPARATOR_STYLE,
+  AccountMenuCount,
+  AccountMenuHint,
+  AccountMenuRowBody,
+  AccountMenuSectionLabel,
+} from '@/components/nav/AccountMenuRow';
 import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
@@ -592,12 +603,12 @@ export default function AppShell() {
       resolveMobileDrawerUtilities(getLauncherCatalog({ permissions, isRoot }), {
         hiddenIds: effectiveNavHidden,
         alreadyShown: groupedNav.flatMap((g) => g.items.map((it) => ({ appKey: it.appKey, route: it.key }))),
-      }).map(({ route, hint, item }) => {
+      }).map(({ route, item }) => {
         const IconComp =
           iconMap[item.icon] ??
           ((LucideIcons as unknown as Record<string, LucideIcon | undefined>)[item.icon]) ??
           Cpu;
-        return { route, hint, label: item.name, icon: <IconComp size={18} /> };
+        return { route, label: item.name, icon: <IconComp size={18} /> };
       }),
     [permissions, isRoot, effectiveNavHidden, groupedNav],
   );
@@ -1134,7 +1145,7 @@ export default function AppShell() {
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
             ...glassMobileHeader,
-            gridTemplateColumns: '44px minmax(0, 1fr) 88px',
+            gridTemplateColumns: '44px minmax(0, 1fr) 92px',
             columnGap: 8,
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
@@ -1143,7 +1154,7 @@ export default function AppShell() {
           <button
             type="button"
             onClick={() => setMobileDrawerOpen(true)}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-xl"
+            className="h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-xl"
             style={{ color: 'var(--text-primary)' }}
             aria-label="打开导航菜单"
           >
@@ -1166,7 +1177,7 @@ export default function AppShell() {
                 setNotificationDialogOpen(true);
                 void loadNotifications({ silent: true });
               }}
-              className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+              className="relative h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-xl"
               style={{ color: 'var(--text-secondary)' }}
               aria-label="通知"
             >
@@ -1192,7 +1203,7 @@ export default function AppShell() {
             <button
               type="button"
               onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
-              className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              className="h-11 w-11 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
               aria-label="修改我的头像"
               title="修改我的头像"
             >
@@ -1270,12 +1281,11 @@ export default function AppShell() {
                 type="button"
                 data-mobile-drawer-utility={it.route}
                 onClick={() => { navigate(it.route); setMobileDrawerOpen(false); }}
-                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                style={{ color: 'var(--text-secondary)' }}
+                className={ACCOUNT_MENU_ROW_TOUCH_CLASS}
+                style={{ color: 'var(--text-primary)' }}
               >
-                {it.icon}
-                <span className="text-sm">{it.label}</span>
-                <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>{it.hint}</span>
+                <span className="shrink-0" style={{ color: 'var(--text-secondary)' }}>{it.icon}</span>
+                <span className="text-[13px]">{it.label}</span>
               </button>
             ))}
             {hasLlmGatewayAccess && (
@@ -1283,12 +1293,13 @@ export default function AppShell() {
                 type="button"
                 disabled={gatewayOpening}
                 onClick={() => void openLlmGateway()}
-                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ color: 'var(--text-secondary)' }}
+                className={ACCOUNT_MENU_ROW_TOUCH_CLASS}
               >
-                <Server size={18} />
-                <span className="text-sm">模型网关</span>
-                {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={16} className="ml-auto" />}
+                <AccountMenuRowBody
+                  icon={Server}
+                  label="模型网关"
+                  trailing={gatewayOpening ? <MapSpinner size={14} /> : <ExternalLink size={13} style={{ color: 'var(--text-muted)' }} aria-hidden />}
+                />
               </button>
             )}
             <button
@@ -1299,11 +1310,9 @@ export default function AppShell() {
                 setMobileDrawerOpen(false);
                 navigate('/login', { replace: true });
               }}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
-              style={{ color: 'var(--text-secondary)' }}
+              className={ACCOUNT_MENU_ROW_TOUCH_CLASS}
             >
-              <LogOut size={18} />
-              <span className="text-sm">退出登录</span>
+              <AccountMenuRowBody icon={LogOut} label="退出登录" />
             </button>
           </div>
         </MobileDrawer>
@@ -1576,8 +1585,8 @@ export default function AppShell() {
 
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="min-w-[220px] rounded-[16px] p-2 z-50"
-                style={glassPanel}
+                className="rounded-[14px] p-1.5 z-50"
+                style={{ ...glassPanel, width: 280 }}
                 sideOffset={8}
                 side="top"
                 align="start"
@@ -1587,8 +1596,8 @@ export default function AppShell() {
                   event.preventDefault();
                 }}
               >
-                {/* 用户信息区 */}
-                <div className="px-2 py-3">
+                {/* 用户信息区。「点头像改头像」靠头像的悬停提示交代（title），不再单占一行说明 */}
+                <div className="px-2.5 pb-2 pt-2">
                   <div className="flex items-center gap-3">
                     <DropdownMenu.Item
                       asChild
@@ -1599,7 +1608,7 @@ export default function AppShell() {
                         className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
                         style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                         aria-label="修改我的头像"
-                        title="修改我的头像"
+                        title="点头像即可修改头像"
                       >
                         <UserAvatar
                           src={resolveAvatarUrl({
@@ -1618,21 +1627,12 @@ export default function AppShell() {
                       <div className="text-[14px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                         {user?.displayName || 'Admin'}
                       </div>
-                      <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-[12px] truncate mt-0.5" style={{ color: 'var(--text-secondary)' }}>
                         {resolveAdminIdentityLabel(user, isRoot)}
                       </div>
                     </div>
                   </div>
-                  {/* 让「再点一次头像改头像」这条隐式交互可被看见，不靠用户自己撞出来 */}
-                  <div className="mt-2 text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                    再点一次侧栏头像即可修改头像
-                  </div>
                 </div>
-
-                <DropdownMenu.Separator
-                  className="h-px mx-2 my-1"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
-                />
 
                 {/* 外观：横排三选项（白天 / 黑夜 / 随系统）。
                     用 Radix 的 RadioGroup / RadioItem，不是 Item + 自己写 role="radio" ——
@@ -1646,8 +1646,8 @@ export default function AppShell() {
                 <DropdownMenu.RadioGroup
                   value={mobileThemeMode}
                   aria-label="外观"
-                  className="mx-1 mb-1 mt-0.5 flex items-stretch gap-1 rounded-[12px] p-1"
-                  style={{ background: 'var(--nested-block-bg)' }}
+                  className="mx-1 mb-1 flex items-stretch gap-1 rounded-[10px] p-0.5"
+                  style={{ background: 'var(--bg-input-hover)' }}
                 >
                   {THEME_MODE_OPTIONS.map((option) => {
                     const Icon = option.icon;
@@ -1663,237 +1663,150 @@ export default function AppShell() {
                           type="button"
                           title={option.description}
                           onClick={(event) => handleThemeModeSelect(option.value, event)}
-                          className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-[9px] px-2 py-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          className="flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-[8px] px-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          // 分段控件的选中态：抬起的实心面 + 正文色（Apple segmented control 写法）
                           style={
                             selected
-                              ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
+                              ? { background: 'var(--panel-solid)', color: 'var(--text-primary)', fontWeight: 600, boxShadow: '0 1px 2px rgba(0, 0, 0, 0.08)' }
                               : { background: 'transparent', color: 'var(--text-secondary)' }
                           }
                         >
-                          <Icon size={15} aria-hidden />
-                          <span className="text-[11px] leading-none">{option.label}</span>
+                          <Icon size={13} aria-hidden />
+                          <span className="text-[12px] leading-none">{option.label}</span>
                         </button>
                       </DropdownMenu.RadioItem>
                     );
                   })}
                 </DropdownMenu.RadioGroup>
 
-                <DropdownMenu.Separator
-                  className="h-px mx-2 my-1"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
-                />
-
-                {/* 智能体接入台：把平台接进用户自己的智能体（MCP）。放在最上面 ——
-                    这是「让 agent 替我干活」的总入口，比设置类条目更常用。 */}
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/mcp-console')}
-                >
-                  <Plug size={16} className="shrink-0" />
-                  <span className="text-[13px]">智能体接入台</span>
-                  <span
-                    className="ml-auto text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    连接 / 记录
-                  </span>
-                </DropdownMenu.Item>
-
-                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/settings?tab=user-space')}
-                >
-                  <Sparkles size={16} className="shrink-0" />
-                  <span className="text-[13px]">我的空间</span>
-                  <span
-                    className="ml-auto text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    常用 / 最近 / 置顶
-                  </span>
-                </DropdownMenu.Item>
-
-                {/* 教程中心:全部官方教程 + 等级与掌握进度。
-                    2026-09-14 从首页右上角搬来(那一格换成了模型排行榜挂件),
-                    与菜单里原有的「我的学习进度」纯文字项**合并成这一条**,不并排两个入口。 */}
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/learning-center')}
-                >
-                  <LearningCenterMenuBody />
-                  <span
-                    className="ml-auto text-[10px] shrink-0"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    继续
-                  </span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
-                  style={{ color: 'var(--text-secondary)' }}
-                  disabled={!user?.username}
-                  onSelect={() => {
-                    if (!user?.username) return;
-                    navigate(`/u/${encodeURIComponent(user.username)}`);
-                  }}
-                >
-                  <Globe size={16} className="shrink-0" />
-                  <span className="text-[13px]">个人主页</span>
-                  <span
-                    className="ml-auto max-w-[96px] truncate font-mono text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    {user?.username ? `/u/${user.username}` : '未设置'}
-                  </span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/settings')}
-                >
-                  <Settings size={16} className="shrink-0" />
-                  <span className="text-[13px]">设置</span>
-                  <span
-                    className="ml-auto text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    皮肤 / 导航 / 账户
-                  </span>
-                </DropdownMenu.Item>
-
-                {hasLlmGatewayAccess && (
-                  <DropdownMenu.Item
-                    className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover-bg-soft focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
-                    style={{ color: 'var(--text-secondary)' }}
-                    disabled={gatewayOpening}
-                    onSelect={(event) => {
-                      event.preventDefault();
-                      void openLlmGateway();
-                    }}
-                  >
-                    <Server size={16} className="shrink-0" />
-                    <span className="text-[13px]">模型网关</span>
-                    {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={15} className="ml-auto" />}
-                  </DropdownMenu.Item>
-                )}
-
-                {/* 液态玻璃一键开关：点击不关菜单（preventDefault），让用户当场看到整个界面玻璃开/关的变化 */}
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={(e) => {
-                    e.preventDefault();
+                {/* 液态玻璃：外观的一部分，紧跟在明暗之后；开关态用 switch 表达，点完不关菜单，当场看见整屏变化 */}
+                {/* 用 Radix 的 CheckboxItem 落 menuitemcheckbox + aria-checked，不自己声明角色（同上面的外观单选） */}
+                <DropdownMenu.CheckboxItem
+                  className={ACCOUNT_MENU_ROW_CLASS}
+                  checked={glassOn}
+                  onSelect={(e) => e.preventDefault()}
+                  onCheckedChange={() => {
                     // 开玻璃时顺手清隐藏的 performanceMode='performance' 存量值（与设置页同口径，Codex P2）
                     setThemeConfig(glassOn
                       ? { material: 'solid' }
                       : { material: 'glass', performanceMode: 'quality' });
                   }}
                 >
-                  <Droplets size={16} className="shrink-0" />
-                  <span className="text-[13px]">液态玻璃</span>
-                  <span
-                    className="ml-auto inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors"
-                    style={
-                      glassOn
-                        ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
-                        : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }
+                  <AccountMenuRowBody
+                    icon={Droplets}
+                    label="液态玻璃"
+                    trailing={
+                      <span
+                        aria-hidden
+                        className="relative inline-block h-[18px] w-8 rounded-full transition-colors"
+                        style={{ background: glassOn ? 'var(--button-primary-bg)' : 'var(--border-default)' }}
+                      >
+                        <span
+                          className="absolute top-[2px] h-[14px] w-[14px] rounded-full transition-all"
+                          style={{ left: glassOn ? 16 : 2, background: 'var(--panel-solid)', boxShadow: '0 1px 2px rgba(0, 0, 0, 0.2)' }}
+                        />
+                      </span>
                     }
-                  >
-                    {glassOn ? '已开启' : '已关闭'}
-                  </span>
-                </DropdownMenu.Item>
+                  />
+                </DropdownMenu.CheckboxItem>
 
+                <DropdownMenu.Separator className="mx-2.5 my-1" style={ACCOUNT_MENU_SEPARATOR_STYLE} />
+
+                {/* 消息：带未读角标，最常点，放在最上面（2026-09-24 用户确认） */}
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
+                  className={ACCOUNT_MENU_ROW_CLASS}
                   onSelect={() => {
                     setNotificationDialogTab('list');
                     setNotificationDialogOpen(true);
                     void loadNotifications({ silent: true });
                   }}
                 >
-                  <Bell size={16} className="shrink-0" />
-                  <span className="text-[13px]">用户通知</span>
-                  {notificationCount > 0 && (
-                    <span
-                      className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
-                      style={{ background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }}
-                    >
-                      {notificationCount}
-                    </span>
-                  )}
+                  <AccountMenuRowBody icon={Bell} label="用户通知" trailing={<AccountMenuCount value={notificationCount} />} />
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => navigate('/changelog')}>
+                  <AccountMenuRowBody icon={Megaphone} label="更新中心" trailing={<AccountMenuCount value={changelogUnread} max={9} />} />
                 </DropdownMenu.Item>
 
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/changelog')}
-                >
-                  <Sparkles size={16} className="shrink-0" />
-                  <span className="text-[13px]">更新中心</span>
-                  {changelogUnread > 0 && (
-                    <span
-                      className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold"
-                      style={{ background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.32), rgba(249, 115, 22, 0.32))', color: '#fbbf24' }}
-                    >
-                      {changelogUnread > 9 ? '9+' : changelogUnread}
-                    </span>
-                  )}
-                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="mx-2.5 my-1" style={ACCOUNT_MENU_SEPARATOR_STYLE} />
 
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/data-transfers')}
-                >
-                  <Database size={16} className="shrink-0" />
-                  <span className="text-[13px]">数据分享</span>
-                </DropdownMenu.Item>
-
-                {/* 注意：工具类菜单项（网页托管/知识库/涌现/提示词/实验室/自动化/快捷指令/PR 审查/请求日志 等）
-                    已从用户菜单移除。它们的入口现在是：
-                    - 首页「实用工具」区（AgentLauncherPage staticUtilities）
-                    - 百宝箱 BUILTIN_TOOLS
-                    - Cmd/Ctrl + K 命令面板（Agent / 工具 / 实用工具 统一搜索）
-                    原则：用户菜单只保留「账户 + 系统 + 我的空间 / 个人主页 + 退出」四类，不承载工具导航。 */}
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => useGlobalDefectStore.getState().openDialog()}
-                >
-                  <Bug size={16} className="shrink-0" />
-                  <span className="text-[13px]">提交缺陷</span>
-                  <span
-                    className="ml-auto text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
+                <DropdownMenu.Group>
+                  <AccountMenuSectionLabel>我的</AccountMenuSectionLabel>
+                  <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => navigate('/settings?tab=user-space')}>
+                    <AccountMenuRowBody icon={Sparkles} label="我的空间" />
+                  </DropdownMenu.Item>
+                  {/* 教程中心：和别的行同一个形状，等级进度只占右侧一小段（原来的大进度环在菜单里很突兀） */}
+                  <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => navigate('/learning-center')}>
+                    <AccountMenuRowBody
+                      icon={GraduationCap}
+                      label="教程中心"
+                      trailing={<AccountMenuHint><LearningCenterMenuHint /></AccountMenuHint>}
+                    />
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    className={ACCOUNT_MENU_ROW_CLASS}
+                    disabled={!user?.username}
+                    onSelect={() => {
+                      if (!user?.username) return;
+                      navigate(`/u/${encodeURIComponent(user.username)}`);
+                    }}
                   >
-                    {navigator.platform.includes('Mac') ? 'Cmd' : 'Ctrl'}+B
-                  </span>
+                    <AccountMenuRowBody icon={Globe} label="个人主页" />
+                  </DropdownMenu.Item>
+                </DropdownMenu.Group>
+
+                <DropdownMenu.Separator className="mx-2.5 my-1" style={ACCOUNT_MENU_SEPARATOR_STYLE} />
+
+                {/* 工具：工具类导航（网页托管 / 知识库等）仍不进用户菜单，入口在首页、百宝箱与 Cmd/Ctrl+K；
+                    这里只留和账号绑定的几项。 */}
+                <DropdownMenu.Group>
+                  <AccountMenuSectionLabel>工具</AccountMenuSectionLabel>
+                  <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => navigate('/mcp-console')}>
+                    <AccountMenuRowBody icon={Plug} label="智能体接入台" />
+                  </DropdownMenu.Item>
+                  {hasLlmGatewayAccess && (
+                    <DropdownMenu.Item
+                      className={ACCOUNT_MENU_ROW_CLASS}
+                      disabled={gatewayOpening}
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        void openLlmGateway();
+                      }}
+                    >
+                      <AccountMenuRowBody
+                        icon={Server}
+                        label="模型网关"
+                        trailing={gatewayOpening
+                          ? <MapSpinner size={14} />
+                          : <ExternalLink size={13} style={{ color: 'var(--text-muted)' }} aria-hidden />}
+                      />
+                    </DropdownMenu.Item>
+                  )}
+                  <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => navigate('/data-transfers')}>
+                    <AccountMenuRowBody icon={Database} label="数据分享" />
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => useGlobalDefectStore.getState().openDialog()}>
+                    <AccountMenuRowBody
+                      icon={Bug}
+                      label="提交缺陷"
+                      trailing={<AccountMenuHint>{navigator.platform.includes('Mac') ? '⌘B' : 'Ctrl+B'}</AccountMenuHint>}
+                    />
+                  </DropdownMenu.Item>
+                </DropdownMenu.Group>
+
+                <DropdownMenu.Separator className="mx-2.5 my-1" style={ACCOUNT_MENU_SEPARATOR_STYLE} />
+
+                <DropdownMenu.Item className={ACCOUNT_MENU_ROW_CLASS} onSelect={() => navigate('/settings')}>
+                  <AccountMenuRowBody icon={Settings} label="设置" />
                 </DropdownMenu.Item>
-
-                <DropdownMenu.Separator
-                  className="h-px mx-2 my-1"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
-                />
-
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
-                  style={{ color: 'var(--text-secondary)' }}
+                  className={ACCOUNT_MENU_ROW_CLASS}
                   onSelect={() => {
                     useAgentSwitcherStore.getState().resetServerSync();
                     logout();
                     navigate('/login', { replace: true });
                   }}
                 >
-                  <LogOut size={16} className="shrink-0" />
-                  <span className="text-[13px]">退出登录</span>
+                  <AccountMenuRowBody icon={LogOut} label="退出登录" />
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
@@ -2172,7 +2085,10 @@ export default function AppShell() {
                   ? 'p-0'
                   : isHomePage
                     ? 'p-0'
-                    : 'px-4 py-3'
+                    // 四边同宽：原来是 px-4 py-3（左右 16、上下 12），用户 2026-09-15
+                    // 反馈「左窄上宽」。这层是页面外的唯一一层间距（面板外观早已去掉，
+                    // 页面直接坐在应用背景上），所以它不该有方向差——同一个 16。
+                    : 'p-4'
             )}
             style={useCanvasPanel ? { overscrollBehavior: 'contain' } : undefined}
           >

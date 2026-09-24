@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
+import { ChevronsUpDown } from 'lucide-react';
 import { glassPanel } from '@/lib/glassStyles';
 import { detectTierFromSize, resolveAspectRatio } from '@/lib/imageAspectOptions';
 import type { SizesByResolution } from '@/lib/imageAspectOptions';
@@ -83,18 +84,19 @@ export function ImageSizePicker({ sizesByResolution, value, onChange, disabled }
         <button
           type="button"
           disabled={disabled}
-          className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity"
+          className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1.5 h-6 text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity"
+          // 实心面板底 + 正文色，不用「淡彩底 + 彩色描边」：后者是暗色界面的发光手法，
+          // 放到白天纸面上像反色（2026-09-24）。它常浮在配图上，实心底保证可读。
           style={{
-            background: 'var(--selection-bg)',
-            border: '1px solid var(--selection-border)',
-            color: 'var(--selection-text)',
+            background: 'var(--panel-solid)',
+            color: 'var(--text-primary)',
             opacity: disabled ? 0.5 : 1,
           }}
           title="选择尺寸"
           onClick={(e) => e.stopPropagation()}
         >
           <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {currentAspect}</span>
-          <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+          <ChevronsUpDown size={11} style={{ opacity: 0.55, flexShrink: 0 }} aria-hidden />
         </button>
       </Popover.Trigger>
       <Popover.Portal>

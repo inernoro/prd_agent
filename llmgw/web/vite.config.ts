@@ -9,9 +9,17 @@ import path from 'path';
 // 不能默认 5000——那是主 API（prd-api），不提供 /gw/auth/login、/gw/logs 等 console 端点（Codex P2）。
 // 本地直接 dotnet run llmgw/console-api（监听 8090）时，用 LLMGW_PROXY_TARGET=http://localhost:8090 覆盖。
 export default defineConfig({
-  // 正式控制台挂载在 /llmgw/。固定公开 base，确保 CSS 内嵌的字体 URL 也落到
+  // 正式控制台挂载在 /llmgw/。默认固定公开 base，确保 CSS 内嵌的字体 URL 也落到
   // /llmgw/assets，而不是误请求 MAP 主站的 /assets 并得到 404。
-  base: '/llmgw/',
+  // CDS 预览把控制台放在独立子域的根路径（<slug>-llmgw.<root>/），Vite 开发服务器
+  // 只认 base 之下的路径：MAP 单点登录跳到根路径的 /auth/map 会被直接拒掉
+  // （「did you mean to visit /llmgw/auth/map」）。
+  // 判定顺序：显式 LLMGW_WEB_BASE > 在 CDS 里跑（平台对每个容器强制注入 VITE_GIT_BRANCH，
+  // 且 CDS 恒把本控制台发布在独立子域根路径）则 "/" > 其余（CI 镜像构建、本地）保持 /llmgw/。
+  // 不只靠 compose 里的 LLMGW_WEB_BASE：repo 的 cds-compose.yml 只是结构种子，
+  // 环境变量要经 CDS 导入审批才生效，靠它会让修复推上去却不起作用。
+  // 前端路由由 runtimeBase.ts 按实际路径推断，两种挂载都成立。
+  base: process.env.LLMGW_WEB_BASE || (process.env.VITE_GIT_BRANCH ? '/' : '/llmgw/'),
   plugins: [react()],
   resolve: {
     alias: {

@@ -37,6 +37,9 @@ describe('托管预览接线', () => {
     const source = read('components/web-hosting/SitePreviewModal.tsx');
     expect(source).toContain('useSitePreviewHtml');
     expect(source).toMatch(/srcDoc=\{/);
+    expect(source).toContain('bg-token-card text-token-primary');
+    expect(source).not.toContain("bg-[#0f1014]");
+    expect(source).not.toContain('bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary');
   });
 
   it('网页托管列表把 site 传给缩略图（不传就取不到正文，静默退回直链）', () => {
@@ -85,5 +88,45 @@ describe('分享下拉接线', () => {
   it('下拉要拿到锚点才能就地展开：分享回调必须带上被点的那枚按钮', () => {
     const source = read('components/web-hosting/SiteCard.tsx');
     expect(source).toMatch(/onShare:\s*\(anchor: HTMLElement\)/);
+  });
+});
+
+describe('网页微调与版本入口接线', () => {
+  it('原操作菜单直达生成工作台，版本记录不再作为列表或卡片常驻动作', () => {
+    const source = read('pages/WebPagesPage.tsx');
+    expect(source).toContain('onAiEdit={() => openSiteEditor(site)}');
+    expect(source).toContain("setWorkbenchTarget({ kind: 'site', site });");
+    expect(source).not.toContain('onVersionHistory');
+    const card = read('components/web-hosting/SiteCard.tsx');
+    expect(card).toContain("label: '帮我修改'");
+    expect(card).toContain('onClick: args.onAiEdit');
+    expect(card).not.toContain('data-site-version-actions');
+    expect(source).toContain('onEditInWorkbench={() => openSiteEditor(commentSite)}');
+  });
+
+  it('预览页的「帮我修改」打开生成工作台，修改不再挤进预览侧栏', () => {
+    const source = read('components/web-hosting/SitePreviewModal.tsx');
+    expect(source).toContain('onClick={onEditInWorkbench}');
+    expect(source).not.toContain('SiteEditPanel');
+    expect(source).not.toContain("setRightPanel('edit')");
+  });
+
+  /**
+   * 判据建好了没人用，删掉一个测试都不会红——正是本文件存在的理由。
+   * entryForKey 是「正文只认当前这个键」的唯一判据；hook 不走它就等于没修：
+   * 发布换掉 siteUrl 之后又会按上一条的正文闩成 srcDoc，新键走不了 srcDoc 时白屏。
+   */
+  it('预览正文的取用走 entryForKey，不直接交出 state 里的上一条', () => {
+    const source = read('components/web-hosting/useSitePreviewHtml.ts');
+    expect(source).toContain('entryForKey(entry, key)');
+    expect(source).not.toMatch(/return\s*\{\s*srcDoc:\s*entry\.srcDoc/);
+  });
+
+  it('工作台里的版本记录就是修改对话：每一轮都能看、已发布的旧版能换回', () => {
+    const source = read('components/web-hosting/workbench/SiteEditStage.tsx');
+    expect(source).toContain('void openRevision(revision.id)');
+    expect(source).toContain('void rollback(revision.id, createRevisionMutationIdempotencyKey())');
+    // 换回必须先确认：客户打开同一个链接会立即看到旧版。
+    expect(source).toContain('setConfirmRollbackId(revision.id)');
   });
 });
