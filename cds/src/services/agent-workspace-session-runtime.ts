@@ -60,13 +60,28 @@ const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-pr
  */
 const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
 
+/**
+ * 字符集之外还要逐段排除 `.` 与 `..`：正则允许点号，`../app/page.html` 能过它，
+ * 于是模型或 daemon 指名的交付文件可以把工作区之外的 HTML 抄进发布的 index.html（Codex P2）。
+ * 容器里的搬运脚本再按真实路径核一次、且不跟随符号链接，两道都过才搬。
+ */
+export function isWorkspaceDeliverableEntry(entryFile: string): boolean {
+  return DELIVERABLE_ENTRY_PATH.test(entryFile)
+    && entryFile.split('/').every((segment) => segment !== '.' && segment !== '..');
+}
+
 /** 把 OpenDesign 指名的交付文件搬到 `index.html`，后续收件与质量闸一律不变。 */
 const promoteDeliverableEntryScript = (entryFile: string): string => [
   'import fs from "node:fs";',
+  'import path from "node:path";',
   `const entry = ${JSON.stringify(entryFile)};`,
-  'const from = "/workspace/" + entry;',
+  'const root = fs.realpathSync("/workspace");',
+  'const from = path.join(root, entry);',
   'if (!fs.existsSync(from)) throw new Error("deliverable entry missing: " + entry);',
-  'const html = fs.readFileSync(from, "utf8");',
+  'if (fs.lstatSync(from).isSymbolicLink()) throw new Error("deliverable entry is a symlink: " + entry);',
+  'const real = fs.realpathSync(from);',
+  'if (!real.startsWith(root + "/")) throw new Error("deliverable entry resolves outside the workspace: " + entry);',
+  'const html = fs.readFileSync(real, "utf8");',
   'if (!/<html[\\s>]/i.test(html)) throw new Error("deliverable entry is not an HTML document: " + entry);',
   'fs.writeFileSync("/workspace/index.html", html);',
   'console.log("deliverable-entry:" + entry + " bytes:" + html.length);',
@@ -3394,7 +3409,7 @@ export class AgentWorkspaceSessionRuntime {
       onStage('deliverable_entry_resolved', { entryFile: entryFile || null, promoted: false });
       return;
     }
-    if (!DELIVERABLE_ENTRY_PATH.test(entryFile)) {
+    if (!isWorkspaceDeliverableEntry(entryFile)) {
       throw new AgentWorkspaceRuntimeError(
         'open_design_deliverable_entry_invalid',
         'OpenDesign named a deliverable entry file that is not a workspace-relative .html path',

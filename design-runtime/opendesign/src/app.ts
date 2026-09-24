@@ -1,6 +1,7 @@
 // 组装：配置 → 引擎进程 → 生命周期（隔离方案 A）→ 执行器 → 任务槽 → HTTP。
 // 入口 index.ts 与协议层测试走同一个组装函数，测试只替换引擎进程与 fetch，不另拼一套接线。
 import type http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 import type { ServiceConfig } from './config.js';
 import { OpenDesignDaemon, type EngineDaemon } from './engine/daemon.js';
@@ -55,6 +56,8 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     pollIntervalMs: overrides.pollIntervalMs,
     engineUid: config.engineUid,
     engineGid: config.engineGid,
+    // 服务自己的代码目录（镜像里是 /opt/map-design-runtime/dist）、工作目录与只读资源都不许落进任务目录。
+    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.designSystemsDir],
   });
   const executor = new DesignTaskExecutor({
     paths: {

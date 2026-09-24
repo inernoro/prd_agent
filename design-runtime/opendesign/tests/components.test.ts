@@ -349,3 +349,31 @@ describe('wiring guards', () => {
     expect(config.odCommand.slice(1)).toEqual(['apps/daemon/dist/cli.js', '--no-open']);
   });
 });
+
+describe('task directory guard before recursive wipes', () => {
+  it('refuses roots, broad system dirs, overlapping dirs and dirs containing protected paths', async () => {
+    const { assertWipeableDirectories } = await import('../src/engine/lifecycle.js');
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dr-wipe-'));
+    const ok = {
+      workspaceDir: path.join(base, 'workspace'),
+      dataDir: path.join(base, 'od'),
+      templatesDir: path.join(base, 'templates'),
+      outputDir: path.join(base, 'output'),
+    };
+    expect(() => assertWipeableDirectories(ok, [path.join(base, 'code')])).not.toThrow();
+    // 配置写错一个字：根、宽泛系统目录、相对路径
+    expect(() => assertWipeableDirectories({ ...ok, workspaceDir: '/' })).toThrow(/根或宽泛/);
+    expect(() => assertWipeableDirectories({ ...ok, dataDir: '/app' })).toThrow(/根或宽泛/);
+    expect(() => assertWipeableDirectories({ ...ok, outputDir: 'relative/out' })).toThrow(/绝对路径/);
+    // 两个目录相同或互相包含：清一个会连带另一个
+    expect(() => assertWipeableDirectories({ ...ok, outputDir: ok.workspaceDir })).toThrow(/互相包含/);
+    expect(() => assertWipeableDirectories({ ...ok, outputDir: path.join(ok.workspaceDir, 'out') })).toThrow(/互相包含/);
+    // 包含服务自己的代码或只读资源
+    expect(() => assertWipeableDirectories({ ...ok, templatesDir: path.join(base, 'shared') }, [path.join(base, 'shared', 'code')])).toThrow(/服务自己要读/);
+    // 指向根的符号链接同样拒绝（按真实路径判）
+    const link = path.join(base, 'link-to-root');
+    fs.symlinkSync('/', link);
+    expect(() => assertWipeableDirectories({ ...ok, workspaceDir: link })).toThrow(/根或宽泛/);
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+});

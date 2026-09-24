@@ -31,6 +31,65 @@ export interface EngineLifecycleOptions {
   engineGid?: number;
   /** 重新拉起后等待健康的上限（秒）。 */
   startTimeoutSeconds?: number;
+  /** 任务目录不许包含的路径（服务代码、只读设计系统等）；缺省只保护当前工作目录。 */
+  protectedPaths?: string[];
+}
+
+/**
+ * 这些目录本身绝不许被当成「任务目录」递归清空：服务以 root 运行，配置写错一个字就会删掉
+ * 整个容器或挂进来的数据（Codex P2，2026-09-24）。只拦「就是这个目录」，它们的子目录可以用。
+ */
+const BROAD_DIRECTORIES = new Set([
+  '/', '/app', '/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib64', '/media', '/mnt',
+  '/opt', '/proc', '/root', '/run', '/sbin', '/srv', '/sys', '/tmp', '/usr', '/var', '/var/lib',
+]);
+
+function realOrResolved(directory: string): string {
+  const resolved = path.resolve(directory);
+  try { return fs.realpathSync(resolved); } catch { return resolved; }
+}
+
+function isSameOrInside(child: string, parent: string): boolean {
+  if (child === parent) return true;
+  const relative = path.relative(parent, child);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+/**
+ * 在任何递归清空发生之前核对任务目录：必须是绝对路径、不是根或宽泛的系统目录、四个目录互不相同
+ * 也互不包含、不包含服务自己的代码与只读资源。任一不满足就拒绝启动并说清是哪一个——
+ * 宁可起不来，也不先删了再发现配错了。
+ */
+export function assertWipeableDirectories(directories: EngineDirectories, protectedPaths: string[] = [process.cwd()]): void {
+  const entries = Object.entries(directories) as Array<[keyof EngineDirectories, string]>;
+  const resolved: Array<[string, string]> = [];
+  for (const [name, raw] of entries) {
+    if (!raw || !path.isAbsolute(raw)) {
+      throw new Error(`任务目录 ${name} 必须是绝对路径，当前是「${raw}」`);
+    }
+    const real = realOrResolved(raw);
+    if (BROAD_DIRECTORIES.has(path.resolve(raw)) || BROAD_DIRECTORIES.has(real)) {
+      throw new Error(`任务目录 ${name}=「${raw}」指向根或宽泛的系统目录，每轮任务后会被清空，已拒绝启动`);
+    }
+    resolved.push([name, real]);
+  }
+  for (let i = 0; i < resolved.length; i++) {
+    for (let j = i + 1; j < resolved.length; j++) {
+      const [a, aPath] = resolved[i];
+      const [b, bPath] = resolved[j];
+      if (isSameOrInside(aPath, bPath) || isSameOrInside(bPath, aPath)) {
+        throw new Error(`任务目录 ${a} 与 ${b} 相同或互相包含（${aPath} / ${bPath}），清空一个会连带另一个，已拒绝启动`);
+      }
+    }
+  }
+  for (const guarded of protectedPaths.filter(Boolean)) {
+    const guardedReal = realOrResolved(guarded);
+    for (const [name, dirPath] of resolved) {
+      if (isSameOrInside(guardedReal, dirPath)) {
+        throw new Error(`任务目录 ${name}=「${dirPath}」包含服务自己要读的「${guardedReal}」，清空会删掉它，已拒绝启动`);
+      }
+    }
+  }
 }
 
 /** 清空一个目录里的全部内容，目录本身保留。 */
@@ -46,6 +105,7 @@ export class EngineLifecycle {
   private unexpectedExits: DaemonExit[] = [];
 
   constructor(private readonly options: EngineLifecycleOptions) {
+    assertWipeableDirectories(options.directories, options.protectedPaths);
     this.fetchImpl = options.fetchImpl || fetch;
     options.daemon.onUnexpectedExit((exit) => {
       this.unexpectedExits = [...this.unexpectedExits, exit].slice(-20);
