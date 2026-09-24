@@ -64,3 +64,14 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
     });
 }
 
+/**
+ * 用户显式选择优先；无偏好时使用网关目录标记的默认模型。
+ * 目录排序只影响展示，不能偷换默认语义。
+ */
+export function selectLiteraryModelOption(
+  options: LiteraryModelOption[],
+  selectedId?: string | null,
+): LiteraryModelOption | null {
+  const selected = selectedId ? options.find((model) => model.id === selectedId) : null;
+  return selected ?? options.find((model) => model.isDefault) ?? options[0] ?? null;
+}

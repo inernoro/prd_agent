@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption } from './literaryModelOptions';
 
 function pool(overrides: Partial<LiteraryAgentModelPool> = {}): LiteraryAgentModelPool {
   return {
@@ -52,5 +52,22 @@ describe('buildLiteraryModelOptions', () => {
     const duplicate = pool({ id: 'duplicate', code: 'gemini-image-alias' });
     expect(buildLiteraryModelOptions([pool(), duplicate])).toHaveLength(1);
   });
-});
 
+  it('无用户偏好时使用显式默认，而不是目录第一项', () => {
+    const options = buildLiteraryModelOptions([
+      pool({ id: 'sunburst', code: 'gpt-image-2.5-sunburst', isDefault: false, models: [{ modelId: 'gpt-image-2.5-sunburst', actualModelId: 'gpt-image-2.5-sunburst', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),
+      pool({ id: 'image2', code: 'gpt-image-2', isDefault: true, models: [{ modelId: 'gpt-image-2', actualModelId: 'gpt-image-2-all', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),
+    ]);
+
+    expect(selectLiteraryModelOption(options, '')?.modelName).toBe('gpt-image-2');
+  });
+
+  it('用户显式偏好不被系统默认覆盖', () => {
+    const options = buildLiteraryModelOptions([
+      pool({ id: 'sunburst', code: 'gpt-image-2.5-sunburst', isDefault: false, models: [{ modelId: 'gpt-image-2.5-sunburst', actualModelId: 'gpt-image-2.5-sunburst', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),
+      pool({ id: 'image2', code: 'gpt-image-2', isDefault: true, models: [{ modelId: 'gpt-image-2', actualModelId: 'gpt-image-2-all', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),
+    ]);
+
+    expect(selectLiteraryModelOption(options, 'pool_sunburst')?.modelName).toBe('gpt-image-2.5-sunburst');
+  });
+});

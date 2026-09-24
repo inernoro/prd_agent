@@ -55,7 +55,7 @@ import {
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions, type LiteraryModelOption } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
@@ -426,6 +426,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
   const autoSubmitEnabledRef = useRef(true);
   useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const [autoSubmitSuppressed, setAutoSubmitSuppressed] = useState(true);
+  const autoSubmitSuppressedRef = useRef(true);
   const [submissionState, setSubmissionState] = useState<{ submitted: boolean; submissionId?: string }>({ submitted: false });
   const submissionStateRef = useRef(submissionState);
   useEffect(() => { submissionStateRef.current = submissionState; }, [submissionState]);
@@ -454,8 +456,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 自动投稿：任意图片生成成功后触发（通过 ref 读取最新值，避免闭包陈旧）
   const tryAutoSubmit = useCallback(() => {
-    if (!autoSubmitEnabledRef.current || submissionStateRef.current.submitted) return;
-    createSubmission({ contentType: 'literary', workspaceId })
+    if (autoSubmitSuppressedRef.current || !autoSubmitEnabledRef.current || submissionStateRef.current.submitted) return;
+    createSubmission({ contentType: 'literary', trigger: 'auto', workspaceId })
       .then((res) => {
         if (res.success) {
           setSubmissionState({ submitted: true, submissionId: res.data.submission?.id });
@@ -483,7 +485,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return;
       }
 
-      const litRes = await createSubmission({ contentType: 'literary', workspaceId });
+      const litRes = await createSubmission({ contentType: 'literary', trigger: 'manual', workspaceId });
       if (litRes.success) {
         setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
         toast.success('已投稿到作品广场');
@@ -584,10 +586,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, []);
 
-  // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
+  // 有效选中模型（用户偏好优先，其次是网关显式默认；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
-    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
-    const fromPool = byId ?? enabledImageModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledImageModels, imageModelPrefId);
     if (fromPool) return fromPool;
     // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
     if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
@@ -595,8 +596,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
 
   const effectiveChatModel = useMemo<PoolModel | null>(() => {
-    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
-    const fromPool = byId ?? enabledChatModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledChatModels, chatModelPrefId);
     if (fromPool) return fromPool;
     if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
@@ -1044,6 +1044,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
+        const suppressAutoSubmit = ws.suppressAutoSubmit === true;
+        autoSubmitSuppressedRef.current = suppressAutoSubmit;
+        setAutoSubmitSuppressed(suppressAutoSubmit);
+        setAutoSubmitEnabled(!suppressAutoSubmit);
         const content = ws.articleContent || '';
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
@@ -2752,17 +2756,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               )}
               <button
                 type="button"
-                onClick={() => setAutoSubmitEnabled((v) => !v)}
+                onClick={() => {
+                  if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
+                }}
+                disabled={autoSubmitSuppressed}
                 className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
                 style={{
-                  color: submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.6)' : 'var(--text-muted)',
-                  background: submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
-                  border: submissionState.submitted ? '1px solid rgba(16, 185, 129, 0.2)' : autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
+                  color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.6)' : 'var(--text-muted)',
+                  background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
+                  border: autoSubmitSuppressed ? '1px solid transparent' : submissionState.submitted ? '1px solid rgba(16, 185, 129, 0.2)' : autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
+                  cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
                 }}
-                title={submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
+                title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
               >
                 <Send size={13} />
-                <span>{submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
+                <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
               </button>
               {!submissionState.submitted && (
                 <button

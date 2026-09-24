@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
@@ -508,6 +509,14 @@ public class DataTransferController : ControllerBase
         {
             case "workspace":
             {
+                var source = await _db.ImageMasterWorkspaces
+                    .Find(x => x.Id == item.SourceId)
+                    .FirstOrDefaultAsync(ct)
+                    ?? throw new InvalidOperationException($"Workspace not found: {item.SourceId}");
+                await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+                    _db,
+                    source,
+                    CancellationToken.None);
                 var result = await _cloneService.CloneAsync(item.SourceId, newOwnerId, ct);
                 item.ClonedId = result.NewWorkspaceId;
                 break;
@@ -543,6 +552,14 @@ public class DataTransferController : ControllerBase
             {
                 var source = await _db.ReferenceImageConfigs.Find(r => r.Id == item.SourceId).FirstOrDefaultAsync(ct)
                              ?? throw new InvalidOperationException($"Ref image config not found: {item.SourceId}");
+                await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                    _db,
+                    $"generated-image:{source.ImageSha256}",
+                    ct);
+                source = await _db.ReferenceImageConfigs
+                    .Find(r => r.Id == item.SourceId && r.ImageSha256 == source.ImageSha256)
+                    .FirstOrDefaultAsync(CancellationToken.None)
+                    ?? throw new InvalidOperationException($"Ref image config changed during transfer: {item.SourceId}");
                 var senderUser = await _db.Users.Find(u => u.UserId == source.CreatedByAdminId).FirstOrDefaultAsync(ct);
                 var now = DateTime.UtcNow;
                 var forked = new ReferenceImageConfig
@@ -564,7 +581,7 @@ public class DataTransferController : ControllerBase
                     CreatedAt = now,
                     UpdatedAt = now,
                 };
-                await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: ct);
+                await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: CancellationToken.None);
                 item.ClonedId = forked.Id;
                 break;
             }

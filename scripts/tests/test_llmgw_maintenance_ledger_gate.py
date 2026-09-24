@@ -12,6 +12,7 @@ from types import SimpleNamespace
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 MODULE_PATH = SCRIPTS_DIR / "llmgw-rollout-ledger.py"
 EXEC_DEP_PATH = SCRIPTS_DIR.parent / "exec_dep.sh"
+PROD_STAGE_WORKFLOW_PATH = SCRIPTS_DIR.parent / ".github" / "workflows" / "llmgw-prod-stage.yml"
 SPEC = importlib.util.spec_from_file_location("llmgw_rollout_ledger", MODULE_PATH)
 assert SPEC and SPEC.loader
 LEDGER = importlib.util.module_from_spec(SPEC)
@@ -202,6 +203,87 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
             baseline = json.loads((directory / "baseline.json").read_text(encoding="utf-8"))
             self.assertEqual("pass", baseline["verdict"])
 
+    def test_maintenance_baseline_audit_accepts_inherited_scoped_shadow_skip(self) -> None:
+        inherited_commit = "b" * 40
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 0,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            stage_path = directory / "stage.json"
+            stage_path.write_text(json.dumps({
+                "verdict": "pass",
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "mode": "http",
+                "disableMapConfigFallbackForActiveAppCallers": True,
+                "failures": [],
+                "shadowEvidenceCommit": COMMIT,
+            }), encoding="utf-8")
+            gate_path = self.write_gate(directory, payload)
+            ledger_path = directory / "ledger.jsonl"
+            ledger_path.write_text(json.dumps({
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "recordedAt": "2026-07-13T00:00:00Z",
+                "evidenceJson": str(stage_path),
+                "releaseGateJson": gate_path,
+                "maintenanceBaselineCommit": inherited_commit,
+            }) + "\n", encoding="utf-8")
+            result = LEDGER.maintenance_baseline(SimpleNamespace(
+                commit=COMMIT,
+                ledger=str(ledger_path),
+                json_out=str(directory / "baseline.json"),
+            ))
+            self.assertEqual(0, result)
+            baseline = json.loads((directory / "baseline.json").read_text(encoding="utf-8"))
+            self.assertEqual("pass", baseline["verdict"])
+
+    def test_maintenance_baseline_audit_rejects_shadow_skip_without_lineage(self) -> None:
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 0,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            stage_path = directory / "stage.json"
+            stage_path.write_text(json.dumps({
+                "verdict": "pass",
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "mode": "http",
+                "disableMapConfigFallbackForActiveAppCallers": True,
+                "failures": [],
+                "shadowEvidenceCommit": COMMIT,
+            }), encoding="utf-8")
+            gate_path = self.write_gate(directory, payload)
+            ledger_path = directory / "ledger.jsonl"
+            ledger_path.write_text(json.dumps({
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "recordedAt": "2026-07-13T00:00:00Z",
+                "evidenceJson": str(stage_path),
+                "releaseGateJson": gate_path,
+            }) + "\n", encoding="utf-8")
+            result = LEDGER.maintenance_baseline(SimpleNamespace(
+                commit=COMMIT,
+                ledger=str(ledger_path),
+                json_out=str(directory / "baseline.json"),
+            ))
+            self.assertEqual(1, result)
+
+
     def test_maintenance_release_inherits_provider_audit_but_video_asr_canary_does_not(self) -> None:
         source = EXEC_DEP_PATH.read_text(encoding="utf-8")
         self.assertIn(
@@ -262,6 +344,17 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                     keywords,
                     f"{function_name} 未传递维护发布 shadow skip 契约",
                 )
+
+    def test_maintenance_workflow_selects_only_a_source_with_the_requested_baseline(self) -> None:
+        source = PROD_STAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+        restore_step = source.split("- name: Restore trusted production maintenance evidence", 1)[1].split(
+            "- name: Run production stage", 1
+        )[0]
+        self.assertIn('if [ -s "$ledger" ] && python3 scripts/llmgw-rollout-ledger.py maintenance-baseline', restore_step)
+        self.assertGreaterEqual(restore_step.count("--commit \"${{ github.event.inputs.maintenance_from_commit }}\""), 3)
+        self.assertIn("python3 scripts/llmgw-prod-evidence-restore.py", restore_step)
+        self.assertNotIn('if [ ! -s "$ledger" ]', restore_step)
+        self.assertIn("Maintenance baseline verified from the requested GitHub Actions artifact.", restore_step)
 
 
 if __name__ == "__main__":

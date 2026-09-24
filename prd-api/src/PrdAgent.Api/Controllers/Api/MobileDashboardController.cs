@@ -41,6 +41,18 @@ public class MobileDashboardController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    internal sealed record WorkspaceFeedTarget(string Type, string Subtitle, string NavigateTo);
+
+    /// <summary>
+    /// 视觉创作与文学创作共用 image_master_workspaces 集合，首页动态必须按场景区分入口。
+    /// 否则 MCP 创建的文学工作区会被硬编码成视觉创作，点击后进入错误编辑器。
+    /// 未知场景沿用视觉创作，保持既有工作区的兼容行为。
+    /// </summary>
+    internal static WorkspaceFeedTarget ResolveWorkspaceFeedTarget(string workspaceId, string? scenarioType)
+        => string.Equals(scenarioType, "article-illustration", StringComparison.Ordinal)
+            ? new("literary-workspace", "文学创作", $"/literary-agent/{workspaceId}")
+            : new("visual-workspace", "视觉创作", $"/visual-agent/{workspaceId}");
+
     // ─────────────────────────────────────────
     //  GET /api/mobile/feed — 最近活动 Feed 流
     // ─────────────────────────────────────────
@@ -66,7 +78,7 @@ public class MobileDashboardController : ControllerBase
         // 哪些来源没取到——空列表到底是"真的没有"还是"查挂了"，只有这里知道
         var degradedSources = new List<string>();
 
-        // 1) 视觉创作工作区
+        // 1) 视觉 / 文学工作区（两者共用 image_master_workspaces，按 ScenarioType 分流）
         try
         {
             var workspaces = await _db.ImageMasterWorkspaces
@@ -77,14 +89,15 @@ public class MobileDashboardController : ControllerBase
 
             foreach (var w in workspaces)
             {
+                var target = ResolveWorkspaceFeedTarget(w.Id, w.ScenarioType);
                 feedItems.Add(new
                 {
                     id = w.Id,
-                    type = "visual-workspace",
+                    type = target.Type,
                     title = w.Title ?? "未命名工作区",
-                    subtitle = "视觉创作",
+                    subtitle = target.Subtitle,
                     updatedAt = w.UpdatedAt,
-                    navigateTo = $"/visual-agent/{w.Id}",
+                    navigateTo = target.NavigateTo,
                     coverAssetId = w.CoverAssetIds?.FirstOrDefault(),
                 });
             }

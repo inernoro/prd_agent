@@ -126,6 +126,7 @@ public class WorkspaceCloneService
             ArticleContentWithMarkers = source.ArticleContentWithMarkers,
             FolderName = source.FolderName,
             StylePrompt = source.StylePrompt,
+            SuppressAutoSubmit = source.SuppressAutoSubmit,
             CreatedAt = now,
             UpdatedAt = now,
         };

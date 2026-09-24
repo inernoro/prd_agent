@@ -895,7 +895,7 @@ export default function AgentLauncherPage() {
                   />
                   {pulse.feed.length === 0 && !feedNotice ? (
                     <p className="home-desk-empty">
-                      {pulse.loading ? '正在读取你的动态…' : '生成配图或提交缺陷之后，动态会出现在这里。'}
+                      {pulse.loading ? '正在读取你的动态…' : '生成配图、创作文章或提交缺陷之后，动态会出现在这里。'}
                     </p>
                   ) : pulse.feed.length === 0 ? (
                     // 取不到 ≠ 没有。对老用户说"你还没用过"比直接认错更伤，
