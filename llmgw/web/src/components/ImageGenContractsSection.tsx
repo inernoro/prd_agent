@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { createImageGenConfig, deleteImageGenConfig, getImageGenConfigs, updateImageGenConfig } from '@/lib/api';
 import type { ImageGenConfigItem, ImageGenConfigsData, UpsertImageGenConfigRequest } from '@/lib/types';
-import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
+import { Button, Chip, HelpTip, InlineAlert, SectionLoader } from '@/components/ui';
 import { RowActions } from '@/components/RowActions';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -232,20 +232,27 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <header style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h3 className="lg-title" style={{ margin: 0 }}>生图契约</h3>
-          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>
-            新生图模型的尺寸档位与参数格式配在这里就生效，不用改代码也不用发版。
-            这里配的赢；没配的回落到代码内置的 {data.builtinCount} 条。
-          </p>
-          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>{syncNote(data)}</p>
+          <HelpTip label="查看生图契约说明">
+            <p style={{ margin: 0 }}>
+              这里配置生图模型的尺寸档位和参数格式。配置优先生效，未配置的模型回落到代码内置的 {data.builtinCount} 条。
+            </p>
+            <p style={{ margin: '8px 0 0' }}>{syncNote(data)}</p>
+            {data.builtinPublishedAt ? <p style={{ margin: '8px 0 0' }}>内置清单发布于 {data.builtinPublishedAt}</p> : null}
+          </HelpTip>
         </div>
-        {canWrite ? (
-          <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: itemToDraft(null) })}>
-            新增契约
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <Button variant="secondary" size="sm" onClick={() => setShowBuiltin((value) => !value)}>
+            {showBuiltin ? '收起内置契约' : `查看内置契约（${data.builtinCount}）`}
           </Button>
-        ) : null}
+          {canWrite ? (
+            <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: itemToDraft(null) })}>
+              新增契约
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       {error ? (
@@ -257,13 +264,56 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
         </InlineAlert>
       ) : null}
 
-      {data.items.length === 0 ? (
-        <p style={{ ...HINT_TEXT, margin: 0 }}>
-          还没有配过契约，生图全部走代码内置那 {data.builtinCount} 条。
-          上游出了内置表里没有的新模型时，在这里加一条。
-        </p>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={TABLE_HEAD_CELL}>匹配模式</th>
+              <th style={TABLE_HEAD_CELL}>模型</th>
+              <th style={TABLE_HEAD_CELL}>尺寸</th>
+              <th style={TABLE_HEAD_CELL}>参数格式</th>
+              <th style={TABLE_HEAD_CELL}>顺序</th>
+              <th style={TABLE_HEAD_CELL} />
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ ...TABLE_CELL, color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>
+                  暂无生图契约
+                </td>
+              </tr>
+            ) : data.items.map((item) => (
+              <tr key={item.id}>
+                <td style={TABLE_CELL}>
+                  <code>{item.modelIdPattern}</code>
+                  {!item.enabled ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
+                </td>
+                <td style={TABLE_CELL}>
+                  {item.displayName || '（未命名）'}
+                  {item.provider ? <span style={HINT_TEXT}> · {item.provider}</span> : null}
+                </td>
+                <td style={TABLE_CELL}>{summarizeSizes(item)}</td>
+                <td style={TABLE_CELL}><code>{item.sizeParamFormat}</code></td>
+                <td style={TABLE_CELL}>{item.matchOrder}</td>
+                <td style={TABLE_CELL}>
+                  {canWrite ? (
+                    <RowActions
+                      actions={[
+                        { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id, draft: itemToDraft(item) }) },
+                        { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
+                      ]}
+                    />
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {showBuiltin ? (
+        <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
@@ -276,27 +326,25 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
-                <tr key={item.id}>
-                  <td style={TABLE_CELL}>
-                    <code>{item.modelIdPattern}</code>
-                    {!item.enabled ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
-                  </td>
-                  <td style={TABLE_CELL}>
-                    {item.displayName || '（未命名）'}
-                    {item.provider ? <span style={HINT_TEXT}> · {item.provider}</span> : null}
-                  </td>
+              {data.builtin.map((item) => (
+                <tr key={item.modelIdPattern}>
+                  <td style={TABLE_CELL}><code>{item.modelIdPattern}</code></td>
+                  <td style={TABLE_CELL}>{item.displayName}</td>
                   <td style={TABLE_CELL}>{summarizeSizes(item)}</td>
                   <td style={TABLE_CELL}><code>{item.sizeParamFormat}</code></td>
                   <td style={TABLE_CELL}>{item.matchOrder}</td>
                   <td style={TABLE_CELL}>
                     {canWrite ? (
-                      <RowActions
-                        actions={[
-                          { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id, draft: itemToDraft(item) }) },
-                          { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
-                        ]}
-                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditing({
+                          id: null,
+                          draft: { ...itemToDraft(item), modelIdPattern: item.modelIdPattern, matchOrder: 50 },
+                        })}
+                      >
+                        新建这条
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -304,51 +352,7 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
             </tbody>
           </table>
         </div>
-      )}
-
-      {/* 内置那份：只读，但可以「照这条建一份」——比从零填二十个字段现实得多。
-          它由 prd-api 启动时发布进库，不是前端或控制台手抄的。 */}
-      <div>
-        <Button variant="ghost" size="sm" onClick={() => setShowBuiltin((v) => !v)}>
-          {showBuiltin ? '收起内置契约' : `看代码内置的 ${data.builtinCount} 条`}
-        </Button>
-        {data.builtinPublishedAt ? (
-          <span style={{ ...HINT_TEXT, marginLeft: 8 }}>由服务端发布于 {data.builtinPublishedAt}</span>
-        ) : (
-          <span style={{ ...HINT_TEXT, marginLeft: 8 }}>
-            服务端还没发布过内置清单——prd-api 起来之后这里才有内容
-          </span>
-        )}
-        {showBuiltin ? (
-          <div style={{ overflowX: 'auto', marginTop: 8 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <tbody>
-                {data.builtin.map((item) => (
-                  <tr key={item.modelIdPattern}>
-                    <td style={TABLE_CELL}><code>{item.modelIdPattern}</code></td>
-                    <td style={TABLE_CELL}>{item.displayName}</td>
-                    <td style={TABLE_CELL}>{summarizeSizes(item)}</td>
-                    <td style={TABLE_CELL}>
-                      {canWrite ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing({
-                            id: null,
-                            draft: { ...itemToDraft(item), modelIdPattern: item.modelIdPattern, matchOrder: 50 },
-                          })}
-                        >
-                          照这条建一份
-                        </Button>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {editing ? (
         <div style={{ border: '1px solid var(--border-subtle)', borderRadius: 8, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>

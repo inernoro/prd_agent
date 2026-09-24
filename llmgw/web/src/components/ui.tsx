@@ -1,7 +1,78 @@
 // 轻量自包含 UI 原语（不复用 prd-admin 的 design/*，本 mini-app 独立组件风格）。
 
-import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react';
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
+
+export function HelpTip({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          width: 22,
+          height: 22,
+          padding: 0,
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 999,
+          background: 'transparent',
+          color: 'var(--text-muted)',
+          fontSize: 'var(--fs-secondary)',
+          fontWeight: 700,
+          lineHeight: 1,
+          cursor: 'pointer',
+        }}
+      >
+        ?
+      </button>
+      {open ? (
+        <div
+          role="note"
+          style={{
+            position: 'absolute',
+            zIndex: 20,
+            top: 28,
+            left: 0,
+            width: 'min(420px, calc(100vw - 64px))',
+            maxHeight: 260,
+            overflowY: 'auto',
+            padding: '10px 12px',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg-surface)',
+            boxShadow: 'var(--shadow-card)',
+            color: 'var(--text-secondary)',
+            fontSize: 'var(--fs-body)',
+            lineHeight: 'var(--lh-body)',
+          }}
+        >
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function Chip({ label, color, bg, title }: { label: string; color: string; bg: string; title?: string }) {
   return (
