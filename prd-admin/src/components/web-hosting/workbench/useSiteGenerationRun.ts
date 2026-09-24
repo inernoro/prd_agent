@@ -57,6 +57,26 @@ function readActiveRun(): string | null {
   try { return sessionStorage.getItem(ACTIVE_GENERATION_RUN_KEY); } catch { return null; }
 }
 
+/**
+ * 创建请求还在路上时工作台被关掉（或被重开），旧实例拿到的 runId 没人接：
+ * 新实例的 reset() 早已读过存储、发现是空的，于是它停在空表单，而服务端那条任务
+ * 在看不见的地方跑完——用户还可能再发一次，同时跑两条（Codex P2）。
+ * 所以旧实例拿到结果后不再自己往下走，而是把 runId 交出去：写进存储（下次打开能接回），
+ * 并通知此刻挂着的空闲实例立即接管。
+ */
+type OrphanedRunListener = (runId: string) => void;
+const orphanedRunListeners = new Set<OrphanedRunListener>();
+
+export function subscribeOrphanedGenerationRun(listener: OrphanedRunListener): () => void {
+  orphanedRunListeners.add(listener);
+  return () => { orphanedRunListeners.delete(listener); };
+}
+
+export function handOffOrphanedGenerationRun(runId: string): void {
+  rememberActiveRun(runId);
+  orphanedRunListeners.forEach((listener) => listener(runId));
+}
+
 /** 刷新后能不能接回一个进行中的任务：工作台打开时据此决定落在哪一屏。 */
 export function hasRecoverableGenerationRun(): boolean {
   return readActiveRun() !== null;
@@ -116,6 +136,8 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
   const lastPaintAtRef = useRef(0);
   const previewRevisionRef = useRef(-1);
   const abortRef = useRef<AbortController | null>(null);
+  // 同步可读的「这个实例手上有没有任务」：接管别人交出的 runId 前要判，state 来不及。
+  const busyRef = useRef(false);
   const onCreatedRef = useRef(onCreated);
   const hasInitialSourceRef = useRef(hasInitialSource);
   // 目标空间在「打开工作台」那一刻取一次就够——它随请求冻结到服务端，
@@ -161,11 +183,13 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setGenerating(false);
     setActiveRunId(null);
     setStopRequested(false);
+    busyRef.current = false;
     forgetActiveRun();
     onCreatedRef.current(siteId);
   }, [applyPreviewHtml]);
 
   const failGeneration = useCallback((message: string) => {
+    busyRef.current = false;
     setGenerating(false);
     setActiveRunId(null);
     setStopRequested(false);
@@ -195,6 +219,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
           setStopRequested(false);
           setPhase(message);
           setNotice({ tone: 'info', text: message });
+          busyRef.current = false;
           forgetActiveRun();
           return;
         }
@@ -236,6 +261,16 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     }
   }, [failGeneration, finishGeneration]);
 
+  const resumeRun = useCallback((runId: string) => {
+    const recovery = new AbortController();
+    abortRef.current = recovery;
+    busyRef.current = true;
+    setGenerating(true);
+    setActiveRunId(runId);
+    setPhase('正在恢复上次未完成的网页生成任务');
+    void recoverActiveRun(runId, recovery.signal);
+  }, [recoverActiveRun]);
+
   /** 打开工作台时调用：清掉上一轮的一切，冻结目标空间，并接回刷新前没跑完的任务。 */
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -264,15 +299,17 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     streamRef.current = '';
     previewRevisionRef.current = -1;
 
+    busyRef.current = false;
+
     const runId = readActiveRun();
-    if (!runId) return;
-    const recovery = new AbortController();
-    abortRef.current = recovery;
-    setGenerating(true);
-    setActiveRunId(runId);
-    setPhase('正在恢复上次未完成的网页生成任务');
-    void recoverActiveRun(runId, recovery.signal);
-  }, [recoverActiveRun]);
+    if (runId) resumeRun(runId);
+  }, [resumeRun]);
+
+  // 别的实例交出来的任务：自己空着就接过来，忙着就只留在存储里，下次打开再接。
+  useEffect(() => subscribeOrphanedGenerationRun((runId) => {
+    if (busyRef.current) return;
+    resumeRun(runId);
+  }), [resumeRun]);
 
   // 完成事件只带站点编号时（精细设计的完成事件就是这样），查一次站点把网址补上。
   useEffect(() => {
@@ -305,6 +342,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     const abort = new AbortController();
     abortRef.current?.abort();
     abortRef.current = abort;
+    busyRef.current = true;
     setGenerating(true);
     // 与修改面板同一处判据：徽章必须在进入 generating 的同一拍清掉。排在创建请求之后，
     // 创建期间顶上挂的是上一轮的模型；创建失败时它更会被留在一次根本没发生的调用上。
@@ -349,6 +387,11 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
       designSystemId: request.designSystemId ?? null,
       attachmentIds: request.attachmentIds,
     });
+    // 创建期间工作台被关掉或重开：这个实例已经不是用户眼前那一个，交出去，别再往下走。
+    if (abort.signal.aborted) {
+      if (created.success) handOffOrphanedGenerationRun(created.data.runId);
+      return;
+    }
     if (!created.success) {
       setActiveRunRuntime(null);
       failGeneration(created.error?.message || '网页生成任务创建失败');
