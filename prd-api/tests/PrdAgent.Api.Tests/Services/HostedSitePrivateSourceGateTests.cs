@@ -362,6 +362,37 @@ public sealed class HostedSitePrivateSourceGateTests
     }
 
     [Fact]
+    public async Task Share_WhenSomeTargetSiteIsNoLongerAccessible_ShouldFailClosed()
+    {
+        // 部分目标站点读不到（被删 / 权限收回）时不许按部分结果放行（Codex P1）：
+        // 放宽链接的下游只认创建者，不会再拒这些站点，它们引用的私有资料就从来没被确认过。
+        var store = new FakeStore();
+        store.AddRevision(Baseline("baseline-site-01", [], "site-01"));
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetByIdAsync("site-01", Owner, CancellationToken.None))
+            .ReturnsAsync(new HostedSite { Id = "site-01", OwnerUserId = Owner, ContentVersion = Version, Visibility = "private" });
+        sites.Setup(service => service.GetByIdAsync("site-02", Owner, CancellationToken.None))
+            .ReturnsAsync((HostedSite?)null);
+        sites.Setup(service => service.CanCreateShareAsync(It.IsAny<IReadOnlyCollection<string>>(), Owner, CancellationToken.None))
+            .ReturnsAsync(true);
+        var controller = BuildWebPagesController(sites.Object, new HostedSitePrivateSourceGate(store));
+
+        var refused = await controller.CreateShare(new CreateWebPageShareRequest
+        {
+            ShareType = "collection",
+            SiteIds = ["site-01", "site-02"],
+            Visibility = "public",
+        });
+
+        var forbidden = Assert.IsType<ObjectResult>(refused);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+        var body = JsonSerializer.Serialize(forbidden.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Contains(ErrorCodes.PERMISSION_DENIED, body);
+        Assert.DoesNotContain("site-02", body);
+        // Strict mock：CreateShareAsync 没有 Setup，被调用就会抛。
+    }
+
+    [Fact]
     public async Task ShareOrPublic_WhenActiveRevisionIsStuckInPublishing_ShouldStillInspectIt()
     {
         // 发布恢复态绕过（Codex P1）：站点指针与内容已切到 edit-1，只是最后一步写版本账本失败，

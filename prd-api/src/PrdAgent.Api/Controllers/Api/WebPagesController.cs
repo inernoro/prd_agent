@@ -1516,8 +1516,18 @@ public class WebPagesController : ControllerBase
         string? confirmedFingerprint)
     {
         if (_privateSources == null || siteIds.Count == 0) return null;
-        var sites = await LoadAccessibleSitesAsync(siteIds);
-        if (sites.Count == 0) return null;
+        var targets = NormalizeSiteIds(siteIds);
+        if (targets.Count == 0) return null;
+        var sites = await LoadAccessibleSitesAsync(targets);
+        if (sites.Count < targets.Count)
+        {
+            // 有目标站点当前账号已经读不到（被删除，或权限被收回）：它们引用了什么无从核查。
+            // 放宽链接的下游只认「链接创建者」、不会再拒这些站点，按部分结果放行就等于这几个站点
+            // 不经确认就对外了（Codex P1）。失败闭合；文案不点名具体站点与资料。
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                ErrorCodes.PERMISSION_DENIED,
+                "这次分享包含你已经无法访问的网页（可能已被删除或权限被收回），无法确认其中是否引用私有资料。请先把这些网页移出分享，或请有权限的人操作"));
+        }
         var decision = await _privateSources.EnforceForSitesAsync(
             sites, action, GetUserId(), confirmedFingerprint, CancellationToken.None);
         return decision.Allowed
