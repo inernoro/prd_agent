@@ -550,7 +550,10 @@ public sealed class MongoHostedSitePrivateSourceStore : IHostedSitePrivateSource
     private static readonly ProjectionDefinition<HostedSiteRevision> HeaderProjection =
         Builders<HostedSiteRevision>.Projection
             .Exclude(revision => revision.Html)
-            .Exclude(revision => revision.VerifiedFiles);
+            .Exclude(revision => revision.VerifiedFiles)
+            // 确认历史只写不读（追加走 $push），且每条都复制一份来源元数据；沿血缘最多 64 次读取时
+            // 把它也带出来，成熟站点一次核查就要搬几 MB（PR #1612 Codex 评审）。
+            .Exclude(revision => revision.PrivateSourceConfirmations);
 
     private readonly MongoDbContext _db;
 
