@@ -16,8 +16,10 @@ interface WorkflowProgressBarProps {
 
 /**
  * 工作流步骤条。三态各有独立的形状，不只靠颜色区分（浅色主题下同色调淡底浅字读不出来）：
- * - 已完成：绿色实心圆 + 对勾，正文色标签
- * - 当前：主色描边胶囊 + 主色实心编号，加粗
+ * - 已完成：品牌色实心圆 + 对勾，正文色标签
+ * - 当前：品牌色描边胶囊 + 品牌色描边圆圈编号，加粗
+ * （已完成不再用「成功绿」：浅色档品牌色改成苔绿后，两种绿会在同一条上打架。
+ *   改走 Apple 步骤指示的写法——完成 = 实心，当前 = 描边，未开始 = 灰。）
  * - 未开始：灰色编号，弱化标签
  * 颜色全部走主题 token，暗 / 浅双皮肤都成立。
  */
@@ -55,13 +57,11 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
                   width: 18,
                   height: 18,
                   fontWeight: 600,
-                  // 当前步骤的实心编号走主按钮那对 token（对比度已被守卫钉住），不拿 accent 当底配浅字
-                  background: isCompleted
-                    ? 'var(--accent-fg-success)'
-                    : isActive
-                      ? 'var(--button-primary-bg)'
-                      : 'var(--bg-input-hover)',
-                  color: isCompleted ? 'var(--bg-base)' : isActive ? 'var(--button-primary-fg)' : 'var(--text-secondary)',
+                  // 已完成的实心圆走主按钮那对 token（对比度已被守卫钉住），不拿 accent 当底配浅字；
+                  // 当前步骤是描边圆圈 + 品牌色数字（accent 只当前景色用）
+                  background: isCompleted ? 'var(--button-primary-bg)' : isActive ? 'transparent' : 'var(--bg-input-hover)',
+                  boxShadow: isActive ? 'inset 0 0 0 1.5px var(--accent-primary)' : undefined,
+                  color: isCompleted ? 'var(--button-primary-fg)' : isActive ? 'var(--accent-primary)' : 'var(--text-secondary)',
                 }}
               >
                 {isCompleted ? <Check size={11} strokeWidth={3} /> : index + 1}
@@ -74,7 +74,7 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
                 className="flex-1 h-px transition-colors duration-300"
                 style={{
                   minWidth: 12,
-                  background: isCompleted ? 'var(--accent-fg-success)' : 'var(--border-default)',
+                  background: isCompleted ? 'var(--accent-primary)' : 'var(--border-default)',
                 }}
               />
             )}

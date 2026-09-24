@@ -815,7 +815,7 @@
   --avatar-bg-warm: #EADFD6;
   --avatar-bg-cool: #DCE2EA;
   --thumb-gradient: linear-gradient(160deg, #FFFFFF, #F1EDE6);
-  --ring-focus: 0 0 0 3px rgba(166, 75, 53, 0.12);
+  --ring-focus: 0 0 0 3px rgba(63, 93, 69, 0.12);
   --shadow-input-inset: inset 0 1px 2px rgba(26, 26, 31, 0.05);
   /* 浅色档改用纸面阴影替代描边（设计稿 1·B 的原话） */
   --shadow-site-card: 0 2px 6px rgba(26, 26, 31, 0.07);
@@ -848,7 +848,7 @@
   --shadow-nav: inset 0 1px 0 rgba(252, 250, 247, 0.86), 0 8px 22px -16px rgba(89, 65, 50, 0.20);
   --shadow-glass-panel: 0 12px 30px -20px rgba(89, 65, 50, 0.28);
   --shadow-glass-bar: 0 8px 22px -18px rgba(89, 65, 50, 0.20);
-  --shadow-glass-bar-gold: 0 8px 22px -18px rgba(166, 75, 53, 0.20);
+  --shadow-glass-bar-gold: 0 8px 22px -18px rgba(63, 93, 69, 0.20);
   --shadow-glass-sidebar: 0 10px 28px -22px rgba(89, 65, 50, 0.24);
   --shadow-glass-tooltip: 0 8px 20px -12px rgba(89, 65, 50, 0.24);
   --shadow-glass-toolbar: 0 8px 22px -16px rgba(89, 65, 50, 0.22);
@@ -874,7 +874,7 @@
   --border-subtle: rgba(26, 26, 31, 0.12);
   --border-default: rgba(26, 26, 31, 0.18);
   --border-hover: rgba(26, 26, 31, 0.28);
-  --border-focus: rgba(166, 75, 53, 0.48);
+  --border-focus: rgba(63, 93, 69, 0.48);
 
   /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
   /*
@@ -997,13 +997,13 @@
   --workflow-accent-text-lightness: 30%;
 
   /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
-  --accent-primary: #A64B35;
-  --accent-primary-rgb: 166, 75, 53;
-  --accent-primary-solid: #A64B35;   /* 浅色档本身已够深，白字 5.71:1 */
-  --accent-gold: #A64B35;
+  --accent-primary: #3F5D45;
+  --accent-primary-rgb: 63, 93, 69;
+  --accent-primary-solid: #3F5D45;   /* 浅色档本身已够深，白字 7.33:1 */
+  --accent-gold: #3F5D45;
   --accent-on-gold: #FBF8F2;   /* 浅色档按暖纸美学不用纯白（themeSystem 契约会拦纯白字面量）：暖白压深赭 gold 仍有 5.38:1 */
   --fg-on-bright-fill: #0a0a0c;   /* 底两档同色，故前景也两档同值（见 :root 处注释） */
-  --accent-gold-2: #C36F52;
+  --accent-gold-2: #6A8A6E;
 
   /* 首页背景浅色档（暗色档与说明见 :root 同名处）。
      渐晕在浅色下反过来做：边缘压黑会把奶白纸面弄脏，改成中心一圈更亮的暖白，
@@ -1026,27 +1026,29 @@
   /* 浅色档的玻璃底色 = --bg-elevated #E4DED5 / --bg-card #F8F5EF 带同一个 0.618。 */
   --glass-surface: rgba(228, 222, 213, 0.618);
   --glass-surface-sub: rgba(248, 245, 239, 0.618);
-  --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
-  --selection-bg: rgba(166, 75, 53, 0.10);
-  --selection-icon-bg: rgba(166, 75, 53, 0.14);
-  --selection-border: rgba(166, 75, 53, 0.34);
-  --selection-text: #8F3F2B;
+  --gold-gradient: linear-gradient(135deg, #B7C9B0 0%, #3F5D45 52%, #6E8C6F 100%);
+  --selection-bg: rgba(63, 93, 69, 0.10);
+  --selection-icon-bg: rgba(63, 93, 69, 0.14);
+  --selection-border: rgba(63, 93, 69, 0.34);
+  --selection-text: #2F4834;
   /* 划词浮层浅色档：暖纸面 + 深赭描边。半透明深底叠在纸面上就是「白底浮暗卡」。 */
   --selection-overlay-bg: rgba(252, 250, 247, 0.95);
-  --selection-overlay-border: rgba(166, 75, 53, 0.22);
-  --selection-highlight-bg: rgba(166, 75, 53, 0.18);
-  --selection-highlight-underline: rgba(166, 75, 53, 0.72);
+  --selection-overlay-border: rgba(63, 93, 69, 0.22);
+  --selection-highlight-bg: rgba(63, 93, 69, 0.18);
+  --selection-highlight-underline: rgba(63, 93, 69, 0.72);
   --selection-checkbox-bg: var(--bg-card);
 
-  /* 白天的主按钮是「深陶土实底 + 白字」（2026-09-24 用户：原来的「亮陶土底 + 深墨字」
+  /* 白天的主按钮是「深色实底 + 白字」（2026-09-24 用户：原来的「亮陶土底 + 深墨字」
      在纸面上像刚从夜间模式穿越过来——亮彩底配黑字是暗色界面的写法）。
-     #A64B35 就是浅色档的 --accent-primary，白字 5.71:1；hover 往暗走（白字对比只升不降）。
+     同日用户选定浅色档品牌色改为暖调苔绿 #3F5D45（色相 132°、低饱和，贴合暖纸底），
+     与 --accent-primary 同值，白字 7.33:1；hover 往暗走（白字对比只升不降）。
+     深色档仍是陶土色，未动。
      首页渐变 CTA 另走 --hero-gradient-fg（那条渐变偏亮，白字只有 2.2~3.6:1）。 */
-  --button-primary-bg: #A64B35;
-  --button-primary-bg-hover: #93402C;
+  --button-primary-bg: #3F5D45;
+  --button-primary-bg-hover: #33503A;
   --button-primary-fg: #FFFFFF;
   --hero-gradient-fg: #241915;
-  --button-primary-shadow: 0 1px 2px rgba(89, 45, 32, 0.18), 0 2px 8px rgba(166, 75, 53, 0.16);
+  --button-primary-shadow: 0 1px 2px rgba(34, 48, 38, 0.18), 0 2px 8px rgba(63, 93, 69, 0.16);
   --button-secondary-bg: var(--bg-card);
   --button-secondary-bg-hover: var(--bg-card-hover);
   --button-secondary-border: var(--hairline);
@@ -1055,7 +1057,7 @@
   --button-danger-border: rgba(220, 38, 38, 0.30);
   --button-danger-fg: #b91c1c;
   --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
-  --section-label-text: #8F3F2B;
+  --section-label-text: #2F4834;
 
   /* 弹窗「控制台」形态的浅色档。面板走纸面卡，分隔线与动作条底走墨色低透明度。
      --dialog-danger-fg 不在这里重写：填色红上的白字两个主题共用。 */
@@ -1127,12 +1129,12 @@
   --media-card-tag-border: rgba(15, 23, 42, 0.11);
   --media-card-tag-text: rgba(15, 23, 42, 0.76);
   --media-card-border: rgba(15, 23, 42, 0.13);
-  --media-card-border-hover: rgba(166, 75, 53, 0.46);
+  --media-card-border-hover: rgba(63, 93, 69, 0.46);
   --media-card-edge: rgba(15, 23, 42, 0.10);
   --media-card-overlay: linear-gradient(90deg, rgba(224, 216, 205, 0.34) 0%, rgba(224, 216, 205, 0.06) 38%, transparent 74%), linear-gradient(180deg, transparent 0%, transparent 64%, rgba(218, 209, 197, 0.20) 82%, rgba(231, 224, 214, 0.38) 100%);
   --media-card-overlay-compact: linear-gradient(90deg, rgba(224, 216, 205, 0.38) 0%, rgba(224, 216, 205, 0.05) 40%, transparent 76%), linear-gradient(180deg, transparent 0%, transparent 60%, rgba(218, 209, 197, 0.22) 80%, rgba(231, 224, 214, 0.42) 100%);
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(116, 101, 82, 0.12);
-  --media-card-task: #8F3F2B;
+  --media-card-task: #2F4834;
   --media-card-task-muted: rgba(15, 23, 42, 0.58);
   --text-on-media: #172033;
   --text-on-media-muted: rgba(15, 23, 42, 0.68);
@@ -1142,8 +1144,8 @@
   --home-panel-bg: #FDFBF7;
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
-  --launcher-theme-icon: #A64B35;
-  --launcher-theme-icon-bg: rgba(166, 75, 53, 0.12);
+  --launcher-theme-icon: #3F5D45;
+  --launcher-theme-icon-bg: rgba(63, 93, 69, 0.12);
   --home-ambient-background:
     radial-gradient(54% 92% at 7% -8%, rgba(200, 98, 58, 0.20) 0%, transparent 70%),
     radial-gradient(48% 82% at 92% 0%, rgba(176, 124, 62, 0.16) 0%, transparent 72%),
@@ -1223,10 +1225,10 @@
   --mobile-sheet-close-bg: var(--bg-card-hover);
   --mobile-sheet-close-border: 1px solid var(--border-subtle);
   --mobile-sheet-close-icon: var(--text-secondary);
-  --mobile-fab-from: #B8684C;
-  --mobile-fab-to: #A64B35;
+  --mobile-fab-from: #587A5E;
+  --mobile-fab-to: #3F5D45;
   --mobile-fab-text: #FCFAF7;
-  --mobile-fab-shadow: rgba(166, 75, 53, 0.30);
+  --mobile-fab-shadow: rgba(63, 93, 69, 0.30);
 
   /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。 */
   --hairline:             rgba(15, 23, 42, 0.08);
