@@ -308,6 +308,115 @@ public sealed class HostedSitePrivateSourceGateTests
         }
     }
 
+    [Fact]
+    public async Task CollectionShare_WhenPrivateSourceOnlyOnSite51OrLater_ShouldStillRefuse()
+    {
+        // 大合集绕过（Codex P1）：分享服务会把 siteIds 里的每一个站点都发布出去，闸不许只看前 50 个。
+        var store = new FakeStore();
+        store.AddStore("store-private", "财务内部库", isPublic: false);
+        store.AddEntry("entry-private", "store-private", "季度经营数据");
+        var siteIds = Enumerable.Range(1, 60).Select(i => $"site-{i:D2}").ToList();
+        foreach (var id in siteIds)
+            store.AddRevision(Baseline($"baseline-{id}", id == "site-56" ? ["entry-private"] : [], id));
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetByIdAsync(It.IsAny<string>(), Owner, CancellationToken.None))
+            .ReturnsAsync((string id, string _, CancellationToken _) => new HostedSite
+            {
+                Id = id,
+                OwnerUserId = Owner,
+                ContentVersion = Version,
+                Visibility = "private",
+            });
+        var controller = BuildWebPagesController(sites.Object, new HostedSitePrivateSourceGate(store));
+
+        var refused = await controller.CreateShare(new CreateWebPageShareRequest
+        {
+            ShareType = "collection",
+            SiteIds = siteIds,
+            Visibility = "logged-in",
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(refused);
+        var payload = JsonSerializer.SerializeToElement(conflict.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(
+            ErrorCodes.HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_REQUIRED,
+            payload.GetProperty("error").GetProperty("code").GetString());
+        Assert.Contains("季度经营数据", payload.GetProperty("error").GetProperty("message").GetString());
+        // Strict mock：CreateShareAsync 没有 Setup，被调用就会抛——拒绝时绝不能生成链接。
+        sites.Verify(service => service.CreateShareAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<string>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<List<string>?>()), Times.Never);
+
+        // 预检也必须覆盖全部站点：它给的指纹要和强制那道闸按全部站点算出来的一致，否则作者确认了也过不去。
+        var inspected = await controller.InspectPrivateSourcesByBody(new InspectPrivateSourcesRequest { SiteIds = siteIds });
+        var ok = Assert.IsType<OkObjectResult>(inspected);
+        var report = JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            .GetProperty("data");
+        Assert.True(report.GetProperty("requiresConfirmation").GetBoolean());
+        Assert.Equal("entry-private", Assert.Single(report.GetProperty("items").EnumerateArray().ToList())
+            .GetProperty("entryId").GetString());
+        Assert.Equal(HostedSitePrivateSourceRules.ComputeFingerprint(["entry-private"]), report.GetProperty("fingerprint").GetString());
+    }
+
+    [Fact]
+    public async Task ShareOrPublic_WhenActiveRevisionIsStuckInPublishing_ShouldStillInspectIt()
+    {
+        // 发布恢复态绕过（Codex P1）：站点指针与内容已切到 edit-1，只是最后一步写版本账本失败，
+        // edit-1 停在 publishing、PublishedContentVersion 为空。线上跑的就是它的内容，必须纳入核查。
+        var store = ScenarioWithPrivateBaseline();
+        store.AddStore("store-team", "团队库", isPublic: false, sharedTeamIds: ["team-1"]);
+        store.AddEntry("entry-team", "store-team", "团队周报");
+        store.AddRevision(new HostedSiteRevision
+        {
+            Id = "edit-1",
+            SiteId = store.Site.Id,
+            Status = HostedSiteRevisionStatuses.Publishing,
+            Source = HostedSiteRevisionSources.AiEdit,
+            ParentRevisionId = "baseline-1",
+            KnowledgeEntryIds = ["entry-team"],
+            BasedOnContentVersion = Version,
+            PublishedContentVersion = null,
+        });
+        store.Site.PublishedRevisionId = "edit-1";
+        store.Site.ContentVersion = Version.AddMinutes(5);
+        var gate = new HostedSitePrivateSourceGate(store);
+
+        foreach (var action in new[] { HostedSitePrivateSourceActions.ShareCreate, HostedSitePrivateSourceActions.SitePublic })
+        {
+            var decision = await gate.EnforceForSitesAsync([store.Site], action, Owner, null, CancellationToken.None);
+
+            Assert.Equal(HostedSitePrivateSourceVerdict.ConfirmationRequired, decision.Verdict);
+            Assert.Equal(["entry-team", "entry-private"], decision.Report.Items.Select(item => item.EntryId).ToArray());
+            Assert.Equal("edit-1", decision.Report.AnchorRevisionIds[store.Site.Id]);
+        }
+        Assert.Empty(store.Appended);
+    }
+
+    [Fact]
+    public async Task ShareOrPublic_WhenActivePointerHasNoRevision_ShouldAskInsteadOfPassingAsUnsourced()
+    {
+        // 站点有活动指针却找不到那条版本：无法证明它没引用私有资料，按「无法确认」列给作者，不静默放行。
+        var store = ScenarioWithPrivateBaseline();
+        store.Site.Title = "经营看板";
+        store.Site.PublishedRevisionId = "edit-gone";
+        store.Site.ContentVersion = Version.AddMinutes(5);
+        var gate = new HostedSitePrivateSourceGate(store);
+
+        var refused = await gate.EnforceForSitesAsync(
+            [store.Site], HostedSitePrivateSourceActions.SitePublic, Owner, null, CancellationToken.None);
+
+        Assert.Equal(HostedSitePrivateSourceVerdict.ConfirmationRequired, refused.Verdict);
+        var item = Assert.Single(refused.Report.Items);
+        Assert.Equal(HostedSitePrivateSourceScopes.Unavailable, item.Scope);
+        Assert.StartsWith(HostedSitePrivateSourceGate.UnresolvedRevisionEntryPrefix, item.EntryId);
+        Assert.Contains("经营看板", item.Title);
+
+        var allowed = await gate.EnforceForSitesAsync(
+            [store.Site], HostedSitePrivateSourceActions.SitePublic, Owner, refused.Report.Fingerprint, CancellationToken.None);
+        Assert.True(allowed.Allowed);
+    }
+
     // ── 夹具 ──
 
     private static FakeStore ScenarioWithPrivateBaseline()
@@ -319,10 +428,10 @@ public sealed class HostedSitePrivateSourceGateTests
         return store;
     }
 
-    private static HostedSiteRevision Baseline(string id, List<string> knowledge) => new()
+    private static HostedSiteRevision Baseline(string id, List<string> knowledge, string siteId = "site-a") => new()
     {
         Id = id,
-        SiteId = "site-a",
+        SiteId = siteId,
         Status = HostedSiteRevisionStatuses.Published,
         Source = HostedSiteRevisionSources.Baseline,
         KnowledgeEntryIds = knowledge,
@@ -349,6 +458,26 @@ public sealed class HostedSitePrivateSourceGateTests
             new ConfigurationBuilder().Build(),
             generationSettings: null,
             privateSources: gate);
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", Owner) }, "test")),
+            },
+        };
+        return controller;
+    }
+
+    private static WebPagesController BuildWebPagesController(IHostedSiteService sites, IHostedSitePrivateSourceGate gate)
+    {
+        var controller = new WebPagesController(
+            sites,
+            Mock.Of<IHostedSiteOptimizationService>(),
+            Mock.Of<IUploadProgressService>(),
+            new MongoDbContext("mongodb://127.0.0.1:27017", $"private_source_gate_unit_{Guid.NewGuid():N}"),
+            Mock.Of<ITeamService>(),
+            Mock.Of<IHttpClientFactory>(),
+            gate);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

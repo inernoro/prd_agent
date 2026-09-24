@@ -186,7 +186,10 @@ public static class HostedSitePrivateSourceRules
 /// <summary>核查与记录所需的数据读写，抽出来是为了让判定逻辑能脱离 Mongo 直接测。</summary>
 public interface IHostedSitePrivateSourceStore
 {
-    /// <summary>站点当前线上内容对应的已发布版本（不含 HTML 与文件字节）。</summary>
+    /// <summary>
+    /// 站点没有活动发布指针时，按内容版本找对应的已发布版本（基线快照走这条；不含 HTML 与文件字节）。
+    /// 有活动指针时一律按指针取，见 <see cref="HostedSitePrivateSourceGate"/> 的 ResolveCurrentRevisionAsync。
+    /// </summary>
     Task<HostedSiteRevision?> FindCurrentRevisionAsync(string siteId, DateTime contentVersion, CancellationToken ct);
 
     /// <summary>站点下的某条版本（不含 HTML 与文件字节）。</summary>
@@ -240,8 +243,11 @@ public interface IHostedSitePrivateSourceGate
 /// （<see cref="HostedSitePrivateSourceRules.PreviousContentRevisionId"/>）向上合并：一次不带新资料的
 /// 「帮我修改」产出的草稿，内容里仍然是首次生成时那几份资料，只看草稿自己的引用会漏掉它们。
 ///
+/// 「当前线上版本」按站点的活动发布指针解析（含停在 publishing 的恢复态），指针悬空按「无法确认」列出，
+/// 见 ResolveCurrentRevisionAsync。
+///
 /// 已知边界（同步记在 doc/debt.platform.open-design.md）：
-/// - 没有版本账本的旧站点、从未在工作台打开过的上传站点，查不到来源，按现状放行；
+/// - 没有版本账本（也没有活动发布指针）的旧站点、从未在工作台打开过的上传站点，查不到来源，按现状放行；
 /// - 手动重传 / 上传优化改写内容后生成的新基线不继承旧来源，按无来源放行；
 /// - 站点原始对象地址、访问 / 扫码便捷链、导出 HTML 不经过这道闸。
 /// </summary>
@@ -265,15 +271,70 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
     {
         var lineages = new List<(string SiteId, IReadOnlyList<string> EntryIds)>();
         var anchors = new Dictionary<string, string>(StringComparer.Ordinal);
+        var unresolved = new List<HostedSitePrivateSourceItem>();
         foreach (var site in sites.DistinctBy(site => site.Id, StringComparer.Ordinal))
         {
-            var current = await _store.FindCurrentRevisionAsync(site.Id, site.ContentVersion, ct);
+            var (current, missingPointer) = await ResolveCurrentRevisionAsync(site, ct);
+            if (missingPointer != null)
+            {
+                unresolved.Add(UnresolvedActiveRevisionItem(site, missingPointer));
+                continue;
+            }
             if (current == null) continue; // 没有版本账本：旧站点 / 无来源记录，按现状放行（已知边界）
             anchors[site.Id] = current.Id;
             lineages.Add((site.Id, await CollectLineageEntryIdsAsync(site.Id, current, ct)));
         }
-        return await BuildReportAsync(lineages, anchors, ct);
+        return await BuildReportAsync(lineages, anchors, ct, unresolved);
     }
+
+    /// <summary>
+    /// 站点当前线上内容对应的版本。站点的活动发布指针 <see cref="HostedSite.PublishedRevisionId"/> 是地面真值：
+    /// 它与入口对象、ContentVersion 在同一次 CAS 里切换，其他内容写入路径都会清空它
+    /// （见 HostedSiteRevisionService.PublishAsync 与 HostedSite 字段注释）。
+    ///
+    /// 所以有指针就按指针取，**不看版本状态**：发布时站点已切换、只是最后一步写版本账本失败，
+    /// 那条已经生效的版本会停在 publishing（PublishedContentVersion 也还没写），只认 published 的查法
+    /// 会把它当成「没有账本」放行分享 / 设为公开（Codex P1）。指针指向的版本不论停在哪个状态，
+    /// 站点上跑的都是它的内容，都必须纳入核查。
+    ///
+    /// 有指针却找不到那条版本（被删 / 数据损坏）时，返回 missingPointer，不当作「无来源」放行：
+    /// 与「资料已删除按私有对待」同一语义（<see cref="HostedSitePrivateSourceScopes.Unavailable"/>）——
+    /// 无法证明它没引用私有资料，就列出来让作者看到并确认。
+    ///
+    /// 没有指针时（基线快照、旧站点、手动重传后指针被清空）才退回「已发布且内容版本一致」的查法。
+    /// </summary>
+    private async Task<(HostedSiteRevision? Revision, string? MissingPointer)> ResolveCurrentRevisionAsync(
+        HostedSite site,
+        CancellationToken ct)
+    {
+        var pointer = site.PublishedRevisionId?.Trim();
+        if (!string.IsNullOrEmpty(pointer))
+        {
+            var active = await _store.FindRevisionAsync(site.Id, pointer, ct);
+            return active != null ? (active, null) : (null, pointer);
+        }
+        return (await _store.FindCurrentRevisionAsync(site.Id, site.ContentVersion, ct), null);
+    }
+
+    /// <summary>
+    /// 活动版本找不到时列给作者看的一条「无法确认」。EntryId 带站点与指针，指针不变指纹就不变，
+    /// 确认一次即可放行；指针换了（站点重新发布）就需要重新确认。
+    /// 已知边界：这种站点没有可挂的版本记录，确认记录无处落（DecideAndRecordAsync 按锚点写，这里没有锚点）。
+    /// </summary>
+    private static HostedSitePrivateSourceItem UnresolvedActiveRevisionItem(HostedSite site, string pointer)
+    {
+        var siteTitle = string.IsNullOrWhiteSpace(site.Title) ? "本站点" : $"「{site.Title.Trim()}」";
+        return new HostedSitePrivateSourceItem(
+            site.Id,
+            $"{UnresolvedRevisionEntryPrefix}{site.Id}:{pointer}",
+            $"{siteTitle}当前线上版本的来源记录缺失",
+            null,
+            null,
+            HostedSitePrivateSourceScopes.Unavailable);
+    }
+
+    /// <summary>「活动版本找不到」那一条的 EntryId 前缀；它不是知识库条目，只借条目 ID 的位置参与指纹。</summary>
+    public const string UnresolvedRevisionEntryPrefix = "unresolved-revision:";
 
     public async Task<HostedSitePrivateSourceReport> InspectRevisionAsync(
         HostedSite site,
@@ -384,11 +445,16 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
     private async Task<HostedSitePrivateSourceReport> BuildReportAsync(
         IReadOnlyList<(string SiteId, IReadOnlyList<string> EntryIds)> lineages,
         IReadOnlyDictionary<string, string> anchors,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<HostedSitePrivateSourceItem>? unresolved = null)
     {
+        unresolved ??= Array.Empty<HostedSitePrivateSourceItem>();
         var allEntryIds = lineages.SelectMany(item => item.EntryIds).Distinct(StringComparer.Ordinal).ToList();
         if (allEntryIds.Count == 0)
-            return new HostedSitePrivateSourceReport(Array.Empty<HostedSitePrivateSourceItem>(), null, anchors);
+            return new HostedSitePrivateSourceReport(
+                unresolved,
+                HostedSitePrivateSourceRules.ComputeFingerprint(unresolved.Select(item => item.EntryId)),
+                anchors);
 
         var entries = (await _store.FindEntriesAsync(allEntryIds, ct))
             .ToDictionary(entry => entry.Id, StringComparer.Ordinal);
@@ -418,6 +484,7 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
                     HostedSitePrivateSourceRules.ClassifyScope(entry, store)));
             }
         }
+        items.AddRange(unresolved);
         var fingerprint = HostedSitePrivateSourceRules.ComputeFingerprint(items.Select(item => item.EntryId));
         return new HostedSitePrivateSourceReport(items, fingerprint, anchors);
     }

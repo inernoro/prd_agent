@@ -1430,16 +1430,24 @@ public class WebPagesController : ControllerBase
     /// <summary>
     /// 发出前核查：这些站点当前线上内容引用了哪些私有资料（分享、设为公开前由前端先问一次）。
     /// 只核查当前账号能访问的站点，读不到的站点直接忽略，不借这里泄露别人的资料名称。
+    ///
+    /// 必须覆盖全部目标站点、不许截断：强制那道闸按全部站点算指纹，这里少看一个站点，
+    /// 前端拿到的指纹就永远对不上，大合集会被卡在「确认已过期」里出不来。
     /// </summary>
     [HttpGet("private-sources")]
-    public async Task<IActionResult> InspectPrivateSources([FromQuery] List<string>? siteIds)
+    public Task<IActionResult> InspectPrivateSources([FromQuery] List<string>? siteIds)
+        => InspectPrivateSourcesCoreAsync(siteIds);
+
+    /// <summary>
+    /// 同上，站点清单放在请求体里：大合集的几百个站点 ID 拼进查询串会超过请求行长度上限，前端一律走这条。
+    /// </summary>
+    [HttpPost("private-sources")]
+    public Task<IActionResult> InspectPrivateSourcesByBody([FromBody] InspectPrivateSourcesRequest? req)
+        => InspectPrivateSourcesCoreAsync(req?.SiteIds);
+
+    private async Task<IActionResult> InspectPrivateSourcesCoreAsync(List<string>? siteIds)
     {
-        var ids = (siteIds ?? new List<string>())
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Select(id => id.Trim())
-            .Distinct(StringComparer.Ordinal)
-            .Take(50)
-            .ToList();
+        var ids = NormalizeSiteIds(siteIds);
         if (ids.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少指定一个站点"));
         if (_privateSources == null)
@@ -1457,12 +1465,18 @@ public class WebPagesController : ControllerBase
 
     private static List<string> TargetShareSiteIds(string? siteId, List<string>? siteIds)
     {
-        var ids = new List<string>();
-        if (!string.IsNullOrWhiteSpace(siteId)) ids.Add(siteId.Trim());
-        foreach (var id in siteIds ?? new List<string>())
-            if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id.Trim())) ids.Add(id.Trim());
-        return ids;
+        var all = new List<string>();
+        if (!string.IsNullOrWhiteSpace(siteId)) all.Add(siteId);
+        all.AddRange(siteIds ?? new List<string>());
+        return NormalizeSiteIds(all);
     }
+
+    private static List<string> NormalizeSiteIds(IEnumerable<string>? siteIds)
+        => (siteIds ?? Enumerable.Empty<string>())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
     private async Task<List<HostedSite>> LoadAccessibleSitesAsync(IReadOnlyList<string> siteIds)
     {
@@ -1478,6 +1492,9 @@ public class WebPagesController : ControllerBase
     /// <summary>
     /// 分享类动作的私有资料闸。只核查当前账号能访问的站点：读不到的站点由后续分享服务自己拒绝，
     /// 这里不借拒绝文案把别人站点引用的资料名称说出去。返回 null = 放行。
+    ///
+    /// 覆盖全部目标站点，不设上限：CreateShareAsync 会把 siteIds 里的每一个站点都发布出去，
+    /// 这里只要少查一个，私有资料只挂在那一个站点上时就会不经确认生成对外链接（Codex P1）。
     /// </summary>
     private async Task<IActionResult?> EnforcePrivateSourcesForShareAsync(
         IReadOnlyList<string> siteIds,
@@ -1485,7 +1502,7 @@ public class WebPagesController : ControllerBase
         string? confirmedFingerprint)
     {
         if (_privateSources == null || siteIds.Count == 0) return null;
-        var sites = await LoadAccessibleSitesAsync(siteIds.Take(50).ToList());
+        var sites = await LoadAccessibleSitesAsync(siteIds);
         if (sites.Count == 0) return null;
         var decision = await _privateSources.EnforceForSitesAsync(
             sites, action, GetUserId(), confirmedFingerprint, CancellationToken.None);
@@ -2026,6 +2043,12 @@ public class CopySiteToTeamRequest
 
     /// <summary>副本直接归入的分组 ID（可选）</summary>
     public string? GroupId { get; set; }
+}
+
+public class InspectPrivateSourcesRequest
+{
+    /// <summary>要核查的站点；覆盖全部，不截断。</summary>
+    public List<string>? SiteIds { get; set; }
 }
 
 public class CreateWebPageShareRequest
