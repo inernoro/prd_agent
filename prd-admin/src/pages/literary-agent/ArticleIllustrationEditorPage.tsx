@@ -791,13 +791,27 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
   const [watermarkOptions, setWatermarkOptions] = useState<WatermarkConfig[] | null>(null);
   const [watermarkSaving, setWatermarkSaving] = useState(false);
+  // 列表读取失败必须和「真的没有水印」分开：把失败当成空列表，菜单就会给出「不加水印」，
+  // 选了之后找不到当前绑定、不发解绑请求，界面却显示已关闭，而生成的图照旧带水印。
+  const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
   const loadWatermarkOptions = async () => {
+    setWatermarkLoadError(null);
     const res = await getWatermarks();
-    setWatermarkOptions(res.success && Array.isArray(res.data) ? res.data : []);
+    if (res.success && Array.isArray(res.data)) {
+      setWatermarkOptions(res.data);
+      return;
+    }
+    setWatermarkOptions(null);
+    setWatermarkLoadError(res.error?.message || '水印列表读取失败');
   };
   const switchWatermark = async (target: WatermarkConfig | null) => {
     const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
     if ((target?.id ?? null) === (current?.id ?? null)) return;
+    // 要关水印却找不到当前绑定记录：说明列表与实际状态对不上，不能只改界面状态了事
+    if (!target && !current && watermarkStatus.enabled) {
+      toast.error('关闭水印失败', '没有找到当前绑定的水印，请在「管理水印…」里处理');
+      return;
+    }
     setWatermarkSaving(true);
     try {
       const res = target
@@ -3545,7 +3559,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   />
                 }
               >
-                {watermarkOptions === null ? (
+                {watermarkLoadError ? (
+                  <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
+                ) : watermarkOptions === null ? (
                   <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
                 ) : (
                   <>

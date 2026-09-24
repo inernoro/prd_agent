@@ -19,3 +19,4 @@
 | fix | prd-admin | AI 资讯分类色与「精选 / 实时」青色改走 --news-label-* 双主题 token，浅色下压到 700/800 档；首页资讯挂件在恒深底条上固定用亮色档 |
 | fix | llmgw | CDS 预览里从 MAP 头像菜单跳「模型网关」报「did you mean to visit /llmgw/auth/map」：Vite 开发服务器 base 在 CDS 内改为根路径，正式构建仍为 /llmgw/ |
 | fix | prd-admin | 步骤条标签放不下时横向滚动；文学创作风格图切换失败时提示原因（两处入口共用同一函数） |
+| fix | prd-admin | 文学创作水印菜单：列表读取失败时显示原因、不再当成空列表给出「不加水印」；找不到当前绑定时不再谎报已关闭 |
