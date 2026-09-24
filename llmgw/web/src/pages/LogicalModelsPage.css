@@ -34,6 +34,10 @@
 }
 
 @container (max-width: 600px) {
+  .lg-logical-model-grid:not(.lg-logical-model-heading) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .lg-logical-model-route-info {
     flex-basis: 100% !important;
   }
