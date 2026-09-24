@@ -12,7 +12,7 @@ import { renderCondition, type RenderedCondition, type ServiceCondition } from '
 import { sanitizeRuntimeError, type SanitizedRuntimeError } from './diagnostics.js';
 import type { DaemonExit } from './engine/daemon.js';
 import type { EngineLifecycle } from './engine/lifecycle.js';
-import type { StageReporter } from './errors.js';
+import { AgentWorkspaceRuntimeError, type StageReporter } from './errors.js';
 import type { DesignTaskInput, DesignTaskResult } from './executor.js';
 import type { NormalizedTaskRequest } from './protocol.js';
 
@@ -388,7 +388,11 @@ export class TaskManager {
     if (this.slot === 'idle') {
       this.restartingAfterExit = exit;
       void this.resetUntilClean().catch(() => undefined);
+      return;
     }
+    // reset 进行中（或正在退避重试）：记下这次退出让能力接口如实说明；是否要再拉一次，
+    // 由 reset 循环在发布 idle 之前复核引擎是否还活着来决定。
+    if (this.slot === 'resetting' || this.slot === 'blocked') this.restartingAfterExit = exit;
   }
 
   /** reset 直到成功；失败期间槽位是 blocked，按指数退避重试，能力接口据此如实报告。 */
@@ -401,6 +405,17 @@ export class TaskManager {
       for (let attempt = 1; !this.stopped; attempt += 1) {
         try {
           await this.options.lifecycle.reset();
+          // 新拉起的引擎可能在健康检查通过之后、这里发布 idle 之前又退出了：此时退出回调看到的槽位
+          // 还是 resetting，不会触发新的 reset。若照样发布 idle，能力检查会报 engine_unhealthy、拒收
+          // 所有任务，却再也没有东西去拉起它，实例就一直卡着（Codex P2）。所以发布前复核一次，
+          // 引擎不在就按一次失败的 reset 处理，走同一条退避重试。
+          if (!this.options.lifecycle.daemon.current()) {
+            throw new AgentWorkspaceRuntimeError(
+              'open_design_engine_exited',
+              'OpenDesign exited right after the reset health check; restarting it again',
+              true,
+            );
+          }
           this.resetFailure = null;
           this.restartingAfterExit = null;
           this.slot = 'idle';

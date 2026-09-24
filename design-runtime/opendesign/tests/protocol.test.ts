@@ -418,6 +418,29 @@ describe('engine process supervision', () => {
     expect((await harness.request('GET', '/v1/capabilities')).body.healthy).toBe(true);
   });
 
+  it('restarts again when the fresh engine exits right after the reset health check', async () => {
+    harness = await startHarness();
+    const lifecycle = harness.runtime.lifecycle;
+    const originalReset = lifecycle.reset.bind(lifecycle);
+    let exitAfterNextReset = true;
+    lifecycle.reset = async () => {
+      await originalReset();
+      if (exitAfterNextReset) {
+        exitAfterNextReset = false;
+        // 健康检查已通过、槽位还是 resetting 的那一刻引擎自己退出。
+        await harness!.daemon.crash();
+      }
+    };
+    const startsBefore = harness.daemon.starts;
+    await harness.daemon.crash();
+    await waitFor(
+      () => harness!.runtime.tasks.slotState() === 'idle' && harness!.daemon.current() !== null,
+      'engine to be running again once the slot is idle',
+    );
+    expect(harness.daemon.starts).toBe(startsBefore + 2);
+    expect((await harness.request('GET', '/v1/capabilities')).body.healthy).toBe(true);
+  });
+
   it('blocks new tasks while the workspace cannot be emptied, and says so', async () => {
     harness = await startHarness();
     // 把输出目录换成一个文件：清空它会失败，reset 失败即槽位 blocked。
