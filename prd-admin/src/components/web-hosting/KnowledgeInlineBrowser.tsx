@@ -113,6 +113,8 @@ export default function KnowledgeInlineBrowser({
   const [rowsTotal, setRowsTotal] = useState(0);
   const [rowsPage, setRowsPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 追加页失败只挂在「再显示」按钮上：不能把已经取到的稿子整片换成一句错误（Codex P2）。
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const entryGateRef = useRef(createLatestRequestGate());
 
   const selectedKeys = useMemo(
@@ -155,6 +157,7 @@ export default function KnowledgeInlineBrowser({
   const loadEntries = useCallback(async () => {
     setRowsTotal(0);
     setRowsPage(1);
+    setLoadMoreError(null);
     if (activeStoreId === RECENT_KEY) {
       const lowered = keyword.toLowerCase();
       setRows(recentEntries
@@ -191,6 +194,7 @@ export default function KnowledgeInlineBrowser({
     const generation = entryGateRef.current.current();
     const nextPage = rowsPage + 1;
     setLoadingMore(true);
+    setLoadMoreError(null);
     const result = await listKnowledgeEntriesPaged(activeStore.id, {
       page: nextPage,
       pageSize: ENTRY_PAGE_SIZE,
@@ -200,7 +204,7 @@ export default function KnowledgeInlineBrowser({
     // 期间换了库或关键词：这一页属于上一个列表，丢掉。
     if (!entryGateRef.current.isCurrent(generation)) return;
     if (!result.success) {
-      setRowsError(result.error?.message || '更多条目暂时无法读取，请重试');
+      setLoadMoreError(result.error?.message || '后面的稿子暂时没读出来');
       return;
     }
     setRows((current) => {
@@ -378,7 +382,11 @@ export default function KnowledgeInlineBrowser({
               className="mt-1 w-full rounded-[10px] px-2.5 py-2.5 text-[12px] text-token-secondary transition-colors hover-bg-soft disabled:opacity-60"
               style={{ border: '1px dashed var(--border-default)' }}
             >
-              {loadingMore ? '正在读取…' : `再显示 ${Math.min(ENTRY_PAGE_SIZE, rowsTotal - rows.length)} 篇（共 ${rowsTotal} 篇，已显示 ${rows.length} 篇）`}
+              {loadingMore
+                ? '正在读取…'
+                : loadMoreError
+                  ? `${loadMoreError}，点这里重试`
+                  : `再显示 ${Math.min(ENTRY_PAGE_SIZE, rowsTotal - rows.length)} 篇（共 ${rowsTotal} 篇，已显示 ${rows.length} 篇）`}
             </button>
           )}
         </div>

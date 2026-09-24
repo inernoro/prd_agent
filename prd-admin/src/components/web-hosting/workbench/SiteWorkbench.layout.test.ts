@@ -157,5 +157,9 @@ describe('选知识：单个知识库超过一页时能继续往下看', () => {
     expect(loadMore).toContain('entryGateRef.current.current()');
     expect(loadMore).toContain('if (!entryGateRef.current.isCurrent(generation)) return;');
     expect(loadMore).toContain('page: nextPage');
+    // 追加失败不能把已取到的稿子换成错误（Codex P2）：只挂在按钮上，按钮本身就是重试。
+    expect(loadMore).not.toContain('setRowsError(');
+    expect(loadMore).toContain('setLoadMoreError(');
+    expect(browser).toContain('点这里重试');
   });
 });
