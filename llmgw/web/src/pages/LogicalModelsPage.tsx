@@ -490,7 +490,7 @@ export function LogicalModelsPage() {
                         ))}
                     </span>
 
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal }} aria-label="近 30 天用量">
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
                       {stat ? (
                         <>
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />

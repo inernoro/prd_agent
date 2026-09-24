@@ -432,6 +432,15 @@ async function probeLogicalModelScroll(label, viewport, theme) {
       }),
       操作未裁切: modelRows.every((row) => [...row.querySelectorAll('button')].every(withinList)),
       各列未越界: modelRows.every((row) => [...row.children].every(withinList)),
+      用量内容未越界: modelRows.every((row) => {
+        const cell = row.querySelector('[aria-label="近 30 天用量"]');
+        if (!cell) return false;
+        const bounds = cell.getBoundingClientRect();
+        return [...cell.querySelectorAll('span, svg')].every((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+        });
+      }),
     };
 
     const expand = [...list.querySelectorAll('button')].find((button) => button.textContent?.trim() === '展开');
@@ -719,7 +728,7 @@ for (const [label, result] of Object.entries(logicalModelScroll)) {
   if (!result.initial.列表未裁切) failed.push('初始列表内容被自身裁切');
   if (result.initial.列表flexShrink !== '0') failed.push(`列表 flex-shrink=${result.initial.列表flexShrink}`);
   if (!result.initial.名称可读) failed.push('名称列被挤压，模型名不可读');
-  if (!result.initial.操作未裁切 || !result.initial.各列未越界) failed.push('列表列或操作被水平裁切');
+  if (!result.initial.操作未裁切 || !result.initial.各列未越界 || !result.initial.用量内容未越界) failed.push('列表列、用量内容或操作被水平裁切');
   if (!result.expanded.操作未裁切) failed.push('展开态操作被水平裁切');
   if (!result.expanded.高度增长 || !result.expanded.列表未裁切) failed.push('展开后列表没有随内容增高');
   if (!result.提示出现后外层滚动) failed.push('成功提示出现后 PageBody 仍不能滚动');
