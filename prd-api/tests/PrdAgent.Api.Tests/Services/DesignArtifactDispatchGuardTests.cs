@@ -82,6 +82,25 @@ public sealed class DesignArtifactDispatchGuardTests
         Assert.Contains("冻结正文", evidence, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void QualityEvidence_ShouldReadVisibleTextOfHtmlKnowledge()
+    {
+        // 2026-09-24 真人验收：知识是 HTML 日报，「主干落地 <b>31</b> 次真实提交」，
+        // 页面写「31 次真实提交」却被判成来源里没有的数字，整轮生成白做。
+        var run = BuildRun();
+        run.KnowledgeReferences[0].Content = "<p>主干落地 <b>31</b> 次真实提交，9 处修复封堵私有工作区。</p>";
+        var page = "<!doctype html><html><head><title>t</title></head><body><main><h1>本周进展</h1>"
+            + "<p>主干落地 31 次真实提交，9 处修复封堵私有工作区。</p></main></body></html>";
+
+        // companion：只拿原文比对确实会拒收。
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(page, run.KnowledgeReferences[0].Content));
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(page, HostedSiteEditRunWorker.BuildQualityEvidence(run, null));
+
+        // Markdown 知识原样保留，尖括号不被当成标签剥掉。
+        Assert.Equal("阈值 a < b 时切换", HostedSiteEditRunWorker.EvidenceOf("阈值 a < b 时切换"));
+    }
+
     private static DesignArtifactRun BuildRun() => new()
     {
         UserId = "user-a",

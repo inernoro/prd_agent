@@ -444,12 +444,31 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 // Client-authored title/instruction are generation requests, not evidence
                 // that can substantiate measured or sensitive claims.
-                string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{item.Content}")),
+                string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{EvidenceOf(item.Content)}")),
                 // 直接上传的文档同样是用户交来的事实来源，页面引用其中的数字必须能在证据里找到。
                 string.Join("\n", (run.UploadedSources ?? new List<DesignUploadedSource>())
-                    .Select(item => $"{item.FileName}\n{item.Content}")),
+                    .Select(item => $"{item.FileName}\n{EvidenceOf(item.Content)}")),
                 editable == null ? string.Empty : HostedSiteRevisionRules.ExtractVisibleText(editable.Html),
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    /// <summary>
+    /// 知识与上传文件可能本身就是 HTML（日报、导出的网页）：「主干落地 &lt;b&gt;31&lt;/b&gt; 次」里数字和量词
+    /// 被标签隔开，拿原文比对，页面上的「31 次」就成了「来源里没有的数字」而被拒收。
+    /// 原文照留（Markdown 里的尖括号不能被当标签剥掉），再补一份可见文字，两者任一能支撑即可。
+    /// </summary>
+    internal static string EvidenceOf(string? content)
+    {
+        if (string.IsNullOrEmpty(content)) return string.Empty;
+        if (!LooksLikeMarkup(content)) return content;
+        return content + "\n" + HostedSiteRevisionRules.ExtractVisibleText(content);
+    }
+
+    private static bool LooksLikeMarkup(string content) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            content,
+            @"</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?>",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            TimeSpan.FromSeconds(1));
 
     internal static async Task RevalidateKnowledgeForDispatchAsync(
         IDesignKnowledgeSnapshotResolver resolver,

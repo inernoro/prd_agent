@@ -53,7 +53,7 @@ export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
       { value: '1', unit: '次模型调用' },
     ],
     description: '一次写完整页，内容最全、速度最快；版式以卡片和列表为主。',
-    footnote: '快速生成约 1 分钟，边写边在右侧预览。',
+    footnote: '快速生成约 1 分钟，边写边在预览里出现。',
   },
   'open-design': {
     title: '精细设计',

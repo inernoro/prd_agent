@@ -5069,6 +5069,16 @@ function sensitiveFacts(text: string): Set<string> {
   return facts;
 }
 
+/**
+ * 知识本身可能是 HTML（日报、导出的网页）：「主干落地 <b>31</b> 次」里数字和量词被标签隔开，
+ * 拿原文比对时页面上的「31 次」会被判成来源里没有的数字。原文照留（Markdown 的尖括号不能被当标签剥），
+ * 再补一份可见文字。与 MAP 发布闸 HostedSiteEditRunWorker.EvidenceOf 同一口径。
+ */
+export function knowledgeEvidenceOf(content: string): string {
+  if (!/<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?>/.test(content)) return content;
+  return `${content}\n${extractVisibleHtmlText(content)}`;
+}
+
 function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = false): string {
   const evidence: string[] = [];
   const taskPath = path.join(workspaceDir, 'brief', 'task.json');
@@ -5085,7 +5095,7 @@ function collectArtifactQualityEvidence(workspaceDir: string, includeUserSupplie
   const knowledgeDir = path.join(workspaceDir, 'knowledge');
   if (fs.existsSync(knowledgeDir)) {
     for (const entry of fs.readdirSync(knowledgeDir, { withFileTypes: true }).filter((item) => item.isFile())) {
-      evidence.push(fs.readFileSync(path.join(knowledgeDir, entry.name), 'utf8'));
+      evidence.push(knowledgeEvidenceOf(fs.readFileSync(path.join(knowledgeDir, entry.name), 'utf8')));
     }
   }
   const currentPath = path.join(workspaceDir, 'current', 'index.html');

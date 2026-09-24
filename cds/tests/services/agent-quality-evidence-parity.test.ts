@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createArtifactQualityGate } from '../../src/services/agent-workspace-session-runtime';
+import { createArtifactQualityGate, knowledgeEvidenceOf } from '../../src/services/agent-workspace-session-runtime';
+import { createArtifactQualityGate as createRuntimeGate, knowledgeEvidenceOf as runtimeEvidenceOf } from '../../../design-runtime/opendesign/src/quality/gate';
 
 /**
  * 同一页面在执行器的质量闸里通过、到 MAP 发布闸才被拒，用户白等一整轮——根因是两道闸的证据口径分裂：
@@ -32,4 +33,24 @@ describe('执行器质量闸与 MAP 发布闸同一证据口径', () => {
       + '<p>本次改造分三步推进，负责人是平台组，计划 2026-10-01 上线。</p></main></body></html>';
     expect(() => gate(html)).toThrow(/unsupported date, contact, or URL/);
   });
+
+  // 2026-09-24 真人验收：知识是 HTML 日报，「主干落地 <b>31</b> 次真实提交」，页面写「31 次真实提交」被判成
+  // 来源里没有的数字。三道闸（MAP、CDS、独立服务）都要把 HTML 知识的可见文字算进证据。
+  const knowledge = '<p>主干落地 <b>31</b> 次真实提交，9 处修复封堵私有工作区。</p>';
+  const page = '<!doctype html><html><head><title>t</title></head><body><main><h1>本周进展</h1>'
+    + '<p>主干落地 31 次真实提交，9 处修复封堵私有工作区。</p></main></body></html>';
+  for (const [name, gateOf, evidenceOf] of [
+    ['CDS 会话运行时', createArtifactQualityGate, knowledgeEvidenceOf],
+    ['独立设计执行服务', createRuntimeGate, runtimeEvidenceOf],
+  ] as const) {
+    it(`${name}：HTML 知识里被标签隔开的数字仍能支撑页面`, () => {
+      // companion：只拿原文比对确实会拒收，说明这条用例测到了修复本身。
+      expect(() => gateOf(knowledge)(page)).toThrow();
+      expect(() => gateOf(evidenceOf(knowledge))(page)).not.toThrow();
+    });
+    it(`${name}：Markdown 知识原样保留，不被当标签剥掉`, () => {
+      expect(evidenceOf('阈值 a < b 时切换')).toBe('阈值 a < b 时切换');
+    });
+  }
 });
+
