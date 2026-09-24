@@ -3,7 +3,7 @@ import { ArrowRight, AlertTriangle, CheckCircle2, Search, Settings2 } from 'luci
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatRelative, proberLiveness, SOURCE_META, type UptimeSummary, type UptimeTargetSummary } from '@/lib/monitorCenter';
-import { businessProjects, explainTarget, HOME_STATES, homeState, sortHomeTargets, type HomeState } from '@/lib/statusHome';
+import { businessProjects, catalogProjects, explainTarget, HOME_STATES, homeState, sortHomeTargets, type HomeState } from '@/lib/statusHome';
 
 export function HomeStateBadge({ state }: { state: HomeState }): JSX.Element {
   return <span className={cn('status-home-badge', state === 'down' ? 'text-destructive bg-destructive/10' : state === 'up' ? 'text-ok bg-ok-soft' : 'text-muted-foreground bg-muted')}>{HOME_STATES[state]}</span>;
@@ -67,7 +67,7 @@ export function MonitorCatalog({ targets, now, projectId, onProject, onOpen }: {
   const [state, setState] = useState<HomeState | 'all'>('all');
   const [source, setSource] = useState('custom');
   const [page, setPage] = useState(0);
-  const projectOptions = new Map(targets.map((t) => [t.projectId, t.projectName || t.projectId || '未归属项目']));
+  const projectOptions = catalogProjects(targets);
   const shown = sortHomeTargets(targets.filter((t) => (projectId === null || t.projectId === projectId) && (source === 'all' || t.source === source) && (state === 'all' || homeState(t, now) === state) && `${t.name} ${t.projectName || ''} ${t.projectId}`.toLowerCase().includes(query.toLowerCase().trim())), now);
   const maxPage = Math.max(0, Math.ceil(shown.length / 20) - 1);
   const currentPage = Math.min(page, maxPage);

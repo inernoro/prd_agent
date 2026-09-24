@@ -68,3 +68,12 @@ export function readStatusLocation(params: URLSearchParams): { view: StatusHomeV
   const view = params.get('view');
   return { view: view === 'catalog' || view === 'history' || view === 'owner' || view === 'all' ? view : 'home', targetId: null };
 }
+
+/** 同项目的基础设施记录可能没有名称，不能覆盖已有的业务项目名称。 */
+export function catalogProjects(targets: readonly UptimeTargetSummary[]): Map<string, string> {
+  const projects = new Map<string, string>();
+  for (const target of targets) {
+    projects.set(target.projectId, target.projectName || projects.get(target.projectId) || target.projectId || '未归属项目');
+  }
+  return projects;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { businessProjects, explainTarget, homeState, readStatusLocation, sortHomeTargets } from '../../web/src/lib/statusHome.js';
+import { businessProjects, catalogProjects, explainTarget, homeState, readStatusLocation, sortHomeTargets } from '../../web/src/lib/statusHome.js';
 import type { UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
 const now = 1_700_000_000_000;
 function target(over: Partial<UptimeTargetSummary> = {}): UptimeTargetSummary {
@@ -20,6 +20,9 @@ describe('业务总览的结论与真实证据一致', () => {
     expect(projects.map((p) => p.id)).toEqual(['two', 'one']);
     expect(projects.map((p) => p.targets.length)).toEqual([1, 1]);
     expect(projects[0].counts.down).toBe(1);
+  });
+  it('列表项目名称不被缺少名称的基础设施记录覆盖', () => {
+    expect(catalogProjects([target(), target({ source: 'release', projectName: undefined })]).get('one')).toBe('项目一');
   });
   it('异常优先，已暂停异常不会继续制造待处理项', () => {
     expect(sortHomeTargets([target(), target({ id: 'down', status: 'down' }), target({ id: 'paused', status: 'down', enabled: false })], now).map((t) => t.id)).toEqual(['down', 'paused', 'monitor@a']);
