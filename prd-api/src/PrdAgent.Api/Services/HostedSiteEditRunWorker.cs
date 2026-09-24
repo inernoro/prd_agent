@@ -413,6 +413,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         catch (InvalidOperationException ex)
         {
+            // 用户读到的是 ex.Message（人话）；OpenDesign 远端回传的原始诊断挂在 InnerException 上
+            //（OpenDesignFailureMessage.Failure），用户文案承诺「原文已记入服务端日志」。
+            // 所以这里必须带着异常对象记一条，否则内层原文随异常一起丢掉，那句承诺是空的（PR #1611 Codex 评审）。
+            _logger.LogError(
+                ex,
+                "用户 {UserId} 发起的设计任务（{Operation}，执行器 {Runtime}）在生成阶段失败，已按人话写入任务记录；远端原始诊断见异常链 runId={RunId} userMessage={UserMessage}",
+                run.UserId,
+                run.Operation,
+                run.Runtime,
+                runId,
+                ex.Message);
             await MarkErrorAsync(runId, ex.Message, leaseOwner);
         }
         catch (OperationCanceledException) when (executionCts.IsCancellationRequested)

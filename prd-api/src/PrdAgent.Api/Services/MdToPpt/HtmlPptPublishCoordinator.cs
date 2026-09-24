@@ -93,13 +93,11 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         // 先校验目标团队、再建意图与站点（PR #1533 评审 4024742437 / 4060021399）。
         // 反过来的话，viewer / 非成员团队要等站点建好之后才在 SetSharedTeamsAsync 里被拒，
         // 而那次拒绝被当成可重试失败：接口反复 503、最终 dead-letter，站点留在个人空间成了孤儿。
-        // 与 SetSharedTeamsAsync 用同一把尺子（CanPublishIntoTeamAsync）；建站后的那道校验保留，兜权限竞态。
-        var forbidden = new List<string>();
-        foreach (var teamId in Normalize(teamIds))
-        {
-            if (!await _sites.CanPublishIntoTeamAsync(run.UserId, teamId, CancellationToken.None))
-                forbidden.Add(teamId);
-        }
+        // 与 SetSharedTeamsAsync 用同一把尺子（HostedSiteService.HasTeamPublishRole）；建站后的那道校验保留，兜权限竞态。
+        // 用批量版一次判完整批团队：teamIds 没有上限，逐个调单个版本会让每个团队都全量重载一次成员关系
+        // （PR #1611 Codex 评审）。
+        var forbidden = await _sites.GetTeamsNotPublishableAsync(
+            run.UserId, Normalize(teamIds), CancellationToken.None);
         if (forbidden.Count > 0)
             throw new HtmlPptPublishForbiddenException(forbidden);
 

@@ -2151,9 +2151,23 @@ public class HostedSiteService : IHostedSiteService
     /// </summary>
     public async Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(teamId)) return false;
+        if (string.IsNullOrWhiteSpace(teamId)) return false;
+        var forbidden = await GetTeamsNotPublishableAsync(userId, [teamId], ct);
+        return forbidden.Count == 0;
+    }
+
+    /// <summary>
+    /// 批量判定：成员关系（GetMyWebHostingTeamRolesAsync）对整批团队只加载一次，
+    /// 每个团队仍走 <see cref="HasTeamPublishRole"/> 这一条判据——单个版本也由它实现，判据只有一处。
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetTeamsNotPublishableAsync(
+        string userId, IReadOnlyCollection<string> teamIds, CancellationToken ct = default)
+    {
+        var requested = teamIds.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.Ordinal).ToList();
+        if (requested.Count == 0) return [];
+        if (string.IsNullOrWhiteSpace(userId)) return requested;
         var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
-        return HasTeamPublishRole(roles, teamId);
+        return requested.Where(t => !HasTeamPublishRole(roles, t)).ToList();
     }
 
     public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)

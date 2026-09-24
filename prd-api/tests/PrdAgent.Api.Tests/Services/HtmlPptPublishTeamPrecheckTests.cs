@@ -4,6 +4,9 @@ using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.MdToPpt;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -25,10 +28,11 @@ public sealed class HtmlPptPublishTeamPrecheckTests
     {
         var run = DoneRun();
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
-        sites.Setup(s => s.CanPublishIntoTeamAsync(run.UserId, "team-editor", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        sites.Setup(s => s.CanPublishIntoTeamAsync(run.UserId, "team-viewer", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+        sites.Setup(s => s.GetTeamsNotPublishableAsync(
+                run.UserId,
+                It.Is<IReadOnlyCollection<string>>(ids => ids.SequenceEqual(new[] { "team-editor", "team-viewer" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["team-viewer"]);
         var coordinator = new HtmlPptPublishCoordinator(
             null!,
             sites.Object,
@@ -46,6 +50,52 @@ public sealed class HtmlPptPublishTeamPrecheckTests
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(),
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    /// <summary>
+    /// teamIds 没有上限（PR #1611 Codex 评审）：预检对整批团队只许加载一次成员关系，
+    /// 不能每个团队都全量重载一次。这里用真的 HostedSiteService、只把 ITeamService 换成计数桩，
+    /// 于是走的是生产里同一条判据（viewer 与非成员都被拒，owner / editor 放行）。
+    /// </summary>
+    [Fact]
+    public async Task ManyTeams_LoadMembershipOnce_AndStillRejectViewerAndStranger()
+    {
+        var run = DoneRun();
+        var roleLoads = 0;
+        var teams = new Mock<ITeamService>(MockBehavior.Strict);
+        teams.Setup(t => t.GetMyWebHostingTeamRolesAsync(run.UserId, It.IsAny<CancellationToken>()))
+            .Callback(() => roleLoads++)
+            .ReturnsAsync(new Dictionary<string, string>
+            {
+                ["team-owner"] = WebHostingRoles.Owner,
+                ["team-editor-a"] = WebHostingRoles.Editor,
+                ["team-editor-b"] = WebHostingRoles.Editor,
+                ["team-viewer"] = WebHostingRoles.Viewer,
+            });
+        var coordinator = new HtmlPptPublishCoordinator(
+            null!,
+            RealSiteService(teams.Object),
+            Mock.Of<IHostedSiteRevisionService>(MockBehavior.Strict),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict),
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var error = await Assert.ThrowsAsync<HtmlPptPublishForbiddenException>(() =>
+            coordinator.PublishAsync(run, run.Title, null, [],
+                ["team-owner", "team-editor-a", "team-viewer", "team-editor-b", "team-stranger", " team-editor-a "]));
+
+        Assert.Equal(["team-viewer", "team-stranger"], error.TeamIds);
+        Assert.Equal(1, roleLoads);
+    }
+
+    private static HostedSiteService RealSiteService(ITeamService teams) => new(
+        null!,
+        Mock.Of<IAssetStorage>(),
+        Mock.Of<IShortLinkService>(),
+        Mock.Of<ISharePasswordService>(),
+        teams,
+        Mock.Of<ITeamActivityService>(),
+        Mock.Of<IUploadProgressService>(),
+        Mock.Of<IAskOpeningQuestionGenerator>(),
+        NullLogger<HostedSiteService>.Instance);
 
     private static MdToPptRun DoneRun() => new()
     {
