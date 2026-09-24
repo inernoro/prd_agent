@@ -244,3 +244,9 @@
 | feat | prd-admin | 「帮我修改」并入同一工作台：每一轮修改是一条对话，线上版与草稿切换对比、确认才发布、旧版在对话里换回，「发布给客户」复用一键分享（链接 + 二维码）；旧的分步生成弹窗与预览侧栏修改面板下线 |
 | refactor | prd-admin | 修改与生成的任务逻辑分别抽成 useSiteEditSession / useSiteGenerationRun，分享页修改坞与工作台共用同一套修改协议 |
 | feat | prd-api | 创建网页生成任务可直接传 designSystemId（风格画廊「更多风格」），按设计系统快照核对并冻结进任务书，与预设 styleId 二选一 |
+| feat | design-runtime | 新增设计执行服务 design-runtime/opendesign：OpenDesign 引擎与服务同容器运行，实现 map-design-executor-v1 协议（查能力、提交任务、读事件、取消） |
+| refactor | design-runtime | 从 CDS 原样搬入任务书校验、提示词、质量闸与修复回路、产物打包与预检等纯逻辑，CDS 原代码本阶段保留 |
+| security | design-runtime | 引擎只持占位令牌经进程内出口中继调模型；每个任务结束后清空工作区与引擎数据并换新令牌重启，清不干净就暂停接单 |
+| ci | design-runtime | branch-image 新增设计执行服务镜像构建，ci 新增 Design Runtime Test（tsc + vitest） |
+| ops | cds | cds-compose 新增 design-opendesign 服务（仅 express）与 api 的执行服务地址、密钥环境变量 |
+| docs | design-runtime | 新增设计执行协议规格，OpenDesign 债务台账补第 1 阶段结论与后续事项 |

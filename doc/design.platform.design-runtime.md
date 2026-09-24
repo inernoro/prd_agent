@@ -110,4 +110,5 @@ sequenceDiagram
 
 - [design.platform.design-generation.md](./design.platform.design-generation.md)：设计生成体系主文档（含强链路控制一节）
 - [spec.platform.design-generation.settings.md](./spec.platform.design-generation.settings.md)：网页生成设置与风格预设
+- [spec.platform.design-runtime.protocol.md](./spec.platform.design-runtime.protocol.md)：第四节协议的落地规格（map-design-executor-v1）
 - [debt.platform.open-design.md](./debt.platform.open-design.md)：OpenDesign 台账（含两道判据分歧的记录）

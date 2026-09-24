@@ -1837,3 +1837,48 @@ run `d2d5c42d95b242e8b2b34a20e2029c03` 在 CDS 质量闸与一轮修复后都通
 | 做一个我的风格 | 画廊里是「即将支持」的占位卡 | 从截图或网址抽设计令牌，生成一套自定义设计系统 |
 | 资料页上的「做成网页」 | 只有知识库深链会带着那一篇打开工作台；周报、转写页没有入口 | 各资料页加同一个入口，打开工作台时预先放好那份资料 |
 | 修改时换风格 | 修改阶段不提供风格选择，只能用文字说「换成某某风格」 | 修改任务支持改设计系统 |
+
+
+## 设计执行服务独立部署 · 第 1 阶段（2026-09-24）
+
+按 [design.platform.design-runtime.md](./design.platform.design-runtime.md) 第七节第 1 阶段，把 OpenDesign 的设计执行逻辑从 CDS 搬成独立服务 `design-runtime/opendesign`，协议见 [spec.platform.design-runtime.protocol.md](./spec.platform.design-runtime.protocol.md)。CDS 里的原代码这一阶段**一行未删**，MAP 仍走经 CDS 的旧路径。
+
+### 已做
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| 纯逻辑搬迁 | 任务书校验、提示词、质量闸与修复回路、公开产物包、产物预检原样搬入，只改归属不改行为；产物溯源里的生产者名等可被 MAP 读到的字面量逐字保留 | 从 CDS 移植的 84 条纯函数用例在新目录全绿 |
+| 本机执行后端 | docker 相关部分换成本机等价物：直接写文件、本机拉起 OpenDesign 进程、进程内出口中继（引擎只拿占位令牌）、冻结进程组代替 docker pause；实时预览推送保留 | 执行器用例 26 条 |
+| 隔离方案 A | 一个实例同时只跑一个任务；成功、失败、取消、超时之后都清空工作区 / 引擎数据 / 模板拷贝 / 导出目录，核对为空后换新令牌重启引擎，核对不过就暂停接单 | 协议用例覆盖四种结束方式；把清空关掉后 5 条用例变红，恢复后转绿 |
+| 引擎死掉会说 | 引擎进程意外退出时能力接口立刻报不健康（`engine_restarting`），自动重拉；十分钟内反复退出改成「去查日志」 | 真进程用例 + 真镜像里 `kill -9` 实测 |
+| 协议 | 四个动作、幂等、409 + 重试秒数、SSE 与一次性 JSON 两种读法、未配 key 时拒绝任务接口并说明原因 | 协议用例 17 条（假 OpenDesign + 假 MAP） |
+| 镜像 | 以 `ghcr.io/nexu-io/od:0.21.1` 为底，加 Codex CLI 0.143.0 与本服务；tini 做 1 号进程，服务以 root 管理、引擎以 open-design 用户运行，引擎读不到服务进程的环境变量；许可声明随镜像分发 | 本地构建真镜像：能力接口健康、版本 0.21.1 / codex-cli 0.143.0；真任务 202、并发第二个 409；任务结束后三个目录为空、引擎数据库里查不到上一个项目 |
+| 部署接线 | `branch-image.yml` 新增 `design-opendesign-image`（标签与过滤规则同 llmgw-serve）；`ci.yml` 新增 `Design Runtime Test`；CDS 部署清单新增 `design-opendesign` 服务（只支持 express，理由写在注释里）与 api 的两项环境变量 | CDS 的 buildScope 与 CI 过滤器对拍测试已登记新镜像并通过 |
+
+### 未验证（第 1 阶段交付时如实列出）
+
+- **CI 构建与 CDS 部署没有跑过**：分支没有推送，`design-opendesign-image` 与 `Design Runtime Test` 两个作业、CDS 拉起这个服务都还没有远端结论。镜像只在本地构建并跑过。
+- **真模型的完整一轮没有跑通**：本地真镜像的任务走到了「OpenDesign 运行」阶段，Codex 已经打到出口中继并被接受，但测试用的假 MAP 在本机回环地址上，中继按规则拒绝了回环目标，任务以 `open_design_run_failed` 结束（这正是中继该有的行为）。从取包、调模型到提交结果的完整一轮，要等第 2 阶段在分支预览里对真 MAP 跑。
+- **交付物晋升后预检可能拒收**：引擎用 slug 文件指明交付物时，晋升后那个 slug 文件仍在工作区根目录，产物预检会把它判成白名单外路径。这一点与 CDS 现行实现完全一致（是搬过来的行为，不是新引入的），但真实引擎会不会写这种文件还没在真任务上确认。
+- **出口中继拒绝内网目标**：中继会拒绝解析到私网、回环、元数据地址的模型出口。分支预览里 api 若只以容器内网地址（如 `http://api:5000`）暴露，中继会拒收。第 2 阶段要么让 MAP 给出可公网解析的 https 出口，要么给中继加一份显式的内网白名单（并记录理由）。
+- **http 传输**：传输地址默认只收 https（回环地址除外）。容器网络里用 http 回调 MAP 需要显式 `DESIGN_RUNTIME_ALLOW_HTTP_TRANSFER=1`。
+- **CDS 既有测试**：CDS 全量 8720 条通过、4 条失败。其中 3 条是构建闸门在满载时的计时波动（单独跑通过）；另 1 条「伙伴 URL 确实走了唯一入口」（`workspace-transfer-redirect-wiring`）在本阶段开工前的基线上就已经失败，与本次改动无关，未处理。
+
+### 第 2 阶段要做
+
+- MAP 新增按 `map-design-executor-v1` 调用执行服务的适配器，读 `DesignRuntime__OpenDesign__BaseUrl` / `ApiKey`（第 1 阶段只在 CDS 部署清单里接了这两项，api 还不读）。
+- MAP 新增合格判断接口，执行服务的修复回路改问 MAP，消掉「MAP 与 CDS 两道判据结论不一致」那条（见上文 2026-09-23 一节）。
+- 阶段映射：服务新增了 `task_accepted`，且不再发 `container_*` 一类阶段；MAP 的进度文案映射要补这一条、删掉不会再出现的几条。
+- 排队可见：`executor_busy` 带重试秒数，界面据此显示「前面还有任务」。
+- 部署前置：CDS 需要导入一次新的部署清单（审批后生效），并在 CDS 项目环境变量里设 `DESIGN_RUNTIME_API_KEY`（api 与服务共用一把）。
+
+### 第 3 阶段要做
+
+- 生产部署清单加入 `design-opendesign` 服务与 api 的两项环境变量，进入发布清单，镜像纳入生产按 sha 钉版（本阶段刻意未改，`branch-image.yml` 头注释也写明它暂不在生产钉版范围内）。
+- 生产网络层对这个容器做出网白名单，只放行 MAP 出口。
+
+### 实现来源
+
+- 服务：`design-runtime/opendesign/`（入口 `src/app.ts`，协议 `src/protocol.ts`，任务状态机 `src/tasks.ts`，隔离清空 `src/engine/lifecycle.ts`）
+- 部署：`.github/workflows/branch-image.yml`、`.github/workflows/ci.yml`、`cds-compose.yml`；生产 `docker-compose.yml` 本阶段未改
+- 对拍守卫：`cds/tests/services/build-scope-ci-parity.test.ts`

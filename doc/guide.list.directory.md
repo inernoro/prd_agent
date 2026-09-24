@@ -31,6 +31,7 @@
 - [海鲜市场产品规格 · 规格](./spec.marketplace.md) `spec.marketplace`
 - [应用注册中心协议 · 规格](./spec.platform.app-registry.md) `spec.platform.app-registry`
 - [网页生成设置与风格预设 · 规格](./spec.platform.design-generation.settings.md) `spec.platform.design-generation.settings`
+- [设计执行协议 map-design-executor-v1 · 规格](./spec.platform.design-runtime.protocol.md) `spec.platform.design-runtime.protocol`
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
 - [四大场景密封验收清单 · 规格](./spec.platform.open-design.sealed-acceptance.md) `spec.platform.open-design.sealed-acceptance`
 - [监控自发现协议 · 规格](./spec.platform.monitor-discovery.md) `spec.platform.monitor-discovery`
