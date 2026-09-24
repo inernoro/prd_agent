@@ -739,7 +739,7 @@ public static class HostedSiteRevisionRules
 
     private static void EnsureSensitiveFactsAreSupported(string visibleText, string evidenceText)
     {
-        var supported = ExtractSensitiveFacts(evidenceText);
+        var supported = ExtractSensitiveFacts(evidenceText, asEvidence: true);
         foreach (var fact in ExtractSensitiveFacts(visibleText))
         {
             if (!supported.Contains(fact))
@@ -748,7 +748,13 @@ public static class HostedSiteRevisionRules
         }
     }
 
-    private static HashSet<string> ExtractSensitiveFacts(string text)
+    /// <summary>
+    /// 日期统一成「年-月[-日]」再比：「2026/9/24」与「2026-09-24」是同一天。作证据时，完整日期
+    /// 同时支撑它的「年-月」（页面写「2026-09」取自来源里的 9 月 24 日），中文写法
+    /// 「2026 年 9 月 24 日」也算证据——此前两者都被判成来源里没有的日期（2026-09-24 真人验收）。
+    /// 页面侧仍只认数字写法，判据范围不扩大；只是证据不再比真实来源窄。
+    /// </summary>
+    private static HashSet<string> ExtractSensitiveFacts(string text, bool asEvidence = false)
     {
         var facts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
@@ -756,9 +762,38 @@ public static class HostedSiteRevisionRules
                      @"https?://[^\s<>\""']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)",
                      RegexOptions))
         {
-            facts.Add(match.Value.TrimEnd('.', ',', ';', ':', '，', '。', '；', '：', ')', ']', '}', '>', '`').ToLowerInvariant());
+            var value = match.Value.TrimEnd('.', ',', ';', ':', '，', '。', '；', '：', ')', ']', '}', '>', '`').ToLowerInvariant();
+            var date = System.Text.RegularExpressions.Regex.Match(value, @"^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$");
+            if (!date.Success)
+            {
+                facts.Add(value);
+                continue;
+            }
+            AddDateFacts(facts, date.Groups[1].Value, date.Groups[2].Value, date.Groups[3].Success ? date.Groups[3].Value : null, asEvidence);
+        }
+        if (asEvidence)
+        {
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                         text ?? string.Empty,
+                         @"((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日号])?",
+                         RegexOptions))
+            {
+                AddDateFacts(facts, match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Success ? match.Groups[3].Value : null, asEvidence: true);
+            }
         }
         return facts;
+    }
+
+    private static void AddDateFacts(HashSet<string> facts, string year, string month, string? day, bool asEvidence)
+    {
+        var yearMonth = $"{year}-{int.Parse(month):00}";
+        if (day == null)
+        {
+            facts.Add(yearMonth);
+            return;
+        }
+        facts.Add($"{yearMonth}-{int.Parse(day):00}");
+        if (asEvidence) facts.Add(yearMonth);
     }
 
     private static string? ReadHtmlAttribute(string attributes, string name)

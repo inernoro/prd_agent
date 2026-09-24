@@ -101,6 +101,29 @@ public sealed class DesignArtifactDispatchGuardTests
         Assert.Equal("阈值 a < b 时切换", HostedSiteEditRunWorker.EvidenceOf("阈值 a < b 时切换"));
     }
 
+    [Theory]
+    [InlineData("日报-2026-09-24-今日大事早知道", "2026-09 版本更新汇总")]
+    [InlineData("发布于 2026 年 9 月 24 日", "2026-09-24 发布")]
+    [InlineData("发布于 2026 年 9 月 24 日", "2026/9/24 发布")]
+    public void DateEvidence_ShouldSupportTheSameDayInAnyWriting_AndItsYearMonth(string evidence, string text)
+    {
+        // 2026-09-24 真人验收：来源写「日报-2026-09-24」，页面写「2026-09」被拒收。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(Page(text), evidence);
+    }
+
+    [Theory]
+    [InlineData("日报-2026-09-24", "2026-10 上线")]
+    [InlineData("计划在 2026-09 完成", "2026-09-30 完成")]
+    public void DateEvidence_ShouldStillRejectDatesTheSourceDoesNotHave(string evidence, string text)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(Page(text), evidence));
+        Assert.Contains("日期、联系方式或网址", error.Message, StringComparison.Ordinal);
+    }
+
+    private static string Page(string text) =>
+        "<!doctype html><html><head><title>t</title></head><body><main><h1>本期</h1><p>" + text + "</p></main></body></html>";
+
     private static DesignArtifactRun BuildRun() => new()
     {
         UserId = "user-a",

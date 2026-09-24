@@ -54,3 +54,24 @@ describe('执行器质量闸与 MAP 发布闸同一证据口径', () => {
   }
 });
 
+
+describe('日期证据：完整日期支撑它的年月，中文写法也算', () => {
+  // 2026-09-24 真人验收：来源写「日报-2026-09-24」「2026 年 9 月 24 日」，页面写「2026-09」被拒收。
+  const page = (text: string) => '<!doctype html><html><head><title>t</title></head><body><main><h1>本期</h1>'
+    + `<p>${text}</p></main></body></html>`;
+  for (const [name, gateOf] of [
+    ['CDS 会话运行时', createArtifactQualityGate],
+    ['独立设计执行服务', createRuntimeGate],
+  ] as const) {
+    it(`${name}：来源里的完整日期支撑页面上的年月`, () => {
+      expect(() => gateOf('日报-2026-09-24-今日大事早知道')(page('2026-09 版本更新汇总'))).not.toThrow();
+      expect(() => gateOf('发布于 2026 年 9 月 24 日')(page('2026-09-24 发布'))).not.toThrow();
+      expect(() => gateOf('发布于 2026 年 9 月 24 日')(page('2026/9/24 发布'))).not.toThrow();
+    });
+    it(`${name}：来源里没有的日期照样拒收`, () => {
+      expect(() => gateOf('日报-2026-09-24')(page('2026-10 上线'))).toThrow(/unsupported date, contact, or URL/);
+      // 只有年月的来源撑不起具体某一天。
+      expect(() => gateOf('计划在 2026-09 完成')(page('2026-09-30 完成'))).toThrow(/unsupported date, contact, or URL/);
+    });
+  }
+});

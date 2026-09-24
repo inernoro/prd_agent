@@ -5054,17 +5054,42 @@ function validateArtifactQuality(
       { measuredClaimToken: retained.token.replace('|', '') },
     );
   }
-  const supportedFacts = sensitiveFacts(evidenceText);
+  const supportedFacts = sensitiveFacts(evidenceText, true);
   for (const fact of sensitiveFacts(visible)) {
     if (supportedFacts.has(fact)) continue;
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains an unsupported date, contact, or URL: ${fact}`);
   }
 }
 
-function sensitiveFacts(text: string): Set<string> {
+/**
+ * 日期统一成「年-月[-日]」再比；作证据时完整日期同时支撑它的「年-月」，中文写法「2026 年 9 月 24 日」
+ * 也算证据。与 MAP 发布闸 HostedSiteRevisionRules.ExtractSensitiveFacts 同一口径（2026-09-24 真人验收：
+ * 页面写「2026-09」取自来源里的 9 月 24 日，被判成来源里没有的日期）。页面侧仍只认数字写法。
+ */
+export function sensitiveFacts(text: string, asEvidence = false): Set<string> {
   const facts = new Set<string>();
+  const addDate = (year: string, month: string, day: string | undefined, evidence: boolean) => {
+    const yearMonth = `${year}-${String(Number(month)).padStart(2, '0')}`;
+    if (day === undefined) {
+      facts.add(yearMonth);
+      return;
+    }
+    facts.add(`${yearMonth}-${String(Number(day)).padStart(2, '0')}`);
+    if (evidence) facts.add(yearMonth);
+  };
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
-    facts.add(match[0].replace(/[.,;:，。；：)\]}>`]+$/g, '').toLowerCase());
+    const value = match[0].replace(/[.,;:，。；：)\]}>`]+$/g, '').toLowerCase();
+    const date = /^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/.exec(value);
+    if (!date) {
+      facts.add(value);
+      continue;
+    }
+    addDate(date[1], date[2], date[3], asEvidence);
+  }
+  if (asEvidence) {
+    for (const match of text.matchAll(/((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日号])?/g)) {
+      addDate(match[1], match[2], match[3], true);
+    }
   }
   return facts;
 }
