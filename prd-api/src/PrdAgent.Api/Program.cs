@@ -430,6 +430,12 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
     PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
     PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
+// 发布前私有资料确认（2026-09-24）：发布到已分享站点 / 新建对外分享 / 设为公开之前的唯一判定源。
+// 两个网页托管 Controller 以可选依赖注入它；这里漏注册就等于整道闸不存在，有守卫测试盯着。
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceStore,
+    PrdAgent.Api.Services.MongoHostedSitePrivateSourceStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceGate,
+    PrdAgent.Api.Services.HostedSitePrivateSourceGate>();
 // 风格目录（OpenDesign 设计系统快照，内嵌资源）：启动时加载一次；缺失或写坏直接让启动失败并说明原因，
 // 不退化成空目录——空目录与「真的没有风格」分不开，风格卡片与样张会静默消失。
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignSystemCatalog>(

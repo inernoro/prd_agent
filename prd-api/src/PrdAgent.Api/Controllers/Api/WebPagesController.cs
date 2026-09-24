@@ -45,6 +45,7 @@ public class WebPagesController : ControllerBase
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
     private readonly ITeamService _teams;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
 
     public WebPagesController(
         IHostedSiteService siteService,
@@ -52,7 +53,8 @@ public class WebPagesController : ControllerBase
         IUploadProgressService uploadProgress,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -60,6 +62,8 @@ public class WebPagesController : ControllerBase
         _db = db;
         _teams = teams;
         _httpClientFactory = httpClientFactory;
+        // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
+        _privateSources = privateSources;
     }
 
     /// <summary>旧的整包审查入口已停用，避免大文件在 API 内存中形成多份副本。</summary>
@@ -1391,6 +1395,25 @@ public class WebPagesController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Visibility))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "visibility 不能为空"));
 
+        if (_privateSources != null
+            && string.Equals(req.Visibility.Trim(), "public", StringComparison.OrdinalIgnoreCase))
+        {
+            // 设为公开 = 出现在个人公开页、任何人可见：本页引用了私有资料时，先要作者确认。
+            // 已经是公开的站点重复设置不算新的暴露，保持原行为。
+            var site = await _siteService.GetByIdAsync(id, GetUserId(), CancellationToken.None);
+            if (site != null && !string.Equals(site.Visibility, "public", StringComparison.OrdinalIgnoreCase))
+            {
+                var decision = await _privateSources.EnforceForSitesAsync(
+                    [site],
+                    PrdAgent.Api.Services.HostedSitePrivateSourceActions.SitePublic,
+                    GetUserId(),
+                    req.ConfirmedPrivateSourceFingerprint,
+                    CancellationToken.None);
+                if (!decision.Allowed)
+                    return Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
+            }
+        }
+
         try
         {
             var updated = await _siteService.SetVisibilityAsync(id, GetUserId(), req.Visibility);
@@ -1402,6 +1425,73 @@ public class WebPagesController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+    }
+
+    /// <summary>
+    /// 发出前核查：这些站点当前线上内容引用了哪些私有资料（分享、设为公开前由前端先问一次）。
+    /// 只核查当前账号能访问的站点，读不到的站点直接忽略，不借这里泄露别人的资料名称。
+    /// </summary>
+    [HttpGet("private-sources")]
+    public async Task<IActionResult> InspectPrivateSources([FromQuery] List<string>? siteIds)
+    {
+        var ids = (siteIds ?? new List<string>())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Take(50)
+            .ToList();
+        if (ids.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少指定一个站点"));
+        if (_privateSources == null)
+            return Ok(ApiResponse<object>.Ok(PrdAgent.Api.Services.HostedSitePrivateSourceResponses.ToDto(
+                PrdAgent.Api.Services.HostedSitePrivateSourceReport.Empty, requiresConfirmation: false)));
+        var sites = await LoadAccessibleSitesAsync(ids);
+        var report = await _privateSources.InspectSitesAsync(sites, CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(PrdAgent.Api.Services.HostedSitePrivateSourceResponses.ToDto(
+            report, requiresConfirmation: report.HasPrivateSources)));
+    }
+
+    /// <summary>owner-only 只放行创建者与站点协作者；其余档位（登录可见 / 公开）都算对外。</summary>
+    private static bool IsBeyondCollaborators(string visibility)
+        => visibility.Trim().ToLowerInvariant() is "public" or "logged-in";
+
+    private static List<string> TargetShareSiteIds(string? siteId, List<string>? siteIds)
+    {
+        var ids = new List<string>();
+        if (!string.IsNullOrWhiteSpace(siteId)) ids.Add(siteId.Trim());
+        foreach (var id in siteIds ?? new List<string>())
+            if (!string.IsNullOrWhiteSpace(id) && !ids.Contains(id.Trim())) ids.Add(id.Trim());
+        return ids;
+    }
+
+    private async Task<List<HostedSite>> LoadAccessibleSitesAsync(IReadOnlyList<string> siteIds)
+    {
+        var sites = new List<HostedSite>();
+        foreach (var id in siteIds)
+        {
+            var site = await _siteService.GetByIdAsync(id, GetUserId(), CancellationToken.None);
+            if (site != null) sites.Add(site);
+        }
+        return sites;
+    }
+
+    /// <summary>
+    /// 分享类动作的私有资料闸。只核查当前账号能访问的站点：读不到的站点由后续分享服务自己拒绝，
+    /// 这里不借拒绝文案把别人站点引用的资料名称说出去。返回 null = 放行。
+    /// </summary>
+    private async Task<IActionResult?> EnforcePrivateSourcesForShareAsync(
+        IReadOnlyList<string> siteIds,
+        string action,
+        string? confirmedFingerprint)
+    {
+        if (_privateSources == null || siteIds.Count == 0) return null;
+        var sites = await LoadAccessibleSitesAsync(siteIds.Take(50).ToList());
+        if (sites.Count == 0) return null;
+        var decision = await _privateSources.EnforceForSitesAsync(
+            sites, action, GetUserId(), confirmedFingerprint, CancellationToken.None);
+        return decision.Allowed
+            ? null
+            : Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
     }
 
     /// <summary>获取用户所有文件夹列表</summary>
@@ -1436,6 +1526,17 @@ public class WebPagesController : ControllerBase
             var isVisit = req.Purpose == "visit";
             var forceNew = !isVisit && (req.ForceNew ?? true);
             var visibility = isVisit ? "public" : (req.Visibility ?? "owner-only");
+
+            // 新建「不止协作者能打开」的分享之前核对私有资料。visit 便捷链不经过这道闸（已知边界：
+            // 它是作者自己点「访问 / 扫码」时用的入口，失败时前端本就回退站点原始地址，拦它挡不住任何人）。
+            if (!isVisit && IsBeyondCollaborators(visibility))
+            {
+                var refusal = await EnforcePrivateSourcesForShareAsync(
+                    TargetShareSiteIds(req.SiteId, req.SiteIds),
+                    PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareCreate,
+                    req.ConfirmedPrivateSourceFingerprint);
+                if (refusal != null) return refusal;
+            }
 
             var share = await _siteService.CreateShareAsync(
                 GetUserId(), await ResolveDisplayNameAsync(GetUserId()),
@@ -1600,6 +1701,24 @@ public class WebPagesController : ControllerBase
     [HttpPatch("shares/{shareId}")]
     public async Task<IActionResult> UpdateShareSettings(string shareId, [FromBody] UpdateShareSettingsRequest req)
     {
+        // 把一条只有协作者能打开的链接放宽到「登录的人 / 任何人」，等同于新开一次对外分享。
+        if (_privateSources != null && req.Visibility != null && IsBeyondCollaborators(req.Visibility))
+        {
+            var userId = GetUserId();
+            var share = await _db.WebPageShareLinks
+                .Find(x => x.Id == shareId && x.CreatedBy == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (share != null && !share.IsRevoked
+                && string.Equals(share.Visibility, "owner-only", StringComparison.Ordinal))
+            {
+                var refusal = await EnforcePrivateSourcesForShareAsync(
+                    share.TargetSiteIds(),
+                    PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareWiden,
+                    req.ConfirmedPrivateSourceFingerprint);
+                if (refusal != null) return refusal;
+            }
+        }
+
         var result = await _siteService.UpdateShareSettingsAsync(
             shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
         if (!result.Ok)
@@ -1846,6 +1965,9 @@ public class SetVisibilityRequest
 {
     /// <summary>public | private</summary>
     public string Visibility { get; set; } = "private";
+
+    /// <summary>设为公开且本页引用了私有资料时必填：作者确认过的私有引用指纹（取自 GET private-sources）。</summary>
+    public string? ConfirmedPrivateSourceFingerprint { get; set; }
 }
 
 public class SetSiteTeamsRequest
@@ -1927,6 +2049,9 @@ public class CreateWebPageShareRequest
     /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
     public string? Visibility { get; set; }
 
+    /// <summary>对外分享（logged-in / public）且引用了私有资料时必填：作者确认过的私有引用指纹。</summary>
+    public string? ConfirmedPrivateSourceFingerprint { get; set; }
+
     /// <summary>
     /// 本条分享链接自选的开场问题（分享面板里从站点题库勾选 / 手写）。
     ///
@@ -1959,6 +2084,9 @@ public class UpdateShareSettingsRequest
     /// 就会把「没传」读成「改成永久」，一次误传把限期链接变永久。
     /// </summary>
     public int? ExpiresInDays { get; set; }
+
+    /// <summary>从 owner-only 放宽到对外档位且引用了私有资料时必填：作者确认过的私有引用指纹。</summary>
+    public string? ConfirmedPrivateSourceFingerprint { get; set; }
 }
 
 public class SetCommentsEnabledRequest

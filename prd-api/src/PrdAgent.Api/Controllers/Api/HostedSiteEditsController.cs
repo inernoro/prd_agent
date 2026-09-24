@@ -34,6 +34,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IDesignArtifactCancellationCoordinator _cancellation;
     private readonly IConfiguration _configuration;
     private readonly IDesignGenerationSettingsService? _generationSettings;
+    private readonly IHostedSitePrivateSourceGate? _privateSources;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -47,7 +48,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
         IDesignArtifactCancellationCoordinator cancellation,
         IConfiguration configuration,
-        IDesignGenerationSettingsService? generationSettings = null)
+        IDesignGenerationSettingsService? generationSettings = null,
+        IHostedSitePrivateSourceGate? privateSources = null)
     {
         _sites = sites;
         _revisions = revisions;
@@ -61,6 +63,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         _cancellation = cancellation;
         _configuration = configuration;
         _generationSettings = generationSettings;
+        // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
+        _privateSources = privateSources;
     }
 
     /// <summary>默认执行器读网页生成设置（内置默认 open-design）；未注入设置服务的构造（单测）保留旧默认直连。</summary>
@@ -611,9 +615,73 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// 发布这版草稿前核查：它连同内容血缘引用了哪些私有资料、站点此刻是否已经对外可见。
+    /// requiresConfirmation 只在「已对外可见且有私有引用」时为 true——没分享过的站点发布只影响作者自己。
+    /// </summary>
+    [HttpGet("revisions/{revisionId}/private-sources")]
+    public async Task<IActionResult> InspectRevisionPrivateSources(string siteId, string revisionId)
+    {
+        var userId = this.GetRequiredUserId();
+        try
+        {
+            var revision = await _revisions.GetAsync(siteId, revisionId, userId, CancellationToken.None);
+            var site = await _sites.GetByIdAsync(siteId, userId, CancellationToken.None);
+            if (revision == null || site == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本或站点不存在"));
+            if (_privateSources == null)
+                return Ok(ApiResponse<object>.Ok(HostedSitePrivateSourceResponses.ToDto(
+                    HostedSitePrivateSourceReport.Empty, requiresConfirmation: false, exposed: false)));
+            var exposed = await _privateSources.IsExternallyExposedAsync(site, CancellationToken.None);
+            var report = await _privateSources.InspectRevisionAsync(site, revision, CancellationToken.None);
+            var pending = revision.Status != HostedSiteRevisionStatuses.Published;
+            return Ok(ApiResponse<object>.Ok(HostedSitePrivateSourceResponses.ToDto(
+                report,
+                requiresConfirmation: pending && exposed && report.HasPrivateSources,
+                exposed)));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本或站点不存在"));
+        }
+    }
+
     [HttpPost("revisions/{revisionId}/publish")]
-    public async Task<IActionResult> PublishRevision(string siteId, string revisionId)
-        => await MutateRevisionAsync(siteId, revisionId, idempotencyKey: null);
+    public async Task<IActionResult> PublishRevision(
+        string siteId,
+        string revisionId,
+        [FromBody] PublishHostedSiteRevisionRequest? request = null)
+    {
+        if (_privateSources != null)
+        {
+            var userId = this.GetRequiredUserId();
+            HostedSiteRevision? revision;
+            try
+            {
+                revision = await _revisions.GetAsync(siteId, revisionId, userId, CancellationToken.None);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本或站点不存在"));
+            }
+            var site = revision == null
+                ? null
+                : await _sites.GetByIdAsync(siteId, userId, CancellationToken.None);
+            // 版本或站点读不到时交给发布服务按原有口径报错，这里不另起一套判定。
+            if (revision != null && site != null)
+            {
+                var decision = await _privateSources.EnforceForRevisionPublishAsync(
+                    site,
+                    revision,
+                    userId,
+                    request?.ConfirmedPrivateSourceFingerprint,
+                    CancellationToken.None);
+                if (!decision.Allowed)
+                    return Conflict(ApiResponse<object>.Fail(decision.ErrorCode, decision.Message));
+            }
+        }
+        return await MutateRevisionAsync(siteId, revisionId, idempotencyKey: null);
+    }
 
     [HttpPost("revisions/{revisionId}/rollback")]
     public async Task<IActionResult> RollbackRevision(
@@ -837,6 +905,13 @@ public sealed class CreateHostedSiteEditRunRequest
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
+}
+
+/// <summary>发布草稿的可选请求体；老前端不带请求体照样能发布没有私有引用的站点。</summary>
+public sealed class PublishHostedSiteRevisionRequest
+{
+    /// <summary>站点已对外可见且这版引用了私有资料时必填：作者确认过的私有引用指纹。</summary>
+    public string? ConfirmedPrivateSourceFingerprint { get; set; }
 }
 
 public sealed class HostedSiteKnowledgeReference
