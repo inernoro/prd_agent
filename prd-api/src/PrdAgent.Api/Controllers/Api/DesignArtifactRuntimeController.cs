@@ -22,6 +22,12 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     private const int DefaultProxyTimeoutSeconds = 900;
     private const int DefaultProxyIdleTimeoutSeconds = 90;
     internal const int MaxPreviewHtmlBytes = 1_048_576;
+    /// <summary>
+    /// 传输层上限按 JSON 转义后的体积算：CDS 用 JSON.stringify 推整页，引号、反斜杠、换行各变两个字符，
+    /// 解码后没超 1 MiB 的属性密集页面，请求体可能远超「1 MiB + 4 KB」，被 Kestrel 在进 action 之前 413
+    /// 掉，实时预览就断了（Codex P2）。这里给两倍余量；真正的 1 MiB 仍在解码之后按 HTML 本身判。
+    /// </summary>
+    internal const int MaxPreviewRequestBytes = MaxPreviewHtmlBytes * 2 + 4096;
     private static readonly TimeSpan PreviewEventTtl = TimeSpan.FromHours(24);
     private readonly IDesignArtifactWorkspaceBroker _broker;
     private readonly PrdAgent.Core.Interfaces.IRunEventStore? _events;
@@ -85,13 +91,13 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     /// 最终产物仍然只认 workspace/result 那一次整包提交与两道校验。
     /// </summary>
     [HttpPost("workspace/preview")]
-    [RequestSizeLimit(MaxPreviewHtmlBytes + 4096)]
+    [RequestSizeLimit(MaxPreviewRequestBytes)]
     public async Task<IActionResult> PushWorkspacePreview(string runId, CancellationToken ct)
     {
         try
         {
             await _broker.ValidatePreviewAsync(runId, ReadBearerToken(), ct);
-            var bytes = await ReadBoundedBodyAsync(Request, MaxPreviewHtmlBytes + 4096, ct);
+            var bytes = await ReadBoundedBodyAsync(Request, MaxPreviewRequestBytes, ct);
             using var document = JsonDocument.Parse(bytes);
             var html = document.RootElement.TryGetProperty("html", out var htmlElement) && htmlElement.ValueKind == JsonValueKind.String
                 ? htmlElement.GetString() ?? string.Empty
