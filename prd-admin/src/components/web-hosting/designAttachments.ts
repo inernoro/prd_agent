@@ -10,7 +10,11 @@ import { uploadAttachment } from '@/services/real/aiToolbox';
  * 不许让进度条停在 100% 却迟迟不变成可用（那是另一种白等）。
  */
 
-export const DESIGN_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+/**
+ * 服务端 AttachmentsController 的 20 MiB 限的是整个 multipart 请求（含分隔符与头），不只是文件本身：
+ * 恰好 20 MiB 的文件会在 Kestrel 就被 413（Codex P2）。这里给 64 KiB 的封包余量。
+ */
+export const DESIGN_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024 - 64 * 1024;
 /** 截图与服务端 DesignRunInputAttachments.MaxReferenceImageBytes 同一口径：超过就在选文件时拦下，不等传完再被 400。 */
 export const DESIGN_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_GENERATE_ATTACHMENTS = 5;
@@ -32,7 +36,8 @@ export interface DesignAttachmentItem {
   thumbnailUrl?: string;
 }
 
-const DOCUMENT_EXTENSIONS = ['.doc', '.docx', '.pdf', '.md', '.markdown', '.txt', '.html', '.htm'];
+// 与上传端点的扩展名映射一致：服务端只把 .md 认作 Markdown，.markdown 会被当成未知类型拒收（Codex P2）。
+const DOCUMENT_EXTENSIONS = ['.doc', '.docx', '.pdf', '.md', '.txt', '.html', '.htm'];
 // 与服务端参考图白名单一致（PNG、JPEG、WebP）：GIF 传得上去，建修改任务时会被拒。
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
@@ -76,7 +81,7 @@ export function validateDesignAttachment(
     return `「${file.name}」超过 5 MB，请压缩后再传`;
   }
   if (file.size > DESIGN_ATTACHMENT_MAX_BYTES) {
-    return `「${file.name}」超过 20 MB，请压缩或拆分后再传`;
+    return `「${file.name}」超过 19.9 MB 上传上限，请压缩或拆分后再传`;
   }
   if (file.size === 0) return `「${file.name}」是空文件`;
   return null;

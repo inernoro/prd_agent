@@ -127,8 +127,12 @@ describe('附件上传队列', () => {
     expect(validateDesignAttachment({ name: '截图.PNG', size: 1024 }, 'image')).toBeNull();
     expect(validateDesignAttachment({ name: '截图.png', size: 1024 }, 'document')).toContain('格式不支持');
     expect(validateDesignAttachment({ name: '方案.pdf', size: 1024 }, 'image')).toContain('不是支持的截图格式');
-    expect(validateDesignAttachment({ name: '大.pdf', size: 21 * 1024 * 1024 }, 'document')).toContain('超过 20 MB');
+    expect(validateDesignAttachment({ name: '大.pdf', size: 21 * 1024 * 1024 }, 'document')).toContain('上传上限');
     expect(validateDesignAttachment({ name: '空.md', size: 0 }, 'document')).toContain('空文件');
+    // 服务端 20 MiB 限的是整个 multipart 请求：恰好 20 MiB 的文件前端就要拦下（Codex P2）。
+    expect(validateDesignAttachment({ name: '刚好.pdf', size: 20 * 1024 * 1024 }, 'document')).toContain('上传上限');
+    // 服务端不认 .markdown（Codex P2）。
+    expect(validateDesignAttachment({ name: '稿子.markdown', size: 1024 }, 'document')).toContain('格式不支持');
     // 截图与服务端参考图契约同口径（Codex P2）：GIF 与超过 5 MB 在选文件时就拦下。
     expect(validateDesignAttachment({ name: '动图.gif', size: 1024 }, 'image')).toContain('只支持 PNG、JPG、WebP');
     expect(validateDesignAttachment({ name: '大图.png', size: 6 * 1024 * 1024 }, 'image')).toContain('超过 5 MB');
