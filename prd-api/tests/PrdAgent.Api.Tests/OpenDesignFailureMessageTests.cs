@@ -5,20 +5,50 @@ using Xunit;
 namespace PrdAgent.Api.Tests;
 
 /// <summary>
-/// 守的是「远端失败时用户拿到的那句话」的三条性质：原因要交出去、追不到要明说、
-/// 不许再把人指向一条已经销毁的会话。红绿闭环：把 Describe 改回固定文案，这里会红。
+/// 守的是「远端失败时用户拿到的那句话」的几条性质：原因要换成人话交出去（原文进日志）、
+/// 追不到要明说、不许再把人指向一条已经销毁的会话。红绿闭环：把 Describe 改回固定文案，
+/// 或改回把远端原文拼进文案，这里会红。
 /// </summary>
 public sealed class OpenDesignFailureMessageTests
 {
+    /// <summary>
+    /// PR #1533 评审 4081291421：远端原文（文件名、端点名、HTTP 细节）不许直接摆到用户面前。
+    /// 已登记的错误码换成稳定的人话原因；原文不丢，挂在异常链里进日志。
+    /// 此前这里断言的恰恰是「原文必须出现在用户文案里」——那条断言锁死的正是被评审指出的缺陷。
+    /// </summary>
     [Fact]
-    public void 远端给了原因时必须把原因交到用户手上()
+    public void 已登记的远端错误码换成人话原因且原文只进异常链()
     {
-        var message = OpenDesignFailureMessage.Describe(
+        const string raw = "index.html contains an empty link target";
+        var error = OpenDesignFailureMessage.Failure(
             OpenDesignFailureStage.RemoteRun,
-            "index.html contains an empty link target");
+            raw,
+            "design_output_quality_rejected");
 
-        Assert.Contains("index.html contains an empty link target", message);
-        Assert.Contains("下一步：", message);
+        Assert.DoesNotContain(raw, error.Message);
+        Assert.Contains("没有通过发布前的校验", error.Message);
+        Assert.Contains("下一步：", error.Message);
+        var diagnostic = Assert.IsType<OpenDesignRemoteDiagnosticException>(error.InnerException);
+        Assert.Equal(raw, diagnostic.Diagnostic);
+        Assert.Equal("design_output_quality_rejected", diagnostic.RemoteCode);
+    }
+
+    [Fact]
+    public void 未登记或没有错误码的远端原文也不进用户文案()
+    {
+        foreach (var code in new string?[] { null, "", "some_future_code" })
+        {
+            const string raw = "POST /internal/workspace/commit failed: HTTP 500 at /srv/od/worker.js:88";
+            var error = OpenDesignFailureMessage.Failure(OpenDesignFailureStage.StartupFailed, raw, code);
+
+            Assert.DoesNotContain("/internal/workspace/commit", error.Message);
+            Assert.DoesNotContain("worker.js", error.Message);
+            Assert.Contains(OpenDesignFailureMessage.UnmappedReason, error.Message);
+            // 看不到原文，就不能让用户「按上面这条原因处理」。
+            Assert.DoesNotContain("按上面这条原因", error.Message);
+            Assert.Contains("下一步：", error.Message);
+            Assert.Equal(raw, Assert.IsType<OpenDesignRemoteDiagnosticException>(error.InnerException).Diagnostic);
+        }
     }
 
     [Fact]
@@ -70,14 +100,14 @@ public sealed class OpenDesignFailureMessageTests
     }
 
     [Fact]
-    public void 超长原因要截断避免把一整段日志摔到用户脸上()
+    public void 超长原因也不会把一整段日志摔到用户脸上()
     {
         var message = OpenDesignFailureMessage.Describe(
             OpenDesignFailureStage.RemoteRun,
             new string('x', 5000));
 
         Assert.True(message.Length < 800, $"实际长度 {message.Length}");
-        Assert.Contains("…", message);
+        Assert.DoesNotContain("xxxx", message);
     }
 
     /// <summary>

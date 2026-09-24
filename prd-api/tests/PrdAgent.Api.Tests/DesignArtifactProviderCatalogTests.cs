@@ -766,8 +766,12 @@ public class DesignArtifactProviderCatalogTests
 
         // 这两条断言原本要求这句话保持不透明，并把用户指向 CDS 会话日志——而 CDS 的 agent 会话
         // 是内存态，失败后随即销毁，点进去只会拿到 session_not_found；原因明明就在 LastError 里。
-        // 改成断言真正被保护的性质：远端原因要交到用户手上，且这句话不再指向那个死胡同。
-        Assert.Contains("remote diagnostic details", error.Message);
+        // 改成断言真正被保护的性质：远端原因不丢、且这句话不再指向那个死胡同。
+        // 2026-09-24（PR #1533 评审 4081291421）：远端原文不直接摆给用户，挂在异常链里进日志；
+        // 用户文案说清「有诊断、在服务端日志里」并给下一步。
+        Assert.DoesNotContain("remote diagnostic details", error.Message);
+        Assert.Contains("remote diagnostic details", error.InnerException?.Message);
+        Assert.Contains(OpenDesignFailureMessage.UnmappedReason, error.Message);
         Assert.DoesNotContain("会话日志", error.Message);
         Assert.Contains("下一步：", error.Message);
         sessions.Verify(service => service.GetAsync(
@@ -1010,7 +1014,9 @@ public class DesignArtifactProviderCatalogTests
                 pollDelay: TimeSpan.Zero));
         Assert.Equal(0, creates);
         Assert.Contains("远端会话没能进入可用状态", error.Message);
-        Assert.Contains("docker unavailable", error.Message);
+        // 远端原文不进用户文案，挂在异常链里进日志（PR #1533 评审 4081291421）。
+        Assert.DoesNotContain("docker unavailable", error.Message);
+        Assert.Contains("docker unavailable", error.InnerException?.Message);
     }
 
     [Fact]
