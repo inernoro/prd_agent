@@ -892,6 +892,23 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    /// <summary>
+    /// serving 的限流按 UTC 自然分钟切窗口（窗口起点截到整分钟，时间源是 DateTime.UtcNow，不可注入）。
+    /// 一批并发请求若恰好跨过整分钟，会被拆进两个窗口，每个窗口各放行一份额度，
+    /// 于是断言「只放行 N 个、只有一个窗口」偶发失败。离下一个整分钟不足
+    /// <see cref="MinuteBoundaryMargin"/> 时先等过这个边界，再让整批请求落在同一个窗口里。
+    /// 只挪发请求的时机，不改限流语义。
+    /// </summary>
+    private static readonly TimeSpan MinuteBoundaryMargin = TimeSpan.FromSeconds(5);
+
+    private static async Task WaitPastMinuteBoundaryIfCloseAsync()
+    {
+        var now = DateTime.UtcNow;
+        var untilNextMinute = TimeSpan.FromTicks(TimeSpan.TicksPerMinute - now.Ticks % TimeSpan.TicksPerMinute);
+        if (untilNextMinute < MinuteBoundaryMargin)
+            await Task.Delay(untilNextMinute + TimeSpan.FromMilliseconds(250));
+    }
+
     [Fact]
     public async Task ConcurrentAppCallerRateLimit_IsTenantScopedAndOnlyAdmittedRequestsReachFakeUpstream()
     {
@@ -953,6 +970,7 @@ public class GatewayKeyGateContractTests
                 }),
             };
 
+            await WaitPastMinuteBoundaryIfCloseAsync();
             var responses = await Task.WhenAll(
                 Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
                     .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
@@ -1046,6 +1064,7 @@ public class GatewayKeyGateContractTests
                 }),
             };
 
+            await WaitPastMinuteBoundaryIfCloseAsync();
             var responses = await Task.WhenAll(
                 Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
                     .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
