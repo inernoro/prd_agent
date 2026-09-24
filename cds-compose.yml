@@ -60,8 +60,11 @@ x-cds-env-meta:
     kind: required
     hint: "LLM 网关 serving 内部调用密钥，由 CDS 项目 env scope 托管"
   DESIGN_RUNTIME_API_KEY:
-    kind: required
-    hint: "设计执行服务（design-opendesign）任务接口的调用密钥，api 与 design-opendesign 共用同一把，由 CDS 项目 env scope 托管"
+    # 两个服务之间对暗号用的内部密钥，没人需要知道它的值：CDS 部署前发现项目里没有就自己生成一把，
+    # 写进项目 env（api 与 design-opendesign、项目内所有分支共用），之后不再改动。显式填过的值优先。
+    kind: auto
+    generate: secret
+    hint: "设计执行服务（design-opendesign）任务接口的内部调用密钥，由 CDS 自动生成，无需填写"
   STABLE_SMOKE_KEY_ID:
     kind: required
     hint: "稳定冒烟 RSA 公钥标识，由 CDS 项目 env scope 托管"

@@ -4189,3 +4189,46 @@ describe('MAP design direction contract', () => {
     expect(derivePreviewUrl('not a url')).toBeUndefined();
   });
 });
+
+describe('live preview delivery', () => {
+  it('re-pushes the same page after a failed preview POST instead of treating it as delivered', async () => {
+    const html = '<!doctype html><html><body><main>Stable page</main></body></html>';
+    const shell: IShellExecutor = {
+      exec: async (command: string) => (command.includes('stat -c')
+        ? { exitCode: 0, stdout: `1700000000:${Buffer.byteLength(html)}`, stderr: '' }
+        : { exitCode: 0, stdout: html, stderr: '' }) as ExecResult,
+    };
+    const statuses = [503, 200];
+    const posted: Array<{ revision: number; html: string }> = [];
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir: fs.mkdtempSync(path.join(os.tmpdir(), 'cds-preview-retry-')),
+      instanceId: 'instance-preview-retry',
+      fetchImpl: async (_input, init) => {
+        posted.push(JSON.parse(String(init?.body)));
+        return new Response('{}', { status: statuses.shift() ?? 200 });
+      },
+    });
+    const stages: string[] = [];
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const push = (runtime as any).createPreviewPusher(
+        { containerName: 'c1', transfer: { resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/r1/workspace/result' } },
+        'transfer-token',
+        now + 600_000,
+        (stage: string) => stages.push(stage),
+      ) as () => Promise<void>;
+      await push();
+      now += 9_000;
+      // 页面没有再变：修复前指纹在推送前就记下，这一轮会直接跳过，预览永远停在失败那一刻。
+      await push();
+      now += 9_000;
+      await push();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(posted.map((item) => item.revision)).toEqual([1, 2]);
+    expect(posted.every((item) => item.html.includes('Stable page'))).toBe(true);
+    expect(stages).toEqual(['open_design_preview_failed', 'open_design_preview_pushed']);
+  });
+});

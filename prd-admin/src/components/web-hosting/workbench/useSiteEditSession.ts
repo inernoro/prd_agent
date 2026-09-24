@@ -237,7 +237,10 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   );
   const unavailableRuntimes = capabilities.filter((item) => !item.enabled);
   const activeRuntimeFact = activeRuntime
-    ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}；产物范围：声明式 HTML 与内联 CSS，不执行脚本。`
+    ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}；产物范围：${activeRuntime.isolationMode === 'session-container'
+      // 会话容器（OpenDesign）走校验过的网页包：包内脚本可以运行。写死「不执行脚本」会和下一段的包说明自相矛盾（Codex P2）。
+      ? '经过清单与哈希校验的网页包，包内脚本、样式与图片可以运行'
+      : '声明式 HTML 与内联 CSS，不执行脚本'}。`
     : '当前没有可用执行器，请根据下方原因完成配置。';
   const runtimeFallback = runtimeFallbackNotice(capabilities, defaultRuntime, selectedRuntime);
   // 截图参考只有精细设计（OpenDesign）能用：快速修改带截图后端会 400，所以这里直接置灰并说清原因。
@@ -415,6 +418,12 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   useEffect(() => {
     try {
       const storedRunId = sessionStorage.getItem(activeSiteEditRunStorageKey(site.id));
+      // 恢复出来的任务先同步标成忙：否则在第一次读进度返回前，用户能再发一条修改、
+      // 别处交来的任务也能把它顶掉，原来那条就在后台隐身了（Codex P2）。
+      if (storedRunId) {
+        busyRef.current = true;
+        setGenerating(true);
+      }
       setRecoveringRunId(storedRunId);
       setActiveRunId(storedRunId);
     } catch {
@@ -508,7 +517,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
 
   const generate = async () => {
     const text = instruction.trim();
-    if (!text || generating) return;
+    if (!text || generating || busyRef.current) return;
     if (screenshots.busy) {
       toast.info('截图还在上传', '等缩略图显示「可以用」后再生成');
       return;

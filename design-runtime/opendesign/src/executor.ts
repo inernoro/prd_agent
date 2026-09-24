@@ -816,7 +816,8 @@ export class DesignTaskExecutor {
         if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
         const html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
         if (!html.trim()) return;
-        lastFingerprint = fingerprint;
+        // 指纹只在对端确认收下之后才记：推送失败（超时 / 5xx）时下一轮要重推同一份内容，
+        // 否则页面停止变化后预览永远卡在失败前那一版。修订号照常递增，保持单调。
         revision += 1;
         const response = await this.fetchPartnerTransfer(previewUrl, {
           method: 'POST',
@@ -836,6 +837,7 @@ export class DesignTaskExecutor {
           return;
         }
         if (!response.ok) throw new Error(`MAP preview endpoint responded with HTTP ${response.status}`);
+        lastFingerprint = fingerprint;
         onStage('open_design_preview_pushed', { revision, bytes: Buffer.byteLength(html, 'utf8') });
       } catch (error) {
         if (!failureReported) {

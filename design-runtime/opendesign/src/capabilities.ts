@@ -51,7 +51,7 @@ export async function describeCapabilities(context: CapabilitiesContext): Promis
       actor: { kind: 'deployment', label: '部署配置' },
       event: '没有提供 DESIGN_RUNTIME_API_KEY',
       impact: '服务拒绝一切任务接口（提交、查询、读事件、取消），能力查询照常可用',
-      urgency: { kind: 'act', action: '在 CDS 项目环境变量（或生产部署配置）里设置 DESIGN_RUNTIME_API_KEY，并让 MAP 使用同一把 key' },
+      urgency: { kind: 'investigate', where: '部署清单：CDS 按 x-cds-env-meta 里 generate: secret 自动生成这把内部密钥，缺它说明部署清单没按该声明导入，或非 CDS 部署没有注入同一把 key' },
       retryable: false,
       technical: { env: 'DESIGN_RUNTIME_API_KEY' },
     }));

@@ -292,6 +292,12 @@ export interface EnvMeta {
   requiredGroup?: string;
   /** requiredGroup 内的一套完整方案，同 option 下所有 key 必须同时填写。 */
   requiredOption?: string;
+  /**
+   * 'secret'：两个服务之间的内部密钥，没有人需要知道它的值——CDS 在部署前发现项目里还没有，
+   * 就生成一把强随机值写进项目 env（项目内所有分支共用这一把），之后不再改动。
+   * 用户或 Agent 显式填过的值永远优先，不会被覆盖。
+   */
+  generate?: 'secret';
 }
 
 /**

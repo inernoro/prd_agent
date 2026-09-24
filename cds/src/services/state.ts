@@ -3781,6 +3781,29 @@ export class StateService {
   }
 
   /**
+   * 补齐项目里声明为 `generate: secret` 但还没有值的内部密钥，返回本次新生成的 key。
+   *
+   * 这类密钥只在两个服务之间对暗号（例如 api 调设计执行服务），没有人需要知道它的值，
+   * 让用户去生成一把再粘贴回来是纯粹的转嫁。已有值（含用户显式填写的）一律不动，
+   * 生成后写进项目 env，项目内所有分支共用同一把，后续部署不再重生成。
+   * 值只进 state，不进日志；调用方负责 save()。
+   */
+  ensureGeneratedEnvKeys(projectId: string): string[] {
+    const project = this.getProject(projectId);
+    if (!project?.envMeta) return [];
+    const mergedEnv = this.getCustomEnv(projectId);
+    const generated: string[] = [];
+    for (const [key, meta] of Object.entries(project.envMeta)) {
+      if (meta.generate !== 'secret') continue;
+      const current = mergedEnv[key];
+      if (current && current.trim() && !isPlaceholderValue(current)) continue;
+      this.setCustomEnvVar(key, crypto.randomBytes(32).toString('base64url'), projectId);
+      generated.push(key);
+    }
+    return generated;
+  }
+
+  /**
    * 列出当前项目所有 kind='required' 但 value 为空 / 仍是 TODO 占位符的 env keys。
    * deploy 路由用此判断是否 block。返回空数组 = 全部填齐,可以 deploy。
    *

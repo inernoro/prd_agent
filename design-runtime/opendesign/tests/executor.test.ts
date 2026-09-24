@@ -2,8 +2,9 @@
 // 里依赖 fake shell 的运行时用例：原来断言「发出了哪条 docker 命令」，现在断言真实结果——工作区里
 // 铺了什么、引擎收到了什么、MAP 收到了什么、失败时报了什么码。全部经由真实的 HTTP 层与任务槽。
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildGeneratedArtifactFiles,
@@ -12,6 +13,7 @@ import {
 } from '../src/artifact/public-package.js';
 import { hardenSelfContainedHtml } from '../src/quality/gate.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
+import { DesignTaskExecutor } from '../src/executor.js';
 import {
   auth,
   buildPackage,
@@ -395,5 +397,45 @@ describe('collecting the deliverable', () => {
     expect(harness.daemon.runBodies).toHaveLength(3);
     expect(String(harness.daemon.runBodies[2].message)).toContain('document-order position(s) 1');
     expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
+  });
+});
+
+describe('live preview delivery', () => {
+  it('re-pushes the same page after a failed preview POST instead of treating it as delivered', async () => {
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-preview-retry-'));
+    fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Stable page</main></body></html>');
+    const statuses = [503, 200];
+    const posted: Array<{ revision: number; html: string }> = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      posted.push(JSON.parse(String(init.body)));
+      return new Response('{}', { status: statuses.shift() ?? 200 });
+    }) as unknown as typeof fetch;
+    const executor = new DesignTaskExecutor({
+      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir },
+      daemon: { current: () => undefined } as any,
+      fetchImpl,
+      relayPort: 0,
+    });
+    const stages: string[] = [];
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const push = (executor as any).createPreviewPusher(
+        { previewUrl: 'https://map.example.test/api/design-artifacts/runtime/r1/workspace/preview', transfer: { transferToken: 't' } },
+        now + 600_000,
+        (stage: string) => stages.push(stage),
+      ) as () => Promise<void>;
+      await push();
+      now += 9_000;
+      // 页面没有再变：修复前指纹在推送前就记下，这一轮会直接跳过，预览永远停在失败那一刻。
+      await push();
+      now += 9_000;
+      await push();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(posted.map((item) => item.revision)).toEqual([1, 2]);
+    expect(posted.every((item) => item.html.includes('Stable page'))).toBe(true);
+    expect(stages).toEqual(['open_design_preview_failed', 'open_design_preview_pushed']);
   });
 });
