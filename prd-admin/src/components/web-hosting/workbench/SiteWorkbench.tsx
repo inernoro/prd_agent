@@ -86,7 +86,7 @@ export default function SiteWorkbench({
   const title = site ? site.title : '生成网页';
   const subtitle = site
     ? busy ? '正在修改 · 线上不变' : '说想改哪里，先出草稿再发布'
-    : busy ? '正在生成 · 可以关掉窗口，回来接着看' : '放资料、说要求，右边先看效果';
+    : busy ? '正在生成 · 可以关掉窗口，回来接着看' : '放资料、说要求，先看效果再生成';
 
   const dialogTitle = (
     <span className="flex min-w-0 items-center gap-2.5">

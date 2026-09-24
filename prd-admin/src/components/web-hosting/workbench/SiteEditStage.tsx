@@ -382,12 +382,12 @@ export default function SiteEditStage({
   const nextHint = generating
     ? '修改写好一段就显示一段；做好后这里可以在「线上版」「草稿」之间切换对比。'
     : view === 'draft'
-      ? '满意就点「发布这版」，旧版留在对话里可随时换回；不满意继续在左边说，或点「放弃草稿」。'
+      ? '满意就点「发布这版」，旧版留在对话里可随时换回；不满意继续在对话里说，或点「放弃草稿」。'
       : draftId
         ? '有一版草稿还没发布：切到「草稿」看改了什么。'
         : shareLink
-          ? '继续在左边说想改哪里，先出草稿，确认后再发布；分享链接不用重发。'
-          : '满意就点「发布给客户」，拿到链接和二维码；不满意直接在左边说想改哪里。';
+          ? '继续在对话里说想改哪里，先出草稿，确认后再发布；分享链接不用重发。'
+          : '满意就点「发布给客户」，拿到链接和二维码；不满意直接在对话里说想改哪里。';
 
   const toolbar = draftId && !generating ? (
     <Segmented
@@ -462,7 +462,7 @@ export default function SiteEditStage({
     <>
       <WorkbenchPreview
         title={pickingKnowledge ? '引用知识库' : previewTitle}
-        note={pickingKnowledge ? `改的时候对照这些稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后左边输入框上方会列出来` : previewNote}
+        note={pickingKnowledge ? `改的时候对照这些稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后输入框上方会列出来` : previewNote}
         nextHint={pickingKnowledge ? '选好点右上角「放入」，这里换回网页预览。' : nextHint}
         toolbar={pickingKnowledge ? null : toolbar}
         actions={pickingKnowledge ? (

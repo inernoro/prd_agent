@@ -979,6 +979,46 @@ public sealed class HostedSiteEditsControllerTests
         Assert.Null(unchanged.CancelRequestedAt);
     }
 
+    [Fact]
+    public async Task PreviewRevision_ShouldMarkTheLiveRevisionAsCurrent()
+    {
+        // 预览接口曾传 null 判「是不是线上这一版」，刚生成的唯一版本被标成「历史线上版本」。
+        var version = new DateTime(2026, 9, 24, 4, 39, 42, DateTimeKind.Utc);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.GetAsync("site-a", "rev-live", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "rev-live",
+                SiteId = "site-a",
+                Status = HostedSiteRevisionStatuses.Published,
+                PublishedContentVersion = version,
+                Html = "<!doctype html><p>live</p>",
+            });
+        revisions.Setup(service => service.GetAsync("site-a", "rev-old", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "rev-old",
+                SiteId = "site-a",
+                Status = HostedSiteRevisionStatuses.Published,
+                PublishedContentVersion = version.AddMinutes(-5),
+                Html = "<!doctype html><p>old</p>",
+            });
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetByIdAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSite { Id = "site-a", OwnerUserId = "owner-user", ContentVersion = version });
+        var controller = BuildController(NewLazyDb(), "owner-user", sites.Object, revisions: revisions.Object);
+
+        Assert.True(IsCurrent(await controller.PreviewRevision("site-a", "rev-live")));
+        Assert.False(IsCurrent(await controller.PreviewRevision("site-a", "rev-old")));
+
+        static bool IsCurrent(IActionResult result)
+        {
+            var ok = Assert.IsType<OkObjectResult>(result);
+            var json = JsonSerializer.SerializeToNode(ok.Value)!;
+            return json["Data"]!["revision"]!["isCurrent"]!.GetValue<bool>();
+        }
+    }
+
     private static HostedSiteEditsController BuildController(
         MongoDbContext db,
         string userId,

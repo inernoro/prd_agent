@@ -16,7 +16,7 @@ export default function GenerateSiteMenu({ onGenerate, onOpenSettings }: {
         type="button"
         data-tour-id="webpages-generate-primary"
         onClick={onGenerate}
-        title="放资料、说要求，右边先看效果；做好后可以接着改、发给客户"
+        title="放资料、说要求，先看效果再生成；做好后可以接着改、发给客户"
         className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-bold transition-shadow focus-visible:outline-none focus-visible:ring-2"
         style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
       >

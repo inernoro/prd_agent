@@ -54,3 +54,17 @@ describe('StyleThumbnail 状态：取回前是样张形状的骨架，没有样�
     expect(source).toContain('srcDoc={state.html}');
   });
 });
+
+describe('StyleThumbnail 预览区铺满', () => {
+  it('fill 模式不锁横向比例、占满父容器高度', () => {
+    // 2026-09-24 手机验收：预览页签里样张缩成一小条，下面大片留白。
+    const html = renderToStaticMarkup(<StyleThumbnail designSystemId="editorial" fit="fill" />);
+    expect(html).not.toContain('aspect-ratio');
+    expect(html).toContain('h-full');
+  });
+
+  it('默认仍是等比缩略图', () => {
+    const html = renderToStaticMarkup(<StyleThumbnail designSystemId="editorial" />);
+    expect(html).toContain('aspect-ratio:1200 / 760');
+  });
+});

@@ -298,6 +298,11 @@ export default function NewSiteStage({
     state: stage.endedAtMs == null && run.generating ? 'active' as const : 'done' as const,
   }));
   const composing = !run.generating && !sent && !run.notice;
+  // 进度卡往下长、停止按钮在卡片最底下：不跟着滚，按钮就被输入区挡住（与修改阶段同一做法）。
+  const conversationEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    conversationEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [run.generating, steps.length, run.notice, sent]);
   const styleName = styleSelection?.name ?? '默认风格';
 
   const conversation = (
@@ -306,7 +311,7 @@ export default function NewSiteStage({
         <p className="font-semibold">把资料做成网页，发给客户看</p>
         <p className="text-[12px] text-token-secondary">
           点输入框左边的 + 放资料（知识库、文件、会议纪要可以一起放），再用一句话说给谁看、想达到什么效果。
-          右边是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。
+          预览里是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。
         </p>
       </AssistantBubble>
       {composing && (
@@ -355,6 +360,7 @@ export default function NewSiteStage({
       {fallbackNotice && !run.generating && (
         <p className="rounded-lg px-2.5 py-2 text-[11px]" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>{fallbackNotice}</p>
       )}
+      <div ref={conversationEndRef} />
     </>
   );
 
@@ -408,8 +414,8 @@ export default function NewSiteStage({
         sendDisabledReason={run.generating ? undefined : sendBlocker}
         onSend={send}
         hint={runtimeCopy
-          ? `点下去：左边一步步显示进度，右边先出骨架、再换成真实页面；${runtimeCopy.footnote}`
-          : '点下去：左边一步步显示进度，右边出真实页面；做好自动存进网页托管，只有你能看到。'}
+          ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${runtimeCopy.footnote}`
+          : '点下去：对话里一步步显示进度，预览里出真实页面；做好自动存进网页托管，只有你能看到。'}
       />
       <input
         ref={fileInputRef}
@@ -461,7 +467,7 @@ export default function NewSiteStage({
   const previewNote = run.generating
     ? (run.phase || '正在准备')
     : pickingKnowledge
-      ? `勾选要放进来的稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后左边输入框上方会列出来`
+      ? `勾选要放进来的稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后输入框上方会列出来`
       : galleryOpen
       ? '每张缩略图都是这个风格真实的样子，标题已换成你的资料'
       : sampleTitle ? '标题已换成你的资料，正文是示例；点生成后换成你的页面' : '示例内容；放进资料后标题先换成你的';
@@ -470,10 +476,10 @@ export default function NewSiteStage({
     : pickingKnowledge
       ? '选好点右上角「放入」，这里换回样张，样张标题会换成第一篇稿子的标题。'
       : galleryOpen
-      ? '点一张就选定它，右边立刻换成这个风格的样张；选好后回到左边点生成。'
+      ? '点一张就选定它，预览立刻换成这个风格的样张；选好后回到对话点生成。'
       : hasSources
         ? '资料已放好。不喜欢这个样子就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
-        : '先在左边放资料、说要求；这里是所选风格真实的样子。';
+        : '先放资料、说要求；这里是所选风格真实的样子。';
 
   const preview = (
     <WorkbenchPreview
@@ -525,11 +531,12 @@ export default function NewSiteStage({
           swatches={selectedStyle?.swatches}
         />
       ) : (
-        <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+        <div className="h-full p-3 lg:p-4">
           <StyleThumbnail
             designSystemId={styleSelection.designSystemId}
             title={sampleTitle}
             size="preview"
+            fit="fill"
             label={`${styleSelection.name}风格样张`}
           />
         </div>

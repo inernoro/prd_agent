@@ -586,10 +586,14 @@ public sealed class HostedSiteEditsController : ControllerBase
     {
         try
         {
-            var item = await _revisions.GetAsync(siteId, revisionId, this.GetRequiredUserId(), CancellationToken.None);
+            var userId = this.GetRequiredUserId();
+            var item = await _revisions.GetAsync(siteId, revisionId, userId, CancellationToken.None);
             if (item == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在"));
-            return Ok(ApiResponse<object>.Ok(new { revision = ToDto(item, null), html = item.Html }));
+            // 与版本列表同一口径判「是不是线上这一版」。之前这里传 null，刚生成的唯一版本
+            // 在预览区被标成「历史线上版本」，对话里却写着「正在看」当前版。
+            var site = await _sites.GetByIdAsync(siteId, userId, CancellationToken.None);
+            return Ok(ApiResponse<object>.Ok(new { revision = ToDto(item, site?.ContentVersion), html = item.Html }));
         }
         catch (KeyNotFoundException)
         {

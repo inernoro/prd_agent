@@ -59,6 +59,12 @@ export interface StyleThumbnailProps {
   /** 读屏用的名称，例如「编辑刊物风格样张」。 */
   label?: string;
   className?: string;
+  /**
+   * scaled：固定画布等比缩小（画廊缩略图）。
+   * fill：铺满父容器、按真实宽度排版、可滚动（预览区大图）——手机上缩成一小条、
+   * 下面大片留白的样张，用户看不出「这套风格在我这屏上长什么样」。
+   */
+  fit?: 'scaled' | 'fill';
 }
 
 export function StyleThumbnail({
@@ -68,7 +74,9 @@ export function StyleThumbnail({
   format = 'page',
   label,
   className,
+  fit = 'scaled',
 }: StyleThumbnailProps) {
+  const fill = fit === 'fill';
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [width, setWidth] = useState(0);
@@ -133,9 +141,9 @@ export function StyleThumbnail({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full overflow-hidden ${className ?? ''}`}
+      className={`relative w-full overflow-hidden ${fill ? 'h-full' : ''} ${className ?? ''}`}
       style={{
-        aspectRatio: `${frame.width} / ${frame.height}`,
+        ...(fill ? {} : { aspectRatio: `${frame.width} / ${frame.height}` }),
         borderRadius: radius,
         border: '1px solid var(--border-subtle)',
         background: 'var(--bg-tertiary)',
@@ -150,17 +158,19 @@ export function StyleThumbnail({
           sandbox=""
           loading="lazy"
           srcDoc={state.html}
-          tabIndex={-1}
-          aria-hidden
-          style={{
-            width: frame.width,
-            height: frame.height,
-            border: 0,
-            transform: `scale(${scale})`,
-            transformOrigin: '0 0',
-            pointerEvents: 'none',
-            display: 'block',
-          }}
+          tabIndex={fill ? undefined : -1}
+          aria-hidden={fill ? undefined : true}
+          style={fill
+            ? { width: '100%', height: '100%', border: 0, display: 'block' }
+            : {
+              width: frame.width,
+              height: frame.height,
+              border: 0,
+              transform: `scale(${scale})`,
+              transformOrigin: '0 0',
+              pointerEvents: 'none',
+              display: 'block',
+            }}
         />
       )}
       {designSystemId && (state.status === 'idle' || state.status === 'loading') && <SampleSkeleton format={format} />}
