@@ -150,6 +150,40 @@ public sealed class MongoIndexAdvisoryCatalogTests
     }
 
     [Fact]
+    public async Task ConcurrentStaleRefreshesShareOneScan()
+    {
+        var logger = new ListLogger();
+        var advisory = new MongoIndexAdvisory();
+        var required = new[] { new RequiredMongoIndex("c1", "idx_a", "后果 A") };
+        var calls = 0;
+        var release = new TaskCompletionSource();
+
+        async Task<IReadOnlyCollection<string>> Lister(string _, CancellationToken ct)
+        {
+            Interlocked.Increment(ref calls);
+            await release.Task.WaitAsync(ct);
+            return new[] { "idx_a" };
+        }
+
+        // 缓存过期时 8 个探测同时到达（CDS 并发上限），只允许发生一次扫描
+        var refreshes = Enumerable.Range(0, 8)
+            .Select(_ => advisory.RefreshIfStaleAsync(
+                required, Lister, logger, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(5), () => DateTime.UtcNow))
+            .ToList();
+        release.SetResult();
+        var reports = await Task.WhenAll(refreshes);
+
+        Assert.Equal(1, calls);
+        Assert.All(reports, report => Assert.Same(reports[0], report));
+        Assert.Empty(reports[0].Missing);
+
+        // 快照新鲜时不再扫描
+        await advisory.RefreshIfStaleAsync(
+            required, Lister, logger, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(5), () => DateTime.UtcNow);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
     public void DeepHealthPublishesRequiredIndexCheckForStandingMonitor()
     {
         // 接线守卫：缺失索引必须进 /api/healthz/deep 的 cds:monitor，CDS 常设探针才会响铃。
@@ -158,7 +192,7 @@ public sealed class MongoIndexAdvisoryCatalogTests
         var start = program.IndexOf("static async Task<IResult> DeepHealth(", StringComparison.Ordinal);
         Assert.True(start >= 0, "找不到 DeepHealth");
         var body = program[start..];
-        Assert.Contains("indexAdvisory.CheckAsync(", body);
+        Assert.Contains("indexAdvisory.RefreshIfStaleAsync(", body);
         var check = body.IndexOf("[\"componentId\"] = \"mongo.required-indexes\"", StringComparison.Ordinal);
         Assert.True(check >= 0, "深度自检里没有 mongo.required-indexes 这条 check");
         var nextCheck = body.IndexOf("[\"componentId\"]", check + 1, StringComparison.Ordinal);

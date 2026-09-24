@@ -77,6 +77,69 @@ public sealed class MongoIndexAdvisory
     /// <summary>最近一次巡检的结论；还没跑过时为 null。</summary>
     public MongoIndexAdvisoryReport? LastReport => Volatile.Read(ref _lastReport);
 
+    private readonly object _refreshGate = new();
+    private Task<MongoIndexAdvisoryReport>? _inFlightRefresh;
+
+    /// <summary>
+    /// 快照超过 <paramref name="maxAge"/> 才刷新，并且同一时刻只允许一次刷新在跑（single-flight）：
+    /// 深度自检会被 CDS 的多条监控并发探测，缓存过期那一刻若各自重扫，会重复打 Mongo、重复写告警，
+    /// 慢的那次超时还会把快的那次的正常结论覆盖成「未核实」。刷新只受 <paramref name="budget"/> 约束，
+    /// 不绑任何一个调用方的取消令牌——否则第一个断开的请求会连累其余等待者。
+    /// </summary>
+    public Task<MongoIndexAdvisoryReport> RefreshIfStaleAsync(
+        IMongoDatabase database,
+        ILogger logger,
+        TimeSpan maxAge,
+        TimeSpan budget)
+        => RefreshIfStaleAsync(
+            RequiredMongoIndexCatalog.All,
+            (collection, token) => ListIndexNamesAsync(database, collection, token),
+            logger,
+            maxAge,
+            budget,
+            () => DateTime.UtcNow);
+
+    /// <summary><see cref="RefreshIfStaleAsync(IMongoDatabase, ILogger, TimeSpan, TimeSpan)"/> 的可注入版本。</summary>
+    public Task<MongoIndexAdvisoryReport> RefreshIfStaleAsync(
+        IReadOnlyList<RequiredMongoIndex> required,
+        Func<string, CancellationToken, Task<IReadOnlyCollection<string>>> listIndexNames,
+        ILogger logger,
+        TimeSpan maxAge,
+        TimeSpan budget,
+        Func<DateTime> clock)
+    {
+        var last = LastReport;
+        if (last is not null && clock() - last.CheckedAt <= maxAge)
+            return Task.FromResult(last);
+
+        lock (_refreshGate)
+        {
+            if (_inFlightRefresh is { IsCompleted: false })
+                return _inFlightRefresh;
+            _inFlightRefresh = RunBoundedAsync(required, listIndexNames, logger, budget, clock());
+            return _inFlightRefresh;
+        }
+    }
+
+    private async Task<MongoIndexAdvisoryReport> RunBoundedAsync(
+        IReadOnlyList<RequiredMongoIndex> required,
+        Func<string, CancellationToken, Task<IReadOnlyCollection<string>>> listIndexNames,
+        ILogger logger,
+        TimeSpan budget,
+        DateTime now)
+    {
+        using var timeout = new CancellationTokenSource(budget);
+        try
+        {
+            return await CheckAsync(required, listIndexNames, logger, now, timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // 超时：CheckAsync 已把没查完的几条记成「未核实」写进快照
+            return LastReport!;
+        }
+    }
+
     /// <summary>对真实库执行巡检。</summary>
     public Task<MongoIndexAdvisoryReport> CheckAsync(
         IMongoDatabase database,
