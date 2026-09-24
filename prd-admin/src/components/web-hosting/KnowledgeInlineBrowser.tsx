@@ -22,6 +22,7 @@ import { formatAttachmentSize } from './designAttachments';
 const RECENT_KEY = '__recent__';
 const STORE_PAGE_SIZE = 40;
 const ENTRY_PAGE_SIZE = 30;
+const KEYWORD_DEBOUNCE_MS = 300;
 
 interface Props {
   recentEntries: RecentDocumentEntry[];
@@ -127,6 +128,14 @@ export default function KnowledgeInlineBrowser({
     }
     setRowsLoading(false);
   }, [activeStore, activeStoreId, keyword, recentEntries]);
+
+  // 打字停下就筛：只认回车或失焦时，用户敲完字看到列表纹丝不动，会以为没搜到。
+  useEffect(() => {
+    const next = keywordInput.trim();
+    if (next === keyword) return;
+    const timer = window.setTimeout(() => setKeyword(next), KEYWORD_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [keyword, keywordInput]);
 
   useEffect(() => {
     void loadEntries();

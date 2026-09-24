@@ -121,3 +121,14 @@ describe('生成工作台布局契约', () => {
     expect(page).not.toContain('SiteGenerateDialog');
   });
 });
+
+describe('选知识的搜索框打字即筛', () => {
+  const browser = readFileSync(path.resolve(__dirname, '../KnowledgeInlineBrowser.tsx'), 'utf8');
+
+  it('输入停下后自动生效，不要求回车或失焦', () => {
+    // 2026-09-24 真人验收：输入「宣讲稿」后列表纹丝不动，只有回车/失焦才筛。
+    expect(browser).toMatch(/setTimeout\(\(\) => setKeyword\(next\), KEYWORD_DEBOUNCE_MS\)/);
+    expect(browser).toContain('const next = keywordInput.trim();');
+    expect(browser).toMatch(/\}, \[keyword, keywordInput\]\);/);
+  });
+});
