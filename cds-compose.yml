@@ -27,6 +27,8 @@ x-cds-env:
   # CDS 固定使用 Cloudflare R2；Tencent COS 只属于正式环境。
   ASSETS_PROVIDER: cloudflareR2
   ASSETS_EXPECTED_PROVIDER: cloudflareR2
+  # 每套 CDS 可在项目环境变量中覆盖为唯一节点名，例如 cds-local-prd-agent。
+  LLMGW_FEDERATION_NODE_ID: cds-prd-agent-preview
   # 对象存储路径前缀——结构约定，非密钥
   R2_PREFIX: data
 
@@ -237,6 +239,9 @@ x-cds-deploy-modes:
       env:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8091"
+        # 使用部署级配置作为稳定联邦节点名；容器重建时不能退化为随机容器主机名。
+        LlmGateway__FederationNodeId: "${LLMGW_FEDERATION_NODE_ID}"
+        LlmGateway__FederationMaxHops: "2"
         # CDS 预览没有稳定对象存储探针对象；深度 readiness 仍检查 Mongo、key 和 router，
         # 正式 docker-compose 则默认强制对象存储探针。
         LlmGateway__Readiness__RequireAssetProbe: "false"
@@ -339,6 +344,9 @@ services:
       LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
+      # API 的 inproc / break-glass 路径也必须使用相同节点身份，避免回环检查口径分裂。
+      LlmGateway__FederationNodeId: "${LLMGW_FEDERATION_NODE_ID}"
+      LlmGateway__FederationMaxHops: "2"
       # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
       # 必须是 host:port,user=,password= 这个格式，所以这里用原始 USER/PASSWORD 自己拼，
       # 不用 CDS_REDIS_URL。已知边界：口令若含 , 或 = 会把这个串解析歪（CDS 生成的是十六进制，不会）。
@@ -485,6 +493,8 @@ services:
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
+      LlmGateway__FederationNodeId: "${LLMGW_FEDERATION_NODE_ID}"
+      LlmGateway__FederationMaxHops: "2"
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       # CDS 源码 profile 同样没有稳定对象存储探针；不能只在 express profile 关闭。
