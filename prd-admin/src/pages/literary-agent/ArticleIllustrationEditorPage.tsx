@@ -706,6 +706,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 不在本页，本地计时起点只是「这次渲染的时刻」；若服务端早已出完图，状态查询几秒后
   // 就会翻成 done，这几秒会被当成出图耗时喂进共享预估，把之后的倒计时拉得离谱地短。
   const restoredRunningRef = useRef(new Set<number>());
+  // 路由只换 workspaceId 时本组件会被复用，两份计时记录必须跟着清空，
+  // 否则 A 工作区的计时会被记到 B 工作区同编号的配图上，污染共享预估
+  useEffect(() => {
+    runStartedAtRef.current = new Map();
+    restoredRunningRef.current = new Set();
+  }, [workspaceId]);
   useEffect(() => {
     const running = new Set(markerRunItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
     for (const [k, startedAt] of Array.from(runStartedAtRef.current.entries())) {
@@ -808,6 +814,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
   const loadWatermarkOptions = async () => {
     setWatermarkLoadError(null);
+    // 重读期间先让旧列表失效：旧列表可能已被管理面板改过（A 换成 B），
+    // 这时若还能点「不加水印」，会按旧的 A 去解绑，B 在服务端仍然生效
+    setWatermarkOptions(null);
     const res = await getWatermarks();
     if (res.success && Array.isArray(res.data)) {
       setWatermarkOptions(res.data);
