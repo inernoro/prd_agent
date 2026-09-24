@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ApiResponse } from '@/types/api';
 import type { PrivateSourceItem, PrivateSourceReport } from '@/services/real/webPages';
+import { normalizeVisibility } from './shareVisibility';
 
 /**
  * 发布前私有资料确认（2026-09-24，轨道 D0）。
@@ -24,6 +25,24 @@ export const PRIVATE_SOURCE_ERROR_CODES = [
 
 export function isPrivateSourceConfirmationError(code: string | null | undefined): boolean {
   return !!code && (PRIVATE_SOURCE_ERROR_CODES as readonly string[]).includes(code);
+}
+
+/**
+ * 改一条已有分享链接的可见性时，这次改动是不是「从只有协作者能打开，变成对外可见」。
+ *
+ * 只有这一种转换需要私有资料确认，与服务端 PATCH /api/web-pages/shares/{id} 的判据一致
+ * （WebPagesController.UpdateShareSettings：链接当前是 owner-only，且目标是 logged-in / public）。
+ * 公开改登录可见、公开原样再选一次公开、任何收紧都直接提交——否则作者点「取消」会挡住一次收紧。
+ *
+ * 当前可见性走 normalizeVisibility：没有可见性字段的存量链接按公开处理（后端读路径同样如此），
+ * 它本来就对外可见，改档不算新的暴露。
+ */
+export function isWideningBeyondCollaborators(
+  current: string | null | undefined,
+  next: string | null | undefined,
+): boolean {
+  if (next !== 'logged-in' && next !== 'public') return false;
+  return normalizeVisibility(current) === 'owner-only';
 }
 
 /** 确认层第一句：先说后果，再列资料。 */

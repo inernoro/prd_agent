@@ -7,6 +7,7 @@ import {
   buildPrivateSourceHeadline,
   describePrivateSourceLocation,
   isPrivateSourceConfirmationError,
+  isWideningBeyondCollaborators,
   requestPrivateSourceConfirmation,
   runWithPrivateSourceGate,
   usePrivateSourceConfirmStore,
@@ -149,6 +150,40 @@ describe('确认层文案与宿主', () => {
     }
   });
 
+  it('改链接可见性：只有「仅协作者 → 对外」才要确认，与服务端 PATCH 判据一致', () => {
+    // 仅协作者改公开 / 登录可见：等同一次对外分享，要弹确认。
+    expect(isWideningBeyondCollaborators('owner-only', 'public')).toBe(true);
+    expect(isWideningBeyondCollaborators('owner-only', 'logged-in')).toBe(true);
+    // 已经对外的链接改档、原样再选一次、收紧：都直接提交，取消确认不能挡住收紧（Codex P2）。
+    expect(isWideningBeyondCollaborators('public', 'logged-in')).toBe(false);
+    expect(isWideningBeyondCollaborators('public', 'public')).toBe(false);
+    expect(isWideningBeyondCollaborators('logged-in', 'public')).toBe(false);
+    expect(isWideningBeyondCollaborators('public', 'owner-only')).toBe(false);
+    expect(isWideningBeyondCollaborators('owner-only', 'owner-only')).toBe(false);
+    // 没有可见性字段的存量链接按公开处理（后端读路径同样如此），改档不是新的暴露。
+    expect(isWideningBeyondCollaborators(undefined, 'public')).toBe(false);
+    expect(isWideningBeyondCollaborators('', 'logged-in')).toBe(false);
+    // 这次没改可见性（只改有效期）。
+    expect(isWideningBeyondCollaborators('owner-only', undefined)).toBe(false);
+  });
+
+  it('改链接可见性时不属于放宽的修改不核查、不弹确认，直接提交', async () => {
+    const ask = vi.fn();
+    const inspect = vi.fn(async () => ok(privateReport));
+    const run = vi.fn(async (_fingerprint: string | undefined) => ok({ visibility: 'logged-in' }));
+    const widening = isWideningBeyondCollaborators('public', 'logged-in');
+    const outcome = await runWithPrivateSourceGate({
+      inspect: widening ? inspect : async () => ok({ requiresConfirmation: false, items: [] }),
+      run,
+      actionLabel: '放宽分享范围',
+      ask,
+    });
+    expect(outcome.status).toBe('done');
+    expect(inspect).not.toHaveBeenCalled();
+    expect(ask).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(undefined);
+  });
+
   it('接线：五个对外发出的入口都走同一个闸，宿主挂在 AppShell 与分享阅读页', () => {
     // 删掉任何一处接线，页面照常渲染、测试照常绿，而私有资料就会不经确认发出去（形状 2）。
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), 'utf8');
@@ -157,6 +192,8 @@ describe('确认层文案与宿主', () => {
     const page = read('../../pages/WebPagesPage.tsx');
     expect(session).toMatch(/runWithPrivateSourceGate\(\{\s*inspect: \(\) => getRevisionPrivateSources/);
     expect(popover.match(/runWithPrivateSourceGate\(/g)?.length).toBe(2);
+    // 改可见性那一处必须按「当前 → 目标」判放宽，不能只看目标档位（否则公开改登录可见也会弹确认）。
+    expect(popover).toContain('isWideningBeyondCollaborators(link.visibility, body.visibility)');
     expect(page.match(/runWithPrivateSourceGate\(/g)?.length).toBe(3);
     expect(read('../../layouts/AppShell.tsx')).toContain('<PrivateSourceConfirmHost />');
     expect(read('../../pages/ShareViewPage.tsx')).toContain('<PrivateSourceConfirmHost />');

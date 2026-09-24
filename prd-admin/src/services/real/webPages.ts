@@ -967,11 +967,15 @@ export interface PrivateSourceReport {
   items: PrivateSourceItem[];
 }
 
-/** 这些站点当前线上内容引用了哪些私有资料（分享、设为公开前调用）。 */
+/**
+ * 这些站点当前线上内容引用了哪些私有资料（分享、设为公开前调用）。
+ * 服务端核查全部站点、不截断；站点清单走请求体，大合集的几百个 ID 拼进查询串会超过请求行长度上限。
+ */
 export async function getSitesPrivateSources(siteIds: string[]): Promise<ApiResponse<PrivateSourceReport>> {
-  const query = new URLSearchParams();
-  siteIds.forEach((id) => query.append('siteIds', id));
-  return apiRequest(`${api.webPages.privateSources()}?${query.toString()}`);
+  return apiRequest(api.webPages.privateSources(), {
+    method: 'POST',
+    body: { siteIds },
+  });
 }
 
 /** 这版草稿（连同它的内容血缘）引用了哪些私有资料、站点是否已对外可见（发布草稿前调用）。 */

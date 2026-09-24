@@ -22,7 +22,7 @@ import {
   resolveVisibility,
   type ShareVisibility,
 } from './quickShare';
-import { runWithPrivateSourceGate } from './privateSourceConfirm';
+import { isWideningBeyondCollaborators, runWithPrivateSourceGate } from './privateSourceConfirm';
 
 /**
  * 分享下拉面板 —— 从站点卡片的「分享」按钮就地垂直展开，一步拿到链接。
@@ -152,8 +152,9 @@ export function QuickSharePopover({
     if (!link) return;
     setBusy(kind);
     try {
-      // 从「我和协作者」放宽到「登录的人 / 任何人」等同于一次对外分享，同样要先确认私有资料。
-      const widening = kind === 'visibility' && !!body.visibility && body.visibility !== 'owner-only';
+      // 只有从「我和协作者」放宽到「登录的人 / 任何人」才等同于一次对外分享、要先确认私有资料；
+      // 已经对外的链接改档（公开改登录可见、原样再选一次）与收紧都直接提交。判据与服务端同源，见 isWideningBeyondCollaborators。
+      const widening = kind === 'visibility' && isWideningBeyondCollaborators(link.visibility, body.visibility);
       const gated = await runWithPrivateSourceGate({
         inspect: widening
           ? () => getSitesPrivateSources(link.siteIds?.length ? link.siteIds : [site.id])
