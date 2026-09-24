@@ -169,7 +169,6 @@ describe('R2 离机备份', () => {
     const html = Buffer.from('<!doctype html><title>验收报告</title>'.repeat(40));
     const sha = crypto.createHash('sha256').update(html).digest('hex');
 
-    // 模拟边缘节点：请求没声明 identity 时，文本对象按压缩后的长度回应。
     function edgeLikeFetch(seen: Array<{ method: string; headers: Headers }>) {
       return async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         const headers = new Headers(init?.headers);
@@ -192,14 +191,13 @@ describe('R2 离机备份', () => {
         contentType: 'text/html; charset=utf-8', fetchImpl: edgeLikeFetch(seen) as typeof fetch,
       });
       expect(out).toEqual({ objectKey: 'cds-acceptance-reports/p/r.html', bytes: html.byteLength, sha256: sha });
-      const head = seen.find((c) => c.method === 'HEAD');
+      const head = seen.find((call) => call.method === 'HEAD');
       expect(head?.headers.get('accept-encoding')).toBe('identity');
-      // 这个头不能进签名：边缘可能改写它，签进去会变成签名不匹配。
       expect(head?.headers.get('authorization')).not.toContain('accept-encoding');
     });
 
-    it('长度与 checksum 分开报，读的人知道该去查传输层还是对象本身', async () => {
-      const fetchImpl = async (_i: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    it('长度与 checksum 分开报，便于区分传输层和对象本身问题', async () => {
+      const fetchImpl = async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         if (init?.method === 'PUT') return new Response('', { status: 200 });
         return new Response(null, { status: 200, headers: { 'content-length': '97', 'content-encoding': 'gzip' } });
       };

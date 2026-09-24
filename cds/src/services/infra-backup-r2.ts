@@ -142,10 +142,9 @@ export async function uploadAndVerifyR2Object(opts: {
         payloadHash: crypto.createHash('sha256').update('').digest('hex'),
         now: new Date(now.getTime() + 1),
       }),
-      // 回读比的是「存进去的字节数」。fetch 默认带 gzip/br 协商，文本类对象（报告 HTML、
-      // 审计 JSON）经过边缘时可能按压缩后的形态回应，长度就不再是原始字节数——二进制备份
-      // 不受影响，所以备份自检一直是绿的，而报告入库从 2026-09-16 起全部失败。
-      // 不纳入签名：边缘节点可能改写这个头，签进去反而会变成签名不匹配。
+      // 回读比的是“存进去的字节数”。fetch 默认带 gzip/br 协商，文本类对象经过边缘时
+      // 可能按压缩后的形态回应，长度就不再是原始字节数。这个头不纳入签名，避免边缘
+      // 节点改写后造成签名不匹配。
       'accept-encoding': 'identity',
     },
   });
@@ -154,8 +153,6 @@ export async function uploadAndVerifyR2Object(opts: {
   const bytes = Number(lengthHeader || '0');
   const remoteSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
   if (bytes !== opts.body.byteLength || remoteSha256 !== sha256) {
-    // 两项分开报：长度不对多半是传输层改写了回应，checksum 缺失或不对才是对象本身有问题，
-    // 下一步去查的地方完全不同。
     const encoding = head.headers.get('content-encoding');
     const parts = [
       bytes !== opts.body.byteLength
