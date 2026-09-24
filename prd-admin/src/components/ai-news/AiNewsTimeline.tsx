@@ -409,7 +409,7 @@ export function AiNewsTimeline() {
                 {feed.stale && (
                   <>
                     <span style={{ opacity: 0.5 }}>·</span>
-                    <span style={{ color: '#fbbf24' }}>暂用缓存</span>
+                    <span style={{ color: 'var(--accent-fg-amber)' }}>暂用缓存</span>
                   </>
                 )}
               </>
