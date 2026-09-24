@@ -20,20 +20,23 @@ public sealed class DesignGenerationSettingsController : ControllerBase
 {
     private readonly IDesignGenerationSettingsService _settings;
     private readonly IAdminPermissionService _permissions;
+    private readonly IDesignSystemCatalog _catalog;
 
     public DesignGenerationSettingsController(
         IDesignGenerationSettingsService settings,
-        IAdminPermissionService permissions)
+        IAdminPermissionService permissions,
+        IDesignSystemCatalog catalog)
     {
         _settings = settings;
         _permissions = permissions;
+        _catalog = catalog;
     }
 
     [HttpGet]
     public async Task<IActionResult> Get()
     {
         var settings = await _settings.GetAsync(CancellationToken.None);
-        return Ok(ApiResponse<object>.Ok(ToView(settings, await CanEditAsync())));
+        return Ok(ApiResponse<object>.Ok(ToView(settings, await CanEditAsync(), _catalog)));
     }
 
     [HttpPut]
@@ -42,7 +45,7 @@ public sealed class DesignGenerationSettingsController : ControllerBase
         try
         {
             var saved = await _settings.SaveAsync(request ?? new DesignGenerationSettingsUpdate(), this.GetRequiredUserId(), CancellationToken.None);
-            return Ok(ApiResponse<object>.Ok(ToView(saved, canEdit: true)));
+            return Ok(ApiResponse<object>.Ok(ToView(saved, canEdit: true, _catalog)));
         }
         catch (DesignGenerationSettingsException ex)
         {
@@ -59,7 +62,13 @@ public sealed class DesignGenerationSettingsController : ControllerBase
         return perms.Contains(AdminPermissionCatalog.WebPagesWrite);
     }
 
-    internal static object ToView(DesignGenerationEffectiveSettings settings, bool canEdit)
+    /// <summary>
+    /// 设置视图。每套风格的 <c>swatches</c> 是只读派生值（取自该风格设计系统的真实 tokens：[--fg, --bg, --accent]），
+    /// PUT 时提交的 swatches 会被忽略；<c>swatchesReadOnly</c> 把这一点写进契约。
+    /// <c>sampleUrl</c> 是该风格真实样张的地址（不含查询串，可追加 title / format），
+    /// 设计系统不在快照里时为 null——没有真实样张就不给地址。
+    /// </summary>
+    internal static object ToView(DesignGenerationEffectiveSettings settings, bool canEdit, IDesignSystemCatalog catalog)
     {
         string? fingerprint = null;
         try { fingerprint = DesignGenerationSettingsService.Freeze(settings, null).PromptFingerprint; }
@@ -75,6 +84,9 @@ public sealed class DesignGenerationSettingsController : ControllerBase
                 style.Description,
                 style.DesignSystemId,
                 style.Swatches,
+                sampleUrl = catalog.Find(style.DesignSystemId) is { } system
+                    ? DesignSystemSampleRenderer.SamplePath(system.Id)
+                    : null,
                 style.Enabled,
                 style.IsDefault,
                 style.BuiltIn,
@@ -100,6 +112,8 @@ public sealed class DesignGenerationSettingsController : ControllerBase
                     defaultValue = DesignGenerationDefaults.ReviewPrompt,
                 },
             },
+            swatchesReadOnly = true,
+            designSystemCatalog = new { engineVersion = catalog.EngineVersion, count = catalog.All.Count },
             platformContract = DesignGenerationDefaults.PlatformContract,
             promptFingerprint = fingerprint,
             updatedAt = settings.UpdatedAt,

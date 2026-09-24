@@ -18,16 +18,22 @@ public static class DesignGenerationDefaults
     public const int MaxPromptLength = 8000;
     public const int MaxStyles = 24;
 
+    /// <summary>
+    /// 8 套内置风格。只写名称、说明与对应的 OpenDesign 设计系统；色块不在这里手写，
+    /// 由 <see cref="DesignGenerationSettingsService.Effective"/> 从设计系统快照的真实 tokens 派生
+    /// （ink = --fg、paper = --bg、accent = --accent）。2026-09-24 之前这里手写的三色与 OpenDesign
+    /// 真实 tokens 对不上（editorial 写的是 #b3261e，真实 accent 是 #9a5a2f），卡片展示的颜色是编的。
+    /// </summary>
     public static readonly IReadOnlyList<DesignStylePreset> Styles = new[]
     {
-        Style("editorial", "编辑刊物", "报刊式排版，衬线标题配大段留白，适合技术方案与深度分析", "editorial", "#1f1f1f", "#f5f1e8", "#b3261e", isDefault: true),
-        Style("warm-editorial", "暖调编辑", "暖米底色与柔和强调色，读起来像一本产品手册", "warm-editorial", "#3b2f2a", "#f7efe6", "#d97757"),
-        Style("minimal", "极简", "黑白灰为主，只用一种强调色，信息密度高、干净克制", "minimal", "#111111", "#ffffff", "#2563eb"),
-        Style("kami", "纸感", "纸张质感与细线分隔，适合中文长文与宣讲稿", "kami", "#2b2b2b", "#faf7f0", "#8a5a44"),
-        Style("corporate", "企业汇报", "稳重蓝灰配色，指标卡与表格清晰，适合对内汇报", "corporate", "#0f2a4a", "#f4f6f9", "#1d6fd8"),
-        Style("bento", "便当格", "大小不一的模块网格，适合多个要点并列展示", "bento", "#18181b", "#f4f4f5", "#f97316"),
-        Style("glassmorphism", "玻璃质感", "半透明分层与柔光背景，适合产品介绍与发布页", "glassmorphism", "#0b1020", "#e8ecff", "#7c9cff"),
-        Style("storytelling", "叙事长卷", "按章节推进的长滚动叙事，适合复盘与故事化讲解", "storytelling", "#1a1a2e", "#fdf6e3", "#e94560"),
+        Style("editorial", "编辑刊物", "报刊式排版，衬线标题配大段留白，适合技术方案与深度分析", "editorial", isDefault: true),
+        Style("warm-editorial", "暖调编辑", "暖米底色与柔和强调色，读起来像一本产品手册", "warm-editorial"),
+        Style("minimal", "极简", "黑白灰为主，只用一种强调色，信息密度高、干净克制", "minimal"),
+        Style("kami", "纸感", "纸张质感与细线分隔，适合中文长文与宣讲稿", "kami"),
+        Style("corporate", "企业汇报", "稳重蓝灰配色，指标卡与表格清晰，适合对内汇报", "corporate"),
+        Style("bento", "便当格", "大小不一的模块网格，适合多个要点并列展示", "bento"),
+        Style("glassmorphism", "玻璃质感", "半透明分层与柔光背景，适合产品介绍与发布页", "glassmorphism"),
+        Style("storytelling", "叙事长卷", "按章节推进的长滚动叙事，适合复盘与故事化讲解", "storytelling"),
     };
 
     public const string GeneratePrompt = """
@@ -92,14 +98,13 @@ public static class DesignGenerationDefaults
 """;
 
     private static DesignStylePreset Style(
-        string id, string name, string description, string designSystemId,
-        string ink, string paper, string accent, bool isDefault = false) => new()
+        string id, string name, string description, string designSystemId, bool isDefault = false) => new()
     {
         Id = id,
         Name = name,
         Description = description,
         DesignSystemId = designSystemId,
-        Swatches = new List<string> { ink, paper, accent },
+        Swatches = new List<string>(),
         Enabled = true,
         IsDefault = isDefault,
         BuiltIn = true,
@@ -156,16 +161,17 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
 {
     private static readonly Regex StyleIdPattern = new("^[a-z0-9][a-z0-9-]{0,47}$", RegexOptions.CultureInvariant);
     private static readonly Regex DesignSystemIdPattern = new("^[a-z0-9][a-z0-9-]{0,63}$", RegexOptions.CultureInvariant);
-    private static readonly Regex SwatchPattern = new("^#[0-9a-fA-F]{6}$", RegexOptions.CultureInvariant);
     private readonly MongoDbContext _db;
+    private readonly IDesignSystemCatalog _catalog;
 
-    public DesignGenerationSettingsService(MongoDbContext db)
+    public DesignGenerationSettingsService(MongoDbContext db, IDesignSystemCatalog catalog)
     {
         _db = db;
+        _catalog = catalog;
     }
 
     public async Task<DesignGenerationEffectiveSettings> GetAsync(CancellationToken ct)
-        => Effective(await LoadAsync(ct));
+        => Effective(await LoadAsync(ct), _catalog);
 
     public async Task<DesignGenerationEffectiveSettings> SaveAsync(
         DesignGenerationSettingsUpdate update, string userId, CancellationToken ct)
@@ -181,20 +187,36 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             next,
             new ReplaceOptions { IsUpsert = true },
             CancellationToken.None);
-        return Effective(next);
+        return Effective(next, _catalog);
     }
 
     public async Task<DesignArtifactDesignDirection> FreezeAsync(string? styleId, CancellationToken ct)
-        => Freeze(Effective(await LoadAsync(ct)), styleId);
+        => Freeze(Effective(await LoadAsync(ct), _catalog), styleId);
 
     private async Task<DesignGenerationSettings?> LoadAsync(CancellationToken ct)
         => await _db.DesignGenerationSettings
             .Find(s => s.Id == DesignGenerationSettings.SingletonId)
             .FirstOrDefaultAsync(ct);
 
-    internal static DesignGenerationEffectiveSettings Effective(DesignGenerationSettings? stored)
+    /// <summary>
+    /// 生效视图。风格色块在这里统一从设计系统快照派生（ink = --fg、paper = --bg、accent = --accent），
+    /// 库里存过的旧三色（2026-09-24 之前可编辑）一律不采用；设计系统不在快照里的风格色块为空——
+    /// 拿不到真实颜色就不给，不编一组。每次都返回新的风格对象，不共享内置默认的实例。
+    /// </summary>
+    internal static DesignGenerationEffectiveSettings Effective(DesignGenerationSettings? stored, IDesignSystemCatalog catalog)
     {
-        var styles = stored?.Styles is { Count: > 0 } saved ? saved : DesignGenerationDefaults.Styles.ToList();
+        var source = stored?.Styles is { Count: > 0 } saved ? saved : DesignGenerationDefaults.Styles.ToList();
+        var styles = source.Select(style => new DesignStylePreset
+        {
+            Id = style.Id,
+            Name = style.Name,
+            Description = style.Description,
+            DesignSystemId = style.DesignSystemId,
+            Swatches = DerivedSwatches(catalog.Find(style.DesignSystemId)),
+            Enabled = style.Enabled,
+            IsDefault = style.IsDefault,
+            BuiltIn = style.BuiltIn,
+        }).ToList();
         return new DesignGenerationEffectiveSettings(
             stored?.DefaultRuntime ?? DesignGenerationDefaults.DefaultRuntime,
             stored?.ReviewMode ?? DesignGenerationDefaults.DefaultReviewMode,
@@ -208,6 +230,12 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             stored?.UpdatedAt,
             stored?.UpdatedByName);
     }
+
+    /// <summary>风格卡片的三枚色块：[ink, paper, accent] = [--fg, --bg, --accent]。唯一派生口径。</summary>
+    internal static List<string> DerivedSwatches(DesignSystemEntry? system)
+        => system == null
+            ? new List<string>()
+            : new List<string> { system.Swatches.Fg, system.Swatches.Bg, system.Swatches.Accent };
 
     internal static DesignGenerationSettings Apply(DesignGenerationSettings current, DesignGenerationSettingsUpdate update)
     {
@@ -274,9 +302,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             var designSystemId = (raw.DesignSystemId ?? string.Empty).Trim().ToLowerInvariant();
             if (!DesignSystemIdPattern.IsMatch(designSystemId))
                 throw new DesignGenerationSettingsException($"风格「{name}」的设计系统编号只能用小写字母、数字和连字符");
-            var swatches = (raw.Swatches ?? new List<string>()).Select(s => (s ?? string.Empty).Trim()).ToList();
-            if (swatches.Count != 3 || swatches.Any(s => !SwatchPattern.IsMatch(s)))
-                throw new DesignGenerationSettingsException($"风格「{name}」需要 3 个 #RRGGBB 色块");
+            // 色块不再是可编辑项：提交里带的 swatches 一律不采用、不落库，读取时从设计系统快照派生。
             result.Add(new DesignStylePreset
             {
                 Id = id,
@@ -285,7 +311,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
                     ? description
                     : throw new DesignGenerationSettingsException($"风格「{name}」的说明不能超过 200 个字符"),
                 DesignSystemId = designSystemId,
-                Swatches = swatches,
+                Swatches = new List<string>(),
                 Enabled = raw.Enabled,
                 IsDefault = raw.IsDefault,
                 BuiltIn = builtInIds.Contains(id),

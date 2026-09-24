@@ -14,10 +14,12 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public sealed class DesignGenerationSettingsTests
 {
+    private static readonly IDesignSystemCatalog Catalog = DesignSystemCatalog.LoadEmbedded();
+
     [Fact]
     public void 没有保存过设置时默认执行器是OpenDesign且八套风格有且只有一套默认()
     {
-        var settings = DesignGenerationSettingsService.Effective(null);
+        var settings = DesignGenerationSettingsService.Effective(null, Catalog);
 
         Assert.Equal(DesignArtifactRuntimes.OpenDesign, settings.DefaultRuntime);
         Assert.Equal(DesignReviewModes.Light, settings.ReviewMode);
@@ -32,13 +34,13 @@ public sealed class DesignGenerationSettingsTests
     public void 改提示词后指纹变化_传空串恢复默认后指纹回到默认值()
     {
         var defaultFingerprint = DesignGenerationSettingsService.Freeze(
-            DesignGenerationSettingsService.Effective(null), null).PromptFingerprint;
+            DesignGenerationSettingsService.Effective(null, Catalog), null).PromptFingerprint;
 
         var edited = DesignGenerationSettingsService.Apply(new DesignGenerationSettings(), new DesignGenerationSettingsUpdate
         {
             Prompts = new DesignGenerationPromptsUpdate { Generate = "只用两种颜色" },
         });
-        var editedSettings = DesignGenerationSettingsService.Effective(edited);
+        var editedSettings = DesignGenerationSettingsService.Effective(edited, Catalog);
         var editedFingerprint = DesignGenerationSettingsService.Freeze(editedSettings, null).PromptFingerprint;
 
         Assert.False(editedSettings.GeneratePromptIsDefault);
@@ -50,7 +52,7 @@ public sealed class DesignGenerationSettingsTests
         });
         Assert.Null(restored.GeneratePrompt);
         Assert.Equal(defaultFingerprint, DesignGenerationSettingsService.Freeze(
-            DesignGenerationSettingsService.Effective(restored), null).PromptFingerprint);
+            DesignGenerationSettingsService.Effective(restored, Catalog), null).PromptFingerprint);
     }
 
     [Fact]
@@ -96,7 +98,6 @@ public sealed class DesignGenerationSettingsTests
         foreach (var broken in new[]
                  {
                      Clone(s => s.DesignSystemId = "../../etc"),
-                     Clone(s => s.Swatches = new List<string> { "#fff", "#000000", "#123456" }),
                      Clone(s => s.Id = "Bad Id"),
                      Clone(s => s.Enabled = false),
                  })
@@ -110,7 +111,7 @@ public sealed class DesignGenerationSettingsTests
     [Fact]
     public void 没选风格时取默认风格_选了停用或不存在的风格要说清原因()
     {
-        var settings = DesignGenerationSettingsService.Effective(null);
+        var settings = DesignGenerationSettingsService.Effective(null, Catalog);
 
         var frozen = DesignGenerationSettingsService.Freeze(settings, null);
         Assert.Equal("editorial", frozen.StyleId);
@@ -135,7 +136,7 @@ public sealed class DesignGenerationSettingsTests
     public void 设置接口把平台契约与三段提示词原文都交出去()
     {
         var view = JsonSerializer.SerializeToNode(
-            DesignGenerationSettingsController.ToView(DesignGenerationSettingsService.Effective(null), canEdit: false))!;
+            DesignGenerationSettingsController.ToView(DesignGenerationSettingsService.Effective(null, Catalog), canEdit: false, Catalog))!;
 
         Assert.Equal("open-design", view["defaultRuntime"]!.GetValue<string>());
         Assert.Equal(DesignGenerationDefaults.PlatformContract, view["platformContract"]!.GetValue<string>());
@@ -165,7 +166,7 @@ public sealed class DesignGenerationSettingsTests
     public void 冻结的风格与提示词进入任务书_上传文档落在knowledge目录并计入事实来源_截图只进reference()
     {
         var run = BuildRun();
-        run.DesignDirection = DesignGenerationSettingsService.Freeze(DesignGenerationSettingsService.Effective(null), "kami");
+        run.DesignDirection = DesignGenerationSettingsService.Freeze(DesignGenerationSettingsService.Effective(null, Catalog), "kami");
         run.UploadedSources = new List<DesignUploadedSource>
         {
             new() { AttachmentId = "att-1", FileName = "方案 A.md", MimeType = "text/markdown", Content = "上线后错误率下降 40%", ContentHash = "h1" },
@@ -203,7 +204,7 @@ public sealed class DesignGenerationSettingsTests
 
         var withDirection = BuildRun();
         withDirection.KnowledgeReferences.Add(new DesignKnowledgeSnapshot { EntryId = "e1", Title = "t", Content = "c", ContentHash = "h" });
-        withDirection.DesignDirection = DesignGenerationSettingsService.Freeze(DesignGenerationSettingsService.Effective(null), null);
+        withDirection.DesignDirection = DesignGenerationSettingsService.Freeze(DesignGenerationSettingsService.Effective(null, Catalog), null);
         var after = DesignArtifactWorkspaceContract.BuildInputPackage(withDirection, null);
 
         // 方向参与版本指纹：同样的知识换一套风格，不能被当成同一个输入。
@@ -216,7 +217,7 @@ public sealed class DesignGenerationSettingsTests
     {
         var run = BuildRun();
         run.Id = "run-direction-golden";
-        run.DesignDirection = DesignGenerationSettingsService.Freeze(DesignGenerationSettingsService.Effective(null), "minimal");
+        run.DesignDirection = DesignGenerationSettingsService.Freeze(DesignGenerationSettingsService.Effective(null, Catalog), "minimal");
         run.KnowledgeReferences.Add(new DesignKnowledgeSnapshot
         {
             EntryId = "entry-1", Title = "产品 资料", Content = "产品定位与核心卖点", ContentHash = "source-hash",

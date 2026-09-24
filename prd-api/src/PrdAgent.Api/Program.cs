@@ -430,6 +430,10 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
     PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
     PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
+// 风格目录（OpenDesign 设计系统快照，内嵌资源）：启动时加载一次；缺失或写坏直接让启动失败并说明原因，
+// 不退化成空目录——空目录与「真的没有风格」分不开，风格卡片与样张会静默消失。
+builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignSystemCatalog>(
+    PrdAgent.Api.Services.DesignSystemCatalog.LoadEmbedded());
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignGenerationSettingsService,
     PrdAgent.Api.Services.DesignGenerationSettingsService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,

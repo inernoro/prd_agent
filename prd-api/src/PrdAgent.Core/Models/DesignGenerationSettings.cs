@@ -49,7 +49,10 @@ public class DesignStylePreset
     /// <summary>OpenDesign 设计系统编号（/app/design-systems/&lt;id&gt;）；直连执行器只把它当风格说明的一部分。</summary>
     public string DesignSystemId { get; set; } = string.Empty;
 
-    /// <summary>界面上的三枚色块，#RRGGBB。</summary>
+    /// <summary>
+    /// 界面上的三枚色块 [ink, paper, accent]。2026-09-24 起不再可编辑：API 层读取时从 OpenDesign 设计系统快照的
+    /// 真实 tokens 派生（--fg / --bg / --accent），保存时不落库；存量文档里的旧值读取时被忽略。
+    /// </summary>
     public List<string> Swatches { get; set; } = new();
 
     public bool Enabled { get; set; } = true;
