@@ -14,9 +14,10 @@ import { SegmentedControl, SourceBadge } from './primitives';
 
 export type IncidentFilter = 'all' | 'ongoing' | 'release';
 
-export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: {
+export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget, scrollMode = 'panel' }: {
   incidents: ReadonlyArray<UptimeIncidentView>;
   filter: IncidentFilter;
+  scrollMode?: 'page' | 'panel';
   onFilter: (next: IncidentFilter) => void;
   onOpenTarget: (targetId: string) => void;
 }): JSX.Element {
@@ -24,7 +25,7 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: 
   const release = incidents.filter((i) => i.source === 'release').length;
   const shown = incidents.filter((i) => (filter === 'ongoing' ? i.ongoing : filter === 'release' ? i.source === 'release' : true));
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+    <div className={cn("flex min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]", scrollMode === 'panel' && 'h-full')}>
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] p-4">
         <div>
           <h2 className="text-base font-semibold">故障时间线</h2>
@@ -41,7 +42,7 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: 
           ariaLabel="筛选故障"
         />
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
+      <div className={cn('p-3', scrollMode === 'panel' && 'min-h-0 flex-1 overflow-y-auto')}>
         {shown.length === 0 ? (
           <div className="rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-4 py-10 text-center text-sm text-muted-foreground">
             {incidents.length === 0 ? '暂未记录到故障事件。' : '这个筛选下没有故障事件。'}

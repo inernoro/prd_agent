@@ -98,6 +98,7 @@ export function TargetDetail({
   actions,
   busy,
   onBack,
+  scrollMode = 'panel',
 }: {
   target: UptimeTargetSummary;
   incidents: ReadonlyArray<UptimeIncidentView>;
@@ -108,6 +109,8 @@ export function TargetDetail({
   busy: 'probe' | 'toggle' | 'remove' | null;
   /** 窄屏：返回列表 */
   onBack?: () => void;
+  /** 页面嵌入时由外层统一滚动；分栏模式才独立滚动。 */
+  scrollMode?: 'page' | 'panel';
 }): JSX.Element {
   const [range, setRange] = useState<HistoryRange>('24h');
   const [reloadToken, setReloadToken] = useState(0);
@@ -129,7 +132,7 @@ export function TargetDetail({
   const recentSamples = history.status === 'ok' ? (history.history.recentSamples || []) : [];
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+    <div className={cn("flex min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]", scrollMode === 'panel' && 'h-full')}>
       <header className="flex shrink-0 flex-col gap-3 border-b border-[hsl(var(--hairline))] p-4">
         <div className="flex flex-wrap items-start gap-3">
           {onBack ? (
@@ -252,7 +255,7 @@ export function TargetDetail({
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+      <div className={cn('p-4', scrollMode === 'panel' && 'min-h-0 flex-1 overflow-y-auto')}>
         <div className="flex flex-col gap-5">
           {isMetric ? <p className="rounded-md bg-muted p-3">以下百分比表示检查通过的次数占比。重复检查可能读到同一项未解决任务；采样次数不等于新故障数量，也不代表网站可用率。</p> : null}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">

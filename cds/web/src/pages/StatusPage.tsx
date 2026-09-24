@@ -380,11 +380,11 @@ export function StatusPage(): JSX.Element {
                 <button aria-current={boardView === 'owner' || boardView === 'all' ? 'page' : undefined} onClick={() => setBoardView('owner')}>监控管理</button>
               </nav>
               {proberLiveness(summary)?.stalled || !summary.enabled ? <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-4 text-warn">{summary.enabled ? '检查器未按时更新' : '检查器已关闭'}，下方为最近记录，不能据此确认当前业务正常。请在监控管理中排查检查器。</div> : null}
-              <div className="status-home-content">
+              <div key={`${boardView}:${location.targetId ?? ''}`} className="status-home-content">
               {boardView === 'home' ? <BusinessHome targets={targets} now={now} summary={summary} onOpen={openTarget} onProject={(id) => { setCatalogProject(id); setBoardView('catalog'); }} onManage={() => setBoardView('owner')} onCoverage={() => setCoverageOpen(true)} /> :
                 boardView === 'catalog' ? <MonitorCatalog targets={targets} now={now} projectId={catalogProject} onProject={setCatalogProject} onOpen={openTarget} /> :
-                boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
-                boardView === 'detail' ? <div className="status-home-detail">{selected ? <TargetDetail key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}
+                boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline scrollMode="page" incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
+                boardView === 'detail' ? <div className="status-home-detail">{selected ? <TargetDetail scrollMode="page" key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}
               {boardView === 'owner' ? (
                 <div className="flex min-h-0 flex-col lg:flex-1">
                   <Button variant="outline" className="mb-3 self-start" onClick={() => setBoardView('all')}>全部探测目标与基础设施</Button>
