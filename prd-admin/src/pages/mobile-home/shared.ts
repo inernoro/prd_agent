@@ -132,6 +132,7 @@ export function useMobileHomeData(): MobileHomeData {
 
 export function normalizeFeedTitle(item: FeedItem): string {
   if (item.type === 'visual-workspace') return `生成了一张配图：${item.title}`;
+  if (item.type === 'literary-workspace') return `创作了一篇文章：${item.title}`;
   if (item.type === 'defect') return `更新了缺陷：${item.title}`;
   return `更新了知识内容：${item.title}`;
 }
