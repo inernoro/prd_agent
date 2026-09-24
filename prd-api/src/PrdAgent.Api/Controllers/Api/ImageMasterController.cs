@@ -829,7 +829,10 @@ public class ImageMasterController : ControllerBase
         {
             // ignore
         }
-        await RecentOpenTracker.TouchAsync(_db, adminId, "visual-agent", wid);
+        // 共享集合里的文章配图工作区属于 literary-agent。若仍写成 visual-agent，
+        // 首页会为同一实体保留两条脚印，并生成一个打开后立即弹回首页的错误入口。
+        var recentTarget = Services.ImageMasterWorkspacePresentation.Resolve(wid, ws.ScenarioType);
+        await RecentOpenTracker.TouchAsync(_db, adminId, recentTarget.AgentKey, wid);
 
         ImageMasterViewport? viewport = null;
         try
