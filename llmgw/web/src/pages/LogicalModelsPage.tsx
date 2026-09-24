@@ -50,6 +50,7 @@ import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, METRIC_CAPTION, MONO_META } from '
 import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 import { CallTracePanel } from '@/components/CallTracePanel';
+import './LogicalModelsPage.css';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -431,7 +432,7 @@ export function LogicalModelsPage() {
             className="lg-logical-model-list"
             style={{ padding: 0, overflow: 'hidden', flexShrink: 0 }}
           >
-            <div style={{ ...ROW_GRID, ...ROW_HEAD }}>
+            <div className="lg-logical-model-grid lg-logical-model-heading" style={{ ...ROW_GRID, ...ROW_HEAD }}>
               <span style={COL_CAP}>模型</span>
               <span style={COL_CAP}>上游线路与单价</span>
               <span style={COL_CAP}>近 30 天</span>
@@ -452,11 +453,11 @@ export function LogicalModelsPage() {
                   // 异常优先于默认：一个模型既是默认又出了问题时，先让人看见出问题那件事
                   boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : item.isDefaultForType ? 'inset 3px 0 0 var(--accent)' : undefined,
                 }}>
-                  <div style={ROW_GRID}>
+                  <div className="lg-logical-model-grid" style={ROW_GRID}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
                       <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, flexWrap: 'wrap' }}>
                           <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
                           {item.isDefaultForType
                             ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
@@ -476,11 +477,11 @@ export function LogicalModelsPage() {
                       </span>
                     </span>
 
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                    <span className="lg-logical-model-routes" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                       {routes.length === 0
                         ? <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>没有上游线路，这个模型不承接请求</span>
                         : routes.map((route) => (
-                          <span key={route.id} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, opacity: route.health === 'live' ? 1 : 0.66, minWidth: 0 }}>
+                          <span key={route.id} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', opacity: route.health === 'live' ? 1 : 0.66, minWidth: 0 }}>
                             <RouteDot health={route.health} />
                             <span style={{ fontSize: 'var(--fs-caption)', whiteSpace: 'nowrap' }}>{route.label}</span>
                             <span style={route.priced ? { ...MONO_META, whiteSpace: 'nowrap' } : { ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.price}</span>
@@ -489,7 +490,7 @@ export function LogicalModelsPage() {
                         ))}
                     </span>
 
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
                       {stat ? (
                         <>
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
@@ -506,7 +507,7 @@ export function LogicalModelsPage() {
                       <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
                     </span>
 
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                    <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
                           「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
                       <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => setTraceFor((x) => (x === item.id ? null : item.id))}>
@@ -519,13 +520,13 @@ export function LogicalModelsPage() {
                   </div>
 
                   {tracing ? (
-                    <div style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px 46px` }}>
+                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)` }}>
                       <CallTracePanel logicalModelId={item.id} />
                     </div>
                   ) : null}
 
                   {open ? (
-                    <div style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px 46px`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+                    <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
                       {health.tone === 'warn' && health.advice ? <InlineAlert tone="info">{health.advice}</InlineAlert> : null}
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
@@ -652,7 +653,7 @@ export function LogicalModelsPage() {
                       ) : null}
 
                       {routes.map((route) => (
-                        <div key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section }}>
+                        <div className="lg-logical-model-route-detail" key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, width: 200, flexShrink: 0 }}>
                             <RouteDot health={route.health} />
                             <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -660,7 +661,7 @@ export function LogicalModelsPage() {
                               <span style={HINT_TEXT}>{route.roleLabel} · 协议 {route.protocol}</span>
                             </span>
                           </span>
-                          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                          <span className="lg-logical-model-route-info" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
                             <span style={HINT_TEXT}>{route.priceOrigin}</span>
                             <span style={HINT_TEXT}>优先级 {route.priority} · 权重 {route.weight} · {route.governance}</span>
                           </span>
@@ -702,10 +703,9 @@ export function LogicalModelsPage() {
 }
 
 // ── 列表行的版式常量 ──────────────────────────────────────────────
-// 五列定宽而不是 auto：十来行模型的列头必须对齐，auto 会让每行各算各的宽度。
+// 列定义走同一 CSS 规则：宽屏对齐列头，容器不足时按行重排，不能让名称列缩到零。
 const ROW_GRID: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 300px 150px 142px 152px',
   alignItems: 'center',
   gap: GAP.page,
   padding: `${GAP.section}px ${CARD_PADDING}px`,
