@@ -28,6 +28,9 @@ import {
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
   getWatermarkByApp,
+  getWatermarks,
+  bindWatermarkApp,
+  unbindWatermarkApp,
   getImageGenRun,
   listReferenceImageConfigs,
   createReferenceImageConfig,
@@ -58,10 +61,11 @@ import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentC
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check, ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
+import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
+import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -163,16 +167,6 @@ type MarkerRunItem = {
   errorMessage?: string | null;
 };
 
-/** 生成设置项的两行文字：上面是「这是什么」，下面是当前值 */
-function SettingText({ k, v }: { k: string; v: string }) {
-  return (
-    <span className="min-w-0 flex-1 flex flex-col">
-      <span className="lit-setting-key">{k}</span>
-      <span className="lit-setting-val">{v}</span>
-    </span>
-  );
-}
-
 /** "1024x1536" → 宽高比；解析不出按 1:1。 */
 function ratioFromSize(size?: string | null): number {
   const [w, h] = String(size || '').split(/[xX×]/).map(Number);
@@ -183,6 +177,9 @@ function sizeLabelOf(size?: string | null): string {
   const [w, h] = String(size || '1024x1024').split(/[xX×]/).map(Number);
   return w > 0 && h > 0 ? `${w} × ${h}` : '1024 × 1024';
 }
+
+/** 文学创作在水印绑定里的应用标识（与配置页 WatermarkSettingsPanel 的 appKey 一致） */
+const LITERARY_APP_KEY = 'literary-agent';
 
 const PRD_MD_STYLE = `
   .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
@@ -341,19 +338,6 @@ const PRD_MD_STYLE = `
   .lit-busy-bar--indeterminate { animation: lit-busy-slide 1.4s ease-in-out infinite; }
   @keyframes lit-busy-slide { 0% { left: -36%; } 100% { left: 100%; } }
   @media (prefers-reduced-motion: reduce) { .lit-busy-bar--indeterminate { animation: none; left: 0; width: 100% !important; } }
-
-  /* 生成设置：可切换的设置项 = 输入框底 + 小标题 + 当前值 + 下拉箭头（与按钮、状态标签三种长相分开） */
-  .lit-setting {
-    display: flex; align-items: center; gap: 6px; min-width: 0; height: 36px; padding: 0 8px;
-    border-radius: 9px; text-align: left; cursor: pointer;
-    background: var(--bg-input); border: 1px solid var(--border-default);
-    transition: border-color .15s ease, background .15s ease;
-  }
-  .lit-setting:hover { border-color: var(--border-focus, var(--accent-primary)); background: var(--bg-input-hover); }
-  .lit-setting:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
-  .lit-setting-key { font-size: 10px; line-height: 1.15; color: var(--text-muted); }
-  .lit-setting-val { font-size: 12px; line-height: 1.25; font-weight: 600; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lit-setting[data-set="true"] .lit-setting-val { color: var(--text-primary); }
 
   /* 正文里的「配图 N 生成中」占位：与正文图片同宽（跟随显示尺寸滑杆） */
   .prd-md .prd-md-gen-slot {
@@ -818,6 +802,47 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setPositionStrategyRaw(saved as PositionStrategy);
     }
   }, [workspaceId]);
+  // ---- 生成设置的就地菜单：风格图 / 水印直接切换，不必打开完整配置页 ----
+  const activeRefConfig = referenceImageConfigs.find((c) => c.isActive) ?? null;
+  const switchReferenceImage = async (config: ReferenceImageConfig, activate: boolean) => {
+    setReferenceImageSaving(true);
+    try {
+      await mutateReferenceImageScenario(
+        () => (activate ? activateReferenceImageConfig({ id: config.id }) : deactivateReferenceImageConfig({ id: config.id })),
+        loadReferenceImageConfigs,
+        reloadImageGenPools,
+      );
+    } finally {
+      setReferenceImageSaving(false);
+    }
+  };
+  const [watermarkOptions, setWatermarkOptions] = useState<WatermarkConfig[] | null>(null);
+  const [watermarkSaving, setWatermarkSaving] = useState(false);
+  const loadWatermarkOptions = async () => {
+    const res = await getWatermarks();
+    setWatermarkOptions(res.success && Array.isArray(res.data) ? res.data : []);
+  };
+  const switchWatermark = async (target: WatermarkConfig | null) => {
+    const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
+    if ((target?.id ?? null) === (current?.id ?? null)) return;
+    setWatermarkSaving(true);
+    try {
+      const res = target
+        ? await bindWatermarkApp({ id: target.id, appKey: LITERARY_APP_KEY })
+        : current
+          ? await unbindWatermarkApp({ id: current.id, appKey: LITERARY_APP_KEY })
+          : null;
+      if (res && !res.success) {
+        toast.error('切换水印失败', res.error?.message || '未知错误');
+        return;
+      }
+      setWatermarkStatus(target ? { enabled: true, name: target.name || target.text || null } : { enabled: false, name: null });
+      await loadWatermarkOptions();
+    } finally {
+      setWatermarkSaving(false);
+    }
+  };
+
   const setPositionStrategy = useCallback((s: PositionStrategy) => {
     setPositionStrategyRaw(s);
     if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
@@ -2696,162 +2721,102 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 {/* 提示词/标记生成模型切换器 */}
                 {effectiveChatModel?.isAutoResolved ? (
                   <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
                     style={{
                       background: 'rgba(99, 102, 241, 0.08)',
-                      border: '1px solid rgba(99, 102, 241, 0.25)',
                       color: 'var(--accent-fg-blue)',
                     }}
                     title={`自动调度: ${effectiveChatModel.name}`}
                   >
-                    <Sparkles size={10} className="shrink-0" />
+                    <Sparkles size={11} className="shrink-0" />
                     <span className="truncate">自动: {effectiveChatModel.name}</span>
                   </span>
                 ) : (
-                <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
-                  <DropdownMenu.Trigger asChild>
+                <QuickMenu
+                  title="文生提示词模型"
+                  width={280}
+                  open={chatModelPrefOpen}
+                  onOpenChange={setChatModelPrefOpen}
+                  trigger={
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
                       style={{
-                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: effectiveChatModel ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-                        color: effectiveChatModel ? 'rgba(129, 140, 248, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.10)',
+                        color: effectiveChatModel ? 'var(--accent-fg-blue)' : 'var(--accent-fg-danger)',
                       }}
                       title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
                     >
-                      <Sparkles size={10} className="shrink-0" />
+                      <Sparkles size={11} className="shrink-0" />
                       <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
-                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="bottom"
-                      align="start"
-                      sideOffset={6}
-                      className="z-50 rounded-[12px] p-2.5"
-                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
-                    >
-                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        文生提示词模型
-                      </div>
-                      {enabledChatModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {enabledChatModels.map((m) => {
-                            const picked = effectiveChatModel?.id === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                                style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-subtle)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'var(--nested-block-bg)',
-                                }}
-                                onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
-                                  </div>
-                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'var(--bg-input-hover)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-default)',
-                                    color: picked ? 'var(--accent-fg-amber)' : 'var(--text-muted)',
-                                  }}><Check size={12} /></span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
+                  }
+                >
+                  {enabledChatModels.length === 0 ? (
+                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
+                  ) : (
+                    enabledChatModels.map((m) => (
+                      <QuickMenuItem
+                        key={m.id}
+                        label={m.name || m.modelName}
+                        selected={effectiveChatModel?.id === m.id}
+                        onSelect={() => setChatModelPrefId(m.id)}
+                      />
+                    ))
+                  )}
+                </QuickMenu>
                 )}
 
                 {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
                 {effectiveModel?.isAutoResolved ? (
                   // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
                   <div
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
                     style={{
                       background: 'rgba(34, 197, 94, 0.08)',
-                      border: '1px solid rgba(34, 197, 94, 0.25)',
                       color: 'var(--accent-fg-success)',
                     }}
                     title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
                   >
-                    <Sparkles size={10} className="shrink-0" />
+                    <Sparkles size={11} className="shrink-0" />
                     <span className="truncate">自动: {effectiveModel.name}</span>
                   </div>
                 ) : (
-                <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
-                  <DropdownMenu.Trigger asChild>
+                <QuickMenu
+                  title="生图模型"
+                  width={280}
+                  open={imageModelPrefOpen}
+                  onOpenChange={setImageModelPrefOpen}
+                  trigger={
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
                       style={{
-                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: effectiveModel ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-                        color: effectiveModel ? 'rgba(74, 222, 128, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.10)',
+                        color: effectiveModel ? 'var(--accent-fg-success)' : 'var(--accent-fg-danger)',
                       }}
                       title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
                     >
-                      <Sparkles size={10} className="shrink-0" />
+                      <Sparkles size={11} className="shrink-0" />
                       <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
-                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="bottom"
-                      align="start"
-                      sideOffset={6}
-                      className="z-50 rounded-[12px] p-2.5"
-                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
-                    >
-                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        生图模型
-                      </div>
-                      {enabledImageModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {enabledImageModels.map((m) => {
-                            const picked = effectiveModel?.id === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                                style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-subtle)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'var(--nested-block-bg)',
-                                }}
-                                onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
-                                  </div>
-                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'var(--bg-input-hover)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-default)',
-                                    color: picked ? 'var(--accent-fg-amber)' : 'var(--text-muted)',
-                                  }}><Check size={12} /></span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
+                  }
+                >
+                  {enabledImageModels.length === 0 ? (
+                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
+                  ) : (
+                    enabledImageModels.map((m) => (
+                      <QuickMenuItem
+                        key={m.id}
+                        label={m.name || m.modelName}
+                        selected={effectiveModel?.id === m.id}
+                        onSelect={() => setImageModelPrefId(m.id)}
+                      />
+                    ))
+                  )}
+                </QuickMenu>
                 )}
 
                 {/* 生图错误提示（无池且未能预解析时才显示） */}
@@ -3512,133 +3477,162 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </Button>
           ))}
 
-          {/* 生成设置：标题行（右侧「全部配置」按钮）+ 2×2 设置项 */}
-          <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>生成设置</span>
-              <Button size="sm" variant="secondary" onClick={() => setPromptPreviewOpen(true)} title="打开全部配置">
-                <SlidersHorizontal size={13} />
-                全部配置
-              </Button>
+          {/* 生成设置：一行四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
+              行尾图标按钮打开完整配置页。参照 Apple HIG 的弹出按钮：长得像下拉就必须就地给出选项。 */}
+          <div
+            className="mt-2.5 pt-2.5 border-t flex items-center gap-1.5"
+            style={{ borderColor: 'var(--border-subtle)' }}
+            data-testid="literary-generation-settings"
+          >
+            <div className="grid grid-cols-4 gap-1.5 flex-1 min-w-0">
+              <QuickMenu
+                title="提示词风格"
+                width={260}
+                trigger={
+                  <PopupButton
+                    icon={<FileText size={13} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />}
+                    value={selectedPrompt?.title || '自动'}
+                    isSet={!!selectedPrompt}
+                    title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
+                    aria-label="提示词风格"
+                  />
+                }
+              >
+                <QuickMenuItem
+                  label="自动"
+                  description="由系统按文章内容推断风格"
+                  selected={!selectedPrompt}
+                  onSelect={() => setSelectedPrompt(null)}
+                />
+                {userPrompts.map((p) => (
+                  <QuickMenuItem
+                    key={p.id}
+                    label={p.title || '未命名'}
+                    selected={selectedPrompt?.id === p.id}
+                    onSelect={() => setSelectedPrompt(p)}
+                  />
+                ))}
+                <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
+              </QuickMenu>
+
+              <QuickMenu
+                title="风格参考图"
+                width={260}
+                trigger={
+                  <PopupButton
+                    icon={<ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
+                    value={activeRefConfig?.name || '无'}
+                    isSet={!!activeRefConfig}
+                    title={`风格参考图：${activeRefConfig?.name || '不使用'}`}
+                    aria-label="风格参考图"
+                  />
+                }
+              >
+                <QuickMenuItem
+                  label="不使用"
+                  selected={!activeRefConfig}
+                  disabled={referenceImageSaving}
+                  onSelect={() => { if (activeRefConfig) void switchReferenceImage(activeRefConfig, false); }}
+                />
+                {referenceImageConfigs.map((c) => (
+                  <QuickMenuItem
+                    key={c.id}
+                    label={c.name || '未命名'}
+                    selected={c.isActive}
+                    disabled={referenceImageSaving}
+                    onSelect={() => { if (!c.isActive) void switchReferenceImage(c, true); }}
+                  />
+                ))}
+                <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
+              </QuickMenu>
+
+              <QuickMenu
+                title="水印"
+                width={240}
+                onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
+                trigger={
+                  <PopupButton
+                    icon={<Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
+                    value={watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
+                    isSet={watermarkStatus.enabled}
+                    title={`水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                    aria-label="水印"
+                  />
+                }
+              >
+                {watermarkOptions === null ? (
+                  <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
+                ) : (
+                  <>
+                    <QuickMenuItem
+                      label="不加水印"
+                      selected={!watermarkStatus.enabled}
+                      disabled={watermarkSaving}
+                      onSelect={() => void switchWatermark(null)}
+                    />
+                    {watermarkOptions.map((w) => (
+                      <QuickMenuItem
+                        key={w.id}
+                        label={w.name || w.text || '未命名'}
+                        selected={w.appKeys?.includes(LITERARY_APP_KEY)}
+                        disabled={watermarkSaving}
+                        onSelect={() => void switchWatermark(w)}
+                      />
+                    ))}
+                  </>
+                )}
+                <QuickMenuAction
+                  label="管理水印…"
+                  onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
+                />
+              </QuickMenu>
+
+              <QuickMenu
+                title="配图位置"
+                width={260}
+                open={positionStrategyOpen}
+                onOpenChange={setPositionStrategyOpen}
+                note={<>选「尊重用户锚点」时，可在文章里用 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出要配图的位置。</>}
+                trigger={
+                  <PopupButton
+                    icon={<MapPin size={13} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />}
+                    value={POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
+                    isSet={positionStrategy !== 'auto'}
+                    title="配图位置：控制 AI 在哪些段落插入配图标记"
+                    aria-label="配图位置"
+                  />
+                }
+              >
+                {POSITION_STRATEGY_OPTIONS.map((opt) => (
+                  <QuickMenuItem
+                    key={opt.value}
+                    label={opt.label}
+                    selected={positionStrategy === opt.value}
+                    onSelect={() => {
+                      setPositionStrategy(opt.value);
+                      // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                      if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                        setPhase(1);
+                        toast.info('已切到「预览」页，可以开始打锚点了');
+                      } else if (opt.value !== 'auto' && phase === 1) {
+                        toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                      }
+                    }}
+                  />
+                ))}
+              </QuickMenu>
             </div>
 
-            <div className="grid grid-cols-2 gap-1.5">
-              {/* 提示词 */}
-              <button
-                type="button"
-                className="lit-setting"
-                data-set={selectedPrompt ? 'true' : 'false'}
-                onClick={() => {
-                  if (selectedPrompt) handleEditPrompt(selectedPrompt);
-                  else setPromptPreviewOpen(true);
-                }}
-                title={selectedPrompt?.title || '系统推断风格（点击自定义）'}
-              >
-                <FileText size={14} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />
-                <SettingText k="提示词" v={selectedPrompt?.title || '自动风格'} />
-                <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-              </button>
-              {/* 风格图 */}
-              <button
-                type="button"
-                className="lit-setting"
-                data-set={referenceImageConfigs.find(c => c.isActive) ? 'true' : 'false'}
-                onClick={() => {
-                  const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
-                  if (activeRefConfig) {
-                    setEditingRefConfig({ ...activeRefConfig });
-                    setEditingRefConfigOpen(true);
-                  } else {
-                    setPromptPreviewOpen(true);
-                  }
-                }}
-                title={referenceImageConfigs.find(c => c.isActive)?.name || '未选择风格图'}
-              >
-                <ImageIcon size={14} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />
-                <SettingText k="风格图" v={referenceImageConfigs.find(c => c.isActive)?.name || '未选择'} />
-                <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-              </button>
-              {/* 水印 */}
-              <button
-                type="button"
-                className="lit-setting"
-                data-set={watermarkStatus.enabled ? 'true' : 'false'}
-                onClick={() => {
-                  setPendingWatermarkEdit(true);
-                  setPromptPreviewOpen(true);
-                }}
-                title={watermarkStatus.enabled ? (watermarkStatus.name || '已启用水印') : '未启用水印'}
-              >
-                <Sparkles size={14} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
-                <SettingText k="水印" v={watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'} />
-                <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-              </button>
-              {/* 位置策略（Phase 1） */}
-              <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
-                <DropdownMenu.Trigger asChild>
-                  <button
-                    type="button"
-                    className="lit-setting"
-                    data-set={positionStrategy !== 'auto' ? 'true' : 'false'}
-                    title="配图位置策略：控制 AI 在哪些段落插入配图标记"
-                  >
-                    <MapPin size={14} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />
-                    <SettingText k="配图位置" v={POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'} />
-                    <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    side="bottom"
-                    align="start"
-                    sideOffset={6}
-                    className="z-50 rounded-[12px] p-2.5"
-                    style={{ width: 260, maxWidth: 'min(92vw, 260px)', ...glassPanel }}
-                  >
-                    <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                      配图位置策略
-                    </div>
-                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
-                    </div>
-                    <div className="space-y-1.5">
-                      {POSITION_STRATEGY_OPTIONS.map((opt) => {
-                        const picked = positionStrategy === opt.value;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                            style={{
-                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid var(--border-subtle)',
-                              background: picked ? 'rgba(52,211,153,0.06)' : 'var(--nested-block-bg)',
-                            }}
-                            onClick={() => {
-                              setPositionStrategy(opt.value);
-                              setPositionStrategyOpen(false);
-                              // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
-                              if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
-                                setPhase(1);
-                                toast.info('已切到「预览」页，可以开始打锚点了');
-                              } else if (opt.value !== 'auto' && phase === 1) {
-                                toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
-                              }
-                            }}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>
-                              {picked && (
-                                <Check size={12} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} />
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-            </div>
+            <button
+              type="button"
+              className="lqm-trigger shrink-0 justify-center"
+              style={{ width: 30, padding: 0 }}
+              onClick={() => setPromptPreviewOpen(true)}
+              title="全部配置"
+              aria-label="全部配置"
+            >
+              <SlidersHorizontal size={14} />
+            </button>
           </div>
         </PanelCard>
 
@@ -4014,11 +4008,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </div>
 
                     {/* 操作按钮栏（图片下方独立行） */}
-                    <div className="px-2.5 py-2 flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1">
+                    <div className="px-2 py-1.5 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-0.5">
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="ghost"
+                          className="!px-2"
                           disabled={it.status === 'running' || it.status === 'parsing'}
                           onClick={() => void handleDeleteMarker(it.markerIndex)}
                           title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
@@ -4027,7 +4022,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </Button>
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="ghost"
+                          className="!px-2"
                           onClick={() => locateMarkerInPreview(it.markerIndex)}
                           title="定位到正文中的配图标记位置"
                         >
@@ -4037,7 +4033,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
+                              className="!px-2"
                               onClick={async () => {
                                 try {
                                   await navigator.clipboard.writeText(src);
@@ -4052,7 +4049,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </Button>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
+                              className="!px-2"
                               onClick={async () => {
                                 try {
                                   const response = await fetch(src);
@@ -4093,9 +4091,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 );
               })}
-            </div>
-            <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-              点击“一键生图”将按顺序逐条解析 JSON 并生成图片；也可在单条卡片内编辑后重生成
             </div>
           </PanelCard>
         )}

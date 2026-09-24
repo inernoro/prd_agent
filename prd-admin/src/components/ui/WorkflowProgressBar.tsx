@@ -25,7 +25,7 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
   return (
-    <div className="mb-3 flex items-center gap-1.5">
+    <div className="mb-2.5 flex items-center gap-1.5">
       {steps.map((step, index) => {
         const isActive = !allCompleted && index === currentIndex;
         const isCompleted = allCompleted || index < currentIndex;
@@ -39,22 +39,22 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
               aria-disabled={!isClickable}
               aria-current={isActive ? 'step' : undefined}
               data-step-state={isActive ? 'active' : isCompleted ? 'done' : 'todo'}
-              className={`flex items-center gap-1.5 h-8 pl-1 pr-3 rounded-full text-[13px] whitespace-nowrap shrink-0 transition-colors duration-200${isClickable && !isActive ? ' hover-bg-soft' : ''}`}
+              className={`flex items-center gap-1.5 h-7 pl-1 pr-2.5 rounded-full text-[12px] whitespace-nowrap shrink-0 transition-colors duration-200${isClickable && !isActive ? ' hover-bg-soft' : ''}`}
               style={{
-                fontWeight: isActive ? 700 : 600,
+                fontWeight: isActive ? 600 : 500,
                 background: isActive ? 'rgba(var(--accent-primary-rgb), 0.14)' : 'transparent',
-                border: isActive ? '1.5px solid var(--accent-primary)' : '1.5px solid transparent',
+                border: isActive ? '1px solid var(--accent-primary)' : '1px solid transparent',
                 color: isActive || isCompleted ? 'var(--text-primary)' : 'var(--text-muted)',
                 cursor: isClickable ? 'pointer' : disabled ? 'not-allowed' : 'default',
               }}
               title={isActive ? '当前阶段' : disabled ? '进行中，暂不能切换阶段' : `跳转到：${step.label}`}
             >
               <span
-                className="inline-flex items-center justify-center rounded-full text-[11px] shrink-0"
+                className="inline-flex items-center justify-center rounded-full text-[10px] shrink-0"
                 style={{
-                  width: 22,
-                  height: 22,
-                  fontWeight: 700,
+                  width: 18,
+                  height: 18,
+                  fontWeight: 600,
                   // 当前步骤的实心编号走主按钮那对 token（对比度已被守卫钉住），不拿 accent 当底配浅字
                   background: isCompleted
                     ? 'var(--accent-fg-success)'
@@ -64,14 +64,14 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
                   color: isCompleted ? 'var(--bg-base)' : isActive ? 'var(--button-primary-fg)' : 'var(--text-secondary)',
                 }}
               >
-                {isCompleted ? <Check size={13} strokeWidth={3} /> : index + 1}
+                {isCompleted ? <Check size={11} strokeWidth={3} /> : index + 1}
               </span>
               {step.label}
             </button>
 
             {index < steps.length - 1 && (
               <div
-                className="flex-1 h-[2px] rounded-full transition-colors duration-300"
+                className="flex-1 h-px transition-colors duration-300"
                 style={{
                   minWidth: 12,
                   background: isCompleted ? 'var(--accent-fg-success)' : 'var(--border-default)',
