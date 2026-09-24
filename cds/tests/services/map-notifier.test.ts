@@ -212,3 +212,13 @@ describe('接线守卫', () => {
     expect(indexSource).toContain('不会有人被通知');
   });
 });
+
+
+describe('通知返回具体检查详情', () => {
+  it('详情链接优先于内部探测地址，保留原有去重键', () => {
+    const payload = buildNotificationPayload({ type: 'uptime.target.down', targetId: 'monitor@x', targetName: '任务', boardUrl: 'https://control.example/status?target=monitor%40x', probeUrl: 'http://127.0.0.1:9900/api/self-check', message: '未通过', consecutiveFailures: 3, detectedAt: '2026-09-24T00:00:00Z' });
+    expect(payload.actionUrl).toBe('https://control.example/status?target=monitor%40x');
+    expect(payload.actionLabel).toBe('查看问题与处理建议');
+    expect(payload.dedupKey).toBe('uptime:monitor@x:down:2026-09-24T00:00:00Z');
+  });
+});

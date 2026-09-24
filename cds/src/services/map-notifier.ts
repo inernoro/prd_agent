@@ -45,6 +45,7 @@ export interface MapNotifierAlert {
   projectId?: string;
   branchId?: string;
   probeUrl?: string;
+  boardUrl?: string;
   message: string;
   consecutiveFailures: number;
   detectedAt: string;
@@ -122,7 +123,7 @@ export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificati
     level: down ? (metricMessage ? 'warning' : 'error') : 'info',
     section: 'admin',
     dedupKey: `uptime:${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
-    ...(alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
+    ...(alert.boardUrl ? { actionLabel: '查看问题与处理建议', actionUrl: alert.boardUrl } : alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
   };
 }
 

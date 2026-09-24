@@ -5954,10 +5954,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       targetName: alert.targetName, detectedAt: alert.detectedAt, title: payload.title, body: payload.message,
     }, () => notifier.send(alert));
   };
-  const alarmBoardUrl = (): string | undefined => {
+  const alarmBoardUrl = (targetId?: string): string | undefined => {
     const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
     // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
-    return base ? `${base}/status` : undefined;
+    return base ? `${base}/status${targetId ? `?target=${encodeURIComponent(targetId)}` : ''}` : undefined;
   };
 
   /**
@@ -6045,6 +6045,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         projectId: data.projectId,
         branchId: data.branchId,
         probeUrl: data.probeUrl,
+        boardUrl: alarmBoardUrl(data.targetId),
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
@@ -6073,7 +6074,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
         consecutiveFailures: data.consecutiveFailures,
       };
-      const boardUrl = alarmBoardUrl();
+      const boardUrl = alarmBoardUrl(data.targetId);
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
         void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })

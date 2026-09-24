@@ -45,9 +45,11 @@ import {
   type UptimeTargetSummary,
   MONITOR_ORIGIN_LABEL,
 } from '@/lib/monitorCenter';
+import { explainTarget, homeState } from '@/lib/statusHome';
+import { HomeStateBadge } from './BusinessHome';
 import { LatencyChart } from './LatencyChart';
 import { FunctionalEvidence } from './FunctionalEvidence';
-import { AvailabilityBar, SegmentedControl, SourceBadge, Stat, StatusPill } from './primitives';
+import { AvailabilityBar, SegmentedControl, SourceBadge, Stat } from './primitives';
 
 type HistoryState =
   | { status: 'idle' }
@@ -121,6 +123,8 @@ export function TargetDetail({
   const viewpoint = target.source === 'branch'
     ? (target.userView ? 'CDS 主机 → 容器端口（进程视角） + 预览域名整条链路（用户视角）' : 'CDS 主机 → 容器端口（进程视角，单点）')
     : 'CDS 主机出网 → 目标地址，单点；与用户视角一致但不等价（内网 DNS / 出网策略可能不同）';
+  const explanation = explainTarget(target);
+  const isMetric = Boolean(target.healthCheck);
   const recentSamples = history.status === 'ok' ? (history.history.recentSamples || []) : [];
 
   return (
@@ -128,14 +132,15 @@ export function TargetDetail({
       <header className="flex shrink-0 flex-col gap-3 border-b border-[hsl(var(--hairline))] p-4">
         <div className="flex flex-wrap items-start gap-3">
           {onBack ? (
-            <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 lg:hidden">
+            <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
               <ChevronLeft />
-              列表
+              返回列表
             </Button>
           ) : null}
           <div className="min-w-0 flex-1">
+            <p className="mb-2 text-muted-foreground">{target.projectName || target.projectId || '未归属项目'} · {target.environmentLabel}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill status={target.status} excluded={target.excluded} measured={target.measured} size="lg" />
+              <HomeStateBadge state={homeState(target, now)} />
               <h2 className="min-w-0 truncate text-lg font-semibold leading-tight">{target.name}</h2>
               <SourceBadge source={target.source} full />
               {target.degraded ? (
@@ -170,10 +175,10 @@ export function TargetDetail({
           <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="sm" onClick={() => void actions.probeNow(target)} disabled={!canProbe || busy !== null} title={canProbe ? '立刻探测一次并记入台账' : '暂停或未纳入监控的目标不能探测'}>
               <Zap className={busy === 'probe' ? 'animate-pulse' : undefined} />
-              {busy === 'probe' ? '探测中' : '立即探测'}
+              {busy === 'probe' ? '检查中' : '立即检查'}
             </Button>
             {isCustom ? (
-              <>
+              <details className="relative"><summary className="cursor-pointer rounded-md border px-3 py-3">监控设置</summary><div className="mt-2 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={() => void actions.toggleEnabled(target)} disabled={busy !== null}>
                   {target.enabled === false ? <Play /> : <Pause />}
                   {busy === 'toggle' ? '处理中' : target.enabled === false ? '恢复探测' : '暂停'}
@@ -195,7 +200,7 @@ export function TargetDetail({
                   pending={busy === 'remove'}
                   onConfirm={() => actions.remove(target)}
                 />
-              </>
+              </div></details>
             ) : link ? (
               <Button variant="outline" size="sm" asChild>
                 <Link to={link.to}>
@@ -207,8 +212,15 @@ export function TargetDetail({
           </div>
         </div>
 
+        <section className="status-home-guidance" aria-label="指标说明与处理建议">
+          <p><strong>这项检查是什么：</strong>{explanation.meaning}</p>
+          <p><strong>可能影响：</strong>{explanation.impact}</p>
+          <p><strong>下一步：</strong>{explanation.action}</p>
+          <p className="text-muted-foreground">立即检查只重新读取状态，不会重试部署或清除故障记录。</p>
+          {target.healthCheck?.componentId === 'webhook.dispatch-unresolved' ? <Button variant="outline" asChild><Link to="/project-list">查看项目与部署记录</Link></Button> : null}
+        </section>
         {target.status === 'down' && target.lastSample?.err ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-base leading-relaxed text-destructive">
             <span className="font-medium">最近失败原因：</span>{target.lastSample.err}
             {target.openIncidentSince ? <span className="opacity-80">（故障始于 {formatClock(target.openIncidentSince)}）</span> : null}
           </div>
@@ -241,10 +253,11 @@ export function TargetDetail({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
         <div className="flex flex-col gap-5">
+          {isMetric ? <p className="rounded-md bg-muted p-3">以下百分比表示检查通过的次数占比。重复检查可能读到同一项未解决任务；采样次数不等于新故障数量，也不代表网站可用率。</p> : null}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            <Stat label="近 24h 可用率" value={formatPercent(target.availability24h)} tone={target.availability24h !== null && target.availability24h < 0.99 ? 'warn' : 'default'} hint={target.sampleCount24h > 0 ? `采样 ${target.sampleCount24h} 次` : '尚无采样'} />
-            <Stat label="近 7 日可用率" value={formatPercent(target.availability7d)} hint="自然日（UTC，含今天）" />
-            <Stat label="平均响应" value={formatLatency(target.avgLatencyMs24h)} hint="近 24h" />
+            <Stat label={isMetric ? '近 24h 检查通过率' : '近 24h 可用率'} value={formatPercent(target.availability24h)} tone={target.availability24h !== null && target.availability24h < 0.99 ? 'warn' : 'default'} hint={target.sampleCount24h > 0 ? `采样 ${target.sampleCount24h} 次` : '尚无采样'} />
+            <Stat label={isMetric ? '近 7 日检查通过率' : '近 7 日可用率'} value={formatPercent(target.availability7d)} hint="自然日（UTC，含今天）" />
+            <Stat label={isMetric ? '读取检查耗时' : '平均响应'} value={formatLatency(target.avgLatencyMs24h)} hint="近 24h" />
             <Stat
               label="最近一次探测"
               value={target.lastSample ? formatLatency(target.lastSample.ms) : '—'}
@@ -267,7 +280,7 @@ export function TargetDetail({
           <section className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-baseline gap-2">
-                <h3 className="text-sm font-semibold">可用率与响应时间</h3>
+                <h3 className="text-sm font-semibold">{isMetric ? '检查结果与读取耗时' : '可用率与响应时间'}</h3>
                 {history.status === 'ok' && range !== '24h' ? (
                   <span className="text-xs text-muted-foreground">
                     {HISTORY_RANGES.find((r) => r.value === range)?.label}可用率 {formatPercent(rangeAvailability)}

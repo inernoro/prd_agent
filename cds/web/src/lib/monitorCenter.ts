@@ -22,6 +22,7 @@ export type MonitorEnvironment = 'production' | 'staging' | 'other' | 'preview';
 export type ObserveMode = 'active' | 'passive';
 
 export interface UptimeSample {
+  noData?: boolean;
   t: number;
   up: boolean;
   ms: number;
@@ -78,6 +79,8 @@ export interface UptimeTargetSummary {
   intervalSeconds: number;
   timeoutMs: number;
   monitorId?: string;
+  /** 结构化检查语义；仅摘要展示，不包含地址凭据或请求头。 */
+  healthCheck?: { componentId: string; field: string; op: string; value: string };
   /** 是否功能监控（问「返回的东西对不对」，而不是「通不通」）。 */
   functional?: boolean;
   /** 属于哪个环境。后端算好下发，前端不推断（判据只许有一份）。 */

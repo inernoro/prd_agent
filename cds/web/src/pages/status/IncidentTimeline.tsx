@@ -61,7 +61,7 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: 
                   type="button"
                   onClick={() => onOpenTarget(incident.targetId)}
                   className={cn(
-                    'flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-left text-xs transition-colors hover:border-[hsl(var(--hairline-strong))]',
+                    'flex w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-3 py-2 text-left text-base transition-colors hover:border-[hsl(var(--hairline-strong))]',
                     incident.ongoing ? 'border-destructive/40 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40',
                   )}
                 >
@@ -70,10 +70,10 @@ export function IncidentTimeline({ incidents, filter, onFilter, onOpenTarget }: 
                     {incident.ongoing ? '进行中' : '已恢复'}
                   </span>
                   <SourceBadge source={incident.source} />
-                  <span className="min-w-0 truncate font-medium text-foreground">{incident.targetName}</span>
+                  <span className="min-w-0 break-words font-medium text-foreground">{incident.targetName}</span>
                   <span className="font-mono text-muted-foreground">{formatClock(incident.startedAt)}</span>
                   <span className="text-muted-foreground">持续 {formatDuration(incident.durationMs)}</span>
-                  <span className="min-w-0 basis-full truncate text-muted-foreground sm:basis-auto sm:flex-1" title={incident.cause}>{incident.cause}</span>
+                  <span className="min-w-0 basis-full break-words text-muted-foreground sm:basis-auto sm:flex-1" title={incident.cause}>{incident.cause}</span>
                   {incident.releaseId ? (
                     // 归因只是「时间上最近的那次发布」，不是因果证明，所以文案用「疑似」。
                     <span className="shrink-0 rounded-full border border-[hsl(var(--hairline-strong))] px-2 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}>

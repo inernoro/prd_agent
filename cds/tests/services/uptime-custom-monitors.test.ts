@@ -258,6 +258,16 @@ describe('selectCustomProbeTargets 目标推导', () => {
 });
 
 describe('探测轮次纳入自定义监控', () => {
+  it('摘要暴露结构化指标解释，不夹带请求凭据；编辑后跟随定义刷新', async () => {
+    const definition = monitor({ kind: 'health-json', healthComponentId: 'webhook.dispatch-unresolved', healthField: 'observedValue', healthOp: 'eq', healthValue: '0', headers: { Authorization: 'private-test-value' } });
+    const svc = makeMonitor({ monitors: [definition], probe: async () => ({ up: false, ms: 1 }), now: () => MIN });
+    await svc.runCycle();
+    expect(svc.getSummary().targets[0].healthCheck).toEqual({ componentId: 'webhook.dispatch-unresolved', field: 'observedValue', op: 'eq', value: '0' });
+    expect(JSON.stringify(svc.getSummary())).not.toContain('private-test-value');
+    definition.healthComponentId = 'api.branches-p95-ms';
+    expect(svc.getSummary().targets[0].healthCheck?.componentId).toBe('api.branches-p95-ms');
+  });
+
   it('自定义目标走同一轮次：连续失败达阈值判 down，摘要带 source / monitorId / 探测方式', async () => {
     let now = 0;
     const probe: ProbeFn = vi.fn(async (target) => {

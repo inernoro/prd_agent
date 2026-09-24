@@ -21,6 +21,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { BusinessHome, MonitorCatalog } from './status/BusinessHome';
+import { readStatusLocation, type StatusHomeView } from '@/lib/statusHome';
+import './status/status-home.css';
 import { Plus, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -61,8 +65,8 @@ const POLL_INTERVAL_MS = 30_000;
 const NOTICE_TTL_MS = 6_000;
 
 type RightTab = 'detail' | 'incidents';
-/** 第一屏 = 我的业务；下钻 = 全部目标。默认落在第一屏。 */
-type BoardView = 'owner' | 'all';
+/** 默认业务总览；通知按目标 ID 直达详情，原运维视图保留在监控管理内。 */
+type BoardView = StatusHomeView;
 
 /**
  * 项目选择存浏览器：CDS 目前是共享账户体系，「我负责哪个项目」是**这台浏览器**
@@ -88,6 +92,7 @@ interface Notice {
 }
 
 function describeProbeResult(target: UptimeTargetSummary, sample: UptimeSample, status: string): Notice {
+  if (sample.noData) return { tone: 'neutral', text: `${target.name}：本次没有可用数据，不能确认恢复。已有故障记录保留。` };
   const head = `${target.name}：${sample.up ? '探测成功' : '探测失败'} · ${formatLatency(sample.ms)}${sample.code ? ` · HTTP ${sample.code}` : ''}`;
   const tail = sample.up
     ? (status === 'up' ? '' : '（状态仍待确认，连续成功后转正常）')
@@ -96,6 +101,9 @@ function describeProbeResult(target: UptimeTargetSummary, sample: UptimeSample, 
 }
 
 export function StatusPage(): JSX.Element {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = readStatusLocation(searchParams);
+  const [catalogProject, setCatalogProject] = useState<string | null>(null);
   const [summary, setSummary] = useState<UptimeSummary | null>(null);
   const [incidents, setIncidents] = useState<UptimeIncidentView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +119,11 @@ export function StatusPage(): JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [branchModalProject, setBranchModalProject] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false);
-  const [boardView, setBoardView] = useState<BoardView>('owner');
+  const boardView = location.view;
+  const setBoardView = (view: BoardView): void => { setSearchParams(view === 'home' ? {} : { view }); };
+  useEffect(() => {
+    if (location.targetId) setSelectedId(location.targetId);
+  }, [location.targetId]);
   // environments = null 表示「还没选过」，由 defaultEnvironments 按实际数据落一次默认。
   const [scope, setScope] = useState<OwnerScope>(() => ({ ...readStoredScope(), environments: null }));
   const mounted = useRef(true);
@@ -183,11 +195,12 @@ export function StatusPage(): JSX.Element {
   // 选中项优先在全量里找（筛选掉了也不丢详情）；没有选中时按「故障优先」挑一个。
   const selected = useMemo(() => {
     const current = selectedId ? targets.find((t) => t.id === selectedId) : undefined;
+    if (location.targetId) return targets.find((t) => t.id === location.targetId) ?? null;
     if (current) return current;
     const fallbackId = pickDefaultTargetId(filtered.length > 0 ? filtered : targets.filter((t) => t.status === 'down' || t.source !== 'branch'), null)
       ?? pickDefaultTargetId(targets, null);
     return fallbackId ? targets.find((t) => t.id === fallbackId) ?? null : null;
-  }, [targets, filtered, selectedId]);
+  }, [targets, filtered, selectedId, location.targetId]);
   const headline = useMemo(() => (summary ? buildMonitorHeadline(summary, incidents, now) : null), [summary, incidents, now]);
 
   // 环境默认值只在「还没选过」时落一次：用户手动取消勾选后不许被下一轮轮询改回去。
@@ -209,10 +222,11 @@ export function StatusPage(): JSX.Element {
   const ongoingCount = incidents.filter((i) => i.ongoing).length;
 
   const openTarget = useCallback((id: string): void => {
+    setSearchParams({ target: id });
     setSelectedId(id);
     setRightTab('detail');
     setMobileView('detail');
-  }, []);
+  }, [setSearchParams]);
   const openBranch = useCallback((branch: BranchView): void => { openTarget(branch.primary.id); }, [openTarget]);
   const openBranches = useCallback((group: ProjectBranchGroup): void => { setBranchModalProject(group.projectId); }, []);
 
@@ -334,7 +348,7 @@ export function StatusPage(): JSX.Element {
       )}
     >
       <Workspace fluid className="cds-workspace--fill">
-        <div className="flex flex-col gap-3 lg:h-full lg:min-h-0">
+        <div className="status-home flex flex-col gap-3 lg:h-full lg:min-h-0">
           {/* 有数据时本次轮询失败只做顶部提示，保留旧数据；无数据时交给错误卡片 */}
           {phase === 'ready' && error ? (
             <div className="shrink-0 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -359,23 +373,21 @@ export function StatusPage(): JSX.Element {
             <MonitorCenterErrorCard message={error || '未知错误'} onRetry={() => void load()} retrying={refreshing} pollSeconds={POLL_INTERVAL_MS / 1000} />
           ) : (
             <>
-              <div className="flex shrink-0 items-center gap-2">
-                <SegmentedControl<BoardView>
-                  value={boardView}
-                  options={[
-                    { value: 'owner', label: '我的业务' },
-                    { value: 'all', label: '全部目标', count: targets.length },
-                  ]}
-                  onChange={setBoardView}
-                  ariaLabel="第一屏视角"
-                />
-                <span className="hidden text-[0.6875rem] text-muted-foreground sm:inline">
-                  「我的业务」按项目与环境看业务能不能用；「全部目标」是逐个探测目标的运维视角
-                </span>
-              </div>
-
+              <nav className="status-home-nav" aria-label="监控视图">
+                {([{ value: 'home', label: '业务总览' }, { value: 'catalog', label: '监控列表' }, { value: 'history', label: '处理记录' }] as const).map((tab) => (
+                  <button key={tab.value} aria-current={boardView === tab.value ? 'page' : undefined} onClick={() => setBoardView(tab.value)}>{tab.label}</button>
+                ))}
+                <button aria-current={boardView === 'owner' || boardView === 'all' ? 'page' : undefined} onClick={() => setBoardView('owner')}>监控管理</button>
+              </nav>
+              {proberLiveness(summary)?.stalled || !summary.enabled ? <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-4 text-warn">{summary.enabled ? '检查器未按时更新' : '检查器已关闭'}，下方为最近记录，不能据此确认当前业务正常。请在监控管理中排查检查器。</div> : null}
+              <div className="status-home-content">
+              {boardView === 'home' ? <BusinessHome targets={targets} now={now} summary={summary} onOpen={openTarget} onProject={(id) => { setCatalogProject(id); setBoardView('catalog'); }} onManage={() => setBoardView('owner')} onCoverage={() => setCoverageOpen(true)} /> :
+                boardView === 'catalog' ? <MonitorCatalog targets={targets} now={now} projectId={catalogProject} onProject={setCatalogProject} onOpen={openTarget} /> :
+                boardView === 'history' ? <div><h1>处理记录</h1><p className="status-home-muted mb-4">最近 100 条故障发生与恢复记录。立即检查会追加采样，只有达到恢复判据才会结束故障。</p><IncidentTimeline incidents={incidents} filter={incidentFilter} onFilter={setIncidentFilter} onOpenTarget={openTarget} /></div> :
+                boardView === 'detail' ? <div className="status-home-detail">{selected ? <TargetDetail key={selected.id} target={selected} incidents={incidents} generatedAt={summary.generatedAt} now={now} actions={actions} busy={busy} onBack={() => setBoardView('catalog')} /> : <div className="status-home-panel"><h1>暂时无法查看这项监控</h1><p>该监控可能已删除，或当前账号没有访问权限。没有改为显示其他监控。</p><Button onClick={() => setBoardView('home')}>返回业务总览</Button></div>}</div> : null}
               {boardView === 'owner' ? (
                 <div className="flex min-h-0 flex-col lg:flex-1">
+                  <Button variant="outline" className="mb-3 self-start" onClick={() => setBoardView('all')}>全部探测目标与基础设施</Button>
                   <OwnerBoard
                     targets={targets}
                     now={now}
@@ -390,7 +402,7 @@ export function StatusPage(): JSX.Element {
                     onReload={() => void load()}
                   />
                 </div>
-              ) : (
+              ) : boardView === 'all' ? (
               <>
               <div className="shrink-0">
                 <OverviewStrip summary={summary} incidents={incidents} headline={headline} statusFilter={filter.status} onStatusFilter={onStatusFilter} onOpenCoverage={() => setCoverageOpen(true)} now={now} />
@@ -463,7 +475,8 @@ export function StatusPage(): JSX.Element {
                 </div>
               </div>
               </>
-              )}
+              ) : null}
+              </div>
             </>
           )}
         </div>
