@@ -18,6 +18,18 @@ public sealed class HtmlPptPublishPendingException : Exception
     public string Code { get; }
 }
 
+/// <summary>
+/// 发布目标里含有用户无权投放的团队空间（viewer / 非成员）。这是确定性的输入错误，
+/// 不是可恢复的发布失败：在建发布意图、建站点之前就拒绝，调用方应返回 403。
+/// </summary>
+public sealed class HtmlPptPublishForbiddenException : Exception
+{
+    public const string ErrorCode = "ppt_publish_team_forbidden";
+    public HtmlPptPublishForbiddenException(IReadOnlyCollection<string> teamIds)
+        : base("无权发布到所选团队空间") => TeamIds = teamIds;
+    public IReadOnlyCollection<string> TeamIds { get; }
+}
+
 public interface IHtmlPptPublishCoordinator
 {
     Task<HtmlPptPublishResult> PublishAsync(
@@ -77,6 +89,19 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         var actualHash = Hash(Encoding.UTF8.GetBytes(run.Html ?? string.Empty));
         if (!FixedHashEquals(actualHash, run.HtmlHash))
             throw new HtmlPptPublishPendingException(BytesMismatchCode, "发布来源字节与完成态哈希不一致");
+
+        // 先校验目标团队、再建意图与站点（PR #1533 评审 4024742437 / 4060021399）。
+        // 反过来的话，viewer / 非成员团队要等站点建好之后才在 SetSharedTeamsAsync 里被拒，
+        // 而那次拒绝被当成可重试失败：接口反复 503、最终 dead-letter，站点留在个人空间成了孤儿。
+        // 与 SetSharedTeamsAsync 用同一把尺子（CanPublishIntoTeamAsync）；建站后的那道校验保留，兜权限竞态。
+        var forbidden = new List<string>();
+        foreach (var teamId in Normalize(teamIds))
+        {
+            if (!await _sites.CanPublishIntoTeamAsync(run.UserId, teamId, CancellationToken.None))
+                forbidden.Add(teamId);
+        }
+        if (forbidden.Count > 0)
+            throw new HtmlPptPublishForbiddenException(forbidden);
 
         var intentId = BuildIntentId(run.Id, actualHash);
         run = await EnsureIntentAsync(run, intentId, actualHash, title, description, tags, teamIds);
