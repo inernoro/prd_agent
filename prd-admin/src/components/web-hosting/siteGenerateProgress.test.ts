@@ -23,6 +23,15 @@ const run = (overrides: Partial<DesignArtifactRunSummary>): DesignArtifactRunSum
   ...overrides,
 });
 
+
+/** 修改面板的任务逻辑在 useSiteEditSession（面板与工作台共用）：判据按「面板 + 钩子」一起读。 */
+function readPanelSource(file: string): string {
+  const own = readFileSync(path.resolve(__dirname, file), 'utf8');
+  return file === 'SiteEditPanel.tsx'
+    ? own + readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8')
+    : own;
+}
+
 describe('SiteGenerateDialog generation progress contract', () => {
   it('consumes the MAP phase, incremental content, and terminal site event', () => {
     expect(parseSiteGenerationProgressEvent({
@@ -104,7 +113,7 @@ describe('两个面板都要把模型摆出来，不只是解析出来', () => {
   ] as const;
   for (const [file, label] of panels) {
     it(`${label}订阅 model 事件并渲染「模型 · 平台」`, () => {
-      const source = readFileSync(path.resolve(__dirname, file), 'utf8');
+      const source = readPanelSource(file);
       expect(source, `${label}没有消费 model 事件`).toMatch(/kind === 'model'|event\.event === 'model'/);
       expect(source, `${label}没有把模型渲染出来`).toContain('{resolvedModel.model} · {resolvedModel.platform}');
       // 值必须来自后端：面板里不许出现写死的模型名当占位。
@@ -133,7 +142,7 @@ describe('刷新之后徽章要还原', () => {
   ] as const;
   for (const [file, label] of panels) {
     it(`${label}的恢复路径把徽章读回来`, () => {
-      const source = readFileSync(path.resolve(__dirname, file), 'utf8');
+      const source = readPanelSource(file);
       expect(source, `${label}恢复时没有还原模型`).toContain('setResolvedModel(resolveRunModelBadge(');
     });
   }
@@ -155,7 +164,7 @@ describe('恢复轮询要分得清「断线」和「没了」', () => {
   ] as const;
   for (const [file, label] of panels) {
     it(`${label}把 NOT_FOUND 当终态收尾，而不是继续轮询`, () => {
-      const source = readFileSync(path.resolve(__dirname, file), 'utf8');
+      const source = readPanelSource(file);
       const branch = source.indexOf("result.error?.code === 'NOT_FOUND'");
       expect(branch, `${label}没有单独处理 NOT_FOUND，会把永久失败当成断线一直重试`)
         .toBeGreaterThan(-1);

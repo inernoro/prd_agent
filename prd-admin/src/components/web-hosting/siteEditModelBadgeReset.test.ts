@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const panel = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+// 任务逻辑已搬进 useSiteEditSession（面板与工作台共用），判据跟着逻辑走。
+const panel = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
 
 /**
  * 模型徽章的清空原先排在 createHostedSiteEditRun 之后：新任务创建期间顶上挂的是上一轮

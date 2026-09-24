@@ -3,7 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const previewSource = readFileSync(path.resolve(__dirname, 'SitePreviewModal.tsx'), 'utf8');
-const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8');
+const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8')
+  + readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
 const pageSource = readFileSync(path.resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf8');
 const cardSource = readFileSync(path.resolve(__dirname, 'SiteCard.tsx'), 'utf8');
 const cardActionsSource = readFileSync(path.resolve(__dirname, 'SiteCardActions.tsx'), 'utf8');

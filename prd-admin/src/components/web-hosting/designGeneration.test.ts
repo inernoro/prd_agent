@@ -144,7 +144,8 @@ describe('附件上传队列', () => {
     expect(screenshotRuntimeSupported('map-gateway')).toBe(false);
     expect(screenshotRuntimeSupported(undefined)).toBe(false);
     // 接线：面板按它置灰，提交时也按它决定带不带截图。
-    const panel = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+    const panel = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
+      + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
     expect(panel).toContain('screenshotAttachmentIds: screenshotRuntimeSupported(requestRuntime.id) ? screenshots.readyIds : []');
     expect(panel).toContain('disabled={generating || !screenshotsSupported}');
   });

@@ -24,7 +24,8 @@ import {
 
 const previewHelperSource = readFileSync(new URL('./siteEditPreview.ts', import.meta.url), 'utf8');
 const generateDialogSource = readFileSync(new URL('./SiteGenerateDialog.tsx', import.meta.url), 'utf8');
-const editPanelSource = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+const editPanelSource = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
 
 describe('AI 流式网页严格预览', () => {
   it('页面起点出现前不把解释文字塞进 iframe', () => {

@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+// 任务逻辑在 useSiteEditSession（修改面板与生成工作台共用），界面在 SiteEditPanel：两处合起来才是完整的修改面板。
+const source = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
 const knowledgePickerSource = readFileSync(new URL('../knowledge/KnowledgeEntryPicker.tsx', import.meta.url), 'utf8');
 const webPagesServiceSource = readFileSync(new URL('../../services/real/webPages.ts', import.meta.url), 'utf8');
 const htmlPptServiceSource = readFileSync(new URL('../../services/real/mdToPptService.ts', import.meta.url), 'utf8');
