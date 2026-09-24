@@ -55,6 +55,26 @@ interface PhaseEvent {
   message?: string;
 }
 
+
+/**
+ * 修改任务的交接：创建请求在路上时工作台被关掉又重开，旧实例拿到的 runId 写进存储时，
+ * 新实例早已读过存储、看到是空的，于是停在空表单，第一条修改在后台隐身运行，用户还能再发一条
+ * （Codex P2，与生成那边 handOffOrphanedGenerationRun 同一做法）。旧实例拿到结果先看自己是否已被关掉，
+ * 是就把 runId 写进存储并通知眼前同一站点的空闲实例接管，自己不再往下走。
+ */
+type OrphanedEditRunListener = (siteId: string, runId: string) => void;
+const orphanedEditRunListeners = new Set<OrphanedEditRunListener>();
+
+export function subscribeOrphanedEditRun(listener: OrphanedEditRunListener): () => void {
+  orphanedEditRunListeners.add(listener);
+  return () => { orphanedEditRunListeners.delete(listener); };
+}
+
+export function handOffOrphanedEditRun(siteId: string, runId: string): void {
+  try { sessionStorage.setItem(activeSiteEditRunStorageKey(siteId), runId); } catch { /* 存不下不影响任务 */ }
+  orphanedEditRunListeners.forEach((listener) => listener(siteId, runId));
+}
+
 export type RecoveryAction = 'generate' | 'history' | 'preview' | 'publish' | 'rollback' | 'reject';
 export type RevisionMutationAction = 'publish' | 'rollback' | 'reject';
 
@@ -163,6 +183,9 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  // 同步可读的「手上有没有任务」：接管别人交出的修改前要判，state 来不及。
+  const busyRef = useRef(false);
+  useEffect(() => { busyRef.current = generating; }, [generating]);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [mutatingAction, setMutatingAction] = useState<RevisionMutationAction | null>(null);
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
@@ -380,6 +403,15 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     return () => window.clearTimeout(timer);
   }, [previewExpiresAt, previewUrl, previewedRevision, site.id]);
 
+  // 别的实例交出来的同一站点的修改：自己空着就接过来，忙着就只留在存储里，下次打开再接。
+  useEffect(() => subscribeOrphanedEditRun((siteId, runId) => {
+    if (siteId !== site.id || busyRef.current) return;
+    busyRef.current = true;
+    setGenerating(true);
+    setRecoveringRunId(runId);
+    setActiveRunId(runId);
+  }), [site.id]);
+
   useEffect(() => {
     try {
       const storedRunId = sessionStorage.getItem(activeSiteEditRunStorageKey(site.id));
@@ -494,6 +526,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
+    busyRef.current = true;
     setGenerating(true);
     setElapsedSeconds(0);
     setRunStartedAtMs(Date.now());
@@ -539,6 +572,11 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       // 只有精细设计收截图；换成快速修改时已加的截图保留在面板上，但不随这次请求提交。
       screenshotAttachmentIds: screenshotRuntimeSupported(requestRuntime.id) ? screenshots.readyIds : [],
     });
+    // 创建期间工作台被关掉或重开：这个实例已经不是用户眼前那一个，交出去，别再往下走。
+    if (abort.signal.aborted) {
+      if (created.success) handOffOrphanedEditRun(site.id, created.data.runId);
+      return;
+    }
     if (!created.success) {
       setGenerating(false);
       if (created.error?.code === 'RUNTIME_NOT_READY') beginRuntimeRecovery(requestRuntime.id);

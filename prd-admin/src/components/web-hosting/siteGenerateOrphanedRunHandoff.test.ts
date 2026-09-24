@@ -71,3 +71,25 @@ describe('被关掉的工作台拿到的任务要交给眼前那一个', () => {
     expect(hook.match(/busyRef\.current = false;/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
   });
 });
+
+describe('修改会话同样交接（Codex P2）', () => {
+  const edit = readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
+
+  it('创建返回后先判 abort，被关掉的实例把修改交出去', () => {
+    const created = edit.indexOf('const created = await createHostedSiteEditRun(');
+    const guard = edit.indexOf('if (abort.signal.aborted) {', created);
+    const firstState = edit.indexOf('setActiveRunRuntime(created.data.runtime)', created);
+    expect(created).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(created);
+    expect(guard).toBeLessThan(firstState);
+    expect(edit.slice(guard, guard + 200)).toContain('handOffOrphanedEditRun(site.id, created.data.runId)');
+  });
+
+  it('同一站点的空闲实例接管，忙时或别的站点不抢', () => {
+    const subscribe = edit.indexOf('subscribeOrphanedEditRun((siteId, runId) => {');
+    expect(subscribe).toBeGreaterThan(-1);
+    const body = edit.slice(subscribe, subscribe + 260);
+    expect(body).toContain('if (siteId !== site.id || busyRef.current) return;');
+    expect(body).toContain('setRecoveringRunId(runId)');
+  });
+});
