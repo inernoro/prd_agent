@@ -195,8 +195,13 @@ export interface DesignGenerationStyle {
   description: string;
   /** 对应 OpenDesign 的设计系统编号。 */
   designSystemId: string;
-  /** 三个 #hex 色块，用于在选择卡片上直观展示风格。 */
+  /**
+   * 三个色块 [ink, paper, accent]，只读：后端从该风格设计系统的真实 tokens 派生（--fg / --bg / --accent），
+   * 设计系统不在 OpenDesign 目录里时为空数组。保存设置时不提交。
+   */
   swatches: string[];
+  /** 该风格真实样张的接口地址（不含查询串）；设计系统不在 OpenDesign 目录里时为 null。 */
+  sampleUrl?: string | null;
   enabled: boolean;
   isDefault: boolean;
   builtIn: boolean;
@@ -226,7 +231,7 @@ export interface DesignGenerationSettings {
 export interface DesignGenerationSettingsUpdate {
   defaultRuntime?: DesignGenerationRuntime;
   reviewMode?: DesignReviewMode;
-  styles?: Array<Omit<DesignGenerationStyle, 'builtIn'>>;
+  styles?: Array<Omit<DesignGenerationStyle, 'builtIn' | 'swatches' | 'sampleUrl'>>;
   /** 传空字符串表示恢复默认。 */
   prompts?: Partial<Record<DesignPromptKind, string>>;
 }

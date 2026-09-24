@@ -19,7 +19,6 @@ import {
   REVIEW_MODE_REGISTRY,
   buildGenerationSettingsPatch,
   composePromptBundle,
-  isValidSwatch,
   type GenerationSettingsDraft,
 } from './generationSettingsModel';
 
@@ -136,7 +135,7 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
     [draft, settings],
   );
   const dirty = Object.keys(patch).length > 0;
-  const invalidStyle = draft?.styles.find((style) => !style.name.trim() || style.swatches.some((swatch) => !isValidSwatch(swatch)));
+  const invalidStyle = draft?.styles.find((style) => !style.name.trim());
 
   const updateDraft = (next: (current: GenerationSettingsDraft) => GenerationSettingsDraft) => {
     setDraft((current) => (current ? next(current) : current));
@@ -166,7 +165,7 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
           name: '新风格',
           description: '',
           designSystemId: template?.designSystemId ?? '',
-          swatches: template ? [...template.swatches] : [],
+          swatches: [],
           enabled: true,
           isDefault: false,
           builtIn: false,
@@ -276,7 +275,7 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
 
         <Section
           title="风格预设"
-          hint="生成弹窗里能选的风格。每项对应 OpenDesign 的一套设计系统，色块只用来在卡片上直观展示。"
+          hint="生成弹窗里能选的风格。每项对应 OpenDesign 的一套设计系统，色块取自它的真实配色，只读。"
           action={!readOnly && <SmallButton onClick={addStyle}><Plus size={13} />新增风格</SmallButton>}
         >
           <div className="flex flex-col gap-2.5">
@@ -285,7 +284,7 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="flex h-7 w-20 shrink-0 overflow-hidden rounded-md" style={{ border: '1px solid var(--border-subtle)' }} aria-hidden>
                     {style.swatches.slice(0, 3).map((swatch, index) => (
-                      <span key={index} className="flex-1" style={{ background: isValidSwatch(swatch) ? swatch : 'transparent' }} />
+                      <span key={index} className="flex-1" style={{ background: swatch }} />
                     ))}
                   </span>
                   <input
@@ -347,39 +346,11 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
                       style={fieldStyle}
                     />
                   </label>
-                  <span className="ml-1">色块</span>
-                  {[0, 1, 2].map((index) => {
-                    const swatch = style.swatches[index] ?? '';
-                    return (
-                      <span key={index} className="flex items-center gap-1">
-                        <input
-                          type="color"
-                          aria-label={`色块 ${index + 1}`}
-                          value={isValidSwatch(swatch) ? swatch : '#808080'}
-                          disabled={readOnly}
-                          onChange={(event) => {
-                            const next = [...style.swatches];
-                            next[index] = event.target.value;
-                            updateStyle(style.id, { swatches: next });
-                          }}
-                          className="h-7 w-7 cursor-pointer rounded border-0 bg-transparent p-0 disabled:cursor-not-allowed"
-                        />
-                        <input
-                          aria-label={`色块 ${index + 1} 色值`}
-                          value={swatch}
-                          disabled={readOnly}
-                          maxLength={7}
-                          onChange={(event) => {
-                            const next = [...style.swatches];
-                            next[index] = event.target.value.trim();
-                            updateStyle(style.id, { swatches: next });
-                          }}
-                          className="h-8 w-[76px] rounded-lg px-2 font-mono text-[12px] text-token-primary outline-none disabled:opacity-80"
-                          style={{ ...fieldStyle, borderColor: swatch && !isValidSwatch(swatch) ? 'var(--semantic-danger-border)' : undefined }}
-                        />
-                      </span>
-                    );
-                  })}
+                  <span className="ml-1 text-token-muted">
+                    {style.swatches.length > 0
+                      ? '色块取自该设计系统的真实配色，随设计系统自动更新'
+                      : '保存后按设计系统的真实配色显示色块；不在 OpenDesign 目录里的设计系统没有色块'}
+                  </span>
                 </div>
               </div>
             ))}

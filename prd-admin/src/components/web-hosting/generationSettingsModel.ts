@@ -31,19 +31,12 @@ export interface GenerationSettingsDraft {
   prompts: Record<DesignPromptKind, string>;
 }
 
-const SWATCH_RE = /^#[0-9a-fA-F]{6}$/;
-
-export function isValidSwatch(value: string): boolean {
-  return SWATCH_RE.test(value);
-}
-
 function styleFingerprint(style: DesignGenerationStyle): string {
   return JSON.stringify([
     style.id,
     style.name,
     style.description,
     style.designSystemId,
-    style.swatches,
     style.enabled,
     style.isDefault,
   ]);
@@ -69,7 +62,6 @@ export function buildGenerationSettingsPatch(
       name: style.name.trim(),
       description: style.description.trim(),
       designSystemId: style.designSystemId.trim(),
-      swatches: style.swatches.slice(0, 3),
       enabled: style.enabled,
       isDefault: style.isDefault,
     }));

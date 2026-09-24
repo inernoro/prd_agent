@@ -12,7 +12,6 @@ import {
 import {
   buildGenerationSettingsPatch,
   composePromptBundle,
-  isValidSwatch,
   type GenerationSettingsDraft,
 } from './generationSettingsModel';
 import {
@@ -200,18 +199,22 @@ describe('网页生成设置只提交改过的字段', () => {
     expect(patch).toEqual({ prompts: { generate: '新的创作要求', edit: '' } });
   });
 
-  it('风格有改动时提交完整列表，且不带只读的 builtIn', () => {
+  it('风格有改动时提交完整列表，且不带只读的 builtIn 与色块（色块由后端从设计系统 tokens 派生）', () => {
     const draft = draftOf();
     draft.styles[0] = { ...draft.styles[0], name: '编辑风格 2' };
     const patch = buildGenerationSettingsPatch(settings, draft);
     expect(patch.styles).toEqual([
-      { id: 'editorial', name: '编辑风格 2', description: '杂志感', designSystemId: 'ds-editorial', swatches: ['#112233', '#445566', '#778899'], enabled: true, isDefault: true },
+      { id: 'editorial', name: '编辑风格 2', description: '杂志感', designSystemId: 'ds-editorial', enabled: true, isDefault: true },
     ]);
   });
 
-  it('色块只认 #RRGGBB；复制全部按平台契约在前的顺序拼接', () => {
-    expect(isValidSwatch('#A1b2C3')).toBe(true);
-    expect(isValidSwatch('#abc')).toBe(false);
+  it('只读色块变了不算改动，不会触发保存', () => {
+    const draft = draftOf();
+    draft.styles[0] = { ...draft.styles[0], swatches: ['#000000', '#ffffff', '#ff0000'] };
+    expect(buildGenerationSettingsPatch(settings, draft)).toEqual({});
+  });
+
+  it('复制全部按平台契约在前的顺序拼接', () => {
     const bundle = composePromptBundle('契约', { generate: '创作', edit: '修改', review: '自查' });
     expect(bundle.indexOf('契约')).toBeLessThan(bundle.indexOf('创作'));
     expect(bundle).toContain('## 自查提示词\n\n自查');
