@@ -509,6 +509,28 @@ public sealed class HostedSitePrivateSourceGateTests
     }
 
     [Fact]
+    public async Task Share_WhenRecordedParentRevisionIsMissing_ShouldAskInsteadOfTreatingItAsComplete()
+    {
+        // 版本记着上一代、上一代却读不到（数据损坏）：私有资料可能正好在那一代，同样按「无法确认」列出。
+        var store = new FakeStore();
+        store.AddRevision(new HostedSiteRevision
+        {
+            Id = "edit-a", SiteId = "site-a", Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.AiEdit, ParentRevisionId = "gone", KnowledgeEntryIds = [],
+        });
+        store.Site.PublishedRevisionId = "edit-a";
+        var gate = new HostedSitePrivateSourceGate(store);
+
+        var decision = await gate.EnforceForSitesAsync(
+            [store.Site], HostedSitePrivateSourceActions.ShareCreate, Owner, null, CancellationToken.None);
+
+        Assert.Equal(HostedSitePrivateSourceVerdict.ConfirmationRequired, decision.Verdict);
+        Assert.Equal(
+            $"{HostedSitePrivateSourceGate.TruncatedLineageEntryPrefix}site-a:edit-a",
+            Assert.Single(decision.Report.Items).EntryId);
+    }
+
+    [Fact]
     public async Task PrivateSourceInspect_ForTeamViewer_ShouldRefuseWithoutLeakingSourceNames()
     {
         // 站点分享给团队后 GetByIdAsync 对 viewer 也放行（Codex P1）：核查接口不能把私有文档名、知识库名给 viewer。

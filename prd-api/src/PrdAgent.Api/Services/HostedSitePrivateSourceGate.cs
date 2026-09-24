@@ -451,7 +451,7 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
 
     /// <summary>
     /// 沿内容血缘合并引用。TruncatedAfterRevisionId 非空 = 没读到头：循环结束时还有上一代没读
-    /// （撞上步数上限，或者遇到环），值是最后读到的那一版。调用方必须据此列出「无法确认」，
+    /// （撞上步数上限、遇到环，或记着的上一代读不到），值是最后读到的那一版。调用方必须据此列出「无法确认」，
     /// 不许把截断后的集合当完整结果。读到基线（没有上一代）才算读完。
     /// </summary>
     private async Task<(IReadOnlyList<string> EntryIds, string? TruncatedAfterRevisionId)> CollectLineageEntryIdsAsync(
@@ -475,9 +475,18 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
             ids.AddRange(current.KnowledgeEntryIds ?? new List<string>());
             lastReadId = current.Id;
             var previousId = HostedSitePrivateSourceRules.PreviousContentRevisionId(current);
-            current = string.IsNullOrWhiteSpace(previousId)
-                ? null
-                : await _store.FindRevisionAsync(siteId, previousId, ct);
+            if (string.IsNullOrWhiteSpace(previousId))
+            {
+                current = null; // 读到基线：血缘完整
+                continue;
+            }
+            current = await _store.FindRevisionAsync(siteId, previousId, ct);
+            if (current == null)
+            {
+                // 记着有上一代、却读不到（版本只在整站删除或撤销未发布草稿时才会被删，
+                // 正常数据里不该出现）：更早的来源同样无法确认，不许当成读到了头。
+                truncatedAfter = lastReadId;
+            }
         }
         var distinct = ids
             .Where(id => !string.IsNullOrWhiteSpace(id))
