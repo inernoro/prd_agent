@@ -404,7 +404,13 @@ public sealed class HostedSiteEditsController : ControllerBase
                 {
                     await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
                     cursor = item.Seq;
-                    terminalEventEmitted = item.EventName is "done" or "error" or "cancelled";
+                    // 终态一出就停：同一批里排在「已取消」之后的迟到输出不再转发（Codex P2），
+                    // 否则前端报了「已停止」又被重新填回预览。与生成流同一条规则。
+                    if (item.EventName is "done" or "error" or "cancelled")
+                    {
+                        terminalEventEmitted = true;
+                        break;
+                    }
                 }
                 if (terminalEventEmitted) return;
                 if (batch.Count > 0)

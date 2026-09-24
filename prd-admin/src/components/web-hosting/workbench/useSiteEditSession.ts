@@ -532,6 +532,19 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       toast.error('没有可用的设计执行器', '请检查执行器部署状态后重试');
       return;
     }
+    // 校验排在拿忙碌标记之前（Codex P2）：原先它在 busyRef.current = true 之后才 return，
+    // 只把 generating 改回 false，而 true/false 两次更新被 React 合并、镜像 effect 不跑，
+    // busyRef 就一直是 true，之后每次点发送都被入口守卫挡掉，只能关掉工作台重开。
+    if (selectedKnowledge.some((entry) => !entry.entryId || !entry.storeId)) {
+      setPhase('引用知识身份不完整，请重新选择');
+      setRecoveryNotice({
+        title: '引用知识需要重新确认',
+        detail: '知识条目已经变化。请取消失效条目或刷新页面后重新选择，线上版本没有变化。',
+        action: 'generate',
+      });
+      toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
+      return;
+    }
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
@@ -562,17 +575,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     setActiveRunId(null);
     setStopRequested(false);
 
-    if (selectedKnowledge.some((entry) => !entry.entryId || !entry.storeId)) {
-      setGenerating(false);
-      setPhase('引用知识身份不完整，请重新选择');
-      setRecoveryNotice({
-        title: '引用知识需要重新确认',
-        detail: '知识条目已经变化。请取消失效条目或刷新页面后重新选择，线上版本没有变化。',
-        action: 'generate',
-      });
-      toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
-      return;
-    }
     const knowledgeReferences = selectedKnowledge.map((entry) => ({
       entryId: entry.entryId,
       storeId: entry.storeId,

@@ -339,6 +339,12 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
   const start = async (request: GenerationRequest) => {
     const text = request.instruction.trim();
     if (!text || generating || busyRef.current) return;
+    // 校验排在拿忙碌标记之前，与修改入口同一条规则：失败不进入忙碌态，也不清掉当前预览。
+    if (request.knowledge.some((entry) => !entry.entryId || !entry.storeId)) {
+      failGeneration('引用知识身份不完整，请重新选择');
+      toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
+      return;
+    }
     const abort = new AbortController();
     abortRef.current?.abort();
     abortRef.current = abort;
@@ -364,12 +370,6 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setPhase(firstPhase);
     setStages(appendGenerationStage([], firstPhase, Date.now()));
     streamRef.current = '';
-
-    if (request.knowledge.some((entry) => !entry.entryId || !entry.storeId)) {
-      failGeneration('引用知识身份不完整，请重新选择');
-      toast.error('无法校验引用知识', '请刷新知识列表后重新选择');
-      return;
-    }
 
     const knowledgeReferences = request.knowledge.map((entry) => ({
       entryId: entry.entryId,

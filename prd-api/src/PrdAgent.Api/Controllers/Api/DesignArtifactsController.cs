@@ -710,7 +710,12 @@ public sealed class DesignArtifactsController : ControllerBase
                     cursor = item.Seq;
                     if (!PublicGenerationStreamEvents.Contains(item.EventName)) continue;
                     await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
-                    terminalEventEmitted |= item.EventName is "done" or "error" or "cancelled";
+                    // 终态一出就停：同一批里迟到的输出不再转发，与修改流同一条规则。
+                    if (item.EventName is "done" or "error" or "cancelled")
+                    {
+                        terminalEventEmitted = true;
+                        break;
+                    }
                 }
                 if (terminalEventEmitted) return;
                 if (batch.Count > 0)

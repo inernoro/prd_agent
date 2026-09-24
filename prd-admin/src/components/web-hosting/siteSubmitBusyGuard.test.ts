@@ -27,6 +27,10 @@ describe('提交入口的忙碌判据', () => {
       const firstAwait = source.indexOf('await ', entryAt);
       expect(markAt, '入口没有同步标记忙碌').toBeGreaterThan(-1);
       expect(markAt, '忙碌标记排在了第一个 await 之后：等待期间的第二次点击看不见它').toBeLessThan(firstAwait);
+      // 拿到忙碌标记之后、第一个 await 之前不许提前 return：那里只能把 generating 改回去，
+      // true/false 两次更新会被合并、镜像 effect 不跑，busyRef 永远卡在 true（Codex P2）。
+      expect(source.slice(markAt, firstAwait), '拿到忙碌标记后同步提前返回，busyRef 会卡在 true：校验要放到拿标记之前')
+        .not.toMatch(/\breturn\b/);
     });
   }
 });

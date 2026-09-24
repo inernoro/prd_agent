@@ -56,4 +56,28 @@ public sealed class RunStreamMongoFallbackContractTests
             CodeWithoutComments(region),
             StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// 一个 Redis 批次里可能是「已取消」后面跟着 worker 迟到的输出（Codex P2，2026-09-24）。
+    /// 终态一写出就必须停止转发，否则前端报了「已停止」又被重新填回预览；
+    /// 按条覆盖一个布尔（改写流原来的写法）更糟，迟到的那条会把终态标志清回 false、流继续开着。
+    /// </summary>
+    [Theory]
+    [InlineData("DesignArtifactsController.cs", "生成流")]
+    [InlineData("HostedSiteEditsController.cs", "改写流")]
+    public void RedisBatchStopsForwardingAtTheFirstTerminalEvent(string fileName, string streamName)
+    {
+        var source = ReadRepoFile("PrdAgent.Api", "Controllers", "Api", fileName);
+        var start = source.IndexOf("foreach (var item in batch)", StringComparison.Ordinal);
+        Assert.True(start > 0, $"{streamName}的 Redis 批次循环不见了");
+        var end = source.IndexOf("if (terminalEventEmitted) return;", start, StringComparison.Ordinal);
+        Assert.True(end > start, $"{streamName}的终态返回不见了");
+        var loop = CodeWithoutComments(source[start..end]);
+
+        var terminalAt = loop.IndexOf("item.EventName is \"done\" or \"error\" or \"cancelled\"", StringComparison.Ordinal);
+        Assert.True(terminalAt > 0, $"{streamName}没有在循环里识别终态");
+        Assert.True(loop.IndexOf("break;", terminalAt, StringComparison.Ordinal) > terminalAt,
+            $"{streamName}识别到终态后没有停止转发：同一批里的迟到输出会在「已停止」之后被推给前端");
+        Assert.DoesNotContain("terminalEventEmitted = item.EventName", loop, StringComparison.Ordinal);
+    }
 }
