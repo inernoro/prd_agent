@@ -25,7 +25,8 @@ describe('网页托管原版列表布局回归', () => {
     expect(toolbar).toContain('来源筛选');
     // 设计稿 Main（2026-09-23）：「生成网页」是主操作，「上传网页」退为次操作紧挨着它。
     expect(toolbar).toContain('size="sm" variant="secondary" onClick={openCreateUploadDialog}');
-    expect(toolbar).toContain('onChoose={openGenerateDialog}');
+    // 2026-09-24：点「生成网页」直接进工作台，不再先弹来源二选一。
+    expect(toolbar).toContain('onGenerate={openGenerateDialog}');
     expect(toolbar).not.toContain('帮我修改');
     expect(toolbar).not.toContain('webpages-knowledge-generate');
   });

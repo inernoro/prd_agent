@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 const sharePage = readFileSync(new URL('../ShareViewPage.tsx', import.meta.url), 'utf8');
 const webPages = readFileSync(new URL('../WebPagesPage.tsx', import.meta.url), 'utf8');
-const dialog = readFileSync(
-  new URL('../../components/web-hosting/SiteGenerateDialog.tsx', import.meta.url), 'utf8');
+const generationRun = readFileSync(
+  new URL('../../components/web-hosting/workbench/useSiteGenerationRun.ts', import.meta.url), 'utf8');
+const newSiteStage = readFileSync(
+  new URL('../../components/web-hosting/workbench/NewSiteStage.tsx', import.meta.url), 'utf8');
 
 /**
  * 两件只有服务端知道的事，不再由浏览器拿代理量推（Codex P2 x2，2026-09-15）。
@@ -31,23 +33,25 @@ describe('只有服务端知道的结论由服务端给', () => {
     expect(sharePage).toMatch(/\{!isOwner && \(/);
   });
 
-  it('生成弹窗把目标空间随请求送出去，且在打开那一刻冻结', () => {
-    expect(dialog).toContain('destinationTeamId: destinationTeamIdRef.current ?? null,');
-    // 冻结点必须在「打开弹窗」的重置段里，不是跟着 prop 实时变。
-    const openReset = dialog.indexOf("setInstruction('');");
-    expect(openReset).toBeGreaterThan(-1);
-    const freeze = dialog.indexOf('destinationTeamIdRef.current = destinationTeamId;');
-    expect(freeze, '目标空间没有在打开那一刻冻结').toBeGreaterThan(-1);
-    expect(Math.abs(freeze - openReset), '冻结点离打开重置段太远，多半又变成实时跟随了')
-      .toBeLessThan(400);
+  it('生成工作台把目标空间随请求送出去，且在打开那一刻冻结', () => {
+    expect(generationRun).toContain('destinationTeamId: destinationTeamIdRef.current ?? null,');
+    // 冻结点必须在「打开工作台」调用的 reset 里，不是跟着 prop 实时变。
+    const reset = generationRun.indexOf('const reset = useCallback(');
+    expect(reset).toBeGreaterThan(-1);
+    const block = generationRun.slice(reset, generationRun.indexOf('const runId = readActiveRun();', reset));
+    expect(block, '目标空间没有在打开那一刻冻结').toContain('destinationTeamIdRef.current = liveDestinationTeamIdRef.current;');
+    // 只有这一处写入冻结值：其余地方写了，就又变成实时跟随了。
+    expect(generationRun.match(/destinationTeamIdRef\.current = /g)).toHaveLength(1);
+    // companion：工作台一挂载就调 reset（每次打开都会重新挂载）。
+    expect(newSiteStage).toContain('resetRun();');
   });
 
   it('生成完成回调不再自己归属团队（服务端已经归好），只补分组', () => {
-    const createdAt = webPages.indexOf('<SiteGenerateDialog');
+    const createdAt = webPages.indexOf('<SiteWorkbench');
     expect(createdAt).toBeGreaterThan(-1);
     const usage = webPages.slice(createdAt, createdAt + 900);
 
-    expect(usage, '没有把目标空间传给生成弹窗').toContain('destinationTeamId=');
+    expect(usage, '没有把目标空间传给生成工作台').toContain('destinationTeamId=');
     expect(usage, '完成回调仍在自己归属团队：用户中途离开时这条回调根本不会执行')
       .not.toContain('assignNewSiteToDialogSpace');
     expect(usage).toContain('groupNewSiteInDialogSpace');

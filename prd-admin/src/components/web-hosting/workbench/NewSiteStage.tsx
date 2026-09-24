@@ -1,0 +1,529 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ClipboardList, Library, Palette, Upload } from 'lucide-react';
+import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
+import { toast } from '@/lib/toast';
+import { listRecentDocumentEntries } from '@/services/real/documentStore';
+import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
+import {
+  getDesignGenerationSettings,
+  getDesignRuntimeCapabilities,
+  type DesignGenerationStyle,
+  type DesignRuntimeCapability,
+} from '@/services/real/webPages';
+import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
+import { chooseDesignRuntime, displayedDesignRuntime, runtimeFallbackNotice } from '../siteEditPreview';
+import {
+  formatGenerationClock,
+  remainingEstimateText,
+  runProvenanceText,
+} from '../siteGenerateProgress';
+import {
+  DESIGN_ATTACHMENT_ACCEPT,
+  MAX_GENERATE_ATTACHMENTS,
+  useDesignAttachmentUploads,
+} from '../designAttachments';
+import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, orderRuntimeCards, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
+import { useSiteGenerationRun } from './useSiteGenerationRun';
+import {
+  AssistantBubble,
+  ComposerSheet,
+  OptionChip,
+  PageSkeleton,
+  RunProgressCard,
+  Segmented,
+  UserBubble,
+  WorkbenchComposer,
+  WorkbenchLayout,
+  WorkbenchPreview,
+  type ComposerChip,
+  type PlusMenuItem,
+  type WorkbenchPane,
+} from './WorkbenchParts';
+
+/** 知识库的一篇稿子，从知识库页「做成网页」带进来时预先放好。 */
+export interface WorkbenchSource {
+  entryId: string;
+  storeId: string;
+  title: string;
+  storeName?: string;
+}
+
+/** 生成完成后交给修改阶段的那一轮对话，好让「继续修改」接在同一段对话下面。 */
+export interface GenerationIntro {
+  request: string;
+  chips: string[];
+  durationText: string;
+  runtimeLabel: string;
+  styleName?: string | null;
+}
+
+const MAX_KNOWLEDGE = 3;
+const DEFAULT_REQUEST = '把这些资料做成一个清晰好读、适合发给客户看的网页';
+
+function durationText(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m} 分 ${String(s % 60).padStart(2, '0')} 秒` : `${s} 秒`;
+}
+
+export default function NewSiteStage({
+  source,
+  destinationTeamId,
+  pane,
+  onPaneChange,
+  onGenerated,
+  onOpenSettings,
+  onBusyChange,
+}: {
+  source?: WorkbenchSource | null;
+  destinationTeamId?: string | null;
+  pane: WorkbenchPane;
+  onPaneChange: (pane: WorkbenchPane) => void;
+  onGenerated: (siteId: string, intro: GenerationIntro) => void;
+  onOpenSettings?: () => void;
+  onBusyChange?: (busy: boolean) => void;
+}) {
+  const [instruction, setInstruction] = useState('');
+  const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
+  const [loadingKnowledge, setLoadingKnowledge] = useState(true);
+  const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>(() => (source ? [{
+    entryId: source.entryId,
+    storeId: source.storeId,
+    title: source.title,
+    storeName: source.storeName || '当前知识库',
+  }] : []));
+  const uploads = useDesignAttachmentUploads('document', MAX_GENERATE_ATTACHMENTS);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
+  const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
+  const [selectedRuntime, setSelectedRuntime] = useState('open-design');
+  const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
+  const [stylesError, setStylesError] = useState<string | null>(null);
+  const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<'knowledge' | 'notes' | 'style' | null>(null);
+  const [notesDraft, setNotesDraft] = useState('');
+  /** 已发出去的那一条（对话里的用户气泡）；失败后输入框里的内容原样保留，可直接再发。 */
+  const [sent, setSent] = useState<{ text: string; chips: string[]; runtimeLabel: string; styleName?: string | null } | null>(null);
+  const handedOffRef = useRef(false);
+
+  const run = useSiteGenerationRun({
+    destinationTeamId,
+    hasInitialSource: Boolean(source),
+    onCreated: () => { /* 完成后由下面的 effect 交给修改阶段 */ },
+  });
+  const { reset: resetRun } = run;
+
+  useEffect(() => {
+    resetRun();
+    let active = true;
+    void Promise.all([
+      listRecentDocumentEntries(16),
+      getDesignRuntimeCapabilities(),
+      getDesignGenerationSettings(),
+    ]).then(([recent, runtimes, settings]) => {
+      if (!active) return;
+      const items = recent.success ? [...recent.data.items] : [];
+      if (source && !items.some((item) => item.id === source.entryId)) {
+        items.unshift({
+          id: source.entryId,
+          storeId: source.storeId,
+          storeName: source.storeName || '当前知识库',
+          title: source.title,
+          contentType: 'text/markdown',
+          tags: [],
+          createdAt: '',
+          updatedAt: '',
+          isNew: false,
+        });
+      }
+      setRecentKnowledge(items);
+      if (runtimes.success) {
+        setCapabilities(runtimes.data.runtimes);
+        setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
+        const runtimeId = chooseDesignRuntime(runtimes.data.runtimes, runtimes.data.defaultRuntime);
+        if (runtimeId) setSelectedRuntime(runtimeId);
+      }
+      if (settings.success) {
+        const enabled = settings.data.styles.filter((style) => style.enabled);
+        setStyles(enabled);
+        setStylesError(null);
+        setSelectedStyleId((enabled.find((style) => style.isDefault) ?? enabled[0])?.id ?? null);
+      } else {
+        setStyles([]);
+        setSelectedStyleId(null);
+        setStylesError(settings.error?.message || '风格列表暂时读不到');
+      }
+      setLoadingKnowledge(false);
+    });
+    return () => { active = false; };
+    // 只在进入工作台时跑一次：来源与目标空间在打开那一刻冻结。
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { onBusyChange?.(run.generating); }, [onBusyChange, run.generating]);
+
+  const enabledRuntimes = useMemo(() => orderRuntimeCards(capabilities.filter((item) => item.enabled)), [capabilities]);
+  const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
+  const visibleRuntime = displayedDesignRuntime(
+    capabilities,
+    requestRuntime?.id ?? selectedRuntime,
+    run.generating ? run.activeRunRuntime : null,
+  );
+  const fallbackNotice = runtimeFallbackNotice(capabilities, settingsDefaultRuntime, requestRuntime?.id);
+  const selectedStyle = styles.find((style) => style.id === selectedStyleId) ?? null;
+  const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
+  const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
+  const eta = runtimeCopy ? `${runtimeCopy.facts[0].value} ${runtimeCopy.facts[0].unit}` : '';
+
+  // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
+  useEffect(() => {
+    const done = run.completedSite;
+    if (!done || handedOffRef.current) return;
+    handedOffRef.current = true;
+    onGenerated(done.id, {
+      request: sent?.text || run.recoveredTitle || '生成网页',
+      chips: sent?.chips ?? [],
+      durationText: durationText(run.elapsedSeconds),
+      runtimeLabel: sent?.runtimeLabel || (visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器'),
+      styleName: run.runInfo?.styleName ?? sent?.styleName,
+    });
+  }, [onGenerated, run.completedSite, run.elapsedSeconds, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
+
+  const addFiles = (files: File[]) => {
+    const rejected = uploads.addFiles(files);
+    if (rejected.length > 0) toast.error('有文件没有加入', rejected.join('；'));
+  };
+
+  const addNotes = () => {
+    const text = notesDraft.trim();
+    if (!text) return;
+    // 粘贴的纪要按一篇 Markdown 附件上传，和拖进来的文件走同一条路，服务端同样当作事实来源。
+    const index = uploads.items.filter((item) => item.fileName.startsWith('会议纪要')).length + 1;
+    addFiles([new File([text], `会议纪要-${index}.md`, { type: 'text/markdown' })]);
+    setNotesDraft('');
+    setSheet(null);
+  };
+
+  const materialChips: ComposerChip[] = [
+    ...selectedKnowledge.map((entry) => ({
+      key: `kb-${entry.entryId}`,
+      label: entry.title,
+      status: '知识库',
+      onRemove: () => setSelectedKnowledge((current) => current.filter((item) => item.entryId !== entry.entryId)),
+    })),
+    ...uploads.items.map((item) => ({
+      key: item.key,
+      label: item.fileName,
+      status: item.status === 'uploading'
+        ? `上传 ${item.progress}%`
+        : item.status === 'reading'
+          ? '读取正文'
+          : item.status === 'ready'
+            ? '可以用'
+            : item.error || '失败',
+      tone: item.status === 'failed' ? 'danger' as const : item.status === 'ready' ? 'default' as const : 'busy' as const,
+      onRemove: () => uploads.remove(item.key),
+    })),
+  ];
+
+  const plusItems: PlusMenuItem[] = [
+    {
+      id: 'knowledge',
+      title: '引用知识库',
+      description: `从我的或团队知识库挑，最多 ${MAX_KNOWLEDGE} 篇；稿子更新后可一键重生成`,
+      icon: Library,
+      onPick: () => setSheet('knowledge'),
+    },
+    {
+      id: 'upload',
+      title: '上传文件',
+      description: 'Markdown、Word、PDF、PPT、纯文本，最多 5 个',
+      icon: Upload,
+      onPick: () => fileInputRef.current?.click(),
+      disabledReason: uploads.items.length >= MAX_GENERATE_ATTACHMENTS ? `已放入 ${MAX_GENERATE_ATTACHMENTS} 个文件，先移除一个` : undefined,
+    },
+    {
+      id: 'notes',
+      title: '粘贴会议纪要或通话记录',
+      description: '直接贴文字，不用先存成文件',
+      icon: ClipboardList,
+      onPick: () => setSheet('notes'),
+      disabledReason: uploads.items.length >= MAX_GENERATE_ATTACHMENTS ? `已放入 ${MAX_GENERATE_ATTACHMENTS} 个文件，先移除一个` : undefined,
+    },
+  ];
+
+  const sendBlocker = !requestRuntime
+    ? '没有可用的设计执行器，请联系管理员检查部署状态'
+    : uploads.busy
+      ? '文件还在上传，传完就能生成'
+      : !hasSources
+        ? '先点左下角的 + 放入资料：知识库、文件或会议纪要都行'
+        : '';
+
+  const send = () => {
+    if (sendBlocker || run.generating || !requestRuntime) return;
+    const text = instruction.trim() || DEFAULT_REQUEST;
+    const title = selectedKnowledge[0]?.title
+      || titleFromFileName(uploads.items.find((item) => item.status === 'ready')?.fileName ?? '');
+    const chips = [
+      ...selectedKnowledge.map((entry) => `知识库 · ${entry.title}`),
+      ...uploads.items.filter((item) => item.status === 'ready').map((item) => `文件 · ${item.fileName}`),
+    ];
+    setSent({ text, chips, runtimeLabel: runtimeCardTitle(requestRuntime), styleName: selectedStyle?.name });
+    handedOffRef.current = false;
+    void run.start({
+      instruction: text,
+      title,
+      runtimeId: requestRuntime.id,
+      sourceSurface: source ? 'knowledge-base' : 'web-hosting',
+      knowledge: selectedKnowledge,
+      styleId: selectedStyleId,
+      attachmentIds: uploads.readyIds,
+    });
+    onPaneChange('preview');
+  };
+
+  const stages = run.stages;
+  const steps = stages.map((stage, index) => ({
+    key: `${stage.label}-${index}`,
+    label: stage.label,
+    state: stage.endedAtMs == null && run.generating ? 'active' as const : 'done' as const,
+  }));
+  const composing = !run.generating && !sent && !run.notice;
+  const styleName = selectedStyle?.name ?? '默认风格';
+
+  const conversation = (
+    <>
+      <AssistantBubble>
+        <p className="font-semibold">把资料做成网页，发给客户看</p>
+        <p className="text-[12px] text-token-secondary">
+          点输入框左边的 + 放资料（知识库、文件、会议纪要可以一起放），再用一句话说给谁看、想达到什么效果。
+          右边是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。
+        </p>
+      </AssistantBubble>
+      {composing && (
+        <div className="flex flex-wrap gap-1.5" aria-label="常用要求">
+          {PRESET_REQUESTS.map((preset) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => setInstruction(preset.text)}
+              className="rounded-lg px-2.5 py-1 text-[12px] text-token-secondary transition-colors hover-bg-soft"
+              style={{ border: '1px solid var(--border-default)' }}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {!sent && run.generating && (
+        <UserBubble text={run.recoveredTitle ? `接着看：${run.recoveredTitle}` : '接着看上次没跑完的生成'} />
+      )}
+      {sent && <UserBubble text={sent.text} chips={sent.chips} />}
+      {run.generating && (
+        <RunProgressCard
+          title="正在生成网页"
+          clock={formatGenerationClock(run.elapsedSeconds)}
+          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds)}
+          runtimeLabel={visibleRuntime ? runtimeCardTitle(visibleRuntime) : undefined}
+          resolvedModel={run.resolvedModel}
+          provenance={runProvenanceText(run.runInfo)}
+          steps={steps.length > 0 ? steps : [{ key: 'start', label: '正在提交资料', state: 'active' }]}
+          activity={`${run.phase || '正在准备'}${run.lastEventAtMs ? ` · 最近一次回应 ${Math.max(0, Math.round((Date.now() - run.lastEventAtMs) / 1000))} 秒前` : ''}`}
+          thinking={run.thinking}
+          onStop={() => void run.stop()}
+          stopRequested={run.stopRequested}
+          canStop={Boolean(run.activeRunId)}
+          stopHint="可以关掉窗口，任务在服务器上继续；重新打开「生成网页」会接着显示进度。"
+        />
+      )}
+      {run.notice && (
+        <AssistantBubble tone="warning">
+          <p className="font-semibold">{run.notice.tone === 'error' ? '这次没有做成' : '说明'}</p>
+          <p className="text-[12px] text-token-secondary">{run.notice.text}</p>
+          <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
+        </AssistantBubble>
+      )}
+      {fallbackNotice && !run.generating && (
+        <p className="rounded-lg px-2.5 py-2 text-[11px]" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>{fallbackNotice}</p>
+      )}
+    </>
+  );
+
+  const options = (
+    <>
+      <OptionChip label={`风格：${styleName}，点开换一个`} value={styleName} onClick={() => setSheet('style')} disabled={run.generating}>
+        <Palette size={13} />
+        {selectedStyle && (
+          <span className="flex gap-0.5">
+            {selectedStyle.swatches.slice(0, 3).map((color) => <span key={color} className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />)}
+          </span>
+        )}
+      </OptionChip>
+      {enabledRuntimes.length > 1 ? (
+        <Segmented
+          label="生成方式"
+          value={requestRuntime?.id ?? ''}
+          disabled={run.generating}
+          onChange={setSelectedRuntime}
+          options={enabledRuntimes.map((item) => ({
+            value: item.id,
+            label: runtimeCardTitle(item).replace('生成', '').replace('设计', ''),
+            title: RUNTIME_CARD_REGISTRY[item.id]?.description ?? item.label,
+          }))}
+        />
+      ) : requestRuntime ? (
+        <span className="text-[12px] text-token-muted">{runtimeCardTitle(requestRuntime)}</span>
+      ) : null}
+    </>
+  );
+
+  const composer = (
+    <>
+      <WorkbenchComposer
+        id="workbench-new-instruction"
+        value={instruction}
+        onChange={setInstruction}
+        placeholder="说说要做成什么样：给谁看、想达到什么效果（可以不写，只放资料也行）"
+        disabled={run.generating}
+        plusItems={plusItems}
+        chips={materialChips}
+        options={options}
+        sendLabel={run.generating ? '正在生成…' : `生成网页${eta ? ` · 约 ${eta.replace('约 ', '')}` : ''}`}
+        sendDisabled={run.generating || Boolean(sendBlocker)}
+        sendDisabledReason={run.generating ? undefined : sendBlocker}
+        onSend={send}
+        hint={runtimeCopy
+          ? `点下去：左边一步步显示进度，右边先出骨架、再换成真实页面；${runtimeCopy.footnote}`
+          : '点下去：左边一步步显示进度，右边出真实页面；做好自动存进网页托管，只有你能看到。'}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept={DESIGN_ATTACHMENT_ACCEPT.document}
+        className="hidden"
+        onChange={(event) => {
+          addFiles(Array.from(event.target.files ?? []));
+          event.target.value = '';
+        }}
+      />
+      {sheet === 'knowledge' && (
+        <ComposerSheet
+          title="引用知识库"
+          onClose={() => setSheet(null)}
+          footer={(
+            <button
+              type="button"
+              onClick={() => setSheet(null)}
+              className="inline-flex h-10 w-full items-center justify-center rounded-xl text-[14px] font-semibold"
+              style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+            >
+              {selectedKnowledge.length > 0 ? `放入 ${selectedKnowledge.length} 篇` : '完成'}
+            </button>
+          )}
+        >
+          <KnowledgeInlineBrowser
+            recentEntries={recentKnowledge}
+            loadingRecent={loadingKnowledge}
+            selectedEntries={selectedKnowledge}
+            onChange={setSelectedKnowledge}
+            onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选；更多资料可以改用上传文件')}
+          />
+        </ComposerSheet>
+      )}
+      {sheet === 'notes' && (
+        <ComposerSheet
+          title="粘贴会议纪要或通话记录"
+          onClose={() => setSheet(null)}
+          footer={(
+            <button
+              type="button"
+              onClick={addNotes}
+              disabled={!notesDraft.trim()}
+              className="inline-flex h-10 w-full items-center justify-center rounded-xl text-[14px] font-semibold disabled:opacity-45"
+              style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+            >
+              放入资料
+            </button>
+          )}
+        >
+          <div className="flex h-full flex-col gap-2 p-4">
+            <label htmlFor="workbench-notes" className="text-[12px] text-token-secondary">
+              贴进来的文字会作为一篇资料交给生成，和上传的文件一样被当作事实来源；不会被改写成别的内容。
+            </label>
+            <textarea
+              id="workbench-notes"
+              value={notesDraft}
+              onChange={(event) => setNotesDraft(event.target.value)}
+              placeholder="例如：9 月 23 日客户沟通纪要……"
+              className="min-h-0 flex-1 resize-none rounded-xl p-3 text-base leading-relaxed text-token-primary outline-none sm:text-[13px]"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
+            />
+          </div>
+        </ComposerSheet>
+      )}
+      {sheet === 'style' && (
+        <ComposerSheet title="选一个风格" onClose={() => setSheet(null)}>
+          <div className="flex h-full flex-col gap-2 overflow-y-auto p-4">
+            {stylesError && <p className="text-[12px]" style={{ color: 'var(--semantic-danger-text)' }}>{stylesError}</p>}
+            {styles.map((style) => (
+              <button
+                key={style.id}
+                type="button"
+                aria-pressed={style.id === selectedStyleId}
+                onClick={() => { setSelectedStyleId(style.id); setSheet(null); }}
+                className="flex items-center gap-3 rounded-xl p-3 text-left transition-colors hover-bg-soft"
+                style={{ border: `1px solid ${style.id === selectedStyleId ? 'var(--accent-primary)' : 'var(--border-subtle)'}` }}
+              >
+                <span className="flex shrink-0 gap-1">
+                  {style.swatches.slice(0, 3).map((color) => <span key={color} className="h-6 w-6 rounded-md" style={{ background: color, border: '1px solid var(--border-subtle)' }} />)}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium text-token-primary">{style.name}{style.isDefault ? ' · 默认' : ''}</span>
+                  <span className="block truncate text-[11px] text-token-muted">{style.description}</span>
+                </span>
+              </button>
+            ))}
+            {onOpenSettings && (
+              <button type="button" onClick={onOpenSettings} className="mt-1 self-start text-[12px] underline-offset-2 hover:underline" style={{ color: 'var(--accent-primary)' }}>
+                管理风格与提示词
+              </button>
+            )}
+          </div>
+        </ComposerSheet>
+      )}
+    </>
+  );
+
+  const previewTitle = run.generating ? '正在生成网页' : `样张 · ${styleName}`;
+  const previewNote = run.generating
+    ? (run.phase || '正在准备')
+    : '点生成后，这里换成你的页面';
+  const nextHint = run.generating
+    ? '灰色块是还没写到的部分，写好一段换一段；做好后自动存进网页托管，这里直接显示成品。'
+    : hasSources
+      ? '资料已放好。不喜欢这个风格就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
+      : '先在左边放资料、说要求；这里会按所选风格显示你的页面。';
+
+  const preview = (
+    <WorkbenchPreview title={previewTitle} note={previewNote} nextHint={nextHint}>
+      {run.previewHtml ? (
+        <iframe
+          key={run.previewSandbox}
+          srcDoc={run.previewHtml}
+          sandbox={run.previewSandbox}
+          referrerPolicy="no-referrer"
+          title="生成中的网页预览"
+          className="h-full w-full bg-white"
+        />
+      ) : (
+        <PageSkeleton
+          caption={run.generating ? '正在规划页面结构，首段内容写好就出现在这里' : `${styleName} · 配色预览`}
+          swatches={selectedStyle?.swatches}
+        />
+      )}
+    </WorkbenchPreview>
+  );
+
+  return <WorkbenchLayout pane={pane} conversation={conversation} composer={composer} preview={preview} />;
+}

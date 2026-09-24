@@ -135,10 +135,17 @@ export function revisionHistoryErrorMessage(error: unknown): string {
 
 export interface SiteEditSessionOptions {
   onPublished: (site: HostedSite) => void;
+  /**
+   * 打开一个待发布草稿时，把它当时的修改要求回填进输入框（默认开）。
+   * 旧面板靠它「按原要求再来一次」；工作台里那一轮已经作为对话气泡摆着，再回填就是重复，所以关掉。
+   */
+  prefillInstructionFromDraft?: boolean;
 }
 
-export function useSiteEditSession(site: HostedSite, { onPublished }: SiteEditSessionOptions) {
+export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstructionFromDraft = true }: SiteEditSessionOptions) {
   const [instruction, setInstruction] = useState('');
+  const prefillFromDraftRef = useRef(prefillInstructionFromDraft);
+  prefillFromDraftRef.current = prefillInstructionFromDraft;
   const [phase, setPhase] = useState('告诉我你想改什么，系统会先生成草稿，不会直接覆盖线上页面。');
   const [progress, setProgress] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -330,7 +337,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished }: SiteEditSe
     setPreviewExpiresAt(access.data.available ? access.data.expiresAt || null : null);
     setPreviewedRevision(result.data.revision);
     const publishable = canPublishRevision(result.data.revision);
-    if (publishable && result.data.revision.instruction) {
+    if (prefillFromDraftRef.current && publishable && result.data.revision.instruction) {
       setInstruction((current) => current.trim() ? current : result.data.revision.instruction || current);
     }
     setDraftRevisionId(publishable ? revisionId : null);

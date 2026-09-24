@@ -23,7 +23,10 @@ import {
 } from './siteEditPreview';
 
 const previewHelperSource = readFileSync(new URL('./siteEditPreview.ts', import.meta.url), 'utf8');
-const generateDialogSource = readFileSync(new URL('./SiteGenerateDialog.tsx', import.meta.url), 'utf8');
+// 生成工作台：任务逻辑（选哪种 sandbox）在 useSiteGenerationRun，渲染在 NewSiteStage。
+const generateDialogSource = readFileSync(new URL('./workbench/useSiteGenerationRun.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./workbench/NewSiteStage.tsx', import.meta.url), 'utf8');
+const editStageSource = readFileSync(new URL('./workbench/SiteEditStage.tsx', import.meta.url), 'utf8');
 const editPanelSource = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
   + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
 
@@ -43,8 +46,11 @@ describe('AI 流式网页严格预览', () => {
     // 直连流的 delta 预览走严格 sandbox；只有服务端 preview 事件（执行器写出的整页）才放开脚本。
     expect(generateDialogSource).toContain('applyPreviewHtml(html, AI_STREAM_PREVIEW_SANDBOX)');
     expect(generateDialogSource).toContain('applyPreviewHtml(html, DESIGN_PREVIEW_EVENT_SANDBOX)');
-    expect(generateDialogSource).toContain('sandbox={sandbox}');
+    expect(generateDialogSource).toContain('sandbox={run.previewSandbox}');
     expect(editPanelSource).toContain('sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}');
+    // 工作台的修改阶段用同一套三档判据，不许自己另起一个更宽的 sandbox。
+    expect(editStageSource).toContain('const frameSandbox = previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX;');
+    expect(editStageSource).toContain('sandbox={frameSandbox}');
     expect(DESIGN_PREVIEW_EVENT_SANDBOX).toBe('allow-scripts');
     expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-same-origin');
     expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-forms');
@@ -55,6 +61,7 @@ describe('AI 流式网页严格预览', () => {
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-popups');
     expect(generateDialogSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
     expect(editPanelSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
+    expect(editStageSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
   });
 
   it('快速切换版本时只接受最后一次请求', () => {

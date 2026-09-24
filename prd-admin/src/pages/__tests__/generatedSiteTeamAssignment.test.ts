@@ -25,10 +25,10 @@ describe('团队空间里生成的网页要归属该团队', () => {
   });
 
   it('生成路径把目标空间交给服务端，回调只补分组', () => {
-    const start = page.indexOf('<SiteGenerateDialog');
+    const start = page.indexOf('<SiteWorkbench');
     expect(start).toBeGreaterThan(-1);
     const body = page.slice(start, start + 900);
-    // companion：确实截到了这个弹窗的 props。
+    // companion：确实截到了生成工作台的 props。
     expect(body).toContain('onCreated');
     expect(body, '没有把目标空间随请求送给服务端').toContain('destinationTeamId=');
     expect(body, '生成回调仍在自己归属团队：用户中途离开时这条回调根本不会执行')
@@ -37,10 +37,13 @@ describe('团队空间里生成的网页要归属该团队', () => {
     expect(body).toContain('groupNewSiteInDialogSpace(siteId');
   });
 
-  it('深链直接开生成弹窗时也快照了空间，不会用上一次的旧值', () => {
-    const start = page.indexOf('setShowGenerateDialog(true);\n  }, [location.search');
-    expect(start, '深链打开生成弹窗的那处不见了').toBeGreaterThan(-1);
-    const before = page.slice(Math.max(0, start - 400), start);
-    expect(before).toContain('uploadDialogSpaceRef.current = currentSpace;');
+  it('深链直接开生成工作台时也快照了空间，不会用上一次的旧值', () => {
+    const start = page.indexOf('parseDesignArtifactLaunch(location.search)');
+    expect(start, '深链打开生成工作台的那处不见了').toBeGreaterThan(-1);
+    const effect = page.slice(start, page.indexOf('}, [location.search', start));
+    // 快照必须排在打开工作台之前。
+    const snapshot = effect.indexOf('uploadDialogSpaceRef.current = currentSpace;');
+    expect(snapshot).toBeGreaterThan(-1);
+    expect(snapshot).toBeLessThan(effect.indexOf('setWorkbenchTarget('));
   });
 });

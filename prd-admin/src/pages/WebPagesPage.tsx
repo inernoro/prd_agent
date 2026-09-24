@@ -14,7 +14,6 @@ import {
   cancelSiteOptimization,
   reuploadSite,
   listSites,
-  getSite,
   updateSite,
   deleteSite,
   batchDeleteSites,
@@ -95,7 +94,7 @@ import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
-import SiteGenerateDialog, { type SiteGenerateSource, type SiteGenerateSourceTab } from '@/components/web-hosting/SiteGenerateDialog';
+import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/workbench/SiteWorkbench';
 import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
 import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
@@ -435,10 +434,8 @@ export default function WebPagesPage() {
   const [tags, setTags] = useState<TagCount[]>([]);
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
-  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
-  const [generateSource, setGenerateSource] = useState<SiteGenerateSource | null>(null);
-  // 「生成网页」下拉选了哪一项：决定生成弹窗落在「引用知识库」还是「直接上传」页签。
-  const [generateTab, setGenerateTab] = useState<SiteGenerateSourceTab>('knowledge');
+  // 生成工作台（一个对话 + 一个预览）：新建网页和「帮我修改」都进这里。null = 关闭。
+  const [workbenchTarget, setWorkbenchTarget] = useState<WorkbenchTarget | null>(null);
   const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const consumedLaunchRef = useRef('');
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
@@ -451,11 +448,9 @@ export default function WebPagesPage() {
     setShowUploadDialog(true);
   };
   // 顶部「生成网页」主入口：与上传弹窗同一个空间快照口径（分组归属用它判定）。
-  const openGenerateDialog = (tab: SiteGenerateSourceTab) => {
+  const openGenerateDialog = () => {
     uploadDialogSpaceRef.current = currentSpace;
-    setGenerateSource(null);
-    setGenerateTab(tab);
-    setShowGenerateDialog(true);
+    setWorkbenchTarget({ kind: 'new' });
   };
 
   /**
@@ -493,16 +488,18 @@ export default function WebPagesPage() {
     const launch = parseDesignArtifactLaunch(location.search);
     if (!launch || launch.target !== 'web-page') return;
     consumedLaunchRef.current = location.search;
-    setGenerateSource({
-      entryId: launch.sourceEntryId,
-      storeId: launch.sourceStoreId,
-      title: launch.sourceTitle,
-      storeName: launch.sourceStoreName,
-    });
-    // 深链直接开生成弹窗时也要快照空间：这条路径以前从不设 ref，
+    // 深链直接开生成工作台时也要快照空间：这条路径以前从不设 ref，
     // 归属会用到上一次打开上传弹窗时的旧值（或默认的个人空间）。
     uploadDialogSpaceRef.current = currentSpace;
-    setShowGenerateDialog(true);
+    setWorkbenchTarget({
+      kind: 'new',
+      source: {
+        entryId: launch.sourceEntryId,
+        storeId: launch.sourceStoreId,
+        title: launch.sourceTitle,
+        storeName: launch.sourceStoreName,
+      },
+    });
   }, [location.search, currentSpace]);
   // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
   // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
@@ -523,12 +520,10 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
-  const [previewInitialPanel, setPreviewInitialPanel] = useState<'none' | 'edit'>('none');
-  const [previewEditSection, setPreviewEditSection] = useState<'compose' | 'history'>('compose');
-  const openSiteEditor = (site: HostedSite, section: 'compose' | 'history') => {
-    setPreviewInitialPanel('edit');
-    setPreviewEditSection(section);
-    setCommentSite(site);
+  // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
+  const openSiteEditor = (site: HostedSite) => {
+    setCommentSite(null);
+    setWorkbenchTarget({ kind: 'site', site });
   };
   // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
@@ -1173,7 +1168,7 @@ export default function WebPagesPage() {
             onMove={() => setMovingSite(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site, 'compose')}
+            onAiEdit={() => openSiteEditor(site)}
           />
         ))}
       </div>
@@ -1194,7 +1189,7 @@ export default function WebPagesPage() {
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site, 'compose')}
+            onAiEdit={() => openSiteEditor(site)}
           />
         ))}
       </div>
@@ -1407,7 +1402,7 @@ export default function WebPagesPage() {
                   <div className="ml-auto flex shrink-0 items-center gap-2">
                     {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
                     <GenerateSiteMenu
-                      onChoose={openGenerateDialog}
+                      onGenerate={openGenerateDialog}
                       onOpenSettings={() => setShowGenerationSettings(true)}
                     />
                     <Button data-tour-id="webpages-upload-primary" size="sm" variant="secondary" onClick={openCreateUploadDialog}>
@@ -2065,9 +2060,8 @@ export default function WebPagesPage() {
           onGenerate={() => {
             setShowUploadDialog(false);
             setPendingExternalFile(null);
-            setGenerateSource(null);
-            setGenerateTab('knowledge');
-            setShowGenerateDialog(true);
+            uploadDialogSpaceRef.current = currentSpace;
+            setWorkbenchTarget({ kind: 'new' });
           }}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
           onShareSite={(id) => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); setShareTargetId(id); setShowShareDialog(true); }}
@@ -2090,34 +2084,30 @@ export default function WebPagesPage() {
         />
       )}
 
-      <SiteGenerateDialog
-        open={showGenerateDialog}
-        initialSource={generateSource}
+      <SiteWorkbench
+        open={workbenchTarget !== null}
+        target={workbenchTarget ?? { kind: 'new' }}
         // 团队归属随请求冻结到服务端，由它建站时应用——用户中途离开时这条回调不会执行。
-        // 传实时值即可：弹窗在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
+        // 传实时值即可：工作台在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
         destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
-        onClose={() => setShowGenerateDialog(false)}
+        onClose={() => setWorkbenchTarget(null)}
         onCreated={(siteId) => {
           void (async () => {
             // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。
             await groupNewSiteInDialogSpace(siteId, '生成');
             void load();
             void loadMeta();
+            markSiteAsFresh(siteId);
           })();
         }}
-        initialTab={generateTab}
-        folders={uploadFolderOptions}
+        onSiteChanged={(updated) => {
+          setSites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        }}
         onOpenSettings={() => setShowGenerationSettings(true)}
-        onEditSite={(siteId) => {
-          void (async () => {
-            const result = await getSite(siteId);
-            if (!result.success) {
-              toast.error('打开修改面板失败', result.error?.message || '网页已生成，可在列表里点「帮我修改」');
-              return;
-            }
-            setShowGenerateDialog(false);
-            openSiteEditor(result.data, 'compose');
-          })();
+        onOpenShareSettings={(target) => {
+          setWorkbenchTarget(null);
+          setShareTargetId(target.id);
+          setShowShareDialog(true);
         }}
       />
 
@@ -2239,13 +2229,8 @@ export default function WebPagesPage() {
       {commentSite && (
         <SitePreviewModal
           site={commentSite}
-          initialPanel={previewInitialPanel}
-          initialEditSection={previewEditSection}
-          onClose={() => {
-            setCommentSite(null);
-            setPreviewInitialPanel('none');
-            setPreviewEditSection('compose');
-          }}
+          onEditInWorkbench={() => openSiteEditor(commentSite)}
+          onClose={() => setCommentSite(null)}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
@@ -2255,10 +2240,6 @@ export default function WebPagesPage() {
           onAskEnabledChange={(sid, enabled) => {
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
-          }}
-          onSiteChange={(updated) => {
-            setCommentSite(updated);
-            setSites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
           }}
         />
       )}
