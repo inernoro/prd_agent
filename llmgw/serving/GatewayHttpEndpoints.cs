@@ -1113,8 +1113,11 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services)
         {
-            var ingress = ToIngress(request, "gw-native", "map");
-            TrackGatewayRequestId(http, ingress.RequestId);
+            var ingress = ToIngress(
+                request,
+                "gw-native",
+                "map",
+                TrackGatewayRequestId(http, request.Context?.RequestId));
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             var governanceResult = GovernanceResult(http, governance, jsonOpts);
             if (governanceResult is not null) return governanceResult;
@@ -1213,8 +1216,11 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
-            var ingress = ToIngress(request, "gw-native", "map");
-            TrackGatewayRequestId(http, ingress.RequestId);
+            var ingress = ToIngress(
+                request,
+                "gw-native",
+                "map",
+                TrackGatewayRequestId(http, request.Context?.RequestId));
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
 
@@ -1269,8 +1275,11 @@ public static class GatewayHttpEndpoints
             ILLMRequestContextAccessor accessor,
             [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
         {
-            var ingress = ToIngress(request, "gw-native", "map");
-            TrackGatewayRequestId(http, ingress.RequestId);
+            var ingress = ToIngress(
+                request,
+                "gw-native",
+                "map",
+                TrackGatewayRequestId(http, request.Context?.RequestId));
             request = ApplyVerifiedRawRequestContext(http, request, ingress);
             var executionStore = services.GetService<GatewayRequestExecutionStore>();
             GatewayExecutionBeginResult? execution = null;
@@ -5250,12 +5259,16 @@ public static class GatewayHttpEndpoints
             ProviderTaskId: ctx?.ProviderTaskId));
     }
 
-    private static GatewayIngressRequest ToIngress(GatewayRequest request, string ingressProtocol, string sourceSystem)
+    private static GatewayIngressRequest ToIngress(
+        GatewayRequest request,
+        string ingressProtocol,
+        string sourceSystem,
+        string? requestId = null)
     {
         var explicitModelPolicy = NormalizeModelPolicy(request.Context?.ModelPolicy);
         return new GatewayIngressRequest
         {
-            RequestId = request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+            RequestId = requestId ?? request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
             SourceSystem = request.Context?.SourceSystem ?? sourceSystem,
             IngressProtocol = request.Context?.IngressProtocol ?? ingressProtocol,
             AppCallerCode = request.AppCallerCode,
@@ -5406,12 +5419,16 @@ public static class GatewayHttpEndpoints
         return ApplyIngressRouting(request, ingress);
     }
 
-    private static GatewayIngressRequest ToIngress(GatewayRawRequest request, string ingressProtocol, string sourceSystem)
+    private static GatewayIngressRequest ToIngress(
+        GatewayRawRequest request,
+        string ingressProtocol,
+        string sourceSystem,
+        string? requestId = null)
     {
         var explicitModelPolicy = NormalizeModelPolicy(request.Context?.ModelPolicy);
         return new GatewayIngressRequest
         {
-            RequestId = request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
+            RequestId = requestId ?? request.Context?.RequestId ?? Guid.NewGuid().ToString("N"),
             SourceSystem = request.Context?.SourceSystem ?? sourceSystem,
             IngressProtocol = request.Context?.IngressProtocol ?? ingressProtocol,
             AppCallerCode = request.AppCallerCode,
