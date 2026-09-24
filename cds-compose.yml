@@ -589,6 +589,9 @@ services:
     environment:
       LLMGW_PROXY_TARGET: "http://llmgw:8090"
       LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve:8091"
+      # 预览控制台挂在独立子域根路径，Vite base 必须是 "/"，否则单点登录落地的
+      # /auth/map 会被开发服务器拒绝（它只认 base 之下的路径）。见 llmgw/web/vite.config.ts。
+      LLMGW_WEB_BASE: "/"
     labels:
       # 显式清理存量 CDS profile 可能遗留的 prebuiltImage=true；源码模式必须挂载当前 worktree。
       cds.prebuilt-image: "false"

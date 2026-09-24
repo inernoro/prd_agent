@@ -5372,7 +5372,10 @@ public class GatewayDataDomainGuardTests
         var vite = ReadRepoFile("llmgw/web/vite.config.ts");
         var nginx = ReadRepoFile("llmgw/web/nginx.conf");
 
-        Assert.Contains("base: '/llmgw/'", vite);
+        // 正式构建（CI 镜像、本地）必须仍以 /llmgw/ 为公开 base；只有 CDS 预览（平台强制注入
+        // VITE_GIT_BRANCH，控制台恒发布在独立子域根路径）才用 "/"，否则单点登录落地的
+        // /auth/map 会被 Vite 开发服务器以「did you mean /llmgw/auth/map」拒绝。
+        Assert.Contains("base: process.env.LLMGW_WEB_BASE || (process.env.VITE_GIT_BRANCH ? '/' : '/llmgw/')", vite);
         Assert.Contains("location ^~ /llmgw/assets/", nginx);
         Assert.Contains("alias /usr/share/nginx/html/assets/;", nginx);
     }

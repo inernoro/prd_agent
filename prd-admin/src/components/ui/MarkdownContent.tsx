@@ -228,7 +228,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                 className="my-8 border-0"
                 style={{
                   height: '1px',
-                  background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 50%, transparent 100%)',
+                  background: 'linear-gradient(90deg, transparent 0%, var(--border-default) 50%, transparent 100%)',
                 }}
               />
             ) : (

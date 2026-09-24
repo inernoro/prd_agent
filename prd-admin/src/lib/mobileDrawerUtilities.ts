@@ -5,17 +5,17 @@ import type { LauncherItem } from '@/lib/launcherCatalog';
  *
  * 手机端没有桌面侧栏的账号菜单，也没有首页搜索；默认导航又只画后端 menuCatalog
  * 里带 group 的项，于是 NAV_REGISTRY 登记的实用工具在手机上彻底找不到（#1479）。
- * 这里只列路由和一句提示，标签 / 图标 / 权限门一律取自 launcherCatalog（NAV_REGISTRY 派生），
+ * 这里只列路由，标签 / 图标 / 权限门一律取自 launcherCatalog（NAV_REGISTRY 派生），
  * 不再手写第二份；没有权限的条目会被目录过滤掉，抽屉里自然不出现。
  */
-export const MOBILE_DRAWER_UTILITY_ROUTES: ReadonlyArray<{ route: string; hint: string }> = [
-  { route: '/mcp-console', hint: '连接 / 记录' },
-  { route: '/authorization-health', hint: '401 诊断' },
+// 不再带「连接 / 记录」这类补充说明（2026-09-24：账号菜单与抽屉统一只显示功能名）
+export const MOBILE_DRAWER_UTILITY_ROUTES: ReadonlyArray<{ route: string }> = [
+  { route: '/mcp-console' },
+  { route: '/authorization-health' },
 ];
 
 export interface MobileDrawerUtility {
   route: string;
-  hint: string;
   item: LauncherItem;
 }
 
@@ -44,11 +44,11 @@ export function resolveMobileDrawerUtilities(
     if (it.appKey) shownKeys.add(it.appKey);
     if (it.route) shownKeys.add(it.route);
   }
-  return MOBILE_DRAWER_UTILITY_ROUTES.flatMap(({ route, hint }) => {
+  return MOBILE_DRAWER_UTILITY_ROUTES.flatMap(({ route }) => {
     const item = catalog.find((it) => it.route === route);
     if (!item) return [];
     if (hidden.has(item.id)) return [];
     if (shownKeys.has(item.id) || shownKeys.has(route)) return [];
-    return [{ route, hint, item }];
+    return [{ route, item }];
   });
 }

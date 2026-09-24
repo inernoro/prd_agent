@@ -342,7 +342,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               {/* Prompt / Completion / Thinking。含 COS 占位符时支持一键还原 */}
               <div className="space-y-2">
                 {restoreErr ? (
-                  <div className="rounded-[8px] px-3 py-2 text-[11px]" style={{ color: '#fbbf24', background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.28)' }}>
+                  <div className="rounded-[8px] px-3 py-2 text-[11px]" style={{ color: 'var(--accent-fg-amber)', background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.28)' }}>
                     部分内容还原失败：{restoreErr}
                   </div>
                 ) : null}

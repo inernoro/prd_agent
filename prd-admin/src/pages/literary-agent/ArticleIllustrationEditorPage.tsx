@@ -3,7 +3,6 @@ import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { TipCard } from '@/components/daily-tips/TipCard';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
@@ -28,6 +27,9 @@ import {
   updateLiteraryPrompt,
   deleteLiteraryPrompt,
   getWatermarkByApp,
+  getWatermarks,
+  bindWatermarkApp,
+  unbindWatermarkApp,
   getImageGenRun,
   listReferenceImageConfigs,
   createReferenceImageConfig,
@@ -59,10 +61,11 @@ import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryMode
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
+import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
+import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -75,7 +78,8 @@ import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor
 import { useDebounce } from '@/hooks/useDebounce';
 import { createSubmission, checkSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
+import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader';
+import { recordGenDurationMs } from '@/lib/genTiming';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
@@ -163,6 +167,20 @@ type MarkerRunItem = {
   errorMessage?: string | null;
 };
 
+/** "1024x1536" → 宽高比；解析不出按 1:1。 */
+function ratioFromSize(size?: string | null): number {
+  const [w, h] = String(size || '').split(/[xX×]/).map(Number);
+  return w > 0 && h > 0 ? w / h : 1;
+}
+/** "1024x1536" → "1024 × 1536"（生图等待态底边那行的尺寸段） */
+function sizeLabelOf(size?: string | null): string {
+  const [w, h] = String(size || '1024x1024').split(/[xX×]/).map(Number);
+  return w > 0 && h > 0 ? `${w} × ${h}` : '1024 × 1024';
+}
+
+/** 文学创作在水印绑定里的应用标识（与配置页 WatermarkSettingsPanel 的 appKey 一致） */
+const LITERARY_APP_KEY = 'literary-agent';
+
 const PRD_MD_STYLE = `
   .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
   .prd-md h1,.prd-md h2,.prd-md h3 { color: var(--text-primary); font-weight: 700; margin: 16px 0 10px; }
@@ -184,7 +202,7 @@ const PRD_MD_STYLE = `
   .prd-md .prd-md-marker {
     background: rgba(245, 158, 11, 0.22);
     border: 1px solid rgba(245, 158, 11, 0.32);
-    color: rgba(255,255,255,0.92);
+    color: var(--text-primary);
     padding: 0 4px;
     border-radius: 6px;
   }
@@ -196,7 +214,7 @@ const PRD_MD_STYLE = `
   .prd-md .prd-md-marker-new {
     background: rgba(245, 158, 11, 0.55);
     border: 1px solid rgba(245, 158, 11, 0.5);
-    color: rgba(255,255,255,0.95);
+    color: var(--text-primary);
     padding: 0 4px;
     border-radius: 6px;
     animation: marker-insert-glow 1.2s ease-out forwards;
@@ -282,6 +300,53 @@ const PRD_MD_STYLE = `
         0 0 12px rgba(99, 102, 241, 0.3),
         0 0 28px rgba(168, 85, 247, 0.12);
     }
+  }
+
+  /* 配图卡片图片区：暗色沿用深底衬图；浅色改纸面嵌块，避免「白底浮灰卡」 */
+  .marker-card-wrap { background: rgba(0,0,0,0.22); }
+  [data-theme="light"] .marker-card-wrap { background: var(--nested-block-bg); }
+  .marker-card-topbar { background: linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%); }
+  .marker-card-title { color: rgba(255,255,255,0.85); }
+
+  /* 状态标签：无边框，圆点 + 字（与按钮、设置项区分）。浮在图片上，所以垫一层实心面板底保证可读 */
+  .marker-status { display: inline-flex; align-items: center; gap: 5px; background: var(--panel-solid); border: none; color: var(--text-secondary); }
+  .marker-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+  .marker-status--done { color: var(--accent-fg-success); }
+  .marker-status--error { color: var(--accent-fg-error); }
+  .marker-status--busy { color: var(--accent-fg-amber); }
+  .marker-status--busy::before { animation: lit-status-pulse 1.2s ease-in-out infinite; }
+  .marker-status--parsed { color: var(--accent-fg-info); }
+  @keyframes lit-status-pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+  /* 浅色主题 + 还没有图：浮层不再压深色渐变，文字改深色，整张卡保持纸面干净 */
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-topbar { background: transparent; }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-title { color: var(--text-secondary); }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-overlay {
+    background: linear-gradient(to top, var(--panel-solid) 0%, color-mix(in srgb, var(--panel-solid) 80%, transparent) 65%, transparent 100%);
+    opacity: 1;
+  }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-text { color: var(--text-secondary); }
+
+  /* AI 输出面板里识别出的 [插图] 行 */
+  .lit-output-marker {
+    margin: 4px 0; padding: 4px 8px; border-radius: 6px;
+    background: rgba(245, 158, 11, 0.14); border-left: 3px solid rgba(245, 158, 11, 0.7);
+    color: var(--text-primary);
+  }
+
+  /* 忙碌主按钮底边的不定进度条 */
+  .lit-busy-bar--indeterminate { animation: lit-busy-slide 1.4s ease-in-out infinite; }
+  @keyframes lit-busy-slide { 0% { left: -36%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .lit-busy-bar--indeterminate { animation: none; left: 0; width: 100% !important; } }
+
+  /* 正文里的「配图 N 生成中」占位：与正文图片同宽（跟随显示尺寸滑杆） */
+  .prd-md .prd-md-gen-slot {
+    position: relative;
+    overflow: hidden;
+    max-width: var(--img-display-size, 50%);
+    margin: 10px auto;
+    border-radius: 10px;
+    border: 1px solid var(--border-subtle);
   }
 
   /* 配图卡片：prompt 文字底部浮层（默认半可见，hover 全可见） */
@@ -516,6 +581,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 风格图/参考图配置（新的多配置模型）
   const [referenceImageConfigs, setReferenceImageConfigs] = useState<ReferenceImageConfig[]>([]);
+  // 列表是否已经是服务端的真实结果。未读到 / 读取失败时空数组不等于「没有风格图」：
+  // 服务端生图时自己查启用中的风格图，界面若在这时显示「不使用」，就是在对用户说谎。
+  const [referenceImageListReady, setReferenceImageListReady] = useState(false);
+  const [referenceImageLoadError, setReferenceImageLoadError] = useState<string | null>(null);
   const [referenceImageLoading, setReferenceImageLoading] = useState(false);
   const [referenceImageSaving, setReferenceImageSaving] = useState(false);
   const referenceImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -622,6 +691,40 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
+  // 每个配图进入「生成中」的时刻：正文占位与右侧卡片共用，重渲染/重挂载不重置「已等待」计时
+  const runStartedAtRef = useRef(new Map<number, number>());
+  const getRunStartedAt = (markerIndex: number): number => {
+    const map = runStartedAtRef.current;
+    let t = map.get(markerIndex);
+    if (t == null) {
+      t = Date.now();
+      map.set(markerIndex, t);
+    }
+    return t;
+  };
+  // 重新打开工作区时从后端恢复、恢复那一刻就处于「生成中」的配图。它们的真实开始时间
+  // 不在本页，本地计时起点只是「这次渲染的时刻」；若服务端早已出完图，状态查询几秒后
+  // 就会翻成 done，这几秒会被当成出图耗时喂进共享预估，把之后的倒计时拉得离谱地短。
+  const restoredRunningRef = useRef(new Set<number>());
+  // 路由只换 workspaceId 时本组件会被复用，两份计时记录必须跟着清空，
+  // 否则 A 工作区的计时会被记到 B 工作区同编号的配图上，污染共享预估
+  useEffect(() => {
+    runStartedAtRef.current = new Map();
+    restoredRunningRef.current = new Set();
+  }, [workspaceId]);
+  useEffect(() => {
+    const running = new Set(markerRunItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
+    for (const [k, startedAt] of Array.from(runStartedAtRef.current.entries())) {
+      if (running.has(k)) continue;
+      // 真实出图耗时喂给共享的耗时预估（与视觉创作同一份滑动平均），下次「还需约 Ns」更准；
+      // 只采本页亲眼看到开始的那几次，恢复来的不算样本
+      const wasRestored = restoredRunningRef.current.delete(k);
+      if (!wasRestored && markerRunItems.find((x) => x.markerIndex === k)?.status === 'done') {
+        recordGenDurationMs(Date.now() - startedAt);
+      }
+      runStartedAtRef.current.delete(k);
+    }
+  }, [markerRunItems]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
@@ -688,6 +791,66 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setPositionStrategyRaw(saved as PositionStrategy);
     }
   }, [workspaceId]);
+  // ---- 生成设置的就地菜单：风格图 / 水印直接切换，不必打开完整配置页 ----
+  const activeRefConfig = referenceImageConfigs.find((c) => c.isActive) ?? null;
+  const switchReferenceImage = async (config: ReferenceImageConfig, activate: boolean) => {
+    setReferenceImageSaving(true);
+    try {
+      const res = await mutateReferenceImageScenario(
+        () => (activate ? activateReferenceImageConfig({ id: config.id }) : deactivateReferenceImageConfig({ id: config.id })),
+        loadReferenceImageConfigs,
+        reloadImageGenPools,
+      );
+      // 失败时不重新加载，当前选择保持原样；必须告诉用户没切成功，否则菜单一关就像什么都没发生
+      if (!res.success) toast.error(activate ? '启用风格图失败' : '停用风格图失败', res.error?.message || '未知错误，请稍后重试');
+    } finally {
+      setReferenceImageSaving(false);
+    }
+  };
+  const [watermarkOptions, setWatermarkOptions] = useState<WatermarkConfig[] | null>(null);
+  const [watermarkSaving, setWatermarkSaving] = useState(false);
+  // 列表读取失败必须和「真的没有水印」分开：把失败当成空列表，菜单就会给出「不加水印」，
+  // 选了之后找不到当前绑定、不发解绑请求，界面却显示已关闭，而生成的图照旧带水印。
+  const [watermarkLoadError, setWatermarkLoadError] = useState<string | null>(null);
+  const loadWatermarkOptions = async () => {
+    setWatermarkLoadError(null);
+    // 重读期间先让旧列表失效：旧列表可能已被管理面板改过（A 换成 B），
+    // 这时若还能点「不加水印」，会按旧的 A 去解绑，B 在服务端仍然生效
+    setWatermarkOptions(null);
+    const res = await getWatermarks();
+    if (res.success && Array.isArray(res.data)) {
+      setWatermarkOptions(res.data);
+      return;
+    }
+    setWatermarkOptions(null);
+    setWatermarkLoadError(res.error?.message || '水印列表读取失败');
+  };
+  const switchWatermark = async (target: WatermarkConfig | null) => {
+    const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
+    if ((target?.id ?? null) === (current?.id ?? null)) return;
+    // 要关水印却找不到当前绑定记录：说明列表与实际状态对不上，不能只改界面状态了事
+    if (!target && !current && watermarkStatus.enabled) {
+      toast.error('关闭水印失败', '没有找到当前绑定的水印，请在「管理水印…」里处理');
+      return;
+    }
+    setWatermarkSaving(true);
+    try {
+      const res = target
+        ? await bindWatermarkApp({ id: target.id, appKey: LITERARY_APP_KEY })
+        : current
+          ? await unbindWatermarkApp({ id: current.id, appKey: LITERARY_APP_KEY })
+          : null;
+      if (res && !res.success) {
+        toast.error('切换水印失败', res.error?.message || '未知错误');
+        return;
+      }
+      setWatermarkStatus(target ? { enabled: true, name: target.name || target.text || null } : { enabled: false, name: null });
+      await loadWatermarkOptions();
+    } finally {
+      setWatermarkSaving(false);
+    }
+  };
+
   const setPositionStrategy = useCallback((s: PositionStrategy) => {
     setPositionStrategyRaw(s);
     if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
@@ -720,7 +883,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
   // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
-  const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
 
   // Phase 1: 段落右键上下文菜单
   const [paragraphCtxMenu, setParagraphCtxMenu] = useState<{
@@ -788,9 +950,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
-        setAnchorTutorialSeen(!!prefs.anchorTutorialSeen);
-      } else {
-        setAnchorTutorialSeen(false);
       }
       setModelPrefReady(true);
       setModelsLoading(false);
@@ -961,6 +1120,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         const sorted = [...res.data.items].sort((a, b) => a.id.localeCompare(b.id));
         setReferenceImageConfigs(sorted);
+        setReferenceImageListReady(true);
+        setReferenceImageLoadError(null);
+      } else {
+        setReferenceImageLoadError(res?.error?.message || '风格图列表读取失败');
       }
     } finally {
       setReferenceImageLoading(false);
@@ -1097,6 +1260,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             assetUrl: m.assetId ? (res.data.assets?.find((a: any) => a.id === m.assetId)?.url || null) : null,
             errorMessage: m.errorMessage || null,
           }));
+          restoredRunningRef.current = new Set(restoredItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
           setMarkerRunItems(restoredItems);
           setMarkerRunItemsRestored(true); // 标记已恢复
 
@@ -1329,15 +1493,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase(1); // Editing
   }, []);
 
-  // Phase 1: 关闭锚点教程气泡（点"知道啦"后不再弹出）
-  const dismissAnchorTutorial = useCallback(() => {
-    setAnchorTutorialSeen(true);
-    void updateLiteraryAgentPreferences({
-      imageModelId: imageModelPrefId || undefined,
-      chatModelId: chatModelPrefId || undefined,
-      anchorTutorialSeen: true,
-    }).catch(() => {});
-  }, [imageModelPrefId, chatModelPrefId]);
 
   // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
   const addAnchorAbove = useCallback((pIdx: number) => {
@@ -1572,7 +1727,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n> 配图 ${i + 1} 生成中...`,
+            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
           });
           continue;
         }
@@ -2435,6 +2590,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const activeButton = buttonConfig.find((btn) => btn.show);
 
+  // 忙碌主按钮的进度文案：标记流式中报「已识别 N 处」（不定进度），批量生图报「已完成 X/Y」（确定进度）
+  const busyProgress: { text: string; ratio: number | null } = (() => {
+    if (markerStreaming) return { text: `正在生成配图标记 · 已识别 ${markerRunItems.length} 处`, ratio: null };
+    const total = markerRunItems.length;
+    const done = markerRunItems.filter((x) => x.status === 'done').length;
+    return total > 0
+      ? { text: `正在生图 · 已完成 ${done}/${total}`, ratio: done / total }
+      : { text: '正在生图…', ratio: null };
+  })();
+
   // 左侧统一作为"预览面板"：上传时渲染原文；AI 流式生成时直接渲染带标记版本
   const leftPreviewMarkdown =
     phase === 2 // MarkersGenerated
@@ -2484,9 +2649,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     { key: 2, label: '配图标记' },
   ];
 
-  const configPillBaseClass =
-    'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover-bg-soft min-w-0 flex-1';
-  const configPillTextClass = 'text-[11px] truncate';
 
   const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
@@ -2563,176 +2725,120 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 {/* 提示词/标记生成模型切换器 */}
                 {effectiveChatModel?.isAutoResolved ? (
                   <span
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
                     style={{
                       background: 'rgba(99, 102, 241, 0.08)',
-                      border: '1px solid rgba(99, 102, 241, 0.25)',
                       color: 'var(--accent-fg-blue)',
                     }}
                     title={`自动调度: ${effectiveChatModel.name}`}
                   >
-                    <Sparkles size={10} className="shrink-0" />
+                    <Sparkles size={11} className="shrink-0" />
                     <span className="truncate">自动: {effectiveChatModel.name}</span>
                   </span>
                 ) : (
-                <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
-                  <DropdownMenu.Trigger asChild>
+                <QuickMenu
+                  title="文生提示词模型"
+                  width={280}
+                  open={chatModelPrefOpen}
+                  onOpenChange={setChatModelPrefOpen}
+                  trigger={
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
                       style={{
-                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: effectiveChatModel ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-                        color: effectiveChatModel ? 'rgba(129, 140, 248, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                        background: effectiveChatModel ? 'rgba(99, 102, 241, 0.12)' : 'rgba(239, 68, 68, 0.10)',
+                        color: effectiveChatModel ? 'var(--accent-fg-blue)' : 'var(--accent-fg-danger)',
                       }}
                       title={effectiveChatModel ? `${effectiveChatModel.name} - 点击切换提示词模型` : '选择提示词模型'}
                     >
-                      <Sparkles size={10} className="shrink-0" />
+                      <Sparkles size={11} className="shrink-0" />
                       <span className="truncate">{effectiveChatModel?.name || '选择模型'}</span>
-                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="bottom"
-                      align="start"
-                      sideOffset={6}
-                      className="z-50 rounded-[12px] p-2.5"
-                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
-                    >
-                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        文生提示词模型
-                      </div>
-                      {enabledChatModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {enabledChatModels.map((m) => {
-                            const picked = effectiveChatModel?.id === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                                style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
-                                }}
-                                onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
-                                      {m.isDefault && (
-                                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px]" style={{ color: 'var(--text-muted)', background: 'var(--surface-muted)' }}>
-                                          默认模型
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
-                                  }}><Check size={12} /></span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
+                  }
+                >
+                  {enabledChatModels.length === 0 ? (
+                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
+                  ) : (
+                    enabledChatModels.map((m) => (
+                      <QuickMenuItem
+                        key={m.id}
+                        label={
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">{m.name}</span>
+                            {m.isDefault && (
+                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
+                                默认模型
+                              </span>
+                            )}
+                          </span>
+                        }
+                        selected={effectiveChatModel?.id === m.id}
+                        onSelect={() => setChatModelPrefId(m.id)}
+                      />
+                    ))
+                  )}
+                </QuickMenu>
                 )}
 
                 {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
                 {effectiveModel?.isAutoResolved ? (
                   // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
                   <div
-                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[11px] font-medium truncate max-w-[200px]"
                     style={{
                       background: 'rgba(34, 197, 94, 0.08)',
-                      border: '1px solid rgba(34, 197, 94, 0.25)',
                       color: 'var(--accent-fg-success)',
                     }}
                     title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
                   >
-                    <Sparkles size={10} className="shrink-0" />
+                    <Sparkles size={11} className="shrink-0" />
                     <span className="truncate">自动: {effectiveModel.name}</span>
                   </div>
                 ) : (
-                <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
-                  <DropdownMenu.Trigger asChild>
+                <QuickMenu
+                  title="生图模型"
+                  width={280}
+                  open={imageModelPrefOpen}
+                  onOpenChange={setImageModelPrefOpen}
+                  trigger={
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px] cursor-pointer hover:opacity-80 transition-opacity"
+                      className="inline-flex items-center gap-1 rounded-full pl-2 pr-1.5 h-6 text-[11px] font-medium max-w-[200px] cursor-pointer transition-colors"
                       style={{
-                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                        border: effectiveModel ? '1px solid rgba(34, 197, 94, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
-                        color: effectiveModel ? 'rgba(74, 222, 128, 0.95)' : 'rgba(248, 113, 113, 0.95)',
+                        background: effectiveModel ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.10)',
+                        color: effectiveModel ? 'var(--accent-fg-success)' : 'var(--accent-fg-danger)',
                       }}
                       title={effectiveModel ? `${effectiveModel.name} - 点击切换生图模型` : '选择生图模型'}
                     >
-                      <Sparkles size={10} className="shrink-0" />
+                      <Sparkles size={11} className="shrink-0" />
                       <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
-                      <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
+                      <ChevronsUpDown size={11} className="shrink-0" style={{ opacity: 0.7 }} />
                     </button>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content
-                      side="bottom"
-                      align="start"
-                      sideOffset={6}
-                      className="z-50 rounded-[12px] p-2.5"
-                      style={{ width: 300, maxWidth: 'min(92vw, 300px)', ...glassPanel }}
-                    >
-                      <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                        生图模型
-                      </div>
-                      {enabledImageModels.length === 0 ? (
-                        <div className="text-[12px] py-2" style={{ color: 'var(--text-muted)' }}>暂无可用模型池</div>
-                      ) : (
-                        <div className="space-y-1.5 max-h-[280px] overflow-auto">
-                          {enabledImageModels.map((m) => {
-                            const picked = effectiveModel?.id === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                                style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
-                                }}
-                                onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
-                                      {m.isDefault && (
-                                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px]" style={{ color: 'var(--text-muted)', background: 'var(--surface-muted)' }}>
-                                          默认模型
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
-                                  }}><Check size={12} /></span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
+                  }
+                >
+                  {enabledImageModels.length === 0 ? (
+                    <QuickMenuEmpty>暂无可用模型池</QuickMenuEmpty>
+                  ) : (
+                    enabledImageModels.map((m) => (
+                      <QuickMenuItem
+                        key={m.id}
+                        label={
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">{m.name}</span>
+                            {m.isDefault && (
+                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
+                                默认模型
+                              </span>
+                            )}
+                          </span>
+                        }
+                        selected={effectiveModel?.id === m.id}
+                        onSelect={() => setImageModelPrefId(m.id)}
+                      />
+                    ))
+                  )}
+                </QuickMenu>
                 )}
 
                 {/* 生图错误提示（无池且未能预解析时才显示） */}
@@ -2760,11 +2866,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
                 }}
                 disabled={autoSubmitSuppressed}
-                className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
+                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                 style={{
-                  color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.6)' : 'var(--text-muted)',
-                  background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
-                  border: autoSubmitSuppressed ? '1px solid transparent' : submissionState.submitted ? '1px solid rgba(16, 185, 129, 0.2)' : autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
+                  // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
+                  color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                  background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
                   cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
                 }}
                 title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
@@ -2777,11 +2883,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   type="button"
                   onClick={handleManualSubmit}
                   disabled={manualSubmitting}
-                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                   style={{
                     color: 'var(--accent-fg-blue)',
-                    background: 'rgba(59, 130, 246, 0.08)',
-                    border: '1px solid rgba(59, 130, 246, 0.15)',
+                    background: 'rgba(59, 130, 246, 0.10)',
                     opacity: manualSubmitting ? 0.5 : 1,
                   }}
                   title="手动将当前作品投稿到作品广场"
@@ -2980,12 +3085,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 aspectRatio: '1 / 1',
                                 maxWidth: 360,
                                 margin: '12px auto',
-                                background: 'rgba(255,255,255,0.03)',
+                                background: 'var(--nested-block-bg)',
                                 border: '1px dashed rgba(52,211,153,0.3)',
                                 borderRadius: 8,
                               }}
                             >
-                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(52,211,153,0.6)' }}>
+                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'var(--accent-fg-emerald)' }}>
                                 <ImageIcon size={28} />
                                 <span className="text-[11px]">配图占位</span>
                               </div>
@@ -3084,12 +3189,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   aspectRatio: '1 / 1',
                                   maxWidth: 360,
                                   margin: '12px auto',
-                                  background: 'rgba(255,255,255,0.03)',
+                                  background: 'var(--nested-block-bg)',
                                   border: '1px dashed rgba(147,197,253,0.3)',
                                   borderRadius: 8,
                                 }}
                               >
-                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(147,197,253,0.55)' }}>
+                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'var(--accent-fg-blue)' }}>
                                   <ImageIcon size={28} />
                                   <span className="text-[11px]">配图占位（1:1）</span>
                                 </div>
@@ -3129,7 +3234,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       />
                       <span
                         className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                        style={{ color: 'var(--accent-fg-violet)' }}
                       >
                         Thinking
                       </span>
@@ -3139,7 +3244,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       style={{
                         background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
                         border: '1px solid rgba(168, 85, 247, 0.15)',
-                        color: 'rgba(255, 255, 255, 0.7)',
+                        color: 'var(--text-secondary)',
                       }}
                     >
                       <StreamingText
@@ -3154,42 +3259,56 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 )}
 
-                {/* Raw LLM 输出区域 */}
-                {rawMarkerOutput && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className="inline-block w-2 h-2 rounded-full"
-                        style={{
-                          background: 'rgba(99, 102, 241, 0.8)',
-                          animation: 'pulse 1.5s ease-in-out infinite',
-                        }}
-                      />
-                      <span
-                        className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-                      >
-                        Output
-                      </span>
-                    </div>
-                    <pre
-                      className="rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)',
-                        border: '1px solid rgba(99, 102, 241, 0.15)',
-                        color: 'rgba(147, 197, 253, 0.75)',
-                        margin: 0,
-                      }}
+                {/* Raw LLM 输出区域：正文走主题正文色，识别出的每条 [插图] 单独高亮 */}
+                {rawMarkerOutput && (() => {
+                  const lines = rawMarkerOutput.split('\n');
+                  const tail = lines.pop() ?? '';
+                  const isMarkerLine = (l: string) => /^\s*\[插图\]/.test(l);
+                  return (
+                    <div
+                      className="rounded-[12px] overflow-hidden"
+                      style={{ border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                      data-testid="literary-ai-output"
                     >
-                      <StreamingText
-                        text={rawMarkerOutput}
-                        streaming={markerStreaming}
-                        mode="blur"
-                        cursorContent={<MapCursor size={12} />}
-                      />
-                    </pre>
-                  </div>
-                )}
+                      <div
+                        className="flex items-center gap-2 px-3 h-8"
+                        style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}
+                      >
+                        <span
+                          className="inline-block w-2 h-2 rounded-full shrink-0"
+                          style={{
+                            background: 'var(--accent-fg-violet)',
+                            animation: markerStreaming ? 'pulse 1.5s ease-in-out infinite' : undefined,
+                          }}
+                        />
+                        <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 输出</span>
+                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          · {markerStreaming ? '正在识别配图位置' : '识别完成'} · 已识别 {markerRunItems.length} 处
+                        </span>
+                      </div>
+                      <div
+                        className="px-3 py-2 text-[12px] leading-[1.7] whitespace-pre-wrap break-all font-mono"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        {lines.map((l, i) =>
+                          isMarkerLine(l) ? (
+                            <div key={i} className="lit-output-marker">{l}</div>
+                          ) : (
+                            <div key={i}>{l || '\u00a0'}</div>
+                          ),
+                        )}
+                        <div className={isMarkerLine(tail) ? 'lit-output-marker' : undefined}>
+                          <StreamingText
+                            text={tail}
+                            streaming={markerStreaming}
+                            mode="blur"
+                            cursorContent={<MapCursor size={12} />}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 空状态：等待 LLM 响应 */}
                 {!thinkingContent && !rawMarkerOutput && (
@@ -3212,8 +3331,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
                     style={{
                       ...glassFloatingButton,
-                      background: 'rgba(0,0,0,0.55)',
-                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'var(--overlay-panel-solid)',
+                      border: '1px solid var(--border-subtle)',
                     }}
                   >
                     <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
@@ -3225,7 +3344,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
                         style={{
                           background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
-                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
+                          color: imageDisplaySize === size ? 'var(--accent-fg-blue)' : 'var(--text-muted)',
                           border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
                           fontVariantNumeric: 'tabular-nums',
                         }}
@@ -3247,14 +3366,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   >
                     <summary
                       className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-[11px] font-semibold tracking-wide uppercase"
-                      style={{ color: 'rgba(168, 85, 247, 0.7)' }}
+                      style={{ color: 'var(--accent-fg-violet)' }}
                     >
                       Thinking
                     </summary>
                     <div
                       className="px-3 py-2 text-[12px] leading-relaxed prd-md"
                       style={{
-                        color: 'rgba(255, 255, 255, 0.6)',
+                        color: 'var(--text-muted)',
                         maxHeight: 200,
                         overflowY: 'auto',
                         borderTop: '1px solid rgba(168, 85, 247, 0.1)',
@@ -3280,6 +3399,28 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
                       h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
                       h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                      // 「配图 N 生成中」占位：buildPreviewMarkdownWithImages 输出的 <div data-gen-slot>，渲染成显影画框
+                      div: ({ node, children, ...props }) => {
+                        const slot = node?.properties?.dataGenSlot;
+                        if (slot == null) return <div {...props}>{children}</div>;
+                        const slotIdx = Number(slot);
+                        const genSize = String(node?.properties?.dataGenSize ?? '');
+                        const markerIndex = markers[slotIdx]?.index ?? slotIdx;
+                        return (
+                          <div
+                            className="prd-md-gen-slot"
+                            role="status"
+                            aria-label={`配图 ${slotIdx + 1} 生成中`}
+                            style={{ aspectRatio: String(ratioFromSize(genSize)) }}
+                          >
+                            <GenDevelopLoader
+                              tone="adaptive"
+                              createdAt={getRunStartedAt(markerIndex)}
+                              sizeLabel={`配图 ${slotIdx + 1} · ${sizeLabelOf(genSize)}`}
+                            />
+                          </div>
+                        );
+                      },
                       // 正文配图：点击打开可缩放灯箱（放大/缩小/拖拽预览），不管比例尺多大都可预览
                       img: ({ node: _node, src, alt, style: _style, ...props }) => (
                         <img
@@ -3325,162 +3466,211 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               markerRunItems.every(x => x.status === 'done')
             }
           />
-          {activeButton && (
+          {activeButton && (isBusy ? (
+            // 生成中：保持实心主色 + 实时进度，不走 disabled 的 50% 透明（那样读不出在干什么）
+            <Button
+              variant="primary"
+              className="w-full relative overflow-hidden"
+              aria-disabled
+              aria-busy
+              data-testid="literary-busy-button"
+              style={{ cursor: 'progress' }}
+              onClick={() => {}}
+            >
+              <MapSpinner size={14} color="currentColor" />
+              {busyProgress.text}
+              <span
+                aria-hidden
+                className={`absolute left-0 bottom-0 h-[3px]${busyProgress.ratio == null ? ' lit-busy-bar--indeterminate' : ''}`}
+                style={{
+                  width: busyProgress.ratio == null ? '36%' : `${Math.max(6, busyProgress.ratio * 100)}%`,
+                  background: 'currentColor',
+                  opacity: 0.55,
+                  transition: 'width 0.6s ease-out',
+                }}
+              />
+            </Button>
+          ) : (
             <Button
               variant="primary"
               className="w-full"
               onClick={() => void activeButton.action()}
-              disabled={isBusy || activeButton.disabled}
+              disabled={activeButton.disabled}
             >
               <activeButton.icon size={16} />
-              {isBusy ? '生成中...' : activeButton.label}
+              {activeButton.label}
             </Button>
-          )}
+          ))}
 
-          {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
-          <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
-            <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          {/* 生成设置：一行四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
+              行尾图标按钮打开完整配置页。参照 Apple HIG 的弹出按钮：长得像下拉就必须就地给出选项。 */}
+          <div
+            className="mt-2.5 pt-2.5 border-t flex items-center gap-1.5"
+            style={{ borderColor: 'var(--border-subtle)' }}
+            data-testid="literary-generation-settings"
+          >
+            <div className="grid grid-cols-4 gap-1.5 flex-1 min-w-0">
+              <QuickMenu
+                title="提示词风格"
+                width={260}
+                trigger={
+                  <PopupButton
+                    icon={<FileText size={13} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />}
+                    value={selectedPrompt?.title || '自动'}
+                    isSet={!!selectedPrompt}
+                    title={`提示词风格：${selectedPrompt?.title || '自动（系统推断）'}`}
+                    aria-label="提示词风格"
+                  />
+                }
+              >
+                <QuickMenuItem
+                  label="自动"
+                  description="由系统按文章内容推断风格"
+                  selected={!selectedPrompt}
+                  onSelect={() => setSelectedPrompt(null)}
+                />
+                {userPrompts.map((p) => (
+                  <QuickMenuItem
+                    key={p.id}
+                    label={p.title || '未命名'}
+                    selected={selectedPrompt?.id === p.id}
+                    onSelect={() => setSelectedPrompt(p)}
+                  />
+                ))}
+                <QuickMenuAction label="管理提示词…" onSelect={() => setPromptPreviewOpen(true)} />
+              </QuickMenu>
 
-            {/* 三个配置项 */}
-            <div className="flex items-center gap-1.5 flex-1 min-w-0">
-              {/* 提示词 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
-                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)'
-                }}
-                onClick={() => {
-                  if (selectedPrompt) handleEditPrompt(selectedPrompt);
-                  else setPromptPreviewOpen(true);
-                }}
-                title={selectedPrompt?.title || '系统推断风格（点击自定义）'}
+              <QuickMenu
+                title="风格参考图"
+                width={260}
+                // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
+                onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
+                trigger={
+                  <PopupButton
+                    icon={<ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
+                    value={!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
+                    isSet={!!activeRefConfig}
+                    title={`风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
+                    aria-label="风格参考图"
+                  />
+                }
               >
-                <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '自动风格'}
-                </span>
-              </div>
-              {/* 风格图 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)'
-                }}
-                onClick={() => {
-                  const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
-                  if (activeRefConfig) {
-                    setEditingRefConfig({ ...activeRefConfig });
-                    setEditingRefConfigOpen(true);
-                  } else {
-                    setPromptPreviewOpen(true);
-                  }
-                }}
-                title={referenceImageConfigs.find(c => c.isActive)?.name || '未选择风格图'}
+                {!referenceImageListReady ? (
+                  <QuickMenuEmpty>
+                    {referenceImageLoadError && !referenceImageLoading
+                      ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
+                      : '正在读取风格图…'}
+                  </QuickMenuEmpty>
+                ) : (
+                  <>
+                    <QuickMenuItem
+                      label="不使用"
+                      selected={!activeRefConfig}
+                      disabled={referenceImageSaving}
+                      onSelect={() => { if (activeRefConfig) void switchReferenceImage(activeRefConfig, false); }}
+                    />
+                    {referenceImageConfigs.map((c) => (
+                      <QuickMenuItem
+                        key={c.id}
+                        label={c.name || '未命名'}
+                        selected={c.isActive}
+                        disabled={referenceImageSaving}
+                        onSelect={() => { if (!c.isActive) void switchReferenceImage(c, true); }}
+                      />
+                    ))}
+                  </>
+                )}
+                <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
+              </QuickMenu>
+
+              <QuickMenu
+                title="水印"
+                width={240}
+                onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
+                trigger={
+                  <PopupButton
+                    icon={<Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
+                    value={watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
+                    isSet={watermarkStatus.enabled}
+                    title={`水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                    aria-label="水印"
+                  />
+                }
               >
-                <ImageIcon size={12} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {referenceImageConfigs.find(c => c.isActive)?.name || '风格图'}
-                </span>
-              </div>
-              {/* 水印 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)'
-                }}
-                onClick={() => {
-                  setPendingWatermarkEdit(true);
-                  setPromptPreviewOpen(true);
-                }}
-                title={watermarkStatus.enabled ? (watermarkStatus.name || '已启用水印') : '未启用水印'}
+                {watermarkLoadError ? (
+                  <QuickMenuEmpty>{`读取水印失败：${watermarkLoadError}。关闭菜单再打开即可重试。`}</QuickMenuEmpty>
+                ) : watermarkOptions === null ? (
+                  <QuickMenuEmpty>正在读取水印…</QuickMenuEmpty>
+                ) : (
+                  <>
+                    <QuickMenuItem
+                      label="不加水印"
+                      selected={!watermarkStatus.enabled}
+                      disabled={watermarkSaving}
+                      onSelect={() => void switchWatermark(null)}
+                    />
+                    {watermarkOptions.map((w) => (
+                      <QuickMenuItem
+                        key={w.id}
+                        label={w.name || w.text || '未命名'}
+                        selected={w.appKeys?.includes(LITERARY_APP_KEY)}
+                        disabled={watermarkSaving}
+                        onSelect={() => void switchWatermark(w)}
+                      />
+                    ))}
+                  </>
+                )}
+                <QuickMenuAction
+                  label="管理水印…"
+                  onSelect={() => { setPendingWatermarkEdit(true); setPromptPreviewOpen(true); }}
+                />
+              </QuickMenu>
+
+              <QuickMenu
+                title="配图位置"
+                width={260}
+                open={positionStrategyOpen}
+                onOpenChange={setPositionStrategyOpen}
+                note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
+                trigger={
+                  <PopupButton
+                    icon={<MapPin size={13} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />}
+                    value={POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
+                    isSet={positionStrategy !== 'auto'}
+                    title="配图位置：控制 AI 在哪些段落插入配图标记"
+                    aria-label="配图位置"
+                  />
+                }
               >
-                <Sparkles size={12} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
-                </span>
-              </div>
-              {/* 位置策略（Phase 1） */}
-              <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
-                <DropdownMenu.Trigger asChild>
-                  <div
-                    className={configPillBaseClass}
-                    style={{
-                      background: positionStrategy !== 'auto' ? 'rgba(52, 211, 153, 0.08)' : 'var(--nested-block-bg)',
-                      border: positionStrategy !== 'auto' ? '1px solid rgba(52, 211, 153, 0.15)' : '1px solid var(--border-subtle)',
+                {POSITION_STRATEGY_OPTIONS.map((opt) => (
+                  <QuickMenuItem
+                    key={opt.value}
+                    label={opt.label}
+                    selected={positionStrategy === opt.value}
+                    onSelect={() => {
+                      setPositionStrategy(opt.value);
+                      // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                      if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                        setPhase(1);
+                        toast.info('已切到「预览」页，可以开始打锚点了');
+                      } else if (opt.value !== 'auto' && phase === 1) {
+                        toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                      }
                     }}
-                    title="配图位置策略：控制 AI 在哪些段落插入配图标记"
-                  >
-                    <MapPin size={12} style={{ color: positionStrategy !== 'auto' ? '#34D399' : '#9CA3AF', flexShrink: 0 }} />
-                    <span className={configPillTextClass} style={{ color: positionStrategy !== 'auto' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                      {POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
-                    </span>
-                  </div>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    side="bottom"
-                    align="start"
-                    sideOffset={6}
-                    className="z-50 rounded-[12px] p-2.5"
-                    style={{ width: 260, maxWidth: 'min(92vw, 260px)', ...glassPanel }}
-                  >
-                    <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                      配图位置策略
-                    </div>
-                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
-                    </div>
-                    <div className="space-y-1.5">
-                      {POSITION_STRATEGY_OPTIONS.map((opt) => {
-                        const picked = positionStrategy === opt.value;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
-                            style={{
-                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                              background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
-                            }}
-                            onClick={() => {
-                              setPositionStrategy(opt.value);
-                              setPositionStrategyOpen(false);
-                              // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
-                              if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
-                                setPhase(1);
-                                toast.info('已切到「预览」页，可以开始打锚点了');
-                              } else if (opt.value !== 'auto' && phase === 1) {
-                                toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
-                              }
-                            }}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>
-                              {picked && (
-                                <Check size={12} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} />
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+                  />
+                ))}
+              </QuickMenu>
             </div>
 
-            {/* 配置按钮 */}
             <button
               type="button"
-              className="text-[11px] px-2.5 py-1 rounded-md hover-bg-soft transition-colors flex-shrink-0 border"
-              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+              className="lqm-trigger shrink-0 justify-center"
+              style={{ width: 30, padding: 0 }}
               onClick={() => setPromptPreviewOpen(true)}
-              title="打开全部配置"
+              title="全部配置"
+              aria-label="全部配置"
             >
-              配置
+              <SlidersHorizontal size={14} />
             </button>
           </div>
         </PanelCard>
@@ -3698,10 +3888,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     {/* ─── 图片区（所有控件 + prompt 文字浮在图片上）─── */}
                     <div
                       className="marker-card-wrap relative group"
+                      data-has-image={canShow ? 'true' : 'false'}
                       style={{
                         aspectRatio: '4 / 3',
                         padding: '6px 6px 0',
-                        background: 'rgba(0,0,0,0.22)',
                         cursor: canShow ? 'pointer' : 'default',
                       }}
                       onClick={() => {
@@ -3723,12 +3913,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           {it.status === 'parsing' ? (
                             <>
-                              <MapSpinner size={28} color="rgba(250, 204, 21, 0.7)" />
-                              <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                              <MapSpinner size={28} />
+                              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>解析尺寸…</span>
                             </>
                           ) : (
-                            <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
-                              <PrdPetalBreathingLoader fill />
+                            <div className="absolute overflow-hidden" style={{ inset: '6px 6px 0', borderRadius: 8 }}>
+                              <GenDevelopLoader
+                                tone="adaptive"
+                                createdAt={getRunStartedAt(it.markerIndex)}
+                                sizeLabel={sizeLabelOf(it.planItem?.size)}
+                              />
                             </div>
                           )}
                         </div>
@@ -3770,11 +3964,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                       {/* 浮层：顶部 - 标签 + 尺寸 + 状态 */}
                       <div
-                        className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
-                        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%)' }}
+                        className="marker-card-topbar absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
+                        style={{ zIndex: 3 }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                        <span className="marker-card-title text-[11px] font-medium">
                           配图 {idx + 1}
                         </span>
                         <div className="flex items-center gap-1.5">
@@ -3799,33 +3993,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             />
                           )}
                           <div
-                            className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                            style={{
-                              background:
-                                it.status === 'done'
-                                  ? 'rgba(34, 197, 94, 0.18)'
-                                  : it.status === 'error'
-                                    ? 'rgba(239, 68, 68, 0.18)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? 'rgba(250, 204, 21, 0.18)'
-                                      : 'rgba(255,255,255,0.1)',
-                              border:
-                                it.status === 'done'
-                                  ? '1px solid rgba(34, 197, 94, 0.35)'
-                                  : it.status === 'error'
-                                    ? '1px solid rgba(239, 68, 68, 0.35)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? '1px solid rgba(250, 204, 21, 0.3)'
-                                      : '1px solid rgba(255,255,255,0.2)',
-                              color:
-                                it.status === 'done'
-                                  ? 'rgba(34, 197, 94, 0.95)'
-                                  : it.status === 'error'
-                                    ? 'rgba(239, 68, 68, 0.95)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? 'rgba(250, 204, 21, 0.95)'
-                                      : 'rgba(255,255,255,0.7)',
-                            }}
+                            className={`marker-status text-[11px] px-2 py-0.5 rounded-full font-semibold marker-status--${
+                              it.status === 'done'
+                                ? 'done'
+                                : it.status === 'error'
+                                  ? 'error'
+                                  : it.status === 'running' || it.status === 'parsing'
+                                    ? 'busy'
+                                    : it.status === 'parsed'
+                                      ? 'parsed'
+                                      : 'idle'
+                            }`}
                             title={it.errorMessage || ''}
                           >
                             {statusLabel}
@@ -3850,27 +4028,31 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       ) : null}
 
-                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑 */}
-                      <div
-                        className="marker-card-prompt-overlay"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingMarkerIdx(it.markerIndex);
-                        }}
-                        title="点击编辑提示词"
-                      >
-                        <div className="marker-card-prompt-text">
-                          {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑。
+                          生成中收起：否则会盖住等待态底边的「阶段 · 还需约 Ns」 */}
+                      {it.status !== 'running' && (
+                        <div
+                          className="marker-card-prompt-overlay"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingMarkerIdx(it.markerIndex);
+                          }}
+                          title="点击编辑提示词"
+                        >
+                          <div className="marker-card-prompt-text">
+                            {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* 操作按钮栏（图片下方独立行） */}
-                    <div className="px-2.5 py-2 flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1">
+                    <div className="px-2 py-1.5 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-0.5">
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="ghost"
+                          className="!px-2"
                           disabled={it.status === 'running' || it.status === 'parsing'}
                           onClick={() => void handleDeleteMarker(it.markerIndex)}
                           title="删除该配图提示词（同时移除文章中的对应 [插图] 标记）"
@@ -3879,7 +4061,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </Button>
                         <Button
                           size="sm"
-                          variant="secondary"
+                          variant="ghost"
+                          className="!px-2"
                           onClick={() => locateMarkerInPreview(it.markerIndex)}
                           title="定位到正文中的配图标记位置"
                         >
@@ -3889,7 +4072,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
+                              className="!px-2"
                               onClick={async () => {
                                 try {
                                   await navigator.clipboard.writeText(src);
@@ -3904,7 +4088,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             </Button>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
+                              className="!px-2"
                               onClick={async () => {
                                 try {
                                   const response = await fetch(src);
@@ -3945,9 +4130,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 );
               })}
-            </div>
-            <div className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-              点击“一键生图”将按顺序逐条解析 JSON 并生成图片；也可在单条卡片内编辑后重生成
             </div>
           </PanelCard>
         )}
@@ -4622,20 +4804,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={async () => {
-                                    setReferenceImageSaving(true);
-                                    try {
-                                      await mutateReferenceImageScenario(
-                                        () => config.isActive
-                                          ? deactivateReferenceImageConfig({ id: config.id })
-                                          : activateReferenceImageConfig({ id: config.id }),
-                                        loadReferenceImageConfigs,
-                                        reloadImageGenPools,
-                                      );
-                                    } finally {
-                                      setReferenceImageSaving(false);
-                                    }
-                                  }}
+                                  onClick={() => void switchReferenceImage(config, !config.isActive)}
                                   disabled={referenceImageSaving}
                                   title={config.isActive ? '取消选择' : '选择'}
                                 >
@@ -5079,38 +5248,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         </div>
       )}
 
-      {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
-          抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
-      {!isMobile && anchorTutorialSeen === false && phase !== 0 && (
-        <div
-          className="fixed z-[1000]"
-          style={{ right: 24, bottom: 24, maxWidth: 340 }}
-        >
-          <TipCard
-            icon={<MapPin size={14} />}
-            accent="rgba(52, 211, 153, 0.95)"
-            title="新功能:手动指定配图位置"
-            body={
-              <div>
-                <div style={{ marginBottom: 6 }}>右上角「位置策略」可切换 4 种生成策略</div>
-                <div style={{ marginBottom: 6 }}>
-                  鼠标悬停段落左侧后，点{' '}
-                  <span style={{ color: 'var(--accent-fg-success)' }}>+</span> 在上方打锚点
-                </div>
-                <div>
-                  段落上
-                  <span style={{ color: 'var(--accent-fg-success)' }}>右键</span> →
-                  选择"在上方/下方插入配图"
-                </div>
-              </div>
-            }
-            ctaText="知道啦"
-            ack
-            onCta={dismissAnchorTutorial}
-            variant="bubble"
-          />
-        </div>
-      )}
     </div>
   );
 }

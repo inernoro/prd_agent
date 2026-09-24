@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAiNewsLatest, type AiNewsItem } from '@/services/real/aiNews';
-import { FEATURED_THRESHOLD, labelMeta, sortByRecency } from './aiNewsShared';
+import { FEATURED_THRESHOLD, NEWS_ON_DARK_TEXT, labelMeta, sortByRecency } from './aiNewsShared';
 import './aiNews.css';
 
 /**
@@ -70,22 +70,22 @@ export function UpdateCenterNewsTeaser() {
       >
         <span
           className="ainews-live-dot inline-flex shrink-0"
-          style={{ width: 7, height: 7, borderRadius: '50%', background: meta.color, boxShadow: `0 0 8px ${meta.color}` }}
+          style={{ width: 7, height: 7, borderRadius: '50%', background: meta.onDark, boxShadow: `0 0 8px ${meta.onDark}` }}
         >
           <span
             className="ainews-live-core"
-            style={{ width: 7, height: 7, borderRadius: '50%', background: meta.color }}
+            style={{ width: 7, height: 7, borderRadius: '50%', background: meta.onDark }}
           />
         </span>
         <span
           className="text-[11px] font-semibold shrink-0"
-          style={{ color: meta.color, textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}
+          style={{ color: meta.onDark, textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}
         >
           {meta.label}
         </span>
         <span
           className="text-[12px] truncate"
-          style={{ color: 'var(--text-primary)', textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
+          style={{ color: NEWS_ON_DARK_TEXT, textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
         >
           {current.title}
         </span>
