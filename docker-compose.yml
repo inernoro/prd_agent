@@ -134,6 +134,8 @@ services:
       # 旧变量保留一版兼容；运行时两者任一为 true 都会对全部 registered caller fail-closed。
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
+      - LlmGateway__FederationNodeId=${LLMGW_FEDERATION_NODE_ID:-map-formal}
+      - LlmGateway__FederationMaxHops=${LLMGW_FEDERATION_MAX_HOPS:-2}
       # 经 gateway nginx 在两个 serving 实例间负载均衡；不再把 MAP 固定到单实例。
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?must set LLMGW_SERVE_KEY in production (gateway /gw/v1 shared key gate, no insecure default)}
@@ -181,6 +183,8 @@ services:
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
+      - LlmGateway__FederationNodeId=${LLMGW_FEDERATION_NODE_ID:-map-formal}
+      - LlmGateway__FederationMaxHops=${LLMGW_FEDERATION_MAX_HOPS:-2}
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       # 平台 API key 密文解密密钥：必须与 api 一致，否则 resolve 取不出可用 ApiKey
@@ -237,6 +241,8 @@ services:
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
+      - LlmGateway__FederationNodeId=${LLMGW_FEDERATION_NODE_ID:-map-formal}
+      - LlmGateway__FederationMaxHops=${LLMGW_FEDERATION_MAX_HOPS:-2}
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}

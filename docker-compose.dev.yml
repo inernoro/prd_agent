@@ -224,6 +224,8 @@ services:
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=mongodb://mongodb:27017
       - LlmGateway__DatabaseName=llm_gateway
+      - LlmGateway__FederationNodeId=${LLMGW_FEDERATION_NODE_ID:-local-dev}
+      - LlmGateway__FederationMaxHops=${LLMGW_FEDERATION_MAX_HOPS:-2}
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:-dev-llmgw-serve-key}

@@ -199,6 +199,12 @@ public class GatewayRequestContext
     /// </summary>
     public string? ProviderTaskId { get; init; }
 
+    /// <summary>已进入本节点前经过的 LLMGW 数量。仅由受信任的联邦请求头写入。</summary>
+    public int? FederationHop { get; set; }
+
+    /// <summary>已经过的 LLMGW 节点路径。仅用于回环保护和跨网关诊断。</summary>
+    public string? FederationPath { get; set; }
+
     /// <summary>
     /// 用户组 ID
     /// </summary>
@@ -323,6 +329,8 @@ public class GatewayRequestContext
             RunId = source?.RunId,
             LogicalRequestId = source?.LogicalRequestId,
             ProviderTaskId = source?.ProviderTaskId,
+            FederationHop = source?.FederationHop,
+            FederationPath = source?.FederationPath,
             GroupId = source?.GroupId,
             UserId = source?.UserId,
             ViewRole = source?.ViewRole,
@@ -398,6 +406,8 @@ public sealed class GatewayIngressRequest
                 RunId = Context?.RunId,
                 LogicalRequestId = Context?.LogicalRequestId,
                 ProviderTaskId = Context?.ProviderTaskId,
+                FederationHop = Context?.FederationHop,
+                FederationPath = Context?.FederationPath,
                 GroupId = Context?.GroupId,
                 UserId = Context?.UserId,
                 ViewRole = Context?.ViewRole,

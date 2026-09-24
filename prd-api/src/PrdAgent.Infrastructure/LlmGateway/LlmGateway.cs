@@ -32,6 +32,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
     private readonly string _internalTenantId;
     private readonly string? _openRouterReferer;
+    private readonly string _federationNodeId;
+    private readonly int _federationMaxHops;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -76,6 +78,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
         _openRouterReferer = OpenRouterAttribution.ResolveReferer(configuration);
+        _federationNodeId = GatewayFederationProtocol.NormalizeNodeId(
+            configuration?["LlmGateway:FederationNodeId"],
+            Environment.MachineName);
+        _federationMaxHops = GatewayFederationProtocol.NormalizeMaxHops(
+            configuration?.GetValue<int?>("LlmGateway:FederationMaxHops"));
         _doubaoStreamAsr = doubaoStreamAsr
             ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance, safeWebSocketConnector);
 
@@ -178,7 +185,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRequest request)
     {
         var candidates = new List<ModelResolutionResult> { resolution };
-        if (request.Context?.IsHealthProbe == true
+        if (GatewayFederationProtocol.IsFederatedProvider(resolution.ProviderId)
+            || request.Context?.IsHealthProbe == true
             || (IsProviderPinnedExpectedModel(resolution, request.ExpectedModel))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId))
@@ -203,7 +211,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         GatewayRawRequest request)
     {
         var candidates = new List<ModelResolutionResult> { resolution };
-        if (request.Context?.IsHealthProbe == true
+        if (GatewayFederationProtocol.IsFederatedProvider(resolution.ProviderId)
+            || request.Context?.IsHealthProbe == true
             || (IsProviderPinnedExpectedModel(resolution, request.ExpectedModel))
             || !string.IsNullOrWhiteSpace(request.PinnedPlatformId)
             || !string.IsNullOrWhiteSpace(request.PinnedModelId)
@@ -604,6 +613,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     : BuildOfferingEndpoint(activeResolution.ApiUrl!, activeResolution.OfferingEndpointPath);
                 var httpRequest = activeAdapter.BuildHttpRequest(endpoint, activeResolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, activeResolution.ApiUrl, request.AppCallerCode);
+                ApplyFederationHeaders(httpRequest, activeResolution, request.Context);
 
                 if (logId == null)
                 {
@@ -888,6 +898,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
                 var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+                ApplyFederationHeaders(httpRequest, resolution, request.Context);
 
                 if (logId == null)
                 {
@@ -1387,6 +1398,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ActualPlatformId = resolution.ActualPlatformId,
             ActualPlatformName = resolution.ActualPlatformName,
             PlatformType = resolution.PlatformType,
+            ProviderId = resolution.ProviderId,
             Protocol = resolution.Protocol ?? string.Empty,
             ApiUrl = resolution.ApiUrl,
             ApiKey = resolution.ApiKey,
@@ -1695,6 +1707,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
 
         ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+        ApplyFederationHeaders(httpRequest, resolution, request.Context);
 
         result = new RawHttpRequestBuildResult(httpRequest, endpoint, requestBodyForLog, isExchange);
         return null;
@@ -2559,6 +2572,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             }
 
             ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+            ApplyFederationHeaders(httpRequest, resolution, request.Context);
 
             // 5. 写入日志（开始）
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
@@ -3526,6 +3540,44 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string appCallerCode)
     {
         OpenRouterAttribution.Apply(httpRequest, apiUrl, appCallerCode, _openRouterReferer);
+    }
+
+    /// <summary>
+    /// 网关把另一个 LLMGW 当作上游时，沿用同一请求号并显式记录跳数与经过节点。
+    /// 只有 ProviderId=llmgw 才写这些头，避免把内部拓扑信息发给普通供应商。
+    /// </summary>
+    private void ApplyFederationHeaders(
+        HttpRequestMessage httpRequest,
+        ModelResolutionResult resolution,
+        GatewayRequestContext? context)
+    {
+        if (!GatewayFederationProtocol.IsFederatedProvider(resolution.ProviderId))
+            return;
+
+        var outbound = GatewayFederationProtocol.BuildOutbound(
+            context?.FederationHop,
+            context?.FederationPath,
+            _federationNodeId,
+            _federationMaxHops);
+        if (!outbound.Allowed || outbound.Trace is null)
+        {
+            throw new InvalidOperationException(
+                $"网关联邦路径无效：{outbound.ErrorCode ?? "FEDERATION_TRACE_INVALID"}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(context?.RequestId))
+        {
+            httpRequest.Headers.Remove("X-Request-Id");
+            httpRequest.Headers.TryAddWithoutValidation("X-Request-Id", context.RequestId);
+        }
+        httpRequest.Headers.Remove(GatewayFederationProtocol.HopHeader);
+        httpRequest.Headers.TryAddWithoutValidation(
+            GatewayFederationProtocol.HopHeader,
+            outbound.Trace.Hop.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        httpRequest.Headers.Remove(GatewayFederationProtocol.PathHeader);
+        httpRequest.Headers.TryAddWithoutValidation(
+            GatewayFederationProtocol.PathHeader,
+            outbound.Trace.Path);
     }
 
     /// <summary>

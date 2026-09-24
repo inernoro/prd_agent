@@ -1180,6 +1180,76 @@ public class LlmGatewayTests
     }
 
     [Fact]
+    public async Task SendRawWithResolutionAsync_WhenProviderIsFederated_ShouldPropagateTraceAndDisableRetry()
+    {
+        var resolution = new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "DefaultPool",
+            ProviderId = GatewayFederationProtocol.ProviderId,
+            ActualModel = "logical-chat",
+            ActualPlatformId = "cds-local-gateway",
+            ActualPlatformName = "CDS Local Gateway",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://llmgw-local.example.com",
+            ApiKey = "service-key",
+            RetryCandidates =
+            [
+                new ModelResolutionResult
+                {
+                    Success = true,
+                    ResolutionType = "DefaultPool",
+                    ActualModel = "fallback-model",
+                    ActualPlatformId = "fallback-platform",
+                    PlatformType = "openai",
+                    Protocol = "openai",
+                    ApiUrl = "https://fallback.example.com",
+                    ApiKey = "fallback-key",
+                },
+            ],
+        };
+        var http = new SequenceHttpClientFactory(
+            (503, "{\"error\":{\"message\":\"local gateway unavailable\"}}"),
+            (200, "{\"choices\":[{\"message\":{\"content\":\"unexpected retry\"}}]}"));
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:FederationNodeId"] = "map-formal",
+                ["LlmGateway:FederationMaxHops"] = "2",
+            })
+            .Build();
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter(),
+            configuration: configuration);
+
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "federation.benchmark::chat",
+            ModelType = "chat",
+            EndpointPath = "/chat/completions",
+            Context = new GatewayRequestContext { RequestId = "benchmark-request-001" },
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "user", ["content"] = "ping" },
+                },
+            },
+        }, resolution);
+
+        Assert.False(response.Success);
+        Assert.Single(http.RequestUris);
+        var headers = Assert.Single(http.RequestHeaders);
+        Assert.Equal("benchmark-request-001", Assert.Single(headers["X-Request-Id"]));
+        Assert.Equal("1", Assert.Single(headers[GatewayFederationProtocol.HopHeader]));
+        Assert.Equal("map-formal", Assert.Single(headers[GatewayFederationProtocol.PathHeader]));
+    }
+
+    [Fact]
     public async Task SendAsync_ShouldWriteIngressAndRoutePolicyContextToLogStart()
     {
         var resolver = new InMemoryModelResolver()

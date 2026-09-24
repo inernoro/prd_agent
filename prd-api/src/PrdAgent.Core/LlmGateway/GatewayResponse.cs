@@ -203,6 +203,9 @@ public class GatewayModelResolution
     /// </summary>
     public string? PlatformType { get; init; }
 
+    /// <summary>平台供应方标识。llmgw 表示另一套模型网关。</summary>
+    public string? ProviderId { get; init; }
+
     /// <summary>
     /// 本次调用使用的协议（P1 协议下沉：池条目 Protocol > 模型 Protocol > 平台 PlatformType）。
     /// </summary>
