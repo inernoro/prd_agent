@@ -895,18 +895,41 @@ public class GatewayKeyGateContractTests
     /// <summary>
     /// serving 的限流按 UTC 自然分钟切窗口（窗口起点截到整分钟，时间源是 DateTime.UtcNow，不可注入）。
     /// 一批并发请求若恰好跨过整分钟，会被拆进两个窗口，每个窗口各放行一份额度，
-    /// 于是断言「只放行 N 个、只有一个窗口」偶发失败。离下一个整分钟不足
-    /// <see cref="MinuteBoundaryMargin"/> 时先等过这个边界，再让整批请求落在同一个窗口里。
-    /// 只挪发请求的时机，不改限流语义。
+    /// 于是断言「只放行 N 个、只有一个窗口」偶发失败。
+    ///
+    /// 做法分两层，只挪发请求的时机、不改限流语义也不改断言：
+    /// 1. 离下一个整分钟不足 <see cref="MinuteBoundaryMargin"/> 时先等过边界（减少重跑）；
+    /// 2. 确定性兜底：服务端取时间与本进程同一个时钟，且都发生在批次前后两次读数之间，
+    ///    所以前后读到的是同一分钟，就证明整批落在同一个窗口里。跨了分钟就清掉窗口与
+    ///    上游计数，换一批请求 ID 重跑，最多 <see cref="MaxRateWindowAttempts"/> 次。
     /// </summary>
     private static readonly TimeSpan MinuteBoundaryMargin = TimeSpan.FromSeconds(5);
+    private const int MaxRateWindowAttempts = 3;
 
-    private static async Task WaitPastMinuteBoundaryIfCloseAsync()
+    private static long CurrentUtcMinute() => DateTime.UtcNow.Ticks / TimeSpan.TicksPerMinute;
+
+    private static async Task<T> RunInSingleRateWindowAsync<T>(
+        Func<int, Task<T>> sendBatch,
+        Func<Task> resetRateState)
     {
-        var now = DateTime.UtcNow;
-        var untilNextMinute = TimeSpan.FromTicks(TimeSpan.TicksPerMinute - now.Ticks % TimeSpan.TicksPerMinute);
-        if (untilNextMinute < MinuteBoundaryMargin)
-            await Task.Delay(untilNextMinute + TimeSpan.FromMilliseconds(250));
+        for (var attempt = 0; attempt < MaxRateWindowAttempts; attempt++)
+        {
+            var untilNextMinute = TimeSpan.FromTicks(
+                TimeSpan.TicksPerMinute - DateTime.UtcNow.Ticks % TimeSpan.TicksPerMinute);
+            if (untilNextMinute < MinuteBoundaryMargin)
+                await Task.Delay(untilNextMinute + TimeSpan.FromMilliseconds(250));
+
+            var startMinute = CurrentUtcMinute();
+            var result = await sendBatch(attempt);
+            if (CurrentUtcMinute() == startMinute)
+                return result;
+
+            await resetRateState();
+        }
+
+        throw new InvalidOperationException(
+            $"连续 {MaxRateWindowAttempts} 批并发请求都跨过了整分钟，无法在单个限流窗口内完成断言；"
+            + "说明一批请求耗时接近一分钟，先查运行环境为何这么慢。");
     }
 
     [Fact]
@@ -954,12 +977,12 @@ public class GatewayKeyGateContractTests
                 RateLimitPerMinute = limit,
             };
 
-            static HttpRequestMessage Request(string key, int index) => new(HttpMethod.Post, "/gw/v1/send")
+            static HttpRequestMessage Request(string key, int index, int attempt) => new(HttpMethod.Post, "/gw/v1/send")
             {
                 Headers =
                 {
                     { "X-Gateway-Key", key },
-                    { "X-Request-Id", $"concurrency-{key}-{index}" },
+                    { "X-Request-Id", $"concurrency-{key}-{attempt}-{index}" },
                 },
                 Content = JsonContent.Create(new
                 {
@@ -970,17 +993,23 @@ public class GatewayKeyGateContractTests
                 }),
             };
 
-            await WaitPastMinuteBoundaryIfCloseAsync();
-            var responses = await Task.WhenAll(
-                Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
-                    .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
+            var appCallerWindows = data.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows");
+            var responses = await RunInSingleRateWindowAsync(
+                attempt => Task.WhenAll(
+                    Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i, attempt)))
+                        .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i, attempt))))),
+                async () =>
+                {
+                    await appCallerWindows.DeleteManyAsync(FilterDefinition<BsonDocument>.Empty);
+                    gateway.Reset();
+                });
 
             responses.Count(x => x.StatusCode == HttpStatusCode.OK).ShouldBe(8);
             responses.Count(x => x.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(32);
             gateway.CountFor("tenant-a").ShouldBe(4);
             gateway.CountFor("tenant-b").ShouldBe(4);
 
-            var windows = await data.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows")
+            var windows = await appCallerWindows
                 .Find(_ => true)
                 .ToListAsync();
             windows.Count.ShouldBe(2);
@@ -1048,12 +1077,12 @@ public class GatewayKeyGateContractTests
                 RateLimitPerMinute = 10,
             };
 
-            static HttpRequestMessage Request(string key, int index) => new(HttpMethod.Post, "/gw/v1/send")
+            static HttpRequestMessage Request(string key, int index, int attempt) => new(HttpMethod.Post, "/gw/v1/send")
             {
                 Headers =
                 {
                     { "X-Gateway-Key", key },
-                    { "X-Request-Id", $"tenant-rate-{key}-{index}" },
+                    { "X-Request-Id", $"tenant-rate-{key}-{attempt}-{index}" },
                 },
                 Content = JsonContent.Create(new
                 {
@@ -1064,10 +1093,17 @@ public class GatewayKeyGateContractTests
                 }),
             };
 
-            await WaitPastMinuteBoundaryIfCloseAsync();
-            var responses = await Task.WhenAll(
-                Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i)))
-                    .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i)))));
+            var appCallerWindows = data.Database.GetCollection<BsonDocument>("llmgw_app_caller_rate_windows");
+            var responses = await RunInSingleRateWindowAsync(
+                attempt => Task.WhenAll(
+                    Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-a-key", i, attempt)))
+                        .Concat(Enumerable.Range(0, 20).Select(i => http.SendAsync(Request("tenant-b-key", i, attempt))))),
+                async () =>
+                {
+                    await tenantWindows.DeleteManyAsync(FilterDefinition<GatewayTenantRateWindowRecord>.Empty);
+                    await appCallerWindows.DeleteManyAsync(FilterDefinition<BsonDocument>.Empty);
+                    gateway.Reset();
+                });
 
             responses.Count(x => x.StatusCode == HttpStatusCode.OK).ShouldBe(8);
             responses.Count(x => x.StatusCode == HttpStatusCode.TooManyRequests).ShouldBe(32);
@@ -3841,6 +3877,8 @@ public class GatewayKeyGateContractTests
         private readonly ConcurrentDictionary<string, int> _counts = new(StringComparer.Ordinal);
 
         public int CountFor(string tenantId) => _counts.GetValueOrDefault(tenantId);
+
+        public void Reset() => _counts.Clear();
 
         public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
         {
