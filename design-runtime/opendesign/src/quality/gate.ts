@@ -985,7 +985,7 @@ function sensitiveFacts(text: string): Set<string> {
   return facts;
 }
 
-export function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = true): string {
+export function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = false): string {
   const evidence: string[] = [];
   const taskPath = path.join(workspaceDir, 'brief', 'task.json');
   if (includeUserSuppliedTask && fs.existsSync(taskPath)) {

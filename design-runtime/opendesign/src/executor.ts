@@ -347,10 +347,14 @@ export class DesignTaskExecutor {
     const editingExistingPage = fs.existsSync(currentIndexPath);
     // One execution owns its frozen evidence and repair-retention state. Neither
     // a later model edit nor another session can redefine the facts being checked.
+    // 证据口径与 MAP 发布闸（HostedSiteEditRunWorker.BuildQualityEvidence）一致：用户写的标题与要求是
+    // 生成请求，不是能证明日期、联系方式、网址或数值的证据。此前这里把它们算进证据，同一页在这里通过、
+    // 到 MAP 最后一步才被拒，白等一整轮（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
+    const qualityEvidence = collectArtifactQualityEvidence(workspaceDir, false);
     const checkArtifactQuality = createArtifactQualityGate(
-      collectArtifactQualityEvidence(workspaceDir),
+      qualityEvidence,
       collectVisibleTextOccurrenceConstraints(workspaceDir),
-      collectArtifactQualityEvidence(workspaceDir, false),
+      qualityEvidence,
     );
     let activeRunId: string | undefined;
     try {

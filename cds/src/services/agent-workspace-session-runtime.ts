@@ -2603,10 +2603,14 @@ export class AgentWorkspaceSessionRuntime {
     const editingExistingPage = fs.existsSync(currentIndexPath);
     // One execution owns its frozen evidence and repair-retention state. Neither
     // a later model edit nor another session can redefine the facts being checked.
+    // 证据口径与 MAP 发布闸（HostedSiteEditRunWorker.BuildQualityEvidence）一致：用户写的标题与要求是
+    // 生成请求，不是能证明日期、联系方式、网址或数值的证据。此前这里把它们算进证据，同一页在这里通过、
+    // 到 MAP 最后一步才被拒，白等一整轮（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
+    const qualityEvidence = collectArtifactQualityEvidence(handle.workspaceDir, false);
     const checkArtifactQuality = createArtifactQualityGate(
-      collectArtifactQualityEvidence(handle.workspaceDir),
+      qualityEvidence,
       collectVisibleTextOccurrenceConstraints(handle.workspaceDir),
-      collectArtifactQualityEvidence(handle.workspaceDir, false),
+      qualityEvidence,
     );
     try {
     const codexConfig = buildOpenDesignCodexConfig(proxiedModelBaseUrl, model.model);
@@ -5065,7 +5069,7 @@ function sensitiveFacts(text: string): Set<string> {
   return facts;
 }
 
-function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = true): string {
+function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = false): string {
   const evidence: string[] = [];
   const taskPath = path.join(workspaceDir, 'brief', 'task.json');
   if (includeUserSuppliedTask && fs.existsSync(taskPath)) {
