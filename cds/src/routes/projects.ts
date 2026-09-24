@@ -1284,6 +1284,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const derivedMeta = deriveEnvMetaForVars(parsed.envVars || {}, explicitMeta);
     if (Object.keys(derivedMeta).length > 0) {
       stateService.setEnvMeta(project.id, derivedMeta);
+      // 内部密钥（generate: secret）导入即由 CDS 生成，不让用户去造一把再粘回来。
+      stateService.ensureGeneratedEnvKeys(project.id);
       const requiredCount = Object.values(derivedMeta).filter((m) => m.kind === 'required').length;
       const autoCount = Object.values(derivedMeta).filter((m) => m.kind === 'auto').length;
       const derivedCount = Object.values(derivedMeta).filter((m) => m.kind === 'infra-derived').length;

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
@@ -8,6 +9,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -21,13 +23,20 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class SubmissionsController : ControllerBase
 {
+    private const int CreatorAvatarExistenceConcurrency = 8;
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
+    private readonly ILogger<SubmissionsController> _logger;
 
-    public SubmissionsController(MongoDbContext db, IAssetStorage assetStorage)
+    public SubmissionsController(
+        MongoDbContext db,
+        IAssetStorage assetStorage,
+        ILogger<SubmissionsController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
+        _logger = logger;
     }
 
     /// <summary>
@@ -410,7 +419,8 @@ public class SubmissionsController : ControllerBase
     [HttpGet("public/creators")]
     public async Task<IActionResult> ListPublicSubmissionCreators(
         [FromQuery] string? contentType = null,
-        [FromQuery] int limit = 24)
+        [FromQuery] int limit = 24,
+        CancellationToken ct = default)
     {
         limit = Math.Clamp(limit, 1, 60);
 
@@ -430,20 +440,120 @@ public class SubmissionsController : ControllerBase
             })
             .SortByDescending(x => x.SubmissionCount)
             .Limit(limit)
-            .ToListAsync();
+            .ToListAsync(ct);
 
-        var creators = grouped
+        var candidates = grouped
             .Where(x => !string.IsNullOrWhiteSpace(x.OwnerUserId))
-            .Select(x => new
-            {
-                ownerUserId = x.OwnerUserId,
-                ownerUserName = x.OwnerUserName,
-                ownerAvatarFileName = x.OwnerAvatarFileName,
-                submissionCount = x.SubmissionCount,
-            });
+            .Select(x => new PublicSubmissionCreatorCandidate(
+                x.OwnerUserId,
+                x.OwnerUserName,
+                x.OwnerAvatarFileName,
+                x.SubmissionCount))
+            .ToList();
+
+        var ownerIds = candidates.Select(x => x.OwnerUserId).ToList();
+        var currentUsers = ownerIds.Count == 0
+            ? []
+            : await _db.Users
+                .Find(x => ownerIds.Contains(x.UserId))
+                .ToListAsync(ct);
+        var currentUsersById = currentUsers
+            .GroupBy(x => x.UserId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+
+        var creators = await ResolvePublicSubmissionCreatorsAsync(
+            candidates,
+            currentUsersById,
+            _assetStorage,
+            _logger,
+            ct);
 
         return Ok(ApiResponse<object>.Ok(new { creators }));
     }
+
+    internal static async Task<IReadOnlyList<PublicSubmissionCreatorView>> ResolvePublicSubmissionCreatorsAsync(
+        IReadOnlyList<PublicSubmissionCreatorCandidate> candidates,
+        IReadOnlyDictionary<string, User> currentUsersById,
+        IAssetStorage assetStorage,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(currentUsersById);
+        ArgumentNullException.ThrowIfNull(assetStorage);
+        ArgumentNullException.ThrowIfNull(logger);
+
+        using var gate = new SemaphoreSlim(
+            CreatorAvatarExistenceConcurrency,
+            CreatorAvatarExistenceConcurrency);
+        var creatorTasks = candidates.Select(async candidate =>
+        {
+            currentUsersById.TryGetValue(candidate.OwnerUserId, out var currentUser);
+            var ownerUserName = currentUser == null
+                ? candidate.OwnerUserName
+                : ResolveDisplayName(currentUser, claimName: null, candidate.OwnerUserId);
+
+            // 当前用户存在时，以资料里的头像为准。资料明确为空表示已清除头像，
+            // 不能退回投稿快照，否则会把已删除的历史对象重新暴露给首页。
+            var avatarFileName = (currentUser == null
+                    ? candidate.OwnerAvatarFileName
+                    : currentUser.AvatarFileName)
+                ?.Trim();
+            if (string.IsNullOrWhiteSpace(avatarFileName))
+            {
+                avatarFileName = null;
+            }
+            else
+            {
+                var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
+                await gate.WaitAsync(ct);
+                try
+                {
+                    if (!await assetStorage.ExistsAsync(objectKey, ct))
+                    {
+                        avatarFileName = null;
+                    }
+                }
+                catch (Exception error) when (
+                    error is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    // 对象存储抖一次不该把整张创作者榜打成 500：这条校验只为「别把已删对象露出去」，
+                    // 查不清就按不可用降级、前端退回首字母占位。降级必须留痕，不许静默
+                    // （predicate-and-wiring-discipline 形状 10）。
+                    logger.LogWarning(
+                        error,
+                        "公开创作者头像存在性校验失败，本次按头像不可用降级 ownerUserId={OwnerUserId} objectKey={ObjectKey}",
+                        candidate.OwnerUserId,
+                        objectKey);
+                    avatarFileName = null;
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }
+
+            return new PublicSubmissionCreatorView(
+                candidate.OwnerUserId,
+                ownerUserName,
+                avatarFileName,
+                candidate.SubmissionCount);
+        });
+
+        return await Task.WhenAll(creatorTasks);
+    }
+
+    internal sealed record PublicSubmissionCreatorCandidate(
+        string OwnerUserId,
+        string OwnerUserName,
+        string? OwnerAvatarFileName,
+        int SubmissionCount);
+
+    internal sealed record PublicSubmissionCreatorView(
+        string OwnerUserId,
+        string OwnerUserName,
+        string? OwnerAvatarFileName,
+        int SubmissionCount);
 
     /// <summary>
     /// 获取当前用户的投稿列表
@@ -767,6 +877,10 @@ public class SubmissionsController : ControllerBase
             (request.ContentType != "visual" && request.ContentType != "literary"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_CONTENT_TYPE", "contentType 必须为 visual 或 literary"));
 
+        var trigger = LiteraryWorkspacePublicationPolicy.NormalizeTrigger(request.Trigger);
+        if (!LiteraryWorkspacePublicationPolicy.IsKnownTrigger(trigger))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SUBMISSION_TRIGGER", "trigger 必须为 manual 或 auto"));
+
         // 视觉创作：从 ImageAsset 创建投稿
         if (request.ContentType == "visual")
         {
@@ -778,6 +892,18 @@ public class SubmissionsController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail("IMAGE_NOT_FOUND", "图片不存在"));
             if (asset.OwnerUserId != userId)
                 return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能投稿自己的作品"));
+            var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+                _db,
+                [asset.WorkspaceId],
+                CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId)
+                && !LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    "AUTO_SUBMISSION_DISABLED",
+                    "该私有工作区禁止自动投稿；如需公开，请明确选择手动投稿"));
+            }
 
             // 查重
             var existing = await _db.Submissions
@@ -824,6 +950,16 @@ public class SubmissionsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "工作区不存在"));
         if (workspace.OwnerUserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能投稿自己的作品"));
+        var suppressAutoSubmit = await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+            _db,
+            workspace,
+            CancellationToken.None);
+        if (suppressAutoSubmit && !LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "AUTO_SUBMISSION_DISABLED",
+                "该私有工作区禁止自动投稿；如需公开，请点击“投稿当前”确认"));
+        }
 
         // 查重（按 workspaceId）
         var existingWs = await _db.Submissions
@@ -1039,11 +1175,22 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+            _db,
+            assets.Select(x => x.WorkspaceId),
+            CancellationToken.None);
+        var protectedAssets = 0;
         // 按 WorkspaceId 分组构建快照，避免重复查询
         var snapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId))
+            {
+                protectedAssets++;
+                continue;
+            }
 
             GenerationSnapshot? snapshot = null;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
@@ -1076,7 +1223,7 @@ public class SubmissionsController : ControllerBase
         if (newSubmissions.Count > 0)
             await _db.Submissions.InsertManyAsync(newSubmissions);
 
-        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count }));
+        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count, protectedAssets }));
     }
 
     /// <summary>
@@ -1157,11 +1304,22 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+            _db,
+            assets.Select(x => x.WorkspaceId),
+            CancellationToken.None);
+        var protectedAssets = 0;
         var migrateSnapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
             if (string.IsNullOrWhiteSpace(asset.Url)) continue;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId))
+            {
+                protectedAssets++;
+                continue;
+            }
 
             GenerationSnapshot? snapshot = null;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
@@ -1201,6 +1359,7 @@ public class SubmissionsController : ControllerBase
             userId,
             totalAssets = assets.Count,
             alreadySubmitted = existingAssetIds.Count,
+            protectedAssets,
             newlySubmitted = newSubmissions.Count,
         }));
     }
@@ -1235,9 +1394,18 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaces = 0;
         foreach (var ws in workspaces)
         {
             if (existingWsIds.Contains(ws.Id)) continue;
+            if (await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+                    _db,
+                    ws,
+                    CancellationToken.None))
+            {
+                protectedWorkspaces++;
+                continue;
+            }
 
             // 获取封面图
             var coverUrl = "";
@@ -1298,6 +1466,7 @@ public class SubmissionsController : ControllerBase
             userId,
             totalWorkspaces = workspaces.Count,
             alreadySubmitted = existingWsIds.Count,
+            protectedWorkspaces,
             newlySubmitted = newSubmissions.Count,
         }));
     }
@@ -1579,6 +1748,7 @@ public class SubmissionsController : ControllerBase
 public class CreateSubmissionRequest
 {
     public string ContentType { get; set; } = string.Empty;
+    public string? Trigger { get; set; }
     public string? Title { get; set; }
     public string? ImageAssetId { get; set; }
     public string? WorkspaceId { get; set; }

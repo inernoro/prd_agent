@@ -489,6 +489,18 @@ public sealed class GatewayAppCallerRecord
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 收容本类未声明的字段。这个集合由两个写方共同维护：网关控制台直接以文档形式
+    /// 写入自己的标记（例如它自己签发凭据时盖的托管标记），而本类是 MAP 侧的强类型视图。
+    /// 没有这个收容位时，控制台每新增一个字段，MAP 侧启动阶段的整表读取就会抛格式异常
+    /// 并把进程带崩——已经真实发生过一次。
+    ///
+    /// 用收容而不是「忽略未知字段」是有意的：去重逻辑会把原始文档整份归档，注释承诺
+    /// 「保留每一份源文档」。忽略会让归档静默缺字段，承诺当场落空；收容则原样往返。
+    /// </summary>
+    [BsonExtraElements]
+    public BsonDocument? ExtraElements { get; set; }
 }
 
 /// <summary>

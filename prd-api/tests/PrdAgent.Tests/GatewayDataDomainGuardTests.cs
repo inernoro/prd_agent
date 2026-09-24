@@ -1491,6 +1491,7 @@ public class GatewayDataDomainGuardTests
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
         var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
 
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
         Assert.Contains("LlmGateway__Mode=${LLMGW_MODE}", dockerCompose);
@@ -1518,6 +1519,10 @@ public class GatewayDataDomainGuardTests
         var cdsAllowlist = Regex.Match(cdsCompose, "LlmGateway__HttpAppCallerAllowlist:\\s*\"([^\"]*)\"");
         Assert.True(cdsAllowlist.Success, "cds-compose.yml 必须显式声明 LlmGateway__HttpAppCallerAllowlist");
         Assert.Contains("transcript-agent.transcribe::asr", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("md-to-ppt-agent.outline::chat", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("md-to-ppt-agent.html-generate::chat", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline)", program);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate)", program);
         Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);
@@ -1533,6 +1538,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
         Assert.Contains("默认由 llm_gateway.llmgw_console_users 托管账号", cdsCompose);
         Assert.Contains("LLMGW_ADMIN_ENV_AUTHORITY: \"${LLMGW_ADMIN_ENV_AUTHORITY}\"", cdsCompose);
+    }
+
+    [Fact]
+    public void WebHostingGenerationAndEdit_RequireHttpBeforeGatewayModeSelection()
+    {
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var allowlistStart = program.IndexOf("var httpAllowlist =", StringComparison.Ordinal);
+        var allowlistEnd = program.IndexOf("var shadowFullSampleAllowlist =", allowlistStart, StringComparison.Ordinal);
+        Assert.True(allowlistStart >= 0 && allowlistEnd > allowlistStart);
+        var unconditionalAllowlist = program[allowlistStart..allowlistEnd];
+
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.GenerateHtml);", unconditionalAllowlist);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.EditHtml);", unconditionalAllowlist);
+        Assert.DoesNotContain("if (", unconditionalAllowlist);
+        Assert.Contains("else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)", program);
+        Assert.Contains("httpAllowlist: httpAllowlist", program);
     }
 
     [Fact]
@@ -1813,31 +1834,51 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void WorkspaceDeletion_RemovesAllReferencesBeforePhysicalObjectCleanup()
     {
-        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
-        var helperStart = controller.IndexOf("private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
-        var imageAssetCheck = controller.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
-        var uploadArtifactCheck = controller.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(artifactFilter", helperStart, StringComparison.Ordinal);
-        var imageRunCheck = controller.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
-        var helperDeleteObject = controller.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
-        var collectArtifacts = controller.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
-        var deleteAssetRecords = controller.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
-        var deleteArtifactRecords = controller.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", deleteAssetRecords, StringComparison.Ordinal);
-        var deleteRun = controller.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", deleteArtifactRecords, StringComparison.Ordinal);
-        var deleteWorkspace = controller.IndexOf("await _db.ImageMasterWorkspaces.DeleteOneAsync", deleteRun, StringComparison.Ordinal);
-        var workspaceDeleteObject = controller.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None)", deleteWorkspace, StringComparison.Ordinal);
+        var deletionService = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageMasterWorkspaceDeletionService.cs");
+        var visualController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var literaryController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentWorkspaceController.cs");
+        var submissionsController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/SubmissionsController.cs");
+        var dataTransferController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DataTransferController.cs");
+        var helperStart = deletionService.IndexOf("public async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
+        var imageAssetCheck = deletionService.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
+        var uploadArtifactCheck = deletionService.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
+        var imageRunCheck = deletionService.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
+        var referenceConfigCheck = deletionService.IndexOf("_db.ReferenceImageConfigs.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
+        var legacyConfigCheck = deletionService.IndexOf("_db.LiteraryAgentConfigs.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
+        var helperDeleteObject = deletionService.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
+        var collectArtifacts = deletionService.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
+        var deleteAssetRecords = deletionService.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+        var deleteArtifactRecords = deletionService.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", deleteAssetRecords, StringComparison.Ordinal);
+        var deleteRun = deletionService.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", deleteArtifactRecords, StringComparison.Ordinal);
+        var deleteWorkspace = deletionService.IndexOf("await _db.ImageMasterWorkspaces.DeleteOneAsync", deleteRun, StringComparison.Ordinal);
+        var workspaceDeleteObject = deletionService.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None)", deleteWorkspace, StringComparison.Ordinal);
 
         Assert.True(helperStart >= 0, "底层对象删除必须复用统一的引用检查入口");
         Assert.True(imageAssetCheck > helperStart, "删除对象前必须检查图片资产引用");
         Assert.True(uploadArtifactCheck > imageAssetCheck, "删除对象前必须检查其他上传产物引用");
         Assert.True(imageRunCheck > uploadArtifactCheck, "删除对象前必须检查其他生图任务引用");
-        Assert.True(helperDeleteObject > imageRunCheck, "全部引用检查通过后才能删除底层对象");
+        Assert.True(referenceConfigCheck > imageRunCheck, "删除对象前必须检查文学参考图配置引用");
+        Assert.True(legacyConfigCheck > referenceConfigCheck, "删除对象前必须检查旧版文学参考图引用");
+        Assert.True(helperDeleteObject > legacyConfigCheck, "全部引用检查通过后才能删除底层对象");
         Assert.True(collectArtifacts >= 0, "工作区删除必须先按 runId 收集生成产物");
         Assert.True(deleteAssetRecords > collectArtifacts, "收集归属完成后才能删除资产记录");
         Assert.True(deleteArtifactRecords > deleteAssetRecords, "必须先解除资产引用再解除产物引用");
         Assert.True(deleteRun > deleteArtifactRecords, "必须在底层对象回收前解除任务归属");
         Assert.True(deleteWorkspace > deleteRun, "工作区记录必须在任务归属解除后删除");
         Assert.True(workspaceDeleteObject > deleteWorkspace, "全部数据库引用解除后才能通过统一入口回收底层对象");
-        Assert.Contains(".Find(x => x.WorkspaceId == wid)", controller);
+        Assert.Contains(".Find(x => x.WorkspaceId == workspaceId)", deletionService);
+        Assert.Contains("ImageMasterWorkspaceDeletionService(db, assetStorage, logger)", visualController);
+        Assert.Contains("ImageMasterWorkspaceDeletionService(db, assetStorage, logger)", literaryController);
+        Assert.Contains("var mutationToken = CancellationToken.None;", deletionService);
+        Assert.Contains("DeleteAsync(wid, CancellationToken.None)", visualController);
+        Assert.Contains("DeleteAsync(ws.Id, CancellationToken.None)", literaryController);
+        Assert.Contains("var protectedWorkspaces = 0;", submissionsController);
+        Assert.Contains("protectedWorkspaces++;", submissionsController);
+        Assert.Contains("ResolveProtectedWorkspaceIdsAsync", submissionsController);
+        Assert.Contains("protectedAssets++;", submissionsController);
+        var transferPolicy = dataTransferController.IndexOf("LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync", StringComparison.Ordinal);
+        var transferClone = dataTransferController.IndexOf("_cloneService.CloneAsync", transferPolicy, StringComparison.Ordinal);
+        Assert.True(transferPolicy >= 0 && transferClone > transferPolicy, "账户迁移必须先回填存量私有标记再克隆工作区");
     }
 
     [Fact]
@@ -3384,10 +3425,21 @@ public class GatewayDataDomainGuardTests
             "正式 compose 的控制台与两份 serving 必须使用同一 GW Mongo 配置入口");
         Assert.Contains("config[\"LlmGateway:MongoConnectionString\"]", consoleProgram);
         Assert.Contains("gatewayMongoClient.GetDatabase(gatewayDbName)", consoleProgram);
-        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz\"", cdsServing);
+        // CDS 的就绪探针是匿名 GET 且把一切 < 500 当就绪，所以就绪声明必须指向匿名那条；
+        // 指回带密钥门的 readyz 会让 401 冒充「就绪」，依赖状态一次都不会被评估。
+        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz/ready\"", cdsServing);
+        Assert.DoesNotContain("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
+        // 脱敏就绪：必须存在、必须按状态码表态、且**不得**端出组件明细（它是匿名的）。
+        Assert.Contains("MapGet(\"/gw/v1/healthz/ready\"", endpoint);
+        var sanitizedReady = endpoint[endpoint.IndexOf("MapGet(\"/gw/v1/healthz/ready\"", StringComparison.Ordinal)..];
+        sanitizedReady = sanitizedReady[..sanitizedReady.IndexOf("MapGet(\"/gw/v1/healthz/deep\"", StringComparison.Ordinal)];
+        Assert.Contains("StatusCodes.Status503ServiceUnavailable", sanitizedReady);
+        Assert.DoesNotContain("snapshot.Components", sanitizedReady);
+        Assert.DoesNotContain("x.Summary", sanitizedReady);
+        Assert.DoesNotContain("durationMs", sanitizedReady);
         Assert.DoesNotContain("map-mongo", readiness);
         Assert.Contains("gateway-mongo", readiness);
         Assert.Contains("asset-storage", readiness);
@@ -4322,7 +4374,7 @@ public class GatewayDataDomainGuardTests
 
         static bool ReturnsHostedSite(string line)
             => System.Text.RegularExpressions.Regex.IsMatch(
-                line, @"public async Task<(HostedSite\??|List<HostedSite>|\(List<HostedSite>)");
+                line, @"public async Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
 
         var memberStarts = new List<int>();
         for (var i = 0; i < lines.Length; i++)
@@ -5495,6 +5547,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("CleanupMultipartRefsAsync", endpoints);
         Assert.Contains("protectedGatewayPath", endpoints);
         Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);
+        // 脱敏就绪必须真的在免鉴权白名单里（精确匹配，不许退化成前缀放行），
+        // 否则 CDS 匿名探针拿到 401，而 401 < 500 会被当成「就绪」——依赖门控又变回摆设。
+        Assert.Contains("!path.Equals(\"/gw/v1/healthz/ready\", StringComparison.OrdinalIgnoreCase)", endpoints);
+        Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/healthz\"", endpoints);
         Assert.Contains("llmgw_multipart_objects", httpClient);
         Assert.Contains("X-Gateway-App-Caller", httpClient);
         Assert.Contains("TryDeserializeRawResponse", httpClient);

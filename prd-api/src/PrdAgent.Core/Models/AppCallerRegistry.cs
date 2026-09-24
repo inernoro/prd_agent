@@ -1170,6 +1170,22 @@ public static class Admin
             Category = "Chat"
         )]
         public const string AskOpeners = "prd-agent-web.web-hosting.ask-openers::intent";
+
+        [AppCallerMetadata(
+            "网页托管-帮我修改",
+            "根据用户要求修改托管站点的入口 HTML，先生成可预览草稿，再由用户发布",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string EditHtml = "prd-agent-web.web-hosting.edit-html::chat";
+
+        [AppCallerMetadata(
+            "网页托管-知识生成",
+            "根据用户选择的知识快照与补充要求生成可托管、可继续微调的完整网页",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string GenerateHtml = "prd-agent-web.web-hosting.generate-html::chat";
     }
 
     public static class Lab

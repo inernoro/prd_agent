@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const dockerCalls: string[][] = [];
+const dockerStdin: string[] = [];
 let memberDbName = 'appdb_rs_guard_1';
 let mainCanaryHit = 0;
 let isoCanaryHit = 0;
@@ -30,8 +31,9 @@ vi.mock('../../src/routes/infra-data.js', () => ({
     return null;
   },
   maskSecretValues: (s: string) => s,
-  runDockerExec: async (argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+  runDockerExec: async (argv: string[], stdin = ''): Promise<{ code: number; stdout: string; stderr: string }> => {
     dockerCalls.push(argv);
+    dockerStdin.push(stdin);
     const joined = argv.join(' ');
     if (argv[0] === 'inspect' && joined.includes('{{json .Config.Env}}')) {
       const name = argv[argv.length - 1];
@@ -52,7 +54,8 @@ vi.mock('../../src/routes/infra-data.js', () => ({
       return { code: 0, stderr: '', stdout: 'running\n' };
     }
     if (argv[0] === 'exec') {
-      const script = argv[argv.length - 1];
+      const evalIndex = argv.indexOf('--eval');
+      const script = evalIndex >= 0 ? argv[evalIndex + 1] : argv[argv.length - 1];
       const onIso = argv.some((a) => a.startsWith('cds-rsdb-'));
       if (script.includes('getCollectionNames')) {
         if (!onIso && srcBaselineFail) return { code: 1, stderr: 'auth failed', stdout: '' };
@@ -90,6 +93,7 @@ let listener: net.Server;
 
 beforeEach(async () => {
   dockerCalls.length = 0;
+  dockerStdin.length = 0;
   memberDbName = 'appdb_rs_guard_1';
   mainCanaryHit = 0;
   isoCanaryHit = 0;
@@ -146,6 +150,26 @@ afterEach(async () => {
 });
 
 describe('runIsolationAudit', () => {
+  it('认证审计通过 stdin 使用 Mongo 口令，宿主与容器 argv 均不含原文或编码值', async () => {
+    const canary = 'audit-canary-p@ss/$ x';
+    const encoded = encodeURIComponent(canary);
+    state.getState().infraServices[0].env = {
+      MONGO_INITDB_ROOT_USERNAME: 'root',
+      MONGO_INITDB_ROOT_PASSWORD: canary,
+    };
+    state.getBranch('proj-main')!.replicaDbSnapshots![0].dedicatedAuth = 'source-infra';
+
+    await runIsolationAudit(state, 'proj-main', 'api');
+
+    expect(dockerCalls.some((argv) => argv.includes('mongosh') && argv.includes('--password'))).toBe(true);
+    for (const argv of dockerCalls) {
+      const serialized = JSON.stringify(argv);
+      expect(serialized).not.toContain(canary);
+      expect(serialized).not.toContain(encoded);
+    }
+    expect(dockerStdin.some((stdin) => stdin === `${canary}\n`)).toBe(true);
+  });
+
   it('全链路健康 → effective，五面齐备且边界显式列出', async () => {
     const r = await runIsolationAudit(state, 'proj-main', 'api');
     expect(r.overall).toBe('effective');

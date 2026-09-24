@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -42,6 +43,41 @@ public sealed class HomeRecentWorkController : ControllerBase
         DateTime LastActiveAt,
         double? Progress = null,
         string? ProgressLabel = null);
+
+    internal sealed record WorkspaceRecentMetadata(string Title, string? ScenarioType);
+
+    internal sealed record RecentOpenCandidate(
+        string AgentKey,
+        string EntityId,
+        DateTime LastOpenedAt);
+
+    /// <summary>
+    /// 历史台账可能把 article-illustration 写成 visual-agent，也可能同时留下
+    /// visual-agent 与 literary-agent 两条记录。工作区实体的 ScenarioType 才是应用身份
+    /// 的唯一判据；归一化后按应用 + 实体去重，保留输入顺序中的第一条（调用方已按时间倒序）。
+    /// </summary>
+    internal static IReadOnlyList<RecentOpenCandidate> NormalizeRecentOpens(
+        IEnumerable<UserRecentOpen> opens,
+        IReadOnlyDictionary<string, WorkspaceRecentMetadata> workspaces)
+    {
+        var normalized = new List<RecentOpenCandidate>();
+        var seen = new HashSet<(string AgentKey, string EntityId)>();
+
+        foreach (var open in opens)
+        {
+            var agentKey = open.AgentKey;
+            if (agentKey is "visual-agent" or "literary-agent"
+                && workspaces.TryGetValue(open.EntityId, out var workspace))
+            {
+                agentKey = ImageMasterWorkspacePresentation.Resolve(open.EntityId, workspace.ScenarioType).AgentKey;
+            }
+
+            if (!seen.Add((agentKey, open.EntityId))) continue;
+            normalized.Add(new RecentOpenCandidate(agentKey, open.EntityId, open.LastOpenedAt));
+        }
+
+        return normalized;
+    }
 
     /// <summary>
     /// 缺陷状态机 → 诚实进度（0..1）+ 中文标签。
@@ -104,14 +140,40 @@ public sealed class HomeRecentWorkController : ControllerBase
         var userId = this.GetRequiredUserId();
 
         // 台账多取一些冗余：富化阶段会丢弃已删除/已失去权限的实体
-        var opens = await _db.UserRecentOpens
+        var rawOpens = await _db.UserRecentOpens
             .Find(x => x.UserId == userId)
             .SortByDescending(x => x.LastOpenedAt)
             .Limit(limit * 3)
             .ToListAsync(ct);
 
-        if (opens.Count == 0)
+        if (rawOpens.Count == 0)
             return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
+
+        // 工作区先按实体场景归一化应用身份，再做模块门禁。不能先相信历史 AgentKey，
+        // 否则一条写错的 visual-agent 脚印会绕过 literary-agent 的权限判断。
+        var workspaceIds = rawOpens
+            .Where(o => o.AgentKey is "visual-agent" or "literary-agent")
+            .Select(o => o.EntityId)
+            .Distinct()
+            .ToList();
+        var workspaceMetadata = new Dictionary<string, WorkspaceRecentMetadata>(StringComparer.Ordinal);
+        if (workspaceIds.Count > 0)
+        {
+            var workspaceFilter = Builders<ImageMasterWorkspace>.Filter.And(
+                Builders<ImageMasterWorkspace>.Filter.In(x => x.Id, workspaceIds),
+                Builders<ImageMasterWorkspace>.Filter.Or(
+                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, userId),
+                    Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, userId)));
+            var workspaces = await _db.ImageMasterWorkspaces.Find(workspaceFilter)
+                .Project(x => new { x.Id, x.Title, x.ScenarioType })
+                .ToListAsync(ct);
+            foreach (var workspace in workspaces)
+            {
+                workspaceMetadata[workspace.Id] = new WorkspaceRecentMetadata(workspace.Title, workspace.ScenarioType);
+            }
+        }
+
+        var opens = NormalizeRecentOpens(rawOpens, workspaceMetadata).ToList();
 
         // 权限口径与 AdminPermissionMiddleware 一致：先过 access 总闸，再看 Super / 具体权限
         var perms = await LoadEffectivePermissionsAsync(userId, ct);
@@ -124,7 +186,6 @@ public sealed class HomeRecentWorkController : ControllerBase
         if (opens.Count == 0)
             return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<RecentWorkItem>() }));
 
-        var wsIds = opens.Where(o => o.AgentKey is "visual-agent" or "literary-agent").Select(o => o.EntityId).Distinct().ToList();
         var wfIds = opens.Where(o => o.AgentKey == "workflow-agent").Select(o => o.EntityId).Distinct().ToList();
         var defectIds = opens.Where(o => o.AgentKey == "defect-agent").Select(o => o.EntityId).Distinct().ToList();
         var reportIds = opens.Where(o => o.AgentKey == "report-agent").Select(o => o.EntityId).Distinct().ToList();
@@ -132,20 +193,6 @@ public sealed class HomeRecentWorkController : ControllerBase
         var docStoreIds = opens.Where(o => o.AgentKey == "document-store").Select(o => o.EntityId).Distinct().ToList();
 
         // 标题富化 + 权限复核（工作区：本人是 owner 或 member；工作流：本人创建）
-        var wsTitles = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (wsIds.Count > 0)
-        {
-            var wsFilter = Builders<ImageMasterWorkspace>.Filter.And(
-                Builders<ImageMasterWorkspace>.Filter.In(x => x.Id, wsIds),
-                Builders<ImageMasterWorkspace>.Filter.Or(
-                    Builders<ImageMasterWorkspace>.Filter.Eq(x => x.OwnerUserId, userId),
-                    Builders<ImageMasterWorkspace>.Filter.AnyEq(x => x.MemberUserIds, userId)));
-            var wss = await _db.ImageMasterWorkspaces.Find(wsFilter)
-                .Project(x => new { x.Id, x.Title })
-                .ToListAsync(ct);
-            foreach (var w in wss) wsTitles[w.Id] = w.Title;
-        }
-
         var wfTitles = new Dictionary<string, string>(StringComparer.Ordinal);
         if (wfIds.Count > 0)
         {
@@ -285,13 +332,14 @@ public sealed class HomeRecentWorkController : ControllerBase
                 "report-agent" => reportTitles.TryGetValue(open.EntityId, out var rp) ? rp : null,
                 "review-agent" => reviewTitles.TryGetValue(open.EntityId, out var rv) ? rv : null,
                 "document-store" => docStoreTitles.TryGetValue(open.EntityId, out var ds) ? ds : null,
-                _ => wsTitles.TryGetValue(open.EntityId, out var ws) ? ws : null,
+                _ => workspaceMetadata.TryGetValue(open.EntityId, out var ws) ? ws.Title : null,
             };
             if (title == null) continue; // 已删除或已失去权限：从继续上次里消失
 
             var route = open.AgentKey switch
             {
-                "literary-agent" => $"/literary-agent/{open.EntityId}",
+                "visual-agent" or "literary-agent" when workspaceMetadata.TryGetValue(open.EntityId, out var workspace)
+                    => ImageMasterWorkspacePresentation.Resolve(open.EntityId, workspace.ScenarioType).Route,
                 "workflow-agent" => $"/workflow-agent/{open.EntityId}",
                 "defect-agent" => $"/defect-agent?defectId={open.EntityId}",
                 "report-agent" => $"/report-agent/report/{open.EntityId}",

@@ -78,6 +78,13 @@ public class RequestResponseLoggingMiddleware
         // 按深度/宽度/长度三维截断，本来就是给人看的那一份。
         "/api/open/",
         "/api/mcp",
+        // OpenDesign 运行时数据面，同理：`workspace/result` 的请求体是
+        // `files[].contentBase64`——刚生成的整页 HTML 与由知识库推导出的正文本身。
+        // 它还比上面两条更危险一点：这条路由是 `[AllowAnonymous]`（凭 runId + bearer 票据），
+        // 落库时挂的是匿名身份，而 apirequestlogs 是同项目**所有分支预览共用**的那张表
+        // （`cross-project-isolation.md` 通道 4），等于把一个用户的私人产物摊给了所有分支。
+        // 诊断能力不受影响：这条链路自己有 design run 与 infra agent 事件两份记录。
+        "/api/design-artifacts/runtime",
     };
 
     /// <summary>
@@ -87,6 +94,15 @@ public class RequestResponseLoggingMiddleware
     /// （`/api/mcp` 会连 `/api/mcp-console` 一起收走，而那是个普通后台面板接口）。
     /// 挡得过宽不会有人发现——日志少一段 body 不报错——但排障能力就这么无声地少一块。
     /// </summary>
+    /// <summary>
+    /// OpenDesign 运行时的模型代理路由（`/api/design-artifacts/runtime/{runId}/llm/v1/...`）。
+    /// 这两条随时可能以 SSE 返回，且不由请求的 Accept 决定，必须始终按流式放行。
+    /// </summary>
+    private static bool IsDesignRuntimeModelProxy(string path) =>
+        path.StartsWith("/api/design-artifacts/runtime/", StringComparison.OrdinalIgnoreCase)
+        && (path.EndsWith("/llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith("/llm/v1/responses", StringComparison.OrdinalIgnoreCase));
+
     private static bool CarriesCredential(string path) =>
         CredentialBearingPathPrefixes.Any(p =>
         {
@@ -117,7 +133,8 @@ public class RequestResponseLoggingMiddleware
         }
 
         var path = context.Request.Path.Value ?? "";
-        var carriesCredential = CarriesCredential(path);
+        var logTarget = HostedSitePreviewLogPolicy.Project(path, context.Request.QueryString.Value);
+        var carriesCredential = CarriesCredential(path) || logTarget.Sensitive;
         if (SkipLogPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
             await _next(context);
@@ -127,7 +144,7 @@ public class RequestResponseLoggingMiddleware
         var requestId = Activity.Current?.Id ?? Guid.NewGuid().ToString("N")[..8];
         context.Items["RequestId"] = requestId;  // 全链路打通：Controller 可通过 HttpContext.Items["RequestId"] 获取
         var method = context.Request.Method;
-        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
+        var query = logTarget.Query;
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
         var tokenInfo = TryReadTokenInfo(context);
@@ -139,15 +156,20 @@ public class RequestResponseLoggingMiddleware
             tokenInfo.Username);
         var userPrefix = BuildUserLogPrefix(userDisplay, resolvedUserId);
         var protocol = context.Request.Protocol;
-        var absoluteUrl = BuildAbsoluteUrl(context, path, query);
+        var absoluteUrl = BuildAbsoluteUrl(context, logTarget.Path, query);
 
         var accept = context.Request.Headers.Accept.ToString();
         // 检查是否为 SSE 流式请求：
         // 1. 客户端显式请求 Accept: text/event-stream
         // 2. Open Platform chat/completions 接口（始终可能是流式响应）
+        // 3. OpenDesign 运行时的模型代理：容器里的 SDK 常常带 `Accept: application/json`
+        //    或 `*/*`，只在请求体里写 `stream`，所以光看 Accept 判不出来。判错的代价不是
+        //    少记一条日志，而是响应被换成 MemoryStream 全量缓冲——CDS 那一端一个字节都收不到，
+        //    撞上它自己 90 秒的中继空闲超时，一次本来健康的长生成就这么被掐断。
         var isEventStream = accept.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/open-platform/", StringComparison.OrdinalIgnoreCase) 
-               && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase);
+               && path.Contains("/chat/completions", StringComparison.OrdinalIgnoreCase)
+            || IsDesignRuntimeModelProxy(path);
         var startedAt = DateTime.UtcNow;
 
         // 记录所有 /api/ 开头的请求（包括 /api/v1/、/api/visual-agent、/api/defect-agent 等）
@@ -279,7 +301,7 @@ public class RequestResponseLoggingMiddleware
 
                 try
                 {
-                    if (responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
+                    if (!carriesCredential && responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
                     {
                         responseBodyStream.Seek(0, SeekOrigin.Begin);
                         using var reader = new StreamReader(responseBodyStream, leaveOpen: true);
@@ -732,8 +754,9 @@ public class RequestResponseLoggingMiddleware
         string? tokenClientType,
         string? tokenSessionKey)
     {
-        var path = context.Request.Path.Value ?? "";
-        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
+        var logTarget = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", context.Request.QueryString.Value);
+        var path = logTarget.Path;
+        var query = logTarget.Query;
         var method = context.Request.Method;
         var protocol = context.Request.Protocol;
         var absoluteUrl = BuildAbsoluteUrl(context, path, query);
@@ -1069,7 +1092,8 @@ public class RequestResponseLoggingMiddleware
             entry.LastSeenAt = now;
             entry.ClientType = "desktop";
 
-            var path = context.Request.Path.Value ?? "";
+            var logTarget = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", context.Request.QueryString.Value);
+            var path = logTarget.Path;
             // 心跳不计入最近请求（避免刷屏）
             var isHeartbeat = path.StartsWith("/api/v1/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase);
 
@@ -1081,7 +1105,7 @@ public class RequestResponseLoggingMiddleware
                     RequestId = requestId,
                     Method = context.Request.Method,
                     Path = path,
-                    Query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : null,
+                    Query = string.IsNullOrEmpty(logTarget.Query) ? null : logTarget.Query,
                     StatusCode = context.Response.StatusCode,
                     DurationMs = durationMs
                 };

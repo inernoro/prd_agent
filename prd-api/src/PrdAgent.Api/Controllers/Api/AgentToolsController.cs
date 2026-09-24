@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.ClaudeSidecar;
+using PrdAgent.Infrastructure.Services.InfraAgentSessions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -399,16 +400,11 @@ public class AgentToolsController : ControllerBase
         var existing = await FindApprovalDecisionAsync(sessionId, approvalId, ct);
         if (!string.IsNullOrWhiteSpace(existing)) return;
 
-        var latest = await _db.InfraAgentEvents
-            .Find(x => x.SessionId == sessionId)
-            .SortByDescending(x => x.Seq)
-            .Limit(1)
-            .FirstOrDefaultAsync(ct);
-
         await _db.InfraAgentEvents.InsertOneAsync(new InfraAgentEvent
         {
             SessionId = sessionId,
-            Seq = (latest?.Seq ?? 0) + 1,
+            Seq = await InfraAgentSessionService.ReserveEventSeqRangeAsync(
+                _db, sessionId, 1, ct),
             Type = InfraAgentEventTypes.ToolResult,
             PayloadJson = JsonSerializer.Serialize(new
             {
@@ -454,16 +450,11 @@ public class AgentToolsController : ControllerBase
             }
         }
 
-        var latest = await _db.InfraAgentEvents
-            .Find(x => x.SessionId == sessionId)
-            .SortByDescending(x => x.Seq)
-            .Limit(1)
-            .FirstOrDefaultAsync(ct);
-
         await _db.InfraAgentEvents.InsertOneAsync(new InfraAgentEvent
         {
             SessionId = sessionId,
-            Seq = (latest?.Seq ?? 0) + 1,
+            Seq = await InfraAgentSessionService.ReserveEventSeqRangeAsync(
+                _db, sessionId, 1, ct),
             Type = InfraAgentEventTypes.ToolCall,
             PayloadJson = JsonSerializer.Serialize(new
             {

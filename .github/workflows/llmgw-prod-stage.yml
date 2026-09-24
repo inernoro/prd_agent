@@ -199,6 +199,8 @@ jobs:
       INPUT_ROUTE_PINNED_MODEL_ID: ${{ github.event.inputs.route_pinned_model_id || '' }}
       PRD_AGENT_API_KEY: ${{ secrets.PRD_AGENT_PROD_API_KEY }}
       LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
+      LLMGW_POST_DEPLOY_SERVICE_KEY: ${{ secrets.LLMGW_PROD_POST_DEPLOY_SERVICE_KEY }}
+      LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY: ${{ secrets.LLMGW_PROD_PROTOCOL_CANARY_KEY }}
       LLMGW_CONSOLE_TOKEN: ${{ secrets.LLMGW_PROD_CONSOLE_TOKEN }}
       LLMGW_CONSOLE_USER: ${{ secrets.LLMGW_PROD_CONSOLE_USER }}
       LLMGW_CONSOLE_PASSWORD: ${{ secrets.LLMGW_PROD_CONSOLE_PASSWORD }}
@@ -248,20 +250,26 @@ jobs:
           target=".llmgw-release-evidence"
           ledger="$target/rollout-ledger.jsonl"
           mkdir -p "$target"
-          if [ ! -s "$ledger" ]; then
+          # Prefer the explicitly requested Actions evidence only when it
+          # actually contains the requested maintenance baseline. Otherwise
+          # restore that exact baseline from the trusted production directory.
+          if [ -s "$ledger" ] && python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
+            --ledger "$ledger" \
+            --commit "${{ github.event.inputs.maintenance_from_commit }}" \
+            --json-out "$target/production-evidence-baseline-audit.json"; then
+            echo "Maintenance baseline verified from the requested GitHub Actions artifact."
+          else
             python3 scripts/llmgw-prod-evidence-restore.py \
               --source "$PRODUCTION_EVIDENCE_SOURCE" \
               --target "$target" \
               --commit "${{ github.event.inputs.maintenance_from_commit }}" \
               --require-owner-uid 0 \
               --json-out "$target/production-evidence-restore.json"
-          else
-            echo "Rollout ledger restored from the requested GitHub Actions artifact."
+            python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
+              --ledger "$ledger" \
+              --commit "${{ github.event.inputs.maintenance_from_commit }}" \
+              --json-out "$target/production-evidence-baseline-audit.json"
           fi
-          python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
-            --ledger "$ledger" \
-            --commit "${{ github.event.inputs.maintenance_from_commit }}" \
-            --json-out "$target/production-evidence-baseline-audit.json"
 
       - name: Run production stage
         shell: bash

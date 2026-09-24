@@ -2,6 +2,7 @@ import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './service
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
 import { defaultLocalhostDeploy } from './routes/github-webhook.js';
 import http from 'node:http';
+import { redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import os from 'node:os';
 import * as v8 from 'node:v8';
 import tls from 'node:tls';
@@ -58,7 +59,7 @@ import {
   runExternalPortAudit,
   type ExternalPortAuditFamily,
 } from './services/external-port-audit.js';
-import { ProxyService } from './services/proxy.js';
+import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
@@ -117,6 +118,7 @@ import { readPreviewMirror, registerLoadedPreviewMirror } from './services/previ
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { startRotationRecoveryArtifactCleanup } from './services/infra-local-recovery-drill.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -732,17 +734,43 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         }
         const out = `${tmpDir}/${t.fileName}`;
         const finalOut = `${dir}/${t.fileName}`;
+        let maintenanceJobId: string | null = null;
+        let maintenanceCompleted = false;
         try {
+          if (t.kind === 'mongo' || t.kind === 'redis') {
+            try {
+              const maintenanceJob = await stateService.beginInfraMaintenanceJob({
+                projectId: t.projectId,
+                serviceId: t.id,
+                runtime: t.kind === 'mongo' ? 'mongodb' : 'redis',
+                kind: 'automatic-backup',
+              });
+              maintenanceJobId = maintenanceJob.id;
+            } catch (error) {
+              if ((error as Error).message === 'infra_maintenance.credential_rotation_in_progress') {
+                throw new Error('凭据轮换进行中，本轮自动备份已跳过且未连接数据服务');
+              }
+              throw error;
+            }
+          }
           let cmd: string;
+          let commandStdin: string | undefined;
           if (t.kind === 'mongo') {
-            // 凭据在**容器内部**展开：既不进宿主命令行（因而不进 CDS 日志、不进
-            // 宿主 ps），也不依赖 CDS 台账里那份 env——台账看不到 compose 导入或
-            // 手工起的容器的真实凭据，照台账取会在有认证的库上静默失败。
-            cmd = `docker exec ${shq(t.containerName)} sh -lc `
-              + `'U="${'$'}{MONGO_INITDB_ROOT_USERNAME:-${'$'}{MONGO_USERNAME:-${'$'}MONGODB_USERNAME}}"; `
-              + `P="${'$'}{MONGO_INITDB_ROOT_PASSWORD:-${'$'}{MONGO_PASSWORD:-${'$'}MONGODB_PASSWORD}}"; `
-              + `if [ -n "${'$'}U" ]; then mongodump --archive --gzip -u "${'$'}U" -p "${'$'}P" --authenticationDatabase admin; `
-              + `else mongodump --archive --gzip; fi' > ${shq(out)}`;
+            // 轮换后数据库容器本身不会重建，启动时 env 仍是旧账号。备份必须读取
+            // state 当前权威值并把口令经 stdin 交给 mongodump config；否则旧用户撤销
+            // 后所有自动备份都会失败。口令不进入宿主或容器 argv。
+            const current = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
+            if (!current) throw new Error('轮换后的 Mongo 权威服务记录不存在');
+            const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
+            const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
+            const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
+            if (user) {
+              if (!password) throw new Error('Mongo 权威账号存在但口令为空');
+              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
+              commandStdin = `password: ${JSON.stringify(password)}\n`;
+            } else {
+              cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
+            }
           } else if (t.kind === 'mysql') {
             // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
             // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。
@@ -834,7 +862,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           if (!capped) {
             throw new Error(`可用空间 ${(lastFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GiB 不足以在保留安全余量后写入，跳过`);
           }
-          const r = await shell.exec(capped.command, { timeout: INFRA_BACKUP_TIMEOUT_MS });
+          const r = await shell.exec(capped.command, { timeout: INFRA_BACKUP_TIMEOUT_MS, stdin: commandStdin });
           if (r.exitCode !== 0) {
             const capGiB = (capped.capBytes / 1024 / 1024 / 1024).toFixed(1);
             // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
@@ -900,6 +928,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 保留策略是它的上界（份数 + 天数），不会因为离机长期挂掉就无限堆积把盘写满。
           const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
           if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
+          maintenanceCompleted = true;
 
           // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
           const ls = await shell.exec(
@@ -937,6 +966,13 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
           await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
           outcomes.push({ id: t.id, projectId: t.projectId, ok: false, error: (err as Error).message });
+        } finally {
+          if (maintenanceJobId) {
+            await stateService.finishInfraMaintenanceJob(
+              maintenanceJobId,
+              maintenanceCompleted ? 'completed' : 'failed',
+            );
+          }
         }
       }
 
@@ -1881,6 +1917,7 @@ async function initStateService(): Promise<void> {
   if (rawStorageMode === 'json') {
     stateService = new StateService(stateFile, config.repoRoot);
     stateService.load();
+    await stateService.flush();
     storageModeResolved = 'json';
     return;
   }
@@ -1902,6 +1939,7 @@ async function initStateService(): Promise<void> {
     console.log('  [storage] CDS_STORAGE_MODE=auto + no CDS_MONGO_URI → using JSON backend');
     stateService = new StateService(stateFile, config.repoRoot);
     stateService.load();
+    await stateService.flush();
     storageModeResolved = 'auto-fallback-json';
     return;
   }
@@ -1961,6 +1999,7 @@ async function initStateService(): Promise<void> {
     }
     stateService = new StateService(stateFile, config.repoRoot, splitStore);
     stateService.load();
+    await stateService.flush();
     storageModeResolved = 'mongo-split';
     activeMongoHandle = splitHandle;
     console.log(
@@ -2027,6 +2066,7 @@ async function initStateService(): Promise<void> {
 
   stateService = new StateService(stateFile, config.repoRoot, mongoStore);
   stateService.load();
+  await stateService.flush();
   storageModeResolved = 'mongo';
   activeMongoHandle = handle;
   console.log(`  [storage] mongo backend active (uri=${uri.replace(/\/\/[^@]*@/, '//***:***@')}, db=${dbName})`);
@@ -2097,6 +2137,10 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
+  recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
+  onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
+});
 const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
 const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
 // 每日安全体检：把公网端口、无口令的库、备份新鲜度、恢复演练合成一句结论。
@@ -4623,6 +4667,7 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
+  clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
   if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
   dockerEventMonitor.stop();
@@ -4710,19 +4755,7 @@ process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
-  const branch = stateService.getBranch(branchId);
-  if (!branch) return null;
-
-  if (profileId && branch.services[profileId]) {
-    const svc = branch.services[profileId];
-    if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
-  }
-
-  // Fallback: find first running service
-  for (const svc of Object.values(branch.services)) {
-    if (svc.status === 'running') return `http://127.0.0.1:${svc.hostPort}`;
-  }
-  return null;
+  return resolveBranchUpstream(stateService.getBranch(branchId), profileId);
 });
 
 // ── Web access tracking (throttled: max 1 event per branch per 2s) ──
@@ -4738,7 +4771,7 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
     id: nextActivitySeq(),
     ts: new Date().toISOString(),
     method,
-    path: reqPath,
+    path: redactHostedSitePreviewLog(reqPath),
     status,
     duration,
     type: 'web',

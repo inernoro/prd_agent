@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -41,6 +42,11 @@ public class MobileDashboardController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    /// <summary>
+    /// 视觉创作与文学创作共用 image_master_workspaces 集合，首页动态必须按场景区分入口。
+    /// 否则 MCP 创建的文学工作区会被硬编码成视觉创作，点击后进入错误编辑器。
+    /// 未知场景沿用视觉创作，保持既有工作区的兼容行为。
+    /// </summary>
     // ─────────────────────────────────────────
     //  GET /api/mobile/feed — 最近活动 Feed 流
     // ─────────────────────────────────────────
@@ -66,7 +72,7 @@ public class MobileDashboardController : ControllerBase
         // 哪些来源没取到——空列表到底是"真的没有"还是"查挂了"，只有这里知道
         var degradedSources = new List<string>();
 
-        // 1) 视觉创作工作区
+        // 1) 视觉 / 文学工作区（两者共用 image_master_workspaces，按 ScenarioType 分流）
         try
         {
             var workspaces = await _db.ImageMasterWorkspaces
@@ -77,14 +83,15 @@ public class MobileDashboardController : ControllerBase
 
             foreach (var w in workspaces)
             {
+                var target = ImageMasterWorkspacePresentation.Resolve(w.Id, w.ScenarioType);
                 feedItems.Add(new
                 {
                     id = w.Id,
-                    type = "visual-workspace",
+                    type = target.FeedType,
                     title = w.Title ?? "未命名工作区",
-                    subtitle = "视觉创作",
+                    subtitle = target.Subtitle,
                     updatedAt = w.UpdatedAt,
-                    navigateTo = $"/visual-agent/{w.Id}",
+                    navigateTo = target.Route,
                     coverAssetId = w.CoverAssetIds?.FirstOrDefault(),
                 });
             }

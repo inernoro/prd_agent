@@ -57,6 +57,7 @@ import {
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
@@ -490,6 +491,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [autoSubmitEnabled, setAutoSubmitEnabled] = useState(true);
   const autoSubmitEnabledRef = useRef(true);
   useEffect(() => { autoSubmitEnabledRef.current = autoSubmitEnabled; }, [autoSubmitEnabled]);
+  const [autoSubmitSuppressed, setAutoSubmitSuppressed] = useState(true);
+  const autoSubmitSuppressedRef = useRef(true);
   const [submissionState, setSubmissionState] = useState<{ submitted: boolean; submissionId?: string }>({ submitted: false });
   const submissionStateRef = useRef(submissionState);
   useEffect(() => { submissionStateRef.current = submissionState; }, [submissionState]);
@@ -518,8 +521,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 自动投稿：任意图片生成成功后触发（通过 ref 读取最新值，避免闭包陈旧）
   const tryAutoSubmit = useCallback(() => {
-    if (!autoSubmitEnabledRef.current || submissionStateRef.current.submitted) return;
-    createSubmission({ contentType: 'literary', workspaceId })
+    if (autoSubmitSuppressedRef.current || !autoSubmitEnabledRef.current || submissionStateRef.current.submitted) return;
+    createSubmission({ contentType: 'literary', trigger: 'auto', workspaceId })
       .then((res) => {
         if (res.success) {
           setSubmissionState({ submitted: true, submissionId: res.data.submission?.id });
@@ -547,7 +550,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return;
       }
 
-      const litRes = await createSubmission({ contentType: 'literary', workspaceId });
+      const litRes = await createSubmission({ contentType: 'literary', trigger: 'manual', workspaceId });
       if (litRes.success) {
         setSubmissionState({ submitted: true, submissionId: litRes.data.submission?.id });
         toast.success('已投稿到作品广场');
@@ -624,39 +627,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelPrefReady, setModelPrefReady] = useState(false);
 
   // 生图模型池 → 可选择列表
-  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
-  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
-    const seenActualModels = new Set<string>();
-    return pools
-      .filter((g) => g.models && g.models.length > 0)
-      .map((g) => {
-        const first = g.models[0]!;
-        return {
-          poolId: g.id,
-          id: `pool_${g.id}`,
-          name: g.code || g.name,
-          modelName: g.code || first.modelId,
-          actualModelId: first.actualModelId || first.modelId,
-          platformId: first.platformId,
-          actualPlatformId: first.actualPlatformId || first.platformId,
-          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
-          isDedicated: g.isDedicated,
-          isDefault: g.isDefault,
-        };
-      })
-      .filter((m) => m.enabled)
-      // 两个逻辑 PublicId 指向同一物理模型时只展示排序靠前的稳定入口。
-      // 目录已把调用方默认排在前面，因此 gpt-image-2 会盖住旧的 gpt-image-2-all 暴露项。
-      .filter((m) => {
-        const identity = `${m.actualPlatformId}:${m.actualModelId}`;
-        if (seenActualModels.has(identity)) return false;
-        seenActualModels.add(identity);
-        return true;
-      });
-  }, []);
+  type PoolModel = LiteraryModelOption;
 
-  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
-  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
+  const enabledImageModels = useMemo(() => buildLiteraryModelOptions(imageGenPools), [imageGenPools]);
+  const enabledChatModels = useMemo(() => buildLiteraryModelOptions(chatPools), [chatPools]);
 
   const reloadImageGenPools = useCallback(async () => {
     setImageGenModelError(null);
@@ -677,10 +651,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, []);
 
-  // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
+  // 有效选中模型（用户偏好优先，其次是网关显式默认；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
-    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
-    const fromPool = byId ?? enabledImageModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledImageModels, imageModelPrefId);
     if (fromPool) return fromPool;
     // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
     if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
@@ -688,8 +661,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
 
   const effectiveChatModel = useMemo<PoolModel | null>(() => {
-    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
-    const fromPool = byId ?? enabledChatModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledChatModels, chatModelPrefId);
     if (fromPool) return fromPool;
     if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
@@ -988,7 +960,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedModel({
               id: 'auto-resolved',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
@@ -1020,7 +992,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedChatModel({
               id: 'auto-resolved-chat',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
@@ -1194,6 +1166,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
+        const suppressAutoSubmit = ws.suppressAutoSubmit === true;
+        autoSubmitSuppressedRef.current = suppressAutoSubmit;
+        setAutoSubmitSuppressed(suppressAutoSubmit);
+        setAutoSubmitEnabled(!suppressAutoSubmit);
         const content = ws.articleContent || '';
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
@@ -2745,7 +2721,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     enabledChatModels.map((m) => (
                       <QuickMenuItem
                         key={m.id}
-                        label={m.name || m.modelName}
+                        label={
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">{m.name}</span>
+                            {m.isDefault && (
+                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
+                                默认模型
+                              </span>
+                            )}
+                          </span>
+                        }
                         selected={effectiveChatModel?.id === m.id}
                         onSelect={() => setChatModelPrefId(m.id)}
                       />
@@ -2796,7 +2781,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     enabledImageModels.map((m) => (
                       <QuickMenuItem
                         key={m.id}
-                        label={m.name || m.modelName}
+                        label={
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate">{m.name}</span>
+                            {m.isDefault && (
+                              <span className="shrink-0 rounded px-1 text-[11px]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input-hover)' }}>
+                                默认模型
+                              </span>
+                            )}
+                          </span>
+                        }
                         selected={effectiveModel?.id === m.id}
                         onSelect={() => setImageModelPrefId(m.id)}
                       />
@@ -2826,17 +2820,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               )}
               <button
                 type="button"
-                onClick={() => setAutoSubmitEnabled((v) => !v)}
+                onClick={() => {
+                  if (!autoSubmitSuppressed) setAutoSubmitEnabled((v) => !v);
+                }}
+                disabled={autoSubmitSuppressed}
                 className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                 style={{
                   // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
-                  color: submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
-                  background: submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                  color: autoSubmitSuppressed ? 'var(--text-muted)' : submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                  background: autoSubmitSuppressed ? 'transparent' : submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
+                  cursor: autoSubmitSuppressed ? 'not-allowed' : undefined,
                 }}
-                title={submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
+                title={autoSubmitSuppressed ? '私有工作区不自动投稿；如需公开，请点击“投稿当前”' : submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
               >
                 <Send size={13} />
-                <span>{submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
+                <span>{autoSubmitSuppressed ? '私有' : submissionState.submitted ? '已投稿' : autoSubmitEnabled ? '投稿' : '投稿关'}</span>
               </button>
               {!submissionState.submitted && (
                 <button

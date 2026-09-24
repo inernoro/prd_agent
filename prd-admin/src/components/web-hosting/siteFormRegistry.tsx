@@ -35,7 +35,7 @@ export const SITE_FORM_REGISTRY: Record<SiteFormKey, SiteFormConfig> = {
   deck: { label: '幻灯片', icon: MonitorPlay, hint: '一套幻灯片，访客可用上下键翻页' },
 };
 
-type SiteFormInput = Pick<HostedSite, 'wrappedAssetType' | 'files'> & { isSlideDeck?: boolean };
+type SiteFormInput = Pick<HostedSite, 'wrappedAssetType' | 'files' | 'contentShape'> & { isSlideDeck?: boolean };
 
 /** 判定站点形态。包装类型优先（后端权威），其次按文件数区分单页 HTML 与 ZIP 站。 */
 export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
@@ -46,6 +46,8 @@ export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
   // deck 判定在包装类型之后、文件数之前：一套 reveal.js 幻灯片既可能是单页也可能是 ZIP，
   // 但它首先是「幻灯片」——用户在列表里要一眼认出的是这个
   if (site.isSlideDeck) return 'deck';
+  if (site.contentShape === 'self-contained-html') return 'html';
+  if (site.contentShape === 'multi-file') return 'zip';
   return (site.files?.length ?? 0) > 1 ? 'zip' : 'html';
 }
 

@@ -189,6 +189,7 @@ public class LiteraryOpenApiController : ControllerBase
             FolderName = string.IsNullOrWhiteSpace(req?.FolderName) ? null : req.FolderName.Trim(),
             ArticleContentWithMarkers = req?.MarkedContent,
             ArticleWorkflow = req?.MarkedContent is { } prepared ? LiteraryMcpWorkflow.Prepare(prepared) : null,
+            SuppressAutoSubmit = true,
             CreatedAt = now,
             UpdatedAt = now,
         };

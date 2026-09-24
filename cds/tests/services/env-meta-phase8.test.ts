@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { parseCdsCompose } from '../../src/services/compose-parser.js';
 
@@ -128,6 +130,30 @@ services: {}
       requiredGroup: 'initial-admin',
       requiredOption: 'map',
     });
+  });
+
+  it('识别 generate: secret（内部密钥由 CDS 生成），未知 generate 值不透传', () => {
+    const parsed = parseCdsCompose(`
+x-cds-project:
+  name: generated-env
+x-cds-env-meta:
+  INTERNAL_KEY:
+    kind: auto
+    generate: secret
+  OTHER_KEY:
+    kind: auto
+    generate: password
+services: {}
+`);
+
+    expect(parsed!.envMeta.INTERNAL_KEY).toEqual({ kind: 'auto', generate: 'secret' });
+    expect(parsed!.envMeta.OTHER_KEY).toEqual({ kind: 'auto' });
+  });
+
+  it('仓库部署清单里的 DESIGN_RUNTIME_API_KEY 由 CDS 生成，不是要人填的必填项', () => {
+    const repoRoot = path.resolve(__dirname, '../../..');
+    const parsed = parseCdsCompose(fs.readFileSync(path.join(repoRoot, 'cds-compose.yml'), 'utf8'));
+    expect(parsed!.envMeta.DESIGN_RUNTIME_API_KEY).toMatchObject({ kind: 'auto', generate: 'secret' });
   });
 
   it('hint 缺失时不报错', () => {
