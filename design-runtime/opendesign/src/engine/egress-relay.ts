@@ -147,6 +147,9 @@ export async function startEgressRelay(options: EgressRelayOptions): Promise<Egr
       });
       upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
       upstream.setTimeout?.(90_000, () => upstream.destroy());
+      // 反方向同理：OpenDesign 取消或断开时 req.pipe 只是脱钩，上游模型调用会接着烧 token、
+      // 占着中继的连接直到 90 秒超时。下游一关（且不是正常写完）就掐掉上游。
+      res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });
       req.pipe(upstream);
     });
   });

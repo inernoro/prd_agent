@@ -21,4 +21,8 @@ describe('模型出口中继：上游断流立刻掐掉下游', () => {
     expect(after).toContain("upstreamResponse.on('aborted', abortDownstream);");
     expect(after).toContain("upstreamResponse.on('error', abortDownstream);");
   });
+
+  it('下游断开（不是正常写完）立刻掐掉上游模型调用，不再烧 token 占连接', () => {
+    expect(source).toContain("res.on('close', () => { if (!res.writableFinished) upstream.destroy(); });");
+  });
 });

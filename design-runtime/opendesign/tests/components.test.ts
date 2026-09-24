@@ -228,6 +228,34 @@ describe('model egress relay', () => {
     expect(Date.now() - startedAt).toBeLessThan(5000);
   });
 
+  it('tears down the upstream call as soon as the downstream caller disconnects', async () => {
+    let upstreamClosedAt = 0;
+    upstream = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: first\n\n');
+      // 模拟一次长流式模型调用：一直不结束，看中继会不会在下游断开时替我们掐掉它。
+      req.socket.on('close', () => { upstreamClosedAt = Date.now(); });
+    });
+    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+    relay = await startEgressRelay({
+      modelBaseUrl: `${origin}/llm/v1`,
+      mapModelTicket: 'real-map-ticket',
+      relayClientToken: 'placeholder',
+      port: 0,
+      isDeniedAddress: () => false,
+    });
+    const controller = new AbortController();
+    const response = await fetch(`${relay.proxiedBaseUrl}/responses`, {
+      method: 'POST', headers: { Authorization: 'Bearer placeholder' }, body: '{}', signal: controller.signal,
+    });
+    expect(response.status).toBe(200);
+    const abortedAt = Date.now();
+    controller.abort();
+    await waitFor(() => upstreamClosedAt > 0 || undefined, 'upstream closed after downstream abort', 5000);
+    expect(upstreamClosedAt - abortedAt).toBeLessThan(5000);
+  });
+
   it('refuses to forward to private, loopback, link-local or metadata addresses by default', async () => {
     const { origin, seen } = await startUpstream();
     relay = await startEgressRelay({
