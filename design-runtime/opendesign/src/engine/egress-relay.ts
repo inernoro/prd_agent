@@ -139,6 +139,11 @@ export async function startEgressRelay(options: EgressRelayOptions): Promise<Egr
         delete responseHeaders.location;
         res.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
         upstreamResponse.pipe(res);
+        // pipe 不会把上游响应体的中断传给下游：MAP 发完响应头后断流，下游要等 90 秒超时才知道。
+        // 上游一断就立刻掐掉下游，让 OpenDesign 马上看到这一轮被打断，而不是白等。
+        const abortDownstream = () => res.destroy();
+        upstreamResponse.on('aborted', abortDownstream);
+        upstreamResponse.on('error', abortDownstream);
       });
       upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
       upstream.setTimeout?.(90_000, () => upstream.destroy());

@@ -251,3 +251,5 @@
 | ops | cds | cds-compose 新增 design-opendesign 服务（仅 express）与 api 的执行服务地址、密钥环境变量 |
 | docs | design-runtime | 新增设计执行协议规格，OpenDesign 债务台账补第 1 阶段结论与后续事项 |
 | fix | prd-admin | 工作台里浮在对话上的面板改为不透明；选知识库挪到右边大区域，不再挤在 420px 对话栏里（验收撞见面板透底、标题被截断） |
+| fix | cds | 模型出口中继在上游断流时立刻关闭下游，不再让 OpenDesign 等 90 秒超时（独立设计执行服务同步修复并补真进程用例） |
+| fix | prd-admin | PPT 大纲完成提示按页码去重计数，来源修复重发的页不再被算成新页 |

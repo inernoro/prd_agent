@@ -1882,3 +1882,10 @@ run `d2d5c42d95b242e8b2b34a20e2029c03` 在 CDS 质量闸与一轮修复后都通
 - 服务：`design-runtime/opendesign/`（入口 `src/app.ts`，协议 `src/protocol.ts`，任务状态机 `src/tasks.ts`，隔离清空 `src/engine/lifecycle.ts`）
 - 部署：`.github/workflows/branch-image.yml`、`.github/workflows/ci.yml`、`cds-compose.yml`；生产 `docker-compose.yml` 本阶段未改
 - 对拍守卫：`cds/tests/services/build-scope-ci-parity.test.ts`
+
+## 2026-09-24 复审里记下、本 PR 不展开的两条
+
+| 欠什么 | 现象 | 为什么不在本 PR 修 | 修法方向 |
+|---|---|---|---|
+| 已校验版本预览里的 ES 模块脚本拿不到文件 | 修改草稿若是 Vite 这类多文件包（`<script type="module" src>`），预览 iframe 是不带同源权限的沙箱，模块脚本按跨源方式请求、带不上按路径发的预览 cookie，拿到 404，页面空白；单 HTML 草稿不受影响 | 要把预览授权从「路径 cookie」改成「路径里的一次性能力票据 + CORS 响应头」，是预览安全模型的重设计，不是一处补丁 | 票据进路径段，相对资源自动带上；文件响应对 `Origin: null` 回 `Access-Control-Allow-Origin`；cookie 路径下线 |
+| 生成工作台接回上次任务时不看打开的场景 | 从知识库深链带着 A 稿打开工作台后，刷新前另一处发起的生成任务会被接回显示；工作台显示「接着看上次没跑完的生成」，完成后打开那个任务的网页，这次带进来的 A 稿不会自动放进去 | 目标团队空间已在创建任务时冻结到服务端，归属不会错；受影响的只是这一次的预填资料，属体验问题 | 恢复键里同时记下发起时的来源与目标空间，打开场景不一致时先问「接着看上一个，还是开始这一个」 |

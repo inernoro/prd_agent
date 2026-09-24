@@ -115,7 +115,6 @@ export default function SiteWorkbench({
         </span>
       )}
       maxWidth={1440}
-      contentClassName="sm:p-1"
       contentStyle={{
         width: 'min(1440px, calc(100vw - 16px))',
         maxWidth: 'calc(100vw - 16px)',

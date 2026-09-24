@@ -204,6 +204,30 @@ describe('model egress relay', () => {
     expect((await fetch(`http://127.0.0.1:${relay.port}/__health`)).status).toBe(204);
   });
 
+  it('closes the downstream stream as soon as the upstream drops mid-response', async () => {
+    upstream = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: first\n\n');
+      // 发完一段就把连接硬掐掉，模拟 MAP 重启或网络中断。
+      setTimeout(() => res.socket?.destroy(), 50);
+    });
+    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+    relay = await startEgressRelay({
+      modelBaseUrl: `${origin}/llm/v1`,
+      mapModelTicket: 'real-map-ticket',
+      relayClientToken: 'placeholder',
+      port: 0,
+      isDeniedAddress: () => false,
+    });
+    const startedAt = Date.now();
+    const response = await fetch(`${relay.proxiedBaseUrl}/responses`, { method: 'POST', headers: { Authorization: 'Bearer placeholder' }, body: '{}' });
+    expect(response.status).toBe(200);
+    // 下游必须很快看到中断（读流抛错），而不是等 90 秒超时。
+    await expect(response.text()).rejects.toThrow();
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+  });
+
   it('refuses to forward to private, loopback, link-local or metadata addresses by default', async () => {
     const { origin, seen } = await startUpstream();
     relay = await startEgressRelay({
