@@ -581,6 +581,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 风格图/参考图配置（新的多配置模型）
   const [referenceImageConfigs, setReferenceImageConfigs] = useState<ReferenceImageConfig[]>([]);
+  // 列表是否已经是服务端的真实结果。未读到 / 读取失败时空数组不等于「没有风格图」：
+  // 服务端生图时自己查启用中的风格图，界面若在这时显示「不使用」，就是在对用户说谎。
+  const [referenceImageListReady, setReferenceImageListReady] = useState(false);
+  const [referenceImageLoadError, setReferenceImageLoadError] = useState<string | null>(null);
   const [referenceImageLoading, setReferenceImageLoading] = useState(false);
   const [referenceImageSaving, setReferenceImageSaving] = useState(false);
   const referenceImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -1107,6 +1111,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         // 按 ID 稳定排序，避免操作后列表重排序导致页面闪烁
         const sorted = [...res.data.items].sort((a, b) => a.id.localeCompare(b.id));
         setReferenceImageConfigs(sorted);
+        setReferenceImageListReady(true);
+        setReferenceImageLoadError(null);
+      } else {
+        setReferenceImageLoadError(res?.error?.message || '风格图列表读取失败');
       }
     } finally {
       setReferenceImageLoading(false);
@@ -3526,31 +3534,43 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="风格参考图"
                 width={260}
+                // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
+                onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
                 trigger={
                   <PopupButton
                     icon={<ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
-                    value={activeRefConfig?.name || '无'}
+                    value={!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
                     isSet={!!activeRefConfig}
-                    title={`风格参考图：${activeRefConfig?.name || '不使用'}`}
+                    title={`风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
                     aria-label="风格参考图"
                   />
                 }
               >
-                <QuickMenuItem
-                  label="不使用"
-                  selected={!activeRefConfig}
-                  disabled={referenceImageSaving}
-                  onSelect={() => { if (activeRefConfig) void switchReferenceImage(activeRefConfig, false); }}
-                />
-                {referenceImageConfigs.map((c) => (
-                  <QuickMenuItem
-                    key={c.id}
-                    label={c.name || '未命名'}
-                    selected={c.isActive}
-                    disabled={referenceImageSaving}
-                    onSelect={() => { if (!c.isActive) void switchReferenceImage(c, true); }}
-                  />
-                ))}
+                {!referenceImageListReady ? (
+                  <QuickMenuEmpty>
+                    {referenceImageLoadError && !referenceImageLoading
+                      ? `读取风格图失败：${referenceImageLoadError}。关闭菜单再打开即可重试。`
+                      : '正在读取风格图…'}
+                  </QuickMenuEmpty>
+                ) : (
+                  <>
+                    <QuickMenuItem
+                      label="不使用"
+                      selected={!activeRefConfig}
+                      disabled={referenceImageSaving}
+                      onSelect={() => { if (activeRefConfig) void switchReferenceImage(activeRefConfig, false); }}
+                    />
+                    {referenceImageConfigs.map((c) => (
+                      <QuickMenuItem
+                        key={c.id}
+                        label={c.name || '未命名'}
+                        selected={c.isActive}
+                        disabled={referenceImageSaving}
+                        onSelect={() => { if (!c.isActive) void switchReferenceImage(c, true); }}
+                      />
+                    ))}
+                  </>
+                )}
                 <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
               </QuickMenu>
 
