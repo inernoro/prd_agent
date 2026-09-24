@@ -74,6 +74,8 @@ export interface GenerationRequest {
   sourceSurface: 'knowledge-base' | 'web-hosting';
   knowledge: KnowledgeEntrySelection[];
   styleId: string | null;
+  /** 风格画廊「更多风格」里直接选的设计系统；有值时服务端不看 styleId。 */
+  designSystemId?: string | null;
   attachmentIds: string[];
 }
 
@@ -344,6 +346,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
       destinationTeamId: destinationTeamIdRef.current ?? null,
       knowledgeReferences,
       styleId: request.styleId,
+      designSystemId: request.designSystemId ?? null,
       attachmentIds: request.attachmentIds,
     });
     if (!created.success) {

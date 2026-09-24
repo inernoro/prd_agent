@@ -109,6 +109,30 @@ public sealed class DesignGenerationSettingsTests
     }
 
     [Fact]
+    public void 直接选目录里的设计系统_按快照冻结且与同名预设区分_未知编号说清原因()
+    {
+        var settings = DesignGenerationSettingsService.Effective(null, Catalog);
+
+        var frozen = DesignGenerationSettingsService.FreezeCatalogStyle(settings, Catalog, "Nike");
+        Assert.Equal("nike", frozen.DesignSystemId);
+        Assert.Equal(DesignGenerationSettingsService.CatalogStylePrefix + "nike", frozen.StyleId);
+        Assert.False(string.IsNullOrWhiteSpace(frozen.StyleName));
+        // 提示词与自查强度仍取当前设置：目录风格只换「长什么样」，不换「怎么设计」。
+        Assert.Equal(settings.GeneratePrompt, frozen.GeneratePrompt);
+        Assert.Equal(settings.ReviewMode, frozen.ReviewMode);
+
+        // 与同名预设不是一回事：指纹不同，任务书里也分得开。
+        var preset = DesignGenerationSettingsService.Freeze(settings, "editorial");
+        var catalogEditorial = DesignGenerationSettingsService.FreezeCatalogStyle(settings, Catalog, "editorial");
+        Assert.NotEqual(preset.StyleId, catalogEditorial.StyleId);
+        Assert.NotEqual(preset.PromptFingerprint, catalogEditorial.PromptFingerprint);
+
+        var unknown = Assert.Throws<DesignGenerationSettingsException>(
+            () => DesignGenerationSettingsService.FreezeCatalogStyle(settings, Catalog, "no-such-system"));
+        Assert.Contains("no-such-system", unknown.Message);
+    }
+
+    [Fact]
     public void 没选风格时取默认风格_选了停用或不存在的风格要说清原因()
     {
         var settings = DesignGenerationSettingsService.Effective(null, Catalog);

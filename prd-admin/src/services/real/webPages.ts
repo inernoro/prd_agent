@@ -1524,14 +1524,16 @@ export async function createDesignArtifactRun(input: {
   destinationTeamId?: string | null;
   /** 知识库引用（0–3 篇）；与 attachmentIds 至少有一种，两者可同时存在。 */
   knowledgeReferences: DesignKnowledgeReferenceInput[];
-  /** 生成弹窗里选的风格预设；不传则由服务端用设置里的默认风格。 */
+  /** 生成工作台里选的风格预设；不传则由服务端用设置里的默认风格。 */
   styleId?: string | null;
+  /** 风格画廊「更多风格」里直接选的 OpenDesign 设计系统；与 styleId 二选一，有它就不传 styleId。 */
+  designSystemId?: string | null;
   /** 直接上传的文件（POST /api/v1/attachments 返回的 id），最多 5 个。 */
   attachmentIds?: string[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
-  const { styleId, attachmentIds, runtime, ...rest } = input;
+  const { styleId, designSystemId, attachmentIds, runtime, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
@@ -1545,7 +1547,7 @@ export async function createDesignArtifactRun(input: {
       })),
       // 不传执行器时交给服务端按「网页生成设置」的默认值决定，前端不再写死一个默认。
       ...(runtime ? { runtime } : {}),
-      ...(styleId ? { styleId } : {}),
+      ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
   });

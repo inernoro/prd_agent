@@ -24,6 +24,8 @@ import {
 } from '../designAttachments';
 import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, orderRuntimeCards, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
 import { useSiteGenerationRun } from './useSiteGenerationRun';
+import { StyleGallery, presetSelection, type StyleGallerySelection } from './StyleGallery';
+import { StyleThumbnail } from './StyleThumbnail';
 import {
   AssistantBubble,
   ComposerSheet,
@@ -72,7 +74,6 @@ export default function NewSiteStage({
   pane,
   onPaneChange,
   onGenerated,
-  onOpenSettings,
   onBusyChange,
 }: {
   source?: WorkbenchSource | null;
@@ -80,7 +81,6 @@ export default function NewSiteStage({
   pane: WorkbenchPane;
   onPaneChange: (pane: WorkbenchPane) => void;
   onGenerated: (siteId: string, intro: GenerationIntro) => void;
-  onOpenSettings?: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [instruction, setInstruction] = useState('');
@@ -98,9 +98,10 @@ export default function NewSiteStage({
   const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
   const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
-  const [stylesError, setStylesError] = useState<string | null>(null);
-  const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<'knowledge' | 'notes' | 'style' | null>(null);
+  /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
+  const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [sheet, setSheet] = useState<'knowledge' | 'notes' | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
   /** 已发出去的那一条（对话里的用户气泡）；失败后输入框里的内容原样保留，可直接再发。 */
   const [sent, setSent] = useState<{ text: string; chips: string[]; runtimeLabel: string; styleName?: string | null } | null>(null);
@@ -146,12 +147,11 @@ export default function NewSiteStage({
       if (settings.success) {
         const enabled = settings.data.styles.filter((style) => style.enabled);
         setStyles(enabled);
-        setStylesError(null);
-        setSelectedStyleId((enabled.find((style) => style.isDefault) ?? enabled[0])?.id ?? null);
+        const preferred = enabled.find((style) => style.isDefault) ?? enabled[0];
+        setStyleSelection((current) => current ?? (preferred ? presetSelection(preferred) : null));
       } else {
+        // 读不到预设就不预选：服务端会用设置里的默认风格，右边样张说明拿不到。
         setStyles([]);
-        setSelectedStyleId(null);
-        setStylesError(settings.error?.message || '风格列表暂时读不到');
       }
       setLoadingKnowledge(false);
     });
@@ -169,7 +169,13 @@ export default function NewSiteStage({
     run.generating ? run.activeRunRuntime : null,
   );
   const fallbackNotice = runtimeFallbackNotice(capabilities, settingsDefaultRuntime, requestRuntime?.id);
-  const selectedStyle = styles.find((style) => style.id === selectedStyleId) ?? null;
+  const selectedStyle = styleSelection?.kind === 'preset'
+    ? styles.find((style) => style.id === styleSelection.styleId) ?? null
+    : null;
+  /** 样张标题：资料放进来后先换成资料的标题，让用户预判成品。 */
+  const sampleTitle = selectedKnowledge[0]?.title
+    || titleFromFileName(uploads.items.find((item) => item.status !== 'failed')?.fileName ?? '')
+    || undefined;
   const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
   const eta = runtimeCopy ? `${runtimeCopy.facts[0].value} ${runtimeCopy.facts[0].unit}` : '';
@@ -268,7 +274,8 @@ export default function NewSiteStage({
       ...selectedKnowledge.map((entry) => `知识库 · ${entry.title}`),
       ...uploads.items.filter((item) => item.status === 'ready').map((item) => `文件 · ${item.fileName}`),
     ];
-    setSent({ text, chips, runtimeLabel: runtimeCardTitle(requestRuntime), styleName: selectedStyle?.name });
+    setSent({ text, chips, runtimeLabel: runtimeCardTitle(requestRuntime), styleName: styleSelection?.name });
+    setGalleryOpen(false);
     handedOffRef.current = false;
     void run.start({
       instruction: text,
@@ -276,7 +283,8 @@ export default function NewSiteStage({
       runtimeId: requestRuntime.id,
       sourceSurface: source ? 'knowledge-base' : 'web-hosting',
       knowledge: selectedKnowledge,
-      styleId: selectedStyleId,
+      styleId: styleSelection?.kind === 'preset' ? styleSelection.styleId : null,
+      designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,
       attachmentIds: uploads.readyIds,
     });
     onPaneChange('preview');
@@ -289,7 +297,7 @@ export default function NewSiteStage({
     state: stage.endedAtMs == null && run.generating ? 'active' as const : 'done' as const,
   }));
   const composing = !run.generating && !sent && !run.notice;
-  const styleName = selectedStyle?.name ?? '默认风格';
+  const styleName = styleSelection?.name ?? '默认风格';
 
   const conversation = (
     <>
@@ -351,7 +359,13 @@ export default function NewSiteStage({
 
   const options = (
     <>
-      <OptionChip label={`风格：${styleName}，点开换一个`} value={styleName} onClick={() => setSheet('style')} disabled={run.generating}>
+      <OptionChip
+        label={`风格：${styleName}，点开换一个`}
+        value={styleName}
+        pressed={galleryOpen}
+        onClick={() => { setGalleryOpen((current) => !current); onPaneChange('preview'); }}
+        disabled={run.generating}
+      >
         <Palette size={13} />
         {selectedStyle && (
           <span className="flex gap-0.5">
@@ -462,52 +476,49 @@ export default function NewSiteStage({
           </div>
         </ComposerSheet>
       )}
-      {sheet === 'style' && (
-        <ComposerSheet title="选一个风格" onClose={() => setSheet(null)}>
-          <div className="flex h-full flex-col gap-2 overflow-y-auto p-4">
-            {stylesError && <p className="text-[12px]" style={{ color: 'var(--semantic-danger-text)' }}>{stylesError}</p>}
-            {styles.map((style) => (
-              <button
-                key={style.id}
-                type="button"
-                aria-pressed={style.id === selectedStyleId}
-                onClick={() => { setSelectedStyleId(style.id); setSheet(null); }}
-                className="flex items-center gap-3 rounded-xl p-3 text-left transition-colors hover-bg-soft"
-                style={{ border: `1px solid ${style.id === selectedStyleId ? 'var(--accent-primary)' : 'var(--border-subtle)'}` }}
-              >
-                <span className="flex shrink-0 gap-1">
-                  {style.swatches.slice(0, 3).map((color) => <span key={color} className="h-6 w-6 rounded-md" style={{ background: color, border: '1px solid var(--border-subtle)' }} />)}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-medium text-token-primary">{style.name}{style.isDefault ? ' · 默认' : ''}</span>
-                  <span className="block truncate text-[11px] text-token-muted">{style.description}</span>
-                </span>
-              </button>
-            ))}
-            {onOpenSettings && (
-              <button type="button" onClick={onOpenSettings} className="mt-1 self-start text-[12px] underline-offset-2 hover:underline" style={{ color: 'var(--accent-primary)' }}>
-                管理风格与提示词
-              </button>
-            )}
-          </div>
-        </ComposerSheet>
-      )}
     </>
   );
 
-  const previewTitle = run.generating ? '正在生成网页' : `样张 · ${styleName}`;
+  const previewTitle = run.generating ? '正在生成网页' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
   const previewNote = run.generating
     ? (run.phase || '正在准备')
-    : '点生成后，这里换成你的页面';
+    : galleryOpen
+      ? '每张缩略图都是这个风格真实的样子，标题已换成你的资料'
+      : sampleTitle ? '标题已换成你的资料，正文是示例；点生成后换成你的页面' : '示例内容；放进资料后标题先换成你的';
   const nextHint = run.generating
     ? '灰色块是还没写到的部分，写好一段换一段；做好后自动存进网页托管，这里直接显示成品。'
-    : hasSources
-      ? '资料已放好。不喜欢这个风格就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
-      : '先在左边放资料、说要求；这里会按所选风格显示你的页面。';
+    : galleryOpen
+      ? '点一张就选定它，右边立刻换成这个风格的样张；选好后回到左边点生成。'
+      : hasSources
+        ? '资料已放好。不喜欢这个样子就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
+        : '先在左边放资料、说要求；这里是所选风格真实的样子。';
 
   const preview = (
-    <WorkbenchPreview title={previewTitle} note={previewNote} nextHint={nextHint}>
-      {run.previewHtml ? (
+    <WorkbenchPreview
+      title={previewTitle}
+      note={previewNote}
+      nextHint={nextHint}
+      actions={galleryOpen && !run.generating ? (
+        <button
+          type="button"
+          onClick={() => setGalleryOpen(false)}
+          className="inline-flex h-9 items-center rounded-lg px-3 text-[13px] font-semibold"
+          style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+        >
+          完成
+        </button>
+      ) : undefined}
+    >
+      {galleryOpen && !run.generating ? (
+        <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+          <StyleGallery
+            selectedId={styleSelection?.key ?? null}
+            title={sampleTitle}
+            onSelect={(selection) => { setStyleSelection(selection); setGalleryOpen(false); }}
+            onRequestCustomStyle={() => toast.info('「做一个我的风格」还没上线', '现在可以从预设或更多风格里挑一套最接近的')}
+          />
+        </div>
+      ) : run.previewHtml ? (
         <iframe
           key={run.previewSandbox}
           srcDoc={run.previewHtml}
@@ -516,11 +527,20 @@ export default function NewSiteStage({
           title="生成中的网页预览"
           className="h-full w-full bg-white"
         />
-      ) : (
+      ) : run.generating || !styleSelection ? (
         <PageSkeleton
-          caption={run.generating ? '正在规划页面结构，首段内容写好就出现在这里' : `${styleName} · 配色预览`}
+          caption={run.generating ? '正在规划页面结构，首段内容写好就出现在这里' : '风格还没读出来，生成时用设置里的默认风格'}
           swatches={selectedStyle?.swatches}
         />
+      ) : (
+        <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+          <StyleThumbnail
+            designSystemId={styleSelection.designSystemId}
+            title={sampleTitle}
+            size="preview"
+            label={`${styleSelection.name}风格样张`}
+          />
+        </div>
       )}
     </WorkbenchPreview>
   );

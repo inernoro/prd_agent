@@ -155,6 +155,12 @@ public interface IDesignGenerationSettingsService
 
     /// <summary>按当前设置冻结一次运行的设计方向；styleId 为空取默认风格，未知或已停用的风格抛出。</summary>
     Task<DesignArtifactDesignDirection> FreezeAsync(string? styleId, CancellationToken ct);
+
+    /// <summary>
+    /// 用户在风格画廊「更多风格」里直接选了 OpenDesign 目录中的一套设计系统（不经管理员预设）：
+    /// 设计系统按快照核对，提示词与自查强度仍取当前设置。不在快照里的编号抛出。
+    /// </summary>
+    Task<DesignArtifactDesignDirection> FreezeCatalogStyleAsync(string designSystemId, CancellationToken ct);
 }
 
 public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsService
@@ -192,6 +198,9 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
 
     public async Task<DesignArtifactDesignDirection> FreezeAsync(string? styleId, CancellationToken ct)
         => Freeze(Effective(await LoadAsync(ct), _catalog), styleId);
+
+    public async Task<DesignArtifactDesignDirection> FreezeCatalogStyleAsync(string designSystemId, CancellationToken ct)
+        => FreezeCatalogStyle(Effective(await LoadAsync(ct), _catalog), _catalog, designSystemId);
 
     private async Task<DesignGenerationSettings?> LoadAsync(CancellationToken ct)
         => await _db.DesignGenerationSettings
@@ -343,6 +352,31 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             StyleName = style.Name,
             StyleDescription = style.Description,
             DesignSystemId = style.DesignSystemId,
+            ReviewMode = settings.ReviewMode,
+            GeneratePrompt = settings.GeneratePrompt,
+            EditPrompt = settings.EditPrompt,
+            ReviewPrompt = settings.ReviewPrompt,
+        };
+        direction.PromptFingerprint = Fingerprint(direction);
+        return direction;
+    }
+
+    /// <summary>目录风格的 StyleId 前缀：与预设编号分开，预设 editorial 与设计系统 editorial 是两回事。</summary>
+    public const string CatalogStylePrefix = "design-system:";
+
+    internal static DesignArtifactDesignDirection FreezeCatalogStyle(
+        DesignGenerationEffectiveSettings settings, IDesignSystemCatalog catalog, string? designSystemId)
+    {
+        var entry = catalog.Find(designSystemId);
+        if (entry == null)
+            throw new DesignGenerationSettingsException(
+                $"没有编号为「{designSystemId?.Trim()}」的设计系统，请从风格画廊里重新选一套");
+        var direction = new DesignArtifactDesignDirection
+        {
+            StyleId = CatalogStylePrefix + entry.Id,
+            StyleName = entry.Name,
+            StyleDescription = string.IsNullOrWhiteSpace(entry.Summary) ? entry.Description : entry.Summary,
+            DesignSystemId = entry.Id,
             ReviewMode = settings.ReviewMode,
             GeneratePrompt = settings.GeneratePrompt,
             EditPrompt = settings.EditPrompt,

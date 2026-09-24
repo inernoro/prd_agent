@@ -145,7 +145,6 @@ export default function SiteWorkbench({
               pane={pane}
               onPaneChange={setPane}
               onGenerated={handleGenerated}
-              onOpenSettings={onOpenSettings}
               onBusyChange={setBusy}
             />
           ) : null}

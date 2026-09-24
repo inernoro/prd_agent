@@ -55,6 +55,16 @@ describe('生成工作台布局契约', () => {
     expect(run).toContain('styleId: request.styleId');
   });
 
+  it('风格：画廊里预设按 styleId、目录风格按 designSystemId 交给服务端；生成前右边是真实样张', () => {
+    expect(newStage).toContain("styleId: styleSelection?.kind === 'preset' ? styleSelection.styleId : null,");
+    expect(newStage).toContain("designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,");
+    expect(run).toContain('designSystemId: request.designSystemId ?? null,');
+    expect(newStage).toContain('<StyleGallery');
+    expect(newStage).toContain('<StyleThumbnail');
+    // 样张标题先换成资料的标题，让人预判成品长什么样。
+    expect(newStage).toContain('title={sampleTitle}');
+  });
+
   it('只有一个执行器时不摆选择器；默认执行器不可用要写明原因', () => {
     expect(newStage).toContain('enabledRuntimes.length > 1 ? (');
     expect(newStage).toContain('runtimeFallbackNotice(capabilities, settingsDefaultRuntime, requestRuntime?.id)');

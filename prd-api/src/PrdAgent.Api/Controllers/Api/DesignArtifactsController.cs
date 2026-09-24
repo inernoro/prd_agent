@@ -213,8 +213,13 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
                 _db, userId, request.AttachmentIds, CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "风格只能选一种：预设风格或目录里的设计系统，不能同时提交"));
             if (_generationSettings != null)
-                designDirection = await _generationSettings.FreezeAsync(request.StyleId, CancellationToken.None);
+                designDirection = string.IsNullOrWhiteSpace(request.DesignSystemId)
+                    ? await _generationSettings.FreezeAsync(request.StyleId, CancellationToken.None)
+                    : await _generationSettings.FreezeCatalogStyleAsync(request.DesignSystemId, CancellationToken.None);
         }
         catch (DesignRunInputException ex)
         {
@@ -958,6 +963,12 @@ public sealed class CreateDesignArtifactRunRequest
 
     /// <summary>风格预设编号；为空取网页生成设置里的默认风格。</summary>
     public string? StyleId { get; set; }
+
+    /// <summary>
+    /// 直接选用 OpenDesign 目录里的一套设计系统（风格画廊「更多风格」）；与 StyleId 二选一。
+    /// 按服务端快照核对，不在目录里的编号拒绝。
+    /// </summary>
+    public string? DesignSystemId { get; set; }
 
     /// <summary>直接上传的文件（附件编号，最多 5 个）；与知识库引用至少有一种。</summary>
     public List<string>? AttachmentIds { get; set; }
