@@ -1785,6 +1785,8 @@ export {
   deleteSite,
   batchDeleteSites,
   setSiteVisibility,
+  getSitesPrivateSources,
+  getRevisionPrivateSources,
   listFolders as listSiteFolders,
   listTags as listSiteTags,
   createShareLink as createSiteShareLink,

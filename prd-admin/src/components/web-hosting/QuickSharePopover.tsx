@@ -8,7 +8,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { toast } from '@/lib/toast';
-import { createSiteShareLink, listSiteShares, revokeSiteShare, updateSiteShareSettings } from '@/services';
+import { createSiteShareLink, getSitesPrivateSources, listSiteShares, revokeSiteShare, updateSiteShareSettings } from '@/services';
 import type { ShareLinkItem } from '@/services/real/webPages';
 import {
   EXPIRY_OPTIONS,
@@ -22,6 +22,7 @@ import {
   resolveVisibility,
   type ShareVisibility,
 } from './quickShare';
+import { isWideningBeyondCollaborators, runWithPrivateSourceGate } from './privateSourceConfirm';
 
 /**
  * 分享下拉面板 —— 从站点卡片的「分享」按钮就地垂直展开，一步拿到链接。
@@ -100,13 +101,24 @@ export function QuickSharePopover({
         return;
       }
 
-      const res = await createSiteShareLink({
-        siteId: site.id,
-        shareType: 'single',
-        expiresInDays: QUICK_SHARE_DEFAULTS.expiresInDays,
-        visibility: QUICK_SHARE_DEFAULTS.visibility,
-        forceNew: true,
+      // 一键分享默认「登录的人」可见，属于对外分享：本页引用了私有资料时先让作者确认。
+      const gated = await runWithPrivateSourceGate({
+        inspect: () => getSitesPrivateSources([site.id]),
+        run: (fingerprint) => createSiteShareLink({
+          siteId: site.id,
+          shareType: 'single',
+          expiresInDays: QUICK_SHARE_DEFAULTS.expiresInDays,
+          visibility: QUICK_SHARE_DEFAULTS.visibility,
+          forceNew: true,
+          confirmedPrivateSourceFingerprint: fingerprint,
+        }),
+        actionLabel: '生成分享链接',
       });
+      if (gated.status !== 'done') {
+        toast.info('没有生成分享链接', '本页引用的私有资料没有对外发出');
+        return;
+      }
+      const res = gated.res;
       if (!res.success) {
         toast.error('生成失败', res.error?.message ?? '请稍后重试');
         return;
@@ -140,7 +152,21 @@ export function QuickSharePopover({
     if (!link) return;
     setBusy(kind);
     try {
-      const res = await updateSiteShareSettings(link.id, body);
+      // 只有从「我和协作者」放宽到「登录的人 / 任何人」才等同于一次对外分享、要先确认私有资料；
+      // 已经对外的链接改档（公开改登录可见、原样再选一次）与收紧都直接提交。判据与服务端同源，见 isWideningBeyondCollaborators。
+      const widening = kind === 'visibility' && isWideningBeyondCollaborators(link.visibility, body.visibility);
+      const gated = await runWithPrivateSourceGate({
+        inspect: widening
+          ? () => getSitesPrivateSources(link.siteIds?.length ? link.siteIds : [site.id])
+          : async () => ({ success: true as const, data: { requiresConfirmation: false, items: [] }, error: null }),
+        run: (fingerprint) => updateSiteShareSettings(link.id, { ...body, confirmedPrivateSourceFingerprint: fingerprint }),
+        actionLabel: '放宽分享范围',
+      });
+      if (gated.status !== 'done') {
+        toast.info('分享范围没有改变', '本页引用的私有资料没有对外发出');
+        return;
+      }
+      const res = gated.res;
       if (!res.success) {
         toast.error('修改失败', res.error?.message ?? '请稍后重试');
         return;

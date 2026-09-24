@@ -935,11 +935,55 @@ export async function batchDeleteSites(ids: string[]): Promise<ApiResponse<{ del
 export async function setSiteVisibility(
   id: string,
   visibility: 'public' | 'private',
+  /** 设为公开且本页引用了私有资料时必填：作者在确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string,
 ): Promise<ApiResponse<HostedSite>> {
   return apiRequest(api.webPages.setVisibility(encodeURIComponent(id)), {
     method: 'PATCH',
-    body: { visibility },
+    body: { visibility, confirmedPrivateSourceFingerprint },
   });
+}
+
+// ─── 发出前私有资料核查 ───
+
+/** 本页引用的一份私有资料。scopeLabel 由服务端给出，前端不自己维护可见范围的文案映射。 */
+export interface PrivateSourceItem {
+  entryId: string;
+  title: string;
+  storeId?: string | null;
+  storeName?: string | null;
+  /** owner-only | team | project | product | shitu | unavailable */
+  scope: string;
+  scopeLabel: string;
+}
+
+export interface PrivateSourceReport {
+  /** 这一次发出前是否必须由作者确认 */
+  requiresConfirmation: boolean;
+  /** 仅发布草稿时有：站点此刻是否已经对外可见（有对外链接或已设为公开） */
+  exposed?: boolean | null;
+  /** 这组私有资料的指纹；确认后原样带回发布 / 分享请求 */
+  fingerprint?: string | null;
+  items: PrivateSourceItem[];
+}
+
+/**
+ * 这些站点当前线上内容引用了哪些私有资料（分享、设为公开前调用）。
+ * 服务端核查全部站点、不截断；站点清单走请求体，大合集的几百个 ID 拼进查询串会超过请求行长度上限。
+ */
+export async function getSitesPrivateSources(siteIds: string[]): Promise<ApiResponse<PrivateSourceReport>> {
+  return apiRequest(api.webPages.privateSources(), {
+    method: 'POST',
+    body: { siteIds },
+  });
+}
+
+/** 这版草稿（连同它的内容血缘）引用了哪些私有资料、站点是否已对外可见（发布草稿前调用）。 */
+export async function getRevisionPrivateSources(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<PrivateSourceReport>> {
+  return apiRequest(api.webPages.revisionPrivateSources(siteId, revisionId));
 }
 
 export async function listFolders(): Promise<ApiResponse<{ folders: string[] }>> {
@@ -1062,6 +1106,8 @@ export async function createShareLink(data: {
    *   非空   = 只显示这几条
    */
   askSuggestedQuestions?: string[];
+  /** 对外分享（logged-in / public）且本页引用了私有资料时必填：确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string;
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -1148,7 +1194,12 @@ export async function ensureShareShortLink(shareId: string): Promise<ApiResponse
  */
 export async function updateShareSettings(
   shareId: string,
-  patch: { visibility?: 'owner-only' | 'logged-in' | 'public'; expiresInDays?: number },
+  patch: {
+    visibility?: 'owner-only' | 'logged-in' | 'public';
+    expiresInDays?: number;
+    /** 从 owner-only 放宽到对外档位且引用了私有资料时必填 */
+    confirmedPrivateSourceFingerprint?: string;
+  },
 ): Promise<ApiResponse<{ visibility: string; expiresAt?: string | null }>> {
   return apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}`, {
     method: 'PATCH',
@@ -1687,8 +1738,13 @@ export async function createHostedSiteRevisionPreviewAccess(
 export async function publishHostedSiteRevision(
   siteId: string,
   revisionId: string,
+  /** 站点已对外可见且这版引用了私有资料时必填：确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string,
 ): Promise<ApiResponse<HostedSiteRevisionMutation>> {
-  return apiRequest(api.webPages.publishRevision(siteId, revisionId), { method: 'POST' });
+  return apiRequest(api.webPages.publishRevision(siteId, revisionId), {
+    method: 'POST',
+    body: confirmedPrivateSourceFingerprint ? { confirmedPrivateSourceFingerprint } : undefined,
+  });
 }
 
 export async function rollbackHostedSiteRevision(

@@ -1265,6 +1265,8 @@ export const api = {
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
+    // 发出前私有资料核查（分享 / 设为公开前先问一次；发布草稿走 revisionPrivateSources）
+    privateSources: () => '/api/web-pages/private-sources',
     shares: () => '/api/web-pages/shares',
     revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
@@ -1293,6 +1295,7 @@ export const api = {
     revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
     revisionPreviewAccess: '/api/hosted-site-preview-access',
     publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
+    revisionPrivateSources: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/private-sources`,
     rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
     rejectRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/reject`,
   },

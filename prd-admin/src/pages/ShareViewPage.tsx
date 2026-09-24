@@ -13,6 +13,7 @@ import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import ShareSiteEditDock from '@/components/web-hosting/ShareSiteEditDock';
+import PrivateSourceConfirmHost from '@/components/web-hosting/PrivateSourceConfirmHost';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
@@ -1120,13 +1121,17 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           两个判据服务的是两个问题，不能互相顶替。
         */}
         {site.viewerCanEdit && !site.wrappedAssetType && (
-          <ShareSiteEditDock
-            siteId={site.id}
-            isMobile={isMobile}
-            adjacentToAsk={Boolean(token && data.ask?.enabled)}
-            hidden={isFullscreen || showComments || askState !== 'collapsed'}
-            onPublished={handleOwnerSitePublished}
-          />
+          <>
+            <ShareSiteEditDock
+              siteId={site.id}
+              isMobile={isMobile}
+              adjacentToAsk={Boolean(token && data.ask?.enabled)}
+              hidden={isFullscreen || showComments || askState !== 'collapsed'}
+              onPublished={handleOwnerSitePublished}
+            />
+            {/* 分享阅读页不在 AppShell 里，编辑坞发布草稿时的私有资料确认层要自己挂一个宿主 */}
+            <PrivateSourceConfirmHost />
+          </>
         )}
       </div>
     );

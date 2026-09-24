@@ -88,6 +88,44 @@ public class HostedSiteRevision
 
     /// <summary>经长度限制和敏感信息脱敏后的可选拒绝原因。</summary>
     public string? RejectionReason { get; set; }
+
+    /// <summary>
+    /// 把这一版内容对外发出（发布到已分享的站点、新建对外分享、设为公开）之前，
+    /// 作者对「本页引用了哪些私有资料」的确认记录：谁、什么时候、为哪个动作、确认了哪些来源。
+    ///
+    /// 只追加，最多保留最近 50 条。老文档没有这个字段，反序列化为空列表，不需要迁移。
+    /// 判定与写入全部走 HostedSitePrivateSourceGate，别处不要自己拼。
+    /// </summary>
+    public List<HostedSitePrivateSourceConfirmation> PrivateSourceConfirmations { get; set; } = new();
+}
+
+/// <summary>一次「我知道本页引用了这些私有资料，仍然发出去」的确认。</summary>
+public class HostedSitePrivateSourceConfirmation
+{
+    /// <summary>确认人。</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    public DateTime ConfirmedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>revision-publish | share-create | share-widen | site-public</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>确认时整组私有引用的指纹（多站点合集分享时是合集整体的指纹）。</summary>
+    public string Fingerprint { get; set; } = string.Empty;
+
+    /// <summary>这一版内容里被确认的私有资料，名称与位置按确认那一刻冻结。</summary>
+    public List<HostedSitePrivateSourceConfirmedItem> Sources { get; set; } = new();
+}
+
+public class HostedSitePrivateSourceConfirmedItem
+{
+    public string EntryId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? StoreId { get; set; }
+    public string? StoreName { get; set; }
+
+    /// <summary>owner-only | team | project | product | shitu | unavailable</summary>
+    public string Scope { get; set; } = string.Empty;
 }
 
 public class HostedSiteRevisionFile
