@@ -26,6 +26,7 @@ namespace PrdAgent.LlmGatewayHost;
 public static class GatewayHttpEndpoints
 {
     private const string GatewayRequestIdItemKey = "llmgw.request.id";
+    private const string GatewayFederationTraceItemKey = "llmgw.federation.trace";
 
     private static readonly JsonSerializerOptions SnakeJson = new()
     {
@@ -50,6 +51,13 @@ public static class GatewayHttpEndpoints
         var internalTenantId = string.IsNullOrWhiteSpace(configuredInternalTenantId)
             ? GatewayTenantDefaults.InternalTenantId
             : configuredInternalTenantId;
+        var federationNodeId = GatewayFederationProtocol.NormalizeNodeId(
+            app.Configuration["LlmGateway:FederationNodeId"],
+            Environment.MachineName);
+        var federationMaxHops = GatewayFederationProtocol.NormalizeMaxHops(
+            int.TryParse(app.Configuration["LlmGateway:FederationMaxHops"], out var configuredMaxHops)
+                ? configuredMaxHops
+                : null);
         // 服务密钥门（内部 M2M，不走 JWT）：
         // - /gw/v1/* 除 healthz 外必须带 key，readyz 也不能公网匿名读取依赖状态。
         // - 迁移期共享 key 只服务 MAP；新接入方使用 llmgw_service_keys 的 scoped key。
@@ -57,6 +65,13 @@ public static class GatewayHttpEndpoints
         //   同样只接受 gateway key；为兼容 OpenAI SDK，允许 Authorization: Bearer <key>。
         app.Use(async (context, next) =>
         {
+            context.Response.OnStarting(() =>
+            {
+                if (context.Items[GatewayRequestIdItemKey] is string { Length: > 0 } requestId)
+                    context.Response.Headers["X-Request-Id"] = requestId;
+                return Task.CompletedTask;
+            });
+
             var path = context.Request.Path.Value ?? string.Empty;
             var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
                                        && !path.Equals("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
@@ -72,6 +87,7 @@ public static class GatewayHttpEndpoints
                 || path.StartsWith("/gemini/v1beta/models/", StringComparison.OrdinalIgnoreCase);
             if (protectedGatewayPath || protectedCompatPath)
             {
+                TrackGatewayRequestId(context);
                 var providedKey = ResolveProvidedGatewayKey(context);
                 var authorizer = context.RequestServices.GetService<IGatewayScopedKeyAuthorizer>();
                 var authorizationInputs = authorizer != null
@@ -140,6 +156,37 @@ public static class GatewayHttpEndpoints
                 }
                 context.Items["llmgw.key.authorization"] = authorization;
                 context.Items["llmgw.key.authorization.inputs"] = authorizationInputs;
+
+                var federation = GatewayFederationProtocol.ValidateInbound(
+                    ResolveHeader(context, GatewayFederationProtocol.HopHeader),
+                    ResolveHeader(context, GatewayFederationProtocol.PathHeader),
+                    federationNodeId,
+                    federationMaxHops);
+                if (!federation.Allowed)
+                {
+                    var statusCode = federation.StatusCode;
+                    await WriteRejectedGatewayRequestLogAsync(
+                        context,
+                        authorization,
+                        authorizationInputs,
+                        path,
+                        context.RequestAborted,
+                        statusCode,
+                        federation.ErrorCode);
+                    context.Response.StatusCode = statusCode;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(JsonSerializer.Serialize(new
+                    {
+                        error = new
+                        {
+                            code = federation.ErrorCode,
+                            message = federation.ErrorMessage,
+                        },
+                    }, jsonOpts));
+                    return;
+                }
+                if (federation.Trace is not null)
+                    context.Items[GatewayFederationTraceItemKey] = federation.Trace;
 
                 // Quickstart dry-run 必须走真实协议 URL 和 scoped key 鉴权，但在模型解析、预算预占
                 // 与上游发送之前结束。成功的 dry-run 仍写入带工作负载身份的租户日志，便于从
@@ -2815,6 +2862,11 @@ public static class GatewayHttpEndpoints
         ingress.Context.ClientCode = authorization.ClientCode;
         ingress.Context.Environment = authorization.Environment;
         ingress.Context.ServiceKeyPrefix = authorization.KeyPrefixSnapshot;
+        if (http.Items[GatewayFederationTraceItemKey] is GatewayFederationTrace federationTrace)
+        {
+            ingress.Context.FederationHop = federationTrace.Hop;
+            ingress.Context.FederationPath = federationTrace.Path;
+        }
         if (!await RecordDiscoveredAppCallerAsync(services, ingress, ct))
         {
             var ownershipStatus = AppCallerStatusDecision.Reject(
@@ -5256,6 +5308,8 @@ public static class GatewayHttpEndpoints
                 RunId = source?.RunId,
                 LogicalRequestId = source?.LogicalRequestId,
                 ProviderTaskId = source?.ProviderTaskId,
+                FederationHop = ingress.Context?.FederationHop,
+                FederationPath = ingress.Context?.FederationPath,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
                 ViewRole = source?.ViewRole,
@@ -5317,6 +5371,8 @@ public static class GatewayHttpEndpoints
                 RunId = source?.RunId,
                 LogicalRequestId = source?.LogicalRequestId,
                 ProviderTaskId = source?.ProviderTaskId,
+                FederationHop = ingress.Context?.FederationHop,
+                FederationPath = ingress.Context?.FederationPath,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
                 ViewRole = source?.ViewRole,

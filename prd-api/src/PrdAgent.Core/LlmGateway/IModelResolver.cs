@@ -167,6 +167,9 @@ public class ModelResolutionResult
     /// </summary>
     public string? PlatformType { get; init; }
 
+    /// <summary>平台供应方标识。llmgw 表示另一套模型网关。</summary>
+    public string? ProviderId { get; init; }
+
     /// <summary>
     /// 本次调用使用的协议（最终保证有值）。
     /// 解析优先级：池条目 Protocol > 模型 Protocol > 平台 PlatformType。
@@ -368,6 +371,7 @@ public class ModelResolutionResult
             ActualPlatformId = ActualPlatformId ?? string.Empty,
             ActualPlatformName = ActualPlatformName,
             PlatformType = PlatformType,
+            ProviderId = ProviderId,
             Protocol = Protocol,
             ResolutionReason = ResolutionReason,
             ApiUrl = ApiUrl,
@@ -509,6 +513,7 @@ public class ModelResolutionResult
             ActualPlatformId = model.PlatformId,
             ActualPlatformName = platform.Name,
             PlatformType = platform.PlatformType,
+            ProviderId = platform.ProviderId,
             Protocol = protocol,
             ResolutionReason = reason,
             ApiUrl = platform.ApiUrl,
@@ -629,6 +634,7 @@ public class ModelResolutionResult
             ActualPlatformId = model.PlatformId ?? string.Empty,
             ActualPlatformName = platform.Name,
             PlatformType = platform.PlatformType,
+            ProviderId = platform.ProviderId,
             Protocol = protocol,
             ResolutionReason = reason,
             ApiUrl = model.ApiUrl ?? platform.ApiUrl,
@@ -665,6 +671,7 @@ public class ModelResolutionResult
             ActualPlatformId = result.ActualPlatformId,
             ActualPlatformName = result.ActualPlatformName,
             PlatformType = result.PlatformType,
+            ProviderId = result.ProviderId,
             Protocol = result.Protocol,
             ResolutionReason = result.ResolutionReason,
             ApiUrl = result.ApiUrl,

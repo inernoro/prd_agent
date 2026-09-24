@@ -2324,6 +2324,7 @@ public class InMemoryModelResolver : IModelResolver
                     ActualPlatformId = fallbackLegacy.PlatformId ?? string.Empty,
                     ActualPlatformName = fbPlatform.Name,
                     PlatformType = fbPlatform.PlatformType,
+                    ProviderId = fbPlatform.ProviderId,
                     ApiUrl = fallbackLegacy.ApiUrl ?? fbPlatform.ApiUrl,
                     ApiKey = fbKey,
                     HealthStatus = "Healthy",

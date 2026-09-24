@@ -431,6 +431,93 @@ public class GatewayKeyGateContractTests
         }
     }
 
+    [Fact]
+    public async Task FederatedRequest_WhenPathContainsCurrentNode_IsRejectedBeforeGatewayCall()
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var currentNode = GatewayFederationProtocol.NormalizeNodeId(null, Environment.MachineName);
+            var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            {
+                Content = JsonContent.Create(new { model = "logical-chat", messages = Array.Empty<object>() }),
+                Headers =
+                {
+                    { "X-Gateway-Key", "scoped-test-key" },
+                    { "X-Gateway-Source", "federation-benchmark" },
+                    { "X-Gateway-App-Caller", "federation.benchmark::chat" },
+                    { "X-Request-Id", "federation-loop-001" },
+                    { GatewayFederationProtocol.HopHeader, "1" },
+                    { GatewayFederationProtocol.PathHeader, currentNode },
+                },
+            };
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe((HttpStatusCode)508);
+            response.Headers.GetValues("X-Request-Id").Single().ShouldBe("federation-loop-001");
+            var payload = await response.Content.ReadFromJsonAsync<JsonObject>();
+            payload?["error"]?["code"]?.GetValue<string>().ShouldBe("FEDERATION_LOOP_DETECTED");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task FederatedRequest_WhenTraceIsValid_ReachesGatewayWithTraceContext()
+    {
+        var contextAccessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new EchoingGateway(contextAccessor);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer, contextAccessor: contextAccessor);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+            {
+                Content = JsonContent.Create(new
+                {
+                    AppCallerCode = "federation.benchmark::chat",
+                    ModelType = "chat",
+                    RequestBody = new { messages = Array.Empty<object>() },
+                }),
+                Headers =
+                {
+                    { "X-Gateway-Key", "scoped-test-key" },
+                    { "X-Request-Id", "federation-valid-001" },
+                    { GatewayFederationProtocol.HopHeader, "1" },
+                    { GatewayFederationProtocol.PathHeader, "map-formal" },
+                },
+            };
+
+            if (Environment.Version.Major >= 9)
+            {
+                // net8 测试程序集借用 .NET 9 runtime 执行时，TestServer 在序列化成功响应阶段会触发
+                // PipeWriter.UnflushedBytes 兼容异常；请求在此之前已完整到达真实 endpoint 与 gateway。
+                await Should.ThrowAsync<InvalidOperationException>(() => app.GetTestClient().SendAsync(request));
+            }
+            else
+            {
+                var response = await app.GetTestClient().SendAsync(request);
+                response.StatusCode.ShouldBe(HttpStatusCode.OK);
+                response.Headers.GetValues("X-Request-Id").Single().ShouldBe("federation-valid-001");
+            }
+
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.FederationHop.ShouldBe(1);
+            gateway.LastRequest.Context.FederationPath.ShouldBe("map-formal");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
     /// <summary>
     /// 起一个 in-process TestServer host 住 serving 端点，上游用永不被触达的 stub
     /// （401 短路发生在中间件层，永远到不了 gateway，故 stub 内部若被调用即抛，反证 401 真短路）。

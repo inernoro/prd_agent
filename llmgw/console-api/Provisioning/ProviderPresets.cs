@@ -63,6 +63,11 @@ public static class ProviderPresets
             "一个密钥聚合数百个模型，**上游直接返回价格**，导入时可自动填。",
             new[] { "openrouter", "open router", "聚合", "路由" }),
 
+        new("llmgw", "LLMGW 联邦上游", "openai", "https://llmgw.example.com", "llmgw", 8,
+            "/service-keys", "", true, true,
+            "把另一个 LLMGW 当作 OpenAI 兼容上游。会传递请求号与联邦路径，并关闭下游二次重试以避免重试放大。",
+            new[] { "llmgw", "网关", "联邦", "gateway", "federation" }),
+
         new("deepseek", "DeepSeek 深度求索", "openai", "https://api.deepseek.com", "deepseek", 20,
             "https://platform.deepseek.com/api_keys", "sk-", true, false,
             "DeepSeek 对话与代码模型，OpenAI 兼容接口。",
