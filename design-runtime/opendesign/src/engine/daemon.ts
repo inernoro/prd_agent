@@ -165,6 +165,11 @@ export class OpenDesignDaemon implements EngineDaemon {
       const intentional = this.stopping !== null && this.child === child;
       const exit: DaemonExit = { code, signal, at: new Date().toISOString(), intentional };
       this.lastExit = exit;
+      // daemon 自己退出时，它拉起的 Codex 等子进程可能还活着、还在写 /workspace。这里是唯一还
+      // 握着进程组号的地方：句柄一清，随后的 reset 里 stop() 就找不到它们了，残留进程会跨任务
+      // 改写下一个任务的目录（Codex P1）。所以在清句柄之前先把整个组收掉（先 SIGCONT 防止被冻结）。
+      this.signalGroup(child, 'SIGCONT');
+      this.signalGroup(child, 'SIGKILL');
       if (this.child === child) {
         this.child = null;
         this.handle = null;

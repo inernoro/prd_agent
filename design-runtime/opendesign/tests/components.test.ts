@@ -45,6 +45,41 @@ function tempDir(prefix: string): string {
 }
 
 describe('OpenDesign daemon process supervision (real child process)', () => {
+  it('kills processes the daemon left behind when it dies on its own', async () => {
+    const root = tempDir('design-runtime-orphan-');
+    const pidFile = path.join(root, 'grandchild.pid');
+    // 「daemon」拉起一个同进程组的孙进程（相当于 Codex），然后自己挂着。
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const fs = require('node:fs');",
+      "const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      `fs.writeFileSync(${JSON.stringify(pidFile)}, String(g.pid));`,
+      'setInterval(() => {}, 1000);',
+    ].join('\n');
+    const daemon = new OpenDesignDaemon({
+      command: [process.execPath, '-e', script],
+      cwd: root,
+      port: await freePort(),
+      dataDir: path.join(root, 'data'),
+      workspaceDir: path.join(root, 'workspace'),
+      home: root,
+      stopTimeoutMs: 2_000,
+    });
+    cleanups.push(() => daemon.stop());
+    const exits: DaemonExit[] = [];
+    daemon.onUnexpectedExit((exit) => exits.push(exit));
+    await daemon.start();
+    const grandchild = Number(await waitFor(() => (fs.existsSync(pidFile) ? fs.readFileSync(pidFile, 'utf8') || undefined : undefined), 'grandchild pid'));
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    cleanups.push(() => { if (alive(grandchild)) process.kill(grandchild, 'SIGKILL'); });
+    expect(alive(grandchild)).toBe(true);
+
+    process.kill(daemon.describe().pid!, 'SIGKILL');
+    await waitFor(() => exits.length === 1, 'unexpected exit notification');
+    await waitFor(() => !alive(grandchild) || undefined, 'orphaned grandchild to be killed');
+    expect(alive(grandchild)).toBe(false);
+  });
+
   it('starts with an explicit environment that never carries the service API key, and notices an unexpected death', async () => {
     const root = tempDir('design-runtime-daemon-');
     const envDump = path.join(root, 'env.json');

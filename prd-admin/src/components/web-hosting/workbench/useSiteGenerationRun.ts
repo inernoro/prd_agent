@@ -338,7 +338,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
 
   const start = async (request: GenerationRequest) => {
     const text = request.instruction.trim();
-    if (!text || generating) return;
+    if (!text || generating || busyRef.current) return;
     const abort = new AbortController();
     abortRef.current?.abort();
     abortRef.current = abort;

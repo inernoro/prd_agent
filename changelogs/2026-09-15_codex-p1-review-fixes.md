@@ -617,3 +617,5 @@
 | feat | cds | 部署清单支持 generate: secret：服务之间的内部密钥由 CDS 在导入或部署前自动生成并写进项目 env，已有值不覆盖 |
 | fix | cds | DESIGN_RUNTIME_API_KEY 改为 CDS 自动生成，不再是会让部署 412 的必填项，也不需要人去生成 |
 | fix | design-runtime | 新拉起的引擎在健康检查通过后立刻退出时，重置流程会再拉一次，不再把空闲状态发布出去后一直卡住拒单 |
+| security | design-runtime | 引擎进程意外退出时立即收掉它留下的整个进程组，残留的 Codex 进程不会再改写下一个任务的工作目录 |
+| fix | prd-admin | 新建网页入口改用同步的忙碌标记，重渲染前连点不会在服务端建出两个任务 |
