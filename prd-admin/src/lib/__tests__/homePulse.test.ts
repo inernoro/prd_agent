@@ -19,6 +19,7 @@ import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_PATH = path.resolve(TEST_DIR, '../../app/App.tsx');
 const FEED_CONTROLLER_PATH = path.resolve(TEST_DIR, '../../../../prd-api/src/PrdAgent.Api/Controllers/Api/MobileDashboardController.cs');
+const WORKSPACE_PRESENTATION_PATH = path.resolve(TEST_DIR, '../../../../prd-api/src/PrdAgent.Api/Services/ImageMasterWorkspacePresentation.cs');
 const LAUNCHER_PATH = path.resolve(TEST_DIR, '../../pages/AgentLauncherPage.tsx');
 const MOBILE_HOME_PATH = path.resolve(TEST_DIR, '../../pages/MobileHomePage.tsx');
 
@@ -176,10 +177,11 @@ describe('空态文案不许许下端点兑现不了的承诺', () => {
 
   it('端点产出的类型与这里登记的一致', () => {
     const controller = fs.readFileSync(FEED_CONTROLLER_PATH, 'utf8');
+    const workspacePresentation = fs.readFileSync(WORKSPACE_PRESENTATION_PATH, 'utf8');
     const feedBody = controller.slice(controller.indexOf('GetFeed'), controller.indexOf('GetStats'));
     const emitted = new Set([
       ...[...feedBody.matchAll(/type = "([a-z-]+)"/g)].map((m) => m[1]),
-      ...[...controller.matchAll(/new\("([a-z-]+-workspace)",\s*"[^"]+",\s*\$"\/(?:literary|visual)-agent\//g)].map((m) => m[1]),
+      ...[...workspacePresentation.matchAll(/new\("[^"]+",\s*"([a-z-]+-workspace)",\s*"[^"]+",\s*\$"\/(?:literary|visual)-agent\//g)].map((m) => m[1]),
     ]);
     expect(emitted.size, 'GetFeed 里没解析到 type，判据已经失效').toBeGreaterThan(0);
     // 端点加了新来源却没更新文案登记表，这条会先红，提醒去把空态文案一起改
