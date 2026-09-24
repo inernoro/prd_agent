@@ -698,12 +698,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
     return t;
   };
+  // 重新打开工作区时从后端恢复、恢复那一刻就处于「生成中」的配图。它们的真实开始时间
+  // 不在本页，本地计时起点只是「这次渲染的时刻」；若服务端早已出完图，状态查询几秒后
+  // 就会翻成 done，这几秒会被当成出图耗时喂进共享预估，把之后的倒计时拉得离谱地短。
+  const restoredRunningRef = useRef(new Set<number>());
   useEffect(() => {
     const running = new Set(markerRunItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
     for (const [k, startedAt] of Array.from(runStartedAtRef.current.entries())) {
       if (running.has(k)) continue;
-      // 真实出图耗时喂给共享的耗时预估（与视觉创作同一份滑动平均），下次「还需约 Ns」更准
-      if (markerRunItems.find((x) => x.markerIndex === k)?.status === 'done') recordGenDurationMs(Date.now() - startedAt);
+      // 真实出图耗时喂给共享的耗时预估（与视觉创作同一份滑动平均），下次「还需约 Ns」更准；
+      // 只采本页亲眼看到开始的那几次，恢复来的不算样本
+      const wasRestored = restoredRunningRef.current.delete(k);
+      if (!wasRestored && markerRunItems.find((x) => x.markerIndex === k)?.status === 'done') {
+        recordGenDurationMs(Date.now() - startedAt);
+      }
       runStartedAtRef.current.delete(k);
     }
   }, [markerRunItems]);
@@ -1235,6 +1243,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             assetUrl: m.assetId ? (res.data.assets?.find((a: any) => a.id === m.assetId)?.url || null) : null,
             errorMessage: m.errorMessage || null,
           }));
+          restoredRunningRef.current = new Set(restoredItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
           setMarkerRunItems(restoredItems);
           setMarkerRunItemsRestored(true); // 标记已恢复
 
