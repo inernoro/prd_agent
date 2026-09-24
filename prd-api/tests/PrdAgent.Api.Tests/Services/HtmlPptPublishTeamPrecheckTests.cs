@@ -97,6 +97,31 @@ public sealed class HtmlPptPublishTeamPrecheckTests
         Mock.Of<IAskOpeningQuestionGenerator>(),
         NullLogger<HostedSiteService>.Instance);
 
+    /// <summary>
+    /// 已有发布意图的请求是重放，只该取回冻结意图的结果，不许按「现在的权限」重新卡团队
+    /// （PR #1611 Codex 评审）。数据库传 null：预检若没被跳过，Strict mock 会先抛 MockException；
+    /// 跳过之后才会走到读意图那一步，因为没有库而抛空引用——以此区分两条路径。
+    /// </summary>
+    [Fact]
+    public async Task ExistingIntent_IsReplayedWithoutRecheckingCurrentTeams()
+    {
+        var run = DoneRun();
+        run.PublishIntentId = "existing-intent";
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var coordinator = new HtmlPptPublishCoordinator(
+            null!,
+            sites.Object,
+            Mock.Of<IHostedSiteRevisionService>(MockBehavior.Strict),
+            Mock.Of<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict),
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        await Assert.ThrowsAsync<NullReferenceException>(() =>
+            coordinator.PublishAsync(run, run.Title, null, [], ["team-viewer"]));
+
+        sites.Verify(s => s.GetTeamsNotPublishableAsync(
+            It.IsAny<string>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private static MdToPptRun DoneRun() => new()
     {
         Id = "publish-precheck-run",

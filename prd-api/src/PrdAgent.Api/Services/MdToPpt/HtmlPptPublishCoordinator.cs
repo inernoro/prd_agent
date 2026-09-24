@@ -96,10 +96,17 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         // 与 SetSharedTeamsAsync 用同一把尺子（HostedSiteService.HasTeamPublishRole）；建站后的那道校验保留，兜权限竞态。
         // 用批量版一次判完整批团队：teamIds 没有上限，逐个调单个版本会让每个团队都全量重载一次成员关系
         // （PR #1611 Codex 评审）。
-        var forbidden = await _sites.GetTeamsNotPublishableAsync(
-            run.UserId, Normalize(teamIds), CancellationToken.None);
-        if (forbidden.Count > 0)
-            throw new HtmlPptPublishForbiddenException(forbidden);
+        //
+        // 只在要新建意图时预检。已有意图（含已完成）的请求是重放：EnsureIntentAsync 返回冻结的意图、
+        // 用的是当时冻结的团队，本次请求带的 teamIds 根本不会被采用；这时拿「现在的权限」去卡它，
+        // 会让一次只该取回历史回执的重试变成 403（PR #1611 Codex 评审）。
+        if (string.IsNullOrWhiteSpace(run.PublishIntentId))
+        {
+            var forbidden = await _sites.GetTeamsNotPublishableAsync(
+                run.UserId, Normalize(teamIds), CancellationToken.None);
+            if (forbidden.Count > 0)
+                throw new HtmlPptPublishForbiddenException(forbidden);
+        }
 
         var intentId = BuildIntentId(run.Id, actualHash);
         run = await EnsureIntentAsync(run, intentId, actualHash, title, description, tags, teamIds);
