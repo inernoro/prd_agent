@@ -68,3 +68,15 @@ describe('StyleThumbnail 预览区铺满', () => {
     expect(html).toContain('aspect-ratio:1200 / 760');
   });
 });
+
+describe('铺满模式在手机上按最小宽度排版再缩', () => {
+  it('宽屏按容器原宽、不缩放；窄屏按 1024 排版并反推高度铺满', async () => {
+    const { fillSampleLayout, SAMPLE_FILL_MIN_WIDTH } = await import('./StyleThumbnail');
+    expect(fillSampleLayout(1300, 800)).toEqual({ width: '100%', height: '100%', scale: 1 });
+    const phone = fillSampleLayout(340, 1400);
+    expect(phone.width).toBe(SAMPLE_FILL_MIN_WIDTH);
+    expect(phone.scale).toBeCloseTo(340 / 1024);
+    // 缩完后的可见高度正好等于容器高度。
+    expect((phone.height as number) * phone.scale).toBeCloseTo(1400);
+  });
+});

@@ -30,6 +30,19 @@ export const THUMBNAIL_SIZE_REGISTRY: Record<StyleThumbnailSize, { fallbackWidth
 };
 
 /** 画布缩放比：容器宽 / 画布宽；量不到宽度时按该档兜底宽度算。 */
+/** 铺满模式的最小排版宽度：样张是桌面版式，窄于它会挤成一字一行（2026-09-24 手机验收）。 */
+export const SAMPLE_FILL_MIN_WIDTH = 1024;
+
+/**
+ * 铺满模式：容器够宽就按容器真实宽度排版、不缩放；窄于 SAMPLE_FILL_MIN_WIDTH（手机）时按最小宽度
+ * 排版再等比缩小，高度按缩放反推，缩完后正好铺满整个预览区而不是留一大片空白。
+ */
+export function fillSampleLayout(containerWidth: number, containerHeight: number): { width: number | string; height: number | string; scale: number } {
+  if (containerWidth <= 0 || containerWidth >= SAMPLE_FILL_MIN_WIDTH) return { width: '100%', height: '100%', scale: 1 };
+  const scale = containerWidth / SAMPLE_FILL_MIN_WIDTH;
+  return { width: SAMPLE_FILL_MIN_WIDTH, height: Math.max(1, containerHeight) / scale, scale };
+}
+
 export function sampleScale(containerWidth: number, format: DesignSystemSampleFormat, size: StyleThumbnailSize): number {
   const width = containerWidth > 0 ? containerWidth : THUMBNAIL_SIZE_REGISTRY[size].fallbackWidth;
   return width / SAMPLE_FRAME_REGISTRY[format].width;
@@ -80,6 +93,7 @@ export function StyleThumbnail({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(0);
   const [state, setState] = useState<LoadState>({ status: 'idle' });
   const [attempt, setAttempt] = useState(0);
   const frame = SAMPLE_FRAME_REGISTRY[format];
@@ -110,10 +124,13 @@ export function StyleThumbnail({
     const node = containerRef.current;
     if (!node) return;
     setWidth(node.clientWidth);
+    setHeight(node.clientHeight);
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver((entries) => {
-      const next = entries[0]?.contentRect.width;
-      if (typeof next === 'number') setWidth(next);
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      setWidth(rect.width);
+      setHeight(rect.height);
     });
     observer.observe(node);
     return () => observer.disconnect();
@@ -137,6 +154,7 @@ export function StyleThumbnail({
 
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
   const scale = sampleScale(width, format, size);
+  const fillLayout = fillSampleLayout(width, height);
 
   return (
     <div
@@ -161,7 +179,14 @@ export function StyleThumbnail({
           tabIndex={fill ? undefined : -1}
           aria-hidden={fill ? undefined : true}
           style={fill
-            ? { width: '100%', height: '100%', border: 0, display: 'block' }
+            ? {
+              width: fillLayout.width,
+              height: fillLayout.height,
+              border: 0,
+              display: 'block',
+              transform: fillLayout.scale === 1 ? undefined : `scale(${fillLayout.scale})`,
+              transformOrigin: '0 0',
+            }
             : {
               width: frame.width,
               height: frame.height,
