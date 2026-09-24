@@ -20,12 +20,14 @@ public sealed class ApplicationReadinessProbe
     private readonly Func<CancellationToken, Task> _mongoProbe;
     private readonly Func<CancellationToken, Task> _redisProbe;
     private readonly Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> _assetProbe;
+    private readonly Func<MongoIndexAdvisoryReport?> _indexReport;
     private readonly ILogger<ApplicationReadinessProbe> _logger;
 
     public ApplicationReadinessProbe(
         MongoDbContext mongo,
         ConnectionMultiplexer redis,
         AssetStorageReadinessProbe assetProbe,
+        MongoIndexAdvisory indexAdvisory,
         ILogger<ApplicationReadinessProbe> logger)
         : this(
             async cancellationToken =>
@@ -39,7 +41,8 @@ public sealed class ApplicationReadinessProbe
             // SingleFlightProbe：这条路真的会挂住，本仓库已经量到过。
             _ => redis.GetDatabase().PingAsync(),
             (force, cancellationToken) => assetProbe.CheckAsync(force, cancellationToken),
-            logger)
+            logger,
+            indexReport: () => indexAdvisory.LastReport)
     {
     }
 
@@ -48,9 +51,11 @@ public sealed class ApplicationReadinessProbe
         Func<CancellationToken, Task> redisProbe,
         Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> assetProbe,
         ILogger<ApplicationReadinessProbe> logger,
-        TimeSpan? dependencyTimeout = null)
+        TimeSpan? dependencyTimeout = null,
+        Func<MongoIndexAdvisoryReport?>? indexReport = null)
     {
         _mongoProbe = mongoProbe;
+        _indexReport = indexReport ?? (() => null);
         // Redis 探测单独合并：它底下那次调用不认取消令牌，超时只能让调用方走人、停不掉它。
         // 不合并的话，Redis 挂住期间每一次 /health/ready（编排每几秒来一次）都会再起一次，
         // 攒成一堆谁也停不掉的在途操作。Mongo 与对象存储不需要：它们真的收令牌，
@@ -74,6 +79,10 @@ public sealed class ApplicationReadinessProbe
         var assetResult = await assetTask;
         var components = new[] { await mongoTask, await redisTask, assetResult.Component };
         var firstFailure = components.FirstOrDefault(component => !component.Ready);
+        // 关键索引巡检是启动时的一次快照，只读附带、不参与 Status 判定：索引缺失是
+        // 「会变慢 / 并发窗口敞开」，不是「接不了流量」，把它判成未就绪会让编排把一个
+        // 能干活的实例摘掉。不查库，只读巡检留下的结论。
+        var indexReport = _indexReport();
 
         return new ApplicationReadinessResponse
         {
@@ -88,6 +97,9 @@ public sealed class ApplicationReadinessProbe
             CleanupVerified = assetResult.Response.CleanupVerified,
             ProbeBytes = assetResult.Response.ProbeBytes,
             Components = components.ToList(),
+            MissingIndexes = indexReport?.Missing.ToList(),
+            UnverifiedIndexes = indexReport?.Unverified.ToList(),
+            IndexesCheckedAt = indexReport?.CheckedAt,
             CheckedAt = DateTime.UtcNow,
             DurationMs = stopwatch.ElapsedMilliseconds,
         };
