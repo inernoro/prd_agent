@@ -76,7 +76,7 @@ public sealed class MongoIndexAdvisoryCatalogTests
 
         var report = await advisory.CheckAsync(
             required,
-            (_, _) => Task.FromResult<IReadOnlyCollection<string>>(new[] { "_id_", "idx_present" }),
+            (_, _) => Task.FromResult(Observed("_id_", "idx_present")),
             logger,
             new DateTime(2026, 9, 24, 0, 0, 0, DateTimeKind.Utc));
 
@@ -106,7 +106,7 @@ public sealed class MongoIndexAdvisoryCatalogTests
             required,
             (collection, _) => collection == "denied"
                 ? throw new InvalidOperationException("not authorized on prdagent to execute command listIndexes")
-                : Task.FromResult<IReadOnlyCollection<string>>(new[] { "idx_b" }),
+                : Task.FromResult(Observed("idx_b")),
             logger,
             DateTime.UtcNow);
 
@@ -134,10 +134,10 @@ public sealed class MongoIndexAdvisoryCatalogTests
             required,
             async (collection, ct) =>
             {
-                if (collection == "fast") return new[] { "idx_fast" };
+                if (collection == "fast") return Observed("idx_fast");
                 cts.Cancel();
                 await Task.Delay(Timeout.Infinite, ct);
-                return Array.Empty<string>();
+                return Array.Empty<ObservedMongoIndex>();
             },
             logger,
             DateTime.UtcNow,
@@ -158,11 +158,11 @@ public sealed class MongoIndexAdvisoryCatalogTests
         var calls = 0;
         var release = new TaskCompletionSource();
 
-        async Task<IReadOnlyCollection<string>> Lister(string _, CancellationToken ct)
+        async Task<IReadOnlyCollection<ObservedMongoIndex>> Lister(string _, CancellationToken ct)
         {
             Interlocked.Increment(ref calls);
             await release.Task.WaitAsync(ct);
-            return new[] { "idx_a" };
+            return Observed("idx_a");
         }
 
         // 缓存过期时 8 个探测同时到达（CDS 并发上限），只允许发生一次扫描
@@ -200,6 +200,47 @@ public sealed class MongoIndexAdvisoryCatalogTests
         Assert.Contains("[\"cds:monitor\"]", segment);
         Assert.Contains("[\"observedValue\"] = requiredIndexIssues", segment);
     }
+
+    [Fact]
+    public async Task SameNameIndexWithoutUniqueIsReportedMissingForUniqueEntries()
+    {
+        var logger = new ListLogger();
+        var advisory = new MongoIndexAdvisory();
+        var required = new[]
+        {
+            new RequiredMongoIndex("c1", "uniq_loose", "并发写入会出现重复", Unique: true),
+            new RequiredMongoIndex("c1", "uniq_ok", "不会出现", Unique: true),
+            new RequiredMongoIndex("c1", "idx_plain", "不会出现"),
+        };
+
+        var report = await advisory.CheckAsync(
+            required,
+            (_, _) => Task.FromResult<IReadOnlyCollection<ObservedMongoIndex>>(new[]
+            {
+                new ObservedMongoIndex("uniq_loose", Unique: false),
+                new ObservedMongoIndex("uniq_ok", Unique: true),
+                new ObservedMongoIndex("idx_plain", Unique: false),
+            }),
+            logger,
+            DateTime.UtcNow);
+
+        Assert.Equal(new[] { "c1.uniq_loose" }, report.Missing);
+        var warning = Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains("没有启用唯一约束", warning.Message);
+        Assert.Contains("并发写入会出现重复", warning.Message);
+    }
+
+    [Fact]
+    public void UniqueCatalogEntriesAreTheUniqNamedOnes()
+    {
+        // 名字以 uniq_ 开头的条目价值在唯一约束上，必须声明 Unique，否则同名非唯一索引会被当成「在」
+        Assert.All(
+            RequiredMongoIndexCatalog.All.Where(index => index.Name.StartsWith("uniq_", StringComparison.Ordinal)),
+            index => Assert.True(index.Unique, $"{index.QualifiedName} 没有声明 Unique"));
+    }
+
+    private static IReadOnlyCollection<ObservedMongoIndex> Observed(params string[] names)
+        => names.Select(name => new ObservedMongoIndex(name, Unique: false)).ToList();
 
     private static Dictionary<string, HashSet<string>> ParseDeclaredIndexes(string script)
     {

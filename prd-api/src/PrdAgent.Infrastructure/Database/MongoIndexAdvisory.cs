@@ -10,10 +10,17 @@ namespace PrdAgent.Infrastructure.Database;
 /// <param name="Collection">集合名，与 MongoDbContext 与 scripts/mongodb-indexes.js 一致。</param>
 /// <param name="Name">索引名，必须与 scripts/mongodb-indexes.js 里声明的名字逐字相同（有守卫）。</param>
 /// <param name="Consequence">缺席期间会退化成什么样。写给运维读的第一句话，不写索引结构。</param>
-public sealed record RequiredMongoIndex(string Collection, string Name, string Consequence)
+/// <param name="Unique">
+/// 这条索引的价值在唯一约束上。为 true 时，同名但没开 unique 的索引按「缺失」报出——
+/// 脚本头注释写明历史上确有一批 uniq_* 索引建时漏了 unique，只认名字会把它们误报成「都在」。
+/// </param>
+public sealed record RequiredMongoIndex(string Collection, string Name, string Consequence, bool Unique = false)
 {
     public string QualifiedName => $"{Collection}.{Name}";
 }
+
+/// <summary>列索引时读到的一条索引：名字，以及是否带唯一约束。</summary>
+public sealed record ObservedMongoIndex(string Name, bool Unique);
 
 /// <summary>
 /// 启动巡检要查的索引清单。这是**数据**：新增一条就是加一行，不许在检查逻辑里写 if。
@@ -40,15 +47,18 @@ public static class RequiredMongoIndexCatalog
         new(
             "hosted_site_revisions",
             "uniq_hosted_site_revision_rollback_idempotency",
-            "同一次网页版本回退请求被并发重放时两次都会写入，同一站点会多出重复的回退版本（回退幂等失效）"),
+            "同一次网页版本回退请求被并发重放时两次都会写入，同一站点会多出重复的回退版本（回退幂等失效）",
+            Unique: true),
         new(
             "infra_agent_sessions",
             "uniq_infra_agent_sessions_prewarm_key",
-            "多个 API 副本同时收到同一用户同一风格的 PPT 预热请求时会各自起一个远端会话（跨副本 single-flight 失效），重复占用运行时"),
+            "多个 API 副本同时收到同一用户同一风格的 PPT 预热请求时会各自起一个远端会话（跨副本 single-flight 失效），重复占用运行时",
+            Unique: true),
         new(
             "activity_logs",
             "uniq_activity_logs_deduplication_key",
-            "同一条领域动态（如生成站点发布）在重试或多副本并发写入时会记成两条，动态时间线出现重复（幂等键失效）"),
+            "同一条领域动态（如生成站点发布）在重试或多副本并发写入时会记成两条，动态时间线出现重复（幂等键失效）",
+            Unique: true),
     ];
 }
 
@@ -102,7 +112,7 @@ public sealed class MongoIndexAdvisory
     /// <summary><see cref="RefreshIfStaleAsync(IMongoDatabase, ILogger, TimeSpan, TimeSpan)"/> 的可注入版本。</summary>
     public Task<MongoIndexAdvisoryReport> RefreshIfStaleAsync(
         IReadOnlyList<RequiredMongoIndex> required,
-        Func<string, CancellationToken, Task<IReadOnlyCollection<string>>> listIndexNames,
+        Func<string, CancellationToken, Task<IReadOnlyCollection<ObservedMongoIndex>>> listIndexNames,
         ILogger logger,
         TimeSpan maxAge,
         TimeSpan budget,
@@ -123,7 +133,7 @@ public sealed class MongoIndexAdvisory
 
     private async Task<MongoIndexAdvisoryReport> RunBoundedAsync(
         IReadOnlyList<RequiredMongoIndex> required,
-        Func<string, CancellationToken, Task<IReadOnlyCollection<string>>> listIndexNames,
+        Func<string, CancellationToken, Task<IReadOnlyCollection<ObservedMongoIndex>>> listIndexNames,
         ILogger logger,
         TimeSpan budget,
         DateTime now)
@@ -157,7 +167,7 @@ public sealed class MongoIndexAdvisory
     /// </summary>
     public async Task<MongoIndexAdvisoryReport> CheckAsync(
         IReadOnlyList<RequiredMongoIndex> required,
-        Func<string, CancellationToken, Task<IReadOnlyCollection<string>>> listIndexNames,
+        Func<string, CancellationToken, Task<IReadOnlyCollection<ObservedMongoIndex>>> listIndexNames,
         ILogger logger,
         DateTime now,
         CancellationToken ct = default)
@@ -169,7 +179,7 @@ public sealed class MongoIndexAdvisory
         for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
         {
             var group = groups[groupIndex];
-            IReadOnlyCollection<string> present;
+            IReadOnlyCollection<ObservedMongoIndex> present;
             try
             {
                 present = await listIndexNames(group.Key, ct);
@@ -201,10 +211,28 @@ public sealed class MongoIndexAdvisory
                 continue;
             }
 
-            var names = present.ToHashSet(StringComparer.Ordinal);
+            var byName = present
+                .GroupBy(observed => observed.Name, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
             foreach (var index in group)
             {
-                if (names.Contains(index.Name)) continue;
+                if (byName.TryGetValue(index.Name, out var observed))
+                {
+                    if (!index.Unique || observed.Unique) continue;
+
+                    // 名字在、约束不在：对并发正确性而言等于没有，按缺失报。
+                    missing.Add(index.QualifiedName);
+                    logger.LogWarning(
+                        "MongoDB 索引 {IndexName}（集合 {Collection}）存在但没有启用唯一约束，于是：{Consequence}。"
+                        + "应用启动不会改索引（no-auto-index），请 DBA 按 {GuidePath} 执行 {ScriptPath}，脚本会把同名索引收紧为唯一索引。",
+                        index.Name,
+                        index.Collection,
+                        index.Consequence,
+                        RequiredMongoIndexCatalog.GuidePath,
+                        RequiredMongoIndexCatalog.ScriptPath);
+                    continue;
+                }
+
                 missing.Add(index.QualifiedName);
                 logger.LogWarning(
                     "缺少 MongoDB 索引 {IndexName}（集合 {Collection}），于是：{Consequence}。"
@@ -230,7 +258,7 @@ public sealed class MongoIndexAdvisory
         return report;
     }
 
-    private static async Task<IReadOnlyCollection<string>> ListIndexNamesAsync(
+    private static async Task<IReadOnlyCollection<ObservedMongoIndex>> ListIndexNamesAsync(
         IMongoDatabase database,
         string collection,
         CancellationToken ct)
@@ -240,9 +268,10 @@ public sealed class MongoIndexAdvisory
         var cursor = await database.GetCollection<BsonDocument>(collection).Indexes.ListAsync(ct);
         var documents = await cursor.ToListAsync(ct);
         return documents
-            .Select(document => document.GetValue("name", BsonNull.Value))
-            .Where(value => value.IsString)
-            .Select(value => value.AsString)
+            .Where(document => document.GetValue("name", BsonNull.Value).IsString)
+            .Select(document => new ObservedMongoIndex(
+                document["name"].AsString,
+                document.GetValue("unique", false).ToBoolean()))
             .ToList();
     }
 }
