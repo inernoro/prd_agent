@@ -291,7 +291,7 @@ public class LiteraryMcpJourneyTests
             };
             await db.ImageAssets.InsertManyAsync([normalAutoAsset, normalMigrationAsset]);
 
-            var submissions = WithAdminUser(new SubmissionsController(db, null!), "writer");
+            var submissions = WithAdminUser(new SubmissionsController(db, null!, NullLogger<SubmissionsController>.Instance), "writer");
             var protectedAsset = await db.ImageAssets.Find(x => x.WorkspaceId == workspaceId).SingleAsync();
             var visualAutoResult = await submissions.CreateSubmission(new()
             {
