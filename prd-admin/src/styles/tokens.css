@@ -93,6 +93,21 @@
   --accent-fg-amber: #fbbf24;
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
+  /* AI 资讯分类色（更新中心「AI 大事」、首页挂件）。暗色沿用原 400 档亮色；
+     浅色压到 700/800 档，否则亮琥珀/亮青落在暖纸底上只有 1.5~2:1。 */
+  --news-label-indigo-soft: #a5b4fc;
+  --news-label-green: #4ade80;
+  --news-label-rose: #fb7185;
+  --news-label-cyan: #22d3ee;
+  --news-label-amber: #fbbf24;
+  --news-label-indigo: #818cf8;
+  --news-label-gold: #f59e0b;
+  --news-label-emerald: #34d399;
+  --news-label-sky: #38bdf8;
+  --news-label-purple: #c084fc;
+  --news-label-pink: #f472b6;
+  --news-label-orange: #fb923c;
+  --news-label-slate: #94a3b8;
 
   /* ── 公共藏书阁（/bookshelf）：粗野骨架 + 五色分卷 ──────────────────
      七卷身份色直接复用上面的 --accent-fg-* 与 --accent-gold，这里只补三样
@@ -902,6 +917,20 @@
   --accent-fg-amber: #92400e;
   --accent-fg-danger: #b91c1c;
   --accent-fg-emerald: #166534;
+  /* AI 资讯分类色浅色档（700/800），与暗色档逐项对应 */
+  --news-label-indigo-soft: #4338ca;
+  --news-label-green: #166534;
+  --news-label-rose: #be123c;
+  --news-label-cyan: #155e75;
+  --news-label-amber: #92400e;
+  --news-label-indigo: #4f46e5;
+  --news-label-gold: #854d0e;
+  --news-label-emerald: #065f46;
+  --news-label-sky: #075985;
+  --news-label-purple: #7e22ce;
+  --news-label-pink: #9d174d;
+  --news-label-orange: #c2410c;
+  --news-label-slate: #475569;
 
   /* ── 公共藏书阁（/bookshelf）浅色档，逐项对应 :root 的同名 token ── */
   --shelf-edge: #1C1C1E;
@@ -1328,6 +1357,20 @@
   --accent-fg-amber: #fbbf24;
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
+  /* 暗岛内 AI 资讯分类色翻回亮档（同上面 --accent-fg-* 的理由） */
+  --news-label-indigo-soft: #a5b4fc;
+  --news-label-green: #4ade80;
+  --news-label-rose: #fb7185;
+  --news-label-cyan: #22d3ee;
+  --news-label-amber: #fbbf24;
+  --news-label-indigo: #818cf8;
+  --news-label-gold: #f59e0b;
+  --news-label-emerald: #34d399;
+  --news-label-sky: #38bdf8;
+  --news-label-purple: #c084fc;
+  --news-label-pink: #f472b6;
+  --news-label-orange: #fb923c;
+  --news-label-slate: #94a3b8;
   /*
    * 表面族必须**整族**覆盖，缺一个就翻车。
    * Codex 在 PR #1374 抓到：arena 的两个下拉用 var(--bg-elevated)，
