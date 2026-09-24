@@ -330,8 +330,12 @@ describe('主题系统契约', () => {
      * --skeleton-sheen 同理：骨架上那道扫光。浅色档的骨架底是**深**的
      * （rgba(60,44,36,0.075)），扫光要把它提回纸白才有「扫过去」的效果，
      * 所以近白是对的方向，不是漏改。它同样只在骨架期出现、不承载任何文字。
+     *
+     * --button-primary-fg 同理（2026-09-24）：浅色主按钮改成「深陶土实底 + 白字」，
+     * 这份白字永远只压在 --button-primary-bg（#A64B35 一档）上，不可能落到纸面；
+     * 对比度由下面「浅色主题语义文字保持可读」那条逐主题算 fg×bg / fg×hover ≥ 4.5 钉住。
      */
-    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen'];
+    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen', '--button-primary-fg'];
     const lightBlockWithoutPaper = lightBlock
       .split('\n')
       .filter((line) => !PAPER_MEDIA_TOKENS.some((t) => line.trim().startsWith(t)))

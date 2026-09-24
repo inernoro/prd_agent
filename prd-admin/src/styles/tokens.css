@@ -547,6 +547,8 @@
   --button-primary-bg-hover: #E08A6B;
   --button-primary-fg: #241915;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
+  /* 首页 HERO 渐变（亮陶土三档）上的文字色：两个主题都是深墨，不跟主按钮走 */
+  --hero-gradient-fg: #241915;
   --button-secondary-bg: rgba(255, 255, 255, 0.05);
   --button-secondary-bg-hover: rgba(255, 255, 255, 0.10);
   --button-secondary-border: rgba(255, 255, 255, 0.10);
@@ -1036,12 +1038,15 @@
   --selection-highlight-underline: rgba(166, 75, 53, 0.72);
   --selection-checkbox-bg: var(--bg-card);
 
-  --button-primary-bg: #CC785C;
-  /* hover 往亮走而不是往暗走：主按钮是「陶土底 + 深墨字」，压暗会把字压进 4.18:1
-     （新加的暗浅双向对比守卫抓到的存量问题），提亮反而对比更高。 */
-  --button-primary-bg-hover: #D4855F;
-  --button-primary-fg: #241915;
-  --button-primary-shadow: 0 2px 6px rgba(204, 120, 92, 0.22), 0 1px 2px rgba(89, 65, 50, 0.06);
+  /* 白天的主按钮是「深陶土实底 + 白字」（2026-09-24 用户：原来的「亮陶土底 + 深墨字」
+     在纸面上像刚从夜间模式穿越过来——亮彩底配黑字是暗色界面的写法）。
+     #A64B35 就是浅色档的 --accent-primary，白字 5.71:1；hover 往暗走（白字对比只升不降）。
+     首页渐变 CTA 另走 --hero-gradient-fg（那条渐变偏亮，白字只有 2.2~3.6:1）。 */
+  --button-primary-bg: #A64B35;
+  --button-primary-bg-hover: #93402C;
+  --button-primary-fg: #FFFFFF;
+  --hero-gradient-fg: #241915;
+  --button-primary-shadow: 0 1px 2px rgba(89, 45, 32, 0.18), 0 2px 8px rgba(166, 75, 53, 0.16);
   --button-secondary-bg: var(--bg-card);
   --button-secondary-bg-hover: var(--bg-card-hover);
   --button-secondary-border: var(--hairline);
@@ -1357,6 +1362,8 @@
   --accent-primary: #D97757;
   --accent-primary-rgb: 217, 119, 87;
   --button-primary-bg: #D97757;
+  /* 岛内是亮陶土底，文字必须钉回深墨：否则浅色页里会继承页面的白字（3.1:1） */
+  --button-primary-fg: #241915;
   --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
   /*
    * 次要 / 危险 / ghost 按钮的底色边框。漏了它们的后果在真机上是「模型设置」

@@ -3,7 +3,6 @@ import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { TipCard } from '@/components/daily-tips/TipCard';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
@@ -875,7 +874,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
   // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
-  const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
 
   // Phase 1: 段落右键上下文菜单
   const [paragraphCtxMenu, setParagraphCtxMenu] = useState<{
@@ -943,9 +941,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
-        setAnchorTutorialSeen(!!prefs.anchorTutorialSeen);
-      } else {
-        setAnchorTutorialSeen(false);
       }
       setModelPrefReady(true);
       setModelsLoading(false);
@@ -1480,15 +1475,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase(1); // Editing
   }, []);
 
-  // Phase 1: 关闭锚点教程气泡（点"知道啦"后不再弹出）
-  const dismissAnchorTutorial = useCallback(() => {
-    setAnchorTutorialSeen(true);
-    void updateLiteraryAgentPreferences({
-      imageModelId: imageModelPrefId || undefined,
-      chatModelId: chatModelPrefId || undefined,
-      anchorTutorialSeen: true,
-    }).catch(() => {});
-  }, [imageModelPrefId, chatModelPrefId]);
 
   // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
   const addAnchorAbove = useCallback((pIdx: number) => {
@@ -2841,11 +2827,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <button
                 type="button"
                 onClick={() => setAutoSubmitEnabled((v) => !v)}
-                className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
+                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                 style={{
-                  color: submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.6)' : 'var(--text-muted)',
-                  background: submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
-                  border: submissionState.submitted ? '1px solid rgba(16, 185, 129, 0.2)' : autoSubmitEnabled ? '1px solid rgba(16, 185, 129, 0.15)' : '1px solid transparent',
+                  // 白天的写法：浅色填充 + 语义深色字，不加彩色描边（彩边是暗色界面的发光手法）
+                  color: submissionState.submitted || autoSubmitEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
+                  background: submissionState.submitted ? 'rgba(16, 185, 129, 0.12)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.08)' : 'transparent',
                 }}
                 title={submissionState.submitted ? '已投稿到作品广场' : autoSubmitEnabled ? '自动投稿已开启，生成配图后自动投稿到作品广场' : '自动投稿已关闭，点击开启'}
               >
@@ -2857,11 +2843,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   type="button"
                   onClick={handleManualSubmit}
                   disabled={manualSubmitting}
-                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
+                  className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                   style={{
                     color: 'var(--accent-fg-blue)',
-                    background: 'rgba(59, 130, 246, 0.08)',
-                    border: '1px solid rgba(59, 130, 246, 0.15)',
+                    background: 'rgba(59, 130, 246, 0.10)',
                     opacity: manualSubmitting ? 0.5 : 1,
                   }}
                   title="手动将当前作品投稿到作品广场"
@@ -3592,7 +3577,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 width={260}
                 open={positionStrategyOpen}
                 onOpenChange={setPositionStrategyOpen}
-                note={<>选「尊重用户锚点」时，可在文章里用 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出要配图的位置。</>}
+                note={<>想自己指定位置：在预览里右键段落选「在上方 / 下方插入配图」，或悬停段落左侧点 +；也可在文章里写 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code>。这些位置在「尊重用户锚点」下生效。</>}
                 trigger={
                   <PopupButton
                     icon={<MapPin size={13} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />}
@@ -5222,38 +5207,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         </div>
       )}
 
-      {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
-          抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
-      {!isMobile && anchorTutorialSeen === false && phase !== 0 && (
-        <div
-          className="fixed z-[1000]"
-          style={{ right: 24, bottom: 24, maxWidth: 340 }}
-        >
-          <TipCard
-            icon={<MapPin size={14} />}
-            accent="rgba(52, 211, 153, 0.95)"
-            title="新功能:手动指定配图位置"
-            body={
-              <div>
-                <div style={{ marginBottom: 6 }}>右上角「位置策略」可切换 4 种生成策略</div>
-                <div style={{ marginBottom: 6 }}>
-                  鼠标悬停段落左侧后，点{' '}
-                  <span style={{ color: 'var(--accent-fg-success)' }}>+</span> 在上方打锚点
-                </div>
-                <div>
-                  段落上
-                  <span style={{ color: 'var(--accent-fg-success)' }}>右键</span> →
-                  选择"在上方/下方插入配图"
-                </div>
-              </div>
-            }
-            ctaText="知道啦"
-            ack
-            onCta={dismissAnchorTutorial}
-            variant="bubble"
-          />
-        </div>
-      )}
     </div>
   );
 }
