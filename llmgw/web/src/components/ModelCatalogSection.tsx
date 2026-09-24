@@ -308,7 +308,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
           <Button variant="secondary" size="sm" onClick={() => setShowBuiltin((value) => !value)}>
-            {showBuiltin ? '收起内置名录' : `查看内置名录（${data.builtinCount}）`}
+            {showBuiltin ? '查看补登名录' : `查看内置名录（${data.builtinCount}）`}
           </Button>
           {canWrite ? (
             <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(null) })}>
@@ -327,8 +327,9 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
         </InlineAlert>
       ) : null}
 
-      <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      {!showBuiltin ? (
+        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
               <th style={TABLE_HEAD_CELL}>模型标识</th>
@@ -380,11 +381,12 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+          </table>
+        </div>
+      ) : null}
 
       {showBuiltin ? (
-        <div style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>

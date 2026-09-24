@@ -222,18 +222,23 @@ export function TabBar<K extends string>({
   items,
   activeKey,
   onChange,
+  ariaLabel = '页面分类',
 }: {
   items: { key: K; label: string }[];
   activeKey: K;
   onChange: (k: K) => void;
+  ariaLabel?: string;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 2, overflowX: 'auto', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, scrollbarWidth: 'none' }}>
+    <div role="tablist" aria-label={ariaLabel} style={{ display: 'flex', gap: 2, overflowX: 'auto', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, scrollbarWidth: 'none' }}>
       {items.map((it) => {
         const active = it.key === activeKey;
         return (
           <button
             key={it.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
             onClick={() => onChange(it.key)}
             style={{
               background: 'transparent',
