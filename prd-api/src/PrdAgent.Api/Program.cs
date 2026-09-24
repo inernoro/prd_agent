@@ -1769,16 +1769,23 @@ static async Task<IResult> DeepHealth(
 {
     var now = DateTime.UtcNow;
 
-    // 关键人工索引：每次深度自检现查一次（五个集合各一次 listIndexes，很便宜），
+    // 关键人工索引：深度自检时现查（五个集合各一次 listIndexes，很便宜），
     // 让 CDS 的常设探针在缺失时响铃——只有启动日志的话，缺了也没人知道（degradation-must-alarm）。
     // 现查还顺带刷新 /health/ready 的快照，DBA 补建后不必重启。只查不建。
     // 读不出结论时值落在失败侧哨兵，不许判绿。
+    //
+    // 两个时间边界：
+    // - 预算 2 秒，必须明显小于 CDS 探针的 5 秒默认超时，否则巡检一慢整个端点被判成连不上，
+    //   同一端点上的其它 check 一起失真；超时时没查完的几条记成「未核实」，照样响铃。
+    // - 60 秒内查过就复用快照：端点匿名可达，被刷时不反复 listIndexes、不反复写告警日志。
     const int requiredIndexUnknownSentinel = 9999;
     int requiredIndexIssues;
     string requiredIndexOutput;
-    using (var indexTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+    var lastIndexReport = indexAdvisory.LastReport;
+    if (lastIndexReport is null || now - lastIndexReport.CheckedAt > TimeSpan.FromSeconds(60))
     {
-        indexTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+        using var indexTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        indexTimeout.CancelAfter(TimeSpan.FromSeconds(2));
         try
         {
             await indexAdvisory.CheckAsync(
