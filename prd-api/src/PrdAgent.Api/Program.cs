@@ -1762,10 +1762,50 @@ static async Task<IResult> DeepHealth(
     PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
     PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
     PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
+    PrdAgent.Infrastructure.Database.MongoIndexAdvisory indexAdvisory,
+    ILoggerFactory loggerFactory,
     IHostEnvironment hostEnvironment,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
+
+    // 关键人工索引：每次深度自检现查一次（五个集合各一次 listIndexes，很便宜），
+    // 让 CDS 的常设探针在缺失时响铃——只有启动日志的话，缺了也没人知道（degradation-must-alarm）。
+    // 现查还顺带刷新 /health/ready 的快照，DBA 补建后不必重启。只查不建。
+    // 读不出结论时值落在失败侧哨兵，不许判绿。
+    const int requiredIndexUnknownSentinel = 9999;
+    int requiredIndexIssues;
+    string requiredIndexOutput;
+    using (var indexTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+    {
+        indexTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            await indexAdvisory.CheckAsync(
+                db.Database,
+                loggerFactory.CreateLogger<PrdAgent.Infrastructure.Database.MongoIndexAdvisory>(),
+                indexTimeout.Token);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // 超时或意外错误：巡检已把没查完的几条记成「未核实」，下面按快照出结论
+        }
+    }
+    var indexReport = indexAdvisory.LastReport;
+    if (indexReport is null)
+    {
+        requiredIndexIssues = requiredIndexUnknownSentinel;
+        requiredIndexOutput = "关键索引巡检没有产出结论，是否缺索引现在未知；去看容器日志里的索引巡检告警";
+    }
+    else
+    {
+        requiredIndexIssues = indexReport.Missing.Count + indexReport.Unverified.Count;
+        requiredIndexOutput = requiredIndexIssues == 0
+            ? $"{PrdAgent.Infrastructure.Database.RequiredMongoIndexCatalog.All.Count} 条需要人工维护的关键索引都在"
+            : $"缺 {indexReport.Missing.Count} 条、无法核实 {indexReport.Unverified.Count} 条关键索引——"
+              + "清理任务可能在整表扫描、或并发写入可能出现重复；请 DBA 按 "
+              + PrdAgent.Infrastructure.Database.RequiredMongoIndexCatalog.GuidePath + " 补建";
+    }
     var faultCount = faults.CountWithinWindow();
     var requests = faults.RequestsWithinWindow();
     var deploymentIdentity = ReadBuildIdentity();
@@ -2060,6 +2100,31 @@ static async Task<IResult> DeepHealth(
                         // 对外只出业务名与红绿，不出地址、判据、日志——所以这条可以公开。
                         publicVisible = true,
                         publicName = "MAP 后端",
+                    },
+                },
+            },
+            ["mongo:required-indexes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "mongo.required-indexes",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = requiredIndexIssues,
+                    ["observedUnit"] = "count",
+                    // 与下面 cds:monitor 的 op/value 同一个判据
+                    ["status"] = requiredIndexIssues == 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    // 对外只给数量与后果，不列索引名（端点匿名可读）；名字在容器日志与 /health/ready 里
+                    ["output"] = requiredIndexOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 关键人工索引缺失数",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        severity = "P1",
+                        // 主动读一次状态，走默认的 active，不设 sampleComponentId
                     },
                 },
             },

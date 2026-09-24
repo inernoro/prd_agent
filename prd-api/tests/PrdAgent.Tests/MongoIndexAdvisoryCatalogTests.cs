@@ -117,6 +117,56 @@ public sealed class MongoIndexAdvisoryCatalogTests
         Assert.Contains("listIndexes", warning.Message);
     }
 
+    [Fact]
+    public async Task TimeoutLeavesUncheckedIndexesAsUnverifiedInsteadOfNoReport()
+    {
+        var logger = new ListLogger();
+        var advisory = new MongoIndexAdvisory();
+        var required = new[]
+        {
+            new RequiredMongoIndex("fast", "idx_fast", "后果 fast"),
+            new RequiredMongoIndex("slow", "idx_slow", "后果 slow"),
+            new RequiredMongoIndex("later", "idx_later", "后果 later"),
+        };
+        using var cts = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => advisory.CheckAsync(
+            required,
+            async (collection, ct) =>
+            {
+                if (collection == "fast") return new[] { "idx_fast" };
+                cts.Cancel();
+                await Task.Delay(Timeout.Infinite, ct);
+                return Array.Empty<string>();
+            },
+            logger,
+            DateTime.UtcNow,
+            cts.Token));
+
+        // 超时后就绪端点要能分清「还在跑」（null）和「没查完」（未核实）
+        var report = Assert.IsType<MongoIndexAdvisoryReport>(advisory.LastReport);
+        Assert.Empty(report.Missing);
+        Assert.Equal(new[] { "slow.idx_slow", "later.idx_later" }, report.Unverified);
+    }
+
+    [Fact]
+    public void DeepHealthPublishesRequiredIndexCheckForStandingMonitor()
+    {
+        // 接线守卫：缺失索引必须进 /api/healthz/deep 的 cds:monitor，CDS 常设探针才会响铃。
+        // 只留在启动日志和 /health/ready 里等于没有铃（degradation-must-alarm）。
+        var program = File.ReadAllText(LocateRepoFile("prd-api/src/PrdAgent.Api/Program.cs"));
+        var start = program.IndexOf("static async Task<IResult> DeepHealth(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到 DeepHealth");
+        var body = program[start..];
+        Assert.Contains("indexAdvisory.CheckAsync(", body);
+        var check = body.IndexOf("[\"componentId\"] = \"mongo.required-indexes\"", StringComparison.Ordinal);
+        Assert.True(check >= 0, "深度自检里没有 mongo.required-indexes 这条 check");
+        var nextCheck = body.IndexOf("[\"componentId\"]", check + 1, StringComparison.Ordinal);
+        var segment = nextCheck > 0 ? body[check..nextCheck] : body[check..];
+        Assert.Contains("[\"cds:monitor\"]", segment);
+        Assert.Contains("[\"observedValue\"] = requiredIndexIssues", segment);
+    }
+
     private static Dictionary<string, HashSet<string>> ParseDeclaredIndexes(string script)
     {
         var sites = CallSite.Matches(script)

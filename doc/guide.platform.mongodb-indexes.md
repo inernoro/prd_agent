@@ -92,7 +92,9 @@ mongosh "<connection-uri>/<database>" scripts/mongodb-indexes.js
 **怎么知道缺没缺**：API 启动后会查一次（只查不建），缺了在日志里写一条 Warning，开头就是后果，
 例如「缺少 MongoDB 索引 idx_hosted_site_deletion_due（集合 hosted_site_deletion_tasks），于是：网页托管删除清理每分钟一轮……」。
 同一份结论也挂在 `GET /health/ready` 的 `missingIndexes` / `unverifiedIndexes` / `indexesCheckedAt`
-三个字段上，只读附带，**不影响**就绪判定。这是启动那一刻的快照：补建后要等下一次重启才会刷新。
+三个字段上，只读附带，**不影响**就绪判定。另外 `GET /api/healthz/deep` 每次被探测都会现查一次，
+缺失数挂在 `mongo.required-indexes` 这条检查上并声明了 `cds:monitor`，CDS 的常设探针（6 小时一轮）
+会在缺失时响铃；它现查的同时刷新 `/health/ready` 的快照，所以补建后不必重启。
 这次启动巡检同时覆盖三条唯一索引（`hosted_site_revisions.uniq_hosted_site_revision_rollback_idempotency`、
 `infra_agent_sessions.uniq_infra_agent_sessions_prewarm_key`、`activity_logs.uniq_activity_logs_deduplication_key`），
 它们缺席时是并发重复写入而不是变慢；补建方式与本节相同。巡检清单与脚本的名字一致性有 xUnit 守卫。
@@ -141,7 +143,7 @@ mongosh "<connection-uri>/<database>" --quiet --eval 'const now = new Date(); pr
 `executionStats.totalDocsExamined` 远小于集合总文档数。第一条的条件里必须带着 `PendingAssetCleanupKeys.0` 存在这一项，
 partial 索引才会被选中——后台任务的真实查询带着它，照搬即可，不要删。
 
-**第三步，重启 API 一次**，确认启动日志里不再有这两条索引的 Warning，`/health/ready` 的 `missingIndexes` 为空数组。
+**第三步，打一次 `GET /api/healthz/deep`**，确认 `mongo.required-indexes` 的 `observedValue` 为 0，随后 `/health/ready` 的 `missingIndexes` 为空数组（不需要重启 API）。
 
 ### 回滚
 
@@ -152,7 +154,7 @@ mongosh "<connection-uri>/<database>" --quiet --eval 'db.hosted_sites.dropIndex(
 mongosh "<connection-uri>/<database>" --quiet --eval 'db.hosted_site_deletion_tasks.dropIndex("idx_hosted_site_deletion_due")'
 ```
 
-回滚后清理任务照常工作，只是回到每轮整表扫描；下次启动日志会重新出现缺失告警。
+回滚后清理任务照常工作，只是回到每轮整表扫描；下一次深度自检（或下次启动）会重新报出缺失并触发 CDS 告警。
 其余步骤按第 6 节。
 
 ### 风险

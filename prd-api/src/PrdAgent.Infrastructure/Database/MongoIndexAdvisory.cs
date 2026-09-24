@@ -101,9 +101,11 @@ public sealed class MongoIndexAdvisory
     {
         var missing = new List<string>();
         var unverified = new List<string>();
+        var groups = required.GroupBy(index => index.Collection, StringComparer.Ordinal).ToList();
 
-        foreach (var group in required.GroupBy(index => index.Collection, StringComparer.Ordinal))
+        for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
         {
+            var group = groups[groupIndex];
             IReadOnlyCollection<string> present;
             try
             {
@@ -111,6 +113,10 @@ public sealed class MongoIndexAdvisory
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                // 超时或停机：没查完的那几条落成「未核实」再往外抛。不留快照的话，
+                // 就绪端点会一直显示 null，和「巡检还在跑」分不开。
+                unverified.AddRange(groups.Skip(groupIndex).SelectMany(g => g).Select(i => i.QualifiedName));
+                Volatile.Write(ref _lastReport, new MongoIndexAdvisoryReport(now, missing, unverified));
                 throw;
             }
             catch (Exception ex)
