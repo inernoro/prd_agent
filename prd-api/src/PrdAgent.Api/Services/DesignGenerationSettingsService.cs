@@ -183,7 +183,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         DesignGenerationSettingsUpdate update, string userId, CancellationToken ct)
     {
         var current = await LoadAsync(ct) ?? new DesignGenerationSettings();
-        var next = Apply(current, update);
+        var next = Apply(current, update, _catalog);
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         next.UpdatedAt = DateTime.UtcNow;
         next.UpdatedByUserId = userId;
@@ -246,7 +246,8 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             ? new List<string>()
             : new List<string> { system.Swatches.Fg, system.Swatches.Bg, system.Swatches.Accent };
 
-    internal static DesignGenerationSettings Apply(DesignGenerationSettings current, DesignGenerationSettingsUpdate update)
+    internal static DesignGenerationSettings Apply(
+        DesignGenerationSettings current, DesignGenerationSettingsUpdate update, IDesignSystemCatalog catalog)
     {
         var next = new DesignGenerationSettings
         {
@@ -272,7 +273,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
                 throw new DesignGenerationSettingsException("自查强度只能是 off、light 或 strict");
             next.ReviewMode = mode == DesignGenerationDefaults.DefaultReviewMode ? null : mode;
         }
-        if (update.Styles != null) next.Styles = NormalizeStyles(update.Styles);
+        if (update.Styles != null) next.Styles = NormalizeStyles(update.Styles, current.Styles, catalog);
         if (update.Prompts != null)
         {
             next.GeneratePrompt = NormalizePrompt(update.Prompts.Generate, current.GeneratePrompt, DesignGenerationDefaults.GeneratePrompt, "创作");
@@ -293,7 +294,8 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         return value == builtIn.Trim() ? null : value;
     }
 
-    private static List<DesignStylePreset> NormalizeStyles(List<DesignStylePreset> submitted)
+    private static List<DesignStylePreset> NormalizeStyles(
+        List<DesignStylePreset> submitted, List<DesignStylePreset>? previous, IDesignSystemCatalog catalog)
     {
         if (submitted.Count == 0) throw new DesignGenerationSettingsException("至少保留一套风格");
         if (submitted.Count > DesignGenerationDefaults.MaxStyles)
@@ -311,6 +313,12 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             var designSystemId = (raw.DesignSystemId ?? string.Empty).Trim().ToLowerInvariant();
             if (!DesignSystemIdPattern.IsMatch(designSystemId))
                 throw new DesignGenerationSettingsException($"风格「{name}」的设计系统编号只能用小写字母、数字和连字符");
+            // 新填或改过的编号必须在设计系统快照里：否则这套风格没有样张、没有色块，生成时也找不到它，
+            // 却会一直挂在风格列表里被人选中。沿用库里原样的旧编号不拦，免得快照更新后连提示词都存不了。
+            var unchanged = previous?.Any(p => p.Id == id && p.DesignSystemId == designSystemId) == true
+                || (previous == null && DesignGenerationDefaults.Styles.Any(p => p.Id == id && p.DesignSystemId == designSystemId));
+            if (!unchanged && catalog.Find(designSystemId) == null)
+                throw new DesignGenerationSettingsException($"风格「{name}」引用的设计系统「{designSystemId}」不在当前快照里，请从风格画廊里选一套");
             // 色块不再是可编辑项：提交里带的 swatches 一律不采用、不落库，读取时从设计系统快照派生。
             result.Add(new DesignStylePreset
             {

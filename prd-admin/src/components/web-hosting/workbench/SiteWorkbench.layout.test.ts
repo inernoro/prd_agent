@@ -132,3 +132,17 @@ describe('选知识的搜索框打字即筛', () => {
     expect(browser).toMatch(/\}, \[keyword, keywordInput\]\);/);
   });
 });
+
+describe('生成完读站点的请求按会话隔离', () => {
+  it('关窗或重开后，迟到的 getSite 结果不落到新一轮', () => {
+    // Codex P2：handleGenerated 的 getSite 没有会话栅栏，关掉再打开别的站点时会被旧结果换掉。
+    const wb = read('SiteWorkbench.tsx');
+    const effect = wb.indexOf('sessionRef.current += 1;');
+    const openGuard = wb.indexOf('if (!open) return;', effect);
+    expect(effect, '关窗时也要换会话号').toBeGreaterThan(-1);
+    expect(openGuard).toBeGreaterThan(effect);
+    const handler = wb.slice(wb.indexOf('const handleGenerated'), wb.indexOf('const handleSiteChanged'));
+    expect(handler).toContain('const requestedIn = sessionRef.current;');
+    expect(handler).toMatch(/getSite\(siteId\)\.then\(\(result\) => \{\s*if \(sessionRef\.current !== requestedIn\) return;/);
+  });
+});

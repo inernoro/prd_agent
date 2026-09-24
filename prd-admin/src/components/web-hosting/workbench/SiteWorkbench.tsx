@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Settings2, Sparkles } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -47,12 +47,17 @@ export default function SiteWorkbench({
   const [busy, setBusy] = useState(false);
   /** 每次打开换一把钥匙：两个阶段都重新挂载，上一轮的状态不会漏进这一轮。 */
   const [session, setSession] = useState(0);
+  // 同步可读的会话号：生成完读站点的那次请求要能判断「我回来时还是不是这一轮」。
+  const sessionRef = useRef(0);
 
   useEffect(() => {
+    // 关窗也算换了一轮：读站点期间关掉，结果不许落到下一次打开的工作台上。
+    sessionRef.current += 1;
     if (!open) return;
     setSession((current) => current + 1);
     setPane('chat');
     setIntro(null);
+    setLoadingSite(false);
     setSite(target.kind === 'site' ? target.site : null);
     // 只在打开那一刻快照目标；打开期间列表刷新带来的新对象由 onSiteChanged 回写。
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -61,7 +66,9 @@ export default function SiteWorkbench({
     onCreated?.(siteId);
     setIntro(generatedIntro);
     setLoadingSite(true);
+    const requestedIn = sessionRef.current;
     void getSite(siteId).then((result) => {
+      if (sessionRef.current !== requestedIn) return;
       setLoadingSite(false);
       if (!result.success) {
         toast.error('网页已生成，但没能打开修改', result.error?.message || '关掉后在网页托管列表里点「帮我修改」');

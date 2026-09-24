@@ -288,7 +288,7 @@ public sealed class DesignSystemCatalogTests
             {
                 new() { Id = "editorial", Name = "编辑刊物", DesignSystemId = "editorial", Swatches = new List<string> { "#fff", "bogus" }, Enabled = true, IsDefault = true },
             },
-        });
+        }, Catalog);
         Assert.Empty(saved.Styles![0].Swatches);
     }
 

@@ -39,7 +39,7 @@ public sealed class DesignGenerationSettingsTests
         var edited = DesignGenerationSettingsService.Apply(new DesignGenerationSettings(), new DesignGenerationSettingsUpdate
         {
             Prompts = new DesignGenerationPromptsUpdate { Generate = "只用两种颜色" },
-        });
+        }, Catalog);
         var editedSettings = DesignGenerationSettingsService.Effective(edited, Catalog);
         var editedFingerprint = DesignGenerationSettingsService.Freeze(editedSettings, null).PromptFingerprint;
 
@@ -49,7 +49,7 @@ public sealed class DesignGenerationSettingsTests
         var restored = DesignGenerationSettingsService.Apply(edited, new DesignGenerationSettingsUpdate
         {
             Prompts = new DesignGenerationPromptsUpdate { Generate = "" },
-        });
+        }, Catalog);
         Assert.Null(restored.GeneratePrompt);
         Assert.Equal(defaultFingerprint, DesignGenerationSettingsService.Freeze(
             DesignGenerationSettingsService.Effective(restored, Catalog), null).PromptFingerprint);
@@ -61,7 +61,7 @@ public sealed class DesignGenerationSettingsTests
         var saved = DesignGenerationSettingsService.Apply(new DesignGenerationSettings(), new DesignGenerationSettingsUpdate
         {
             Prompts = new DesignGenerationPromptsUpdate { Review = DesignGenerationDefaults.ReviewPrompt },
-        });
+        }, Catalog);
 
         Assert.Null(saved.ReviewPrompt);
     }
@@ -72,7 +72,7 @@ public sealed class DesignGenerationSettingsTests
     public void 默认执行器只接受两种取值(string runtime)
     {
         Assert.Throws<DesignGenerationSettingsException>(() => DesignGenerationSettingsService.Apply(
-            new DesignGenerationSettings(), new DesignGenerationSettingsUpdate { DefaultRuntime = runtime }));
+            new DesignGenerationSettings(), new DesignGenerationSettingsUpdate { DefaultRuntime = runtime }, Catalog));
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public sealed class DesignGenerationSettingsTests
         {
             Assert.Throws<DesignGenerationSettingsException>(() => DesignGenerationSettingsService.Apply(
                 new DesignGenerationSettings(),
-                new DesignGenerationSettingsUpdate { Styles = new List<DesignStylePreset> { broken } }));
+                new DesignGenerationSettingsUpdate { Styles = new List<DesignStylePreset> { broken } }, Catalog));
         }
     }
 
@@ -257,5 +257,23 @@ public sealed class DesignGenerationSettingsTests
     public void 预览事件在公开生成流上放行()
     {
         Assert.Contains("preview", DesignArtifactsController.PublicGenerationStreamEvents);
+    }
+
+    [Fact]
+    public void SavingStyles_RejectsNewDesignSystemIdsOutsideTheSnapshot_ButKeepsLegacyOnes()
+    {
+        // Codex P2：新填的设计系统编号不在快照里也能保存，这套风格没有样张、生成时找不到。
+        var ghost = new DesignStylePreset { Id = "ghost", Name = "幽灵", DesignSystemId = "no-such-system", Enabled = true, IsDefault = true };
+        var ex = Assert.Throws<DesignGenerationSettingsException>(() => DesignGenerationSettingsService.Apply(
+            new DesignGenerationSettings(), new DesignGenerationSettingsUpdate { Styles = new List<DesignStylePreset> { ghost } }, Catalog));
+        Assert.Contains("no-such-system", ex.Message);
+
+        // 库里原样沉淀的旧编号（快照更新后可能不在了）不拦：否则管理员连提示词都存不了。
+        var stored = new DesignGenerationSettings { Styles = new List<DesignStylePreset> { ghost } };
+        var saved = DesignGenerationSettingsService.Apply(stored, new DesignGenerationSettingsUpdate
+        {
+            Styles = new List<DesignStylePreset> { new() { Id = "ghost", Name = "改个名", DesignSystemId = "no-such-system", Enabled = true, IsDefault = true } },
+        }, Catalog);
+        Assert.Equal("改个名", saved.Styles![0].Name);
     }
 }
