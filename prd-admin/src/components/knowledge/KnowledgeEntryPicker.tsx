@@ -58,6 +58,8 @@ export function createLatestRequestGate() {
   let generation = 0;
   return {
     begin: () => ++generation,
+    /** 不开新一代、只读当前代号：给「在当前列表上追加一页」这类请求用。 */
+    current: () => generation,
     isCurrent: (requestGeneration: number) => requestGeneration === generation,
     invalidate: () => { generation += 1; },
   };

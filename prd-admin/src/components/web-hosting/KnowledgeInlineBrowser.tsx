@@ -109,6 +109,10 @@ export default function KnowledgeInlineBrowser({
   const [rows, setRows] = useState<EntryRow[]>([]);
   const [rowsLoading, setRowsLoading] = useState(false);
   const [rowsError, setRowsError] = useState<string | null>(null);
+  // 当前库条目总数与已取到的页：超过一页时列表底部给「再显示」，不让第 31 篇以后只能靠猜标题搜（Codex P2）。
+  const [rowsTotal, setRowsTotal] = useState(0);
+  const [rowsPage, setRowsPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   const entryGateRef = useRef(createLatestRequestGate());
 
   const selectedKeys = useMemo(
@@ -140,7 +144,17 @@ export default function KnowledgeInlineBrowser({
 
   const activeStore = stores.find((store) => store.id === activeStoreId) ?? null;
 
+  const toEntryRow = useCallback((entry: { id: string; title: string; fileSize: number; updatedAt?: string }, store: DocumentStoreWithPreview): EntryRow => ({
+    selection: { entryId: entry.id, storeId: store.id, title: entry.title, storeName: store.name },
+    meta: [
+      entry.fileSize > 0 ? formatAttachmentSize(entry.fileSize) : '',
+      formatDay(entry.updatedAt),
+    ].filter(Boolean).join(' · '),
+  }), []);
+
   const loadEntries = useCallback(async () => {
+    setRowsTotal(0);
+    setRowsPage(1);
     if (activeStoreId === RECENT_KEY) {
       const lowered = keyword.toLowerCase();
       setRows(recentEntries
@@ -163,19 +177,41 @@ export default function KnowledgeInlineBrowser({
     });
     if (!entryGateRef.current.isCurrent(generation)) return;
     if (result.success) {
-      setRows(result.data.items.map((entry) => ({
-        selection: { entryId: entry.id, storeId: activeStore.id, title: entry.title, storeName: activeStore.name },
-        meta: [
-          entry.fileSize > 0 ? formatAttachmentSize(entry.fileSize) : '',
-          formatDay(entry.updatedAt),
-        ].filter(Boolean).join(' · '),
-      })));
+      setRows(result.data.items.map((entry) => toEntryRow(entry, activeStore)));
+      setRowsTotal(result.data.total);
     } else {
       setRows([]);
       setRowsError(result.error?.message || '知识条目暂时无法读取，请重试');
     }
     setRowsLoading(false);
-  }, [activeStore, activeStoreId, keyword, recentEntries]);
+  }, [activeStore, activeStoreId, keyword, recentEntries, toEntryRow]);
+
+  const loadMoreEntries = async () => {
+    if (!activeStore || loadingMore) return;
+    const generation = entryGateRef.current.current();
+    const nextPage = rowsPage + 1;
+    setLoadingMore(true);
+    const result = await listKnowledgeEntriesPaged(activeStore.id, {
+      page: nextPage,
+      pageSize: ENTRY_PAGE_SIZE,
+      keyword: keyword || undefined,
+    });
+    setLoadingMore(false);
+    // 期间换了库或关键词：这一页属于上一个列表，丢掉。
+    if (!entryGateRef.current.isCurrent(generation)) return;
+    if (!result.success) {
+      setRowsError(result.error?.message || '更多条目暂时无法读取，请重试');
+      return;
+    }
+    setRows((current) => {
+      const known = new Set(current.map((row) => knowledgeEntrySelectionKey(row.selection)));
+      return [...current, ...result.data.items
+        .map((entry) => toEntryRow(entry, activeStore))
+        .filter((row) => !known.has(knowledgeEntrySelectionKey(row.selection)))];
+    });
+    setRowsTotal(result.data.total);
+    setRowsPage(nextPage);
+  };
 
   // 打字停下就筛：只认回车或失焦时，用户敲完字看到列表纹丝不动，会以为没搜到。
   useEffect(() => {
@@ -332,6 +368,18 @@ export default function KnowledgeInlineBrowser({
                 </button>
               );
             })
+          )}
+          {!rowsLoading && !rowsError && activeStoreId !== RECENT_KEY && rows.length < rowsTotal && (
+            <button
+              type="button"
+              onClick={() => void loadMoreEntries()}
+              disabled={loadingMore}
+              data-knowledge-load-more
+              className="mt-1 w-full rounded-[10px] px-2.5 py-2.5 text-[12px] text-token-secondary transition-colors hover-bg-soft disabled:opacity-60"
+              style={{ border: '1px dashed var(--border-default)' }}
+            >
+              {loadingMore ? '正在读取…' : `再显示 ${Math.min(ENTRY_PAGE_SIZE, rowsTotal - rows.length)} 篇（共 ${rowsTotal} 篇，已显示 ${rows.length} 篇）`}
+            </button>
           )}
         </div>
       </div>

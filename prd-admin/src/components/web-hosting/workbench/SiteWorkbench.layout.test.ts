@@ -146,3 +146,16 @@ describe('生成完读站点的请求按会话隔离', () => {
     expect(handler).toMatch(/getSite\(siteId\)\.then\(\(result\) => \{\s*if \(sessionRef\.current !== requestedIn\) return;/);
   });
 });
+
+describe('选知识：单个知识库超过一页时能继续往下看', () => {
+  it('按 total 给出「再显示」，追加页受同一请求栅栏保护', () => {
+    // Codex P2：只取第一页，第 31 篇以后只能靠猜标题去搜。
+    const browser = readFileSync(path.resolve(__dirname, '../KnowledgeInlineBrowser.tsx'), 'utf8');
+    expect(browser).toContain('rows.length < rowsTotal');
+    expect(browser).toContain('data-knowledge-load-more');
+    const loadMore = browser.slice(browser.indexOf('const loadMoreEntries'), browser.indexOf('const toggle'));
+    expect(loadMore).toContain('entryGateRef.current.current()');
+    expect(loadMore).toContain('if (!entryGateRef.current.isCurrent(generation)) return;');
+    expect(loadMore).toContain('page: nextPage');
+  });
+});
