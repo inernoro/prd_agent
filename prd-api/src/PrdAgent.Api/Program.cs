@@ -475,6 +475,11 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillServic
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteDeletionCleanupService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteOptimizationCleanupService>();
 
+// 关键 MongoDB 索引巡检：启动后查一次清理任务与并发正确性依赖的人工索引在不在，
+// 缺了写 Warning（第一句写后果），只查不建（no-auto-index），不阻塞启动、不参与健康判定。
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Database.MongoIndexAdvisory>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MongoIndexAdvisoryStartupCheck>();
+
 // 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
 builder.Services.AddHostedService<PrdAgent.Api.Services.EscalationNotificationCleanupService>();
 
