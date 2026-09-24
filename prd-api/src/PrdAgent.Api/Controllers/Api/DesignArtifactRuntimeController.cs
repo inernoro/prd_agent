@@ -69,8 +69,13 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     {
         try
         {
+            // 本控制器是匿名入口：先验工作区票据（与实时预览同一张票、同一个运行窗口），
+            // 再读请求体。反过来的话，没有票据的请求也能把最多 6 MiB 读进内存（Codex P2，PR #1533）。
+            // CommitResultAsync 里仍会再验一次，这里只负责把未授权请求挡在读体之前。
+            var token = ReadBearerToken();
+            await _broker.ValidatePreviewAsync(runId, token, ct);
             var bytes = await ReadBoundedBodyAsync(Request, DesignArtifactWorkspaceBroker.MaxOutputBytes, ct);
-            var result = await _broker.CommitResultAsync(runId, ReadBearerToken(), bytes, ct);
+            var result = await _broker.CommitResultAsync(runId, token, bytes, ct);
             return Ok(new
             {
                 artifactRef = $"map://design-artifact/{runId}/result",
@@ -164,6 +169,11 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     {
         try
         {
+            // 先验模型票据再读请求体：匿名入口上，没有票据的请求不该换来一次最多 1 MiB 的
+            // 上传、分配与 JSON 解析（Codex P2，PR #1533）。这里只读校验，不计数；
+            // 调用次数仍在请求体通过合同校验之后由 ReserveModelCallAsync 记，口径不变。
+            var ticket = ReadBearerToken();
+            await _broker.ValidateModelTicketAsync(runId, ticket, ct);
             var bodyBytes = await ReadBoundedBodyAsync(Request, MaxProxyRequestBytes, ct);
             var body = JsonNode.Parse(bodyBytes) as JsonObject
                        ?? throw new InvalidOperationException("模型请求格式不正确，请重新发起任务");
@@ -173,7 +183,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 && !(body["input"] is JsonValue input && input.TryGetValue<string>(out _)))
                 throw new InvalidOperationException("模型请求缺少任务上下文，请重新发起任务");
 
-            var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
+            var run = await _broker.ReserveModelCallAsync(runId, ticket, ct);
             var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
             if (responses)
                 selection.ApplyToResponsesRequest(body);

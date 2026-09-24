@@ -90,8 +90,21 @@ export const AI_STREAM_PREVIEW_SANDBOX = '';
  */
 export const DESIGN_PREVIEW_EVENT_SANDBOX = 'allow-scripts';
 
-/** preview 事件文档的 CSP：放行页面自带的脚本、样式、图片与字体，禁止发请求、提交表单和嵌套页面。 */
+/**
+ * preview 事件文档的 CSP：放行页面自带的内联脚本与样式、以及 data/blob 形式的图片、字体与媒体，
+ * 其余一律不许走网络。以 default-src 'none' 起步——没有它，未列出的资源类型（script/img/style/
+ * font/media 的外链）按浏览器默认放行，页面脚本能把预览里渲染的私有知识经一次图片请求带出去
+ *（PR #1533 评审 4081964338）。口径与最终产物的 VerifiedPackageArtifactCsp 对齐，只是去掉了
+ * 'self'：srcdoc 是不透明源，'self' 在这里不对应任何可信资源。
+ */
 export const DESIGN_PREVIEW_EVENT_CSP = [
+  "default-src 'none';",
+  "script-src 'unsafe-inline';",
+  "style-src 'unsafe-inline';",
+  "img-src data: blob:;",
+  "font-src data:;",
+  "media-src data: blob:;",
+  "manifest-src 'none';",
   "connect-src 'none';",
   "form-action 'none';",
   "frame-src 'none';",

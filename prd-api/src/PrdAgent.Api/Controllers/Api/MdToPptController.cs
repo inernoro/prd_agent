@@ -2029,6 +2029,15 @@ public class MdToPptController : ControllerBase
                 req.TeamIds ?? new List<string>(),
                 CancellationToken.None);
         }
+        catch (HtmlPptPublishForbiddenException ex)
+        {
+            _logger.LogWarning("[MdToPpt] publish rejected: team destination forbidden runId={RunId} teams={Teams}",
+                sourceRun.Id, string.Join(",", ex.TeamIds));
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    HtmlPptPublishForbiddenException.ErrorCode,
+                    "你在所选的团队空间里是只读或非成员角色，无法发布到那里。请取消勾选该团队后重新发布，或请团队管理员授予编辑权限"));
+        }
         catch (HtmlPptPublishPendingException ex)
         {
             _logger.LogWarning(ex, "[MdToPpt] publish pending runId={RunId} code={Code}", sourceRun.Id, ex.Code);

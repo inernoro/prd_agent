@@ -573,8 +573,10 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                                 "OpenDesign 远程执行返回错误 session={SessionId} message={RemoteMessage}",
                                 session.Id,
                                 remoteError ?? "unknown");
-                            throw new InvalidOperationException(
-                                OpenDesignFailureMessage.Describe(OpenDesignFailureStage.RemoteRun, remoteError));
+                            throw OpenDesignFailureMessage.Failure(
+                                OpenDesignFailureStage.RemoteRun,
+                                remoteError,
+                                ReadPayloadString(item.PayloadJson, "code"));
                         case InfraAgentEventTypes.Done:
                             var package = await _workspaceBroker.ReadResultAsync(run.Id, CancellationToken.None);
                             completedTurnObserved = true;
@@ -633,9 +635,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             "OpenDesign 远程会话在终态事件到达前已失败 session={SessionId} lastError={RemoteMessage}",
                             session.Id,
                             latestSession.LastError ?? "unknown");
-                        throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                        throw OpenDesignFailureMessage.Failure(
                             OpenDesignFailureStage.RemoteSessionEnded,
-                            latestSession.LastError));
+                            latestSession.LastError);
                     }
                     if (latestSession?.Status == InfraAgentSessionStatuses.Stopped)
                     {
@@ -751,17 +753,17 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
             var settled = await WaitForRuntimeSettledAsync(readProvider, deadline, ct, pollDelay);
             if (settled != RuntimeSettleOutcome.Available)
             {
-                throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                throw OpenDesignFailureMessage.Failure(
                     settled == RuntimeSettleOutcome.StillVerifying
                         ? OpenDesignFailureStage.RuntimeVerifying
                         : OpenDesignFailureStage.StartupFailed,
-                    failure.Message));
+                    failure.Message);
             }
             if (attempt >= maxAttempts)
             {
-                throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                throw OpenDesignFailureMessage.Failure(
                     OpenDesignFailureStage.RuntimeVerifying,
-                    failure.Message));
+                    failure.Message);
             }
 
             await discard(current);
@@ -839,9 +841,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                         && !string.IsNullOrWhiteSpace(current.CdsSessionId))
                         return current;
                     if (current.Status != InfraAgentSessionStatuses.Creating)
-                        throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                        throw OpenDesignFailureMessage.Failure(
                             OpenDesignFailureStage.StartupFailed,
-                            current.LastError));
+                            current.LastError);
                 }
                 await Task.Delay(pollDelay ?? TimeSpan.FromSeconds(1), linked.Token);
             }

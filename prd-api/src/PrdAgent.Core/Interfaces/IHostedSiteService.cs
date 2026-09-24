@@ -147,6 +147,14 @@ public interface IHostedSiteService
     Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default);
 
     /// <summary>
+    /// 批量版的 <see cref="CanPublishIntoTeamAsync"/>：返回这批团队里用户**不能**投放的那些
+    /// （viewer / 非成员），保持入参顺序。成员关系只加载一次，逐个团队走同一条判据；
+    /// 调用方拿一批团队做预检时必须用它，不许循环调单个版本（每次都会全量重载成员关系）。
+    /// </summary>
+    Task<IReadOnlyList<string>> GetTeamsNotPublishableAsync(
+        string userId, IReadOnlyCollection<string> teamIds, CancellationToken ct = default);
+
+    /// <summary>
     /// 这个用户能不能编辑这个站点。与编辑端点同一道角色门，供分享页决定显不显示编辑坞。
     /// 前端不得再拿 createdBy 之类的代理量自己推。
     /// </summary>

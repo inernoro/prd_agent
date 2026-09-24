@@ -18,6 +18,18 @@ public sealed class HtmlPptPublishPendingException : Exception
     public string Code { get; }
 }
 
+/// <summary>
+/// 发布目标里含有用户无权投放的团队空间（viewer / 非成员）。这是确定性的输入错误，
+/// 不是可恢复的发布失败：在建发布意图、建站点之前就拒绝，调用方应返回 403。
+/// </summary>
+public sealed class HtmlPptPublishForbiddenException : Exception
+{
+    public const string ErrorCode = "ppt_publish_team_forbidden";
+    public HtmlPptPublishForbiddenException(IReadOnlyCollection<string> teamIds)
+        : base("无权发布到所选团队空间") => TeamIds = teamIds;
+    public IReadOnlyCollection<string> TeamIds { get; }
+}
+
 public interface IHtmlPptPublishCoordinator
 {
     Task<HtmlPptPublishResult> PublishAsync(
@@ -77,6 +89,24 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         var actualHash = Hash(Encoding.UTF8.GetBytes(run.Html ?? string.Empty));
         if (!FixedHashEquals(actualHash, run.HtmlHash))
             throw new HtmlPptPublishPendingException(BytesMismatchCode, "发布来源字节与完成态哈希不一致");
+
+        // 先校验目标团队、再建意图与站点（PR #1533 评审 4024742437 / 4060021399）。
+        // 反过来的话，viewer / 非成员团队要等站点建好之后才在 SetSharedTeamsAsync 里被拒，
+        // 而那次拒绝被当成可重试失败：接口反复 503、最终 dead-letter，站点留在个人空间成了孤儿。
+        // 与 SetSharedTeamsAsync 用同一把尺子（HostedSiteService.HasTeamPublishRole）；建站后的那道校验保留，兜权限竞态。
+        // 用批量版一次判完整批团队：teamIds 没有上限，逐个调单个版本会让每个团队都全量重载一次成员关系
+        // （PR #1611 Codex 评审）。
+        //
+        // 只在要新建意图时预检。已有意图（含已完成）的请求是重放：EnsureIntentAsync 返回冻结的意图、
+        // 用的是当时冻结的团队，本次请求带的 teamIds 根本不会被采用；这时拿「现在的权限」去卡它，
+        // 会让一次只该取回历史回执的重试变成 403（PR #1611 Codex 评审）。
+        if (string.IsNullOrWhiteSpace(run.PublishIntentId))
+        {
+            var forbidden = await _sites.GetTeamsNotPublishableAsync(
+                run.UserId, Normalize(teamIds), CancellationToken.None);
+            if (forbidden.Count > 0)
+                throw new HtmlPptPublishForbiddenException(forbidden);
+        }
 
         var intentId = BuildIntentId(run.Id, actualHash);
         run = await EnsureIntentAsync(run, intentId, actualHash, title, description, tags, teamIds);
