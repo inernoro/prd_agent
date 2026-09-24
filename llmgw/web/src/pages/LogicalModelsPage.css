@@ -1,0 +1,44 @@
+.lg-logical-model-list {
+  container-type: inline-size;
+}
+
+.lg-logical-model-grid {
+  grid-template-columns: minmax(220px, 2.2fr) minmax(260px, 2.6fr) minmax(120px, 1.2fr) minmax(130px, 1.3fr) minmax(152px, 1.52fr);
+}
+
+/* 依据卡片可用宽度切换，侧栏宽度和窗口大小不必同步猜断点。 */
+@container (max-width: 1000px) {
+  .lg-logical-model-heading {
+    display: none !important;
+  }
+
+  .lg-logical-model-grid:not(.lg-logical-model-heading) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .lg-logical-model-grid > :first-child,
+  .lg-logical-model-routes,
+  .lg-logical-model-actions {
+    grid-column: 1 / -1;
+  }
+
+  .lg-logical-model-detail {
+    --logical-detail-indent: 14px;
+  }
+
+  .lg-logical-model-routes > span > span {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal !important;
+  }
+}
+
+@container (max-width: 600px) {
+  .lg-logical-model-route-info {
+    flex-basis: 100% !important;
+  }
+
+  .lg-logical-model-list button {
+    min-height: 44px;
+  }
+}

@@ -413,10 +413,25 @@ async function probeLogicalModelScroll(label, viewport, theme) {
 
     const headerTop = Math.round(header.getBoundingClientRect().top);
     const initialHeight = Math.round(list.getBoundingClientRect().height);
+    // 容器自身不溢出不代表内容可用：旧五列布局把名称压成零宽，操作在卡片外被裁掉。
+    // 此处是布局回归，不替代独立触控浏览器的正式路径验收。
+    const listRect = list.getBoundingClientRect();
+    const modelRows = [...list.children].slice(1).map((item) => item.firstElementChild);
+    const withinList = (element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.left >= listRect.left - 1 && rect.right <= listRect.right + 1;
+    };
     const initial = {
       外层可滚动: body.scrollHeight > body.clientHeight + 1,
       列表未裁切: list.scrollHeight <= list.clientHeight + 1,
       列表flexShrink: getComputedStyle(list).flexShrink,
+      名称可读: modelRows.every((row) => {
+        const name = row?.querySelector('strong');
+        return name && row.firstElementChild.getBoundingClientRect().width >= 150
+          && name.getBoundingClientRect().width >= Math.min(60, name.scrollWidth) && name.scrollWidth > 0;
+      }),
+      操作未裁切: modelRows.every((row) => [...row.querySelectorAll('button')].every(withinList)),
+      各列未越界: modelRows.every((row) => [...row.children].every(withinList)),
     };
 
     const expand = [...list.querySelectorAll('button')].find((button) => button.textContent?.trim() === '展开');
@@ -425,6 +440,7 @@ async function probeLogicalModelScroll(label, viewport, theme) {
     const expanded = {
       高度增长: list.getBoundingClientRect().height > initialHeight,
       列表未裁切: list.scrollHeight <= list.clientHeight + 1,
+      操作未裁切: [...list.querySelectorAll('button')].every(withinList),
     };
 
     const notice = document.createElement('div');
@@ -462,6 +478,9 @@ for (const [label, viewport, theme] of [
   ['桌面浅色', { width: 1440, height: 900 }, 'light'],
   ['桌面深色', { width: 1440, height: 900 }, 'dark'],
   ['手机浅色', { width: 390, height: 844 }, 'light'],
+  ['手机深色', { width: 390, height: 844 }, 'dark'],
+  ['窄屏手机', { width: 320, height: 844 }, 'light'],
+  ['平板浅色', { width: 820, height: 900 }, 'light'],
 ]) {
   logicalModelScroll[label] = await probeLogicalModelScroll(label, viewport, theme);
 }
@@ -699,6 +718,9 @@ for (const [label, result] of Object.entries(logicalModelScroll)) {
   if (!result.initial.外层可滚动) failed.push('初始长列表没有让 PageBody 可滚动');
   if (!result.initial.列表未裁切) failed.push('初始列表内容被自身裁切');
   if (result.initial.列表flexShrink !== '0') failed.push(`列表 flex-shrink=${result.initial.列表flexShrink}`);
+  if (!result.initial.名称可读) failed.push('名称列被挤压，模型名不可读');
+  if (!result.initial.操作未裁切 || !result.initial.各列未越界) failed.push('列表列或操作被水平裁切');
+  if (!result.expanded.操作未裁切) failed.push('展开态操作被水平裁切');
   if (!result.expanded.高度增长 || !result.expanded.列表未裁切) failed.push('展开后列表没有随内容增高');
   if (!result.提示出现后外层滚动) failed.push('成功提示出现后 PageBody 仍不能滚动');
   if (!result.末行可见) failed.push('无法滚到最后一个模型');
