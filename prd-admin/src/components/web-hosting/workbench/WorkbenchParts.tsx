@@ -526,7 +526,8 @@ export function ComposerSheet({ title, onClose, children, footer }: {
       role="dialog"
       aria-label={title}
       className="absolute inset-0 z-30 flex flex-col rounded-[14px]"
-      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)' }}
+      // 必须不透明：bg-card 是半透明的，下面的对话会透上来（2026-09-24 验收撞见）。
+      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
       onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}
     >
       <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
@@ -537,6 +538,18 @@ export function ComposerSheet({ title, onClose, children, footer }: {
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       {footer && <div className="shrink-0 px-4 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>{footer}</div>}
+    </div>
+  );
+}
+
+/**
+ * 预览区里的一块不透明操作面板（选知识库等）：借右边的大区域操作，左边的对话与输入框保持原样。
+ * 知识浏览器是「库列表 + 条目列表」两栏，挤进 420px 的对话栏里标题全被截断。
+ */
+export function PreviewPanel({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden" style={{ background: 'var(--bg-elevated)', minHeight: 0 }}>
+      {children}
     </div>
   );
 }

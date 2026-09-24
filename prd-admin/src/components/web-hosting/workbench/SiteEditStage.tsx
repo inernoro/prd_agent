@@ -28,8 +28,8 @@ import {
 import type { GenerationIntro } from './NewSiteStage';
 import {
   AssistantBubble,
-  ComposerSheet,
   PageSkeleton,
+  PreviewPanel,
   RunProgressCard,
   Segmented,
   UserBubble,
@@ -147,7 +147,7 @@ export default function SiteEditStage({
       title: '引用知识库',
       description: `改的时候对照知识库里的稿子，最多 ${MAX_KNOWLEDGE} 篇`,
       icon: Library,
-      onPick: () => setSheet('knowledge'),
+      onPick: () => { setSheet('knowledge'); onPaneChange('preview'); },
     },
     {
       id: 'screenshot',
@@ -366,34 +366,11 @@ export default function SiteEditStage({
           event.target.value = '';
         }}
       />
-      {sheet === 'knowledge' && (
-        <ComposerSheet
-          title="引用知识库"
-          onClose={() => setSheet(null)}
-          footer={(
-            <button
-              type="button"
-              onClick={() => setSheet(null)}
-              className="inline-flex h-10 w-full items-center justify-center rounded-xl text-[14px] font-semibold"
-              style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
-            >
-              {selectedKnowledge.length > 0 ? `放入 ${selectedKnowledge.length} 篇` : '完成'}
-            </button>
-          )}
-        >
-          <KnowledgeInlineBrowser
-            recentEntries={recentKnowledge}
-            loadingRecent={loadingKnowledge}
-            selectedEntries={selectedKnowledge}
-            onChange={setSelectedKnowledge}
-            onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选')}
-          />
-        </ComposerSheet>
-      )}
     </>
   );
 
   const draftId = pendingDraft?.id ?? null;
+  const pickingKnowledge = sheet === 'knowledge' && !generating;
   const previewTitle = generating
     ? '正在修改'
     : view === 'draft' ? '草稿' : previewedRevision && !previewedRevision.isCurrent ? revisionLabel(previewedRevision) : '线上版';
@@ -483,8 +460,33 @@ export default function SiteEditStage({
   const frameSandbox = previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX;
   const preview = (
     <>
-      <WorkbenchPreview title={previewTitle} note={previewNote} nextHint={nextHint} toolbar={toolbar} actions={actions}>
-        {previewHtml || previewUrl ? (
+      <WorkbenchPreview
+        title={pickingKnowledge ? '引用知识库' : previewTitle}
+        note={pickingKnowledge ? `改的时候对照这些稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后左边输入框上方会列出来` : previewNote}
+        nextHint={pickingKnowledge ? '选好点右上角「放入」，这里换回网页预览。' : nextHint}
+        toolbar={pickingKnowledge ? null : toolbar}
+        actions={pickingKnowledge ? (
+          <button
+            type="button"
+            onClick={() => setSheet(null)}
+            className="inline-flex h-9 items-center rounded-lg px-3 text-[13px] font-semibold"
+            style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+          >
+            {selectedKnowledge.length > 0 ? `放入 ${selectedKnowledge.length} 篇` : '完成'}
+          </button>
+        ) : actions}
+      >
+        {pickingKnowledge ? (
+          <PreviewPanel>
+            <KnowledgeInlineBrowser
+              recentEntries={recentKnowledge}
+              loadingRecent={loadingKnowledge}
+              selectedEntries={selectedKnowledge}
+              onChange={setSelectedKnowledge}
+              onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选')}
+            />
+          </PreviewPanel>
+        ) : previewHtml || previewUrl ? (
           <iframe
             key={`${previewUrl ? 'url' : 'doc'}-${frameSandbox}`}
             src={previewUrl || undefined}

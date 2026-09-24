@@ -250,3 +250,4 @@
 | ci | design-runtime | branch-image 新增设计执行服务镜像构建，ci 新增 Design Runtime Test（tsc + vitest） |
 | ops | cds | cds-compose 新增 design-opendesign 服务（仅 express）与 api 的执行服务地址、密钥环境变量 |
 | docs | design-runtime | 新增设计执行协议规格，OpenDesign 债务台账补第 1 阶段结论与后续事项 |
+| fix | prd-admin | 工作台里浮在对话上的面板改为不透明；选知识库挪到右边大区域，不再挤在 420px 对话栏里（验收撞见面板透底、标题被截断） |

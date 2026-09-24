@@ -31,6 +31,7 @@ import {
   ComposerSheet,
   OptionChip,
   PageSkeleton,
+  PreviewPanel,
   RunProgressCard,
   Segmented,
   UserBubble,
@@ -237,7 +238,7 @@ export default function NewSiteStage({
       title: '引用知识库',
       description: `从我的或团队知识库挑，最多 ${MAX_KNOWLEDGE} 篇；稿子更新后可一键重生成`,
       icon: Library,
-      onPick: () => setSheet('knowledge'),
+      onPick: () => { setGalleryOpen(false); setSheet('knowledge'); onPaneChange('preview'); },
     },
     {
       id: 'upload',
@@ -363,7 +364,7 @@ export default function NewSiteStage({
         label={`风格：${styleName}，点开换一个`}
         value={styleName}
         pressed={galleryOpen}
-        onClick={() => { setGalleryOpen((current) => !current); onPaneChange('preview'); }}
+        onClick={() => { setSheet(null); setGalleryOpen((current) => !current); onPaneChange('preview'); }}
         disabled={run.generating}
       >
         <Palette size={13} />
@@ -421,30 +422,6 @@ export default function NewSiteStage({
           event.target.value = '';
         }}
       />
-      {sheet === 'knowledge' && (
-        <ComposerSheet
-          title="引用知识库"
-          onClose={() => setSheet(null)}
-          footer={(
-            <button
-              type="button"
-              onClick={() => setSheet(null)}
-              className="inline-flex h-10 w-full items-center justify-center rounded-xl text-[14px] font-semibold"
-              style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
-            >
-              {selectedKnowledge.length > 0 ? `放入 ${selectedKnowledge.length} 篇` : '完成'}
-            </button>
-          )}
-        >
-          <KnowledgeInlineBrowser
-            recentEntries={recentKnowledge}
-            loadingRecent={loadingKnowledge}
-            selectedEntries={selectedKnowledge}
-            onChange={setSelectedKnowledge}
-            onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选；更多资料可以改用上传文件')}
-          />
-        </ComposerSheet>
-      )}
       {sheet === 'notes' && (
         <ComposerSheet
           title="粘贴会议纪要或通话记录"
@@ -479,15 +456,20 @@ export default function NewSiteStage({
     </>
   );
 
-  const previewTitle = run.generating ? '正在生成网页' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
+  const pickingKnowledge = sheet === 'knowledge' && !run.generating;
+  const previewTitle = run.generating ? '正在生成网页' : pickingKnowledge ? '引用知识库' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
   const previewNote = run.generating
     ? (run.phase || '正在准备')
-    : galleryOpen
+    : pickingKnowledge
+      ? `勾选要放进来的稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后左边输入框上方会列出来`
+      : galleryOpen
       ? '每张缩略图都是这个风格真实的样子，标题已换成你的资料'
       : sampleTitle ? '标题已换成你的资料，正文是示例；点生成后换成你的页面' : '示例内容；放进资料后标题先换成你的';
   const nextHint = run.generating
     ? '灰色块是还没写到的部分，写好一段换一段；做好后自动存进网页托管，这里直接显示成品。'
-    : galleryOpen
+    : pickingKnowledge
+      ? '选好点右上角「放入」，这里换回样张，样张标题会换成第一篇稿子的标题。'
+      : galleryOpen
       ? '点一张就选定它，右边立刻换成这个风格的样张；选好后回到左边点生成。'
       : hasSources
         ? '资料已放好。不喜欢这个样子就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
@@ -498,18 +480,28 @@ export default function NewSiteStage({
       title={previewTitle}
       note={previewNote}
       nextHint={nextHint}
-      actions={galleryOpen && !run.generating ? (
+      actions={(galleryOpen || pickingKnowledge) && !run.generating ? (
         <button
           type="button"
-          onClick={() => setGalleryOpen(false)}
+          onClick={() => { setGalleryOpen(false); setSheet(null); }}
           className="inline-flex h-9 items-center rounded-lg px-3 text-[13px] font-semibold"
           style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
         >
-          完成
+          {pickingKnowledge && selectedKnowledge.length > 0 ? `放入 ${selectedKnowledge.length} 篇` : '完成'}
         </button>
       ) : undefined}
     >
-      {galleryOpen && !run.generating ? (
+      {pickingKnowledge ? (
+        <PreviewPanel>
+          <KnowledgeInlineBrowser
+            recentEntries={recentKnowledge}
+            loadingRecent={loadingKnowledge}
+            selectedEntries={selectedKnowledge}
+            onChange={setSelectedKnowledge}
+            onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选；更多资料可以改用上传文件')}
+          />
+        </PreviewPanel>
+      ) : galleryOpen && !run.generating ? (
         <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <StyleGallery
             selectedId={styleSelection?.key ?? null}

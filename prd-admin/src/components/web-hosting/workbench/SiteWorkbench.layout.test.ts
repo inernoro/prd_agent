@@ -45,6 +45,17 @@ describe('生成工作台布局契约', () => {
     expect(newStage).toContain('attachmentIds: uploads.readyIds,');
   });
 
+  it('浮在对话上的面板必须不透明；选知识库借右边大区域，不挤在 420px 对话栏里', () => {
+    // 2026-09-24 验收撞见：面板用了半透明 bg-card，下面的对话透上来，整块读不清。
+    const sheet = parts.slice(parts.indexOf('export function ComposerSheet'));
+    expect(sheet).toContain("background: 'var(--bg-elevated)'");
+    expect(sheet).not.toContain("background: 'var(--bg-card)'");
+    for (const stage of [newStage, editStage]) {
+      expect(stage).toMatch(/<PreviewPanel>\s*<KnowledgeInlineBrowser/);
+      expect(stage).not.toMatch(/<ComposerSheet\s+title="引用知识库"/);
+    }
+  });
+
   it('只提交资料身份：知识是 entryId/storeId，上传是附件 id；不在浏览器里读正文', () => {
     const both = newStage + run;
     expect(both).not.toContain('getDocumentContent');
