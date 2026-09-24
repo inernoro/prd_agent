@@ -51,6 +51,25 @@ describe('preview 事件', () => {
     expect(DESIGN_PREVIEW_EVENT_CSP).toContain("form-action 'none'");
   });
 
+  it('CSP 对每一类资源都不放行网络来源（未列出的类型必须落到 default-src \'none\'）', () => {
+    const directives = new Map(
+      DESIGN_PREVIEW_EVENT_CSP.split(';')
+        .map((part) => part.trim().split(/\s+/u))
+        .filter((tokens) => tokens[0])
+        .map((tokens) => [tokens[0].toLowerCase(), tokens.slice(1)] as const),
+    );
+    // 浏览器的回退规则：某类资源没有自己的指令时用 default-src；default-src 也没有就是不限制。
+    const effective = (name: string) => directives.get(name) ?? directives.get('default-src') ?? null;
+    const noNetwork = new Set(["'none'", "'unsafe-inline'", 'data:', 'blob:']);
+    for (const kind of ['script-src', 'style-src', 'img-src', 'font-src', 'media-src', 'connect-src',
+      'object-src', 'frame-src', 'child-src', 'worker-src', 'manifest-src']) {
+      const sources = effective(kind);
+      expect(sources, `${kind} 没有任何限制，按浏览器默认放行`).not.toBeNull();
+      for (const source of sources ?? []) expect(noNetwork.has(source), `${kind} 放行了 ${source}`).toBe(true);
+    }
+    expect(directives.get('default-src')).toEqual(["'none'"]);
+  });
+
   it('没有 head / html 的片段也会被包成带 CSP 的文档', () => {
     expect(designPreviewEventDocument('<html><body>x</body></html>')).toMatch(/^<html><head><meta http-equiv="Content-Security-Policy"/);
     expect(designPreviewEventDocument('<section>片段</section>')).toMatch(/^<!doctype html><html><head><meta/);
