@@ -1254,7 +1254,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(forgedAuthResponse.writeHead).toHaveBeenCalledWith(401);
     expect(upstreamOptions).toBeUndefined();
 
-    const authenticatedResponse = { writeHead: vi.fn(), end: vi.fn() };
+    const authenticatedResponse = { writeHead: vi.fn(), end: vi.fn(), on: vi.fn(), destroy: vi.fn(), writableFinished: false };
     relayHandler?.({
       method: 'POST',
       url: '/api/design-artifacts/runtime/run-1/llm/v1/chat/completions',
@@ -1277,6 +1277,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(upstreamOptions?.headers).not.toHaveProperty('cookie');
     expect(JSON.stringify(upstreamOptions?.headers)).not.toContain(relayClientToken);
     expect(upstreamRequest.setTimeout).toHaveBeenCalledWith(90_000, expect.any(Function));
+    // 下游断开（不是正常写完）要掐掉上游：close 监听挂上了，且触发时真的销毁上游请求。
+    const closeListener = authenticatedResponse.on.mock.calls.find(([event]) => event === 'close')?.[1] as (() => void) | undefined;
+    expect(closeListener).toBeTypeOf('function');
+    closeListener?.();
+    expect(upstreamRequest.destroy).toHaveBeenCalled();
     const externalHealthResponse = { writeHead: vi.fn(), end: vi.fn() };
     relayHandler?.({
       method: 'GET', url: '/__health', headers: {}, socket: { remoteAddress: '172.18.0.10' }, pipe: vi.fn(),
