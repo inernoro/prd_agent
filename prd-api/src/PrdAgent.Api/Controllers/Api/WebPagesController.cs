@@ -1400,13 +1400,19 @@ public class WebPagesController : ControllerBase
         {
             // 设为公开 = 出现在个人公开页、任何人可见：本页引用了私有资料时，先要作者确认。
             // 已经是公开的站点重复设置不算新的暴露，保持原行为。
-            var site = await _siteService.GetByIdAsync(id, GetUserId(), CancellationToken.None);
-            if (site != null && !string.Equals(site.Visibility, "public", StringComparison.OrdinalIgnoreCase))
+            var userId = GetUserId();
+            var site = await _siteService.GetByIdAsync(id, userId, CancellationToken.None);
+            // 先过与 SetVisibilityAsync 同一道权限门（只有站点创建者能改可见性），再核查、记录确认：
+            // GetByIdAsync 对团队 viewer 也放行，不先判的话 viewer 能拿到资料名、还能写下一条永远不会生效的确认。
+            // 拒绝口径与下游一致（下游对无权者返回 null → 404），不借拒绝文案说出资料名。
+            if (site == null || !_siteService.CanSetVisibility(site, userId))
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+            if (!string.Equals(site.Visibility, "public", StringComparison.OrdinalIgnoreCase))
             {
                 var decision = await _privateSources.EnforceForSitesAsync(
                     [site],
                     PrdAgent.Api.Services.HostedSitePrivateSourceActions.SitePublic,
-                    GetUserId(),
+                    userId,
                     req.ConfirmedPrivateSourceFingerprint,
                     CancellationToken.None);
                 if (!decision.Allowed)
@@ -1429,7 +1435,9 @@ public class WebPagesController : ControllerBase
 
     /// <summary>
     /// 发出前核查：这些站点当前线上内容引用了哪些私有资料（分享、设为公开前由前端先问一次）。
-    /// 只核查当前账号能访问的站点，读不到的站点直接忽略，不借这里泄露别人的资料名称。
+    /// 只对当前账号能把它发出去的站点返回来源：每个站点都要有建分享的权限（与 CreateShareAsync 同一判据
+    /// <see cref="IHostedSiteService.CanCreateShareAsync"/>；设为公开只给站点创建者，是它的子集）。
+    /// 有一个不满足就整笔 403、不返回任何资料名——团队 viewer 能看到站点，但不能借这里读到私有文档名和知识库名。
     ///
     /// 必须覆盖全部目标站点、不许截断：强制那道闸按全部站点算指纹，这里少看一个站点，
     /// 前端拿到的指纹就永远对不上，大合集会被卡在「确认已过期」里出不来。
@@ -1453,6 +1461,9 @@ public class WebPagesController : ControllerBase
         if (_privateSources == null)
             return Ok(ApiResponse<object>.Ok(PrdAgent.Api.Services.HostedSitePrivateSourceResponses.ToDto(
                 PrdAgent.Api.Services.HostedSitePrivateSourceReport.Empty, requiresConfirmation: false)));
+        if (!await _siteService.CanCreateShareAsync(ids, GetUserId(), CancellationToken.None))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                ErrorCodes.PERMISSION_DENIED, "你对其中部分站点没有分享或公开的权限，无法核查它们引用的资料"));
         var sites = await LoadAccessibleSitesAsync(ids);
         var report = await _privateSources.InspectSitesAsync(sites, CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(PrdAgent.Api.Services.HostedSitePrivateSourceResponses.ToDto(
@@ -1492,6 +1503,9 @@ public class WebPagesController : ControllerBase
     /// <summary>
     /// 分享类动作的私有资料闸。只核查当前账号能访问的站点：读不到的站点由后续分享服务自己拒绝，
     /// 这里不借拒绝文案把别人站点引用的资料名称说出去。返回 null = 放行。
+    ///
+    /// 调用前必须先过与下游动作相同的权限门（新建分享：CanCreateShareAsync；放宽链接：链接创建者），
+    /// 这里放行时会写确认记录，没权限的人不能走到这一步。
     ///
     /// 覆盖全部目标站点，不设上限：CreateShareAsync 会把 siteIds 里的每一个站点都发布出去，
     /// 这里只要少查一个，私有资料只挂在那一个站点上时就会不经确认生成对外链接（Codex P1）。
@@ -1546,10 +1560,16 @@ public class WebPagesController : ControllerBase
 
             // 新建「不止协作者能打开」的分享之前核对私有资料。visit 便捷链不经过这道闸（已知边界：
             // 它是作者自己点「访问 / 扫码」时用的入口，失败时前端本就回退站点原始地址，拦它挡不住任何人）。
-            if (!isVisit && IsBeyondCollaborators(visibility))
+            if (!isVisit && IsBeyondCollaborators(visibility) && _privateSources != null)
             {
+                var targetSiteIds = TargetShareSiteIds(req.SiteId, req.SiteIds);
+                // 先过与 CreateShareAsync 同一道权限门，再核查、记录确认：GetByIdAsync 对团队 viewer 也放行，
+                // 不先判的话 viewer 带着指纹能写下一条确认记录，直到分享服务才被拒。拒绝口径与分享服务一致。
+                if (targetSiteIds.Count > 0
+                    && !await _siteService.CanCreateShareAsync(targetSiteIds, GetUserId(), CancellationToken.None))
+                    throw new UnauthorizedAccessException(PrdAgent.Infrastructure.Services.HostedSiteService.NoSharePermissionMessage);
                 var refusal = await EnforcePrivateSourcesForShareAsync(
-                    TargetShareSiteIds(req.SiteId, req.SiteIds),
+                    targetSiteIds,
                     PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareCreate,
                     req.ConfirmedPrivateSourceFingerprint);
                 if (refusal != null) return refusal;
@@ -1719,6 +1739,8 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> UpdateShareSettings(string shareId, [FromBody] UpdateShareSettingsRequest req)
     {
         // 把一条只有协作者能打开的链接放宽到「登录的人 / 任何人」，等同于新开一次对外分享。
+        // 权限门与 UpdateShareSettingsAsync 同一判据：只有链接创建者能改（下面按 CreatedBy 查）；
+        // 查不到就不核查、不记录，交给下游按原口径报「分享不存在或无权操作」。
         if (_privateSources != null && req.Visibility != null && IsBeyondCollaborators(req.Visibility))
         {
             var userId = GetUserId();

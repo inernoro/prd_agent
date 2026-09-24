@@ -327,6 +327,8 @@ public sealed class HostedSitePrivateSourceGateTests
                 ContentVersion = Version,
                 Visibility = "private",
             });
+        sites.Setup(service => service.CanCreateShareAsync(It.IsAny<IReadOnlyCollection<string>>(), Owner, CancellationToken.None))
+            .ReturnsAsync(true);
         var controller = BuildWebPagesController(sites.Object, new HostedSitePrivateSourceGate(store));
 
         var refused = await controller.CreateShare(new CreateWebPageShareRequest
@@ -417,7 +419,169 @@ public sealed class HostedSitePrivateSourceGateTests
         Assert.True(allowed.Allowed);
     }
 
+    [Fact]
+    public async Task ShareOrPublish_WhenPrivateSourceOnlyOnSeventiethAncestor_ShouldAskInsteadOfTruncatingSilently()
+    {
+        // 血缘截断绕过（Codex P1）：改了 70 次的页面，私有资料只在第 70 代祖先（基线）上。
+        // 回溯只走 MaxLineageDepth 步，读不到头时不许把截断后的集合当完整结果放行。
+        var store = ScenarioWithPrivateBaseline();
+        store.Site.Title = "经营看板";
+        var previous = "baseline-1";
+        for (var generation = 1; generation <= 70; generation++)
+        {
+            var id = $"edit-{generation:D2}";
+            store.AddRevision(new HostedSiteRevision
+            {
+                Id = id,
+                SiteId = store.Site.Id,
+                Status = HostedSiteRevisionStatuses.Published,
+                Source = HostedSiteRevisionSources.AiEdit,
+                ParentRevisionId = previous,
+                KnowledgeEntryIds = [],
+            });
+            previous = id;
+        }
+        store.Site.PublishedRevisionId = "edit-70";
+        var gate = new HostedSitePrivateSourceGate(store);
+        // 从 edit-70 往上读满 64 代，最后读到的是 edit-07，edit-06 及更早都没读到。
+        var expectedEntryId = $"{HostedSitePrivateSourceGate.TruncatedLineageEntryPrefix}site-a:edit-07";
+
+        var refused = await gate.EnforceForSitesAsync(
+            [store.Site], HostedSitePrivateSourceActions.ShareCreate, Owner, null, CancellationToken.None);
+
+        Assert.Equal(HostedSitePrivateSourceVerdict.ConfirmationRequired, refused.Verdict);
+        var item = Assert.Single(refused.Report.Items);
+        Assert.Equal(expectedEntryId, item.EntryId);
+        Assert.Equal(HostedSitePrivateSourceScopes.Unavailable, item.Scope);
+        Assert.Contains("经营看板", item.Title);
+        Assert.Contains("更早版本的来源无法确认", item.Title);
+        Assert.Empty(store.Appended);
+
+        // 确认之后照常放行，确认记录落在当前线上版本上，内容就是这一条「无法确认」。
+        var allowed = await gate.EnforceForSitesAsync(
+            [store.Site], HostedSitePrivateSourceActions.ShareCreate, Owner, refused.Report.Fingerprint, CancellationToken.None);
+        Assert.True(allowed.Allowed);
+        var (anchor, record) = Assert.Single(store.Appended);
+        Assert.Equal("edit-70", anchor);
+        Assert.Equal(expectedEntryId, Assert.Single(record.Sources).EntryId);
+
+        // 发布草稿走的是同一条血缘：站点已对外可见时，基于 edit-70 的草稿同样要确认。
+        store.ExternallyShared = true;
+        var draft = new HostedSiteRevision
+        {
+            Id = "draft-71",
+            SiteId = store.Site.Id,
+            Status = HostedSiteRevisionStatuses.Draft,
+            Source = HostedSiteRevisionSources.AiEdit,
+            ParentRevisionId = "edit-70",
+            KnowledgeEntryIds = [],
+        };
+        var publish = await gate.EnforceForRevisionPublishAsync(store.Site, draft, Owner, null, CancellationToken.None);
+        Assert.Equal(HostedSitePrivateSourceVerdict.ConfirmationRequired, publish.Verdict);
+        Assert.StartsWith(HostedSitePrivateSourceGate.TruncatedLineageEntryPrefix, Assert.Single(publish.Report.Items).EntryId);
+    }
+
+    [Fact]
+    public async Task Share_WhenLineageLoopsBackOnItself_ShouldAskInsteadOfTreatingItAsComplete()
+    {
+        // 血缘成环（数据损坏）：环以外的祖先读不到，同样按「更早版本的来源无法确认」列出。
+        var store = new FakeStore();
+        store.AddRevision(new HostedSiteRevision
+        {
+            Id = "edit-a", SiteId = "site-a", Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.AiEdit, ParentRevisionId = "edit-b", KnowledgeEntryIds = [],
+        });
+        store.AddRevision(new HostedSiteRevision
+        {
+            Id = "edit-b", SiteId = "site-a", Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.AiEdit, ParentRevisionId = "edit-a", KnowledgeEntryIds = [],
+        });
+        store.Site.PublishedRevisionId = "edit-a";
+        var gate = new HostedSitePrivateSourceGate(store);
+
+        var decision = await gate.EnforceForSitesAsync(
+            [store.Site], HostedSitePrivateSourceActions.ShareCreate, Owner, null, CancellationToken.None);
+
+        Assert.Equal(HostedSitePrivateSourceVerdict.ConfirmationRequired, decision.Verdict);
+        Assert.Equal(
+            $"{HostedSitePrivateSourceGate.TruncatedLineageEntryPrefix}site-a:edit-b",
+            Assert.Single(decision.Report.Items).EntryId);
+    }
+
+    [Fact]
+    public async Task PrivateSourceInspect_ForTeamViewer_ShouldRefuseWithoutLeakingSourceNames()
+    {
+        // 站点分享给团队后 GetByIdAsync 对 viewer 也放行（Codex P1）：核查接口不能把私有文档名、知识库名给 viewer。
+        var store = ScenarioWithPrivateBaseline();
+        var sites = TeamViewerSites(store.Site);
+        var controller = BuildWebPagesController(sites.Object, new HostedSitePrivateSourceGate(store), Viewer);
+
+        foreach (var result in new[]
+                 {
+                     await controller.InspectPrivateSources(["site-a"]),
+                     await controller.InspectPrivateSourcesByBody(new InspectPrivateSourcesRequest { SiteIds = ["site-a"] }),
+                 })
+        {
+            var refused = Assert.IsType<ObjectResult>(result);
+            Assert.Equal(StatusCodes.Status403Forbidden, refused.StatusCode);
+            var body = JsonSerializer.Serialize(refused.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.Contains(ErrorCodes.PERMISSION_DENIED, body);
+            Assert.DoesNotContain("季度经营数据", body);
+            Assert.DoesNotContain("财务内部库", body);
+            Assert.DoesNotContain("psc1:", body);
+        }
+    }
+
+    [Fact]
+    public async Task ShareOrPublicByTeamViewer_EvenWithCorrectFingerprint_ShouldRefuseAndNotRecordConfirmation()
+    {
+        // viewer 拿到了正确的指纹（例如从作者那里看来的）：权限门必须先于确认记录，拒绝且不写记录。
+        var store = ScenarioWithPrivateBaseline();
+        var fingerprint = (await new HostedSitePrivateSourceGate(store).InspectSitesAsync([store.Site], CancellationToken.None))
+            .Fingerprint;
+        Assert.NotNull(fingerprint);
+        var sites = TeamViewerSites(store.Site);
+        var controller = BuildWebPagesController(sites.Object, new HostedSitePrivateSourceGate(store), Viewer);
+
+        var share = await controller.CreateShare(new CreateWebPageShareRequest
+        {
+            SiteId = "site-a",
+            Visibility = "public",
+            ConfirmedPrivateSourceFingerprint = fingerprint,
+        });
+        var shareRefused = Assert.IsType<BadRequestObjectResult>(share);
+        var sharePayload = JsonSerializer.SerializeToElement(
+            shareRefused.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(ErrorCodes.PERMISSION_DENIED, sharePayload.GetProperty("error").GetProperty("code").GetString());
+
+        var visibility = await controller.SetVisibility("site-a", new SetVisibilityRequest
+        {
+            Visibility = "public",
+            ConfirmedPrivateSourceFingerprint = fingerprint,
+        });
+        Assert.IsType<NotFoundObjectResult>(visibility);
+
+        Assert.Empty(store.Appended);
+        // Strict mock：CreateShareAsync / SetVisibilityAsync 都没有 Setup，被调用就会抛。
+        sites.Verify(service => service.SetVisibilityAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── 夹具 ──
+
+    private const string Viewer = "team-viewer";
+
+    /// <summary>站点分享到了团队、当前用户是 viewer：看得见（GetByIdAsync 放行），但不能分享、不能改可见性。</summary>
+    private static Mock<IHostedSiteService> TeamViewerSites(HostedSite site)
+    {
+        site.SharedTeamIds = ["team-1"];
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetByIdAsync(site.Id, Viewer, CancellationToken.None)).ReturnsAsync(site);
+        sites.Setup(service => service.CanCreateShareAsync(It.IsAny<IReadOnlyCollection<string>>(), Viewer, CancellationToken.None))
+            .ReturnsAsync(false);
+        sites.Setup(service => service.CanSetVisibility(site, Viewer)).Returns(false);
+        return sites;
+    }
 
     private static FakeStore ScenarioWithPrivateBaseline()
     {
@@ -468,7 +632,10 @@ public sealed class HostedSitePrivateSourceGateTests
         return controller;
     }
 
-    private static WebPagesController BuildWebPagesController(IHostedSiteService sites, IHostedSitePrivateSourceGate gate)
+    private static WebPagesController BuildWebPagesController(
+        IHostedSiteService sites,
+        IHostedSitePrivateSourceGate gate,
+        string userId = Owner)
     {
         var controller = new WebPagesController(
             sites,
@@ -482,7 +649,7 @@ public sealed class HostedSitePrivateSourceGateTests
         {
             HttpContext = new DefaultHttpContext
             {
-                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", Owner) }, "test")),
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", userId) }, "test")),
             },
         };
         return controller;

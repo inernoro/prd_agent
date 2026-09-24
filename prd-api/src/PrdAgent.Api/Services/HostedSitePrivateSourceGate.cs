@@ -106,7 +106,7 @@ public sealed record HostedSitePrivateSourceDecision(
 /// </summary>
 public static class HostedSitePrivateSourceRules
 {
-    /// <summary>沿版本血缘最多回溯多少步（防环、防异常长链）。</summary>
+    /// <summary>沿版本血缘最多回溯多少步（防环、防异常长链）。读不到头时按「更早版本的来源无法确认」列给作者，不当完整结果。</summary>
     public const int MaxLineageDepth = 64;
 
     /// <summary>确认记录在一条版本上最多保留多少条。</summary>
@@ -244,7 +244,8 @@ public interface IHostedSitePrivateSourceGate
 /// 「帮我修改」产出的草稿，内容里仍然是首次生成时那几份资料，只看草稿自己的引用会漏掉它们。
 ///
 /// 「当前线上版本」按站点的活动发布指针解析（含停在 publishing 的恢复态），指针悬空按「无法确认」列出，
-/// 见 ResolveCurrentRevisionAsync。
+/// 见 ResolveCurrentRevisionAsync。血缘超过 MaxLineageDepth 或成环、没读到头时同样按「无法确认」列出，
+/// 见 TruncatedLineageItem。
 ///
 /// 已知边界（同步记在 doc/debt.platform.open-design.md）：
 /// - 没有版本账本（也没有活动发布指针）的旧站点、从未在工作台打开过的上传站点，查不到来源，按现状放行；
@@ -282,7 +283,10 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
             }
             if (current == null) continue; // 没有版本账本：旧站点 / 无来源记录，按现状放行（已知边界）
             anchors[site.Id] = current.Id;
-            lineages.Add((site.Id, await CollectLineageEntryIdsAsync(site.Id, current, ct)));
+            var lineage = await CollectLineageEntryIdsAsync(site.Id, current, ct);
+            lineages.Add((site.Id, lineage.EntryIds));
+            if (lineage.TruncatedAfterRevisionId != null)
+                unresolved.Add(TruncatedLineageItem(site, lineage.TruncatedAfterRevisionId));
         }
         return await BuildReportAsync(lineages, anchors, ct, unresolved);
     }
@@ -336,14 +340,41 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
     /// <summary>「活动版本找不到」那一条的 EntryId 前缀；它不是知识库条目，只借条目 ID 的位置参与指纹。</summary>
     public const string UnresolvedRevisionEntryPrefix = "unresolved-revision:";
 
+    /// <summary>
+    /// 血缘没能读到头时列给作者看的一条「无法确认」：沿上一代回溯撞上步数上限
+    /// （<see cref="HostedSitePrivateSourceRules.MaxLineageDepth"/>），或者撞上了环，更早的祖先版本没读到。
+    /// 私有资料可能只挂在那些祖先上，把截断后的集合当成完整结果会不经确认放行（Codex P1）。
+    ///
+    /// EntryId 带站点与「最后读到的那一版」，与 <see cref="UnresolvedActiveRevisionItem"/> 同一写法：
+    /// 血缘不变指纹就不变，确认一次即可放行；再发布一版（起点变了）就要重新确认。
+    /// 这一条挂在站点上，站点有锚点版本，确认记录照常落在锚点上。
+    /// </summary>
+    private static HostedSitePrivateSourceItem TruncatedLineageItem(HostedSite site, string lastReadRevisionId)
+    {
+        var siteTitle = string.IsNullOrWhiteSpace(site.Title) ? "本站点" : $"「{site.Title.Trim()}」";
+        return new HostedSitePrivateSourceItem(
+            site.Id,
+            $"{TruncatedLineageEntryPrefix}{site.Id}:{lastReadRevisionId}",
+            $"{siteTitle}更早版本的来源无法确认",
+            null,
+            null,
+            HostedSitePrivateSourceScopes.Unavailable);
+    }
+
+    /// <summary>「血缘没读到头」那一条的 EntryId 前缀；同样不是知识库条目，只借条目 ID 的位置参与指纹。</summary>
+    public const string TruncatedLineageEntryPrefix = "lineage-truncated:";
+
     public async Task<HostedSitePrivateSourceReport> InspectRevisionAsync(
         HostedSite site,
         HostedSiteRevision revision,
         CancellationToken ct)
     {
-        var entryIds = await CollectLineageEntryIdsAsync(site.Id, revision, ct);
+        var lineage = await CollectLineageEntryIdsAsync(site.Id, revision, ct);
         var anchors = new Dictionary<string, string>(StringComparer.Ordinal) { [site.Id] = revision.Id };
-        return await BuildReportAsync([(site.Id, entryIds)], anchors, ct);
+        var unresolved = lineage.TruncatedAfterRevisionId == null
+            ? Array.Empty<HostedSitePrivateSourceItem>()
+            : new[] { TruncatedLineageItem(site, lineage.TruncatedAfterRevisionId) };
+        return await BuildReportAsync([(site.Id, lineage.EntryIds)], anchors, ct, unresolved);
     }
 
     public async Task<bool> IsExternallyExposedAsync(HostedSite site, CancellationToken ct)
@@ -418,28 +449,42 @@ public sealed class HostedSitePrivateSourceGate : IHostedSitePrivateSourceGate
         return new HostedSitePrivateSourceDecision(HostedSitePrivateSourceVerdict.Allowed, report);
     }
 
-    private async Task<IReadOnlyList<string>> CollectLineageEntryIdsAsync(
+    /// <summary>
+    /// 沿内容血缘合并引用。TruncatedAfterRevisionId 非空 = 没读到头：循环结束时还有上一代没读
+    /// （撞上步数上限，或者遇到环），值是最后读到的那一版。调用方必须据此列出「无法确认」，
+    /// 不许把截断后的集合当完整结果。读到基线（没有上一代）才算读完。
+    /// </summary>
+    private async Task<(IReadOnlyList<string> EntryIds, string? TruncatedAfterRevisionId)> CollectLineageEntryIdsAsync(
         string siteId,
         HostedSiteRevision start,
         CancellationToken ct)
     {
         var ids = new List<string>();
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        var current = start;
-        for (var depth = 0; current != null && depth < HostedSitePrivateSourceRules.MaxLineageDepth; depth++)
+        HostedSiteRevision? current = start;
+        string? lastReadId = null;
+        string? truncatedAfter = null;
+        for (var depth = 0; current != null; depth++)
         {
-            if (!visited.Add(current.Id)) break;
+            if (depth >= HostedSitePrivateSourceRules.MaxLineageDepth || !visited.Add(current.Id))
+            {
+                // 还有一代没读（步数用完，或者这一代已经读过、血缘成了环）：更早的来源无法确认。
+                truncatedAfter = lastReadId ?? start.Id;
+                break;
+            }
             ids.AddRange(current.KnowledgeEntryIds ?? new List<string>());
+            lastReadId = current.Id;
             var previousId = HostedSitePrivateSourceRules.PreviousContentRevisionId(current);
             current = string.IsNullOrWhiteSpace(previousId)
                 ? null
                 : await _store.FindRevisionAsync(siteId, previousId, ct);
         }
-        return ids
+        var distinct = ids
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id.Trim())
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        return (distinct, truncatedAfter);
     }
 
     private async Task<HostedSitePrivateSourceReport> BuildReportAsync(
