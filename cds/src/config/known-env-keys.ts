@@ -109,7 +109,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_GITHUB_APP_SLUG', description: 'CDS GitHub App slug（仅展示）', isSecret: false, group: 'github' },
 
   // ── misc ──
-  { key: 'CDS_ENV_FILE', description: '.cds.env 文件路径覆盖', isSecret: false, group: 'misc' },
+  { key: 'CDS_ENV_FILE', description: '仅限进程启动时覆盖 .cds.env 路径，不得写入 .cds.env', isSecret: false, group: 'misc' },
   { key: 'CDS_SMOKE_SCRIPT_DIR', description: '冒烟测试脚本目录（默认 ./scripts）', isSecret: false, group: 'misc' },
   { key: 'CDS_CONFIG', description: '配置文件路径覆盖（默认 cds.config.json）', isSecret: false, group: 'misc' },
   { key: 'CDS_BUG_REPORT_MAP_BASE_URL', description: '快捷提缺陷的 MAP 服务基址（推荐改由 CDS 系统设置托管）', isSecret: false, group: 'misc' },

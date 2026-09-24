@@ -29,17 +29,24 @@ public class ExceptionMiddleware
         {
             // 请求被客户端中断 / 连接被取消（常见于 SSE 断开、页面切换、服务重启时的 in-flight 请求）
             // 这不是服务端错误：不打 Error，避免噪音；也不强行写响应（通常客户端已断开）
-            _logger.LogInformation("Request canceled: {Method} {Path}", context.Request.Method, context.Request.Path);
+            _logger.LogInformation("Request canceled: {Method} {Path}", context.Request.Method,
+                HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", null).Path);
             return;
         }
         catch (TaskCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
-            _logger.LogInformation("Request canceled: {Method} {Path}", context.Request.Method, context.Request.Path);
+            _logger.LogInformation("Request canceled: {Method} {Path}", context.Request.Method,
+                HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", null).Path);
             return;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unhandled exception occurred");
+            var preview = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", null);
+            if (preview.Sensitive)
+                _logger.LogError("Preview request failed: {Method} {Path} {ExceptionType}",
+                    context.Request.Method, preview.Path, ex.GetType().Name);
+            else
+                _logger.LogError(ex, "Unhandled exception occurred");
             await HandleExceptionAsync(context, ex);
         }
     }
@@ -56,6 +63,9 @@ public class ExceptionMiddleware
             InvalidOperationException => (HttpStatusCode.BadRequest, ErrorCodes.INTERNAL_ERROR, exception.Message),
             _ => (HttpStatusCode.InternalServerError, ErrorCodes.INTERNAL_ERROR, "服务器内部错误")
         };
+
+        if (HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", null).Sensitive)
+            message = "预览暂时无法打开，请返回作品页面重新打开预览";
 
         context.Response.StatusCode = (int)statusCode;
 

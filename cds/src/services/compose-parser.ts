@@ -66,6 +66,7 @@ interface ComposeFile {
     hint?: string;
     requiredGroup?: string;
     requiredOption?: string;
+    generate?: string;
   }>;
   /** CDS extension: routing rules */
   'x-cds-routing'?: Array<{
@@ -240,6 +241,7 @@ export interface CdsComposeConfig {
     hint?: string;
     requiredGroup?: string;
     requiredOption?: string;
+    generate?: 'secret';
   }>;
   infraServices: ComposeServiceDef[];
   routingRules: Array<{
@@ -667,6 +669,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
     hint?: string;
     requiredGroup?: string;
     requiredOption?: string;
+    generate?: 'secret';
   }> = {};
   if (doc['x-cds-env-meta']) {
     for (const [key, meta] of Object.entries(doc['x-cds-env-meta'])) {
@@ -678,6 +681,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         ...(meta?.hint ? { hint: meta.hint } : {}),
         ...(meta?.requiredGroup ? { requiredGroup: String(meta.requiredGroup) } : {}),
         ...(meta?.requiredOption ? { requiredOption: String(meta.requiredOption) } : {}),
+        ...(String(meta?.generate || '').toLowerCase() === 'secret' ? { generate: 'secret' as const } : {}),
       };
     }
   }

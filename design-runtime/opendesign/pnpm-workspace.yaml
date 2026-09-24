@@ -1,0 +1,9 @@
+# 本服务不是 monorepo，这个文件只为承载 allowBuilds，写法与 cds/pnpm-workspace.yaml 对齐。
+# packages 必填：pnpm 9 在 `pnpm store path` 时要求它非空；这里用一个匹配不到任何子包的占位 glob。
+packages:
+  - 'packages/*'
+
+# pnpm 11 遇到未批准的 native build script 会把 install 当 fatal。esbuild 只被 vitest 在
+# 开发与测试时用到，运行镜像里不含它（镜像只拷 dist/）。
+allowBuilds:
+  esbuild: true

@@ -70,11 +70,25 @@ public sealed class AdminBootstrapWiringContractTests
             "prd-api/src/PrdAgent.Api/Filters/ActivityActionRegistry.cs");
         var filter = ReadRepoFile(
             "prd-api/src/PrdAgent.Api/Filters/ActivityLogActionFilter.cs");
+        var recorder = ReadRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ActivityActionRecorder.cs");
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
 
         Assert.Contains("Users.UpdatePassword", registry);
         Assert.Contains("Users.InitializeUsers", registry);
-        Assert.Contains("ActorId = actorId", filter);
-        Assert.Contains("ActivityLogs.InsertOneAsync", filter);
+        // 留痕已下沉到共享 recorder：守认证来源、参数传递、落库三跳，而不是要求都写在过滤器内。
+        var action = SourceSlice.Member(filter, "public async Task OnActionExecutionAsync(");
+        Assert.Contains("var actorId = context.HttpContext.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value", action);
+        Assert.Contains("if (string.IsNullOrEmpty(actorId)) return;", action);
+        Assert.Matches(@"_recorder\.RecordHttpAsync\(\s*def,\s*actionKey,\s*actorId,", action);
+
+        var recordHttp = SourceSlice.Member(recorder, "public async Task<bool> RecordHttpAsync(");
+        Assert.Matches(@"var entry = BuildEntry\(\s*definition,\s*action,\s*actorId,", recordHttp);
+        Assert.Contains("ActivityLogs.InsertOneAsync(entry, cancellationToken: ct)", recordHttp);
+        var buildEntry = SourceSlice.Member(recorder, "private static ActivityLog BuildEntry(");
+        Assert.Contains("var normalizedActor = RequiredBounded(actorId, nameof(actorId))", buildEntry);
+        Assert.Contains("ActorId = normalizedActor", buildEntry);
+        Assert.Contains("AddScoped<PrdAgent.Api.Services.IActivityActionRecorder, PrdAgent.Api.Services.ActivityActionRecorder>()", program);
     }
 
     private static string ReadRepoFile(string relativePath)

@@ -9,6 +9,7 @@ const AUTH_ENV_KEYS = [
   'CDS_AUTH_MODE',
   'CDS_USERNAME',
   'CDS_PASSWORD',
+  'CDS_PUBLIC_BASE_URL',
   'CDS_GITHUB_CLIENT_ID',
   'CDS_GITHUB_CLIENT_SECRET',
   'CDS_SSO_ENABLED',
@@ -160,6 +161,42 @@ async function requestJson(
   });
 }
 
+async function requestRaw(
+  server: http.Server,
+  method: string,
+  urlPath: string,
+  payload: string,
+  headers: http.OutgoingHttpHeaders = {},
+): Promise<HttpResponse> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: addr.port,
+      path: urlPath,
+      method,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(payload)),
+        ...headers,
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+      res.on('end', () => resolve({
+        status: res.statusCode!,
+        contentType: (res.headers['content-type'] || '').toString(),
+        body: raw,
+        headers: res.headers,
+      }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Promise<http.Server> {
   const forwarder = http.createServer((req, res) => {
     if ((req.url || '').startsWith('/__forwarder/active')) {
@@ -278,12 +315,21 @@ describe('Server route ordering (regression)', () => {
     logs: HttpLogRecord[],
     active: ActiveHttpRequestRecord[] = [],
     onFindActiveFilter?: (filter: HttpActiveRequestFilter) => void,
+    captureWrites = false,
+    serverEvents: Array<Record<string, unknown>> = [],
   ): express.Express {
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
     stateService.load();
     const httpLogStore: HttpLogSink = {
-      record() {},
+      record(record) {
+        if (!captureWrites) return;
+        logs.push({
+          ...record,
+          _id: `captured-${logs.length + 1}`,
+          ts: new Date(),
+        });
+      },
       async findRecent(filter = {}) {
         const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
         return logs
@@ -330,6 +376,9 @@ describe('Server route ordering (regression)', () => {
       shell: new MockShellExecutor(),
       config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
       httpLogStore,
+      serverEventLogStore: {
+        record(record) { serverEvents.push(record as unknown as Record<string, unknown>); },
+      },
     });
   }
 
@@ -410,10 +459,12 @@ describe('Server route ordering (regression)', () => {
     const prevMode = process.env.CDS_AUTH_MODE;
     const prevUser = process.env.CDS_USERNAME;
     const prevPass = process.env.CDS_PASSWORD;
+    const prevPublicBaseUrl = process.env.CDS_PUBLIC_BASE_URL;
     try {
       delete process.env.CDS_AUTH_MODE;
       process.env.CDS_USERNAME = 'operator';
       process.env.CDS_PASSWORD = 'secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
 
       const app = buildRealServerWithEvents([]);
       server = await startServer(app);
@@ -476,6 +527,7 @@ describe('Server route ordering (regression)', () => {
         ? login.headers['set-cookie'][0]
         : String(login.headers['set-cookie'] || '');
       const cookie = rawCookie.split(';')[0];
+      expect(rawCookie).toContain('; Secure');
 
       const authedMe = await request(server, '/api/me', { Cookie: cookie });
       expect(authedMe.status).toBe(200);
@@ -486,14 +538,19 @@ describe('Server route ordering (regression)', () => {
         isSystemOwner: true,
       });
 
-      const headerToken = cookie.slice('cds_token='.length);
-      const headerAuthedMe = await request(server, '/api/me', { 'X-CDS-Token': headerToken });
-      expect(headerAuthedMe.status).toBe(200);
-      expect(JSON.parse(headerAuthedMe.body).user).toMatchObject({
-        username: 'operator',
-        authProvider: 'local',
-        isSystemOwner: true,
+      const humanToken = cookie.slice('cds_token='.length);
+      const machineToken = crypto.createHash('sha256').update('cds:operator:secret').digest('hex');
+      expect(humanToken).not.toBe(machineToken);
+      const headerAuthedApi = await request(server, '/api/branches', { 'X-CDS-Token': machineToken });
+      expect(headerAuthedApi.status).toBe(200);
+      const replayedMachineCookie = await request(server, '/api/me', {
+        Cookie: `cds_token=${machineToken}`,
       });
+      expect(replayedMachineCookie.status).toBe(401);
+      const replayedHumanHeader = await request(server, '/api/branches', {
+        'X-CDS-Token': humanToken,
+      });
+      expect(replayedHumanHeader.status).toBe(401);
     } finally {
       if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
       else process.env.CDS_AUTH_MODE = prevMode;
@@ -501,6 +558,156 @@ describe('Server route ordering (regression)', () => {
       else process.env.CDS_USERNAME = prevUser;
       if (prevPass === undefined) delete process.env.CDS_PASSWORD;
       else process.env.CDS_PASSWORD = prevPass;
+      if (prevPublicBaseUrl === undefined) delete process.env.CDS_PUBLIC_BASE_URL;
+      else process.env.CDS_PUBLIC_BASE_URL = prevPublicBaseUrl;
+    }
+  });
+
+  it('密封存储全部 Express 路径变体在解析和认证前抑制请求材料', async () => {
+    const prevMode = process.env.CDS_AUTH_MODE;
+    const prevUser = process.env.CDS_USERNAME;
+    const prevPass = process.env.CDS_PASSWORD;
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      process.env.CDS_AUTH_MODE = 'basic';
+      process.env.CDS_USERNAME = 'operator';
+      process.env.CDS_PASSWORD = 'secret';
+      const logs: HttpLogRecord[] = [];
+      const events: Array<Record<string, unknown>> = [];
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true, events);
+      server = await startServer(app);
+      const canary = 'sealed-storage-log-canary';
+
+      const routes = [
+        `/api/cds-system/sealed-storage/initialize?value=${canary}`,
+        `/_cds/api/cds-system/sealed-storage/initialize?value=${canary}`,
+        `/api/CDS-SYSTEM/SEALED-STORAGE/INITIALIZE/?value=${canary}`,
+        `/_cds/api/CDS-SYSTEM/SEALED-STORAGE/INITIALIZE/?value=${canary}`,
+      ];
+      for (const route of routes) {
+        const response = await requestJson(server, 'POST', route, { value: canary }, {
+          'User-Agent': canary,
+          Referer: `https://example.test/${canary}`,
+          'X-CDS-Trigger': canary,
+          'X-CDS-Request-Id': canary,
+          'X-Forwarded-For': canary,
+          'X-Forwarded-Proto': canary,
+          Host: canary,
+        });
+        expect(response.status).toBe(401);
+        expect(response.headers['x-cds-suppress-activity']).toBeUndefined();
+        expect(JSON.stringify(response.headers)).not.toContain(canary);
+      }
+
+      const malformed = `{\"value\":\"${canary}\"`;
+      const oversized = JSON.stringify({ value: `${canary}${'x'.repeat(110_000)}` });
+      for (const [route, payload] of [
+        ['/api/cds-system/sealed-storage/initialize/', malformed],
+        ['/_cds/api/CDS-SYSTEM/SEALED-STORAGE/INITIALIZE', oversized],
+      ] as const) {
+        const response = await requestRaw(server, 'POST', route, payload, {
+          'User-Agent': canary,
+          Referer: `https://example.test/${canary}`,
+          'X-CDS-Trigger': canary,
+          'X-CDS-Request-Id': canary,
+          'X-Forwarded-For': canary,
+          'X-Forwarded-Proto': canary,
+          Host: canary,
+        });
+        expect(response.status).toBe(401);
+        expect(response.body).not.toContain(canary);
+        expect(JSON.stringify(response.headers)).not.toContain(canary);
+      }
+
+      expect(logs).toHaveLength(routes.length + 2);
+      for (const log of logs) {
+        expect(log.path).toBe('/api/cds-system/sealed-storage/initialize');
+        expect(log.request.bodyPreview).toBe('[cds request body omitted]');
+        expect(log.request.headers).toEqual({});
+        expect(JSON.stringify(log)).not.toContain(canary);
+      }
+      expect(JSON.stringify(events)).not.toContain(canary);
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain(canary);
+    } finally {
+      warnSpy.mockRestore();
+      if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
+      else process.env.CDS_AUTH_MODE = prevMode;
+      if (prevUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = prevUser;
+      if (prevPass === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = prevPass;
+    }
+  });
+
+  it('人工初始化不会把任意请求头写入 HTTP 或持久审计日志', async () => {
+    const previous = {
+      mode: process.env.CDS_AUTH_MODE,
+      user: process.env.CDS_USERNAME,
+      pass: process.env.CDS_PASSWORD,
+      publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL,
+      envFile: process.env.CDS_ENV_FILE,
+      secret: process.env.CDS_SECRET_KEY,
+    };
+    const envFile = path.join(tmpDir, 'sealed.env');
+    const canary = 'sealed-header-canary-must-not-survive';
+    try {
+      process.env.CDS_AUTH_MODE = 'basic';
+      process.env.CDS_USERNAME = 'operator';
+      process.env.CDS_PASSWORD = 'secret';
+      process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
+      process.env.CDS_ENV_FILE = envFile;
+      delete process.env.CDS_SECRET_KEY;
+      const logs: HttpLogRecord[] = [];
+      const events: Array<Record<string, unknown>> = [];
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true, events);
+      server = await startServer(app);
+
+      const login = await requestJson(server, 'POST', '/api/login', {
+        username: 'operator',
+        password: 'secret',
+      });
+      const rawCookie = Array.isArray(login.headers['set-cookie'])
+        ? login.headers['set-cookie'][0]
+        : String(login.headers['set-cookie'] || '');
+      const cookie = rawCookie.split(';')[0];
+      const initialized = await requestRaw(
+        server,
+        'POST',
+        '/api/cds-system/sealed-storage/initialize',
+        '',
+        {
+          Cookie: cookie,
+          'X-CDS-Human-Action': 'initialize-sealed-storage',
+          'User-Agent': canary,
+          Referer: `https://example.test/${canary}`,
+          'X-CDS-Trigger': canary,
+          'X-CDS-Request-Id': canary,
+          'X-Forwarded-For': canary,
+          'X-Forwarded-Proto': canary,
+          Host: canary,
+        },
+      );
+
+      expect(initialized.status).toBe(200);
+      expect(initialized.headers['x-cds-suppress-activity']).toBeUndefined();
+      expect(JSON.stringify(initialized.headers)).not.toContain(canary);
+      const sealedLog = logs.find((log) => log.path === '/api/cds-system/sealed-storage/initialize');
+      expect(sealedLog?.request.headers).toEqual({});
+      expect(JSON.stringify(sealedLog)).not.toContain(canary);
+      expect(JSON.stringify(events)).not.toContain(canary);
+      expect(events.some((event) => event.source === 'sealed-storage-bootstrap')).toBe(true);
+      expect(events.some((event) => event.source === 'api-mutation')).toBe(true);
+    } finally {
+      const restore = (key: string, value: string | undefined) => {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      };
+      restore('CDS_AUTH_MODE', previous.mode);
+      restore('CDS_USERNAME', previous.user);
+      restore('CDS_PASSWORD', previous.pass);
+      restore('CDS_PUBLIC_BASE_URL', previous.publicBaseUrl);
+      restore('CDS_ENV_FILE', previous.envFile);
+      restore('CDS_SECRET_KEY', previous.secret);
     }
   });
 

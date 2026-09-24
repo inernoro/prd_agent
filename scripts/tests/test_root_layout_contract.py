@@ -54,6 +54,8 @@ ALLOWED_ROOT_DIRECTORIES = {
     "changelogs",
     "claude-sdk-sidecar",
     "deploy",
+    # 独立部署的设计执行服务（每种引擎一个子目录，实现 map-design-executor-v1），见 doc/design.platform.design-runtime.md。
+    "design-runtime",
     "doc",
     "e2e",
     "llmgw",

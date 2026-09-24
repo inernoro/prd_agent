@@ -46,7 +46,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ENV_FILE="$SCRIPT_DIR/.cds.env"
+# CDS_ENV_FILE 只允许由启动进程显式传入，不能从被选择的文件里再次改写选择器。
+# 先捕获外部值，后续 source 即使遇到同名行也会恢复这份启动态权威。
+CDS_ENV_FILE_STARTUP="${CDS_ENV_FILE:-}"
+ENV_FILE="${CDS_ENV_FILE_STARTUP:-$SCRIPT_DIR/.cds.env}"
 CONFIG_FILE="${CDS_CONFIG:-cds.config.json}"
 STATE_DIR="$SCRIPT_DIR/.cds"
 PID_FILE="$STATE_DIR/cds.pid"
@@ -99,6 +102,62 @@ random_token() {
     || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
 }
 
+ENV_WRITE_LOCK_DIR=""
+ENV_WRITE_LOCK_NONCE=""
+
+# 与 Node env-file.ts 共用目录锁协议。锁一旦存在就 fail-closed；残留锁只能
+# 在停机后由明确的单写者运维流程清理，避免用户态接管竞态导致双写。
+env_lock_acquire() {
+  local lock_dir="${ENV_FILE}.write.lock"
+  local owner_file="$lock_dir/owner"
+  local nonce=""
+
+  if ! mkdir -m 700 "$lock_dir" 2>/dev/null; then
+    # EEXIST 一律 fail-closed。Shell 无法原子比较目录 inode 后再 rename，
+    # 自动接管会误删刚被其他进程替换的新锁。残留锁必须停机后人工清理。
+    printf "[error] .cds.env 写锁已存在，已拒绝并发覆盖；若确认进程已停止，请人工清理锁目录。\n" >&2
+    return 1
+  fi
+
+  nonce="$(random_token)"
+  if ! printf '%s\n%s\n' "$$" "$nonce" > "$owner_file"; then
+    rmdir "$lock_dir" 2>/dev/null || true
+    return 1
+  fi
+  chmod 600 "$owner_file"
+  ENV_WRITE_LOCK_DIR="$lock_dir"
+  ENV_WRITE_LOCK_NONCE="$nonce"
+}
+
+env_lock_release() {
+  [ -n "$ENV_WRITE_LOCK_DIR" ] || return 0
+  local owner_file="$ENV_WRITE_LOCK_DIR/owner"
+  local current_nonce=""
+  if [ -f "$owner_file" ]; then
+    current_nonce="$(sed -n '2p' "$owner_file" 2>/dev/null || true)"
+  fi
+  if [ "$current_nonce" = "$ENV_WRITE_LOCK_NONCE" ]; then
+    rm -f "$owner_file"
+    rmdir "$ENV_WRITE_LOCK_DIR" 2>/dev/null || true
+  fi
+  ENV_WRITE_LOCK_DIR=""
+  ENV_WRITE_LOCK_NONCE=""
+}
+
+env_backup_secure() {
+  local source_file="$1" backup_file="$2" backup_tmp=""
+  backup_tmp="$(mktemp "${backup_file}.tmp.XXXXXX")" || return 1
+  chmod 600 "$backup_tmp" || { rm -f "$backup_tmp"; return 1; }
+  if ! command cat "$source_file" > "$backup_tmp"; then
+    rm -f "$backup_tmp"
+    return 1
+  fi
+  python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' "$backup_tmp" \
+    || { rm -f "$backup_tmp"; return 1; }
+  mv -f "$backup_tmp" "$backup_file" || { rm -f "$backup_tmp"; return 1; }
+  chmod 600 "$backup_file"
+}
+
 # ISO timestamp offset from now (GNU date + BSD date compat).
 iso_offset_seconds() {
   local offset="$1"
@@ -107,25 +166,117 @@ iso_offset_seconds() {
     || python3 -c "import datetime;print((datetime.datetime.utcnow()+datetime.timedelta(seconds=${offset})).strftime('%Y-%m-%dT%H:%M:%SZ'))"
 }
 
-# Atomically upsert or remove a `export KEY="value"` line in .cds.env.
-# Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
-env_upsert() {
+# 单键读改写，**假定调用方已持有 .cds.env 写锁**。
+# 单独存在是因为目录锁不可重入（已存在即 fail-closed），而「一次 init 写四个键」
+# 这类改动必须整组原子：逐键各抢各放的话，两个 init 并发就能交错出
+# 「A 的用户名配 B 的密码与 JWT」这种谁也登不进去的组合。
+# 只写一个键时用下面的 env_upsert，它负责抢锁与放锁。
+env_upsert_locked() {
   local key="$1" value="$2"
-  local tmp="${ENV_FILE}.tmp.$$"
-  [ -f "$ENV_FILE" ] || {
-    touch "$ENV_FILE"
-    chmod 600 "$ENV_FILE"
-  }
-  awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$ENV_FILE" > "$tmp"
-  if [ -n "$value" ]; then
+  local tmp=""
+  local rc=0
+  if ! tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"; then
+    return 1
+  fi
+  chmod 600 "$tmp"
+  if [ ! -f "$ENV_FILE" ]; then
+    touch "$ENV_FILE" || rc=$?
+    [ "$rc" -ne 0 ] || chmod 600 "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$ENV_FILE" > "$tmp" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ] && [ -n "$value" ]; then
     # #856：用单引号包裹并转义内部单引号（每个 ' 替换成 '\''），保证任意内容
     # （尤其是含换行/$/反引号的多行 PEM 私钥，如 GitHub App private key）被 source
     # 时原样保留，不会被 shell 解释（此前双引号写法会导致 `RSA: command not found`）。
     local escaped="${value//\'/\'\\\'\'}"
-    printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp"
+    printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp" || rc=$?
   fi
-  mv -f "$tmp" "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
+  if [ "$rc" -eq 0 ]; then
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' "$tmp" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    mv -f "$tmp" "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    chmod 600 "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE" || rc=$?
+  fi
+  rm -f "$tmp"
+  return "$rc"
+}
+
+# 多键**一次提交**：把全部键应用到同一份临时文件，最后只 rename 一次。
+# 它与 env_upsert_locked 解决的不是同一个问题：
+#   - 锁解决「别的进程别插进来」；
+#   - 单次 rename 解决「自己中途失败别留下半套」。
+# 四次各自 rename 的话，第二次失败、或进程恰好在两次之间退出，.cds.env 就停在
+# 「新用户名配旧口令」上——备份留着但没有任何人去恢复，下次启动直接登不进仪表盘。
+# config-runtime-drift.md 要求源头改动必须是原子的，这里就是那个「源头」。
+#
+# 调用方必须已持有写锁。用法：env_upsert_many_locked K1 V1 K2 V2 ...（VALUE="" 删除该行）
+env_upsert_many_locked() {
+  if [ "$#" -eq 0 ] || [ $(( $# % 2 )) -ne 0 ]; then
+    err "env_upsert_many_locked 需要成对的 KEY VALUE 参数"
+    return 2
+  fi
+  local tmp="" work="" rc=0
+  if ! work="$(mktemp "${ENV_FILE}.work.XXXXXX")"; then
+    return 1
+  fi
+  chmod 600 "$work"
+  if ! tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"; then
+    rm -f "$work"
+    return 1
+  fi
+  chmod 600 "$tmp"
+  if [ ! -f "$ENV_FILE" ]; then
+    touch "$ENV_FILE" || rc=$?
+    if [ "$rc" -eq 0 ]; then chmod 600 "$ENV_FILE" || rc=$?; fi
+  fi
+  if [ "$rc" -eq 0 ]; then
+    command cat "$ENV_FILE" > "$work" || rc=$?
+  fi
+  while [ "$rc" -eq 0 ] && [ "$#" -ge 2 ]; do
+    local key="$1" value="$2"
+    shift 2
+    awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$work" > "$tmp" || { rc=$?; break; }
+    if [ -n "$value" ]; then
+      # 与 env_upsert_locked 同一套转义（#856）：单引号包裹并把内部 ' 写成 '\'' ，
+      # 保证含换行/$/反引号的多行 PEM 私钥被 source 时原样保留。
+      local escaped="${value//\'/\'\\\'\'}"
+      printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp" || { rc=$?; break; }
+    fi
+    command cat "$tmp" > "$work" || { rc=$?; break; }
+  done
+  if [ "$rc" -eq 0 ]; then
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' "$work" || rc=$?
+  fi
+  # 唯一一次落地：到这里为止 .cds.env 一个字节都没被动过，失败即原样保留。
+  if [ "$rc" -eq 0 ]; then
+    mv -f "$work" "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    chmod 600 "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE" || rc=$?
+  fi
+  rm -f "$tmp" "$work"
+  return "$rc"
+}
+
+# Atomically upsert or remove a `export KEY="value"` line in .cds.env.
+# Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
+env_upsert() {
+  local rc=0
+  env_lock_acquire || return 1
+  env_upsert_locked "$1" "$2" || rc=$?
+  env_lock_release
+  return "$rc"
 }
 
 # #856 preflight：尽力检查 .cds.env 是否存在「未用单引号包裹的 PEM 私钥」行——
@@ -146,6 +297,11 @@ load_env() {
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   set +a
+  if [ -n "$CDS_ENV_FILE_STARTUP" ]; then
+    export CDS_ENV_FILE="$CDS_ENV_FILE_STARTUP"
+  else
+    unset CDS_ENV_FILE
+  fi
 }
 
 hash_stream() {
@@ -383,13 +539,27 @@ ensure_cds_mongo_running() {
 }
 
 # Read an individual value from .cds.env without sourcing it.
+#
+# 必须按 env_upsert 实际写出的格式解码：它用单引号包裹、内部单引号写成 '\'' 。
+# 这里原先只剥双引号，于是读回来的是带着引号字符的字面量。init 重跑时这些值正是
+# 「回车保持原样」的默认值，会被原样再写一遍——引号从此变成密码/用户名/JWT/根域名
+# 本身的一部分，重启后仪表盘登不进去、路由也对不上（Codex P1，2026-09-16；
+# 写入侧的单引号格式来自主干，不是本 PR 引入，但两半判据分裂在这里，形状 3）。
+# 双引号那一支保留，用来读旧版本写下的存量文件。
+# 已知边界：仍是按行读，多行值（PEM 私钥）只能靠 source 取，这条不变。
 read_env_value() {
   local key="$1"
   [ -f "$ENV_FILE" ] || { printf ''; return; }
   awk -F'=' -v k="$key" '
+    BEGIN { q = sprintf("%c", 39) }
     $0 ~ "^export "k"=" {
       sub("^export "k"=","")
-      gsub("^\"|\"$","")
+      if (length($0) >= 2 && substr($0,1,1) == q && substr($0,length($0),1) == q) {
+        $0 = substr($0, 2, length($0) - 2)
+        gsub(q "\\\\" q q, q)
+      } else {
+        gsub("^\"|\"$","")
+      }
       last=$0
     }
     END { printf "%s", last }
@@ -2039,15 +2209,33 @@ init_cmd() {
     exit 0
   fi
 
-  cat > "$ENV_FILE" <<EOF
-# CDS 本地环境 — 由 ./exec_cds.sh init 生成于 $(date +%F)
-# 这是 CDS 唯一用户配置入口 — 所有变量使用 CDS_ 前缀
-export CDS_USERNAME="${new_user}"
-export CDS_PASSWORD="${new_pass}"
-export CDS_JWT_SECRET="${new_jwt}"
-export CDS_ROOT_DOMAINS="${new_doms}"
-EOF
-  chmod 600 "$ENV_FILE"
+  # 逐键合并而不是整文件重写，是为了保留 CDS_SECRET_KEY 与其他既有系统配置——
+  # 重跑 init 绝不能让已密封状态失去解密根密钥。
+  #
+  # 但「逐键」不等于可以把这四个值拆成四次独立落地。主干原来的整文件替换同时保证了两件事，
+  # 缺一个这四个值就可能停在「新用户名配旧口令」上、下次启动直接登不进仪表盘：
+  #   1. 别的进程别插进来 —— 整段（备份 + 写入）只取一次锁；
+  #   2. 自己中途失败别留下半套 —— 四个键应用到同一份临时文件，最后只 rename 一次。
+  # 第 2 条是 config-runtime-drift.md 说的「源头改动必须是原子的」：在 mv 之前，
+  # .cds.env 一个字节都没被动过，任何一步失败都原样保留，备份不必派上用场。
+  env_lock_acquire || { err "获取 .cds.env 写锁失败，已取消初始化"; exit 1; }
+  local init_rc=0
+  if [ -f "$ENV_FILE" ]; then
+    local init_backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
+    env_backup_secure "$ENV_FILE" "$init_backup" || init_rc=$?
+  fi
+  if [ "$init_rc" -eq 0 ]; then
+    env_upsert_many_locked \
+      CDS_USERNAME "$new_user" \
+      CDS_PASSWORD "$new_pass" \
+      CDS_JWT_SECRET "$new_jwt" \
+      CDS_ROOT_DOMAINS "$new_doms" || init_rc=$?
+  fi
+  env_lock_release
+  if [ "$init_rc" -ne 0 ]; then
+    err "写入 $ENV_FILE 失败（已保留备份），请检查后重试"
+    exit 1
+  fi
   ok "已写入 $ENV_FILE"
 
   # ── Phase 3: MongoDB (默认，持久化所有 CDS state) ──────────────────
@@ -2996,6 +3184,8 @@ scan_shell_env() {
 }
 
 migrate_env_cmd() {
+  env_lock_acquire || return 1
+  trap env_lock_release EXIT
   # ── 参数解析 ──
   # --verbose / -v   打印每个变量的明细（默认只打 summary）
   # --from FILE      指定额外扫描源（可重复）
@@ -3074,6 +3264,8 @@ migrate_env_cmd() {
 
   while IFS=$'\t' read -r src_tag mig_key mig_val; do
     [ -z "$mig_key" ] && continue
+    # 选择器只能由启动进程传入，绝不能写回它所选择的 .cds.env。
+    [ "$mig_key" = "CDS_ENV_FILE" ] && continue
     if [[ "$mig_key" == CDS_* ]]; then
       printf '%s\t%s\t%s\n' "$mig_key" "$mig_val" "$src_tag" >> "$out_canonical"
       continue
@@ -3176,13 +3368,16 @@ migrate_env_cmd() {
   if [ "$n_canonical" -gt 0 ] || [ ${#rename_keys[@]} -gt 0 ]; then
     if [ -f "$ENV_FILE" ]; then
       backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
-      cp "$ENV_FILE" "$backup"
+      env_backup_secure "$ENV_FILE" "$backup"
     fi
     local renamed_targets=" "
     local r
     for r in "${rename_canonical[@]:-}"; do
       [ -n "$r" ] && renamed_targets+="$r "
     done
+    local env_tmp
+    env_tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"
+    chmod 600 "$env_tmp"
     {
       echo "# CDS 本地环境 — 由 ./exec_cds.sh migrate-env 生成于 $(date +%F)"
       echo "# 唯一用户配置入口 — 所有变量必须 CDS_ 前缀"
@@ -3196,8 +3391,11 @@ migrate_env_cmd() {
       for ((i=0; i<${#rename_keys[@]}; i++)); do
         printf 'export %s="%s"\n' "${rename_canonical[$i]}" "$(printf '%s' "${rename_vals[$i]}" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g')"
       done
-    } > "$ENV_FILE"
+    } > "$env_tmp"
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' "$env_tmp"
+    mv -f "$env_tmp" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE"
   fi
 
   # ── 简洁的"完成 + 下一步" ──

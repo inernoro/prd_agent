@@ -57,6 +57,9 @@
     <!-- 藏书阁精读稿的上下文：书单 + 相关规则的导读与事故。
          由 prd-admin 的 bookshelfContext.test.ts 生成，那侧有守卫钉住它与源头一致。 -->
     <EmbeddedResource Include="Resources/bookshelf-context.json" />
+    <!-- 风格目录：OpenDesign 设计系统快照（scripts/sync-opendesign-design-systems.py 从钉住版本的镜像生成），
+         内嵌供 DesignSystemCatalog 读取；只含元数据与 tokens.css。 -->
+    <EmbeddedResource Include="Resources/DesignSystems/opendesign-design-systems.json" />
   </ItemGroup>
 
 </Project>

@@ -2,6 +2,25 @@
 
 </div>
 
+<style>
+#mdppt-touch-navigation { display:none; }
+@media (max-width:640px) {
+  body[data-mdppt-anchor="cyber-terminal"] .slide { padding-bottom:calc(112px + env(safe-area-inset-bottom, 0px)) !important; }
+  #mdppt-touch-navigation {
+    position:fixed; left:12px; right:12px; bottom:calc(56px + env(safe-area-inset-bottom, 0px));
+    z-index:2147482999; display:flex; align-items:center; justify-content:space-between;
+    gap:12px; padding:4px; border:1px solid var(--hc-border, #555); border-radius:12px;
+    background:var(--hc-bg, #16191e); color:var(--hc-ink, #fff); font:500 14px/1.4 system-ui,sans-serif;
+  }
+  #mdppt-touch-navigation button {
+    min-width:88px; min-height:44px; padding:8px 12px; border:1px solid var(--hc-border, #555);
+    border-radius:8px; background:var(--hc-surface, #242830); color:inherit; font:inherit; cursor:pointer;
+  }
+  #mdppt-touch-navigation button:disabled { opacity:.4; cursor:default; }
+  #mdppt-touch-navigation button:focus-visible { outline:2px solid var(--hc-green, #80baff); outline-offset:2px; }
+  #mdppt-touch-navigation span { white-space:nowrap; font-variant-numeric:tabular-nums; }
+}
+</style>
 
 <script>
 (function () {
@@ -12,13 +31,44 @@
     i = Math.max(0, slides.findIndex(function (s) { return s.classList.contains('active'); }));
     slides[i].classList.add('is-active');
   }
+  var nav = null, previous = null, next = null, pageCount = null;
+  function syncNavigation() {
+    if (!nav) return;
+    previous.disabled = i === 0;
+    next.disabled = i === slides.length - 1;
+    pageCount.textContent = (i + 1) + ' / ' + slides.length;
+  }
   function go(n) {
     if (n < 0 || n >= slides.length || n === i) return;
     slides[i].classList.remove('is-active');
     i = n;
     slides[i].classList.add('is-active');
+    syncNavigation();
+  }
+  // 只服务带官方模板身份的本 deck；直接复用 go，不抢触摸阅读、横向表格滚动或缩放。
+  if (slides.length > 1 && document.body.getAttribute('data-mdppt-anchor') === 'cyber-terminal') {
+    nav = document.createElement('nav');
+    nav.setAttribute('id', 'mdppt-touch-navigation');
+    nav.setAttribute('aria-label', '幻灯片翻页');
+    previous = document.createElement('button');
+    previous.setAttribute('type', 'button');
+    previous.textContent = '上一页';
+    previous.addEventListener('click', function () { go(i - 1); });
+    pageCount = document.createElement('span');
+    pageCount.setAttribute('aria-live', 'polite');
+    next = document.createElement('button');
+    next.setAttribute('type', 'button');
+    next.textContent = '下一页';
+    next.addEventListener('click', function () { go(i + 1); });
+    nav.appendChild(previous);
+    nav.appendChild(pageCount);
+    nav.appendChild(next);
+    document.body.appendChild(nav);
+    syncNavigation();
   }
   document.addEventListener('keydown', function (e) {
+    // 聚焦按钮的空格由浏览器生成 click，不能再被 deck 当成下一页。
+    if (e.key === ' ' && nav && nav.contains(e.target)) return;
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(i + 1); }
     else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(i - 1); }
     else if (e.key === 'Home') { go(0); }

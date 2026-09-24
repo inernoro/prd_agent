@@ -21,4 +21,16 @@ internal static class RequestLogRedactionProbe
         method.ShouldNotBeNull("CarriesCredential 改名了（两条守卫盯的都是它，同步改这里，别把断言删掉）");
         return (bool)method!.Invoke(null, new object?[] { path })!;
     }
+
+    /// <summary>
+    /// 同理问「这条路径是不是必须按流式放行」。判错的代价不是少一条日志：
+    /// 响应会被换成 MemoryStream 全量缓冲，下游一个字节都收不到。
+    /// </summary>
+    public static bool IsDesignRuntimeModelProxy(string path)
+    {
+        var method = typeof(RequestResponseLoggingMiddleware)
+            .GetMethod("IsDesignRuntimeModelProxy", BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull("IsDesignRuntimeModelProxy 改名了（守卫盯的就是它，同步改这里，别把断言删掉）");
+        return (bool)method!.Invoke(null, new object?[] { path })!;
+    }
 }

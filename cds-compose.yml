@@ -59,6 +59,12 @@ x-cds-env-meta:
   LLMGW_SERVE_API_KEY:
     kind: required
     hint: "LLM 网关 serving 内部调用密钥，由 CDS 项目 env scope 托管"
+  DESIGN_RUNTIME_API_KEY:
+    # 两个服务之间对暗号用的内部密钥，没人需要知道它的值：CDS 部署前发现项目里没有就自己生成一把，
+    # 写进项目 env（api 与 design-opendesign、项目内所有分支共用），之后不再改动。显式填过的值优先。
+    kind: auto
+    generate: secret
+    hint: "设计执行服务（design-opendesign）任务接口的内部调用密钥，由 CDS 自动生成，无需填写"
   STABLE_SMOKE_KEY_ID:
     kind: required
     hint: "稳定冒烟 RSA 公钥标识，由 CDS 项目 env scope 托管"
@@ -240,6 +246,25 @@ x-cds-deploy-modes:
         # CDS 预览没有稳定对象存储探针对象；深度 readiness 仍检查 Mongo、key 和 router，
         # 正式 docker-compose 则默认强制对象存储探针。
         LlmGateway__Readiness__RequireAssetProbe: "false"
+  # 设计执行服务 design-opendesign（OpenDesign 引擎，实现 map-design-executor-v1 协议）。
+  # **只支持 express**，没有 dev 源码模式：服务要与 OpenDesign daemon、Codex CLI 0.143.0 同处一个
+  # 容器运行，而这两样只存在于以 ghcr.io/nexu-io/od:0.21.1 为底的镜像里；在普通 node 镜像里挂源码
+  # 起不来引擎，起来了也只能如实报不健康。改服务代码的验证路径是 push → CI 构建本分支镜像 → CDS 拉取。
+  # 没有源码模式也就没有「拉不到镜像时回退源码编译」：拉不到就按回退链用 branch-main。
+  design-opendesign:
+    express:
+      label: "极速版（CI 预构建）"
+      image: "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:sha-${CDS_COMMIT_SHA}"
+      fallbackImage:
+        - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-${CDS_BRANCH_SLUG}"
+        - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**
+      # （design_opendesign 那一组）。声明得比 CI 窄会让 CDS 把旧镜像当新代码发出去。
+      buildScope:
+        - "design-runtime/opendesign/**"
+        - ".github/workflows/branch-image.yml"
+      prebuilt: true
+      containerPort: 8093
   # 独立 LLM Gateway Web：CDS 源码模式不依赖 GitHub/GHCR，express 仍使用不可变 SHA 镜像。
   llmgw-web:
     dev:
@@ -336,7 +361,8 @@ services:
       # 「向我提问」两个调用方一并切到 HTTP 权威：模型池配置在 llmgw 那边，
       # 留在 inproc 会去查 MAP 自己的 model_groups —— 那张表在网关剥离之后就是空的，
       # 结果是 [ModelResolver] 未找到可用模型（无池且 legacy 未命中），访客看到「回答失败了」。
-      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
+      # HTML PPT 的大纲和页级生成同样由 MAP 选模，但必须经独立 LLMGW 记录模型、调用方和 runId。
+      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent,md-to-ppt-agent.outline::chat,md-to-ppt-agent.html-generate::chat"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
@@ -349,6 +375,11 @@ services:
       # Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
+      # 设计执行服务（design-opendesign，map-design-executor-v1）。第 1 阶段只把地址与密钥接到位，
+      # MAP 侧按协议调用它的适配器在第 2 阶段落地；在那之前 api 不读这两项。
+      # 密钥不带仓库可见的 fallback：值只来自 CDS 项目 env scope。
+      DesignRuntime__OpenDesign__BaseUrl: "http://design-opendesign:8093"
+      DesignRuntime__OpenDesign__ApiKey: "${DESIGN_RUNTIME_API_KEY}"
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
@@ -456,7 +487,7 @@ services:
       LLMGW_ADMIN_ENV_AUTHORITY: "${LLMGW_ADMIN_ENV_AUTHORITY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/healthz"
+      cds.readiness-path: "/gw/readyz"
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
@@ -498,7 +529,41 @@ services:
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/v1/healthz"
+      #
+      # 这条声明必须指向**匿名且脱敏**的那条就绪路由，不能指向 readyz：
+      # CDS 的 HTTP 就绪探针是匿名 GET 且把一切 < 500 当就绪（container.ts 的 probeHttp），
+      # 而 readyz 带密钥门 —— 声明成 readyz 的话 401 会被当成「就绪」，依赖状态一次都不会
+      # 被评估，等价于只探了「HTTP 端口起来了」。
+      # healthz/ready 与 readyz 判据同源（同一个就绪探针），区别只在端出多少：
+      # 它只用状态码表态（200 / 503），正文没有组件名、耗时与摘要；要明细仍然走带密钥的 readyz。
+      cds.readiness-path: "/gw/v1/healthz/ready"
+
+  # 设计执行服务 design-opendesign：OpenDesign daemon + 本服务同处一个容器，实现 map-design-executor-v1。
+  # 只有预构建镜像这一种运行方式（原因见 x-cds-deploy-modes.design-opendesign 的注释），所以基础
+  # profile 直接就是 CI 镜像，cds.prebuilt-image=true 让 CDS 不挂源码、直接 docker pull + run。
+  # `.:/repo` 这条挂载不会真的生效（预构建镜像跳过源码挂载），留着只为让 CDS 把它识别成分支应用服务，
+  # 而不是跨分支共享的基础设施——每条分支都该有自己那一份，改提示词、改引擎才能按分支独立验证。
+  # 不声明 cds.subdomain / path-prefix：它只供 api 经容器网络调用，不发布 Web 预览。
+  design-opendesign:
+    image: "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:sha-${CDS_COMMIT_SHA}"
+    fallbackImage:
+      - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-${CDS_BRANCH_SLUG}"
+      - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-main"
+    working_dir: /repo
+    volumes:
+      - .:/repo
+    ports:
+      - "8093"
+    environment:
+      # 任务接口的 Bearer 密钥。未注入时服务照常起来，但拒绝一切任务接口并在 /v1/capabilities 说明原因。
+      DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
+    labels:
+      cds.prebuilt-image: "true"
+      # 匿名就绪探针：引擎健康检查通过才 200，否则 503（CDS 把 < 500 当就绪）。它不看 API key——
+      # 缺 key 时容器照样就绪，原因由能力接口说清，而不是让整条分支卡在「未就绪」。
+      cds.readiness-path: "/healthz/ready"
+      # 首次启动要清空目录并拉起 OpenDesign；给足窗口。
+      cds.readiness-timeout: "300"
 
   # 独立 LLM 网关前端控制台 llmgw-web。默认 CDS 源码模式由 Vite 承载当前分支，
   # /gw 与四协议入口分别反代到 console API 和 serving；express 模式仍使用 CI 的不可变 nginx 镜像。
@@ -556,6 +621,14 @@ services:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
+
+  # 索引目录不进部署链路（Codex P1，2026-09-15）。曾在这里放过一个 mongodb-indexes 一次性容器，
+  # 两处都错：一是 CDS 的 compose 解析把「挂了相对路径源码」当成应用服务，于是给它 /app 工作目录、
+  # 合成 8080 端口，再等一个 mongosh 永远不会开的 TCP 监听——脚本挂载路径也随之失效，任何一次
+  # 重新导入都会让这个服务失败并连坐拖住 API；二是它本身违反 no-auto-index：索引由 DBA 跑
+  # scripts/mongodb-indexes.js 手动建，正是为了避开「索引冲突导致应用启动失败」这一类事故，
+  # 而那一版恰恰把 API 启动挂到了它的成功退出上。清单与验证步骤见
+  # doc/guide.platform.mongodb-indexes.md。
 
   redis:
     image: redis:7-alpine

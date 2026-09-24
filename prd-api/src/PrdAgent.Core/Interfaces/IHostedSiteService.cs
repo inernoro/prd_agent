@@ -16,6 +16,25 @@ public interface IHostedSiteService
         string? title, string? description, string? folder, List<string>? tags,
         CancellationToken ct = default);
 
+    /// <summary>返回 CreateFromHtml 最终会写入对象存储的确定性字节。</summary>
+    byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
+
+    /// <summary>
+    /// 以稳定 sourceRef 创建 HTML 站点。站点 ID 和对象 key 均由 owner + sourceRef 确定，
+    /// 因此并发重试或进程在写入后崩溃都不会产生第二个站点。
+    /// </summary>
+    Task<HostedSite> CreateFromHtmlIdempotentAsync(
+        string userId,
+        byte[] htmlBytes,
+        string fileName,
+        string? title,
+        string? description,
+        string? folder,
+        List<string>? tags,
+        string sourceType,
+        string sourceRef,
+        CancellationToken ct = default);
+
     /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
     /// <param name="uploadId">
     /// 可选。传了就把解包进度写进 <see cref="IUploadProgressService"/>，
@@ -43,6 +62,22 @@ public interface IHostedSiteService
         CancellationToken ct = default,
         int? maxStoredBytes = null);
 
+    /// <summary>
+    /// 从已验证的完整文件包创建新站点。先把全部目标 key 登记到设计 Run 的补偿账本，
+    /// 全部上传成功后才插入站点记录；已有站点的整包版本发布走 ReplaceWithVerifiedFilesAsync。
+    /// </summary>
+    Task<HostedSite> CreateFromVerifiedFilesAsync(
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        string? title,
+        string? description,
+        string sourceType,
+        string sourceRef,
+        List<string>? tags,
+        string? folder,
+        string leaseOwnerId,
+        CancellationToken ct = default);
+
     // ── 替换内容 ──
 
     /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>
@@ -54,6 +89,37 @@ public interface IHostedSiteService
         CancellationToken ct = default,
         string? uploadId = null,
         string? reuploadRef = null);
+
+    /// <summary>
+    /// 读取可微调的入口 HTML。会执行站点编辑权限与形态校验，且限制正文最多 2MB。
+    /// </summary>
+    Task<HostedSiteEditableEntry> GetEditableEntryHtmlAsync(
+        string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 读取用于版本基线的入口 HTML。与直接微调不同，允许正文已经内嵌到入口 HTML 的 Markdown 包装站；
+    /// PDF、视频等依赖原始资产的包装站仍然拒绝。
+    /// </summary>
+    Task<HostedSiteEditableEntry> GetRevisionEntryHtmlAsync(
+        string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 只替换入口 HTML，保留 ZIP 站点里的 CSS、图片等其余文件。
+    /// </summary>
+    Task<HostedSite> ReplaceEntryHtmlAsync(
+        string siteId, string userId, string html,
+        DateTime? expectedContentVersion = null,
+        string? publishedRevisionId = null,
+        CancellationToken ct = default);
+
+    /// <summary>发布已验证的完整 OpenDesign 文件包，并以单次站点 CAS 切换全部文件。</summary>
+    Task<HostedSite> ReplaceWithVerifiedFilesAsync(
+        string siteId,
+        string userId,
+        IReadOnlyList<HostedSiteVerifiedFile> files,
+        DateTime expectedContentVersion,
+        string publishedRevisionId,
+        CancellationToken ct = default);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
@@ -75,6 +141,18 @@ public interface IHostedSiteService
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
     /// <summary>
+    /// 这个用户能不能把网页放进这个团队空间（owner / editor）。与 SetSharedTeamsAsync 同一条判据，
+    /// 供「发起生成时就冻结目标空间」在用户还在场的那一刻先量一次。
+    /// </summary>
+    Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 这个用户能不能编辑这个站点。与编辑端点同一道角色门，供分享页决定显不显示编辑坞。
+    /// 前端不得再拿 createdBy 之类的代理量自己推。
+    /// </summary>
+    Task<bool> CanEditSiteAsync(HostedSite site, string userId, CancellationToken ct = default);
+
+    /// <summary>
     /// 把自己的站点物理复制一份进团队空间（COS 文件完整拷贝，副本与原件互相独立）。
     /// groupId 可选：副本直接归入目标团队的专题/日常分类。
     /// 站点不存在/非 owner 抛 KeyNotFoundException；目标团队无编辑权抛 UnauthorizedAccessException。
@@ -94,6 +172,31 @@ public interface IHostedSiteService
         CancellationToken ct = default);
 
     Task<bool> DeleteAsync(string siteId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 补偿尚未完成的设计任务所创建的私有站点。仅删除 Id、owner、design-agent 来源和 run 引用均精确匹配、
+    /// 且仍未公开的站点，并清理该站点的对象、版本和分享记录。
+    /// </summary>
+    Task<bool> CompensateGeneratedSiteAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        CancellationToken ct = default);
+
+    /// <summary>接管执行租约与清理租约均已过期的生成补偿，清理完成前禁止重新发布。</summary>
+    Task<bool> RecoverGeneratedSiteCleanupAsync(
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default);
+
+    /// <summary>执行中的 Worker 补偿必须原子校验发布租约归属，旧 Worker 不得清理接管者的产物。</summary>
+    Task<bool> CompensateGeneratedSiteWithLeaseAsync(
+        string? siteId,
+        string runId,
+        string userId,
+        string leaseOwnerId,
+        CancellationToken ct = default);
 
     Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct = default);
 
@@ -294,6 +397,11 @@ public interface IHostedSiteService
     Task<ShareSiteResolveResult> ResolveShareSiteAsync(
         string token, string? siteId, string? password, string? viewerUserId, CancellationToken ct = default);
 }
+
+public record HostedSiteEditableEntry(
+    HostedSite Site,
+    string Html,
+    DateTime ContentVersion);
 
 /// <summary>站点「向我提问」配置的写入入参（owner 在提问设置抽屉里改的那几项）。</summary>
 public class AskConfigUpdate
@@ -628,4 +736,13 @@ public class SharedSiteInfo
     /// 盖一条错误角标。
     /// </summary>
     public string? WrappedAssetType { get; set; }
+
+    /// <summary>
+    /// 当前访问者能不能编辑这个站点，由服务端用编辑端点那同一道角色门算出来。
+    ///
+    /// 前端**不要**再拿 createdBy 之类的代理量自己推：那是「谁建了这条分享链接」，
+    /// 而后端明确允许团队编辑者建分享——两者一错位，真正的站点主人进不去编辑坞，
+    /// 只建过链接的人反而看得见。匿名访问恒为 false。
+    /// </summary>
+    public bool ViewerCanEdit { get; set; }
 }

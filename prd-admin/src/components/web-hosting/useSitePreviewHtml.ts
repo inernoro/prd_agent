@@ -76,7 +76,7 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
  * @param enabled 只有真的要显示这一屏时才取（缩略图靠它做「进视口才拉」）
  */
 export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: boolean) {
-  const [entry, setEntry] = useState<CacheEntry>({ srcDoc: null, error: null });
+  const [entry, setEntry] = useState<CacheEntry & { key: string }>({ key: '', srcDoc: null, error: null });
   const [loading, setLoading] = useState(false);
 
   const key = site ? cacheKey(site) : '';
@@ -84,14 +84,14 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
 
   useEffect(() => {
     if (!site || !enabled || !fetchable) {
-      setEntry({ srcDoc: null, error: null });
+      setEntry({ key, srcDoc: null, error: null });
       setLoading(false);
       return;
     }
     // 命中缓存就同步给出，不闪一下 loading（卡片滚出再滚回时尤其明显）
     const cached = cache.get(key);
     if (cached) {
-      setEntry(cached);
+      setEntry({ key, ...cached });
       setLoading(false);
       return;
     }
@@ -99,14 +99,31 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
     let alive = true;
     setLoading(true);
     loadSrcDoc(site)
-      .then((res) => { if (alive) setEntry(res); })
+      .then((res) => { if (alive) setEntry({ key, ...res }); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
     // site 是每次渲染新建的对象字面量，依赖它会无限重取；key 已经涵盖 id + siteUrl 的变化。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled, fetchable]);
 
-  return { srcDoc: entry.srcDoc, error: entry.error, loading };
+  const current = entryForKey(entry, key);
+  return { srcDoc: current.srcDoc, error: current.error, loading };
+}
+
+/**
+ * 只交出属于**当前这个键**的正文。
+ *
+ * effect 在渲染之后才跑，所以发布换掉 siteUrl 的那一次渲染里，state 还装着上一条的正文。
+ * 调用方（SitePreviewModal）拿它当「有没有正文」的判据去闩渲染路径，于是会按旧正文闩成
+ * srcDoc；等新键取回来发现走不了 srcDoc（代理失败或本就该走直链），iframe 的 src 与 srcDoc
+ * 就同时为空，白屏——本该退回的直链再也走不到（Codex P2，2026-09-16）。
+ *
+ * 用派生判据而不是在 effect 里清：清要等下一次提交才生效，而判据在同一次渲染就成立。
+ */
+export function entryForKey(entry: CacheEntry & { key: string }, key: string): CacheEntry {
+  return entry.key === key
+    ? { srcDoc: entry.srcDoc, error: entry.error }
+    : { srcDoc: null, error: null };
 }
 
 /** 仅供测试：清掉进程内缓存 */

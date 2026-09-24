@@ -1134,7 +1134,7 @@ export default function AppShell() {
           className="fixed top-0 left-0 right-0 z-100 grid items-center px-3"
           style={{
             ...glassMobileHeader,
-            gridTemplateColumns: '44px minmax(0, 1fr) 88px',
+            gridTemplateColumns: '44px minmax(0, 1fr) 92px',
             columnGap: 8,
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
@@ -1143,7 +1143,7 @@ export default function AppShell() {
           <button
             type="button"
             onClick={() => setMobileDrawerOpen(true)}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-xl"
+            className="h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-xl"
             style={{ color: 'var(--text-primary)' }}
             aria-label="打开导航菜单"
           >
@@ -1166,7 +1166,7 @@ export default function AppShell() {
                 setNotificationDialogOpen(true);
                 void loadNotifications({ silent: true });
               }}
-              className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+              className="relative h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-xl"
               style={{ color: 'var(--text-secondary)' }}
               aria-label="通知"
             >
@@ -1192,7 +1192,7 @@ export default function AppShell() {
             <button
               type="button"
               onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
-              className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              className="h-11 w-11 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
               aria-label="修改我的头像"
               title="修改我的头像"
             >
@@ -2172,7 +2172,10 @@ export default function AppShell() {
                   ? 'p-0'
                   : isHomePage
                     ? 'p-0'
-                    : 'px-4 py-3'
+                    // 四边同宽：原来是 px-4 py-3（左右 16、上下 12），用户 2026-09-15
+                    // 反馈「左窄上宽」。这层是页面外的唯一一层间距（面板外观早已去掉，
+                    // 页面直接坐在应用背景上），所以它不该有方向差——同一个 16。
+                    : 'p-4'
             )}
             style={useCanvasPanel ? { overscrollBehavior: 'contain' } : undefined}
           >
