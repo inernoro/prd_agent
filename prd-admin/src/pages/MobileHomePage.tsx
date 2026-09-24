@@ -106,7 +106,7 @@ export default function MobileHomePage() {
   }));
 
   const feedTint = (type: string): string =>
-    type === 'visual-workspace' ? C.purple : type === 'defect' ? C.red : C.blue;
+    type === 'visual-workspace' ? C.purple : type === 'literary-workspace' ? C.blue : type === 'defect' ? C.red : C.blue;
 
   // 近7日:聚合大数 + 真实按日序列(后端 /api/mobile/stats 的 daily,按用户时区切日)。
   // 指标口径 2026-07-15 用户拍板:会话/消息是桌面 PRD 解读时代的死指标(恒 0),
@@ -319,7 +319,7 @@ export default function MobileHomePage() {
               </div>
             ) : data.feed.length === 0 ? (
               <div style={{ ...AS_TYPE.itemSubtitle, color: C.labelSecondary, padding: '12px 0' }}>
-                {data.loading ? '正在读取你的动态…' : '生成配图或提交缺陷后，动态会出现在这里'}
+                {data.loading ? '正在读取你的动态…' : '生成配图、创作文章或提交缺陷后，动态会出现在这里'}
               </div>
             ) : (
               data.feed.slice(0, 6).map((item, idx) => (

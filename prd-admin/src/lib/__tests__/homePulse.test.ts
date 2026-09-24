@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { RETIRED_ROUTES, formatCompactNumber, resolveHomePulse } from '../homePulse';
+import { normalizeFeedTitle } from '@/pages/mobile-home/shared';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -167,6 +168,7 @@ describe('空态文案不许许下端点兑现不了的承诺', () => {
   /** 后端真正会产出的动态类型 → 空态文案里对应的说法 */
   const SOURCE_COPY: Record<string, string> = {
     'visual-workspace': '配图',
+    'literary-workspace': '文章',
     defect: '缺陷',
   };
   /** 端点不产出、但历史文案点过名的来源——出现在文案里就是空头支票 */
@@ -175,7 +177,10 @@ describe('空态文案不许许下端点兑现不了的承诺', () => {
   it('端点产出的类型与这里登记的一致', () => {
     const controller = fs.readFileSync(FEED_CONTROLLER_PATH, 'utf8');
     const feedBody = controller.slice(controller.indexOf('GetFeed'), controller.indexOf('GetStats'));
-    const emitted = new Set([...feedBody.matchAll(/type = "([a-z-]+)"/g)].map((m) => m[1]));
+    const emitted = new Set([
+      ...[...feedBody.matchAll(/type = "([a-z-]+)"/g)].map((m) => m[1]),
+      ...[...controller.matchAll(/new\("([a-z-]+-workspace)",\s*"[^"]+",\s*\$"\/(?:literary|visual)-agent\//g)].map((m) => m[1]),
+    ]);
     expect(emitted.size, 'GetFeed 里没解析到 type，判据已经失效').toBeGreaterThan(0);
     // 端点加了新来源却没更新文案登记表，这条会先红，提醒去把空态文案一起改
     expect([...emitted].sort()).toEqual(Object.keys(SOURCE_COPY).sort());
@@ -195,6 +200,19 @@ describe('空态文案不许许下端点兑现不了的承诺', () => {
       // 至少点名一个真来源，别改成一句什么都没说的空话
       expect(Object.values(SOURCE_COPY).some((word) => empty!.includes(word)), `${name}空态文案没告诉用户做什么才会有动态`).toBe(true);
     }
+  });
+
+  it('文学动态使用文章语义，不退回笼统知识内容', () => {
+    const item: FeedItem = {
+      id: 'literary-1',
+      type: 'literary-workspace',
+      title: '短期验收稿',
+      subtitle: '文学创作',
+      updatedAt: '2026-09-24T00:00:00Z',
+      navigateTo: '/literary-agent/literary-1',
+    };
+
+    expect(normalizeFeedTitle(item)).toBe('创作了一篇文章：短期验收稿');
   });
 });
 
