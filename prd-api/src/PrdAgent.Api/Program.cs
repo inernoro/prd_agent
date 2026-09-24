@@ -2129,7 +2129,10 @@ static async Task<IResult> DeepHealth(
                         field = "observedValue",
                         op = "eq",
                         value = 0,
-                        intervalSeconds = 21600,
+                        // 2 小时一轮，不是 6 小时：CDS 目前不读单条监控的 failuresToAlarm，一律按全局
+                        // 连败 3 次才告警（debt.platform.md MD-1）。6 小时一轮会让缺索引最长 18 小时才响；
+                        // 2 小时 × 3 次仍在 6 小时内。每轮只多 5 次 listIndexes，60 秒内还会复用快照。
+                        intervalSeconds = 7200,
                         severity = "P1",
                         // 主动读一次状态，走默认的 active，不设 sampleComponentId
                     },

@@ -93,7 +93,7 @@ mongosh "<connection-uri>/<database>" scripts/mongodb-indexes.js
 例如「缺少 MongoDB 索引 idx_hosted_site_deletion_due（集合 hosted_site_deletion_tasks），于是：网页托管删除清理每分钟一轮……」。
 同一份结论也挂在 `GET /health/ready` 的 `missingIndexes` / `unverifiedIndexes` / `indexesCheckedAt`
 三个字段上，只读附带，**不影响**就绪判定。另外 `GET /api/healthz/deep` 每次被探测都会现查一次，
-缺失数挂在 `mongo.required-indexes` 这条检查上并声明了 `cds:monitor`，CDS 的常设探针（6 小时一轮）
+缺失数挂在 `mongo.required-indexes` 这条检查上并声明了 `cds:monitor`，CDS 的常设探针（2 小时一轮，连败 3 次即 6 小时内告警）
 会在缺失时响铃；它现查的同时刷新 `/health/ready` 的快照，所以补建后不必重启。
 这次启动巡检同时覆盖三条唯一索引（`hosted_site_revisions.uniq_hosted_site_revision_rollback_idempotency`、
 `infra_agent_sessions.uniq_infra_agent_sessions_prewarm_key`、`activity_logs.uniq_activity_logs_deduplication_key`），
