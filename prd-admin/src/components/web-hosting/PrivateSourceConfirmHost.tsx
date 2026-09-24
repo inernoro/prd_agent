@@ -16,6 +16,9 @@ import {
  *
  * 颜色全部走 token（双主题成立），列表区限高滚动，375px 宽度下标题与资料名都能换行不溢出。
  */
+/** 确认层的层级：高于 AnchoredMenu 的 9999，见 privateSourceConfirm.test.ts 的守卫。 */
+export const PRIVATE_SOURCE_CONFIRM_Z_INDEX = 10000;
+
 export function PrivateSourceConfirmHost() {
   const id = useId();
   const hostId = usePrivateSourceConfirmStore((s) => s.hostId);
@@ -36,7 +39,9 @@ export function PrivateSourceConfirmHost() {
   return (
     <Dialog
       open={!!current}
-      zIndex={520}
+      // 必须压过 AnchoredMenu（fixed z-[9999]）：确认层常从卡片的「分享」下拉里弹出，
+      // 层级低于它时下拉会盖住确认层一半、后果句被截断（2026-09-24 预览视觉验收发现）。
+      zIndex={PRIVATE_SOURCE_CONFIRM_Z_INDEX}
       tone="danger"
       maxWidth={520}
       onOpenChange={(next) => {

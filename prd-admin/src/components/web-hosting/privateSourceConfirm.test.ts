@@ -198,4 +198,17 @@ describe('确认层文案与宿主', () => {
     expect(read('../../layouts/AppShell.tsx')).toContain('<PrivateSourceConfirmHost />');
     expect(read('../../pages/ShareViewPage.tsx')).toContain('<PrivateSourceConfirmHost />');
   });
+
+  it('确认层压在下拉菜单之上，且在确认层里点击不会关掉下层菜单', () => {
+    // 2026-09-24 预览视觉验收：卡片「分享」下拉（AnchoredMenu z-9999）盖住了 z-520 的确认层一半，
+    // 点确认层按钮又被当成「点外面」关掉了下拉，生成的链接没地方显示。
+    const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), 'utf8');
+    const host = read('./PrivateSourceConfirmHost.tsx');
+    const menu = read('../ui/AnchoredMenu.tsx');
+    const hostZ = Number(/PRIVATE_SOURCE_CONFIRM_Z_INDEX = (\d+)/.exec(host)?.[1]);
+    const menuZ = Number(/z-\[(\d+)\]/.exec(menu)?.[1]);
+    expect(hostZ).toBeGreaterThan(menuZ);
+    expect(host).toContain('zIndex={PRIVATE_SOURCE_CONFIRM_Z_INDEX}');
+    expect(menu).toContain(`closest('[role="dialog"]')`);
+  });
 });

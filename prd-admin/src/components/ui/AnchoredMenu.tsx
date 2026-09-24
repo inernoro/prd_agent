@@ -108,6 +108,10 @@ export function AnchoredMenu({
       const t = e.target as Node;
       if (menuRef.current?.contains(t)) return;
       if (getAnchor()?.contains(t)) return; // 锚点自己负责 toggle
+      // 从菜单里弹出的模态对话框（如发布前私有资料确认）渲染在别的 portal 里，DOM 上不在菜单内，
+      // 但它是这次菜单操作的一部分：在对话框里点按钮不该把下层菜单关掉，否则确认后的结果
+      // （例如刚生成的分享链接）没有地方就地显示。
+      if (t instanceof Element && t.closest('[role="dialog"]')) return;
       onClose();
     };
     const onKey = (e: KeyboardEvent) => {
