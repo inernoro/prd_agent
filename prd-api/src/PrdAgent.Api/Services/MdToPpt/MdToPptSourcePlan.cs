@@ -200,10 +200,24 @@ internal sealed class MdToPptSourcePlan
         var byId = BlockLookup();
         var covered = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<PagePlan>();
+        // 来源块比页数少时（一段话的稿子、默认 8 页），「每页至少一块、每块只出现一次」无解，
+        // 每次都会 source_plan_missing（Codex P1）。此时允许多出来的那几页（封面、结尾）不绑来源，
+        // 名额恰好是页数减块数；块仍必须全部覆盖，所以不会因此漏掉任何事实。
+        var sourceFreeAllowance = Math.Max(0, expectedPages - Blocks.Count);
         foreach (var page in pages)
         {
             if (page?.SourceBlockIds is not { Count: > 0 })
-                throw Invalid("source_plan_missing", "大纲页面缺少知识来源绑定，请重新生成完整大纲后确认");
+            {
+                if (page == null || sourceFreeAllowance == 0)
+                    throw Invalid("source_plan_missing", "大纲页面缺少知识来源绑定，请重新生成完整大纲后确认");
+                sourceFreeAllowance--;
+                var freeTitle = page.Title?.Trim() ?? string.Empty;
+                result.Add(new PagePlan(
+                    Array.Empty<SourceBlock>(),
+                    Hash(Fingerprint + "\n" + JsonSerializer.Serialize(new { displayTitle = freeTitle, ids = Array.Empty<string>() })),
+                    freeTitle));
+                continue;
+            }
             var selected = new List<SourceBlock>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var id in page.SourceBlockIds)

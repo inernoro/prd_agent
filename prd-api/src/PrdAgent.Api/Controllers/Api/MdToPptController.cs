@@ -46,11 +46,14 @@ public class MdToPptController : ControllerBase
     /// 而 MdToPptSourcePlan.Bind 要求每页必填。把契约钉进 system 段（模型真正照抄的那一份），
     /// 否则每次知识驱动生成都在 Bind 阶段 source_plan_missing。
     /// </summary>
-    internal static string SourcePlanOutlineContract(int blockCount) =>
+    internal static string SourcePlanOutlineContract(int blockCount, int pageCount = 0) =>
         "\n9. 本次是知识驱动生成：每一页对象都必须额外输出 \"sourceBlockIds\":[\"块ID\",...]，"
         + "取值只能来自用户内容末尾「服务端冻结来源块目录」里的 id。"
         + $"目录里一共 {blockCount} 个 id，全部 {blockCount} 个都必须在某一页出现，一个都不能漏；"
         + "同一个 id 不要出现在两页。内容少的 id（小标题、过渡句）并到相邻页即可，不要因为「不重要」就丢掉。"
+        + (pageCount > blockCount
+            ? $"来源 id 比页数少：最多 {pageCount - blockCount} 页（例如封面、结尾）可以输出空数组 \"sourceBlockIds\":[]，这些页只放标题与版式，不写任何事实；其余页每页至少一个 id。"
+            : string.Empty)
         + $"输出最后一页之前，先把目录从头到尾核对一遍：{blockCount} 个 id 是否都已分配。"
         + "缺字段或漏 id 的大纲会被服务端整份作废，必须重来。";
 
@@ -459,7 +462,7 @@ public class MdToPptController : ControllerBase
         // 模型遵循的是 system 段里的格式示例，不是 user 段末尾追加的目录说明。
         // 冻结来源目录只写进 user 段时，模型照抄上面那份不含 sourceBlockIds 的示例，
         // Bind 阶段必然 source_plan_missing。所以契约必须同时写进 system 段。
-        if (sourcePlan != null) systemPrompt += SourcePlanOutlineContract(sourcePlan.Blocks.Count);
+        if (sourcePlan != null) systemPrompt += SourcePlanOutlineContract(sourcePlan.Blocks.Count, ResolveTargetPages(req));
 
         var userContent = BuildPartitionedKnowledgeContext(
             req.Content,
@@ -665,7 +668,7 @@ public class MdToPptController : ControllerBase
             "6. 用户内容含「当前大纲」段落 = 调整任务：只改与调整要求直接相关的页；其余页 title 与 bullets 必须逐字原样保留（一个字不许改写/增删/换序），design 缺失的页补写 design 不算改动";
 
         // 同上：JSONL 的 page 行格式示例同样要带 sourceBlockIds。
-        if (sourcePlan != null) systemPrompt += SourcePlanOutlineContract(sourcePlan.Blocks.Count);
+        if (sourcePlan != null) systemPrompt += SourcePlanOutlineContract(sourcePlan.Blocks.Count, ResolveTargetPages(req));
 
         var userContent = BuildPartitionedKnowledgeContext(
             req.Content,

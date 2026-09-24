@@ -67,6 +67,34 @@ public class MdToPptSourcePlanTests
     }
 
     [Fact]
+    public void Bind_AllowsSourceFreePages_OnlyWhenBlocksAreFewerThanPages()
+    {
+        // Codex P1：一段话的稿子、默认 8 页，「每页至少一块、每块只出现一次」无解，每次 source_plan_missing。
+        var plan = MdToPptSourcePlan.Create(Sources("只有一段话的稿子，说明本次改造的范围。"));
+        var only = Assert.Single(plan.Blocks);
+        var pages = new List<MdToPptOutlinePageDto>
+        {
+            new() { Title = "封面", SourceBlockIds = new() },
+            new() { Title = "改造范围", SourceBlockIds = new() { only.Id } },
+            new() { Title = "结尾", SourceBlockIds = new() },
+        };
+        var bound = plan.Bind(pages, 3);
+        Assert.Empty(bound[0].Blocks);
+        Assert.Single(bound[1].Blocks);
+        Assert.NotEqual(bound[0].Hash, bound[2].Hash);
+
+        // 名额恰好是页数减块数：三页全空就是漏了唯一的块。
+        pages[1].SourceBlockIds = new();
+        Assert.Equal("source_plan_missing", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 3)).Code);
+
+        // 块不少于页数时，空页照旧拒收。
+        var enough = MdToPptSourcePlan.Create(Sources("# 第一\n\n第一事实。\n\n# 第二\n\n第二事实。"));
+        var full = enough.Blocks.Select(x => new MdToPptOutlinePageDto { SourceBlockIds = new() { x.Id } }).ToList();
+        full[0].SourceBlockIds = new();
+        Assert.Equal("source_plan_missing", Assert.Throws<MdToPptSourcePlanException>(() => enough.Bind(full, full.Count)).Code);
+    }
+
+    [Fact]
     public void Coverage_RejectsUnknownMissingDuplicateAndPageCount_InsteadOfChangingFourPages()
     {
         var plan = MdToPptSourcePlan.Create(Sources("# 第一\n\n第一事实。\n\n# 第二\n\n第二事实。"));
@@ -314,10 +342,11 @@ public class MdToPptOutlineSourcePlanContractTests
     public void BothOutlineEndpoints_AppendTheContractToTheirSystemPrompt()
     {
         var source = ControllerSource();
-        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count\)\s*;").Count;
+        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count,\s*ResolveTargetPages\(req\)\)\s*;").Count;
 
         // /outline（整块 JSON）与 /outline-stream（JSONL）各一处；少一处就有一条入口
-        // 仍然发不出 sourceBlockIds，而它不会让任何现有用例变红。
+        // 仍然发不出 sourceBlockIds，而它不会让任何现有用例变红。页数也要传进去，
+        // 否则来源块少于页数时模型不知道封面、结尾可以留空（Codex P1）。
         Assert.Equal(2, appends);
     }
 }
