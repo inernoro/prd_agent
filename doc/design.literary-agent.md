@@ -245,6 +245,10 @@ Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → Ima
 | DELETE | `/api/literary/config/reference-image` | 清除全局参考图 |
 | GET | `/api/literary/config/models/*` | 获取可用生图模型（text2img/img2img/all/main） |
 
+### 参考图激活状态的用户隔离（2026-09-22）
+
+参考图的读写、激活/停用与旧版兼容入口（`/api/literary/config/reference-image` 全局设置）曾按应用级配置存取，激活状态实际落在同一份记录上被所有用户共享——一个用户激活某张参考图，会串改到其他用户当前看到的"已激活参考图"，与"每个创作者独立维护自己的参考图库"的产品定位（见二、三节）不符。修复后读写、激活/停用与旧版兼容入口均按当前用户隔离，市场发布/fork 的参考图不受影响（发布本身就是显式的跨用户共享动作）。配套补充了双用户交叉验证与市场路径的回归测试，防止隔离修复本身破坏 fork 链路。
+
 ### 提示词（LiteraryPromptsController）
 
 | 方法 | 路径 | 用途 |
