@@ -778,11 +778,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const switchReferenceImage = async (config: ReferenceImageConfig, activate: boolean) => {
     setReferenceImageSaving(true);
     try {
-      await mutateReferenceImageScenario(
+      const res = await mutateReferenceImageScenario(
         () => (activate ? activateReferenceImageConfig({ id: config.id }) : deactivateReferenceImageConfig({ id: config.id })),
         loadReferenceImageConfigs,
         reloadImageGenPools,
       );
+      // 失败时不重新加载，当前选择保持原样；必须告诉用户没切成功，否则菜单一关就像什么都没发生
+      if (!res.success) toast.error(activate ? '启用风格图失败' : '停用风格图失败', res.error?.message || '未知错误，请稍后重试');
     } finally {
       setReferenceImageSaving(false);
     }
@@ -4748,20 +4750,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     border: config.isActive ? '1px solid rgba(34, 197, 94, 0.95)' : 'none',
                                     minWidth: 40,
                                   }}
-                                  onClick={async () => {
-                                    setReferenceImageSaving(true);
-                                    try {
-                                      await mutateReferenceImageScenario(
-                                        () => config.isActive
-                                          ? deactivateReferenceImageConfig({ id: config.id })
-                                          : activateReferenceImageConfig({ id: config.id }),
-                                        loadReferenceImageConfigs,
-                                        reloadImageGenPools,
-                                      );
-                                    } finally {
-                                      setReferenceImageSaving(false);
-                                    }
-                                  }}
+                                  onClick={() => void switchReferenceImage(config, !config.isActive)}
                                   disabled={referenceImageSaving}
                                   title={config.isActive ? '取消选择' : '选择'}
                                 >

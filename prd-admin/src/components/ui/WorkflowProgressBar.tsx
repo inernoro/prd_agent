@@ -27,7 +27,9 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
   return (
-    <div className="mb-2.5 flex items-center gap-1.5">
+    // 标签不换行、不收缩（逐字竖排读不了），放不下时整条横向滚动，不撑出所在面板
+    // （自动化规则的末步标签会拼接全部动作，长度没有上限）。
+    <div className="mb-2.5 flex min-w-0 items-center gap-1.5 overflow-x-auto" style={{ overscrollBehaviorX: 'contain' }}>
       {steps.map((step, index) => {
         const isActive = !allCompleted && index === currentIndex;
         const isCompleted = allCompleted || index < currentIndex;
