@@ -1898,13 +1898,13 @@ run `d2d5c42d95b242e8b2b34a20e2029c03` 在 CDS 质量闸与一轮修复后都通
 
 **建议优先处理（涉及权限或输入边界）**
 
-| 模块 | 问题 | 评论 |
-|---|---|---|
-| 设计运行时回调 | 先读请求体、后校验票据，未授权请求也会被读进内存 | 4082427132、4082726315 |
-| 事件预览 CSP | 缺 `default-src 'none'`，未列出的资源类型按浏览器默认放行 | 4081964338 |
-| 网关 gw-native | 固定模型（pin）不要求特权作用域就被采信 | 4060151690 |
-| PPT 发布 | 先建站、后校验团队权限，越权时会留下一个站点 | 4024742437、4060021399 |
-| 失败文案 | 远端原始诊断直接展示给用户 | 4081291421 |
+| 模块 | 问题 | 评论 | 处理结果（2026-09-24） |
+|---|---|---|---|
+| 设计运行时回调 | 先读请求体、后校验票据，未授权请求也会被读进内存 | 4082427132、4082726315 | **已修**（`0a8c01f6e`）：结果提交先验工作区票据、两条模型代理先只读验模型票据，再读体；调用计数口径不变。`DesignArtifactRuntimeAuthBeforeBodyTests` 断言票据无效或缺失时请求体一个字节都不读，回退修复即红 |
+| 事件预览 CSP | 缺 `default-src 'none'`，未列出的资源类型按浏览器默认放行 | 4081964338 | **已修**（`250b3d41b`）：以 `default-src 'none'` 起步，只放行内联脚本与样式、data/blob 图片字体媒体，口径对齐最终产物的 `VerifiedPackageArtifactCsp`。`designGeneration.test.ts` 按浏览器回退规则逐类核对，删掉这几条即红 |
+| 网关 gw-native | 固定模型（pin）不要求特权作用域就被采信 | 4060151690 | **转后续（B 类）**：问题在当前代码仍成立（`GatewayHttpEndpoints` 的 gw-native 面按请求头/体读取 pin，`TryResolvePinnedModelAsync` 只验租户启用）。修法要么新增一个专门的 pin 作用域（新语义类别，且 MAP 运行时 key 与 `LegacySuccessorScopePolicy.RequiredRuntimeScopes` 要同步迁移，否则 MAP 自己的设计运行时先断），要么把 pin 回校验到按 appCaller 的对外模型授权（池退场后的新授权规则），都不是最小修复。现有边界：`sourceSystem=map` 的 key 只能在内部租户创建（console-api 创建接口强制），暴露面限于内部 key 持有者。下一步：定 pin 的授权形态（专用 scope 还是服务端签名），连同 key 迁移一起做 |
+| PPT 发布 | 先建站、后校验团队权限，越权时会留下一个站点 | 4024742437、4060021399 | **已修**（`f378ce01c`）：`PublishAsync` 在建意图与站点之前用 `CanPublishIntoTeamAsync` 逐个校验目标团队，越权返回 403 与可操作提示，不再落进可重试的 503；建站后的校验保留兜竞态。`HtmlPptPublishTeamPrecheckTests` 回退修复即红。未覆盖：已建意图在恢复器重试期间权限被收回，仍按可重试失败处理（不再建新站，但会重试到 dead-letter） |
+| 失败文案 | 远端原始诊断直接展示给用户 | 4081291421 | **已修**（`16bbfd871`）：已登记的 CDS 错误码换成人话原因与下一步，其余统一说「远端回传了一条技术诊断（原文已记入服务端日志）」；原文挂在异常 InnerException 上随 worker 日志落盘。`OpenDesignFailureMessageTests` 把原文拼回文案即红。错误码表取自 CDS `AgentWorkspaceRuntimeError` 当前集合，CDS 新增码时需同步登记，未登记的码不会泄露原文，只是退回通用说法 |
 
 **正确性与恢复**
 
