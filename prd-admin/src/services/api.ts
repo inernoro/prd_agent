@@ -1249,6 +1249,11 @@ export const api = {
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
     content: (id: string) => `/api/web-pages/${id}/content`,
+    /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
+    offlineHtml: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/export/offline-html`,
+    /** 单文件离线 HTML，经分享链接（登录 + 分享门禁：撤销 / 过期 / 可见性 / 密码） */
+    shareOfflineHtml: (token: string, query: string) =>
+      `/api/web-pages/shares/view/${encodeURIComponent(token)}/export/offline-html${query}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
@@ -1301,6 +1306,8 @@ export const api = {
   },
   designArtifacts: {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    // 最近 30 天真实耗时 P50/P95（按执行器 × 产物类型），给「预计还要多久」用
+    timingStats: () => '/api/design-artifacts/timing-stats',
     // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
     generationSettings: () => '/api/design-artifacts/generation-settings',
     runs: () => '/api/design-artifacts/runs',

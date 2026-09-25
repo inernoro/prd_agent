@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildDesignArtifactLaunchPath } from '@/lib/designArtifactLaunch';
-import { activatePptSessionContext, resolvePptSessionContext } from '../sessionContext';
+import { activatePptSessionContext, FRESH_PPT_SESSION_PATH, freshPptSessionPath, resolvePptSessionContext } from '../sessionContext';
 
 function storage() {
   const values = new Map<string, string>();
@@ -79,5 +79,38 @@ describe('HTML PPT 知识启动上下文', () => {
     const saved = { getItem: () => { throw new Error('disabled'); } };
     expect(resolvePptSessionContext({ key: 'menu', search: '' }, saved).id).toBe('legacy');
     expect(resolvePptSessionContext(launch(), saved).launch?.sourceEntryId).toBe('entry-a');
+  });
+
+  it('「不带资料，直接打开」开一个空白会话，不恢复上一次；同一页面刷新仍是这个新会话', () => {
+    const saved = storage();
+    const previous = resolvePptSessionContext(launch(), saved);
+    activatePptSessionContext(previous, saved);
+    const search = FRESH_PPT_SESSION_PATH.slice(FRESH_PPT_SESSION_PATH.indexOf('?'));
+    const fresh = resolvePptSessionContext({ key: 'blank-a', search }, saved);
+    expect(fresh.id).not.toBe(previous.id);
+    expect(fresh.launch).toBeNull();
+    expect(saved.getItem(fresh.sessionKey)).toBeNull();
+    expect(resolvePptSessionContext({ key: 'blank-a', search }, saved)).toEqual(fresh);
+    expect(resolvePptSessionContext({ key: 'blank-b', search }, saved).id).not.toBe(fresh.id);
+  });
+
+  it('从团队空间点「不带资料」：空白会话仍带着团队，刷新与回到菜单入口都不丢', () => {
+    const saved = storage();
+    const target = freshPptSessionPath('team-7f3a');
+    const search = target.slice(target.indexOf('?'));
+    const fresh = resolvePptSessionContext({ key: 'blank-t', search }, saved);
+    expect(fresh.launch).toBeNull();
+    expect(fresh.destinationTeamId).toBe('team-7f3a');
+    activatePptSessionContext(fresh, saved);
+    expect(resolvePptSessionContext({ key: 'menu', search: '' }, saved).destinationTeamId).toBe('team-7f3a');
+    // 个人空间与非法编号都不带团队
+    expect(freshPptSessionPath(null)).toBe(FRESH_PPT_SESSION_PATH);
+    expect(freshPptSessionPath('bad team!')).toBe(FRESH_PPT_SESSION_PATH);
+  });
+
+  it('知识交接的团队仍从 launch 取', () => {
+    const path = buildDesignArtifactLaunchPath({ target: 'html-ppt', sourceStoreId: 's', sourceEntryId: 'e', sourceTitle: 't', destinationTeamId: 'team-9' });
+    const context = resolvePptSessionContext({ key: 'k', search: path.slice(path.indexOf('?')) }, storage());
+    expect(context.destinationTeamId).toBe('team-9');
   });
 });

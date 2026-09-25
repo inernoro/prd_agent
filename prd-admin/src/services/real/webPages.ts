@@ -1,4 +1,4 @@
-import { apiRequest } from '@/services/real/apiClient';
+import { apiDownload, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
 import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -1415,6 +1415,32 @@ export async function getShareSiteContent(
   }
 }
 
+/**
+ * 下载单文件离线 HTML（站内工作台）：服务端把站内样式、脚本、图片、字体内嵌进一个文件。
+ * 要求对这个网页有编辑权。文件下载不能走 apiRequest 的 JSON 通道，走 apiDownload（同一套鉴权与令牌刷新）。
+ * 「漏了什么」在响应头里，由 offlineExport.ts 的 readOfflineExportSummary 解析。
+ */
+export function downloadSiteOfflineHtml(siteId: string, fallbackFileName: string): Promise<ApiDownloadedFile> {
+  return apiDownload(api.webPages.offlineHtml(siteId), fallbackFileName);
+}
+
+/**
+ * 经分享链接下载单文件离线 HTML（需登录）。分享门禁与分享页取正文是同一条：
+ * 撤销 / 过期 / 可见性 / 密码。密码不对时后端回 403 SHARE_PASSWORD_REQUIRED（不是 401，免得被当成登录失效）。
+ */
+export function downloadShareOfflineHtml(
+  token: string,
+  siteId: string | undefined,
+  password: string | undefined,
+  fallbackFileName: string,
+): Promise<ApiDownloadedFile> {
+  const params = new URLSearchParams();
+  if (siteId) params.set('siteId', siteId);
+  if (password) params.set('password', password);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return apiDownload(api.webPages.shareOfflineHtml(token, query), fallbackFileName);
+}
+
 /** 经分享链接发表评论（需登录） */
 export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
@@ -1527,6 +1553,43 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   runtimes: DesignRuntimeCapability[];
 }>> {
   return apiRequest(api.designArtifacts.runtimeCapabilities());
+}
+
+/** 一项耗时指标（秒）。样本为 0 时百分位为 null；estimateReady 由后端按最少样本数判定。 */
+export interface DesignTimingMetric {
+  sampleCount: number;
+  p50Seconds: number | null;
+  p95Seconds: number | null;
+  estimateReady: boolean;
+}
+
+export interface DesignTimingGroup {
+  runtime: string;
+  artifactType: string;
+  succeededCount: number;
+  failedCount: number;
+  cancelledCount: number;
+  /** 生成耗时：完成时刻 − 创建时刻，只统计成功任务。 */
+  generation: DesignTimingMetric;
+  /** 资料到可分享链接：创建时刻 → 生成者为产出站点建的第一条分享/访问链接。 */
+  materialToShareLink: DesignTimingMetric;
+  materialToShareLinkEligibleRuns: number;
+}
+
+export interface DesignTimingStats {
+  windowDays: number;
+  since: string;
+  generatedAt: string;
+  percentileMethod: string;
+  estimateMinSamples: number;
+  runSampleCap: number;
+  runSamplesTruncated: boolean;
+  groups: DesignTimingGroup[];
+}
+
+/** 耗时统计只影响一句预估：给它一个上限，超时回 TIMEOUT，调用方据此明说「取不到」。 */
+export async function getDesignTimingStats(timeoutMs?: number): Promise<ApiResponse<DesignTimingStats>> {
+  return apiRequest(api.designArtifacts.timingStats(), timeoutMs ? { timeoutMs } : undefined);
 }
 
 export async function getDesignGenerationSettings(): Promise<ApiResponse<DesignGenerationSettings>> {

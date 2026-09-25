@@ -35,6 +35,8 @@ const LAUNCH_CONSUMERS: Record<DesignArtifactTarget, string> = {
 const BUILDER_ALLOWLIST = new Set([
   'lib/designArtifactLaunch.ts',
   'components/design-launch/designLaunchAgents.ts',
+  // 网页工作台选「网页 PPT」时的交接：带要求草稿编号与团队落点，出发时才构造（#1626）
+  'components/web-hosting/workbench/outputForm.ts',
 ]);
 
 /** 必须挂着共享入口的页面：删掉任何一处接线，这里会红。 */

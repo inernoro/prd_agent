@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ExternalLink, ImagePlus, Library, RefreshCw, RotateCcw, Share2, X } from 'lucide-react';
+import { Check, ExternalLink, FileDown, ImagePlus, Library, RefreshCw, RotateCcw, Share2, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { listSiteShares } from '@/services';
+import { downloadSiteOfflineHtml } from '@/services/real/webPages';
 import type { HostedSite, HostedSiteRevision, ShareLinkItem } from '@/services/real/webPages';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
 import { QuickSharePopover } from '../QuickSharePopover';
 import { pickQuickShareLink } from '../quickShare';
+import { describeOfflineExportResult } from '../offlineExport';
+import { sanitizeFileBaseName } from '../sourceDownload';
+import { useOfflineExport } from '../useOfflineExport';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
@@ -87,11 +91,32 @@ export default function SiteEditStage({
   const [confirmRollbackId, setConfirmRollbackId] = useState<string | null>(null);
   const [shareAnchor, setShareAnchor] = useState<HTMLElement | null>(null);
   const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
+  const { busy: exportingOffline, label: offlineExportLabel, run: runOfflineExport } = useOfflineExport();
   const screenshotInputRef = useRef<HTMLInputElement | null>(null);
   const openedInitialRef = useRef(false);
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { onBusyChange?.(generating); }, [generating, onBusyChange]);
+
+  /**
+   * 下载离线 HTML：服务端把这个网页的样式、脚本、图片、字体都装进一个文件（线上版，不含草稿）。
+   * 结论用 toast 交代：全装进去了说能断网打开；有资源没装进去说清缺了几处、为什么。
+   */
+  const downloadOfflineHtml = async () => {
+    const outcome = await runOfflineExport(
+      () => downloadSiteOfflineHtml(site.id, `${sanitizeFileBaseName(site.title)}.html`),
+    );
+    if (outcome.ok === null) return;
+    if (!outcome.ok) {
+      toast.error('离线版网页没有下载成功', outcome.failure.detail
+        ? `${outcome.failure.text}（${outcome.failure.detail}）`
+        : outcome.failure.text, 8000);
+      return;
+    }
+    const result = describeOfflineExportResult(outcome.summary);
+    if (result.tone === 'warning') toast.warning(`已下载 ${outcome.fileName}`, result.text, 8000);
+    else toast.success(`已下载 ${outcome.fileName}`, result.text, 5000);
+  };
 
   const loadShares = () => {
     void listSiteShares(false, site.id).then((result) => {
@@ -441,6 +466,17 @@ export default function SiteEditStage({
               <ExternalLink size={13} />新窗口打开
             </a>
           )}
+          <button
+            type="button"
+            onClick={() => void downloadOfflineHtml()}
+            disabled={exportingOffline}
+            aria-busy={exportingOffline}
+            title="把线上版网页连同站内的样式、脚本、图片打成一个 HTML 文件；还需要联网的部分下载后会说明"
+            className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-[13px] text-token-secondary hover-bg-soft disabled:opacity-70"
+          >
+            {exportingOffline ? <MapSpinner size={12} /> : <FileDown size={13} />}
+            {exportingOffline ? offlineExportLabel : '下载离线 HTML'}
+          </button>
           <button
             type="button"
             onClick={(event) => setShareAnchor(event.currentTarget)}
