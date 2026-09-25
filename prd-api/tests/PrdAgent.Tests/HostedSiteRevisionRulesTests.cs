@@ -288,6 +288,37 @@ public class HostedSiteRevisionRulesTests
         Assert.Contains("未支持的数值陈述", error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("以及一个当时只有 15 个 star 的仓库", "以及一个当时只有15个star的“YOCloudCLI”仓库")]
+    [InlineData("以及一个当时只有15个star的仓库", "以及一个当时只有 15 个 star 的“YOCloudCLI”仓库")]
+    [InlineData("试用期 15 天 trial 结束后收费", "试用期15天trial结束后收费")]
+    public void ValidateGeneratedContentQuality_CountUnitFollowedByLatinWordMatchesAcrossSpacing(string page, string evidence)
+    {
+        // 2026-09-25 #1622 预览验收：转录写「只有15个star」、页面写「只有 15 个 star」，
+        // 来源那句因「个」后紧跟英文字母不被当作陈述，页面那句被当作陈述，于是误判为无依据、生成失败。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            $"<!doctype html><html><body><p>{page}</p></body></html>", evidence);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_LatinUnitPrefixOfLongerWordIsNotAClaim()
+    {
+        // 英文单位后仍不许紧跟字母：「5 GBps」不是「5 GB」的陈述，不能因为来源没有就拒收。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            "<!doctype html><html><body><p>链路提供 5 GBps 的吞吐。</p></body></html>", "链路吞吐很高");
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_InventedCountBeforeLatinWordIsStillRejected()
+    {
+        // 放宽的只是「写法差异」，编造的数字照旧拒收。
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>当时只有 30 个 star。</p></body></html>",
+                "当时只有15个star"));
+        Assert.Contains("未支持的数值陈述", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ValidateGeneratedContentQuality_UnsupportedClaimMessageQuotesTheSentence()
     {
