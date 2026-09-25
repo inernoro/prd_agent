@@ -134,6 +134,11 @@ export default function NewSiteStage({
   /** 产出形式：网页在这里直接生成；网页 PPT 带着资料与要求交给 HTML PPT 智能体（原因见 outputForm.ts）。 */
   const [outputForm, setOutputForm] = useState<WorkbenchOutputForm>('web-page');
   const navigate = useNavigate();
+  /**
+   * PPT 的发布落点在打开工作台那一刻冻结，与网页生成（useSiteGenerationRun.reset 快照）同一口径：
+   * 工作台开着时切换了当前空间，也不许把 A 团队里发起的稿子悄悄发到 B 团队或个人空间。
+   */
+  const [pptDestinationTeamId] = useState(destinationTeamId);
 
   const run = useSiteGenerationRun({
     destinationTeamId,
@@ -311,8 +316,8 @@ export default function NewSiteStage({
     instruction,
     knowledge: selectedKnowledge,
     uploadedFileNames: uploads.items.filter((item) => item.status !== 'failed').map((item) => item.fileName),
-    destinationTeamId,
-  }), [instruction, selectedKnowledge, uploads.items, destinationTeamId]);
+    destinationTeamId: pptDestinationTeamId,
+  }), [instruction, selectedKnowledge, uploads.items, pptDestinationTeamId]);
 
   const sendBlocker = isPpt
     ? (pptHandoff.ok ? '' : pptHandoff.blocker)
@@ -606,7 +611,7 @@ export default function NewSiteStage({
           />
         </PreviewPanel>
       ) : showPptHandoff ? (
-        <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate(freshPptSessionPath(destinationTeamId))} />
+        <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate(freshPptSessionPath(pptDestinationTeamId))} />
       ) : galleryOpen && !run.generating ? (
         <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <StyleGallery

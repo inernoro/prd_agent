@@ -152,6 +152,12 @@ describe('新建阶段接线', () => {
     expect(stage).toContain('OUTPUT_FORM_ORDER.map(');
   });
 
+  it('PPT 的发布落点在打开工作台时冻结，交接与空白入口都用冻结值', () => {
+    expect(stage).toContain('const [pptDestinationTeamId] = useState(destinationTeamId);');
+    expect(stage).not.toMatch(/freshPptSessionPath\(destinationTeamId\)/);
+    expect(stage).not.toMatch(/buildHtmlPptHandoff\(\{[^}]*destinationTeamId,\s*\}/);
+  });
+
   it('发送按 sendRoute 分派，页面里只有这一处判定', () => {
     expect(stage.match(/sendRoute\(/g)?.length).toBe(1);
   });
