@@ -22,6 +22,7 @@ import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal, 
 import { GenerateFromContentDialog } from '@/components/design-launch/GenerateFromContentDialog';
 import { resolveRecordingGenerateSource } from '@/pages/document-store/recordingGenerateSource';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
+import type { TranscriptEditActivity } from '@/components/doc-browser/transcriptEditActivity';
 import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
 import { useIsDesktop } from '@/hooks/useBreakpoint';
@@ -1279,6 +1280,8 @@ export function RecordingResultPage() {
    * 得让他知道这件事马上能做，而不是找不到入口。原因判定收在一个纯函数里。
    */
   const [showGenerate, setShowGenerate] = useState(false);
+  /** 页内校对的状态，由跟读组件从它自己的编辑 / 保存状态上报，不在这里另记一份 */
+  const [transcriptEditActivity, setTranscriptEditActivity] = useState<TranscriptEditActivity>('idle');
   const generate = state.kind === 'ready'
     ? resolveRecordingGenerateSource({
         storeId: state.storeId,
@@ -1288,6 +1291,7 @@ export function RecordingResultPage() {
         noteMd: state.noteMd,
         offline,
         pendingEditCount: pendingEdits?.count ?? 0,
+        editActivity: transcriptEditActivity,
       })
     : null;
   const generateAction = generate ? (
@@ -1541,6 +1545,7 @@ export function RecordingResultPage() {
             documentMode
             // 没有笔记条目就没有可写回的地方——此时不给编辑入口，而不是给一个点了报错的
             onSaveNote={state.noteId ? onSaveNote : undefined}
+            onEditActivityChange={setTranscriptEditActivity}
             onRestyle={onRestyle}
             organize={{
               currentStyleKey: state.styleKey,

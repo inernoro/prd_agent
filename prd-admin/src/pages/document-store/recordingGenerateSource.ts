@@ -1,4 +1,5 @@
 import type { GenerateContentSource } from '@/components/design-launch/designLaunchAgents';
+import type { TranscriptEditActivity } from '@/components/doc-browser/transcriptEditActivity';
 
 /**
  * 录音结果页「用这份转录生成网页」能不能点、点了交出去的是哪一条。
@@ -23,11 +24,15 @@ export function resolveRecordingGenerateSource(input: {
   offline: boolean;
   /** 本机排队、还没传上去的校对处数 */
   pendingEditCount: number;
+  /** 页内校对：编辑框开着或保存在飞时，服务端那份还不是屏幕上这份 */
+  editActivity?: TranscriptEditActivity;
 }): RecordingGenerateSource {
   if (!input.noteId || !input.noteMd.trim()) return { kind: 'blocked', reason: '转录完成后可用' };
   if (input.offline) return { kind: 'blocked', reason: '联网后可用' };
   // 生成读的是服务端那份正文；本机还有没传上去的校对，照读会丢掉这些改动
   if (input.pendingEditCount > 0) return { kind: 'blocked', reason: `${input.pendingEditCount} 处校对同步后可用` };
+  if (input.editActivity === 'saving') return { kind: 'blocked', reason: '转写修改还在保存' };
+  if (input.editActivity === 'editing') return { kind: 'blocked', reason: '转写修改还没保存' };
   return {
     kind: 'ready',
     source: {

@@ -110,3 +110,12 @@ describe('共享生成弹窗在窄屏可用', () => {
     expect(dialog?.text).not.toMatch(/<Dialog\b/);
   });
 });
+
+describe('录音页生成入口接上了页内校对状态', () => {
+  it('跟读组件上报校对状态，且它进了生成挡板', () => {
+    // 删掉任一端，挡板照常绿、生成照常能点——带走的却是还没存上去的旧正文
+    const page = sources.find((file) => file.rel === 'pages/document-store/RecordingResultPage.tsx');
+    expect(page?.text).toContain('onEditActivityChange={setTranscriptEditActivity}');
+    expect(page?.text).toContain('editActivity: transcriptEditActivity');
+  });
+});

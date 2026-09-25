@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { deriveTranscriptEditActivity } from '@/components/doc-browser/transcriptEditActivity';
 import { resolveRecordingGenerateSource } from '../recordingGenerateSource';
 
 const base = {
@@ -35,5 +36,28 @@ describe('录音结果页「生成网页」的来源与挡板', () => {
       kind: 'ready',
       source: { storeId: 'store-owning', entryId: 'note-1', title: '录音转录', storeName: undefined },
     });
+  });
+});
+
+describe('页内校对未落地时不许生成（生成读的是服务端正文）', () => {
+  it('编辑框开着：挡住并说明修改还没保存', () => {
+    expect(resolveRecordingGenerateSource({ ...base, editActivity: 'editing' }))
+      .toEqual({ kind: 'blocked', reason: '转写修改还没保存' });
+  });
+
+  it('保存请求在飞：挡住并说明还在保存', () => {
+    expect(resolveRecordingGenerateSource({ ...base, editActivity: 'saving' }))
+      .toEqual({ kind: 'blocked', reason: '转写修改还在保存' });
+  });
+
+  it('空闲时照常放行', () => {
+    expect(resolveRecordingGenerateSource({ ...base, editActivity: 'idle' }).kind).toBe('ready');
+  });
+
+  it('校对状态从跟读组件已有的三个状态推出：保存优先于编辑', () => {
+    expect(deriveTranscriptEditActivity({ editingIndex: null, renamingSpeaker: null, savingEdit: false })).toBe('idle');
+    expect(deriveTranscriptEditActivity({ editingIndex: 0, renamingSpeaker: null, savingEdit: false })).toBe('editing');
+    expect(deriveTranscriptEditActivity({ editingIndex: null, renamingSpeaker: '张三', savingEdit: false })).toBe('editing');
+    expect(deriveTranscriptEditActivity({ editingIndex: 2, renamingSpeaker: null, savingEdit: true })).toBe('saving');
   });
 });
