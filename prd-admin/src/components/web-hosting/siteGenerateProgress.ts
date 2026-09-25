@@ -251,7 +251,7 @@ export function remainingEstimateText(
     return `已进行 ${elapsed}，比最近 ${n} 次里 95% 的任务都久（约 ${p95}），任务仍在继续`;
   }
   const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
-  if (!typical) return '正在积累耗时数据，暂不预估剩余时间';
+  if (!typical) return `${fallbackReason(statsState)}，暂不预估剩余时间`;
   const elapsedMinutes = elapsedSeconds / 60;
   const low = Math.max(0, Math.ceil(typical.min - elapsedMinutes));
   const high = Math.max(0, Math.ceil(typical.max - elapsedMinutes));
