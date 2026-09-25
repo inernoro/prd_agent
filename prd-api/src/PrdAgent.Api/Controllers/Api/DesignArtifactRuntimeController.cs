@@ -276,9 +276,14 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 Response.Body,
                 idleTimeout,
                 proxyDeadline.Token,
-                forwarded => servedModel.Observe(forwarded.Span) is { } model
-                    ? RecordServedModelAsync(run, model)
-                    : Task.CompletedTask);
+                forwarded =>
+                {
+                    servedModel.Observe(forwarded.Span);
+                    return Task.CompletedTask;
+                });
+            // 整条响应转发完才记：流里先出现的可能是逻辑别名，终态里的才是网关实际用的模型。
+            if (servedModel.Model is { } served)
+                await RecordServedModelAsync(run, served);
         }
         catch (OperationCanceledException)
         {

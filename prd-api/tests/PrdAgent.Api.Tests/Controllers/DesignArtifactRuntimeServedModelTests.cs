@@ -44,16 +44,38 @@ public sealed class DesignArtifactRuntimeServedModelTests
     }
 
     [Fact]
-    public async Task ResponsesStream_ReadsTheModelFromTheWrappedResponseObject()
+    public async Task ResponsesStream_RecordsTheTerminalModelNotTheAliasFromResponseCreated()
     {
+        // 网关在处理 Start 分片之前就发 response.created，里面是请求时的逻辑别名；
+        // 只有 response.completed 带的是实际模型。记别名等于把「实际模型可见」做反了。
         var sse = string.Concat(
             "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\",\"model\":\"gpt-5-codex-served\"}}\n\n");
-        var (broker, _, controller) = Build(sse, "text/event-stream", resolvedModel: null);
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\",\"model\":\"default-chat-curated\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"model\":\"gpt-5-codex-served\"}}\n\n");
+        var (broker, events, controller) = Build(sse, "text/event-stream", resolvedModel: null);
 
         await controller.ProxyResponses(RunId, CancellationToken.None);
 
         broker.Verify(x => x.RecordServedModelAsync(RunId, "gpt-5-codex-served", null, It.IsAny<CancellationToken>()), Times.Once);
+        broker.Verify(x => x.RecordServedModelAsync(RunId, "default-chat-curated", It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        events.Verify(x => x.AppendEventAsync(
+            RunKinds.DesignArtifact, RunId, "model", It.IsAny<object>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResponsesStream_WithoutTerminalEvent_RecordsNothing()
+    {
+        var sse = string.Concat(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\",\"model\":\"default-chat-curated\"}}\n\n");
+        var (broker, _, controller) = Build(sse, "text/event-stream", resolvedModel: null);
+
+        await controller.ProxyResponses(RunId, CancellationToken.None);
+
+        broker.Verify(x => x.RecordServedModelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -101,11 +123,9 @@ public sealed class DesignArtifactRuntimeServedModelTests
     {
         var bytes = Encoding.UTF8.GetBytes("data: {\"object\":\"chat.completion.chunk\",\"model\":\"split-model\"}\n\n");
         var sniffer = new DesignRuntimeServedModelSniffer(eventStream: true);
-        string? found = null;
         foreach (var piece in bytes.Chunk(7))
-            found ??= sniffer.Observe(piece);
+            sniffer.Observe(piece);
 
-        found.ShouldBe("split-model");
         sniffer.Model.ShouldBe("split-model");
     }
 
