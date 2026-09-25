@@ -4332,8 +4332,15 @@ public class MdToPptController : ControllerBase
         if (changed)
         {
             _logger.LogWarning(
-                "[MdToPpt] LLM Gateway 没有接住页面请求点名的模型「{Requested}」，本次运行的页面路线改为 {Outcome}。{Notice} 技术细节：runId={RunId} explicit={Explicit} gatewayCode={Code}",
-                route.RequestedModel ?? "(未点名)", outcome, route.Notice ?? "改由网关默认对外模型重试。", runId, route.ExplicitlySelected, gatewayErrorCode ?? "(无)");
+                "[MdToPpt] LLM Gateway 没有接住页面请求点名的模型「{Requested}」（{Cause}），本次运行的页面路线改为 {Outcome}。"
+                + "技术细节：runId={RunId} explicit={Explicit} gatewayCode={Code}",
+                route.RequestedModel ?? "(未点名)",
+                outcome == MdToPptPageModelOutcome.UseGatewayDefault
+                    ? "它不在对外模型目录或未授权给 MD 转 PPT，改为不点名、由网关默认对外模型重试"
+                    : route.ExplicitlySelected
+                        ? "用户点名的运行配置，不替换模型；可能是不在对外模型目录、未授权或调用方被停用"
+                        : "不点名的重试也被拒，通常是 MD 转 PPT 调用方在网关被停用或没有默认对外模型",
+                outcome, runId, route.ExplicitlySelected, gatewayErrorCode ?? "(无)");
         }
         return outcome;
     }

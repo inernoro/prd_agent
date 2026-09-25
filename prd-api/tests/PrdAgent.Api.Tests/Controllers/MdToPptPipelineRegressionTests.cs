@@ -68,7 +68,8 @@ public class MdToPptPipelineRegressionTests
         route.OnGatewayRejected(MdToPptPageModelOutcome.UseGatewayDefault, PoolUnbound)
             .ShouldBe((MdToPptPageModelOutcome.Reject, true));
         route.Notice.ShouldNotBeNull();
-        route.Notice.ShouldContain("默认对外模型", customMessage: "拒绝必须说清卡在哪、找谁");
+        route.Notice.ShouldContain("管理员", customMessage: "拒绝必须给出下一步");
+        AssertPublicMessage(route.Notice, "gpt-5.6-sol");
     }
 
     [Fact]
@@ -80,6 +81,15 @@ public class MdToPptPipelineRegressionTests
             .ShouldBe((MdToPptPageModelOutcome.Reject, true));
         route.Notice.ShouldNotBeNull();
         route.Notice.ShouldContain("MAP 默认模型", customMessage: "拒绝必须给出下一步");
+        AssertPublicMessage(route.Notice, "gpt-5.6-sol");
+    }
+
+    // 给用户看的拒绝文案只说结果与恢复动作，模型名与网关内部细节只进日志（user-readable-errors，Codex P2）。
+    private static void AssertPublicMessage(string message, string requestedModel)
+    {
+        message.ShouldNotContain(requestedModel);
+        foreach (var internalTerm in new[] { "Gateway", "对外模型目录", "调用方", "APPCALLER", "授权" })
+            message.ShouldNotContain(internalTerm, customMessage: $"用户可见文案不应暴露内部细节：{internalTerm}");
     }
 
     [Theory]

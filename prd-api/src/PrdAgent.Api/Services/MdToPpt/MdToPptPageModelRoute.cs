@@ -57,25 +57,25 @@ internal sealed class MdToPptPageModelRoute
     public string? ExpectedModelFor(MdToPptPageModelOutcome outcome) =>
         outcome == MdToPptPageModelOutcome.UseProfileModel ? RequestedModel : null;
 
-    /// <summary>改道后的请求被网关接住时给人看的说明（<paramref name="actualModel"/> 是这次实际跑的模型）。</summary>
+    /// <summary>
+    /// 改道后的请求被接住时给用户看的说明。只说结果与下一步；模型名可以出现（模型标签本来就展示它，
+    /// 见 ai-model-visibility），网关目录、调用方、错误码这些内部细节只进日志（user-readable-errors）。
+    /// </summary>
     public string SubstitutionNotice(string? actualModel) =>
-        $"LLM Gateway 没有接住默认运行配置里点名的模型「{RequestedModel}」，本次改由网关为 MD 转 PPT 配置的默认对外模型"
-        + (string.IsNullOrWhiteSpace(actualModel) ? "" : $"（实际模型 {actualModel.Trim()}）")
-        + " 生成页面。想固定用某个模型，请在模型选择里点名一个网关认识的配置。";
+        $"默认模型配置「{RequestedModel}」当前不可用，本次已改用系统默认模型"
+        + (string.IsNullOrWhiteSpace(actualModel) ? "" : $" {actualModel.Trim()}")
+        + " 生成页面。想固定用某个模型，可在模型选择里改选。";
 
     /// <summary>
-    /// 拒绝时给人看的说明。<see cref="GatewayRouteFailure.AppCallerPoolUnbound"/> 不只代表「目录里没有这个名字」，
-    /// 调用方在网关被停用、未登记时也是这个码（Codex P2，PR #1629），所以这里把几种可能一并交代，
-    /// 不把原因说死成「模型没登记」。
+    /// 拒绝时给用户看的说明：只说结果与恢复动作，不带模型名、网关目录、授权、调用方状态这些内部细节
+    /// （Codex P2，PR #1629，对齐 user-readable-errors）。具体原因由调用方写进诊断日志。
     /// </summary>
     public string? Notice => Outcome switch
     {
         MdToPptPageModelOutcome.Reject when ExplicitlySelected =>
-            $"LLM Gateway 没有接住你选的运行配置里的模型「{RequestedModel}」（它不在对外模型目录里、没有授权给 MD 转 PPT，或该用途在网关被停用），页面无法生成。"
-            + "请在模型选择里改选「MAP 默认模型」重试；仍然失败请网关管理员检查 MD 转 PPT 调用方的状态。",
+            "你选的模型配置当前无法用于生成页面，这次没有生成。请在模型选择里改选「MAP 默认模型」后重试。",
         MdToPptPageModelOutcome.Reject =>
-            $"LLM Gateway 拒绝了 MD 转 PPT 的页面生成：点名「{RequestedModel}」和交给网关默认对外模型两种方式都没有线路接住，"
-            + "通常是该用途在网关被停用、或没有配置默认对外模型。请网关管理员检查 MD 转 PPT 调用方的状态与默认对外模型后重试。",
+            "页面生成服务暂时不可用，这次没有生成。请稍后重试；持续失败请联系管理员检查模型服务配置。",
         _ => null,
     };
 
