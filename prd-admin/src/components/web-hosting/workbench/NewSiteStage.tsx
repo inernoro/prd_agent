@@ -8,16 +8,23 @@ import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   getDesignGenerationSettings,
   getDesignRuntimeCapabilities,
+  getDesignTimingStats,
   type DesignGenerationStyle,
   type DesignRuntimeCapability,
+  type DesignTimingStats,
 } from '@/services/real/webPages';
 import { freshPptSessionPath } from '@/pages/md-to-ppt-agent/sessionContext';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
 import { chooseDesignRuntime, displayedDesignRuntime, runtimeFallbackNotice } from '../siteEditPreview';
 import {
   formatGenerationClock,
+  generationEtaSentence,
+  generationEtaShort,
+  pickGenerationTiming,
   remainingEstimateText,
   runProvenanceText,
+  TIMING_STATS_TIMEOUT_MS,
+  type TimingStatsState,
 } from '../siteGenerateProgress';
 import {
   DESIGN_ATTACHMENT_ACCEPT,
@@ -111,6 +118,11 @@ export default function NewSiteStage({
   const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
   const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
+  /** 本部署最近 30 天的真实耗时；拿不到就是 null，预估退回经验值并明说。 */
+  const [timingStats, setTimingStats] = useState<DesignTimingStats | null>(null);
+  // 统计请求的状态单独记：还在读、读到了、读不到三者文案不同；读不到不许冒充还在积累，
+  // 卡住的请求也不许让「正在读取」一直挂着——请求有上限，超时即按读不到处理。
+  const [timingState, setTimingState] = useState<TimingStatsState>('loading');
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -177,6 +189,24 @@ export default function NewSiteStage({
 
   useEffect(() => { onBusyChange?.(run.generating); }, [onBusyChange, run.generating]);
 
+  // 真实耗时只影响「预计多久」这句话，单独取、不挡资料与执行器的加载。
+  useEffect(() => {
+    let active = true;
+    void getDesignTimingStats(TIMING_STATS_TIMEOUT_MS)
+      .then((res) => {
+        if (!active) return;
+        if (res.success) { setTimingStats(res.data); setTimingState('ready'); return; }
+        setTimingState('unavailable');
+        console.warn('[web-pages] 生成耗时统计取不到，预估退回经验值', res.error?.code, res.error?.message);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setTimingState('unavailable');
+        console.warn('[web-pages] 生成耗时统计请求失败，预估退回经验值', error);
+      });
+    return () => { active = false; };
+  }, []);
+
   const enabledRuntimes = useMemo(() => orderRuntimeCards(capabilities.filter((item) => item.enabled)), [capabilities]);
   const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
   const visibleRuntime = displayedDesignRuntime(
@@ -194,7 +224,10 @@ export default function NewSiteStage({
     || undefined;
   const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
-  const eta = runtimeCopy ? `${runtimeCopy.facts[0].value} ${runtimeCopy.facts[0].unit}` : '';
+  const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
+  const eta = generationEtaShort(requestRuntime?.id, requestTiming);
+  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming, timingState);
+  const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
   useEffect(() => {
@@ -376,7 +409,7 @@ export default function NewSiteStage({
         <RunProgressCard
           title="正在生成网页"
           clock={formatGenerationClock(run.elapsedSeconds)}
-          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds)}
+          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming, timingState)}
           runtimeLabel={visibleRuntime ? runtimeCardTitle(visibleRuntime) : undefined}
           resolvedModel={run.resolvedModel}
           provenance={runProvenanceText(run.runInfo)}
@@ -467,15 +500,15 @@ export default function NewSiteStage({
         options={options}
         sendLabel={run.generating
           ? '正在生成…'
-          : isPpt ? '去 PPT 智能体生成' : `生成网页${eta ? ` · 约 ${eta.replace('约 ', '')}` : ''}`}
+          : isPpt ? '去 PPT 智能体生成' : `生成网页${eta ? ` · ${eta}` : ''}`}
         sendDisabled={run.generating || Boolean(sendBlocker)}
         sendDisabledReason={run.generating ? undefined : sendBlocker}
         onSend={send}
         hint={isPpt
           ? `点下去：带着稿子和要求打开 HTML PPT 智能体（要求只预填、不会自动发送）。${HTML_PPT_TIMING_NOTE}`
           : runtimeCopy
-          ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${runtimeCopy.footnote}`
-          : '点下去：对话里一步步显示进度，预览里出真实页面；做好自动存进网页托管，只有你能看到。'}
+          ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${etaSentence ? `${etaSentence}。` : ''}${runtimeCopy.continuity}`
+          : `点下去：对话里一步步显示进度，预览里出真实页面；${etaSentence ? `${etaSentence}。` : ''}做好自动存进网页托管，只有你能看到。`}
       />
       <input
         ref={fileInputRef}
