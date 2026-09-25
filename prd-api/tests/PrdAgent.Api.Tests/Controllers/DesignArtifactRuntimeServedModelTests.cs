@@ -102,6 +102,21 @@ public sealed class DesignArtifactRuntimeServedModelTests
     }
 
     [Fact]
+    public async Task ServedModelWrite_IsNotCancelledByTheProjectionTimeout()
+    {
+        // 限时只截断调用方等待；落库拿到的令牌不能被 3 秒超时取消，否则 Mongo 慢时实际模型会永久丢失。
+        var (broker, _, controller) = Build(
+            "{\"id\":\"c1\",\"object\":\"chat.completion\",\"model\":\"claude-served\",\"choices\":[]}",
+            "application/json",
+            resolvedModel: null);
+
+        await controller.ProxyChatCompletions(RunId, CancellationToken.None);
+
+        broker.Verify(x => x.RecordServedModelAsync(
+            RunId, "claude-served", null, It.Is<CancellationToken>(token => !token.CanBeCanceled)), Times.Once);
+    }
+
+    [Fact]
     public async Task JsonResponse_ReadsTheTopLevelModel()
     {
         var (broker, _, controller) = Build(

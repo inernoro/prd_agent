@@ -391,8 +391,9 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         if (string.Equals(run.ResolvedModel, model, StringComparison.Ordinal)) return;
         try
         {
-            using var timeout = new CancellationTokenSource(ServedModelProjectionTimeout);
-            if (!await _broker.RecordServedModelAsync(run.Id, model, platform: null, timeout.Token)
+            // 落库本身不带超时令牌：WaitAsync 只截断「调用方等多久」，写入可以在返回之后继续完成，
+            // 否则 Mongo 一慢就会把这次成功调用的实际模型永久丢掉（server-authority）。
+            if (!await _broker.RecordServedModelAsync(run.Id, model, platform: null, CancellationToken.None)
                     .WaitAsync(ServedModelProjectionTimeout))
                 return;
             _logger.LogInformation(
@@ -406,14 +407,13 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 // 旁路投影：模型响应已经转发完，执行器要等本方法返回才看得到 EOF。
                 // 事件存储慢或不可用时不能拖住这次成功的模型调用，所以限时、失败只记日志。
                 // 用 WaitAsync 在调用方这一侧截断：Redis 实现并不理会传入的取消令牌，只传令牌是假限时。
-                using var projectionTimeout = new CancellationTokenSource(ServedModelProjectionTimeout);
                 await _events.AppendEventAsync(
                         PrdAgent.Core.Models.RunKinds.DesignArtifact,
                         run.Id,
                         "model",
                         new { model, platform = (string?)null },
                         PreviewEventTtl,
-                        projectionTimeout.Token)
+                        CancellationToken.None)
                     .WaitAsync(ServedModelProjectionTimeout);
             }
         }
