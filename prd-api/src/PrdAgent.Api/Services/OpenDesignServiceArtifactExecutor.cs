@@ -262,7 +262,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                         throw ServiceFailure(
                             $"设计执行服务在 {(int)Math.Ceiling((UtcNow() - queuedSince).TotalMinutes)} 分钟里一直在处理其他任务",
                             "本次任务排不上号，已停止等待、没有开始生成",
-                            "稍后重新发起；高峰期持续排队说明需要多部署一个设计执行服务实例",
+                            "稍后重新发起；高峰期持续排队请管理员评估设计执行服务的并发容量",
                             ("transport", TransportLogName), ("code", submit.Code), ("queuedSeconds", (int)(UtcNow() - queuedSince).TotalSeconds));
                     yield return new DesignArtifactExecutorChunk(
                         "phase",
