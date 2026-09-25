@@ -232,6 +232,29 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
+    public async Task 元数据与导航类link不内嵌_不算缺失_也不计入外部依赖()
+    {
+        var site = new FakeSite().Add("index.html", "<p>x</p>").Add("icon.png", "PNG", "image/png");
+        const string html = """
+            <link rel="canonical" href="https://example.com/page">
+            <link rel="alternate" hreflang="en" href="en/index.html">
+            <link rel="next" href="page2.html">
+            <link rel="preconnect" href="https://fonts.example.com">
+            <link rel="icon" href="icon.png">
+            """;
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("<link rel=\"canonical\" href=\"https://example.com/page\">", result.Html);
+        Assert.Contains("<link rel=\"alternate\" hreflang=\"en\" href=\"en/index.html\">", result.Html);
+        Assert.Contains("<link rel=\"next\" href=\"page2.html\">", result.Html);
+        Assert.Empty(result.Missing);
+        Assert.Empty(result.External);
+        // 会被浏览器取回的 rel 照常内嵌
+        Assert.Contains("href=\"data:image/png;base64,", result.Html);
+    }
+
+    [Fact]
     public async Task 越出站点根的引用一律不读()
     {
         var site = new FakeSite().Add("index.css", "x");

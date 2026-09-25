@@ -94,10 +94,15 @@ public sealed class HostedSiteHtmlInliner
     private static readonly Regex ClosingStyle = new(
         "</style", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
 
-    /// <summary>这两种 rel 指向的是主机而不是文件，没有可内嵌的内容。</summary>
-    private static readonly HashSet<string> HostOnlyRels = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// 浏览器会真的去取回文件的 rel——白名单，不是黑名单。canonical / alternate / author /
+    /// next / prev 这类是元数据或导航，渲染时不加载；preconnect / dns-prefetch 指向主机。
+    /// 它们一律不内嵌、不算缺失、也不计入外部依赖。
+    /// </summary>
+    private static readonly HashSet<string> ResourceRels = new(StringComparer.OrdinalIgnoreCase)
     {
-        "preconnect", "dns-prefetch",
+        "stylesheet", "icon", "apple-touch-icon", "apple-touch-icon-precomposed", "mask-icon",
+        "manifest", "preload", "modulepreload", "prefetch",
     };
 
     /// <summary>哪些标签的哪些属性指向一份要内嵌的资源（iframe / a / form 是导航，不内嵌）。</summary>
@@ -432,13 +437,13 @@ public sealed class HostedSiteHtmlInliner
     /// &lt;link&gt; 指向的东西按什么内容打包——所有 link 的唯一判定：
     /// 样式表、as=style 的预加载 → 样式表（要先内嵌里面的 url() / @import）；
     /// modulepreload、as=script 的预加载 → 脚本；其余（图标、字体预加载、prefetch 等）→ 原字节。
-    /// preconnect / dns-prefetch 指向的是主机不是文件，不动。
+    /// rel 不在 <see cref="ResourceRels"/> 里的（元数据、导航、preconnect 等）不动。
     /// </summary>
     private static PayloadKind? LinkPayloadKind(string attrs)
     {
         var rels = (FindAttribute(attrs, "rel")?.Value ?? string.Empty)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (rels.Any(HostOnlyRels.Contains)) return null;
+        if (!rels.Any(ResourceRels.Contains)) return null;
 
         var asValue = (FindAttribute(attrs, "as")?.Value ?? string.Empty).Trim();
         if (rels.Contains("stylesheet", StringComparer.OrdinalIgnoreCase)

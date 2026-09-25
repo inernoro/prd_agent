@@ -4,3 +4,4 @@
 | fix | prd-api | 离线 HTML 导出改为保留外链脚本与样式表的原元素和全部属性（地址换成 data: URL），输出带 UTF-8 BOM，页面自带内容安全策略时拒绝导出并说明下一步 |
 | fix | prd-api | 离线 HTML 导出统计仍依赖外部网络的地址并经响应头返回，引用片段接回 data: URL，遵循页面第一个 base href，预加载与样式表、脚本共用内嵌路径 |
 | fix | prd-admin | 离线 HTML 下载结论在仍有外部依赖时不再宣称断网可打开，改为说明几处依赖外部网络及来源主机 |
+| fix | prd-api | 离线导出只内嵌会被浏览器取回的 link（rel 白名单），canonical / alternate 等元数据链接不再被误报缺失或计入外部依赖 |
