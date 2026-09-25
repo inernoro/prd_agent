@@ -442,6 +442,13 @@ builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignSystemCatalog>(
     PrdAgent.Api.Services.DesignSystemCatalog.LoadEmbedded());
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignGenerationSettingsService,
     PrdAgent.Api.Services.DesignGenerationSettingsService>();
+// 「我的风格」：每人自己的风格（归属判定在服务里）；生成时由设置服务按 personal:<id> + 当前用户取出冻结。
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalDesignStyleStore,
+    PrdAgent.Api.Services.MongoPersonalDesignStyleStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalDesignStyleService,
+    PrdAgent.Api.Services.PersonalDesignStyleService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalStyleDerivationService,
+    PrdAgent.Api.Services.PersonalStyleDerivationService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,
     PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactCancellationCoordinator,

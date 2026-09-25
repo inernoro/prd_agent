@@ -161,6 +161,13 @@ public interface IDesignGenerationSettingsService
     /// 设计系统按快照核对，提示词与自查强度仍取当前设置。不在快照里的编号抛出。
     /// </summary>
     Task<DesignArtifactDesignDirection> FreezeCatalogStyleAsync(string designSystemId, CancellationToken ct);
+
+    /// <summary>
+    /// 生成请求的唯一风格入口：目录设计系统 / 「我的风格」（personal:&lt;id&gt;，按归属人核对）/ 管理员预设（空取默认），三选一。
+    /// 同时给了 styleId 与 designSystemId 抛出。
+    /// </summary>
+    Task<DesignArtifactDesignDirection> FreezeForRunAsync(
+        string userId, string? styleId, string? designSystemId, CancellationToken ct);
 }
 
 public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsService
@@ -169,11 +176,16 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
     private static readonly Regex DesignSystemIdPattern = new("^[a-z0-9][a-z0-9-]{0,63}$", RegexOptions.CultureInvariant);
     private readonly MongoDbContext _db;
     private readonly IDesignSystemCatalog _catalog;
+    private readonly IPersonalDesignStyleService? _personalStyles;
 
-    public DesignGenerationSettingsService(MongoDbContext db, IDesignSystemCatalog catalog)
+    public DesignGenerationSettingsService(
+        MongoDbContext db,
+        IDesignSystemCatalog catalog,
+        IPersonalDesignStyleService? personalStyles = null)
     {
         _db = db;
         _catalog = catalog;
+        _personalStyles = personalStyles;
     }
 
     public async Task<DesignGenerationEffectiveSettings> GetAsync(CancellationToken ct)
@@ -201,6 +213,75 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
 
     public async Task<DesignArtifactDesignDirection> FreezeCatalogStyleAsync(string designSystemId, CancellationToken ct)
         => FreezeCatalogStyle(Effective(await LoadAsync(ct), _catalog), _catalog, designSystemId);
+
+    public async Task<DesignArtifactDesignDirection> FreezeForRunAsync(
+        string userId, string? styleId, string? designSystemId, CancellationToken ct)
+        => await FreezeForRun(Effective(await LoadAsync(ct), _catalog), _catalog, _personalStyles, userId, styleId, designSystemId, ct);
+
+    /// <summary>
+    /// 生成请求 → 冻结的设计方向。分支只有三条，且判据都在这里：
+    /// designSystemId（目录风格）/ personal:&lt;id&gt;（我的风格，服务端按编号 + 归属人取，从不收前端传来的风格正文）/ 其余按预设。
+    /// </summary>
+    internal static async Task<DesignArtifactDesignDirection> FreezeForRun(
+        DesignGenerationEffectiveSettings settings,
+        IDesignSystemCatalog catalog,
+        IPersonalDesignStyleService? personalStyles,
+        string userId,
+        string? styleId,
+        string? designSystemId,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(styleId) && !string.IsNullOrWhiteSpace(designSystemId))
+            throw new DesignGenerationSettingsException("风格只能选一种：预设风格、我的风格或目录里的设计系统，不能同时提交");
+        if (!string.IsNullOrWhiteSpace(designSystemId))
+            return FreezeCatalogStyle(settings, catalog, designSystemId);
+        if (PersonalDesignStyleService.IsPersonalStyleId(styleId))
+        {
+            var style = personalStyles == null ? null : await personalStyles.GetOwnedAsync(userId, styleId!, ct);
+            if (style == null)
+                throw new DesignGenerationSettingsException("这套「我的风格」不存在或已被删除，请在风格画廊里重新选一套");
+            return FreezePersonalStyle(settings, catalog, style);
+        }
+        return Freeze(settings, styleId);
+    }
+
+    /// <summary>
+    /// 「我的风格」冻结：风格说明同时进两处——直连执行器读 StyleDescription，OpenDesign 执行器读创作提示词
+    /// （CDS 只把 prompts.generate 拼进系统提示词），所以把它接在当前创作提示词后面。骨架必须还在快照里：
+    /// 下线了就明说，不悄悄换成默认骨架（形状 10）。
+    /// </summary>
+    internal static DesignArtifactDesignDirection FreezePersonalStyle(
+        DesignGenerationEffectiveSettings settings, IDesignSystemCatalog catalog, PersonalDesignStyle style)
+    {
+        var baseEntry = catalog.Find(style.BaseDesignSystemId)
+            ?? throw new DesignGenerationSettingsException(
+                $"「{style.Name}」参考的设计系统「{style.BaseDesignSystemId}」已不在风格目录里，请在风格画廊里编辑这套风格、换一个骨架");
+        var instruction = (style.Instruction ?? string.Empty).Trim();
+        var generatePrompt = settings.GeneratePrompt.TrimEnd() + "\n\n" + PersonalStylePromptBlock(style.Name, instruction);
+        if (generatePrompt.Length > DesignGenerationDefaults.MaxPromptLength)
+            throw new DesignGenerationSettingsException(
+                $"「{style.Name}」的风格说明加上当前创作提示词超过 {DesignGenerationDefaults.MaxPromptLength} 个字，请把风格说明写短一些");
+        var direction = new DesignArtifactDesignDirection
+        {
+            StyleId = PersonalDesignStyle.StyleIdPrefix + style.Id,
+            StyleName = style.Name,
+            StyleDescription = instruction,
+            DesignSystemId = baseEntry.Id,
+            ReviewMode = settings.ReviewMode,
+            GeneratePrompt = generatePrompt,
+            EditPrompt = settings.EditPrompt,
+            ReviewPrompt = settings.ReviewPrompt,
+        };
+        direction.PromptFingerprint = Fingerprint(direction);
+        return direction;
+    }
+
+    internal static string PersonalStylePromptBlock(string name, string instruction) => $"""
+【用户自己的风格：{name}】
+下面是用户为自己定的视觉风格。配色、字体、字号、间距与版式以它为准，与所选设计系统冲突时以这里为准；
+它只管外观，不是事实来源，不得据此编造任何内容。
+{instruction}
+""";
 
     private async Task<DesignGenerationSettings?> LoadAsync(CancellationToken ct)
         => await _db.DesignGenerationSettings

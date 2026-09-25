@@ -24,7 +24,7 @@ import {
 } from '../designAttachments';
 import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, orderRuntimeCards, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
 import { useSiteGenerationRun } from './useSiteGenerationRun';
-import { StyleGallery, presetSelection, type StyleGallerySelection } from './StyleGallery';
+import { StyleGallery, presetSelection, selectionStyleId, type StyleGallerySelection } from './StyleGallery';
 import { StyleThumbnail } from './StyleThumbnail';
 import {
   AssistantBubble,
@@ -284,7 +284,7 @@ export default function NewSiteStage({
       runtimeId: requestRuntime.id,
       sourceSurface: source ? 'knowledge-base' : 'web-hosting',
       knowledge: selectedKnowledge,
-      styleId: styleSelection?.kind === 'preset' ? styleSelection.styleId : null,
+      styleId: selectionStyleId(styleSelection),
       designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,
       attachmentIds: uploads.readyIds,
     });
@@ -513,7 +513,6 @@ export default function NewSiteStage({
             selectedId={styleSelection?.key ?? null}
             title={sampleTitle}
             onSelect={(selection) => { setStyleSelection(selection); setGalleryOpen(false); }}
-            onRequestCustomStyle={() => toast.info('「做一个我的风格」还没上线', '现在可以从预设或更多风格里挑一套最接近的')}
           />
         </div>
       ) : run.previewHtml ? (
@@ -525,10 +524,15 @@ export default function NewSiteStage({
           title="生成中的网页预览"
           className="h-full w-full bg-white"
         />
-      ) : run.generating || !styleSelection ? (
+      ) : run.generating || !styleSelection || styleSelection.kind === 'personal' ? (
+        // 我的风格没有现成样张（样张来自设计系统，而它覆盖了配色与字体），只画它自己的色块，不拿骨架样张冒充。
         <PageSkeleton
-          caption={run.generating ? '正在规划页面结构，首段内容写好就出现在这里' : '风格还没读出来，生成时用设置里的默认风格'}
-          swatches={selectedStyle?.swatches}
+          caption={run.generating
+            ? '正在规划页面结构，首段内容写好就出现在这里'
+            : styleSelection?.kind === 'personal'
+              ? `「${styleSelection.name}」没有现成样张，生成时按它的配色、字体与版式出页面`
+              : '风格还没读出来，生成时用设置里的默认风格'}
+          swatches={selectedStyle?.swatches ?? (styleSelection?.kind === 'personal' ? styleSelection.swatches : undefined)}
         />
       ) : (
         <div className="h-full p-3 lg:p-4">

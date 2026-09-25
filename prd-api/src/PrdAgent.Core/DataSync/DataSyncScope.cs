@@ -302,6 +302,8 @@ public static class DataSyncScope
             // 这里原本登记了一个并不存在的 "Token"，是一次空转的脱敏，由「登记的脱敏字段必须真实存在」查出。
             new DataSyncCollection("hosted_sites", System.Array.Empty<string>()),
             new DataSyncCollection("hosted_site_revisions", System.Array.Empty<string>()),
+            // 「我的风格」：用户自己的风格说明与色块，没有凭据字段；归属人随文档一起走。
+            new DataSyncCollection("personal_design_styles", System.Array.Empty<string>()),
             new DataSyncCollection("project_route_plans", System.Array.Empty<string>()),
             new DataSyncCollection("project_route_site_specs", System.Array.Empty<string>()),
             new DataSyncCollection("web_folders", System.Array.Empty<string>()),
