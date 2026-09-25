@@ -525,6 +525,79 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         AssertNoTransportDiagnostics(error.Message);
     }
 
+    [Fact]
+    public async Task ProxyUnavailableWhileReopeningEvents_ResumesInsteadOfFailing()
+    {
+        // 任务已接下、事件流断开后，重连恰好撞上代理层的 503（没有服务的错误体）：应当续读，而不是判失败并取消在跑的任务。
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        var opens = 0;
+        service.OnEvents(_ => ++opens switch
+        {
+            1 => Sse(Event(1, "text_delta", new JsonObject { ["text"] = "第一段" })),
+            2 => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("upstream unavailable") },
+            _ => Sse(Event(2, "done", new JsonObject { ["artifactRef"] = "ref" })),
+        });
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        service.EventRequests.Count.ShouldBe(3);
+        service.EventRequests[2].AfterSeq.ShouldBe("1");
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        service.CancelCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ServiceDeclaresNonRetryable503OnEvents_FailsWithoutRetrying()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Json(HttpStatusCode.ServiceUnavailable, new JsonObject
+        {
+            ["error"] = new JsonObject { ["code"] = "api_key_not_configured", ["message"] = "not configured", ["retryable"] = false },
+        }));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, BuildRun()));
+
+        service.EventRequests.Count.ShouldBe(1);
+        AssertNoTransportDiagnostics(error.Message);
+    }
+
+    [Fact]
+    public async Task LongBusyPeriod_DoesNotCountAgainstTheUnavailableWindow()
+    {
+        // 先短暂不可用，随后服务恢复但一直忙了三分多钟，最后又断一次：这次断开只算一次，不能按「两分钟没恢复」判失败。
+        var service = new FakeDesignService();
+        var submissions = 0;
+        service.OnSubmit(_ =>
+        {
+            submissions++;
+            if (submissions == 1 || submissions == 16) throw new HttpRequestException("connection reset by peer");
+            if (submissions < 16)
+                return Json((HttpStatusCode)409, new JsonObject
+                {
+                    ["error"] = new JsonObject
+                    {
+                        ["code"] = "executor_busy",
+                        ["message"] = "busy",
+                        ["retryable"] = true,
+                        ["details"] = new JsonObject { ["code"] = "executor_busy", ["slot"] = "running" },
+                    },
+                    ["retryAfterSeconds"] = 15,
+                });
+            return Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") });
+        });
+        service.OnEvents(_ => Sse(Event(1, "done", new JsonObject { ["artifactRef"] = "ref" })));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        service.Submissions.Count.ShouldBe(17);
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+    }
+
     // ───────────── 夹具 ─────────────
 
     private static IConfiguration Config(Dictionary<string, string?> values) =>

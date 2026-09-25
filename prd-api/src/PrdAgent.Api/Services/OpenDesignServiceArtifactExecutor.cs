@@ -257,6 +257,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
 
                 if (submit.Kind == SubmitKind.Busy)
                 {
+                    // 服务能回「忙」就说明它是通的：不可用窗口只量连续不可用的时长，排队由 queueDeadline 兜住。
+                    unavailableSince = null;
                     var wait = submit.RetryAfter;
                     if (UtcNow() + wait > queueDeadline)
                         throw ServiceFailure(
@@ -653,7 +655,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var text = await response.Content.ReadAsStringAsync(linked.Token);
             var error = TryParse(text)?["error"] as JsonObject;
             var code = ReadString(error, "code") ?? "unknown";
-            if (status >= 500 && status != 503)
+            // 5xx 一律按「暂时连不上」走有上限的续读；唯一例外是服务明确答复不可重试的 503
+            // （如缺 API key），那是配置问题，重连多少次都一样。代理层的 503 没有这份错误体，照常续读。
+            var nonRetryable = status == 503 && error is not null && error["retryable"]?.GetValueKind() != JsonValueKind.True;
+            if (status >= 500 && !nonRetryable)
                 return new OpenOutcome(null, null, new HttpRequestException($"HTTP {status} {code}"));
             return new OpenOutcome(null, status == 404 && code == "task_not_found"
                 ? ServiceFailure(
