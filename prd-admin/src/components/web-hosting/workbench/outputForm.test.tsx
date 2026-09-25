@@ -2,12 +2,30 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { MAX_LAUNCH_REQUEST_CHARS, parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
+import { MAX_LAUNCH_REQUEST_CHARS, parseDesignArtifactLaunch, readLaunchRequest } from '@/lib/designArtifactLaunch';
 import { HtmlPptHandoffPanel } from './HtmlPptHandoffPanel';
-import { HTML_PPT_TIMING_NOTE, OUTPUT_FORM_ORDER, OUTPUT_FORM_REGISTRY, buildHtmlPptHandoff } from './outputForm';
+import {
+  HTML_PPT_TIMING_NOTE,
+  OUTPUT_FORM_ORDER,
+  OUTPUT_FORM_REGISTRY,
+  buildHtmlPptHandoff,
+  openHtmlPptHandoff,
+  type HtmlPptHandoff,
+} from './outputForm';
 
 const entryA = { entryId: 'entry-a', storeId: 'store-a', title: '三季度复盘', storeName: '团队知识库' };
 const entryB = { entryId: 'entry-b', storeId: 'store-a', title: '客户访谈纪要' };
+
+function memoryStorage() {
+  const values = new Map<string, string>();
+  return { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); } };
+}
+
+/** 模拟点下「去 PPT 智能体生成」：存草稿、拿到跳转地址。 */
+function depart(handoff: HtmlPptHandoff, storage = memoryStorage()) {
+  if (!handoff.ok) throw new Error('handoff blocked');
+  return { path: openHtmlPptHandoff(handoff, storage, () => 'handoff00001'), storage };
+}
 
 function launchOf(handoffPath: string) {
   return {
@@ -31,7 +49,8 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
     });
     expect(handoff.ok).toBe(true);
     if (!handoff.ok) return;
-    const { pathname, launch } = launchOf(handoff.path);
+    const { path: target, storage } = depart(handoff);
+    const { pathname, launch } = launchOf(target);
     expect(pathname).toBe('/md-to-ppt-agent');
     expect(launch).toEqual({
       target: 'html-ppt',
@@ -39,18 +58,19 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
       sourceEntryId: 'entry-a',
       sourceTitle: '三季度复盘',
       sourceStoreName: '团队知识库',
-      request: '给客户讲清三季度的变化',
+      handoffId: 'handoff00001',
     });
+    expect(target).not.toContain(encodeURIComponent('三季度的变化'));
+    expect(readLaunchRequest('handoff00001', storage)).toEqual({ status: 'ready', text: '给客户讲清三季度的变化' });
     expect(handoff.carriedTitle).toBe('三季度复盘');
     expect(handoff.leftBehind).toEqual([]);
   });
 
-  it('没写要求时不带 request 参数，PPT 智能体的输入框保持空白', () => {
+  it('没写要求时不带交接编号，PPT 智能体的输入框保持空白', () => {
     const handoff = buildHtmlPptHandoff({ instruction: '   ', knowledge: [entryA], uploadedFileNames: [] });
-    expect(handoff.ok).toBe(true);
-    if (!handoff.ok) return;
-    expect(handoff.path).not.toContain('request=');
-    expect(launchOf(handoff.path).launch?.request).toBeUndefined();
+    const { path: target } = depart(handoff);
+    expect(target).not.toContain('handoff=');
+    expect(launchOf(target).launch?.handoffId).toBeUndefined();
   });
 
   it('带不过去的稿子与文件逐个列出来，不静默丢弃', () => {
@@ -61,7 +81,7 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
     });
     expect(handoff.ok).toBe(true);
     if (!handoff.ok) return;
-    expect(launchOf(handoff.path).launch?.sourceEntryId).toBe('entry-a');
+    expect(launchOf(depart(handoff).path).launch?.sourceEntryId).toBe('entry-a');
     expect(handoff.leftBehind).toEqual(['客户访谈纪要', '会议纪要-1.md', '报价单.pdf']);
   });
 
@@ -78,9 +98,10 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
       knowledge: [entryA],
       uploadedFileNames: [],
     });
-    expect(handoff.ok).toBe(true);
-    if (!handoff.ok) return;
-    expect(launchOf(handoff.path).launch?.request).toHaveLength(MAX_LAUNCH_REQUEST_CHARS);
+    const { path: target, storage } = depart(handoff);
+    expect(target.length).toBeLessThan(400);
+    const draft = readLaunchRequest(launchOf(target).launch!.handoffId!, storage);
+    expect(draft.status === 'ready' ? draft.text : '').toHaveLength(MAX_LAUNCH_REQUEST_CHARS);
   });
 
   it('网页 PPT 的耗时写成经验值，不照搬网页生成的数字', () => {
@@ -120,7 +141,7 @@ describe('新建阶段接线', () => {
   it('网页 PPT 在建设计任务之前就跳转并返回', () => {
     const send = stage.slice(stage.indexOf('const send = () => {'));
     const pptBranch = send.indexOf('if (isPpt) {');
-    const navigateCall = send.indexOf('navigate(pptHandoff.path)');
+    const navigateCall = send.indexOf('navigate(openHtmlPptHandoff(pptHandoff))');
     const runStart = send.indexOf('run.start(');
     expect(pptBranch).toBeGreaterThanOrEqual(0);
     expect(navigateCall).toBeGreaterThan(pptBranch);

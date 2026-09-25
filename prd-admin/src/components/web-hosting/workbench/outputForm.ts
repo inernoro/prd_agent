@@ -1,4 +1,9 @@
-import { buildDesignArtifactLaunchPath } from '@/lib/designArtifactLaunch';
+import {
+  buildDesignArtifactLaunchPath,
+  sessionStorageOrNull,
+  stashLaunchRequest,
+  type DesignArtifactLaunchContext,
+} from '@/lib/designArtifactLaunch';
 
 /**
  * 生成工作台的「产出形式」：同一份资料，做成网页，或做成一套网页 PPT（幻灯片）。
@@ -48,7 +53,9 @@ export type HtmlPptHandoff =
   | { ok: false; blocker: string }
   | {
     ok: true;
-    path: string;
+    /** 跳转目标（不含要求正文；正文在点下去那一刻才存进 sessionStorage，见 openHtmlPptHandoff）。 */
+    launch: DesignArtifactLaunchContext;
+    request: string;
     /** 会被带过去的那篇稿子。 */
     carriedTitle: string;
     /** 带不过去、需要在 PPT 智能体里重新放一次的资料（给用户看的名字）。 */
@@ -77,15 +84,30 @@ export function buildHtmlPptHandoff(input: {
   }
   return {
     ok: true,
-    path: buildDesignArtifactLaunchPath({
+    launch: {
       target: 'html-ppt',
       sourceStoreId: first.storeId,
       sourceEntryId: first.entryId,
       sourceTitle: first.title,
       sourceStoreName: first.storeName,
-      request: input.instruction,
-    }),
+    },
+    request: input.instruction,
     carriedTitle: first.title,
     leftBehind: [...rest.map((entry) => entry.title), ...input.uploadedFileNames],
   };
+}
+
+/**
+ * 真正出发时调用：把要求草稿按随机编号存进 sessionStorage，只把编号放进 URL，返回跳转地址。
+ * 放在构造器之外，是为了让输入框每敲一个字都重算的那份交接保持纯函数、不碰存储。
+ */
+export function openHtmlPptHandoff(
+  handoff: Extract<HtmlPptHandoff, { ok: true }>,
+  storage: Pick<Storage, 'getItem' | 'setItem'> | null = sessionStorageOrNull(),
+  createId?: () => string,
+): string {
+  return buildDesignArtifactLaunchPath({
+    ...handoff.launch,
+    handoffId: stashLaunchRequest(handoff.request, storage, createId),
+  });
 }

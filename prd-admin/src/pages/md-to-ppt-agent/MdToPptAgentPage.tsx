@@ -56,6 +56,7 @@ import {
 import { apiRequest } from '@/services/real/apiClient';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
+import { consumeLaunchRequest, readLaunchRequest, sessionStorageOrNull } from '@/lib/designArtifactLaunch';
 import { activatePptSessionContext, resolvePptSessionContext, type PptSessionContext } from './sessionContext';
 import { NextStepBar } from './NextStepBar';
 import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
@@ -1516,10 +1517,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Chat state
   const [messages, setMessages] = useState<ChatMessage[]>(savedSession?.messages ?? []);
-  // 从网页工作台「网页 PPT」带过来的那句要求：只预填、不自动发送；已带入过的会话刷新后不再回填。
-  const [input, setInput] = useState(() => (
-    context.launch && !savedSession?.launchImported ? context.launch.request ?? '' : ''
+  // 从网页工作台「网页 PPT」带过来的要求：按交接编号读 sessionStorage，只预填、不自动发送；
+  // 真正发出去才标记已用，发送前刷新或返回草稿仍在。读不到就明说，不静默丢。
+  const [handoffDraft] = useState(() => (
+    context.launch?.handoffId ? readLaunchRequest(context.launch.handoffId, sessionStorageOrNull()) : null
   ));
+  const [input, setInput] = useState(() => (handoffDraft?.status === 'ready' ? handoffDraft.text : ''));
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ─── Artifact state（右侧）
@@ -1801,7 +1804,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   }, [context.launch, launchImported, launchImportAttempt]);
 
   // 两端共用同一状态与恢复入口；失败不吞掉输入，也不静默永久禁用。
-  const launchImportNotice = launchImportBlocked ? (
+  const launchImportStatus = launchImportBlocked ? (
     <div role={launchImportFailed ? 'alert' : 'status'} className="flex items-center gap-2 text-xs text-token-secondary" data-testid="knowledge-launch-import">
       {launchImportFailed ? (
         <>
@@ -1816,6 +1819,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       )}
     </div>
   ) : null;
+  const handoffLostNotice = handoffDraft?.status === 'missing' && messages.length === 0 ? (
+    <div role="status" className="text-xs text-token-secondary" data-testid="launch-request-lost">
+      在网页工作台写的要求没能带过来（可能换了标签页打开，或浏览器禁用了会话存储），请在下面重新输入。
+    </div>
+  ) : null;
+  const launchImportNotice = launchImportStatus || handoffLostNotice ? <>{handoffLostNotice}{launchImportStatus}</> : null;
 
   // 左侧对话栏宽度（可拖拽，280-640px；纯 UI 偏好走 localStorage——关浏览器仍记住）
   const [chatWidth, setChatWidth] = useState<number>(() => {
@@ -3102,6 +3111,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isProcessing || launchImportBlocked) return;
+    if (context.launch?.handoffId) consumeLaunchRequest(context.launch.handoffId, sessionStorageOrNull());
 
     const atts = [...pendingAttachments];
     const kbs = [...pendingKbRefs];
@@ -3137,7 +3147,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits]);
+  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits, context.launch]);
 
   // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
