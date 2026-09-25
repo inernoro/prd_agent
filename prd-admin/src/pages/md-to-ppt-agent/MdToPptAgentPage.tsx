@@ -377,6 +377,8 @@ function formatDiagStage(stage?: string): string {
       return '已收到首个事件';
     case 'first_text_delta':
       return '模型开始输出';
+    case 'model_substituted':
+      return '已改用网关默认模型';
     default:
       return stage || '准备中';
   }
@@ -1041,6 +1043,17 @@ function buildRecoveredDoneMessage(run: { degraded?: number; total?: number }): 
       '或切换模型运行配置后整体重新生成。';
   }
   return 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。';
+}
+
+// 服务端发现默认运行配置里的模型不在网关对外模型目录、改用网关默认模型时，当场告诉用户（不许静默换模型）。
+export function noticeFromModelSubstitution(diag: MdToPptDiagEvent): string | null {
+  if (diag.stage !== 'model_substituted') return null;
+  return typeof diag.message === 'string' && diag.message.trim() ? diag.message : null;
+}
+
+function handleDiagNotice(diag: MdToPptDiagEvent): void {
+  const notice = noticeFromModelSubstitution(diag);
+  if (notice) toast.warning('已改用网关默认模型', notice);
 }
 
 function warnIfDegraded(run: { degraded?: number }): void {
@@ -2618,7 +2631,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           } catch { /* ignore */ }
         },
         onModel: (info) => setModelInfo(info),
-        onDiag: (d) => setDiagLines((prev) => [...prev, d]),
+        onDiag: (d) => {
+          handleDiagNotice(d);
+          setDiagLines((prev) => [...prev, d]);
+        },
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onDone: (result) => {
@@ -2855,7 +2871,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           if (runId) setActiveRunId(runId);
         },
         onModel: (info) => setModelInfo(info),
-        onDiag: (d) => setDiagLines((prev) => [...prev, d]),
+        onDiag: (d) => {
+          handleDiagNotice(d);
+          setDiagLines((prev) => [...prev, d]);
+        },
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onDone: (result) => {
