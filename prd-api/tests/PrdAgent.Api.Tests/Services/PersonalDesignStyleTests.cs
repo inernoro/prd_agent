@@ -242,6 +242,19 @@ section.b { margin: 64px 0; }
     }
 
     [Fact]
+    public void 根上重复定义的变量按层叠取后写的那条_其它选择器不覆盖根上的值()
+    {
+        const string css = ":root{--bg:#ffffff;--accent:#111111}"
+            + ":root{--bg:#f3ecdf;--accent:#b95337}"
+            + "[data-theme=dark]{--bg:#000000}"
+            + "body{background:var(--bg)} .btn{background:var(--accent)}";
+        var result = PersonalStyleDeriver.Derive("<html><head></head><body>x</body></html>", new[] { css }, null);
+
+        Assert.Contains("底色 #f3ecdf", result.Instruction);
+        Assert.Contains("强调色 #b95337", result.Instruction);
+    }
+
+    [Fact]
     public void 站内样式文件与页内样式一起读_读不到的维度整行不出现()
     {
         const string html = "<html><head><link rel=\"stylesheet\" href=\"style.css\"></head><body>纯文字</body></html>";

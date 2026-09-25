@@ -315,12 +315,14 @@ public static class PersonalStyleDeriver
             foreach (var (property, value) in rule.Declarations)
             {
                 if (!property.StartsWith("--", StringComparison.Ordinal)) continue;
-                // :root / html / body 上的定义优先；主题切换等其它选择器上的重定义不覆盖它。
+                // :root / html / body 上的定义优先，且按层叠取后写的那条（常见写法是先写基础令牌、再覆盖）；
+                // 主题切换等其它选择器上的重定义不覆盖根上的值，只在根上没定义时兜底。
                 if (isRoot)
                 {
-                    if (fromRoot.Add(property)) vars[property] = value;
+                    fromRoot.Add(property);
+                    vars[property] = value;
                 }
-                else if (!vars.ContainsKey(property)) vars[property] = value;
+                else if (!fromRoot.Contains(property) && !vars.ContainsKey(property)) vars[property] = value;
             }
         }
         return vars;

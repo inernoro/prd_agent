@@ -1,29 +1,49 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { HostedSite } from '@/services/real/webPages';
+import { appendSitePage, firstSitePage, hasMoreSitePages, type SitePickerState } from './personalStyleModel';
 
-const dialog = readFileSync(path.resolve(__dirname, 'PersonalStyleDialog.tsx'), 'utf8');
+function site(id: string, over: Partial<HostedSite> = {}): HostedSite {
+  return { id, title: id, ownerUserId: 'u1', sourceType: 'upload', entryFile: 'index.html', ...over } as HostedSite;
+}
+const ok = (ids: string[], total: number) => ({ success: true as const, data: { items: ids.map((id) => site(id)), total } });
 
-// 接线守卫：只读第一页时，第 51 张之后的网页永远选不到，首页全是 PDF / 视频时还会误说「没有可提取的网页」。
-describe('我的风格：网页选择器可以翻到第一页之后', () => {
-  it('按标题搜索会带进列表请求', () => {
-    expect(dialog).toContain('listSites({ limit: SITE_PAGE_SIZE, keyword: debouncedQuery || undefined })');
+describe('我的风格：网页选择器分页', () => {
+  it('第一页回来后知道还有没有下一页', () => {
+    const state = firstSitePage('', ok(['a', 'b'], 5), 'u1');
+    expect(state).toMatchObject({ status: 'ready', scanned: 2, total: 5 });
+    expect(hasMoreSitePages(state)).toBe(true);
+    expect(hasMoreSitePages(firstSitePage('', ok(['a'], 1), 'u1'))).toBe(false);
   });
 
-  it('继续加载按已看过的条数往后翻，而不是重复读第一页', () => {
-    expect(dialog).toContain('listSites({ limit: SITE_PAGE_SIZE, skip, keyword: query || undefined })');
-    expect(dialog).toContain('const hasMoreSites = sites.status === \'ready\' && sites.scanned < sites.total;');
+  it('继续加载按已看过的条数往后接，去重，看完就没有下一页', () => {
+    const first = firstSitePage('复盘', ok(['a', 'b'], 3), 'u1');
+    const next = appendSitePage(first, { query: '复盘', skip: 2 }, ok(['b', 'c'], 3), 'u1');
+    expect(next.status === 'ready' && next.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
+    expect(hasMoreSitePages(next)).toBe(false);
   });
 
-  it('本页过滤后为空但后面还有网页时，不说「你还没有可以提取的网页」', () => {
-    expect(dialog).toMatch(/hasMoreSites\s*\?\s*`已看过/);
+  it('迟到的翻页响应：搜索词已变或起点对不上就原样丢弃', () => {
+    const current: SitePickerState = firstSitePage('B', ok(['b1', 'b2'], 10), 'u1');
+    expect(appendSitePage(current, { query: 'A', skip: 2 }, ok(['a3'], 10), 'u1')).toBe(current);
+    expect(appendSitePage(current, { query: 'B', skip: 50 }, ok(['b3'], 10), 'u1')).toBe(current);
   });
 
-  it('搜索条件变化时撤销已选网页，不会从看不见的来源提取', () => {
-    expect(dialog).toContain('useEffect(() => { setSiteId(null); }, [debouncedQuery]);');
+  it('翻页失败只收起加载态，不丢已有列表；第一页失败给出可读原因', () => {
+    const loading = { ...(firstSitePage('', ok(['a'], 5), 'u1') as Extract<SitePickerState, { status: 'ready' }>), loadingMore: true };
+    const after = appendSitePage(loading, { query: '', skip: 1 }, { success: false }, 'u1');
+    expect(after).toMatchObject({ status: 'ready', loadingMore: false, scanned: 1 });
+    expect(firstSitePage('', { success: false, error: { message: '读不到' } }, 'u1')).toEqual({ status: 'failed', message: '读不到' });
   });
+});
 
-  it('迟到的翻页响应搜索词对不上就丢掉，不混进当前列表', () => {
-    expect(dialog).toContain('current.query !== query');
+// 接线守卫：对话框把分页交给上面这几个纯函数，而不是自己另写一套。
+describe('对话框接线', () => {
+  const dialog = readFileSync(path.resolve(__dirname, 'PersonalStyleDialog.tsx'), 'utf8');
+  it('第一页、继续加载、是否还有下一页都走共享判定', () => {
+    expect(dialog).toContain('firstSitePage(');
+    expect(dialog).toContain('appendSitePage(');
+    expect(dialog).toContain('hasMoreSitePages(');
   });
 });

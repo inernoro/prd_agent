@@ -134,3 +134,56 @@ export function deriveBlocker(siteId: string | null, note: string): string | nul
 export function createBlocker(count: number, limit: number): string | null {
   return count >= limit ? `已经有 ${count} 套，最多 ${limit} 套，先删掉一套不用的` : null;
 }
+
+/** 「我的风格」网页选择器的分页状态：按页读、可搜索、可继续往下加载。 */
+export type SitePickerState =
+  | { status: 'loading' }
+  | { status: 'ready'; query: string; items: HostedSite[]; scanned: number; total: number; loadingMore: boolean }
+  | { status: 'failed'; message: string };
+
+type SitePageResponse =
+  | { success: true; data: { items: HostedSite[]; total: number } }
+  | { success: false; error?: { message?: string } | null };
+
+/** 第一页（或换了搜索词之后的第一页）回来：整页替换。 */
+export function firstSitePage(query: string, res: SitePageResponse, userId: string | null | undefined): SitePickerState {
+  if (!res.success) return { status: 'failed', message: res.error?.message || '你的网页列表没有读出来，可以先只写描述' };
+  return {
+    status: 'ready',
+    query,
+    items: derivableSites(res.data.items, userId),
+    scanned: res.data.items.length,
+    total: res.data.total,
+    loadingMore: false,
+  };
+}
+
+/**
+ * 「继续加载」的响应回来：只认发出它的那次请求（同一搜索词、同一起点），否则原样丢弃——
+ * 迟到的响应不许把别的查询结果混进当前列表。失败只收起加载态，不丢已有列表。
+ */
+export function appendSitePage(
+  current: SitePickerState,
+  request: { query: string; skip: number },
+  res: SitePageResponse,
+  userId: string | null | undefined,
+): SitePickerState {
+  if (current.status !== 'ready' || current.scanned !== request.skip || current.query !== request.query) return current;
+  if (!res.success) return { ...current, loadingMore: false };
+  const known = new Set(current.items.map((item) => item.id));
+  const more = derivableSites(res.data.items, userId).filter((item) => !known.has(item.id));
+  return {
+    status: 'ready',
+    query: request.query,
+    items: [...current.items, ...more],
+    scanned: current.scanned + res.data.items.length,
+    total: res.data.total,
+    loadingMore: false,
+  };
+}
+
+/** 还有没有没看过的网页。 */
+export function hasMoreSitePages(state: SitePickerState): boolean {
+  return state.status === 'ready' && state.scanned < state.total;
+}
+
