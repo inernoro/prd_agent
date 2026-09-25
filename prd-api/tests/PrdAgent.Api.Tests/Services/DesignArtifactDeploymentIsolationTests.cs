@@ -367,6 +367,33 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal(writerFinished ? null : "stranded-object", after.WorkspacePendingResultAssetKey);
     }
 
+    [DesignScopeMongoFact]
+    public async Task ServedModel_IsWrittenOnlyWhenItChanges_AndOnlyOnARunningRunOfThisDeployment()
+    {
+        var running = Run("served-running", RunStatuses.Running);
+        var foreign = Run("served-foreign", RunStatuses.Running);
+        var done = Run("served-done", RunStatuses.Done);
+        await InsertAsync(running, CurrentScope);
+        await InsertAsync(foreign, "project-b::branch-a::revision::revision-a");
+        await InsertAsync(done, CurrentScope);
+        var broker = new DesignArtifactWorkspaceBroker(
+            _db,
+            new Mock<IAssetStorage>(MockBehavior.Strict).Object,
+            new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
+            new ConfigurationBuilder().Build());
+
+        Assert.True(await broker.RecordServedModelAsync(running.Id, "gpt-served", null, default));
+        // 同一个模型的后续调用一条都不写：这就是「每次调用最多一次、不是每个分片一次」。
+        Assert.False(await broker.RecordServedModelAsync(running.Id, "gpt-served", null, default));
+        Assert.True(await broker.RecordServedModelAsync(running.Id, "gpt-served-2", null, default));
+        Assert.False(await broker.RecordServedModelAsync(foreign.Id, "gpt-served", null, default));
+        Assert.False(await broker.RecordServedModelAsync(done.Id, "gpt-served", null, default));
+
+        Assert.Equal("gpt-served-2", (await Read(running.Id)).ResolvedModel);
+        Assert.Null((await Read(foreign.Id)).ResolvedModel);
+        Assert.Null((await Read(done.Id)).ResolvedModel);
+    }
+
     private static DesignArtifactRun Run(string id, string status) => new()
     {
         Id = id, UserId = "owner", Status = status, CreatedAt = Now.AddMinutes(-10), UpdatedAt = Now.AddMinutes(-5),

@@ -175,10 +175,15 @@ public sealed class OpenDesignStageProgressTests
     public void 接线守卫_执行器必须把status事件交给进度翻译器_worker必须写入phase分片()
     {
         var executor = Source("prd-api", "src", "PrdAgent.Api", "Services", "DesignArtifactExecutor.cs");
+        var service = Source("prd-api", "src", "PrdAgent.Api", "Services", "OpenDesignServiceArtifactExecutor.cs");
+        var translator = Source("prd-api", "src", "PrdAgent.Api", "Services", "OpenDesignEventTranslator.cs");
         var worker = Source("prd-api", "src", "PrdAgent.Api", "Services", "HostedSiteEditRunWorker.cs");
 
+        // 两条传输面（经 CDS 会话 / 直连设计执行服务）共用同一个翻译器，翻译器把 status 交给进度翻译。
         Assert.Contains("case InfraAgentEventTypes.Status:", executor);
-        Assert.Contains("stageProgress.Observe(", executor);
+        Assert.Contains("translator.ToChunk(", executor);
+        Assert.Contains("translator.ToChunk(", service);
+        Assert.Contains("_stageProgress.Observe(", translator);
         Assert.Contains("chunk.Type == \"phase\"", worker);
     }
 }
