@@ -24,7 +24,43 @@ import { createPortal } from 'react-dom';
  * 锚点可传 anchorRef（包裹按钮的 ref）或 anchorEl（在 .map 列表里用 e.currentTarget
  * 存进 state 的元素），二选一。组件自带：视口边界夹取 + 下方放不下自动上翻 + 点外关闭
  * （排除锚点自身，便于按钮 toggle）+ ESC 关闭 + 滚动/缩放跟随重定位。
+ *
+ * 锚点在模态弹窗里时（如网页工作台），菜单挂进那个弹窗而不是 body：Radix 模态会把 body
+ * 设成 pointer-events:none、把焦点锁在弹窗内容里，挂在 body 下的菜单点不动、输入框也拿不到
+ * 焦点（2026-09-25 验收：工作台「发布给客户 → 生成链接并复制」点了没反应）。
  */
+
+type ClosestCapable = { closest(selector: string): Element | null };
+
+/** 菜单该挂到哪：锚点所在的弹窗，没有就是 body。 */
+export function resolveMenuPortalTarget<T>(anchor: ClosestCapable | null, body: T): Element | T {
+  return anchor?.closest('[role="dialog"]') ?? body;
+}
+
+/**
+ * 点在菜单与锚点之外时要不要关菜单。
+ * 从菜单里弹出的确认对话框渲染在别的弹窗里：在那里点按钮是这次菜单操作的一部分，不关；
+ * 但菜单所在的那个弹窗本身也是 dialog，点它的其它地方就是点外面，照常关。
+ */
+export function shouldCloseOnOutsidePointer(target: ClosestCapable | null, anchor: Node | null): boolean {
+  const dialog = target?.closest('[role="dialog"]');
+  if (!dialog) return true;
+  return anchor ? dialog.contains(anchor) : false;
+}
+
+/**
+ * fixed 定位以视口为准，但挂进弹窗后，若弹窗带 transform 等属性，fixed 会改以弹窗为参照。
+ * 用「上一次写进去的坐标」与「实际落点」之差量出这个偏移，换算回视口坐标。
+ */
+export function containingBlockOffset(
+  applied: { top: string; left: string },
+  actual: { top: number; left: number },
+): { dx: number; dy: number } {
+  const top = parseFloat(applied.top);
+  const left = parseFloat(applied.left);
+  if (!Number.isFinite(top) || !Number.isFinite(left)) return { dx: 0, dy: 0 };
+  return { dx: actual.left - left, dy: actual.top - top };
+}
 type AnchoredMenuProps = {
   open: boolean;
   onClose: () => void;
@@ -79,6 +115,13 @@ export function AnchoredMenu({
       const above = a.top - gap - mh;
       top = above >= 8 ? above : Math.max(8, window.innerHeight - mh - 8);
     }
+    // 挂在 body 下时 fixed 就是视口坐标；挂进弹窗时按实际参照系换算
+    if (menu && menu.parentElement !== document.body) {
+      const r = menu.getBoundingClientRect();
+      const { dx, dy } = containingBlockOffset(menu.style, r);
+      top -= dy;
+      left -= dx;
+    }
     setPos({ top, left });
   }, [getAnchor, align, gap, minWidth]);
 
@@ -110,8 +153,8 @@ export function AnchoredMenu({
       if (getAnchor()?.contains(t)) return; // 锚点自己负责 toggle
       // 从菜单里弹出的模态对话框（如发布前私有资料确认）渲染在别的 portal 里，DOM 上不在菜单内，
       // 但它是这次菜单操作的一部分：在对话框里点按钮不该把下层菜单关掉，否则确认后的结果
-      // （例如刚生成的分享链接）没有地方就地显示。
-      if (t instanceof Element && t.closest('[role="dialog"]')) return;
+      // （例如刚生成的分享链接）没有地方就地显示。判定见 shouldCloseOnOutsidePointer。
+      if (!shouldCloseOnOutsidePointer(t instanceof Element ? t : null, getAnchor())) return;
       onClose();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -122,7 +165,12 @@ export function AnchoredMenu({
     window.addEventListener('resize', onResize);
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    // 弹窗出场动画期间带 transform、是 fixed 的参照系；动画一结束参照系换回视口，
+    // 在这期间打开的菜单要按新参照系重算一次，否则会停在错位的位置上。
+    const host = resolveMenuPortalTarget(getAnchor(), null);
+    host?.addEventListener('animationend', onResize);
     return () => {
+      host?.removeEventListener('animationend', onResize);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('mousedown', onDown);
@@ -144,7 +192,7 @@ export function AnchoredMenu({
     >
       {children}
     </div>,
-    document.body,
+    resolveMenuPortalTarget(getAnchor(), document.body),
   );
 }
 
