@@ -100,3 +100,13 @@ describe('深链只有一处构造', () => {
     expect(file?.text).toContain('<GenerateFromContentDialog');
   });
 });
+
+describe('共享生成弹窗在窄屏可用', () => {
+  it('走 ResponsiveDialog（窄屏换底部面板），不直接用居中 Dialog', () => {
+    // 居中 Dialog 的标题区不收缩，长描述会把弹窗撑出 390px 视口、关闭按钮落到屏幕外
+    const dialog = sources.find((file) => file.rel === 'components/design-launch/GenerateFromContentDialog.tsx');
+    expect(dialog).toBeDefined();
+    expect(dialog?.text).toContain("from '@/components/ui/ResponsiveDialog'");
+    expect(dialog?.text).not.toMatch(/<Dialog\b/);
+  });
+});

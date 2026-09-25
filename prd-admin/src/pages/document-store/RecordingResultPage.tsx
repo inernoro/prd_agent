@@ -1298,17 +1298,21 @@ export function RecordingResultPage() {
       aria-disabled={generate.kind === 'blocked'}
       title={generate.kind === 'blocked' ? generate.reason : '用这份转录生成网页或 HTML PPT'}
       onClick={() => { if (generate.kind === 'ready') setShowGenerate(true); }}
-      className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-[12px] px-3.5 text-[14px] font-semibold disabled:cursor-not-allowed"
+      className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-[12px] px-3.5 py-1.5 text-left text-[14px] font-semibold disabled:cursor-not-allowed"
       style={{
         background: 'var(--bg-card)',
         color: generate.kind === 'blocked' ? 'var(--text-muted)' : 'var(--text-primary)',
         border: '1px solid var(--border-subtle)',
       }}
     >
-      <Wand2 size={15} /> 生成网页
-      {generate.kind === 'blocked' && (
-        <span className="text-[12px] font-normal" style={{ color: 'var(--text-muted)' }}>· {generate.reason}</span>
-      )}
+      <Wand2 size={15} className="shrink-0" />
+      {/* 原因落在标签下方：窄屏「更多」菜单只有 160px 宽，与标签并排会被挤成两列四行 */}
+      <span className="flex min-w-0 flex-col items-start leading-tight">
+        <span className="whitespace-nowrap">生成网页</span>
+        {generate.kind === 'blocked' && (
+          <span className="mt-0.5 text-[12px] font-normal" style={{ color: 'var(--text-muted)' }}>{generate.reason}</span>
+        )}
+      </span>
     </button>
   ) : null;
   const headerActions = exportAction || generateAction ? <>{exportAction}{generateAction}</> : null;

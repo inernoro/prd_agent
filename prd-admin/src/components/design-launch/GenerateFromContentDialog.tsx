@@ -1,6 +1,6 @@
 import { FileText, Globe, type LucideIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Dialog } from '@/components/ui/Dialog';
+import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import type { DesignArtifactTarget } from '@/lib/designArtifactLaunch';
 import { buildGenerateLaunchPath, DESIGN_LAUNCH_AGENTS, type GenerateContentSource } from './designLaunchAgents';
 
@@ -15,6 +15,10 @@ const AGENT_ICON: Record<DesignArtifactTarget, LucideIcon> = {
  * 受控形态（open / onOpenChange 由调用方持有）：同一页面常有多个触发点
  * （知识库顶栏按钮 + 移动端更多菜单），它们打开的是同一个弹窗。
  * 选中后直接跳到目标工作台，来源由深链带过去，工作台里不需要再选一次。
+ *
+ * 走 ResponsiveDialog：窄屏（<768px）换成通栏底部面板。居中 Dialog 的标题区不收缩，
+ * 描述一长就把整块撑出视口、关闭按钮被挤到屏幕外（390px 实测），而底部面板恒为屏宽、
+ * 描述自动换行、关闭按钮常驻；卡片网格在窄屏本来就是单列。
  */
 export function GenerateFromContentDialog({
   open,
@@ -31,7 +35,7 @@ export function GenerateFromContentDialog({
 }) {
   const navigate = useNavigate();
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open && !!source}
       onOpenChange={onOpenChange}
       title="选择生成智能体"
