@@ -187,6 +187,8 @@ public sealed class ApplicationReadinessProbeTests
         // 一次 Redis 故障就会攒出成百条谁也停不掉的在途探测。
         var started = 0;
         var release = new TaskCompletionSource();
+        // 时钟不走：五轮都落在过期窗口之内。窗口内外由用例决定，不取决于 CI 当时有多慢。
+        var clock = new ManualTimeProvider();
         var probe = CreateProbe(
             mongo: _ => Task.CompletedTask,
             redis: _ =>
@@ -195,7 +197,8 @@ public sealed class ApplicationReadinessProbeTests
                 return release.Task;
             },
             asset: (_, _) => Task.FromResult(HealthyAsset()),
-            dependencyTimeout: TimeSpan.FromMilliseconds(40));
+            dependencyTimeout: TimeSpan.FromMilliseconds(40),
+            timeProvider: clock);
 
         for (var round = 0; round < 5; round++)
         {
@@ -220,6 +223,7 @@ public sealed class ApplicationReadinessProbeTests
         //（Codex P2，2026-09-16）。并发闸纪律第四条：卡住的持有者必须有人来收。
         var started = 0;
         var firstAttempt = new TaskCompletionSource();
+        var clock = new ManualTimeProvider();
         var probe = CreateProbe(
             mongo: _ => Task.CompletedTask,
             redis: _ =>
@@ -228,7 +232,8 @@ public sealed class ApplicationReadinessProbeTests
                 return Interlocked.Increment(ref started) == 1 ? firstAttempt.Task : Task.CompletedTask;
             },
             asset: (_, _) => Task.FromResult(HealthyAsset()),
-            dependencyTimeout: TimeSpan.FromMilliseconds(10));
+            dependencyTimeout: TimeSpan.FromMilliseconds(10),
+            timeProvider: clock);
 
         (await probe.CheckAsync(force: true)).ErrorCode.ShouldBe(ApplicationReadinessProbe.RedisUnavailable);
         started.ShouldBe(1);
@@ -238,7 +243,7 @@ public sealed class ApplicationReadinessProbeTests
         started.ShouldBe(1);
 
         // 熬过窗口（10ms x 12 = 120ms）之后必须重新发起，于是 Redis 一恢复就能重新变健康。
-        await Task.Delay(TimeSpan.FromMilliseconds(10 * SingleFlightProbe.StaleProbeTimeoutMultiplier + 60));
+        clock.Advance(TimeSpan.FromMilliseconds(10 * SingleFlightProbe.StaleProbeTimeoutMultiplier + 1));
 
         var recovered = await probe.CheckAsync(force: true);
         recovered.Status.ShouldBe("healthy");
@@ -292,13 +297,27 @@ public sealed class ApplicationReadinessProbeTests
         Func<CancellationToken, Task> mongo,
         Func<CancellationToken, Task> redis,
         Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> asset,
-        TimeSpan? dependencyTimeout = null)
+        TimeSpan? dependencyTimeout = null,
+        TimeProvider? timeProvider = null)
         => new(
             mongo,
             redis,
             asset,
             NullLogger<ApplicationReadinessProbe>.Instance,
-            dependencyTimeout);
+            dependencyTimeout,
+            timeProvider: timeProvider);
+
+    /// <summary>只在用例调用 Advance 时才走的时钟：过期窗口的判断从此与机器快慢无关。</summary>
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private long _ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
+    }
 
     private static AssetStorageReadinessResponse HealthyAsset()
         => new() { Status = "healthy" };
