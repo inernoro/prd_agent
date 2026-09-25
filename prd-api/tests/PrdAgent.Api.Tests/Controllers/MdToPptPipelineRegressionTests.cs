@@ -18,106 +18,106 @@ namespace PrdAgent.Api.Tests.Controllers;
 /// </summary>
 public class MdToPptPipelineRegressionTests
 {
-    private static GatewayModelResolution NotInCatalog(string model) => new()
-    {
-        Success = false,
-        ErrorMessage = $"没有对外模型能接住这次请求；请确认 {model} 在对外模型目录里",
-        FailureCode = GatewayRouteFailure.AppCallerPoolUnbound,
-        FailureStage = MdToPptPageModelChoice.NotInCatalogStage,
-    };
-
-    private static GatewayModelResolution GatewayDefault() => new()
-    {
-        Success = true,
-        LogicalModelPublicId = "default-chat-curated",
-        ActualModel = "gpt-5.6-sol",
-    };
+    private const string PoolUnbound = GatewayRouteFailure.AppCallerPoolUnbound;
 
     [Fact]
-    public void PageModel_ImplicitProfileNotInGatewayCatalog_PinsGatewayDefaultInsteadOfRawPoolName()
+    public void PageModelRoute_ImplicitProfileRejectedByGateway_SwitchesOnceToGatewayDefault()
     {
-        // 事故现场：默认运行配置「池 · gpt-5.6-sol」是旧 MAP 模型池物化出来的，网关只认对外模型。
-        var choice = MdToPptPageModelChoice.Choose("gpt-5.6-sol", explicitlySelected: false,
-            NotInCatalog("gpt-5.6-sol"), GatewayDefault());
+        // 事故现场：默认运行配置「池 · gpt-5.6-sol」是旧 MAP 模型池物化出来的，网关只认对外模型，
+        // 页面请求在解析阶段被以 APPCALLER_POOL_UNBOUND 拒绝。
+        var route = new MdToPptPageModelRoute("gpt-5.6-sol", explicitlySelected: false);
+        route.ExpectedModelFor(route.Outcome).ShouldBe("gpt-5.6-sol");
 
-        choice.Outcome.ShouldBe(MdToPptPageModelOutcome.UseGatewayDefault);
-        choice.ExpectedModel.ShouldBe("default-chat-curated");
-        choice.DisplayModel.ShouldBe("gpt-5.6-sol");
-        choice.Notice.ShouldNotBeNull();
-        choice.Notice.ShouldContain("gpt-5.6-sol", customMessage: "改判必须说清原来点名的是谁");
-        choice.Notice.ShouldContain("default-chat-curated", customMessage: "改判必须说清这次实际用的是谁");
+        var first = route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound);
+        first.ShouldBe((MdToPptPageModelOutcome.UseGatewayDefault, true));
+        route.ExpectedModelFor(route.Outcome).ShouldBeNull("改道后不点名，交给网关按该用途的默认对外模型选");
+        route.Notice.ShouldNotBeNull();
+        route.Notice.ShouldContain("gpt-5.6-sol", customMessage: "改判必须说清原来点名的是谁");
+
+        // 并行的另一页也按旧路线撞了同一堵墙：不重复切换、不升级成拒绝，按新路线重试即可。
+        var second = route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound);
+        second.ShouldBe((MdToPptPageModelOutcome.UseGatewayDefault, false));
 
         var wire = MdToPptController.BuildGatewayPageRequest(
             new InfraAgentRuntimeProfile { Model = "gpt-5.6-sol" }, "sys", "usr",
-            AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, modelChoice: choice);
-        wire.ExpectedModel.ShouldBe("default-chat-curated");
+            AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+            modelRoute: route, routeOutcome: route.Outcome);
+        wire.ExpectedModel.ShouldBeNull();
     }
 
     [Fact]
-    public void PageModel_ExplicitProfileNotInGatewayCatalog_RejectsOnceInsteadOfDegradingEveryPage()
+    public void PageModelRoute_GatewayDefaultAlsoRejected_RejectsTheRun()
     {
-        var choice = MdToPptPageModelChoice.Choose("gpt-5.6-sol", explicitlySelected: true,
-            NotInCatalog("gpt-5.6-sol"), GatewayDefault());
+        var route = new MdToPptPageModelRoute("gpt-5.6-sol", explicitlySelected: false);
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound);
 
-        choice.Outcome.ShouldBe(MdToPptPageModelOutcome.Reject);
-        choice.Notice.ShouldNotBeNull();
-        choice.Notice.ShouldContain("gpt-5.6-sol");
-        choice.Notice.ShouldContain("MAP 默认模型", customMessage: "拒绝必须给出下一步");
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseGatewayDefault, PoolUnbound)
+            .ShouldBe((MdToPptPageModelOutcome.Reject, true));
+        route.Notice.ShouldNotBeNull();
+        route.Notice.ShouldContain("默认对外模型", customMessage: "拒绝必须说清卡在哪、找谁");
     }
 
     [Fact]
-    public void PageModel_NoGatewayDefault_RejectsWithNextStep()
+    public void PageModelRoute_ExplicitProfileRejected_RejectsInsteadOfSwappingModels()
     {
-        var choice = MdToPptPageModelChoice.Choose("gpt-5.6-sol", explicitlySelected: false,
-            NotInCatalog("gpt-5.6-sol"), new GatewayModelResolution { Success = false });
+        var route = new MdToPptPageModelRoute("gpt-5.6-sol", explicitlySelected: true);
 
-        choice.Outcome.ShouldBe(MdToPptPageModelOutcome.Reject);
-        choice.Notice.ShouldNotBeNull();
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound)
+            .ShouldBe((MdToPptPageModelOutcome.Reject, true));
+        route.Notice.ShouldNotBeNull();
+        route.Notice.ShouldContain("MAP 默认模型", customMessage: "拒绝必须给出下一步");
     }
 
     [Theory]
-    [InlineData(true, null)]
-    [InlineData(false, GatewayRouteFailure.GatewayConfigUnavailable)]
-    [InlineData(false, GatewayRouteFailure.ProviderUnavailable)]
-    public void PageModel_KnownModelOrUnrelatedFailure_KeepsProfilePin(bool success, string? failureCode)
+    [InlineData(GatewayRouteFailure.GatewayConfigUnavailable)]
+    [InlineData(GatewayRouteFailure.ProviderUnavailable)]
+    [InlineData(GatewayRouteFailure.ModelPoolAllUnavailable)]
+    [InlineData(null)]
+    public void PageModelRoute_UnrelatedGatewayFailure_KeepsProfilePin(string? code)
     {
-        var resolution = new GatewayModelResolution
-        {
-            Success = success,
-            FailureCode = failureCode,
-            FailureStage = success ? null : "gateway-config-plane",
-        };
+        var route = new MdToPptPageModelRoute("qwen-max", explicitlySelected: false);
 
-        var choice = MdToPptPageModelChoice.Choose("qwen-max", explicitlySelected: false, resolution, GatewayDefault());
-
-        choice.Outcome.ShouldBe(MdToPptPageModelOutcome.UseProfileModel);
-        choice.ExpectedModel.ShouldBe("qwen-max");
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, code)
+            .ShouldBe((MdToPptPageModelOutcome.UseProfileModel, false));
+        route.ExpectedModelFor(route.Outcome).ShouldBe("qwen-max");
+        route.Notice.ShouldBeNull();
     }
 
     [Fact]
-    public void PageModel_ProfileWithoutModel_StaysAuto()
+    public void PageModelRoute_ProfileWithoutModel_NeverSwitches()
     {
-        var choice = MdToPptPageModelChoice.Choose("  ", explicitlySelected: false, null, null);
+        var route = new MdToPptPageModelRoute("  ", explicitlySelected: false);
 
-        choice.Outcome.ShouldBe(MdToPptPageModelOutcome.UseProfileModel);
-        choice.ExpectedModel.ShouldBeNull();
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound)
+            .ShouldBe((MdToPptPageModelOutcome.UseProfileModel, false));
+        route.ExpectedModelFor(route.Outcome).ShouldBeNull();
     }
 
     [Fact]
-    public void GatewayPageRequests_AllCarryTheRunModelChoice()
+    public void PageGeneration_DoesNotPreflightResolveBeforeSending()
     {
-        // 接线守卫：判定只算一次，每一条走网关的页面请求都必须带上它。
+        // ResolveModelAsync 会替熔断冷却期满的线路抢半开试探租约；预检之后不发请求，真正的页面请求
+        // 反而抢不到那条线路，模型永远恢复不了（Codex P1，PR #1629）。改道只能看真实发送的结果。
+        var source = File.ReadAllText(ControllerPath());
+        source.ShouldNotContain("_gateway.ResolveModelAsync(",
+            customMessage: "MD 转 PPT 页面生成不许在发送前单独调用 ResolveModelAsync 预检模型");
+    }
+
+    [Fact]
+    public void GatewayPageRequests_AllCarryTheRunModelRoute()
+    {
+        // 接线守卫：路线按运行共享，每一条走网关的页面请求都必须带上它。
         // 漏掉任何一处，那条路径会照旧钉旧池模型名、在解析阶段被拒——而且不会有别的测试变红。
         var source = File.ReadAllText(ControllerPath());
         var callSites = CallSites(source, "RunPageOnceAsync(", "private async Task<PageGenerationResult> RunPageOnceAsync(");
         callSites.Count.ShouldBeGreaterThanOrEqualTo(4);
         foreach (var call in callSites)
-            call.ShouldContain("modelChoice", customMessage: $"页面请求没有带运行级模型判定：{call}");
+            call.ShouldContain("modelRoute", customMessage: $"页面请求没有带运行级模型路线：{call}");
 
         var builders = CallSites(source, "BuildGatewayPageRequest(", "internal static GatewayRequest BuildGatewayPageRequest(");
         builders.Count.ShouldBeGreaterThanOrEqualTo(2);
         foreach (var call in builders)
-            call.ShouldContain("modelChoice", customMessage: $"网关页面请求没有带运行级模型判定：{call}");
+            call.ShouldContain("modelRoute", customMessage: $"网关页面请求没有带运行级模型路线：{call}");
     }
 
     [Fact]

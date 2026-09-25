@@ -4308,63 +4308,47 @@ public class MdToPptController : ControllerBase
     }
 
     /// <summary>
-    /// 走网关直出的页面生成，整次运行先问一次网关「这个模型名你认不认」，再决定页面请求钉哪个对外模型。
+    /// 一次运行的页面模型路线：运行配置里点名的模型 + 这份配置是不是用户点名选的。
     ///
-    /// 为什么要问：运行配置里的模型名来自 MAP 旧模型池（「从模型池直选」物化出来的），而页面请求
-    /// 已经强制进独立 LLMGW，后者只认对外模型目录里的名字。旧池名字网关不认时，每一页都在解析阶段
-    /// 被拒，再各自退化成兜底版式——同一次运行里大纲却能出（大纲不点名模型），于是看起来像
-    /// 「页面生成器坏了」。判据收在 <see cref="MdToPptPageModelChoice.Choose"/> 一处，这里只负责取事实。
+    /// 运行配置里的模型名常来自 MAP 旧模型池（「从模型池直选」物化出来的），而页面请求已经强制进
+    /// 独立 LLMGW，后者只认对外模型目录。以前旧池名字网关接不住时，每一页都在解析阶段被拒、各自
+    /// 退化成兜底版式，同一次运行里大纲却能出（大纲不点名模型）。改道判据见 <see cref="MdToPptPageModelRoute.Decide"/>，
+    /// 且只看真实发送的结果——不做预检，预检会替熔断线路抢走半开试探租约。
     /// </summary>
-    private async Task<MdToPptPageModelChoice> ResolvePageModelChoiceAsync(
-        InfraAgentRuntimeProfile profile,
-        string? requestedProfileId,
+    internal static MdToPptPageModelRoute CreatePageModelRoute(InfraAgentRuntimeProfile profile, string? requestedProfileId)
+        => new(
+            profile.Model,
+            !string.IsNullOrWhiteSpace(requestedProfileId)
+                && string.Equals(requestedProfileId.Trim(), profile.Id, StringComparison.Ordinal));
+
+    /// <summary>网关拒绝了按某条路线发出的页面请求：更新路线；由这一次触发切换时，把改判告诉用户并留痕。</summary>
+    private async Task<MdToPptPageModelOutcome> ApplyGatewayRejectionAsync(
+        MdToPptPageModelRoute route,
+        MdToPptPageModelOutcome attemptedWith,
+        string? gatewayErrorCode,
         string runId)
     {
-        var requested = string.IsNullOrWhiteSpace(profile.Model) ? null : profile.Model.Trim();
-        if (!ShouldUseGatewayDirect(profile) || requested == null)
-            return MdToPptPageModelChoice.ProfileModel(requested);
-
-        var explicitlySelected = !string.IsNullOrWhiteSpace(requestedProfileId)
-            && string.Equals(requestedProfileId.Trim(), profile.Id, StringComparison.Ordinal);
-        GatewayModelResolution? requestedResolution;
-        try
-        {
-            requestedResolution = await _gateway.ResolveModelAsync(
-                AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, ModelTypes.Chat, requested, ct: CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            // 预检问不到不改判：照旧按配置里的模型发，真实失败会在页面请求里如实暴露并留痕。
-            _logger.LogWarning(ex, "[MdToPpt] 页面模型预检没问到网关，按运行配置里的模型 {Model} 照常发送 runId={RunId}", requested, runId);
-            return MdToPptPageModelChoice.ProfileModel(requested);
-        }
-
-        GatewayModelResolution? defaultResolution = null;
-        if (!requestedResolution.Success
-            && !explicitlySelected
-            && string.Equals(requestedResolution.FailureStage, MdToPptPageModelChoice.NotInCatalogStage, StringComparison.Ordinal))
-        {
-            try
-            {
-                defaultResolution = await _gateway.ResolveModelAsync(
-                    AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, ModelTypes.Chat, null, ct: CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[MdToPpt] 查询网关默认对外模型失败 runId={RunId}", runId);
-            }
-        }
-
-        var choice = MdToPptPageModelChoice.Choose(requested, explicitlySelected, requestedResolution, defaultResolution);
-        if (choice.Outcome != MdToPptPageModelOutcome.UseProfileModel)
+        var (outcome, changed) = route.OnGatewayRejected(attemptedWith, gatewayErrorCode);
+        if (changed)
         {
             _logger.LogWarning(
-                "[MdToPpt] {Notice} 技术细节：outcome={Outcome} runId={RunId} profileId={ProfileId} requested={Requested} expected={Expected} failureCode={Code} failureStage={Stage}",
-                choice.Notice, choice.Outcome, runId, profile.Id, requested, choice.ExpectedModel ?? "(未点名)",
-                requestedResolution.FailureCode ?? "(无)", requestedResolution.FailureStage ?? "(无)");
+                "[MdToPpt] {Notice} 技术细节：outcome={Outcome} runId={RunId} requested={Requested} explicit={Explicit} gatewayCode={Code}",
+                route.Notice, outcome, runId, route.RequestedModel ?? "(未点名)", route.ExplicitlySelected, gatewayErrorCode ?? "(无)");
+            if (outcome == MdToPptPageModelOutcome.UseGatewayDefault && route.OnSubstituted != null)
+            {
+                try { await route.OnSubstituted(); }
+                catch (Exception ex) { _logger.LogWarning(ex, "[MdToPpt] 改判提示下发失败 runId={RunId}", runId); }
+            }
         }
-        return choice;
+        return outcome;
     }
+
+    private static object ModelSubstitutedDiag(MdToPptPageModelRoute route) => new
+    {
+        stage = "model_substituted",
+        requestedModel = route.RequestedModel,
+        message = route.Notice,
+    };
 
     private static string GenerationPlatformLabel(InfraAgentRuntimeProfile profile)
         => ShouldUseGatewayDirect(profile) ? "LLM Gateway" : "CDS Agent";
@@ -4418,16 +4402,17 @@ public class MdToPptController : ControllerBase
         string? title = null,
         string? runId = null,
         bool includeThinking = false,
-        MdToPptPageModelChoice? modelChoice = null)
+        MdToPptPageModelRoute? modelRoute = null,
+        MdToPptPageModelOutcome routeOutcome = MdToPptPageModelOutcome.UseProfileModel)
     {
         return new GatewayRequest
         {
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Chat,
-            // 本次运行已经问过网关认不认这个名字时，按那次的结论发（见 ResolvePageModelChoiceAsync）；
-            // 没问过的旧调用方保持原样：按运行配置里的模型名发。
-            ExpectedModel = modelChoice != null
-                ? modelChoice.ExpectedModel
+            // 带运行级路线时按路线点名（改道后不点名，交给网关默认对外模型）；
+            // 没带路线的旧调用方保持原样：按运行配置里的模型名发。
+            ExpectedModel = modelRoute != null
+                ? modelRoute.ExpectedModelFor(routeOutcome)
                 : string.IsNullOrWhiteSpace(profile.Model) ? null : profile.Model.Trim(),
             Stream = true,
             IncludeThinking = includeThinking,
@@ -4506,68 +4491,93 @@ public class MdToPptController : ControllerBase
         string title,
         string runId,
         IReadOnlyList<DesignKnowledgeSnapshot> frozenKnowledge,
-        MdToPptPageModelChoice? modelChoice)
+        MdToPptPageModelRoute? modelRoute)
     {
         try
         {
-            var requestId = Guid.NewGuid().ToString("N");
-            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-                RequestId: requestId,
-                GroupId: null,
-                SessionId: runId,
-                UserId: userId,
-                ViewRole: null,
-                DocumentChars: userPrompt.Length,
-                DocumentHash: null,
-                SystemPromptRedacted: "[MdToPpt-Page]",
-                RequestType: "chat",
-                AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
-                RunId: runId));
-
-            var request = BuildGatewayPageRequest(
-                profile,
-                systemPrompt,
-                userPrompt,
-                AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
-                requestId,
-                userId,
-                title,
-                runId,
-                modelChoice: modelChoice);
-
-            var fullText = new StringBuilder();
-            string? actualModel = null;
-            string? actualPlatform = null;
-            await RevalidateKnowledgeForDispatchAsync(userId, frozenKnowledge, CancellationToken.None);
-            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
+            // 至多两次发送：第一次按当前路线；若因「点名的模型网关接不住」被拒、且路线改道，
+            // 立即按新路线（不点名）再发一次。别的失败不在这里重试，交给调用方既有的重试 / 兜底链路。
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                var attemptedWith = modelRoute?.Outcome ?? MdToPptPageModelOutcome.UseProfileModel;
+                if (attemptedWith == MdToPptPageModelOutcome.Reject)
+                    return new PageGenerationResult(null, modelRoute!.Notice, null, null);
+
+                var requestId = Guid.NewGuid().ToString("N");
+                using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                    RequestId: requestId,
+                    GroupId: null,
+                    SessionId: runId,
+                    UserId: userId,
+                    ViewRole: null,
+                    DocumentChars: userPrompt.Length,
+                    DocumentHash: null,
+                    SystemPromptRedacted: "[MdToPpt-Page]",
+                    RequestType: "chat",
+                    AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                    RunId: runId));
+
+                var request = BuildGatewayPageRequest(
+                    profile,
+                    systemPrompt,
+                    userPrompt,
+                    AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                    requestId,
+                    userId,
+                    title,
+                    runId,
+                    modelRoute: modelRoute,
+                    routeOutcome: attemptedWith);
+
+                var fullText = new StringBuilder();
+                string? actualModel = null;
+                string? actualPlatform = null;
+                GatewayStreamChunk? rejection = null;
+                await RevalidateKnowledgeForDispatchAsync(userId, frozenKnowledge, CancellationToken.None);
+                await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
                 {
-                    actualModel = chunk.Resolution.ActualModel;
-                    actualPlatform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
-                    continue;
-                }
-                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    fullText.Append(chunk.Content);
-                    continue;
+                    if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                    {
+                        actualModel = chunk.Resolution.ActualModel;
+                        actualPlatform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
+                        continue;
+                    }
+                    if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        fullText.Append(chunk.Content);
+                        continue;
+                    }
+
+                    if (chunk.Type == GatewayChunkType.Error)
+                    {
+                        rejection = chunk;
+                        break;
+                    }
                 }
 
-                if (chunk.Type == GatewayChunkType.Error)
+                if (rejection != null)
                 {
                     // 网关给的原因必须留痕：以前这里直接换成通用文案，页面退化成兜底版式，
                     // 而日志里一个字都没有——N1「每页都退化」查了半天就是卡在这里（形状 10）。
                     _logger.LogWarning(
-                        "[MdToPpt-Page] LLM Gateway 拒绝了这一页的生成请求，这一页将退化为兜底版式：{Title} runId={RunId} expectedModel={Expected} code={Code} error={Error}",
-                        title, runId, request.ExpectedModel ?? "(未点名)", chunk.ErrorCode ?? "(无)", chunk.Error ?? chunk.Content ?? "(无)");
+                        "[MdToPpt-Page] LLM Gateway 拒绝了这一页的生成请求：{Title} runId={RunId} expectedModel={Expected} code={Code} error={Error}",
+                        title, runId, request.ExpectedModel ?? "(未点名)", rejection.ErrorCode ?? "(无)", rejection.Error ?? rejection.Content ?? "(无)");
+                    if (modelRoute != null && fullText.Length == 0)
+                    {
+                        var now = await ApplyGatewayRejectionAsync(modelRoute, attemptedWith, rejection.ErrorCode, runId);
+                        if (now == MdToPptPageModelOutcome.Reject)
+                            return new PageGenerationResult(null, modelRoute.Notice, actualModel, actualPlatform);
+                        if (now != attemptedWith) continue;
+                    }
                     return new PageGenerationResult(null, ToPublicGenerationError(), actualModel, actualPlatform);
                 }
-            }
 
-            var raw = fullText.ToString();
-            return string.IsNullOrWhiteSpace(raw)
-                ? new PageGenerationResult(null, "LLM Gateway 未返回页面 HTML", actualModel, actualPlatform)
-                : new PageGenerationResult(raw, null, actualModel, actualPlatform);
+                var raw = fullText.ToString();
+                return string.IsNullOrWhiteSpace(raw)
+                    ? new PageGenerationResult(null, "LLM Gateway 未返回页面 HTML", actualModel, actualPlatform)
+                    : new PageGenerationResult(raw, null, actualModel, actualPlatform);
+            }
+            return new PageGenerationResult(null, ToPublicGenerationError(), null, null);
         }
         catch (DesignKnowledgeSnapshotException)
         {
@@ -4590,10 +4600,10 @@ public class MdToPptController : ControllerBase
         string runId,
         InfraAgentSessionView? presession,
         IReadOnlyList<DesignKnowledgeSnapshot> frozenKnowledge,
-        MdToPptPageModelChoice? modelChoice = null)
+        MdToPptPageModelRoute? modelRoute = null)
     {
         if (ShouldUseGatewayDirect(profile))
-            return await RunGatewayPageOnceAsync(userId, profile, systemPrompt, userPrompt, title, runId, frozenKnowledge, modelChoice);
+            return await RunGatewayPageOnceAsync(userId, profile, systemPrompt, userPrompt, title, runId, frozenKnowledge, modelRoute);
 
         if (connection == null)
             return new PageGenerationResult(null, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权", null, null);
@@ -4753,24 +4763,9 @@ public class MdToPptController : ControllerBase
             await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
             return;
         }
-        var modelChoice = await ResolvePageModelChoiceAsync(profile, req.RuntimeProfileId, run.Id);
-        if (modelChoice.Outcome == MdToPptPageModelOutcome.Reject)
-        {
-            await PersistRunErrorAsync(run, modelChoice.Notice!);
-            await EmitAsync("error", new { message = modelChoice.Notice, code = "page_model_not_in_gateway_catalog" });
-            return;
-        }
-        await EmitAsync("model", new { model = modelChoice.DisplayModel ?? GenerationModelLabel(profile), platform });
-        if (modelChoice.Outcome == MdToPptPageModelOutcome.UseGatewayDefault)
-        {
-            await EmitAsync("diag", new
-            {
-                stage = "model_substituted",
-                requestedModel = modelChoice.RequestedModel,
-                expectedModel = modelChoice.ExpectedModel,
-                message = modelChoice.Notice,
-            });
-        }
+        var modelRoute = CreatePageModelRoute(profile, req.RuntimeProfileId);
+        modelRoute.OnSubstituted = () => EmitAsync("diag", ModelSubstitutedDiag(modelRoute));
+        await EmitAsync("model", new { model = GenerationModelLabel(profile), platform });
 
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
         // 锚定 deck 模式（2026-06-12）：人工精调成品模板做壳子与版式范本；
@@ -4890,7 +4885,7 @@ public class MdToPptController : ControllerBase
                     }
                     var pageResult = await RunPageOnceAsync(
                         userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", run.Id,
-                        i == 0 ? presession : null, run.KnowledgeReferences, modelChoice);
+                        i == 0 ? presession : null, run.KnowledgeReferences, modelRoute);
                     var unsupportedClaims = UnsupportedVisibleClaimValidation.Accepted;
                     var section = NormalizeGeneratedSlideFragment(pageResult.Text, anchor != null);
                     if (sourcePages != null && !string.IsNullOrEmpty(section))
@@ -4939,7 +4934,7 @@ public class MdToPptController : ControllerBase
                         var retryUserPrompt = BuildAnchoredPageRetryUserPrompt(usr, unsupportedClaims);
                         var retryResult = await RunPageOnceAsync(
                             userId, connection, profile, sys, retryUserPrompt, $"PPT 第{i + 1}页R", run.Id,
-                            null, run.KnowledgeReferences, modelChoice);
+                            null, run.KnowledgeReferences, modelRoute);
                         section = NormalizeGeneratedSlideFragment(retryResult.Text, anchor != null);
                         if (sourcePages != null && !string.IsNullOrEmpty(section))
                             section = MaterializeSourcePage(section, sourcePages[i], i, total, out _);
@@ -5015,6 +5010,15 @@ public class MdToPptController : ControllerBase
             }).ToList();
 
             await Task.WhenAll(tasks);
+
+            // 点名的模型网关接不住、又不能改道（用户点名选的配置，或网关默认也接不住）：
+            // 整次运行如实失败，不把一整本兜底版式当成生成结果保存下来。
+            if (modelRoute.Outcome == MdToPptPageModelOutcome.Reject)
+            {
+                await PersistRunErrorAsync(run, modelRoute.Notice!);
+                await EmitAsync("error", new { message = modelRoute.Notice, code = "page_model_not_in_gateway_catalog" });
+                return;
+            }
 
             if (anchor != null && sections.Length > 0 && !string.IsNullOrEmpty(sections[0]))
                 sections[0] = AddActiveToFirstSlide(sections[0]);
@@ -5095,24 +5099,9 @@ public class MdToPptController : ControllerBase
         if (!ShouldUseGatewayDirect(profile) && connection == null) return false; // 回落整篇路径（它有自己的错误提示）
 
         var platform = GenerationPlatformLabel(profile);
-        var modelChoice = await ResolvePageModelChoiceAsync(profile, req.RuntimeProfileId, run.Id);
-        if (modelChoice.Outcome == MdToPptPageModelOutcome.Reject)
-        {
-            await PersistRunErrorAsync(run, modelChoice.Notice!);
-            await WriteEventAsync("error", new { message = modelChoice.Notice, code = "page_model_not_in_gateway_catalog" });
-            return true;
-        }
-        await WriteEventAsync("model", new { model = modelChoice.DisplayModel ?? GenerationModelLabel(profile), platform });
-        if (modelChoice.Outcome == MdToPptPageModelOutcome.UseGatewayDefault)
-        {
-            await WriteDiagAsync(new
-            {
-                stage = "model_substituted",
-                requestedModel = modelChoice.RequestedModel,
-                expectedModel = modelChoice.ExpectedModel,
-                message = modelChoice.Notice,
-            });
-        }
+        var modelRoute = CreatePageModelRoute(profile, req.RuntimeProfileId);
+        modelRoute.OnSubstituted = () => WriteDiagAsync(ModelSubstitutedDiag(modelRoute));
+        await WriteEventAsync("model", new { model = GenerationModelLabel(profile), platform });
         await WriteDiagAsync(new
         {
             stage = "page_patch_start",
@@ -5163,7 +5152,7 @@ public class MdToPptController : ControllerBase
 
             var pageResult = await RunPageOnceAsync(
                 userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", run.Id,
-                null, run.KnowledgeReferences, modelChoice);
+                null, run.KnowledgeReferences, modelRoute);
             string? actualModel = null;
             string? actualPlatform = null;
             var section = NormalizeGeneratedSlideFragment(pageResult.Text, targetIsAnchored);
@@ -5177,7 +5166,7 @@ public class MdToPptController : ControllerBase
                 _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, pageResult.Error);
                 var retryResult = await RunPageOnceAsync(
                     userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", run.Id,
-                    null, run.KnowledgeReferences, modelChoice);
+                    null, run.KnowledgeReferences, modelRoute);
                 section = NormalizeGeneratedSlideFragment(retryResult.Text, targetIsAnchored);
                 if (!string.IsNullOrEmpty(section))
                 {
@@ -5252,69 +5241,79 @@ public class MdToPptController : ControllerBase
             AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
             RunId: run.Id));
 
-        var modelChoice = await ResolvePageModelChoiceAsync(profile, requestedProfileId, run.Id);
-        if (modelChoice.Outcome == MdToPptPageModelOutcome.Reject)
-        {
-            await PersistRunErrorAsync(run, modelChoice.Notice!);
-            await WriteEventAsync("error", new { message = modelChoice.Notice, code = "page_model_not_in_gateway_catalog" });
-            return;
-        }
-        var request = BuildGatewayPageRequest(
-            profile,
-            systemPrompt,
-            userPrompt,
-            AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
-            requestId,
-            userId,
-            title,
-            runId: run.Id,
-            includeThinking: true,
-            modelChoice: modelChoice);
+        var modelRoute = CreatePageModelRoute(profile, requestedProfileId);
+        modelRoute.OnSubstituted = () => WriteDiagAsync(ModelSubstitutedDiag(modelRoute));
         var fullText = new StringBuilder();
-        var model = modelChoice.DisplayModel ?? GenerationModelLabel(profile);
+        var model = GenerationModelLabel(profile);
         var resolvedPlatform = "LLM Gateway";
 
         await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
-        if (modelChoice.Outcome == MdToPptPageModelOutcome.UseGatewayDefault)
-        {
-            await WriteDiagAsync(new
-            {
-                stage = "model_substituted",
-                requestedModel = modelChoice.RequestedModel,
-                expectedModel = modelChoice.ExpectedModel,
-                message = modelChoice.Notice,
-            });
-        }
         await WriteDiagAsync(new { stage = "gateway_direct", route = "gateway-direct", runId = run.Id });
         try
         {
             await RevalidateKnowledgeForDispatchAsync(userId, run.KnowledgeReferences, CancellationToken.None);
-            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
+            // 至多两次：点名的模型网关接不住且允许改道时，按新路线（不点名）立即再发一次。
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                var attemptedWith = modelRoute.Outcome;
+                var request = BuildGatewayPageRequest(
+                    profile,
+                    systemPrompt,
+                    userPrompt,
+                    AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                    requestId,
+                    userId,
+                    title,
+                    runId: run.Id,
+                    includeThinking: true,
+                    modelRoute: modelRoute,
+                    routeOutcome: attemptedWith);
+                GatewayStreamChunk? rejection = null;
+                await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
                 {
-                    model = chunk.Resolution.ActualModel;
-                    resolvedPlatform = chunk.Resolution.ActualPlatformName
-                        ?? chunk.Resolution.ActualPlatformId
-                        ?? resolvedPlatform;
-                    await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
+                    if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                    {
+                        model = chunk.Resolution.ActualModel;
+                        resolvedPlatform = chunk.Resolution.ActualPlatformName
+                            ?? chunk.Resolution.ActualPlatformId
+                            ?? resolvedPlatform;
+                        await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
+                    }
+                    else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        await WriteEventAsync("thinking", new { text = chunk.Content });
+                    }
+                    else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        fullText.Append(chunk.Content);
+                        await WriteEventAsync("delta", new { text = chunk.Content });
+                    }
+                    else if (chunk.Type == GatewayChunkType.Error)
+                    {
+                        rejection = chunk;
+                        break;
+                    }
                 }
-                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+
+                if (rejection == null) break;
+                _logger.LogWarning(
+                    "[MdToPpt-Gateway] LLM Gateway 拒绝了整篇生成请求 runId={RunId} expectedModel={Expected} code={Code} error={Error}",
+                    run.Id, request.ExpectedModel ?? "(未点名)", rejection.ErrorCode ?? "(无)", rejection.Error ?? rejection.Content ?? "(无)");
+                if (fullText.Length == 0)
                 {
-                    await WriteEventAsync("thinking", new { text = chunk.Content });
+                    var now = await ApplyGatewayRejectionAsync(modelRoute, attemptedWith, rejection.ErrorCode, run.Id);
+                    if (now == MdToPptPageModelOutcome.Reject)
+                    {
+                        await PersistRunErrorAsync(run, modelRoute.Notice!);
+                        await WriteEventAsync("error", new { message = modelRoute.Notice, code = "page_model_not_in_gateway_catalog" });
+                        return;
+                    }
+                    if (now != attemptedWith && attempt == 0) continue;
                 }
-                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    fullText.Append(chunk.Content);
-                    await WriteEventAsync("delta", new { text = chunk.Content });
-                }
-                else if (chunk.Type == GatewayChunkType.Error)
-                {
-                    var message = chunk.Error ?? chunk.Content ?? "LLM Gateway 生成失败";
-                    await PersistRunErrorAsync(run, message);
-                    await WriteEventAsync("error", new { message });
-                    return;
-                }
+                var message = rejection.Error ?? rejection.Content ?? "LLM Gateway 生成失败";
+                await PersistRunErrorAsync(run, message);
+                await WriteEventAsync("error", new { message });
+                return;
             }
 
             var html = NormalizePresentationDocument(StripCodeFences(fullText.ToString()));
