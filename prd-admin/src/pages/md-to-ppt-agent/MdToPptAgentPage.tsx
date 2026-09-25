@@ -1523,7 +1523,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const [launchDraft] = useState(() => resolveLaunchDraft(context.launch, sessionStorageOrNull()));
   const [input, setInput] = useState(launchDraft.input);
   // 在团队空间发起的交接，发布也落进同一个团队；团队名只用于展示，拿不到就显示编号。
-  const destinationTeamId = context.launch?.destinationTeamId;
+  const destinationTeamId = context.destinationTeamId;
   const [destinationTeamName, setDestinationTeamName] = useState<string | null>(null);
   useEffect(() => {
     if (!destinationTeamId) return;

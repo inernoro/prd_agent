@@ -11,7 +11,7 @@ import {
   type DesignGenerationStyle,
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
-import { FRESH_PPT_SESSION_PATH } from '@/pages/md-to-ppt-agent/sessionContext';
+import { freshPptSessionPath } from '@/pages/md-to-ppt-agent/sessionContext';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
 import { chooseDesignRuntime, displayedDesignRuntime, runtimeFallbackNotice } from '../siteEditPreview';
 import {
@@ -565,7 +565,7 @@ export default function NewSiteStage({
           />
         </PreviewPanel>
       ) : showPptHandoff ? (
-        <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate(FRESH_PPT_SESSION_PATH)} />
+        <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate(freshPptSessionPath(destinationTeamId))} />
       ) : galleryOpen && !run.generating ? (
         <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <StyleGallery

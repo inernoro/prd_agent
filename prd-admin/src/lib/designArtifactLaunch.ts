@@ -24,7 +24,7 @@ export const MAX_LAUNCH_REQUEST_CHARS = 4000;
 
 const HANDOFF_KEY_PREFIX = 'design-launch-request:';
 const HANDOFF_ID_PATTERN = /^[A-Za-z0-9_-]{8,40}$/;
-const TEAM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const TEAM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** 已提交的交接草稿留一个墓碑，刷新后既不回填、也不误报「没带过来」。 */
 const CONSUMED_MARKER = '\u0000consumed';
 
