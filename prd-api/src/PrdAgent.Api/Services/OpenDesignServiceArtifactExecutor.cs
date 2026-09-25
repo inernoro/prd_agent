@@ -537,7 +537,6 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var error = parsed?["error"] as JsonObject;
             var code = ReadString(error, "code") ?? "unknown";
             var serviceMessage = ReadString(error, "message");
-            var retryable = error?["retryable"]?.GetValueKind() == JsonValueKind.True;
             var retryAfter = ReadRetryAfter(parsed, response);
             _logger.LogWarning(
                 "设计执行服务拒绝了提交 transport=service run={RunId} status={Status} code={Code}", runId, status, code);
@@ -548,9 +547,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 return new SubmitOutcome(SubmitKind.Busy,
                     RetryAfter: retryAfter ?? TimeSpan.FromSeconds(DefaultBusyRetrySeconds), Code: code, Slot: slot, Status: status);
             }
-            // 服务明说可重试的 5xx（引擎就绪前的 503、顶层处理器兜底的 500）：同一任务幂等重交，
-            // 走与不可用相同的有上限等待，而不是当场判用户这次失败。
-            if (status >= 500 && retryable)
+            // 暂时性的 5xx（服务明说可重试，或代理层不带服务错误体的 502/503/504）：同一任务幂等重交，
+            // 走与不可用相同的有上限等待，而不是当场判用户这次失败。判据与读事件共用一处。
+            if (IsTransientServerFailure(status, error))
             {
                 return new SubmitOutcome(SubmitKind.Unavailable,
                     RetryAfter: retryAfter ?? TimeSpan.FromSeconds(DefaultUnavailableRetrySeconds),
@@ -560,6 +559,14 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             return new SubmitOutcome(SubmitKind.Failed, Failure: DescribeRejection(status, code, serviceMessage, transport));
         }
     }
+
+    /// <summary>
+    /// 一个 5xx 是不是暂时性的：提交与读事件的唯一判据。
+    /// 带服务错误体时以服务自己声明的 <c>retryable</c> 为准（缺 API key 这类配置问题重试多少次都一样）；
+    /// 不带错误体的 5xx 来自代理或网关层，请求可能已经到了服务，同一任务幂等重交 / 从 afterSeq 续读都是安全的。
+    /// </summary>
+    internal static bool IsTransientServerFailure(int status, JsonObject? error) =>
+        status >= 500 && (error is null || error["retryable"]?.GetValueKind() == JsonValueKind.True);
 
     private static InvalidOperationException DescribeRejection(
         int status,
@@ -655,10 +662,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var text = await response.Content.ReadAsStringAsync(linked.Token);
             var error = TryParse(text)?["error"] as JsonObject;
             var code = ReadString(error, "code") ?? "unknown";
-            // 5xx 一律按「暂时连不上」走有上限的续读；唯一例外是服务明确答复不可重试的 503
-            // （如缺 API key），那是配置问题，重连多少次都一样。代理层的 503 没有这份错误体，照常续读。
-            var nonRetryable = status == 503 && error is not null && error["retryable"]?.GetValueKind() != JsonValueKind.True;
-            if (status >= 500 && !nonRetryable)
+            // 判据与提交共用一处：暂时性的 5xx 走有上限的续读，服务明确答复不可重试的（如缺 API key）直接判失败。
+            if (IsTransientServerFailure(status, error))
                 return new OpenOutcome(null, null, new HttpRequestException($"HTTP {status} {code}"));
             return new OpenOutcome(null, status == 404 && code == "task_not_found"
                 ? ServiceFailure(

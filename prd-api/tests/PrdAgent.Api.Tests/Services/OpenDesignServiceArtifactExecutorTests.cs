@@ -526,6 +526,42 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Fact]
+    public async Task BareProxyBadGatewayOnSubmission_IsResubmittedInsteadOfFailing()
+    {
+        // 代理层返回不带服务错误体的 502：请求可能已经到了服务，同一任务幂等重交，不判失败。
+        var service = new FakeDesignService();
+        var submissions = 0;
+        service.OnSubmit(_ => ++submissions == 1
+            ? new HttpResponseMessage(HttpStatusCode.BadGateway) { Content = new StringContent("<html>502 Bad Gateway</html>") }
+            : Json(HttpStatusCode.OK, new JsonObject { ["task"] = TaskView("running"), ["replayed"] = true }));
+        service.OnEvents(_ => Sse(Event(1, "done", new JsonObject { ["artifactRef"] = "ref" })));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        service.Submissions.Count.ShouldBe(2);
+        service.Submissions[1].Body!.ToJsonString().ShouldBe(service.Submissions[0].Body!.ToJsonString());
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        service.CancelCalls.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(502, null, true)]
+    [InlineData(503, null, true)]
+    [InlineData(504, null, true)]
+    [InlineData(500, true, true)]
+    [InlineData(503, true, true)]
+    [InlineData(500, false, false)]
+    [InlineData(503, false, false)]
+    [InlineData(409, null, false)]
+    [InlineData(401, true, false)]
+    public void TransientServerFailure_IsOnePredicateForSubmissionAndEvents(int status, bool? retryable, bool expected)
+    {
+        JsonObject? error = retryable is null ? null : new JsonObject { ["code"] = "x", ["retryable"] = retryable };
+        OpenDesignServiceArtifactExecutor.IsTransientServerFailure(status, error).ShouldBe(expected);
+    }
+
+    [Fact]
     public async Task ProxyUnavailableWhileReopeningEvents_ResumesInsteadOfFailing()
     {
         // 任务已接下、事件流断开后，重连恰好撞上代理层的 503（没有服务的错误体）：应当续读，而不是判失败并取消在跑的任务。
