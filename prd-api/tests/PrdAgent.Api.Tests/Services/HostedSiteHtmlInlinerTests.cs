@@ -255,6 +255,29 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
+    public async Task 协议相对地址补成https_计入外部依赖_integrity保留()
+    {
+        var site = new FakeSite().Add("a.css", "@import \"//cdn.example.com/base.css\";body{background:url(//cdn.example.com/bg.png)}");
+        const string html = """
+            <script src="//cdn.example.com/app.js" integrity="sha384-x" crossorigin></script>
+            <img srcset="//cdn.example.com/a.png 1x, //cdn.example.com/a2.png 2x">
+            <link rel="stylesheet" href="a.css">
+            """;
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("<script src=\"https://cdn.example.com/app.js\" integrity=\"sha384-x\" crossorigin></script>", result.Html);
+        Assert.Contains("srcset=\"https://cdn.example.com/a.png 1x, https://cdn.example.com/a2.png 2x\"", result.Html);
+        Assert.DoesNotContain("\"//cdn.example.com", result.Html);
+        var css = Encoding.UTF8.GetString(Convert.FromBase64String(
+            System.Text.RegularExpressions.Regex.Match(result.Html, "data:text/css;charset=utf-8;base64,([A-Za-z0-9+/=]+)").Groups[1].Value));
+        Assert.Contains("@import \"https://cdn.example.com/base.css\"", css);
+        Assert.Contains("url(https://cdn.example.com/bg.png)", css);
+        Assert.Contains("//cdn.example.com/app.js", result.External);
+        Assert.Empty(result.Missing);
+    }
+
+    [Fact]
     public async Task 越出站点根的引用一律不读()
     {
         var site = new FakeSite().Add("index.css", "x");

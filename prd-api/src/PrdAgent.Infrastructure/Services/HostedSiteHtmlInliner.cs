@@ -497,6 +497,13 @@ public sealed class HostedSiteHtmlInliner
     private async Task<BuiltDataUrl?> BuildDataUrlAsync(
         ReferenceBase basis, string reference, PayloadKind kind, CancellationToken ct)
     {
+        // 协议相对地址（//cdn…）留在原处会被本地文件按 file:// 解析，联网也加载不到：补成 https:。
+        // 内容没变，所以不算内嵌、也不去掉 integrity；外部依赖照常登记。
+        if (ExplicitHttps(reference) is { } absolute)
+        {
+            Classify(basis, reference);
+            return new BuiltDataUrl(absolute, ContentChanged: false);
+        }
         var file = await ResolveAndLoadAsync(basis, reference, isText: kind != PayloadKind.Binary, ct);
         if (file == null) return null;
         // 读入时已按原文字节计入预算；样式表里的子资源会在下面各自计入。最终按 data: URL 的真实长度重算这一项。
@@ -533,6 +540,13 @@ public sealed class HostedSiteHtmlInliner
         return new BuiltDataUrl(
             "data:" + mime + ";base64," + Convert.ToBase64String(payload) + FragmentOf(reference),
             changed);
+    }
+
+    /// <summary>协议相对地址（// 开头）补成 https:；其余返回 null。</summary>
+    internal static string? ExplicitHttps(string reference)
+    {
+        var raw = reference.Trim();
+        return raw.StartsWith("//", StringComparison.Ordinal) && raw.Length > 2 ? "https:" + raw : null;
     }
 
     /// <summary>引用里第一个 # 起的片段（含 #）；纯锚点与没有片段的给空串。</summary>
@@ -583,6 +597,13 @@ public sealed class HostedSiteHtmlInliner
     {
         var reference = m.Groups["iu"].Success && m.Groups["iu"].Length > 0 ? m.Groups["iu"].Value : m.Groups["iu2"].Value;
         var media = m.Groups["media"].Value.Trim();
+
+        // 协议相对的外部导入：离线文件里会被按 file:// 解析，补成 https: 后原样保留修饰。
+        if (ExplicitHttps(reference) is { } absolute)
+        {
+            Classify(basis, reference);
+            return m.Value.Replace(reference, absolute, StringComparison.Ordinal);
+        }
 
         // layer()/supports() 包不进 @media，展开会改变语义；深度或环路超限同理——保持原样。
         if (depth >= MaxCssImportDepth
