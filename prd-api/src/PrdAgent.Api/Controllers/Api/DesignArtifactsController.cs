@@ -228,11 +228,11 @@ public sealed class DesignArtifactsController : ControllerBase
                 _db, userId, request.AttachmentIds, CancellationToken.None);
             if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    "风格只能选一种：预设风格或目录里的设计系统，不能同时提交"));
+                    "风格只能选一种：预设风格、我的风格或目录里的设计系统，不能同时提交"));
+            // 预设 / 我的风格（personal:<id>，服务端按归属人取）/ 目录设计系统，判据全在 FreezeForRunAsync 一处。
             if (_generationSettings != null)
-                designDirection = string.IsNullOrWhiteSpace(request.DesignSystemId)
-                    ? await _generationSettings.FreezeAsync(request.StyleId, CancellationToken.None)
-                    : await _generationSettings.FreezeCatalogStyleAsync(request.DesignSystemId, CancellationToken.None);
+                designDirection = await _generationSettings.FreezeForRunAsync(
+                    userId, request.StyleId, request.DesignSystemId, CancellationToken.None);
         }
         catch (DesignRunInputException ex)
         {
@@ -979,7 +979,10 @@ public sealed class CreateDesignArtifactRunRequest
 
     public List<DesignKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 
-    /// <summary>风格预设编号；为空取网页生成设置里的默认风格。</summary>
+    /// <summary>
+    /// 风格预设编号；为空取网页生成设置里的默认风格。「我的风格」写作 <c>personal:&lt;id&gt;</c>，
+    /// 服务端按编号 + 当前用户取出风格正文，别人的编号与不存在一样被拒。
+    /// </summary>
     public string? StyleId { get; set; }
 
     /// <summary>

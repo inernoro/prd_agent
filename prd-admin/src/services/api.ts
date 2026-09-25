@@ -1310,6 +1310,10 @@ export const api = {
     timingStats: () => '/api/design-artifacts/timing-stats',
     // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
     generationSettings: () => '/api/design-artifacts/generation-settings',
+    // 「我的风格」：每人自己的风格（列表 / 新建 / 改 / 删 / 从自己的网页提取草稿）
+    personalStyles: () => '/api/design-artifacts/personal-styles',
+    personalStyle: (id: string) => `/api/design-artifacts/personal-styles/${encodeURIComponent(id)}`,
+    personalStyleDerive: () => '/api/design-artifacts/personal-styles/derive',
     runs: () => '/api/design-artifacts/runs',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
     cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,
