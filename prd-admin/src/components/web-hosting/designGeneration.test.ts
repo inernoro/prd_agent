@@ -107,11 +107,14 @@ describe('阶段列表', () => {
   it('用时时钟与剩余时间估算', () => {
     expect(formatGenerationClock(348)).toBe('05:48');
     expect(formatGenerationClock(3_725)).toBe('1:02:05');
-    expect(remainingEstimateText('open-design', 5 * 60)).toBe('按通常耗时估算，预计还需 4–7 分钟');
-    expect(remainingEstimateText('open-design', 11 * 60)).toBe('按通常耗时估算，预计还需不到 1 分钟');
-    expect(remainingEstimateText('open-design', 13 * 60)).toContain('已超过通常耗时');
+    expect(remainingEstimateText('open-design', 5 * 60)).toBe('按经验值估算（真实耗时数据还在积累），预计还需 4–7 分钟');
+    expect(remainingEstimateText('open-design', 11 * 60)).toBe('按经验值估算（真实耗时数据还在积累），预计还需不到 1 分钟');
+    expect(remainingEstimateText('open-design', 13 * 60)).toContain('已超过经验耗时');
     // 不认识的执行器不许编一个预估出来。
-    expect(remainingEstimateText('unknown-runtime', 60)).toBe('正在积累耗时数据，暂不预估剩余时间');
+    expect(remainingEstimateText('unknown-runtime', 60)).toBe('真实耗时数据还在积累，暂不预估剩余时间');
+    // 没有经验值的执行器也要分清三种状态：取不到不许冒充还在积累
+    expect(remainingEstimateText('unknown-runtime', 60, null, 'unavailable')).toBe('耗时统计暂时取不到，暂不预估剩余时间');
+    expect(remainingEstimateText('unknown-runtime', 60, null, 'loading')).toBe('正在读取真实耗时，暂不预估剩余时间');
   });
 
   it('风格与提示词版本那句话，缺哪项就不写哪项', () => {

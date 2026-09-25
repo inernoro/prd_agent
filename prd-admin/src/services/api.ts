@@ -1301,6 +1301,8 @@ export const api = {
   },
   designArtifacts: {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    // 最近 30 天真实耗时 P50/P95（按执行器 × 产物类型），给「预计还要多久」用
+    timingStats: () => '/api/design-artifacts/timing-stats',
     // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
     generationSettings: () => '/api/design-artifacts/generation-settings',
     // 「我的风格」：每人自己的风格（列表 / 新建 / 改 / 删 / 从自己的网页提取草稿）
