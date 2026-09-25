@@ -163,7 +163,7 @@ public sealed class PersonalDesignStyleTests
         Assert.Equal(PersonalDesignStyle.StyleIdPrefix + mine.Id, direction.StyleId);
         Assert.Equal("我的蓝调", direction.StyleName);
         Assert.Equal("editorial", direction.DesignSystemId);
-        Assert.Equal(mine.Instruction, direction.StyleDescription);
+        Assert.StartsWith(mine.Instruction, direction.StyleDescription);
         Assert.StartsWith(DesignGenerationDefaults.GeneratePrompt.TrimEnd(), direction.GeneratePrompt);
         Assert.Contains(mine.Instruction, direction.GeneratePrompt);
         Assert.Contains("我的蓝调", direction.GeneratePrompt);
@@ -175,6 +175,38 @@ public sealed class PersonalDesignStyleTests
 
         var otherPreset = DesignGenerationSettingsService.Freeze(settings, "editorial");
         Assert.NotEqual(otherPreset.PromptFingerprint, direction.PromptFingerprint);
+    }
+
+    [Fact]
+    public async Task 改过的配色与字体进生成_两个执行器都拿到改后的值()
+    {
+        var settings = DesignGenerationSettingsService.Effective(null, Catalog);
+        var service = new PersonalDesignStyleService(new InMemoryStore(), Catalog);
+        var mine = await service.CreateAsync(Alice, ValidInput(), CancellationToken.None);
+        // 只改色块和字体，不动风格说明：生成必须用改后的值，而不是说明里原来那组颜色。
+        await service.UpdateAsync(Alice, mine.Id, new PersonalDesignStyleInput
+        {
+            Swatches = new List<string> { "#111111", "#fafafa", "#d9480f" },
+            Fonts = new List<string> { "Noto Serif SC", "Inter" },
+        }, CancellationToken.None);
+
+        var direction = await DesignGenerationSettingsService.FreezeForRun(
+            settings, Catalog, service, Alice, PersonalDesignStyle.StyleIdPrefix + mine.Id, null, CancellationToken.None);
+
+        foreach (var text in new[] { direction.StyleDescription, direction.GeneratePrompt })
+        {
+            Assert.Contains("#111111", text);
+            Assert.Contains("#fafafa", text);
+            Assert.Contains("#d9480f", text);
+            Assert.Contains("标题 Noto Serif SC，正文 Inter", text);
+        }
+    }
+
+    [Fact]
+    public void 没有色块与字体的风格_说明原样交出_不编一组()
+    {
+        var style = new PersonalDesignStyle { Name = "只写描述", Instruction = "  克制、留白多  " };
+        Assert.Equal("克制、留白多", DesignGenerationSettingsService.PersonalStyleSpec(style));
     }
 
     [Fact]

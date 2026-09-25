@@ -31,10 +31,10 @@ public class PersonalDesignStyle
     /// </summary>
     public string Instruction { get; set; } = string.Empty;
 
-    /// <summary>画廊上的三枚色块 [ink, paper, accent]（#rrggbb）；按描述建的风格没有真实颜色，就是空的，不编一组。</summary>
+    /// <summary>三枚色块 [ink, paper, accent]（#rrggbb）：画廊展示，生成时也作为指定配色交给执行器；按描述建的风格没有真实颜色，就是空的，不编一组。</summary>
     public List<string> Swatches { get; set; } = new();
 
-    /// <summary>标题 / 正文字体（CSS font-family 里的第一个族名），只用于展示。</summary>
+    /// <summary>标题 / 正文字体（CSS font-family 里的第一个族名）：画廊展示，生成时也作为指定字体交给执行器。</summary>
     public List<string> Fonts { get; set; } = new();
 
     /// <summary>OpenDesign 设计系统骨架（/app/design-systems/&lt;id&gt;）；OpenDesign 执行器必须有一个。</summary>

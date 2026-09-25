@@ -256,7 +256,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         var baseEntry = catalog.Find(style.BaseDesignSystemId)
             ?? throw new DesignGenerationSettingsException(
                 $"「{style.Name}」参考的设计系统「{style.BaseDesignSystemId}」已不在风格目录里，请在风格画廊里编辑这套风格、换一个骨架");
-        var instruction = (style.Instruction ?? string.Empty).Trim();
+        var instruction = PersonalStyleSpec(style);
         var generatePrompt = settings.GeneratePrompt.TrimEnd() + "\n\n" + PersonalStylePromptBlock(style.Name, instruction);
         if (generatePrompt.Length > DesignGenerationDefaults.MaxPromptLength)
             throw new DesignGenerationSettingsException(
@@ -274,6 +274,26 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         };
         direction.PromptFingerprint = Fingerprint(direction);
         return direction;
+    }
+
+    /// <summary>
+    /// 交给执行器的完整风格说明：用户写的说明，加上画廊里能改的三色与字体。
+    /// 色块与字体是用户在核对 / 编辑里改过的结构化字段，只进画廊不进生成，就会出现「预览是改后的颜色、成品还是提取出来的旧色」。
+    /// </summary>
+    internal static string PersonalStyleSpec(PersonalDesignStyle style)
+    {
+        var instruction = (style.Instruction ?? string.Empty).Trim();
+        var lines = new List<string>();
+        if (style.Swatches is { Count: 3 } swatches && swatches.All(value => !string.IsNullOrWhiteSpace(value)))
+            lines.Add($"指定配色（以此为准）：正文文字 {swatches[0].Trim()}，页面底色 {swatches[1].Trim()}，强调色 {swatches[2].Trim()}");
+        var fonts = (style.Fonts ?? new List<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToList();
+        if (fonts.Count >= 2) lines.Add($"指定字体（以此为准）：标题 {fonts[0]}，正文 {fonts[1]}");
+        else if (fonts.Count == 1) lines.Add($"指定字体（以此为准）：{fonts[0]}");
+        if (lines.Count == 0) return instruction;
+        return string.IsNullOrEmpty(instruction) ? string.Join("\n", lines) : instruction + "\n" + string.Join("\n", lines);
     }
 
     internal static string PersonalStylePromptBlock(string name, string instruction) => $"""

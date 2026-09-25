@@ -17,6 +17,7 @@ import {
   presetSelection,
   personalCardAction,
   selectionAfterDelete,
+  selectionAfterSave,
   selectionStyleId,
 } from './StyleGallery';
 
@@ -222,5 +223,15 @@ describe('骨架已下线的「我的风格」', () => {
   it('卡片主操作是打开编辑，不选中一个生成必然被拒的风格', () => {
     expect(personalCardAction({ baseDesignSystemAvailable: false })).toBe('edit');
     expect(personalCardAction({ baseDesignSystemAvailable: true })).toBe('select');
+  });
+
+  it('只改了名字或说明就保存：不选中它；它原本是选中项就清掉', () => {
+    const retired = { ...mine, baseDesignSystemAvailable: false };
+    expect(selectionAfterSave(retired, 'editorial')).toEqual({ kind: 'keep' });
+    expect(selectionAfterSave(retired, retired.styleId)).toEqual({ kind: 'clear' });
+  });
+
+  it('换上可用骨架后保存：照常选中', () => {
+    expect(selectionAfterSave(mine, 'editorial')).toEqual({ kind: 'select', selection: personalSelection(mine) });
   });
 });

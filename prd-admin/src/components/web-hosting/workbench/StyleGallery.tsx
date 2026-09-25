@@ -53,6 +53,18 @@ export function selectionAfterDelete(
   return fallback ? { kind: 'select', selection: presetSelection(fallback) } : { kind: 'clear' };
 }
 
+/**
+ * 新建或改完一套「我的风格」之后怎么处理选中：骨架还在就选中它（新建后不必再点一次）；
+ * 骨架已下线（只改了名字或说明，没换骨架）就不选——选中了生成也必然被拒。它原本就是选中项时一并清掉。
+ */
+export function selectionAfterSave(
+  saved: PersonalStyle,
+  selectedId: string | null,
+): { kind: 'select'; selection: StyleGallerySelection } | { kind: 'keep' } | { kind: 'clear' } {
+  if (personalCardAction(saved) === 'select') return { kind: 'select', selection: personalSelection(saved) };
+  return selectedId === saved.styleId ? { kind: 'clear' } : { kind: 'keep' };
+}
+
 export function presetSelection(style: DesignGenerationStyle): StyleGallerySelection {
   return { kind: 'preset', key: style.id, styleId: style.id, designSystemId: style.designSystemId, name: style.name };
 }
@@ -165,7 +177,7 @@ export function StyleGallery({ selectedId, onSelect, onClearSelection, title }: 
   const mineLimit = mine.status === 'ready' ? mine.data.limit : 20;
   const newBlocker = mine.status === 'ready' ? createBlocker(mineCount, mineLimit) : null;
 
-  /** 新建或改完：列表里换上服务端返回的那一份，并直接选中它（新建后不必再点一次）。 */
+  /** 新建或改完：列表里换上服务端返回的那一份；能用就直接选中它，骨架已下线就不选（见 selectionAfterSave）。 */
   const handleSaved = useCallback((saved: PersonalStyle) => {
     setMine((current) => {
       if (current.status !== 'ready') return current;
@@ -173,8 +185,10 @@ export function StyleGallery({ selectedId, onSelect, onClearSelection, title }: 
       return { status: 'ready', data: { ...current.data, items: [saved, ...rest] } };
     });
     setDialog(null);
-    onSelect(personalSelection(saved));
-  }, [onSelect]);
+    const next = selectionAfterSave(saved, selectedId);
+    if (next.kind === 'select') onSelect(next.selection);
+    else if (next.kind === 'clear') onClearSelection?.();
+  }, [onClearSelection, onSelect, selectedId]);
 
   const handleDelete = useCallback(async (style: PersonalStyle) => {
     const confirmed = await systemDialog.confirm({
