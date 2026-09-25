@@ -32,6 +32,7 @@ import {
   OUTPUT_FORM_REGISTRY,
   buildHtmlPptHandoff,
   openHtmlPptHandoff,
+  sendRoute,
   type WorkbenchOutputForm,
 } from './outputForm';
 import { HtmlPptHandoffPanel } from './HtmlPptHandoffPanel';
@@ -291,13 +292,20 @@ export default function NewSiteStage({
         : '';
 
   const send = () => {
-    if (isPpt) {
+    const route = sendRoute({
+      outputForm,
+      blocked: Boolean(sendBlocker),
+      generating: run.generating,
+      pptHandoffReady: pptHandoff.ok,
+      hasRuntime: Boolean(requestRuntime),
+    });
+    if (route === 'none') return;
+    if (route === 'ppt-handoff') {
       // 交接不是生成：不建设计任务、不显示网页进度卡，直接带着资料与要求去 PPT 智能体。
-      if (sendBlocker || run.generating || !pptHandoff.ok) return;
-      navigate(openHtmlPptHandoff(pptHandoff));
+      if (pptHandoff.ok) navigate(openHtmlPptHandoff(pptHandoff));
       return;
     }
-    if (sendBlocker || run.generating || !requestRuntime) return;
+    if (!requestRuntime) return;
     const text = instruction.trim() || DEFAULT_REQUEST;
     const title = selectedKnowledge[0]?.title
       || titleFromFileName(uploads.items.find((item) => item.status === 'ready')?.fileName ?? '');

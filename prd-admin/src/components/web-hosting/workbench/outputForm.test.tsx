@@ -10,6 +10,7 @@ import {
   OUTPUT_FORM_REGISTRY,
   buildHtmlPptHandoff,
   openHtmlPptHandoff,
+  sendRoute,
   type HtmlPptHandoff,
 } from './outputForm';
 
@@ -151,16 +152,22 @@ describe('新建阶段接线', () => {
     expect(stage).toContain('OUTPUT_FORM_ORDER.map(');
   });
 
-  it('网页 PPT 在建设计任务之前就跳转并返回', () => {
-    const send = stage.slice(stage.indexOf('const send = () => {'));
-    const pptBranch = send.indexOf('if (isPpt) {');
-    const navigateCall = send.indexOf('navigate(openHtmlPptHandoff(pptHandoff))');
-    const runStart = send.indexOf('run.start(');
-    expect(pptBranch).toBeGreaterThanOrEqual(0);
-    expect(navigateCall).toBeGreaterThan(pptBranch);
-    expect(runStart).toBeGreaterThan(navigateCall);
-    // 跳转之后、这条 if 分支闭合之前必须 return，不能掉进下面的网页生成。
-    const branchTail = send.slice(navigateCall, send.indexOf('}', navigateCall));
-    expect(branchTail).toContain('return;');
+  it('发送按 sendRoute 分派，页面里只有这一处判定', () => {
+    expect(stage.match(/sendRoute\(/g)?.length).toBe(1);
+  });
+});
+
+describe('发送分派（sendRoute）', () => {
+  const base = { blocked: false, generating: false, pptHandoffReady: true, hasRuntime: true };
+  it('网页 PPT 只做交接，永远不走网页生成', () => {
+    expect(sendRoute({ ...base, outputForm: 'html-ppt' })).toBe('ppt-handoff');
+    expect(sendRoute({ ...base, outputForm: 'html-ppt', pptHandoffReady: false })).toBe('none');
+    expect(sendRoute({ ...base, outputForm: 'html-ppt', hasRuntime: false })).toBe('ppt-handoff');
+  });
+  it('网页照常生成；被拦下或正在生成时什么都不做', () => {
+    expect(sendRoute({ ...base, outputForm: 'web-page' })).toBe('generate');
+    expect(sendRoute({ ...base, outputForm: 'web-page', hasRuntime: false })).toBe('none');
+    expect(sendRoute({ ...base, outputForm: 'web-page', blocked: true })).toBe('none');
+    expect(sendRoute({ ...base, outputForm: 'html-ppt', generating: true })).toBe('none');
   });
 });

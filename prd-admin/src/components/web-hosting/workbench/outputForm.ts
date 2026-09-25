@@ -121,3 +121,19 @@ export function openHtmlPptHandoff(
     handoffId: stashLaunchRequest(handoff.request, storage, createId),
   });
 }
+
+/**
+ * 点发送之后走哪条路：网页 PPT 只做交接（绝不建网页设计任务——统一设计任务入口会以「只支持生成网页」
+ * 回绝 html-ppt）；网页照常生成；被拦下或正在生成时什么都不做。页面只按这个结果分派。
+ */
+export function sendRoute(input: {
+  outputForm: WorkbenchOutputForm;
+  blocked: boolean;
+  generating: boolean;
+  pptHandoffReady: boolean;
+  hasRuntime: boolean;
+}): 'ppt-handoff' | 'generate' | 'none' {
+  if (input.blocked || input.generating) return 'none';
+  if (input.outputForm === 'html-ppt') return input.pptHandoffReady ? 'ppt-handoff' : 'none';
+  return input.hasRuntime ? 'generate' : 'none';
+}

@@ -3,3 +3,4 @@
 | fix | prd-admin | 从团队空间交接到 HTML PPT 智能体时带上目标团队，发布前显示「发布到」哪个空间，发布请求携带 teamIds |
 | fix | prd-admin | 网页 PPT 交接没写要求时带默认要求过去；「不带资料，直接打开」开空白会话，不再恢复上一次 |
 | fix | prd-admin | 团队空间里点「不带资料，直接打开」开的空白 PPT 会话仍带着团队，发布落进同一团队 |
+| refactor | prd-admin | 工作台发送分派收成纯函数 sendRoute，网页 PPT 只交接不建设计任务由行为测试守住 |
