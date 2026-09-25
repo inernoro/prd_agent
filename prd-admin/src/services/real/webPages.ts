@@ -1558,7 +1558,6 @@ export interface DesignTimingStats {
   estimateMinSamples: number;
   runSampleCap: number;
   runSamplesTruncated: boolean;
-  shareSamplesTruncated: boolean;
   groups: DesignTimingGroup[];
 }
 

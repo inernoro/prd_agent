@@ -27,7 +27,6 @@ const stats = (groups: DesignTimingGroup[]): DesignTimingStats => ({
   estimateMinSamples: 5,
   runSampleCap: 2000,
   runSamplesTruncated: false,
-  shareSamplesTruncated: false,
   groups,
 });
 

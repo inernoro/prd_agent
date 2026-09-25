@@ -70,7 +70,7 @@ public sealed class DesignArtifactTimingStatsTests
         IReadOnlyCollection<DesignArtifactTimingRunSample> runs,
         IReadOnlyCollection<DesignArtifactTimingShareSample>? shares = null)
         => DesignArtifactTimingStats.Summarize(runs, shares ?? Array.Empty<DesignArtifactTimingShareSample>(),
-            T0.AddDays(-30), T0.AddDays(1), false, false);
+            T0.AddDays(-30), T0.AddDays(1), false);
 
     [Fact]
     public void Summarize_FailedAndCancelledAreCountedButNotTimed()
@@ -145,47 +145,11 @@ public sealed class DesignArtifactTimingStatsTests
         Assert.Equal(12 * 60d, group.MaterialToShareLink.P50Seconds);
     }
 
-    [Fact]
-    public void Summarize_TruncatedShareSamples_NeverClaimAnEstimate()
-    {
-        // 分享链接样本被上限截断时，被挤掉的可能正是某些任务的首条链接：数字照给，但不许拿来预估。
-        var runs = Enumerable.Range(0, 6)
-            .Select(i => Done(DesignArtifactRuntimes.OpenDesign, 600, siteId: $"site-{i}", user: "u1"))
-            .ToArray();
-        var shares = Enumerable.Range(0, 6)
-            .Select(i => new DesignArtifactTimingShareSample("u1", T0.AddMinutes(20), new[] { $"site-{i}" }))
-            .ToArray();
-
-        var complete = Assert.Single(DesignArtifactTimingStats.Summarize(runs, shares, T0.AddDays(-30), T0.AddDays(1), false, false).Groups);
-        var truncated = Assert.Single(DesignArtifactTimingStats.Summarize(runs, shares, T0.AddDays(-30), T0.AddDays(1), false, true).Groups);
-
-        Assert.True(complete.MaterialToShareLink.EstimateReady);
-        Assert.False(truncated.MaterialToShareLink.EstimateReady);
-        Assert.Equal(6, truncated.MaterialToShareLink.SampleCount);
-        // 生成耗时不受分享样本截断影响
-        Assert.True(truncated.Generation.EstimateReady);
-    }
-
     private static string Render(FilterDefinition<DesignArtifactRun> filter)
         => filter.Render(new RenderArgs<DesignArtifactRun>(
                 BsonSerializer.SerializerRegistry.GetSerializer<DesignArtifactRun>(),
                 BsonSerializer.SerializerRegistry))
             .ToString();
-
-    [Fact]
-    public void ShareFilter_KeepsOnlyLinksOnSampledSitesBeforeTheCap()
-    {
-        var rendered = DesignArtifactTimingStats.ShareFilter(["u1"], ["site-a"], T0)
-            .Render(new RenderArgs<WebPageShareLink>(
-                BsonSerializer.SerializerRegistry.GetSerializer<WebPageShareLink>(),
-                BsonSerializer.SerializerRegistry))
-            .ToString();
-        Assert.Contains("\"CreatedBy\" : { \"$in\" : [\"u1\"] }", rendered, StringComparison.Ordinal);
-        Assert.Contains("\"CreatedAt\" : { \"$gte\"", rendered, StringComparison.Ordinal);
-        // 单站点与合集两种指向都要在库里就筛掉无关链接，否则上限会被它们占满
-        Assert.Contains("\"SiteId\" : { \"$in\" : [\"site-a\"] }", rendered, StringComparison.Ordinal);
-        Assert.Contains("\"SiteIds\" : { \"$in\" : [\"site-a\"] }", rendered, StringComparison.Ordinal);
-    }
 
     [Fact]
     public void GroupRunFilter_CapsEachRuntimeAndArtifactTypeSeparately()
@@ -216,5 +180,47 @@ public sealed class DesignArtifactTimingStatsTests
         Assert.Contains("\"DeploymentSlug\" : \"proj::feat.x\"", rendered, StringComparison.Ordinal);
         // 锚定前缀 + 转义：不许把 proj::feat-x 或 proj::feat.xyz 的任务算进来
         Assert.Contains("/^proj::feat\\.x::revision::/", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task FirstSharesAsync_OnMongo_PairsCreatorWithSiteAndTakesEarliest()
+    {
+        // 真库验证聚合管道：只认抽样任务的 (生成者, 站点) 配对；同队成员给别人站点建的交叉链接不算；
+        // 单站点与合集都认；每个配对取最早一条；时间窗外的不算。
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            Console.WriteLine("跳过：未设置 MONGODB_TEST_CONNECTION");
+            return;
+        }
+
+        var client = new MongoClient(connectionString);
+        var databaseName = $"timing_stats_{Guid.NewGuid():N}";
+        var links = client.GetDatabase(databaseName).GetCollection<WebPageShareLink>("web_page_share_links");
+        try
+        {
+            await links.InsertManyAsync(new[]
+            {
+                new WebPageShareLink { CreatedBy = "u1", SiteId = "site-a", CreatedAt = T0.AddMinutes(30) },
+                new WebPageShareLink { CreatedBy = "u1", SiteIds = new List<string> { "site-x", "site-a" }, CreatedAt = T0.AddMinutes(12) },
+                new WebPageShareLink { CreatedBy = "u1", SiteId = "site-b", CreatedAt = T0.AddMinutes(5) },   // 交叉：u1 给 u2 的站点建的
+                new WebPageShareLink { CreatedBy = "u2", SiteId = "site-b", CreatedAt = T0.AddMinutes(40) },
+                new WebPageShareLink { CreatedBy = "u2", SiteId = "site-b", CreatedAt = T0.AddDays(-40) },   // 时间窗外
+                new WebPageShareLink { CreatedBy = "u3", SiteId = "site-a", CreatedAt = T0.AddMinutes(1) },  // 不在抽样用户里
+            });
+
+            var shares = await DesignArtifactTimingStats.FirstSharesAsync(
+                links, new[] { ("u1", "site-a"), ("u2", "site-b") }, T0.AddDays(-30), CancellationToken.None);
+
+            var byPair = shares.ToDictionary(s => (s.CreatedBy, s.SiteIds.Single()), s => s.CreatedAt);
+            Assert.Equal(2, byPair.Count);
+            Assert.Equal(T0.AddMinutes(12), byPair[("u1", "site-a")]);
+            Assert.Equal(T0.AddMinutes(40), byPair[("u2", "site-b")]);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName);
+        }
     }
 }

@@ -25,14 +25,14 @@ namespace PrdAgent.Api.Services;
 ///   分支预览按分支级作用域（CurrentDurable，跨 revision）统计，否则每次推送样本清零，预估永远不可用。
 ///   这是只读聚合，不参与认领，所以放宽到分支级不破坏 revision fencing。
 /// - 有界：时间窗 + 投影 + 条数上限（<see cref="RunSampleCap"/> 按「执行器 × 产物类型」每组各算一次，
-///   量大的一组挤不掉量小的一组；<see cref="ShareSampleCap"/> 为分享链接总上限），截断时在响应里如实标出。任务查询以 UpdatedAt ≥ since 作为隐含下界（终态任务 UpdatedAt ≥ CreatedAt），
+///   量大的一组挤不掉量小的一组），截断时在响应里如实标出。分享链接不设条数上限：在库里按
+///   「(生成者, 站点)」配对聚合出最早一条，结果行数不超过抽样任务数，所以没有「被挤掉」可言。任务查询以 UpdatedAt ≥ since 作为隐含下界（终态任务 UpdatedAt ≥ CreatedAt），
 ///   命中既有索引 idx_design_run_v2_scope_status_updated（DeploymentSlug, Status, UpdatedAt）。
 /// </summary>
 public static class DesignArtifactTimingStats
 {
     public const int WindowDays = 30;
     public const int RunSampleCap = 2000;
-    public const int ShareSampleCap = 5000;
 
     /// <summary>样本少于这个数时前端不许拿它当预估，只能退回经验值并说明数据在积累。</summary>
     public const int EstimateMinSamples = 5;
@@ -73,8 +73,7 @@ public static class DesignArtifactTimingStats
         IReadOnlyCollection<DesignArtifactTimingShareSample> shares,
         DateTime since,
         DateTime generatedAt,
-        bool runSamplesTruncated,
-        bool shareSamplesTruncated)
+        bool runSamplesTruncated)
     {
         // (用户, 站点) → 最早一条链接的创建时间
         var firstShareAt = new Dictionary<(string UserId, string SiteId), DateTime>();
@@ -123,11 +122,7 @@ public static class DesignArtifactTimingStats
                     FailedCount: failed,
                     CancelledCount: cancelled,
                     Generation: Metric(generation),
-                    // 分享链接样本被上限截断时，被挤掉的可能正是某些任务的首条链接（用户分享默认每次新建），
-                    // 数出来的百分位有偏。数字照给、但不许拿来预估：如实交给调用方 shareSamplesTruncated。
-                    MaterialToShareLink: shareSamplesTruncated
-                        ? Metric(toShare) with { EstimateReady = false }
-                        : Metric(toShare),
+                    MaterialToShareLink: Metric(toShare),
                     MaterialToShareLinkEligibleRuns: eligible);
             })
             .ToList();
@@ -140,7 +135,6 @@ public static class DesignArtifactTimingStats
             EstimateMinSamples: EstimateMinSamples,
             RunSampleCap: RunSampleCap,
             RunSamplesTruncated: runSamplesTruncated,
-            ShareSamplesTruncated: shareSamplesTruncated,
             Groups: groups);
     }
 
@@ -157,21 +151,64 @@ public static class DesignArtifactTimingStats
             f.Regex(x => x.DeploymentSlug, new BsonRegularExpression($"^{Regex.Escape(durableScope + "::revision::")}")));
     }
 
+    /// <summary>配对键的分隔符：用户 id 与站点 id 都不含它。</summary>
+    private const string PairSeparator = "\u001f";
+
+    public static string PairKey(string userId, string siteId) => userId + PairSeparator + siteId;
+
     /// <summary>
-    /// 只取「抽样到的任务产出的站点」上的链接，再套上限：先按人取、后按站点筛，
-    /// 同一批人建的无关链接或更早的链接会把新任务的有效链接挤出上限，百分位就偏了。
-    /// 走 idx_web_page_share_links_creator_created（CreatedBy, CreatedAt）；站点条件在索引扫描后过滤。
+    /// 每个抽样任务的「(生成者, 站点)」配对上，最早的一条分享链接。在库里配对聚合而不是先取行再筛：
+    /// 按人、按站点各自 $in 会放进交叉配对（同队成员给别人的站点建的链接），先取后筛再加上限就会挤掉有效行。
+    /// 结果每个配对至多一行，行数不超过抽样任务数，不需要条数上限。
+    /// 先用 (CreatedBy, CreatedAt) 索引缩到这些人、这个时间窗，再展开目标站点、按配对键过滤并取最早。
     /// 单站点 SiteId 与合集 SiteIds 都认，与 <see cref="WebPageShareLink.TargetSiteIds"/> 同口径。
     /// </summary>
-    public static FilterDefinition<WebPageShareLink> ShareFilter(
-        IReadOnlyCollection<string> userIds,
-        IReadOnlyCollection<string> siteIds,
-        DateTime since)
+    public static async Task<List<DesignArtifactTimingShareSample>> FirstSharesAsync(
+        IMongoCollection<WebPageShareLink> links,
+        IReadOnlyCollection<(string UserId, string SiteId)> pairs,
+        DateTime since,
+        CancellationToken ct)
     {
         var sf = Builders<WebPageShareLink>.Filter;
-        return sf.In(x => x.CreatedBy, userIds)
-               & sf.Gte(x => x.CreatedAt, since)
-               & (sf.In(x => x.SiteId, siteIds) | sf.AnyIn(x => x.SiteIds, siteIds));
+        var userIds = pairs.Select(p => p.UserId).Distinct(StringComparer.Ordinal).ToList();
+        var pairKeys = new BsonArray(pairs.Select(p => PairKey(p.UserId, p.SiteId)).Distinct(StringComparer.Ordinal));
+        var rows = await links.Aggregate()
+            .Match(sf.In(x => x.CreatedBy, userIds) & sf.Gte(x => x.CreatedAt, since))
+            .AppendStage<BsonDocument>(new BsonDocument("$project", new BsonDocument
+            {
+                { "CreatedBy", 1 },
+                { "CreatedAt", 1 },
+                { "targets", new BsonDocument("$setUnion", new BsonArray
+                    {
+                        new BsonDocument("$cond", new BsonArray
+                        {
+                            new BsonDocument("$gt", new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$SiteId", "" }), "" }),
+                            new BsonArray { "$SiteId" },
+                            new BsonArray(),
+                        }),
+                        new BsonDocument("$ifNull", new BsonArray { "$SiteIds", new BsonArray() }),
+                    })
+                },
+            }))
+            .AppendStage<BsonDocument>(new BsonDocument("$unwind", "$targets"))
+            .AppendStage<BsonDocument>(new BsonDocument("$addFields", new BsonDocument("pairKey",
+                new BsonDocument("$concat", new BsonArray { "$CreatedBy", PairSeparator, "$targets" }))))
+            .AppendStage<BsonDocument>(new BsonDocument("$match", new BsonDocument("pairKey", new BsonDocument("$in", pairKeys))))
+            .AppendStage<BsonDocument>(new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$pairKey" },
+                { "user", new BsonDocument("$first", "$CreatedBy") },
+                { "site", new BsonDocument("$first", "$targets") },
+                { "firstAt", new BsonDocument("$min", "$CreatedAt") },
+            }))
+            .ToListAsync(ct);
+
+        return rows
+            .Select(row => new DesignArtifactTimingShareSample(
+                row["user"].AsString,
+                row["firstAt"].ToUniversalTime(),
+                new[] { row["site"].AsString }))
+            .ToList();
     }
 
     /// <summary>单组（执行器 × 产物类型）的任务过滤：在 <see cref="RunFilter"/> 之上各自取最近样本、各自套上限。</summary>
@@ -240,31 +277,15 @@ public static class DesignArtifactTimingStats
         var sharedCandidates = runs
             .Where(run => run.Status == RunStatuses.Done && !string.IsNullOrEmpty(run.SiteId) && !string.IsNullOrEmpty(run.UserId))
             .ToList();
-        var userIds = sharedCandidates.Select(run => run.UserId).Distinct(StringComparer.Ordinal).ToList();
-        var siteIds = sharedCandidates.Select(run => run.SiteId!).Distinct(StringComparer.Ordinal).ToList();
+        var pairs = sharedCandidates
+            .Select(run => (run.UserId, run.SiteId!))
+            .Distinct()
+            .ToList();
+        var shares = pairs.Count == 0
+            ? new List<DesignArtifactTimingShareSample>()
+            : await FirstSharesAsync(db.WebPageShareLinks, pairs, since, ct);
 
-        var shares = new List<DesignArtifactTimingShareSample>();
-        var sharesTruncated = false;
-        if (userIds.Count > 0)
-        {
-            var shareRows = await db.WebPageShareLinks
-                .Find(ShareFilter(userIds, siteIds, since))
-                .SortBy(x => x.CreatedAt)
-                .Limit(ShareSampleCap + 1)
-                .Project(x => new { x.CreatedBy, x.CreatedAt, x.SiteId, x.SiteIds })
-                .ToListAsync(ct);
-            sharesTruncated = shareRows.Count > ShareSampleCap;
-            shares = shareRows
-                .Take(ShareSampleCap)
-                .Select(row => new DesignArtifactTimingShareSample(
-                    row.CreatedBy,
-                    row.CreatedAt,
-                    // 与 WebPageShareLink.TargetSiteIds 同口径：单站点 SiteId + 合集 SiteIds 都认。
-                    new WebPageShareLink { SiteId = row.SiteId, SiteIds = row.SiteIds ?? new List<string>() }.TargetSiteIds()))
-                .ToList();
-        }
-
-        return Summarize(runs, shares, since, now, runsTruncated, sharesTruncated);
+        return Summarize(runs, shares, since, now, runsTruncated);
     }
 }
 
@@ -306,5 +327,4 @@ public sealed record DesignArtifactTimingStatsResult(
     int EstimateMinSamples,
     int RunSampleCap,
     bool RunSamplesTruncated,
-    bool ShareSamplesTruncated,
     IReadOnlyList<DesignArtifactTimingGroup> Groups);
