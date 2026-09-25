@@ -165,7 +165,12 @@ export function AnchoredMenu({
     window.addEventListener('resize', onResize);
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
+    // 弹窗出场动画期间带 transform、是 fixed 的参照系；动画一结束参照系换回视口，
+    // 在这期间打开的菜单要按新参照系重算一次，否则会停在错位的位置上。
+    const host = resolveMenuPortalTarget(getAnchor(), null);
+    host?.addEventListener('animationend', onResize);
     return () => {
+      host?.removeEventListener('animationend', onResize);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('mousedown', onDown);
