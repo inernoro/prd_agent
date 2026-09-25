@@ -1249,6 +1249,11 @@ export const api = {
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
     content: (id: string) => `/api/web-pages/${id}/content`,
+    /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
+    offlineHtml: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/export/offline-html`,
+    /** 单文件离线 HTML，经分享链接（登录 + 分享门禁：撤销 / 过期 / 可见性 / 密码） */
+    shareOfflineHtml: (token: string, query: string) =>
+      `/api/web-pages/shares/view/${encodeURIComponent(token)}/export/offline-html${query}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
