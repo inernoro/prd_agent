@@ -18,7 +18,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
-import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal, WifiOff } from 'lucide-react';
+import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal, Wand2, WifiOff } from 'lucide-react';
+import { GenerateFromContentDialog } from '@/components/design-launch/GenerateFromContentDialog';
+import { resolveRecordingGenerateSource } from '@/pages/document-store/recordingGenerateSource';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
@@ -582,7 +584,7 @@ export function RecordingResultPage() {
   }, [state]);
 
   // 原文还没出来时不摆这颗：能点却只会给一份空文件的按钮，比没有按钮更误导
-  const headerActions = state.kind === 'ready' && state.noteMd.trim() ? (
+  const exportAction = state.kind === 'ready' && state.noteMd.trim() ? (
     <button
       type="button"
       onClick={exportNote}
@@ -1271,7 +1273,48 @@ export function RecordingResultPage() {
     onPickOrganizeStyle(state.styleKey || DEFAULT_ORGANIZE_STYLE_KEY);
   }, [onPickOrganizeStyle, state]);
 
+  /*
+   * 「生成网页」：把这份转录交给网页设计 / HTML PPT 智能体。与「导出」不同，
+   * 原文还没出来时它**照样摆出来**但点不了，并写明原因——用户刚录完就在这一屏等，
+   * 得让他知道这件事马上能做，而不是找不到入口。原因判定收在一个纯函数里。
+   */
+  const [showGenerate, setShowGenerate] = useState(false);
+  const generate = state.kind === 'ready'
+    ? resolveRecordingGenerateSource({
+        storeId: state.storeId,
+        storeName: state.storeName,
+        title: state.title,
+        noteId: state.noteId,
+        noteMd: state.noteMd,
+        offline,
+        pendingEditCount: pendingEdits?.count ?? 0,
+      })
+    : null;
+  const generateAction = generate ? (
+    <button
+      type="button"
+      data-testid="recording-generate-web"
+      disabled={generate.kind === 'blocked'}
+      aria-disabled={generate.kind === 'blocked'}
+      title={generate.kind === 'blocked' ? generate.reason : '用这份转录生成网页或 HTML PPT'}
+      onClick={() => { if (generate.kind === 'ready') setShowGenerate(true); }}
+      className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-[12px] px-3.5 text-[14px] font-semibold disabled:cursor-not-allowed"
+      style={{
+        background: 'var(--bg-card)',
+        color: generate.kind === 'blocked' ? 'var(--text-muted)' : 'var(--text-primary)',
+        border: '1px solid var(--border-subtle)',
+      }}
+    >
+      <Wand2 size={15} /> 生成网页
+      {generate.kind === 'blocked' && (
+        <span className="text-[12px] font-normal" style={{ color: 'var(--text-muted)' }}>· {generate.reason}</span>
+      )}
+    </button>
+  ) : null;
+  const headerActions = exportAction || generateAction ? <>{exportAction}{generateAction}</> : null;
+
   return (
+    <>
     <RecordingResultShell
       title={state.kind === 'ready' ? state.title : '录音'}
       subtitle={subtitle}
@@ -1507,6 +1550,13 @@ export function RecordingResultPage() {
         </div>
       )}
     </RecordingResultShell>
+    <GenerateFromContentDialog
+      open={showGenerate}
+      onOpenChange={setShowGenerate}
+      source={generate?.kind === 'ready' ? generate.source : null}
+      sourceLabel="当前录音转录"
+    />
+    </>
   );
 }
 
