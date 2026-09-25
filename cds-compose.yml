@@ -375,8 +375,9 @@ services:
       # Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
-      # 设计执行服务（design-opendesign，map-design-executor-v1）。第 1 阶段只把地址与密钥接到位，
-      # MAP 侧按协议调用它的适配器在第 2 阶段落地；在那之前 api 不读这两项。
+      # 设计执行服务（design-opendesign，map-design-executor-v1）。两项都在时 api 的 OpenDesign 默认直连它；
+      # 缺任一项照旧走 CDS 会话。要退回旧路径就加 DesignRuntime__OpenDesign__Transport: "cds-session"。
+      # 判定只有一处：prd-api OpenDesignTransportResolver。
       # 密钥不带仓库可见的 fallback：值只来自 CDS 项目 env scope。
       DesignRuntime__OpenDesign__BaseUrl: "http://design-opendesign:8093"
       DesignRuntime__OpenDesign__ApiKey: "${DESIGN_RUNTIME_API_KEY}"
