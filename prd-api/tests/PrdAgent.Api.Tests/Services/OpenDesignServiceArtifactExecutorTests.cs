@@ -224,13 +224,16 @@ public sealed class OpenDesignServiceArtifactExecutorTests
 
         var error = await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, BuildRun()));
 
-        // 第一句是外因（谁做了什么），技术细节排在最后。
-        error.Message.ShouldStartWith("网页生成失败：设计执行服务拒绝了 MAP 的调用密钥");
-        error.Message.ShouldContain("DESIGN_RUNTIME_API_KEY");
-        error.Message.IndexOf("技术细节", StringComparison.Ordinal)
-            .ShouldBeGreaterThan(error.Message.IndexOf("下一步", StringComparison.Ordinal));
-        error.Message.ShouldContain("transport=service");
-        error.Message.ShouldContain("status=401");
+        // 用户读的那句只有外因、影响与下一步（worker 会把 Message 原样存成任务的用户可见错误）；
+        // 传输面、HTTP 状态、协议码、服务原文、内部地址全部挂在异常链上进日志。
+        error.Message.ShouldStartWith("网页生成失败：设计执行服务拒绝了 MAP 的内部调用凭据");
+        error.Message.ShouldContain("下一步");
+        AssertNoTransportDiagnostics(error.Message);
+        var diagnostic = error.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>();
+        diagnostic.RemoteCode.ShouldBe("unauthorized");
+        diagnostic.Diagnostic.ShouldContain("transport=service");
+        diagnostic.Diagnostic.ShouldContain("status=401");
+        diagnostic.Diagnostic.ShouldContain(BaseUrl.TrimEnd('/'));
         service.EventRequests.ShouldBeEmpty();
     }
 
@@ -246,8 +249,58 @@ public sealed class OpenDesignServiceArtifactExecutorTests
 
         var error = await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, BuildRun()));
 
-        error.Message.ShouldContain(OpenDesignTransportResolver.ApiKeyKey);
+        error.Message.ShouldStartWith("网页生成失败：OpenDesign 直连设计执行服务所需的部署配置不完整");
+        AssertNoTransportDiagnostics(error.Message);
+        error.Message.ShouldNotContain(OpenDesignTransportResolver.ApiKeyKey);
+        error.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>()
+            .Diagnostic.ShouldContain(OpenDesignTransportResolver.ApiKeyKey);
         service.Submissions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ConnectionLostDuringSubmission_ResubmitsTheSameTaskInsteadOfFailing()
+    {
+        // 请求可能已经到了服务、只是响应丢了：同一 taskId / attempt / 内容重交是幂等的，应当重试而不是判失败。
+        var service = new FakeDesignService();
+        var submissions = 0;
+        service.OnSubmit(_ =>
+        {
+            submissions++;
+            if (submissions == 1) throw new HttpRequestException("connection reset by peer");
+            return Json(HttpStatusCode.OK, new JsonObject { ["task"] = TaskView("running"), ["replayed"] = true });
+        });
+        service.OnEvents(_ => Sse(Event(1, "done", new JsonObject { ["artifactRef"] = "ref" })));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        service.Submissions.Count.ShouldBe(2);
+        service.Submissions[1].Body!.ToJsonString().ShouldBe(service.Submissions[0].Body!.ToJsonString());
+        chunks.ShouldContain(chunk => chunk.Type == "phase" && chunk.Content!.Contains("连接在提交时中断"));
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        service.CancelCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ServiceStaysUnreachable_FailsWithoutLeakingTransportDetails()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => throw new HttpRequestException("connection refused"));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, BuildRun()));
+
+        error.Message.ShouldStartWith("网页生成失败：设计执行服务在");
+        AssertNoTransportDiagnostics(error.Message);
+        error.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>()
+            .RemoteCode.ShouldBe("submit_connection_lost");
+        service.Submissions.Count.ShouldBeGreaterThan(1);
+    }
+
+    private static void AssertNoTransportDiagnostics(string message)
+    {
+        foreach (var leaked in new[] { "transport=", "status=", "技术细节", "HTTP ", "http://", "https://", "design-opendesign", "DesignRuntime:" })
+            message.ShouldNotContain(leaked);
     }
 
     // ───────────── 传输开关 ─────────────
@@ -419,8 +472,12 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         FakeDesignService service,
         IDesignArtifactWorkspaceBroker broker,
         List<TimeSpan>? delays = null,
-        Dictionary<string, string?>? configuration = null) =>
-        new(
+        Dictionary<string, string?>? configuration = null)
+    {
+        // 假时钟：每次「等待」立即返回并把时钟往前推，排队 / 不可用的截止时间按它算，
+        // 用例既不真等、也不会在真实时间里空转到上限。
+        var now = DateTime.UtcNow;
+        return new(
             new SingleClientFactory(service),
             broker,
             Config(configuration ?? new Dictionary<string, string?>
@@ -434,9 +491,12 @@ public sealed class OpenDesignServiceArtifactExecutorTests
             {
                 delays?.Add(wait);
                 ct.ThrowIfCancellationRequested();
+                now += wait;
                 return Task.CompletedTask;
             },
+            UtcNow = () => now,
         };
+    }
 
     private static Mock<IDesignArtifactWorkspaceBroker> BuildBroker()
     {

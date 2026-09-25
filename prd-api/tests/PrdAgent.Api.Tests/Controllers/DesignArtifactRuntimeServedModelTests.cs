@@ -79,6 +79,29 @@ public sealed class DesignArtifactRuntimeServedModelTests
     }
 
     [Fact]
+    public async Task SlowEventStore_CannotHoldTheModelResponseOpen()
+    {
+        // 模型响应已经转发完，执行器要等代理返回才看得到 EOF：旁路的模型事件投影卡住时，
+        // 不能拖住这次成功的模型调用。事件存储在这里永远不返回（Redis 实现本身不理会取消令牌）。
+        var (broker, events, controller) = Build(
+            "{\"id\":\"c1\",\"object\":\"chat.completion\",\"model\":\"claude-served\",\"choices\":[]}",
+            "application/json",
+            resolvedModel: null);
+        events.Setup(x => x.AppendEventAsync(
+                It.IsAny<string>(), It.IsAny<string>(), "model", It.IsAny<object>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+            .Returns(new TaskCompletionSource<long>().Task);
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        // 外层再套一道时限：回归时让用例失败，而不是把整个测试进程挂住。
+        await controller.ProxyChatCompletions(RunId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(20));
+        watch.Stop();
+
+        controller.Response.StatusCode.ShouldBe(StatusCodes.Status200OK);
+        watch.Elapsed.ShouldBeLessThan(DesignArtifactRuntimeController.ServedModelProjectionTimeout + TimeSpan.FromSeconds(5));
+        broker.Verify(x => x.RecordServedModelAsync(RunId, "claude-served", null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task JsonResponse_ReadsTheTopLevelModel()
     {
         var (broker, _, controller) = Build(

@@ -378,6 +378,9 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         }
     }
 
+    /// <summary>记录实际模型（落库 + 推事件）各自的上限：它挡在模型响应的 EOF 之前，必须短。</summary>
+    internal static readonly TimeSpan ServedModelProjectionTimeout = TimeSpan.FromSeconds(3);
+
     /// <summary>
     /// 网关实际回答所用的模型：代理从网关响应里读到、且与 run 上记的不同时写一次并推一条 model 事件，
     /// 面板顶部的「{模型} · {平台}」由此显示真实值（ai-model-visibility）。平台名网关响应里没有，
@@ -388,8 +391,10 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         if (string.Equals(run.ResolvedModel, model, StringComparison.Ordinal)) return;
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            if (!await _broker.RecordServedModelAsync(run.Id, model, platform: null, timeout.Token)) return;
+            using var timeout = new CancellationTokenSource(ServedModelProjectionTimeout);
+            if (!await _broker.RecordServedModelAsync(run.Id, model, platform: null, timeout.Token)
+                    .WaitAsync(ServedModelProjectionTimeout))
+                return;
             _logger.LogInformation(
                 "设计模型代理记下网关实际使用的模型 runId={RunId} model={Model} previous={Previous}",
                 run.Id,
@@ -398,13 +403,18 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             run.ResolvedModel = model;
             if (_events != null)
             {
+                // 旁路投影：模型响应已经转发完，执行器要等本方法返回才看得到 EOF。
+                // 事件存储慢或不可用时不能拖住这次成功的模型调用，所以限时、失败只记日志。
+                // 用 WaitAsync 在调用方这一侧截断：Redis 实现并不理会传入的取消令牌，只传令牌是假限时。
+                using var projectionTimeout = new CancellationTokenSource(ServedModelProjectionTimeout);
                 await _events.AppendEventAsync(
-                    PrdAgent.Core.Models.RunKinds.DesignArtifact,
-                    run.Id,
-                    "model",
-                    new { model, platform = (string?)null },
-                    PreviewEventTtl,
-                    CancellationToken.None);
+                        PrdAgent.Core.Models.RunKinds.DesignArtifact,
+                        run.Id,
+                        "model",
+                        new { model, platform = (string?)null },
+                        PreviewEventTtl,
+                        projectionTimeout.Token)
+                    .WaitAsync(ServedModelProjectionTimeout);
             }
         }
         catch (Exception ex)

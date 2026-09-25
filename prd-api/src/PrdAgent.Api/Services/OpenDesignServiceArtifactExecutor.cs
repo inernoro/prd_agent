@@ -49,6 +49,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     private const int DefaultBusyRetrySeconds = 15;
     private const int DefaultUnavailableRetrySeconds = 10;
     private const string SubmitTimeoutCode = "submit_timeout";
+    private const string SubmitConnectionLostCode = "submit_connection_lost";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -74,6 +75,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
 
     /// <summary>排队与重连之间的等待。测试替换它，免得真等 15 秒。</summary>
     internal Func<TimeSpan, CancellationToken, Task> Delay { get; init; } = Task.Delay;
+
+    /// <summary>排队、不可用与读事件的截止时间都按它算。测试换成随 <see cref="Delay"/> 推进的假时钟。</summary>
+    internal Func<DateTime> UtcNow { get; init; } = () => DateTime.UtcNow;
 
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
 
@@ -189,10 +193,15 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             "OpenDesign 设计任务开始执行 transport={Transport} run={RunId} operation={Operation} baseUrl={BaseUrl}",
             TransportLogName, run.Id, run.Operation, transport.BaseUrl);
         if (transport.Problem != null || transport.BaseUrl == null || transport.ApiKey == null)
-            throw new InvalidOperationException(transport.Problem ?? MissingConfigurationReason);
+            throw ServiceFailure(
+                "OpenDesign 直连设计执行服务所需的部署配置不完整",
+                "本次任务没有开始生成",
+                "请管理员补齐设计执行服务的地址与内部密钥，或把 OpenDesign 切回经 CDS 会话的旧路径",
+                ("code", "transport_configuration_incomplete"), ("transport", TransportLogName),
+                ("problem", transport.Problem ?? MissingConfigurationReason));
 
         var workspace = await _workspaceBroker.PrepareAsync(run, currentHtml, CancellationToken.None);
-        var ticketExpiresAt = run.RuntimeTicketExpiresAt ?? DateTime.UtcNow.Add(FallbackTicketTtl);
+        var ticketExpiresAt = run.RuntimeTicketExpiresAt ?? UtcNow().Add(FallbackTicketTtl);
         // 排队不能把票据耗光：任务真正开跑时，票据至少还要够它跑满上限。
         var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(TaskTimeoutSeconds) - TicketSafetyMargin;
         const int attempt = 1;
@@ -203,7 +212,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         // 收尾时按「可能已接单」处理，否则服务唯一的执行位会被一个已被放弃的任务白占到超时。
         var dispatched = false;
         var remoteTerminal = false;
-        var queuedSince = DateTime.UtcNow;
+        var queuedSince = UtcNow();
         DateTime? unavailableSince = null;
 
         try
@@ -217,22 +226,22 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     accepted = true;
                     _logger.LogInformation(
                         "设计执行服务已接下任务 transport={Transport} run={RunId} replayed={Replayed} queuedSeconds={QueuedSeconds}",
-                        TransportLogName, run.Id, submit.Replayed, (int)(DateTime.UtcNow - queuedSince).TotalSeconds);
+                        TransportLogName, run.Id, submit.Replayed, (int)(UtcNow() - queuedSince).TotalSeconds);
                     break;
                 }
 
                 if (submit.Kind == SubmitKind.Busy)
                 {
                     var wait = submit.RetryAfter;
-                    if (DateTime.UtcNow + wait > queueDeadline)
+                    if (UtcNow() + wait > queueDeadline)
                         throw ServiceFailure(
-                            $"设计执行服务在 {(int)Math.Ceiling((DateTime.UtcNow - queuedSince).TotalMinutes)} 分钟里一直在处理其他任务",
+                            $"设计执行服务在 {(int)Math.Ceiling((UtcNow() - queuedSince).TotalMinutes)} 分钟里一直在处理其他任务",
                             "本次任务排不上号，已停止等待、没有开始生成",
-                            "稍后重新发起；高峰期持续排队说明需要多部署一个 design-opendesign 实例",
-                            ("transport", TransportLogName), ("code", submit.Code), ("queuedSeconds", (int)(DateTime.UtcNow - queuedSince).TotalSeconds));
+                            "稍后重新发起；高峰期持续排队说明需要多部署一个设计执行服务实例",
+                            ("transport", TransportLogName), ("code", submit.Code), ("queuedSeconds", (int)(UtcNow() - queuedSince).TotalSeconds));
                     yield return new DesignArtifactExecutorChunk(
                         "phase",
-                        BusyPhase(submit.Slot, wait, DateTime.UtcNow - queuedSince),
+                        BusyPhase(submit.Slot, wait, UtcNow() - queuedSince),
                         Progress: translator.Progress);
                     await Delay(wait, ct);
                     continue;
@@ -240,20 +249,24 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
 
                 if (submit.Kind == SubmitKind.Unavailable)
                 {
-                    unavailableSince ??= DateTime.UtcNow;
+                    unavailableSince ??= UtcNow();
                     var wait = submit.RetryAfter;
-                    if (DateTime.UtcNow - unavailableSince.Value + wait > MaxUnavailableWait
-                        || DateTime.UtcNow + wait > queueDeadline)
+                    if (UtcNow() - unavailableSince.Value + wait > MaxUnavailableWait
+                        || UtcNow() + wait > queueDeadline)
                         throw ServiceFailure(
-                            $"设计执行服务在 {(int)MaxUnavailableWait.TotalMinutes} 分钟内一直没有恢复接单（{submit.ServiceMessage ?? submit.Code}）",
+                            $"设计执行服务在 {(int)MaxUnavailableWait.TotalMinutes} 分钟内一直没有恢复接单",
                             "本次任务没有开始生成",
-                            "等服务恢复后重新发起；持续出现请管理员查看 design-opendesign 容器日志",
-                            ("transport", TransportLogName), ("code", submit.Code), ("status", submit.Status));
+                            "等服务恢复后重新发起；持续出现请管理员查看设计执行服务的日志",
+                            ("transport", TransportLogName), ("code", submit.Code), ("status", submit.Status),
+                            ("service", Truncate(submit.ServiceMessage, 240)), ("baseUrl", transport.BaseUrl));
                     yield return new DesignArtifactExecutorChunk(
                         "phase",
-                        submit.Code == SubmitTimeoutCode
-                            ? $"设计执行服务在 {(int)RequestTimeout.TotalSeconds} 秒内没有回应这次提交，约 {(int)wait.TotalSeconds} 秒后重试"
-                            : $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
+                        submit.Code switch
+                        {
+                            SubmitTimeoutCode => $"设计执行服务在 {(int)RequestTimeout.TotalSeconds} 秒内没有回应这次提交，约 {(int)wait.TotalSeconds} 秒后重试",
+                            SubmitConnectionLostCode => $"与设计执行服务的连接在提交时中断，约 {(int)wait.TotalSeconds} 秒后重新提交（同一任务重复提交不会重复生成）",
+                            _ => $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
+                        },
                         Progress: translator.Progress);
                     await Delay(wait, ct);
                     continue;
@@ -262,12 +275,12 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 throw submit.Failure!;
             }
 
-            var eventsDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(TaskTimeoutSeconds) + EventGrace;
+            var eventsDeadline = UtcNow() + TimeSpan.FromSeconds(TaskTimeoutSeconds) + EventGrace;
             var afterSeq = 0L;
             var consecutiveFailures = 0;
             while (true)
             {
-                if (DateTime.UtcNow >= eventsDeadline)
+                if (UtcNow() >= eventsDeadline)
                     throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
                         OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(TaskTimeoutSeconds)), remoteReason: null));
 
@@ -287,7 +300,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 Exception? breakError = null;
                 while (true)
                 {
-                    var idle = Min(StreamIdleTimeout, eventsDeadline - DateTime.UtcNow);
+                    var idle = Min(StreamIdleTimeout, eventsDeadline - UtcNow());
                     if (idle <= TimeSpan.Zero) break;
                     var read = await session.ReadAsync(idle, ct);
                     if (read.Event == null)
@@ -403,12 +416,14 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     private static InvalidOperationException StreamBroken(int failures, Exception? error) => ServiceFailure(
         $"MAP 连续 {failures} 次没能从设计执行服务读到本次任务的进度",
         "本次生成已停止等待，服务侧的任务会被取消",
-        "重新发起一次；反复出现请管理员查看 design-opendesign 容器是否在重启、MAP 到它的网络是否稳定",
+        "重新发起一次；反复出现请管理员查看设计执行服务是否在重启、MAP 到它的网络是否稳定",
         ("transport", TransportLogName), ("lastError", error?.GetType().Name));
 
     /// <summary>
-    /// 传输面（HTTP 层）失败交给用户的那句话：外因在前（谁做了什么）→ 于是怎样 → 下一步 → 技术细节。
-    /// 远端执行过程中的失败不走这里，走与 CDS 路径共用的 <see cref="OpenDesignFailureMessage"/>。
+    /// 传输面（HTTP 层）失败交给用户的那句话：外因在前（谁做了什么）→ 于是怎样 → 下一步。
+    /// 技术细节（传输面、HTTP 状态、协议错误码、服务原文、内部地址与配置键）不进用户读的那句话——
+    /// worker 会把 Message 原样存成任务的用户可见错误——而是挂在 InnerException 上，由 worker 的
+    /// LogError(ex, ...) 连同异常链记进日志，与 CDS 路径的 <see cref="OpenDesignFailureMessage"/> 同一口径。
     /// </summary>
     internal static InvalidOperationException ServiceFailure(
         string whoDidWhat,
@@ -419,8 +434,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         var details = string.Join(" · ", technical
             .Where(item => item.Value != null && !string.IsNullOrWhiteSpace(item.Value.ToString()))
             .Select(item => $"{item.Key}={item.Value}"));
+        var code = technical.FirstOrDefault(item => item.Key == "code").Value?.ToString();
         return new InvalidOperationException(
-            $"网页生成失败：{whoDidWhat}，{impact}。下一步：{nextStep}。" + (details.Length > 0 ? $"技术细节：{details}" : string.Empty));
+            $"网页生成失败：{whoDidWhat}，{impact}。下一步：{nextStep}。",
+            details.Length > 0 ? new OpenDesignRemoteDiagnosticException(code, details) : null);
     }
 
     // ───────────────────────── 提交 ─────────────────────────
@@ -471,12 +488,12 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            _logger.LogWarning(ex, "提交设计任务时连不上设计执行服务 transport=service run={RunId} baseUrl={BaseUrl}", runId, transport.BaseUrl);
-            return new SubmitOutcome(SubmitKind.Failed, Failure: ServiceFailure(
-                $"MAP 连不上设计执行服务（{transport.BaseUrl}）",
-                "本次任务没有开始生成",
-                $"确认 design-opendesign 容器在运行、{OpenDesignTransportResolver.BaseUrlKey} 写对；需要回退时把 {OpenDesignTransportResolver.TransportKey} 设为 cds-session",
-                ("transport", TransportLogName), ("error", ex.GetType().Name)));
+            // 与提交超时同理：请求可能已经到了服务、只是响应丢了。同一 taskId、同一 attempt、同一内容
+            // 重交是幂等的（服务返回 replayed），所以按「暂时不可用」重试，而不是直接判失败——
+            // 服务真的起不来时，由不可用等待上限兜住，最后如实报失败。
+            _logger.LogWarning(ex, "提交设计任务时与设计执行服务的连接中断，按幂等重交重试 transport=service run={RunId} baseUrl={BaseUrl}", runId, transport.BaseUrl);
+            return new SubmitOutcome(SubmitKind.Unavailable, RetryAfter: TimeSpan.FromSeconds(DefaultUnavailableRetrySeconds),
+                Code: SubmitConnectionLostCode, ServiceMessage: ex.GetType().Name);
         }
 
         using (response)
@@ -522,25 +539,25 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     {
         (string Key, object? Value)[] technical =
         [
-            ("transport", TransportLogName), ("status", status), ("code", code),
-            ("service", Truncate(serviceMessage, 240)),
+            ("code", code), ("transport", TransportLogName), ("status", status),
+            ("service", Truncate(serviceMessage, 240)), ("baseUrl", transport.BaseUrl),
         ];
         return (status, code) switch
         {
             (401, _) => ServiceFailure(
-                "设计执行服务拒绝了 MAP 的调用密钥",
+                "设计执行服务拒绝了 MAP 的内部调用凭据",
                 "本次任务没有开始生成",
-                $"核对 MAP 的 {OpenDesignTransportResolver.ApiKeyKey} 与 design-opendesign 的 DESIGN_RUNTIME_API_KEY 是否为同一把（CDS 项目环境变量）",
+                "请管理员核对 MAP 与设计执行服务使用的是否为同一把内部密钥",
                 technical),
             (503, "api_key_not_configured") => ServiceFailure(
-                "设计执行服务的部署没有配置 DESIGN_RUNTIME_API_KEY",
+                "设计执行服务的部署缺少内部密钥",
                 "它拒绝一切任务，本次没有开始生成",
-                "在 CDS 项目环境变量或生产配置里补上这把内部密钥后重新部署 design-opendesign",
+                "请管理员补上内部密钥后重新部署设计执行服务",
                 technical),
             (503, _) => ServiceFailure(
-                $"设计执行服务自报暂不能接任务（{serviceMessage ?? code}）",
+                "设计执行服务自报暂不能接任务",
                 "本次任务没有开始生成",
-                "按服务给出的原因处理（通常是重建 design-opendesign 镜像）后重新发起",
+                "请管理员按服务日志里的原因处理（通常是重建设计执行服务镜像）后重新发起",
                 technical),
             (409, _) => ServiceFailure(
                 "设计执行服务上已经有同一任务编号的另一次提交",
@@ -548,19 +565,19 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 "重新发起一次任务",
                 technical),
             (404, _) => ServiceFailure(
-                $"{transport.BaseUrl} 上没有 {ExecutorProtocol} 的任务接口",
+                "MAP 配置的设计执行服务地址上找不到任务接口",
                 "本次任务没有开始生成",
-                $"确认 {OpenDesignTransportResolver.BaseUrlKey} 指向 design-opendesign，且它与本分支同一版本部署",
+                "请管理员核对设计执行服务的地址配置，以及它是否与 MAP 同一版本部署",
                 technical),
             (400 or 413, _) => ServiceFailure(
                 "设计执行服务认为 MAP 提交的任务不合协议约定",
                 "本次任务没有开始生成，重试也不会通过",
-                "请管理员核对 MAP 与 design-opendesign 是否为同一版本部署",
+                "请管理员核对 MAP 与设计执行服务是否为同一版本部署",
                 technical),
             _ => ServiceFailure(
-                $"设计执行服务处理 MAP 的提交时出错（HTTP {status}）",
+                "设计执行服务处理 MAP 的提交时出错",
                 "本次任务没有开始生成",
-                "重新发起一次；反复出现请管理员查看 design-opendesign 容器日志",
+                "重新发起一次；反复出现请管理员查看设计执行服务的日志",
                 technical),
         };
     }
@@ -614,8 +631,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ? ServiceFailure(
                     "设计执行服务上已经查不到这次任务（多半是服务在任务进行中重启过）",
                     "本次生成的进度与结果都已丢失",
-                    "重新发起一次；反复出现请管理员查看 design-opendesign 容器是否在反复重启",
-                    ("transport", TransportLogName), ("status", status), ("code", code))
+                    "重新发起一次；反复出现请管理员查看设计执行服务是否在反复重启",
+                    ("code", code), ("transport", TransportLogName), ("status", status))
                 : DescribeRejection(status, code, ReadString(error, "message"), transport), null);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
