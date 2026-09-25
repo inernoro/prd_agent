@@ -23,6 +23,11 @@ export function HtmlPptHandoffPanel({ handoff, onOpenBlank }: { handoff: HtmlPpt
           {handoff.ok ? (
             <>
               <p className="text-token-primary">会带过去：知识库《{handoff.carriedTitle}》和你写的要求</p>
+              <p className="mt-1.5 text-[12px] text-token-secondary">
+                {handoff.launch.destinationTeamId
+                  ? '发布时放进你现在所在的团队空间，PPT 智能体里会标明「发布到」哪个空间'
+                  : '发布时放进你的个人空间'}
+              </p>
               {handoff.leftBehind.length > 0 && (
                 <p className="mt-1.5 text-[12px]" style={{ color: 'var(--semantic-warning-text)' }}>
                   一次只能带一篇稿子，下面这些要在 PPT 智能体里用 + 再放一次：{handoff.leftBehind.join('、')}

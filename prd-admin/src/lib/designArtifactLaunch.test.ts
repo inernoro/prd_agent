@@ -56,6 +56,17 @@ describe('designArtifactLaunch', () => {
     expect(readLaunchRequest('deadbeef0001', broken)).toEqual({ status: 'missing' });
   });
 
+  it('carries the destination team id and drops malformed ones', () => {
+    const path = buildDesignArtifactLaunchPath({
+      target: 'html-ppt', sourceStoreId: 's', sourceEntryId: 'e', sourceTitle: 't', destinationTeamId: 'team_01',
+    });
+    expect(parseDesignArtifactLaunch(path.slice(path.indexOf('?')))?.destinationTeamId).toBe('team_01');
+    const personal = buildDesignArtifactLaunchPath({ target: 'html-ppt', sourceStoreId: 's', sourceEntryId: 'e', sourceTitle: 't' });
+    expect(personal).not.toContain('destTeam=');
+    expect(parseDesignArtifactLaunch('?designTarget=html-ppt&sourceStore=s&sourceEntry=e&sourceTitle=t&destTeam=a%2Fb')?.destinationTeamId)
+      .toBeUndefined();
+  });
+
   it('rejects incomplete or unsupported launch context', () => {
     expect(parseDesignArtifactLaunch('?designTarget=video&sourceStore=a&sourceEntry=b&sourceTitle=c')).toBeNull();
     expect(parseDesignArtifactLaunch('?designTarget=html-ppt&sourceStore=a')).toBeNull();

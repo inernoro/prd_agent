@@ -66,6 +66,19 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
     expect(handoff.leftBehind).toEqual([]);
   });
 
+  it('团队空间里发起时，交接把团队带过去；个人空间不带', () => {
+    const inTeam = buildHtmlPptHandoff({
+      instruction: '', knowledge: [entryA], uploadedFileNames: [], destinationTeamId: 'team-7f3a',
+    });
+    expect(launchOf(depart(inTeam).path).launch?.destinationTeamId).toBe('team-7f3a');
+    const personal = buildHtmlPptHandoff({
+      instruction: '', knowledge: [entryA], uploadedFileNames: [], destinationTeamId: null,
+    });
+    expect(launchOf(depart(personal).path).launch?.destinationTeamId).toBeUndefined();
+    const html = renderToStaticMarkup(<HtmlPptHandoffPanel handoff={inTeam} onOpenBlank={() => {}} />);
+    expect(html).toContain('团队空间');
+  });
+
   it('没写要求时不带交接编号，PPT 智能体的输入框保持空白', () => {
     const handoff = buildHtmlPptHandoff({ instruction: '   ', knowledge: [entryA], uploadedFileNames: [] });
     const { path: target } = depart(handoff);

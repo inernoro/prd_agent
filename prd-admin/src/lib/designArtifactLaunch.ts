@@ -12,6 +12,11 @@ export interface DesignArtifactLaunchContext {
    * 目标页据此预填输入框（不自动发送），见 stashLaunchRequest / readLaunchRequest。
    */
   handoffId?: string;
+  /**
+   * 发起方所在的团队空间（可选）。在团队空间里发起的生成，产物发布时也该落进同一个团队，
+   * 而不是悄悄掉回个人空间。团队编号本身可以放进 URL；是否有权发布由服务端发布接口校验。
+   */
+  destinationTeamId?: string;
 }
 
 /** 与服务端「设计要求不能超过 4000 个字符」同一上限，超出部分截掉而不是整条丢弃。 */
@@ -19,6 +24,7 @@ export const MAX_LAUNCH_REQUEST_CHARS = 4000;
 
 const HANDOFF_KEY_PREFIX = 'design-launch-request:';
 const HANDOFF_ID_PATTERN = /^[A-Za-z0-9_-]{8,40}$/;
+const TEAM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** 已提交的交接草稿留一个墓碑，刷新后既不回填、也不误报「没带过来」。 */
 const CONSUMED_MARKER = '\u0000consumed';
 
@@ -76,6 +82,8 @@ export function buildDesignArtifactLaunchPath(context: DesignArtifactLaunchConte
   });
   if (context.sourceStoreName) params.set('sourceStoreName', context.sourceStoreName);
   if (context.handoffId && HANDOFF_ID_PATTERN.test(context.handoffId)) params.set('handoff', context.handoffId);
+  if (context.destinationTeamId && TEAM_ID_PATTERN.test(context.destinationTeamId))
+    params.set('destTeam', context.destinationTeamId);
   const pathname = context.target === 'html-ppt' ? '/md-to-ppt-agent' : '/web-pages';
   return `${pathname}?${params.toString()}`;
 }
@@ -89,6 +97,7 @@ export function parseDesignArtifactLaunch(search: string): DesignArtifactLaunchC
   if ((target !== 'web-page' && target !== 'html-ppt') || !sourceStoreId || !sourceEntryId || !sourceTitle)
     return null;
   const handoffId = params.get('handoff')?.trim();
+  const destinationTeamId = params.get('destTeam')?.trim();
   return {
     target,
     sourceStoreId,
@@ -96,6 +105,7 @@ export function parseDesignArtifactLaunch(search: string): DesignArtifactLaunchC
     sourceTitle,
     sourceStoreName: params.get('sourceStoreName')?.trim() || undefined,
     ...(handoffId && HANDOFF_ID_PATTERN.test(handoffId) ? { handoffId } : {}),
+    ...(destinationTeamId && TEAM_ID_PATTERN.test(destinationTeamId) ? { destinationTeamId } : {}),
   };
 }
 

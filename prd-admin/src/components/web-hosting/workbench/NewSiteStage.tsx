@@ -276,7 +276,8 @@ export default function NewSiteStage({
     instruction,
     knowledge: selectedKnowledge,
     uploadedFileNames: uploads.items.filter((item) => item.status !== 'failed').map((item) => item.fileName),
-  }), [instruction, selectedKnowledge, uploads.items]);
+    destinationTeamId,
+  }), [instruction, selectedKnowledge, uploads.items, destinationTeamId]);
 
   const sendBlocker = isPpt
     ? (pptHandoff.ok ? '' : pptHandoff.blocker)

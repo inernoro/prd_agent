@@ -72,6 +72,8 @@ export function buildHtmlPptHandoff(input: {
   instruction: string;
   knowledge: readonly HandoffKnowledge[];
   uploadedFileNames: readonly string[];
+  /** 工作台打开时冻结的团队空间；个人空间为空。PPT 发布时据此落进同一个团队。 */
+  destinationTeamId?: string | null;
 }): HtmlPptHandoff {
   const [first, ...rest] = input.knowledge;
   if (!first) {
@@ -90,6 +92,7 @@ export function buildHtmlPptHandoff(input: {
       sourceEntryId: first.entryId,
       sourceTitle: first.title,
       sourceStoreName: first.storeName,
+      ...(input.destinationTeamId ? { destinationTeamId: input.destinationTeamId } : {}),
     },
     request: input.instruction,
     carriedTitle: first.title,
