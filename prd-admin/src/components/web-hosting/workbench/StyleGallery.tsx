@@ -39,6 +39,20 @@ export function selectionStyleId(selection: StyleGallerySelection | null): strin
 /** 目录项的选择键加前缀，避免与预设的 styleId 撞名（预设 editorial 与设计系统 editorial 是两回事）。 */
 export const DESIGN_SYSTEM_KEY_PREFIX = 'design-system:';
 
+/**
+ * 删掉一套「我的风格」之后选中项该怎么变：删的不是选中的那套 → 不动；是 → 退回默认预设，
+ * 预设读不到或为空 → 清空（生成时由服务端用默认风格）。
+ */
+export function selectionAfterDelete(
+  selectedId: string | null,
+  deletedStyleId: string,
+  presets: readonly DesignGenerationStyle[] | null,
+): { kind: 'keep' } | { kind: 'select'; selection: StyleGallerySelection } | { kind: 'clear' } {
+  if (selectedId !== deletedStyleId) return { kind: 'keep' };
+  const fallback = presets?.find((item) => item.isDefault) ?? presets?.[0];
+  return fallback ? { kind: 'select', selection: presetSelection(fallback) } : { kind: 'clear' };
+}
+
 export function presetSelection(style: DesignGenerationStyle): StyleGallerySelection {
   return { kind: 'preset', key: style.id, styleId: style.id, designSystemId: style.designSystemId, name: style.name };
 }
@@ -87,11 +101,13 @@ export interface StyleGalleryProps {
   /** 当前选中项的 key（预设为 styleId，我的风格为 `personal:<id>`，目录项为 `design-system:<id>`）；null 表示未选。 */
   selectedId: string | null;
   onSelect: (selection: StyleGallerySelection) => void;
+  /** 选中的那套被删、又没有可退回的预设时调用：清空选择（生成时由服务端用默认风格），不关画廊。 */
+  onClearSelection?: () => void;
   /** 样张大标题，通常是用户正在生成的网页标题。 */
   title?: string;
 }
 
-export function StyleGallery({ selectedId, onSelect, title }: StyleGalleryProps) {
+export function StyleGallery({ selectedId, onSelect, onClearSelection, title }: StyleGalleryProps) {
   const [presets, setPresets] = useState<Loadable<DesignGenerationStyle[]>>({ status: 'loading' });
   const [mine, setMine] = useState<Loadable<{ items: PersonalStyle[]; limit: number }>>({ status: 'loading' });
   const [catalog, setCatalog] = useState<Loadable<DesignSystemCatalog>>({ status: 'loading' });
@@ -177,12 +193,11 @@ export function StyleGallery({ selectedId, onSelect, title }: StyleGalleryProps)
     setMine((current) => (current.status === 'ready'
       ? { status: 'ready', data: { ...current.data, items: current.data.items.filter((item) => item.id !== style.id) } }
       : current));
-    // 删掉的正是选中的那套：退回默认预设，免得生成时带着一个已经不存在的编号被拒。
-    if (selectedId === style.styleId && presets.status === 'ready') {
-      const fallback = presets.data.find((item) => item.isDefault) ?? presets.data[0];
-      if (fallback) onSelect(presetSelection(fallback));
-    }
-  }, [onSelect, presets, selectedId]);
+    // 删掉的正是选中的那套：退回默认预设；预设读不到就清空选择——总之不许留着一个已经不存在的编号。
+    const next = selectionAfterDelete(selectedId, style.styleId, presets.status === 'ready' ? presets.data : null);
+    if (next.kind === 'select') onSelect(next.selection);
+    else if (next.kind === 'clear') onClearSelection?.();
+  }, [onClearSelection, onSelect, presets, selectedId]);
 
   return (
     <div className="flex min-w-0 flex-col gap-5">

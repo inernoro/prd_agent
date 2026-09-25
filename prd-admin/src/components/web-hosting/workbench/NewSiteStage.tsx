@@ -513,6 +513,7 @@ export default function NewSiteStage({
             selectedId={styleSelection?.key ?? null}
             title={sampleTitle}
             onSelect={(selection) => { setStyleSelection(selection); setGalleryOpen(false); }}
+            onClearSelection={() => setStyleSelection(null)}
           />
         </div>
       ) : run.previewHtml ? (

@@ -15,6 +15,7 @@ import {
   groupMoreStyles,
   personalSelection,
   presetSelection,
+  selectionAfterDelete,
   selectionStyleId,
 } from './StyleGallery';
 
@@ -198,5 +199,20 @@ describe('我的风格：和预设并列，标「我的」，按 personal:<id> �
     expect(mineAt).toBeGreaterThan(presetsAt);
     expect(createAt).toBeGreaterThan(mineAt);
     expect(moreAt).toBeGreaterThan(createAt);
+  });
+});
+
+describe('删掉选中的「我的风格」之后', () => {
+  it('删的不是选中的那套：选择不动', () => {
+    expect(selectionAfterDelete('editorial', 'personal:p1', [preset])).toEqual({ kind: 'keep' });
+  });
+
+  it('删的是选中的那套：退回默认预设', () => {
+    expect(selectionAfterDelete('personal:p1', 'personal:p1', [preset])).toEqual({ kind: 'select', selection: presetSelection(preset) });
+  });
+
+  it('预设读不到或为空：清空选择，不留已删除的编号', () => {
+    expect(selectionAfterDelete('personal:p1', 'personal:p1', null)).toEqual({ kind: 'clear' });
+    expect(selectionAfterDelete('personal:p1', 'personal:p1', [])).toEqual({ kind: 'clear' });
   });
 });

@@ -3,3 +3,4 @@
 | feat | prd-admin | 风格画廊新增「我的风格」区（标「我的」、可编辑重命名与删除），「做一个我的风格」打开创建弹窗：选网页或写描述 → 系统提取 → 核对「系统填写」项 → 保存并选中 |
 | chore | prd-api | 新集合 personal_design_styles 登记数据同步分组与 DBA 索引清单（idx_personal_design_styles_owner_updated） |
 | fix | prd-admin | 「我的风格」网页选择器支持按标题搜索与继续加载，不再只看最近 50 张 |
+| fix | prd-admin | 「我的风格」换搜索条件时撤销看不见的已选网页；删掉选中风格而预设读不到时清空选择，不再带着已删除的编号去生成 |

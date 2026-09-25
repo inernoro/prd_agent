@@ -79,6 +79,9 @@ export function PersonalStyleDialog({
     return () => { active = false; };
   }, [open]);
 
+  // 搜索条件一变就撤销已选网页：新列表里可能没有它，看不见的选中项不许被悄悄拿去提取。
+  useEffect(() => { setSiteId(null); }, [debouncedQuery]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(siteQuery.trim()), 300);
     return () => window.clearTimeout(timer);
