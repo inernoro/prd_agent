@@ -188,10 +188,85 @@ public sealed class HostedSiteExportControllerTests
 
         Assert.True(result.Succeeded);
         var html = Encoding.UTF8.GetString(result.Html);
-        Assert.Contains("<style>h1{color:red}</style>", html);
+        Assert.Contains($"href=\"data:text/css;charset=utf-8;base64,{Convert.ToBase64String(Encoding.UTF8.GetBytes("h1{color:red}"))}\"", html);
         Assert.Equal(new[] { "web-hosting/sites/site-a/index.html", "web-hosting/sites/site-a/css/app.css" }, reads);
         Assert.Contains(result.Missing, m => m.Reason == "outside-site-root" && m.Reference == "../other/secret.png");
         Assert.Equal("季度复盘（离线版）.html", result.FileName);
+    }
+
+    /// <summary>
+    /// Codex P2：落盘后的文件没有 HTTP 的 charset 头，页面没声明编码时浏览器会按本地默认编码猜。
+    /// 输出以 UTF-8 BOM 开头，本地打开也按 UTF-8 解码。
+    /// </summary>
+    [Fact]
+    public async Task 导出的文件以UTF8_BOM开头()
+    {
+        var storage = new Mock<IAssetStorage>(MockBehavior.Loose);
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken _) => key.EndsWith("index.html", StringComparison.Ordinal)
+                ? Encoding.UTF8.GetBytes("<html><body>中文正文</body></html>")
+                : Encoding.UTF8.GetBytes("h1{}"));
+        var service = new HostedSiteOfflineExportService(storage.Object, NullLogger<HostedSiteOfflineExportService>.Instance);
+
+        var result = await service.ExportAsync(Site());
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, result.Html.Take(3).ToArray());
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }.Concat(Encoding.UTF8.GetBytes("<html><body>中文正文</body></html>")), result.Html);
+    }
+
+    /// <summary>
+    /// Codex P1：页面自己的 meta 内容安全策略会拦下内嵌的 data: 资源。不替作者改写策略，直接拒绝并给出下一步。
+    /// </summary>
+    [Fact]
+    public async Task 页面声明了内容安全策略时拒绝导出_且不再读其它文件()
+    {
+        var storage = new Mock<IAssetStorage>(MockBehavior.Loose);
+        var reads = new List<string>();
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((key, _) => reads.Add(key))
+            .ReturnsAsync(Encoding.UTF8.GetBytes(
+                "<head><META http-equiv=\"content-security-policy\" content=\"default-src 'self'\"><link rel=stylesheet href=css/app.css></head>"));
+        var service = new HostedSiteOfflineExportService(storage.Object, NullLogger<HostedSiteOfflineExportService>.Instance);
+
+        var result = await service.ExportAsync(Site());
+
+        Assert.Equal(HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta, result.Failure);
+        Assert.Empty(result.Html);
+        Assert.Equal(new[] { "web-hosting/sites/site-a/index.html" }, reads);
+        // 外因在前、影响、下一步
+        Assert.Contains("内容安全策略", result.Message);
+        Assert.Contains("显示不正常", result.Message);
+        Assert.Contains("在线分享链接", result.Message);
+        Assert.Contains("重新发布", result.Message);
+    }
+
+    [Fact]
+    public async Task 控制器把内容安全策略拒绝映射为400与OFFLINE_EXPORT_CSP_META()
+    {
+        var (controller, sites, exporter) = Build();
+        var site = Site();
+        sites.Setup(x => x.GetByIdAsync("site-a", UserId, It.IsAny<CancellationToken>())).ReturnsAsync(site);
+        sites.Setup(x => x.CanEditSiteAsync(site, UserId, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        exporter.Setup(x => x.ExportAsync(site, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteOfflineExportResult
+            {
+                Failure = HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta,
+                Message = HostedSiteOfflineExportService.DescribeFailure(HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta),
+            });
+
+        var result = await controller.ExportOwnedSite("site-a");
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal("OFFLINE_EXPORT_CSP_META", ErrorCode(result));
+    }
+
+    /// <summary>每个失败枚举都要有自己的对外错误码，不许落到兜底码（新增枚举忘了接线会红）。</summary>
+    [Fact]
+    public void 每个失败类型都有专属错误码()
+    {
+        foreach (var failure in Enum.GetValues<HostedSiteOfflineExportFailure>())
+            Assert.NotEqual("OFFLINE_EXPORT_FAILED", HostedSiteExportController.FailureCode(failure));
     }
 
     [Fact]

@@ -102,6 +102,7 @@ public sealed class HostedSiteExportController : ControllerBase
         HostedSiteOfflineExportFailure.EntryMissing => "OFFLINE_EXPORT_ENTRY_MISSING",
         HostedSiteOfflineExportFailure.EntryUnreadable => "OFFLINE_EXPORT_ENTRY_UNREADABLE",
         HostedSiteOfflineExportFailure.TooLarge => "OFFLINE_EXPORT_TOO_LARGE",
+        HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta => "OFFLINE_EXPORT_CSP_META",
         _ => "OFFLINE_EXPORT_FAILED",
     };
 

@@ -74,7 +74,7 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
-    public async Task 样式表变成style_脚本变成内联script_图片变成dataUri()
+    public async Task 外链样式表与脚本保留原元素和全部属性_只把地址换成dataUrl()
     {
         var site = new FakeSite()
             .Add("css/app.css", "body{color:red}")
@@ -90,13 +90,73 @@ public sealed class HostedSiteHtmlInlinerTests
         var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
 
         Assert.True(result.Succeeded);
-        Assert.Contains("<style media=\"screen\">body{color:red}</style>", result.Html);
-        Assert.Contains("<script defer>console.log('hi')</script>", result.Html);
-        Assert.DoesNotContain("integrity", result.Html);
+        Assert.Contains("<link rel=\"stylesheet\" href=\"data:text/css;charset=utf-8;base64,", result.Html);
+        Assert.Contains("media=\"screen\">", result.Html);
+        Assert.Equal("body{color:red}", DataUrlText(result.Html, "link", "href"));
+        Assert.DoesNotContain("<style", result.Html);
+
+        // 脚本字节没变，作者写的 integrity 仍然成立，原样保留
+        Assert.Contains("<script src=\"data:text/javascript;base64,", result.Html);
+        Assert.Contains("integrity=\"sha384-x\" defer></script>", result.Html);
+        Assert.Equal("console.log('hi')", DataUrlText(result.Html, "script", "src"));
+
         Assert.Contains($"src=\"data:image/png;base64,{Convert.ToBase64String(new byte[] { 1, 2, 3 })}\"", result.Html);
         Assert.Contains("alt=\"logo\"", result.Html);
         Assert.Empty(result.Missing);
         Assert.Equal(3, result.InlinedCount);
+    }
+
+    /// <summary>
+    /// Codex P1：换成内联经典脚本会丢掉 defer / async / module 语义，执行时机与顺序全变。
+    /// 现在元素原样保留，只换 src 的值。
+    /// </summary>
+    [Fact]
+    public async Task 脚本的defer_async_module语义原样保留()
+    {
+        var site = new FakeSite().Add("a.js", "A()").Add("b.js", "B()").Add("c.js", "export const c = 1;");
+        const string html = "<script defer src=\"a.js\"></script><script async src=\"b.js\"></script><script type=\"module\" src=\"c.js\"></script>";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Matches("<script defer src=\"data:text/javascript;base64,[^\"]+\"></script>", result.Html);
+        Assert.Matches("<script async src=\"data:text/javascript;base64,[^\"]+\"></script>", result.Html);
+        Assert.Matches("<script type=\"module\" src=\"data:text/javascript;base64,[^\"]+\"></script>", result.Html);
+        Assert.Equal(new[] { "A()", "B()", "export const c = 1;" }, AllDataUrlTexts(result.Html, "script", "src"));
+    }
+
+    /// <summary>
+    /// Codex P2：变成 &lt;style&gt; 会让禁用的样式表生效，并丢掉 id / title（脚本靠它们切换主题）。
+    /// </summary>
+    [Fact]
+    public async Task 样式表的disabled_id_title与候选样式表语义原样保留()
+    {
+        var site = new FakeSite().Add("dark.css", ".d{}").Add("alt.css", ".a{}");
+        const string html = "<link rel=\"stylesheet\" disabled id=\"theme-dark\" title=\"深色\" href=\"dark.css\">"
+            + "<link rel=\"alternate stylesheet\" title=\"备选\" href=\"alt.css\">";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Matches("<link rel=\"stylesheet\" disabled id=\"theme-dark\" title=\"深色\" href=\"data:text/css;charset=utf-8;base64,[^\"]+\">", result.Html);
+        Assert.Matches("<link rel=\"alternate stylesheet\" title=\"备选\" href=\"data:text/css;charset=utf-8;base64,[^\"]+\">", result.Html);
+        Assert.Equal(new[] { ".d{}", ".a{}" }, AllDataUrlTexts(result.Html, "link", "href"));
+        Assert.DoesNotContain("<style", result.Html);
+    }
+
+    [Fact]
+    public async Task 样式表内容被改写时才去掉integrity_否则原样保留()
+    {
+        var site = new FakeSite()
+            .Add("plain.css", ".p{}")
+            .Add("withimg.css", ".w{background:url(i.png)}")
+            .Add("i.png", "I", "image/png");
+        const string html = "<link rel=stylesheet integrity=\"sha384-p\" href=plain.css>"
+            + "<link rel=stylesheet integrity=\"sha384-w\" href=withimg.css>";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("integrity=\"sha384-p\"", result.Html);
+        Assert.DoesNotContain("sha384-w", result.Html);
+        Assert.Contains($"url(data:image/png;base64,{B64("I")})", AllDataUrlTexts(result.Html, "link", "href")[1]);
     }
 
     [Fact]
@@ -110,8 +170,11 @@ public sealed class HostedSiteHtmlInlinerTests
 
         var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
 
-        Assert.Contains($"url(data:font/woff2;base64,{B64("FONT")})", result.Html);
-        Assert.Contains($"url(data:image/svg+xml;base64,{B64("<svg/>")})", result.Html);
+        // data: URL 没有基准地址：样式表里的相对 url() 必须在编码前就全部内嵌
+        var css = DataUrlText(result.Html, "link", "href");
+        Assert.Contains($"url(data:font/woff2;base64,{B64("FONT")})", css);
+        Assert.Contains($"url(data:image/svg+xml;base64,{B64("<svg/>")})", css);
+        Assert.DoesNotContain("../fonts", css);
         Assert.Empty(result.Missing);
     }
 
@@ -141,8 +204,9 @@ public sealed class HostedSiteHtmlInlinerTests
         var result = await site.Inliner().InlineAsync("index.html", "<link rel=stylesheet href=a.css>", CancellationToken.None);
 
         Assert.True(result.Succeeded);
-        Assert.Contains(".a{}", result.Html);
-        Assert.Contains(".b{}", result.Html);
+        var css = DataUrlText(result.Html, "link", "href");
+        Assert.Contains(".a{}", css);
+        Assert.Contains(".b{}", css);
     }
 
     [Fact]
@@ -195,14 +259,14 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
-    public async Task 内嵌脚本里的结束标签会被转义_不会提前闭合script()
+    public async Task 外链脚本内容装进dataUrl_里面的结束标签不会提前闭合script()
     {
         var site = new FakeSite().Add("a.js", "document.write('</script><b>x</b>')");
 
         var result = await site.Inliner().InlineAsync("index.html", "<script src=\"a.js\"></script>", CancellationToken.None);
 
-        Assert.Contains("<\\/script><b>x</b>", result.Html);
         Assert.Equal(1, CountOf(result.Html, "</script>"));
+        Assert.Equal("document.write('</script><b>x</b>')", DataUrlText(result.Html, "script", "src"));
     }
 
     [Fact]
@@ -218,14 +282,27 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
-    public async Task 预加载提示与候选样式表不内嵌()
+    public async Task 预加载提示不内嵌()
     {
-        var site = new FakeSite().Add("f.woff2", "F").Add("alt.css", ".x{}");
-        const string html = "<link rel=\"preload\" href=\"f.woff2\" as=\"font\"><link rel=\"alternate stylesheet\" href=\"alt.css\">";
+        var site = new FakeSite().Add("f.woff2", "F");
+        const string html = "<link rel=\"preload\" href=\"f.woff2\" as=\"font\">";
 
         var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
 
         Assert.Equal(html, result.Html);
+    }
+
+    [Theory]
+    [InlineData("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'\">", true)]
+    [InlineData("<META HTTP-EQUIV='content-security-policy' CONTENT=\"script-src 'none'\">", true)]
+    [InlineData("<meta http-equiv=\" Content-Security-Policy \" content=x>", true)]
+    [InlineData("<!-- <meta http-equiv=\"Content-Security-Policy\" content=x> -->", false)]
+    [InlineData("<script>var s='<meta http-equiv=\"Content-Security-Policy\">'</script>", false)]
+    [InlineData("<meta http-equiv=\"Content-Security-Policy-Report-Only\" content=x>", false)]
+    [InlineData("<meta charset=\"utf-8\">", false)]
+    public void 识别页面自己声明的内容安全策略(string html, bool expected)
+    {
+        Assert.Equal(expected, HostedSiteHtmlInliner.DeclaresContentSecurityPolicy(html));
     }
 
     [Fact]
@@ -263,6 +340,15 @@ public sealed class HostedSiteHtmlInlinerTests
         Assert.Equal("b.png", parts[1].Url);
         Assert.Equal("2x", parts[1].Descriptor);
     }
+
+    /// <summary>取第 index 个 &lt;tag ... attr="data:...;base64,xxx"&gt; 的内容并解码成文本。</summary>
+    private static string DataUrlText(string html, string tag, string attr, int index = 0) =>
+        AllDataUrlTexts(html, tag, attr)[index];
+
+    private static List<string> AllDataUrlTexts(string html, string tag, string attr) =>
+        System.Text.RegularExpressions.Regex.Matches(html, $"<{tag}\\b[^>]*\\b{attr}=\"data:[^\";]+(?:;[^\";,]+)*;base64,([^\"]+)\"")
+            .Select(m => Encoding.UTF8.GetString(Convert.FromBase64String(m.Groups[1].Value)))
+            .ToList();
 
     private static int CountOf(string text, string needle)
     {

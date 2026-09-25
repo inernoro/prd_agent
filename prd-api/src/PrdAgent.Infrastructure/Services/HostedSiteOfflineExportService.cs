@@ -14,6 +14,8 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
 {
     public const long MaxOutputBytes = HostedSiteHtmlInliner.DefaultMaxOutputBytes;
 
+    private static readonly byte[] Utf8Bom = { 0xEF, 0xBB, 0xBF };
+
     private readonly IAssetStorage _storage;
     private readonly ILogger<HostedSiteOfflineExportService> _logger;
 
@@ -50,6 +52,11 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
             ? Encoding.UTF8.GetString(entryBytes, 3, entryBytes.Length - 3)
             : Encoding.UTF8.GetString(entryBytes);
 
+        // 作者自己声明的内容安全策略会拦下内嵌进来的 data: 资源。改写或删掉它不是打包该替作者做的决定，
+        // 所以直接拒绝，并在文案里给出替代路径。
+        if (HostedSiteHtmlInliner.DeclaresContentSecurityPolicy(html))
+            return Fail(HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta);
+
         var inliner = new HostedSiteHtmlInliner(
             files.Select(f => new HostedSiteInlineFile(f.Path, f.Size, f.MimeType, f.CosKey)),
             async (file, token) => string.IsNullOrWhiteSpace(file.StorageKey)
@@ -72,7 +79,9 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
 
         return new HostedSiteOfflineExportResult
         {
-            Html = Encoding.UTF8.GetBytes(result.Html),
+            // 带 UTF-8 BOM：文件落盘后没有 HTTP 的 charset 头，页面里又不一定声明了编码，
+            // 浏览器按本地默认编码猜会把中文解成乱码；BOM 是本地文件唯一可靠的编码信号。
+            Html = Utf8Bom.Concat(Encoding.UTF8.GetBytes(result.Html)).ToArray(),
             FileName = BuildFileName(site.Title),
             InlinedCount = result.InlinedCount,
             Missing = missing,
@@ -93,6 +102,8 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
         HostedSiteOfflineExportFailure.TooLarge =>
             $"这个网页把图片、字体、脚本都装进一个文件后会超过 {MaxOutputBytes / 1024 / 1024}MB（内嵌后体积约增加三分之一），所以这次没有生成下载。线上页面不受影响；如需离线保存，请先压缩或删掉大体积的图片 / 视频后再试。"
             + (string.IsNullOrWhiteSpace(detail) ? string.Empty : $"（超限时正在打包：{detail}）"),
+        HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta =>
+            "这个网页在页面里声明了自己的内容安全策略，它会拦下离线打包时内嵌进来的样式、脚本和图片，下载下来的文件打开后显示不正常，所以这次没有生成下载。线上网页不受影响；请改用在线分享链接查看，或去掉页面里的这条安全策略后重新发布再下载。",
         _ => "离线打包没有完成，请稍后再试。",
     };
 

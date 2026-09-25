@@ -85,9 +85,6 @@ public sealed class HostedSiteHtmlInliner
     private static readonly Regex SchemePrefix = new(
         "^[a-zA-Z][a-zA-Z0-9+.\\-]*:", RegexOptions.Compiled, RegexTimeout);
 
-    private static readonly Regex ClosingScript = new(
-        "</script", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
-
     private static readonly Regex ClosingStyle = new(
         "</style", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
 
@@ -230,6 +227,26 @@ public sealed class HostedSiteHtmlInliner
             : (HostedSiteReferenceKind.Site, string.Join('/', stack));
     }
 
+    /// <summary>
+    /// 入口 HTML 是否用 &lt;meta http-equiv="Content-Security-Policy"&gt; 声明了作者自己的内容安全策略。
+    /// 这种策略通常会拦下 data: 地址的脚本 / 样式 / 图片，离线文件打开后会大面积失效；
+    /// 而改写或删掉作者的安全策略不是打包该做的决定，所以由调用方据此拒绝导出。
+    /// 注释与脚本里的同名字样不算（走同一个标签扫描，跳过注释、脚本与样式块）；仅报告模式的策略不拦截，不算。
+    /// </summary>
+    public static bool DeclaresContentSecurityPolicy(string html)
+    {
+        foreach (Match m in HtmlToken.Matches(html ?? string.Empty))
+        {
+            if (!m.Groups["tag"].Success
+                || !string.Equals(m.Groups["name"].Value, "meta", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var httpEquiv = FindAttribute(m.Groups["attrs"].Value, "http-equiv")?.Value;
+            if (string.Equals(httpEquiv?.Trim(), "Content-Security-Policy", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
     public async Task<HostedSiteInlineResult> InlineAsync(string entryPath, string html, CancellationToken ct)
     {
         _estimatedBytes = Encoding.UTF8.GetByteCount(html);
@@ -302,16 +319,10 @@ public sealed class HostedSiteHtmlInliner
     private async Task<string> InlineScriptAsync(string entryPath, Match m, CancellationToken ct)
     {
         var attrs = m.Groups["sattrs"].Value;
-        var src = FindAttribute(attrs, "src");
-        if (src == null) return m.Value;
-
-        var file = await ResolveAndLoadAsync(entryPath, src.Value.Value, isText: true, ct);
-        if (file == null) return m.Value;
-
-        var code = DecodeText(file.Value.Bytes);
-        var kept = RemoveAttributes(attrs, "src", "integrity");
-        _inlined++;
-        return "<script" + kept + ">" + EscapeClosing(ClosingScript, code, "<\\/script") + "</script>";
+        var rewritten = await RewriteExternalResourceAsync(entryPath, attrs, "src", ExternalResourceKind.Script, ct);
+        // 元素、属性、顺序原样保留（defer / async / type=module / integrity 等语义都不动），只换了 src 的值；
+        // 带 src 的脚本体本来就不执行，照抄即可。
+        return rewritten == null ? m.Value : "<script" + rewritten + ">" + m.Groups["sbody"].Value + "</script>";
     }
 
     private async Task<string> InlineTagAsync(string entryPath, Match m, CancellationToken ct)
@@ -363,26 +374,9 @@ public sealed class HostedSiteHtmlInliner
 
         if (rels.Contains("stylesheet", StringComparer.OrdinalIgnoreCase))
         {
-            // 候选样式表是给用户手动切换的，内嵌进来会被当成默认样式一起生效。
-            if (rels.Contains("alternate", StringComparer.OrdinalIgnoreCase)) return original;
-
-            var (kind, path) = ResolveReference(entryPath, href.Value.Value);
-            if (kind != HostedSiteReferenceKind.Site)
-            {
-                if (kind == HostedSiteReferenceKind.OutsideSiteRoot)
-                    RecordMissing(href.Value.Value, HostedSiteInlineMissingReason.OutsideSiteRoot);
-                return original;
-            }
-
-            var file = await LoadAsync(href.Value.Value, path!, isText: true, ct);
-            if (file == null) return original;
-
-            var css = await ProcessCssAsync(DecodeText(file.Value.Bytes), file.Value.Path, 0,
-                new HashSet<string>(StringComparer.Ordinal) { file.Value.Path }, ct);
-            _inlined++;
-            var media = FindAttribute(attrs, "media")?.Value;
-            var mediaAttr = string.IsNullOrWhiteSpace(media) ? string.Empty : " media=\"" + EscapeAttribute(media) + "\"";
-            return "<style" + mediaAttr + ">" + EscapeClosing(ClosingStyle, css, "<\\/style") + "</style>";
+            // 元素与全部属性原样保留（disabled / id / title / media / alternate 都照旧生效），只换 href 的值。
+            var rewritten = await RewriteExternalResourceAsync(entryPath, attrs, "href", ExternalResourceKind.Stylesheet, ct);
+            return rewritten == null ? original : "<link" + rewritten + ">";
         }
 
         // 图标一类：href 直接换成 data: URI
@@ -394,6 +388,66 @@ public sealed class HostedSiteHtmlInliner
         {
             [target.Index] = target.Name + "=\"" + EscapeAttribute(dataUri) + "\"",
         }) + ">";
+    }
+
+    private enum ExternalResourceKind { Script, Stylesheet }
+
+    /// <summary>
+    /// 外链脚本与外链样式表的唯一内嵌路径：元素不换、属性不删，只把 src / href 的值换成 data: URL。
+    /// 这样 defer / async / module、disabled / id / title / media 以及书写顺序全部按作者的原样生效，
+    /// 不必逐个语义去「模拟」（换成内联元素会丢掉它们）。
+    ///
+    /// 样式表在编码前先把自己的 url() 与 @import 按样式表所在目录解析、内嵌——data: URL 没有可用的
+    /// 基准地址，里面留下的任何相对路径离线都解析不到；解析不了的照旧进缺失清单。
+    ///
+    /// 返回改写后的属性串；引用不在站内 / 读不到时返回 null（调用方保留原样，缺失已登记）。
+    /// </summary>
+    private async Task<string?> RewriteExternalResourceAsync(
+        string basePath, string attrs, string attributeName, ExternalResourceKind kind, CancellationToken ct)
+    {
+        var parsed = ParseAttributes(attrs);
+        var target = parsed.FirstOrDefault(a => a.Value != null
+            && string.Equals(a.Name, attributeName, StringComparison.OrdinalIgnoreCase));
+        if (target == null) return null;
+
+        var file = await ResolveAndLoadAsync(basePath, target.Value!, isText: true, ct);
+        if (file == null) return null;
+        // 读入时已按原文字节计入预算；样式表里的子资源会在下面各自计入。最终按 data: URL 的真实长度重算这一项。
+        var baseline = _estimatedBytes - file.Value.Bytes.Length;
+
+        byte[] payload;
+        string mime;
+        var removals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (kind == ExternalResourceKind.Stylesheet)
+        {
+            var original = DecodeText(file.Value.Bytes);
+            var css = await ProcessCssAsync(original, file.Value.Path, 0,
+                new HashSet<string>(StringComparer.Ordinal) { file.Value.Path }, ct);
+            payload = Encoding.UTF8.GetBytes(css);
+            mime = "text/css;charset=utf-8";
+            // 内容被改写（资源已内嵌）后，作者写的完整性摘要对不上新内容，留着浏览器会拒绝加载整张样式表。
+            // 只有内容真的变了才去掉它；脚本与未改写的样式表字节不变，摘要照样成立，一律保留。
+            if (css != original) removals.Add("integrity");
+        }
+        else
+        {
+            payload = file.Value.Bytes;
+            mime = "text/javascript";
+        }
+
+        // 子资源已经包含在 payload 里，改用「读这个文件之前的预算 + 整个 data: URL」，避免同一份字节算两遍
+        _estimatedBytes = baseline + Base64Length(payload.Length);
+        if (_estimatedBytes > _maxOutputBytes) throw new OverLimitException(file.Value.Path);
+
+        _inlined++;
+        var dataUrl = "data:" + mime + ";base64," + Convert.ToBase64String(payload);
+        var replacements = new Dictionary<int, string>
+        {
+            [target.Index] = target.Name + "=\"" + EscapeAttribute(dataUrl) + "\"",
+        };
+        foreach (var attr in parsed.Where(a => removals.Contains(a.Name)))
+            replacements[attr.Index] = string.Empty;
+        return ReplaceAttributes(attrs, parsed, replacements);
     }
 
     /// <summary>
@@ -617,15 +671,6 @@ public sealed class HostedSiteHtmlInliner
                 return (attr.Name, attr.Value);
         }
         return null;
-    }
-
-    private static string RemoveAttributes(string attrs, params string[] names)
-    {
-        var parsed = ParseAttributes(attrs);
-        var removals = parsed
-            .Where(a => names.Contains(a.Name, StringComparer.OrdinalIgnoreCase))
-            .ToDictionary(a => a.Index, _ => string.Empty);
-        return removals.Count == 0 ? attrs : ReplaceAttributes(attrs, parsed, removals);
     }
 
     private static string ReplaceAttributes(string attrs, List<ParsedAttribute> parsed, Dictionary<int, string> replacements)
