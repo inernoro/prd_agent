@@ -458,11 +458,9 @@ builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
-builder.Services.AddScoped<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>();
-builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
-    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
-builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderProbe>(sp =>
-    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
+// OpenDesign 两条传输面：直连设计执行服务（service）/ 经 CDS 会话（cds-session，回退用）。
+// 选哪条只由 OpenDesignTransportResolver 一处判定（DesignRuntime:OpenDesign:Transport / BaseUrl / ApiKey）。
+PrdAgent.Api.Services.OpenDesignTransportServiceCollectionExtensions.AddOpenDesignExecutors(builder.Services);
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();

@@ -57,6 +57,12 @@ public interface IDesignArtifactWorkspaceBroker
     Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct);
 
     Task<DesignArtifactRun> ValidateModelTicketAsync(string runId, string token, CancellationToken ct);
+
+    /// <summary>
+    /// 记下网关实际回答本次设计任务所用的模型（运行时模型代理从网关响应里读到的）。
+    /// 只在值变化时写一次：返回 true 表示这次真的改了 run（调用方据此推一条 model 事件）。
+    /// </summary>
+    Task<bool> RecordServedModelAsync(string runId, string model, string? platform, CancellationToken ct);
 }
 
 public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBroker
@@ -630,6 +636,23 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
         return run;
+    }
+
+    public async Task<bool> RecordServedModelAsync(string runId, string model, string? platform, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        // 条件里带「值不同」：同一个模型的后续调用一条都不写；并发的两次调用也只有一次命中。
+        var write = await _db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == runId
+                    && item.Status == RunStatuses.Running
+                    && item.ResolvedModel != model,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.ResolvedModel, model)
+                .Set(item => item.ResolvedPlatform, platform)
+                .Max(item => item.UpdatedAt, now),
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
     }
 
     internal static async Task<bool> PersistPreparedWorkspaceAsync(
