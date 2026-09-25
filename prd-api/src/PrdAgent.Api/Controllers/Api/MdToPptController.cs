@@ -4345,18 +4345,19 @@ public class MdToPptController : ControllerBase
         return outcome;
     }
 
-    /// <summary>改道后的请求刚被网关接住（收到 Start）：整次运行只通知一次，带上实际模型。</summary>
+    /// <summary>改道后的请求刚被网关接住（收到 Start）：整次运行只通知一次，带上实际模型与实际平台。</summary>
     private async Task AnnounceSubstitutionIfFirstAsync(
         MdToPptPageModelRoute? route,
         MdToPptPageModelOutcome attemptedWith,
         string? actualModel,
+        string? actualPlatform,
         string runId)
     {
         if (route?.OnSubstituted == null
             || attemptedWith != MdToPptPageModelOutcome.UseGatewayDefault
             || !route.TryMarkSubstitutionAnnounced())
             return;
-        try { await route.OnSubstituted(actualModel); }
+        try { await route.OnSubstituted(actualModel, actualPlatform); }
         catch (Exception ex) { _logger.LogWarning(ex, "[MdToPpt] 改判提示下发失败 runId={RunId}", runId); }
     }
 
@@ -4558,7 +4559,7 @@ public class MdToPptController : ControllerBase
                     {
                         actualModel = chunk.Resolution.ActualModel;
                         actualPlatform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
-                        await AnnounceSubstitutionIfFirstAsync(modelRoute, attemptedWith, actualModel, runId);
+                        await AnnounceSubstitutionIfFirstAsync(modelRoute, attemptedWith, actualModel, actualPlatform, runId);
                         continue;
                     }
                     if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
@@ -4783,9 +4784,9 @@ public class MdToPptController : ControllerBase
             return;
         }
         var modelRoute = CreatePageModelRoute(profile, req.RuntimeProfileId);
-        modelRoute.OnSubstituted = async actual =>
+        modelRoute.OnSubstituted = async (actual, actualPlatform) =>
         {
-            await EmitAsync("model", new { model = actual ?? GenerationModelLabel(profile), platform });
+            await EmitAsync("model", new { model = actual ?? GenerationModelLabel(profile), platform = actualPlatform ?? platform });
             await EmitAsync("diag", ModelSubstitutedDiag(modelRoute, actual));
         };
         await EmitAsync("model", new { model = GenerationModelLabel(profile), platform });
@@ -5123,9 +5124,9 @@ public class MdToPptController : ControllerBase
 
         var platform = GenerationPlatformLabel(profile);
         var modelRoute = CreatePageModelRoute(profile, req.RuntimeProfileId);
-        modelRoute.OnSubstituted = async actual =>
+        modelRoute.OnSubstituted = async (actual, actualPlatform) =>
         {
-            await WriteEventAsync("model", new { model = actual ?? GenerationModelLabel(profile), platform });
+            await WriteEventAsync("model", new { model = actual ?? GenerationModelLabel(profile), platform = actualPlatform ?? platform });
             await WriteDiagAsync(ModelSubstitutedDiag(modelRoute, actual));
         };
         await WriteEventAsync("model", new { model = GenerationModelLabel(profile), platform });
@@ -5255,7 +5256,7 @@ public class MdToPptController : ControllerBase
         string? requestedProfileId)
     {
         var modelRoute = CreatePageModelRoute(profile, requestedProfileId);
-        modelRoute.OnSubstituted = actual => WriteDiagAsync(ModelSubstitutedDiag(modelRoute, actual));
+        modelRoute.OnSubstituted = (actual, _) => WriteDiagAsync(ModelSubstitutedDiag(modelRoute, actual));
         var fullText = new StringBuilder();
         var model = GenerationModelLabel(profile);
         var resolvedPlatform = "LLM Gateway";
@@ -5306,7 +5307,7 @@ public class MdToPptController : ControllerBase
                             ?? chunk.Resolution.ActualPlatformId
                             ?? resolvedPlatform;
                         await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
-                        await AnnounceSubstitutionIfFirstAsync(modelRoute, attemptedWith, model, run.Id);
+                        await AnnounceSubstitutionIfFirstAsync(modelRoute, attemptedWith, model, resolvedPlatform, run.Id);
                     }
                     else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
                     {

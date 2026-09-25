@@ -107,12 +107,30 @@ public class MdToPptPipelineRegressionTests
         route.Notice.ShouldBeNull();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PageModelRoute_ProfileWithoutModel_RejectedByGateway_RejectsTheRun(bool explicitlySelected)
+    {
+        // 系统默认配置（CreateSystemGatewayProfile）没有模型名：请求本来就交给网关默认，
+        // 网关没有默认对外模型或调用方被停用时，不能停在原路线让每页退化成兜底（Codex P1）。
+        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
+        var route = MdToPptController.CreatePageModelRoute(profile, explicitlySelected ? profile.Id : null);
+        route.ExpectedModelFor(route.Outcome).ShouldBeNull();
+
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound)
+            .ShouldBe((MdToPptPageModelOutcome.Reject, true));
+        route.Notice.ShouldNotBeNull();
+        route.Notice.ShouldNotContain("改选「MAP 默认模型」", customMessage: "用户本来就在用 MAP 默认模型，不能让他改选它");
+        route.TryMarkSubstitutionAnnounced().ShouldBeFalse();
+    }
+
     [Fact]
-    public void PageModelRoute_ProfileWithoutModel_NeverSwitches()
+    public void PageModelRoute_ProfileWithoutModel_UnrelatedFailure_KeepsRoute()
     {
         var route = new MdToPptPageModelRoute("  ", explicitlySelected: false);
 
-        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound)
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, GatewayRouteFailure.ProviderUnavailable)
             .ShouldBe((MdToPptPageModelOutcome.UseProfileModel, false));
         route.ExpectedModelFor(route.Outcome).ShouldBeNull();
     }
@@ -141,6 +159,24 @@ public class MdToPptPipelineRegressionTests
         requestId.ShouldBeGreaterThan(loop, $"{methodSignature} 的 requestId 必须在每次发送时新建");
         method.ShouldContain("AnnounceSubstitutionIfFirstAsync(",
             customMessage: $"{methodSignature} 收到 Start 时要宣布改判（带实际模型）");
+    }
+
+    [Fact]
+    public void SubstitutionAnnouncement_CarriesActualPlatformFromStartResolution()
+    {
+        // 改道后推送的 model 事件，平台必须是 Start.Resolution 给的实际平台，
+        // 不许退回预先算好的「LLM Gateway」路线标签（Codex P2，PR #1629）。
+        var source = File.ReadAllText(ControllerPath());
+        var announces = CallSites(source, "AnnounceSubstitutionIfFirstAsync(", "private async Task AnnounceSubstitutionIfFirstAsync(");
+        announces.Count.ShouldBe(2);
+        announces.ShouldContain(call => call.Contains("actualPlatform"), "逐页 / 单页重绘的发送循环要把 actualPlatform 传出去");
+        announces.ShouldContain(call => call.Contains("resolvedPlatform"), "整篇直出的发送循环要把 resolvedPlatform 传出去");
+
+        var modelEventHandlers = Regex.Matches(source, @"OnSubstituted = async \(actual, actualPlatform\) =>\s*\{\s*await \w+\(""model"", new \{[^}]*\}")
+            .Select(m => m.Value).ToList();
+        modelEventHandlers.Count.ShouldBe(2, "并行逐页生成与单页重绘两处改判回调都要推 model 事件");
+        foreach (var handler in modelEventHandlers)
+            handler.ShouldContain("platform = actualPlatform ??", customMessage: $"改判的 model 事件没有用实际平台：{handler}");
     }
 
     [Fact]

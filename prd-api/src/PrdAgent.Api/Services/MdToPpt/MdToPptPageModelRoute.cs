@@ -40,11 +40,12 @@ internal sealed class MdToPptPageModelRoute
     public bool ExplicitlySelected { get; }
 
     /// <summary>
-    /// 改道后的请求**真的被网关接住**（收到 Start、知道实际模型）时通知一次，参数是实际模型。
+    /// 改道后的请求**真的被网关接住**（收到 Start、知道实际模型）时通知一次，参数是实际模型与实际平台
+    /// （两者都取自 Start.Resolution，平台不许退回预先算好的路线标签，Codex P2）。
     /// 不在切换那一刻通知：切换只是「换个方式再试」，若网关连不点名的请求也拒绝（例如该用途被停用），
     /// 提前说「已改用默认模型」就是一句谎话。
     /// </summary>
-    public Func<string?, Task>? OnSubstituted { get; set; }
+    public Func<string?, string?, Task>? OnSubstituted { get; set; }
 
     /// <summary>整次运行只宣布一次改判；返回 true 的那一次负责通知。</summary>
     public bool TryMarkSubstitutionAnnounced() =>
@@ -72,7 +73,7 @@ internal sealed class MdToPptPageModelRoute
     /// </summary>
     public string? Notice => Outcome switch
     {
-        MdToPptPageModelOutcome.Reject when ExplicitlySelected =>
+        MdToPptPageModelOutcome.Reject when ExplicitlySelected && RequestedModel != null =>
             "你选的模型配置当前无法用于生成页面，这次没有生成。请在模型选择里改选「MAP 默认模型」后重试。",
         MdToPptPageModelOutcome.Reject =>
             "页面生成服务暂时不可用，这次没有生成。请稍后重试；持续失败请联系管理员检查模型服务配置。",
@@ -91,9 +92,11 @@ internal sealed class MdToPptPageModelRoute
         string? gatewayErrorCode)
     {
         if (attemptedWith == MdToPptPageModelOutcome.Reject) return MdToPptPageModelOutcome.Reject;
-        if (string.IsNullOrWhiteSpace(requestedModel)) return attemptedWith;
         if (!string.Equals(gatewayErrorCode, GatewayRouteFailure.AppCallerPoolUnbound, StringComparison.Ordinal))
             return attemptedWith;
+        // 配置本来就没点名模型（如系统默认配置）：这次请求就是「交给网关默认」的那一次，
+        // 再被拒没有别的路可改，直接整次失败——否则每页各自退化成兜底版式、整本兜底稿被当成功保存（Codex P1）。
+        if (string.IsNullOrWhiteSpace(requestedModel)) return MdToPptPageModelOutcome.Reject;
         return attemptedWith == MdToPptPageModelOutcome.UseProfileModel && !explicitlySelected
             ? MdToPptPageModelOutcome.UseGatewayDefault
             : MdToPptPageModelOutcome.Reject;
