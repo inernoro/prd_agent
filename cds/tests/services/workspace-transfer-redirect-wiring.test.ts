@@ -19,12 +19,12 @@ describe('伙伴侧传输不跟随重定向', () => {
     expect(body).toContain('workspace_transfer_redirect_rejected');
   });
 
-  it('两个伙伴 URL 都不再直接进 this.fetchImpl', () => {
+  it('三个伙伴 URL 都不再直接进 this.fetchImpl', () => {
     const offenders = source
       .split('\n')
       .map((line, index) => ({ line: line.trim(), no: index + 1 }))
       .filter((item) => item.line.includes('this.fetchImpl(')
-        && (item.line.includes('inputPackageUrl') || item.line.includes('resultCommitUrl')));
+        && (item.line.includes('inputPackageUrl') || item.line.includes('resultCommitUrl') || item.line.includes('previewUrl')));
     expect(offenders.map((item) => `${item.no}: ${item.line}`)).toEqual([]);
   });
 
@@ -32,8 +32,10 @@ describe('伙伴侧传输不跟随重定向', () => {
     const calls = source
       .split('\n')
       .filter((line) => line.includes('this.fetchPartnerTransfer('));
-    expect(calls).toHaveLength(2);
+    // 三处：取输入包、提交结果、推实时预览（2026-09-23 实时预览上线后新增的第三处，同样走唯一入口）。
+    expect(calls).toHaveLength(3);
     expect(calls.some((line) => line.includes('inputPackageUrl'))).toBe(true);
     expect(calls.some((line) => line.includes('resultCommitUrl'))).toBe(true);
+    expect(calls.some((line) => line.includes('previewUrl'))).toBe(true);
   });
 });

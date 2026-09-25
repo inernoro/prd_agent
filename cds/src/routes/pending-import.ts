@@ -401,6 +401,8 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // Phase 8 — env metadata + defaultEnv 同步落库(同上 projects.ts /clone 路径逻辑)
     if (parsed.envMeta && Object.keys(parsed.envMeta).length > 0) {
       stateService.setEnvMeta(project.id, parsed.envMeta);
+      // 导入即补齐内部密钥，面板上立刻能看到「已由 CDS 生成」，不必等第一次部署。
+      stateService.ensureGeneratedEnvKeys(project.id);
     }
     if (Object.keys(parsed.envVars || {}).length > 0) {
       stateService.setDefaultEnv(project.id, parsed.envVars || {});

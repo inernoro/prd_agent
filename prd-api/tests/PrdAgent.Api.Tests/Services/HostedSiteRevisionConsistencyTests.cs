@@ -353,6 +353,49 @@ public sealed class HostedSiteRevisionConsistencyTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task RollbackRetry_ThatCompletesAnUnpublishedDraft_ShouldReportTheChange()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-10));
+        var publishedVersion = MongoTime(DateTime.UtcNow);
+        var target = PublishingRevision("draft-rollback-target", baseVersion);
+        target.Status = HostedSiteRevisionStatuses.Published;
+        target.PublishedAt = baseVersion;
+        target.PublishedContentVersion = baseVersion;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(target);
+
+        // 上一次调用插入了回退草稿就退出了：还没开始发布，站点没变。
+        var leftover = PublishingRevision("draft-rollback-attempt", baseVersion);
+        leftover.Status = HostedSiteRevisionStatuses.Draft;
+        leftover.PublishAttemptId = null;
+        leftover.PublishAttemptStartedAt = null;
+        leftover.Source = HostedSiteRevisionSources.Rollback;
+        leftover.RollbackTargetRevisionId = target.Id;
+        leftover.RollbackIdempotencyKey = "draft-request-key";
+        leftover.Html = target.Html;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(leftover);
+
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(Site(target.Id, baseVersion), target.Html, baseVersion));
+        sites.Setup(x => x.ReplaceEntryHtmlAsync(
+                "site-1", "user-1", target.Html, baseVersion, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Site(null, publishedVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var retried = await service.RollbackAsync("site-1", target.Id, "user-1", "draft-request-key");
+
+        Assert.Equal(leftover.Id, retried.Revision.Id);
+        Assert.Equal(HostedSiteRevisionStatuses.Published, retried.Revision.Status);
+        // 真正完成站点替换的是这次重试，所以要如实报「变了」，控制器才会记活动。
+        Assert.True(retried.Changed);
+        sites.Verify(x => x.ReplaceEntryHtmlAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task ConcurrentRollback_WithSameIdempotencyKey_ShouldCreateAndPublishOneRevision()
     {
         await using var fixture = await RevisionMongoFixture.CreateAsync();

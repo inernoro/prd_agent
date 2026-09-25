@@ -216,6 +216,18 @@ public class DesignArtifactRun
     [System.Text.Json.Serialization.JsonIgnore]
     public DesignKnowledgeOriginalSnapshot? KnowledgeOriginals { get; set; }
 
+    /// <summary>创建时冻结的风格与提示词。缺失 = 改动前的旧运行，执行器按内置默认处理。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactDesignDirection? DesignDirection { get; set; }
+
+    /// <summary>直接上传的文档（事实来源，与知识库引用并列；不写进站点的知识来源记录）。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<DesignUploadedSource>? UploadedSources { get; set; }
+
+    /// <summary>修改时附上的截图（视觉参考，不是事实来源）。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public List<DesignReferenceImage>? ReferenceImages { get; set; }
+
     /// <summary>OpenDesign 工作区输入包的对象存储物理 key。只由 MAP 与 CDS 控制面读取。</summary>
     public string? WorkspaceInputAssetKey { get; set; }
 

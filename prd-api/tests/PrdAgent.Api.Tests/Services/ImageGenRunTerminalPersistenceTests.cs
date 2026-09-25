@@ -17,6 +17,87 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class ImageGenRunTerminalPersistenceTests
 {
+    [Theory]
+    [InlineData(ImageGenRunStatus.Queued, false)]
+    [InlineData(ImageGenRunStatus.ScopedQueued, false)]
+    [InlineData(ImageGenRunStatus.ScopedQueued, true)]
+    public async Task CancellingPendingRunImmediatelyPersistsTerminalState(
+        ImageGenRunStatus pendingStatus,
+        bool cancelWasAlreadyRequested)
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(pendingStatus, failed: 0);
+        run.CancelRequested = cancelWasAlreadyRequested;
+        await fixture.Db.ImageGenRuns.InsertOneAsync(run);
+
+        var result = await ImageGenRunCancellation.RequestAsync(
+            fixture.Db,
+            fixture.RunStore,
+            run.Id,
+            run.OwnerAdminId,
+            run.AppKey,
+            CancellationToken.None);
+
+        Assert.True(result.Found);
+        Assert.True(result.BecameTerminal);
+        var persisted = await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.True(persisted.CancelRequested);
+        Assert.Equal(ImageGenRunStatus.Cancelled, persisted.Status);
+        Assert.NotNull(persisted.EndedAt);
+
+        var events = await fixture.RunStore.GetEventsAsync(RunKinds.ImageGen, run.Id, 0, 10);
+        var runDone = Assert.Single(events);
+        using var payload = JsonDocument.Parse(runDone.PayloadJson);
+        Assert.Equal("runDone", payload.RootElement.GetProperty("type").GetString());
+        Assert.Equal("Cancelled", payload.RootElement.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task CancellingRunningRunLeavesTerminalPersistenceToWorker()
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(ImageGenRunStatus.Running, failed: 0);
+        await fixture.Db.ImageGenRuns.InsertOneAsync(run);
+
+        var result = await ImageGenRunCancellation.RequestAsync(
+            fixture.Db,
+            fixture.RunStore,
+            run.Id,
+            run.OwnerAdminId,
+            run.AppKey,
+            CancellationToken.None);
+
+        Assert.True(result.Found);
+        Assert.False(result.BecameTerminal);
+        var persisted = await fixture.Db.ImageGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.True(persisted.CancelRequested);
+        Assert.Equal(ImageGenRunStatus.Running, persisted.Status);
+        Assert.Null(persisted.EndedAt);
+    }
+
+    [Fact]
+    public async Task CancellationWatcherPropagatesPersistedRequestToUpstreamToken()
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(ImageGenRunStatus.Running, failed: 0);
+        run.CancelRequested = false;
+        await fixture.Db.ImageGenRuns.InsertOneAsync(run);
+
+        using var upstreamCancellation = new CancellationTokenSource();
+        var watch = fixture.Worker.WatchRunCancellationAsync(
+            run.Id,
+            upstreamCancellation,
+            CancellationToken.None,
+            TimeSpan.FromMilliseconds(10));
+
+        await fixture.Db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<ImageGenRun>.Update.Set(x => x.CancelRequested, true));
+
+        await watch.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(upstreamCancellation.IsCancellationRequested);
+    }
+
     [Fact]
     public async Task RejectedItemPersistsSameReasonToRunAndRunDoneEvent()
     {

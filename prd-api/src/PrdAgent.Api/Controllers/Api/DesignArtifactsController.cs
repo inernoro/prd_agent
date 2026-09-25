@@ -55,6 +55,7 @@ public sealed class DesignArtifactsController : ControllerBase
         "model",
         "thinking",
         "delta",
+        "preview",
         "done",
         "error",
         "cancelled",
@@ -69,6 +70,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IHostedSiteService _sites;
     private readonly ILogger<DesignArtifactsController>? _logger;
+    private readonly IDesignGenerationSettingsService? _generationSettings;
 
     public DesignArtifactsController(
         MongoDbContext db,
@@ -80,7 +82,8 @@ public sealed class DesignArtifactsController : ControllerBase
         IDesignArtifactCancellationCoordinator cancellation,
         IConfiguration configuration,
         IHostedSiteService sites,
-        ILogger<DesignArtifactsController>? logger = null)
+        ILogger<DesignArtifactsController>? logger = null,
+        IDesignGenerationSettingsService? generationSettings = null)
     {
         _db = db;
         _events = events;
@@ -92,7 +95,16 @@ public sealed class DesignArtifactsController : ControllerBase
         _configuration = configuration;
         _sites = sites;
         _logger = logger;
+        _generationSettings = generationSettings;
     }
+
+    /// <summary>
+    /// 默认执行器读网页生成设置（内置默认 open-design）。未注入设置服务的构造（单测）保留旧默认直连。
+    /// </summary>
+    private async Task<string> ResolveDefaultRuntimeAsync()
+        => _generationSettings == null
+            ? DesignArtifactRuntimes.MapGateway
+            : (await _generationSettings.GetAsync(CancellationToken.None)).DefaultRuntime;
 
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
@@ -102,7 +114,7 @@ public sealed class DesignArtifactsController : ControllerBase
             .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            defaultRuntime = DesignArtifactRuntimes.MapGateway,
+            defaultRuntime = await ResolveDefaultRuntimeAsync(),
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -181,7 +193,7 @@ public sealed class DesignArtifactsController : ControllerBase
         }
 
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
-            ? DesignArtifactRuntimes.MapGateway
+            ? await ResolveDefaultRuntimeAsync()
             : request.Runtime.Trim().ToLowerInvariant();
         var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
@@ -195,8 +207,30 @@ public sealed class DesignArtifactsController : ControllerBase
                 capability.Reason ?? "所选执行器尚未部署并通过健康检查，请先使用可用执行器"));
 
         var references = request.KnowledgeReferences ?? new List<DesignKnowledgeReferenceRequest>();
-        if (references.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少选择一篇知识作为网页内容来源"));
+        List<DesignUploadedSource> uploadedSources;
+        DesignArtifactDesignDirection? designDirection = null;
+        try
+        {
+            uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
+                _db, userId, request.AttachmentIds, CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "风格只能选一种：预设风格或目录里的设计系统，不能同时提交"));
+            if (_generationSettings != null)
+                designDirection = string.IsNullOrWhiteSpace(request.DesignSystemId)
+                    ? await _generationSettings.FreezeAsync(request.StyleId, CancellationToken.None)
+                    : await _generationSettings.FreezeCatalogStyleAsync(request.DesignSystemId, CancellationToken.None);
+        }
+        catch (DesignRunInputException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (DesignGenerationSettingsException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        if (references.Count == 0 && uploadedSources.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少选择一篇知识或上传一个文件作为网页内容来源"));
         if (references.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
         IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
@@ -207,7 +241,8 @@ public sealed class DesignArtifactsController : ControllerBase
                     reference.EntryId ?? string.Empty,
                     reference.StoreId ?? string.Empty,
                     reference.ContentHash)).ToList();
-            if (runtime == DesignArtifactRuntimes.OpenDesign)
+            if (identities.Count == 0) snapshots = Array.Empty<DesignKnowledgeSnapshot>();
+            else if (runtime == DesignArtifactRuntimes.OpenDesign)
             {
                 var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
                 snapshots = workspace.KnowledgeReferences;
@@ -244,10 +279,13 @@ public sealed class DesignArtifactsController : ControllerBase
             LlmRequestPolicy = requestPolicy,
             RuntimeConnectionId = capability.ConnectionId,
             Instruction = instruction,
-            Title = TrimOptional(request.Title, 200) ?? snapshots[0].Title,
+            Title = TrimOptional(request.Title, 200)
+                    ?? (snapshots.Count > 0 ? snapshots[0].Title : Path.GetFileNameWithoutExtension(uploadedSources[0].FileName)),
             KnowledgeReferences = snapshots.ToList(),
             KnowledgeOriginals = originals,
-            InputAuthority = snapshots.Count > 0
+            UploadedSources = uploadedSources.Count > 0 ? uploadedSources : null,
+            DesignDirection = designDirection,
+            InputAuthority = snapshots.Count > 0 || uploadedSources.Count > 0
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
                 : DesignArtifactInputAuthorities.UserSupplied,
             UserSuppliedContentHash = System.Convert.ToHexString(
@@ -672,7 +710,12 @@ public sealed class DesignArtifactsController : ControllerBase
                     cursor = item.Seq;
                     if (!PublicGenerationStreamEvents.Contains(item.EventName)) continue;
                     await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
-                    terminalEventEmitted |= item.EventName is "done" or "error" or "cancelled";
+                    // 终态一出就停：同一批里迟到的输出不再转发，与修改流同一条规则。
+                    if (item.EventName is "done" or "error" or "cancelled")
+                    {
+                        terminalEventEmitted = true;
+                        break;
+                    }
                 }
                 if (terminalEventEmitted) return;
                 if (batch.Count > 0)
@@ -785,6 +828,12 @@ public sealed class DesignArtifactsController : ControllerBase
         run.ResolvedPlatform,
         run.LlmRequestPolicy,
         llmRequestPolicyState = run.LlmRequestPolicy == null ? "legacy-unfrozen" : "frozen",
+        styleId = run.DesignDirection?.StyleId,
+        styleName = run.DesignDirection?.StyleName,
+        designSystemId = run.DesignDirection?.DesignSystemId,
+        promptFingerprint = run.DesignDirection?.PromptFingerprint,
+        reviewMode = run.DesignDirection?.ReviewMode,
+        uploadedSources = run.UploadedSources?.Select(x => new { x.AttachmentId, x.FileName, x.ContentHash }),
         run.Title,
         run.Progress,
         run.Phase,
@@ -916,6 +965,18 @@ public sealed class CreateDesignArtifactRunRequest
     public string? DestinationTeamId { get; set; }
 
     public List<DesignKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
+
+    /// <summary>风格预设编号；为空取网页生成设置里的默认风格。</summary>
+    public string? StyleId { get; set; }
+
+    /// <summary>
+    /// 直接选用 OpenDesign 目录里的一套设计系统（风格画廊「更多风格」）；与 StyleId 二选一。
+    /// 按服务端快照核对，不在目录里的编号拒绝。
+    /// </summary>
+    public string? DesignSystemId { get; set; }
+
+    /// <summary>直接上传的文件（附件编号，最多 5 个）；与知识库引用至少有一种。</summary>
+    public List<string>? AttachmentIds { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }

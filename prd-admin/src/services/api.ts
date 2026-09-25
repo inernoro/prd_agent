@@ -600,6 +600,7 @@ export const api = {
     imageGen: {
       resolveModel: () => '/api/literary-agent/image-gen/resolve-model',
       resolveChatModel: () => '/api/literary-agent/image-gen/resolve-chat-model',
+      adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,
@@ -1264,6 +1265,8 @@ export const api = {
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
+    // 发出前私有资料核查（分享 / 设为公开前先问一次；发布草稿走 revisionPrivateSources）
+    privateSources: () => '/api/web-pages/private-sources',
     shares: () => '/api/web-pages/shares',
     revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
@@ -1292,11 +1295,14 @@ export const api = {
     revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
     revisionPreviewAccess: '/api/hosted-site-preview-access',
     publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
+    revisionPrivateSources: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/private-sources`,
     rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
     rejectRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/reject`,
   },
   designArtifacts: {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
+    generationSettings: () => '/api/design-artifacts/generation-settings',
     runs: () => '/api/design-artifacts/runs',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
     cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,

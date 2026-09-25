@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXEC_DEP = ROOT / "exec_dep.sh"
+PROD_STAGE_WORKFLOW = ROOT / ".github" / "workflows" / "llmgw-prod-stage.yml"
 STANDALONE_NGINX = ROOT / "deploy" / "nginx" / "conf.d" / "branches" / "_standalone.conf"
 
 
@@ -35,6 +36,25 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
             'GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py '
             '$args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates',
             self.source,
+        )
+
+    def test_production_workflow_injects_independent_post_deploy_keys(self) -> None:
+        workflow = PROD_STAGE_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            "LLMGW_POST_DEPLOY_SERVICE_KEY: ${{ secrets.LLMGW_PROD_POST_DEPLOY_SERVICE_KEY }}",
+            workflow,
+        )
+        self.assertIn(
+            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY: ${{ secrets.LLMGW_PROD_PROTOCOL_CANARY_KEY }}",
+            workflow,
+        )
+        self.assertNotIn(
+            "LLMGW_POST_DEPLOY_SERVICE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}",
+            workflow,
+        )
+        self.assertNotIn(
+            "LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}",
+            workflow,
         )
 
     def test_smoke_sends_scoped_identity_headers(self) -> None:

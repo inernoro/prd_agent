@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/types/api';
 
 export interface FeedItem {
   id: string;
-  type: 'prd-session' | 'visual-workspace' | 'defect';
+  type: 'prd-session' | 'visual-workspace' | 'literary-workspace' | 'defect';
   title: string;
   subtitle: string;
   updatedAt: string;

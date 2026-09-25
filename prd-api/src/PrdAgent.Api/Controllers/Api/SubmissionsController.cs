@@ -877,6 +877,10 @@ public class SubmissionsController : ControllerBase
             (request.ContentType != "visual" && request.ContentType != "literary"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_CONTENT_TYPE", "contentType 必须为 visual 或 literary"));
 
+        var trigger = LiteraryWorkspacePublicationPolicy.NormalizeTrigger(request.Trigger);
+        if (!LiteraryWorkspacePublicationPolicy.IsKnownTrigger(trigger))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SUBMISSION_TRIGGER", "trigger 必须为 manual 或 auto"));
+
         // 视觉创作：从 ImageAsset 创建投稿
         if (request.ContentType == "visual")
         {
@@ -888,6 +892,18 @@ public class SubmissionsController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail("IMAGE_NOT_FOUND", "图片不存在"));
             if (asset.OwnerUserId != userId)
                 return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能投稿自己的作品"));
+            var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+                _db,
+                [asset.WorkspaceId],
+                CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId)
+                && !LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    "AUTO_SUBMISSION_DISABLED",
+                    "该私有工作区禁止自动投稿；如需公开，请明确选择手动投稿"));
+            }
 
             // 查重
             var existing = await _db.Submissions
@@ -934,6 +950,16 @@ public class SubmissionsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "工作区不存在"));
         if (workspace.OwnerUserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能投稿自己的作品"));
+        var suppressAutoSubmit = await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+            _db,
+            workspace,
+            CancellationToken.None);
+        if (suppressAutoSubmit && !LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "AUTO_SUBMISSION_DISABLED",
+                "该私有工作区禁止自动投稿；如需公开，请点击“投稿当前”确认"));
+        }
 
         // 查重（按 workspaceId）
         var existingWs = await _db.Submissions
@@ -1149,11 +1175,22 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+            _db,
+            assets.Select(x => x.WorkspaceId),
+            CancellationToken.None);
+        var protectedAssets = 0;
         // 按 WorkspaceId 分组构建快照，避免重复查询
         var snapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId))
+            {
+                protectedAssets++;
+                continue;
+            }
 
             GenerationSnapshot? snapshot = null;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
@@ -1186,7 +1223,7 @@ public class SubmissionsController : ControllerBase
         if (newSubmissions.Count > 0)
             await _db.Submissions.InsertManyAsync(newSubmissions);
 
-        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count }));
+        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count, protectedAssets }));
     }
 
     /// <summary>
@@ -1267,11 +1304,22 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+            _db,
+            assets.Select(x => x.WorkspaceId),
+            CancellationToken.None);
+        var protectedAssets = 0;
         var migrateSnapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
             if (string.IsNullOrWhiteSpace(asset.Url)) continue;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId))
+            {
+                protectedAssets++;
+                continue;
+            }
 
             GenerationSnapshot? snapshot = null;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
@@ -1311,6 +1359,7 @@ public class SubmissionsController : ControllerBase
             userId,
             totalAssets = assets.Count,
             alreadySubmitted = existingAssetIds.Count,
+            protectedAssets,
             newlySubmitted = newSubmissions.Count,
         }));
     }
@@ -1345,9 +1394,18 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaces = 0;
         foreach (var ws in workspaces)
         {
             if (existingWsIds.Contains(ws.Id)) continue;
+            if (await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+                    _db,
+                    ws,
+                    CancellationToken.None))
+            {
+                protectedWorkspaces++;
+                continue;
+            }
 
             // 获取封面图
             var coverUrl = "";
@@ -1408,6 +1466,7 @@ public class SubmissionsController : ControllerBase
             userId,
             totalWorkspaces = workspaces.Count,
             alreadySubmitted = existingWsIds.Count,
+            protectedWorkspaces,
             newlySubmitted = newSubmissions.Count,
         }));
     }
@@ -1689,6 +1748,7 @@ public class SubmissionsController : ControllerBase
 public class CreateSubmissionRequest
 {
     public string ContentType { get; set; } = string.Empty;
+    public string? Trigger { get; set; }
     public string? Title { get; set; }
     public string? ImageAssetId { get; set; }
     public string? WorkspaceId { get; set; }

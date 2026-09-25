@@ -682,7 +682,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         {
             if (existing.RollbackTargetRevisionId != target.Id)
                 throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
-            return await ReplayRollbackAsync(siteId, userId, target.Id, existing, current, reportChange: false);
+            return await ReplayRollbackAsync(siteId, userId, target.Id, existing, current);
         }
 
         var parent = await EnsureCurrentSnapshotAsync(siteId, userId, current, ct);
@@ -726,9 +726,9 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             if (winner.RollbackTargetRevisionId != target.Id)
                 throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
             var latest = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
-            return await ReplayRollbackAsync(siteId, userId, target.Id, winner, latest, reportChange: false);
+            return await ReplayRollbackAsync(siteId, userId, target.Id, winner, latest);
         }
-        return await ReplayRollbackAsync(siteId, userId, target.Id, rollback, current, reportChange: true);
+        return await ReplayRollbackAsync(siteId, userId, target.Id, rollback, current);
     }
 
     /// <summary>
@@ -772,9 +772,11 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         string userId,
         string targetRevisionId,
         HostedSiteRevision initial,
-        HostedSiteEditableEntry initialSite,
-        bool reportChange)
+        HostedSiteEditableEntry initialSite)
     {
+        // 「变了没有」只由亲手切换站点的那一次调用说了算（PublishAsync 仅在本次亲自切换时返回 true）：
+        // 同键并发时，谁真正发布谁报 true；看到「已经发布」的一律 false，哪怕回退记录是它自己插入的。
+        // 进程在插入回退草稿后、发布前退出时，完成替换的是这次重试，它会如实报 true（Codex P2，2026-09-24）。
         var revision = initial;
         var current = initialSite;
         InvalidOperationException? lastRefusal = null;
@@ -783,7 +785,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             if (revision.RollbackTargetRevisionId != targetRevisionId)
                 throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
             if (revision.Status == HostedSiteRevisionStatuses.Published)
-                return new HostedSiteRevisionMutationResult(revision, current.Site, reportChange);
+                return new HostedSiteRevisionMutationResult(revision, current.Site, false);
             // Publishing 一律交给 PublishAsync 判，不在这里先拿站点指针筛一道：
             // 进程在「标成 Publishing」之后、「切换站点指针」之前停掉时，指针永远对不上，
             // 而 PublishAsync 自己有按 PublishAttemptTtl 接管过期尝试的路径——这里筛掉它，
@@ -793,8 +795,7 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             {
                 try
                 {
-                    var result = await PublishAsync(siteId, revision.Id, userId, CancellationToken.None);
-                    return result with { Changed = reportChange && result.Changed };
+                    return await PublishAsync(siteId, revision.Id, userId, CancellationToken.None);
                 }
                 catch (InvalidOperationException refusal) when (attempt < 39)
                 {

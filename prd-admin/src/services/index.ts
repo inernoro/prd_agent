@@ -1063,6 +1063,7 @@ export const updateArticleMarker = updateArticleMarkerReal;
 export const getVisualAgentImageGenModels = getVisualAgentImageGenModelsReal;
 export const getVisualAgentText2ImgModels = getVisualAgentText2ImgModelsReal;
 export const getVisualAgentAdapterInfo = getVisualAgentAdapterInfoReal;
+export { getLiteraryAgentAdapterInfoReal as getLiteraryAgentAdapterInfo } from './real/literaryAgentConfig';
 
 export const exportConfig: ExportConfigContract = withAuth(exportConfigReal);
 export const importConfig: ImportConfigContract = withAuth(importConfigReal);
@@ -1784,6 +1785,8 @@ export {
   deleteSite,
   batchDeleteSites,
   setSiteVisibility,
+  getSitesPrivateSources,
+  getRevisionPrivateSources,
   listFolders as listSiteFolders,
   listTags as listSiteTags,
   createShareLink as createSiteShareLink,

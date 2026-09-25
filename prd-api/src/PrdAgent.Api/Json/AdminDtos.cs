@@ -316,6 +316,19 @@ public class ApplicationReadinessResponse
     public bool CleanupVerified { get; set; }
     public long ProbeBytes { get; set; }
     public List<ApplicationReadinessComponent> Components { get; set; } = [];
+
+    /// <summary>
+    /// 启动巡检确认不存在的关键人工索引（集合.索引名）。只读附加信息，不影响 Status；
+    /// 巡检还没跑完时为 null。清单见 RequiredMongoIndexCatalog。
+    /// </summary>
+    public List<string>? MissingIndexes { get; set; }
+
+    /// <summary>启动巡检列不出索引（权限不足或连不上）、结论未知的那几条。</summary>
+    public List<string>? UnverifiedIndexes { get; set; }
+
+    /// <summary>上面两项来自哪一刻的巡检；DBA 补建索引后要重启才会刷新。</summary>
+    public DateTime? IndexesCheckedAt { get; set; }
+
     public DateTime CheckedAt { get; set; }
     public long DurationMs { get; set; }
 }

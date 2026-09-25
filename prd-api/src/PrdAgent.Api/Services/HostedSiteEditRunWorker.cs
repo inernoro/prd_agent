@@ -210,13 +210,25 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     continue;
                 }
 
+                // OpenDesign 的阶段事件：进度只增不减（生命周期服务拒收倒退），
+                // 文案后面挂上已调用模型的次数，让用户看得到「还在动」。
+                if (chunk.Type == "phase" && chunk.Progress.HasValue && !string.IsNullOrWhiteSpace(chunk.Content))
+                {
+                    var calls = await ReadRuntimeModelCallCountAsync(db, runId, CancellationToken.None);
+                    var phaseText = calls > 0 ? $"{chunk.Content} · 已调用模型 {calls} 次" : chunk.Content;
+                    await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
+                        Math.Max(run.Progress, chunk.Progress.Value), phaseText);
+                    continue;
+                }
+
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     output.Append(chunk.Content);
                     if (!sawFirstText)
                     {
                         sawFirstText = true;
-                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 36, "页面已经开始生成");
+                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
+                            Math.Max(run.Progress, 36), "页面已经开始生成");
                     }
                     await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
@@ -401,6 +413,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         catch (InvalidOperationException ex)
         {
+            // 用户读到的是 ex.Message（人话）；OpenDesign 远端回传的原始诊断挂在 InnerException 上
+            //（OpenDesignFailureMessage.Failure），用户文案承诺「原文已记入服务端日志」。
+            // 所以这里必须带着异常对象记一条，否则内层原文随异常一起丢掉，那句承诺是空的（PR #1611 Codex 评审）。
+            _logger.LogError(
+                ex,
+                "用户 {UserId} 发起的设计任务（{Operation}，执行器 {Runtime}）在生成阶段失败，已按人话写入任务记录；远端原始诊断见异常链 runId={RunId} userMessage={UserMessage}",
+                run.UserId,
+                run.Operation,
+                run.Runtime,
+                runId,
+                ex.Message);
             await MarkErrorAsync(runId, ex.Message, leaseOwner);
         }
         catch (OperationCanceledException) when (executionCts.IsCancellationRequested)
@@ -432,9 +455,31 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 // Client-authored title/instruction are generation requests, not evidence
                 // that can substantiate measured or sensitive claims.
-                string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{item.Content}")),
+                string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{EvidenceOf(item.Content)}")),
+                // 直接上传的文档同样是用户交来的事实来源，页面引用其中的数字必须能在证据里找到。
+                string.Join("\n", (run.UploadedSources ?? new List<DesignUploadedSource>())
+                    .Select(item => $"{item.FileName}\n{EvidenceOf(item.Content)}")),
                 editable == null ? string.Empty : HostedSiteRevisionRules.ExtractVisibleText(editable.Html),
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    /// <summary>
+    /// 知识与上传文件可能本身就是 HTML（日报、导出的网页）：「主干落地 &lt;b&gt;31&lt;/b&gt; 次」里数字和量词
+    /// 被标签隔开，拿原文比对，页面上的「31 次」就成了「来源里没有的数字」而被拒收。
+    /// 原文照留（Markdown 里的尖括号不能被当标签剥掉），再补一份可见文字，两者任一能支撑即可。
+    /// </summary>
+    internal static string EvidenceOf(string? content)
+    {
+        if (string.IsNullOrEmpty(content)) return string.Empty;
+        if (!LooksLikeMarkup(content)) return content;
+        return content + "\n" + HostedSiteRevisionRules.ExtractVisibleText(content);
+    }
+
+    private static bool LooksLikeMarkup(string content) =>
+        System.Text.RegularExpressions.Regex.IsMatch(
+            content,
+            @"</?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?>",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+            TimeSpan.FromSeconds(1));
 
     internal static async Task RevalidateKnowledgeForDispatchAsync(
         IDesignKnowledgeSnapshotResolver resolver,
@@ -466,6 +511,18 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             CancellationToken.None);
         await foreach (var chunk in executor.ExecuteAsync(run, currentHtml, ct))
             yield return chunk;
+    }
+
+    private static async Task<int> ReadRuntimeModelCallCountAsync(
+        MongoDbContext db,
+        string runId,
+        CancellationToken ct)
+    {
+        var count = await db.DesignArtifactRuns
+            .Find(item => item.Id == runId)
+            .Project(item => item.RuntimeModelCallCount)
+            .FirstOrDefaultAsync(ct);
+        return Math.Max(0, count);
     }
 
     private async Task UpdatePhaseAsync(

@@ -592,6 +592,7 @@
 }
 
 .home-desk-feed-dot.is-visual-workspace { background: hsl(16 54% 62%); }
+.home-desk-feed-dot.is-literary-workspace { background: hsl(214 54% 62%); }
 .home-desk-feed-dot.is-defect { background: hsl(32 54% 62%); }
 .home-desk-feed-dot.is-prd-session { background: hsl(214 54% 62%); }
 

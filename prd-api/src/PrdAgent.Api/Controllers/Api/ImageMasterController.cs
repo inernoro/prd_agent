@@ -48,6 +48,7 @@ public class ImageMasterController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IImageDescriptionService _imageDescriptionService;
     private readonly PrdAgent.Api.Services.IVisualModelPolicyService _visualModels;
+    private readonly PrdAgent.Api.Services.ImageMasterWorkspaceDeletionService _workspaceDeletion;
 
     private static readonly TimeSpan IdemExpiry = TimeSpan.FromMinutes(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -88,6 +89,7 @@ public class ImageMasterController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _imageDescriptionService = imageDescriptionService;
         _visualModels = visualModels;
+        _workspaceDeletion = new PrdAgent.Api.Services.ImageMasterWorkspaceDeletionService(db, assetStorage, logger);
     }
 
     private string GetAdminId() => this.GetRequiredUserId();
@@ -95,46 +97,7 @@ public class ImageMasterController : ControllerBase
     private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync(
         string? sha256,
         CancellationToken ct)
-    {
-        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(sha)) return false;
-
-        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
-            _db,
-            $"generated-image:{sha}",
-            ct);
-
-        var imageAssetFilter = Builders<ImageAsset>.Filter.Or(
-            Builders<ImageAsset>.Filter.Eq(item => item.Sha256, sha),
-            Builders<ImageAsset>.Filter.Eq(item => item.OriginalSha256, sha),
-            Builders<ImageAsset>.Filter.Eq(item => item.DisplaySha256, sha));
-        if (await _db.ImageAssets.CountDocumentsAsync(imageAssetFilter, cancellationToken: ct) > 0)
-            return false;
-
-        var artifactFilter = Builders<UploadArtifact>.Filter.Eq(item => item.Sha256, sha);
-        if (await _db.UploadArtifacts.CountDocumentsAsync(artifactFilter, cancellationToken: ct) > 0)
-            return false;
-
-        if (await _db.ImageGenRunItems.CountDocumentsAsync(
-                item => item.DisplaySha256 == sha,
-                cancellationToken: ct) > 0)
-        {
-            return false;
-        }
-
-        var runFilter = Builders<ImageGenRun>.Filter.Or(
-            Builders<ImageGenRun>.Filter.Eq(item => item.InitImageAssetSha256, sha),
-            Builders<ImageGenRun>.Filter.Eq("ImageRefs.AssetSha256", sha));
-        if (await _db.ImageGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct) > 0)
-            return false;
-
-        await _assetStorage.DeleteByShaAsync(
-            sha,
-            ct,
-            domain: AppDomainPaths.DomainVisualAgent,
-            type: AppDomainPaths.TypeImg);
-        return true;
-    }
+        => await _workspaceDeletion.TryDeleteUnreferencedGeneratedImageAsync(sha256, ct);
 
     private async Task<ImageMasterWorkspace?> GetWorkspaceIfAllowedAsync(string workspaceId, string adminId, CancellationToken ct)
     {
@@ -557,87 +520,12 @@ public class ImageMasterController : ControllerBase
             }
         }
 
-        var imageRuns = await _db.ImageGenRuns
-            .Find(x => x.WorkspaceId == wid)
-            .Project(x => new { x.Id, x.Status })
-            .ToListAsync(ct);
-        if (imageRuns.Any(x => x.Status is ImageGenRunStatus.Queued
-                or ImageGenRunStatus.ScopedQueued
-                or ImageGenRunStatus.Running))
+        var deletion = await _workspaceDeletion.DeleteAsync(wid, CancellationToken.None);
+        if (deletion.HasActiveGeneration)
         {
             return Conflict(ApiResponse<object>.Fail(
                 ErrorCodes.WORKSPACE_GENERATION_ACTIVE,
                 "该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除"));
-        }
-        var imageRunIds = imageRuns.Select(x => x.Id).ToArray();
-
-        // 1) 删除画布
-        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        // 2) 删除消息（workspace 维度）
-        await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        // 3) 先收集全部持久化归属与待回收摘要。共享工作区中的任务可能由成员创建，
-        // 删除与活动任务阻断都必须按 WorkspaceId 覆盖，而不是只看所有者。
-        var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid).ToListAsync(ct);
-        var cleanupShas = new HashSet<string>(StringComparer.Ordinal);
-        static void AddCleanupSha(ISet<string> target, string? value)
-        {
-            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
-            if (!string.IsNullOrWhiteSpace(normalized)) target.Add(normalized);
-        }
-        foreach (var asset in assets)
-        {
-            AddCleanupSha(cleanupShas, asset.Sha256);
-            AddCleanupSha(cleanupShas, asset.OriginalSha256);
-            AddCleanupSha(cleanupShas, asset.DisplaySha256);
-        }
-
-        // requestId 固定为 {runId}-{itemIndex}-{imageIndex}，用于收集当前工作区生成的原图归属。
-        UploadArtifact[] runArtifacts = [];
-        ImageGenRunItem[] runItems = [];
-        if (imageRunIds.Length > 0)
-        {
-            var artifactFilters = imageRunIds
-                .Select(runId => Builders<UploadArtifact>.Filter.Regex(
-                    x => x.RequestId,
-                    new BsonRegularExpression($"^{Regex.Escape(runId)}-\\d+-\\d+$")))
-                .ToArray();
-            var runArtifactFilter = Builders<UploadArtifact>.Filter.Or(artifactFilters);
-            runArtifacts = (await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(ct)).ToArray();
-            runItems = (await _db.ImageGenRunItems
-                .Find(x => imageRunIds.Contains(x.RunId))
-                .ToListAsync(ct)).ToArray();
-            foreach (var artifact in runArtifacts) AddCleanupSha(cleanupShas, artifact.Sha256);
-            foreach (var item in runItems) AddCleanupSha(cleanupShas, item.DisplaySha256);
-        }
-
-        // 4) 所有数据库引用先删除。任一步失败都会在物理删除开始前中止，避免留下仍可见但
-        // 已经失去底层对象的产物记录。
-        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid, ct);
-        if (imageRunIds.Length > 0)
-        {
-            var runArtifactIds = runArtifacts.Select(x => x.Id).ToArray();
-            if (runArtifactIds.Length > 0)
-                await _db.UploadArtifacts.DeleteManyAsync(x => runArtifactIds.Contains(x.Id), ct);
-            await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
-            await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
-            await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), ct);
-        }
-
-        // 5) 删除 workspace
-        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == wid, ct);
-
-        // 6) 引用解除后再做引用安全的物理回收。请求断开不能打断服务端清理；失败最多留下
-        // 可后续回收的孤儿对象，不会产生数据库记录指向已删除对象的数据损坏。
-        foreach (var sha in cleanupShas)
-        {
-            try
-            {
-                await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "ImageMaster workspace object cleanup failed: workspaceId={WorkspaceId} sha={Sha}", wid, sha);
-            }
         }
 
         var payload = new { deleted = true };
@@ -941,7 +829,10 @@ public class ImageMasterController : ControllerBase
         {
             // ignore
         }
-        await RecentOpenTracker.TouchAsync(_db, adminId, "visual-agent", wid);
+        // 共享集合里的文章配图工作区属于 literary-agent。若仍写成 visual-agent，
+        // 首页会为同一实体保留两条脚印，并生成一个打开后立即弹回首页的错误入口。
+        var recentTarget = Services.ImageMasterWorkspacePresentation.Resolve(wid, ws.ScenarioType);
+        await RecentOpenTracker.TouchAsync(_db, adminId, recentTarget.AgentKey, wid);
 
         ImageMasterViewport? viewport = null;
         try
@@ -2990,6 +2881,7 @@ public class ImageMasterController : ControllerBase
         {
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            var snapshotAt = wf.UpdatedAt;
 
             var now = DateTime.UtcNow;
             var needUpdate = false;
@@ -3029,8 +2921,10 @@ public class ImageMasterController : ControllerBase
             if (runningMarkers.Count == 0)
             {
                 // 只有 parsing 超时的更新
+                wf.UpdatedAt = now;
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -3095,8 +2989,10 @@ public class ImageMasterController : ControllerBase
             // 如果有状态变更，更新数据库
             if (needUpdate)
             {
+                wf.UpdatedAt = now;
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -3121,24 +3017,27 @@ public class ImageMasterController : ControllerBase
         {
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            var snapshotAt = wf.UpdatedAt;
             if (ws.ScenarioType != "article-illustration") return;
 
+            var recovered = PrdAgent.Core.Services.LiteraryMcpWorkflow.RecoverVersionedAssets(ws, assets);
             var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
-            if (hasMapping) return;
+            if (hasMapping && !recovered) return;
             if (assets.Count == 0) return;
-            if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
+            if (!recovered && !wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
 
             var markerCount = wf.Markers.Count;
             var candidateAssets = assets
+                .Where(a => !hasMapping && !a.ArticleWorkflowVersion.HasValue)
                 .OrderByDescending(a => a.CreatedAt)
                 .Take(markerCount)
                 .OrderBy(a => a.CreatedAt)
                 .ToList();
 
-            if (candidateAssets.Count == 0) return;
+            if (candidateAssets.Count == 0 && !recovered) return;
 
             wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            var needUpdate = false;
+            var needUpdate = recovered;
 
             for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
             {
@@ -3158,9 +3057,11 @@ public class ImageMasterController : ControllerBase
             {
                 wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
                     .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+                wf.UpdatedAt = DateTime.UtcNow;
 
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),

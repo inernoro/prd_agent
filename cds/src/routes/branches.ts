@@ -12648,6 +12648,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // profiles.length > 0：env 必填闸门是给「要构建启动的服务」用的；走到这里 profiles 非空（空已在上面
     // 的清理分支处理/放行）。保留判断让远端空 payload 收敛路径（remoteOwned 放行）不被 env 闸门误拦。
     const ignoreRequired = req.query?.ignoreRequired === '1' || req.query?.ignoreRequired === 'true';
+    if (entry.projectId && profiles.length > 0) {
+      // 内部密钥（x-cds-env-meta 里 generate: secret）由 CDS 自己补齐，不进必填闸门、不让人去生成。
+      const generatedEnvKeys = stateService.ensureGeneratedEnvKeys(entry.projectId);
+      if (generatedEnvKeys.length > 0) stateService.save();
+    }
     if (!ignoreRequired && entry.projectId && profiles.length > 0) {
       const missingRequired = stateService.getMissingRequiredEnvKeys(entry.projectId);
       if (missingRequired.length > 0) {

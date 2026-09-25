@@ -2314,6 +2314,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const prevOutline = outlineDraft?.outline ?? [];
       let metaSeen = false;
       let pagesSeen = 0;
+      // 来源修复会用同一个页码把修好的页再发一遍（覆盖原页）：按页码去重计数，别把替换当成新页。
+      const pageIndexesSeen = new Set<number>();
       let clarifyCount = 0;
       let serverOutlineRunId = '';
 
@@ -2400,6 +2402,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             sourceBlockIds: pg.sourceBlockIds,
           };
           const idx = (pg.index || pagesSeen) - 1;
+          pageIndexesSeen.add(idx);
           setOutlineDraft((prev) => {
             if (!prev) return prev;
             const outline = [...prev.outline];
@@ -2438,7 +2441,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 ? {
                     ...m,
                     content:
-                      `大纲已生成（${pagesSeen} 页，含每页版式与排字设计意图），在右侧展开了：` +
+                      `大纲已生成（${pageIndexesSeen.size} 页，含每页版式与排字设计意图），在右侧展开了：` +
                       '可以直接改标题、要点和设计行，增删页、拖拽换位，' +
                       (clarifyCount > 0 ? '顶部有几个澄清问题帮我消除歧义，' : '') +
                       '也可以在下方输入框让我调整。改好后点右侧「确认，生成 PPT」。',

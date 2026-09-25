@@ -17,6 +17,11 @@ public sealed record AgentApiKeyQuotaPatch(int? DailyImageQuota, int? DailyWrite
     public bool IsEmpty => DailyImageQuota is null && DailyWriteQuota is null && RateLimitPerMin is null;
 }
 
+/// <summary>文学配图模型设置的一次性补丁。整个对象为 null 表示不改。</summary>
+public sealed record AgentApiKeyLiteraryImageModelPatch(
+    McpLiteraryImageModelMode Mode,
+    string? LogicalModelPublicId);
+
 public interface IAgentApiKeyService
 {
     /// <summary>
@@ -68,7 +73,8 @@ public interface IAgentApiKeyService
         bool? isActive,
         CancellationToken ct = default,
         AgentApiKeyQuotaPatch? quota = null,
-        AgentApiKeyScopeMode? scopeMode = null);
+        AgentApiKeyScopeMode? scopeMode = null,
+        AgentApiKeyLiteraryImageModelPatch? literaryImageModel = null);
 
     /// <summary>删除 Key（硬删除；撤销用 RevokeAsync）</summary>
     Task<bool> DeleteAsync(string id, CancellationToken ct = default);

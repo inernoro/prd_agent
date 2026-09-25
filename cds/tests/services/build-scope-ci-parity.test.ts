@@ -34,6 +34,7 @@ const JOB_TO_SERVICE: Record<string, string> = {
   'llmgw-image': 'llmgw',
   'llmgw-web-image': 'llmgw-web',
   'llmgw-serve-image': 'llmgw-serve',
+  'design-opendesign-image': 'design-opendesign',
 };
 
 interface WorkflowJob { if?: string; steps?: Array<Record<string, unknown>> }

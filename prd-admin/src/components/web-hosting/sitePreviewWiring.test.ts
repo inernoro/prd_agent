@@ -92,24 +92,23 @@ describe('分享下拉接线', () => {
 });
 
 describe('网页微调与版本入口接线', () => {
-  it('原操作菜单直达修改面板，版本记录不再作为列表或卡片常驻动作', () => {
+  it('原操作菜单直达生成工作台，版本记录不再作为列表或卡片常驻动作', () => {
     const source = read('pages/WebPagesPage.tsx');
-    expect(source).toContain("onAiEdit={() => openSiteEditor(site, 'compose')}");
+    expect(source).toContain('onAiEdit={() => openSiteEditor(site)}');
+    expect(source).toContain("setWorkbenchTarget({ kind: 'site', site });");
     expect(source).not.toContain('onVersionHistory');
     const card = read('components/web-hosting/SiteCard.tsx');
     expect(card).toContain("label: '帮我修改'");
     expect(card).toContain('onClick: args.onAiEdit');
     expect(card).not.toContain('data-site-version-actions');
-    expect(source).toContain('initialPanel={previewInitialPanel}');
-    expect(source).toContain('initialEditSection={previewEditSection}');
+    expect(source).toContain('onEditInWorkbench={() => openSiteEditor(commentSite)}');
   });
 
-  it('预览页的版本记录按钮打开真实编辑面板并定位历史区', () => {
+  it('预览页的「帮我修改」打开生成工作台，修改不再挤进预览侧栏', () => {
     const source = read('components/web-hosting/SitePreviewModal.tsx');
-    expect(source).toContain("setEditSection('history')");
-    expect(source).toContain("setRightPanel('edit')");
-    expect(source).toContain('focusSection={editSection}');
-    expect(source).toContain('版本记录');
+    expect(source).toContain('onClick={onEditInWorkbench}');
+    expect(source).not.toContain('SiteEditPanel');
+    expect(source).not.toContain("setRightPanel('edit')");
   });
 
   /**
@@ -123,11 +122,11 @@ describe('网页微调与版本入口接线', () => {
     expect(source).not.toMatch(/return\s*\{\s*srcDoc:\s*entry\.srcDoc/);
   });
 
-  it('修改与版本记录的高亮状态互斥', () => {
-    const source = read('components/web-hosting/SitePreviewModal.tsx');
-    expect(source.match(/rightPanel === 'edit' && editSection === 'compose'/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(source.match(/rightPanel === 'edit' && editSection === 'history'/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(source).toContain("aria-pressed={rightPanel === 'edit' && editSection === 'compose'}");
-    expect(source).toContain("aria-pressed={rightPanel === 'edit' && editSection === 'history'}");
+  it('工作台里的版本记录就是修改对话：每一轮都能看、已发布的旧版能换回', () => {
+    const source = read('components/web-hosting/workbench/SiteEditStage.tsx');
+    expect(source).toContain('void openRevision(revision.id)');
+    expect(source).toContain('void rollback(revision.id, createRevisionMutationIdempotencyKey())');
+    // 换回必须先确认：客户打开同一个链接会立即看到旧版。
+    expect(source).toContain('setConfirmRollbackId(revision.id)');
   });
 });

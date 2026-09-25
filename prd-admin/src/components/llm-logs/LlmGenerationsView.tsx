@@ -193,7 +193,7 @@ export function LlmGenerationsView() {
       case 'genId': return <span className="truncate text-[11px] font-mono" style={{ color: 'var(--text-muted)' }} title={it.requestId}>{it.requestId || DASH}</span>;
       case 'status': { const s = statusBadgeStyle(it.status, it.statusCode); return <Chip label={s.label} color={s.color} bg={s.bg} />; }
       case 'attempts': return <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{DASH}</span>;
-      case 'fallback': return it.isFallback ? <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} /> : <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>否</span>;
+      case 'fallback': return it.isFallback ? <Chip label="已降级" color="var(--accent-fg-amber)" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} /> : <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>否</span>;
       case 'latency': return <span className="tabular-nums text-[11px]" style={{ color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       default: return null;
     }

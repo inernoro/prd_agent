@@ -766,8 +766,12 @@ public class DesignArtifactProviderCatalogTests
 
         // 这两条断言原本要求这句话保持不透明，并把用户指向 CDS 会话日志——而 CDS 的 agent 会话
         // 是内存态，失败后随即销毁，点进去只会拿到 session_not_found；原因明明就在 LastError 里。
-        // 改成断言真正被保护的性质：远端原因要交到用户手上，且这句话不再指向那个死胡同。
-        Assert.Contains("remote diagnostic details", error.Message);
+        // 改成断言真正被保护的性质：远端原因不丢、且这句话不再指向那个死胡同。
+        // 2026-09-24（PR #1533 评审 4081291421）：远端原文不直接摆给用户，挂在异常链里进日志；
+        // 用户文案说清「有诊断、在服务端日志里」并给下一步。
+        Assert.DoesNotContain("remote diagnostic details", error.Message);
+        Assert.Contains("remote diagnostic details", error.InnerException?.Message);
+        Assert.Contains(OpenDesignFailureMessage.UnmappedReason, error.Message);
         Assert.DoesNotContain("会话日志", error.Message);
         Assert.Contains("下一步：", error.Message);
         sessions.Verify(service => service.GetAsync(
@@ -952,6 +956,132 @@ public class DesignArtifactProviderCatalogTests
             }, DateTime.UtcNow.AddSeconds(2), cancellation.Token));
         Assert.Equal(0, calls);
     }
+
+    [Fact]
+    public async Task StartupRetriesWithFreshSessionWhenNodeWasVerifying()
+    {
+        // 2026-09-23 预览环境实测：上一个设计会话结束后 CDS 节点做能力自检，新会话被拒，
+        // 用户只看到「设计任务执行失败」。自检结束后换新会话就能起来。
+        var first = BuildSession() with { Id = "session-a" };
+        var second = BuildSession() with { Id = "session-b" };
+        var started = new List<string>();
+        var discarded = new List<string>();
+        var replaced = new List<string>();
+        var providerReads = 0;
+        var ready = await OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+            first,
+            (candidate, _) =>
+            {
+                started.Add(candidate.Id);
+                if (candidate.Id == "session-a")
+                    throw new InfraAgentSessionException(
+                        InfraAgentSessionErrorCodes.CdsRequestFailed,
+                        "OpenDesign capability verification is running on this CDS node",
+                        502);
+                return Task.FromResult(candidate);
+            },
+            _ => Task.FromResult<InfraAgentRuntimeProviderView?>(
+                BuildProvider(verificationPending: ++providerReads == 1)),
+            _ => Task.FromResult(second),
+            failed => { discarded.Add(failed.Id); return Task.CompletedTask; },
+            replacement => replaced.Add(replacement.Id),
+            DateTime.UtcNow.AddSeconds(5),
+            CancellationToken.None,
+            pollDelay: TimeSpan.Zero);
+
+        Assert.Same(second, ready);
+        Assert.Equal(["session-a", "session-b"], started);
+        Assert.Equal(["session-a"], discarded);
+        Assert.Equal(["session-b"], replaced);
+        Assert.Equal(2, providerReads);
+    }
+
+    [Fact]
+    public async Task StartupDoesNotRetryWhenRuntimeIsReallyUnavailable()
+    {
+        var creates = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) => throw new InfraAgentSessionException(
+                    InfraAgentSessionErrorCodes.CdsRequestFailed, "docker unavailable", 502),
+                _ => Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider(healthy: false)),
+                _ => { creates++; return Task.FromResult(BuildSession()); },
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5),
+                CancellationToken.None,
+                pollDelay: TimeSpan.Zero));
+        Assert.Equal(0, creates);
+        Assert.Contains("远端会话没能进入可用状态", error.Message);
+        // 远端原文不进用户文案，挂在异常链里进日志（PR #1533 评审 4081291421）。
+        Assert.DoesNotContain("docker unavailable", error.Message);
+        Assert.Contains("docker unavailable", error.InnerException?.Message);
+    }
+
+    [Fact]
+    public async Task StartupRetryIsBoundedAndExplainsTheVerifyingNode()
+    {
+        var starts = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) =>
+                {
+                    starts++;
+                    throw new InfraAgentSessionException(
+                        InfraAgentSessionErrorCodes.CdsRequestFailed, "verification is running", 502);
+                },
+                _ => Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider()),
+                _ => Task.FromResult(BuildSession()),
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5),
+                CancellationToken.None,
+                maxAttempts: 3,
+                pollDelay: TimeSpan.Zero));
+        Assert.Equal(3, starts);
+        Assert.Contains("正在做能力自检", error.Message);
+    }
+
+    [Fact]
+    public async Task StartupRetryPassesThroughNonCdsFailures()
+    {
+        var reads = 0;
+        await Assert.ThrowsAsync<DesignArtifactExecutionCancelledException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) => throw new DesignArtifactExecutionCancelledException("stopped"),
+                _ => { reads++; return Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider()); },
+                _ => Task.FromResult(BuildSession()),
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5),
+                CancellationToken.None,
+                pollDelay: TimeSpan.Zero));
+        Assert.Equal(0, reads);
+    }
+
+    private static InfraAgentRuntimeProviderView BuildProvider(
+        bool verificationPending = false,
+        bool healthy = true) => new(
+        InfraAgentRuntimes.OpenDesign,
+        "OpenDesign",
+        "cds-managed",
+        "cds",
+        "ready",
+        true,
+        [InfraAgentWorkloadKinds.DesignArtifact],
+        [InfraAgentIsolationModes.SessionContainer],
+        InfraAgentIsolationModes.SessionContainer,
+        "cds-design-artifact-events-v1",
+        Configured: true,
+        Healthy: healthy,
+        Selectable: healthy,
+        IsolationOwnedBy: "cds",
+        ResourcePolicyEnforcedPerSession: true,
+        Reason: null,
+        VerificationPending: verificationPending);
 
     private static InfraConnectionPublicView BuildConnection(
         string id = "connection-1",

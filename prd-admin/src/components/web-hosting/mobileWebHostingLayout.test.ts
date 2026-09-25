@@ -3,7 +3,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const previewSource = readFileSync(path.resolve(__dirname, 'SitePreviewModal.tsx'), 'utf8');
-const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8');
+const editPanelSource = readFileSync(path.resolve(__dirname, 'SiteEditPanel.tsx'), 'utf8')
+  + readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
 const pageSource = readFileSync(path.resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf8');
 const cardSource = readFileSync(path.resolve(__dirname, 'SiteCard.tsx'), 'utf8');
 const cardActionsSource = readFileSync(path.resolve(__dirname, 'SiteCardActions.tsx'), 'utf8');
@@ -22,8 +23,9 @@ describe('mobile web hosting layout', () => {
   it('gives every preview-header action at least a 44px touch target', () => {
     expect(previewSource.match(/min-h-11/g)?.length).toBeGreaterThanOrEqual(7);
     expect(previewSource).toContain('min-w-11');
+    // 2026-09-24：「帮我修改」进生成工作台，版本记录作为那里的对话显示，预览顶栏只留一个入口。
     expect(previewSource).toContain('帮我修改');
-    expect(previewSource).toContain('版本记录');
+    expect(previewSource).toContain('onClick={onEditInWorkbench}');
   });
 
   it('keeps the functional page controls at least 44px on mobile', () => {
@@ -52,11 +54,12 @@ describe('mobile web hosting layout', () => {
 
   it('opens every right panel as a mobile overlay instead of squeezing the preview', () => {
     expect(previewSource).toContain('relative flex-1 min-h-0 flex overflow-hidden');
-    expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(3);
+    // 评论、提问两块侧栏；修改不再挤进 440px 侧栏，而是进生成工作台（一个对话 + 一个预览）。
+    expect(previewSource.match(/absolute inset-0 z-20 flex w-full/g)).toHaveLength(2);
     expect(previewSource).toContain('sm:w-[360px]');
     expect(previewSource).toContain('sm:w-[380px]');
-    expect(previewSource).toContain('sm:w-[440px]');
-    expect(previewSource.match(/background: 'var\(--bg-elevated\)'/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(previewSource).not.toContain('sm:w-[440px]');
+    expect(previewSource.match(/background: 'var\(--bg-elevated\)'/g)?.length).toBeGreaterThanOrEqual(1);
     expect(previewSource).not.toContain("background: 'var(--panel-solid, var(--bg-elevated))'");
   });
 

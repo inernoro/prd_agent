@@ -430,6 +430,18 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
     PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
     PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
+// 发布前私有资料确认（2026-09-24）：发布到已分享站点 / 新建对外分享 / 设为公开之前的唯一判定源。
+// 两个网页托管 Controller 以可选依赖注入它；这里漏注册就等于整道闸不存在，有守卫测试盯着。
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceStore,
+    PrdAgent.Api.Services.MongoHostedSitePrivateSourceStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceGate,
+    PrdAgent.Api.Services.HostedSitePrivateSourceGate>();
+// 风格目录（OpenDesign 设计系统快照，内嵌资源）：启动时加载一次；缺失或写坏直接让启动失败并说明原因，
+// 不退化成空目录——空目录与「真的没有风格」分不开，风格卡片与样张会静默消失。
+builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignSystemCatalog>(
+    PrdAgent.Api.Services.DesignSystemCatalog.LoadEmbedded());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignGenerationSettingsService,
+    PrdAgent.Api.Services.DesignGenerationSettingsService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,
     PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactCancellationCoordinator,
@@ -468,6 +480,11 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>(
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteDeletionCleanupService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteOptimizationCleanupService>();
+
+// 关键 MongoDB 索引巡检：启动后查一次清理任务与并发正确性依赖的人工索引在不在，
+// 缺了写 Warning（第一句写后果），只查不建（no-auto-index），不阻塞启动、不参与健康判定。
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Database.MongoIndexAdvisory>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MongoIndexAdvisoryStartupCheck>();
 
 // 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
 builder.Services.AddHostedService<PrdAgent.Api.Services.EscalationNotificationCleanupService>();
@@ -571,6 +588,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
 // 接入台（MCP）：用量闸门 + 调用记录
 builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.ILiteraryMcpModelSelectionService,
+    PrdAgent.Api.Services.Mcp.LiteraryMcpModelSelectionService>();
 // 网关回环续跳的自证令牌：每进程一份，随进程生灭，不落库
 builder.Services.AddSingleton<PrdAgent.Api.Services.Mcp.McpLoopbackSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
@@ -1749,10 +1768,53 @@ static async Task<IResult> DeepHealth(
     PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
     PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
     PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
+    PrdAgent.Infrastructure.Database.MongoIndexAdvisory indexAdvisory,
+    ILoggerFactory loggerFactory,
     IHostEnvironment hostEnvironment,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
+
+    // 关键人工索引：深度自检时现查（五个集合各一次 listIndexes，很便宜），
+    // 让 CDS 的常设探针在缺失时响铃——只有启动日志的话，缺了也没人知道（degradation-must-alarm）。
+    // 现查还顺带刷新 /health/ready 的快照，DBA 补建后不必重启。只查不建。
+    // 读不出结论时值落在失败侧哨兵，不许判绿。
+    //
+    // 两个时间边界 + 一次只跑一个：
+    // - 预算 2 秒，必须明显小于 CDS 探针的 5 秒默认超时，否则巡检一慢整个端点被判成连不上，
+    //   同一端点上的其它 check 一起失真；超时时没查完的几条记成「未核实」，照样响铃。
+    // - 60 秒内查过就复用快照：端点匿名可达，被刷时不反复 listIndexes、不反复写告警日志。
+    // - 过期时并发到达的探测共用同一次刷新（single-flight，收在 MongoIndexAdvisory 里）。
+    const int requiredIndexUnknownSentinel = 9999;
+    int requiredIndexIssues;
+    string requiredIndexOutput;
+    try
+    {
+        await indexAdvisory.RefreshIfStaleAsync(
+            db.Database,
+            loggerFactory.CreateLogger<PrdAgent.Infrastructure.Database.MongoIndexAdvisory>(),
+            maxAge: TimeSpan.FromSeconds(60),
+            budget: TimeSpan.FromSeconds(2));
+    }
+    catch (Exception)
+    {
+        // 意外错误：下面按现有快照出结论，没有快照就落失败侧哨兵
+    }
+    var indexReport = indexAdvisory.LastReport;
+    if (indexReport is null)
+    {
+        requiredIndexIssues = requiredIndexUnknownSentinel;
+        requiredIndexOutput = "关键索引巡检没有产出结论，是否缺索引现在未知；去看容器日志里的索引巡检告警";
+    }
+    else
+    {
+        requiredIndexIssues = indexReport.Missing.Count + indexReport.Unverified.Count;
+        requiredIndexOutput = requiredIndexIssues == 0
+            ? $"{PrdAgent.Infrastructure.Database.RequiredMongoIndexCatalog.All.Count} 条需要人工维护的关键索引都在"
+            : $"缺 {indexReport.Missing.Count} 条、无法核实 {indexReport.Unverified.Count} 条关键索引——"
+              + "清理任务可能在整表扫描、或并发写入可能出现重复；请 DBA 按 "
+              + PrdAgent.Infrastructure.Database.RequiredMongoIndexCatalog.GuidePath + " 补建";
+    }
     var faultCount = faults.CountWithinWindow();
     var requests = faults.RequestsWithinWindow();
     var deploymentIdentity = ReadBuildIdentity();
@@ -1964,7 +2026,10 @@ static async Task<IResult> DeepHealth(
     // CDS 会留下故障/恢复事件；旧失败不会让红灯再挂 6 小时。
     var visualImageRecentRequests = 0;
     var visualImageConsecutiveFailures = -1;
+    const long visualImageLatencyBudgetMs = 180_000;
+    long visualImageLatestSuccessDurationMs = 0;
     string visualImageOutcomeOutput;
+    string visualImageLatencyOutput;
     try
     {
         var imageCallers = PrdAgent.Api.Services.VisualModelPolicyService.AppCallers;
@@ -1977,19 +2042,27 @@ static async Task<IResult> DeepHealth(
             .Find(filter)
             .SortByDescending(x => x.StartedAt)
             .Limit(20)
-            .Project(x => new { x.Status })
+            .Project(x => new { x.Status, x.DurationMs })
             .ToListAsync(cancellationToken);
         visualImageRecentRequests = outcomes.Count;
         visualImageConsecutiveFailures = outcomes.TakeWhile(x => x.Status != "succeeded").Count();
+        var latestSuccess = outcomes.FirstOrDefault(x => x.Status == "succeeded");
+        visualImageLatestSuccessDurationMs = Math.Max(0, latestSuccess?.DurationMs ?? 0);
         visualImageOutcomeOutput = outcomes.Count == 0
             ? $"最近 {faults.WindowMinutes} 分钟没有生图真实调用，无法用真实结果证明链路可用"
             : visualImageConsecutiveFailures == 0
                 ? $"最近一笔生图真实调用成功；窗口内采样 {outcomes.Count} 笔"
                 : $"最近连续 {visualImageConsecutiveFailures} 笔生图真实调用失败；详情见网关调用日志";
+        visualImageLatencyOutput = latestSuccess == null
+            ? $"最近 {faults.WindowMinutes} 分钟没有成功的生图调用，无法评估响应耗时"
+            : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs
+                ? $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，处于 180000ms 体验预算内"
+                : $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，超过 180000ms 体验预算；详情见网关调用日志";
     }
     catch (Exception ex)
     {
         visualImageOutcomeOutput = $"读取生图真实调用结果失败：{ex.GetType().Name}";
+        visualImageLatencyOutput = $"读取生图响应耗时失败：{ex.GetType().Name}";
     }
 
     var payload = new Dictionary<string, object?>
@@ -2036,6 +2109,34 @@ static async Task<IResult> DeepHealth(
                         // 对外只出业务名与红绿，不出地址、判据、日志——所以这条可以公开。
                         publicVisible = true,
                         publicName = "MAP 后端",
+                    },
+                },
+            },
+            ["mongo:required-indexes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "mongo.required-indexes",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = requiredIndexIssues,
+                    ["observedUnit"] = "count",
+                    // 与下面 cds:monitor 的 op/value 同一个判据
+                    ["status"] = requiredIndexIssues == 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    // 对外只给数量与后果，不列索引名（端点匿名可读）；名字在容器日志与 /health/ready 里
+                    ["output"] = requiredIndexOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 关键人工索引缺失数",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        // 2 小时一轮，不是 6 小时：CDS 目前不读单条监控的 failuresToAlarm，一律按全局
+                        // 连败 3 次才告警（debt.platform.md MD-1）。6 小时一轮会让缺索引最长 18 小时才响；
+                        // 2 小时 × 3 次仍在 6 小时内。每轮只多 5 次 listIndexes，60 秒内还会复用快照。
+                        intervalSeconds = 7200,
+                        severity = "P1",
+                        // 主动读一次状态，走默认的 active，不设 sampleComponentId
                     },
                 },
             },
@@ -2239,6 +2340,36 @@ static async Task<IResult> DeepHealth(
                         severity = "P2",
                         environment = "production",
                         publicVisible = false,
+                    },
+                },
+            },
+            ["visual-image:latency"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.latency",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageLatestSuccessDurationMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = visualImageLatestSuccessDurationMs == 0
+                        ? "warn"
+                        : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageLatencyOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图最近成功响应耗时",
+                        field = "observedValue",
+                        op = "lte",
+                        value = visualImageLatencyBudgetMs,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P1",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图响应耗时",
                     },
                 },
             },

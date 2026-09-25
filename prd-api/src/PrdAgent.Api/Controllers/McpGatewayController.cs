@@ -348,7 +348,8 @@ public class McpGatewayController : ControllerBase
         {
             log.Capability = McpCapabilityCatalog.ByScope(bt.RequiredScope)?.Key;
             log.IsWrite = McpUsageService.IsWriteTool(bt);
-            log.ImageCount = McpUsageService.IsImageTool(bt) ? ReadRequestedImageCount(args) : 0;
+            log.ImageCount = bt.Name == "map_literary_generate_image" ? 1
+                : McpUsageService.IsImageTool(bt) ? ReadRequestedImageCount(args) : 0;
 
             if (!ScopeSatisfies(scopes, bt.RequiredScope))
                 return await DeniedAsync(id, log, $"权限不足：此工具需要 scope {bt.RequiredScope}，当前密钥未授权。", ct);

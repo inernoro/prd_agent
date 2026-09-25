@@ -367,12 +367,13 @@ public static class McpBuiltinTools
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "工作区 id" },
                 new() { Name = "offset", In = "query", Type = "integer", Description = "从第几个字开始读（默认 0）" },
                 new() { Name = "limit", In = "query", Type = "integer", Description = "本次最多读多少字（默认 20000）" },
+                new() { Name = "format", In = "query", Description = "plain 原稿；illustrated 按真实标记位置返回已完成配图的 Markdown，未完成保留标记", EnumValues = new[] { "plain", "illustrated" } },
             },
         },
         new McpToolDef
         {
             Name = "map_literary_create_workspace",
-            Description = "新建一个文学创作工作区，可以同时把初稿写进去。返回 workspaceId。",
+            Description = "新建私有文学工作区，可带初稿及文件夹。需要配图时传 markedContent（与 content 互斥）：正文中独立行写 [插图]: 画面描述，支持 1-4 张。读取工作区取得标记索引与 workflowVersion，再调用 map_literary_generate_image。归档到文件夹不等于公开发布。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces",
@@ -380,6 +381,8 @@ public static class McpBuiltinTools
             {
                 new() { Name = "title", In = "body", Description = "工作区标题，最长 40 字，留空为「未命名」" },
                 new() { Name = "content", In = "body", Description = "初稿正文，可留空" },
+                new() { Name = "markedContent", In = "body", Description = "含 1-4 行 [插图]: 描述 的完整文章，与 content 互斥；最多 200000 字，每个描述最多 4000 字" },
+                new() { Name = "folderName", In = "body", Description = "文学创作内文件夹名称，最长 80 字；不填写为未分类，不公开发布" },
                 new() { Name = "clientRequestId", In = "body", Description = "幂等键" },
             },
         },
@@ -396,6 +399,41 @@ public static class McpBuiltinTools
                 new() { Name = "content", In = "body", Required = true, Description = "正文内容" },
                 new() { Name = "mode", In = "body", Description = "replace（默认）或 append", EnumValues = new[] { "replace", "append" } },
                 new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇正文时它的 updatedAt。mode=replace 传了才有「期间被改过就不覆盖」这层保护。" },
+            },
+        },
+
+        new McpToolDef
+        {
+            Name = "map_literary_generate_image",
+            Description = "为文学工作区一个现有配图标记生成一张图，使用文学创作模型和当前用户参考图配置，保存到该工作区并回填原文位置。每次一张，异步返回 runId。超时重试必须保持 clientRequestId；查询终态后用 get_workspace(format=illustrated) 取图文稿。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/images",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
+                new() { Name = "markerIndex", In = "body", Type = "integer", Required = true, Description = "get_workspace 返回的 illustrations[].index，从 0 开始" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "get_workspace 返回的 workflowVersion，改稿后旧版本不能生成" },
+                new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一张图一个值，原样重试使用同一个值" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_get_image_run",
+            Description = "只读查询文学配图进度与图片地址；每 5 秒查询一次，finished=true 即停止，失败时按 error 提示处理。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "GET", PathTemplate = "/api/open/literary/image-runs/{runId}",
+            Params = new List<McpToolParam> { new() { Name = "runId", In = "path", Required = true, Description = "文学配图任务 id" } },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_move_workspace",
+            Description = "将已有文学文章及配图一起移到指定文件夹，不复制文章、不创建空白文章、不公开发布。重复调用安全。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/folder",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
+                new() { Name = "folderName", In = "body", Required = true, Description = "最多 80 字，空字符串表示移回未分类" },
             },
         },
 

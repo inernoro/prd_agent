@@ -138,6 +138,10 @@ public class McpConsoleController : ControllerBase
             // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
             scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
+                ? "fixed"
+                : "follow-user-panel",
+            mcpLiteraryImageModelPublicId = k.McpLiteraryImageModelPublicId,
             // 手动模式才有「你有、但没开给它」这件事 —— 自动模式按定义不会缺。
             // 这正是「用户知道、钥匙没权限」：平台新上一块能力、或者他当初没勾，都落在这里。
             // 用不了的钥匙也不谈「你还能再给它什么」—— 那句话的前提是它还能用。

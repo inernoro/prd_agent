@@ -111,6 +111,10 @@ describe('PPT 来源绑定传输', () => {
     const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
     const onPage = source.slice(source.indexOf('onPage: (pg) => {'), source.indexOf('onDone: () => {', source.indexOf('onPage: (pg) => {')));
     expect(onPage).toContain('sourceBlockIds: pg.sourceBlockIds');
+    // 来源修复会用同一页码重发修好的页：完成提示按页码去重计数，不能把替换算成新页（Codex P2）。
+    expect(onPage).toContain('pageIndexesSeen.add(idx);');
+    expect(source).toContain('大纲已生成（${pageIndexesSeen.size} 页');
+    expect(source).not.toContain('大纲已生成（${pagesSeen} 页');
     expect(source).toContain('const [moved] = outline.splice(from, 1)');
     expect(source).toContain('outline.splice(i, 0, moved)');
     expect(source).toContain('{ ...sl, title: e.target.value }');

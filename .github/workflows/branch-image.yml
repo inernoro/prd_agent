@@ -22,6 +22,9 @@ name: Branch Image
 # 正式环境 exec_dep.sh --commit 会把 api/llmgw/llmgw-serve/llmgw-web 全部钉到同一 sha。
 # 因此只要 prd-api 改动触发 api/llmgw-serve 镜像，也必须补齐 llmgw/llmgw-web 同 sha tag；
 # workflow_dispatch 仍用于人工补齐不可变镜像组。
+#
+# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）只进 CDS 分支预览，
+# 这一阶段不进正式发布清单（生产 docker-compose.yml 未引用它），所以不参与上面那组同 sha 钉版。
 
 on:
   push:
@@ -37,6 +40,8 @@ env:
   LLMGW_WEB_IMAGE: ${{ github.repository }}/prdagent-llmgw-web
   # 独立 LLM 网关承载服务镜像（PrdAgent.LlmGateway，源码在 prd-api/ 下，故随 api 触发）
   LLMGW_SERVE_IMAGE: ${{ github.repository }}/prdagent-llmgw-serve
+  # 设计执行服务（OpenDesign 引擎，map-design-executor-v1），自包含于 design-runtime/opendesign
+  DESIGN_OPENDESIGN_IMAGE: ${{ github.repository }}/prdagent-design-opendesign
 
 jobs:
   changes:
@@ -48,6 +53,7 @@ jobs:
       llmgw: ${{ steps.filter.outputs.llmgw }}
       llmgw_web: ${{ steps.filter.outputs.llmgw_web }}
       llmgw_serve: ${{ steps.filter.outputs.llmgw_serve }}
+      design_opendesign: ${{ steps.filter.outputs.design_opendesign }}
       same_as_main: ${{ steps.main_equivalence.outputs.value }}
     steps:
       - name: Checkout
@@ -81,6 +87,11 @@ jobs:
               # （形状 7：守卫/流水线自己没接上线）。与 cds-compose.yml 里 llmgw-serve 的
               # buildScope 逐条对齐。
               - 'prd-api/**'
+              - '.github/workflows/branch-image.yml'
+            # 设计执行服务的镜像只由自己的目录构建（构建上下文就是 design-runtime/opendesign），
+            # 不编译 prd-api。与 cds-compose.yml 里 design-opendesign 的 buildScope 逐条对齐。
+            design_opendesign:
+              - 'design-runtime/opendesign/**'
               - '.github/workflows/branch-image.yml'
 
       # 一个提交先推 feature、随后又快进 main 时，feature workflow 执行期间看到的
@@ -379,3 +390,50 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=branch-llmgw-serving
           cache-to: type=gha,mode=max,scope=branch-llmgw-serving
+
+  # 设计执行服务镜像：以 ghcr.io/nexu-io/od:0.21.1 为底，装 Codex CLI 0.143.0 与本服务（见该目录 Dockerfile）。
+  design-opendesign-image:
+    name: Build design runtime (OpenDesign) image
+    needs: changes
+    # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
+    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.DESIGN_OPENDESIGN_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.sha }}
+            type=ref,event=branch,prefix=branch-
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./design-runtime/opendesign
+          file: ./design-runtime/opendesign/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=branch-design-opendesign
+          cache-to: type=gha,mode=max,scope=branch-design-opendesign

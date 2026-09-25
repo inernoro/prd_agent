@@ -610,6 +610,31 @@ public sealed class GatewayConsoleTenantAccessTests
     }
 
     [Fact]
+    public async Task TeamScopedLogFilter_ViewerWithoutTeamSeesOnlyOwnFederatedLogs()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var logs = scope.Database.GetCollection<BsonDocument>("llm_request_logs");
+        await logs.InsertManyAsync(
+        [
+            new BsonDocument { { "_id", "own-map" }, { "TenantId", "tenant-a" }, { "UserId", "map-user-a" } },
+            new BsonDocument { { "_id", "own-gateway" }, { "TenantId", "tenant-a" }, { "UserId", "user-a" } },
+            new BsonDocument { { "_id", "other-user" }, { "TenantId", "tenant-a" }, { "UserId", "map-user-b" } },
+            new BsonDocument { { "_id", "other-tenant" }, { "TenantId", "tenant-b" }, { "UserId", "map-user-a" } },
+        ]);
+        var http = CreateHttpContext(LlmGwTenantRoles.Viewer, [], "map-user-a");
+
+        var visible = await logs.Find(TenantAccess.FilterTeamScope(
+                http,
+                Builders<BsonDocument>.Filter.Empty))
+            .SortBy(x => x["_id"])
+            .ToListAsync();
+
+        visible.Select(x => x["_id"].AsString).ShouldBe(["own-gateway", "own-map"]);
+    }
+
+    [Fact]
     public async Task TenantContext_OldSecurityVersionIsRejectedAfterPasswordChange()
     {
         var database = await TryCreateDatabaseAsync();
@@ -619,7 +644,14 @@ public sealed class GatewayConsoleTenantAccessTests
         var memberships = scope.Database.GetCollection<LlmGwMembership>("llmgw_memberships");
         var tenants = scope.Database.GetCollection<LlmGwTenant>("llmgw_tenants");
         var teams = scope.Database.GetCollection<LlmGwTeam>("llmgw_teams");
-        var user = new LlmGwUser { Id = "user-a", Username = "alice", SecurityVersion = 2 };
+        var user = new LlmGwUser
+        {
+            Id = "user-a",
+            Username = "alice",
+            SecurityVersion = 2,
+            IdentityProvider = StableSmokeFederation.IdentityProvider,
+            ExternalSubjectId = "stable-smoke:map-user-a",
+        };
         var membership = new LlmGwMembership
         {
             Id = "membership-a",
@@ -638,7 +670,9 @@ public sealed class GatewayConsoleTenantAccessTests
         var currentContext = CreateAuthenticatedHttpContext(user, membership, securityVersion: 2);
 
         (await TenantAccess.ResolveAsync(oldContext, users, memberships, tenants, teams, CancellationToken.None)).ShouldBeNull();
-        (await TenantAccess.ResolveAsync(currentContext, users, memberships, tenants, teams, CancellationToken.None)).ShouldNotBeNull();
+        var resolved = await TenantAccess.ResolveAsync(currentContext, users, memberships, tenants, teams, CancellationToken.None);
+        resolved.ShouldNotBeNull();
+        resolved.ExternalUserId.ShouldBe("map-user-a");
     }
 
     [Fact]
@@ -682,7 +716,10 @@ public sealed class GatewayConsoleTenantAccessTests
         (expiresAt - DateTime.UtcNow).ShouldBeInRange(TimeSpan.FromMinutes(14), TimeSpan.FromMinutes(16));
     }
 
-    private static DefaultHttpContext CreateHttpContext(string role, IReadOnlyList<string> teamIds)
+    private static DefaultHttpContext CreateHttpContext(
+        string role,
+        IReadOnlyList<string> teamIds,
+        string? externalUserId = null)
     {
         var http = new DefaultHttpContext();
         http.Items[TenantAccess.ItemKey] = new TenantAccessContext(
@@ -694,7 +731,8 @@ public sealed class GatewayConsoleTenantAccessTests
             "membership-a",
             1,
             role,
-            teamIds);
+            teamIds,
+            externalUserId);
         return http;
     }
 

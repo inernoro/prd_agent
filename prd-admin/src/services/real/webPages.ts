@@ -161,6 +161,13 @@ export interface DesignArtifactRunSummary {
    */
   destinationApplyError?: string | null;
   linkedRunId?: string | null;
+  /** 本次运行冻结的风格预设（发起时从网页生成设置读取，之后改设置不影响这一轮）。 */
+  styleId?: string | null;
+  styleName?: string | null;
+  designSystemId?: string | null;
+  /** 三段提示词拼接后的指纹，用来追溯「这一轮用的是哪一版提示词」。 */
+  promptFingerprint?: string | null;
+  reviewMode?: DesignReviewMode | null;
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
@@ -175,6 +182,58 @@ export interface DesignArtifactRunSummary {
     title: string;
     contentHash: string;
   }>;
+}
+
+// ─── 网页生成设置（管理员可改，每次运行冻结进任务书） ───
+
+export type DesignGenerationRuntime = 'open-design' | 'map-gateway';
+export type DesignReviewMode = 'off' | 'light' | 'strict';
+
+export interface DesignGenerationStyle {
+  id: string;
+  name: string;
+  description: string;
+  /** 对应 OpenDesign 的设计系统编号。 */
+  designSystemId: string;
+  /**
+   * 三个色块 [ink, paper, accent]，只读：后端从该风格设计系统的真实 tokens 派生（--fg / --bg / --accent），
+   * 设计系统不在 OpenDesign 目录里时为空数组。保存设置时不提交。
+   */
+  swatches: string[];
+  /** 该风格真实样张的接口地址（不含查询串）；设计系统不在 OpenDesign 目录里时为 null。 */
+  sampleUrl?: string | null;
+  enabled: boolean;
+  isDefault: boolean;
+  builtIn: boolean;
+}
+
+export interface DesignGenerationPrompt {
+  value: string;
+  isDefault: boolean;
+  defaultValue: string;
+}
+
+export type DesignPromptKind = 'generate' | 'edit' | 'review';
+
+export interface DesignGenerationSettings {
+  defaultRuntime: DesignGenerationRuntime;
+  reviewMode: DesignReviewMode;
+  styles: DesignGenerationStyle[];
+  prompts: Record<DesignPromptKind, DesignGenerationPrompt>;
+  /** 平台契约全文：发布闸门的硬规矩，只读。 */
+  platformContract: string;
+  promptFingerprint: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  canEdit: boolean;
+}
+
+export interface DesignGenerationSettingsUpdate {
+  defaultRuntime?: DesignGenerationRuntime;
+  reviewMode?: DesignReviewMode;
+  styles?: Array<Omit<DesignGenerationStyle, 'builtIn' | 'swatches' | 'sampleUrl'>>;
+  /** 传空字符串表示恢复默认。 */
+  prompts?: Partial<Record<DesignPromptKind, string>>;
 }
 
 export interface HostedSiteOptimizationAnalysis {
@@ -876,11 +935,55 @@ export async function batchDeleteSites(ids: string[]): Promise<ApiResponse<{ del
 export async function setSiteVisibility(
   id: string,
   visibility: 'public' | 'private',
+  /** 设为公开且本页引用了私有资料时必填：作者在确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string,
 ): Promise<ApiResponse<HostedSite>> {
   return apiRequest(api.webPages.setVisibility(encodeURIComponent(id)), {
     method: 'PATCH',
-    body: { visibility },
+    body: { visibility, confirmedPrivateSourceFingerprint },
   });
+}
+
+// ─── 发出前私有资料核查 ───
+
+/** 本页引用的一份私有资料。scopeLabel 由服务端给出，前端不自己维护可见范围的文案映射。 */
+export interface PrivateSourceItem {
+  entryId: string;
+  title: string;
+  storeId?: string | null;
+  storeName?: string | null;
+  /** owner-only | team | project | product | shitu | unavailable */
+  scope: string;
+  scopeLabel: string;
+}
+
+export interface PrivateSourceReport {
+  /** 这一次发出前是否必须由作者确认 */
+  requiresConfirmation: boolean;
+  /** 仅发布草稿时有：站点此刻是否已经对外可见（有对外链接或已设为公开） */
+  exposed?: boolean | null;
+  /** 这组私有资料的指纹；确认后原样带回发布 / 分享请求 */
+  fingerprint?: string | null;
+  items: PrivateSourceItem[];
+}
+
+/**
+ * 这些站点当前线上内容引用了哪些私有资料（分享、设为公开前调用）。
+ * 服务端核查全部站点、不截断；站点清单走请求体，大合集的几百个 ID 拼进查询串会超过请求行长度上限。
+ */
+export async function getSitesPrivateSources(siteIds: string[]): Promise<ApiResponse<PrivateSourceReport>> {
+  return apiRequest(api.webPages.privateSources(), {
+    method: 'POST',
+    body: { siteIds },
+  });
+}
+
+/** 这版草稿（连同它的内容血缘）引用了哪些私有资料、站点是否已对外可见（发布草稿前调用）。 */
+export async function getRevisionPrivateSources(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<PrivateSourceReport>> {
+  return apiRequest(api.webPages.revisionPrivateSources(siteId, revisionId));
 }
 
 export async function listFolders(): Promise<ApiResponse<{ folders: string[] }>> {
@@ -1003,6 +1106,8 @@ export async function createShareLink(data: {
    *   非空   = 只显示这几条
    */
   askSuggestedQuestions?: string[];
+  /** 对外分享（logged-in / public）且本页引用了私有资料时必填：确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string;
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -1089,7 +1194,12 @@ export async function ensureShareShortLink(shareId: string): Promise<ApiResponse
  */
 export async function updateShareSettings(
   shareId: string,
-  patch: { visibility?: 'owner-only' | 'logged-in' | 'public'; expiresInDays?: number },
+  patch: {
+    visibility?: 'owner-only' | 'logged-in' | 'public';
+    expiresInDays?: number;
+    /** 从 owner-only 放宽到对外档位且引用了私有资料时必填 */
+    confirmedPrivateSourceFingerprint?: string;
+  },
 ): Promise<ApiResponse<{ visibility: string; expiresAt?: string | null }>> {
   return apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}`, {
     method: 'PATCH',
@@ -1419,6 +1529,20 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   return apiRequest(api.designArtifacts.runtimeCapabilities());
 }
 
+export async function getDesignGenerationSettings(): Promise<ApiResponse<DesignGenerationSettings>> {
+  return apiRequest(api.designArtifacts.generationSettings());
+}
+
+/** 部分保存：只提交改过的字段。apiRequest 会自己序列化，这里传原始对象。 */
+export async function updateDesignGenerationSettings(
+  patch: DesignGenerationSettingsUpdate,
+): Promise<ApiResponse<DesignGenerationSettings>> {
+  return apiRequest(api.designArtifacts.generationSettings(), {
+    method: 'PUT',
+    body: patch,
+  });
+}
+
 /**
  * 创建 Run 前向服务端取得当前权威内容哈希。这里只传来源身份，正文始终由服务端读取；
  * 创建接口会再读一次并比较哈希，封住预检与入队之间的变更窗口。
@@ -1449,22 +1573,33 @@ export async function createDesignArtifactRun(input: {
    * 把站点生成完，但它会留在个人空间；换个标签页恢复也重建不出原来的目标。个人空间传空。
    */
   destinationTeamId?: string | null;
+  /** 知识库引用（0–3 篇）；与 attachmentIds 至少有一种，两者可同时存在。 */
   knowledgeReferences: DesignKnowledgeReferenceInput[];
+  /** 生成工作台里选的风格预设；不传则由服务端用设置里的默认风格。 */
+  styleId?: string | null;
+  /** 风格画廊「更多风格」里直接选的 OpenDesign 设计系统；与 styleId 二选一，有它就不传 styleId。 */
+  designSystemId?: string | null;
+  /** 直接上传的文件（POST /api/v1/attachments 返回的 id），最多 5 个。 */
+  attachmentIds?: string[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
+  const { styleId, designSystemId, attachmentIds, runtime, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
       artifactType: 'web-page',
       operation: 'generate',
-      ...input,
+      ...rest,
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,
         contentHash,
       })),
-      runtime: input.runtime || 'map-gateway',
+      // 不传执行器时交给服务端按「网页生成设置」的默认值决定，前端不再写死一个默认。
+      ...(runtime ? { runtime } : {}),
+      ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
+      ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
   });
 }
@@ -1501,14 +1636,25 @@ export async function streamDesignArtifactRun(input: {
     throw new Error(result.errorMessage || '网页生成进度连接中断');
 }
 
+export interface HostedSiteEditRunExtras {
+  /** 「附上截图」：用户圈出问题的图片附件，最多 3 张。 */
+  screenshotAttachmentIds?: string[];
+  /** 补充资料附件。 */
+  attachmentIds?: string[];
+}
+
 export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
   runtime = 'map-gateway',
-): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
+  extras: HostedSiteEditRunExtras = {},
+): Promise<ApiResponse<Pick<DesignArtifactRunSummary, 'runId' | 'status' | 'runtime'>
+  & Partial<Pick<DesignArtifactRunSummary, 'styleName' | 'promptFingerprint' | 'reviewMode'>>>> {
   const resolved = await resolveDesignKnowledgeReferences(knowledgeReferences);
   if (!resolved.success) return resolved;
+  const screenshots = extras.screenshotAttachmentIds?.filter(Boolean) ?? [];
+  const attachments = extras.attachmentIds?.filter(Boolean) ?? [];
   return apiRequest(api.webPages.editRuns(siteId), {
     method: 'POST',
     body: {
@@ -1519,6 +1665,8 @@ export async function createHostedSiteEditRun(
         storeId,
         contentHash,
       })),
+      ...(screenshots.length > 0 ? { screenshotAttachmentIds: screenshots } : {}),
+      ...(attachments.length > 0 ? { attachmentIds: attachments } : {}),
     },
   });
 }
@@ -1590,8 +1738,13 @@ export async function createHostedSiteRevisionPreviewAccess(
 export async function publishHostedSiteRevision(
   siteId: string,
   revisionId: string,
+  /** 站点已对外可见且这版引用了私有资料时必填：确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string,
 ): Promise<ApiResponse<HostedSiteRevisionMutation>> {
-  return apiRequest(api.webPages.publishRevision(siteId, revisionId), { method: 'POST' });
+  return apiRequest(api.webPages.publishRevision(siteId, revisionId), {
+    method: 'POST',
+    body: confirmedPrivateSourceFingerprint ? { confirmedPrivateSourceFingerprint } : undefined,
+  });
 }
 
 export async function rollbackHostedSiteRevision(

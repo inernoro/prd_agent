@@ -219,7 +219,8 @@ describe('toUserReadableErrorMessage', () => {
     ['MIDUO_SSO_NOT_CONFIGURED', '米多星球 SSO 尚未配置，请先在系统设置中配置 appCode 后重试。'],
     ['SSO_BINDING_EXISTS', '该米多星球绑定值已被其他用户使用，请先解除原绑定或更换绑定值后重试。'],
     ['MAP_SSO_BROWSER_SESSION_REQUIRED', '当前会话不能进入模型网关，请先通过管理后台登录后重试。'],
-    ['MAP_ADMIN_REQUIRED', '当前账号不是管理员，无法进入模型网关，请使用管理员账号登录后重试。'],
+    ['MAP_ADMIN_REQUIRED', '当前账号不是系统管理员，无法执行此操作，请联系管理员授权后重试。'],
+    ['LLM_GATEWAY_ACCESS_REQUIRED', '当前账号没有模型网关权限，请联系管理员授予后重试。'],
     ['SYNTHETIC_SESSION_FEDERATION_FORBIDDEN', '合成测试会话不能进入外部控制台，请使用真人管理员账号登录后重试。'],
   ])('为 SSO 授权错误 %s 提供对应恢复动作', (code, expected) => {
     const message = toUserReadableErrorMessage(
@@ -370,4 +371,3 @@ describe('GitHub 错误契约', () => {
     expect(out).toContain(options.fallbackMessage);
   });
 });
-

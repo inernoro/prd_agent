@@ -44,6 +44,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         }).Build();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var inputs = new[]
         {
             """[{"role":"user","content":[{"type":"input_text","text":"读取资料并写出 index.html"}]}]""",
@@ -98,6 +99,7 @@ public sealed class DesignArtifactWorkspaceContractTests
                 : AppCallerRegistry.Admin.WebHosting.GenerateHtml, handler.Header("X-Gateway-App-Caller"));
         }
         broker.Verify(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        broker.Verify(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
         broker.VerifyNoOtherCalls();
     }
 
@@ -109,11 +111,15 @@ public sealed class DesignArtifactWorkspaceContractTests
     public async Task ResponsesProxyRejectsMalformedContextBeforeCallingGateway(string body)
     {
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        // 票据先于请求体校验；票据合法、请求体不合合同时，仍然不计数、不打网关。
+        broker.Setup(x => x.ValidateModelTicketAsync("run-invalid-context", "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BuildRun());
         var handler = new CapturingHandler();
         var controller = BuildResponsesProxy(broker.Object, handler, new ConfigurationBuilder().Build(), body);
         await controller.ProxyResponses("run-invalid-context", CancellationToken.None);
         Assert.Equal(409, controller.Response.StatusCode);
         Assert.Null(handler.Body);
+        broker.Verify(x => x.ValidateModelTicketAsync("run-invalid-context", "model-ticket", It.IsAny<CancellationToken>()), Times.Once);
         broker.VerifyNoOtherCalls();
     }
 
@@ -121,7 +127,7 @@ public sealed class DesignArtifactWorkspaceContractTests
     public async Task ResponsesProxyRejectsInvalidTicketBeforeCallingGateway()
     {
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
-        broker.Setup(x => x.ReserveModelCallAsync("another-run", "model-ticket", It.IsAny<CancellationToken>()))
+        broker.Setup(x => x.ValidateModelTicketAsync("another-run", "model-ticket", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new UnauthorizedAccessException());
         var handler = new CapturingHandler();
         var controller = BuildResponsesProxy(broker.Object, handler, new ConfigurationBuilder().Build(), """{"input":[],"store":false}""");
@@ -140,6 +146,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
 
@@ -158,6 +165,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
         controller.HttpContext.Features.Set<IHttpResponseFeature>(new StartedResponseFeature());
@@ -179,6 +187,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         var run = AbortFixtureRun();
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
             AbortFixtureBody);
         var lifetime = new AbortableLifetimeFeature();
@@ -529,6 +538,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
         var handler = new CapturingHandler();
         var proxy = new DesignArtifactRuntimeController(
             broker.Object, new SingleClientFactory(handler), configuration,
@@ -717,6 +728,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
+        broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
         var handler = new CapturingHandler();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -766,6 +779,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         run.Status = RunStatuses.Running;
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler(
             System.Net.HttpStatusCode.BadGateway,
@@ -877,6 +892,8 @@ public sealed class DesignArtifactWorkspaceContractTests
         run.Status = RunStatuses.Running;
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        broker.Setup(item => item.ValidateModelTicketAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
             .ReturnsAsync(run);
         var handler = new CapturingHandler();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

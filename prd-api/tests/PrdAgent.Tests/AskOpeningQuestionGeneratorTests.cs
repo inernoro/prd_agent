@@ -240,7 +240,6 @@ public class AskOpeningQuestionWiringTests
     public void 开启提问与重新上传都要排一次生成()
     {
         var svc = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "HostedSiteService.cs"));
-
         // 按真实入口逐一守卫，防止新增发布路径令全文件计数误报，或一处漏接被另一处重复调用抵消。
         var paths = new[]
         {
@@ -254,9 +253,9 @@ public class AskOpeningQuestionWiringTests
         {
             var body = SourceSlice.Member(svc, signature);
             Assert.Single(Regex.Matches(body, @"_askOpeners\.QueueEnsure\("));
-            Assert.Matches($@"_askOpeners\.QueueEnsure\(\s*{siteArgument}\s*\)", body);
+            // 主干给其中几处补了「站主默认开关」第二个实参，按「第一个实参是该入口的站点变量」判，不锁实参个数。
+            Assert.Matches($@"_askOpeners\.QueueEnsure\(\s*{siteArgument}\s*(?:,[^)]*)?\)", body);
         }
-
     }
 
     [Fact]

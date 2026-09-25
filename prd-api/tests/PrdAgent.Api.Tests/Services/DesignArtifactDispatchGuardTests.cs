@@ -82,6 +82,48 @@ public sealed class DesignArtifactDispatchGuardTests
         Assert.Contains("冻结正文", evidence, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void QualityEvidence_ShouldReadVisibleTextOfHtmlKnowledge()
+    {
+        // 2026-09-24 真人验收：知识是 HTML 日报，「主干落地 <b>31</b> 次真实提交」，
+        // 页面写「31 次真实提交」却被判成来源里没有的数字，整轮生成白做。
+        var run = BuildRun();
+        run.KnowledgeReferences[0].Content = "<p>主干落地 <b>31</b> 次真实提交，9 处修复封堵私有工作区。</p>";
+        var page = "<!doctype html><html><head><title>t</title></head><body><main><h1>本周进展</h1>"
+            + "<p>主干落地 31 次真实提交，9 处修复封堵私有工作区。</p></main></body></html>";
+
+        // companion：只拿原文比对确实会拒收。
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(page, run.KnowledgeReferences[0].Content));
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(page, HostedSiteEditRunWorker.BuildQualityEvidence(run, null));
+
+        // Markdown 知识原样保留，尖括号不被当成标签剥掉。
+        Assert.Equal("阈值 a < b 时切换", HostedSiteEditRunWorker.EvidenceOf("阈值 a < b 时切换"));
+    }
+
+    [Theory]
+    [InlineData("日报-2026-09-24-今日大事早知道", "2026-09 版本更新汇总")]
+    [InlineData("发布于 2026 年 9 月 24 日", "2026-09-24 发布")]
+    [InlineData("发布于 2026 年 9 月 24 日", "2026/9/24 发布")]
+    public void DateEvidence_ShouldSupportTheSameDayInAnyWriting_AndItsYearMonth(string evidence, string text)
+    {
+        // 2026-09-24 真人验收：来源写「日报-2026-09-24」，页面写「2026-09」被拒收。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(Page(text), evidence);
+    }
+
+    [Theory]
+    [InlineData("日报-2026-09-24", "2026-10 上线")]
+    [InlineData("计划在 2026-09 完成", "2026-09-30 完成")]
+    public void DateEvidence_ShouldStillRejectDatesTheSourceDoesNotHave(string evidence, string text)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(Page(text), evidence));
+        Assert.Contains("日期、联系方式或网址", error.Message, StringComparison.Ordinal);
+    }
+
+    private static string Page(string text) =>
+        "<!doctype html><html><head><title>t</title></head><body><main><h1>本期</h1><p>" + text + "</p></main></body></html>";
+
     private static DesignArtifactRun BuildRun() => new()
     {
         UserId = "user-a",

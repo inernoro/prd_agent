@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  appendRunNarration,
   AI_STREAM_PREVIEW_CSP,
   AI_STREAM_PREVIEW_SANDBOX,
+  DESIGN_PREVIEW_EVENT_SANDBOX,
   activeSiteEditRunStorageKey,
   buildStrictAiPreviewDocument,
   buildStrictAiPreviewParserInput,
@@ -21,8 +23,12 @@ import {
 } from './siteEditPreview';
 
 const previewHelperSource = readFileSync(new URL('./siteEditPreview.ts', import.meta.url), 'utf8');
-const generateDialogSource = readFileSync(new URL('./SiteGenerateDialog.tsx', import.meta.url), 'utf8');
-const editPanelSource = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8');
+// 生成工作台：任务逻辑（选哪种 sandbox）在 useSiteGenerationRun，渲染在 NewSiteStage。
+const generateDialogSource = readFileSync(new URL('./workbench/useSiteGenerationRun.ts', import.meta.url), 'utf8')
+  + readFileSync(new URL('./workbench/NewSiteStage.tsx', import.meta.url), 'utf8');
+const editStageSource = readFileSync(new URL('./workbench/SiteEditStage.tsx', import.meta.url), 'utf8');
+const editPanelSource = readFileSync(new URL('./SiteEditPanel.tsx', import.meta.url), 'utf8')
+  + readFileSync(new URL('./workbench/useSiteEditSession.ts', import.meta.url), 'utf8');
 
 describe('AI 流式网页严格预览', () => {
   it('页面起点出现前不把解释文字塞进 iframe', () => {
@@ -37,13 +43,25 @@ describe('AI 流式网页严格预览', () => {
 
   it('严格 sandbox 不授予脚本、表单、弹窗、模态框或同源权限', () => {
     expect(AI_STREAM_PREVIEW_SANDBOX).toBe('');
-    expect(generateDialogSource).toContain('sandbox={AI_STREAM_PREVIEW_SANDBOX}');
-    expect(editPanelSource).toContain('sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}');
+    // 直连流的 delta 预览走严格 sandbox；只有服务端 preview 事件（执行器写出的整页）才放开脚本。
+    expect(generateDialogSource).toContain('applyPreviewHtml(html, AI_STREAM_PREVIEW_SANDBOX)');
+    expect(generateDialogSource).toContain('applyPreviewHtml(html, DESIGN_PREVIEW_EVENT_SANDBOX)');
+    expect(generateDialogSource).toContain('sandbox={run.previewSandbox}');
+    expect(editPanelSource).toContain('sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}');
+    // 工作台的修改阶段用同一套三档判据，不许自己另起一个更宽的 sandbox。
+    expect(editStageSource).toContain('const frameSandbox = previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX;');
+    expect(editStageSource).toContain('sandbox={frameSandbox}');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).toBe('allow-scripts');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-same-origin');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-forms');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-popups');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-top-navigation');
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).toContain('allow-scripts');
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-same-origin');
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-popups');
     expect(generateDialogSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
     expect(editPanelSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
+    expect(editStageSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
   });
 
   it('快速切换版本时只接受最后一次请求', () => {
@@ -154,5 +172,25 @@ describe('网页微调任务恢复', () => {
     expect(runningGenerationActivity('正在读取知识', 23))
       .toBe('当前步骤：正在读取知识。已运行 23 秒，任务仍在继续，页面会自动更新。');
     expect(runningGenerationActivity('', -4)).toContain('已运行 0 秒');
+  });
+});
+
+describe('执行器叙述合并', () => {
+  it('只差数字的状态句原地替换，不刷屏', () => {
+    let text = '';
+    for (const n of [0, 3, 6, 9]) text = appendRunNarration(text, `OpenDesign 正在修改共享工作区，已运行 ${n} 秒。`, 500);
+    expect(text).toBe('OpenDesign 正在修改共享工作区，已运行 9 秒。');
+  });
+
+  it('内容不同的句子照常追加，模型流式分片也照常拼接', () => {
+    let text = appendRunNarration('', '读取任务书。', 500);
+    text = appendRunNarration(text, 'OpenDesign 正在修改共享工作区，已运行 3 秒。', 500);
+    text = appendRunNarration(text, '首屏标题改为短句', 500);
+    text = appendRunNarration(text, '，其余保持不变。', 500);
+    expect(text).toBe('读取任务书。OpenDesign 正在修改共享工作区，已运行 3 秒。首屏标题改为短句，其余保持不变。');
+  });
+
+  it('保留长度上限', () => {
+    expect(appendRunNarration('a'.repeat(10), 'bcd', 5)).toBe('aabcd');
   });
 });

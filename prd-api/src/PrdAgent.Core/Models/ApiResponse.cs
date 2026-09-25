@@ -125,6 +125,12 @@ public static class ErrorCodes
     // 网页托管版本记录相关
     public const string HOSTED_SITE_HISTORY_UNAVAILABLE = "HOSTED_SITE_HISTORY_UNAVAILABLE";
 
+    /// <summary>本页引用了私有资料，对外发出前必须带上确认（HTTP 409）</summary>
+    public const string HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_REQUIRED = "HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_REQUIRED";
+
+    /// <summary>带来的确认与当前私有引用集合对不上（确认之后引用变了），需要重新确认（HTTP 409）</summary>
+    public const string HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_STALE = "HOSTED_SITE_PRIVATE_SOURCE_CONFIRMATION_STALE";
+
     // 分享相关
     public const string SHARE_EXPIRED = "SHARE_EXPIRED";
     public const string SHARE_REVOKED = "SHARE_REVOKED";

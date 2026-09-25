@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const dialog = readFileSync(new URL('./SiteGenerateDialog.tsx', import.meta.url), 'utf8');
+// 生成的任务逻辑随工作台搬进了 useSiteGenerationRun；判据跟着逻辑走。
+const dialog = readFileSync(new URL('./workbench/useSiteGenerationRun.ts', import.meta.url), 'utf8');
 const pptPage = readFileSync(new URL('../../pages/md-to-ppt-agent/MdToPptAgentPage.tsx', import.meta.url), 'utf8');
 
 /**
@@ -14,7 +15,7 @@ const pptPage = readFileSync(new URL('../../pages/md-to-ppt-agent/MdToPptAgentPa
  *     saveSession 静默吞掉、快照停在上一版，刷新之后连 runId 都恢复不出来。
  */
 describe('sessionStorage 失败不能拖垮正在跑的任务', () => {
-  it('生成弹窗的 storage 访问全部走带 try 的封装', () => {
+  it('生成工作台的 storage 访问全部走带 try 的封装', () => {
     // companion：封装确实存在。
     expect(dialog).toContain('function rememberActiveRun(');
     expect(dialog).toContain('function forgetActiveRun(');

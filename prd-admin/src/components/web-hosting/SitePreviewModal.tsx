@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, History, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
+import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -11,7 +11,6 @@ import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
 import { DIRECT_PREVIEW_SANDBOX, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
-import SiteEditPanel from './SiteEditPanel';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -29,14 +28,13 @@ interface Props {
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
   /** 提问开关同理：只改弹窗内的 state，关掉再打开会从 stale site.askEnabled 退回旧值 */
   onAskEnabledChange?: (siteId: string, enabled: boolean) => void;
-  /** 页面内容发布后回填父级站点 SSOT，使预览与卡片立即切到新版本。 */
-  onSiteChange?: (site: HostedSite) => void;
   /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
   canToggleComments?: boolean;
-  /** 卡片可直接打开修改面板，避免用户必须先预览、再猜“帮我修改”在哪里。 */
-  initialPanel?: 'none' | 'edit';
-  /** 卡片的“版本记录”入口直接把修改面板定位到历史区。 */
-  initialEditSection?: 'compose' | 'history';
+  /**
+   * 「帮我修改」：交给页面打开生成工作台（一个对话 + 一个预览，历史版本也在那里）。
+   * 2026-09-24 起修改不再挤在预览右侧 440px 的侧栏里——草稿只剩一小块，看不到改了什么。
+   */
+  onEditInWorkbench?: () => void;
 }
 
 /**
@@ -48,10 +46,8 @@ export default function SitePreviewModal({
   onClose,
   onCommentsEnabledChange,
   onAskEnabledChange,
-  onSiteChange,
   canToggleComments = true,
-  initialPanel = 'none',
-  initialEditSection = 'compose',
+  onEditInWorkbench,
 }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -62,8 +58,7 @@ export default function SitePreviewModal({
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
-  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask' | 'edit'>(initialPanel);
-  const [editSection, setEditSection] = useState<'compose' | 'history'>(initialEditSection);
+  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
   const showComments = rightPanel === 'comments';
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
@@ -73,7 +68,6 @@ export default function SitePreviewModal({
   const [showAskConfig, setShowAskConfig] = useState(false);
   /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
   const [askEverOpened, setAskEverOpened] = useState(false);
-  const [editEverOpened, setEditEverOpened] = useState(initialPanel === 'edit');
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
   // 三态：站点未表态时先按系统默认关闭展示，再读取 owner 自己的全局默认。
   // 站点明确设置过 true / false 时优先，不让个人默认覆盖单站点选择。
@@ -147,8 +141,8 @@ export default function SitePreviewModal({
     });
 
     const handleKey = (e: KeyboardEvent) => {
-      // 本 PR 把 SiteEditPanel 放进了这个预览浮层，它自己会开知识选择、回滚、驳回等
-      // Radix 弹窗，那些弹窗按 Escape 时已在捕获阶段处理掉了。判据与 ShareSiteEditDock 共用。
+      // 浮层里的评论、提问设置等会开自己的 Radix 弹窗，那些弹窗按 Escape 时已在捕获阶段
+      // 处理掉了。判据与 ShareSiteEditDock 共用。
       if (shouldCloseOnEscape(e)) {
         closeRef.current();
         return;
@@ -272,39 +266,15 @@ export default function SitePreviewModal({
                 提问
               </button>
             )}
-            {canToggleComments && !site.wrappedAssetType && (
+            {canToggleComments && !site.wrappedAssetType && onEditInWorkbench && (
               <button
                 type="button"
-                onClick={() => {
-                  const shouldOpen = rightPanel !== 'edit' || editSection !== 'compose';
-                  setEditEverOpened(true);
-                  setEditSection('compose');
-                  setRightPanel(shouldOpen ? 'edit' : 'none');
-                }}
-                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  rightPanel === 'edit' && editSection === 'compose' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
-                }`}
-                aria-pressed={rightPanel === 'edit' && editSection === 'compose'}
+                onClick={onEditInWorkbench}
+                title="在工作台里说想改哪里，先出草稿再发布；历史版本也在那里"
+                className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs font-semibold text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <WandSparkles className="w-3.5 h-3.5" />
                 帮我修改
-              </button>
-            )}
-            {canToggleComments && !site.wrappedAssetType && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditEverOpened(true);
-                  setEditSection('history');
-                  setRightPanel('edit');
-                }}
-                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                  rightPanel === 'edit' && editSection === 'history' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
-                }`}
-                aria-pressed={rightPanel === 'edit' && editSection === 'history'}
-              >
-                <History className="h-3.5 w-3.5" />
-                版本记录
               </button>
             )}
             {canToggleComments && (
@@ -463,21 +433,6 @@ export default function SitePreviewModal({
             </aside>
           )}
 
-          {editEverOpened && (
-            <aside
-              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[440px] sm:shrink-0 sm:border-l sm:border-token-subtle"
-              style={{
-                background: 'var(--bg-elevated)',
-                display: rightPanel === 'edit' ? 'flex' : 'none',
-              }}
-            >
-              <SiteEditPanel
-                site={site}
-                focusSection={editSection}
-                onPublished={(updated) => onSiteChange?.(updated)}
-              />
-            </aside>
-          )}
         </div>
       </div>
 

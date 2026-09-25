@@ -38,6 +38,9 @@
     <None Include="..\..\..\scripts\fixtures\opendesign-task-v1.json"
           Link="Fixtures\opendesign-task-v1.json"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\scripts\fixtures\opendesign-task-v1-direction.json"
+          Link="Fixtures\opendesign-task-v1-direction.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

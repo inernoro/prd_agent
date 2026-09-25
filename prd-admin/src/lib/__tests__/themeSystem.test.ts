@@ -330,8 +330,12 @@ describe('主题系统契约', () => {
      * --skeleton-sheen 同理：骨架上那道扫光。浅色档的骨架底是**深**的
      * （rgba(60,44,36,0.075)），扫光要把它提回纸白才有「扫过去」的效果，
      * 所以近白是对的方向，不是漏改。它同样只在骨架期出现、不承载任何文字。
+     *
+     * --button-primary-fg 同理（2026-09-24）：浅色主按钮改成「深陶土实底 + 白字」，
+     * 这份白字永远只压在 --button-primary-bg（浅色档苔绿 #3F5D45）上，不可能落到纸面；
+     * 对比度由下面「浅色主题语义文字保持可读」那条逐主题算 fg×bg / fg×hover ≥ 4.5 钉住。
      */
-    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen'];
+    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen', '--button-primary-fg'];
     const lightBlockWithoutPaper = lightBlock
       .split('\n')
       .filter((line) => !PAPER_MEDIA_TOKENS.some((t) => line.trim().startsWith(t)))
@@ -366,9 +370,9 @@ describe('主题系统契约', () => {
     const documentStore = fs.readFileSync(DOCUMENT_STORE_PATH, 'utf8');
     const docBrowser = fs.readFileSync(DOC_BROWSER_PATH, 'utf8');
 
-    expect(tokenValue(lightBlock, 'accent-primary')).toBe('#A64B35');
+    expect(tokenValue(lightBlock, 'accent-primary')).toBe('#3F5D45');
     expect(tokenValue(lightBlock, 'accent-primary')).not.toBe(tokenValue(lightBlock, 'semantic-info-text'));
-    expect(tokenValue(lightBlock, 'selection-text')).toBe('#8F3F2B');
+    expect(tokenValue(lightBlock, 'selection-text')).toBe('#2F4834');
     expect(documentStore).not.toContain('focus-visible:ring-blue-400/60');
     expect(docBrowser).not.toContain('group-hover/resize:bg-[rgba(59,130,246');
   });

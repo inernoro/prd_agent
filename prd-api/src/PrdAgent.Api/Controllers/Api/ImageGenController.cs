@@ -2174,12 +2174,15 @@ public class ImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
         }
 
-        var res = await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == runId && x.OwnerAdminId == adminId,
-            Builders<ImageGenRun>.Update.Set(x => x.CancelRequested, true),
-            cancellationToken: ct);
+        var res = await PrdAgent.Api.Services.ImageGenRunCancellation.RequestAsync(
+            _db,
+            _runStore,
+            runId,
+            adminId,
+            appKey: null,
+            ct);
 
-        if (res.MatchedCount == 0)
+        if (!res.Found)
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.IMAGE_GEN_RUN_NOT_FOUND, "run 不存在"));
         }

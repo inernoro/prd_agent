@@ -109,6 +109,7 @@
 | `github_user_connections` | `GitHubUserConnection` | 每个 PRD Agent 用户的 GitHub OAuth 连接（加密 token、scopes、login） | `(userId)` 唯一 |
 | `pr_review_items` | `PrReviewItem` | PR 审查工作台的用户级记录（owner/repo/number + 嵌入式 Snapshot + 私人笔记） | `(userId, updatedAt desc)`；`(userId, owner, repo, number)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
+| `design_generation_settings` | `DesignGenerationSettings` | 网页生成设置单例（Id=global）：默认执行器、自查强度、风格预设、三段可编辑提示词；null 字段回落内置默认 | 无（单文档） |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
 | `document_embeddings` | `DocumentEmbedding` | 知识库文档切块向量（`Vector` 为 float32 二进制，随向量存 `Model` / `Dimension`，跨模型同维度判为不兼容；`DeploymentSlug` 隔离分支预览与生产，二者共用同一个 Mongo） | 待建：`(storeId, deploymentSlug, model)` 检索用；`(entryId, chunkIndex, deploymentSlug)` 唯一——**唯一键必须带部署作用域**，否则分支预览与生产的同一篇文档会撞键。索引未创建，见 no-auto-index 规则，交 DBA |
 | `document_stores` | `DocumentStore` | 知识库（文档空间）主记录：名称/描述/tags/是否公开/主文档/置顶/点赞收藏计数 | （未显式创建额外索引；owner 查询走 `OwnerId`） |

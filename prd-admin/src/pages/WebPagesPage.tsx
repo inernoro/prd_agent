@@ -18,6 +18,7 @@ import {
   deleteSite,
   batchDeleteSites,
   setSiteVisibility,
+  getSitesPrivateSources,
   listSiteFolders,
   listSiteTags,
   createSiteShareLink,
@@ -38,6 +39,7 @@ import {
 } from '@/services';
 import type { HostedSite, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSiteAskConfig } from '@/services/real/webPages';
+import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
@@ -94,7 +96,9 @@ import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
-import SiteGenerateDialog, { type SiteGenerateSource } from '@/components/web-hosting/SiteGenerateDialog';
+import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/workbench/SiteWorkbench';
+import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
+import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { useLocation } from 'react-router-dom';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
@@ -432,8 +436,9 @@ export default function WebPagesPage() {
   const [tags, setTags] = useState<TagCount[]>([]);
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
-  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
-  const [generateSource, setGenerateSource] = useState<SiteGenerateSource | null>(null);
+  // 生成工作台（一个对话 + 一个预览）：新建网页和「帮我修改」都进这里。null = 关闭。
+  const [workbenchTarget, setWorkbenchTarget] = useState<WorkbenchTarget | null>(null);
+  const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const consumedLaunchRef = useRef('');
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
@@ -443,6 +448,11 @@ export default function WebPagesPage() {
     uploadDialogSpaceRef.current = currentSpace;
     setEditItem(null);
     setShowUploadDialog(true);
+  };
+  // 顶部「生成网页」主入口：与上传弹窗同一个空间快照口径（分组归属用它判定）。
+  const openGenerateDialog = () => {
+    uploadDialogSpaceRef.current = currentSpace;
+    setWorkbenchTarget({ kind: 'new' });
   };
 
   /**
@@ -480,16 +490,18 @@ export default function WebPagesPage() {
     const launch = parseDesignArtifactLaunch(location.search);
     if (!launch || launch.target !== 'web-page') return;
     consumedLaunchRef.current = location.search;
-    setGenerateSource({
-      entryId: launch.sourceEntryId,
-      storeId: launch.sourceStoreId,
-      title: launch.sourceTitle,
-      storeName: launch.sourceStoreName,
-    });
-    // 深链直接开生成弹窗时也要快照空间：这条路径以前从不设 ref，
+    // 深链直接开生成工作台时也要快照空间：这条路径以前从不设 ref，
     // 归属会用到上一次打开上传弹窗时的旧值（或默认的个人空间）。
     uploadDialogSpaceRef.current = currentSpace;
-    setShowGenerateDialog(true);
+    setWorkbenchTarget({
+      kind: 'new',
+      source: {
+        entryId: launch.sourceEntryId,
+        storeId: launch.sourceStoreId,
+        title: launch.sourceTitle,
+        storeName: launch.sourceStoreName,
+      },
+    });
   }, [location.search, currentSpace]);
   // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
   // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
@@ -510,12 +522,10 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
-  const [previewInitialPanel, setPreviewInitialPanel] = useState<'none' | 'edit'>('none');
-  const [previewEditSection, setPreviewEditSection] = useState<'compose' | 'history'>('compose');
-  const openSiteEditor = (site: HostedSite, section: 'compose' | 'history') => {
-    setPreviewInitialPanel('edit');
-    setPreviewEditSection(section);
-    setCommentSite(site);
+  // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
+  const openSiteEditor = (site: HostedSite) => {
+    setCommentSite(null);
+    setWorkbenchTarget({ kind: 'site', site });
   };
   // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
@@ -671,8 +681,16 @@ export default function WebPagesPage() {
       }
       return;
     }
-    if (!confirm(`将「${site.title}」设为公开？\n\n任何人都能在你的个人公开页（/u/${username ?? '...'}）看到此站点。`)) return;
-    const res = await setSiteVisibility(site.id, 'public');
+    // 引用了私有资料时由确认层逐条列出资料并说明后果；没有时仍是原来那句确认。
+    const gated = await runWithPrivateSourceGate({
+      inspect: () => getSitesPrivateSources([site.id]),
+      run: (fingerprint) => setSiteVisibility(site.id, 'public', fingerprint),
+      actionLabel: '设为公开',
+      confirmWithoutPrivateSources: () =>
+        confirm(`将「${site.title}」设为公开？\n\n任何人都能在你的个人公开页（/u/${username ?? '...'}）看到此站点。`),
+    });
+    if (gated.status !== 'done') return;
+    const res = gated.res;
     if (res.success) {
       setSites(prev => prev.map(s => s.id === site.id ? res.data : s));
     } else {
@@ -1160,7 +1178,7 @@ export default function WebPagesPage() {
             onMove={() => setMovingSite(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site, 'compose')}
+            onAiEdit={() => openSiteEditor(site)}
           />
         ))}
       </div>
@@ -1181,7 +1199,7 @@ export default function WebPagesPage() {
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
-            onAiEdit={() => openSiteEditor(site, 'compose')}
+            onAiEdit={() => openSiteEditor(site)}
           />
         ))}
       </div>
@@ -1391,8 +1409,13 @@ export default function WebPagesPage() {
                     跟顶栏的语境切换（资产库 / 分享）不是一类动作。
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                  <div className="ml-auto shrink-0">
-                    <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
+                    <GenerateSiteMenu
+                      onGenerate={openGenerateDialog}
+                      onOpenSettings={() => setShowGenerationSettings(true)}
+                    />
+                    <Button data-tour-id="webpages-upload-primary" size="sm" variant="secondary" onClick={openCreateUploadDialog}>
                       <Upload size={14} className="mr-1" /> 上传网页
                     </Button>
                   </div>
@@ -1491,7 +1514,13 @@ export default function WebPagesPage() {
                 // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
                 // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
                 // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
-                const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public' });
+                const gated = await runWithPrivateSourceGate({
+                  inspect: () => getSitesPrivateSources([site.id]),
+                  run: (fingerprint) => createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public', confirmedPrivateSourceFingerprint: fingerprint }),
+                  actionLabel: '生成分享',
+                });
+                if (gated.status !== 'done') throw new Error('已取消分享：本页引用的私有资料没有对外发出');
+                const share = gated.res;
                 if (share.success && share.data) {
                   loadShares();
                   return {
@@ -2047,8 +2076,8 @@ export default function WebPagesPage() {
           onGenerate={() => {
             setShowUploadDialog(false);
             setPendingExternalFile(null);
-            setGenerateSource(null);
-            setShowGenerateDialog(true);
+            uploadDialogSpaceRef.current = currentSpace;
+            setWorkbenchTarget({ kind: 'new' });
           }}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
           onShareSite={(id) => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); setShareTargetId(id); setShowShareDialog(true); }}
@@ -2071,21 +2100,36 @@ export default function WebPagesPage() {
         />
       )}
 
-      <SiteGenerateDialog
-        open={showGenerateDialog}
-        initialSource={generateSource}
+      <SiteWorkbench
+        open={workbenchTarget !== null}
+        target={workbenchTarget ?? { kind: 'new' }}
         // 团队归属随请求冻结到服务端，由它建站时应用——用户中途离开时这条回调不会执行。
-        // 传实时值即可：弹窗在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
+        // 传实时值即可：工作台在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
         destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
-        onClose={() => setShowGenerateDialog(false)}
+        onClose={() => setWorkbenchTarget(null)}
         onCreated={(siteId) => {
           void (async () => {
             // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。
             await groupNewSiteInDialogSpace(siteId, '生成');
             void load();
             void loadMeta();
+            markSiteAsFresh(siteId);
           })();
         }}
+        onSiteChanged={(updated) => {
+          setSites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        }}
+        onOpenSettings={() => setShowGenerationSettings(true)}
+        onOpenShareSettings={(target) => {
+          setWorkbenchTarget(null);
+          setShareTargetId(target.id);
+          setShowShareDialog(true);
+        }}
+      />
+
+      <GenerationSettingsDrawer
+        open={showGenerationSettings}
+        onClose={() => setShowGenerationSettings(false)}
       />
 
       {/* 拖文件替换网页 — 二次确认 */}
@@ -2201,13 +2245,8 @@ export default function WebPagesPage() {
       {commentSite && (
         <SitePreviewModal
           site={commentSite}
-          initialPanel={previewInitialPanel}
-          initialEditSection={previewEditSection}
-          onClose={() => {
-            setCommentSite(null);
-            setPreviewInitialPanel('none');
-            setPreviewEditSection('compose');
-          }}
+          onEditInWorkbench={() => openSiteEditor(commentSite)}
+          onClose={() => setCommentSite(null)}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
@@ -2217,10 +2256,6 @@ export default function WebPagesPage() {
           onAskEnabledChange={(sid, enabled) => {
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
-          }}
-          onSiteChange={(updated) => {
-            setCommentSite(updated);
-            setSites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
           }}
         />
       )}
@@ -4069,23 +4104,38 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
     // 用户+站点/合集+访问级别 去重（不依赖任何前端分页列表，账号链接再多也不失效），
     // 并把有效期刷新为本次所选窗口。前端只发指令、用返回值展示。
     try {
-      const res = await createSiteShareLink({
-        siteId: siteId || undefined,
-        siteIds: isCollection ? siteIds : undefined,
-        shareType: isCollection ? 'collection' : 'single',
-        password: pwd,
-        expiresInDays,
-        // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
-        forceNew: true,
-        visibility,
-        // 数字短链按需分配（2026-06-11）：只有用户在高级选项里主动选「数字短链」才生成
-        // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
-        // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
-        allocateShortLink: isShort,
-        // 三态：没动过就整个字段不传（继承站点题库），动过才传数组（空数组=这条链接不显示）。
-        // 判定收在 resolveShareAskSelection 里，有守卫盯着，别在这儿就地写三元。
-        askSuggestedQuestions: resolveShareAskSelection(askTouched, askPicked),
+      // 对外档位（登录可见 / 公开）且本页引用了私有资料时，先让作者在确认层里确认。
+      const targetSiteIds = isCollection ? (siteIds ?? []) : (siteId ? [siteId] : []);
+      const external = visibility !== 'owner-only' && targetSiteIds.length > 0;
+      const gated = await runWithPrivateSourceGate({
+        inspect: external
+          ? () => getSitesPrivateSources(targetSiteIds)
+          : async () => ({ success: true as const, data: { requiresConfirmation: false, items: [] }, error: null }),
+        run: (fingerprint) => createSiteShareLink({
+          siteId: siteId || undefined,
+          siteIds: isCollection ? siteIds : undefined,
+          shareType: isCollection ? 'collection' : 'single',
+          password: pwd,
+          expiresInDays,
+          // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
+          forceNew: true,
+          visibility,
+          // 数字短链按需分配（2026-06-11）：只有用户在高级选项里主动选「数字短链」才生成
+          // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
+          // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
+          allocateShortLink: isShort,
+          // 三态：没动过就整个字段不传（继承站点题库），动过才传数组（空数组=这条链接不显示）。
+          // 判定收在 resolveShareAskSelection 里，有守卫盯着，别在这儿就地写三元。
+          askSuggestedQuestions: resolveShareAskSelection(askTouched, askPicked),
+          confirmedPrivateSourceFingerprint: fingerprint,
+        }),
+        actionLabel: '生成分享链接',
       });
+      if (gated.status !== 'done') {
+        toast.info('没有生成分享链接', '本页引用的私有资料没有对外发出');
+        return;
+      }
+      const res = gated.res;
       if (res.success) {
         onCreated?.();
         // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准

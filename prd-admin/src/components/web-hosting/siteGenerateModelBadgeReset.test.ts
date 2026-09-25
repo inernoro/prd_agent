@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const dialog = readFileSync(new URL('./SiteGenerateDialog.tsx', import.meta.url), 'utf8');
+// 生成的任务逻辑随工作台搬进了 useSiteGenerationRun；判据跟着逻辑走。
+const dialog = readFileSync(new URL('./workbench/useSiteGenerationRun.ts', import.meta.url), 'utf8');
 
 /**
  * 与改写面板同一处判据的另一半（Codex P2，2026-09-15）。上一轮修了 SiteEditPanel，

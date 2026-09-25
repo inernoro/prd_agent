@@ -249,6 +249,45 @@ public sealed class ApplicationReadinessProbeTests
         firstAttempt.SetResult();
     }
 
+    [Fact]
+    public async Task MissingIndexes_AreReportedButDoNotChangeTheHealthVerdict()
+    {
+        var checkedAt = new DateTime(2026, 9, 24, 1, 2, 3, DateTimeKind.Utc);
+        var probe = new ApplicationReadinessProbe(
+            _ => Task.CompletedTask,
+            _ => Task.CompletedTask,
+            (_, _) => Task.FromResult(HealthyAsset()),
+            NullLogger<ApplicationReadinessProbe>.Instance,
+            indexReport: () => new PrdAgent.Infrastructure.Database.MongoIndexAdvisoryReport(
+                checkedAt,
+                ["hosted_site_deletion_tasks.idx_hosted_site_deletion_due"],
+                ["activity_logs.uniq_activity_logs_deduplication_key"]));
+
+        var result = await probe.CheckAsync();
+
+        // 索引缺失是「会变慢 / 并发窗口敞开」，不是「接不了流量」：不许把实例判成未就绪。
+        result.Status.ShouldBe("healthy");
+        result.ErrorCode.ShouldBeNull();
+        result.MissingIndexes.ShouldBe(["hosted_site_deletion_tasks.idx_hosted_site_deletion_due"]);
+        result.UnverifiedIndexes.ShouldBe(["activity_logs.uniq_activity_logs_deduplication_key"]);
+        result.IndexesCheckedAt.ShouldBe(checkedAt);
+    }
+
+    [Fact]
+    public async Task IndexFieldsStayNullUntilTheStartupCheckHasRun()
+    {
+        var probe = CreateProbe(
+            mongo: _ => Task.CompletedTask,
+            redis: _ => Task.CompletedTask,
+            asset: (_, _) => Task.FromResult(HealthyAsset()));
+
+        var result = await probe.CheckAsync();
+
+        result.MissingIndexes.ShouldBeNull();
+        result.UnverifiedIndexes.ShouldBeNull();
+        result.IndexesCheckedAt.ShouldBeNull();
+    }
+
     private static ApplicationReadinessProbe CreateProbe(
         Func<CancellationToken, Task> mongo,
         Func<CancellationToken, Task> redis,

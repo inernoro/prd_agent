@@ -32,6 +32,22 @@ export function displayedDesignRuntime(
     ?? capabilities.find((item) => item.enabled);
 }
 
+/**
+ * 追加一段执行器叙述。远端每隔几秒推一句「正在修改共享工作区，已运行 N 秒」，
+ * 直接拼接会让同一句话刷满整个框、把真正有内容的分析挤出去；只差数字的同一句
+ * 改为原地替换最后一句，其余照常追加。
+ */
+export function appendRunNarration(previous: string, text: string, maxChars: number): string {
+  const shape = (value: string) => value.replace(/\d+/g, '#').trim();
+  const sentences = previous.split(/(?<=[。！？\n])/);
+  const last = sentences[sentences.length - 1] ?? '';
+  if (last.trim() && shape(last) === shape(text)) {
+    sentences[sentences.length - 1] = text;
+    return sentences.join('').slice(-maxChars);
+  }
+  return `${previous}${text}`.slice(-maxChars);
+}
+
 export function activeSiteEditRunStorageKey(siteId: string) {
   return `web-hosting-edit-active-run-v1:${siteId}`;
 }
@@ -66,6 +82,82 @@ export function canPublishRevision(item: Pick<HostedSiteRevision, 'isCurrent' | 
 }
 
 export const AI_STREAM_PREVIEW_SANDBOX = '';
+
+/**
+ * 服务端 preview 事件推来的是执行器写出的整页正文（含它自己的脚本与交互）。
+ * 只给 allow-scripts：没有 allow-same-origin，srcdoc 文档是不透明源，脚本碰不到本站的
+ * 存储与 DOM；也不给表单、弹窗、顶层导航。网络再用 CSP 收一道（见 designPreviewEventDocument）。
+ */
+export const DESIGN_PREVIEW_EVENT_SANDBOX = 'allow-scripts';
+
+/**
+ * preview 事件文档的 CSP：放行页面自带的内联脚本与样式、以及 data/blob 形式的图片、字体与媒体，
+ * 其余一律不许走网络。以 default-src 'none' 起步——没有它，未列出的资源类型（script/img/style/
+ * font/media 的外链）按浏览器默认放行，页面脚本能把预览里渲染的私有知识经一次图片请求带出去
+ *（PR #1533 评审 4081964338）。口径与最终产物的 VerifiedPackageArtifactCsp 对齐，只是去掉了
+ * 'self'：srcdoc 是不透明源，'self' 在这里不对应任何可信资源。
+ */
+export const DESIGN_PREVIEW_EVENT_CSP = [
+  "default-src 'none';",
+  "script-src 'unsafe-inline';",
+  "style-src 'unsafe-inline';",
+  "img-src data: blob:;",
+  "font-src data:;",
+  "media-src data: blob:;",
+  "manifest-src 'none';",
+  "connect-src 'none';",
+  "form-action 'none';",
+  "frame-src 'none';",
+  "child-src 'none';",
+  "worker-src 'none';",
+  "object-src 'none';",
+  "base-uri 'none';",
+].join(' ');
+
+/**
+ * 把 preview 事件的整页正文包成可以放进 srcdoc 的文档：CSP meta 必须是 head 里的第一个节点，
+ * 排在页面自己的任何节点之前，否则解析到它之前的资源已经发出去了。
+ */
+export function designPreviewEventDocument(html: string): string {
+  const raw = html.trim();
+  if (!raw) return '';
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${DESIGN_PREVIEW_EVENT_CSP}">`;
+  const headOpen = /<head(?:\s[^>]*)?>/iu.exec(raw);
+  if (headOpen && headOpen.index !== undefined) {
+    const at = headOpen.index + headOpen[0].length;
+    return `${raw.slice(0, at)}${meta}${raw.slice(at)}`;
+  }
+  const htmlOpen = /<html(?:\s[^>]*)?>/iu.exec(raw);
+  if (htmlOpen && htmlOpen.index !== undefined) {
+    const at = htmlOpen.index + htmlOpen[0].length;
+    return `${raw.slice(0, at)}<head>${meta}</head>${raw.slice(at)}`;
+  }
+  return `<!doctype html><html><head>${meta}</head><body>${raw}</body></html>`;
+}
+
+/** preview 事件按 revision 单调推进：断线重连会重放旧事件，旧的不许把新页面盖回去。 */
+export function isNewerPreviewRevision(revision: number, latest: number): boolean {
+  return revision >= latest;
+}
+
+/**
+ * 设置里的默认执行器不可用时，界面要说清为什么换了一个——不能悄悄换掉（形状 10：静默降级）。
+ * 默认执行器可用、或已经选中它时返回空串。
+ */
+export function runtimeFallbackNotice(
+  capabilities: readonly Pick<DesignRuntimeCapability, 'id' | 'label' | 'enabled' | 'reason'>[],
+  defaultRuntime: string | null | undefined,
+  chosenRuntime: string | null | undefined,
+): string {
+  if (!defaultRuntime || defaultRuntime === chosenRuntime) return '';
+  const preferred = capabilities.find((item) => item.id === defaultRuntime);
+  if (!preferred || preferred.enabled) return '';
+  const chosen = capabilities.find((item) => item.id === chosenRuntime);
+  const reason = preferred.reason?.trim() || '未启用';
+  return chosen
+    ? `默认的「${preferred.label}」暂不可用（${reason}），本次改用「${chosen.label}」。`
+    : `默认的「${preferred.label}」暂不可用（${reason}），当前也没有其它可用执行器。`;
+}
 
 // Verified multi-file packages are served from a short-lived, opaque-origin route.
 // Keep this narrower than the ordinary hosted-site direct preview.

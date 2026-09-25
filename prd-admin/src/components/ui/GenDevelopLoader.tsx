@@ -180,6 +180,7 @@ export function GenDevelopLoader({
   sizeLabel,
   mode = 'image',
   viewportRef,
+  tone = 'stage',
 }: {
   createdAt?: number;
   className?: string;
@@ -206,6 +207,12 @@ export function GenDevelopLoader({
    *  generationProgressPlacement，两个宿主同一份。
    */
   viewportRef?: RefObject<HTMLElement | null>;
+  /**
+   * 配色档。`stage`（默认）= 恒暗，给被钉死成暗色的画布舞台用；
+   * `adaptive` = 跟随主题，浅色下走纸面配色（覆盖见 tokens.css 的 .gen-dev--adaptive），
+   * 给会翻浅色的普通页面用（如文学创作的配图卡片）。
+   */
+  tone?: 'stage' | 'adaptive';
 }) {
   ensureStyles();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -325,7 +332,7 @@ export function GenDevelopLoader({
   return (
     <div
       ref={rootRef}
-      className={`gen-dev${className ? ` ${className}` : ''}`}
+      className={`gen-dev${tone === 'adaptive' ? ' gen-dev--adaptive' : ''}${className ? ` ${className}` : ''}`}
       data-testid="generation-progress"
       // 缩到最小档时底边一行只剩一个点，靠文字找不到它。冒烟脚本按这个属性认模式。
       data-gen-mode={mode}

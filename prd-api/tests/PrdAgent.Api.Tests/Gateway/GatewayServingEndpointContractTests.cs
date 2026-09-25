@@ -220,6 +220,10 @@ public class GatewayServingEndpointContractTests
             member.ActualPlatformId.ShouldBe("openai");
             member.ParameterCapabilities.ShouldNotBeNull();
             member.ParameterCapabilities!["image_size.field.size"].ShouldBeTrue();
+            member.ImageCapabilities.ShouldNotBeNull(
+                "LLMGW 发布的图片能力快照必须跨 HTTP 边界完整下发，MAP 才不需要识别实际模型名");
+            member.ImageCapabilities!.SizesByResolution["default"].ShouldBe(new[] { "1024x1024", "1536x1024" });
+            member.ImageCapabilities.SupportsImageToImage.ShouldBeTrue();
         }
         finally { await app.StopAsync(); }
     }
@@ -325,6 +329,16 @@ public class GatewayServingEndpointContractTests
                             ParameterCapabilities = new Dictionary<string, bool>
                             {
                                 ["image_size.field.size"] = true,
+                            },
+                            ImageCapabilities = new GatewayImageCapabilitiesSnapshot
+                            {
+                                SizeConstraintType = "whitelist",
+                                SizeParamFormat = "WxH",
+                                SizesByResolution = new Dictionary<string, List<string>>
+                                {
+                                    ["default"] = ["1024x1024", "1536x1024"],
+                                },
+                                SupportsImageToImage = true,
                             },
                         },
                     ],

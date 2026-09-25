@@ -79,13 +79,59 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
-    public async Task CreateRun_ShouldRejectMultiFileSiteBeforeResolvingKnowledgeOrQueueing()
+    public async Task CreateRun_QuickPathShouldRejectMultiFileSiteBeforeResolvingKnowledgeOrQueueing()
     {
+        // 直连执行器把整页当一段文本改写，只能按声明式规则加固，所以多文件站点在它这里仍要当场拒绝，
+        // 并告诉用户换精细设计。
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>", fileCount: 2));
+        var providers = EnabledProvider(DesignArtifactRuntimes.MapGateway);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.MapGateway,
+        });
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("ZIP 或多文件资源", ResponseMessage(badRequest), StringComparison.Ordinal);
+        Assert.Contains("OpenDesign", ResponseMessage(badRequest), StringComparison.Ordinal);
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
+    /// 2026-09-23 用户：「只接受单个 HTML 文件、不能带脚本的网页，这肯定是有问题的」。
+    /// OpenDesign 拿到整站文件、产物按整包校验放行包内脚本，入口不该再按直连的规则拦它。
+    /// 判据：请求越过了单文件/无脚本闸门、走到了知识解析这一步（这里让知识解析返回冲突以便在入库前停下）。
+    /// </summary>
+    [Theory]
+    [InlineData("<!doctype html><html><body>safe</body></html>", 2)]
+    [InlineData("<!doctype html><html><body><script>document.title='交互'</script></body></html>", 1)]
+    public async Task CreateRun_OpenDesignShouldAcceptMultiFileOrScriptedSites(string html, int fileCount)
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(BuildEditableEntry(html, fileCount: fileCount));
         var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化"));
         var queue = new Mock<IRunQueue>(MockBehavior.Strict);
         var controller = BuildController(
             NewLazyDb(),
@@ -101,9 +147,8 @@ public sealed class HostedSiteEditsControllerTests
             Runtime = DesignArtifactRuntimes.OpenDesign,
         });
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains("ZIP 或多文件资源", ResponseMessage(badRequest), StringComparison.Ordinal);
-        knowledge.VerifyNoOtherCalls();
+        Assert.IsType<ConflictObjectResult>(result);
+        knowledge.VerifyAll();
         queue.VerifyNoOtherCalls();
     }
 
@@ -121,13 +166,13 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
-    public async Task CreateRun_ShouldRejectDynamicCurrentHtmlBeforeQueueing()
+    public async Task CreateRun_QuickPathShouldRejectDynamicCurrentHtmlBeforeQueueing()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry(
                 "<!doctype html><html><body><script>fetch('https://evil.example')</script></body></html>"));
-        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
+        var providers = EnabledProvider(DesignArtifactRuntimes.MapGateway);
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
         var queue = new Mock<IRunQueue>(MockBehavior.Strict);
         var controller = BuildController(
@@ -141,7 +186,7 @@ public sealed class HostedSiteEditsControllerTests
         var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
         {
             Instruction = "调整版式",
-            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Runtime = DesignArtifactRuntimes.MapGateway,
         });
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
@@ -932,6 +977,46 @@ public sealed class HostedSiteEditsControllerTests
         var unchanged = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
         Assert.Equal(RunStatuses.Committing, unchanged.Status);
         Assert.Null(unchanged.CancelRequestedAt);
+    }
+
+    [Fact]
+    public async Task PreviewRevision_ShouldMarkTheLiveRevisionAsCurrent()
+    {
+        // 预览接口曾传 null 判「是不是线上这一版」，刚生成的唯一版本被标成「历史线上版本」。
+        var version = new DateTime(2026, 9, 24, 4, 39, 42, DateTimeKind.Utc);
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.GetAsync("site-a", "rev-live", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "rev-live",
+                SiteId = "site-a",
+                Status = HostedSiteRevisionStatuses.Published,
+                PublishedContentVersion = version,
+                Html = "<!doctype html><p>live</p>",
+            });
+        revisions.Setup(service => service.GetAsync("site-a", "rev-old", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "rev-old",
+                SiteId = "site-a",
+                Status = HostedSiteRevisionStatuses.Published,
+                PublishedContentVersion = version.AddMinutes(-5),
+                Html = "<!doctype html><p>old</p>",
+            });
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetByIdAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(new HostedSite { Id = "site-a", OwnerUserId = "owner-user", ContentVersion = version });
+        var controller = BuildController(NewLazyDb(), "owner-user", sites.Object, revisions: revisions.Object);
+
+        Assert.True(IsCurrent(await controller.PreviewRevision("site-a", "rev-live")));
+        Assert.False(IsCurrent(await controller.PreviewRevision("site-a", "rev-old")));
+
+        static bool IsCurrent(IActionResult result)
+        {
+            var ok = Assert.IsType<OkObjectResult>(result);
+            var json = JsonSerializer.SerializeToNode(ok.Value)!;
+            return json["Data"]!["revision"]!["isCurrent"]!.GetValue<bool>();
+        }
     }
 
     private static HostedSiteEditsController BuildController(

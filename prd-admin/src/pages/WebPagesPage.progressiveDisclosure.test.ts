@@ -13,17 +13,20 @@ describe('网页托管原版列表布局回归', () => {
     expect(source).toContain('<SiteContextPanel');
   });
 
-  it('搜索、四档组织、显示、网格列表和上传按原顺序常驻', () => {
+  it('搜索、四档组织、显示、网格列表、生成与上传按原顺序常驻', () => {
     const toolbar = source.slice(source.indexOf('const desktopToolbar ='), source.indexOf('\n  return (', source.indexOf('const desktopToolbar =')));
     expect(toolbar).not.toContain('label="整理"');
-    const positions = ['placeholder="搜索标题、描述、标签"', 'data-tour-id="webpages-group-pills"', 'label="显示"', 'data-tour-id="webpages-view-toggle"', 'data-tour-id="webpages-upload-primary"'].map((marker) => toolbar.indexOf(marker));
+    const positions = ['placeholder="搜索标题、描述、标签"', 'data-tour-id="webpages-group-pills"', 'label="显示"', 'data-tour-id="webpages-view-toggle"', '<GenerateSiteMenu', 'data-tour-id="webpages-upload-primary"'].map((marker) => toolbar.indexOf(marker));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(toolbar).toContain('ALL_GROUP_MODES.map');
     expect(toolbar).toContain('data-tour-id="webpages-sort-pills"');
     expect(toolbar).toContain('data-tour-id="webpages-card-size-pills"');
     expect(toolbar).toContain('来源筛选');
-    expect(toolbar).toContain('size="sm" variant="primary" onClick={openCreateUploadDialog}');
+    // 设计稿 Main（2026-09-23）：「生成网页」是主操作，「上传网页」退为次操作紧挨着它。
+    expect(toolbar).toContain('size="sm" variant="secondary" onClick={openCreateUploadDialog}');
+    // 2026-09-24：点「生成网页」直接进工作台，不再先弹来源二选一。
+    expect(toolbar).toContain('onGenerate={openGenerateDialog}');
     expect(toolbar).not.toContain('帮我修改');
     expect(toolbar).not.toContain('webpages-knowledge-generate');
   });

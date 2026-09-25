@@ -147,6 +147,14 @@ public interface IHostedSiteService
     Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default);
 
     /// <summary>
+    /// 批量版的 <see cref="CanPublishIntoTeamAsync"/>：返回这批团队里用户**不能**投放的那些
+    /// （viewer / 非成员），保持入参顺序。成员关系只加载一次，逐个团队走同一条判据；
+    /// 调用方拿一批团队做预检时必须用它，不许循环调单个版本（每次都会全量重载成员关系）。
+    /// </summary>
+    Task<IReadOnlyList<string>> GetTeamsNotPublishableAsync(
+        string userId, IReadOnlyCollection<string> teamIds, CancellationToken ct = default);
+
+    /// <summary>
     /// 这个用户能不能编辑这个站点。与编辑端点同一道角色门，供分享页决定显不显示编辑坞。
     /// 前端不得再拿 createdBy 之类的代理量自己推。
     /// </summary>
@@ -204,6 +212,15 @@ public interface IHostedSiteService
 
     /// <summary>切换站点可见性（private / public），首次 public 时写入 PublishedAt</summary>
     Task<HostedSite?> SetVisibilityAsync(string siteId, string userId, string visibility, CancellationToken ct = default);
+
+    /// <summary>这个用户能不能改站点可见性（只有站点创建者）。与 SetVisibilityAsync 同一判据，供私有资料确认闸在记录确认前先判。</summary>
+    bool CanSetVisibility(HostedSite site, string userId);
+
+    /// <summary>
+    /// 这个用户能不能为这些站点建分享链接（每个站点都要 CreateShare 权限）。与 CreateShareAsync 同一判据，
+    /// 供私有资料核查接口与分享前确认在返回资料名 / 记录确认之前先判。GetByIdAsync 对 viewer 也放行，不能拿它当这道门。
+    /// </summary>
+    Task<bool> CanCreateShareAsync(IReadOnlyCollection<string> siteIds, string userId, CancellationToken ct = default);
 
     /// <summary>按用户名获取该用户所有公开的站点（公开页聚合，无需登录）</summary>
     Task<List<HostedSite>> ListPublicByUserIdAsync(string ownerUserId, int limit = 60, CancellationToken ct = default);

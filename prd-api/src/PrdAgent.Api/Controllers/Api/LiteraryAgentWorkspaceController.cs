@@ -27,6 +27,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<LiteraryAgentWorkspaceController> _logger;
+    private readonly Services.ImageMasterWorkspaceDeletionService _workspaceDeletion;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -35,6 +36,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         _db = db;
         _assetStorage = assetStorage;
         _logger = logger;
+        _workspaceDeletion = new Services.ImageMasterWorkspaceDeletionService(db, assetStorage, logger);
     }
 
     private string GetAdminId()
@@ -243,11 +245,13 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // Only owner can delete
         if (ws.OwnerUserId != adminId) return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以删除"));
 
-        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == ws.Id, ct);
-        // Clean up related data
-        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
-        await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
-        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
+        var deletion = await _workspaceDeletion.DeleteAsync(ws.Id, CancellationToken.None);
+        if (deletion.HasActiveGeneration)
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.WORKSPACE_GENERATION_ACTIVE,
+                "该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除"));
+        }
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -266,6 +270,8 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        await Services.LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(_db, ws, ct);
 
         // Update lastOpenedAt + 每用户「最近打开」台账（首页继续上次）
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
@@ -342,6 +348,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         {
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            var snapshotAt = wf.UpdatedAt;
 
             var now = DateTime.UtcNow;
             var needUpdate = false;
@@ -371,8 +378,10 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
             if (runningMarkers.Count == 0)
             {
+                wf.UpdatedAt = now;
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -430,8 +439,10 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
             if (needUpdate)
             {
+                wf.UpdatedAt = now;
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -456,25 +467,28 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         {
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            var snapshotAt = wf.UpdatedAt;
             if (ws.ScenarioType != "article-illustration") return;
 
+            var recovered = PrdAgent.Core.Services.LiteraryMcpWorkflow.RecoverVersionedAssets(ws, assets);
             var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
-            if (hasMapping) return;
+            if (hasMapping && !recovered) return;
             if (assets.Count == 0) return;
-            if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
+            if (!recovered && !wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
 
             // 取最新 N 个 assets（按创建时间倒序已在查询中完成），然后反转为正序
             var markerCount = wf.Markers.Count;
             var candidateAssets = assets
+                .Where(a => !hasMapping && !a.ArticleWorkflowVersion.HasValue)
                 .OrderByDescending(a => a.CreatedAt)
                 .Take(markerCount)
                 .OrderBy(a => a.CreatedAt)
                 .ToList();
 
-            if (candidateAssets.Count == 0) return;
+            if (candidateAssets.Count == 0 && !recovered) return;
 
             wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            var needUpdate = false;
+            var needUpdate = recovered;
 
             for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
             {
@@ -494,9 +508,11 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             {
                 wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
                     .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+                wf.UpdatedAt = DateTime.UtcNow;
 
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),

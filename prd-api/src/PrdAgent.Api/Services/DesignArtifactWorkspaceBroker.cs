@@ -41,6 +41,9 @@ public interface IDesignArtifactWorkspaceBroker
 
     Task<byte[]> ReadInputPackageAsync(string runId, string token, CancellationToken ct);
 
+    /// <summary>校验 CDS 推来的实时预览：同一张工作区凭证、任务仍在运行窗口内。</summary>
+    Task ValidatePreviewAsync(string runId, string token, CancellationToken ct);
+
     Task<DesignArtifactResultCommit> CommitResultAsync(
         string runId,
         string token,
@@ -122,7 +125,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 throw new InvalidOperationException("知识原件读取服务不可用，请联系管理员后重试");
             originals = await _knowledge.ReadWorkspaceOriginalsAsync(run.UserId, run.KnowledgeReferences, run.KnowledgeOriginals, ct);
         }
-        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml, currentFiles, originals);
+        var referenceFiles = await ReadReferenceImagesAsync(run, ct);
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml, currentFiles, originals, referenceFiles);
         var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
         var inputSha256 = Sha256Hex(bytes);
         var inputAssetKey = _storage.TryBuildContentAddressedKey(
@@ -267,6 +271,38 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         }
     }
 
+    /// <summary>
+    /// 修改时附上的截图，原样放进工作区 reference/。读不到就让这次运行失败并说清是哪张——
+    /// 静默丢图会让用户以为模型看过了它（判据与接线纪律 形状 10）。
+    /// </summary>
+    private async Task<IReadOnlyList<DesignWorkspaceFile>?> ReadReferenceImagesAsync(DesignArtifactRun run, CancellationToken ct)
+    {
+        if (run.ReferenceImages is not { Count: > 0 } images) return null;
+        var files = new List<DesignWorkspaceFile>();
+        for (var index = 0; index < images.Count; index++)
+        {
+            var image = images[index];
+            byte[]? bytes;
+            try { bytes = string.IsNullOrWhiteSpace(image.StorageKey) ? null : await _storage.TryDownloadBytesAsync(image.StorageKey, ct); }
+            catch (Exception error) when (error is not OperationCanceledException) { bytes = null; }
+            if (bytes == null || bytes.LongLength == 0)
+                throw new InvalidOperationException($"截图「{image.FileName}」读取失败，请重新上传后再试");
+            var extension = image.MimeType switch
+            {
+                "image/jpeg" => ".jpg",
+                "image/webp" => ".webp",
+                _ => ".png",
+            };
+            files.Add(new DesignWorkspaceFile(
+                $"reference/screenshot-{index + 1:D2}{extension}",
+                Convert.ToBase64String(bytes),
+                Sha256Hex(bytes),
+                bytes.LongLength,
+                image.MimeType));
+        }
+        return files;
+    }
+
     private async Task<byte[]?> ReadCurrentAssetAsync(string key, CancellationToken ct)
     {
         try { return await _storage.TryDownloadBytesAsync(key, ct); }
@@ -325,6 +361,14 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             || !FixedEquals(run.WorkspaceInputSha256, Sha256Hex(bytes)))
             throw new InvalidOperationException("设计任务输入校验失败，请重新发起任务");
         return bytes;
+    }
+
+    public async Task ValidatePreviewAsync(string runId, string token, CancellationToken ct)
+    {
+        ValidateTicket(token, runId, "workspace");
+        var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("设计任务不存在");
+        EnsureActiveWorkspaceWindow(run);
     }
 
     public async Task<DesignArtifactResultCommit> CommitResultAsync(
@@ -898,14 +942,28 @@ public static class DesignArtifactWorkspaceContract
         @"<script\b(?=[^>]*\bdata-cds-offline-guard(?:\s|=|>))[^>]*>[\s\S]*?</script\s*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    public const string DesignDirectionSchemaVersion = "map-design-direction-v1";
+
+    /// <summary>上传文档在工作区里的位置；与知识库条目同在 knowledge/，前缀 upload- 区分来源。</summary>
+    internal static string UploadedSourcePath(int index, DesignUploadedSource item)
+    {
+        var stem = Path.GetFileNameWithoutExtension(item.FileName ?? string.Empty);
+        var slug = SafeSlug.Replace(stem.Trim(), "-").Trim('-');
+        if (string.IsNullOrWhiteSpace(slug)) slug = item.AttachmentId;
+        slug = slug.Length > 48 ? slug[..48] : slug;
+        return $"knowledge/upload-{index + 1:D2}-{slug}.md";
+    }
 
     public static DesignWorkspacePackage BuildInputPackage(
         DesignArtifactRun run, string? currentHtml, IReadOnlyList<DesignWorkspaceFile>? currentFiles = null,
-        IReadOnlyList<DesignWorkspaceFile>? originalFiles = null)
+        IReadOnlyList<DesignWorkspaceFile>? originalFiles = null,
+        IReadOnlyList<DesignWorkspaceFile>? referenceFiles = null)
     {
         var visibleTextOccurrenceConstraints = ExtractVisibleTextOccurrenceConstraints(run.Instruction);
+        var uploadedSources = run.UploadedSources ?? new List<DesignUploadedSource>();
         var factualSources = new List<string>();
-        if (run.KnowledgeReferences.Count > 0) factualSources.Add("server-knowledge");
+        // 直接上传的文档和知识库条目一样落在 knowledge/ 下，CDS 按「有没有 knowledge/ 文件」核对这一项。
+        if (run.KnowledgeReferences.Count > 0 || uploadedSources.Count > 0) factualSources.Add("server-knowledge");
         if (run.Operation == DesignArtifactOperations.Edit && !string.IsNullOrWhiteSpace(currentHtml))
             factualSources.Add("server-current-visible-content");
         var semantic = JsonSerializer.SerializeToUtf8Bytes(new
@@ -921,6 +979,15 @@ public static class DesignArtifactWorkspaceContract
             knowledge = run.KnowledgeReferences.Select(item => new { item.EntryId, item.ContentHash }),
             currentHtmlHash = string.IsNullOrEmpty(currentHtml) ? null : HashText(currentHtml),
         }, JsonOptions);
+        // 新增输入只在出现时参与版本指纹：没有它们的旧运行，指纹与改动前逐字节一致。
+        if (uploadedSources.Count > 0 || referenceFiles is { Count: > 0 } || run.DesignDirection != null)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                inputRevision = HashBytes(semantic),
+                uploaded = uploadedSources.Select(item => new { item.AttachmentId, item.ContentHash }),
+                references = referenceFiles?.Select(file => new { file.Path, file.Sha256 }),
+                designDirection = run.DesignDirection?.PromptFingerprint,
+            }, JsonOptions);
         // Keep the existing HTML-only revision algorithm for callers without a
         // server file snapshot; complete edits additionally bind every file digest.
         if (currentFiles != null || originalFiles != null)
@@ -1006,6 +1073,51 @@ public static class DesignArtifactWorkspaceContract
             }, JsonOptions);
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
+        if (uploadedSources.Count > 0 || referenceFiles is { Count: > 0 })
+        {
+            var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
+            if (uploadedSources.Count > 0)
+                completeTask["input"]!["uploadedSources"] = JsonSerializer.SerializeToNode(new
+                {
+                    authority = "user-uploaded-file",
+                    files = uploadedSources.Select((item, index) => new
+                    {
+                        path = UploadedSourcePath(index, item),
+                        item.AttachmentId,
+                        item.FileName,
+                        item.ContentHash,
+                    }),
+                }, JsonOptions);
+            if (referenceFiles is { Count: > 0 })
+                completeTask["input"]!["referenceImages"] = JsonSerializer.SerializeToNode(new
+                {
+                    authority = "user-uploaded-visual-reference",
+                    factual = false,
+                    files = referenceFiles.Select(file => new { file.Path, file.Sha256, file.Size, file.MediaType }),
+                }, JsonOptions);
+            task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
+        }
+        if (run.DesignDirection != null)
+        {
+            var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
+            completeTask["designDirection"] = JsonSerializer.SerializeToNode(new
+            {
+                schemaVersion = DesignDirectionSchemaVersion,
+                run.DesignDirection.StyleId,
+                run.DesignDirection.StyleName,
+                run.DesignDirection.StyleDescription,
+                run.DesignDirection.DesignSystemId,
+                run.DesignDirection.ReviewMode,
+                prompts = new
+                {
+                    generate = run.DesignDirection.GeneratePrompt,
+                    edit = run.DesignDirection.EditPrompt,
+                    review = run.DesignDirection.ReviewPrompt,
+                },
+                run.DesignDirection.PromptFingerprint,
+            }, JsonOptions);
+            task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
+        }
         files.Add(ToFile("brief/task.json", "application/json", task));
         for (var index = 0; index < run.KnowledgeReferences.Count; index++)
         {
@@ -1016,6 +1128,13 @@ public static class DesignArtifactWorkspaceContract
             var markdown = $"# {item.Title}\n\n{item.Content}";
             files.Add(ToFile($"knowledge/{index + 1:D2}-{slug}.md", "text/markdown", Encoding.UTF8.GetBytes(markdown)));
         }
+        for (var index = 0; index < uploadedSources.Count; index++)
+        {
+            var item = uploadedSources[index];
+            files.Add(ToFile(UploadedSourcePath(index, item), "text/markdown",
+                Encoding.UTF8.GetBytes(DesignRunInputAttachments.ToMarkdown(item))));
+        }
+        if (referenceFiles != null) files.AddRange(referenceFiles);
         if (originalFiles != null) files.AddRange(originalFiles);
         if (currentFiles != null)
         {

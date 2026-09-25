@@ -21,7 +21,16 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     private const int MaxProxyRequestBytes = 1_048_576;
     private const int DefaultProxyTimeoutSeconds = 900;
     private const int DefaultProxyIdleTimeoutSeconds = 90;
+    internal const int MaxPreviewHtmlBytes = 1_048_576;
+    /// <summary>
+    /// 传输层上限按 JSON 转义后的体积算：CDS 用 JSON.stringify 推整页，引号、反斜杠、换行各变两个字符，
+    /// 解码后没超 1 MiB 的属性密集页面，请求体可能远超「1 MiB + 4 KB」，被 Kestrel 在进 action 之前 413
+    /// 掉，实时预览就断了（Codex P2）。这里给两倍余量；真正的 1 MiB 仍在解码之后按 HTML 本身判。
+    /// </summary>
+    internal const int MaxPreviewRequestBytes = MaxPreviewHtmlBytes * 2 + 4096;
+    private static readonly TimeSpan PreviewEventTtl = TimeSpan.FromHours(24);
     private readonly IDesignArtifactWorkspaceBroker _broker;
+    private readonly PrdAgent.Core.Interfaces.IRunEventStore? _events;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DesignArtifactRuntimeController> _logger;
@@ -30,8 +39,10 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         IDesignArtifactWorkspaceBroker broker,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ILogger<DesignArtifactRuntimeController> logger)
+        ILogger<DesignArtifactRuntimeController> logger,
+        PrdAgent.Core.Interfaces.IRunEventStore? events = null)
     {
+        _events = events;
         _broker = broker;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -58,8 +69,13 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     {
         try
         {
+            // 本控制器是匿名入口：先验工作区票据（与实时预览同一张票、同一个运行窗口），
+            // 再读请求体。反过来的话，没有票据的请求也能把最多 6 MiB 读进内存（Codex P2，PR #1533）。
+            // CommitResultAsync 里仍会再验一次，这里只负责把未授权请求挡在读体之前。
+            var token = ReadBearerToken();
+            await _broker.ValidatePreviewAsync(runId, token, ct);
             var bytes = await ReadBoundedBodyAsync(Request, DesignArtifactWorkspaceBroker.MaxOutputBytes, ct);
-            var result = await _broker.CommitResultAsync(runId, ReadBearerToken(), bytes, ct);
+            var result = await _broker.CommitResultAsync(runId, token, bytes, ct);
             return Ok(new
             {
                 artifactRef = $"map://design-artifact/{runId}/result",
@@ -67,6 +83,50 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 files = result.Files,
                 idempotent = result.Idempotent,
             });
+        }
+        catch (Exception ex)
+        {
+            return MapRuntimeError(ex, runId);
+        }
+    }
+
+    /// <summary>
+    /// OpenDesign 运行期间的实时预览：CDS 发现 /workspace/index.html 变了就把整页推来，
+    /// 这里只写进 Redis 事件流（生成流与修改流都会转给前端），不进 Mongo，也不当产物——
+    /// 最终产物仍然只认 workspace/result 那一次整包提交与两道校验。
+    /// </summary>
+    [HttpPost("workspace/preview")]
+    [RequestSizeLimit(MaxPreviewRequestBytes)]
+    public async Task<IActionResult> PushWorkspacePreview(string runId, CancellationToken ct)
+    {
+        try
+        {
+            await _broker.ValidatePreviewAsync(runId, ReadBearerToken(), ct);
+            var bytes = await ReadBoundedBodyAsync(Request, MaxPreviewRequestBytes, ct);
+            using var document = JsonDocument.Parse(bytes);
+            var html = document.RootElement.TryGetProperty("html", out var htmlElement) && htmlElement.ValueKind == JsonValueKind.String
+                ? htmlElement.GetString() ?? string.Empty
+                : string.Empty;
+            var revision = document.RootElement.TryGetProperty("revision", out var revisionElement)
+                           && revisionElement.TryGetInt32(out var parsedRevision)
+                ? parsedRevision
+                : 0;
+            if (html.Length == 0 || Encoding.UTF8.GetByteCount(html) > MaxPreviewHtmlBytes)
+                return BadRequest(new { error = "preview_invalid", message = "预览内容为空或超过 1 MB" });
+            if (_events == null)
+                return StatusCode(503, new { error = "preview_unavailable", message = "事件流未配置" });
+            await _events.AppendEventAsync(
+                PrdAgent.Core.Models.RunKinds.DesignArtifact,
+                runId,
+                "preview",
+                new { html, revision },
+                PreviewEventTtl,
+                CancellationToken.None);
+            return Ok(new { accepted = true, revision });
+        }
+        catch (JsonException)
+        {
+            return BadRequest(new { error = "preview_invalid", message = "预览内容不是合法 JSON" });
         }
         catch (Exception ex)
         {
@@ -109,6 +169,11 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     {
         try
         {
+            // 先验模型票据再读请求体：匿名入口上，没有票据的请求不该换来一次最多 1 MiB 的
+            // 上传、分配与 JSON 解析（Codex P2，PR #1533）。这里只读校验，不计数；
+            // 调用次数仍在请求体通过合同校验之后由 ReserveModelCallAsync 记，口径不变。
+            var ticket = ReadBearerToken();
+            await _broker.ValidateModelTicketAsync(runId, ticket, ct);
             var bodyBytes = await ReadBoundedBodyAsync(Request, MaxProxyRequestBytes, ct);
             var body = JsonNode.Parse(bodyBytes) as JsonObject
                        ?? throw new InvalidOperationException("模型请求格式不正确，请重新发起任务");
@@ -118,7 +183,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 && !(body["input"] is JsonValue input && input.TryGetValue<string>(out _)))
                 throw new InvalidOperationException("模型请求缺少任务上下文，请重新发起任务");
 
-            var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
+            var run = await _broker.ReserveModelCallAsync(runId, ticket, ct);
             var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
             if (responses)
                 selection.ApplyToResponsesRequest(body);

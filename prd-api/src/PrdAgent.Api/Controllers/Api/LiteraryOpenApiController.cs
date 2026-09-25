@@ -6,6 +6,8 @@ using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Core.Services;
+using PrdAgent.Api.Extensions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -16,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 ///
 /// 与 LiteraryAgentWorkspaceController 的关系：同一批工作区文档（ImageMasterWorkspace，
 /// scenarioType=article-illustration），内容指纹走同一个 LiteraryWorkspaceHash，不另起一套。
-/// 这里只开「列 / 建 / 写正文」三件事：配图、参考图、提示词那些要在界面上看着调，不适合盲调。
+/// 配图采用明确标记、异步任务与只读查询，产物仍在同一文学工作区，默认不公开发布。
 /// </summary>
 [ApiController]
 [Route("api/open/literary")]
@@ -64,6 +66,7 @@ public class LiteraryOpenApiController : ControllerBase
             {
                 workspaceId = w.Id,
                 title = w.Title,
+                folderName = w.FolderName,
                 contentChars = w.ArticleContent?.Length ?? 0,
                 updatedAt = w.UpdatedAt,
             })
@@ -87,7 +90,7 @@ public class LiteraryOpenApiController : ControllerBase
     [HttpGet("workspaces/{workspaceId}")]
     [RequireScope(ScopeUse)]
     public async Task<IActionResult> GetWorkspace(string workspaceId,
-        [FromQuery] int offset, [FromQuery] int limit, CancellationToken ct)
+        [FromQuery] int offset, [FromQuery] int limit, CancellationToken ct, [FromQuery] string? format = null)
     {
         var userId = GetBoundUserId();
         // 场景与写入端点同一个判据：别的场景的工作区不该从这条路被读出来。
@@ -98,7 +101,26 @@ public class LiteraryOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND",
                 "工作区不存在、不属于你，或者不是文学创作的工作区"));
 
+        if (format != null && format != "plain" && format != "illustrated")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "format 只能是 plain 或 illustrated。"));
         var full = ws.ArticleContent ?? string.Empty;
+        if (format == "illustrated" && ws.ArticleContentWithMarkers != null)
+        {
+            var assetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values.ToList() ?? new List<string>();
+            var version = ws.ArticleWorkflow?.Version;
+            var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id
+                && (assetIds.Contains(x.Id) || (version.HasValue && x.ArticleWorkflowVersion == version.Value))).ToListAsync(ct);
+            LiteraryMcpWorkflow.RecoverVersionedAssets(ws, assets);
+            var mapping = ws.ArticleWorkflow?.AssetIdByMarkerIndex ?? new Dictionary<string, string>();
+            var urls = new Dictionary<int, string>();
+            foreach (var (index, id) in mapping)
+            {
+                var asset = assets.FirstOrDefault(x => x.Id == id);
+                if (asset != null && int.TryParse(index, out var i) && Request.ResolveAbsoluteUrl(asset.Url) is { } url)
+                    urls[i] = url;
+            }
+            full = LiteraryMcpWorkflow.Render(ws.ArticleContentWithMarkers, urls);
+        }
         var from = offset > 0 ? Math.Min(offset, full.Length) : 0;
         var take = limit is > 0 and <= MaxContentChars ? limit : DefaultReadChars;
         var slice = full.Substring(from, Math.Min(take, full.Length - from));
@@ -107,6 +129,9 @@ public class LiteraryOpenApiController : ControllerBase
         {
             workspaceId = ws.Id,
             title = ws.Title,
+            folderName = ws.FolderName,
+            workflowVersion = ws.ArticleWorkflow?.Version ?? 0,
+            illustrations = ws.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status, runId = m.RunId }),
             content = slice,
             offset = from,
             contentChars = full.Length,
@@ -123,6 +148,9 @@ public class LiteraryOpenApiController : ControllerBase
         /// <summary>可选：建的同时把初稿写进去。</summary>
         public string? Content { get; set; }
         public string? ClientRequestId { get; set; }
+        public string? FolderName { get; set; }
+        /// <summary>可选带 [插图]: 提示词 的正文，与 Content 互斥。</summary>
+        public string? MarkedContent { get; set; }
     }
 
     /// <summary>新建一个创作工作区，可带初稿。</summary>
@@ -135,7 +163,9 @@ public class LiteraryOpenApiController : ControllerBase
         if (string.IsNullOrWhiteSpace(title)) title = "未命名";
         if (title.Length > 40) title = title[..40].Trim();
 
-        var content = req?.Content ?? string.Empty;
+        var validation = LiteraryMcpWorkflow.Validate(req?.Content, req?.MarkedContent, req?.FolderName);
+        if (validation != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, validation));
+        var content = req?.MarkedContent is { } marked ? LiteraryMcpWorkflow.PlainContent(marked) : req?.Content ?? string.Empty;
         if (content.Length > MaxContentChars)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请分次写入"));
@@ -156,6 +186,10 @@ public class LiteraryOpenApiController : ControllerBase
             CanvasHash = string.Empty,
             ContentHash = LiteraryWorkspaceHash.ComputeContentHash(string.Empty, assetsHash),
             ArticleContent = string.IsNullOrEmpty(content) ? null : content,
+            FolderName = string.IsNullOrWhiteSpace(req?.FolderName) ? null : req.FolderName.Trim(),
+            ArticleContentWithMarkers = req?.MarkedContent,
+            ArticleWorkflow = req?.MarkedContent is { } prepared ? LiteraryMcpWorkflow.Prepare(prepared) : null,
+            SuppressAutoSubmit = true,
             CreatedAt = now,
             UpdatedAt = now,
         };

@@ -88,6 +88,44 @@ public class HostedSiteRevision
 
     /// <summary>经长度限制和敏感信息脱敏后的可选拒绝原因。</summary>
     public string? RejectionReason { get; set; }
+
+    /// <summary>
+    /// 把这一版内容对外发出（发布到已分享的站点、新建对外分享、设为公开）之前，
+    /// 作者对「本页引用了哪些私有资料」的确认记录：谁、什么时候、为哪个动作、确认了哪些来源。
+    ///
+    /// 只追加，最多保留最近 50 条。老文档没有这个字段，反序列化为空列表，不需要迁移。
+    /// 判定与写入全部走 HostedSitePrivateSourceGate，别处不要自己拼。
+    /// </summary>
+    public List<HostedSitePrivateSourceConfirmation> PrivateSourceConfirmations { get; set; } = new();
+}
+
+/// <summary>一次「我知道本页引用了这些私有资料，仍然发出去」的确认。</summary>
+public class HostedSitePrivateSourceConfirmation
+{
+    /// <summary>确认人。</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    public DateTime ConfirmedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>revision-publish | share-create | share-widen | site-public</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>确认时整组私有引用的指纹（多站点合集分享时是合集整体的指纹）。</summary>
+    public string Fingerprint { get; set; } = string.Empty;
+
+    /// <summary>这一版内容里被确认的私有资料，名称与位置按确认那一刻冻结。</summary>
+    public List<HostedSitePrivateSourceConfirmedItem> Sources { get; set; } = new();
+}
+
+public class HostedSitePrivateSourceConfirmedItem
+{
+    public string EntryId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? StoreId { get; set; }
+    public string? StoreName { get; set; }
+
+    /// <summary>owner-only | team | project | product | shitu | unavailable</summary>
+    public string Scope { get; set; } = string.Empty;
 }
 
 public class HostedSiteRevisionFile
@@ -471,7 +509,7 @@ public static class HostedSiteRevisionRules
             {
                 var parts = claim.Token.Split('|', 2);
                 throw new InvalidOperationException(
-                    $"生成页面包含知识与指令未支持的数值陈述：{parts[0]}{parts[1]}。已停止保存，请删除或改回来源中的准确数值。");
+                    $"生成页面包含知识与指令未支持的数值陈述：{parts[0]}{parts[1]}（原句「{claim.Excerpt}」）。已停止保存，请删除或改回来源中的准确数值。");
             }
         }
     }
@@ -481,7 +519,15 @@ public static class HostedSiteRevisionRules
         string Context,
         bool RequiresContext,
         bool IsStructural,
-        HashSet<string> EntityKeys);
+        HashSet<string> EntityKeys,
+        string Excerpt);
+
+    /// <summary>拒收时引用的原句：只说「1个」读者不知道去改哪一句。</summary>
+    private static string ClaimExcerpt(string segment)
+    {
+        var trimmed = segment.Trim();
+        return trimmed.Length <= 40 ? trimmed : trimmed[..40] + "…";
+    }
 
     private static List<MeasuredClaimContext> ExtractMeasuredClaimContexts(string text)
     {
@@ -490,9 +536,10 @@ public static class HostedSiteRevisionRules
         {
             var patterns = new[]
             {
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])",
+                // 「1 个月」「2 个小时」是时长，和「1 月」「2 小时」同一件事，不能当成「1 个（计数）」。
+                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])",
                 @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])",
+                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))",
             };
             foreach (var pattern in patterns)
             {
@@ -514,7 +561,8 @@ public static class HostedSiteRevisionRules
                         NormalizeClaimContext(segment),
                         requiresContext,
                         requiresContext && IsStructuralCount(segment),
-                        entityKeys));
+                        entityKeys,
+                        ClaimExcerpt(segment)));
                 }
             }
         }
@@ -729,7 +777,7 @@ public static class HostedSiteRevisionRules
 
     private static void EnsureSensitiveFactsAreSupported(string visibleText, string evidenceText)
     {
-        var supported = ExtractSensitiveFacts(evidenceText);
+        var supported = ExtractSensitiveFacts(evidenceText, asEvidence: true);
         foreach (var fact in ExtractSensitiveFacts(visibleText))
         {
             if (!supported.Contains(fact))
@@ -738,7 +786,13 @@ public static class HostedSiteRevisionRules
         }
     }
 
-    private static HashSet<string> ExtractSensitiveFacts(string text)
+    /// <summary>
+    /// 日期统一成「年-月[-日]」再比：「2026/9/24」与「2026-09-24」是同一天。作证据时，完整日期
+    /// 同时支撑它的「年-月」（页面写「2026-09」取自来源里的 9 月 24 日），中文写法
+    /// 「2026 年 9 月 24 日」也算证据——此前两者都被判成来源里没有的日期（2026-09-24 真人验收）。
+    /// 页面侧仍只认数字写法，判据范围不扩大；只是证据不再比真实来源窄。
+    /// </summary>
+    private static HashSet<string> ExtractSensitiveFacts(string text, bool asEvidence = false)
     {
         var facts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
@@ -746,9 +800,38 @@ public static class HostedSiteRevisionRules
                      @"https?://[^\s<>\""']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)",
                      RegexOptions))
         {
-            facts.Add(match.Value.TrimEnd('.', ',', ';', ':', '，', '。', '；', '：', ')', ']', '}', '>', '`').ToLowerInvariant());
+            var value = match.Value.TrimEnd('.', ',', ';', ':', '，', '。', '；', '：', ')', ']', '}', '>', '`').ToLowerInvariant();
+            var date = System.Text.RegularExpressions.Regex.Match(value, @"^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$");
+            if (!date.Success)
+            {
+                facts.Add(value);
+                continue;
+            }
+            AddDateFacts(facts, date.Groups[1].Value, date.Groups[2].Value, date.Groups[3].Success ? date.Groups[3].Value : null, asEvidence);
+        }
+        if (asEvidence)
+        {
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                         text ?? string.Empty,
+                         @"((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日号])?",
+                         RegexOptions))
+            {
+                AddDateFacts(facts, match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Success ? match.Groups[3].Value : null, asEvidence: true);
+            }
         }
         return facts;
+    }
+
+    private static void AddDateFacts(HashSet<string> facts, string year, string month, string? day, bool asEvidence)
+    {
+        var yearMonth = $"{year}-{int.Parse(month):00}";
+        if (day == null)
+        {
+            facts.Add(yearMonth);
+            return;
+        }
+        facts.Add($"{yearMonth}-{int.Parse(day):00}");
+        if (asEvidence) facts.Add(yearMonth);
     }
 
     private static string? ReadHtmlAttribute(string attributes, string name)
