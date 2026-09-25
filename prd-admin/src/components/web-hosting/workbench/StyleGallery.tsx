@@ -393,6 +393,11 @@ export function CustomStyleCard({ onRequest, disabledReason }: { onRequest: () =
   );
 }
 
+/** 我的风格卡的主操作：骨架还在就选中，骨架已下线就打开编辑。 */
+export function personalCardAction(style: Pick<PersonalStyle, 'baseDesignSystemAvailable'>): 'select' | 'edit' {
+  return style.baseDesignSystemAvailable === false ? 'edit' : 'select';
+}
+
 export interface PersonalStyleCardProps {
   style: PersonalStyle;
   selected: boolean;
@@ -409,17 +414,19 @@ export function PersonalStyleCard({ style, selected, onSelect, onEdit, onDelete 
   const selection = personalSelection(style);
   const [ink, paper, accent] = style.swatches.length === 3 ? style.swatches : [];
   const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+  // 骨架设计系统已下线的风格生成必然被拒：卡片主操作改成打开编辑去换骨架，而不是选中一个用不了的风格。
+  const activate = personalCardAction(style) === 'edit' ? onEdit : () => onSelect(selection);
   return (
     <div
       role="button"
       tabIndex={0}
       aria-pressed={selected}
-      onClick={() => onSelect(selection)}
+      onClick={activate}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          onSelect(selection);
+          activate();
         }
       }}
       className="group flex min-w-0 cursor-pointer flex-col gap-2 rounded-xl p-2 text-left outline-none transition-colors hover-bg-soft"

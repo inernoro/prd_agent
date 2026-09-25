@@ -15,6 +15,7 @@ import {
   groupMoreStyles,
   personalSelection,
   presetSelection,
+  personalCardAction,
   selectionAfterDelete,
   selectionStyleId,
 } from './StyleGallery';
@@ -214,5 +215,12 @@ describe('删掉选中的「我的风格」之后', () => {
   it('预设读不到或为空：清空选择，不留已删除的编号', () => {
     expect(selectionAfterDelete('personal:p1', 'personal:p1', null)).toEqual({ kind: 'clear' });
     expect(selectionAfterDelete('personal:p1', 'personal:p1', [])).toEqual({ kind: 'clear' });
+  });
+});
+
+describe('骨架已下线的「我的风格」', () => {
+  it('卡片主操作是打开编辑，不选中一个生成必然被拒的风格', () => {
+    expect(personalCardAction({ baseDesignSystemAvailable: false })).toBe('edit');
+    expect(personalCardAction({ baseDesignSystemAvailable: true })).toBe('select');
   });
 });
