@@ -74,11 +74,16 @@ describe('网页生成预估：真实 P50/P95 优先，样本不足老实说是�
   it('生成中剩余时间随用时推进：中位数之前、中位数与慢档之间、超过慢档', () => {
     const timing = pickGenerationTiming(ready, 'open-design');
     expect(remainingEstimateText('open-design', 4 * 60, timing))
-      .toBe('预计还需约 6 分钟（最近 12 次中位数约 10 分钟，慢的时候约 14 分钟）');
+      .toBe('已进行 4 分钟；最近 12 次里一半在 10 分钟内完成，慢的约 14 分钟');
     expect(remainingEstimateText('open-design', 12 * 60, timing))
-      .toBe('已超过最近 12 次的中位数（约 10 分钟），慢的时候约 14 分钟，最多还需约 2 分钟');
+      .toBe('已进行 12 分钟，超过最近 12 次的中位数（约 10 分钟）；慢的那一档约 14 分钟完成');
     expect(remainingEstimateText('open-design', 15 * 60, timing))
-      .toBe('已超过最近 12 次里慢的那档（约 14 分钟），任务仍在继续');
+      .toBe('已进行 15 分钟，比最近 12 次里 95% 的任务都久（约 14 分钟），任务仍在继续');
+    // P50 / P95 只当里程碑：不许减出一个「还需 / 最多还需」的承诺
+    for (const elapsed of [60, 9 * 60, 12 * 60, 20 * 60]) {
+      const text = remainingEstimateText('open-design', elapsed, timing);
+      expect(text).not.toMatch(/还需|最多/);
+    }
     // 没有真实数据时仍走经验值，并且说清楚是经验值
     expect(remainingEstimateText('open-design', 5 * 60, null)).toContain('按经验值估算（耗时数据还在积累）');
   });

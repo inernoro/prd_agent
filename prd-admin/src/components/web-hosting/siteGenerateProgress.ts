@@ -215,16 +215,19 @@ export function remainingEstimateText(
   timing: GenerationTiming | null = null,
 ): string {
   if (timing) {
+    // P50 / P95 是历史总耗时的里程碑，不是剩余时间：还在跑的任务本身就已经比一部分快样本慢，
+    // 拿它减去已用时间会低估；P95 也不是上限。所以只摆「已进行多久」与两个里程碑，不承诺还剩多少。
     const n = timing.sampleCount;
+    const elapsed = formatEtaDuration(elapsedSeconds);
     const p50 = formatEtaDuration(timing.p50Seconds);
     const p95 = formatEtaDuration(timing.p95Seconds);
     if (elapsedSeconds < timing.p50Seconds) {
-      return `预计还需约 ${formatEtaDuration(timing.p50Seconds - elapsedSeconds)}（最近 ${n} 次中位数约 ${p50}，慢的时候约 ${p95}）`;
+      return `已进行 ${elapsed}；最近 ${n} 次里一半在 ${p50}内完成，慢的约 ${p95}`;
     }
     if (elapsedSeconds < timing.p95Seconds) {
-      return `已超过最近 ${n} 次的中位数（约 ${p50}），慢的时候约 ${p95}，最多还需约 ${formatEtaDuration(timing.p95Seconds - elapsedSeconds)}`;
+      return `已进行 ${elapsed}，超过最近 ${n} 次的中位数（约 ${p50}）；慢的那一档约 ${p95}完成`;
     }
-    return `已超过最近 ${n} 次里慢的那档（约 ${p95}），任务仍在继续`;
+    return `已进行 ${elapsed}，比最近 ${n} 次里 95% 的任务都久（约 ${p95}），任务仍在继续`;
   }
   const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
   if (!typical) return '正在积累耗时数据，暂不预估剩余时间';
