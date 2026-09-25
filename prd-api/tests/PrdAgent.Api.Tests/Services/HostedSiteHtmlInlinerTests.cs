@@ -291,6 +291,17 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
+    public async Task 带layer或supports的站外导入不展开但计入外部依赖()
+    {
+        var site = new FakeSite().Add("a.css", "@import \"https://cdn.example.com/theme.css\" layer(base);body{}");
+        const string html = "<link rel=\"stylesheet\" href=\"a.css\">";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("https://cdn.example.com/theme.css", result.External);
+    }
+
+    [Fact]
     public async Task 越出站点根的引用一律不读()
     {
         var site = new FakeSite().Add("index.css", "x");

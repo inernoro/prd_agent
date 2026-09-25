@@ -622,7 +622,11 @@ public sealed class HostedSiteHtmlInliner
         if (depth >= MaxCssImportDepth
             || media.Contains("layer(", StringComparison.OrdinalIgnoreCase)
             || media.Contains("supports(", StringComparison.OrdinalIgnoreCase))
+        {
+            // 不展开也要归类：站外的绝对地址仍要计入外部依赖，否则界面会误说「断网可打开」。
+            Classify(basis, reference);
             return m.Value;
+        }
 
         var (kind, path) = Classify(basis, reference);
         if (kind != HostedSiteReferenceKind.Site) return m.Value;

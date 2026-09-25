@@ -471,7 +471,7 @@ export default function SiteEditStage({
             onClick={() => void downloadOfflineHtml()}
             disabled={exportingOffline}
             aria-busy={exportingOffline}
-            title="把线上版网页连同样式、脚本、图片打成一个 HTML 文件，断网也能打开"
+            title="把线上版网页连同站内的样式、脚本、图片打成一个 HTML 文件；还需要联网的部分下载后会说明"
             className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-[13px] text-token-secondary hover-bg-soft disabled:opacity-70"
           >
             {exportingOffline ? <MapSpinner size={12} /> : <FileDown size={13} />}

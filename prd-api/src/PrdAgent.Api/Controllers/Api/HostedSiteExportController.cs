@@ -28,6 +28,9 @@ public sealed class HostedSiteExportController : ControllerBase
     public const string ExternalCountHeader = "X-Offline-Export-External-Count";
     public const string ExternalHeader = "X-Offline-Export-External";
     private const int MaxMissingInHeader = 20;
+    /** 单条编码后最多多少字符、整个头最多多少字符：超长的引用会把响应头撑爆，代理直接拒掉整个下载。 */
+    private const int MaxHeaderEntryChars = 200;
+    private const int MaxHeaderTotalChars = 4000;
 
     private readonly IHostedSiteService _sites;
     private readonly IHostedSiteOfflineExportService _exporter;
@@ -85,7 +88,7 @@ public sealed class HostedSiteExportController : ControllerBase
         if (result.Missing.Count > 0)
         {
             // 头只能装 ASCII：路径逐条百分号编码，「原因:路径」用逗号连起来，只带前 20 条。
-            Response.Headers[MissingHeader] = string.Join(",", result.Missing
+            Response.Headers[MissingHeader] = BoundedHeaderList(result.Missing
                 .Take(MaxMissingInHeader)
                 .Select(m => m.Reason + ":" + Uri.EscapeDataString(m.Reference)));
         }
@@ -94,7 +97,7 @@ public sealed class HostedSiteExportController : ControllerBase
         Response.Headers[ExternalCountHeader] = result.ExternalCount.ToString();
         if (result.ExternalHosts.Count > 0)
         {
-            Response.Headers[ExternalHeader] = string.Join(",", result.ExternalHosts
+            Response.Headers[ExternalHeader] = BoundedHeaderList(result.ExternalHosts
                 .Take(MaxMissingInHeader)
                 .Select(Uri.EscapeDataString));
         }
@@ -140,5 +143,32 @@ public sealed class HostedSiteExportController : ControllerBase
             default:
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, message));
         }
+    }
+
+    /// <summary>
+    /// 逗号拼接、逐条截到 <see cref="MaxHeaderEntryChars"/>、总长不超过 <see cref="MaxHeaderTotalChars"/>。
+    /// 截断只影响诊断头，计数头（*-Count）始终是全量。截断落在 %XX 中间时退回到它之前，避免半个转义。
+    /// </summary>
+    public static string BoundedHeaderList(IEnumerable<string> entries)
+    {
+        var parts = new List<string>();
+        var total = 0;
+        foreach (var raw in entries)
+        {
+            var entry = raw.Length <= MaxHeaderEntryChars ? raw : TrimEscaped(raw, MaxHeaderEntryChars);
+            var cost = entry.Length + (parts.Count > 0 ? 1 : 0);
+            if (total + cost > MaxHeaderTotalChars) break;
+            parts.Add(entry);
+            total += cost;
+        }
+        return string.Join(",", parts);
+    }
+
+    private static string TrimEscaped(string value, int max)
+    {
+        var cut = max;
+        var percent = value.LastIndexOf('%', cut - 1, Math.Min(cut, 3));
+        if (percent >= 0 && percent > cut - 3) cut = percent;
+        return value[..cut];
     }
 }

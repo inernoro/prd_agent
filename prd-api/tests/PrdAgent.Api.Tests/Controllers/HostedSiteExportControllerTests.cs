@@ -324,4 +324,17 @@ public sealed class HostedSiteExportControllerTests
         }
         throw new InvalidOperationException("找不到仓库根");
     }
+
+    [Fact]
+    public void 诊断头逐条截断且总长有上限_不会撑爆响应头()
+    {
+        var longRef = "NotInSite:" + Uri.EscapeDataString(new string('路', 5000));
+        var header = HostedSiteExportController.BoundedHeaderList(Enumerable.Repeat(longRef, 20));
+
+        Assert.True(header.Length <= 4000, $"header length {header.Length}");
+        Assert.All(header.Split(','), part => Assert.True(part.Length <= 200));
+        // 截断不留半个 %XX 转义
+        Assert.All(header.Split(','), part => Assert.DoesNotMatch("%[0-9A-F]?$", part));
+        Assert.Equal("a,b", HostedSiteExportController.BoundedHeaderList(new[] { "a", "b" }));
+    }
 }
