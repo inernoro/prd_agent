@@ -37,6 +37,8 @@ export type PersonalStyleDialogMode = { kind: 'create' } | { kind: 'edit'; style
  * 系统填的每一项都挂「系统填写」标记，用户一改标记就消失；提取不调模型，读不到的维度不编。
  * 编辑模式直接进审阅页，只提交改过的字段。
  */
+const SITE_PAGE_SIZE = 50;
+
 export function PersonalStyleDialog({
   open,
   mode,
@@ -50,7 +52,15 @@ export function PersonalStyleDialog({
 }) {
   const currentUserId = useAuthStore((s) => s.user?.userId);
   const [step, setStep] = useState<'source' | 'review'>(mode.kind === 'edit' ? 'review' : 'source');
-  const [sites, setSites] = useState<{ status: 'loading' } | { status: 'ready'; items: HostedSite[] } | { status: 'failed'; message: string }>({ status: 'loading' });
+  // 网页列表按页读：每页 SITE_PAGE_SIZE 条，可按标题搜、可继续往下加载。只读第一页的话，
+  // 第 51 张之后的网页永远选不到，首页恰好全是 PDF / 视频时还会误说「没有可提取的网页」。
+  const [sites, setSites] = useState<
+    | { status: 'loading' }
+    | { status: 'ready'; items: HostedSite[]; scanned: number; total: number; loadingMore: boolean }
+    | { status: 'failed'; message: string }
+  >({ status: 'loading' });
+  const [siteQuery, setSiteQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [catalog, setCatalog] = useState<DesignSystemItem[]>([]);
   const [siteId, setSiteId] = useState<string | null>(null);
   const [note, setNote] = useState('');
@@ -66,16 +76,53 @@ export function PersonalStyleDialog({
     void listDesignSystems().then((res) => {
       if (active && res.success) setCatalog(res.data.items);
     });
-    if (mode.kind === 'create') {
-      void listSites({ limit: 50 }).then((res) => {
-        if (!active) return;
-        setSites(res.success
-          ? { status: 'ready', items: derivableSites(res.data.items, currentUserId) }
-          : { status: 'failed', message: res.error?.message || '你的网页列表没有读出来，可以先只写描述' });
-      });
-    }
     return () => { active = false; };
-  }, [open, mode.kind, currentUserId]);
+  }, [open]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(siteQuery.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [siteQuery]);
+
+  useEffect(() => {
+    if (!open || mode.kind !== 'create') return;
+    let active = true;
+    setSites({ status: 'loading' });
+    void listSites({ limit: SITE_PAGE_SIZE, keyword: debouncedQuery || undefined }).then((res) => {
+      if (!active) return;
+      setSites(res.success
+        ? {
+          status: 'ready',
+          items: derivableSites(res.data.items, currentUserId),
+          scanned: res.data.items.length,
+          total: res.data.total,
+          loadingMore: false,
+        }
+        : { status: 'failed', message: res.error?.message || '你的网页列表没有读出来，可以先只写描述' });
+    });
+    return () => { active = false; };
+  }, [open, mode.kind, currentUserId, debouncedQuery]);
+
+  const loadMoreSites = async () => {
+    if (sites.status !== 'ready' || sites.loadingMore || sites.scanned >= sites.total) return;
+    const skip = sites.scanned;
+    setSites({ ...sites, loadingMore: true });
+    const res = await listSites({ limit: SITE_PAGE_SIZE, skip, keyword: debouncedQuery || undefined });
+    setSites((current) => {
+      if (current.status !== 'ready' || current.scanned !== skip) return current;
+      if (!res.success) return { ...current, loadingMore: false };
+      const known = new Set(current.items.map((item) => item.id));
+      const more = derivableSites(res.data.items, currentUserId).filter((item) => !known.has(item.id));
+      return {
+        status: 'ready',
+        items: [...current.items, ...more],
+        scanned: current.scanned + res.data.items.length,
+        total: res.data.total,
+        loadingMore: false,
+      };
+    });
+  };
+  const hasMoreSites = sites.status === 'ready' && sites.scanned < sites.total;
 
   const blocker = deriveBlocker(siteId, note);
   const filled = useMemo<PersonalStyleField[]>(
@@ -135,13 +182,26 @@ export function PersonalStyleDialog({
       </p>
       <section className="flex flex-col gap-2" aria-label="从我的网页提取">
         <h4 className="text-[12px] font-semibold text-token-primary">从我的网页提取</h4>
+        <input
+          type="search"
+          value={siteQuery}
+          onChange={(event) => setSiteQuery(event.target.value)}
+          placeholder="按标题搜索我的网页"
+          aria-label="按标题搜索我的网页"
+          className="rounded-lg px-2.5 py-1.5 text-[12px] text-token-primary"
+          style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-subtle)' }}
+        />
         {sites.status === 'loading' && (
           <div className="flex items-center gap-2 text-[12px] text-token-muted"><MapSpinner size={12} />正在读取你的网页列表</div>
         )}
         {sites.status === 'failed' && <div className="text-[12px]" style={{ color: 'var(--semantic-danger-text)' }}>{sites.message}</div>}
         {sites.status === 'ready' && sites.items.length === 0 && (
           <div className="rounded-lg px-3 py-2 text-[12px] text-token-muted" style={{ background: 'var(--bg-tertiary)' }}>
-            你还没有可以提取的网页（需要是自己创建的 HTML 网页）。可以直接在下面写几句描述。
+            {hasMoreSites
+              ? `已看过 ${sites.scanned} / ${sites.total} 张网页，其中还没有可以提取的（需要是自己创建的 HTML 网页）。可以继续往下找，或直接在下面写几句描述。`
+              : debouncedQuery
+                ? '没有搜到可以提取的网页（需要是自己创建的 HTML 网页）。换个标题搜，或直接在下面写几句描述。'
+                : '你还没有可以提取的网页（需要是自己创建的 HTML 网页）。可以直接在下面写几句描述。'}
           </div>
         )}
         {sites.status === 'ready' && sites.items.length > 0 && (
@@ -165,6 +225,19 @@ export function PersonalStyleDialog({
               );
             })}
           </div>
+        )}
+        {hasMoreSites && (
+          <button
+            type="button"
+            onClick={() => { void loadMoreSites(); }}
+            disabled={sites.status === 'ready' && sites.loadingMore}
+            className="self-start rounded-lg px-2.5 py-1 text-[12px] text-token-muted hover-bg-soft"
+            data-personal-style-load-more
+          >
+            {sites.status === 'ready' && sites.loadingMore
+              ? '正在加载'
+              : `继续加载（已看过 ${sites.status === 'ready' ? sites.scanned : 0} / ${sites.status === 'ready' ? sites.total : 0} 张）`}
+          </button>
         )}
       </section>
       <section className="flex flex-col gap-2">
