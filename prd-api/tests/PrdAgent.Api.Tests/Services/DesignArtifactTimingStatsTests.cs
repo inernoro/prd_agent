@@ -145,6 +145,27 @@ public sealed class DesignArtifactTimingStatsTests
         Assert.Equal(12 * 60d, group.MaterialToShareLink.P50Seconds);
     }
 
+    [Fact]
+    public void Summarize_TruncatedShareSamples_NeverClaimAnEstimate()
+    {
+        // 分享链接样本被上限截断时，被挤掉的可能正是某些任务的首条链接：数字照给，但不许拿来预估。
+        var runs = Enumerable.Range(0, 6)
+            .Select(i => Done(DesignArtifactRuntimes.OpenDesign, 600, siteId: $"site-{i}", user: "u1"))
+            .ToArray();
+        var shares = Enumerable.Range(0, 6)
+            .Select(i => new DesignArtifactTimingShareSample("u1", T0.AddMinutes(20), new[] { $"site-{i}" }))
+            .ToArray();
+
+        var complete = Assert.Single(DesignArtifactTimingStats.Summarize(runs, shares, T0.AddDays(-30), T0.AddDays(1), false, false).Groups);
+        var truncated = Assert.Single(DesignArtifactTimingStats.Summarize(runs, shares, T0.AddDays(-30), T0.AddDays(1), false, true).Groups);
+
+        Assert.True(complete.MaterialToShareLink.EstimateReady);
+        Assert.False(truncated.MaterialToShareLink.EstimateReady);
+        Assert.Equal(6, truncated.MaterialToShareLink.SampleCount);
+        // 生成耗时不受分享样本截断影响
+        Assert.True(truncated.Generation.EstimateReady);
+    }
+
     private static string Render(FilterDefinition<DesignArtifactRun> filter)
         => filter.Render(new RenderArgs<DesignArtifactRun>(
                 BsonSerializer.SerializerRegistry.GetSerializer<DesignArtifactRun>(),

@@ -123,7 +123,11 @@ public static class DesignArtifactTimingStats
                     FailedCount: failed,
                     CancelledCount: cancelled,
                     Generation: Metric(generation),
-                    MaterialToShareLink: Metric(toShare),
+                    // 分享链接样本被上限截断时，被挤掉的可能正是某些任务的首条链接（用户分享默认每次新建），
+                    // 数出来的百分位有偏。数字照给、但不许拿来预估：如实交给调用方 shareSamplesTruncated。
+                    MaterialToShareLink: shareSamplesTruncated
+                        ? Metric(toShare) with { EstimateReady = false }
+                        : Metric(toShare),
                     MaterialToShareLinkEligibleRuns: eligible);
             })
             .ToList();
