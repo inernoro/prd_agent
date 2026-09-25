@@ -337,4 +337,17 @@ public sealed class HostedSiteExportControllerTests
         Assert.All(header.Split(','), part => Assert.DoesNotMatch("%[0-9A-F]?$", part));
         Assert.Equal("a,b", HostedSiteExportController.BoundedHeaderList(new[] { "a", "b" }));
     }
+
+    [Fact]
+    public void 超长中文引用按完整字符截断_编码结果能被完整解码()
+    {
+        var raw = new string('路', 500) + ".png";
+        var encoded = HostedSiteExportController.EscapeBounded(raw, 190);
+
+        Assert.True(encoded.Length <= 190);
+        var decoded = Uri.UnescapeDataString(encoded);
+        Assert.DoesNotContain('\uFFFD', decoded);
+        Assert.True(raw.StartsWith(decoded, StringComparison.Ordinal));
+        Assert.Equal(21, decoded.Length); // 每个「路」编码后 9 个字符，190 里放得下 21 个
+    }
 }

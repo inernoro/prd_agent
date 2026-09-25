@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ApiDownloadError } from '@/services/real/apiClient';
 import {
@@ -186,5 +186,16 @@ describe('工作台接线（形状 2：建了没人用）', () => {
     expect(stage).toContain("'下载离线 HTML'");
     // 打包中按钮换成会动的进度文字，而不是一个静止的「加载中」
     expect(stage).toContain('exportingOffline ? offlineExportLabel');
+  });
+});
+
+describe('浏览器侧异常不把实现细节给用户看', () => {
+  it('非服务端错误只给通用说明，不带原始 message', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const r = describeOfflineExportFailure(new TypeError('Failed to execute blob on Response: body stream already read'));
+    expect(r.detail).toBeUndefined();
+    expect(r.text).toContain('离线版网页没有下载成功');
+    expect(describeOfflineExportFailure(new DOMException('The user aborted a request.', 'AbortError')).detail).toBeUndefined();
+    warn.mockRestore();
   });
 });

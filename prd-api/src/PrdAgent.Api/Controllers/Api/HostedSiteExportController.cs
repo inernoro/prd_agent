@@ -90,7 +90,7 @@ public sealed class HostedSiteExportController : ControllerBase
             // 头只能装 ASCII：路径逐条百分号编码，「原因:路径」用逗号连起来，只带前 20 条。
             Response.Headers[MissingHeader] = BoundedHeaderList(result.Missing
                 .Take(MaxMissingInHeader)
-                .Select(m => m.Reason + ":" + Uri.EscapeDataString(m.Reference)));
+                .Select(m => m.Reason + ":" + EscapeBounded(m.Reference, MaxHeaderEntryChars - m.Reason.ToString().Length - 1)));
         }
         // 仍依赖外部网络的地址：总数 + 涉及的主机（与缺失头同一上限、同样逐条百分号编码）。
         // 前端据此决定能不能说「断网也能打开」。
@@ -99,7 +99,7 @@ public sealed class HostedSiteExportController : ControllerBase
         {
             Response.Headers[ExternalHeader] = BoundedHeaderList(result.ExternalHosts
                 .Take(MaxMissingInHeader)
-                .Select(Uri.EscapeDataString));
+                .Select(host => EscapeBounded(host, MaxHeaderEntryChars)));
         }
         // 这是用户上传的任意 HTML，从 API 源下发：强制附件 + 沙箱 + 不嗅探，绝不在主站源上渲染。
         Response.Headers["Content-Security-Policy"] = "sandbox";
@@ -162,6 +162,23 @@ public sealed class HostedSiteExportController : ControllerBase
             total += cost;
         }
         return string.Join(",", parts);
+    }
+
+    /// <summary>
+    /// 先按字符（文本元素）截原文、再逐个百分号编码，保证编码后不超过 <paramref name="maxEncoded"/>，
+    /// 且截断永远落在完整字符上——在编码串上截会切开多字节 UTF-8，前端 decodeURIComponent 直接抛错、整条诊断丢失。
+    /// </summary>
+    public static string EscapeBounded(string raw, int maxEncoded)
+    {
+        var sb = new System.Text.StringBuilder();
+        var elements = System.Globalization.StringInfo.GetTextElementEnumerator(raw ?? string.Empty);
+        while (elements.MoveNext())
+        {
+            var encoded = Uri.EscapeDataString((string)elements.Current);
+            if (sb.Length + encoded.Length > Math.Max(0, maxEncoded)) break;
+            sb.Append(encoded);
+        }
+        return sb.ToString();
     }
 
     private static string TrimEscaped(string value, int max)

@@ -150,7 +150,12 @@ export function describeOfflineExportFailure(error: unknown): { text: string; de
   const code = error instanceof ApiDownloadError ? error.code.trim().toUpperCase() : '';
   const known = FAILURE_BY_CODE[code];
   if (known) return { text: known };
-  const raw = error instanceof Error ? error.message.trim() : '';
+  // 能给人看的只有两类：服务端结构化错误，以及下载器自己抛的普通 Error（文案是写给用户的）。
+  // 浏览器原生的 TypeError / DOMException 等（blob 读取失败、保存被拦）是实现细节，只进日志。
+  const readable = error instanceof ApiDownloadError
+    || (error instanceof Error && Object.getPrototypeOf(error) === Error.prototype);
+  if (!readable) console.warn('[offline-export] 下载失败', error);
+  const raw = readable && error instanceof Error ? error.message.trim() : '';
   return {
     text: '离线版网页没有下载成功，稍后再试一次；一直不行请联系管理员。',
     detail: raw || undefined,

@@ -9,3 +9,4 @@
 | fix | prd-api | 离线导出把协议相对的 base 地址也补成 https: |
 | fix | prd-api | 离线导出带 layer/supports 的站外导入计入外部依赖；缺失与外部依赖诊断头逐条截断、总长设上限 |
 | fix | prd-admin | 「下载离线 HTML」按钮提示不再预先承诺断网可打开 |
+| fix | web-hosting | 离线导出诊断头按完整字符截断（不再切开中文导致前端解码失败）；浏览器原生异常不再把原文展示给用户 |
