@@ -321,6 +321,8 @@ public class MongoDbContext
     public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs_v2");
     /// <summary>网页生成设置单例（默认执行器、风格预设、可编辑提示词）。</summary>
     public IMongoCollection<DesignGenerationSettings> DesignGenerationSettings => _database.GetCollection<DesignGenerationSettings>("design_generation_settings");
+    // 「我的风格」：每人自己的网页生成风格（按 OwnerUserId 隔离，每人最多 20 套）
+    public IMongoCollection<PersonalDesignStyle> PersonalDesignStyles => _database.GetCollection<PersonalDesignStyle>("personal_design_styles");
 
     /// <summary>
     /// 公开历史与共享对象引用保护专用只读查询。不得用于取消、生命周期、工作区或发布写入。
@@ -1685,6 +1687,10 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        // PersonalDesignStyles：风格画廊按「我的 + 最近更新」列出、创建前按归属人计数（仅参考，DBA 执行 scripts/mongodb-indexes.js）
+        PersonalDesignStyles.Indexes.CreateOne(new CreateIndexModel<PersonalDesignStyle>(
+            Builders<PersonalDesignStyle>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_personal_design_styles_owner_updated" }));
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys
                 .Ascending(x => x.AssetCleanupNextAttemptAt)

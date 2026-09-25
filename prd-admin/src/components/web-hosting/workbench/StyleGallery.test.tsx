@@ -3,15 +3,22 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { DesignGenerationStyle } from '@/services/real/webPages';
 import type { DesignSystemCatalog, DesignSystemItem } from '@/services/real/designSystems';
+import type { PersonalStyle } from '@/services/real/personalStyles';
 import {
   CUSTOM_STYLE_CARD_TEXT,
   CustomStyleCard,
   DESIGN_SYSTEM_KEY_PREFIX,
+  PersonalStyleCard,
   StyleCard,
   StyleGallery,
   designSystemSelection,
   groupMoreStyles,
+  personalSelection,
   presetSelection,
+  personalCardAction,
+  selectionAfterDelete,
+  selectionAfterSave,
+  selectionStyleId,
 } from './StyleGallery';
 
 function item(id: string, category: string): DesignSystemItem {
@@ -98,26 +105,133 @@ describe('选择回调', () => {
   });
 });
 
-describe('做一个我的风格：只是入口，写明即将支持', () => {
-  it('点击交给调用方处理，卡片上写清「即将支持」且不假装能用', () => {
+const mine: PersonalStyle = {
+  id: 'a'.repeat(32),
+  styleId: `personal:${'a'.repeat(32)}`,
+  name: '我的蓝调',
+  instruction: '配色：底色 #f7f5f0，正文 #1f2328，强调色 #2f6feb。',
+  swatches: ['#1f2328', '#f7f5f0', '#2f6feb'],
+  fonts: ['Inter'],
+  baseDesignSystemId: 'editorial',
+  baseDesignSystemName: 'Editorial',
+  baseDesignSystemAvailable: true,
+  sourceSiteId: 'site-1',
+  sourceSiteTitle: '季度复盘',
+  sourceNote: null,
+  systemFilledFields: ['instruction'],
+  createdAt: '2026-09-25T00:00:00Z',
+  updatedAt: '2026-09-25T00:00:00Z',
+};
+
+describe('我的风格：和预设并列，标「我的」，按 personal:<id> 交给服务端', () => {
+  it('选择键就是 styleId，不与同名预设或目录项撞车；生成请求带 styleId', () => {
+    const selection = personalSelection(mine);
+    expect(selection).toEqual({
+      kind: 'personal',
+      key: `personal:${'a'.repeat(32)}`,
+      styleId: `personal:${'a'.repeat(32)}`,
+      designSystemId: 'editorial',
+      name: '我的蓝调',
+      swatches: mine.swatches,
+    });
+    expect(selection.key).not.toBe(presetSelection(preset).key);
+    expect(selection.key).not.toBe(designSystemSelection(item('editorial', 'x')).key);
+
+    expect(selectionStyleId(selection)).toBe(`personal:${'a'.repeat(32)}`);
+    expect(selectionStyleId(presetSelection(preset))).toBe('editorial');
+    expect(selectionStyleId(designSystemSelection(item('bento', 'x')))).toBeNull();
+    expect(selectionStyleId(null)).toBeNull();
+  });
+
+  it('卡片带「我的」标记、名称与说明，缩略图用它自己的色块；点卡片选中，点编辑/删除不误选', () => {
+    const onSelect = vi.fn();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    const html = renderToStaticMarkup(
+      <PersonalStyleCard style={mine} selected={false} onSelect={onSelect} onEdit={onEdit} onDelete={onDelete} />,
+    );
+    expect(html).toContain('>我的<');
+    expect(html).toContain('我的蓝调');
+    expect(html).toContain('data-style-kind="personal"');
+    expect(html).toContain('background:#f7f5f0');
+    expect(html).toContain('aria-label="编辑我的蓝调"');
+    expect(html).toContain('aria-label="删除我的蓝调"');
+
+    const card = PersonalStyleCard({ style: mine, selected: false, onSelect, onEdit, onDelete }) as ReactElement<{ onClick: () => void }>;
+    card.props.onClick();
+    expect(onSelect).toHaveBeenCalledWith(personalSelection(mine));
+  });
+
+  it('按描述建的风格没有色块就明说，不编一组颜色；骨架下线要挂出来', () => {
+    const noSwatches = { ...mine, swatches: [], baseDesignSystemAvailable: false };
+    const html = renderToStaticMarkup(
+      <PersonalStyleCard style={noSwatches} selected onSelect={() => undefined} onEdit={() => undefined} onDelete={() => undefined} />,
+    );
+    expect(html).toContain('按描述生成，无色块');
+    expect(html).toContain('骨架已下线');
+    expect(html).toContain('aria-pressed="true"');
+  });
+
+  it('「做一个我的风格」入口可点、交给画廊打开创建弹窗；到上限时禁用并写明原因', () => {
     const onRequest = vi.fn();
-    const card = CustomStyleCard({ onRequest }) as ReactElement<{ onClick: () => void }>;
+    const card = CustomStyleCard({ onRequest }) as ReactElement<{ onClick: () => void; disabled: boolean }>;
     card.props.onClick();
     expect(onRequest).toHaveBeenCalledTimes(1);
+    expect(card.props.disabled).toBe(false);
 
     const html = renderToStaticMarkup(<CustomStyleCard onRequest={onRequest} />);
     expect(html).toContain(CUSTOM_STYLE_CARD_TEXT.title);
-    expect(html).toContain('即将支持');
-    expect(CUSTOM_STYLE_CARD_TEXT.description).toContain('还没有上线');
+    expect(html).not.toContain('即将支持');
+
+    const full = renderToStaticMarkup(<CustomStyleCard onRequest={onRequest} disabledReason="已经有 20 套，最多 20 套，先删掉一套不用的" />);
+    expect(full).toContain('disabled=""');
+    expect(full).toContain('最多 20 套');
   });
 
-  it('画廊首帧：预设区是卡片骨架，末尾一定有「做一个我的风格」入口', () => {
+  it('画廊首帧：预设在前、我的风格紧跟其后（含新建入口）、更多风格在最后', () => {
     const html = renderToStaticMarkup(
-      <StyleGallery selectedId={null} onSelect={() => undefined} onRequestCustomStyle={() => undefined} title="标题" />,
+      <StyleGallery selectedId={null} onSelect={() => undefined} title="标题" />,
     );
-    expect(html).toContain('预设风格');
-    expect(html).toContain('更多风格');
     expect(html).toContain('aspect-ratio:1200 / 760');
-    expect(html.lastIndexOf(CUSTOM_STYLE_CARD_TEXT.title)).toBeGreaterThan(html.indexOf('更多风格'));
+    const presetsAt = html.indexOf('预设风格');
+    const mineAt = html.indexOf('aria-label="我的风格"');
+    const createAt = html.indexOf(CUSTOM_STYLE_CARD_TEXT.title);
+    const moreAt = html.indexOf('aria-label="更多风格"');
+    expect(presetsAt).toBeGreaterThanOrEqual(0);
+    expect(mineAt).toBeGreaterThan(presetsAt);
+    expect(createAt).toBeGreaterThan(mineAt);
+    expect(moreAt).toBeGreaterThan(createAt);
+  });
+});
+
+describe('删掉选中的「我的风格」之后', () => {
+  it('删的不是选中的那套：选择不动', () => {
+    expect(selectionAfterDelete('editorial', 'personal:p1', [preset])).toEqual({ kind: 'keep' });
+  });
+
+  it('删的是选中的那套：退回默认预设', () => {
+    expect(selectionAfterDelete('personal:p1', 'personal:p1', [preset])).toEqual({ kind: 'select', selection: presetSelection(preset) });
+  });
+
+  it('预设读不到或为空：清空选择，不留已删除的编号', () => {
+    expect(selectionAfterDelete('personal:p1', 'personal:p1', null)).toEqual({ kind: 'clear' });
+    expect(selectionAfterDelete('personal:p1', 'personal:p1', [])).toEqual({ kind: 'clear' });
+  });
+});
+
+describe('骨架已下线的「我的风格」', () => {
+  it('卡片主操作是打开编辑，不选中一个生成必然被拒的风格', () => {
+    expect(personalCardAction({ baseDesignSystemAvailable: false })).toBe('edit');
+    expect(personalCardAction({ baseDesignSystemAvailable: true })).toBe('select');
+  });
+
+  it('只改了名字或说明就保存：不选中它；它原本是选中项就清掉', () => {
+    const retired = { ...mine, baseDesignSystemAvailable: false };
+    expect(selectionAfterSave(retired, 'editorial')).toEqual({ kind: 'keep' });
+    expect(selectionAfterSave(retired, retired.styleId)).toEqual({ kind: 'clear' });
+  });
+
+  it('换上可用骨架后保存：照常选中', () => {
+    expect(selectionAfterSave(mine, 'editorial')).toEqual({ kind: 'select', selection: personalSelection(mine) });
   });
 });
