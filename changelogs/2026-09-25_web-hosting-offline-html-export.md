@@ -6,3 +6,4 @@
 | fix | prd-admin | 离线 HTML 下载结论在仍有外部依赖时不再宣称断网可打开，改为说明几处依赖外部网络及来源主机 |
 | fix | prd-api | 离线导出只内嵌会被浏览器取回的 link（rel 白名单），canonical / alternate 等元数据链接不再被误报缺失或计入外部依赖 |
 | fix | prd-api | 离线导出把协议相对地址（//cdn…）补成 https:，下载的文件联网时外部资源可正常加载 |
+| fix | prd-api | 离线导出把协议相对的 base 地址也补成 https: |

@@ -311,8 +311,8 @@ public sealed class HostedSiteHtmlInliner
     /// 算出文档级引用的解析基准：取文档里第一个带 href 的 &lt;base&gt;（与浏览器一致，后面的不算）。
     /// 没有就是入口文件本身。base 本身也按入口所在目录解析，且必须落在站点根之内。
     ///
-    /// 输出里 &lt;base&gt; 原样保留：凡是被改写的引用都换成了自带内容的 data: URL，不受 base 影响；
-    /// 没能内嵌的引用与页内链接则继续按作者写的 base 解析，与线上行为一致。
+    /// 输出里 &lt;base&gt; 原样保留（协议相对的补成 https:）：凡是被改写的引用都换成了自带内容的 data: URL，
+    /// 不受 base 影响；没能内嵌的引用与页内链接则继续按作者写的 base 解析，与线上行为一致。
     /// </summary>
     private static ReferenceBase ResolveDocumentBase(string entryPath, string html)
     {
@@ -394,6 +394,19 @@ public sealed class HostedSiteHtmlInliner
     {
         var name = m.Groups["name"].Value;
         var attrs = m.Groups["attrs"].Value;
+
+        if (string.Equals(name, "base", StringComparison.OrdinalIgnoreCase))
+        {
+            // 协议相对的 base 在本地文件里会按 file:// 解析，没能内嵌的相对引用全跟着失效：补成 https:。
+            var baseAttrs = ParseAttributes(attrs);
+            var href = baseAttrs.FirstOrDefault(a => a.Value != null
+                && string.Equals(a.Name, "href", StringComparison.OrdinalIgnoreCase));
+            if (href == null || ExplicitHttps(href.Value!) is not { } absoluteBase) return m.Value;
+            return "<" + name + ReplaceAttributes(attrs, baseAttrs, new Dictionary<int, string>
+            {
+                [href.Index] = href.Name + "=\"" + EscapeAttribute(absoluteBase) + "\"",
+            }) + ">";
+        }
 
         if (string.Equals(name, "link", StringComparison.OrdinalIgnoreCase))
         {

@@ -278,6 +278,19 @@ public sealed class HostedSiteHtmlInlinerTests
     }
 
     [Fact]
+    public async Task 协议相对的base在输出里补成https()
+    {
+        var site = new FakeSite();
+        const string html = "<base href=\"//cdn.example.com/site/\" target=\"_blank\"><img src=\"a.png\">";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("<base href=\"https://cdn.example.com/site/\" target=\"_blank\">", result.Html);
+        Assert.Contains("<img src=\"a.png\">", result.Html);
+        Assert.Contains("https://cdn.example.com/site/a.png", result.External);
+    }
+
+    [Fact]
     public async Task 越出站点根的引用一律不读()
     {
         var site = new FakeSite().Add("index.css", "x");
