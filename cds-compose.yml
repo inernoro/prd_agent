@@ -559,6 +559,12 @@ services:
       DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
     labels:
       cds.prebuilt-image: "true"
+      # CI 构建该镜像的输入范围，与 x-cds-deploy-modes.design-opendesign.express.buildScope 同一份、
+      # 逐条对齐 .github/workflows/branch-image.yml 的 design_opendesign filters。必须声明在这里：
+      # 本服务只有 express 一种模式，项目里不存在 activeDeployMode，CDS 读取的是基础 profile，
+      # 模式里的 buildScope 读不到。缺了它，没改 design-runtime/ 的分支拉不到 sha 镜像时，
+      # 回退到 branch-main 会因「无法证明与目标提交等价」被拒，整条分支部署失败。
+      cds.build-scope: "design-runtime/opendesign/**,.github/workflows/branch-image.yml"
       # 匿名就绪探针：引擎健康检查通过才 200，否则 503（CDS 把 < 500 当就绪）。它不看 API key——
       # 缺 key 时容器照样就绪，原因由能力接口说清，而不是让整条分支卡在「未就绪」。
       cds.readiness-path: "/healthz/ready"
