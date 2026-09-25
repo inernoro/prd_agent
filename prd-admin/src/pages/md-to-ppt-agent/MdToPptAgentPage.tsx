@@ -56,6 +56,9 @@ import {
 import { apiRequest } from '@/services/real/apiClient';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
+import { sessionStorageOrNull } from '@/lib/designArtifactLaunch';
+import { listMyTeams } from '@/services/real/teams';
+import { buildPptPublishRequest, markLaunchDraftSent, publishDestinationLabel, resolveLaunchDraft } from './launchHandoff';
 import { activatePptSessionContext, resolvePptSessionContext, type PptSessionContext } from './sessionContext';
 import { NextStepBar } from './NextStepBar';
 import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
@@ -1529,7 +1532,22 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Chat state
   const [messages, setMessages] = useState<ChatMessage[]>(savedSession?.messages ?? []);
-  const [input, setInput] = useState('');
+  // 从网页工作台「网页 PPT」带过来的要求：只预填、不自动发送；判定见 launchHandoff.ts。
+  const [launchDraft] = useState(() => resolveLaunchDraft(context.launch, sessionStorageOrNull()));
+  const [input, setInput] = useState(launchDraft.input);
+  // 在团队空间发起的交接，发布也落进同一个团队；团队名只用于展示，拿不到就显示编号。
+  const destinationTeamId = context.destinationTeamId;
+  const [destinationTeamName, setDestinationTeamName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!destinationTeamId) return;
+    let active = true;
+    void listMyTeams().then((result) => {
+      if (!active || !result.success) return;
+      setDestinationTeamName(result.data.items.find((item) => item.team.id === destinationTeamId)?.team.name ?? null);
+    }).catch(() => { /* 退回编号展示 */ });
+    return () => { active = false; };
+  }, [destinationTeamId]);
+  const destinationLabel = publishDestinationLabel(destinationTeamId, destinationTeamName);
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ─── Artifact state（右侧）
@@ -1811,7 +1829,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   }, [context.launch, launchImported, launchImportAttempt]);
 
   // 两端共用同一状态与恢复入口；失败不吞掉输入，也不静默永久禁用。
-  const launchImportNotice = launchImportBlocked ? (
+  const launchImportStatus = launchImportBlocked ? (
     <div role={launchImportFailed ? 'alert' : 'status'} className="flex items-center gap-2 text-xs text-token-secondary" data-testid="knowledge-launch-import">
       {launchImportFailed ? (
         <>
@@ -1826,6 +1844,17 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       )}
     </div>
   ) : null;
+  const handoffLostNotice = launchDraft.notice === 'request-lost' && messages.length === 0 ? (
+    <div role="status" className="text-xs text-token-secondary" data-testid="launch-request-lost">
+      在网页工作台写的要求没能带过来（可能换了标签页打开，或浏览器禁用了会话存储），请在下面重新输入。
+    </div>
+  ) : null;
+  const destinationNotice = destinationLabel ? (
+    <div className="text-xs text-token-secondary" data-testid="publish-destination">{destinationLabel}</div>
+  ) : null;
+  const launchImportNotice = launchImportStatus || handoffLostNotice || destinationNotice
+    ? <>{destinationNotice}{handoffLostNotice}{launchImportStatus}</>
+    : null;
 
   // 左侧对话栏宽度（可拖拽，280-640px；纯 UI 偏好走 localStorage——关浏览器仍记住）
   const [chatWidth, setChatWidth] = useState<number>(() => {
@@ -3118,6 +3147,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isProcessing || launchImportBlocked) return;
+    markLaunchDraftSent(context.launch, sessionStorageOrNull());
 
     const atts = [...pendingAttachments];
     const kbs = [...pendingKbRefs];
@@ -3153,7 +3183,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits]);
+  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits, context.launch]);
 
   // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
@@ -3177,11 +3207,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     }
     setIsPublishing(true);
     const publishHtml = prepareExportHtml(base);
-    const result = await publishMdToPpt({
+    const result = await publishMdToPpt(buildPptPublishRequest({
       htmlContent: publishHtml,
       title: extractDeckTitle(base) || 'PPT 演示',
       runId: sourceRunId,
-    });
+      destinationTeamId,
+    }));
     setIsPublishing(false);
     if (result.success && result.siteUrl) {
       if (result.runId) setActiveRunId(result.runId);
@@ -3195,7 +3226,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     } else {
       toast.error('发布失败', result.error || '请稍后重试，当前版本未被覆盖。');
     }
-  }, [latestHtml, activeRunId, editMode, commitEdits]);
+  }, [latestHtml, activeRunId, editMode, commitEdits, destinationTeamId]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {

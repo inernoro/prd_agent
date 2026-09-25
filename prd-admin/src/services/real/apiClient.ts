@@ -272,6 +272,24 @@ export interface ApiDownloadedFile {
   blob: Blob;
   fileName: string;
   contentType: string;
+  /** 原始响应头：有的下载端点把「这次打包漏了什么」之类的结论放在头里（如离线 HTML 导出）。 */
+  headers?: Headers;
+}
+
+/**
+ * 下载失败。message 已经过净化（可直接给人看）；code 是后端的结构化错误码，
+ * 调用方要按原因给不同下一步时按 code 分支，不要去匹配 message 里的字。
+ */
+export class ApiDownloadError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(message: string, code: string, status: number) {
+    super(message);
+    this.name = 'ApiDownloadError';
+    this.code = code;
+    this.status = status;
+  }
 }
 
 export async function apiMultipartRequest<T>(
@@ -433,11 +451,11 @@ export async function apiDownload(
   if (!response.ok) {
     const body = errorBody;
     const code = body?.error?.code || 'DOWNLOAD_FAILED';
-    throw new Error(toUserReadableErrorMessage(body?.error, {
+    throw new ApiDownloadError(toUserReadableErrorMessage(body?.error, {
       code,
       fallbackMessage: '文件下载未完成',
       recoveryMessage: '请稍后重试。',
-    }));
+    }), code, response.status);
   }
 
   const blob = await response.blob();
@@ -446,6 +464,7 @@ export async function apiDownload(
     blob,
     fileName: readDownloadFileName(response.headers.get('content-disposition'), fallbackFileName),
     contentType: response.headers.get('content-type') || blob.type || 'application/octet-stream',
+    headers: response.headers,
   };
 }
 

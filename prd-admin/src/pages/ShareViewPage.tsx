@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
-import { listShareComments, getShareSiteContent, type HostedSite } from '@/services/real/webPages';
+import { listShareComments, getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, FileDown, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -28,16 +28,12 @@ import {
   canUseSrcDocPreview,
   hasFetchableHtml,
   resolvePreviewSource,
-  stripInjectedTelemetry,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
 import type { PreviewSource } from '@/components/web-hosting/previewHtml';
-import {
-  planSourceDownload,
-  describeDownloadResult,
-  describeDownloadFailure,
-  saveTextAsFile,
-} from '@/components/web-hosting/sourceDownload';
+import { planSourceDownload } from '@/components/web-hosting/sourceDownload';
+import { describeOfflineExportResult } from '@/components/web-hosting/offlineExport';
+import { useOfflineExport } from '@/components/web-hosting/useOfflineExport';
 
 /**
  * 幻灯片邀请条：告诉访客这一页能用键盘翻。
@@ -191,10 +187,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
-  /** 正在取源文件 */
-  const [downloading, setDownloading] = useState(false);
+  /** 离线版网页打包下载：打包中的状态、已等待秒数、落盘都在这个 hook 里 */
+  const { busy: downloading, label: offlineExportLabel, run: runOfflineExport } = useOfflineExport();
   /**
-   * 下载之后要不要多说一句：多文件站下到的只是入口那一份，失败了要说清为什么。
+   * 下载之后要不要多说一句：有资源没装进离线文件要说清缺了哪几处，失败了要说清为什么。
    * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
    */
   const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
@@ -292,12 +288,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   }, [token, password, isAuthenticated, navigate]);
 
   /**
-   * 下载源文件。
+   * 下载源文件：普通网页下载的是**离线版**——服务端从对象存储按文件清单读原字节，
+   * 把站内样式、脚本、图片、字体都内嵌进入口 HTML，打成一个文件。
    *
-   * 正文走**服务端同源代理**再从 Blob 落盘，而不是给托管直链挂一个 a[download]：
-   * 托管内容在独立域名，跨域的 download 属性会被浏览器忽略、退化成导航打开——
-   * 而「导航打开一份 text/html」正是某些 App 内置浏览器弹「Download：(null)」的那条路径。
-   * 从同源拿内容，浏览器不必再为这份内容发一次跨域请求。
+   * 为什么不再走取正文代理（getShareSiteContent）：那条代理读的是托管域名经 CDN 服务出来的那一份，
+   * 带着 CDN 注入的遥测、只有入口一个文件、上限 2MB；多文件站下回来图片样式全丢。
+   * 离线打包不经 CDN，也就不再需要剥遥测；分享门禁（撤销 / 过期 / 可见性 / 密码）与取正文同源。
+   * 落盘仍走同源 Blob（saveBlobAsFile），不给托管直链挂 a[download]。
    */
   const handleDownloadSource = useCallback(async () => {
     if (!token || !data || data.sites.length !== 1) return;
@@ -317,27 +314,17 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       return;
     }
 
-    setDownloading(true);
     setDownloadNote(null);
-    const res = await getShareSiteContent(token, site.id, password || undefined);
-    setDownloading(false);
-    if (!res.success || !res.data?.html) {
-      // 后端那句是协议口径的（「站点内容读取失败（HTTP 404）」），不能原样端给访客：
-      // 第一句要人话 + 下一步，原文降级成附注（external-cause-first）
-      const failure = describeDownloadFailure(res.error?.message);
-      setDownloadNote({ text: failure.text, detail: failure.detail, tone: 'error' });
+    const outcome = await runOfflineExport(
+      () => downloadShareOfflineHtml(token, site.id, password || undefined, plan.fileName),
+    );
+    if (outcome.ok === null) return;
+    if (!outcome.ok) {
+      setDownloadNote({ text: outcome.failure.text, detail: outcome.failure.detail, tone: 'error' });
       return;
     }
-    // 取回来的是「托管域名对外服务的那一份」，不是存进对象存储的那一份：托管域名前面挂着
-    // CDN，它会往每一份 HTML 里塞一条 cloudflareinsights 的 beacon（见 previewHtml.ts 的
-    // stripInjectedTelemetry）。那段脚本不是分享者写的，下载下来只会变成一条跟着文件跑的
-    // 第三方请求，所以落盘前按同一份判据剥掉——预览与下载共用一个出口，不另起判据。
-    // 仍然剥不掉的差异（上传时注入的翻页垫片、路径重写、后端剥掉的 UTF-8 BOM）要拿存储
-    // 原字节才能避免，那需要一个专用的流式下载端点，已记进 PR 的后续事项。
-    saveTextAsFile(stripInjectedTelemetry(res.data.html), plan.fileName);
-    const note = describeDownloadResult(plan);
-    setDownloadNote(note ? { text: note, tone: 'info' } : null);
-  }, [token, data, password]);
+    setDownloadNote({ text: describeOfflineExportResult(outcome.summary).text, tone: 'info' });
+  }, [token, data, password, runOfflineExport]);
 
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
@@ -793,8 +780,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const downloadHint =
       downloadPlan.kind === 'unavailable' ? downloadPlan.reason
         : downloadPlan.kind === 'open' ? '在新窗口打开源文件，可在浏览器里另存'
-        : downloadPlan.partial ? `下载入口文件 ${downloadPlan.fileName}（本站共 ${downloadPlan.fileCount} 个文件）`
-        : `下载源文件（${downloadPlan.fileName}）`;
+        : downloadPlan.fileCount > 1
+          ? `下载离线版网页：本站 ${downloadPlan.fileCount} 个文件里的样式、脚本、图片都装进一个 HTML`
+          : '下载离线版网页（一个 HTML 文件）';
     /**
      * 顶栏说明条有两种来源，这里合成一条。
      *
@@ -811,7 +799,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
      * 关闭按钮——它是这一屏的状态，不是一次操作的回执。
      */
     const visibleNote: { text: string; tone: 'info' | 'error'; detail?: string; dismissible: boolean } | null =
-      downloadNote
+      // 打包中：按钮在手机上只剩图标，进度必须以文字常驻在说明条里（静止转圈超过 2 秒即缺陷）
+      downloading
+        ? { text: `${offlineExportLabel}：正在把样式、脚本和图片装进一个文件`, tone: 'info', dismissible: false }
+        : downloadNote
         ? { ...downloadNote, dismissible: true }
         : isAuthenticated && downloadPlan.kind === 'unavailable'
           ? { text: downloadPlan.reason, tone: 'info', dismissible: false }
@@ -903,7 +894,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                     : downloadPlan.kind === 'open'
                       ? <ExternalLink size={isMobile ? 15 : 13} />
                       : <FileDown size={isMobile ? 15 : 13} />}
-                  {!isMobile && (downloading ? '取源文件…' : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件')}
+                  {!isMobile && (downloading ? offlineExportLabel : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件')}
                 </button>
               )}
               <span className="share-topbar-divider" />
