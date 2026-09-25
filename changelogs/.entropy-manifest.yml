@@ -718,3 +718,8 @@ processed:
   - 2026-09-22_llmgw_gemini_body_auto.md
   - 2026-09-22_llmgw_stable_smoke_federation.md
   - 2026-09-22_model-catalog-authoritative-consumers.md
+  - 2026-09-22_release-image-pull-timeout.md
+  - 2026-09-22_visual-model-directory-boundary.md
+  - 2026-09-22_web-page-ask-default-and-ios-fullscreen.md
+  - 2026-09-22_加强部署版本与监控闭环.md
+  - 2026-09-23_entropy-cleanup.md
