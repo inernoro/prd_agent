@@ -11,7 +11,7 @@ describe('我的风格：网页选择器可以翻到第一页之后', () => {
   });
 
   it('继续加载按已看过的条数往后翻，而不是重复读第一页', () => {
-    expect(dialog).toContain('listSites({ limit: SITE_PAGE_SIZE, skip, keyword: debouncedQuery || undefined })');
+    expect(dialog).toContain('listSites({ limit: SITE_PAGE_SIZE, skip, keyword: query || undefined })');
     expect(dialog).toContain('const hasMoreSites = sites.status === \'ready\' && sites.scanned < sites.total;');
   });
 
@@ -21,5 +21,9 @@ describe('我的风格：网页选择器可以翻到第一页之后', () => {
 
   it('搜索条件变化时撤销已选网页，不会从看不见的来源提取', () => {
     expect(dialog).toContain('useEffect(() => { setSiteId(null); }, [debouncedQuery]);');
+  });
+
+  it('迟到的翻页响应搜索词对不上就丢掉，不混进当前列表', () => {
+    expect(dialog).toContain('current.query !== query');
   });
 });

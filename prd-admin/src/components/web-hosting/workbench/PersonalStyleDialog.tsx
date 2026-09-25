@@ -56,7 +56,7 @@ export function PersonalStyleDialog({
   // 第 51 张之后的网页永远选不到，首页恰好全是 PDF / 视频时还会误说「没有可提取的网页」。
   const [sites, setSites] = useState<
     | { status: 'loading' }
-    | { status: 'ready'; items: HostedSite[]; scanned: number; total: number; loadingMore: boolean }
+    | { status: 'ready'; query: string; items: HostedSite[]; scanned: number; total: number; loadingMore: boolean }
     | { status: 'failed'; message: string }
   >({ status: 'loading' });
   const [siteQuery, setSiteQuery] = useState('');
@@ -96,6 +96,7 @@ export function PersonalStyleDialog({
       setSites(res.success
         ? {
           status: 'ready',
+          query: debouncedQuery,
           items: derivableSites(res.data.items, currentUserId),
           scanned: res.data.items.length,
           total: res.data.total,
@@ -109,15 +110,18 @@ export function PersonalStyleDialog({
   const loadMoreSites = async () => {
     if (sites.status !== 'ready' || sites.loadingMore || sites.scanned >= sites.total) return;
     const skip = sites.scanned;
+    const query = debouncedQuery;
     setSites({ ...sites, loadingMore: true });
-    const res = await listSites({ limit: SITE_PAGE_SIZE, skip, keyword: debouncedQuery || undefined });
+    const res = await listSites({ limit: SITE_PAGE_SIZE, skip, keyword: query || undefined });
     setSites((current) => {
-      if (current.status !== 'ready' || current.scanned !== skip) return current;
+      // 迟到的翻页响应只认发出它的那次搜索：搜索词已变就丢掉，不把别的查询结果混进来。
+      if (current.status !== 'ready' || current.scanned !== skip || current.query !== query) return current;
       if (!res.success) return { ...current, loadingMore: false };
       const known = new Set(current.items.map((item) => item.id));
       const more = derivableSites(res.data.items, currentUserId).filter((item) => !known.has(item.id));
       return {
         status: 'ready',
+        query,
         items: [...current.items, ...more],
         scanned: current.scanned + res.data.items.length,
         total: res.data.total,
