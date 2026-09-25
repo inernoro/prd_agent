@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ClipboardList, Library, Palette, Upload } from 'lucide-react';
 import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import { toast } from '@/lib/toast';
@@ -24,6 +25,14 @@ import {
 } from '../designAttachments';
 import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, orderRuntimeCards, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
 import { useSiteGenerationRun } from './useSiteGenerationRun';
+import {
+  HTML_PPT_TIMING_NOTE,
+  OUTPUT_FORM_ORDER,
+  OUTPUT_FORM_REGISTRY,
+  buildHtmlPptHandoff,
+  type WorkbenchOutputForm,
+} from './outputForm';
+import { HtmlPptHandoffPanel } from './HtmlPptHandoffPanel';
 import { StyleGallery, presetSelection, type StyleGallerySelection } from './StyleGallery';
 import { StyleThumbnail } from './StyleThumbnail';
 import {
@@ -107,6 +116,9 @@ export default function NewSiteStage({
   /** 已发出去的那一条（对话里的用户气泡）；失败后输入框里的内容原样保留，可直接再发。 */
   const [sent, setSent] = useState<{ text: string; chips: string[]; runtimeLabel: string; styleName?: string | null } | null>(null);
   const handedOffRef = useRef(false);
+  /** 产出形式：网页在这里直接生成；网页 PPT 带着资料与要求交给 HTML PPT 智能体（原因见 outputForm.ts）。 */
+  const [outputForm, setOutputForm] = useState<WorkbenchOutputForm>('web-page');
+  const navigate = useNavigate();
 
   const run = useSiteGenerationRun({
     destinationTeamId,
@@ -258,7 +270,16 @@ export default function NewSiteStage({
     },
   ];
 
-  const sendBlocker = !requestRuntime
+  const isPpt = outputForm === 'html-ppt';
+  const pptHandoff = useMemo(() => buildHtmlPptHandoff({
+    instruction,
+    knowledge: selectedKnowledge,
+    uploadedFileNames: uploads.items.filter((item) => item.status !== 'failed').map((item) => item.fileName),
+  }), [instruction, selectedKnowledge, uploads.items]);
+
+  const sendBlocker = isPpt
+    ? (pptHandoff.ok ? '' : pptHandoff.blocker)
+    : !requestRuntime
     ? '没有可用的设计执行器，请联系管理员检查部署状态'
     : uploads.busy
       ? '文件还在上传，传完就能生成'
@@ -267,6 +288,12 @@ export default function NewSiteStage({
         : '';
 
   const send = () => {
+    if (isPpt) {
+      // 交接不是生成：不建设计任务、不显示网页进度卡，直接带着资料与要求去 PPT 智能体。
+      if (sendBlocker || run.generating || !pptHandoff.ok) return;
+      navigate(pptHandoff.path);
+      return;
+    }
     if (sendBlocker || run.generating || !requestRuntime) return;
     const text = instruction.trim() || DEFAULT_REQUEST;
     const title = selectedKnowledge[0]?.title
@@ -308,13 +335,14 @@ export default function NewSiteStage({
   const conversation = (
     <>
       <AssistantBubble>
-        <p className="font-semibold">把资料做成网页，发给客户看</p>
+        <p className="font-semibold">{isPpt ? '把资料做成网页 PPT，发给客户看' : '把资料做成网页，发给客户看'}</p>
         <p className="text-[12px] text-token-secondary">
-          点输入框左边的 + 放资料（知识库、文件、会议纪要可以一起放），再用一句话说给谁看、想达到什么效果。
-          预览里是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。
+          {isPpt
+            ? '从 + 里放一篇知识库稿子，再用一句话说给谁看、想讲清什么。点下去会带着稿子和这句话去 HTML PPT 智能体：先出大纲给你确认，再逐页生成；发布后进网页托管，按幻灯片播放，同样能「发布给客户」。'
+            : '点输入框左边的 + 放资料（知识库、文件、会议纪要可以一起放），再用一句话说给谁看、想达到什么效果。预览里是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。'}
         </p>
       </AssistantBubble>
-      {composing && (
+      {composing && !isPpt && (
         <div className="flex flex-wrap gap-1.5" aria-label="常用要求">
           {PRESET_REQUESTS.map((preset) => (
             <button
@@ -366,35 +394,52 @@ export default function NewSiteStage({
 
   const options = (
     <>
-      <OptionChip
-        label={`风格：${styleName}，点开换一个`}
-        value={styleName}
-        pressed={galleryOpen}
-        onClick={() => { setSheet(null); setGalleryOpen((current) => !current); onPaneChange('preview'); }}
+      <Segmented
+        label="产出形式"
+        value={outputForm}
         disabled={run.generating}
-      >
-        <Palette size={13} />
-        {selectedStyle && (
-          <span className="flex gap-0.5">
-            {selectedStyle.swatches.slice(0, 3).map((color) => <span key={color} className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />)}
-          </span>
-        )}
-      </OptionChip>
-      {enabledRuntimes.length > 1 ? (
-        <Segmented
-          label="生成方式"
-          value={requestRuntime?.id ?? ''}
-          disabled={run.generating}
-          onChange={setSelectedRuntime}
-          options={enabledRuntimes.map((item) => ({
-            value: item.id,
-            label: runtimeCardTitle(item).replace('生成', '').replace('设计', ''),
-            title: RUNTIME_CARD_REGISTRY[item.id]?.description ?? item.label,
-          }))}
-        />
-      ) : requestRuntime ? (
-        <span className="text-[12px] text-token-muted">{runtimeCardTitle(requestRuntime)}</span>
-      ) : null}
+        onChange={(form) => { setOutputForm(form); setGalleryOpen(false); onPaneChange('preview'); }}
+        options={OUTPUT_FORM_ORDER.map((form) => ({
+          value: form,
+          label: OUTPUT_FORM_REGISTRY[form].label,
+          title: OUTPUT_FORM_REGISTRY[form].title,
+        }))}
+      />
+      {isPpt ? (
+        <span className="text-[12px] text-token-muted">主题与模板在 PPT 智能体里选</span>
+      ) : (
+        <>
+          <OptionChip
+            label={`风格：${styleName}，点开换一个`}
+            value={styleName}
+            pressed={galleryOpen}
+            onClick={() => { setSheet(null); setGalleryOpen((current) => !current); onPaneChange('preview'); }}
+            disabled={run.generating}
+          >
+            <Palette size={13} />
+            {selectedStyle && (
+              <span className="flex gap-0.5">
+                {selectedStyle.swatches.slice(0, 3).map((color) => <span key={color} className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />)}
+              </span>
+            )}
+          </OptionChip>
+          {enabledRuntimes.length > 1 ? (
+            <Segmented
+              label="生成方式"
+              value={requestRuntime?.id ?? ''}
+              disabled={run.generating}
+              onChange={setSelectedRuntime}
+              options={enabledRuntimes.map((item) => ({
+                value: item.id,
+                label: runtimeCardTitle(item).replace('生成', '').replace('设计', ''),
+                title: RUNTIME_CARD_REGISTRY[item.id]?.description ?? item.label,
+              }))}
+            />
+          ) : requestRuntime ? (
+            <span className="text-[12px] text-token-muted">{runtimeCardTitle(requestRuntime)}</span>
+          ) : null}
+        </>
+      )}
     </>
   );
 
@@ -409,11 +454,15 @@ export default function NewSiteStage({
         plusItems={plusItems}
         chips={materialChips}
         options={options}
-        sendLabel={run.generating ? '正在生成…' : `生成网页${eta ? ` · 约 ${eta.replace('约 ', '')}` : ''}`}
+        sendLabel={run.generating
+          ? '正在生成…'
+          : isPpt ? '去 PPT 智能体生成' : `生成网页${eta ? ` · 约 ${eta.replace('约 ', '')}` : ''}`}
         sendDisabled={run.generating || Boolean(sendBlocker)}
         sendDisabledReason={run.generating ? undefined : sendBlocker}
         onSend={send}
-        hint={runtimeCopy
+        hint={isPpt
+          ? `点下去：带着稿子和要求打开 HTML PPT 智能体（要求只预填、不会自动发送）。${HTML_PPT_TIMING_NOTE}`
+          : runtimeCopy
           ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${runtimeCopy.footnote}`
           : '点下去：对话里一步步显示进度，预览里出真实页面；做好自动存进网页托管，只有你能看到。'}
       />
@@ -463,11 +512,14 @@ export default function NewSiteStage({
   );
 
   const pickingKnowledge = sheet === 'knowledge' && !run.generating;
-  const previewTitle = run.generating ? '正在生成网页' : pickingKnowledge ? '引用知识库' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
+  const showPptHandoff = isPpt && !run.generating && !pickingKnowledge;
+  const previewTitle = run.generating ? '正在生成网页' : pickingKnowledge ? '引用知识库' : showPptHandoff ? '网页 PPT 怎么做' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
   const previewNote = run.generating
     ? (run.phase || '正在准备')
     : pickingKnowledge
       ? `勾选要放进来的稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后输入框上方会列出来`
+      : showPptHandoff
+      ? '在 HTML PPT 智能体里生成，这里说清会带过去什么'
       : galleryOpen
       ? '每张缩略图都是这个风格真实的样子，标题已换成你的资料'
       : sampleTitle ? '标题已换成你的资料，正文是示例；点生成后换成你的页面' : '示例内容；放进资料后标题先换成你的';
@@ -475,6 +527,8 @@ export default function NewSiteStage({
     ? '灰色块是还没写到的部分，写好一段换一段；做好后自动存进网页托管，这里直接显示成品。'
     : pickingKnowledge
       ? '选好点右上角「放入」，这里换回样张，样张标题会换成第一篇稿子的标题。'
+      : showPptHandoff
+      ? '点「去 PPT 智能体生成」后离开这个窗口；PPT 发布后回到网页托管就能看到它，按幻灯片播放。'
       : galleryOpen
       ? '点一张就选定它，预览立刻换成这个风格的样张；选好后回到对话点生成。'
       : hasSources
@@ -507,6 +561,8 @@ export default function NewSiteStage({
             onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选；更多资料可以改用上传文件')}
           />
         </PreviewPanel>
+      ) : showPptHandoff ? (
+        <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate('/md-to-ppt-agent')} />
       ) : galleryOpen && !run.generating ? (
         <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <StyleGallery

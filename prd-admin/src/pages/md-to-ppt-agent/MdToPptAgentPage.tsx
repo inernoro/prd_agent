@@ -1516,7 +1516,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Chat state
   const [messages, setMessages] = useState<ChatMessage[]>(savedSession?.messages ?? []);
-  const [input, setInput] = useState('');
+  // 从网页工作台「网页 PPT」带过来的那句要求：只预填、不自动发送；已带入过的会话刷新后不再回填。
+  const [input, setInput] = useState(() => (
+    context.launch && !savedSession?.launchImported ? context.launch.request ?? '' : ''
+  ));
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ─── Artifact state（右侧）

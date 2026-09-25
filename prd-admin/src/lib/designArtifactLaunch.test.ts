@@ -21,6 +21,22 @@ describe('designArtifactLaunch', () => {
     });
   });
 
+  it('carries an optional request for the target workbench and drops it when blank', () => {
+    const path = buildDesignArtifactLaunchPath({
+      target: 'html-ppt',
+      sourceStoreId: 'store-1',
+      sourceEntryId: 'entry-2',
+      sourceTitle: '季度复盘',
+      request: '讲给客户听 & 突出变化',
+    });
+    expect(path.startsWith('/md-to-ppt-agent?')).toBe(true);
+    expect(parseDesignArtifactLaunch(path.slice(path.indexOf('?')))?.request).toBe('讲给客户听 & 突出变化');
+    const blank = buildDesignArtifactLaunchPath({
+      target: 'html-ppt', sourceStoreId: 's', sourceEntryId: 'e', sourceTitle: 't', request: '  ',
+    });
+    expect(blank).not.toContain('request=');
+  });
+
   it('rejects incomplete or unsupported launch context', () => {
     expect(parseDesignArtifactLaunch('?designTarget=video&sourceStore=a&sourceEntry=b&sourceTitle=c')).toBeNull();
     expect(parseDesignArtifactLaunch('?designTarget=html-ppt&sourceStore=a')).toBeNull();
