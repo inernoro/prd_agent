@@ -1091,7 +1091,7 @@ builder.Services.AddCors(options =>
                 })
                 .AllowAnyHeader()
                 .AllowAnyMethod()
-                .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count");
+                .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count", "X-Offline-Export-External-Count", "X-Offline-Export-External");
             return;
         }
 
@@ -1099,7 +1099,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count");
+            .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count", "X-Offline-Export-External-Count", "X-Offline-Export-External");
     });
 });
 

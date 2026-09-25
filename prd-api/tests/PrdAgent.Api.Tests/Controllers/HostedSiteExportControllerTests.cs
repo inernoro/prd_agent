@@ -48,6 +48,8 @@ public sealed class HostedSiteExportControllerTests
                 FileName = "季度复盘（离线版）.html",
                 InlinedCount = 1,
                 Missing = new List<HostedSiteOfflineExportMissing> { new("img/缺.png", "not-in-site") },
+                ExternalCount = 3,
+                ExternalHosts = new List<string> { "cdn.example.com", "字体.example.cn" },
             });
         var controller = new HostedSiteExportController(sites.Object, exporter.Object)
         {
@@ -111,6 +113,9 @@ public sealed class HostedSiteExportControllerTests
         Assert.Equal("1", headers[HostedSiteExportController.MissingCountHeader].ToString());
         Assert.Equal("not-in-site:" + Uri.EscapeDataString("img/缺.png"), headers[HostedSiteExportController.MissingHeader].ToString());
         Assert.Equal("sandbox", headers["Content-Security-Policy"].ToString());
+        // 仍依赖外部网络的地址：总数 + 主机清单（逐条百分号编码）
+        Assert.Equal("3", headers[HostedSiteExportController.ExternalCountHeader].ToString());
+        Assert.Equal("cdn.example.com," + Uri.EscapeDataString("字体.example.cn"), headers[HostedSiteExportController.ExternalHeader].ToString());
     }
 
     [Theory]
@@ -189,6 +194,7 @@ public sealed class HostedSiteExportControllerTests
         Assert.True(result.Succeeded);
         var html = Encoding.UTF8.GetString(result.Html);
         Assert.Contains($"href=\"data:text/css;charset=utf-8;base64,{Convert.ToBase64String(Encoding.UTF8.GetBytes("h1{color:red}"))}\"", html);
+        Assert.Equal(0, result.ExternalCount);
         Assert.Equal(new[] { "web-hosting/sites/site-a/index.html", "web-hosting/sites/site-a/css/app.css" }, reads);
         Assert.Contains(result.Missing, m => m.Reason == "outside-site-root" && m.Reference == "../other/secret.png");
         Assert.Equal("季度复盘（离线版）.html", result.FileName);
@@ -267,6 +273,22 @@ public sealed class HostedSiteExportControllerTests
     {
         foreach (var failure in Enum.GetValues<HostedSiteOfflineExportFailure>())
             Assert.NotEqual("OFFLINE_EXPORT_FAILED", HostedSiteExportController.FailureCode(failure));
+    }
+
+    [Fact]
+    public async Task 打包服务汇总外部依赖的数量与主机()
+    {
+        var storage = new Mock<IAssetStorage>(MockBehavior.Loose);
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Encoding.UTF8.GetBytes(
+                "<link rel=stylesheet href=\"https://cdn.example.com/a.css\"><script src=\"https://cdn.example.com/b.js\"></script><img src=\"//img.example.net/c.png\">"));
+        var service = new HostedSiteOfflineExportService(storage.Object, NullLogger<HostedSiteOfflineExportService>.Instance);
+
+        var result = await service.ExportAsync(Site());
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, result.ExternalCount);
+        Assert.Equal(new[] { "cdn.example.com", "img.example.net" }, result.ExternalHosts);
     }
 
     [Fact]

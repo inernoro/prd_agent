@@ -4,12 +4,16 @@
  * 服务端把网页的样式、脚本、图片、字体都内嵌进一个 HTML 文件。它有两种结论要讲给用户：
  * - 成功，但有几处引用没能装进去（站点里本来就没有 / 读取失败 / 指向站点目录之外）——
  *   结论放在响应头 `X-Offline-Export-Missing-*`，这里解析成一句人话；
+ * - 成功，但页面仍引用外部地址（CDN 上的样式、脚本、字体）——这些原样留在文件里，断网时加载不到，
+ *   结论在 `X-Offline-Export-External-*`；有它就不能说「断网也能打开」；
  * - 失败——后端给的是**结构化错误码**，这里按码出文案（能用状态就用状态，不去匹配句子里的字）。
  */
 import { ApiDownloadError } from '@/services/real/apiClient';
 
 export const OFFLINE_EXPORT_MISSING_COUNT_HEADER = 'X-Offline-Export-Missing-Count';
 export const OFFLINE_EXPORT_MISSING_HEADER = 'X-Offline-Export-Missing';
+export const OFFLINE_EXPORT_EXTERNAL_COUNT_HEADER = 'X-Offline-Export-External-Count';
+export const OFFLINE_EXPORT_EXTERNAL_HEADER = 'X-Offline-Export-External';
 
 export type OfflineMissingReason = 'not-in-site' | 'outside-site-root' | 'read-failed';
 
@@ -22,6 +26,10 @@ export interface OfflineExportSummary {
   /** 没装进去的引用总数（头里的明细最多 20 条，总数以这个为准） */
   missingCount: number;
   missing: OfflineMissingItem[];
+  /** 仍依赖外部网络的地址总数（按完整地址去重） */
+  externalCount: number;
+  /** 这些地址涉及的主机，供举例（头里最多 20 个） */
+  externalHosts: string[];
 }
 
 const KNOWN_REASONS = new Set<OfflineMissingReason>(['not-in-site', 'outside-site-root', 'read-failed']);
@@ -45,12 +53,34 @@ export function parseMissingHeader(header: string | null | undefined): OfflineMi
   return items;
 }
 
+/** 解析逗号分隔、逐条百分号编码的主机清单；解不开的逐条丢弃。 */
+export function parseExternalHostsHeader(header: string | null | undefined): string[] {
+  if (!header) return [];
+  const hosts: string[] = [];
+  for (const part of header.split(',')) {
+    try {
+      const host = decodeURIComponent(part.trim());
+      if (host) hosts.push(host);
+    } catch {
+      // 编码坏了就跳过这一条
+    }
+  }
+  return hosts;
+}
+
+function readCount(headers: Headers | null | undefined, name: string, floor: number): number {
+  const declared = Number.parseInt(headers?.get(name) ?? '', 10);
+  return Number.isFinite(declared) && declared >= floor ? declared : floor;
+}
+
 export function readOfflineExportSummary(headers?: Headers | null): OfflineExportSummary {
   const missing = parseMissingHeader(headers?.get(OFFLINE_EXPORT_MISSING_HEADER));
-  const declared = Number.parseInt(headers?.get(OFFLINE_EXPORT_MISSING_COUNT_HEADER) ?? '', 10);
+  const externalHosts = parseExternalHostsHeader(headers?.get(OFFLINE_EXPORT_EXTERNAL_HEADER));
   return {
-    missingCount: Number.isFinite(declared) && declared >= missing.length ? declared : missing.length,
+    missingCount: readCount(headers, OFFLINE_EXPORT_MISSING_COUNT_HEADER, missing.length),
     missing,
+    externalCount: readCount(headers, OFFLINE_EXPORT_EXTERNAL_COUNT_HEADER, externalHosts.length),
+    externalHosts,
   };
 }
 
@@ -60,24 +90,34 @@ const REASON_LABEL: Record<OfflineMissingReason, string> = {
   'read-failed': '暂时读取失败',
 };
 
-/** 下载成功后给用户的那句话：全装进去了就说能断网打开；有缺口就说清缺了几处、为什么、会怎样。 */
+/**
+ * 下载成功后给用户的那句话。只有「一处没缺、也不依赖外部网络」才说断网能打开；
+ * 有缺口就说清缺了几处、为什么、会怎样；仍有外部依赖就说清几处、在哪些主机、断网时会怎样。
+ */
 export function describeOfflineExportResult(summary: OfflineExportSummary): { text: string; tone: 'info' | 'warning' } {
-  if (summary.missingCount === 0) {
+  if (summary.missingCount === 0 && summary.externalCount === 0) {
     return { text: '已下载离线版网页：样式、脚本和图片都装在这一个文件里，断网也能打开。', tone: 'info' };
   }
-  const byReason = new Map<OfflineMissingReason, number>();
-  for (const item of summary.missing) byReason.set(item.reason, (byReason.get(item.reason) ?? 0) + 1);
-  const breakdown = [...byReason.entries()].map(([reason, n]) => `${REASON_LABEL[reason]} ${n} 处`).join('、');
-  const sample = summary.missing.slice(0, 3).map((m) => m.reference).join('、');
-  const hasReadFailure = byReason.has('read-failed');
-  return {
-    text: `已下载离线版网页，但有 ${summary.missingCount} 处资源没能装进去`
+
+  const sentences: string[] = [];
+  if (summary.missingCount > 0) {
+    const byReason = new Map<OfflineMissingReason, number>();
+    for (const item of summary.missing) byReason.set(item.reason, (byReason.get(item.reason) ?? 0) + 1);
+    const breakdown = [...byReason.entries()].map(([reason, n]) => `${REASON_LABEL[reason]} ${n} 处`).join('、');
+    const sample = summary.missing.slice(0, 3).map((m) => m.reference).join('、');
+    sentences.push(`有 ${summary.missingCount} 处资源没能装进去`
       + (breakdown ? `（${breakdown}）` : '')
-      + '，离线打开时这些位置会缺图或缺样式'
+      + '，打开时这些位置会缺图或缺样式'
       + (sample ? `，例如 ${sample}` : '')
-      + (hasReadFailure ? '。读取失败的那几处过一会儿重新下载通常能补上。' : '。'),
-    tone: 'warning',
-  };
+      + (byReason.has('read-failed') ? '；读取失败的那几处过一会儿重新下载通常能补上' : ''));
+  }
+  if (summary.externalCount > 0) {
+    const hosts = summary.externalHosts.slice(0, 3).join('、');
+    sentences.push(`仍有 ${summary.externalCount} 处依赖外部网络（如 CDN）`
+      + (hosts ? `，来自 ${hosts}${summary.externalHosts.length > 3 ? ' 等' : ''}` : '')
+      + '，断网时这些部分可能无法显示');
+  }
+  return { text: `已下载离线版网页，但${sentences.join('；')}。`, tone: 'warning' };
 }
 
 /**

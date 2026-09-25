@@ -85,6 +85,13 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
             FileName = BuildFileName(site.Title),
             InlinedCount = result.InlinedCount,
             Missing = missing,
+            ExternalCount = result.External.Count,
+            ExternalHosts = result.External
+                .Select(HostedSiteHtmlInliner.HostOf)
+                .Where(host => host != null)
+                .Select(host => host!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
         };
     }
 

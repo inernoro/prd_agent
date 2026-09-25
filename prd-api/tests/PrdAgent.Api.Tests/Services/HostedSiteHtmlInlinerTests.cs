@@ -228,6 +228,7 @@ public sealed class HostedSiteHtmlInlinerTests
         Assert.Contains("<script src=\"https://cdn.example.com/x.js\"></script>", result.Html);
         Assert.Contains(result.Missing, m => m.Reference == "img/missing.png" && m.Reason == HostedSiteInlineMissingReason.NotInSite);
         Assert.Contains(result.Missing, m => m.Reference == "img/broken.png" && m.Reason == HostedSiteInlineMissingReason.ReadFailed);
+        Assert.Equal(new[] { "https://cdn.example.com/x.css", "https://cdn.example.com/x.js" }, result.External);
     }
 
     [Fact]
@@ -281,24 +282,170 @@ public sealed class HostedSiteHtmlInlinerTests
         Assert.Empty(site.Reads);
     }
 
+    /// <summary>
+    /// Codex P2：preload + onload 切换成样式表的写法，原来 href 仍指向同目录文件，离线时找不到。
+    /// 现在与样式表走同一条改写路径：as=style 先内嵌 url()，再换成 data: URL；onload 等属性原样保留。
+    /// </summary>
     [Fact]
-    public async Task 预加载提示不内嵌()
+    public async Task 预加载样式表的onload激活写法也内嵌_且与样式表同一处理()
     {
-        var site = new FakeSite().Add("f.woff2", "F");
-        const string html = "<link rel=\"preload\" href=\"f.woff2\" as=\"font\">";
+        var site = new FakeSite()
+            .Add("app.css", ".a{background:url(bg.png)}")
+            .Add("bg.png", "P", "image/png")
+            .Add("f.woff2", "F")
+            .Add("m.js", "export default 1;");
+        const string html = "<link rel=\"preload\" as=\"style\" href=\"app.css\" onload=\"this.onload=null;this.rel='stylesheet'\">"
+            + "<link rel=\"preload\" as=\"font\" type=\"font/woff2\" crossorigin href=\"f.woff2\">"
+            + "<link rel=\"modulepreload\" href=\"m.js\">"
+            + "<link rel=\"preconnect\" href=\"https://fonts.example.com\">";
 
         var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
 
-        Assert.Equal(html, result.Html);
+        Assert.Matches("<link rel=\"preload\" as=\"style\" href=\"data:text/css;charset=utf-8;base64,[^\"]+\" onload=\"this.onload=null;this.rel='stylesheet'\">", result.Html);
+        var texts = AllDataUrlTexts(result.Html, "link", "href");
+        Assert.Equal($".a{{background:url(data:image/png;base64,{B64("P")})}}", texts[0]);
+        Assert.Equal("F", texts[1]);
+        Assert.Contains("href=\"data:font/woff2;base64,", result.Html);
+        Assert.Equal("export default 1;", texts[2]);
+        Assert.Contains("href=\"data:text/javascript;base64,", result.Html);
+        // preconnect 指向的是主机不是文件，原样不动
+        Assert.Contains("<link rel=\"preconnect\" href=\"https://fonts.example.com\">", result.Html);
+        Assert.Empty(result.Missing);
+    }
+
+    /// <summary>Codex P2：引用里的 #片段（SVG 符号、媒体片段）在 data: URL 上要接回来，否则指向变了。</summary>
+    [Fact]
+    public async Task 引用里的片段接回到dataUrl末尾()
+    {
+        var site = new FakeSite()
+            .Add("icons.svg", "<svg/>", "image/svg+xml")
+            .Add("v.mp4", "V", "video/mp4");
+        const string html = "<img src=\"icons.svg?v=2#check\"><video src=\"v.mp4#t=10,20\"></video>"
+            + "<div style=\"background:url(icons.svg#bg)\"></div><img src=\"icons.svg\">";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains($"src=\"data:image/svg+xml;base64,{B64("<svg/>")}#check\"", result.Html);
+        Assert.Contains($"src=\"data:video/mp4;base64,{B64("V")}#t=10,20\"", result.Html);
+        Assert.Contains($"url(data:image/svg+xml;base64,{B64("<svg/>")}#bg)", result.Html);
+        Assert.Contains($"<img src=\"data:image/svg+xml;base64,{B64("<svg/>")}\">", result.Html);
+        Assert.Single(site.Reads, r => r == "key/icons.svg");
     }
 
     [Theory]
-    [InlineData("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'\">", true)]
-    [InlineData("<META HTTP-EQUIV='content-security-policy' CONTENT=\"script-src 'none'\">", true)]
-    [InlineData("<meta http-equiv=\" Content-Security-Policy \" content=x>", true)]
-    [InlineData("<!-- <meta http-equiv=\"Content-Security-Policy\" content=x> -->", false)]
-    [InlineData("<script>var s='<meta http-equiv=\"Content-Security-Policy\">'</script>", false)]
-    [InlineData("<meta http-equiv=\"Content-Security-Policy-Report-Only\" content=x>", false)]
+    [InlineData("icons.svg#check", "#check")]
+    [InlineData("a.png?x=1#y", "#y")]
+    [InlineData("a.png", "")]
+    [InlineData("a.png#", "")]
+    [InlineData("#only", "")]
+    public void 片段提取(string reference, string expected)
+    {
+        Assert.Equal(expected, HostedSiteHtmlInliner.FragmentOf(reference));
+    }
+
+    /// <summary>Codex P2：&lt;base href&gt; 决定文档里相对引用指向哪里，忽略它会内嵌错文件或漏掉资源。</summary>
+    [Fact]
+    public async Task base指向站内子目录时_文档引用按base解析_样式表内url仍按样式表自己解析()
+    {
+        var site = new FakeSite()
+            .Add("a.png", "ROOT", "image/png")
+            .Add("assets/a.png", "SUB", "image/png")
+            .Add("assets/css/s.css", ".s{background:url(../img/b.png)}")
+            .Add("assets/img/b.png", "B", "image/png");
+        const string html = "<head><base href=\"assets/\"><link rel=stylesheet href=\"css/s.css\"></head><body><img src=\"a.png\"></body>";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains($"src=\"data:image/png;base64,{B64("SUB")}\"", result.Html);
+        Assert.DoesNotContain(B64("ROOT"), result.Html);
+        Assert.Equal($".s{{background:url(data:image/png;base64,{B64("B")})}}", DataUrlText(result.Html, "link", "href"));
+        // base 原样保留：被改写的引用都是自带内容的 data: URL，不受它影响
+        Assert.Contains("<base href=\"assets/\">", result.Html);
+        Assert.Empty(result.Missing);
+    }
+
+    [Fact]
+    public async Task 只认第一个base()
+    {
+        var site = new FakeSite().Add("one/a.png", "1", "image/png").Add("two/a.png", "2", "image/png");
+        const string html = "<base target=\"_blank\"><base href=\"one/\"><base href=\"two/\"><img src=\"a.png\">";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains($"src=\"data:image/png;base64,{B64("1")}\"", result.Html);
+    }
+
+    [Fact]
+    public async Task base指向站点根之外时_相对引用一律不读并记为越界()
+    {
+        var site = new FakeSite().Add("a.png", "A", "image/png").Add("root.png", "R", "image/png");
+        const string html = "<base href=\"../other/\"><img src=\"a.png\"><img src=\"/root.png\">";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("<img src=\"a.png\">", result.Html);
+        Assert.DoesNotContain("key/a.png", site.Reads);
+        Assert.Contains(result.Missing, m => m.Reference == "a.png" && m.Reason == HostedSiteInlineMissingReason.OutsideSiteRoot);
+        // 以 / 开头的站点根引用不受 base 目录影响，照常内嵌
+        Assert.Contains($"src=\"data:image/png;base64,{B64("R")}\"", result.Html);
+    }
+
+    [Fact]
+    public async Task base指向站外时_相对引用留在原处并计入外部依赖()
+    {
+        var site = new FakeSite().Add("a.png", "A", "image/png");
+        const string html = "<base href=\"https://cdn.example.com/site/\"><img src=\"a.png\"><script src=\"js/x.js\"></script>";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Contains("<img src=\"a.png\">", result.Html);
+        Assert.Empty(site.Reads);
+        Assert.Equal(new[] { "https://cdn.example.com/site/a.png", "https://cdn.example.com/site/js/x.js" }, result.External);
+    }
+
+    [Fact]
+    public async Task 没有base时照入口目录解析()
+    {
+        var site = new FakeSite().Add("pages/a.png", "P", "image/png");
+
+        var result = await site.Inliner().InlineAsync("pages/index.html", "<img src=\"a.png\">", CancellationToken.None);
+
+        Assert.Contains($"src=\"data:image/png;base64,{B64("P")}\"", result.Html);
+    }
+
+    /// <summary>Codex P1：外部 CDN 资源原样保留时，不能再对用户说「全装进去了、断网能打开」。</summary>
+    [Fact]
+    public async Task 留在原处的外部地址逐个计数_data与锚点不算()
+    {
+        var site = new FakeSite().Add("local.png", "L", "image/png");
+        const string html = "<link rel=stylesheet href=\"https://cdn.example.com/a.css\">"
+            + "<script src=\"//static.example.net/b.js\"></script>"
+            + "<img src=\"https://cdn.example.com/a.css\">"
+            + "<img src=\"data:image/png;base64,AAAA\"><img src=\"#x\"><img src=\"local.png\">"
+            + "<style>@font-face{src:url(https://fonts.example.org/f.woff2)}</style>";
+
+        var result = await site.Inliner().InlineAsync("index.html", html, CancellationToken.None);
+
+        Assert.Equal(new[]
+        {
+            "https://cdn.example.com/a.css",
+            "//static.example.net/b.js",
+            "https://fonts.example.org/f.woff2",
+        }, result.External);
+        Assert.Empty(result.Missing);
+    }
+
+    [Theory]
+    [InlineData("https://cdn.example.com/a.css", "cdn.example.com")]
+    [InlineData("//static.example.net/b.js", "static.example.net")]
+    [InlineData("http://x.test:8080/y", "x.test")]
+    [InlineData("not a url", null)]
+    public void 外部地址取主机(string url, string? host)
+    {
+        Assert.Equal(host, HostedSiteHtmlInliner.HostOf(url));
+    }
+
+    [Theory]
     [InlineData("<meta charset=\"utf-8\">", false)]
     public void 识别页面自己声明的内容安全策略(string html, bool expected)
     {

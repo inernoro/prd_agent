@@ -48,6 +48,12 @@ public sealed class HostedSiteInlineResult
     public int InlinedCount { get; init; }
     public IReadOnlyList<HostedSiteInlineMissing> Missing { get; init; } = Array.Empty<HostedSiteInlineMissing>();
 
+    /// <summary>
+    /// 留在原处、离线时仍要联网才能加载的外部地址（http(s) 与协议相对 //；按完整地址去重）。
+    /// 页面自己写的绝对地址、以及 base 指向站外时的相对引用都算。data: 与纯锚点不算。
+    /// </summary>
+    public IReadOnlyList<string> External { get; init; } = Array.Empty<string>();
+
     /// <summary>非空 = 超过体积上限，没有产出。值是压线时正在处理的那个文件（或「整页」）。</summary>
     public string? OverLimitAt { get; init; }
 
@@ -56,8 +62,8 @@ public sealed class HostedSiteInlineResult
 
 /// <summary>
 /// 把托管站点的入口 HTML 打成一份自包含的离线 HTML：
-/// 站内相对引用的 CSS 变成 &lt;style&gt;、脚本变成内联 &lt;script&gt;、图片 / 字体 / CSS url() 变成 data: URI，
-/// 外部绝对地址原样保留。
+/// 站内相对引用的样式表、脚本、图片、字体、CSS url() 一律换成自带内容的 data: URL（元素与其余属性原样保留），
+/// 外部绝对地址原样保留并计入「仍依赖外部网络」清单。
 ///
 /// 纯逻辑：文件清单与读字节的委托由调用方给，本类不碰存储、不碰权限。
 /// 读文件只会以「清单里的路径」为键去取，规范化后跳出站点根的引用一律不读——
@@ -88,10 +94,10 @@ public sealed class HostedSiteHtmlInliner
     private static readonly Regex ClosingStyle = new(
         "</style", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
 
-    /// <summary>这几种 rel 只是加载提示；目标已经被内嵌在别处，改写它们只会让文件重复变胖。</summary>
-    private static readonly HashSet<string> HintRels = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>这两种 rel 指向的是主机而不是文件，没有可内嵌的内容。</summary>
+    private static readonly HashSet<string> HostOnlyRels = new(StringComparer.OrdinalIgnoreCase)
     {
-        "preload", "prefetch", "modulepreload", "preconnect", "dns-prefetch",
+        "preconnect", "dns-prefetch",
     };
 
     /// <summary>哪些标签的哪些属性指向一份要内嵌的资源（iframe / a / form 是导航，不内嵌）。</summary>
@@ -152,6 +158,8 @@ public sealed class HostedSiteHtmlInliner
     private readonly Dictionary<string, byte[]?> _cache = new(StringComparer.Ordinal);
     private readonly List<HostedSiteInlineMissing> _missing = new();
     private readonly HashSet<string> _missingKeys = new(StringComparer.Ordinal);
+    private readonly List<string> _external = new();
+    private readonly HashSet<string> _externalKeys = new(StringComparer.Ordinal);
     private long _estimatedBytes;
     private int _inlined;
 
@@ -272,6 +280,7 @@ public sealed class HostedSiteHtmlInliner
             OutputBytes = bytes,
             InlinedCount = _inlined,
             Missing = _missing.ToList(),
+            External = _external.ToList(),
         };
     }
 
@@ -280,10 +289,66 @@ public sealed class HostedSiteHtmlInliner
         OverLimitAt = at,
         InlinedCount = _inlined,
         Missing = _missing.ToList(),
+        External = _external.ToList(),
     };
+
+    /// <summary>
+    /// 相对引用按谁解析。站内文件（入口、样式表）给 SitePath；
+    /// 文档里的第一个 &lt;base href&gt; 指向站外时给 External（相对引用全部当外部地址计数、原样保留）；
+    /// 指向站点根之外时 OutsideRoot（相对引用一律不读，记为越界）。
+    /// </summary>
+    private sealed record ReferenceBase(string SitePath, Uri? External = null, bool OutsideRoot = false)
+    {
+        public static ReferenceBase ForFile(string path) => new(path);
+    }
+
+    /// <summary>
+    /// 算出文档级引用的解析基准：取文档里第一个带 href 的 &lt;base&gt;（与浏览器一致，后面的不算）。
+    /// 没有就是入口文件本身。base 本身也按入口所在目录解析，且必须落在站点根之内。
+    ///
+    /// 输出里 &lt;base&gt; 原样保留：凡是被改写的引用都换成了自带内容的 data: URL，不受 base 影响；
+    /// 没能内嵌的引用与页内链接则继续按作者写的 base 解析，与线上行为一致。
+    /// </summary>
+    private static ReferenceBase ResolveDocumentBase(string entryPath, string html)
+    {
+        foreach (Match m in HtmlToken.Matches(html))
+        {
+            if (!m.Groups["tag"].Success
+                || !string.Equals(m.Groups["name"].Value, "base", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var href = FindAttribute(m.Groups["attrs"].Value, "href")?.Value;
+            if (href == null) continue;
+
+            var raw = href.Trim();
+            var (kind, _) = ResolveReference(entryPath, raw);
+            if (kind == HostedSiteReferenceKind.External)
+            {
+                var absolute = raw.StartsWith("//", StringComparison.Ordinal) ? "https:" + raw : raw;
+                return Uri.TryCreate(absolute, UriKind.Absolute, out var external)
+                    ? new ReferenceBase(entryPath, External: external)
+                    : ReferenceBase.ForFile(entryPath);
+            }
+
+            var cut = raw.IndexOfAny(['?', '#']);
+            var pathPart = (cut >= 0 ? raw[..cut] : raw).Replace('\\', '/');
+            if (pathPart.Length == 0) return ReferenceBase.ForFile(entryPath);
+
+            // 以 / 结尾的 base 指的是一个目录：借一个占位文件名让「取所在目录」的规则照常成立
+            var probe = pathPart.EndsWith('/') ? pathPart + "__base__" : pathPart;
+            var (baseKind, basePath) = ResolveReference(entryPath, probe);
+            return baseKind switch
+            {
+                HostedSiteReferenceKind.Site => ReferenceBase.ForFile(basePath!),
+                HostedSiteReferenceKind.OutsideSiteRoot => new ReferenceBase(entryPath, OutsideRoot: true),
+                _ => ReferenceBase.ForFile(entryPath),
+            };
+        }
+        return ReferenceBase.ForFile(entryPath);
+    }
 
     private async Task<string> InlineHtmlAsync(string entryPath, string html, CancellationToken ct)
     {
+        var docBase = ResolveDocumentBase(entryPath, html);
         var sb = new StringBuilder(html.Length);
         var last = 0;
         foreach (Match m in HtmlToken.Matches(html))
@@ -298,40 +363,40 @@ public sealed class HostedSiteHtmlInliner
             }
             else if (m.Groups["script"].Success)
             {
-                sb.Append(await InlineScriptAsync(entryPath, m, ct));
+                var attrs = m.Groups["sattrs"].Value;
+                var rewritten = await RewriteReferenceAttributeAsync(docBase, attrs, "src", PayloadKind.Script, ct);
+                // 元素、属性、顺序原样保留（defer / async / type=module / integrity 等语义都不动），只换了 src 的值；
+                // 带 src 的脚本体本来就不执行，照抄即可。
+                sb.Append(rewritten == null ? m.Value : "<script" + rewritten + ">" + m.Groups["sbody"].Value + "</script>");
             }
             else if (m.Groups["style"].Success)
             {
-                var css = await ProcessCssAsync(m.Groups["stbody"].Value, entryPath, 0, new HashSet<string>(StringComparer.Ordinal), ct);
+                var css = await ProcessCssAsync(m.Groups["stbody"].Value, docBase, 0, new HashSet<string>(StringComparer.Ordinal), ct);
                 sb.Append("<style").Append(m.Groups["stattrs"].Value).Append('>')
                     .Append(EscapeClosing(ClosingStyle, css, "<\\/style"))
                     .Append("</style>");
             }
             else
             {
-                sb.Append(await InlineTagAsync(entryPath, m, ct));
+                sb.Append(await InlineTagAsync(docBase, m, ct));
             }
         }
         sb.Append(html, last, html.Length - last);
         return sb.ToString();
     }
 
-    private async Task<string> InlineScriptAsync(string entryPath, Match m, CancellationToken ct)
-    {
-        var attrs = m.Groups["sattrs"].Value;
-        var rewritten = await RewriteExternalResourceAsync(entryPath, attrs, "src", ExternalResourceKind.Script, ct);
-        // 元素、属性、顺序原样保留（defer / async / type=module / integrity 等语义都不动），只换了 src 的值；
-        // 带 src 的脚本体本来就不执行，照抄即可。
-        return rewritten == null ? m.Value : "<script" + rewritten + ">" + m.Groups["sbody"].Value + "</script>";
-    }
-
-    private async Task<string> InlineTagAsync(string entryPath, Match m, CancellationToken ct)
+    private async Task<string> InlineTagAsync(ReferenceBase docBase, Match m, CancellationToken ct)
     {
         var name = m.Groups["name"].Value;
         var attrs = m.Groups["attrs"].Value;
 
         if (string.Equals(name, "link", StringComparison.OrdinalIgnoreCase))
-            return await InlineLinkAsync(entryPath, m.Value, attrs, ct);
+        {
+            var kind = LinkPayloadKind(attrs);
+            if (kind == null) return m.Value;
+            var rewritten = await RewriteReferenceAttributeAsync(docBase, attrs, "href", kind.Value, ct);
+            return rewritten == null ? m.Value : "<link" + rewritten + ">";
+        }
 
         var targets = AssetAttributes.TryGetValue(name, out var list) ? list : Array.Empty<string>();
         var parsed = ParseAttributes(attrs);
@@ -345,14 +410,14 @@ public sealed class HostedSiteHtmlInliner
 
             if (string.Equals(attrName, "style", StringComparison.OrdinalIgnoreCase))
             {
-                var css = await ProcessCssAsync(attr.Value, entryPath, MaxCssImportDepth, new HashSet<string>(StringComparer.Ordinal), ct);
+                var css = await ProcessCssAsync(attr.Value, docBase, MaxCssImportDepth, new HashSet<string>(StringComparer.Ordinal), ct);
                 if (css != attr.Value) rewritten = css;
             }
             else if (targets.Contains(attrName, StringComparer.OrdinalIgnoreCase))
             {
                 rewritten = string.Equals(attrName, "srcset", StringComparison.OrdinalIgnoreCase)
-                    ? await RewriteSrcSetAsync(entryPath, attr.Value, ct)
-                    : await DataUriForAsync(entryPath, attr.Value, ct);
+                    ? await RewriteSrcSetAsync(docBase, attr.Value, ct)
+                    : (await BuildDataUrlAsync(docBase, attr.Value, PayloadKind.Binary, ct))?.DataUrl;
             }
 
             if (rewritten != null && rewritten != attr.Value)
@@ -363,76 +428,96 @@ public sealed class HostedSiteHtmlInliner
         return "<" + name + ReplaceAttributes(attrs, parsed, replacements) + ">";
     }
 
-    private async Task<string> InlineLinkAsync(string entryPath, string original, string attrs, CancellationToken ct)
+    /// <summary>
+    /// &lt;link&gt; 指向的东西按什么内容打包——所有 link 的唯一判定：
+    /// 样式表、as=style 的预加载 → 样式表（要先内嵌里面的 url() / @import）；
+    /// modulepreload、as=script 的预加载 → 脚本；其余（图标、字体预加载、prefetch 等）→ 原字节。
+    /// preconnect / dns-prefetch 指向的是主机不是文件，不动。
+    /// </summary>
+    private static PayloadKind? LinkPayloadKind(string attrs)
     {
-        var href = FindAttribute(attrs, "href");
-        if (href == null) return original;
-
         var rels = (FindAttribute(attrs, "rel")?.Value ?? string.Empty)
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        if (rels.Any(HintRels.Contains)) return original;
+        if (rels.Any(HostOnlyRels.Contains)) return null;
 
-        if (rels.Contains("stylesheet", StringComparer.OrdinalIgnoreCase))
-        {
-            // 元素与全部属性原样保留（disabled / id / title / media / alternate 都照旧生效），只换 href 的值。
-            var rewritten = await RewriteExternalResourceAsync(entryPath, attrs, "href", ExternalResourceKind.Stylesheet, ct);
-            return rewritten == null ? original : "<link" + rewritten + ">";
-        }
-
-        // 图标一类：href 直接换成 data: URI
-        var dataUri = await DataUriForAsync(entryPath, href.Value.Value, ct);
-        if (dataUri == null) return original;
-        var parsed = ParseAttributes(attrs);
-        var target = parsed.First(a => string.Equals(a.Name, "href", StringComparison.OrdinalIgnoreCase));
-        return "<link" + ReplaceAttributes(attrs, parsed, new Dictionary<int, string>
-        {
-            [target.Index] = target.Name + "=\"" + EscapeAttribute(dataUri) + "\"",
-        }) + ">";
+        var asValue = (FindAttribute(attrs, "as")?.Value ?? string.Empty).Trim();
+        if (rels.Contains("stylesheet", StringComparer.OrdinalIgnoreCase)
+            || string.Equals(asValue, "style", StringComparison.OrdinalIgnoreCase))
+            return PayloadKind.Stylesheet;
+        if (rels.Contains("modulepreload", StringComparer.OrdinalIgnoreCase)
+            || string.Equals(asValue, "script", StringComparison.OrdinalIgnoreCase))
+            return PayloadKind.Script;
+        return PayloadKind.Binary;
     }
 
-    private enum ExternalResourceKind { Script, Stylesheet }
+    private enum PayloadKind { Script, Stylesheet, Binary }
+
+    private sealed record BuiltDataUrl(string DataUrl, bool ContentChanged);
 
     /// <summary>
-    /// 外链脚本与外链样式表的唯一内嵌路径：元素不换、属性不删，只把 src / href 的值换成 data: URL。
-    /// 这样 defer / async / module、disabled / id / title / media 以及书写顺序全部按作者的原样生效，
-    /// 不必逐个语义去「模拟」（换成内联元素会丢掉它们）。
-    ///
-    /// 样式表在编码前先把自己的 url() 与 @import 按样式表所在目录解析、内嵌——data: URL 没有可用的
-    /// 基准地址，里面留下的任何相对路径离线都解析不到；解析不了的照旧进缺失清单。
-    ///
+    /// 属性里的引用 → data: URL 的唯一改写路径（脚本 src、link href 共用）：元素不换、属性不删，
+    /// 只把引用那个属性的值换掉。defer / async / module、disabled / id / title / media / onload
+    /// 以及书写顺序全部按作者原样生效。内容被改写（样式表内嵌了子资源）时去掉 integrity——
+    /// 摘要对不上新内容，留着浏览器会拒绝加载；字节没变的一律保留。
     /// 返回改写后的属性串；引用不在站内 / 读不到时返回 null（调用方保留原样，缺失已登记）。
     /// </summary>
-    private async Task<string?> RewriteExternalResourceAsync(
-        string basePath, string attrs, string attributeName, ExternalResourceKind kind, CancellationToken ct)
+    private async Task<string?> RewriteReferenceAttributeAsync(
+        ReferenceBase basis, string attrs, string attributeName, PayloadKind kind, CancellationToken ct)
     {
         var parsed = ParseAttributes(attrs);
         var target = parsed.FirstOrDefault(a => a.Value != null
             && string.Equals(a.Name, attributeName, StringComparison.OrdinalIgnoreCase));
         if (target == null) return null;
 
-        var file = await ResolveAndLoadAsync(basePath, target.Value!, isText: true, ct);
+        var built = await BuildDataUrlAsync(basis, target.Value!, kind, ct);
+        if (built == null) return null;
+
+        var replacements = new Dictionary<int, string>
+        {
+            [target.Index] = target.Name + "=\"" + EscapeAttribute(built.DataUrl) + "\"",
+        };
+        if (built.ContentChanged)
+        {
+            foreach (var attr in parsed.Where(a => string.Equals(a.Name, "integrity", StringComparison.OrdinalIgnoreCase)))
+                replacements[attr.Index] = string.Empty;
+        }
+        return ReplaceAttributes(attrs, parsed, replacements);
+    }
+
+    /// <summary>
+    /// 一个引用 → 自带内容的 data: URL。所有内嵌（元素属性、srcset、CSS url()、link）都经这里：
+    /// 样式表在编码前先把自己的 url() 与 @import 按样式表所在目录内嵌（data: URL 没有可用的基准地址，
+    /// 留下的相对路径离线都解析不到）；引用里的 #片段（SVG 符号、媒体片段）原样接回 data: URL 末尾。
+    /// </summary>
+    private async Task<BuiltDataUrl?> BuildDataUrlAsync(
+        ReferenceBase basis, string reference, PayloadKind kind, CancellationToken ct)
+    {
+        var file = await ResolveAndLoadAsync(basis, reference, isText: kind != PayloadKind.Binary, ct);
         if (file == null) return null;
         // 读入时已按原文字节计入预算；样式表里的子资源会在下面各自计入。最终按 data: URL 的真实长度重算这一项。
-        var baseline = _estimatedBytes - file.Value.Bytes.Length;
+        var baseline = _estimatedBytes - (kind == PayloadKind.Binary
+            ? Base64Length(file.Value.Bytes.Length)
+            : file.Value.Bytes.Length);
 
-        byte[] payload;
+        byte[] payload = file.Value.Bytes;
         string mime;
-        var removals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (kind == ExternalResourceKind.Stylesheet)
+        var changed = false;
+        switch (kind)
         {
-            var original = DecodeText(file.Value.Bytes);
-            var css = await ProcessCssAsync(original, file.Value.Path, 0,
-                new HashSet<string>(StringComparer.Ordinal) { file.Value.Path }, ct);
-            payload = Encoding.UTF8.GetBytes(css);
-            mime = "text/css;charset=utf-8";
-            // 内容被改写（资源已内嵌）后，作者写的完整性摘要对不上新内容，留着浏览器会拒绝加载整张样式表。
-            // 只有内容真的变了才去掉它；脚本与未改写的样式表字节不变，摘要照样成立，一律保留。
-            if (css != original) removals.Add("integrity");
-        }
-        else
-        {
-            payload = file.Value.Bytes;
-            mime = "text/javascript";
+            case PayloadKind.Stylesheet:
+                var original = DecodeText(file.Value.Bytes);
+                var css = await ProcessCssAsync(original, ReferenceBase.ForFile(file.Value.Path), 0,
+                    new HashSet<string>(StringComparer.Ordinal) { file.Value.Path }, ct);
+                payload = Encoding.UTF8.GetBytes(css);
+                mime = "text/css;charset=utf-8";
+                changed = css != original;
+                break;
+            case PayloadKind.Script:
+                mime = "text/javascript";
+                break;
+            default:
+                mime = file.Value.Mime;
+                break;
         }
 
         // 子资源已经包含在 payload 里，改用「读这个文件之前的预算 + 整个 data: URL」，避免同一份字节算两遍
@@ -440,14 +525,17 @@ public sealed class HostedSiteHtmlInliner
         if (_estimatedBytes > _maxOutputBytes) throw new OverLimitException(file.Value.Path);
 
         _inlined++;
-        var dataUrl = "data:" + mime + ";base64," + Convert.ToBase64String(payload);
-        var replacements = new Dictionary<int, string>
-        {
-            [target.Index] = target.Name + "=\"" + EscapeAttribute(dataUrl) + "\"",
-        };
-        foreach (var attr in parsed.Where(a => removals.Contains(a.Name)))
-            replacements[attr.Index] = string.Empty;
-        return ReplaceAttributes(attrs, parsed, replacements);
+        return new BuiltDataUrl(
+            "data:" + mime + ";base64," + Convert.ToBase64String(payload) + FragmentOf(reference),
+            changed);
+    }
+
+    /// <summary>引用里第一个 # 起的片段（含 #）；纯锚点与没有片段的给空串。</summary>
+    internal static string FragmentOf(string reference)
+    {
+        var raw = reference.Trim();
+        var hash = raw.IndexOf('#');
+        return hash > 0 && hash < raw.Length - 1 ? raw[hash..] : string.Empty;
     }
 
     /// <summary>
@@ -456,7 +544,7 @@ public sealed class HostedSiteHtmlInliner
     /// depth ≥ 上限（行内 style 属性直接传上限）时 @import 不再展开。
     /// </summary>
     private async Task<string> ProcessCssAsync(
-        string css, string cssFilePath, int depth, HashSet<string> importChain, CancellationToken ct)
+        string css, ReferenceBase basis, int depth, HashSet<string> importChain, CancellationToken ct)
     {
         var matches = CssToken.Matches(css);
         if (matches.Count == 0) return css;
@@ -471,22 +559,22 @@ public sealed class HostedSiteHtmlInliner
 
             if (m.Groups["import"].Success)
             {
-                sb.Append(await InlineImportAsync(m, cssFilePath, depth, importChain, ct));
+                sb.Append(await InlineImportAsync(m, basis, depth, importChain, ct));
                 continue;
             }
 
             var reference = m.Groups["ud"].Success ? m.Groups["ud"].Value
                 : m.Groups["us"].Success ? m.Groups["us"].Value
                 : m.Groups["uu"].Value;
-            var dataUri = await DataUriForAsync(cssFilePath, reference, ct);
-            sb.Append(dataUri == null ? m.Value : "url(" + dataUri + ")");
+            var built = await BuildDataUrlAsync(basis, reference, PayloadKind.Binary, ct);
+            sb.Append(built == null ? m.Value : "url(" + built.DataUrl + ")");
         }
         sb.Append(css, last, css.Length - last);
         return sb.ToString();
     }
 
     private async Task<string> InlineImportAsync(
-        Match m, string cssFilePath, int depth, HashSet<string> importChain, CancellationToken ct)
+        Match m, ReferenceBase basis, int depth, HashSet<string> importChain, CancellationToken ct)
     {
         var reference = m.Groups["iu"].Success && m.Groups["iu"].Length > 0 ? m.Groups["iu"].Value : m.Groups["iu2"].Value;
         var media = m.Groups["media"].Value.Trim();
@@ -497,12 +585,7 @@ public sealed class HostedSiteHtmlInliner
             || media.Contains("supports(", StringComparison.OrdinalIgnoreCase))
             return m.Value;
 
-        var (kind, path) = ResolveReference(cssFilePath, reference);
-        if (kind == HostedSiteReferenceKind.OutsideSiteRoot)
-        {
-            RecordMissing(reference, HostedSiteInlineMissingReason.OutsideSiteRoot);
-            return m.Value;
-        }
+        var (kind, path) = Classify(basis, reference);
         if (kind != HostedSiteReferenceKind.Site) return m.Value;
         if (importChain.Contains(ToCanonical(path!))) return m.Value;
 
@@ -510,12 +593,12 @@ public sealed class HostedSiteHtmlInliner
         if (file == null) return m.Value;
 
         var chain = new HashSet<string>(importChain, StringComparer.Ordinal) { file.Value.Path };
-        var inner = await ProcessCssAsync(DecodeText(file.Value.Bytes), file.Value.Path, depth + 1, chain, ct);
+        var inner = await ProcessCssAsync(DecodeText(file.Value.Bytes), ReferenceBase.ForFile(file.Value.Path), depth + 1, chain, ct);
         _inlined++;
         return media.Length == 0 ? inner : "@media " + media + "{" + inner + "}";
     }
 
-    private async Task<string?> RewriteSrcSetAsync(string basePath, string srcset, CancellationToken ct)
+    private async Task<string?> RewriteSrcSetAsync(ReferenceBase basis, string srcset, CancellationToken ct)
     {
         var candidates = ParseSrcSet(srcset);
         if (candidates.Count == 0) return null;
@@ -523,9 +606,9 @@ public sealed class HostedSiteHtmlInliner
         var parts = new List<string>(candidates.Count);
         foreach (var (url, descriptor) in candidates)
         {
-            var dataUri = await DataUriForAsync(basePath, url, ct);
-            if (dataUri != null) changed = true;
-            var chosen = dataUri ?? url;
+            var built = await BuildDataUrlAsync(basis, url, PayloadKind.Binary, ct);
+            if (built != null) changed = true;
+            var chosen = built?.DataUrl ?? url;
             parts.Add(descriptor.Length == 0 ? chosen : chosen + " " + descriptor);
         }
         return changed ? string.Join(", ", parts) : null;
@@ -559,24 +642,64 @@ public sealed class HostedSiteHtmlInliner
         return result;
     }
 
-    private async Task<string?> DataUriForAsync(string basePath, string reference, CancellationToken ct)
+    /// <summary>
+    /// 按解析基准给一个引用归类，并把「留在原处的外部地址」「越出站点根」登记下来——
+    /// 所有内嵌路径都经这一处归类，外部计数与越界上报不会有第二个口径。
+    /// </summary>
+    private (HostedSiteReferenceKind Kind, string? Path) Classify(ReferenceBase basis, string reference)
     {
-        var file = await ResolveAndLoadAsync(basePath, reference, isText: false, ct);
-        if (file == null) return null;
-        _inlined++;
-        return "data:" + file.Value.Mime + ";base64," + Convert.ToBase64String(file.Value.Bytes);
-    }
+        var (kind, path) = ResolveReference(basis.SitePath, reference);
+        switch (kind)
+        {
+            case HostedSiteReferenceKind.Ignored:
+                return (kind, null);
+            case HostedSiteReferenceKind.External:
+                RecordExternal(reference.Trim());
+                return (kind, null);
+        }
 
-    private async Task<LoadedFile?> ResolveAndLoadAsync(string basePath, string reference, bool isText, CancellationToken ct)
-    {
-        var (kind, path) = ResolveReference(basePath, reference);
-        if (kind == HostedSiteReferenceKind.OutsideSiteRoot)
+        var raw = reference.Trim().Replace('\\', '/');
+        if (basis.External != null)
+        {
+            // base 指向站外：相对引用（含 / 开头）都相对那个站外地址，留在原处并计入外部依赖
+            if (Uri.TryCreate(basis.External, raw, out var absolute)) RecordExternal(absolute.ToString());
+            return (HostedSiteReferenceKind.External, null);
+        }
+        if (basis.OutsideRoot && !raw.StartsWith('/'))
         {
             RecordMissing(reference, HostedSiteInlineMissingReason.OutsideSiteRoot);
-            return null;
+            return (HostedSiteReferenceKind.OutsideSiteRoot, null);
         }
+        if (kind == HostedSiteReferenceKind.OutsideSiteRoot)
+            RecordMissing(reference, HostedSiteInlineMissingReason.OutsideSiteRoot);
+        return (kind, path);
+    }
+
+    private async Task<LoadedFile?> ResolveAndLoadAsync(ReferenceBase basis, string reference, bool isText, CancellationToken ct)
+    {
+        var (kind, path) = Classify(basis, reference);
         if (kind != HostedSiteReferenceKind.Site) return null;
         return await LoadAsync(reference, path!, isText, ct);
+    }
+
+    /// <summary>只记 http(s) 与协议相对（//）的地址；按完整地址去重。</summary>
+    private void RecordExternal(string url)
+    {
+        var lowered = url.ToLowerInvariant();
+        if (!lowered.StartsWith("//", StringComparison.Ordinal)
+            && !lowered.StartsWith("http://", StringComparison.Ordinal)
+            && !lowered.StartsWith("https://", StringComparison.Ordinal))
+            return;
+        if (_externalKeys.Add(url)) _external.Add(url);
+    }
+
+    /// <summary>外部地址的主机名（协议相对的按 https 解析）；解析不了给 null。</summary>
+    public static string? HostOf(string url)
+    {
+        var absolute = url.StartsWith("//", StringComparison.Ordinal) ? "https:" + url : url;
+        return Uri.TryCreate(absolute, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host)
+            ? uri.Host
+            : null;
     }
 
     private async Task<LoadedFile?> LoadAsync(string reference, string path, bool isText, CancellationToken ct)

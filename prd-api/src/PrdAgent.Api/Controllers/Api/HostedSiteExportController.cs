@@ -25,6 +25,8 @@ public sealed class HostedSiteExportController : ControllerBase
     public const string MissingCountHeader = "X-Offline-Export-Missing-Count";
     public const string MissingHeader = "X-Offline-Export-Missing";
     public const string InlinedCountHeader = "X-Offline-Export-Inlined-Count";
+    public const string ExternalCountHeader = "X-Offline-Export-External-Count";
+    public const string ExternalHeader = "X-Offline-Export-External";
     private const int MaxMissingInHeader = 20;
 
     private readonly IHostedSiteService _sites;
@@ -86,6 +88,15 @@ public sealed class HostedSiteExportController : ControllerBase
             Response.Headers[MissingHeader] = string.Join(",", result.Missing
                 .Take(MaxMissingInHeader)
                 .Select(m => m.Reason + ":" + Uri.EscapeDataString(m.Reference)));
+        }
+        // 仍依赖外部网络的地址：总数 + 涉及的主机（与缺失头同一上限、同样逐条百分号编码）。
+        // 前端据此决定能不能说「断网也能打开」。
+        Response.Headers[ExternalCountHeader] = result.ExternalCount.ToString();
+        if (result.ExternalHosts.Count > 0)
+        {
+            Response.Headers[ExternalHeader] = string.Join(",", result.ExternalHosts
+                .Take(MaxMissingInHeader)
+                .Select(Uri.EscapeDataString));
         }
         // 这是用户上传的任意 HTML，从 API 源下发：强制附件 + 沙箱 + 不嗅探，绝不在主站源上渲染。
         Response.Headers["Content-Security-Policy"] = "sandbox";
