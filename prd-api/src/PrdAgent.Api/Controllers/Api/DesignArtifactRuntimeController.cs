@@ -268,7 +268,22 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
                 Response.Headers["X-Accel-Buffering"] = "no";
             await using var stream = await response.Content.ReadAsStreamAsync(proxyDeadline.Token);
-            await CopyWithIdleTimeoutAsync(stream, Response.Body, idleTimeout, proxyDeadline.Token);
+            // 边转发边读网关报的 model：执行器（服务或 CDS 容器）里调的模型，MAP 只有在这里看得见。
+            var servedModel = new DesignRuntimeServedModelSniffer(
+                eventStream: response.Content.Headers.ContentType?.MediaType == "text/event-stream");
+            await CopyWithIdleTimeoutAsync(
+                stream,
+                Response.Body,
+                idleTimeout,
+                proxyDeadline.Token,
+                forwarded =>
+                {
+                    servedModel.Observe(forwarded.Span);
+                    return Task.CompletedTask;
+                });
+            // 整条响应转发完才记：流里先出现的可能是逻辑别名，终态里的才是网关实际用的模型。
+            if (servedModel.Model is { } served)
+                await RecordServedModelAsync(run, served);
         }
         catch (OperationCanceledException)
         {
@@ -363,11 +378,57 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         }
     }
 
+    /// <summary>记录实际模型（落库 + 推事件）各自的上限：它挡在模型响应的 EOF 之前，必须短。</summary>
+    internal static readonly TimeSpan ServedModelProjectionTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// 网关实际回答所用的模型：代理从网关响应里读到、且与 run 上记的不同时写一次并推一条 model 事件，
+    /// 面板顶部的「{模型} · {平台}」由此显示真实值（ai-model-visibility）。平台名网关响应里没有，
+    /// 不编：留空，前端按统一口径显示为「LLM Gateway」。这是旁路：失败只记日志，绝不影响转发。
+    /// </summary>
+    private async Task RecordServedModelAsync(DesignArtifactRun run, string model)
+    {
+        if (string.Equals(run.ResolvedModel, model, StringComparison.Ordinal)) return;
+        try
+        {
+            // 落库本身不带超时令牌：WaitAsync 只截断「调用方等多久」，写入可以在返回之后继续完成，
+            // 否则 Mongo 一慢就会把这次成功调用的实际模型永久丢掉（server-authority）。
+            if (!await _broker.RecordServedModelAsync(run.Id, model, platform: null, CancellationToken.None)
+                    .WaitAsync(ServedModelProjectionTimeout))
+                return;
+            _logger.LogInformation(
+                "设计模型代理记下网关实际使用的模型 runId={RunId} model={Model} previous={Previous}",
+                run.Id,
+                model,
+                run.ResolvedModel ?? "none");
+            run.ResolvedModel = model;
+            if (_events != null)
+            {
+                // 旁路投影：模型响应已经转发完，执行器要等本方法返回才看得到 EOF。
+                // 事件存储慢或不可用时不能拖住这次成功的模型调用，所以限时、失败只记日志。
+                // 用 WaitAsync 在调用方这一侧截断：Redis 实现并不理会传入的取消令牌，只传令牌是假限时。
+                await _events.AppendEventAsync(
+                        PrdAgent.Core.Models.RunKinds.DesignArtifact,
+                        run.Id,
+                        "model",
+                        new { model, platform = (string?)null },
+                        PreviewEventTtl,
+                        CancellationToken.None)
+                    .WaitAsync(ServedModelProjectionTimeout);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "记录网关实际使用的设计模型失败，面板沿用已有值 runId={RunId}", run.Id);
+        }
+    }
+
     internal static async Task CopyWithIdleTimeoutAsync(
         Stream source,
         Stream destination,
         TimeSpan idleTimeout,
-        CancellationToken totalDeadline)
+        CancellationToken totalDeadline,
+        Func<ReadOnlyMemory<byte>, Task>? observeForwarded = null)
     {
         var buffer = new byte[64 * 1024];
         var destinationConnected = true;
@@ -377,6 +438,8 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             idleDeadline.CancelAfter(idleTimeout);
             var read = await source.ReadAsync(buffer.AsMemory(), idleDeadline.Token);
             if (read == 0) break;
+            // 调用方断开后仍在排空上游：旁路观察照样进行（模型事实与它是否还有人在读无关）。
+            if (observeForwarded != null) await observeForwarded(buffer.AsMemory(0, read));
             if (!destinationConnected) continue;
 
             try
