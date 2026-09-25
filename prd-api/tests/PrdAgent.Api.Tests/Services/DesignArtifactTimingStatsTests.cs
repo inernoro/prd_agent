@@ -188,6 +188,17 @@ public sealed class DesignArtifactTimingStatsTests
     }
 
     [Fact]
+    public void GroupRunFilter_CapsEachRuntimeAndArtifactTypeSeparately()
+    {
+        // 上限按组算：每组查询都要同时带执行器与产物类型，量大的一组才挤不掉量小的一组。
+        var rendered = Render(DesignArtifactTimingStats.GroupRunFilter(null, T0, DesignArtifactRuntimes.OpenDesign, DesignArtifactTypes.WebPage));
+        Assert.Contains($"\"Runtime\" : \"{DesignArtifactRuntimes.OpenDesign}\"", rendered, StringComparison.Ordinal);
+        Assert.Contains($"\"ArtifactType\" : \"{DesignArtifactTypes.WebPage}\"", rendered, StringComparison.Ordinal);
+        Assert.Contains("\"UpdatedAt\" : { \"$gte\"", rendered, StringComparison.Ordinal);
+        Assert.Contains("\"Operation\" : \"generate\"", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RunFilter_ProductionIsBoundedAndOnlyGenerate()
     {
         var rendered = Render(DesignArtifactTimingStats.RunFilter(null, T0));

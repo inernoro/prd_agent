@@ -24,8 +24,8 @@ namespace PrdAgent.Api.Services;
 /// - 部署作用域：生产（DeploymentScope.Current 为 null）只看 DeploymentSlug 缺失的任务；
 ///   分支预览按分支级作用域（CurrentDurable，跨 revision）统计，否则每次推送样本清零，预估永远不可用。
 ///   这是只读聚合，不参与认领，所以放宽到分支级不破坏 revision fencing。
-/// - 有界：时间窗 + 投影 + 条数上限（<see cref="RunSampleCap"/> / <see cref="ShareSampleCap"/>），
-///   截断时在响应里如实标出。任务查询以 UpdatedAt ≥ since 作为隐含下界（终态任务 UpdatedAt ≥ CreatedAt），
+/// - 有界：时间窗 + 投影 + 条数上限（<see cref="RunSampleCap"/> 按「执行器 × 产物类型」每组各算一次，
+///   量大的一组挤不掉量小的一组；<see cref="ShareSampleCap"/> 为分享链接总上限），截断时在响应里如实标出。任务查询以 UpdatedAt ≥ since 作为隐含下界（终态任务 UpdatedAt ≥ CreatedAt），
 ///   命中既有索引 idx_design_run_v2_scope_status_updated（DeploymentSlug, Status, UpdatedAt）。
 /// </summary>
 public static class DesignArtifactTimingStats
@@ -174,6 +174,13 @@ public static class DesignArtifactTimingStats
                & (sf.In(x => x.SiteId, siteIds) | sf.AnyIn(x => x.SiteIds, siteIds));
     }
 
+    /// <summary>单组（执行器 × 产物类型）的任务过滤：在 <see cref="RunFilter"/> 之上各自取最近样本、各自套上限。</summary>
+    public static FilterDefinition<DesignArtifactRun> GroupRunFilter(string? durableScope, DateTime since, string runtime, string artifactType)
+    {
+        var f = Builders<DesignArtifactRun>.Filter;
+        return RunFilter(durableScope, since) & f.Eq(x => x.Runtime, runtime) & f.Eq(x => x.ArtifactType, artifactType);
+    }
+
     public static FilterDefinition<DesignArtifactRun> RunFilter(string? durableScope, DateTime since)
     {
         var f = Builders<DesignArtifactRun>.Filter;
@@ -191,33 +198,43 @@ public static class DesignArtifactTimingStats
         CancellationToken ct)
     {
         var since = now.AddDays(-WindowDays);
-        var rows = await db.DesignArtifactRuns
-            .Find(RunFilter(DeploymentScope.CurrentDurable, since))
-            .SortByDescending(x => x.UpdatedAt)
-            .Limit(RunSampleCap)
-            .Project(x => new
-            {
-                x.Runtime,
-                x.ArtifactType,
-                x.Status,
-                x.CreatedAt,
-                x.CompletedAt,
-                x.ArtifactSiteId,
-                x.ProducedArtifactSiteId,
-                x.UserId,
-            })
-            .ToListAsync(ct);
-
-        var runs = rows
-            .Select(row => new DesignArtifactTimingRunSample(
+        var scope = DeploymentScope.CurrentDurable;
+        var baseFilter = RunFilter(scope, since);
+        // 上限按组算：全局一个上限时，量大的执行器（如快速生成）会把量小的一组整组挤出窗口，
+        // 后者明明样本充足却被报成「还在积累」。组合只有执行器 × 产物类型那几种，Distinct 很小。
+        var runtimes = await (await db.DesignArtifactRuns.DistinctAsync(x => x.Runtime, baseFilter, cancellationToken: ct)).ToListAsync(ct);
+        var artifactTypes = await (await db.DesignArtifactRuns.DistinctAsync(x => x.ArtifactType, baseFilter, cancellationToken: ct)).ToListAsync(ct);
+        var runs = new List<DesignArtifactTimingRunSample>();
+        var runsTruncated = false;
+        foreach (var runtime in runtimes)
+        foreach (var artifactType in artifactTypes)
+        {
+            var groupRows = await db.DesignArtifactRuns
+                .Find(GroupRunFilter(scope, since, runtime, artifactType))
+                .SortByDescending(x => x.UpdatedAt)
+                .Limit(RunSampleCap)
+                .Project(x => new
+                {
+                    x.Runtime,
+                    x.ArtifactType,
+                    x.Status,
+                    x.CreatedAt,
+                    x.CompletedAt,
+                    x.ArtifactSiteId,
+                    x.ProducedArtifactSiteId,
+                    x.UserId,
+                })
+                .ToListAsync(ct);
+            if (groupRows.Count >= RunSampleCap) runsTruncated = true;
+            runs.AddRange(groupRows.Select(row => new DesignArtifactTimingRunSample(
                 row.Runtime,
                 row.ArtifactType,
                 row.Status,
                 row.CreatedAt,
                 row.CompletedAt,
                 row.ArtifactSiteId ?? row.ProducedArtifactSiteId,
-                row.UserId))
-            .ToList();
+                row.UserId)));
+        }
 
         var sharedCandidates = runs
             .Where(run => run.Status == RunStatuses.Done && !string.IsNullOrEmpty(run.SiteId) && !string.IsNullOrEmpty(run.UserId))
@@ -245,7 +262,7 @@ public static class DesignArtifactTimingStats
                 .ToList();
         }
 
-        return Summarize(runs, shares, since, now, rows.Count >= RunSampleCap, sharesTruncated);
+        return Summarize(runs, shares, since, now, runsTruncated, sharesTruncated);
     }
 }
 
