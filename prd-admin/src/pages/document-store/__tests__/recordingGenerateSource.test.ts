@@ -61,3 +61,14 @@ describe('页内校对未落地时不许生成（生成读的是服务端正文�
     expect(deriveTranscriptEditActivity({ editingIndex: 2, renamingSpeaker: null, savingEdit: true })).toBe('saving');
   });
 });
+
+describe('一键整理 / 重新生成在途时不许生成（它跑完会改写同一条笔记）', () => {
+  it('整理在途：挡住并说明还在整理', () => {
+    expect(resolveRecordingGenerateSource({ ...base, reorganizing: true }))
+      .toEqual({ kind: 'blocked', reason: '整理还在进行' });
+  });
+
+  it('整理结束后照常放行', () => {
+    expect(resolveRecordingGenerateSource({ ...base, reorganizing: false }).kind).toBe('ready');
+  });
+});

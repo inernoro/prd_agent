@@ -117,5 +117,6 @@ describe('录音页生成入口接上了页内校对状态', () => {
     const page = sources.find((file) => file.rel === 'pages/document-store/RecordingResultPage.tsx');
     expect(page?.text).toContain('onEditActivityChange={setTranscriptEditActivity}');
     expect(page?.text).toContain('editActivity: transcriptEditActivity');
+    expect(page?.text).toContain('reorganizing: running !== null || launchingStyle !== null');
   });
 });

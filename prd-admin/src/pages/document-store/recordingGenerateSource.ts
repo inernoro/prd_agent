@@ -26,6 +26,8 @@ export function resolveRecordingGenerateSource(input: {
   pendingEditCount: number;
   /** 页内校对：编辑框开着或保存在飞时，服务端那份还不是屏幕上这份 */
   editActivity?: TranscriptEditActivity;
+  /** 一键整理 / 重新生成在途（含正在发起那一下）：跑完会整篇改写这条笔记 */
+  reorganizing?: boolean;
 }): RecordingGenerateSource {
   if (!input.noteId || !input.noteMd.trim()) return { kind: 'blocked', reason: '转录完成后可用' };
   if (input.offline) return { kind: 'blocked', reason: '联网后可用' };
@@ -33,6 +35,8 @@ export function resolveRecordingGenerateSource(input: {
   if (input.pendingEditCount > 0) return { kind: 'blocked', reason: `${input.pendingEditCount} 处校对同步后可用` };
   if (input.editActivity === 'saving') return { kind: 'blocked', reason: '转写修改还在保存' };
   if (input.editActivity === 'editing') return { kind: 'blocked', reason: '转写修改还没保存' };
+  // 整理跑完会改写同一条笔记：现在生成要么拿到整理前的旧正文，要么中途撞上「来源已变化」
+  if (input.reorganizing) return { kind: 'blocked', reason: '整理还在进行' };
   return {
     kind: 'ready',
     source: {

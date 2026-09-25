@@ -1292,6 +1292,7 @@ export function RecordingResultPage() {
         offline,
         pendingEditCount: pendingEdits?.count ?? 0,
         editActivity: transcriptEditActivity,
+        reorganizing: running !== null || launchingStyle !== null,
       })
     : null;
   const generateAction = generate ? (
