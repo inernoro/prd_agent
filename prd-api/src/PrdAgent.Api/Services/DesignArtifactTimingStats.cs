@@ -212,7 +212,8 @@ public static class DesignArtifactTimingStats
             var groupRows = await db.DesignArtifactRuns
                 .Find(GroupRunFilter(scope, since, runtime, artifactType))
                 .SortByDescending(x => x.UpdatedAt)
-                .Limit(RunSampleCap)
+                // 多取一条只为探测是否真被截断：恰好等于上限不算截断。
+                .Limit(RunSampleCap + 1)
                 .Project(x => new
                 {
                     x.Runtime,
@@ -225,8 +226,8 @@ public static class DesignArtifactTimingStats
                     x.UserId,
                 })
                 .ToListAsync(ct);
-            if (groupRows.Count >= RunSampleCap) runsTruncated = true;
-            runs.AddRange(groupRows.Select(row => new DesignArtifactTimingRunSample(
+            if (groupRows.Count > RunSampleCap) runsTruncated = true;
+            runs.AddRange(groupRows.Take(RunSampleCap).Select(row => new DesignArtifactTimingRunSample(
                 row.Runtime,
                 row.ArtifactType,
                 row.Status,
@@ -249,11 +250,12 @@ public static class DesignArtifactTimingStats
             var shareRows = await db.WebPageShareLinks
                 .Find(ShareFilter(userIds, siteIds, since))
                 .SortBy(x => x.CreatedAt)
-                .Limit(ShareSampleCap)
+                .Limit(ShareSampleCap + 1)
                 .Project(x => new { x.CreatedBy, x.CreatedAt, x.SiteId, x.SiteIds })
                 .ToListAsync(ct);
-            sharesTruncated = shareRows.Count >= ShareSampleCap;
+            sharesTruncated = shareRows.Count > ShareSampleCap;
             shares = shareRows
+                .Take(ShareSampleCap)
                 .Select(row => new DesignArtifactTimingShareSample(
                     row.CreatedBy,
                     row.CreatedAt,
