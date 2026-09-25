@@ -27,6 +27,7 @@ internal enum MdToPptPageModelOutcome
 internal sealed class MdToPptPageModelRoute
 {
     private int _state = (int)MdToPptPageModelOutcome.UseProfileModel;
+    private int _substitutionAnnounced;
 
     public MdToPptPageModelRoute(string? profileModel, bool explicitlySelected)
     {
@@ -38,8 +39,17 @@ internal sealed class MdToPptPageModelRoute
 
     public bool ExplicitlySelected { get; }
 
-    /// <summary>路线第一次从「按配置点名」切到「网关默认」时通知一次（用于把改判告诉用户）。</summary>
-    public Func<Task>? OnSubstituted { get; set; }
+    /// <summary>
+    /// 改道后的请求**真的被网关接住**（收到 Start、知道实际模型）时通知一次，参数是实际模型。
+    /// 不在切换那一刻通知：切换只是「换个方式再试」，若网关连不点名的请求也拒绝（例如该用途被停用），
+    /// 提前说「已改用默认模型」就是一句谎话。
+    /// </summary>
+    public Func<string?, Task>? OnSubstituted { get; set; }
+
+    /// <summary>整次运行只宣布一次改判；返回 true 的那一次负责通知。</summary>
+    public bool TryMarkSubstitutionAnnounced() =>
+        Outcome == MdToPptPageModelOutcome.UseGatewayDefault
+        && Interlocked.Exchange(ref _substitutionAnnounced, 1) == 0;
 
     public MdToPptPageModelOutcome Outcome => (MdToPptPageModelOutcome)Volatile.Read(ref _state);
 
@@ -47,18 +57,25 @@ internal sealed class MdToPptPageModelRoute
     public string? ExpectedModelFor(MdToPptPageModelOutcome outcome) =>
         outcome == MdToPptPageModelOutcome.UseProfileModel ? RequestedModel : null;
 
-    /// <summary>给人看的说明：改判或拒绝时说清是谁点名了什么、这次怎么办、下一步做什么。</summary>
+    /// <summary>改道后的请求被网关接住时给人看的说明（<paramref name="actualModel"/> 是这次实际跑的模型）。</summary>
+    public string SubstitutionNotice(string? actualModel) =>
+        $"LLM Gateway 没有接住默认运行配置里点名的模型「{RequestedModel}」，本次改由网关为 MD 转 PPT 配置的默认对外模型"
+        + (string.IsNullOrWhiteSpace(actualModel) ? "" : $"（实际模型 {actualModel.Trim()}）")
+        + " 生成页面。想固定用某个模型，请在模型选择里点名一个网关认识的配置。";
+
+    /// <summary>
+    /// 拒绝时给人看的说明。<see cref="GatewayRouteFailure.AppCallerPoolUnbound"/> 不只代表「目录里没有这个名字」，
+    /// 调用方在网关被停用、未登记时也是这个码（Codex P2，PR #1629），所以这里把几种可能一并交代，
+    /// 不把原因说死成「模型没登记」。
+    /// </summary>
     public string? Notice => Outcome switch
     {
-        MdToPptPageModelOutcome.UseGatewayDefault =>
-            $"默认运行配置里的模型「{RequestedModel}」不在 LLM Gateway 的对外模型目录里，本次改由网关按 MD 转 PPT 的默认对外模型生成页面（实际模型见模型标签）。"
-            + "想固定用某个模型，请在模型选择里点名一个网关认识的配置。",
         MdToPptPageModelOutcome.Reject when ExplicitlySelected =>
-            $"你选的运行配置里的模型「{RequestedModel}」不在 LLM Gateway 的对外模型目录里（或没有授权给 MD 转 PPT），页面无法生成。"
-            + "请在模型选择里改选「MAP 默认模型」，或请网关管理员把它登记为对外模型后重试。",
+            $"LLM Gateway 没有接住你选的运行配置里的模型「{RequestedModel}」（它不在对外模型目录里、没有授权给 MD 转 PPT，或该用途在网关被停用），页面无法生成。"
+            + "请在模型选择里改选「MAP 默认模型」重试；仍然失败请网关管理员检查 MD 转 PPT 调用方的状态。",
         MdToPptPageModelOutcome.Reject =>
-            $"默认运行配置里的模型「{RequestedModel}」不在 LLM Gateway 的对外模型目录里，网关也没有能接住 MD 转 PPT 的默认对外模型，页面无法生成。"
-            + "请网关管理员给该用途设默认对外模型，或把该模型登记为对外模型后重试。",
+            $"LLM Gateway 拒绝了 MD 转 PPT 的页面生成：点名「{RequestedModel}」和交给网关默认对外模型两种方式都没有线路接住，"
+            + "通常是该用途在网关被停用、或没有配置默认对外模型。请网关管理员检查 MD 转 PPT 调用方的状态与默认对外模型后重试。",
         _ => null,
     };
 

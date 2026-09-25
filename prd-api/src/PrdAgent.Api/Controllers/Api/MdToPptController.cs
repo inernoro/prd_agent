@@ -4321,8 +4321,8 @@ public class MdToPptController : ControllerBase
             !string.IsNullOrWhiteSpace(requestedProfileId)
                 && string.Equals(requestedProfileId.Trim(), profile.Id, StringComparison.Ordinal));
 
-    /// <summary>网关拒绝了按某条路线发出的页面请求：更新路线；由这一次触发切换时，把改判告诉用户并留痕。</summary>
-    private async Task<MdToPptPageModelOutcome> ApplyGatewayRejectionAsync(
+    /// <summary>网关拒绝了按某条路线发出的页面请求：更新路线，由这一次触发切换时留痕（对用户的改判提示等改道请求真被接住再发）。</summary>
+    private MdToPptPageModelOutcome ApplyGatewayRejection(
         MdToPptPageModelRoute route,
         MdToPptPageModelOutcome attemptedWith,
         string? gatewayErrorCode,
@@ -4332,22 +4332,33 @@ public class MdToPptController : ControllerBase
         if (changed)
         {
             _logger.LogWarning(
-                "[MdToPpt] {Notice} 技术细节：outcome={Outcome} runId={RunId} requested={Requested} explicit={Explicit} gatewayCode={Code}",
-                route.Notice, outcome, runId, route.RequestedModel ?? "(未点名)", route.ExplicitlySelected, gatewayErrorCode ?? "(无)");
-            if (outcome == MdToPptPageModelOutcome.UseGatewayDefault && route.OnSubstituted != null)
-            {
-                try { await route.OnSubstituted(); }
-                catch (Exception ex) { _logger.LogWarning(ex, "[MdToPpt] 改判提示下发失败 runId={RunId}", runId); }
-            }
+                "[MdToPpt] LLM Gateway 没有接住页面请求点名的模型「{Requested}」，本次运行的页面路线改为 {Outcome}。{Notice} 技术细节：runId={RunId} explicit={Explicit} gatewayCode={Code}",
+                route.RequestedModel ?? "(未点名)", outcome, route.Notice ?? "改由网关默认对外模型重试。", runId, route.ExplicitlySelected, gatewayErrorCode ?? "(无)");
         }
         return outcome;
     }
 
-    private static object ModelSubstitutedDiag(MdToPptPageModelRoute route) => new
+    /// <summary>改道后的请求刚被网关接住（收到 Start）：整次运行只通知一次，带上实际模型。</summary>
+    private async Task AnnounceSubstitutionIfFirstAsync(
+        MdToPptPageModelRoute? route,
+        MdToPptPageModelOutcome attemptedWith,
+        string? actualModel,
+        string runId)
+    {
+        if (route?.OnSubstituted == null
+            || attemptedWith != MdToPptPageModelOutcome.UseGatewayDefault
+            || !route.TryMarkSubstitutionAnnounced())
+            return;
+        try { await route.OnSubstituted(actualModel); }
+        catch (Exception ex) { _logger.LogWarning(ex, "[MdToPpt] 改判提示下发失败 runId={RunId}", runId); }
+    }
+
+    private static object ModelSubstitutedDiag(MdToPptPageModelRoute route, string? actualModel) => new
     {
         stage = "model_substituted",
         requestedModel = route.RequestedModel,
-        message = route.Notice,
+        actualModel,
+        message = route.SubstitutionNotice(actualModel),
     };
 
     private static string GenerationPlatformLabel(InfraAgentRuntimeProfile profile)
@@ -4540,6 +4551,7 @@ public class MdToPptController : ControllerBase
                     {
                         actualModel = chunk.Resolution.ActualModel;
                         actualPlatform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
+                        await AnnounceSubstitutionIfFirstAsync(modelRoute, attemptedWith, actualModel, runId);
                         continue;
                     }
                     if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
@@ -4564,7 +4576,7 @@ public class MdToPptController : ControllerBase
                         title, runId, request.ExpectedModel ?? "(未点名)", rejection.ErrorCode ?? "(无)", rejection.Error ?? rejection.Content ?? "(无)");
                     if (modelRoute != null && fullText.Length == 0)
                     {
-                        var now = await ApplyGatewayRejectionAsync(modelRoute, attemptedWith, rejection.ErrorCode, runId);
+                        var now = ApplyGatewayRejection(modelRoute, attemptedWith, rejection.ErrorCode, runId);
                         if (now == MdToPptPageModelOutcome.Reject)
                             return new PageGenerationResult(null, modelRoute.Notice, actualModel, actualPlatform);
                         if (now != attemptedWith) continue;
@@ -4764,7 +4776,11 @@ public class MdToPptController : ControllerBase
             return;
         }
         var modelRoute = CreatePageModelRoute(profile, req.RuntimeProfileId);
-        modelRoute.OnSubstituted = () => EmitAsync("diag", ModelSubstitutedDiag(modelRoute));
+        modelRoute.OnSubstituted = async actual =>
+        {
+            await EmitAsync("model", new { model = actual ?? GenerationModelLabel(profile), platform });
+            await EmitAsync("diag", ModelSubstitutedDiag(modelRoute, actual));
+        };
         await EmitAsync("model", new { model = GenerationModelLabel(profile), platform });
 
         var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
@@ -5100,7 +5116,11 @@ public class MdToPptController : ControllerBase
 
         var platform = GenerationPlatformLabel(profile);
         var modelRoute = CreatePageModelRoute(profile, req.RuntimeProfileId);
-        modelRoute.OnSubstituted = () => WriteDiagAsync(ModelSubstitutedDiag(modelRoute));
+        modelRoute.OnSubstituted = async actual =>
+        {
+            await WriteEventAsync("model", new { model = actual ?? GenerationModelLabel(profile), platform });
+            await WriteDiagAsync(ModelSubstitutedDiag(modelRoute, actual));
+        };
         await WriteEventAsync("model", new { model = GenerationModelLabel(profile), platform });
         await WriteDiagAsync(new
         {
@@ -5227,22 +5247,8 @@ public class MdToPptController : ControllerBase
         MdToPptRun run,
         string? requestedProfileId)
     {
-        var requestId = Guid.NewGuid().ToString("N");
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: requestId,
-            GroupId: null,
-            SessionId: run.Id,
-            UserId: userId,
-            ViewRole: null,
-            DocumentChars: userPrompt.Length,
-            DocumentHash: null,
-            SystemPromptRedacted: "[MdToPpt-Deck]",
-            RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
-            RunId: run.Id));
-
         var modelRoute = CreatePageModelRoute(profile, requestedProfileId);
-        modelRoute.OnSubstituted = () => WriteDiagAsync(ModelSubstitutedDiag(modelRoute));
+        modelRoute.OnSubstituted = actual => WriteDiagAsync(ModelSubstitutedDiag(modelRoute, actual));
         var fullText = new StringBuilder();
         var model = GenerationModelLabel(profile);
         var resolvedPlatform = "LLM Gateway";
@@ -5256,6 +5262,21 @@ public class MdToPptController : ControllerBase
             for (var attempt = 0; attempt < 2; attempt++)
             {
                 var attemptedWith = modelRoute.Outcome;
+                // 每次发送都要新的 requestId：serving 按 (租户, 调用方, requestId) 登记在途请求，
+                // 上一次被拒的流还没清理完就用同一个 id 重发会被 409 挡掉（Codex P1，PR #1629）。
+                var requestId = Guid.NewGuid().ToString("N");
+                using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                    RequestId: requestId,
+                    GroupId: null,
+                    SessionId: run.Id,
+                    UserId: userId,
+                    ViewRole: null,
+                    DocumentChars: userPrompt.Length,
+                    DocumentHash: null,
+                    SystemPromptRedacted: "[MdToPpt-Deck]",
+                    RequestType: "chat",
+                    AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+                    RunId: run.Id));
                 var request = BuildGatewayPageRequest(
                     profile,
                     systemPrompt,
@@ -5278,6 +5299,7 @@ public class MdToPptController : ControllerBase
                             ?? chunk.Resolution.ActualPlatformId
                             ?? resolvedPlatform;
                         await WriteEventAsync("model", new { model, platform = "LLM Gateway" });
+                        await AnnounceSubstitutionIfFirstAsync(modelRoute, attemptedWith, model, run.Id);
                     }
                     else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
                     {
@@ -5301,7 +5323,7 @@ public class MdToPptController : ControllerBase
                     run.Id, request.ExpectedModel ?? "(未点名)", rejection.ErrorCode ?? "(无)", rejection.Error ?? rejection.Content ?? "(无)");
                 if (fullText.Length == 0)
                 {
-                    var now = await ApplyGatewayRejectionAsync(modelRoute, attemptedWith, rejection.ErrorCode, run.Id);
+                    var now = ApplyGatewayRejection(modelRoute, attemptedWith, rejection.ErrorCode, run.Id);
                     if (now == MdToPptPageModelOutcome.Reject)
                     {
                         await PersistRunErrorAsync(run, modelRoute.Notice!);

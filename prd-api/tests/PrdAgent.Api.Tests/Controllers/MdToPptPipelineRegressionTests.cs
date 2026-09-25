@@ -31,8 +31,9 @@ public class MdToPptPipelineRegressionTests
         var first = route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound);
         first.ShouldBe((MdToPptPageModelOutcome.UseGatewayDefault, true));
         route.ExpectedModelFor(route.Outcome).ShouldBeNull("改道后不点名，交给网关按该用途的默认对外模型选");
-        route.Notice.ShouldNotBeNull();
-        route.Notice.ShouldContain("gpt-5.6-sol", customMessage: "改判必须说清原来点名的是谁");
+        var notice = route.SubstitutionNotice("gpt-5.6-sol-2026");
+        notice.ShouldContain("gpt-5.6-sol", customMessage: "改判必须说清原来点名的是谁");
+        notice.ShouldContain("gpt-5.6-sol-2026", customMessage: "改判必须说清这次实际用的是谁");
 
         // 并行的另一页也按旧路线撞了同一堵墙：不重复切换、不升级成拒绝，按新路线重试即可。
         var second = route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound);
@@ -43,6 +44,19 @@ public class MdToPptPipelineRegressionTests
             AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
             modelRoute: route, routeOutcome: route.Outcome);
         wire.ExpectedModel.ShouldBeNull();
+    }
+
+    [Fact]
+    public void PageModelRoute_AnnouncesSubstitutionOnlyOnceAndOnlyAfterSwitching()
+    {
+        // 改判提示只在改道后的请求真被网关接住时发一次：并行几页各自拿到 Start，也只宣布一次；
+        // 没改道之前不宣布（Codex P2：网关若连不点名的请求也拒绝，提前宣布就是谎话）。
+        var route = new MdToPptPageModelRoute("gpt-5.6-sol", explicitlySelected: false);
+        route.TryMarkSubstitutionAnnounced().ShouldBeFalse();
+
+        route.OnGatewayRejected(MdToPptPageModelOutcome.UseProfileModel, PoolUnbound);
+        route.TryMarkSubstitutionAnnounced().ShouldBeTrue();
+        route.TryMarkSubstitutionAnnounced().ShouldBeFalse();
     }
 
     [Fact]
@@ -103,6 +117,22 @@ public class MdToPptPipelineRegressionTests
             customMessage: "MD 转 PPT 页面生成不许在发送前单独调用 ResolveModelAsync 预检模型");
     }
 
+    [Theory]
+    [InlineData("private async Task<PageGenerationResult> RunGatewayPageOnceAsync(")]
+    [InlineData("private async Task RunGatewayDeckStreamAsync(")]
+    public void GatewaySendLoops_AllocateFreshRequestIdAndAnnounceOnStart(string methodSignature)
+    {
+        // serving 按 (租户, 调用方, requestId) 登记在途请求，改道重发复用同一个 id 会被 409 挡掉（Codex P1）；
+        // 改道后的请求被接住时要把实际模型推给前端（Codex P2，ai-model-visibility）。
+        var method = MethodBody(File.ReadAllText(ControllerPath()), methodSignature);
+        var loop = method.IndexOf("for (var attempt = 0;", StringComparison.Ordinal);
+        loop.ShouldBeGreaterThanOrEqualTo(0, $"{methodSignature} 应当有改道重发循环");
+        var requestId = method.IndexOf("var requestId = Guid.NewGuid()", StringComparison.Ordinal);
+        requestId.ShouldBeGreaterThan(loop, $"{methodSignature} 的 requestId 必须在每次发送时新建");
+        method.ShouldContain("AnnounceSubstitutionIfFirstAsync(",
+            customMessage: $"{methodSignature} 收到 Start 时要宣布改判（带实际模型）");
+    }
+
     [Fact]
     public void GatewayPageRequests_AllCarryTheRunModelRoute()
     {
@@ -154,6 +184,16 @@ public class MdToPptPipelineRegressionTests
         inline.Count.ShouldBe(0, "done 事件里的 html 必须经 CompletedRunDoneEvent(run) 下发："
             + string.Join(" | ", inline.Select(m => m.Value)));
         Regex.Matches(source, "\"done\",\\s*CompletedRunDoneEvent\\(run").Count.ShouldBeGreaterThanOrEqualTo(5);
+    }
+
+    private static string MethodBody(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"找不到 {signature}");
+        var next = source.IndexOf("\n    private ", start + signature.Length, StringComparison.Ordinal);
+        var nextInternal = source.IndexOf("\n    internal ", start + signature.Length, StringComparison.Ordinal);
+        var end = new[] { next, nextInternal, source.Length }.Where(i => i > 0).Min();
+        return source[start..end];
     }
 
     private static List<string> CallSites(string source, string token, string definition)
