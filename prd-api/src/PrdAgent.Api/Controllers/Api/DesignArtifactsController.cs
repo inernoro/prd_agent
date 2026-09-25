@@ -122,6 +122,19 @@ public sealed class DesignArtifactsController : ControllerBase
     /// <summary>
     /// 在创建设计任务前读取知识来源的当前权威哈希。响应不返回正文；创建 Run 时仍会二次读取并校验。
     /// </summary>
+    /// <summary>
+    /// 本部署最近 30 天网页生成的真实耗时（按执行器 × 产物类型分组的 P50 / P95），
+    /// 以及「资料到可分享链接」端到端耗时。口径见 <see cref="DesignArtifactTimingStats"/>。
+    /// 只返回聚合数字，不含任何任务正文或用户标识。前端据此给出「预计约 X 分钟」，
+    /// 样本不足 estimateMinSamples 时前端退回经验值并明说数据在积累。
+    /// </summary>
+    [HttpGet("timing-stats")]
+    public async Task<IActionResult> TimingStats(CancellationToken ct)
+    {
+        var result = await DesignArtifactTimingStats.QueryAsync(_db, DateTime.UtcNow, ct);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
     [HttpPost("knowledge-references/resolve")]
     public async Task<IActionResult> ResolveKnowledgeReferences(
         [FromBody] ResolveDesignKnowledgeReferencesRequest request)
