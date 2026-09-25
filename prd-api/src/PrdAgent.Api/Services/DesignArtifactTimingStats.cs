@@ -153,6 +153,23 @@ public static class DesignArtifactTimingStats
             f.Regex(x => x.DeploymentSlug, new BsonRegularExpression($"^{Regex.Escape(durableScope + "::revision::")}")));
     }
 
+    /// <summary>
+    /// 只取「抽样到的任务产出的站点」上的链接，再套上限：先按人取、后按站点筛，
+    /// 同一批人建的无关链接或更早的链接会把新任务的有效链接挤出上限，百分位就偏了。
+    /// 走 idx_web_page_share_links_creator_created（CreatedBy, CreatedAt）；站点条件在索引扫描后过滤。
+    /// 单站点 SiteId 与合集 SiteIds 都认，与 <see cref="WebPageShareLink.TargetSiteIds"/> 同口径。
+    /// </summary>
+    public static FilterDefinition<WebPageShareLink> ShareFilter(
+        IReadOnlyCollection<string> userIds,
+        IReadOnlyCollection<string> siteIds,
+        DateTime since)
+    {
+        var sf = Builders<WebPageShareLink>.Filter;
+        return sf.In(x => x.CreatedBy, userIds)
+               & sf.Gte(x => x.CreatedAt, since)
+               & (sf.In(x => x.SiteId, siteIds) | sf.AnyIn(x => x.SiteIds, siteIds));
+    }
+
     public static FilterDefinition<DesignArtifactRun> RunFilter(string? durableScope, DateTime since)
     {
         var f = Builders<DesignArtifactRun>.Filter;
@@ -198,21 +215,18 @@ public static class DesignArtifactTimingStats
                 row.UserId))
             .ToList();
 
-        var userIds = runs
-            .Where(run => run.Status == RunStatuses.Done && !string.IsNullOrEmpty(run.SiteId))
-            .Select(run => run.UserId)
-            .Where(id => !string.IsNullOrEmpty(id))
-            .Distinct(StringComparer.Ordinal)
+        var sharedCandidates = runs
+            .Where(run => run.Status == RunStatuses.Done && !string.IsNullOrEmpty(run.SiteId) && !string.IsNullOrEmpty(run.UserId))
             .ToList();
+        var userIds = sharedCandidates.Select(run => run.UserId).Distinct(StringComparer.Ordinal).ToList();
+        var siteIds = sharedCandidates.Select(run => run.SiteId!).Distinct(StringComparer.Ordinal).ToList();
 
         var shares = new List<DesignArtifactTimingShareSample>();
         var sharesTruncated = false;
         if (userIds.Count > 0)
         {
-            var sf = Builders<WebPageShareLink>.Filter;
-            // 走 idx_web_page_share_links_creator_created（CreatedBy, CreatedAt）。
             var shareRows = await db.WebPageShareLinks
-                .Find(sf.In(x => x.CreatedBy, userIds) & sf.Gte(x => x.CreatedAt, since))
+                .Find(ShareFilter(userIds, siteIds, since))
                 .SortBy(x => x.CreatedAt)
                 .Limit(ShareSampleCap)
                 .Project(x => new { x.CreatedBy, x.CreatedAt, x.SiteId, x.SiteIds })

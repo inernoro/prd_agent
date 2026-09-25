@@ -200,19 +200,32 @@ export function generationEtaShort(runtimeId: string | null | undefined, timing:
   return typical ? `约 ${typical.min}–${typical.max} 分钟` : '';
 }
 
-/** 发送前那句预期说明，带上数字的来路：最近 N 次的中位数，或明说是经验值。 */
-export function generationEtaSentence(runtimeId: string | null | undefined, timing: GenerationTiming | null): string {
+/**
+ * 退回经验值时，说清为什么退回：统计取到了但样本不够，和统计根本没取到是两回事——
+ * 后者若也写成「还在积累」，接口坏了会被一直当成样本少（降级不许静默）。
+ */
+function fallbackReason(statsUnavailable: boolean): string {
+  return statsUnavailable ? '耗时统计暂时取不到' : '真实耗时数据还在积累';
+}
+
+/** 发送前那句预期说明，带上数字的来路：最近 N 次的中位数，或明说是经验值、以及为什么是经验值。 */
+export function generationEtaSentence(
+  runtimeId: string | null | undefined,
+  timing: GenerationTiming | null,
+  statsUnavailable = false,
+): string {
   if (timing) {
     return `预计约 ${formatEtaDuration(timing.p50Seconds)}（最近 ${timing.sampleCount} 次中位数，慢的时候约 ${formatEtaDuration(timing.p95Seconds)}）`;
   }
   const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
-  return typical ? `按经验值约 ${typical.min}–${typical.max} 分钟，真实耗时数据还在积累` : '';
+  return typical ? `按经验值约 ${typical.min}–${typical.max} 分钟，${fallbackReason(statsUnavailable)}` : '';
 }
 
 export function remainingEstimateText(
   runtimeId: string | null | undefined,
   elapsedSeconds: number,
   timing: GenerationTiming | null = null,
+  statsUnavailable = false,
 ): string {
   if (timing) {
     // P50 / P95 是历史总耗时的里程碑，不是剩余时间：还在跑的任务本身就已经比一部分快样本慢，
@@ -235,8 +248,9 @@ export function remainingEstimateText(
   const low = Math.max(0, Math.ceil(typical.min - elapsedMinutes));
   const high = Math.max(0, Math.ceil(typical.max - elapsedMinutes));
   if (high <= 0) return `已超过经验耗时（${typical.min}–${typical.max} 分钟），任务仍在继续`;
-  if (low <= 0) return `按经验值估算（耗时数据还在积累），预计还需不到 ${high} 分钟`;
-  return `按经验值估算（耗时数据还在积累），预计还需 ${low}–${high} 分钟`;
+  const reason = statsUnavailable ? '耗时统计暂时取不到' : '耗时数据还在积累';
+  if (low <= 0) return `按经验值估算（${reason}），预计还需不到 ${high} 分钟`;
+  return `按经验值估算（${reason}），预计还需 ${low}–${high} 分钟`;
 }
 
 /** 「风格：编辑风格 · 提示词版本 1a2b3c4d」；两项都没有就不出这句。 */

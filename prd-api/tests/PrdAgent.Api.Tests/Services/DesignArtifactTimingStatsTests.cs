@@ -152,6 +152,21 @@ public sealed class DesignArtifactTimingStatsTests
             .ToString();
 
     [Fact]
+    public void ShareFilter_KeepsOnlyLinksOnSampledSitesBeforeTheCap()
+    {
+        var rendered = DesignArtifactTimingStats.ShareFilter(["u1"], ["site-a"], T0)
+            .Render(new RenderArgs<WebPageShareLink>(
+                BsonSerializer.SerializerRegistry.GetSerializer<WebPageShareLink>(),
+                BsonSerializer.SerializerRegistry))
+            .ToString();
+        Assert.Contains("\"CreatedBy\" : { \"$in\" : [\"u1\"] }", rendered, StringComparison.Ordinal);
+        Assert.Contains("\"CreatedAt\" : { \"$gte\"", rendered, StringComparison.Ordinal);
+        // 单站点与合集两种指向都要在库里就筛掉无关链接，否则上限会被它们占满
+        Assert.Contains("\"SiteId\" : { \"$in\" : [\"site-a\"] }", rendered, StringComparison.Ordinal);
+        Assert.Contains("\"SiteIds\" : { \"$in\" : [\"site-a\"] }", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RunFilter_ProductionIsBoundedAndOnlyGenerate()
     {
         var rendered = Render(DesignArtifactTimingStats.RunFilter(null, T0));

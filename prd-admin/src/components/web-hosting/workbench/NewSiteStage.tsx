@@ -106,6 +106,8 @@ export default function NewSiteStage({
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
   /** 本部署最近 30 天的真实耗时；拿不到就是 null，预估退回经验值并明说。 */
   const [timingStats, setTimingStats] = useState<DesignTimingStats | null>(null);
+  // 统计请求失败与「样本不够」分开记：前者要在文案里说「取不到」，而不是冒充还在积累。
+  const [timingUnavailable, setTimingUnavailable] = useState(false);
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -173,8 +175,17 @@ export default function NewSiteStage({
   useEffect(() => {
     let active = true;
     void getDesignTimingStats()
-      .then((res) => { if (active && res.success) setTimingStats(res.data); })
-      .catch(() => { /* 取不到就留 null：文案会写明是经验值 */ });
+      .then((res) => {
+        if (!active) return;
+        if (res.success) { setTimingStats(res.data); return; }
+        setTimingUnavailable(true);
+        console.warn('[web-pages] 生成耗时统计取不到，预估退回经验值', res.error?.code, res.error?.message);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setTimingUnavailable(true);
+        console.warn('[web-pages] 生成耗时统计请求失败，预估退回经验值', error);
+      });
     return () => { active = false; };
   }, []);
 
@@ -197,7 +208,7 @@ export default function NewSiteStage({
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
   const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
   const eta = generationEtaShort(requestRuntime?.id, requestTiming);
-  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming);
+  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming, timingUnavailable);
   const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
@@ -356,7 +367,7 @@ export default function NewSiteStage({
         <RunProgressCard
           title="正在生成网页"
           clock={formatGenerationClock(run.elapsedSeconds)}
-          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming)}
+          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming, timingUnavailable)}
           runtimeLabel={visibleRuntime ? runtimeCardTitle(visibleRuntime) : undefined}
           resolvedModel={run.resolvedModel}
           provenance={runProvenanceText(run.runInfo)}
