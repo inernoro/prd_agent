@@ -7,13 +7,18 @@ import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   getDesignGenerationSettings,
   getDesignRuntimeCapabilities,
+  getDesignTimingStats,
   type DesignGenerationStyle,
   type DesignRuntimeCapability,
+  type DesignTimingStats,
 } from '@/services/real/webPages';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
 import { chooseDesignRuntime, displayedDesignRuntime, runtimeFallbackNotice } from '../siteEditPreview';
 import {
   formatGenerationClock,
+  generationEtaSentence,
+  generationEtaShort,
+  pickGenerationTiming,
   remainingEstimateText,
   runProvenanceText,
 } from '../siteGenerateProgress';
@@ -99,6 +104,8 @@ export default function NewSiteStage({
   const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
   const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
+  /** 本部署最近 30 天的真实耗时；拿不到就是 null，预估退回经验值并明说。 */
+  const [timingStats, setTimingStats] = useState<DesignTimingStats | null>(null);
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -162,6 +169,15 @@ export default function NewSiteStage({
 
   useEffect(() => { onBusyChange?.(run.generating); }, [onBusyChange, run.generating]);
 
+  // 真实耗时只影响「预计多久」这句话，单独取、不挡资料与执行器的加载。
+  useEffect(() => {
+    let active = true;
+    void getDesignTimingStats()
+      .then((res) => { if (active && res.success) setTimingStats(res.data); })
+      .catch(() => { /* 取不到就留 null：文案会写明是经验值 */ });
+    return () => { active = false; };
+  }, []);
+
   const enabledRuntimes = useMemo(() => orderRuntimeCards(capabilities.filter((item) => item.enabled)), [capabilities]);
   const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
   const visibleRuntime = displayedDesignRuntime(
@@ -179,7 +195,10 @@ export default function NewSiteStage({
     || undefined;
   const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
-  const eta = runtimeCopy ? `${runtimeCopy.facts[0].value} ${runtimeCopy.facts[0].unit}` : '';
+  const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
+  const eta = generationEtaShort(requestRuntime?.id, requestTiming);
+  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming);
+  const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
   useEffect(() => {
@@ -337,7 +356,7 @@ export default function NewSiteStage({
         <RunProgressCard
           title="正在生成网页"
           clock={formatGenerationClock(run.elapsedSeconds)}
-          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds)}
+          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming)}
           runtimeLabel={visibleRuntime ? runtimeCardTitle(visibleRuntime) : undefined}
           resolvedModel={run.resolvedModel}
           provenance={runProvenanceText(run.runInfo)}
@@ -409,13 +428,13 @@ export default function NewSiteStage({
         plusItems={plusItems}
         chips={materialChips}
         options={options}
-        sendLabel={run.generating ? '正在生成…' : `生成网页${eta ? ` · 约 ${eta.replace('约 ', '')}` : ''}`}
+        sendLabel={run.generating ? '正在生成…' : `生成网页${eta ? ` · ${eta}` : ''}`}
         sendDisabled={run.generating || Boolean(sendBlocker)}
         sendDisabledReason={run.generating ? undefined : sendBlocker}
         onSend={send}
         hint={runtimeCopy
-          ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${runtimeCopy.footnote}`
-          : '点下去：对话里一步步显示进度，预览里出真实页面；做好自动存进网页托管，只有你能看到。'}
+          ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${etaSentence ? `${etaSentence}。` : ''}${runtimeCopy.continuity}`
+          : `点下去：对话里一步步显示进度，预览里出真实页面；${etaSentence ? `${etaSentence}。` : ''}做好自动存进网页托管，只有你能看到。`}
       />
       <input
         ref={fileInputRef}

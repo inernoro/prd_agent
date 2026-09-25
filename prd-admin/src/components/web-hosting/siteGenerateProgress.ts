@@ -1,5 +1,5 @@
 import type { SseEvent } from '@/lib/sse';
-import type { DesignArtifactRunSummary } from '@/services/real/webPages';
+import type { DesignArtifactRunSummary, DesignTimingStats } from '@/services/real/webPages';
 
 export type SiteGenerationProgressEvent =
   | { kind: 'phase'; message?: string; progress?: number }
@@ -154,23 +154,86 @@ export function formatGenerationClock(totalSeconds: number): string {
 }
 
 /**
- * 两种执行器的「通常耗时」。这是产品文案里承诺给用户的量级（快速约 1 分钟、精细 9–12 分钟），
- * 不是按历史运行算出来的中位数——所以界面上必须写明「按通常耗时估算」，不许冒充实测。
+ * 两种执行器的「经验值」耗时。这是产品文案里承诺给用户的量级（快速约 1–2 分钟、精细 9–12 分钟），
+ * 不是按历史运行算出来的——只在真实样本不足时兜底，界面上必须写明「经验值、数据还在积累」，
+ * 不许冒充实测。有足够样本时一律用后端 /api/design-artifacts/timing-stats 的 P50/P95。
  */
 export const TYPICAL_RUNTIME_MINUTES: Record<string, { min: number; max: number }> = {
   'map-gateway': { min: 1, max: 2 },
   'open-design': { min: 9, max: 12 },
 };
 
-export function remainingEstimateText(runtimeId: string | null | undefined, elapsedSeconds: number): string {
+/** 某执行器网页生成的真实耗时（秒）。只有后端判定 estimateReady 时才会有值。 */
+export interface GenerationTiming {
+  sampleCount: number;
+  p50Seconds: number;
+  p95Seconds: number;
+}
+
+/**
+ * 从耗时统计里挑出这个执行器的网页生成 P50/P95。样本数不够（后端 estimateReady=false）、
+ * 缺百分位、或者统计没拿到，一律返回 null，调用方退回经验值——不拿两三个样本冒充规律。
+ */
+export function pickGenerationTiming(
+  stats: DesignTimingStats | null | undefined,
+  runtimeId: string | null | undefined,
+  artifactType = 'web-page',
+): GenerationTiming | null {
+  if (!stats || !runtimeId) return null;
+  const group = stats.groups.find((item) => item.runtime === runtimeId && item.artifactType === artifactType);
+  const metric = group?.generation;
+  if (!metric || !metric.estimateReady || metric.p50Seconds == null || metric.p95Seconds == null) return null;
+  return { sampleCount: metric.sampleCount, p50Seconds: metric.p50Seconds, p95Seconds: metric.p95Seconds };
+}
+
+/** 不足一分钟按秒说，否则四舍五入到分钟。 */
+export function formatEtaDuration(seconds: number): string {
+  const s = Math.max(0, seconds);
+  if (s < 60) return `${Math.max(1, Math.round(s))} 秒`;
+  return `${Math.round(s / 60)} 分钟`;
+}
+
+/** 发送按钮上那几个字：「约 X 分钟」。真实数据优先，没有就用经验值，都没有给空串。 */
+export function generationEtaShort(runtimeId: string | null | undefined, timing: GenerationTiming | null): string {
+  if (timing) return `约 ${formatEtaDuration(timing.p50Seconds)}`;
+  const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
+  return typical ? `约 ${typical.min}–${typical.max} 分钟` : '';
+}
+
+/** 发送前那句预期说明，带上数字的来路：最近 N 次的中位数，或明说是经验值。 */
+export function generationEtaSentence(runtimeId: string | null | undefined, timing: GenerationTiming | null): string {
+  if (timing) {
+    return `预计约 ${formatEtaDuration(timing.p50Seconds)}（最近 ${timing.sampleCount} 次中位数，慢的时候约 ${formatEtaDuration(timing.p95Seconds)}）`;
+  }
+  const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
+  return typical ? `按经验值约 ${typical.min}–${typical.max} 分钟，真实耗时数据还在积累` : '';
+}
+
+export function remainingEstimateText(
+  runtimeId: string | null | undefined,
+  elapsedSeconds: number,
+  timing: GenerationTiming | null = null,
+): string {
+  if (timing) {
+    const n = timing.sampleCount;
+    const p50 = formatEtaDuration(timing.p50Seconds);
+    const p95 = formatEtaDuration(timing.p95Seconds);
+    if (elapsedSeconds < timing.p50Seconds) {
+      return `预计还需约 ${formatEtaDuration(timing.p50Seconds - elapsedSeconds)}（最近 ${n} 次中位数约 ${p50}，慢的时候约 ${p95}）`;
+    }
+    if (elapsedSeconds < timing.p95Seconds) {
+      return `已超过最近 ${n} 次的中位数（约 ${p50}），慢的时候约 ${p95}，最多还需约 ${formatEtaDuration(timing.p95Seconds - elapsedSeconds)}`;
+    }
+    return `已超过最近 ${n} 次里慢的那档（约 ${p95}），任务仍在继续`;
+  }
   const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
   if (!typical) return '正在积累耗时数据，暂不预估剩余时间';
   const elapsedMinutes = elapsedSeconds / 60;
   const low = Math.max(0, Math.ceil(typical.min - elapsedMinutes));
   const high = Math.max(0, Math.ceil(typical.max - elapsedMinutes));
-  if (high <= 0) return `已超过通常耗时（${typical.min}–${typical.max} 分钟），任务仍在继续`;
-  if (low <= 0) return `按通常耗时估算，预计还需不到 ${high} 分钟`;
-  return `按通常耗时估算，预计还需 ${low}–${high} 分钟`;
+  if (high <= 0) return `已超过经验耗时（${typical.min}–${typical.max} 分钟），任务仍在继续`;
+  if (low <= 0) return `按经验值估算（耗时数据还在积累），预计还需不到 ${high} 分钟`;
+  return `按经验值估算（耗时数据还在积累），预计还需 ${low}–${high} 分钟`;
 }
 
 /** 「风格：编辑风格 · 提示词版本 1a2b3c4d」；两项都没有就不出这句。 */

@@ -84,7 +84,9 @@ describe('生成工作台布局契约', () => {
   it('生成中：每秒更新用时、阶段来自 phase 事件、有心跳、右边是实时页面', () => {
     expect(run).toContain('window.setInterval');
     expect(newStage).toContain('formatGenerationClock(run.elapsedSeconds)');
-    expect(newStage).toContain('remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds)');
+    // 剩余时间带上本执行器的真实 P50/P95（样本不足时为 null，退回经验值）。
+    expect(newStage).toContain('remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming)');
+    expect(newStage).toContain('pickGenerationTiming(timingStats, run.activeRunRuntime)');
     expect(run).toContain('appendGenerationStage(current, item.message, Date.now())');
     expect(newStage).toContain('最近一次回应');
     expect(newStage).toContain('srcDoc={run.previewHtml}');

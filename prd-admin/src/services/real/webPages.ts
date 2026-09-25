@@ -1529,6 +1529,43 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   return apiRequest(api.designArtifacts.runtimeCapabilities());
 }
 
+/** 一项耗时指标（秒）。样本为 0 时百分位为 null；estimateReady 由后端按最少样本数判定。 */
+export interface DesignTimingMetric {
+  sampleCount: number;
+  p50Seconds: number | null;
+  p95Seconds: number | null;
+  estimateReady: boolean;
+}
+
+export interface DesignTimingGroup {
+  runtime: string;
+  artifactType: string;
+  succeededCount: number;
+  failedCount: number;
+  cancelledCount: number;
+  /** 生成耗时：完成时刻 − 创建时刻，只统计成功任务。 */
+  generation: DesignTimingMetric;
+  /** 资料到可分享链接：创建时刻 → 生成者为产出站点建的第一条分享/访问链接。 */
+  materialToShareLink: DesignTimingMetric;
+  materialToShareLinkEligibleRuns: number;
+}
+
+export interface DesignTimingStats {
+  windowDays: number;
+  since: string;
+  generatedAt: string;
+  percentileMethod: string;
+  estimateMinSamples: number;
+  runSampleCap: number;
+  runSamplesTruncated: boolean;
+  shareSamplesTruncated: boolean;
+  groups: DesignTimingGroup[];
+}
+
+export async function getDesignTimingStats(): Promise<ApiResponse<DesignTimingStats>> {
+  return apiRequest(api.designArtifacts.timingStats());
+}
+
 export async function getDesignGenerationSettings(): Promise<ApiResponse<DesignGenerationSettings>> {
   return apiRequest(api.designArtifacts.generationSettings());
 }
