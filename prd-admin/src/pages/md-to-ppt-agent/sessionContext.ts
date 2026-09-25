@@ -16,6 +16,13 @@ function contextFor(id: string, launch: DesignArtifactLaunchContext | null): Ppt
   return { id, sessionKey: SESSION_KEY + suffix, outlineRunKey: OUTLINE_RUN_KEY + suffix, launch };
 }
 
+/**
+ * 「不带资料，直接打开」这类入口要的是一个空白会话：带上这个参数，就不去恢复上一次的会话游标。
+ * 同一 history entry 刷新复用同一个新会话（按 location.key），与显式知识启动同一口径。
+ */
+export const FRESH_PPT_SESSION_PARAM = 'fresh';
+export const FRESH_PPT_SESSION_PATH = `/md-to-ppt-agent?${FRESH_PPT_SESSION_PARAM}=1`;
+
 /** 只存恢复游标，不复制服务器任务。每次显式知识启动独立；同一 history entry 刷新复用。 */
 export function resolvePptSessionContext(
   location: { key: string; search: string },
@@ -25,6 +32,9 @@ export function resolvePptSessionContext(
   if (launch?.target === 'html-ppt') {
     const id = JSON.stringify([location.key, launch.sourceStoreId, launch.sourceEntryId]);
     return contextFor(id, launch);
+  }
+  if (new URLSearchParams(location.search).get(FRESH_PPT_SESSION_PARAM) === '1') {
+    return contextFor(JSON.stringify(['fresh', location.key]), null);
   }
   try {
     const raw = storage.getItem(ACTIVE_CONTEXT_KEY);

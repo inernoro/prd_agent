@@ -62,6 +62,11 @@ export type HtmlPptHandoff =
     leftBehind: string[];
   };
 
+/** 用户没写要求时带过去的默认要求。 */
+export function defaultHtmlPptRequest(title: string): string {
+  return `把《${title}》做成一套网页 PPT`;
+}
+
 /**
  * 把工作台里放好的资料与要求折成一次去 HTML PPT 智能体的跳转。
  *
@@ -94,7 +99,9 @@ export function buildHtmlPptHandoff(input: {
       sourceStoreName: first.storeName,
       ...(input.destinationTeamId ? { destinationTeamId: input.destinationTeamId } : {}),
     },
-    request: input.instruction,
+    // 没写要求时给一句默认要求：交接编号只在有要求时才生成，空要求到那边输入框也是空的、
+    // 发送按钮一直灰着，用户以为跳转坏了。
+    request: input.instruction.trim() || defaultHtmlPptRequest(first.title),
     carriedTitle: first.title,
     leftBehind: [...rest.map((entry) => entry.title), ...input.uploadedFileNames],
   };

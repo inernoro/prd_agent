@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildDesignArtifactLaunchPath } from '@/lib/designArtifactLaunch';
-import { activatePptSessionContext, resolvePptSessionContext } from '../sessionContext';
+import { activatePptSessionContext, FRESH_PPT_SESSION_PATH, resolvePptSessionContext } from '../sessionContext';
 
 function storage() {
   const values = new Map<string, string>();
@@ -79,5 +79,18 @@ describe('HTML PPT 知识启动上下文', () => {
     const saved = { getItem: () => { throw new Error('disabled'); } };
     expect(resolvePptSessionContext({ key: 'menu', search: '' }, saved).id).toBe('legacy');
     expect(resolvePptSessionContext(launch(), saved).launch?.sourceEntryId).toBe('entry-a');
+  });
+
+  it('「不带资料，直接打开」开一个空白会话，不恢复上一次；同一页面刷新仍是这个新会话', () => {
+    const saved = storage();
+    const previous = resolvePptSessionContext(launch(), saved);
+    activatePptSessionContext(previous, saved);
+    const search = FRESH_PPT_SESSION_PATH.slice(FRESH_PPT_SESSION_PATH.indexOf('?'));
+    const fresh = resolvePptSessionContext({ key: 'blank-a', search }, saved);
+    expect(fresh.id).not.toBe(previous.id);
+    expect(fresh.launch).toBeNull();
+    expect(saved.getItem(fresh.sessionKey)).toBeNull();
+    expect(resolvePptSessionContext({ key: 'blank-a', search }, saved)).toEqual(fresh);
+    expect(resolvePptSessionContext({ key: 'blank-b', search }, saved).id).not.toBe(fresh.id);
   });
 });

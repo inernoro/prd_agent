@@ -79,11 +79,11 @@ describe('生成工作台的产出形式：网页 / 网页 PPT', () => {
     expect(html).toContain('团队空间');
   });
 
-  it('没写要求时不带交接编号，PPT 智能体的输入框保持空白', () => {
+  it('没写要求时带一句默认要求过去：那边输入框有字、发送按钮可点', () => {
     const handoff = buildHtmlPptHandoff({ instruction: '   ', knowledge: [entryA], uploadedFileNames: [] });
-    const { path: target } = depart(handoff);
-    expect(target).not.toContain('handoff=');
-    expect(launchOf(target).launch?.handoffId).toBeUndefined();
+    const { path: target, storage } = depart(handoff);
+    expect(launchOf(target).launch?.handoffId).toBe('handoff00001');
+    expect(readLaunchRequest('handoff00001', storage)).toEqual({ status: 'ready', text: '把《三季度复盘》做成一套网页 PPT' });
   });
 
   it('带不过去的稿子与文件逐个列出来，不静默丢弃', () => {
