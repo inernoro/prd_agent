@@ -91,7 +91,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     {
         var transport = OpenDesignTransportResolver.Resolve(_configuration);
         if (transport.Problem != null || transport.BaseUrl == null || transport.ApiKey == null)
-            return new DesignArtifactProviderProbeResult(false, false, false, transport.Problem ?? MissingConfigurationReason);
+        {
+            _logger.LogWarning("设计执行服务的部署配置不完整 transport=service problem={Problem}", transport.Problem ?? MissingConfigurationReason);
+            return new DesignArtifactProviderProbeResult(false, false, false, IncompleteConfigurationReason);
+        }
 
         using var timeout = new CancellationTokenSource(ProbeTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
@@ -103,38 +106,56 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var text = await response.Content.ReadAsStringAsync(linked.Token);
             if (!response.IsSuccessStatusCode)
             {
-                return Unavailable(
-                    $"设计执行服务的能力接口回了 HTTP {(int)response.StatusCode}，OpenDesign 暂不可用：需要排查：" +
-                    $"{transport.BaseUrl} 是否指向 design-opendesign、它是否与本分支同一版本部署");
+                return Logged(Unavailable(
+                    "设计执行服务暂时回报不了自身状态，OpenDesign 暂不可用：请稍后重试；持续出现请管理员查看设计执行服务的状态",
+                    $"capabilities status={(int)response.StatusCode} baseUrl={transport.BaseUrl}"));
             }
-            return MapCapabilities(text, transport.BaseUrl);
+            return Logged(MapCapabilities(text, transport.BaseUrl));
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return Unavailable(
-                $"MAP 在 {(int)ProbeTimeout.TotalSeconds} 秒内没有等到设计执行服务的能力接口回应，OpenDesign 暂不可用：" +
-                "等待服务恢复，无需人工处理；持续出现请查看 design-opendesign 容器是否在运行");
+            return Logged(Unavailable(
+                "设计执行服务没有及时回报自身状态，OpenDesign 暂不可用：等它恢复即可，无需处理；持续出现请管理员查看设计执行服务是否在运行",
+                $"capabilities timeout={(int)ProbeTimeout.TotalSeconds}s baseUrl={transport.BaseUrl}"));
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
             _logger.LogWarning(ex, "读取设计执行服务能力失败 transport=service baseUrl={BaseUrl}", transport.BaseUrl);
             return Unavailable(
-                $"MAP 连不上设计执行服务（{transport.BaseUrl}），OpenDesign 暂不可用：需要排查：design-opendesign 容器是否在运行、" +
-                $"{OpenDesignTransportResolver.BaseUrlKey} 是否写对；需要回退时把 {OpenDesignTransportResolver.TransportKey} 设为 cds-session");
+                "MAP 连不上设计执行服务，OpenDesign 暂不可用：请管理员检查设计执行服务是否在运行，必要时把 OpenDesign 切回经 CDS 会话的旧路径",
+                $"capabilities error={ex.GetType().Name} baseUrl={transport.BaseUrl}").Result;
         }
     }
 
     private const string MissingConfigurationReason =
-        "部署配置没有给出设计执行服务的地址与密钥，OpenDesign 暂不可用：需要处理：补齐 DesignRuntime:OpenDesign:BaseUrl 与 ApiKey";
+        "部署配置没有给出设计执行服务的地址与密钥（DesignRuntime:OpenDesign:BaseUrl 与 ApiKey）";
 
-    private static DesignArtifactProviderProbeResult Unavailable(string reason) =>
-        new(Configured: true, Healthy: false, Enabled: false, Reason: reason);
+    /// <summary>能力原因会经公开的能力接口展示给普通用户：只说结果与下一步，配置键与地址只进日志。</summary>
+    private const string IncompleteConfigurationReason =
+        "OpenDesign 直连设计执行服务所需的部署配置不完整，暂不可用：请管理员补齐设计执行服务的地址与内部密钥，或把 OpenDesign 切回经 CDS 会话的旧路径";
+
+    /// <summary>
+    /// 探针结论：<see cref="Result"/> 的 Reason 会经公开能力接口与 RUNTIME_NOT_READY 交给普通用户，
+    /// 只写结果与下一步；HTTP 状态、协议名、服务原文、内部地址放 <see cref="Diagnostic"/>，只进日志。
+    /// </summary>
+    internal sealed record ProbeVerdict(DesignArtifactProviderProbeResult Result, string? Diagnostic);
+
+    private static ProbeVerdict Unavailable(string userReason, string diagnostic) =>
+        new(new DesignArtifactProviderProbeResult(Configured: true, Healthy: false, Enabled: false, Reason: userReason), diagnostic);
+
+    private DesignArtifactProviderProbeResult Logged(ProbeVerdict verdict)
+    {
+        if (verdict.Diagnostic != null)
+            _logger.LogWarning("设计执行服务暂不可用 transport=service reason={Reason} diagnostic={Diagnostic}",
+                verdict.Result.Reason, verdict.Diagnostic);
+        return verdict.Result;
+    }
 
     /// <summary>
     /// 能力描述 → 目录事实。判据：协议对得上且服务自报健康就可用；忙（busy / acceptingTasks=false）
     /// 不算不可用——隔离方案 A 下一个实例一次只跑一个任务，新任务排队等它就行。
     /// </summary>
-    internal static DesignArtifactProviderProbeResult MapCapabilities(string json, Uri baseUrl)
+    internal static ProbeVerdict MapCapabilities(string json, Uri baseUrl)
     {
         JsonObject? capabilities;
         try
@@ -148,15 +169,16 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         if (capabilities == null)
         {
             return Unavailable(
-                $"设计执行服务（{baseUrl}）的能力接口返回的不是 JSON 对象，OpenDesign 暂不可用：需要排查：该地址是否真的指向 design-opendesign");
+                "设计执行服务回报的状态无法识别，OpenDesign 暂不可用：请管理员核对设计执行服务的地址配置与部署版本",
+                $"capabilities not a JSON object baseUrl={baseUrl}");
         }
 
         var protocol = ReadString(capabilities, "protocol");
         if (!string.Equals(protocol, ExecutorProtocol, StringComparison.Ordinal))
         {
             return Unavailable(
-                $"设计执行服务报告的协议是「{protocol ?? "未声明"}」，与 MAP 要求的 {ExecutorProtocol} 不一致，OpenDesign 暂不可用：" +
-                "需要处理：把 design-opendesign 部署成与 MAP 同一版本");
+                "设计执行服务与 MAP 的版本不一致，OpenDesign 暂不可用：请管理员把设计执行服务部署成与 MAP 同一版本",
+                $"protocol={protocol ?? "missing"} expected={ExecutorProtocol} baseUrl={baseUrl}");
         }
 
         if (capabilities["healthy"]?.GetValueKind() != JsonValueKind.True)
@@ -164,13 +186,16 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var reason = capabilities["reason"] as JsonObject;
             var serviceMessage = ReadString(reason, "message");
             var code = ReadString(reason, "code");
-            // 服务的原因本身已按「谁 + 做了什么 → 于是怎样 → 要不要紧」渲染好，原样接在主语后面。
-            return Unavailable(string.IsNullOrWhiteSpace(serviceMessage)
-                ? "设计执行服务自报暂不可用、但没有给出原因，OpenDesign 暂不可用：需要排查：design-opendesign 容器日志"
-                : $"设计执行服务自报暂不可用（{code ?? "unknown"}）：{serviceMessage}");
+            // 服务原文（错误码、引擎与镜像细节）只进日志；给用户的一句按「等一等」与「要人处理」两类说。
+            var transient = code is "engine_starting" or "engine_restarting";
+            return Unavailable(
+                transient
+                    ? "设计执行服务正在启动设计引擎，OpenDesign 暂不可用：等它就绪即可，无需处理，稍后重试"
+                    : "设计执行服务自报暂不可用，OpenDesign 暂不可用：请稍后重试；持续出现请管理员查看设计执行服务的状态",
+                $"unhealthy code={code ?? "unknown"} message={serviceMessage ?? "none"} baseUrl={baseUrl}");
         }
 
-        return new DesignArtifactProviderProbeResult(Configured: true, Healthy: true, Enabled: true, Reason: null);
+        return new ProbeVerdict(new DesignArtifactProviderProbeResult(Configured: true, Healthy: true, Enabled: true, Reason: null), null);
     }
 
     // ───────────────────────── 执行 ─────────────────────────
@@ -265,7 +290,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                         {
                             SubmitTimeoutCode => $"设计执行服务在 {(int)RequestTimeout.TotalSeconds} 秒内没有回应这次提交，约 {(int)wait.TotalSeconds} 秒后重试",
                             SubmitConnectionLostCode => $"与设计执行服务的连接在提交时中断，约 {(int)wait.TotalSeconds} 秒后重新提交（同一任务重复提交不会重复生成）",
-                            _ => $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
+                            "engine_starting" or "engine_restarting" => $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
+                            _ => $"设计执行服务暂时不能接单，约 {(int)wait.TotalSeconds} 秒后重试提交（同一任务重复提交不会重复生成）",
                         },
                         Progress: translator.Progress);
                     await Delay(wait, ct);
@@ -520,7 +546,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 return new SubmitOutcome(SubmitKind.Busy,
                     RetryAfter: retryAfter ?? TimeSpan.FromSeconds(DefaultBusyRetrySeconds), Code: code, Slot: slot, Status: status);
             }
-            if (status == 503 && retryable)
+            // 服务明说可重试的 5xx（引擎就绪前的 503、顶层处理器兜底的 500）：同一任务幂等重交，
+            // 走与不可用相同的有上限等待，而不是当场判用户这次失败。
+            if (status >= 500 && retryable)
             {
                 return new SubmitOutcome(SubmitKind.Unavailable,
                     RetryAfter: retryAfter ?? TimeSpan.FromSeconds(DefaultUnavailableRetrySeconds),

@@ -398,7 +398,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     {
         var result = OpenDesignServiceArtifactExecutor.MapCapabilities(
             """{"protocol":"map-design-executor-v1","healthy":true,"busy":true,"acceptingTasks":false,"state":"running","reason":null,"conditions":[]}""",
-            new Uri(BaseUrl));
+            new Uri(BaseUrl)).Result;
 
         result.Enabled.ShouldBeTrue();
         result.Healthy.ShouldBeTrue();
@@ -406,27 +406,35 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Fact]
-    public void Probe_UnhealthyIsDisabledWithTheServicesOwnReason()
+    public void Probe_UnhealthyIsDisabled_UserSeesPlainReason_DiagnosticKeepsTheServicesOwn()
     {
-        var result = OpenDesignServiceArtifactExecutor.MapCapabilities(
+        var verdict = OpenDesignServiceArtifactExecutor.MapCapabilities(
             """{"protocol":"map-design-executor-v1","healthy":false,"busy":false,"acceptingTasks":false,"state":"blocked","reason":{"code":"workspace_reset_failed","message":"本服务在上一个任务结束后清空工作目录失败"}}""",
             new Uri(BaseUrl));
 
+        var result = verdict.Result;
         result.Enabled.ShouldBeFalse();
         result.Configured.ShouldBeTrue();
-        result.Reason!.ShouldContain("workspace_reset_failed");
-        result.Reason!.ShouldContain("本服务在上一个任务结束后清空工作目录失败");
+        // 能力原因经公开接口交给普通用户：只说结果与下一步，服务原文、错误码与内部地址只进日志。
+        result.Reason!.ShouldStartWith("设计执行服务自报暂不可用");
+        AssertNoTransportDiagnostics(result.Reason);
+        result.Reason.ShouldNotContain("workspace_reset_failed");
+        verdict.Diagnostic!.ShouldContain("workspace_reset_failed");
+        verdict.Diagnostic!.ShouldContain("本服务在上一个任务结束后清空工作目录失败");
     }
 
     [Fact]
     public void Probe_WrongProtocolIsDisabled()
     {
-        var result = OpenDesignServiceArtifactExecutor.MapCapabilities(
+        var verdict = OpenDesignServiceArtifactExecutor.MapCapabilities(
             """{"protocol":"map-design-executor-v2","healthy":true}""",
             new Uri(BaseUrl));
 
-        result.Enabled.ShouldBeFalse();
-        result.Reason!.ShouldContain("map-design-executor-v2");
+        verdict.Result.Enabled.ShouldBeFalse();
+        verdict.Result.Reason!.ShouldContain("版本不一致");
+        AssertNoTransportDiagnostics(verdict.Result.Reason!);
+        verdict.Result.Reason.ShouldNotContain("map-design-executor");
+        verdict.Diagnostic!.ShouldContain("map-design-executor-v2");
     }
 
     [Fact]
@@ -460,7 +468,61 @@ public sealed class OpenDesignServiceArtifactExecutorTests
 
         result.Configured.ShouldBeFalse();
         result.Enabled.ShouldBeFalse();
-        result.Reason!.ShouldContain(OpenDesignTransportResolver.TransportKey);
+        result.Reason!.ShouldContain("部署配置不完整");
+        AssertNoTransportDiagnostics(result.Reason!);
+    }
+
+    [Fact]
+    public async Task Probe_NonSuccessCapabilitiesDoesNotLeakStatusOrAddress()
+    {
+        var service = new FakeDesignService();
+        service.OnCapabilities(() => new HttpResponseMessage(HttpStatusCode.BadGateway));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var result = await executor.ProbeAsync("user-1", CancellationToken.None);
+
+        result.Enabled.ShouldBeFalse();
+        result.Reason!.ShouldStartWith("设计执行服务暂时回报不了自身状态");
+        AssertNoTransportDiagnostics(result.Reason);
+        result.Reason.ShouldNotContain("502");
+    }
+
+    [Fact]
+    public async Task RetryableServerError_IsResubmittedInsteadOfFailingTheRun()
+    {
+        // 服务顶层处理器兜底返回 500 + retryable: true：同一任务幂等重交，而不是当场判失败。
+        var service = new FakeDesignService();
+        var submissions = 0;
+        service.OnSubmit(_ => ++submissions == 1
+            ? Json(HttpStatusCode.InternalServerError, new JsonObject
+            {
+                ["error"] = new JsonObject { ["code"] = "internal_error", ["message"] = "unexpected", ["retryable"] = true },
+            })
+            : Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(Event(1, "done", new JsonObject { ["artifactRef"] = "ref" })));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        service.Submissions.Count.ShouldBe(2);
+        chunks.ShouldContain(chunk => chunk.Type == "phase" && chunk.Content!.Contains("暂时不能接单"));
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+    }
+
+    [Fact]
+    public async Task NonRetryableServerError_StillFailsWithoutLeakingDetails()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.InternalServerError, new JsonObject
+        {
+            ["error"] = new JsonObject { ["code"] = "internal_error", ["message"] = "boom", ["retryable"] = false },
+        }));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, BuildRun()));
+
+        service.Submissions.Count.ShouldBe(1);
+        AssertNoTransportDiagnostics(error.Message);
     }
 
     // ───────────── 夹具 ─────────────
