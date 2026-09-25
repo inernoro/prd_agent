@@ -65,10 +65,13 @@ describe('网页生成预估：真实 P50/P95 优先，样本不足老实说是�
     expect(generationEtaShort('open-design', timing)).toBe('约 10 分钟');
     expect(generationEtaSentence('map-gateway', null)).toBe('按经验值约 1–2 分钟，真实耗时数据还在积累');
     // 统计请求失败要说「取不到」，不许冒充「还在积累」（降级不许静默）
-    expect(generationEtaSentence('map-gateway', null, true)).toBe('按经验值约 1–2 分钟，耗时统计暂时取不到');
-    expect(remainingEstimateText('open-design', 5 * 60, null, true)).toContain('耗时统计暂时取不到');
-    expect(remainingEstimateText('open-design', 5 * 60, null, true)).not.toContain('还在积累');
+    expect(generationEtaSentence('map-gateway', null, 'unavailable')).toBe('按经验值约 1–2 分钟，耗时统计暂时取不到');
+    expect(remainingEstimateText('open-design', 5 * 60, null, 'unavailable')).toContain('耗时统计暂时取不到');
+    expect(remainingEstimateText('open-design', 5 * 60, null, 'unavailable')).not.toContain('还在积累');
     expect(generationEtaShort('map-gateway', null)).toBe('约 1–2 分钟');
+    // 还在读统计时不许说「还在积累」：一条卡住的请求会让这句话永远停在「积累」
+    expect(generationEtaSentence('map-gateway', null, 'loading')).toBe('按经验值约 1–2 分钟，正在读取真实耗时');
+    expect(remainingEstimateText('open-design', 5 * 60, null, 'loading')).not.toContain('还在积累');
     // 既没有数据也没有经验值：不编
     expect(generationEtaSentence('unknown', null)).toBe('');
     expect(generationEtaShort('unknown', null)).toBe('');
@@ -88,7 +91,7 @@ describe('网页生成预估：真实 P50/P95 优先，样本不足老实说是�
       expect(text).not.toMatch(/还需|最多/);
     }
     // 没有真实数据时仍走经验值，并且说清楚是经验值
-    expect(remainingEstimateText('open-design', 5 * 60, null)).toContain('按经验值估算（耗时数据还在积累）');
+    expect(remainingEstimateText('open-design', 5 * 60, null)).toContain('按经验值估算（真实耗时数据还在积累）');
   });
 
   it('不足一分钟按秒说，不写「0 分钟」', () => {

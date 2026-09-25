@@ -21,6 +21,8 @@ import {
   pickGenerationTiming,
   remainingEstimateText,
   runProvenanceText,
+  TIMING_STATS_TIMEOUT_MS,
+  type TimingStatsState,
 } from '../siteGenerateProgress';
 import {
   DESIGN_ATTACHMENT_ACCEPT,
@@ -106,8 +108,9 @@ export default function NewSiteStage({
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
   /** 本部署最近 30 天的真实耗时；拿不到就是 null，预估退回经验值并明说。 */
   const [timingStats, setTimingStats] = useState<DesignTimingStats | null>(null);
-  // 统计请求失败与「样本不够」分开记：前者要在文案里说「取不到」，而不是冒充还在积累。
-  const [timingUnavailable, setTimingUnavailable] = useState(false);
+  // 统计请求的状态单独记：还在读、读到了、读不到三者文案不同；读不到不许冒充还在积累，
+  // 卡住的请求也不许让「正在读取」一直挂着——请求有上限，超时即按读不到处理。
+  const [timingState, setTimingState] = useState<TimingStatsState>('loading');
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -174,16 +177,16 @@ export default function NewSiteStage({
   // 真实耗时只影响「预计多久」这句话，单独取、不挡资料与执行器的加载。
   useEffect(() => {
     let active = true;
-    void getDesignTimingStats()
+    void getDesignTimingStats(TIMING_STATS_TIMEOUT_MS)
       .then((res) => {
         if (!active) return;
-        if (res.success) { setTimingStats(res.data); return; }
-        setTimingUnavailable(true);
+        if (res.success) { setTimingStats(res.data); setTimingState('ready'); return; }
+        setTimingState('unavailable');
         console.warn('[web-pages] 生成耗时统计取不到，预估退回经验值', res.error?.code, res.error?.message);
       })
       .catch((error) => {
         if (!active) return;
-        setTimingUnavailable(true);
+        setTimingState('unavailable');
         console.warn('[web-pages] 生成耗时统计请求失败，预估退回经验值', error);
       });
     return () => { active = false; };
@@ -208,7 +211,7 @@ export default function NewSiteStage({
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
   const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
   const eta = generationEtaShort(requestRuntime?.id, requestTiming);
-  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming, timingUnavailable);
+  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming, timingState);
   const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
@@ -367,7 +370,7 @@ export default function NewSiteStage({
         <RunProgressCard
           title="正在生成网页"
           clock={formatGenerationClock(run.elapsedSeconds)}
-          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming, timingUnavailable)}
+          estimate={remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming, timingState)}
           runtimeLabel={visibleRuntime ? runtimeCardTitle(visibleRuntime) : undefined}
           resolvedModel={run.resolvedModel}
           provenance={runProvenanceText(run.runInfo)}

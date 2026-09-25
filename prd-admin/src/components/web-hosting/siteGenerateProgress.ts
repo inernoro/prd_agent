@@ -201,31 +201,39 @@ export function generationEtaShort(runtimeId: string | null | undefined, timing:
 }
 
 /**
- * 退回经验值时，说清为什么退回：统计取到了但样本不够，和统计根本没取到是两回事——
- * 后者若也写成「还在积累」，接口坏了会被一直当成样本少（降级不许静默）。
+ * 耗时统计请求的三种状态。退回经验值时要说清为什么退回：还在读、读到了但样本不够、
+ * 根本没读到是三回事——读不到若也写成「还在积累」，接口坏了会被一直当成样本少
+ * （降级不许静默）；还在读若写成「还在积累」，一条卡住的请求会让这句话永远停在那里。
  */
-function fallbackReason(statsUnavailable: boolean): string {
-  return statsUnavailable ? '耗时统计暂时取不到' : '真实耗时数据还在积累';
+export type TimingStatsState = 'loading' | 'ready' | 'unavailable';
+
+/** 统计请求的上限。超过就按「取不到」处理，不让预估停在「正在读取」。 */
+export const TIMING_STATS_TIMEOUT_MS = 8000;
+
+function fallbackReason(state: TimingStatsState): string {
+  if (state === 'unavailable') return '耗时统计暂时取不到';
+  if (state === 'loading') return '正在读取真实耗时';
+  return '真实耗时数据还在积累';
 }
 
 /** 发送前那句预期说明，带上数字的来路：最近 N 次的中位数，或明说是经验值、以及为什么是经验值。 */
 export function generationEtaSentence(
   runtimeId: string | null | undefined,
   timing: GenerationTiming | null,
-  statsUnavailable = false,
+  statsState: TimingStatsState = 'ready',
 ): string {
   if (timing) {
     return `预计约 ${formatEtaDuration(timing.p50Seconds)}（最近 ${timing.sampleCount} 次中位数，慢的时候约 ${formatEtaDuration(timing.p95Seconds)}）`;
   }
   const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
-  return typical ? `按经验值约 ${typical.min}–${typical.max} 分钟，${fallbackReason(statsUnavailable)}` : '';
+  return typical ? `按经验值约 ${typical.min}–${typical.max} 分钟，${fallbackReason(statsState)}` : '';
 }
 
 export function remainingEstimateText(
   runtimeId: string | null | undefined,
   elapsedSeconds: number,
   timing: GenerationTiming | null = null,
-  statsUnavailable = false,
+  statsState: TimingStatsState = 'ready',
 ): string {
   if (timing) {
     // P50 / P95 是历史总耗时的里程碑，不是剩余时间：还在跑的任务本身就已经比一部分快样本慢，
@@ -248,7 +256,7 @@ export function remainingEstimateText(
   const low = Math.max(0, Math.ceil(typical.min - elapsedMinutes));
   const high = Math.max(0, Math.ceil(typical.max - elapsedMinutes));
   if (high <= 0) return `已超过经验耗时（${typical.min}–${typical.max} 分钟），任务仍在继续`;
-  const reason = statsUnavailable ? '耗时统计暂时取不到' : '耗时数据还在积累';
+  const reason = fallbackReason(statsState);
   if (low <= 0) return `按经验值估算（${reason}），预计还需不到 ${high} 分钟`;
   return `按经验值估算（${reason}），预计还需 ${low}–${high} 分钟`;
 }

@@ -1561,8 +1561,9 @@ export interface DesignTimingStats {
   groups: DesignTimingGroup[];
 }
 
-export async function getDesignTimingStats(): Promise<ApiResponse<DesignTimingStats>> {
-  return apiRequest(api.designArtifacts.timingStats());
+/** 耗时统计只影响一句预估：给它一个上限，超时回 TIMEOUT，调用方据此明说「取不到」。 */
+export async function getDesignTimingStats(timeoutMs?: number): Promise<ApiResponse<DesignTimingStats>> {
+  return apiRequest(api.designArtifacts.timingStats(), timeoutMs ? { timeoutMs } : undefined);
 }
 
 export async function getDesignGenerationSettings(): Promise<ApiResponse<DesignGenerationSettings>> {
