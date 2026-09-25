@@ -1,4 +1,11 @@
-export type DesignArtifactTarget = 'web-page' | 'html-ppt';
+/** 全部生成目标。新增一种就在这里加，入口组件与路由守卫都从这份清单派生。 */
+export const DESIGN_ARTIFACT_TARGETS = ['web-page', 'html-ppt'] as const;
+export type DesignArtifactTarget = (typeof DESIGN_ARTIFACT_TARGETS)[number];
+
+/** 每个目标落到哪条路由：唯一定义处，守卫测试据此核对路由真的注册过。 */
+export function designArtifactLaunchPathname(target: DesignArtifactTarget): string {
+  return target === 'html-ppt' ? '/md-to-ppt-agent' : '/web-pages';
+}
 
 export interface DesignArtifactLaunchContext {
   target: DesignArtifactTarget;
@@ -84,8 +91,7 @@ export function buildDesignArtifactLaunchPath(context: DesignArtifactLaunchConte
   if (context.handoffId && HANDOFF_ID_PATTERN.test(context.handoffId)) params.set('handoff', context.handoffId);
   if (context.destinationTeamId && TEAM_ID_PATTERN.test(context.destinationTeamId))
     params.set('destTeam', context.destinationTeamId);
-  const pathname = context.target === 'html-ppt' ? '/md-to-ppt-agent' : '/web-pages';
-  return `${pathname}?${params.toString()}`;
+  return `${designArtifactLaunchPathname(context.target)}?${params.toString()}`;
 }
 
 export function parseDesignArtifactLaunch(search: string): DesignArtifactLaunchContext | null {
@@ -94,7 +100,7 @@ export function parseDesignArtifactLaunch(search: string): DesignArtifactLaunchC
   const sourceStoreId = params.get('sourceStore')?.trim();
   const sourceEntryId = params.get('sourceEntry')?.trim();
   const sourceTitle = params.get('sourceTitle')?.trim();
-  if ((target !== 'web-page' && target !== 'html-ppt') || !sourceStoreId || !sourceEntryId || !sourceTitle)
+  if (!isDesignArtifactTarget(target) || !sourceStoreId || !sourceEntryId || !sourceTitle)
     return null;
   const handoffId = params.get('handoff')?.trim();
   const destinationTeamId = params.get('destTeam')?.trim();
@@ -112,4 +118,8 @@ export function parseDesignArtifactLaunch(search: string): DesignArtifactLaunchC
 /** 取当前标签页的 sessionStorage；隐私模式或沙箱里访问本身会抛错，此时返回 null。 */
 export function sessionStorageOrNull(): Storage | null {
   try { return typeof window === 'undefined' ? null : window.sessionStorage; } catch { return null; }
+}
+
+function isDesignArtifactTarget(value: string | null): value is DesignArtifactTarget {
+  return (DESIGN_ARTIFACT_TARGETS as readonly string[]).includes(value ?? '');
 }

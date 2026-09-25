@@ -13,6 +13,20 @@ namespace PrdAgent.Api.Tests;
 
 public sealed class DesignKnowledgeSnapshotResolverTests
 {
+    [Theory]
+    [InlineData("audio/webm", true)]
+    [InlineData("Audio/MP4", true)]
+    [InlineData("video/mp4", true)]
+    [InlineData(" audio/mpeg", true)]
+    [InlineData("text/plain", false)]
+    [InlineData("application/pdf", false)]
+    [InlineData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", false)]
+    [InlineData("", false)]
+    public void IsMediaPayload_OnlyAudioAndVideoAreExcludedFromOriginals(string mime, bool expected)
+    {
+        Assert.Equal(expected, DesignKnowledgeSnapshotResolver.IsMediaPayload(new Attachment { MimeType = mime }));
+    }
+
     [Fact]
     [Trait("Category", TestCategories.Integration)]
     public async Task ResolveAsync_ReadsServerOwnedContentAndMetadata()
