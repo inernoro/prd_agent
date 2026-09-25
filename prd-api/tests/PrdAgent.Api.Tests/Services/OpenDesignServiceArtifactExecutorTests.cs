@@ -189,6 +189,30 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Fact]
+    public async Task CancellationWhileSubmissionIsInFlight_StillAsksTheServiceToCancel()
+    {
+        // 服务已经收到提交（可能已接单），MAP 却在拿到 202 之前被取消：
+        // 不发取消，服务唯一的执行位就会被一个已被放弃的任务白占到超时。
+        var service = new FakeDesignService();
+        using var cts = new CancellationTokenSource();
+        service.OnSubmit(_ =>
+        {
+            cts.Cancel();
+            throw new TaskCanceledException("MAP 在提交响应到达前被取消");
+        });
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in executor.ExecuteAsync(BuildRun(), null, cts.Token)) { }
+        });
+
+        service.Submissions.Count.ShouldBe(1);
+        service.CancelCalls.ShouldBe(1);
+        service.CancelAuthorization.ShouldBe($"Bearer {ApiKey}");
+    }
+
+    [Fact]
     public async Task Unauthorized_FailsWithExternalCauseFirstAndNeverFallsBackToCds()
     {
         var service = new FakeDesignService();

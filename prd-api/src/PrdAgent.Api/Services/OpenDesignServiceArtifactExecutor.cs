@@ -199,6 +199,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         var requestBody = BuildTaskRequest(run, workspace, attempt, TaskTimeoutSeconds);
         var translator = new OpenDesignEventTranslator(run.Operation == DesignArtifactOperations.Edit, run.Progress);
         var accepted = false;
+        // 提交请求一旦发出，服务就可能已经接下任务——哪怕 MAP 没等到 202（调用方取消、响应丢失、超时）。
+        // 收尾时按「可能已接单」处理，否则服务唯一的执行位会被一个已被放弃的任务白占到超时。
+        var dispatched = false;
         var remoteTerminal = false;
         var queuedSince = DateTime.UtcNow;
         DateTime? unavailableSince = null;
@@ -207,6 +210,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         {
             while (true)
             {
+                dispatched = true;
                 var submit = await SubmitOnceAsync(transport, run.Id, requestBody, ct);
                 if (submit.Kind == SubmitKind.Accepted)
                 {
@@ -340,9 +344,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         }
         finally
         {
-            // 已提交、未见终态就退出（MAP 取消、超时、读流失败）：请服务停掉任务并清空工作目录。
+            // 提交过、未见终态就退出（MAP 取消、提交结果不明、超时、读流失败）：请服务停掉任务并清空工作目录。
+            // 服务其实没接下时取消返回 404，只记日志，无副作用；取消按 taskId 定位，碰不到别的任务。
             // 用 CancellationToken.None：这一步恰恰要在调用方已取消之后做完。
-            if (accepted && !remoteTerminal)
+            if ((accepted || dispatched) && !remoteTerminal)
                 await CancelRemoteTaskAsync(transport, run.Id);
         }
     }
