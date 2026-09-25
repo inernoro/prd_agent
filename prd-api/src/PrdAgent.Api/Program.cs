@@ -360,6 +360,8 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.HostedSiteService>()
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteRevisionService, PrdAgent.Infrastructure.Services.HostedSiteRevisionService>();
+// 离线 HTML 打包（站内资源内嵌成单文件）；权限由 HostedSiteExportController 先过站点 / 分享门禁
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOfflineExportService, PrdAgent.Infrastructure.Services.HostedSiteOfflineExportService>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.HostedSitePreviewAccessService>();
 // 预览 iframe 的可嵌入来源与 CORS 信任来源同源同表（见 HostedSitePreviewEmbedOptions 注释）。
 builder.Services.AddSingleton(
@@ -1091,7 +1093,7 @@ builder.Services.AddCors(options =>
                 })
                 .AllowAnyHeader()
                 .AllowAnyMethod()
-                .WithExposedHeaders("X-Perm-Fingerprint");
+                .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count");
             return;
         }
 
@@ -1099,7 +1101,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .WithExposedHeaders("X-Perm-Fingerprint");
+            .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count");
     });
 });
 

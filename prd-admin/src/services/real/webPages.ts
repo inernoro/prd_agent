@@ -1,4 +1,4 @@
-import { apiRequest } from '@/services/real/apiClient';
+import { apiDownload, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
 import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -1413,6 +1413,32 @@ export async function getShareSiteContent(
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }
+}
+
+/**
+ * 下载单文件离线 HTML（站内工作台）：服务端把站内样式、脚本、图片、字体内嵌进一个文件。
+ * 要求对这个网页有编辑权。文件下载不能走 apiRequest 的 JSON 通道，走 apiDownload（同一套鉴权与令牌刷新）。
+ * 「漏了什么」在响应头里，由 offlineExport.ts 的 readOfflineExportSummary 解析。
+ */
+export function downloadSiteOfflineHtml(siteId: string, fallbackFileName: string): Promise<ApiDownloadedFile> {
+  return apiDownload(api.webPages.offlineHtml(siteId), fallbackFileName);
+}
+
+/**
+ * 经分享链接下载单文件离线 HTML（需登录）。分享门禁与分享页取正文是同一条：
+ * 撤销 / 过期 / 可见性 / 密码。密码不对时后端回 403 SHARE_PASSWORD_REQUIRED（不是 401，免得被当成登录失效）。
+ */
+export function downloadShareOfflineHtml(
+  token: string,
+  siteId: string | undefined,
+  password: string | undefined,
+  fallbackFileName: string,
+): Promise<ApiDownloadedFile> {
+  const params = new URLSearchParams();
+  if (siteId) params.set('siteId', siteId);
+  if (password) params.set('password', password);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return apiDownload(api.webPages.shareOfflineHtml(token, query), fallbackFileName);
 }
 
 /** 经分享链接发表评论（需登录） */
