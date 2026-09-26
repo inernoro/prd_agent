@@ -44,9 +44,10 @@ import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
 import {
   buildPrebuiltGateRejection,
+  enforceAgentPrebuiltPolicy,
   findNonPrebuiltDefaultModes,
   isAgentGatedRequest,
-  isAgentPrebuiltOnly,
+  isAgentPrebuiltPolicyEnabled,
 } from '../services/agent-prebuilt-gate.js';
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
@@ -3180,6 +3181,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      agentPrebuiltPolicy: 'prebuilt-only' | 'prefer-prebuilt' | 'unrestricted';
       agentPrebuiltOnly: boolean;
       resourceChipDisplay: {
         icon?: boolean;
@@ -3274,7 +3276,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltPolicy' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
     if (body.inheritGlobalEnv !== undefined) {
       if (typeof body.inheritGlobalEnv !== 'boolean') {
         res.status(400).json({
@@ -3314,18 +3316,34 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // the UI; coerce everything truthy but 'false' into a real boolean.
       patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
     }
-    if (body.agentPrebuiltOnly !== undefined) {
-      // Agent 极速版门禁的开关本身只能由真人改：机器凭据能关掉它，门禁就形同虚设。
+    if (body.agentPrebuiltPolicy !== undefined || body.agentPrebuiltOnly !== undefined) {
+      // Agent 部署策略本身只能由真人改：机器凭据能把严格策略改成宽松策略，门禁就形同虚设。
       // 与 agent-prebuilt-gate.ts 同一口径（isMachineCaller），不看 X-CDS-Trigger——
-      // 没有任何内部派发需要改这个开关。
+      // 没有任何内部派发需要改这项策略。
       if (isMachineCaller(req)) {
         res.status(403).json({
           error: 'agent_prebuilt_only_human_only',
-          message: '「Agent 只允许极速版部署」开关只能由真人在项目设置页修改，Agent 凭据不得开启或关闭。',
+          message: 'Agent 部署策略只能由真人在项目设置页修改，Agent 凭据不得调整。',
         });
         return;
       }
-      patch.agentPrebuiltOnly = body.agentPrebuiltOnly === true || body.agentPrebuiltOnly === 'true' as unknown as boolean;
+      const allowedPolicies = new Set(['prebuilt-only', 'prefer-prebuilt', 'unrestricted']);
+      const policy = body.agentPrebuiltPolicy !== undefined
+        ? body.agentPrebuiltPolicy
+        : (body.agentPrebuiltOnly === true || body.agentPrebuiltOnly === 'true' as unknown as boolean)
+          ? 'prebuilt-only'
+          : 'unrestricted';
+      if (!allowedPolicies.has(policy)) {
+        res.status(400).json({
+          error: 'validation',
+          field: 'agentPrebuiltPolicy',
+          message: 'Agent 部署策略必须是 prebuilt-only、prefer-prebuilt 或 unrestricted',
+        });
+        return;
+      }
+      patch.agentPrebuiltPolicy = policy;
+      // 同步旧字段，保证旧客户端和旧脚本回读时不会把严格模式误显示为关闭。
+      patch.agentPrebuiltOnly = policy === 'prebuilt-only';
     }
     if (body.resourceChipDisplay !== undefined) {
       const incoming = body.resourceChipDisplay;
@@ -3370,8 +3388,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
       // Agent 极速版门禁：项目默认会在建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支，
       // 之后豁免的 webhook 部署就会在宿主上编译——机器凭据不得把它写成非极速版（Codex PR #1513 P1）。
-      if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
-        const violations = findNonPrebuiltDefaultModes(projectProfiles, next, { coverAllProfiles: true });
+      if (isAgentPrebuiltPolicyEnabled(project) && isAgentGatedRequest(req)) {
+        const violations = enforceAgentPrebuiltPolicy(
+          project,
+          projectProfiles,
+          findNonPrebuiltDefaultModes(projectProfiles, next, { coverAllProfiles: true }),
+        );
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(project, projectProfiles, violations, { operation: 'project-default' }));
           return;
@@ -3462,8 +3484,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const profiles = stateService.getBuildProfilesForProject(project.id);
     // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
     // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。
-    if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
-      const violations = findNonPrebuiltDefaultModes(profiles, defaults);
+    if (isAgentPrebuiltPolicyEnabled(project) && isAgentGatedRequest(req)) {
+      const violations = enforceAgentPrebuiltPolicy(
+        project,
+        profiles,
+        findNonPrebuiltDefaultModes(profiles, defaults),
+      );
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(project, profiles, violations, { operation: 'project-default' }));
         return;

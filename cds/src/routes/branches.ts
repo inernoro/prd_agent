@@ -26,11 +26,14 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import {
   buildPrebuiltGateRejection,
+  buildPrebuiltPolicyMutationRejection,
+  enforceAgentPrebuiltPolicy,
   findNonPrebuiltProfiles,
   isAgentGatedRequest,
-  isAgentPrebuiltOnly,
+  isAgentPrebuiltPolicyEnabled,
   isPrebuiltMode,
   PREBUILT_DEFINITION_FIELDS,
+  shouldDisableSourceFallback,
   withoutSourceFallback,
 } from '../services/agent-prebuilt-gate.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
@@ -12431,15 +12434,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const currentProfiles = managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry);
 
-    // Agent 极速版门禁（2026-09-08）：项目开了 agentPrebuiltOnly，机器凭据发起的部署只要有一个
-    // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
+    // Agent 部署策略门禁：严格模式下任一源码服务都拒绝；优先模式只拒绝“明明有极速版
+    // 能力却仍选择源码”的服务。CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
     // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）。项目按 `entry.projectId || 'default'`
     // 取：没存 projectId 的老分支归 default 项目，不能因 deployProject 为空就漏判（Codex 第二轮 P1）。
     // 判的对象是下面真正要部署的 `profiles`（带 versionId 时是版本物化后的清单，全是不可变镜像，
     // 不编译源码），不是 currentProfiles——否则分支基线已切回源码模式时，重放一个合规的历史版本也会被
     // 误拦（Codex 第七轮 P2）。
     const gateProject = stateService.getProject(entry.projectId || 'default');
-    const agentPrebuiltGated = Boolean(gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req));
+    const agentPrebuiltGated = Boolean(gateProject && isAgentPrebuiltPolicyEnabled(gateProject) && isAgentGatedRequest(req));
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -12700,7 +12703,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 版本物化后的清单在执行时不再套分支覆盖（运行循环里 selectedDeploymentVersion ? profile : resolve…），
       // 判定也不能套：分支此刻若选了显式 prebuilt: false 的模式，重放合规版本会被误拦（Codex 第八轮 P2）。
-      const violations = findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : entry);
+      const violations = enforceAgentPrebuiltPolicy(
+        gateProject,
+        gateProfiles,
+        findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : entry),
+      );
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(gateProject, gateProfiles, violations, {
           branchId: entry.id,
@@ -12889,11 +12896,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
           // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
           // 未门禁时保持原样（版本 / managed 传已物化清单，否则由 proxy 内部自行 resolve）。
-          profiles: agentPrebuiltGated
+          profiles: agentPrebuiltGated && gateProject
             ? (selectedDeploymentVersion || managedPlan
                 ? profiles
                 : currentProfiles.map((p) => resolveEffectiveProfile(p, entry))
-              ).map((p) => withoutSourceFallback(p))
+              ).map((p) => shouldDisableSourceFallback(gateProject, p) ? withoutSourceFallback(p) : p)
             : (selectedDeploymentVersion || managedPlan ? profiles : undefined),
         });
       } catch (err) {
@@ -13433,18 +13440,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
-          const effectiveProfile = selectedDeploymentVersion
+          const resolvedProfile = selectedDeploymentVersion
             ? profile
-            : agentPrebuiltGated
-              ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
-              : resolveEffectiveProfile(profile, entry);
+            : resolveEffectiveProfile(profile, entry);
+          const sourceFallbackDisabled = Boolean(
+            agentPrebuiltGated
+            && gateProject
+            && shouldDisableSourceFallback(gateProject, resolvedProfile),
+          );
+          const effectiveProfile = sourceFallbackDisabled
+            ? withoutSourceFallback(resolvedProfile)
+            : resolvedProfile;
           const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
             ? ` [${effectiveProfile.deployModes[activeMode].label}]`
             : '';
           const overrideLabel = (branchOverride ? ' (分支自定义)' : '')
-            + (agentPrebuiltGated && effectiveProfile.prebuiltImage ? ' (极速版门禁：镜像缺失不回退源码编译)' : '');
+            + (sourceFallbackDisabled && effectiveProfile.prebuiltImage ? ' (Agent 部署策略：镜像缺失不回退源码编译)' : '');
           const serviceStartTime = Date.now();
 
           // ── 全局构建并发闸 ──
@@ -14321,9 +14334,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     // Agent 极速版门禁：单服务部署与整分支部署同一道闸（Codex PR #1513 P1：此端点绕过了整分支入口）。
     const singleDeployProject = stateService.getProject(entry.projectId || 'default');
-    const singleDeployGated = Boolean(singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && isAgentGatedRequest(req));
+    const singleDeployGated = Boolean(singleDeployProject && isAgentPrebuiltPolicyEnabled(singleDeployProject) && isAgentGatedRequest(req));
     if (singleDeployGated && singleDeployProject) {
-      const violations = findNonPrebuiltProfiles([profile], entry);
+      const violations = enforceAgentPrebuiltPolicy(
+        singleDeployProject,
+        [profile],
+        findNonPrebuiltProfiles([profile], entry),
+      );
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(singleDeployProject, [profile], violations, {
           branchId: entry.id,
@@ -14463,16 +14480,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Resolve baseline → branch override → deploy-mode override
       // 门禁下摘掉源码回退（同整分支部署）。
-      const effectiveProfile = singleDeployGated
-        ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
-        : resolveEffectiveProfile(profile, entry);
+      const resolvedProfile = resolveEffectiveProfile(profile, entry);
+      const sourceFallbackDisabled = Boolean(
+        singleDeployGated
+        && singleDeployProject
+        && shouldDisableSourceFallback(singleDeployProject, resolvedProfile),
+      );
+      const effectiveProfile = sourceFallbackDisabled
+        ? withoutSourceFallback(resolvedProfile)
+        : resolvedProfile;
       const branchOverride = entry.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
         ? ` [${effectiveProfile.deployModes[activeMode].label}]`
         : '';
       const overrideLabel = (branchOverride ? ' (分支自定义)' : '')
-        + (singleDeployGated && effectiveProfile.prebuiltImage ? ' (极速版门禁：镜像缺失不回退源码编译)' : '');
+        + (sourceFallbackDisabled && effectiveProfile.prebuiltImage ? ' (Agent 部署策略：镜像缺失不回退源码编译)' : '');
 
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
@@ -15805,14 +15828,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     {
       const overrideBody = (req.body ?? {}) as Record<string, unknown>;
       const overrideProject = stateService.getProject(entry.projectId || 'default');
-      if (overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)) {
+      if (overrideProject && isAgentPrebuiltPolicyEnabled(overrideProject) && isAgentGatedRequest(req)) {
         const hasModeField = Object.prototype.hasOwnProperty.call(overrideBody, 'activeDeployMode');
         // 判的必须是**将要落盘的原值**，不能先 trim：路由按原值持久化、运行时按原值精确查模式，
         // `" express "` 这种值判成 express 放行后存下来查不到、落回源码基线（Codex 第十轮 P1）。
         const pendingMode = hasModeField
           ? (typeof overrideBody.activeDeployMode === 'string' && overrideBody.activeDeployMode !== '' ? overrideBody.activeDeployMode : undefined)
           : (profile.activeDeployMode || undefined);
-        const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
+        const violations = enforceAgentPrebuiltPolicy(
+          overrideProject,
+          [profile],
+          findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode }),
+        );
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {
             branchId: entry.id,
@@ -16955,10 +16982,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     {
       const gateProject = stateService.getProject(entry.projectId || 'default');
       const gateProfile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
-      if (gateProfile && gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
-        const violations = findNonPrebuiltProfiles([gateProfile], entry, {
-          profileId, modeId: gateProfile.activeDeployMode || undefined,
-        });
+      if (gateProfile && gateProject && isAgentPrebuiltPolicyEnabled(gateProject) && isAgentGatedRequest(req)) {
+        const violations = enforceAgentPrebuiltPolicy(
+          gateProject,
+          [gateProfile],
+          findNonPrebuiltProfiles([gateProfile], entry, {
+            profileId, modeId: gateProfile.activeDeployMode || undefined,
+          }),
+        );
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(gateProject, [gateProfile], violations, {
             branchId: entry.id,
@@ -18059,14 +18090,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 口径只拦 managedBuild：prebuilt 标记本身不挂载源码、不编译（台账 G3），新建时不拦。
       {
         const gateProject = stateService.getProject(profile.projectId);
-        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req) && profile.managedBuild) {
-          res.status(409).json({
-            error: 'agent_prebuilt_only',
-            message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：managedBuild 会让 CDS 宿主编译源码，Agent 不得新建带它的构建配置，请由真人在项目设置页调整。`,
-            projectId: gateProject.id,
-            violations: [],
-            hint: '极速版配置只需 deployModes 里带 prebuilt: true 的模式或 prebuiltImage: true 的镜像站点，不需要 managedBuild。',
-          });
+        const managedBuildViolations = profile.managedBuild
+          ? enforceAgentPrebuiltPolicy(
+            gateProject,
+            [profile],
+            findNonPrebuiltProfiles([profile], undefined, {
+              profileId: profile.id,
+              modeId: profile.activeDeployMode || undefined,
+            }),
+          )
+          : [];
+        if (gateProject && isAgentPrebuiltPolicyEnabled(gateProject) && isAgentGatedRequest(req) && managedBuildViolations.length > 0) {
+          res.status(409).json(buildPrebuiltPolicyMutationRejection(
+            gateProject,
+            `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：managedBuild 会让 CDS 宿主编译源码，Agent 不得新建带它的构建配置，请由真人在项目设置页调整。`,
+            '极速版配置只需 deployModes 里带 prebuilt: true 的模式或 prebuiltImage: true 的镜像站点，不需要 managedBuild。',
+          ));
           return;
         }
       }
@@ -18152,16 +18191,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       {
         const gateProject = stateService.getProject(existing.projectId || 'default');
         const patch = incomingBody && typeof incomingBody === 'object' ? incomingBody as Record<string, unknown> : {};
-        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+        if (gateProject && isAgentPrebuiltPolicyEnabled(gateProject) && isAgentGatedRequest(req)) {
           const touchedDefinition = PREBUILT_DEFINITION_FIELDS.filter((f) => f in patch);
           if (touchedDefinition.length > 0) {
-            res.status(409).json({
-              error: 'agent_prebuilt_only',
-              message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：构建配置的 ${touchedDefinition.join(' / ')} 定义了什么算极速版，Agent 不得修改，请由真人在项目设置页调整。`,
-              projectId: gateProject.id,
-              violations: [],
-              hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
-            });
+            res.status(409).json(buildPrebuiltPolicyMutationRejection(
+              gateProject,
+              `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」启用了 Agent 预构建策略：构建配置的 ${touchedDefinition.join(' / ')} 定义了什么算极速版，Agent 不得修改，请由真人在项目设置页调整。`,
+              '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+            ));
             return;
           }
           if ('activeDeployMode' in patch) {
@@ -18169,11 +18206,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
             const nextMode = typeof patch.activeDeployMode === 'string' && patch.activeDeployMode !== ''
               ? patch.activeDeployMode
               : undefined;
-            if (!isPrebuiltMode(existing, nextMode)) {
+            const violations = enforceAgentPrebuiltPolicy(
+              gateProject,
+              [existing],
+              isPrebuiltMode(existing, nextMode)
+                ? []
+                : [{
+                  profileId: existing.id,
+                  profileName: existing.name || existing.id,
+                  modeId: nextMode || '',
+                  modeLabel: nextMode ? (existing.deployModes?.[nextMode]?.label || nextMode) : '源码构建（无部署模式）',
+                }],
+            );
+            if (violations.length > 0) {
               const modeLabel = nextMode ? (existing.deployModes?.[nextMode]?.label || nextMode) : '源码构建（无部署模式）';
-              res.status(409).json(buildPrebuiltGateRejection(gateProject, [existing], [{
-                profileId: existing.id, profileName: existing.name || existing.id, modeId: nextMode || '', modeLabel,
-              }], { operation: 'profile-default' }));
+              res.status(409).json(buildPrebuiltGateRejection(gateProject, [existing], violations.map((violation) => ({
+                ...violation,
+                modeLabel,
+              })), { operation: 'profile-default' }));
               return;
             }
           }
@@ -18397,16 +18447,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const gatedProjectIds = new Set(
           targets
             .map((p) => p.projectId || 'default')
-            .filter((pid) => isAgentPrebuiltOnly(stateService.getProject(pid))),
+            .filter((pid) => isAgentPrebuiltPolicyEnabled(stateService.getProject(pid))),
         );
         if (gatedProjectIds.size > 0) {
-          res.status(409).json({
-            error: 'agent_prebuilt_only',
-            message: `项目 ${[...gatedProjectIds].join('、')} 要求 Agent 只使用极速版（CI 预构建）部署：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
-            projectId: [...gatedProjectIds][0],
-            violations: [],
-            hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
-          });
+          const firstProjectId = [...gatedProjectIds][0];
+          const firstProject = stateService.getProject(firstProjectId)!;
+          res.status(409).json(buildPrebuiltPolicyMutationRejection(
+            firstProject,
+            `项目 ${[...gatedProjectIds].join('、')} 启用了 Agent 预构建策略：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
+            '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+          ));
           return;
         }
       }
@@ -18467,8 +18517,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 同款风险），Agent 不得把它写成非 prebuilt 模式，也不得清空回源码基线。
       {
         const gateProject = stateService.getProject(profile.projectId || 'default');
-        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
-          const violations = findNonPrebuiltProfiles([profile], undefined, { profileId: id, modeId: mode || undefined });
+        if (gateProject && isAgentPrebuiltPolicyEnabled(gateProject) && isAgentGatedRequest(req)) {
+          const violations = enforceAgentPrebuiltPolicy(
+            gateProject,
+            [profile],
+            findNonPrebuiltProfiles([profile], undefined, { profileId: id, modeId: mode || undefined }),
+          );
           if (violations.length > 0) {
             res.status(409).json(buildPrebuiltGateRejection(gateProject, [profile], violations, {
               operation: 'profile-default',

@@ -516,9 +516,9 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
       '不跨项目操作',
       '长任务持续回报阶段与进度',
       '只使用 CDS API 返回的预览入口',
-      '只用极速版（CI 预构建）部署，不在 CDS 宿主跑源码编译，也不改项目级默认部署模式',
+      '读取并遵守项目级 Agent 部署策略；优先使用 CI 预构建，不把项目策略误报成 CDS 全局限制，也不改项目级默认部署模式',
     ],
-    completion: ['目标提交已部署', 'branch status 的 deployRuntime.prebuilt 为 true', '服务健康', '真实预览入口可访问'],
+    completion: ['目标提交已部署', '部署模式符合项目 Agent 部署策略', '服务健康', '真实预览入口可访问'],
     pagePath: (projectId) => projectPath('/branches', projectId),
   },
   'build-diagnostics': {

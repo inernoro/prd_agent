@@ -279,24 +279,24 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     ? '优先使用 cdscli health、auth inspect、auth check 和能力目录中已登记的系统只读接口；系统写操作只通过受保护页面与人类审批完成，不手写旁路请求。'
     : '优先使用 cdscli health、project show、branch status、deployment-run、diagnose、help-me-check、branch logs、smoke 和 preview-url 等已经存在的能力，不手写旁路请求替代 CDS 技能。';
   const missionLines = missionPromptLines(context);
-  // 极速版（CI 预构建）是 Agent 分支的必备品，不是可选项：CDS 宿主的编译算力由全部项目
-  // 共享，Agent 一旦用源码模式（dev / static）部署，就是在宿主上跑 dotnet build / pnpm build
-  // 试错，一条分支就能把别人的部署排到队尾（2026-07-27 宿主全量重编宕机）。镜像交给仓库 CI
-  // 按 commit 构建，CDS 只 pull + run；判据是 profile list 的 prebuiltModes（deployModes 里
-  // prebuilt 为 true 的模式），不认模式名。切换只写分支覆盖（branch set-mode），不动项目级
-  // 默认（profile deploy-mode 会静默改掉同项目其它分支的部署方式）。
+  // Agent 必须先读项目级部署策略，不能把 CDS 的“建议优先预构建”误报成全局硬限制。
+  // prebuilt-only 是硬门禁；prefer-prebuilt 只在服务已经具备预构建能力时强制使用；
+  // unrestricted 不增加限制。判据仍是 profile list 的 prebuiltModes（deployModes 里 prebuilt
+  // 为 true 的模式），不认模式名。切换只写分支覆盖（branch set-mode），不动项目级默认。
   // 系统级任务没有项目分支可部署，这一段不输出。
   const deploySelfTestLines = target.kind === 'system'
     ? []
     : [
       '',
-      '六、部署只用极速版（CI 预构建），并自己测试直到完成',
-      'CDS 宿主的编译算力是全部项目共享的稀缺资源。Agent 分支一律使用极速版（CI 预构建）部署：镜像由仓库 CI 按 commit 构建，CDS 只做 docker pull 与启动，不在宿主上跑 dotnet build、pnpm build 等源码编译。dev、static 等源码编译模式只留给人类在页面上手动选择，Agent 不得为了快、为了试错或为了绕过 CI 而使用。',
-      '触发任何部署之前先运行 cdscli profile list --project <projectId>，只认返回里 prebuiltModes 列出的模式（本仓库命名为 express）；模式名不是判据，deployModes 里 prebuilt 为 true 才是。prebuiltImage 为 true 的 profile 本身就是镜像站点，无需切换。',
+      '六、读取项目 Agent 部署策略，再部署并自己测试直到完成',
+      '触发部署前先运行 cdscli project show <projectId>，读取 agentPrebuiltPolicy。字段缺省时兼容旧字段：agentPrebuiltOnly=true 等于 prebuilt-only，否则等于 unrestricted。不得把某个项目的策略说成“CDS 新版本全局强制”。',
+      '三种策略必须严格区分：prebuilt-only 要求所有 Agent 服务都走 CI 预构建；prefer-prebuilt 要求已有预构建能力的服务必须使用，但没有任何预构建模式的服务允许源码构建；unrestricted 不额外限制部署模式。Agent 不得自行修改项目策略。',
+      'CDS 宿主的编译算力由全部项目共享。无论策略是否强制，都优先使用极速版（CI 预构建）：镜像由仓库 CI 按 commit 构建，CDS 只做 docker pull 与启动；源码构建只用于项目策略允许且服务确实没有预构建能力的场景，不得用来绕过正在工作的 CI。',
+      '运行 cdscli profile list --project <projectId>，只认返回里 prebuiltModes 列出的模式；模式名不是判据，deployModes 里 prebuilt 为 true 才是。prebuiltImage 为 true 的 profile 本身就是镜像站点，无需切换。',
       '对每个要部署的 profile 运行 cdscli branch set-mode <branchId> <profileId> <prebuiltModes 中的模式名>，只写当前分支的覆盖。不要用 profile deploy-mode 改项目级默认：那会静默改掉同项目其它分支的部署方式。',
-      '部署后用 cdscli branch status <branchId> 核对 deployRuntime.prebuilt 为 true，才算极速版真正生效。镜像还没构建好时分支在等 CI，不是失败：用 branch status 与 deployment-run 持续等待并回报阶段，不得切回源码编译模式抢时间。',
-      'profile list 没有任何 prebuilt 模式、也没有 prebuiltImage 站点时，说明项目还没接 CI 预构建：如实报告这个缺口并停在这一步等用户决定，不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名。',
-      '项目开启「Agent 只允许极速版部署」门禁时，非极速版的部署与模式写入会被 CDS 以 409 agent_prebuilt_only 拒绝，响应里列出被拦的服务与可切的模式：按它说的切到极速版重试，不要绕过、不要改项目设置、也不要请求真人替你关闭门禁。',
+      '选择极速版后，用 cdscli branch status <branchId> 核对 deployRuntime.prebuilt 为 true。镜像还没构建好时分支在等 CI，不是失败：持续读取 branch status 与 deployment-run 并回报阶段，不得切回源码编译模式抢时间。',
+      'profile list 没有任何 prebuilt 模式、也没有 prebuiltImage 站点时：prebuilt-only 下停止部署，准确列出缺口并让真人选择“补 CI”或在响应给出的项目设置路径调整策略；prefer-prebuilt 和 unrestricted 下允许源码构建，但必须明确回报本次会占用宿主构建资源。不得手写不存在的模式名。',
+      '收到 409 agent_prebuilt_only 时，读取 policy、settingsPath、violations 和 recovery：recovery.commands 非空就逐条执行后重试；kind=configure-prebuilt-or-change-policy 时列出具体服务，并把 settingsPath 交给真人决定。不要笼统地说“新版 CDS 强制”，不要把可自动执行的切换甩给同事。',
       'push 之后不要停下来等我测试。按「push → 等 CI 镜像就绪 → 部署 → branch status、branch logs、smoke、preview-url 验证 → 修代码 → 再 push」循环，直到部署就绪、冒烟通过、真实预览入口能打开为止；只有需要页面批准的授权和高风险操作才回来找我。',
       '每一轮失败先读 deployment-run 与 branch logs 找到第一个有效错误，改代码后重新 push 让 CI 重新出镜像；不得靠在 CDS 宿主反复源码编译来试错，也不得把「请你手动验证」或「等待用户测试」当作完成。',
     ];
