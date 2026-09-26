@@ -9,14 +9,16 @@
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { PlatformsPage } from '@/pages/PlatformsPage';
 import { ExchangesPage } from '@/pages/ExchangesPage';
-import { HINT_TEXT } from '@/lib/typography';
+import { TabBar } from '@/components/ui';
 import { GAP } from '@/lib/surface';
 
-type UpstreamKind = 'provider' | 'exchange';
+type UpstreamView = 'provider' | 'exchange' | 'catalog' | 'imagegen';
 
-const KINDS: Array<{ id: UpstreamKind; label: string; hint: string }> = [
-  { id: 'provider', label: '自有上游', hint: '说 OpenAI / Claude 协议的供应方，填密钥即可接入' },
-  { id: 'exchange', label: '转接上游', hint: '协议不标准的供应方，由 Exchange 转接成网关能调度的形态' },
+const VIEWS: Array<{ key: UpstreamView; label: string }> = [
+  { key: 'provider', label: 'Provider' },
+  { key: 'exchange', label: '转接上游' },
+  { key: 'catalog', label: '模型名录' },
+  { key: 'imagegen', label: '生图契约' },
 ];
 
 export function UpstreamsPage() {
@@ -24,46 +26,28 @@ export function UpstreamsPage() {
   const location = useLocation();
   // 旧地址 /exchanges 直接落到转接上游那一段，不做 302——保住页内锚点（#image-layering）
   const fromExchangeRoute = location.pathname.endsWith('/exchanges');
-  const raw = params.get('kind');
-  const kind: UpstreamKind = raw === 'exchange' || (raw === null && fromExchangeRoute) ? 'exchange' : 'provider';
+  const rawView = params.get('view');
+  const legacyKind = params.get('kind');
+  const view: UpstreamView = VIEWS.some((item) => item.key === rawView)
+    ? rawView as UpstreamView
+    : legacyKind === 'exchange' || (legacyKind === null && fromExchangeRoute)
+      ? 'exchange'
+      : 'provider';
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
-      <div role="tablist" aria-label="上游类型" data-testid="upstream-kind-tabs" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'wrap' }}>
-        {KINDS.map((item) => {
-          const active = kind === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              title={item.hint}
-              onClick={() => {
-                const next = new URLSearchParams(params);
-                next.set('kind', item.id);
-                setParams(next, { replace: true });
-              }}
-              style={{
-                /* 刻意做成紧凑的段选择器而不是带说明的大卡：
-                   两段各自的页面自己会交代它是什么，这里只负责切换。
-                   （大卡还会给这一屏多引入一种卡片内边距，被排版漂移检测判红。） */
-                padding: '5px 12px', cursor: 'pointer',
-                borderRadius: 'var(--radius-sm)',
-                border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
-                background: active ? 'var(--accent-soft)' : 'transparent',
-                color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                fontSize: 'var(--fs-secondary)',
-                fontWeight: active ? 600 : 400,
-              }}
-            >
-              {item.label}
-            </button>
-          );
-        })}
-        <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>{KINDS.find((x) => x.id === kind)?.hint}</span>
-      </div>
-      {kind === 'exchange' ? <ExchangesPage /> : <PlatformsPage />}
+    <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+      <TabBar
+        ariaLabel="上游配置分类"
+        items={VIEWS}
+        activeKey={view}
+        onChange={(nextView) => {
+          const next = new URLSearchParams(params);
+          next.set('view', nextView);
+          next.set('kind', nextView === 'exchange' ? 'exchange' : 'provider');
+          setParams(next, { replace: true });
+        }}
+      />
+      {view === 'exchange' ? <ExchangesPage /> : <PlatformsPage section={view} />}
     </div>
   );
 }

@@ -14,7 +14,7 @@
 import { useEffect, useState } from 'react';
 import { createCatalogEntry, deleteCatalogEntry, getCatalogEntries, updateCatalogEntry } from '@/lib/api';
 import type { CatalogEntriesData, CatalogEntryItem, UpsertCatalogEntryRequest } from '@/lib/types';
-import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
+import { Button, Chip, HelpTip, InlineAlert, SectionLoader } from '@/components/ui';
 import { RowActions } from '@/components/RowActions';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -296,23 +296,26 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <header style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h3 className="lg-title" style={{ margin: 0 }}>模型名录</h3>
-          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>
-            名录回答的是「这个模型是什么」——算哪几种用途、能不能吃图。名录外的模型只能按模型名猜，
-            猜不出用途就是一个「哑」模型：入库了，但模型池选型时不参与任何用途匹配。
-          </p>
-          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>
-            这里补登的赢；没补登的回落到代码内置那 {data.builtinCount} 条。
-            补完<strong>立刻生效</strong>，上游清单那一屏刷新就能看见——不用发版，也不用等任何缓存。
-          </p>
+          <HelpTip label="查看模型名录说明">
+            <p style={{ margin: 0 }}>
+              名录登记模型的用途和图片输入能力。补登内容优先生效，未补登的模型回落到代码内置的 {data.builtinCount} 条。
+            </p>
+            <p style={{ margin: '8px 0 0' }}>保存后立即生效，刷新上游清单即可查看。</p>
+          </HelpTip>
         </div>
-        {canWrite ? (
-          <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(null) })}>
-            补登一个模型
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <Button variant="secondary" size="sm" onClick={() => setShowBuiltin((value) => !value)}>
+            {showBuiltin ? '查看补登名录' : `查看内置名录（${data.builtinCount}）`}
           </Button>
-        ) : null}
+          {canWrite ? (
+            <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(null) })}>
+              补登模型
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       {error ? (
@@ -324,13 +327,66 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
         </InlineAlert>
       ) : null}
 
-      {data.items.length === 0 ? (
-        <p style={{ ...HINT_TEXT, margin: 0 }}>
-          还没补登过，名录只有代码内置那 {data.builtinCount} 条。
-          在上游清单里看到「名录外」的模型时，点那一行的「补登」最省事——模型标识会自动填好。
-        </p>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
+      {!showBuiltin ? (
+        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th style={TABLE_HEAD_CELL}>模型标识</th>
+              <th style={TABLE_HEAD_CELL}>名字</th>
+              <th style={TABLE_HEAD_CELL}>用途</th>
+              <th style={TABLE_HEAD_CELL}>图片</th>
+              <th style={TABLE_HEAD_CELL}>等价写法</th>
+              <th style={TABLE_HEAD_CELL} />
+            </tr>
+          </thead>
+          <tbody>
+            {data.items.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ ...TABLE_CELL, color: 'var(--text-muted)', textAlign: 'center', padding: 24 }}>
+                  暂无补登模型
+                </td>
+              </tr>
+            ) : data.items.map((item) => (
+              <tr key={item.id}>
+                <td style={TABLE_CELL}>
+                  <code>{item.canonicalId}</code>
+                  {item.enabled === false ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
+                </td>
+                <td style={TABLE_CELL}>
+                  {item.displayName || '（未命名）'}
+                  {item.vendor ? <span style={HINT_TEXT}> · {item.vendor}</span> : null}
+                </td>
+                <td style={TABLE_CELL}>
+                  <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {item.capabilities.map((c) => (
+                      <Chip key={c} label={c} color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={capabilityLabelCn(c)} />
+                    ))}
+                  </span>
+                </td>
+                <td style={TABLE_CELL}>
+                  {item.requiresImageInput ? '必须给图' : item.acceptsImageInput ? '能吃图' : '—'}
+                </td>
+                <td style={TABLE_CELL}>{item.aliases.length > 0 ? `${item.aliases.length} 个` : '—'}</td>
+                <td style={TABLE_CELL}>
+                  {canWrite ? (
+                    <RowActions
+                      actions={[
+                        { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id ?? null, draft: draftFromEntry(item) }) },
+                        { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
+                      ]}
+                    />
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {showBuiltin ? (
+        <div data-testid="model-catalog-table" style={{ overflowX: 'auto', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
@@ -338,40 +394,21 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
                 <th style={TABLE_HEAD_CELL}>名字</th>
                 <th style={TABLE_HEAD_CELL}>用途</th>
                 <th style={TABLE_HEAD_CELL}>图片</th>
-                <th style={TABLE_HEAD_CELL}>等价写法</th>
                 <th style={TABLE_HEAD_CELL} />
               </tr>
             </thead>
             <tbody>
-              {data.items.map((item) => (
-                <tr key={item.id}>
-                  <td style={TABLE_CELL}>
-                    <code>{item.canonicalId}</code>
-                    {item.enabled === false ? <Chip label="已停用" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
-                  </td>
-                  <td style={TABLE_CELL}>
-                    {item.displayName || '（未命名）'}
-                    {item.vendor ? <span style={HINT_TEXT}> · {item.vendor}</span> : null}
-                  </td>
-                  <td style={TABLE_CELL}>
-                    <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                      {item.capabilities.map((c) => (
-                        <Chip key={c} label={c} color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={capabilityLabelCn(c)} />
-                      ))}
-                    </span>
-                  </td>
-                  <td style={TABLE_CELL}>
-                    {item.requiresImageInput ? '必须给图' : item.acceptsImageInput ? '能吃图' : '—'}
-                  </td>
-                  <td style={TABLE_CELL}>{item.aliases.length > 0 ? `${item.aliases.length} 个` : '—'}</td>
+              {data.builtin.map((item) => (
+                <tr key={item.canonicalId}>
+                  <td style={TABLE_CELL}><code>{item.canonicalId}</code></td>
+                  <td style={TABLE_CELL}>{item.displayName}</td>
+                  <td style={TABLE_CELL}>{item.capabilities.join(' · ')}</td>
+                  <td style={TABLE_CELL}>{item.requiresImageInput ? '必须给图' : item.acceptsImageInput ? '能吃图' : '—'}</td>
                   <td style={TABLE_CELL}>
                     {canWrite ? (
-                      <RowActions
-                        actions={[
-                          { key: 'edit', label: '编辑', onSelect: () => setEditing({ id: item.id ?? null, draft: draftFromEntry(item) }) },
-                          { key: 'delete', label: '删除', danger: true, onSelect: () => void remove(item) },
-                        ]}
-                      />
+                      <Button variant="ghost" size="sm" onClick={() => setEditing({ id: null, draft: draftFromEntry(item) })}>
+                        补登这条
+                      </Button>
                     ) : null}
                   </td>
                 </tr>
@@ -379,40 +416,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
             </tbody>
           </table>
         </div>
-      )}
-
-      {/* 内置那份：只读，但可以「照这条建一份」——上游给老模型加了能力时，补登要能纠正它。 */}
-      <div>
-        <Button variant="ghost" size="sm" onClick={() => setShowBuiltin((v) => !v)}>
-          {showBuiltin ? '收起内置名录' : `看代码内置的 ${data.builtinCount} 条`}
-        </Button>
-        {showBuiltin ? (
-          <div style={{ overflowX: 'auto', marginTop: 8 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <tbody>
-                {data.builtin.map((item) => (
-                  <tr key={item.canonicalId}>
-                    <td style={TABLE_CELL}><code>{item.canonicalId}</code></td>
-                    <td style={TABLE_CELL}>{item.displayName}</td>
-                    <td style={TABLE_CELL}>{item.capabilities.join(' · ')}</td>
-                    <td style={TABLE_CELL}>
-                      {canWrite ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing({ id: null, draft: draftFromEntry(item) })}
-                        >
-                          照这条建一份
-                        </Button>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {editing ? (
         <CatalogEntryEditor
