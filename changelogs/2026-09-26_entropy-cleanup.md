@@ -1,1 +1,0 @@
-| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 补齐 5 条 changelog（模型目录健康探针 + 新模型能力契约、文学创作默认模型选择、私有工作区投稿保护与级联删除、浅色主题与生成进度体验，补入 design.literary-agent.md 与 design.platform.llm-gateway.model-architecture.md；网关控制台权限入口一条经核实为窄范围会话/展示修复，无需文档） |
