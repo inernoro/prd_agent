@@ -319,6 +319,86 @@ public class HostedSiteRevisionRulesTests
         Assert.Contains("未支持的数值陈述", error.Message, StringComparison.Ordinal);
     }
 
+    private const string CrossLineEvidence = "项目优势：交付快、成本低。项目启动会同期召开，随后是项目复盘。";
+
+    [Theory]
+    [InlineData("<div class=\"slot\"><span class=\"time\">00:00 - 00:15</span>\n<span class=\"tag\">项目优势</span></div>")]
+    [InlineData("<p>00:00 - 00:15<br>项目优势</p>")]
+    [InlineData("<p>00:00 - 00:15<br/>项目优势</p>")]
+    public void ValidateGeneratedContentQuality_TimestampLineAndNextLabelLineAreNotReadAsOneCount(string body)
+    {
+        // 2026-09-28 #1627 预览验收（run 56c075784f7449208133f9745947d808）：一行时间戳「00:00 - 00:15」、
+        // 下一行标签「项目优势」，被连读成「15项」判为无依据，整版拒收，而用户没写过任何数字。
+        // 第一条两侧只隔源码换行（浏览器渲染成空格，不是行界），靠「时刻不是数值陈述」兜住；
+        // 后两条隔着 <br>，靠行界兜住。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence);
+    }
+
+    [Theory]
+    [InlineData("<p>成立于 2026<br>项目启动会同期召开</p>")]
+    [InlineData("<p>成立于 2026<hr>项目启动会同期召开</p>")]
+    public void ValidateGeneratedContentQuality_NumberAndUnitAreNeverPairedAcrossLines(string body)
+    {
+        // 判据本身：数字与量词只在同一行里配对。<br>、<hr> 两侧不是同一行，不能拼成「2026项」。
+        // 源码里的普通换行不算：浏览器把它渲染成空格，见 InventedCountOnSameLineIsStillRejected。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence);
+    }
+
+    [Theory]
+    [InlineData("<p>00:15 项目优势</p>")]
+    [InlineData("<p>1:30:00 项目复盘</p>")]
+    [InlineData("<p>09：30 项目启动会同期召开</p>")]
+    public void ValidateGeneratedContentQuality_ClockTimesAreNotNumericClaims(string body)
+    {
+        // 时刻与时间段不是数值陈述：冒号后的「15」是分钟，不是「15 项」。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence);
+    }
+
+    [Theory]
+    [InlineData("<p>共 15 项优势</p>")]
+    [InlineData("<p>00:00 - 00:15 介绍 15 项优势</p>")]
+    [InlineData("<p>共 <strong>15</strong> 项优势</p>")]
+    [InlineData("<div class=\"slot\"><span class=\"time\">00:00 - 00:15</span>\n<span class=\"tag\">共 15 项优势</span></div>")]
+    [InlineData("<p>共 15\n项优势</p>")]
+    [InlineData("<p>共 <strong>15</strong>\n项优势</p>")]
+    [InlineData("<p>共15<br hidden>项优势</p>")]
+    [InlineData("<p>共15<br style=\"display:none\">项优势</p>")]
+    [InlineData("<div>共15<div hidden></div>项优势</div>")]
+    public void ValidateGeneratedContentQuality_InventedCountOnSameLineIsStillRejected(string body)
+    {
+        // 收紧的只是「跨行拼接」与「时刻当数量」，同一行里编造的数字照旧拒收（行内强调标签不算换行）。
+        // 行内流里的源码换行在页面上是一个空格，「共 15\n项优势」看到的就是「共 15 项优势」，必须拦住。
+        // 隐藏的 <br> 与隐藏的块级元素在页面上不产生换行，同样不能当行界放过。
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence));
+        Assert.Contains("未支持的数值陈述：15项", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_RatioSignInPageTextIsNotMistakenForClockTime()
+    {
+        // 时刻的内部标记不能与页面原文撞字：原文里本来就有的比例号「∶」后面的数字照样核对。
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>师生比 1\u223630 人</p></body></html>", "师生比很低。"));
+        Assert.Contains("未支持的数值陈述：30", error.Message, StringComparison.Ordinal);
+        Assert.Contains("「师生比 1\u223630 人」", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_RejectionExcerptKeepsClockTimeAsWritten()
+    {
+        // 时刻在内部被改写过，拒收提示里引用的原句必须还原成页面上的写法。
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>00:00 - 00:15 介绍 15 项优势</p></body></html>", CrossLineEvidence));
+        Assert.Contains("「00:00 - 00:15 介绍 15 项优势」", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ValidateGeneratedContentQuality_UnsupportedClaimMessageQuotesTheSentence()
     {
