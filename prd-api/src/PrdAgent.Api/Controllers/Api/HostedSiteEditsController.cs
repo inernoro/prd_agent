@@ -346,6 +346,10 @@ public sealed class HostedSiteEditsController : ControllerBase
                 "DESIGN_ARTIFACT_CANCEL_CONFLICT",
                 "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
         }
+        catch (DesignArtifactCancellationUnavailableException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ex.Code, ex.Message));
+        }
 
         if (cancellation == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "修改任务不存在"));
@@ -523,13 +527,15 @@ public sealed class HostedSiteEditsController : ControllerBase
                                                   && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting,
             CancellationToken.None);
 
+    // 与查询（GetRun 读历史、不按作用域）同一口径：任务存在就不许回「不存在」。分支重新部署后
+    // 它可能还登记在上一版 revision 名下，接管或说明原因交给取消协调器按作用域判（#135）。
     private async Task<DesignArtifactRun?> FindOwnedEditableRunAsync(string siteId, string runId, string userId) =>
-        await _db.DesignArtifactRuns.Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
+        await _db.DesignArtifactRuns.Find(x => x.Id == runId
                                          && x.UserId == userId
                                          && x.TargetSiteId == siteId
                                          && x.Operation == DesignArtifactOperations.Edit
                                          && x.ArtifactType == DesignArtifactTypes.WebPage
-                                         && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting))
+                                         && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting)
             .FirstOrDefaultAsync(CancellationToken.None);
 
     private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)
