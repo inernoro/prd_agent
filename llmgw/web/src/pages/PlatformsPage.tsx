@@ -10,6 +10,7 @@ import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarn
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
 import { ModelCatalogSection } from '@/components/ModelCatalogSection';
+import { PageBody, PageShell } from '@/components/PageShell';
 import { RowActions } from '@/components/RowActions';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
@@ -17,7 +18,9 @@ import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
-export function PlatformsPage() {
+type PlatformSection = 'provider' | 'catalog' | 'imagegen';
+
+export function PlatformsPage({ section = 'provider' }: { section?: PlatformSection }) {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { confirm, promptText } = useDialogs();
@@ -366,14 +369,17 @@ export function PlatformsPage() {
     }
   }
 
-  if (error) return <Empty text={error} />;
-  if (!items) return <SectionLoader text="正在加载平台…" />;
+  if (section === 'provider' && error) return <PageShell><PageBody><Empty text={error} /></PageBody></PageShell>;
+  if (section === 'provider' && !items) return <PageShell><PageBody><SectionLoader text="正在加载平台…" /></PageBody></PageShell>;
 
   const th = TABLE_HEAD_CELL;
   const td = TABLE_CELL;
+  const providerItems = items ?? [];
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <PageShell>
+      {section === 'provider' ? (
+      <PageBody>
       <header className="lg-page-heading">
         <div style={{ maxWidth: 720 }}>
           <h1>Provider（模型供应方）</h1>
@@ -469,7 +475,7 @@ export function PlatformsPage() {
       ) : null}
       {/* 自测结果与模型清单挂在表格上方：接完之后「通没通、上游有什么」必须看得见。 */}
       {Object.entries(testResult).map(([platformId, result]) => {
-        const owner = items.find((x) => x.id === platformId);
+        const owner = providerItems.find((x) => x.id === platformId);
         return (
           <div key={platformId} style={{ flexShrink: 0 }}>
             <div style={{ ...HINT_TEXT, marginBottom: 4 }}>{owner?.name || platformId} 的连接测试</div>
@@ -480,7 +486,7 @@ export function PlatformsPage() {
       {discovery ? (
         <section style={{ ...createCardStyle, flexShrink: 0 }}>
           <div style={{ marginBottom: 10, fontWeight: 600 }}>
-            {items.find((x) => x.id === discovery.platformId)?.name || discovery.platformId} 的上游模型
+            {providerItems.find((x) => x.id === discovery.platformId)?.name || discovery.platformId} 的上游模型
           </div>
           {/* key 换 Provider 就换：勾选集是 useState 初始值，只在挂载时算一次。
               不加 key 的话，开着 A 的清单再去点 B 的「查看模型」，这个组件不卸载，
@@ -494,11 +500,11 @@ export function PlatformsPage() {
             onCancel={() => setDiscovery(null)}
             /* 补登完重新拉一次：那一行当场从「名录外」翻成「名录内」，
                证明补登真的生效了，而不是让人自己去别处确认。 */
-            onRegistered={() => void openDiscovery(items.find((x) => x.id === discovery.platformId)!)}
+            onRegistered={() => void openDiscovery(providerItems.find((x) => x.id === discovery.platformId)!)}
           />
         </section>
       ) : null}
-      {items.length > 0 && canWrite ? (
+      {providerItems.length > 0 && canWrite ? (
         <details style={{ flexShrink: 0 }}>
           <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
           <div style={toolbarStyle}>
@@ -512,10 +518,10 @@ export function PlatformsPage() {
           </div>
         </details>
       ) : null}
-      {items.length === 0 ? (
+      {providerItems.length === 0 ? (
         <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
-      <div className="lg-config-table-shell" style={{ flex: 1, minHeight: 160, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+      <div className="lg-config-table-shell" style={{ flexShrink: 0, minHeight: 160, overflowX: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
         <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
@@ -531,7 +537,7 @@ export function PlatformsPage() {
             </tr>
           </thead>
           <tbody>
-            {items.map((p) => {
+            {providerItems.map((p) => {
               const en = boolChip(p.enabled, '启用', '停用');
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
@@ -770,14 +776,13 @@ export function PlatformsPage() {
       </div>
       )}
 
-      {/* 第三段：模型名录。放这一页是因为发现「系统不认识这个模型」的时机就是在上游清单里；
-          名录的键是模型标识而不是上游（同一个模型在哪个平台上都是同一个模型）。 */}
-      <ModelCatalogSection canWrite={canWrite} />
-
-      {/* 第四段：生图契约。放这一页是因为配它的时机就是「刚接了个上游、里面有新生图模型」；
-          匹配键是模型名而不是上游，所以它不挂在某个 Provider 下面。 */}
-      <ImageGenContractsSection canWrite={canWrite} />
-    </div>
+      </PageBody>
+      ) : section === 'catalog' ? (
+        <PageBody><ModelCatalogSection canWrite={canWrite} /></PageBody>
+      ) : (
+        <PageBody><ImageGenContractsSection canWrite={canWrite} /></PageBody>
+      )}
+    </PageShell>
   );
 }
 

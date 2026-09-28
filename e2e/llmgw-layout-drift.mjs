@@ -164,6 +164,38 @@ const LOGICAL_MODELS = [
     })],
   })),
 ];
+const CATALOG_ENTRIES = Array.from({ length: 44 }, (_, index) => ({
+  id: `catalog-${index + 1}`,
+  canonicalId: `demo-model-${index + 1}`,
+  displayName: `演示模型 ${index + 1}`,
+  vendor: 'demo',
+  capabilities: index % 2 === 0 ? ['chat', 'reasoning'] : ['vision'],
+  acceptsImageInput: index % 2 === 1,
+  requiresImageInput: false,
+  aliases: [],
+  enabled: true,
+}));
+const IMAGEGEN_CONFIGS = Array.from({ length: 44 }, (_, index) => ({
+  id: `imagegen-${index + 1}`,
+  modelIdPattern: `demo-image-${index + 1}`,
+  matchOrder: index + 1,
+  enabled: true,
+  displayName: `演示生图 ${index + 1}`,
+  provider: 'demo',
+  platformType: 'openai',
+  sizeConstraintType: 'whitelist',
+  sizeConstraintDescription: '',
+  sizesByResolution: { '1k': ['1024x1024'] },
+  sizesNotApplicable: false,
+  sizeParamFormat: 'WxH',
+  injectSizePrompt: false,
+  paramRenames: {},
+  requiresResolutionParam: false,
+  supportsImageToImage: true,
+  supportsInpainting: false,
+  supportsResponseFormat: true,
+  notes: [],
+}));
 const LIST = { items: [], total: 2, page: 1, pageSize: 20 };
 const STUBS = {
   '/auth/tenants': [],
@@ -190,8 +222,15 @@ const STUBS = {
   },
   '/parameter-capabilities/meta': { items: [], templates: [] },
   '/imagegen-configs': {
-    items: [], total: 0, builtinCount: 0, builtin: [], refreshSeconds: 60,
-    staleAfterSeconds: 180, syncedAt: nowIso, syncedPatterns: [], syncHosts: [],
+    items: IMAGEGEN_CONFIGS, total: IMAGEGEN_CONFIGS.length,
+    builtinCount: 1, builtin: [IMAGEGEN_CONFIGS[0]], refreshSeconds: 60,
+    staleAfterSeconds: 180, syncedAt: nowIso,
+    syncedPatterns: IMAGEGEN_CONFIGS.map((item) => item.modelIdPattern), syncHosts: [],
+  },
+  '/catalog-entries': {
+    items: CATALOG_ENTRIES, total: CATALOG_ENTRIES.length,
+    builtinCount: 1, builtin: [CATALOG_ENTRIES[0]],
+    knownCapabilities: ['chat', 'reasoning', 'vision', 'image_generation'],
   },
   '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
   // 白名单列表那条趋势线的数据源。桩里必须给真值：给空会让页面走「暂无用量」分支，
@@ -493,6 +532,51 @@ for (const [label, viewport, theme] of [
 ]) {
   logicalModelScroll[label] = await probeLogicalModelScroll(label, viewport, theme);
 }
+
+// 上游配置是同一个入口下的四类列表。任一时刻只能出现当前 Tab 的一张业务表，
+// 长列表的纵向滚动必须归唯一的 PageBody；内置/自定义切换也只能替换列表，不能再叠一张表。
+async function probeUpstreamView(view, expectedTabLabel, tableSelector, toggleLabel) {
+  activeProbe = `/platforms?view=${view}`;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${base}/platforms?view=${view}`);
+  await page.waitForSelector(tableSelector);
+  await page.waitForTimeout(200);
+  const initial = await page.evaluate(async ({ expectedTabLabel }) => {
+    const body = document.querySelector('.lg-page-body');
+    const tablist = document.querySelector('[role="tablist"][aria-label="上游配置分类"]');
+    const active = tablist?.querySelector('[role="tab"][aria-selected="true"]');
+    const tables = body ? [...body.querySelectorAll('table')].filter((table) => table.offsetParent !== null) : [];
+    if (!body || !tablist || !active) return { 可验证: false, 原因: '缺少 Tab 或 PageBody' };
+    const scrollable = body.scrollHeight > body.clientHeight + 1;
+    const last = tables[0]?.querySelector('tbody tr:last-child');
+    last?.scrollIntoView({ block: 'end' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bodyRect = body.getBoundingClientRect();
+    const lastRect = last?.getBoundingClientRect();
+    return {
+      可验证: true,
+      当前Tab: active.textContent?.trim(),
+      预期Tab: expectedTabLabel,
+      PageBody数量: document.querySelectorAll('.lg-page-body').length,
+      可见表格数: tables.length,
+      可滚动: scrollable,
+      已滚动: !scrollable || body.scrollTop > 0,
+      末行可见: Boolean(lastRect && lastRect.bottom <= bodyRect.bottom + 1 && lastRect.top >= bodyRect.top - 1),
+    };
+  }, { expectedTabLabel });
+  if (toggleLabel) {
+    await page.getByRole('button', { name: toggleLabel }).click();
+    await page.waitForTimeout(100);
+    initial.切换后可见表格数 = await page.locator('.lg-page-body table:visible').count();
+  }
+  return initial;
+}
+
+const upstreamViews = {
+  Provider: await probeUpstreamView('provider', 'Provider', '.lg-config-table-shell', null),
+  模型名录: await probeUpstreamView('catalog', '模型名录', '[data-testid="model-catalog-table"]', '查看内置名录（1）'),
+  生图契约: await probeUpstreamView('imagegen', '生图契约', '[data-testid="imagegen-contract-table"]', '查看内置契约（1）'),
+};
 await page.setViewportSize({ width: 1440, height: 900 });
 activeProbe = '/exchanges';
 await page.goto(`${base}/exchanges#image-layering`);
@@ -724,6 +808,7 @@ for (const [label, result] of Object.entries(logicalModelScroll)) {
     continue;
   }
   const failed = [];
+  if (result.当前Tab !== result.预期Tab) failed.push(`当前 Tab 为「${result.当前Tab}」，预期「${result.预期Tab}」`);
   if (!result.initial.外层可滚动) failed.push('初始长列表没有让 PageBody 可滚动');
   if (!result.initial.列表未裁切) failed.push('初始列表内容被自身裁切');
   if (result.initial.列表flexShrink !== '0') failed.push(`列表 flex-shrink=${result.initial.列表flexShrink}`);
@@ -736,6 +821,28 @@ for (const [label, result] of Object.entries(logicalModelScroll)) {
   if (!result.页头固定) failed.push('滚动时页头发生位移');
   if (failed.length) {
     console.error(`${label}模型目录滚动契约失败：${failed.join('；')}`);
+    drift += failed.length;
+  }
+}
+
+console.log('上游 Tab 与滚动契约:', JSON.stringify(upstreamViews));
+for (const [label, result] of Object.entries(upstreamViews)) {
+  if (!result.可验证) {
+    console.error(`${label} 无法验证：${result.原因}`);
+    drift += 1;
+    continue;
+  }
+  const failed = [];
+  if (result.当前Tab !== result.预期Tab) failed.push(`当前 Tab 为「${result.当前Tab}」，预期「${result.预期Tab}」`);
+  if (result.PageBody数量 !== 1) failed.push(`PageBody 有 ${result.PageBody数量} 个`);
+  if (result.可见表格数 !== 1) failed.push(`当前 Tab 可见 ${result.可见表格数} 张表`);
+  if ((label === '模型名录' || label === '生图契约') && !result.可滚动) failed.push('长列表没有产生纵向滚动');
+  if (!result.已滚动 || !result.末行可见) failed.push('无法滚到最后一行');
+  if (result.切换后可见表格数 !== undefined && result.切换后可见表格数 !== 1) {
+    failed.push(`切到内置数据后可见 ${result.切换后可见表格数} 张表`);
+  }
+  if (failed.length) {
+    console.error(`${label} 上游列表契约失败：${failed.join('；')}`);
     drift += failed.length;
   }
 }
