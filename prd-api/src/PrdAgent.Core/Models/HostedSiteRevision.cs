@@ -413,12 +413,12 @@ public static class HostedSiteRevisionRules
             TimeSpan.FromSeconds(1));
         value = ExtractVisibleTextFromMarkup(value);
         value = System.Net.WebUtility.HtmlDecode(value);
-        // 换行是行界，不能和普通空白一起压成空格：压掉之后「00:15」与下一行「项目优势」就成了
-        // 同一句「00:15 项目优势」，数值核对会把两行拼成「15项」（#1627 预览验收）。
+        // 源码里的换行与其它空白一样折成空格：行内流里浏览器就是这么渲染的，「共 15\n项优势」
+        // 页面上就是「共 15 项优势」。真正的行界只有块级元素与 <br>/<hr>，已在上一步插成句界。
         return System.Text.RegularExpressions.Regex.Replace(
             value,
             @"\s+",
-            whitespace => whitespace.Value.IndexOfAny(['\r', '\n']) >= 0 ? "\n" : " ",
+            " ",
             RegexOptions,
             TimeSpan.FromSeconds(1)).Trim();
     }
@@ -527,7 +527,7 @@ public static class HostedSiteRevisionRules
     /// <summary>拒收时引用的原句：只说「1个」读者不知道去改哪一句。</summary>
     private static string ClaimExcerpt(string segment)
     {
-        var trimmed = segment.Trim();
+        var trimmed = segment.Replace(ClockColonMark, ':').Replace(ClockFullWidthColonMark, '：').Trim();
         return trimmed.Length <= 40 ? trimmed : trimmed[..40] + "…";
     }
 
@@ -537,11 +537,13 @@ public static class HostedSiteRevisionRules
         // 数字与量词只在同一行、同一句里配对：按行界与句读切段后再取数，段与段之间绝不拼接。
         // 时刻与时间段（00:15、00:00 - 00:15、1:30:00）不是数值陈述，但冒号本身是切段符，切开后
         // 「00:15 项目优势」里的「15」会落到下一段开头、被读成「15 项」。所以先把时刻里的冒号换成
-        // ClockTimeSeparator（不参与切段），再由取数正则拒绝紧跟在它后面的数字。
+        // 私用区标记（不参与切段），再由取数正则拒绝紧跟在它后面的数字。
+        // 标记必须是原文里不会出现的字符：先把输入里已有的标记字符清成空格，否则页面原文可以借它
+        // 让后面的数字逃过核对。
         var masked = System.Text.RegularExpressions.Regex.Replace(
-            text ?? string.Empty,
+            (text ?? string.Empty).Replace(ClockColonMark, ' ').Replace(ClockFullWidthColonMark, ' '),
             @"(?<![A-Za-z0-9_.:：])\d{1,2}(?:[:：][0-5]\d){1,2}(?![\d:：])",
-            clock => clock.Value.Replace(':', ClockTimeSeparator).Replace('：', ClockTimeSeparator),
+            clock => clock.Value.Replace(':', ClockColonMark).Replace('：', ClockFullWidthColonMark),
             RegexOptions,
             TimeSpan.FromSeconds(1));
         foreach (var segment in System.Text.RegularExpressions.Regex.Split(masked, @"[\r\n。！？!?；;，,：:]+"))
@@ -552,9 +554,9 @@ public static class HostedSiteRevisionRules
                 // 「后面不许紧跟英文字母」只对英文单位成立（防止把 5 GBps 的前缀当成 5 GB）；
                 // 中文单位本身完整，「15天trial」「15 天 trial」必须识别成同一个陈述，否则来源不带空格、
                 // 页面带空格时，来源那句不算陈述而页面那句算，误判为无依据（2026-09-25 #1622 预览验收）。
-                @"(?<![A-Za-z0-9_\u2236])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?(?<=[A-Za-z])(?![A-Za-z]))",
+                @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?(?<=[A-Za-z])(?![A-Za-z]))",
                 @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
-                @"(?<![A-Za-z0-9_\u2236])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?!\s*(?:月|小时))",
+                @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?!\s*(?:月|小时))",
             };
             foreach (var pattern in patterns)
             {
@@ -584,8 +586,12 @@ public static class HostedSiteRevisionRules
         return claims;
     }
 
-    /// <summary>时刻内部的冒号改写成比例号（U+2236），外观不变、不参与切段，且其后的数字不算数值陈述。</summary>
-    private const char ClockTimeSeparator = '\u2236';
+    /// <summary>
+    /// 时刻内部冒号的标记（半角 / 全角各一个，便于在引用原句时原样还原）。取私用区字符，
+    /// 不与任何页面原文撞字；紧跟其后的数字不算数值陈述。与取数正则里的 \uE000\uE001 必须一致。
+    /// </summary>
+    private const char ClockColonMark = '\uE000';
+    private const char ClockFullWidthColonMark = '\uE001';
 
     private static string NormalizeClaimContext(string value) =>
         System.Text.RegularExpressions.Regex.Replace(
@@ -738,8 +744,8 @@ public static class HostedSiteRevisionRules
         foreach (var tag in tags)
         {
             if (tag.Start > cursor && suppressedDepth == 0) builder.Append(html, cursor, tag.Start - cursor);
-            // <br>/<hr> 是行界：两侧文字在页面上不在同一行，不能被读成同一句。
-            if (IsLineBreakElement(tag.Name) && suppressedDepth == 0) builder.Append('\n');
+            // <br>/<hr> 是行界：两侧文字在页面上不在同一行，与块级元素一样插句界，不能被读成同一句。
+            if (IsLineBreakElement(tag.Name) && suppressedDepth == 0) builder.Append('。');
             var block = IsBlockElement(tag.Name);
             if (tag.IsClosing)
             {

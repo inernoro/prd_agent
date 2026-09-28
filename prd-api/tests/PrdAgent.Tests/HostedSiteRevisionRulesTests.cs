@@ -329,17 +329,19 @@ public class HostedSiteRevisionRulesTests
     {
         // 2026-09-28 #1627 预览验收（run 56c075784f7449208133f9745947d808）：一行时间戳「00:00 - 00:15」、
         // 下一行标签「项目优势」，被连读成「15项」判为无依据，整版拒收，而用户没写过任何数字。
+        // 第一条两侧只隔源码换行（浏览器渲染成空格，不是行界），靠「时刻不是数值陈述」兜住；
+        // 后两条隔着 <br>，靠行界兜住。
         HostedSiteRevisionRules.ValidateGeneratedContentQuality(
             $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence);
     }
 
     [Theory]
-    [InlineData("<div class=\"stat\"><span class=\"value\">2026</span>\n<span class=\"label\">项目启动</span></div>")]
     [InlineData("<p>成立于 2026<br>项目启动会同期召开</p>")]
     [InlineData("<p>成立于 2026<hr>项目启动会同期召开</p>")]
     public void ValidateGeneratedContentQuality_NumberAndUnitAreNeverPairedAcrossLines(string body)
     {
-        // 判据本身：数字与量词只在同一行里配对。换行、<br>、<hr> 两侧不是同一句话，不能拼成「2026项」。
+        // 判据本身：数字与量词只在同一行里配对。<br>、<hr> 两侧不是同一行，不能拼成「2026项」。
+        // 源码里的普通换行不算：浏览器把它渲染成空格，见 InventedCountOnSameLineIsStillRejected。
         HostedSiteRevisionRules.ValidateGeneratedContentQuality(
             $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence);
     }
@@ -360,13 +362,37 @@ public class HostedSiteRevisionRulesTests
     [InlineData("<p>00:00 - 00:15 介绍 15 项优势</p>")]
     [InlineData("<p>共 <strong>15</strong> 项优势</p>")]
     [InlineData("<div class=\"slot\"><span class=\"time\">00:00 - 00:15</span>\n<span class=\"tag\">共 15 项优势</span></div>")]
+    [InlineData("<p>共 15\n项优势</p>")]
+    [InlineData("<p>共 <strong>15</strong>\n项优势</p>")]
     public void ValidateGeneratedContentQuality_InventedCountOnSameLineIsStillRejected(string body)
     {
         // 收紧的只是「跨行拼接」与「时刻当数量」，同一行里编造的数字照旧拒收（行内强调标签不算换行）。
+        // 行内流里的源码换行在页面上是一个空格，「共 15\n项优势」看到的就是「共 15 项优势」，必须拦住。
         var error = Assert.Throws<InvalidOperationException>(() =>
             HostedSiteRevisionRules.ValidateGeneratedContentQuality(
                 $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence));
         Assert.Contains("未支持的数值陈述：15项", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_RatioSignInPageTextIsNotMistakenForClockTime()
+    {
+        // 时刻的内部标记不能与页面原文撞字：原文里本来就有的比例号「∶」后面的数字照样核对。
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>师生比 1\u223630 人</p></body></html>", "师生比很低。"));
+        Assert.Contains("未支持的数值陈述：30", error.Message, StringComparison.Ordinal);
+        Assert.Contains("「师生比 1\u223630 人」", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_RejectionExcerptKeepsClockTimeAsWritten()
+    {
+        // 时刻在内部被改写过，拒收提示里引用的原句必须还原成页面上的写法。
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>00:00 - 00:15 介绍 15 项优势</p></body></html>", CrossLineEvidence));
+        Assert.Contains("「00:00 - 00:15 介绍 15 项优势」", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
