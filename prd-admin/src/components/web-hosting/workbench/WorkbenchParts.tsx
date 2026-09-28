@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, Plus, Send, Square, X, type LucideIcon } from 'lucide-react';
+import { ArrowUp, Check, Plus, Square, X, type LucideIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
 /**
@@ -227,8 +227,35 @@ export interface ComposerChip {
 }
 
 /**
- * 底部唯一的输入框。「+」加资料（知识库、上传、粘贴纪要、截图），这是叠加动作不是二选一；
- * 下面一行是本次生成的选项（风格、快慢）；最底下一个主按钮写清按下去得到什么。
+ * 输入框的四种状态。卡片边框、发送按钮与说明行都按它变化，并写在 data-state 上供验收读取：
+ * - busy：正在生成，输入与发送都锁住，发送位显示转圈；
+ * - blocked：还不能发（没写要求、资料还在上传……），发送按钮置灰，说明行换成原因；
+ * - ready：可以发，发送按钮用主色；
+ * - idle：可以发但什么都没写（新建页允许只放资料），与 ready 同样可发，按钮弱一档。
+ */
+export type ComposerState = 'busy' | 'blocked' | 'ready' | 'idle';
+
+export function composerState({ disabled, sendDisabled, value, chipCount }: {
+  disabled?: boolean;
+  sendDisabled?: boolean;
+  value: string;
+  chipCount: number;
+}): ComposerState {
+  if (disabled) return 'busy';
+  if (sendDisabled) return 'blocked';
+  return value.trim() || chipCount > 0 ? 'ready' : 'idle';
+}
+
+const COMPOSER_MAX_LENGTH = 4000;
+/** 接近上限才出现字数，平时不打扰。 */
+const COMPOSER_COUNTER_FROM = 3500;
+const COMPOSER_MIN_HEIGHT = 96;
+const COMPOSER_MAX_HEIGHT = 240;
+
+/**
+ * 底部唯一的输入框：一张卡片，输入区占满，左下角是「+」和已放入的资料（引用），右下角是小小的发送按钮。
+ * 「+」加资料（知识库、上传、粘贴纪要、截图）是叠加动作不是二选一。
+ * 卡片下方一行是本次生成的选项（产出形式、风格、快慢），再下一行写清按下去得到什么。
  */
 export function WorkbenchComposer({
   id,
@@ -263,6 +290,17 @@ export function WorkbenchComposer({
 }) {
   const [plusOpen, setPlusOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const state = composerState({ disabled, sendDisabled, value, chipCount: chips.length });
+  const canSend = state === 'ready' || state === 'idle';
+
+  // 输入框随内容长高，到上限后内部滚动；不让一大段要求把选项和发送挤出视野。
+  useEffect(() => {
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(Math.max(element.scrollHeight, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT)}px`;
+  }, [value]);
 
   useEffect(() => {
     if (!plusOpen) return;
@@ -278,117 +316,143 @@ export function WorkbenchComposer({
     };
   }, [plusOpen]);
 
+  const plusMenu = (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        type="button"
+        aria-label="添加资料"
+        aria-haspopup="menu"
+        aria-expanded={plusOpen}
+        disabled={disabled}
+        onClick={() => setPlusOpen((current) => !current)}
+        className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2"
+        style={{ color: 'var(--text-primary)', background: plusOpen ? 'var(--bg-tertiary)' : undefined }}
+      >
+        <Plus size={18} />
+      </button>
+      {plusOpen && (
+        <div
+          role="menu"
+          aria-label="添加资料"
+          className="absolute bottom-10 left-0 z-20 flex w-[288px] flex-col gap-0.5 rounded-xl p-1.5 shadow-lg"
+          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+        >
+          {plusItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="menuitem"
+                disabled={Boolean(item.disabledReason)}
+                onClick={() => { setPlusOpen(false); item.onPick(); }}
+                className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+                  <Icon size={15} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium text-token-primary">{item.title}</span>
+                  <span className="block text-[11px] leading-snug text-token-muted">{item.disabledReason || item.description}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+
+  const sendTitle = canSend ? `${sendLabel}（Ctrl/⌘ + Enter）` : sendDisabledReason || sendLabel;
+
   return (
     <div className="flex flex-col gap-2">
-      {chips.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5" aria-label="已放入的资料">
-          {chips.map((chip) => (
-            <li
-              key={chip.key}
-              className="flex max-w-full items-center gap-1.5 rounded-lg py-1 pl-2 pr-1 text-[12px]"
-              style={{
-                background: chip.tone === 'danger' ? 'var(--semantic-danger-soft)' : 'var(--bg-tertiary)',
-                color: chip.tone === 'danger' ? 'var(--semantic-danger-text)' : 'var(--text-primary)',
-              }}
-            >
-              {chip.tone === 'busy' && <MapSpinner size={11} />}
-              <span className="max-w-[200px] truncate" title={chip.label}>{chip.label}</span>
-              {chip.status && <span className="shrink-0 text-[11px] text-token-muted">{chip.status}</span>}
-              {chip.onRemove && (
-                <button
-                  type="button"
-                  aria-label={`移除 ${chip.label}`}
-                  onClick={chip.onRemove}
-                  disabled={disabled}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-token-muted hover-bg-soft disabled:opacity-40"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
       <div
-        className="flex items-end gap-2 rounded-xl p-1.5"
+        data-composer-state={state}
+        className="flex flex-col rounded-2xl transition-shadow focus-within:ring-2 focus-within:ring-[color:var(--accent-primary)]"
         style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
       >
-        <div ref={menuRef} className="relative shrink-0">
-          <button
-            type="button"
-            aria-label="添加资料"
-            aria-haspopup="menu"
-            aria-expanded={plusOpen}
-            disabled={disabled}
-            onClick={() => setPlusOpen((current) => !current)}
-            className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2"
-            style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)', background: plusOpen ? 'var(--bg-elevated)' : undefined }}
-          >
-            <Plus size={17} />
-          </button>
-          {plusOpen && (
-            <div
-              role="menu"
-              aria-label="添加资料"
-              className="absolute bottom-11 left-0 z-20 flex w-[288px] flex-col gap-0.5 rounded-xl p-1.5 shadow-lg"
-              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
-            >
-              {plusItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="menuitem"
-                    disabled={Boolean(item.disabledReason)}
-                    onClick={() => { setPlusOpen(false); item.onPick(); }}
-                    className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-55"
-                  >
-                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
-                      <Icon size={15} />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[13px] font-medium text-token-primary">{item.title}</span>
-                      <span className="block text-[11px] leading-snug text-token-muted">{item.disabledReason || item.description}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
         <label htmlFor={id} className="sr-only">要求</label>
         <textarea
+          ref={textareaRef}
           id={id}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onPaste={onPaste}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !sendDisabled) {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSend) {
               event.preventDefault();
               onSend();
             }
           }}
           disabled={disabled}
-          rows={2}
-          maxLength={4000}
+          rows={4}
+          maxLength={COMPOSER_MAX_LENGTH}
           placeholder={placeholder}
-          className="min-h-9 w-full flex-1 resize-none bg-transparent px-1 py-1.5 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60 sm:text-[13px]"
+          style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: COMPOSER_MAX_HEIGHT }}
+          className="w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3.5 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60 sm:text-[14px]"
         />
+        <div className="flex items-end gap-2 px-2 pb-2 pt-1">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+            {plusMenu}
+            {chips.length > 0 && (
+              <ul className="contents" aria-label="已放入的资料">
+                {chips.map((chip) => (
+                  <li
+                    key={chip.key}
+                    className="flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pl-2.5 pr-1 text-[12px]"
+                    style={{
+                      background: chip.tone === 'danger' ? 'var(--semantic-danger-soft)' : 'var(--bg-tertiary)',
+                      color: chip.tone === 'danger' ? 'var(--semantic-danger-text)' : 'var(--text-primary)',
+                    }}
+                  >
+                    {chip.tone === 'busy' && <MapSpinner size={11} />}
+                    <span className="max-w-[160px] truncate" title={chip.label}>{chip.label}</span>
+                    {chip.status && <span className="shrink-0 text-[11px] text-token-muted">{chip.status}</span>}
+                    {chip.onRemove && (
+                      <button
+                        type="button"
+                        aria-label={`移除 ${chip.label}`}
+                        onClick={chip.onRemove}
+                        disabled={disabled}
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-token-muted hover-bg-soft disabled:opacity-40"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {value.length >= COMPOSER_COUNTER_FROM && (
+              <span className="text-[11px] tabular-nums text-token-muted" aria-live="polite">{value.length}/{COMPOSER_MAX_LENGTH}</span>
+            )}
+            <button
+              type="button"
+              onClick={onSend}
+              disabled={!canSend}
+              aria-label={sendLabel}
+              title={sendTitle}
+              className="flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
+              style={state === 'ready'
+                ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }
+                : state === 'idle'
+                  ? { background: 'var(--text-primary)', color: 'var(--bg-input)' }
+                  : { background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
+            >
+              {state === 'busy' ? <MapSpinner size={15} /> : <ArrowUp size={17} strokeWidth={2.4} />}
+            </button>
+          </div>
+        </div>
       </div>
       {options && <div className="flex flex-wrap items-center gap-1.5">{options}</div>}
-      <button
-        type="button"
-        onClick={onSend}
-        disabled={sendDisabled}
-        title={sendDisabled ? sendDisabledReason : undefined}
-        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-[14px] font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2"
-        style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
-      >
-        <Send size={15} />
-        {sendLabel}
-      </button>
-      <p className="text-[11px] leading-relaxed text-token-muted">{sendDisabled && sendDisabledReason ? sendDisabledReason : hint}</p>
+      <p className="text-[11px] leading-relaxed text-token-muted">
+        {state === 'blocked' && sendDisabledReason
+          ? sendDisabledReason
+          : <><span className="font-medium text-token-secondary">{sendLabel}</span>{state === 'busy' ? '' : ` · ${hint}`}</>}
+      </p>
     </div>
   );
 }
