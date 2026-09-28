@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { FileText } from 'lucide-react';
-import { WorkbenchComposer, composerState, type ComposerChip } from './WorkbenchParts';
+import { WorkbenchComposer, composerState, fitComposerHeight, type ComposerChip } from './WorkbenchParts';
 
 function render(overrides: Partial<Parameters<typeof WorkbenchComposer>[0]> = {}) {
   return renderToStaticMarkup(
@@ -93,5 +93,23 @@ describe('WorkbenchComposer 布局', () => {
   it('接近字数上限才显示字数', () => {
     expect(render({ value: 'a'.repeat(3499) })).not.toContain('/4000');
     expect(render({ value: 'a'.repeat(3500) })).toContain('3500/4000');
+  });
+});
+
+describe('fitComposerHeight', () => {
+  function element(scrollHeight: number) {
+    return { scrollHeight, style: { height: '' } } as unknown as HTMLTextAreaElement;
+  }
+
+  it('按内容高度设高，夹在 96 到 240 之间', () => {
+    const short = element(40);
+    fitComposerHeight(short);
+    expect(short.style.height).toBe('96px');
+    const medium = element(180);
+    fitComposerHeight(medium);
+    expect(medium.style.height).toBe('180px');
+    const long = element(900);
+    fitComposerHeight(long);
+    expect(long.style.height).toBe('240px');
   });
 });

@@ -252,6 +252,12 @@ const COMPOSER_COUNTER_FROM = 3500;
 const COMPOSER_MIN_HEIGHT = 96;
 const COMPOSER_MAX_HEIGHT = 240;
 
+/** 按当前宽度下的内容高度设输入框高度，夹在上下限之间。 */
+export function fitComposerHeight(element: HTMLTextAreaElement) {
+  element.style.height = 'auto';
+  element.style.height = `${Math.min(Math.max(element.scrollHeight, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT)}px`;
+}
+
 /**
  * 底部唯一的输入框：一张卡片，输入区占满，左下角是「+」和已放入的资料（引用），右下角是小小的发送按钮。
  * 「+」加资料（知识库、上传、粘贴纪要、截图）是叠加动作不是二选一。
@@ -295,12 +301,24 @@ export function WorkbenchComposer({
   const canSend = state === 'ready' || state === 'idle';
 
   // 输入框随内容长高，到上限后内部滚动；不让一大段要求把选项和发送挤出视野。
+  // 宽度变了（窗口缩放、栏宽变化）文字会重新折行，也要重算，否则会提前出滚动条或留出空白。
   useEffect(() => {
     const element = textareaRef.current;
-    if (!element) return;
-    element.style.height = 'auto';
-    element.style.height = `${Math.min(Math.max(element.scrollHeight, COMPOSER_MIN_HEIGHT), COMPOSER_MAX_HEIGHT)}px`;
+    if (element) fitComposerHeight(element);
   }, [value]);
+  useEffect(() => {
+    const element = textareaRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    let lastWidth = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      // 只认宽度变化：高度是本函数自己设的，跟着高度回调会自我触发。
+      if (element.clientWidth === lastWidth) return;
+      lastWidth = element.clientWidth;
+      fitComposerHeight(element);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!plusOpen) return;
