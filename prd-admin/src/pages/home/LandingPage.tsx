@@ -15,6 +15,7 @@ import { CdsScene } from './scenes/CdsScene';
 import { Interlude } from './components/Interlude';
 import { SCENE_HUE } from './scenes/sceneTokens';
 import { StartScene } from './scenes/StartScene';
+import { FilmSection } from './film/FilmSection';
 import { StaticBackdrop } from './components/StaticBackdrop';
 import { InkFieldBackdrop } from '@/components/backgrounds/InkFieldBackdrop';
 import { LanguageToggle } from './components/LanguageToggle';
@@ -26,6 +27,7 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
  * 结构（十幕）：
  *   1 · Hero（第一屏就是视觉创作工作台——本系统的核心，不是通用对话壳）
  *   2 · StatsStrip
+ *   2½ · FilmSection     ← 片花：52 秒，画面与配乐都由代码按同一张时间轴实时生成（`film/`）
  *   3 · LiteraryScene    ← 文学创作 `/literary-agent`：左文右图，可切风格
  *   4 · KnowledgeScene   ← 知识库 `/document-store`：三栏阅读器 + 划词浮层 + 知识星系
  *   5 · LayersScene      ← 三层一体：MAP / LLMGW / CDS 各一块真实界面切片
@@ -303,6 +305,11 @@ function LandingInner() {
 
       <div id="stats" style={BELOW_FOLD_SECTION}>
         <StatsStrip />
+      </div>
+
+      {/* 片花不挂 content-visibility：它自己只在点了播放之后才逐帧重绘，海报态是一张静帧 */}
+      <div id="film">
+        <FilmSection />
       </div>
 
       <div id="literary" style={BELOW_FOLD_SECTION}>

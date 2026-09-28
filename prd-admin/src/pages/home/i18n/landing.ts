@@ -333,6 +333,40 @@ export interface TailTranslation {
   };
 }
 
+/**
+ * 片花（`film/`）。画面与配乐都由代码按时间轴实时生成，文案随语言切换，
+ * 所以片子里的每一个字都在这里，没有烤进任何视频文件。
+ */
+export interface FilmTranslation {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  controls: {
+    play: string;
+    pause: string;
+    replay: string;
+    mute: string;
+    unmute: string;
+    fullscreen: string;
+    soundOn: string;
+    /** 浏览器拿不到音频能力时的如实说明 */
+    noAudio: string;
+  };
+  /** 开场两行 */
+  open: [string, string];
+  /** 下三分之一字幕：六幕各一条 */
+  chapters: Array<{ title: string; line: string }>;
+  visual: { prompt: string; send: string; tileDone: string; tileWorking: string };
+  writing: { docTitle: string; paragraphs: string[]; nodes: string[] };
+  toolbox: { unit: string; search: string };
+  workflow: { title: string; schedule: string; nodes: string[]; done: string };
+  models: { poolName: string; rateLimited: string; switched: string; failures: string; rows: string[] };
+  cds: { command: string; branch: string; stages: string[]; ready: string; slogan: string };
+  /** 快切：每拍一个字 */
+  montage: string[];
+  finale: { brand: string; tagline: string; cta: string };
+}
+
 /** 三层一体三块各自的数据形状 —— 组件直接引这三个别名，不要去 typeof import 整棵树 */
 export type MapLaneData = TranslationShape['scenes']['layers']['map']['lane'];
 export type GatewayStackData = TranslationShape['scenes']['layers']['gateway']['stack'];
@@ -368,6 +402,8 @@ export interface TranslationShape {
    * 摆放位置见 `LandingPage` 的节奏表。
    */
   interludes: Array<{ kicker: string; title: string; note: string }>;
+  /** 片花：首屏数字条之后那一块可播放的影片 */
+  film: FilmTranslation;
   footer: {
     brand: string;
     github: string;
@@ -942,6 +978,68 @@ const zh: TranslationShape = {
       note: '这两件事都不该由业务代码操心。下面两幕就是它们各自那一层。',
     },
   ],
+  film: {
+    eyebrow: 'FILM · 0:52',
+    title: '五十二秒，看它怎么干活',
+    subtitle: '画面和配乐都是这一页现场算出来的——没有一个视频文件，每一次切镜都踩在鼓点上。建议开声音。',
+    controls: {
+      play: '播放片花',
+      pause: '暂停',
+      replay: '重播',
+      mute: '静音',
+      unmute: '打开声音',
+      fullscreen: '全屏',
+      soundOn: '有声',
+      noAudio: '当前浏览器不支持网页音频，只播画面',
+    },
+    open: ['说一句话。', '剩下的，交给 Agent。'],
+    chapters: [
+      { title: '视觉创作', line: '一句话出图，落在画布上，不在聊天记录里' },
+      { title: '文学与知识库', line: '边写边配图，读过的东西自己连成一张网' },
+      { title: '百宝箱', line: '三十几个 Agent，摆在同一个台面上' },
+      { title: '工作流', line: '把一串活儿排好，它自己跑完' },
+      { title: '模型池', line: '一个模型倒下，下一个自己顶上' },
+      { title: 'CDS', line: '分支即环境，push 是唯一那一步' },
+    ],
+    visual: {
+      prompt: '为新品发布会做一张海报：暖色，胶片感',
+      send: '发送',
+      tileDone: '已完成',
+      tileWorking: '生成中',
+    },
+    writing: {
+      docTitle: '第三章 · 雨停之后',
+      paragraphs: [
+        '雨是在傍晚停的。街灯一盏一盏亮起来，像有人沿着河岸点了一串火柴。',
+        '她把伞收进门后，发现窗台上那盆薄荷又长高了一截，叶子上还挂着水。',
+        '远处有列车驶过，声音被湿漉漉的空气压得很低，听上去像一句没说完的话。',
+      ],
+      nodes: ['雨停', '街灯', '河岸', '薄荷', '列车', '第二章', '人物卡'],
+    },
+    toolbox: { unit: '个常用 Agent', search: '搜索 Agent' },
+    workflow: {
+      title: '工作流 · 周报自动汇总',
+      schedule: '每周五 18:00 自动运行，不用人盯',
+      nodes: ['定时触发', '抓取周报', '模型归纳', '生成图表', '推送群聊'],
+      done: '已送达 · 用时 38 秒',
+    },
+    models: {
+      poolName: '模型池 · 对话主力',
+      rateLimited: '429 限流',
+      switched: '已自动切换',
+      failures: '用户侧失败 0 次',
+      rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
+    },
+    cds: {
+      command: 'git push origin feature/film',
+      branch: 'feature/film',
+      stages: ['拉取', '构建', '启动', '就绪'],
+      ready: '预览已上线',
+      slogan: 'push 之后，什么都不用做',
+    },
+    montage: ['写', '画', '查', '编', '跑', '测', '发', '看'],
+    finale: { brand: 'MAP · 米多智能体生态平台', tagline: '让创造，自由呼吸', cta: '进入 MAP' },
+  },
   footer: {
     brand: '米多智能体生态平台',
     github: 'GitHub',
@@ -1509,6 +1607,68 @@ const en: TranslationShape = {
       note: 'Neither should be product code’s problem. The next two acts are those layers.',
     },
   ],
+  film: {
+    eyebrow: 'FILM · 0:52',
+    title: 'Fifty-two seconds of it at work',
+    subtitle: 'Picture and score are computed live by this page — there is no video file, and every cut lands on a drum hit. Sound on, if you can.',
+    controls: {
+      play: 'Play the film',
+      pause: 'Pause',
+      replay: 'Replay',
+      mute: 'Mute',
+      unmute: 'Sound on',
+      fullscreen: 'Fullscreen',
+      soundOn: 'Sound',
+      noAudio: 'This browser has no Web Audio, playing picture only',
+    },
+    open: ['Say one sentence.', 'Agents do the rest.'],
+    chapters: [
+      { title: 'Visual', line: 'One sentence, one image — on a canvas, not in a chat log' },
+      { title: 'Writing & Knowledge', line: 'Illustrated as you write; what you read links itself up' },
+      { title: 'Toolbox', line: 'Thirty-odd agents on one desk' },
+      { title: 'Workflows', line: 'Line up a chain of work; it runs itself' },
+      { title: 'Model pool', line: 'One model falls over, the next one steps in' },
+      { title: 'CDS', line: 'A branch is an environment; push is the only step' },
+    ],
+    visual: {
+      prompt: 'A launch-event poster: warm tones, film grain',
+      send: 'Send',
+      tileDone: 'Done',
+      tileWorking: 'Rendering',
+    },
+    writing: {
+      docTitle: 'Chapter 3 · After the Rain',
+      paragraphs: [
+        'The rain stopped at dusk. Streetlights came on one by one, like someone striking matches along the river.',
+        'She left her umbrella by the door and saw the mint on the sill had grown again, still beaded with water.',
+        'A train went by far off, its sound pressed low by the wet air, like a sentence left unfinished.',
+      ],
+      nodes: ['Rain', 'Streetlight', 'River', 'Mint', 'Train', 'Chapter 2', 'Cast'],
+    },
+    toolbox: { unit: 'everyday agents', search: 'Search agents' },
+    workflow: {
+      title: 'Workflow · Weekly digest',
+      schedule: 'Runs every Friday at 18:00 — nobody has to watch it',
+      nodes: ['Schedule', 'Fetch reports', 'Summarize', 'Chart it', 'Post to chat'],
+      done: 'Delivered · 38 s',
+    },
+    models: {
+      poolName: 'Model pool · Chat primary',
+      rateLimited: '429 rate limited',
+      switched: 'Switched over',
+      failures: '0 user-facing failures',
+      rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
+    },
+    cds: {
+      command: 'git push origin feature/film',
+      branch: 'feature/film',
+      stages: ['Pull', 'Build', 'Start', 'Ready'],
+      ready: 'Preview is live',
+      slogan: 'After push, nothing left to do',
+    },
+    montage: ['Write', 'Draw', 'Find', 'Build', 'Run', 'Test', 'Ship', 'See'],
+    finale: { brand: 'MAP · MIDOO AGENTIC PLATFORM', tagline: 'Create, freely.', cta: 'Enter MAP' },
+  },
   footer: {
     brand: 'Midoo Agentic Platform',
     github: 'GitHub',
