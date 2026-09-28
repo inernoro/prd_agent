@@ -1,4 +1,4 @@
-import { apiRequest } from '@/services/real/apiClient';
+import { apiDownload, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
 import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -935,11 +935,55 @@ export async function batchDeleteSites(ids: string[]): Promise<ApiResponse<{ del
 export async function setSiteVisibility(
   id: string,
   visibility: 'public' | 'private',
+  /** 设为公开且本页引用了私有资料时必填：作者在确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string,
 ): Promise<ApiResponse<HostedSite>> {
   return apiRequest(api.webPages.setVisibility(encodeURIComponent(id)), {
     method: 'PATCH',
-    body: { visibility },
+    body: { visibility, confirmedPrivateSourceFingerprint },
   });
+}
+
+// ─── 发出前私有资料核查 ───
+
+/** 本页引用的一份私有资料。scopeLabel 由服务端给出，前端不自己维护可见范围的文案映射。 */
+export interface PrivateSourceItem {
+  entryId: string;
+  title: string;
+  storeId?: string | null;
+  storeName?: string | null;
+  /** owner-only | team | project | product | shitu | unavailable */
+  scope: string;
+  scopeLabel: string;
+}
+
+export interface PrivateSourceReport {
+  /** 这一次发出前是否必须由作者确认 */
+  requiresConfirmation: boolean;
+  /** 仅发布草稿时有：站点此刻是否已经对外可见（有对外链接或已设为公开） */
+  exposed?: boolean | null;
+  /** 这组私有资料的指纹；确认后原样带回发布 / 分享请求 */
+  fingerprint?: string | null;
+  items: PrivateSourceItem[];
+}
+
+/**
+ * 这些站点当前线上内容引用了哪些私有资料（分享、设为公开前调用）。
+ * 服务端核查全部站点、不截断；站点清单走请求体，大合集的几百个 ID 拼进查询串会超过请求行长度上限。
+ */
+export async function getSitesPrivateSources(siteIds: string[]): Promise<ApiResponse<PrivateSourceReport>> {
+  return apiRequest(api.webPages.privateSources(), {
+    method: 'POST',
+    body: { siteIds },
+  });
+}
+
+/** 这版草稿（连同它的内容血缘）引用了哪些私有资料、站点是否已对外可见（发布草稿前调用）。 */
+export async function getRevisionPrivateSources(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<PrivateSourceReport>> {
+  return apiRequest(api.webPages.revisionPrivateSources(siteId, revisionId));
 }
 
 export async function listFolders(): Promise<ApiResponse<{ folders: string[] }>> {
@@ -1062,6 +1106,8 @@ export async function createShareLink(data: {
    *   非空   = 只显示这几条
    */
   askSuggestedQuestions?: string[];
+  /** 对外分享（logged-in / public）且本页引用了私有资料时必填：确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string;
 }): Promise<ApiResponse<{
   id: string;
   token: string;
@@ -1148,7 +1194,12 @@ export async function ensureShareShortLink(shareId: string): Promise<ApiResponse
  */
 export async function updateShareSettings(
   shareId: string,
-  patch: { visibility?: 'owner-only' | 'logged-in' | 'public'; expiresInDays?: number },
+  patch: {
+    visibility?: 'owner-only' | 'logged-in' | 'public';
+    expiresInDays?: number;
+    /** 从 owner-only 放宽到对外档位且引用了私有资料时必填 */
+    confirmedPrivateSourceFingerprint?: string;
+  },
 ): Promise<ApiResponse<{ visibility: string; expiresAt?: string | null }>> {
   return apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}`, {
     method: 'PATCH',
@@ -1364,6 +1415,32 @@ export async function getShareSiteContent(
   }
 }
 
+/**
+ * 下载单文件离线 HTML（站内工作台）：服务端把站内样式、脚本、图片、字体内嵌进一个文件。
+ * 要求对这个网页有编辑权。文件下载不能走 apiRequest 的 JSON 通道，走 apiDownload（同一套鉴权与令牌刷新）。
+ * 「漏了什么」在响应头里，由 offlineExport.ts 的 readOfflineExportSummary 解析。
+ */
+export function downloadSiteOfflineHtml(siteId: string, fallbackFileName: string): Promise<ApiDownloadedFile> {
+  return apiDownload(api.webPages.offlineHtml(siteId), fallbackFileName);
+}
+
+/**
+ * 经分享链接下载单文件离线 HTML（需登录）。分享门禁与分享页取正文是同一条：
+ * 撤销 / 过期 / 可见性 / 密码。密码不对时后端回 403 SHARE_PASSWORD_REQUIRED（不是 401，免得被当成登录失效）。
+ */
+export function downloadShareOfflineHtml(
+  token: string,
+  siteId: string | undefined,
+  password: string | undefined,
+  fallbackFileName: string,
+): Promise<ApiDownloadedFile> {
+  const params = new URLSearchParams();
+  if (siteId) params.set('siteId', siteId);
+  if (password) params.set('password', password);
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return apiDownload(api.webPages.shareOfflineHtml(token, query), fallbackFileName);
+}
+
 /** 经分享链接发表评论（需登录） */
 export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
   const q = password ? `?password=${encodeURIComponent(password)}` : '';
@@ -1476,6 +1553,43 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   runtimes: DesignRuntimeCapability[];
 }>> {
   return apiRequest(api.designArtifacts.runtimeCapabilities());
+}
+
+/** 一项耗时指标（秒）。样本为 0 时百分位为 null；estimateReady 由后端按最少样本数判定。 */
+export interface DesignTimingMetric {
+  sampleCount: number;
+  p50Seconds: number | null;
+  p95Seconds: number | null;
+  estimateReady: boolean;
+}
+
+export interface DesignTimingGroup {
+  runtime: string;
+  artifactType: string;
+  succeededCount: number;
+  failedCount: number;
+  cancelledCount: number;
+  /** 生成耗时：完成时刻 − 创建时刻，只统计成功任务。 */
+  generation: DesignTimingMetric;
+  /** 资料到可分享链接：创建时刻 → 生成者为产出站点建的第一条分享/访问链接。 */
+  materialToShareLink: DesignTimingMetric;
+  materialToShareLinkEligibleRuns: number;
+}
+
+export interface DesignTimingStats {
+  windowDays: number;
+  since: string;
+  generatedAt: string;
+  percentileMethod: string;
+  estimateMinSamples: number;
+  runSampleCap: number;
+  runSamplesTruncated: boolean;
+  groups: DesignTimingGroup[];
+}
+
+/** 耗时统计只影响一句预估：给它一个上限，超时回 TIMEOUT，调用方据此明说「取不到」。 */
+export async function getDesignTimingStats(timeoutMs?: number): Promise<ApiResponse<DesignTimingStats>> {
+  return apiRequest(api.designArtifacts.timingStats(), timeoutMs ? { timeoutMs } : undefined);
 }
 
 export async function getDesignGenerationSettings(): Promise<ApiResponse<DesignGenerationSettings>> {
@@ -1687,8 +1801,13 @@ export async function createHostedSiteRevisionPreviewAccess(
 export async function publishHostedSiteRevision(
   siteId: string,
   revisionId: string,
+  /** 站点已对外可见且这版引用了私有资料时必填：确认层里确认过的私有引用指纹 */
+  confirmedPrivateSourceFingerprint?: string,
 ): Promise<ApiResponse<HostedSiteRevisionMutation>> {
-  return apiRequest(api.webPages.publishRevision(siteId, revisionId), { method: 'POST' });
+  return apiRequest(api.webPages.publishRevision(siteId, revisionId), {
+    method: 'POST',
+    body: confirmedPrivateSourceFingerprint ? { confirmedPrivateSourceFingerprint } : undefined,
+  });
 }
 
 export async function rollbackHostedSiteRevision(

@@ -1012,6 +1012,15 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_shared_teams" }
 )
 
+// collection: personal_design_styles
+// 「我的风格」：风格画廊按「我的 + 最近更新」列出，新建前按归属人计数（每人上限 20 套）。
+// 两条读法都以 OwnerUserId 为前导；没有索引时，每次打开风格画廊都整表扫描。
+db.personal_design_styles.createIndex(
+  { "OwnerUserId": 1, "UpdatedAt": -1 },
+  { name: "idx_personal_design_styles_owner_updated" }
+)
+// end collection: personal_design_styles
+
 db.document_stores.createIndex(
   { "SharedTeamIds": 1 },
   { name: "idx_document_stores_shared_teams" }

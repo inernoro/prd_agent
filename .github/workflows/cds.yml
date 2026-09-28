@@ -32,6 +32,10 @@ jobs:
               # 触发路径覆没覆盖登记与解析器）。不把被守文件登记进来，只改它的 PR
               # 会整个跳过测试 job——守卫从落地起就对它要防的场景不设防。
               - '.github/workflows/cds-external-port-audit.yml'
+              # build-scope-ci-parity 守卫对拍这两份文件（compose 的构建范围 vs 镜像工作流的触发条件），
+              # 只改其中一份的 PR 也必须跑到它，否则漂移会一路全绿进 main（形状 7）。
+              - 'cds-compose.yml'
+              - '.github/workflows/branch-image.yml'
 
   build-and-test:
     name: Build & Test

@@ -2,35 +2,30 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   planSourceDownload,
-  describeDownloadResult,
-  describeDownloadFailure,
   sanitizeFileBaseName,
   extensionOf,
-  SOURCE_PROXY_MAX_BYTES,
-  SOURCE_DOWNLOADABLE_MAX_BYTES,
+  OFFLINE_EXPORT_MAX_BYTES,
 } from './sourceDownload';
 
 describe('源文件形态判定', () => {
-  it('单文件 HTML 站：下的就是完整的那一份', () => {
+  it('单文件 HTML 站：下载离线版', () => {
     const plan = planSourceDownload({ title: '拜耳 · 业务员邀请', entryFile: 'index.html', fileCount: 1 });
     expect(plan).toEqual({
       kind: 'html',
       fileName: '拜耳 · 业务员邀请.html',
-      partial: false,
       fileCount: 1,
     });
-    expect(describeDownloadResult(plan)).toBeNull();
   });
 
-  it('多文件站：仍然可下，但必须说清下到的只是入口那一份', () => {
+  /**
+   * 多文件站此前只能下到入口那一份（取正文代理只取入口），图片样式全丢，只好标 partial 再补一句说明。
+   * 现在走离线打包，样式、脚本、图片都内嵌进一个文件——「只下到一部分」这一档不再存在，
+   * 真漏了哪几处由服务端在响应头里逐条报（见 offlineExport.test.ts）。
+   */
+  it('多文件站：同样下载离线版，不再是「只有入口那一份」', () => {
     const plan = planSourceDownload({ title: '诊断报告', entryFile: 'index.html', fileCount: 9 });
     expect(plan.kind).toBe('html');
-    if (plan.kind !== 'html') throw new Error('unreachable');
-    expect(plan.partial).toBe(true);
-    const note = describeDownloadResult(plan);
-    // 不许静默：用户手里这份不完整，这件事只能由我们说出来
-    expect(note).toContain('9');
-    expect(note).toContain('其余 8');
+    expect(plan).not.toHaveProperty('partial');
   });
 
   /**
@@ -62,61 +57,29 @@ describe('源文件形态判定', () => {
   });
 
   /**
-   * 超过代理上限的单文件站，按下去必然失败（Codex 第二轮 P2）。
-   *
-   * 取正文那条路由读满 2MB 就断，而托管上传允许到 500MB——两个数字差两个量级。
-   * 与其让用户点一次换一个后端报错，不如在按下之前就判出来并说清替代路径。
+   * 入口文件**自己**就超过离线打包上限的，内嵌之后只会更大，按下去必然失败——按之前就说清并给替代路径。
    */
-  it('入口文件超过代理上限：不宣称能下，直接说清并给替代路径', () => {
+  it('入口文件超过打包上限：不宣称能下，直接说清并给替代路径', () => {
     const plan = planSourceDownload({
       title: '巨型单页', entryFile: 'index.html', fileCount: 1,
-      entrySize: SOURCE_PROXY_MAX_BYTES + 1,
+      entrySize: OFFLINE_EXPORT_MAX_BYTES + 1,
     });
     expect(plan.kind).toBe('unavailable');
     if (plan.kind !== 'unavailable') throw new Error('unreachable');
-    expect(plan.reason).toContain('2MB');
+    expect(plan.reason).toContain('20MB');
     expect(plan.reason, '只说不行不够，要给下一步').toContain('新窗口打开');
   });
 
-  /**
-   * 边界上两个数量的**量纲不一样**（Codex 第七轮 P2）。
-   *
-   * `entrySize` 是存进对象存储的字节，后端 `maxBytes` 量的是 CDN 服务出来的字节，中间隔着
-   * CDN 注入的遥测。所以「恰好压线」不是安全的——它取回来必然超，点一次必然失败。
-   * 判据因此改用 `SOURCE_DOWNLOADABLE_MAX_BYTES`（代理上限减去注入余量）。
-   */
-  it('恰好压在代理上限上的，取回时会被注入撑破，要拦', () => {
+  it('入口恰好压线的照常能下（上限量的是打包产物，压线的入口交给服务端判）', () => {
     expect(planSourceDownload({
-      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_PROXY_MAX_BYTES,
-    }).kind, '存储 2MB + CDN 注入 = 必然超代理上限').toBe('unavailable');
-  });
-
-  it('余量之内的照常能下，不因为留余量就把好站点误伤掉', () => {
-    expect(planSourceDownload({
-      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_DOWNLOADABLE_MAX_BYTES,
+      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: OFFLINE_EXPORT_MAX_BYTES,
     }).kind).toBe('html');
-    expect(planSourceDownload({
-      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_DOWNLOADABLE_MAX_BYTES + 1,
-    }).kind).toBe('unavailable');
-  });
-
-  it('余量必须为正且小于代理上限（写反了会把所有站点都拦掉）', () => {
-    expect(SOURCE_DOWNLOADABLE_MAX_BYTES).toBeGreaterThan(0);
-    expect(SOURCE_DOWNLOADABLE_MAX_BYTES).toBeLessThan(SOURCE_PROXY_MAX_BYTES);
   });
 
   /**
-   * 判据认的是**入口文件自己**的大小，与站点有几个文件无关。
-   *
-   * 上一版拿 totalSize 近似，只好写成「只对单文件站判」；那个特例又把「多文件站里入口
-   * 本身超 2MB」漏掉了（Codex 第四轮 P2）。换成后端给的 entrySize 之后，两种站点同一条判据。
+   * 判据只认入口自己的大小，与站点有几个文件、总共多大无关：目录里躺着一个没被引用的大视频，
+   * 不该把整站拦掉——引用了什么只有服务端量得准。
    */
-  it('多文件站里入口自己超限，同样要拦', () => {
-    expect(planSourceDownload({
-      title: 't', entryFile: 'index.html', fileCount: 30, entrySize: SOURCE_PROXY_MAX_BYTES + 1,
-    }).kind).toBe('unavailable');
-  });
-
   it('入口不大就不拦，哪怕整站几百 MB（判据只认入口那一份）', () => {
     expect(planSourceDownload({
       title: 't', entryFile: 'index.html', fileCount: 30, entrySize: 50 * 1024,
@@ -130,18 +93,23 @@ describe('源文件形态判定', () => {
   /**
    * 判据分裂守卫（predicate-and-wiring-discipline 形状 3）。
    *
-   * 「哪些包装类型的壳子本身就是正文」这件事，后端 WebPagesController 的
-   * SrcDocReadableWrappers 是 SSOT。前端另抄一份是为了在按下去之前就判出可用性，
-   * 抄错的后果是：按钮看着能点，点了拿回一个 400。所以这里拿后端源码当判据，
+   * 「哪些包装类型的壳子本身就是正文、能打离线包」这件事，后端 HostedSiteService 的
+   * IsRevisionReadableWrapper 是 SSOT（离线打包服务直接调它）。前端另抄一份是为了在按下去之前
+   * 就判出可用性，抄错的后果是：按钮看着能点，点了拿回一个 400。所以这里拿后端源码当判据，
    * 后端放行了新类型而前端忘了跟，这条会红。
    */
-  it('可读包装类型必须与后端 SrcDocReadableWrappers 一致', () => {
-    const controller = readFileSync(
-      new URL('../../../../prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs', import.meta.url),
+  it('可读包装类型必须与后端 IsRevisionReadableWrapper 一致', () => {
+    const service = readFileSync(
+      new URL('../../../../prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs', import.meta.url),
       'utf8',
     );
-    const block = /SrcDocReadableWrappers\s*=\s*[\s\S]{0,200}?\{([^}]*)\}/.exec(controller);
-    expect(block, '后端那份名单不见了，判据要跟着改').not.toBeNull();
+    const exporter = readFileSync(
+      new URL('../../../../prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteOfflineExportService.cs', import.meta.url),
+      'utf8',
+    );
+    expect(exporter, '离线打包必须复用这条判据，不许自己另写一份').toContain('HostedSiteService.IsRevisionReadableWrapper(');
+    const block = /IsRevisionReadableWrapper\(string\? wrappedAssetType\) =>([\s\S]{0,300}?);/.exec(service);
+    expect(block, '后端那条判据不见了，判据要跟着改').not.toBeNull();
     const backendWrappers = [...block![1].matchAll(/"([^"]+)"/g)].map((m) => m[1].toLowerCase());
     expect(backendWrappers.length).toBeGreaterThan(0);
 
@@ -166,11 +134,12 @@ describe('源文件形态判定', () => {
 describe('下载源文件的取法', () => {
   const page = readFileSync(new URL('../../pages/ShareViewPage.tsx', import.meta.url), 'utf8');
 
-  it('正文走服务端同源代理 + Blob 落盘', () => {
+  it('下载走离线打包端点，落盘经共用 hook 的同源 Blob 出口', () => {
     expect(page).toContain('planSourceDownload');
-    expect(page).toContain('saveTextAsFile');
-    // 取正文用的是已有的同源代理端点，不另开一套
-    expect(page).toContain('getShareSiteContent');
+    expect(page).toContain('downloadShareOfflineHtml');
+    expect(page).toContain('useOfflineExport');
+    const hook = readFileSync(new URL('./useOfflineExport.ts', import.meta.url), 'utf8');
+    expect(hook).toContain('saveBlobAsFile(file.blob, file.fileName)');
   });
 
   /**
@@ -199,18 +168,24 @@ describe('下载源文件的取法', () => {
   });
 
   /**
-   * 落盘前必须剥掉 CDN 在传输途中注入的遥测（Codex 第五轮 P2）。
+   * 下载不许退回取正文代理（Codex 第五轮 P2 那条遥测问题的根治）。
    *
-   * 取正文走的是托管域名对外服务的那一份，而托管域名前面挂着 CDN，它会往每一份 HTML 里
-   * 塞一条 cloudflareinsights 的 beacon（previewHtml.ts 的 stripInjectedTelemetry 就是为它
-   * 写的，2026-08-25 每日验收抓到过：自己传的 200 字节纯 HTML 取回来 9336 字节）。
-   * 那段脚本不是分享者写的，跟着下载文件跑出去就是一条第三方请求。
-   *
-   * 预览已经剥了，下载没剥 = 同一件事两个口径（形状 3）。这里钉的是「共用同一个判据」，
-   * 不是「文案里有没有 beacon 几个字」——真去删掉那个调用，这条会红。
+   * 取正文代理读的是托管域名经 CDN 服务出来的那一份：CDN 往每份 HTML 里塞一条 cloudflareinsights
+   * beacon，那段脚本不是分享者写的，此前只好在落盘前剥掉；而且它只取入口一个文件、上限 2MB。
+   * 离线打包从对象存储按文件清单读原字节，不经 CDN——剥遥测这一步随之不再需要。
+   * 这里钉的是「下载那段逻辑里不再出现取正文代理」：谁把下载退回代理，这条会红。
    */
-  it('落盘前剥掉传输途中注入的遥测，与预览共用同一判据', () => {
-    expect(page).toMatch(/saveTextAsFile\(\s*stripInjectedTelemetry\(/);
+  it('下载那段逻辑不再走取正文代理', () => {
+    const start = page.indexOf('const handleDownloadSource');
+    const end = page.indexOf('const fetchShare', start);
+    expect(start).toBeGreaterThan(0);
+    const block = page.slice(start, end);
+    expect(block).not.toContain('getShareSiteContent');
+    expect(block).toContain('downloadShareOfflineHtml');
+  });
+
+  it('打包中的进度以文字常驻在说明条里（手机上按钮只剩图标）', () => {
+    expect(page).toMatch(/downloading\s*\?\s*\{ text: `\$\{offlineExportLabel\}/);
   });
 
   it('PDF 一档的按钮文案是「打开」不是「下载」', () => {
@@ -223,10 +198,10 @@ describe('下载源文件的取法', () => {
    *
    * 第一版写成「不许出现 href=siteUrl 且带 download」的正则，撤回修复试红时它没红：
    * `a.href=site.siteUrl; a.download=name;` 分成两句赋值就绕过去了（形状 1，判据比该管的窄）。
-   * 改成钉「这个文件里根本不许自己造下载」——落盘动作只许经 saveTextAsFile 一个出口，
+   * 改成钉「这个文件里根本不许自己造下载」——落盘动作只许经 saveBlobAsFile 一个出口，
    * 那里已经规定了「内容从同源拿、Blob 落盘」。绕过它就必须先把这条守卫改掉，改不掉就得红。
    */
-  it('页面里不许自己手搓下载，落盘只许经 saveTextAsFile', () => {
+  it('页面里不许自己手搓下载，落盘只许经 saveBlobAsFile', () => {
     const codeOnly = page
       .replace(/\/\*[\s\S]*?\*\//g, ' ')
       .split('\n')
@@ -239,69 +214,15 @@ describe('下载源文件的取法', () => {
   });
 });
 
-/**
- * 失败文案必须是人话（external-cause-first）。
- *
- * Codex 第二轮 P2：后端那条路由的报错是协议口径的（`站点内容读取失败（HTTP 404）`），
- * 原样端给访客等于把「这什么意思、我该怎么办」的推导工作转嫁给他。
- */
-describe('失败文案', () => {
-  it('超限：说清为什么 + 去哪儿', () => {
-    const out = describeDownloadFailure('站点入口文件超过 2MB，不支持读取');
-    expect(out.text).toContain('新窗口打开');
-    expect(out.text).not.toContain('2MB，不支持读取');
-  });
-
-  it('404：说的是「文件不在了」，不是一个 HTTP 码', () => {
-    const out = describeDownloadFailure('站点内容读取失败（HTTP 404）');
-    expect(out.text).toContain('分享者');
-    expect(out.text).not.toMatch(/HTTP\s*404/);
-  });
-
-  /**
-   * 认得出来的错误**不带**原始报错。
-   *
-   * 读者是分享链接的外部访客，不是运维：受控文案已经说清了怎么回事，再摆一句
-   * `HTTP 404` 增量为零（Codex 第四轮 P2）。认不出来的那一档反过来——见下一条。
-   */
-  it('认得出来的错误不把 HTTP 细节带给访客', () => {
-    expect(describeDownloadFailure('站点内容读取失败（HTTP 404）').detail).toBeUndefined();
-    expect(describeDownloadFailure('站点内容读取失败（HTTP 502）').detail).toBeUndefined();
-    expect(describeDownloadFailure('站点入口文件超过 2MB，不支持读取').detail).toBeUndefined();
-  });
-
-  it('认不出来时保留原文——那是访客唯一能转述给分享者的线索', () => {
-    const out = describeDownloadFailure('something weird');
-    expect(out.text).toContain('稍后再试');
-    expect(out.detail).toBe('something weird');
-  });
-
-  it('后端没给 message 时不渲染空附注', () => {
-    expect(describeDownloadFailure(undefined).detail).toBeUndefined();
-    expect(describeDownloadFailure('   ').detail).toBeUndefined();
-  });
-
-  it('每条规则都要有真实样本命中，不留永不生效的死规则', () => {
-    // 覆盖守卫：三条规则各自对应一句后端真实会返回的文案
-    const samples = [
-      '站点入口文件超过 2MB，不支持读取',
-      '站点内容读取失败（HTTP 404）',
-      '站点内容读取失败（HTTP 502）',
-    ];
-    const texts = new Set(samples.map((s) => describeDownloadFailure(s).text));
-    expect(texts.size, '有规则没被任何样本命中，或两条规则产出了同一句话').toBe(3);
-  });
-});
-
-describe('代理上限必须与后端一致', () => {
-  it('SOURCE_PROXY_MAX_BYTES 跟得上后端的 maxBytes', () => {
-    const controller = readFileSync(
-      new URL('../../../../prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs', import.meta.url),
+describe('打包上限必须与后端一致', () => {
+  it('OFFLINE_EXPORT_MAX_BYTES 跟得上后端 HostedSiteHtmlInliner.DefaultMaxOutputBytes', () => {
+    const inliner = readFileSync(
+      new URL('../../../../prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteHtmlInliner.cs', import.meta.url),
       'utf8',
     );
-    const m = /const long maxBytes\s*=\s*([0-9]+)L?\s*\*\s*1024\s*\*\s*1024/.exec(controller);
+    const m = /DefaultMaxOutputBytes\s*=\s*([0-9]+)L?\s*\*\s*1024\s*\*\s*1024/.exec(inliner);
     expect(m, '后端那个上限改写法了，判据要跟着改').not.toBeNull();
-    expect(SOURCE_PROXY_MAX_BYTES).toBe(Number(m![1]) * 1024 * 1024);
+    expect(OFFLINE_EXPORT_MAX_BYTES).toBe(Number(m![1]) * 1024 * 1024);
   });
 });
 

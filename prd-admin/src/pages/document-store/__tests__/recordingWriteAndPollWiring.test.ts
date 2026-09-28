@@ -1196,7 +1196,7 @@ describe('原文还没出来时不给「导出」', () => {
   const source = read('pages/document-store/RecordingResultPage.tsx');
 
   it('按钮本身不渲染，而不是渲染一颗点了给空文件的', () => {
-    const at = source.indexOf('const headerActions = ');
+    const at = source.indexOf('const exportAction = ');
     expect(at).toBeGreaterThan(-1);
     expect(source.slice(at, at + 160)).toContain("state.noteMd.trim()");
   });

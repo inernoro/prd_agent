@@ -98,7 +98,8 @@ public sealed class OpenDesignStageProgress
 
     private static Macro? MacroOf(string? reason) => reason switch
     {
-        "workspace_downloading" or "workspace_materialized" or "container_starting" or "container_ready"
+        // task_accepted 只有直连设计执行服务时才有（服务接单的第一条事件）；container_* 只有经 CDS 会话时才有。
+        "task_accepted" or "workspace_downloading" or "workspace_materialized" or "container_starting" or "container_ready"
             => Macro.Preparing,
         "open_design_importing" => Macro.Importing,
         "open_design_run_starting" => Macro.Starting,

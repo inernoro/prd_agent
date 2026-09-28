@@ -7,6 +7,7 @@ import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
   createHostedSiteRevisionPreviewAccess,
+  getRevisionPrivateSources,
   cancelHostedSiteEditRun,
   getDesignRuntimeCapabilities,
   getHostedSiteEditRun,
@@ -20,6 +21,7 @@ import {
   type HostedSiteRevision,
   type DesignRuntimeCapability,
 } from '@/services/real/webPages';
+import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import {
   activeSiteEditRunStorageKey,
   appendRunNarration,
@@ -768,9 +770,23 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const publish = async (revisionId: string) => {
     setMutatingId(revisionId);
     setMutatingAction('publish');
-    const result = await publishHostedSiteRevision(site.id, revisionId);
+    // 站点已经对外可见且这版引用了私有资料时，先让作者确认（服务端同样强制，前端只是先问清楚）。
+    const gated = await runWithPrivateSourceGate({
+      inspect: () => getRevisionPrivateSources(site.id, revisionId),
+      run: (fingerprint) => publishHostedSiteRevision(site.id, revisionId, fingerprint),
+      actionLabel: '发布这版',
+      allowRevise: true,
+    });
     setMutatingId(null);
     setMutatingAction(null);
+    if (gated.status !== 'done') {
+      // 取消 / 返回修改：线上版本没有任何变化，草稿原样留着。
+      setPhase(gated.status === 'revise'
+        ? '草稿没有发布：在对话里说想改哪里，改掉引用私有资料的内容后再发布'
+        : '草稿没有发布，线上版本保持不变');
+      return;
+    }
+    const result = gated.res;
     if (!result.success) {
       const detail = result.error?.message || '请刷新后重试';
       setRecoveryNotice({

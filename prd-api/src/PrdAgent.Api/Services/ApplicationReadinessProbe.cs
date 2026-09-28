@@ -52,7 +52,8 @@ public sealed class ApplicationReadinessProbe
         Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> assetProbe,
         ILogger<ApplicationReadinessProbe> logger,
         TimeSpan? dependencyTimeout = null,
-        Func<MongoIndexAdvisoryReport?>? indexReport = null)
+        Func<MongoIndexAdvisoryReport?>? indexReport = null,
+        TimeProvider? timeProvider = null)
     {
         _mongoProbe = mongoProbe;
         _indexReport = indexReport ?? (() => null);
@@ -60,7 +61,7 @@ public sealed class ApplicationReadinessProbe
         // 不合并的话，Redis 挂住期间每一次 /health/ready（编排每几秒来一次）都会再起一次，
         // 攒成一堆谁也停不掉的在途操作。Mongo 与对象存储不需要：它们真的收令牌，
         // 超时一到下游就被取消，每次探测都干净结束。
-        _redisProbe = new SingleFlightProbe(redisProbe, dependencyTimeout ?? DefaultDependencyTimeout).RunAsync;
+        _redisProbe = new SingleFlightProbe(redisProbe, dependencyTimeout ?? DefaultDependencyTimeout, timeProvider).RunAsync;
         _assetProbe = assetProbe;
         _logger = logger;
         // 显式传入只为把这条 5 秒上限缩短到可测。
@@ -214,14 +215,18 @@ internal sealed class SingleFlightProbe
 
     private readonly Func<CancellationToken, Task> _probe;
     private readonly TimeSpan _staleAfter;
+    // 过期判断只看这个时钟。测试换成手动推进的时钟，窗口内外由用例决定，
+    // 不取决于 CI 机器当时有多慢（2026-09-25 #1618：满载时 5 轮 40ms 探测跑了 879ms，越过 480ms 窗口）。
+    private readonly TimeProvider _time;
     private readonly object _gate = new();
     private Task? _inFlight;
     private long _startedAtTicks;
 
-    internal SingleFlightProbe(Func<CancellationToken, Task> probe, TimeSpan dependencyTimeout)
+    internal SingleFlightProbe(Func<CancellationToken, Task> probe, TimeSpan dependencyTimeout, TimeProvider? time = null)
     {
         _probe = probe;
         _staleAfter = dependencyTimeout * StaleProbeTimeoutMultiplier;
+        _time = time ?? TimeProvider.System;
     }
 
     internal Task RunAsync(CancellationToken cancellationToken)
@@ -229,14 +234,14 @@ internal sealed class SingleFlightProbe
         lock (_gate)
         {
             if (_inFlight is { IsCompleted: false }
-                && Stopwatch.GetElapsedTime(_startedAtTicks) < _staleAfter) return _inFlight;
+                && _time.GetElapsedTime(_startedAtTicks) < _staleAfter) return _inFlight;
             // 令牌不往下传：这一次是共享的，第一个调用方走人不该把后来者的探测一起取消掉。
             // 各自的上限仍由 ProbeAsync 的 WaitAsync 施加。
             var started = _probe(CancellationToken.None);
             // 所有调用方都超时走人之后这个 Task 可能没人 await，异常会变成未观察异常。
             // 被判过期的上一条就此不再被引用：它还在跑（停不掉），但不再挡着后来者。
             _inFlight = started;
-            _startedAtTicks = Stopwatch.GetTimestamp();
+            _startedAtTicks = _time.GetTimestamp();
             _ = started.ContinueWith(
                 task => _ = task.Exception,
                 CancellationToken.None,

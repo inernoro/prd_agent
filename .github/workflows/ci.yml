@@ -84,6 +84,9 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/ci.yml'
+              # build-scope-ci-parity 守卫的两份被守文件，理由同 cds.yml 的同名条目（形状 7）。
+              - 'cds-compose.yml'
+              - '.github/workflows/branch-image.yml'
             docs:
               # 文档说人话闸门：判据 doc/rule.doc.readability.md。
               # 新增文档必须自带导读三行，否则棘轮欠账上升，这道闸会红。

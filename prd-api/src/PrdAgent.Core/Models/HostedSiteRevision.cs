@@ -88,6 +88,44 @@ public class HostedSiteRevision
 
     /// <summary>经长度限制和敏感信息脱敏后的可选拒绝原因。</summary>
     public string? RejectionReason { get; set; }
+
+    /// <summary>
+    /// 把这一版内容对外发出（发布到已分享的站点、新建对外分享、设为公开）之前，
+    /// 作者对「本页引用了哪些私有资料」的确认记录：谁、什么时候、为哪个动作、确认了哪些来源。
+    ///
+    /// 只追加，最多保留最近 50 条。老文档没有这个字段，反序列化为空列表，不需要迁移。
+    /// 判定与写入全部走 HostedSitePrivateSourceGate，别处不要自己拼。
+    /// </summary>
+    public List<HostedSitePrivateSourceConfirmation> PrivateSourceConfirmations { get; set; } = new();
+}
+
+/// <summary>一次「我知道本页引用了这些私有资料，仍然发出去」的确认。</summary>
+public class HostedSitePrivateSourceConfirmation
+{
+    /// <summary>确认人。</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    public DateTime ConfirmedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>revision-publish | share-create | share-widen | site-public</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>确认时整组私有引用的指纹（多站点合集分享时是合集整体的指纹）。</summary>
+    public string Fingerprint { get; set; } = string.Empty;
+
+    /// <summary>这一版内容里被确认的私有资料，名称与位置按确认那一刻冻结。</summary>
+    public List<HostedSitePrivateSourceConfirmedItem> Sources { get; set; } = new();
+}
+
+public class HostedSitePrivateSourceConfirmedItem
+{
+    public string EntryId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? StoreId { get; set; }
+    public string? StoreName { get; set; }
+
+    /// <summary>owner-only | team | project | product | shitu | unavailable</summary>
+    public string Scope { get; set; } = string.Empty;
 }
 
 public class HostedSiteRevisionFile
@@ -375,6 +413,8 @@ public static class HostedSiteRevisionRules
             TimeSpan.FromSeconds(1));
         value = ExtractVisibleTextFromMarkup(value);
         value = System.Net.WebUtility.HtmlDecode(value);
+        // 源码里的换行与其它空白一样折成空格：行内流里浏览器就是这么渲染的，「共 15\n项优势」
+        // 页面上就是「共 15 项优势」。真正的行界只有块级元素与 <br>/<hr>，已在上一步插成句界。
         return System.Text.RegularExpressions.Regex.Replace(
             value,
             @"\s+",
@@ -487,21 +527,36 @@ public static class HostedSiteRevisionRules
     /// <summary>拒收时引用的原句：只说「1个」读者不知道去改哪一句。</summary>
     private static string ClaimExcerpt(string segment)
     {
-        var trimmed = segment.Trim();
+        var trimmed = segment.Replace(ClockColonMark, ':').Replace(ClockFullWidthColonMark, '：').Trim();
         return trimmed.Length <= 40 ? trimmed : trimmed[..40] + "…";
     }
 
     private static List<MeasuredClaimContext> ExtractMeasuredClaimContexts(string text)
     {
         var claims = new List<MeasuredClaimContext>();
-        foreach (var segment in System.Text.RegularExpressions.Regex.Split(text ?? string.Empty, @"[\r\n。！？!?；;，,：:]+"))
+        // 数字与量词只在同一行、同一句里配对：按行界与句读切段后再取数，段与段之间绝不拼接。
+        // 时刻与时间段（00:15、00:00 - 00:15、1:30:00）不是数值陈述，但冒号本身是切段符，切开后
+        // 「00:15 项目优势」里的「15」会落到下一段开头、被读成「15 项」。所以先把时刻里的冒号换成
+        // 私用区标记（不参与切段），再由取数正则拒绝紧跟在它后面的数字。
+        // 标记必须是原文里不会出现的字符：先把输入里已有的标记字符清成空格，否则页面原文可以借它
+        // 让后面的数字逃过核对。
+        var masked = System.Text.RegularExpressions.Regex.Replace(
+            (text ?? string.Empty).Replace(ClockColonMark, ' ').Replace(ClockFullWidthColonMark, ' '),
+            @"(?<![A-Za-z0-9_.:：])\d{1,2}(?:[:：][0-5]\d){1,2}(?![\d:：])",
+            clock => clock.Value.Replace(':', ClockColonMark).Replace('：', ClockFullWidthColonMark),
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        foreach (var segment in System.Text.RegularExpressions.Regex.Split(masked, @"[\r\n。！？!?；;，,：:]+"))
         {
             var patterns = new[]
             {
                 // 「1 个月」「2 个小时」是时长，和「1 月」「2 小时」同一件事，不能当成「1 个（计数）」。
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])",
+                // 「后面不许紧跟英文字母」只对英文单位成立（防止把 5 GBps 的前缀当成 5 GB）；
+                // 中文单位本身完整，「15天trial」「15 天 trial」必须识别成同一个陈述，否则来源不带空格、
+                // 页面带空格时，来源那句不算陈述而页面那句算，误判为无依据（2026-09-25 #1622 预览验收）。
+                @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?(?<=[A-Za-z])(?![A-Za-z]))",
                 @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))",
+                @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?!\s*(?:月|小时))",
             };
             foreach (var pattern in patterns)
             {
@@ -530,6 +585,13 @@ public static class HostedSiteRevisionRules
         }
         return claims;
     }
+
+    /// <summary>
+    /// 时刻内部冒号的标记（半角 / 全角各一个，便于在引用原句时原样还原）。取私用区字符，
+    /// 不与任何页面原文撞字；紧跟其后的数字不算数值陈述。与取数正则里的 \uE000\uE001 必须一致。
+    /// </summary>
+    private const char ClockColonMark = '\uE000';
+    private const char ClockFullWidthColonMark = '\uE001';
 
     private static string NormalizeClaimContext(string value) =>
         System.Text.RegularExpressions.Regex.Replace(
@@ -682,22 +744,31 @@ public static class HostedSiteRevisionRules
         foreach (var tag in tags)
         {
             if (tag.Start > cursor && suppressedDepth == 0) builder.Append(html, cursor, tag.Start - cursor);
+            // <br>/<hr> 是行界：两侧文字在页面上不在同一行，与块级元素一样插句界，不能被读成同一句。
+            // 隐藏的行界与块级元素在页面上不产生换行，不能插句界，否则「共15<br hidden>项」会被拆开而漏检。
+            var hidden = !tag.IsClosing && IsHiddenElement(tag.Attributes);
+            if (IsLineBreakElement(tag.Name) && suppressedDepth == 0 && !hidden) builder.Append('。');
             var block = IsBlockElement(tag.Name);
             if (tag.IsClosing)
             {
+                var closedSuppressed = false;
                 for (var index = stack.Count - 1; index >= 0; index--)
                 {
                     var frame = stack[index];
                     stack.RemoveAt(index);
                     if (frame.Suppressed) suppressedDepth--;
-                    if (frame.Name.Equals(tag.Name, StringComparison.OrdinalIgnoreCase)) break;
+                    if (frame.Name.Equals(tag.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        closedSuppressed = frame.Suppressed;
+                        break;
+                    }
                 }
-                if (block && suppressedDepth == 0) builder.Append('。');
+                if (block && suppressedDepth == 0 && !closedSuppressed) builder.Append('。');
             }
             else
             {
-                if (block && suppressedDepth == 0) builder.Append('。');
-                var suppressed = IsHiddenElement(tag.Attributes);
+                if (block && suppressedDepth == 0 && !hidden) builder.Append('。');
+                var suppressed = hidden;
                 if (!tag.IsSelfClosing && !IsVoidElement(tag.Name))
                 {
                     stack.Add((tag.Name, suppressed));
@@ -728,6 +799,9 @@ public static class HostedSiteRevisionRules
             @"^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|section|table|tbody|td|tfoot|th|thead|tr|ul)$",
             RegexOptions,
             TimeSpan.FromSeconds(1));
+
+    private static bool IsLineBreakElement(string name) =>
+        name.Equals("br", StringComparison.OrdinalIgnoreCase) || name.Equals("hr", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsVoidElement(string name) =>
         System.Text.RegularExpressions.Regex.IsMatch(

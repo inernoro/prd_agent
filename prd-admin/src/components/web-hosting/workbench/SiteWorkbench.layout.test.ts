@@ -66,8 +66,9 @@ describe('生成工作台布局契约', () => {
     expect(run).toContain('styleId: request.styleId');
   });
 
-  it('风格：画廊里预设按 styleId、目录风格按 designSystemId 交给服务端；生成前右边是真实样张', () => {
-    expect(newStage).toContain("styleId: styleSelection?.kind === 'preset' ? styleSelection.styleId : null,");
+  it('风格：画廊里预设与我的风格按 styleId、目录风格按 designSystemId 交给服务端；生成前右边是真实样张', () => {
+    // 哪些选择带 styleId 的判据收在 StyleGallery.selectionStyleId 一处，行为由 StyleGallery.test 断言。
+    expect(newStage).toContain('styleId: selectionStyleId(styleSelection),');
     expect(newStage).toContain("designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,");
     expect(run).toContain('designSystemId: request.designSystemId ?? null,');
     expect(newStage).toContain('<StyleGallery');
@@ -84,7 +85,11 @@ describe('生成工作台布局契约', () => {
   it('生成中：每秒更新用时、阶段来自 phase 事件、有心跳、右边是实时页面', () => {
     expect(run).toContain('window.setInterval');
     expect(newStage).toContain('formatGenerationClock(run.elapsedSeconds)');
-    expect(newStage).toContain('remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds)');
+    // 剩余时间带上本执行器的真实 P50/P95（样本不足时为 null，退回经验值）。
+    expect(newStage).toContain('remainingEstimateText(run.activeRunRuntime, run.elapsedSeconds, activeTiming, timingState)');
+    expect(newStage).toContain('pickGenerationTiming(timingStats, run.activeRunRuntime)');
+    // 统计请求有上限：卡住的请求不许让预估永远停在「正在读取」。
+    expect(newStage).toContain('getDesignTimingStats(TIMING_STATS_TIMEOUT_MS)');
     expect(run).toContain('appendGenerationStage(current, item.message, Date.now())');
     expect(newStage).toContain('最近一次回应');
     expect(newStage).toContain('srcDoc={run.previewHtml}');

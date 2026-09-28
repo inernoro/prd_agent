@@ -42,6 +42,11 @@ export interface RuntimeCardCopy {
   description: string;
   /** 「开始生成」旁那句预期说明。 */
   footnote: string;
+  /**
+   * 不带耗时数字的那半句（生成过程中会发生什么）。新建网页的提示把耗时换成真实 P50/P95
+   * 或明说的经验值，再接上这半句；footnote 里的数字只剩修改流程在用。
+   */
+  continuity: string;
 }
 
 export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
@@ -54,6 +59,7 @@ export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
     ],
     description: '一次写完整页，内容最全、速度最快；版式以卡片和列表为主。',
     footnote: '快速生成约 1 分钟，边写边在预览里出现。',
+    continuity: '边写边在预览里出现。',
   },
   'open-design': {
     title: '精细设计',
@@ -64,6 +70,7 @@ export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
     ],
     description: '在隔离环境里先定结构、再写、再逐项自查修复；对比表、可展开块更多。可以后台运行。',
     footnote: '精细设计约 9–12 分钟。关掉窗口任务也会继续，重新打开「生成网页」可接着看进度。',
+    continuity: '关掉窗口任务也会继续，重新打开「生成网页」可接着看进度。',
   },
 };
 

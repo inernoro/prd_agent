@@ -375,8 +375,9 @@ services:
       # Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
-      # 设计执行服务（design-opendesign，map-design-executor-v1）。第 1 阶段只把地址与密钥接到位，
-      # MAP 侧按协议调用它的适配器在第 2 阶段落地；在那之前 api 不读这两项。
+      # 设计执行服务（design-opendesign，map-design-executor-v1）。两项都在时 api 的 OpenDesign 默认直连它；
+      # 缺任一项照旧走 CDS 会话。要退回旧路径就加 DesignRuntime__OpenDesign__Transport: "cds-session"。
+      # 判定只有一处：prd-api OpenDesignTransportResolver。
       # 密钥不带仓库可见的 fallback：值只来自 CDS 项目 env scope。
       DesignRuntime__OpenDesign__BaseUrl: "http://design-opendesign:8093"
       DesignRuntime__OpenDesign__ApiKey: "${DESIGN_RUNTIME_API_KEY}"
@@ -559,6 +560,12 @@ services:
       DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
     labels:
       cds.prebuilt-image: "true"
+      # CI 构建该镜像的输入范围，与 x-cds-deploy-modes.design-opendesign.express.buildScope 同一份、
+      # 逐条对齐 .github/workflows/branch-image.yml 的 design_opendesign filters。必须声明在这里：
+      # 本服务只有 express 一种模式，项目里不存在 activeDeployMode，CDS 读取的是基础 profile，
+      # 模式里的 buildScope 读不到。缺了它，没改 design-runtime/ 的分支拉不到 sha 镜像时，
+      # 回退到 branch-main 会因「无法证明与目标提交等价」被拒，整条分支部署失败。
+      cds.build-scope: "design-runtime/opendesign/**,.github/workflows/branch-image.yml"
       # 匿名就绪探针：引擎健康检查通过才 200，否则 503（CDS 把 < 500 当就绪）。它不看 API key——
       # 缺 key 时容器照样就绪，原因由能力接口说清，而不是让整条分支卡在「未就绪」。
       cds.readiness-path: "/healthz/ready"

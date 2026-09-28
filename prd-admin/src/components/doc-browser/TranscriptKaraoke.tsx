@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, Check, ChevronDown, ChevronUp, Info, MessageSquare, Pencil, RefreshCw, Search, UserRound, Users } from 'lucide-react';
 import { requestRecordingPlay } from './recordingPlayBridge';
+import { deriveTranscriptEditActivity, type TranscriptEditActivity } from './transcriptEditActivity';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { RecordingSegmentBar } from '@/components/doc-browser/RecordingSegmentBar';
 import { RecordingAskComposer } from '@/components/doc-browser/RecordingAskComposer';
@@ -214,6 +215,7 @@ export function TranscriptKaraoke({
   onRestyle,
   organize,
   onPickOrganizeStyle,
+  onEditActivityChange,
 }: {
   src: string;
   noteMd: string;
@@ -233,6 +235,11 @@ export function TranscriptKaraoke({
   organize?: OrganizeState;
   /** 选了某种整理方式：宿主去发起 restyle。不传就不渲染这一块。 */
   onPickOrganizeStyle?: (styleKey: string, customPrompt?: string) => void;
+  /**
+   * 校对状态变化（编辑框开着 / 保存在飞 / 空闲）。宿主要拿服务端正文去做别的事
+   * （例如生成网页）时据此挡住，免得带走一份还没存上去的旧正文。
+   */
+  onEditActivityChange?: (activity: TranscriptEditActivity) => void;
 }) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   // 摘要一直存在 noteMd 里，只是此前没有任何界面读它；纪要与待办都从这里长出来
@@ -274,6 +281,10 @@ export function TranscriptKaraoke({
   const organizePanelRef = useRef<HTMLDivElement | null>(null);
   const [renamingSpeaker, setRenamingSpeaker] = useState<string | null>(null);
   const [speakerDraft, setSpeakerDraft] = useState('');
+  const editActivity = deriveTranscriptEditActivity({ editingIndex, renamingSpeaker, savingEdit });
+  useEffect(() => { onEditActivityChange?.(editActivity); }, [editActivity, onEditActivityChange]);
+  // 卸载时（切到另一条录音、页面离开）交回空闲，宿主不会一直挂着上一条的「编辑中」
+  useEffect(() => () => onEditActivityChange?.('idle'), [onEditActivityChange]);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);

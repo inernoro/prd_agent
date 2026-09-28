@@ -134,9 +134,18 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
     private async Task<Attachment?> ReadMatchingOriginalAsync(string userId, DesignKnowledgeOriginalBinding snapshot, CancellationToken ct)
     {
         var entry = await _db.DocumentEntries.Find(x => x.Id == snapshot.EntryId && x.StoreId == snapshot.StoreId && !x.IsFolder).FirstOrDefaultAsync(ct);
-        if (entry == null || !string.Equals(entry.AttachmentId ?? string.Empty, snapshot.File?.AttachmentId ?? string.Empty, StringComparison.Ordinal))
+        if (entry == null) throw OriginalChanged();
+        if (snapshot.File == null)
+        {
+            // 冻结时没有原件：条目此刻也不许冒出一份「可当原件」的附件；
+            // 只有音视频载荷（录音条目的音频）例外——它从来不是正文的原件，冻结时就被显式排除。
+            if (string.IsNullOrWhiteSpace(entry.AttachmentId)) return null;
+            var current = await _db.Attachments.Find(x => x.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync(ct);
+            if (current != null && IsMediaPayload(current)) return null;
             throw OriginalChanged();
-        if (snapshot.File == null) return null;
+        }
+        if (!string.Equals(entry.AttachmentId ?? string.Empty, snapshot.File.AttachmentId, StringComparison.Ordinal))
+            throw OriginalChanged();
         var attachment = await _db.Attachments.Find(x => x.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync(ct);
         var frozen = snapshot.File;
         if (attachment == null || attachment.StorageKey != frozen.StorageKey || attachment.Size != frozen.Size
@@ -183,6 +192,17 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
         if (bytes == null || bytes.LongLength != attachment.Size)
             throw OriginalChanged();
         return bytes;
+    }
+
+    /// <summary>
+    /// 音视频载荷不是任何文本正文的「原件」：录音/视频条目的正文是转录稿（写在 Document 上），
+    /// 附件只负责播放。判据只看附件自己的 MIME，不看条目标题或扩展名。
+    /// </summary>
+    internal static bool IsMediaPayload(Attachment attachment)
+    {
+        var mime = attachment.MimeType?.Trim() ?? string.Empty;
+        return mime.StartsWith("audio/", StringComparison.OrdinalIgnoreCase)
+               || mime.StartsWith("video/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string OriginalFileName(Attachment attachment) => Path.GetFileName(attachment.FileName.Replace('\\', '/'));
@@ -261,7 +281,9 @@ public sealed class DesignKnowledgeSnapshotResolver : IDesignKnowledgeSnapshotRe
             }
 
             DesignKnowledgeOriginalFile? original = null;
-            if (originals != null && sourceAttachment != null)
+            // 录音条目：附件是音频、正文是写回同一条目的转录稿。音频不是正文的原件，
+            // 也进不了工作区（体积远超传输上限），当原件冻结只会让「用会议录音生成网页」整条失败。
+            if (originals != null && sourceAttachment != null && !IsMediaPayload(sourceAttachment))
             {
                 await RequireOriginalReadAccessAsync(userId, sourceAttachment, ct);
                 var bytes = await ReadOriginalBytesAsync(sourceAttachment, ct);

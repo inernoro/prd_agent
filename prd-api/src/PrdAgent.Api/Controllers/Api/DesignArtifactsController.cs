@@ -122,6 +122,19 @@ public sealed class DesignArtifactsController : ControllerBase
     /// <summary>
     /// 在创建设计任务前读取知识来源的当前权威哈希。响应不返回正文；创建 Run 时仍会二次读取并校验。
     /// </summary>
+    /// <summary>
+    /// 本部署最近 30 天网页生成的真实耗时（按执行器 × 产物类型分组的 P50 / P95），
+    /// 以及「资料到可分享链接」端到端耗时。口径见 <see cref="DesignArtifactTimingStats"/>。
+    /// 只返回聚合数字，不含任何任务正文或用户标识。前端据此给出「预计约 X 分钟」，
+    /// 样本不足 estimateMinSamples 时前端退回经验值并明说数据在积累。
+    /// </summary>
+    [HttpGet("timing-stats")]
+    public async Task<IActionResult> TimingStats(CancellationToken ct)
+    {
+        var result = await DesignArtifactTimingStats.QueryAsync(_db, DateTime.UtcNow, ct);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
     [HttpPost("knowledge-references/resolve")]
     public async Task<IActionResult> ResolveKnowledgeReferences(
         [FromBody] ResolveDesignKnowledgeReferencesRequest request)
@@ -215,11 +228,11 @@ public sealed class DesignArtifactsController : ControllerBase
                 _db, userId, request.AttachmentIds, CancellationToken.None);
             if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    "风格只能选一种：预设风格或目录里的设计系统，不能同时提交"));
+                    "风格只能选一种：预设风格、我的风格或目录里的设计系统，不能同时提交"));
+            // 预设 / 我的风格（personal:<id>，服务端按归属人取）/ 目录设计系统，判据全在 FreezeForRunAsync 一处。
             if (_generationSettings != null)
-                designDirection = string.IsNullOrWhiteSpace(request.DesignSystemId)
-                    ? await _generationSettings.FreezeAsync(request.StyleId, CancellationToken.None)
-                    : await _generationSettings.FreezeCatalogStyleAsync(request.DesignSystemId, CancellationToken.None);
+                designDirection = await _generationSettings.FreezeForRunAsync(
+                    userId, request.StyleId, request.DesignSystemId, CancellationToken.None);
         }
         catch (DesignRunInputException ex)
         {
@@ -346,11 +359,13 @@ public sealed class DesignArtifactsController : ControllerBase
     public async Task<IActionResult> CancelRun(string runId)
     {
         var userId = this.GetRequiredUserId();
+        // 与查询接口同一口径：只要这条任务存在就不许回「不存在」。分支重新部署后任务可能还登记在
+        // 上一版 revision 名下，是接管、还是说清楚为什么不能停，交给取消协调器按作用域判（#135）。
         var generationRun = await _db.DesignArtifactRuns
-            .Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
+            .Find(run => run.Id == runId
                          && run.UserId == userId
                          && run.ArtifactType == DesignArtifactTypes.WebPage
-                         && run.Operation == DesignArtifactOperations.Generate))
+                         && run.Operation == DesignArtifactOperations.Generate)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (generationRun == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
@@ -372,6 +387,10 @@ public sealed class DesignArtifactsController : ControllerBase
             return Conflict(ApiResponse<object>.Fail(
                 "DESIGN_ARTIFACT_CANCEL_CONFLICT",
                 "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
+        }
+        catch (DesignArtifactCancellationUnavailableException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ex.Code, ex.Message));
         }
 
         if (cancellation == null)
@@ -966,7 +985,10 @@ public sealed class CreateDesignArtifactRunRequest
 
     public List<DesignKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 
-    /// <summary>风格预设编号；为空取网页生成设置里的默认风格。</summary>
+    /// <summary>
+    /// 风格预设编号；为空取网页生成设置里的默认风格。「我的风格」写作 <c>personal:&lt;id&gt;</c>，
+    /// 服务端按编号 + 当前用户取出风格正文，别人的编号与不存在一样被拒。
+    /// </summary>
     public string? StyleId { get; set; }
 
     /// <summary>

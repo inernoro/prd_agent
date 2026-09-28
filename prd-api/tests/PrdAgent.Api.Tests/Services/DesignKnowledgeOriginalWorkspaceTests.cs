@@ -167,6 +167,45 @@ public sealed class DesignKnowledgeOriginalWorkspaceTests
         await f.AssertUnpreparedAsync(run);
     }
 
+    /// <summary>
+    /// 录音条目：附件是音频（远超工作区上限），正文是写回同一条目的转录稿。
+    /// 「用会议录音生成网页」必须拿转录稿当来源，而不是把音频当原件冻结后整条失败。
+    /// </summary>
+    [Fact]
+    public async Task RecordingEntry_TranscriptIsSource_AudioPayloadIsNotFrozenAsOriginal()
+    {
+        await using var f = await Fixture.CreateAsync();
+        await f.UploadAsync();
+        var audioBytes = new byte[checked((int)DesignArtifactWorkspaceBroker.MaxInputBytes * 2)];
+        var stored = await f.Local.SaveAsync(audioBytes, "audio/webm", default);
+        var audio = new Attachment
+        {
+            UploaderId = "owner", FileName = "meeting.webm", MimeType = "audio/webm",
+            Size = audioBytes.LongLength, Url = stored.Url, StorageKey = stored.Key, Type = AttachmentType.Document,
+        };
+        await f.Db.Attachments.InsertOneAsync(audio);
+        await f.Db.DocumentEntries.UpdateOneAsync(x => x.Id == f.Entry.Id,
+            Builders<DocumentEntry>.Update.Set(x => x.AttachmentId, audio.AttachmentId).Set(x => x.ContentType, "audio/webm"));
+
+        var frozen = await f.Resolver.ResolveWorkspaceForRunAsync("owner", await f.ReferencesAsync(), default);
+
+        var source = Assert.Single(frozen.KnowledgeReferences);
+        Assert.Equal(Encoding.UTF8.GetString(f.UploadBytes), source.Content);
+        Assert.Null(Assert.Single(frozen.Originals.References).File);
+        Assert.Empty(f.Reads);
+        var run = await f.NewRunAsync(frozen.KnowledgeReferences, frozen.Originals);
+        await f.Broker().PrepareAsync(run, null, default);
+        Assert.Equal(2, (await f.PackageAsync(run)).Files.Count);
+        Assert.Empty(f.Reads);
+
+        // 冻结后把音频换成一份可当原件的文本附件：仍按「原件变化」拒绝，例外只放行音视频载荷。
+        run = await f.NewRunAsync(frozen.KnowledgeReferences, frozen.Originals);
+        await f.Db.DocumentEntries.UpdateOneAsync(x => x.Id == f.Entry.Id,
+            Builders<DocumentEntry>.Update.Set(x => x.AttachmentId, f.Attachment.AttachmentId));
+        await Assert.ThrowsAsync<DesignKnowledgeSnapshotException>(() => f.Broker().PrepareAsync(run, null, default));
+        await f.AssertUnpreparedAsync(run);
+    }
+
     [Fact]
     public async Task OversizedBinary_DoesNotRestrictTextOnlyCallers_ButCannotCreateWorkspaceSnapshot()
     {

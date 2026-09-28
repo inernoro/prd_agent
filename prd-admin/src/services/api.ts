@@ -1249,6 +1249,11 @@ export const api = {
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
     content: (id: string) => `/api/web-pages/${id}/content`,
+    /** 单文件离线 HTML（站内资源内嵌）。站内入口：要求对该网页有编辑权 */
+    offlineHtml: (id: string) => `/api/web-pages/${encodeURIComponent(id)}/export/offline-html`,
+    /** 单文件离线 HTML，经分享链接（登录 + 分享门禁：撤销 / 过期 / 可见性 / 密码） */
+    shareOfflineHtml: (token: string, query: string) =>
+      `/api/web-pages/shares/view/${encodeURIComponent(token)}/export/offline-html${query}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
@@ -1265,6 +1270,8 @@ export const api = {
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
+    // 发出前私有资料核查（分享 / 设为公开前先问一次；发布草稿走 revisionPrivateSources）
+    privateSources: () => '/api/web-pages/private-sources',
     shares: () => '/api/web-pages/shares',
     revokeShare: (shareId: string) => `/api/web-pages/shares/${shareId}`,
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
@@ -1293,13 +1300,20 @@ export const api = {
     revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
     revisionPreviewAccess: '/api/hosted-site-preview-access',
     publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
+    revisionPrivateSources: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/private-sources`,
     rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
     rejectRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/reject`,
   },
   designArtifacts: {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    // 最近 30 天真实耗时 P50/P95（按执行器 × 产物类型），给「预计还要多久」用
+    timingStats: () => '/api/design-artifacts/timing-stats',
     // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
     generationSettings: () => '/api/design-artifacts/generation-settings',
+    // 「我的风格」：每人自己的风格（列表 / 新建 / 改 / 删 / 从自己的网页提取草稿）
+    personalStyles: () => '/api/design-artifacts/personal-styles',
+    personalStyle: (id: string) => `/api/design-artifacts/personal-styles/${encodeURIComponent(id)}`,
+    personalStyleDerive: () => '/api/design-artifacts/personal-styles/derive',
     runs: () => '/api/design-artifacts/runs',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
     cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,

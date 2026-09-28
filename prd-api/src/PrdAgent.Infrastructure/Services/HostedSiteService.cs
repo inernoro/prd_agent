@@ -2325,14 +2325,21 @@ public class HostedSiteService : IHostedSiteService
     // 可见性
     // ─────────────────────────────────────────────
 
+    /// <summary>
+    /// 这个用户能不能改这个站点的可见性（设为公开 / 私有）：只有站点创建者能改，团队 owner / editor 都不行。
+    /// 唯一判定源：<see cref="SetVisibilityAsync"/> 与发布前私有资料确认那道闸共用，闸在记录确认之前先问这里。
+    /// </summary>
+    public bool CanSetVisibility(HostedSite site, string userId)
+        => site.OwnerUserId == userId;
+
     public async Task<HostedSite?> SetVisibilityAsync(string siteId, string userId, string visibility, CancellationToken ct)
     {
         var normalized = visibility?.Trim().ToLowerInvariant();
         if (normalized != "public" && normalized != "private")
             throw new ArgumentException("visibility 必须是 public 或 private");
 
-        var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
-        if (site == null) return null;
+        var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+        if (site == null || !CanSetVisibility(site, userId)) return null;
 
         var now = DateTime.UtcNow;
         var update = Builders<HostedSite>.Update
@@ -2369,6 +2376,29 @@ public class HostedSiteService : IHostedSiteService
     // ─────────────────────────────────────────────
     // 分享
     // ─────────────────────────────────────────────
+
+    /// <summary>无分享权限时给人读的那句话；分享服务与控制器预检共用，两处报同一句。</summary>
+    public const string NoSharePermissionMessage = "包含无分享权限或非团队的站点";
+
+    /// <summary>
+    /// 这个用户能不能为这些站点建分享链接：每一个站点都要有 CreateShare 权限（站点创建者 / 团队 owner / editor），
+    /// viewer、非成员、不存在的站点一律不行。唯一判定源：<see cref="CreateShareWithReuseInfoAsync"/> 与
+    /// 发布前私有资料确认那道闸（核查接口与分享前的确认记录）共用。
+    /// </summary>
+    public async Task<bool> CanCreateShareAsync(IReadOnlyCollection<string> siteIds, string userId, CancellationToken ct = default)
+    {
+        if (siteIds.Count == 0) return false;
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        var fbShare = Builders<HostedSite>.Filter;
+        var shareSites = await _db.HostedSites.Find(fbShare.In(x => x.Id, siteIds)).ToListAsync(ct);
+        var sharableIds = shareSites.Where(s =>
+        {
+            var isOwner = s.OwnerUserId == userId;
+            var role = WebHostingPermission.ResolveSiteRole(isOwner, s.SharedTeamIds, roles);
+            return WebHostingPermission.Can(role, WebHostingAction.CreateShare, isOwner);
+        }).Select(s => s.Id).ToHashSet();
+        return siteIds.All(sharableIds.Contains);
+    }
 
     public async Task<WebPageShareLink> CreateShareAsync(
         string userId, string displayName,
@@ -2452,17 +2482,8 @@ public class HostedSiteService : IHostedSiteService
 
         // 角色门控：editor / owner / 站点创建者可建分享链接；viewer 与非成员拒绝。
         // 所有目标站点都必须有 CreateShare 权限，否则整笔拒绝（与原「全部可访问才放行」一致）。
-        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
-        var fbShare = Builders<HostedSite>.Filter;
-        var shareSites = await _db.HostedSites.Find(fbShare.In(x => x.Id, allIds)).ToListAsync(ct);
-        var sharableIds = shareSites.Where(s =>
-        {
-            var isOwner = s.OwnerUserId == userId;
-            var role = WebHostingPermission.ResolveSiteRole(isOwner, s.SharedTeamIds, roles);
-            return WebHostingPermission.Can(role, WebHostingAction.CreateShare, isOwner);
-        }).Select(s => s.Id).ToHashSet();
-        if (!allIds.All(sharableIds.Contains))
-            throw new UnauthorizedAccessException("包含无分享权限或非团队的站点");
+        if (!await CanCreateShareAsync(allIds, userId, ct))
+            throw new UnauthorizedAccessException(NoSharePermissionMessage);
 
         // 复用优先（服务端唯一判定，不依赖前端列表/分页，杜绝"链接数 > 分页上限后去重失效"）：
         // 同用户 + 同站点/合集 + 同访问级别 + 未吊销的链接直接复用，避免无限创建；

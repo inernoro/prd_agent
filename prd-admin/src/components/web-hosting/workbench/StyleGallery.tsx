@@ -1,31 +1,84 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Palette, RotateCw } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Palette, Pencil, RotateCw, Trash2 } from 'lucide-react';
+import { systemDialog } from '@/lib/systemDialog';
+import { toast } from '@/lib/toast';
 import { getDesignGenerationSettings, type DesignGenerationStyle } from '@/services/real/webPages';
 import {
   listDesignSystems,
   type DesignSystemCatalog,
   type DesignSystemItem,
 } from '@/services/real/designSystems';
+import { deletePersonalStyle, listPersonalStyles, type PersonalStyle } from '@/services/real/personalStyles';
 import { StyleThumbnail } from './StyleThumbnail';
+import { PersonalStyleDialog, type PersonalStyleDialogMode } from './PersonalStyleDialog';
+import { createBlocker } from './personalStyleModel';
 
 /**
  * 风格画廊（受控）：管理员配置的预设风格在前（真实缩略图 + 名称 + 一句话），
- * 下面「更多风格」按分类折叠浏览 OpenDesign 的全部设计系统，最后一张是「做一个我的风格」入口。
+ * 接着是「我的风格」（只属于当前用户，标「我的」，可新建 / 编辑 / 删除），
+ * 下面「更多风格」按分类折叠浏览 OpenDesign 的全部设计系统。
  *
  * 每张缩略图都是该风格真实样张的缩小版（StyleThumbnail），分类默认折叠、缩略图进入视口才加载，
  * 一百五十多套设计系统不会一次性全渲染。
  */
 
-/** 选中的是哪一套：管理员预设（生成时按 styleId 冻结）或目录里的某个设计系统。 */
+/**
+ * 选中的是哪一套：管理员预设（生成时按 styleId 冻结）、我的风格（styleId = personal:<id>，
+ * 服务端按编号 + 当前用户取出风格正文）或目录里的某个设计系统。
+ */
 export type StyleGallerySelection =
   | { kind: 'preset'; key: string; styleId: string; designSystemId: string; name: string }
+  | { kind: 'personal'; key: string; styleId: string; designSystemId: string; name: string; swatches: string[] }
   | { kind: 'design-system'; key: string; designSystemId: string; name: string };
+
+/** 生成请求里该带的 styleId：预设与我的风格走 styleId，目录设计系统走 designSystemId（不带 styleId）。 */
+export function selectionStyleId(selection: StyleGallerySelection | null): string | null {
+  return selection && selection.kind !== 'design-system' ? selection.styleId : null;
+}
 
 /** 目录项的选择键加前缀，避免与预设的 styleId 撞名（预设 editorial 与设计系统 editorial 是两回事）。 */
 export const DESIGN_SYSTEM_KEY_PREFIX = 'design-system:';
 
+/**
+ * 删掉一套「我的风格」之后选中项该怎么变：删的不是选中的那套 → 不动；是 → 退回默认预设，
+ * 预设读不到或为空 → 清空（生成时由服务端用默认风格）。
+ */
+export function selectionAfterDelete(
+  selectedId: string | null,
+  deletedStyleId: string,
+  presets: readonly DesignGenerationStyle[] | null,
+): { kind: 'keep' } | { kind: 'select'; selection: StyleGallerySelection } | { kind: 'clear' } {
+  if (selectedId !== deletedStyleId) return { kind: 'keep' };
+  const fallback = presets?.find((item) => item.isDefault) ?? presets?.[0];
+  return fallback ? { kind: 'select', selection: presetSelection(fallback) } : { kind: 'clear' };
+}
+
+/**
+ * 新建或改完一套「我的风格」之后怎么处理选中：骨架还在就选中它（新建后不必再点一次）；
+ * 骨架已下线（只改了名字或说明，没换骨架）就不选——选中了生成也必然被拒。它原本就是选中项时一并清掉。
+ */
+export function selectionAfterSave(
+  saved: PersonalStyle,
+  selectedId: string | null,
+): { kind: 'select'; selection: StyleGallerySelection } | { kind: 'keep' } | { kind: 'clear' } {
+  if (personalCardAction(saved) === 'select') return { kind: 'select', selection: personalSelection(saved) };
+  return selectedId === saved.styleId ? { kind: 'clear' } : { kind: 'keep' };
+}
+
 export function presetSelection(style: DesignGenerationStyle): StyleGallerySelection {
   return { kind: 'preset', key: style.id, styleId: style.id, designSystemId: style.designSystemId, name: style.name };
+}
+
+/** 我的风格的选择键就是它的 styleId（personal:<id>），与预设编号、design-system: 前缀都不会撞。 */
+export function personalSelection(style: PersonalStyle): StyleGallerySelection {
+  return {
+    kind: 'personal',
+    key: style.styleId,
+    styleId: style.styleId,
+    designSystemId: style.baseDesignSystemId,
+    name: style.name,
+    swatches: style.swatches,
+  };
 }
 
 export function designSystemSelection(item: DesignSystemItem): StyleGallerySelection {
@@ -57,30 +110,39 @@ export function groupMoreStyles(catalog: DesignSystemCatalog, presetDesignSystem
 type Loadable<T> = { status: 'loading' } | { status: 'ready'; data: T } | { status: 'failed'; message: string };
 
 export interface StyleGalleryProps {
-  /** 当前选中项的 key（预设为 styleId，目录项为 `design-system:<id>`）；null 表示未选。 */
+  /** 当前选中项的 key（预设为 styleId，我的风格为 `personal:<id>`，目录项为 `design-system:<id>`）；null 表示未选。 */
   selectedId: string | null;
   onSelect: (selection: StyleGallerySelection) => void;
+  /** 选中的那套被删、又没有可退回的预设时调用：清空选择（生成时由服务端用默认风格），不关画廊。 */
+  onClearSelection?: () => void;
   /** 样张大标题，通常是用户正在生成的网页标题。 */
   title?: string;
-  /** 点「做一个我的风格」时调用；本期只是入口，由调用方决定怎么处理。 */
-  onRequestCustomStyle: () => void;
 }
 
-export function StyleGallery({ selectedId, onSelect, title, onRequestCustomStyle }: StyleGalleryProps) {
+export function StyleGallery({ selectedId, onSelect, onClearSelection, title }: StyleGalleryProps) {
   const [presets, setPresets] = useState<Loadable<DesignGenerationStyle[]>>({ status: 'loading' });
+  const [mine, setMine] = useState<Loadable<{ items: PersonalStyle[]; limit: number }>>({ status: 'loading' });
   const [catalog, setCatalog] = useState<Loadable<DesignSystemCatalog>>({ status: 'loading' });
+  const [dialog, setDialog] = useState<{ key: number; mode: PersonalStyleDialogMode } | null>(null);
   const [openCategories, setOpenCategories] = useState<ReadonlySet<string>>(() => new Set());
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setPresets({ status: 'loading' });
+    setMine({ status: 'loading' });
     setCatalog({ status: 'loading' });
     void getDesignGenerationSettings().then((res) => {
       if (cancelled) return;
       setPresets(res.success
         ? { status: 'ready', data: res.data.styles.filter((style) => style.enabled) }
         : { status: 'failed', message: res.error?.message || '预设风格没有读出来，请稍后重试。' });
+    });
+    void listPersonalStyles().then((res) => {
+      if (cancelled) return;
+      setMine(res.success
+        ? { status: 'ready', data: res.data }
+        : { status: 'failed', message: res.error?.message || '我的风格没有读出来，请稍后重试。' });
     });
     void listDesignSystems().then((res) => {
       if (cancelled) return;
@@ -111,6 +173,46 @@ export function StyleGallery({ selectedId, onSelect, title, onRequestCustomStyle
   }, []);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
 
+  const mineCount = mine.status === 'ready' ? mine.data.items.length : 0;
+  const mineLimit = mine.status === 'ready' ? mine.data.limit : 20;
+  const newBlocker = mine.status === 'ready' ? createBlocker(mineCount, mineLimit) : null;
+
+  /** 新建或改完：列表里换上服务端返回的那一份；能用就直接选中它，骨架已下线就不选（见 selectionAfterSave）。 */
+  const handleSaved = useCallback((saved: PersonalStyle) => {
+    setMine((current) => {
+      if (current.status !== 'ready') return current;
+      const rest = current.data.items.filter((item) => item.id !== saved.id);
+      return { status: 'ready', data: { ...current.data, items: [saved, ...rest] } };
+    });
+    setDialog(null);
+    const next = selectionAfterSave(saved, selectedId);
+    if (next.kind === 'select') onSelect(next.selection);
+    else if (next.kind === 'clear') onClearSelection?.();
+  }, [onClearSelection, onSelect, selectedId]);
+
+  const handleDelete = useCallback(async (style: PersonalStyle) => {
+    const confirmed = await systemDialog.confirm({
+      title: '删除我的风格',
+      message: `删除「${style.name}」？已经用它生成的网页不受影响，但以后不能再选它。`,
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+    const res = await deletePersonalStyle(style.id);
+    if (!res.success) {
+      toast.error('没有删掉', res.error?.message || '请稍后重试');
+      return;
+    }
+    setMine((current) => (current.status === 'ready'
+      ? { status: 'ready', data: { ...current.data, items: current.data.items.filter((item) => item.id !== style.id) } }
+      : current));
+    // 删掉的正是选中的那套：退回默认预设；预设读不到就清空选择——总之不许留着一个已经不存在的编号。
+    const next = selectionAfterDelete(selectedId, style.styleId, presets.status === 'ready' ? presets.data : null);
+    if (next.kind === 'select') onSelect(next.selection);
+    else if (next.kind === 'clear') onClearSelection?.();
+  }, [onClearSelection, onSelect, presets, selectedId]);
+
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <section className="flex flex-col gap-2.5" aria-label="预设风格">
@@ -130,6 +232,35 @@ export function StyleGallery({ selectedId, onSelect, title, onRequestCustomStyle
             />
           ))}
         </div>
+      </section>
+
+      <section className="flex flex-col gap-2.5" aria-label="我的风格">
+        <SectionHeading
+          title="我的风格"
+          hint={mine.status === 'ready'
+            ? `只有你自己看得到、用得到；已有 ${mineCount} / ${mineLimit} 套`
+            : '只有你自己看得到、用得到'}
+        />
+        {mine.status === 'failed' && <LoadFailure message={mine.message} onRetry={retry} />}
+        {mine.status === 'loading' && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"><CardSkeleton /></div>}
+        {mine.status === 'ready' && mine.data.items.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {mine.data.items.map((style) => (
+              <PersonalStyleCard
+                key={style.id}
+                style={style}
+                selected={selectedId === style.styleId}
+                onSelect={onSelect}
+                onEdit={() => setDialog({ key: Date.now(), mode: { kind: 'edit', style } })}
+                onDelete={() => void handleDelete(style)}
+              />
+            ))}
+          </div>
+        )}
+        <CustomStyleCard
+          disabledReason={newBlocker}
+          onRequest={() => setDialog({ key: Date.now(), mode: { kind: 'create' } })}
+        />
       </section>
 
       <section className="flex flex-col gap-2.5" aria-label="更多风格">
@@ -183,7 +314,15 @@ export function StyleGallery({ selectedId, onSelect, title, onRequestCustomStyle
         })}
       </section>
 
-      <CustomStyleCard onRequest={onRequestCustomStyle} />
+      {dialog && (
+        <PersonalStyleDialog
+          key={dialog.key}
+          open
+          mode={dialog.mode}
+          onOpenChange={(open) => { if (!open) setDialog(null); }}
+          onSaved={handleSaved}
+        />
+      )}
     </div>
   );
 }
@@ -245,31 +384,146 @@ export function StyleCard({ selection, selected, description, sampleDesignSystem
 
 export const CUSTOM_STYLE_CARD_TEXT = {
   title: '做一个我的风格',
-  badge: '即将支持',
-  description: '按你的品牌规范或参考页面生成一套自己的风格。这个能力还没有上线，现在还不能用。',
+  description: '挑一张你自己做过的网页，或写几句想要的感觉；系统读出配色、字体与版式，你核对后保存。',
 } as const;
 
-export function CustomStyleCard({ onRequest }: { onRequest: () => void }) {
+export function CustomStyleCard({ onRequest, disabledReason }: { onRequest: () => void; disabledReason?: string | null }) {
   return (
     <button
       type="button"
       onClick={onRequest}
-      className="flex items-center gap-3 rounded-xl p-3 text-left hover-bg-soft"
+      disabled={Boolean(disabledReason)}
+      className="flex items-center gap-3 rounded-xl p-3 text-left hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
       style={{ border: '1px dashed var(--border-default)' }}
     >
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg" style={{ background: 'var(--bg-tertiary)' }}>
         <Palette size={18} className="text-token-secondary" />
       </span>
       <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-center gap-2">
-          <span className="text-[13px] font-semibold text-token-primary">{CUSTOM_STYLE_CARD_TEXT.title}</span>
-          <span className="rounded-md px-1.5 py-0.5 text-[11px] text-token-muted" style={{ background: 'var(--bg-tertiary)' }}>
-            {CUSTOM_STYLE_CARD_TEXT.badge}
-          </span>
-        </span>
-        <span className="text-[11px] leading-snug text-token-muted">{CUSTOM_STYLE_CARD_TEXT.description}</span>
+        <span className="text-[13px] font-semibold text-token-primary">{CUSTOM_STYLE_CARD_TEXT.title}</span>
+        <span className="text-[11px] leading-snug text-token-muted">{disabledReason || CUSTOM_STYLE_CARD_TEXT.description}</span>
       </span>
     </button>
+  );
+}
+
+/** 我的风格卡的主操作：骨架还在就选中，骨架已下线就打开编辑。 */
+export function personalCardAction(style: Pick<PersonalStyle, 'baseDesignSystemAvailable'>): 'select' | 'edit' {
+  return style.baseDesignSystemAvailable === false ? 'edit' : 'select';
+}
+
+export interface PersonalStyleCardProps {
+  style: PersonalStyle;
+  selected: boolean;
+  onSelect: (selection: StyleGallerySelection) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+/**
+ * 我的风格卡：没有真实样张（样张来自设计系统，而这套风格覆盖了它的配色与字体），缩略图位置用这套风格
+ * 自己的三枚色块画一张配色示意；按描述建、没有色块的，写「按描述生成」而不是编一组颜色。
+ */
+export function PersonalStyleCard({ style, selected, onSelect, onEdit, onDelete }: PersonalStyleCardProps) {
+  const selection = personalSelection(style);
+  const [ink, paper, accent] = style.swatches.length === 3 ? style.swatches : [];
+  const stop = (event: { stopPropagation: () => void }) => event.stopPropagation();
+  // 骨架设计系统已下线的风格生成必然被拒：卡片主操作改成打开编辑去换骨架，而不是选中一个用不了的风格。
+  const activate = personalCardAction(style) === 'edit' ? onEdit : () => onSelect(selection);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onClick={activate}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          activate();
+        }
+      }}
+      className="group flex min-w-0 cursor-pointer flex-col gap-2 rounded-xl p-2 text-left outline-none transition-colors hover-bg-soft"
+      style={{
+        border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+        boxShadow: selected ? '0 0 0 1px var(--accent-primary)' : undefined,
+        background: 'var(--bg-card)',
+      }}
+      data-style-key={selection.key}
+      data-style-kind="personal"
+    >
+      <div className="relative">
+        <div
+          className="flex w-full flex-col justify-center gap-1.5 overflow-hidden rounded-[10px] px-[12%]"
+          style={{
+            aspectRatio: '1200 / 760',
+            background: paper ?? 'var(--bg-tertiary)',
+            border: '1px solid var(--border-subtle)',
+          }}
+          role="img"
+          aria-label={ink ? `${style.name}的配色示意` : `${style.name}按描述生成，没有色块`}
+        >
+          {ink ? (
+            <>
+              <span className="h-2 w-2/3 rounded-sm" style={{ background: ink }} />
+              <span className="h-1 w-5/6 rounded-sm opacity-60" style={{ background: ink }} />
+              <span className="h-1 w-3/4 rounded-sm opacity-60" style={{ background: ink }} />
+              <span className="mt-1 h-2.5 w-1/4 rounded-sm" style={{ background: accent }} />
+            </>
+          ) : (
+            <span className="text-center text-[11px] text-token-muted">按描述生成，无色块</span>
+          )}
+        </div>
+        <span
+          className="absolute left-1.5 top-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold"
+          style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+        >
+          我的
+        </span>
+        {selected && (
+          <span
+            className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full"
+            style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+            aria-hidden
+          >
+            <Check size={12} />
+          </span>
+        )}
+      </div>
+      <div className="flex min-w-0 items-start gap-1 px-0.5">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-[13px] font-semibold text-token-primary">{style.name}</span>
+          <span className="line-clamp-2 text-[11px] leading-snug text-token-muted">{style.instruction}</span>
+          {!style.baseDesignSystemAvailable && (
+            <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--semantic-warning-text)' }}>
+              <AlertTriangle size={11} />骨架已下线，编辑换一个
+            </span>
+          )}
+        </div>
+        <span className="flex shrink-0 items-center">
+          <button
+            type="button"
+            aria-label={`编辑${style.name}`}
+            title="编辑 / 重命名"
+            onClick={(event) => { stop(event); onEdit(); }}
+            onKeyDown={stop}
+            className="rounded p-1 text-token-muted hover-bg-soft"
+          >
+            <Pencil size={12} />
+          </button>
+          <button
+            type="button"
+            aria-label={`删除${style.name}`}
+            title="删除"
+            onClick={(event) => { stop(event); onDelete(); }}
+            onKeyDown={stop}
+            className="rounded p-1 text-token-muted hover-bg-soft"
+          >
+            <Trash2 size={12} />
+          </button>
+        </span>
+      </div>
+    </div>
   );
 }
 

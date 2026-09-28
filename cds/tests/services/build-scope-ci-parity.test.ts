@@ -87,6 +87,31 @@ describe('cds-compose 的 buildScope 与 branch-image.yml 的构建触发条件�
     }
   });
 
+  // 顶层 `cds.build-scope` 标签是同一份契约的第二个落点：只有 express 一种模式的服务在项目里没有
+  // activeDeployMode，CDS 读的是基础 profile，模式里的 buildScope 读不到（PR #1618 部署失败的根因）。
+  // 两份必须与 CI 同步，否则漂移时这条对拍依旧全绿、部署却按陈旧范围放行或拒收回退镜像。
+  const services = compose.services as Record<string, { labels?: Record<string, string> }>;
+  const labelScope = (svc: string): string[] | undefined => {
+    const raw = services[svc]?.labels?.['cds.build-scope'];
+    return raw === undefined ? undefined : raw.split(',').map((s) => s.trim()).filter(Boolean).sort();
+  };
+
+  it('服务顶层 cds.build-scope 标签（若声明）与该 job 的触发条件一致', () => {
+    for (const [jobId, svc] of Object.entries(JOB_TO_SERVICE)) {
+      const declared = labelScope(svc);
+      if (declared === undefined) continue;
+      expect(declared, `${svc} 的 cds.build-scope 标签与 job '${jobId}' 的触发条件不一致`).toEqual(ciScopeFor(jobId));
+    }
+  });
+
+  it('只有 express 一种模式的镜像服务必须在顶层声明 cds.build-scope', () => {
+    for (const svc of Object.values(JOB_TO_SERVICE)) {
+      const modeNames = Object.keys(modes[svc] || {});
+      if (modeNames.length !== 1 || modeNames[0] !== 'express') continue;
+      expect(labelScope(svc), `${svc} 只有 express 模式，项目里不会有 activeDeployMode，必须在 services.${svc}.labels 声明 cds.build-scope`).toBeTruthy();
+    }
+  });
+
   it('三个 llmgw 镜像都必须含 prd-api/**（其 Dockerfile 编译 prd-api 的 Core/Infrastructure）', () => {
     for (const svc of ['llmgw', 'llmgw-web', 'llmgw-serve']) {
       expect(modes[svc].express.buildScope, svc).toContain('prd-api/**');

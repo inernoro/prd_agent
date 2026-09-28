@@ -360,6 +360,8 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.HostedSiteService>()
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteRevisionService, PrdAgent.Infrastructure.Services.HostedSiteRevisionService>();
+// 离线 HTML 打包（站内资源内嵌成单文件）；权限由 HostedSiteExportController 先过站点 / 分享门禁
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOfflineExportService, PrdAgent.Infrastructure.Services.HostedSiteOfflineExportService>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.HostedSitePreviewAccessService>();
 // 预览 iframe 的可嵌入来源与 CORS 信任来源同源同表（见 HostedSitePreviewEmbedOptions 注释）。
 builder.Services.AddSingleton(
@@ -430,12 +432,25 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
     PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
     PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
+// 发布前私有资料确认（2026-09-24）：发布到已分享站点 / 新建对外分享 / 设为公开之前的唯一判定源。
+// 两个网页托管 Controller 以可选依赖注入它；这里漏注册就等于整道闸不存在，有守卫测试盯着。
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceStore,
+    PrdAgent.Api.Services.MongoHostedSitePrivateSourceStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IHostedSitePrivateSourceGate,
+    PrdAgent.Api.Services.HostedSitePrivateSourceGate>();
 // 风格目录（OpenDesign 设计系统快照，内嵌资源）：启动时加载一次；缺失或写坏直接让启动失败并说明原因，
 // 不退化成空目录——空目录与「真的没有风格」分不开，风格卡片与样张会静默消失。
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignSystemCatalog>(
     PrdAgent.Api.Services.DesignSystemCatalog.LoadEmbedded());
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignGenerationSettingsService,
     PrdAgent.Api.Services.DesignGenerationSettingsService>();
+// 「我的风格」：每人自己的风格（归属判定在服务里）；生成时由设置服务按 personal:<id> + 当前用户取出冻结。
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalDesignStyleStore,
+    PrdAgent.Api.Services.MongoPersonalDesignStyleStore>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalDesignStyleService,
+    PrdAgent.Api.Services.PersonalDesignStyleService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IPersonalStyleDerivationService,
+    PrdAgent.Api.Services.PersonalStyleDerivationService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,
     PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactCancellationCoordinator,
@@ -452,11 +467,9 @@ builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;
 });
-builder.Services.AddScoped<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>();
-builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
-    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
-builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderProbe>(sp =>
-    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
+// OpenDesign 两条传输面：直连设计执行服务（service）/ 经 CDS 会话（cds-session，回退用）。
+// 选哪条只由 OpenDesignTransportResolver 一处判定（DesignRuntime:OpenDesign:Transport / BaseUrl / ApiKey）。
+PrdAgent.Api.Services.OpenDesignTransportServiceCollectionExtensions.AddOpenDesignExecutors(builder.Services);
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
@@ -1085,7 +1098,7 @@ builder.Services.AddCors(options =>
                 })
                 .AllowAnyHeader()
                 .AllowAnyMethod()
-                .WithExposedHeaders("X-Perm-Fingerprint");
+                .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count", "X-Offline-Export-External-Count", "X-Offline-Export-External");
             return;
         }
 
@@ -1093,7 +1106,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .WithExposedHeaders("X-Perm-Fingerprint");
+            .WithExposedHeaders("X-Perm-Fingerprint", "Content-Disposition", "X-Offline-Export-Missing-Count", "X-Offline-Export-Missing", "X-Offline-Export-Inlined-Count", "X-Offline-Export-External-Count", "X-Offline-Export-External");
     });
 });
 
