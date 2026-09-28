@@ -99,10 +99,14 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.True(await HostedSiteEditRunWorker.RenewLeaseAsync(_db, owned.Id, "worker", now, TimeSpan.FromMinutes(2), default));
     }
 
+    // 同项目同分支、另一个 revision 的「运行中且租约早已到期」任务不再属于「异部署、不许碰」：
+    // 那正是分支重新部署后留下的孤儿（#135），由 RetiredRevision_* 用例单独约束。
+    // 这里只保留真正的异部署——别的项目、别的分支——它们无论租约如何都原样不动。
     [DesignScopeMongoTheory]
     [InlineData("project-b::branch-a::revision::revision-a")]
     [InlineData("project-a::branch-b::revision::revision-a")]
-    [InlineData("project-a::branch-a::revision::revision-b")]
+    [InlineData("project-a::branch-b")]
+    [InlineData("project-b::branch-a")]
     public async Task Recovery_RequeuesOnlyOwnedRuns_AndLeavesForeignExecutionAndCleanupUnchanged(string otherScope)
     {
         var now = Now;
@@ -130,6 +134,198 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Null((await Read("owned-rejected")).WorkspaceRejectedResultAssetKey);
         storage.Verify(item => item.DeleteByKeyAsync("owned-object", CancellationToken.None), Times.Once);
         storage.VerifyNoOtherCalls();
+    }
+
+    // ───────────── 分支重新部署后上一版留下的孤儿任务（#135） ─────────────
+
+    private const string RetiredScope = "project-a::branch-a::revision::revision-retired";
+
+    /// <summary>上一版 revision 的执行方已经退出：租约早已到期、没人续租、结果也没落定。</summary>
+    private static DesignArtifactRun OrphanedGeneration(string id, bool publicLifecycle = false)
+    {
+        var run = Run(id, RunStatuses.Running);
+        run.ArtifactType = DesignArtifactTypes.WebPage;
+        run.Operation = DesignArtifactOperations.Generate;
+        run.Runtime = DesignArtifactRuntimes.OpenDesign;
+        run.LeaseOwnerId = "retired-worker:lease";
+        run.LeaseExpiresAt = Now.AddMinutes(-3);
+        run.Progress = 40;
+        run.Phase = "正在生成页面";
+        if (publicLifecycle)
+        {
+            run.ContractVersion = DesignArtifactContractVersions.Current;
+            run.LifecycleVersion = 3;
+        }
+        return run;
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetiredRevision_OrphanedRun_IsSettledAsFailedWithTheRedeployReason(bool publicLifecycle)
+    {
+        var orphan = OrphanedGeneration("orphan-running", publicLifecycle);
+        await InsertAsync(orphan, RetiredScope);
+        var adapter = new Mock<IWebPageDesignArtifactLifecycleAdapter>(MockBehavior.Strict);
+        adapter.Setup(item => item.FailAsync(
+                orphan.Id,
+                WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode,
+                It.Is<DesignArtifactLifecycleLeaseAuthority>(lease => lease.Recovery
+                                                                      && lease.LeaseOwnerId == orphan.LeaseOwnerId),
+                CancellationToken.None))
+            // 真实 adapter 在这一步把公共生命周期推进到 error；桩只做同一件状态写入。
+            .Returns(() => _db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == orphan.Id,
+                Builders<DesignArtifactRun>.Update.Set(item => item.Status, RunStatuses.Error)));
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(
+            _db, _queue, _events, Now, default, publicLifecycle: adapter.Object, lifecycle: Lifecycle());
+
+        var settled = await Read(orphan.Id);
+        Assert.Equal(RunStatuses.Error, settled.Status);
+        Assert.Equal(HostedSiteEditRunWorker.RedeployInterruptedMessage, settled.Error);
+        Assert.Equal(HostedSiteEditRunWorker.RedeployInterruptedMessage, settled.Phase);
+        Assert.Null(settled.LeaseExpiresAt);
+        // 接管之后归本 revision 管：此后的读写、恢复都按本部署作用域走。
+        Assert.Equal(CurrentScope, settled.DeploymentSlug);
+        Assert.Equal(publicLifecycle ? 1 : 0, adapter.Invocations.Count);
+        var terminal = (await _events.GetEventsAsync(RunKinds.DesignArtifact, orphan.Id, 0, 100)).Last();
+        Assert.Equal("error", terminal.EventName);
+        Assert.Contains("分支重新部署", terminal.PayloadJson);
+
+        // 查询接口与任务记录同口径：它现在说「失败」，不再说「在跑」。
+        var read = Assert.IsType<OkObjectResult>(await GenerationController().GetRun(orphan.Id));
+        Assert.Contains(RunStatuses.Error, System.Text.Json.JsonSerializer.Serialize(read.Value));
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("lease-still-held")]
+    [InlineData("lease-just-lapsed")]
+    public async Task RetiredRevision_RunStillWithinItsLeaseOrGrace_IsLeftToItsOwnWorker(string shape)
+    {
+        // 滚动部署时上一版容器可能还活着并在续租；刚到期的也给它一段余量，不抢在它自己收尾之前。
+        var run = OrphanedGeneration(shape);
+        run.LeaseExpiresAt = shape == "lease-still-held"
+            ? Now.AddMinutes(1)
+            : Now - HostedSiteEditRunWorker.RetiredRevisionAdoptionGrace + TimeSpan.FromSeconds(5);
+        await InsertAsync(run, RetiredScope);
+        var before = await Raw(run.Id);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+
+        Assert.Equal(before, await Raw(run.Id));
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("workspace-result-committed")]
+    [InlineData("workspace-result-writing")]
+    [InlineData("revision-already-written")]
+    [InlineData("committing")]
+    [InlineData("queued")]
+    public async Task RetiredRevision_RunWhoseResultHasLanded_IsNeverMisjudgedAsFailed(string shape)
+    {
+        // 「结果已落定却没交付」另有台账（doc/debt.platform.open-design.md），本修复只收「执行方丢了任务」这一类。
+        var run = OrphanedGeneration(shape);
+        switch (shape)
+        {
+            case "workspace-result-committed":
+                run.WorkspaceResultAssetKey = "web-hosting/results/committed.zip";
+                break;
+            case "workspace-result-writing":
+                run.WorkspacePendingResultAssetKey = "web-hosting/results/writing.zip";
+                break;
+            case "revision-already-written":
+                await _db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+                {
+                    Id = "landed-revision", SiteId = "landed-site", SourceRunId = run.Id,
+                });
+                break;
+            case "committing":
+                run.Status = RunStatuses.Committing;
+                break;
+            case "queued":
+                run.Status = RunStatuses.Queued;
+                run.LeaseOwnerId = null;
+                run.LeaseExpiresAt = null;
+                break;
+        }
+        await InsertAsync(run, RetiredScope);
+        var before = await Raw(run.Id);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+
+        Assert.Equal(before, await Raw(run.Id));
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetiredRevision_StopOnAnOrphanedRun_SettlesItInsteadOfAnsweringNotFound(bool publicLifecycle)
+    {
+        var orphan = OrphanedGeneration("orphan-stop", publicLifecycle);
+        await InsertAsync(orphan, RetiredScope);
+
+        var result = await ProductionWiredGenerationController().CancelRun(orphan.Id);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Contains(RunStatuses.Cancelled, System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        var settled = await Read(orphan.Id);
+        Assert.Equal(RunStatuses.Cancelled, settled.Status);
+        Assert.NotNull(settled.CancelledAt);
+        Assert.Equal(CurrentScope, settled.DeploymentSlug);
+        Assert.Equal("cancelled", (await _events.GetEventsAsync(RunKinds.DesignArtifact, orphan.Id, 0, 100)).Last().EventName);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RetiredRevision_StopOnAnOrphanedEditRun_IsAcceptedAndSettledInsteadOfNotFound()
+    {
+        // 修改面板的停止走同一个协调器：同一类孤儿不许一边回 404、一边查询说在跑。
+        var orphan = OrphanedGeneration("orphan-edit-stop");
+        orphan.Operation = DesignArtifactOperations.Edit;
+        orphan.TargetSiteId = "site";
+        orphan.SourceSurface = DesignArtifactSourceSurfaces.WebHosting;
+        await InsertAsync(orphan, RetiredScope);
+
+        Assert.IsType<OkObjectResult>(await EditController().CancelRun("site", orphan.Id));
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+
+        var settled = await Read(orphan.Id);
+        Assert.Equal(RunStatuses.Cancelled, settled.Status);
+        Assert.Equal(CurrentScope, settled.DeploymentSlug);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RetiredRevision_StopRecordedBeforeTheLeaseLapsed_IsSettledByRecovery()
+    {
+        // 停止意图登记在前、执行方随后退出：恢复器接管后按「已取消」收尾，而不是记成失败。
+        var orphan = OrphanedGeneration("orphan-stop-then-recover");
+        orphan.CancelRequestedAt = Now.AddMinutes(-2);
+        orphan.CancelRequestedByUserId = "owner";
+        await InsertAsync(orphan, RetiredScope);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+
+        Assert.Equal(RunStatuses.Cancelled, (await Read(orphan.Id)).Status);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData(RetiredScope, DesignArtifactCancellationUnavailableException.RetiredRevisionCode)]
+    [InlineData("project-a::branch-b::revision::revision-a", DesignArtifactCancellationUnavailableException.OtherDeploymentCode)]
+    [InlineData("project-b::branch-a::revision::revision-a", DesignArtifactCancellationUnavailableException.OtherDeploymentCode)]
+    public async Task StopOnARunThisRevisionCannotTouch_ExplainsWhyInsteadOfAnsweringNotFound(string scope, string code)
+    {
+        var run = OrphanedGeneration("not-mine-to-stop");
+        run.LeaseExpiresAt = Now.AddMinutes(1);
+        await InsertAsync(run, scope);
+        var before = await Raw(run.Id);
+        var controller = ProductionWiredGenerationController();
+
+        // 查询看得到它……
+        Assert.IsType<OkObjectResult>(await controller.GetRun(run.Id));
+        // ……停止就不许说「不存在」。
+        var conflict = Assert.IsType<ConflictObjectResult>(await controller.CancelRun(run.Id));
+        Assert.Contains(code, System.Text.Json.JsonSerializer.Serialize(conflict.Value));
+        Assert.Equal(before, await Raw(run.Id));
     }
 
     [DesignScopeMongoFact]
@@ -306,6 +502,10 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     private DesignArtifactsController GenerationController() => WithUser(new DesignArtifactsController(
         _db, _events, _queue, Mock.Of<IDesignArtifactProviderCatalog>(), Mock.Of<IDesignKnowledgeSnapshotResolver>(),
         _gateway, new DesignArtifactCancellationCoordinator(_db, Lifecycle()), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>()));
+    /// <summary>与生产 DI 相同的装配：取消协调器拿得到事件存储，执行方已不在时就地收敛。</summary>
+    private DesignArtifactsController ProductionWiredGenerationController() => WithUser(new DesignArtifactsController(
+        _db, _events, _queue, Mock.Of<IDesignArtifactProviderCatalog>(), Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+        _gateway, new DesignArtifactCancellationCoordinator(_db, Lifecycle(), _events), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>()));
     private HostedSiteEditsController EditController() => WithUser(new HostedSiteEditsController(
         Mock.Of<IHostedSiteService>(), Mock.Of<IHostedSiteRevisionService>(), _events, _queue, _db,
         NullLogger<HostedSiteEditsController>.Instance, Mock.Of<IDesignArtifactProviderCatalog>(),

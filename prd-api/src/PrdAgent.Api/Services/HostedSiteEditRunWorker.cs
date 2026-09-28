@@ -21,6 +21,21 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     internal static readonly TimeSpan QueueRecoveryDelay = TimeSpan.FromSeconds(10);
     private const int MaxModelInputChars = 240_000;
 
+    /// <summary>同一 revision 的执行进程退出后（进程重启）给用户的原因。</summary>
+    internal const string RestartInterruptedMessage = "服务重启中断了本次设计任务，请重新发起";
+
+    /// <summary>
+    /// 分支推了新 commit、CDS 重新部署后，上一版进程留下的任务已无人执行时给用户的原因。
+    /// 外因在前（external-cause-first）：用户要知道的是「分支重新部署了」，不是「租约过期」。
+    /// </summary>
+    internal const string RedeployInterruptedMessage = "分支重新部署，正在进行的生成被中断，请重新发起";
+
+    /// <summary>
+    /// 上一版 revision 的租约到期后再多等这么久才接管，给时钟偏差与最后一次续租留余量。
+    /// 最坏收敛时间 = 租约（2 分钟）+ 本余量 + 一个恢复周期（15 秒），约 2 分 45 秒。
+    /// </summary>
+    internal static readonly TimeSpan RetiredRevisionAdoptionGrace = TimeSpan.FromSeconds(30);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunQueue _queue;
     private readonly IRunEventStore _events;
@@ -888,7 +903,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             scope.ServiceProvider.GetRequiredService<IAssetStorage>(),
             scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>(),
             publicLifecycle,
-            scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>());
+            scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>(),
+            _logger);
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(
@@ -1519,10 +1535,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IAssetStorage? workspaceStorage = null,
         IActivityActionRecorder? activityRecorder = null,
         IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
-        IDesignArtifactLifecycleService? lifecycle = null)
+        IDesignArtifactLifecycleService? lifecycle = null,
+        ILogger? logger = null)
     {
-        // 仅恢复精确 revision。旧 revision 的排队接管和运行中执行器的可靠停止另行处理，
-        // 不能用过期时间推测异部署执行已停止，也不能批量改写其 DeploymentSlug。
+        // 恢复以精确 revision 为主。唯一的跨 revision 动作是下面的「接管上一版的孤儿任务」：
+        // 同项目同分支、上一版 revision 的 Running 任务，租约早已到期且结果未落定时，
+        // 逐条 CAS 改写到本 revision，再走与同 revision 重启完全相同的终结路径。
+        // 兄弟分支、别的项目与生产的任务一律不碰（cross-project-isolation 通道 8）；
+        // 排队中的旧任务与「结果已落定未交付」的旧任务也不在此接管范围。
         if (workspaceStorage != null)
             await RecoverRejectedWorkspaceResultsAsync(db, workspaceStorage, now, ct);
 
@@ -1562,6 +1582,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
         }
+
+        var adoptedFromRetiredRevision = await AdoptRetiredRevisionRunsAsync(db, now, ct, logger);
 
         var staleRunning = await db.DesignArtifactRuns
             .Find(x => x.DeploymentSlug == DeploymentScope.Current && ((x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
@@ -1635,7 +1657,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
 
-            var interruptedMessage = "服务重启中断了本次设计任务，请重新发起";
+            var interruptedMessage = adoptedFromRetiredRevision.Contains(candidate.Id)
+                ? RedeployInterruptedMessage
+                : RestartInterruptedMessage;
             var usesPublicLifecycle = publicLifecycle != null
                                       && candidate.ContractVersion == DesignArtifactContractVersions.Current
                                       && candidate.Runtime == DesignArtifactRuntimes.OpenDesign
@@ -1726,7 +1750,130 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             await RecoverGeneratedSitePublicationActivitiesAsync(db, activityRecorder, ct);
     }
 
-    private static async Task<bool> FinalizeRecoveredCancellationAsync(
+    /// <summary>
+    /// 「上一版 revision 留下、已无人执行」的设计任务判据。唯一定义处：恢复器批量接管、
+    /// 停止接口单条接管都走这里，不许在别处再抄一份。
+    ///
+    /// 为什么只能按租约判，而且按租约判是成立的：CDS 分支预览的 DeploymentSlug 带 commit
+    /// revision，推一个新 commit 之后新进程的所有读写都按新 slug 过滤，上一版留下的 Running
+    /// 任务既没人续租、也没人终结，查询（不按作用域）一直看到 Running，停止（按作用域）却
+    /// 找不到它。设计任务与头像任务不同，它有可续期的执行租约：旧 worker 的心跳循环在
+    /// 自己确认的租约到期那一刻就会取消执行（<see cref="RunLeaseHeartbeatLoopAsync"/>），
+    /// 所以「租约到期 + 余量」本身就证明原执行方已经放手。接管时把 DeploymentSlug 改写成
+    /// 本 revision，旧 worker 任何一次迟到的写入都按旧 slug 过滤、全部落空，这就是围栏。
+    ///
+    /// 不接管的：
+    /// - 别的项目、别的分支、生产（正则只匹配本项目本分支的 revision 变体）；
+    /// - 排队中的任务、正在提交（Committing）的任务；
+    /// - 结果已经落定或正在落定的任务（工作区结果包、待写结果、已产出站点/版本、补偿清理中）——
+    ///   这一类「结果已落定却没交付」由 doc/debt.platform.open-design.md 另行登记，保持原样。
+    ///
+    /// <paramref name="now"/> 为 null 时去掉时间条件，只判「是不是本分支上一版的、结果未落定的
+    /// 运行中任务」，停止接口用它区分「稍等就会自动结束」与「当前版本无法处理」。
+    /// </summary>
+    internal static FilterDefinition<DesignArtifactRun>? BuildRetiredRevisionRunFilter(
+        string? currentScope,
+        string? durableScope,
+        DateTime? now)
+    {
+        if (string.IsNullOrWhiteSpace(currentScope) || string.IsNullOrWhiteSpace(durableScope))
+            return null;
+        var f = Builders<DesignArtifactRun>.Filter;
+        var sameBranchAnyRevision = new MongoDB.Bson.BsonRegularExpression(
+            $"^{System.Text.RegularExpressions.Regex.Escape(durableScope)}(?:::revision::.+)?$");
+        var filter = f.Regex(x => x.DeploymentSlug, sameBranchAnyRevision)
+                     & f.Ne(x => x.DeploymentSlug, currentScope)
+                     & f.Eq(x => x.ArtifactType, DesignArtifactTypes.WebPage)
+                     & f.Eq(x => x.Status, RunStatuses.Running)
+                     & f.Eq(x => x.WorkspaceResultAssetKey, null)
+                     & f.Eq(x => x.WorkspacePendingResultAssetKey, null)
+                     & f.Eq(x => x.ProducedArtifactSiteId, null)
+                     & f.Eq(x => x.ProducedArtifactRevisionId, null)
+                     & f.Eq(x => x.ArtifactSiteId, null)
+                     & f.Eq(x => x.ArtifactRevisionId, null)
+                     & f.Ne(x => x.CleanupPending, true)
+                     & f.Eq(x => x.CleanupStartedAt, null)
+                     & f.Eq(x => x.CleanupLeaseOwnerId, null);
+        if (now == null) return filter;
+        var releasedBefore = now.Value - RetiredRevisionAdoptionGrace;
+        return filter & f.Or(
+            f.And(f.Ne(x => x.LeaseExpiresAt, null), f.Lte(x => x.LeaseExpiresAt, releasedBefore)),
+            f.And(f.Eq(x => x.LeaseExpiresAt, null), f.Lte(x => x.UpdatedAt, releasedBefore - LeaseDuration)));
+    }
+
+    /// <summary>
+    /// 把一条「上一版 revision 留下、已无人执行」的任务改写到本 revision，返回改写后的文档；
+    /// 不满足判据、已被别人接管或结果已写成托管版本时返回 null。单条 CAS，不批量改写。
+    /// </summary>
+    internal static async Task<DesignArtifactRun?> TryAdoptRetiredRevisionRunAsync(
+        MongoDbContext db,
+        DesignArtifactRun candidate,
+        DateTime now,
+        CancellationToken ct)
+    {
+        var currentScope = DeploymentScope.Current;
+        var filter = BuildRetiredRevisionRunFilter(currentScope, DeploymentScope.CurrentDurable, now);
+        if (filter == null) return null;
+        if (await HasLandedRevisionAsync(db, candidate.Id, ct)) return null;
+        var f = Builders<DesignArtifactRun>.Filter;
+        return await db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            filter
+            & f.Eq(x => x.Id, candidate.Id)
+            & f.Eq(x => x.DeploymentSlug, candidate.DeploymentSlug)
+            & f.Eq(x => x.LeaseOwnerId, candidate.LeaseOwnerId)
+            & f.Eq(x => x.LeaseExpiresAt, candidate.LeaseExpiresAt),
+            Builders<DesignArtifactRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+    }
+
+    /// <summary>
+    /// 这条任务是不是「本分支上一版留下、结果未落定的运行中任务」（不看租约是否已到期）。
+    /// 停止接口用它区分「稍等会自动结束」与「当前版本处理不了」，与接管共用同一份判据。
+    /// </summary>
+    internal static async Task<bool> IsRetiredRevisionRunAsync(MongoDbContext db, string runId, CancellationToken ct)
+    {
+        var filter = BuildRetiredRevisionRunFilter(DeploymentScope.Current, DeploymentScope.CurrentDurable, now: null);
+        return filter != null
+               && await db.DesignArtifactRuns
+                   .Find(filter & Builders<DesignArtifactRun>.Filter.Eq(x => x.Id, runId))
+                   .AnyAsync(ct)
+               && !await HasLandedRevisionAsync(db, runId, ct);
+    }
+
+    /// <summary>结果已写成托管版本（按来源任务反查）同样算「已落定」，不许把它判成失败。</summary>
+    private static Task<bool> HasLandedRevisionAsync(MongoDbContext db, string runId, CancellationToken ct) =>
+        db.HostedSiteRevisions.Find(revision => revision.SourceRunId == runId).AnyAsync(ct);
+
+    private static async Task<HashSet<string>> AdoptRetiredRevisionRunsAsync(
+        MongoDbContext db,
+        DateTime now,
+        CancellationToken ct,
+        ILogger? logger)
+    {
+        var adopted = new HashSet<string>(StringComparer.Ordinal);
+        var filter = BuildRetiredRevisionRunFilter(DeploymentScope.Current, DeploymentScope.CurrentDurable, now);
+        if (filter == null) return adopted;
+        var candidates = await db.DesignArtifactRuns.Find(filter).Limit(100).ToListAsync(ct);
+        foreach (var candidate in candidates)
+        {
+            var run = await TryAdoptRetiredRevisionRunAsync(db, candidate, now, ct);
+            if (run == null) continue;
+            adopted.Add(run.Id);
+            logger?.LogWarning(
+                "分支重新部署后，上一版服务留下的设计任务已无人执行，本版本接管并终结（已请求停止的记为取消，其余记为失败，用户需重新发起）；runId={RunId} 上一版作用域={RetiredScope} 本版作用域={CurrentScope} 上一版租约到期={LeaseExpiresAt:o}",
+                run.Id,
+                candidate.DeploymentSlug,
+                run.DeploymentSlug,
+                candidate.LeaseExpiresAt);
+        }
+        return adopted;
+    }
+
+    internal static async Task<bool> FinalizeRecoveredCancellationAsync(
         MongoDbContext db,
         IRunEventStore events,
         DesignArtifactRun candidate,

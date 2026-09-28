@@ -23,13 +23,16 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
 {
     private readonly MongoDbContext _db;
     private readonly IDesignArtifactLifecycleService _lifecycle;
+    private readonly IRunEventStore? _events;
 
     public DesignArtifactCancellationCoordinator(
         MongoDbContext db,
-        IDesignArtifactLifecycleService lifecycle)
+        IDesignArtifactLifecycleService lifecycle,
+        IRunEventStore? events = null)
     {
         _db = db;
         _lifecycle = lifecycle;
+        _events = events;
     }
 
     public async Task<DesignArtifactCancellationResult?> RequestAsync(
@@ -39,7 +42,8 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
     {
         var current = await _db.DesignArtifactRuns
             .Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId && run.UserId == userId))
-            .FirstOrDefaultAsync(ct);
+                .FirstOrDefaultAsync(ct)
+            ?? await AdoptFromRetiredRevisionOrExplainAsync(runId, userId, ct);
         if (current == null) return null;
 
         var updated = current.ContractVersion == DesignArtifactContractVersions.Current
@@ -52,9 +56,65 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
                     current.VersionBoundary?.BaseContentHash),
                 ct)
             : await RequestLegacyAsync(_db, current, DateTime.UtcNow, ct);
+        updated = await FinalizeIfExecutorGoneAsync(updated, ct);
         return new DesignArtifactCancellationResult(
             updated,
             current.Status != updated.Status || current.CancelRequestedAt != updated.CancelRequestedAt);
+    }
+
+    /// <summary>
+    /// 本 revision 里找不到这条任务时，查它是不是「本分支上一版留下的」：
+    /// 已无人执行就就地接管（之后照常记录取消意图并立即收敛）；还不能接管就说清楚为什么，
+    /// 而不是回一句「设计任务不存在」——查询接口明明看得到它（#135）。
+    /// 真的不存在才返回 null。
+    /// </summary>
+    private async Task<DesignArtifactRun?> AdoptFromRetiredRevisionOrExplainAsync(
+        string runId,
+        string userId,
+        CancellationToken ct)
+    {
+        var elsewhere = await _db.DesignArtifactRuns
+            .Find(run => run.Id == runId && run.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (elsewhere == null) return null;
+
+        var adopted = await HostedSiteEditRunWorker.TryAdoptRetiredRevisionRunAsync(
+            _db, elsewhere, DateTime.UtcNow, ct);
+        if (adopted != null) return adopted;
+
+        if (elsewhere.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
+            throw new DesignArtifactCancellationConflictException();
+
+        if (await HostedSiteEditRunWorker.IsRetiredRevisionRunAsync(_db, elsewhere.Id, ct))
+        {
+            throw new DesignArtifactCancellationUnavailableException(
+                DesignArtifactCancellationUnavailableException.RetiredRevisionCode,
+                "分支刚重新部署，这个任务还登记在上一版服务名下；上一版退出后约 3 分钟内它会自动结束，届时可以直接重新发起");
+        }
+        throw new DesignArtifactCancellationUnavailableException(
+            DesignArtifactCancellationUnavailableException.OtherDeploymentCode,
+            "这个任务由另一个部署版本执行，当前版本不能停止它；请刷新任务状态确认结果");
+    }
+
+    /// <summary>
+    /// 取消意图已记录、但执行方已经不在了（租约到期，没有 worker 会再读这份意图）：
+    /// 不等恢复器下一轮，就地收敛为终态，让停止按钮一次得到结果。
+    /// 判据与恢复器相同：租约到期才动；仍在租约内的交给在跑的 worker 自己停。
+    /// </summary>
+    private async Task<DesignArtifactRun> FinalizeIfExecutorGoneAsync(DesignArtifactRun run, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        if (_events == null
+            || run.Status != RunStatuses.Running
+            || !run.CancelRequestedAt.HasValue
+            || !run.LeaseExpiresAt.HasValue
+            || run.LeaseExpiresAt > now)
+            return run;
+        await HostedSiteEditRunWorker.FinalizeRecoveredCancellationAsync(_db, _events, run, _lifecycle, now);
+        return await _db.DesignArtifactRuns
+                   .Find(item => item.DeploymentSlug == DeploymentScope.Current && item.Id == run.Id)
+                   .FirstOrDefaultAsync(ct)
+               ?? run;
     }
 
     internal static async Task<DesignArtifactRun> RequestLegacyAsync(
@@ -118,3 +178,13 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
 }
 
 public sealed class DesignArtifactCancellationConflictException : InvalidOperationException;
+
+/// <summary>任务存在，但当前部署版本不能停止它；Code/Message 直接给到调用方（409）。</summary>
+public sealed class DesignArtifactCancellationUnavailableException(string code, string message)
+    : InvalidOperationException(message)
+{
+    public const string RetiredRevisionCode = "DESIGN_ARTIFACT_CANCEL_RETIRED_REVISION";
+    public const string OtherDeploymentCode = "DESIGN_ARTIFACT_CANCEL_OTHER_DEPLOYMENT";
+
+    public string Code { get; } = code;
+}

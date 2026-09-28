@@ -4,10 +4,12 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
 using Shouldly;
 using Xunit;
 
@@ -599,6 +601,88 @@ public sealed class OpenDesignServiceArtifactExecutorTests
 
         service.EventRequests.Count.ShouldBe(1);
         AssertNoTransportDiagnostics(error.Message);
+    }
+
+    // ───────────── 执行方丢失任务（#135） ─────────────
+
+    /// <summary>
+    /// 设计执行服务在任务进行中重启（分支重新部署会同时替换它），进程内存里的任务随之消失：
+    /// 续读事件拿到 404 task_not_found。这不是断线，续读多少次都不会回来——必须当场判失败、
+    /// 给出人话原因，而不是按「连接中断」一直重连、让界面永远停在「任务仍在继续」。
+    /// </summary>
+    [Fact]
+    public async Task ServiceLostTheTask_TaskNotFoundOnResume_FailsAtOnceWithAReadableReason()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(afterSeq => afterSeq == "0"
+            // 第一条连接：看到任务在跑，然后连接被部署切断、没有终态。
+            ? Sse(Event(1, "status", new JsonObject { ["status"] = "running", ["reason"] = "open_design_running" }))
+            // 重连时服务已是新进程，任务记录只在旧进程内存里。
+            : Json(HttpStatusCode.NotFound, new JsonObject
+            {
+                ["error"] = new JsonObject { ["code"] = "task_not_found", ["message"] = "task not found" },
+            }));
+        var executor = BuildExecutor(service, BuildBroker().Object);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, BuildRun()));
+
+        error.Message.ShouldContain("查不到这次任务");
+        error.Message.ShouldContain("重新发起");
+        AssertNoTransportDiagnostics(error.Message);
+        (error.InnerException as OpenDesignRemoteDiagnosticException)?.RemoteCode.ShouldBe("task_not_found");
+        // 只续读了一次就判定，不按断线反复重连。
+        service.EventRequests.Count.ShouldBe(2);
+        service.EventRequests[1].AfterSeq.ShouldBe("1");
+    }
+
+    /// <summary>
+    /// 同一件事走 worker 真实的 ProcessAsync：执行方丢了任务之后，任务记录在这一轮里就收敛为「失败」
+    /// 并带着给用户看的原因，实时流也推出 error 终态——查询接口不会再一直说「在跑」。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ServiceLostTheTask_WorkerSettlesTheRunAsFailedWithTheReason()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync("design_task_not_found");
+        var run = BuildRun();
+        run.Status = RunStatuses.Queued;
+        run.Progress = 2;
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Json(HttpStatusCode.NotFound, new JsonObject
+        {
+            ["error"] = new JsonObject { ["code"] = "task_not_found", ["message"] = "task not found" },
+        }));
+        var services = new ServiceCollection();
+        services.AddSingleton(fixture.Db);
+        services.AddSingleton(Mock.Of<IHostedSiteService>());
+        services.AddSingleton(Mock.Of<IHostedSiteRevisionService>());
+        services.AddSingleton(Mock.Of<IWebPageDesignArtifactLifecycleAdapter>());
+        services.AddSingleton(Mock.Of<IDesignArtifactLifecycleService>());
+        services.AddSingleton(Mock.Of<IDesignKnowledgeSnapshotResolver>());
+        services.AddSingleton(Mock.Of<IActivityActionRecorder>());
+        services.AddSingleton<IDesignArtifactExecutor>(BuildExecutor(service, BuildBroker().Object));
+        using var provider = services.BuildServiceProvider();
+        var events = new InMemoryRunEventStore();
+        using var worker = new HostedSiteEditRunWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Mock.Of<IRunQueue>(),
+            events,
+            NullLogger<HostedSiteEditRunWorker>.Instance);
+
+        await worker.ProcessAsync(run.Id, CancellationToken.None);
+
+        var settled = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        settled.Status.ShouldBe(RunStatuses.Error);
+        settled.Error.ShouldNotBeNull();
+        settled.Error.ShouldContain("查不到这次任务");
+        settled.LeaseExpiresAt.ShouldBeNull();
+        var terminal = (await events.GetEventsAsync(RunKinds.DesignArtifact, run.Id, 0, 100, CancellationToken.None))
+            .Last();
+        terminal.EventName.ShouldBe("error");
     }
 
     [Fact]

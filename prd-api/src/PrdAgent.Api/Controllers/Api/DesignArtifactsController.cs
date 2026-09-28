@@ -359,11 +359,13 @@ public sealed class DesignArtifactsController : ControllerBase
     public async Task<IActionResult> CancelRun(string runId)
     {
         var userId = this.GetRequiredUserId();
+        // 与查询接口同一口径：只要这条任务存在就不许回「不存在」。分支重新部署后任务可能还登记在
+        // 上一版 revision 名下，是接管、还是说清楚为什么不能停，交给取消协调器按作用域判（#135）。
         var generationRun = await _db.DesignArtifactRuns
-            .Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
+            .Find(run => run.Id == runId
                          && run.UserId == userId
                          && run.ArtifactType == DesignArtifactTypes.WebPage
-                         && run.Operation == DesignArtifactOperations.Generate))
+                         && run.Operation == DesignArtifactOperations.Generate)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (generationRun == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
@@ -385,6 +387,10 @@ public sealed class DesignArtifactsController : ControllerBase
             return Conflict(ApiResponse<object>.Fail(
                 "DESIGN_ARTIFACT_CANCEL_CONFLICT",
                 "任务已经进入保存或终态，不能再取消；请刷新任务状态确认结果"));
+        }
+        catch (DesignArtifactCancellationUnavailableException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ex.Code, ex.Message));
         }
 
         if (cancellation == null)
