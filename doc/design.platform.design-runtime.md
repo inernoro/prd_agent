@@ -114,3 +114,10 @@ sequenceDiagram
 - [spec.platform.design-generation.settings.md](./spec.platform.design-generation.settings.md)：网页生成设置与风格预设
 - [spec.platform.design-runtime.protocol.md](./spec.platform.design-runtime.protocol.md)：第四节协议的落地规格（map-design-executor-v1）
 - [debt.platform.open-design.md](./debt.platform.open-design.md)：OpenDesign 台账（含两道判据分歧的记录）
+
+## 十、分支重新部署后的设计任务接管（2026-09-28）
+
+- 问题：分支重新部署时，上一版正在跑的设计任务会永远停在「运行中」，用户既等不到结果也停不掉。
+- 做法：任务的执行租约过期超过 30 秒，就由新版本接管并终结为失败，原因写明「分支重新部署，正在进行的生成被中断，请重新发起」。
+- 「停止」与「查询」用同一个口径：执行方已丢失的任务就地收敛为「已取消」；仍在上一版名下、或属于其他部署的任务返回冲突并说明原因，不再回「设计任务不存在」。
+- 取舍：宁可让被中断的任务明确失败、由用户重新发起，也不做跨版本续跑，避免新旧版本同时写同一个任务。
