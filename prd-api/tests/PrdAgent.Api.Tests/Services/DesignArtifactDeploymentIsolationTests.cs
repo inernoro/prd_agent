@@ -342,6 +342,46 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal(HostedSiteEditRunWorker.RedeployInterruptedMessage, settled.Error);
     }
 
+    [DesignScopeMongoFact]
+    public async Task RetiredRevision_StopThatLosesTheAdoptionRace_StillStopsTheRunNowOwnedHere()
+    {
+        // 停止接口读到上一版那份之后、接管之前，恢复器抢先把它接管到了本版本：
+        // 停止不能拿过期的那份判成「其他部署」，而要照常停下本版本名下的它。
+        var orphan = OrphanedGeneration("orphan-adopted-concurrently");
+        await InsertAsync(orphan, RetiredScope);
+        Assert.NotNull(await HostedSiteEditRunWorker.TryAdoptRetiredRevisionRunAsync(_db, await Read(orphan.Id), Now, default));
+
+        var resolved = await new DesignArtifactCancellationCoordinator(_db, Lifecycle(), _events)
+            .AdoptFromRetiredRevisionOrExplainAsync(orphan.Id, "owner", default);
+
+        Assert.NotNull(resolved);
+        Assert.Equal(CurrentScope, resolved!.DeploymentSlug);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RetiredRevision_LandedRowsBeyondTheBatch_DoNotStarveAGenuineOrphan()
+    {
+        // 结果已写成托管版本的旧任务不会被接管；它们再多也不能占满批次，让排在后面的真孤儿永远轮不到。
+        for (var i = 0; i < 101; i++)
+        {
+            var landed = OrphanedGeneration($"landed-{i:D3}");
+            await InsertAsync(landed, RetiredScope);
+            await _db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+            {
+                Id = $"landed-revision-{i:D3}", SiteId = "landed-site", SourceRunId = landed.Id,
+            });
+        }
+        var orphan = OrphanedGeneration("zz-genuine-orphan");
+        await InsertAsync(orphan, RetiredScope);
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+
+        var settled = await Read(orphan.Id);
+        Assert.Equal(RunStatuses.Error, settled.Status);
+        Assert.Equal(HostedSiteEditRunWorker.RedeployInterruptedMessage, settled.Error);
+        Assert.Equal(RetiredScope, (await Read("landed-000")).DeploymentSlug);
+    }
+
     [DesignScopeMongoTheory]
     [InlineData(RetiredScope, DesignArtifactCancellationUnavailableException.RetiredRevisionCode)]
     [InlineData("project-a::branch-b::revision::revision-a", DesignArtifactCancellationUnavailableException.OtherDeploymentCode)]

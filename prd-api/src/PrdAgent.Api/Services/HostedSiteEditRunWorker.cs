@@ -1867,7 +1867,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         var filter = BuildRetiredRevisionRunFilter(DeploymentScope.Current, DeploymentScope.CurrentDurable, now);
         if (filter == null) return;
-        var candidates = await db.DesignArtifactRuns.Find(filter).Limit(100).ToListAsync(ct);
+        // 结果已写成托管版本的旧任务不接管；先把它们排除再取批量，否则这类行一多就会
+        // 每轮占满批次、被逐条拒绝，排在后面的真孤儿永远轮不到。
+        var ids = await db.DesignArtifactRuns.Find(filter).Project(x => x.Id).ToListAsync(ct);
+        if (ids.Count == 0) return;
+        var landed = (await db.HostedSiteRevisions
+                .Find(Builders<HostedSiteRevision>.Filter.In(revision => revision.SourceRunId, ids))
+                .Project(revision => revision.SourceRunId)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.Ordinal);
+        var batch = ids.Where(id => !landed.Contains(id)).Take(100).ToList();
+        if (batch.Count == 0) return;
+        var candidates = await db.DesignArtifactRuns
+            .Find(filter & Builders<DesignArtifactRun>.Filter.In(x => x.Id, batch))
+            .ToListAsync(ct);
         foreach (var candidate in candidates)
         {
             var run = await TryAdoptRetiredRevisionRunAsync(db, candidate, now, ct);

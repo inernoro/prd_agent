@@ -68,7 +68,7 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
     /// 而不是回一句「设计任务不存在」——查询接口明明看得到它（#135）。
     /// 真的不存在才返回 null。
     /// </summary>
-    private async Task<DesignArtifactRun?> AdoptFromRetiredRevisionOrExplainAsync(
+    internal async Task<DesignArtifactRun?> AdoptFromRetiredRevisionOrExplainAsync(
         string runId,
         string userId,
         CancellationToken ct)
@@ -81,6 +81,13 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
         var adopted = await HostedSiteEditRunWorker.TryAdoptRetiredRevisionRunAsync(
             _db, elsewhere, DateTime.UtcNow, ct);
         if (adopted != null) return adopted;
+
+        // 接管没抢到，可能是恢复器或另一次停止刚刚把它接管到本版本：再按本版本读一次，
+        // 已经是本版本的就照常停止，不能拿过期的那份去判「其他部署」。
+        var nowMine = await _db.DesignArtifactRuns
+            .Find(run => run.DeploymentSlug == DeploymentScope.Current && run.Id == runId && run.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (nowMine != null) return nowMine;
 
         if (elsewhere.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
             throw new DesignArtifactCancellationConflictException();
