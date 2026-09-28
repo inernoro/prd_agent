@@ -57,6 +57,10 @@ public static class AskAccessPolicy
     public static string? UnsupportedReason(string? wrappedAssetType)
         => string.Equals(wrappedAssetType, "video", StringComparison.OrdinalIgnoreCase)
             ? "这是一个视频页面，没有可供阅读的文字内容，暂不支持提问。"
+            : string.Equals(wrappedAssetType, "image", StringComparison.OrdinalIgnoreCase)
+            ? "这是一个图片页面，没有可供阅读的文字内容，暂不支持提问。"
+            : string.Equals(wrappedAssetType, "gallery", StringComparison.OrdinalIgnoreCase)
+            ? "这是一个多图页面，没有可供阅读的文字内容，暂不支持提问。"
             : null;
 
     /// <summary>

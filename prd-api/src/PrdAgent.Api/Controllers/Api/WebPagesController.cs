@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Claims;
 using System.Text;
+using System.Text.RegularExpressions;
 using Markdig;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -40,6 +41,21 @@ public class WebPagesController : ControllerBase
     private static readonly HashSet<string> MarkdownExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".md", ".markdown",
+    };
+
+    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".txt", ".text", ".csv", ".tsv", ".json", ".jsonl", ".xml",
+        ".yaml", ".yml", ".toml", ".ini", ".log", ".rst", ".adoc",
+        ".css", ".js", ".jsx", ".ts", ".tsx", ".sql",
+        ".py", ".java", ".go", ".rs", ".sh", ".bash", ".c", ".cpp",
+        ".h", ".hpp", ".cs", ".rb", ".php", ".swift", ".kt",
+        ".vue", ".svelte", ".properties", ".conf", ".cfg", ".tex",
+    };
+
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
     };
 
     private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
@@ -288,7 +304,7 @@ public class WebPagesController : ControllerBase
     // 上传 / 创建
     // ─────────────────────────────────────────────
 
-    /// <summary>上传 HTML/ZIP/Markdown/PDF/视频文件，解压或包装后托管</summary>
+    /// <summary>上传 HTML/ZIP/文本/图片/PDF/视频文件，解压或包装后托管</summary>
     [HttpPost("upload")]
     [RequestSizeLimit(MaxSingleFileSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
@@ -298,7 +314,8 @@ public class WebPagesController : ControllerBase
         [FromForm] string? description,
         [FromForm] string? folder,
         [FromForm] string? tags,
-        [FromForm] string? uploadId)
+        [FromForm] string? uploadId,
+        [FromForm] bool gallery = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -319,18 +336,23 @@ public class WebPagesController : ControllerBase
 
         try
         {
+            if (gallery && (ext != ".zip" || !IsGalleryZip(fileBytes)))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "多图画廊需要至少两张图片，且只能包含图片和入口页"));
             HostedSite site;
             if (ext == ".zip")
             {
-                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList, uploadId: uploadId);
+                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList,
+                    wrappedAssetType: gallery ? "gallery" : null, uploadId: uploadId);
             }
             else if (ext is ".html" or ".htm")
             {
                 site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
             }
-            else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+            else if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext)
+                     || TextExtensions.Contains(ext) || ImageExtensions.Contains(ext) || ext == ".pdf")
             {
-                // 视频 / PDF / Markdown：现场生成 index.html 壳子 + 原文件，打包成 ZIP 走现有路径
+                // 不同文件生成对应阅读页；二进制资产保留原件，纯文本在转义后嵌入 HTML。
                 // 标题留空时用文件名（去扩展名）兜底，避免 ZIP 路径把视频/PDF 全落成"未命名站点"
                 // （前端 UploadEditDialog 仅对 .md 自动预填标题；其它媒体类型靠后端兜底）
                 var effectiveTitle = string.IsNullOrWhiteSpace(title)
@@ -341,6 +363,8 @@ public class WebPagesController : ControllerBase
                 var assetType = ext == ".pdf" ? "pdf"
                     : VideoExtensions.Contains(ext) ? "video"
                     : MarkdownExtensions.Contains(ext) ? "markdown"
+                    : TextExtensions.Contains(ext) ? "text"
+                    : ImageExtensions.Contains(ext) ? "image"
                     : null;
                 site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType, uploadId: uploadId);
             }
@@ -348,7 +372,7 @@ public class WebPagesController : ControllerBase
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
-                    "支持的文件类型：.html / .htm / .zip / .md / .markdown / .pdf / .mp4 / .m4v / .webm / .mov / .ogg / .ogv"));
+                    "支持 HTML、ZIP、Markdown、常见纯文本、图片、PDF 和视频文件"));
             }
 
             return Ok(ApiResponse<object>.Ok(site));
@@ -394,7 +418,7 @@ public class WebPagesController : ControllerBase
     // 媒体文件 → 网页壳子
     // ─────────────────────────────────────────────
 
-    /// <summary>把媒体文件（视频/PDF/Markdown）包装成可托管的 ZIP（含 index.html 壳子 + 原文件）</summary>
+    /// <summary>把单文件包装成可托管的 ZIP（含 index.html 和需要保留的原文件）</summary>
     private static byte[] BuildWrapperZip(string originalFileName, byte[] fileBytes, string ext, string? title)
     {
         // 资产文件名做安全清洗，避免路径穿越
@@ -407,6 +431,8 @@ public class WebPagesController : ControllerBase
             ".pdf" => BuildPdfWrapper(safeAssetName, displayTitle),
             _ when VideoExtensions.Contains(ext) => BuildVideoWrapper(safeAssetName, displayTitle, ext),
             _ when MarkdownExtensions.Contains(ext) => BuildMarkdownWrapper(fileBytes, displayTitle),
+            _ when TextExtensions.Contains(ext) => BuildTextWrapper(fileBytes, displayTitle),
+            _ when ImageExtensions.Contains(ext) => BuildImageWrapper(safeAssetName, displayTitle),
             _ => throw new InvalidOperationException($"未识别的包装类型: {ext}"),
         };
 
@@ -420,8 +446,8 @@ public class WebPagesController : ControllerBase
                 var bytes = Encoding.UTF8.GetBytes(indexHtml);
                 s.Write(bytes, 0, bytes.Length);
             }
-            // Markdown 不需要保留原文件（已渲染入 HTML）；视频 / PDF 必须保留
-            if (!MarkdownExtensions.Contains(ext))
+            // 纯文本已安全转义并嵌入 HTML；二进制资产保留原件。
+            if (!MarkdownExtensions.Contains(ext) && !TextExtensions.Contains(ext))
             {
                 var assetEntry = zip.CreateEntry(safeAssetName, CompressionLevel.NoCompression);
                 using var s = assetEntry.Open();
@@ -429,6 +455,24 @@ public class WebPagesController : ControllerBase
             }
         }
         return ms.ToArray();
+    }
+
+    private static bool IsGalleryZip(byte[] zipBytes)
+    {
+        try
+        {
+            using var stream = new MemoryStream(zipBytes);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+            var files = archive.Entries.Where(entry => !string.IsNullOrEmpty(entry.Name)).ToList();
+            var imageCount = files.Count(entry => entry.FullName.StartsWith("images/", StringComparison.Ordinal)
+                && ImageExtensions.Contains(Path.GetExtension(entry.Name)));
+            return files.Count >= 3 && files.Count <= 51 && imageCount == files.Count - 1
+                && files.Any(entry => entry.FullName == "index.html");
+        }
+        catch (InvalidDataException)
+        {
+            return false;
+        }
     }
 
     private static string SanitizeFileName(string raw)
@@ -615,6 +659,16 @@ public class WebPagesController : ControllerBase
             .DisableHtml()
             .Build();
         var bodyHtml = Markdown.ToHtml(text, pipeline);
+        // Markdig 默认把 mermaid 围栏当普通代码块；只改已转义的代码节点，绝不把
+        // Markdown 原始 HTML 重新放开。
+        var hasMermaid = bodyHtml.Contains("<pre class=\"mermaid\">", StringComparison.Ordinal);
+        bodyHtml = Regex.Replace(bodyHtml,
+            "<pre><code class=\"language-mermaid\">(?<code>.*?)</code></pre>",
+            match =>
+            {
+                hasMermaid = true;
+                return $"<pre class=\"mermaid\">{match.Groups["code"].Value}</pre>";
+            }, RegexOptions.Singleline | RegexOptions.CultureInvariant);
         var safeTitle = HtmlEscape(title);
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE html>");
@@ -635,6 +689,7 @@ public class WebPagesController : ControllerBase
         sb.AppendLine("    .markdown-body blockquote{border-left:4px solid #d0d7de;padding:0 1em;color:#57606a;margin:0;}");
         sb.AppendLine("    .markdown-body table{border-collapse:collapse;}");
         sb.AppendLine("    .markdown-body th,.markdown-body td{border:1px solid #d0d7de;padding:6px 13px;}");
+        sb.AppendLine("    .markdown-body .mermaid{overflow-x:auto;text-align:center;white-space:pre-wrap;}");
         sb.AppendLine("    @media (prefers-color-scheme: dark){");
         sb.AppendLine("      body{background:#0d1117;color:#e6edf3;}");
         sb.AppendLine("      .markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom-color:#30363d;}");
@@ -649,9 +704,79 @@ public class WebPagesController : ControllerBase
         sb.AppendLine("  <article class=\"markdown-body\">");
         sb.AppendLine(bodyHtml);
         sb.AppendLine("  </article>");
+        if (hasMermaid)
+        {
+            // 经典脚本能在不透明源的 srcDoc 预览运行；module import 会让该预览退回直链。
+            // CDN 失败时保留可读的流程图源码；锁定版本避免托管页随 latest 漂移。
+            sb.AppendLine("  <script src=\"https://cdn.jsdelivr.net/npm/mermaid@11.14.0/dist/mermaid.min.js\"></script>");
+            sb.AppendLine("  <script>");
+            sb.AppendLine("    if (window.mermaid) {");
+            sb.AppendLine("      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' });");
+            sb.AppendLine("      mermaid.run({ querySelector: '.mermaid' }).catch(() => console.warn('流程图渲染失败，显示原始定义'));");
+            sb.AppendLine("    }");
+            sb.AppendLine("  </script>");
+        }
         sb.AppendLine("</body>");
         sb.AppendLine("</html>");
         return sb.ToString();
+    }
+
+    private static string BuildTextWrapper(byte[] textBytes, string title)
+    {
+        if (textBytes.Length > 32 * 1024 * 1024)
+            throw new InvalidOperationException("纯文本文件超过 32MB，请拆分后上传或使用 ZIP 托管");
+        string content;
+        try
+        {
+            content = new UTF8Encoding(false, true).GetString(textBytes);
+        }
+        catch (DecoderFallbackException ex)
+        {
+            throw new InvalidOperationException("文本文件需要使用 UTF-8 编码，请转换编码后重试", ex);
+        }
+
+        var safeTitle = System.Net.WebUtility.HtmlEncode(title);
+        var safeContent = System.Net.WebUtility.HtmlEncode(content);
+        return $$"""
+            <!DOCTYPE html>
+            <html lang="zh-CN"><head><meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
+            <title>{{safeTitle}}</title>
+            <style>
+            :root{color-scheme:light dark}
+            body{margin:0;padding:32px 24px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#fff;color:#1f2328}
+            main{max-width:1080px;margin:auto}
+            h1{font:600 24px system-ui,sans-serif;overflow-wrap:anywhere}
+            pre{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;font-size:14px}
+            @media(prefers-color-scheme:dark){
+              body{background:#0d1117;color:#e6edf3}
+            }
+            </style></head><body><main><h1>{{safeTitle}}</h1><pre>{{safeContent}}</pre></main></body></html>
+            """;
+    }
+
+    private static string BuildImageWrapper(string assetName, string title)
+    {
+        var safeTitle = System.Net.WebUtility.HtmlEncode(title);
+        var safeAssetUrl = Uri.EscapeDataString(assetName);
+        return $$"""
+            <!DOCTYPE html>
+            <html lang="zh-CN"><head><meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src http: https: data:; style-src 'unsafe-inline'" />
+            <title>{{safeTitle}}</title>
+            <style>
+            :root{color-scheme:light dark}
+            body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f8fa;color:#1f2328}
+            main{padding:24px;text-align:center;max-width:100%}
+            img{max-width:100%;max-height:calc(100vh - 100px);object-fit:contain}
+            h1{font:600 18px system-ui,sans-serif;overflow-wrap:anywhere}
+            @media(prefers-color-scheme:dark){
+              body{background:#0d1117;color:#e6edf3}
+            }
+            </style></head><body><main><img src="{{safeAssetUrl}}" alt="{{safeTitle}}" /><h1>{{safeTitle}}</h1></main></body></html>
+            """;
     }
 
     /// <summary>从 HTML 内容直接创建站点（供工作流/API 调用）</summary>
@@ -1180,26 +1305,26 @@ public class WebPagesController : ControllerBase
     /// <summary>
     /// 服务端代理取回站点入口 HTML，绕开浏览器跨域限制。站内路径与分享路径共用，
     /// 保证「什么算可读、多大算超限、失败怎么报」只有一份判定（判据分裂会随时间漂移）。
-    /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。
+    /// 仅适用 HTML 入口的站点；仅放行带可读内容的包装类型与有界大小的文件。
     /// </summary>
     /// <summary>
-    /// 壳子本身就是完整正文、可以直接当 HTML 读回去的包装类型。
+    /// 可以作为 HTML 页面读回并预览的包装类型。
     /// 默认拒绝、这里显式放行：将来新增包装形态时保持今天的行为，
-    /// 确认它自包含之后才加进来（default-deny，不靠「忘了排除」来放行）。
+    /// 确认同目录资产可通过注入 base 正确加载后才加进来。
     /// </summary>
     private static readonly HashSet<string> SrcDocReadableWrappers =
-        new(StringComparer.OrdinalIgnoreCase) { "markdown" };
+        new(StringComparer.OrdinalIgnoreCase) { "markdown", "text", "image", "gallery" };
 
     private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site)
     {
-        // 只拒「壳子里没有正文」的那几类：PDF / 视频壳本身只是一个指向同目录资产的容器，
+        // 只拒不适合以内联 HTML 预览的那几类：PDF / 视频壳本身只是一个指向同目录资产的容器，
         // 取回它的 HTML 没有意义，而且它必须以托管域名为文档源才能加载那份资产。
         // Markdown 包装站不同 —— 它的壳子**就是**正文：服务端把 .md 渲染成完整 HTML、
         // 样式内联、没有任何外部引用，恰恰是最适合 srcDoc 的那种页面。
         // 此前一刀切拒绝，导致 MD 站在分享页拿不到原文、只能退回直链 iframe，
         // 而直链正是那条「Chrome 只绘制空白」的路径 —— 用户看到的就是标题栏下面一片白。
         if (!string.IsNullOrEmpty(site.WrappedAssetType) && !SrcDocReadableWrappers.Contains(site.WrappedAssetType))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频包装站，不支持以 HTML 读取"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点需要直接加载源文件，不支持以内联 HTML 读取"));
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
@@ -1287,27 +1412,41 @@ public class WebPagesController : ControllerBase
     [HttpPost("{id}/reupload")]
     [RequestSizeLimit(MaxSingleFileSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
-    public async Task<IActionResult> Reupload(string id, IFormFile file, [FromForm] string? uploadId = null)
+    public async Task<IActionResult> Reupload(string id, IFormFile file,
+        [FromForm] string? uploadId = null, [FromForm] bool gallery = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
+        if (file.Length > MaxSingleFileSize)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件大小不能超过 500MB"));
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
         var fileBytes = ms.ToArray();
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         var uploadName = file.FileName;
+        if (gallery && (ext != ".zip" || !IsGalleryZip(fileBytes)))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "多图画廊需要至少两张图片，且只能包含图片和入口页"));
 
-        // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）
-        string? wrappedAssetType = null;
-        if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext) || ext == ".pdf")
+        // 非 HTML 文件包装成 ZIP（保持与 Upload 一致的行为）。
+        string? wrappedAssetType = gallery ? "gallery" : null;
+        if (VideoExtensions.Contains(ext) || MarkdownExtensions.Contains(ext)
+            || TextExtensions.Contains(ext) || ImageExtensions.Contains(ext) || ext == ".pdf")
         {
             fileBytes = BuildWrapperZip(file.FileName, fileBytes, ext, title: null);
             uploadName = Path.ChangeExtension(file.FileName, ".zip");
             wrappedAssetType = ext == ".pdf" ? "pdf"
                 : VideoExtensions.Contains(ext) ? "video"
                 : MarkdownExtensions.Contains(ext) ? "markdown"
+                : TextExtensions.Contains(ext) ? "text"
+                : ImageExtensions.Contains(ext) ? "image"
                 : null;
+        }
+        else if (ext is not (".zip" or ".html" or ".htm"))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "支持 HTML、ZIP、Markdown、常见纯文本、图片、PDF 和视频文件"));
         }
 
         try

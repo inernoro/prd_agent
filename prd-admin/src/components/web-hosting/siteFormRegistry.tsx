@@ -1,4 +1,4 @@
-import { Code2, FileText, FileType2, MonitorPlay, PlayCircle, Package } from 'lucide-react';
+import { Code2, FileText, FileType2, Image, Images, MonitorPlay, PlayCircle, Package } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { HostedSite } from '@/services/real/webPages';
 
@@ -16,7 +16,21 @@ import type { HostedSite } from '@/services/real/webPages';
  * 注意 `SlideNavCompatVersion` 是无条件盖在所有站点上的垫片版本号，**不能**当 deck 标记
  * （不成立的证据不能当证据）；老数据没有 isSlideDeck 字段，按 false 处理，退回 HTML 站。
  */
-export type SiteFormKey = 'html' | 'zip' | 'pdf' | 'video' | 'markdown' | 'deck';
+export type SiteFormKey = 'html' | 'zip' | 'pdf' | 'video' | 'markdown' | 'text' | 'image' | 'gallery' | 'deck';
+
+/** 与服务端 WebPagesController 的直传扩展名保持一致。 */
+export const WEB_HOSTING_UPLOAD_EXTENSIONS = [
+  '.html', '.htm', '.zip', '.md', '.markdown', '.pdf',
+  '.txt', '.text', '.csv', '.tsv', '.json', '.jsonl', '.xml',
+  '.yaml', '.yml', '.toml', '.ini', '.log', '.rst', '.adoc',
+  '.css', '.js', '.jsx', '.ts', '.tsx', '.sql',
+  '.py', '.java', '.go', '.rs', '.sh', '.bash', '.c', '.cpp',
+  '.h', '.hpp', '.cs', '.rb', '.php', '.swift', '.kt',
+  '.vue', '.svelte', '.properties', '.conf', '.cfg', '.tex',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.bmp',
+  '.mp4', '.m4v', '.webm', '.mov', '.ogg', '.ogv',
+] as const;
+export const WEB_HOSTING_UPLOAD_ACCEPT = WEB_HOSTING_UPLOAD_EXTENSIONS.join(',');
 
 export interface SiteFormConfig {
   /** 徽标文案（缩略图左上） */
@@ -32,6 +46,9 @@ export const SITE_FORM_REGISTRY: Record<SiteFormKey, SiteFormConfig> = {
   pdf: { label: 'PDF', icon: FileText, hint: 'PDF 被包装成可翻页阅读的站点' },
   video: { label: '视频', icon: PlayCircle, hint: '视频被包装成播放页，不支持提问' },
   markdown: { label: 'MD', icon: FileType2, hint: 'Markdown 渲染成网页' },
+  text: { label: '文本', icon: FileText, hint: '纯文本以保留换行的阅读页展示' },
+  image: { label: '图片', icon: Image, hint: '图片按屏幕尺寸自适应展示' },
+  gallery: { label: '多图', icon: Images, hint: '多张图片以画廊形式展示' },
   deck: { label: '幻灯片', icon: MonitorPlay, hint: '一套幻灯片，访客可用上下键翻页' },
 };
 
@@ -43,6 +60,9 @@ export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
   if (wrapped === 'pdf') return 'pdf';
   if (wrapped === 'video') return 'video';
   if (wrapped === 'markdown') return 'markdown';
+  if (wrapped === 'text') return 'text';
+  if (wrapped === 'image') return 'image';
+  if (wrapped === 'gallery') return 'gallery';
   // deck 判定在包装类型之后、文件数之前：一套 reveal.js 幻灯片既可能是单页也可能是 ZIP，
   // 但它首先是「幻灯片」——用户在列表里要一眼认出的是这个
   if (site.isSlideDeck) return 'deck';
@@ -61,6 +81,7 @@ export function siteFormBadge(site: SiteFormInput): string | null {
   const form = resolveSiteForm(site);
   const count = site.files?.length ?? 0;
   if (form === 'zip') return `${count.toLocaleString()} 文件`;
+  if (form === 'gallery') return `${Math.max(count - 1, 0).toLocaleString()} 张`;
   if (form === 'html') return count === 1 ? '单页' : null;
   // 设计稿的幻灯片角标是「1 / 24」页码、PDF 是「24 页」、视频是「02:14」——
   // 这三个数后端目前都没有（页数要解析 PDF、时长要探媒体），写「-- 页」比不写更糟。

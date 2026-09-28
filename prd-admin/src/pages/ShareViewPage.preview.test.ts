@@ -366,10 +366,8 @@ describe('withPreviewBase', () => {
 /**
  * 只有「真的有 HTML 正文」的站点才去取原文。
  *
- * 由 review 第二轮（#1356）抓出：PDF / 视频 / Markdown 包装站的入口**也是** index.html，
- * 只有 pdfAssetUrl 会被挡掉；视频与 Markdown 壳子照样发起代理请求，而后端对任何非空
- * wrappedAssetType 一律拒绝。前端把这个预期之内的拒绝当成失败，在一个本来显示正常的
- * 直链预览上盖一条错误角标——用户看到「这页出错了」，其实什么事都没有。
+ * PDF / 视频壳子保持直链；Markdown / 纯文本 / 单图 / 多图
+ * 壳子可取回 HTML，并通过注入 base 加载同目录资产。
  */
 describe('hasFetchableHtml', () => {
   const html = { siteUrl: 'https://cfi.example.org/s/a/index.html', entryFile: 'index.html' };
@@ -381,11 +379,11 @@ describe('hasFetchableHtml', () => {
   // 2026-08-25 收紧：不再「一律不取」。Markdown 壳子就是服务端渲染好的完整正文，
   // 它取得回来、也最适合 srcDoc；一刀切排除会让 MD 站永远走直链，那正是白屏那条路。
   // 其余包装类型（含将来新增的）保持默认不取。
-  it('Markdown 包装站要取正文', () => {
-    expect(hasFetchableHtml({ ...html, wrappedAssetType: 'markdown' })).toBe(true);
+  it.each(['markdown', 'text', 'image', 'gallery'])('有可读页面的包装站要取正文：%s', (type) => {
+    expect(hasFetchableHtml({ ...html, wrappedAssetType: type })).toBe(true);
   });
 
-  it.each(['pdf', 'video', 'PDF', 'audio'])('壳子里没有正文的包装站不取：%s', (type) => {
+  it.each(['pdf', 'video', 'PDF', 'audio'])('壳子里没有可代理页面的包装站不取：%s', (type) => {
     expect(hasFetchableHtml({ ...html, wrappedAssetType: type })).toBe(false);
   });
 

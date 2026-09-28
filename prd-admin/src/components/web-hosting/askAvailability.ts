@@ -9,7 +9,7 @@
  * 集合一模一样。后端哪天多加一种（比如纯音频），这里不跟着改就红——不会重演
  * 「后端改了口径、前端文案还在照旧承诺」那种事。
  */
-export const ASK_UNSUPPORTED_ASSET_TYPES = ['video'] as const;
+export const ASK_UNSUPPORTED_ASSET_TYPES = ['video', 'image', 'gallery'] as const;
 
 export function isAskSupported(site: { wrappedAssetType?: string | null }): boolean {
   const t = site.wrappedAssetType?.toLowerCase();

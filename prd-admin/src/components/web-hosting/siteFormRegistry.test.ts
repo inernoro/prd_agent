@@ -35,4 +35,15 @@ describe('site form content shape', () => {
     expect(resolveSiteForm(site)).toBe('zip');
     expect(siteFormBadge(site)).toBe('2 文件');
   });
+
+  it('uses explicit content types for text, single images and galleries', () => {
+    expect(resolveSiteForm({ wrappedAssetType: 'text', files: [] })).toBe('text');
+    expect(resolveSiteForm({ wrappedAssetType: 'image', files: [] })).toBe('image');
+    const gallery = {
+      wrappedAssetType: 'gallery',
+      files: [file('index.html'), file('images/one.png'), file('images/two.png')],
+    };
+    expect(resolveSiteForm(gallery)).toBe('gallery');
+    expect(siteFormBadge(gallery)).toBe('2 张');
+  });
 });

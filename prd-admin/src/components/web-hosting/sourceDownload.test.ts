@@ -56,6 +56,11 @@ describe('源文件形态判定', () => {
     expect(plan.reason).toContain('视频');
   });
 
+  it('文本阅读页可导出，画廊不会把缺图的入口页冒充完整源文件', () => {
+    expect(planSourceDownload({ title: '说明', wrappedAssetType: 'text' }).kind).toBe('html');
+    expect(planSourceDownload({ title: '照片', wrappedAssetType: 'gallery' }).kind).toBe('unavailable');
+  });
+
   /**
    * 入口文件**自己**就超过离线打包上限的，内嵌之后只会更大，按下去必然失败——按之前就说清并给替代路径。
    */

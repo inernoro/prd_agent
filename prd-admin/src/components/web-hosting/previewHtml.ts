@@ -68,7 +68,7 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
  * 这个站点有没有「可以取回来的 HTML 正文」。
  *
  * 光看入口是不是 .html 不够：PDF / 视频 / Markdown 包装站的入口**也是** index.html，
- * 只是那层壳子里没有正文，正文代理对任何非空 wrappedAssetType 一律拒绝。
+ * 但 PDF / 视频的壳子不适合内联预览，正文代理会拒绝这些类型。
  * 前端不看这个字段就会去问、拿回一个预期之内的拒绝，然后在一个本来显示得好好的
  * 直链预览上盖一条错误角标——用户看到的是「这页出错了」，其实什么事都没有。
  *
@@ -77,11 +77,11 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
  * 一刀切跳过的后果是 MD 站在分享页只能走直链 iframe，而直链正是那条会白屏的路径
  * —— 用户看到的就是标题栏下面一片白（2026-08-25 反馈）。
  *
- * 所以改成 default-deny 的白名单：只有确认「壳子即正文」的包装类型才放行，
- * 后端将来多一种包装形态时保持今天的行为，确认自包含之后才加进来。
+ * 所以改成 default-deny 的白名单：只有确认 HTML 页面可内联预览的包装类型才放行，
+ * 后端将来多一种包装形态时保持今天的行为，确认可通过注入 base 正确加载资产后才加进来。
  * 两侧判据必须同步 —— 后端 WebPagesController.SrcDocReadableWrappers 是同一份名单。
  */
-const SRCDOC_READABLE_WRAPPERS = new Set(['markdown']);
+const SRCDOC_READABLE_WRAPPERS = new Set(['markdown', 'text', 'image', 'gallery']);
 
 export function hasFetchableHtml(site: {
   siteUrl: string;

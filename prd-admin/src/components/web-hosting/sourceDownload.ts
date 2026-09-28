@@ -57,7 +57,7 @@ export type SourceDownloadPlan =
  * 不在名单里的包装类型一律拒绝。这里跟着它列，是为了在**按下去之前**就把按钮置灰并说明原因，
  * 而不是让用户点一次换一个报错。后端放行新的包装类型时这里要一起加（守卫见 sourceDownload.test.ts）。
  */
-const HTML_READABLE_WRAPPERS = new Set(['markdown']);
+const HTML_READABLE_WRAPPERS = new Set(['markdown', 'text']);
 
 /** Windows 与 macOS 都不接受的文件名字符，外加控制字符 */
 // eslint-disable-next-line no-control-regex
@@ -100,6 +100,12 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
   if (wrapped && !HTML_READABLE_WRAPPERS.has(wrapped)) {
     if (site.pdfAssetUrl) {
       return { kind: 'open', url: site.pdfAssetUrl };
+    }
+    if (wrapped === 'gallery') {
+      return {
+        kind: 'unavailable',
+        reason: '多图页面的源文件是一组图片，当前不能从这里打包取回。请找分享者要原始图片。',
+      };
     }
     // 视频这类目前没有把资产地址透到分享数据里。说清现状，不要给一个点了会报错的按钮。
     return {

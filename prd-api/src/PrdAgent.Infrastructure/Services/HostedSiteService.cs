@@ -74,6 +74,8 @@ public class HostedSiteService : IHostedSiteService
         [".jpeg"] = "image/jpeg",
         [".gif"] = "image/gif",
         [".webp"] = "image/webp",
+        [".avif"] = "image/avif",
+        [".bmp"] = "image/bmp",
         [".ico"] = "image/x-icon",
         [".woff"] = "font/woff",
         [".woff2"] = "font/woff2",
@@ -881,7 +883,8 @@ public class HostedSiteService : IHostedSiteService
 
     internal static bool IsRevisionReadableWrapper(string? wrappedAssetType) =>
         string.IsNullOrWhiteSpace(wrappedAssetType)
-        || string.Equals(wrappedAssetType, "markdown", StringComparison.OrdinalIgnoreCase);
+        || string.Equals(wrappedAssetType, "markdown", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(wrappedAssetType, "text", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 这个用户能不能编辑这个站点。与「谁建了那条分享链接」是两件事：后端明确允许团队

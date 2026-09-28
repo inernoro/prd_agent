@@ -20,6 +20,9 @@ const site = (over: Partial<Parameters<typeof hasFetchableHtml>[0]> = {}) => ({
 describe('站点正文可取回判据', () => {
   it('Markdown 包装站可以取回正文（壳子就是服务端渲染好的完整 HTML）', () => {
     expect(hasFetchableHtml(site({ wrappedAssetType: 'markdown' }))).toBe(true);
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'text' }))).toBe(true);
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'image' }))).toBe(true);
+    expect(hasFetchableHtml(site({ wrappedAssetType: 'gallery' }))).toBe(true);
   });
 
   it('PDF / 视频包装站不取（壳子里没有正文，且必须以托管域名为源加载同目录资产）', () => {

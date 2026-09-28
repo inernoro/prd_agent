@@ -5,9 +5,9 @@ const pageSource = readFileSync(new URL('../../pages/WebPagesPage.tsx', import.m
 const serviceSource = readFileSync(new URL('../../services/real/webPages.ts', import.meta.url), 'utf8');
 
 describe('网页托管 ZIP 优化确认门', () => {
-  it('只让 ZIP 进入审查式上传，不改变其他文件类型的原路径', () => {
+  it('只让普通 ZIP 进入审查式上传，多图生成的 ZIP 直传', () => {
     expect(pageSource).toContain("const isZip = file?.name.toLowerCase().endsWith('.zip') ?? false");
-    expect(pageSource).toContain('if (file && isZip)');
+    expect(pageSource).toContain('if (file && isZip && !gallerySelected)');
     expect(pageSource).toContain('reviewSiteZip({');
     expect(pageSource).toContain('reuploadSite(');
     expect(pageSource).toContain('uploadSite({');

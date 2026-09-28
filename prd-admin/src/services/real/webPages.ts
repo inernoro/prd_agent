@@ -479,6 +479,7 @@ export function buildApiUrl(path: string) {
 
 export async function uploadSite(input: {
   file: File;
+  gallery?: boolean;
   title?: string;
   description?: string;
   folder?: string;
@@ -502,6 +503,7 @@ export async function uploadSite(input: {
 
   const fd = new FormData();
   fd.append('file', input.file);
+  if (input.gallery) fd.append('gallery', 'true');
   if (input.title) fd.append('title', input.title);
   if (input.description) fd.append('description', input.description);
   if (input.folder) fd.append('folder', input.folder);
@@ -807,7 +809,7 @@ export async function cancelSiteOptimization(sessionId: string): Promise<ApiResp
  * 请求照跑、站点照换 —— 界面说停了，实际没停，比没有这颗按钮更糟。
  */
 export async function reuploadSite(
-  id: string, file: File, uploadId?: string, signal?: AbortSignal,
+  id: string, file: File, uploadId?: string, signal?: AbortSignal, gallery = false,
 ): Promise<ApiResponse<HostedSite>> {
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -815,6 +817,7 @@ export async function reuploadSite(
 
   const fd = new FormData();
   fd.append('file', file);
+  if (gallery) fd.append('gallery', 'true');
   // 解包进度是按这个键存的，不带上的话换 ZIP 时那块面板一直停在「等待中」
   if (uploadId) fd.append('uploadId', uploadId);
 
