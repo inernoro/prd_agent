@@ -180,6 +180,12 @@ public class DesignArtifactRun
     /// <summary>排队任务最近一次被恢复器补投队列的时间，限制多实例重复补投频率。</summary>
     public DateTime? RecoveryEnqueuedAt { get; set; }
 
+    /// <summary>
+    /// 分支重新部署后，本版本从上一版 revision 接管这条无人执行任务的时间。
+    /// 中断原因从这里读，不靠某一轮恢复的内存状态，接管与终结分在两轮也不会把原因丢成「服务重启」。
+    /// </summary>
+    public DateTime? RetiredRevisionAdoptedAt { get; set; }
+
     /// <summary>异常终结的 committing 任务是否仍需按 Run 来源清理未发布产物。</summary>
     public bool CleanupPending { get; set; }
 

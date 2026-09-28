@@ -1583,7 +1583,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
         }
 
-        var adoptedFromRetiredRevision = await AdoptRetiredRevisionRunsAsync(db, now, ct, logger);
+        // 接管只改写作用域并在任务上记下原因；终结交给下面同一条恢复路径，
+        // 本轮批量满了没轮到的，下一轮照样按记下的原因终结。
+        await AdoptRetiredRevisionRunsAsync(db, now, ct, logger);
 
         var staleRunning = await db.DesignArtifactRuns
             .Find(x => x.DeploymentSlug == DeploymentScope.Current && ((x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
@@ -1657,7 +1659,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
 
-            var interruptedMessage = adoptedFromRetiredRevision.Contains(candidate.Id)
+            var interruptedMessage = candidate.RetiredRevisionAdoptedAt.HasValue
                 ? RedeployInterruptedMessage
                 : RestartInterruptedMessage;
             var usesPublicLifecycle = publicLifecycle != null
@@ -1816,13 +1818,22 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         if (filter == null) return null;
         if (await HasLandedRevisionAsync(db, candidate.Id, ct)) return null;
         var f = Builders<DesignArtifactRun>.Filter;
+        var update = Builders<DesignArtifactRun>.Update
+            .Set(x => x.DeploymentSlug, currentScope)
+            .Set(x => x.RetiredRevisionAdoptedAt, now);
+        // 没有租约的旧任务（判据里 LeaseExpiresAt 为空的那一支）接管时补一份「已到期」的租约：
+        // 执行方已确认不在，而停止收敛、恢复终结、公共生命周期都以租约为围栏，缺了它就只能干等下一轮。
+        if (string.IsNullOrWhiteSpace(candidate.LeaseOwnerId))
+            update = update.Set(x => x.LeaseOwnerId, $"retired-revision-adoption:{Guid.NewGuid():N}");
+        if (!candidate.LeaseExpiresAt.HasValue)
+            update = update.Set(x => x.LeaseExpiresAt, now);
         return await db.DesignArtifactRuns.FindOneAndUpdateAsync(
             filter
             & f.Eq(x => x.Id, candidate.Id)
             & f.Eq(x => x.DeploymentSlug, candidate.DeploymentSlug)
             & f.Eq(x => x.LeaseOwnerId, candidate.LeaseOwnerId)
             & f.Eq(x => x.LeaseExpiresAt, candidate.LeaseExpiresAt),
-            Builders<DesignArtifactRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            update,
             new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
             {
                 ReturnDocument = ReturnDocument.After,
@@ -1848,21 +1859,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     private static Task<bool> HasLandedRevisionAsync(MongoDbContext db, string runId, CancellationToken ct) =>
         db.HostedSiteRevisions.Find(revision => revision.SourceRunId == runId).AnyAsync(ct);
 
-    private static async Task<HashSet<string>> AdoptRetiredRevisionRunsAsync(
+    private static async Task AdoptRetiredRevisionRunsAsync(
         MongoDbContext db,
         DateTime now,
         CancellationToken ct,
         ILogger? logger)
     {
-        var adopted = new HashSet<string>(StringComparer.Ordinal);
         var filter = BuildRetiredRevisionRunFilter(DeploymentScope.Current, DeploymentScope.CurrentDurable, now);
-        if (filter == null) return adopted;
+        if (filter == null) return;
         var candidates = await db.DesignArtifactRuns.Find(filter).Limit(100).ToListAsync(ct);
         foreach (var candidate in candidates)
         {
             var run = await TryAdoptRetiredRevisionRunAsync(db, candidate, now, ct);
             if (run == null) continue;
-            adopted.Add(run.Id);
             logger?.LogWarning(
                 "分支重新部署后，上一版服务留下的设计任务已无人执行，本版本接管并终结（已请求停止的记为取消，其余记为失败，用户需重新发起）；runId={RunId} 上一版作用域={RetiredScope} 本版作用域={CurrentScope} 上一版租约到期={LeaseExpiresAt:o}",
                 run.Id,
@@ -1870,7 +1879,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 run.DeploymentSlug,
                 candidate.LeaseExpiresAt);
         }
-        return adopted;
     }
 
     internal static async Task<bool> FinalizeRecoveredCancellationAsync(

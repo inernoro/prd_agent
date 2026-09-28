@@ -309,6 +309,40 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     }
 
     [DesignScopeMongoTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetiredRevision_StopOnAnOrphanedRunWithoutALease_SettlesAtOnce(bool publicLifecycle)
+    {
+        // 判据接纳「没有租约、很久没更新」的旧任务；接管后停止必须当场收敛，不能因为缺租约干等下一轮。
+        var orphan = OrphanedGeneration("orphan-stop-no-lease", publicLifecycle);
+        orphan.LeaseOwnerId = null;
+        orphan.LeaseExpiresAt = null;
+        await InsertAsync(orphan, RetiredScope);
+
+        var ok = Assert.IsType<OkObjectResult>(await ProductionWiredGenerationController().CancelRun(orphan.Id));
+
+        Assert.Contains(RunStatuses.Cancelled, System.Text.Json.JsonSerializer.Serialize(ok.Value));
+        var settled = await Read(orphan.Id);
+        Assert.Equal(RunStatuses.Cancelled, settled.Status);
+        Assert.Equal(CurrentScope, settled.DeploymentSlug);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RetiredRevision_AdoptedInOnePassAndSettledInALaterOne_KeepsTheRedeployReason()
+    {
+        // 接管与终结可能不在同一轮（例如本轮待终结的任务超过批量上限）：原因记在任务上，不随那一轮的内存状态丢失。
+        var orphan = OrphanedGeneration("orphan-adopted-earlier");
+        await InsertAsync(orphan, RetiredScope);
+        Assert.NotNull(await HostedSiteEditRunWorker.TryAdoptRetiredRevisionRunAsync(_db, await Read(orphan.Id), Now, default));
+
+        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+
+        var settled = await Read(orphan.Id);
+        Assert.Equal(RunStatuses.Error, settled.Status);
+        Assert.Equal(HostedSiteEditRunWorker.RedeployInterruptedMessage, settled.Error);
+    }
+
+    [DesignScopeMongoTheory]
     [InlineData(RetiredScope, DesignArtifactCancellationUnavailableException.RetiredRevisionCode)]
     [InlineData("project-a::branch-b::revision::revision-a", DesignArtifactCancellationUnavailableException.OtherDeploymentCode)]
     [InlineData("project-b::branch-a::revision::revision-a", DesignArtifactCancellationUnavailableException.OtherDeploymentCode)]
