@@ -413,10 +413,12 @@ public static class HostedSiteRevisionRules
             TimeSpan.FromSeconds(1));
         value = ExtractVisibleTextFromMarkup(value);
         value = System.Net.WebUtility.HtmlDecode(value);
+        // 换行是行界，不能和普通空白一起压成空格：压掉之后「00:15」与下一行「项目优势」就成了
+        // 同一句「00:15 项目优势」，数值核对会把两行拼成「15项」（#1627 预览验收）。
         return System.Text.RegularExpressions.Regex.Replace(
             value,
             @"\s+",
-            " ",
+            whitespace => whitespace.Value.IndexOfAny(['\r', '\n']) >= 0 ? "\n" : " ",
             RegexOptions,
             TimeSpan.FromSeconds(1)).Trim();
     }
@@ -532,7 +534,17 @@ public static class HostedSiteRevisionRules
     private static List<MeasuredClaimContext> ExtractMeasuredClaimContexts(string text)
     {
         var claims = new List<MeasuredClaimContext>();
-        foreach (var segment in System.Text.RegularExpressions.Regex.Split(text ?? string.Empty, @"[\r\n。！？!?；;，,：:]+"))
+        // 数字与量词只在同一行、同一句里配对：按行界与句读切段后再取数，段与段之间绝不拼接。
+        // 时刻与时间段（00:15、00:00 - 00:15、1:30:00）不是数值陈述，但冒号本身是切段符，切开后
+        // 「00:15 项目优势」里的「15」会落到下一段开头、被读成「15 项」。所以先把时刻里的冒号换成
+        // ClockTimeSeparator（不参与切段），再由取数正则拒绝紧跟在它后面的数字。
+        var masked = System.Text.RegularExpressions.Regex.Replace(
+            text ?? string.Empty,
+            @"(?<![A-Za-z0-9_.:：])\d{1,2}(?:[:：][0-5]\d){1,2}(?![\d:：])",
+            clock => clock.Value.Replace(':', ClockTimeSeparator).Replace('：', ClockTimeSeparator),
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        foreach (var segment in System.Text.RegularExpressions.Regex.Split(masked, @"[\r\n。！？!?；;，,：:]+"))
         {
             var patterns = new[]
             {
@@ -540,9 +552,9 @@ public static class HostedSiteRevisionRules
                 // 「后面不许紧跟英文字母」只对英文单位成立（防止把 5 GBps 的前缀当成 5 GB）；
                 // 中文单位本身完整，「15天trial」「15 天 trial」必须识别成同一个陈述，否则来源不带空格、
                 // 页面带空格时，来源那句不算陈述而页面那句算，误判为无依据（2026-09-25 #1622 预览验收）。
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?(?<=[A-Za-z])(?![A-Za-z]))",
+                @"(?<![A-Za-z0-9_\u2236])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?(?<=[A-Za-z])(?![A-Za-z]))",
                 @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?!\s*(?:月|小时))",
+                @"(?<![A-Za-z0-9_\u2236])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?!\s*(?:月|小时))",
             };
             foreach (var pattern in patterns)
             {
@@ -571,6 +583,9 @@ public static class HostedSiteRevisionRules
         }
         return claims;
     }
+
+    /// <summary>时刻内部的冒号改写成比例号（U+2236），外观不变、不参与切段，且其后的数字不算数值陈述。</summary>
+    private const char ClockTimeSeparator = '\u2236';
 
     private static string NormalizeClaimContext(string value) =>
         System.Text.RegularExpressions.Regex.Replace(
@@ -723,6 +738,8 @@ public static class HostedSiteRevisionRules
         foreach (var tag in tags)
         {
             if (tag.Start > cursor && suppressedDepth == 0) builder.Append(html, cursor, tag.Start - cursor);
+            // <br>/<hr> 是行界：两侧文字在页面上不在同一行，不能被读成同一句。
+            if (IsLineBreakElement(tag.Name) && suppressedDepth == 0) builder.Append('\n');
             var block = IsBlockElement(tag.Name);
             if (tag.IsClosing)
             {
@@ -769,6 +786,9 @@ public static class HostedSiteRevisionRules
             @"^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|section|table|tbody|td|tfoot|th|thead|tr|ul)$",
             RegexOptions,
             TimeSpan.FromSeconds(1));
+
+    private static bool IsLineBreakElement(string name) =>
+        name.Equals("br", StringComparison.OrdinalIgnoreCase) || name.Equals("hr", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsVoidElement(string name) =>
         System.Text.RegularExpressions.Regex.IsMatch(
