@@ -745,23 +745,30 @@ public static class HostedSiteRevisionRules
         {
             if (tag.Start > cursor && suppressedDepth == 0) builder.Append(html, cursor, tag.Start - cursor);
             // <br>/<hr> 是行界：两侧文字在页面上不在同一行，与块级元素一样插句界，不能被读成同一句。
-            if (IsLineBreakElement(tag.Name) && suppressedDepth == 0) builder.Append('。');
+            // 隐藏的行界与块级元素在页面上不产生换行，不能插句界，否则「共15<br hidden>项」会被拆开而漏检。
+            var hidden = !tag.IsClosing && IsHiddenElement(tag.Attributes);
+            if (IsLineBreakElement(tag.Name) && suppressedDepth == 0 && !hidden) builder.Append('。');
             var block = IsBlockElement(tag.Name);
             if (tag.IsClosing)
             {
+                var closedSuppressed = false;
                 for (var index = stack.Count - 1; index >= 0; index--)
                 {
                     var frame = stack[index];
                     stack.RemoveAt(index);
                     if (frame.Suppressed) suppressedDepth--;
-                    if (frame.Name.Equals(tag.Name, StringComparison.OrdinalIgnoreCase)) break;
+                    if (frame.Name.Equals(tag.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        closedSuppressed = frame.Suppressed;
+                        break;
+                    }
                 }
-                if (block && suppressedDepth == 0) builder.Append('。');
+                if (block && suppressedDepth == 0 && !closedSuppressed) builder.Append('。');
             }
             else
             {
-                if (block && suppressedDepth == 0) builder.Append('。');
-                var suppressed = IsHiddenElement(tag.Attributes);
+                if (block && suppressedDepth == 0 && !hidden) builder.Append('。');
+                var suppressed = hidden;
                 if (!tag.IsSelfClosing && !IsVoidElement(tag.Name))
                 {
                     stack.Add((tag.Name, suppressed));

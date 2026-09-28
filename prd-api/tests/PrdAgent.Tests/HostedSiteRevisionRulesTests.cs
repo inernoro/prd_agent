@@ -364,10 +364,14 @@ public class HostedSiteRevisionRulesTests
     [InlineData("<div class=\"slot\"><span class=\"time\">00:00 - 00:15</span>\n<span class=\"tag\">共 15 项优势</span></div>")]
     [InlineData("<p>共 15\n项优势</p>")]
     [InlineData("<p>共 <strong>15</strong>\n项优势</p>")]
+    [InlineData("<p>共15<br hidden>项优势</p>")]
+    [InlineData("<p>共15<br style=\"display:none\">项优势</p>")]
+    [InlineData("<div>共15<div hidden></div>项优势</div>")]
     public void ValidateGeneratedContentQuality_InventedCountOnSameLineIsStillRejected(string body)
     {
         // 收紧的只是「跨行拼接」与「时刻当数量」，同一行里编造的数字照旧拒收（行内强调标签不算换行）。
         // 行内流里的源码换行在页面上是一个空格，「共 15\n项优势」看到的就是「共 15 项优势」，必须拦住。
+        // 隐藏的 <br> 与隐藏的块级元素在页面上不产生换行，同样不能当行界放过。
         var error = Assert.Throws<InvalidOperationException>(() =>
             HostedSiteRevisionRules.ValidateGeneratedContentQuality(
                 $"<!doctype html><html><body>{body}</body></html>", CrossLineEvidence));
