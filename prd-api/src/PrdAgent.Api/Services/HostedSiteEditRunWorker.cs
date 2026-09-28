@@ -1795,7 +1795,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                      & f.Eq(x => x.ArtifactRevisionId, null)
                      & f.Ne(x => x.CleanupPending, true)
                      & f.Eq(x => x.CleanupStartedAt, null)
-                     & f.Eq(x => x.CleanupLeaseOwnerId, null);
+                     & f.Eq(x => x.CleanupLeaseOwnerId, null)
+                     & f.Eq(x => x.RetiredRevisionSkippedAt, null);
         if (now == null) return filter;
         var releasedBefore = now.Value - RetiredRevisionAdoptionGrace;
         return filter & f.Or(
@@ -1867,22 +1868,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         var filter = BuildRetiredRevisionRunFilter(DeploymentScope.Current, DeploymentScope.CurrentDurable, now);
         if (filter == null) return;
-        // 结果已写成托管版本的旧任务不接管；先把它们排除再取批量，否则这类行一多就会
-        // 每轮占满批次、被逐条拒绝，排在后面的真孤儿永远轮不到。
-        var ids = await db.DesignArtifactRuns.Find(filter).Project(x => x.Id).ToListAsync(ct);
-        if (ids.Count == 0) return;
-        var landed = (await db.HostedSiteRevisions
-                .Find(Builders<HostedSiteRevision>.Filter.In(revision => revision.SourceRunId, ids))
-                .Project(revision => revision.SourceRunId)
-                .ToListAsync(ct))
-            .ToHashSet(StringComparer.Ordinal);
-        var batch = ids.Where(id => !landed.Contains(id)).Take(100).ToList();
-        if (batch.Count == 0) return;
-        var candidates = await db.DesignArtifactRuns
-            .Find(filter & Builders<DesignArtifactRun>.Filter.In(x => x.Id, batch))
-            .ToListAsync(ct);
+        var candidates = await db.DesignArtifactRuns.Find(filter).Limit(100).ToListAsync(ct);
         foreach (var candidate in candidates)
         {
+            // 结果已写成托管版本的旧任务不接管，并在它身上记一笔，之后判据不再选中它。
+            // 不记的话这类行一多就会每轮占满批次、被逐条拒绝，排在后面的真孤儿永远轮不到；
+            // 记在任务上而不是先全量读出来再排除，是为了让每轮的读取量始终有上限。
+            if (await HasLandedRevisionAsync(db, candidate.Id, ct))
+            {
+                await db.DesignArtifactRuns.UpdateOneAsync(
+                    x => x.Id == candidate.Id && x.DeploymentSlug == candidate.DeploymentSlug,
+                    Builders<DesignArtifactRun>.Update.Set(x => x.RetiredRevisionSkippedAt, now),
+                    cancellationToken: ct);
+                continue;
+            }
             var run = await TryAdoptRetiredRevisionRunAsync(db, candidate, now, ct);
             if (run == null) continue;
             logger?.LogWarning(

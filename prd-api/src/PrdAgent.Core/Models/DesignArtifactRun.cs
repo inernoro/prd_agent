@@ -186,6 +186,12 @@ public class DesignArtifactRun
     /// </summary>
     public DateTime? RetiredRevisionAdoptedAt { get; set; }
 
+    /// <summary>
+    /// 上一版 revision 留下的任务被判为「结果已写成托管版本」、不予接管的时间。
+    /// 记下后接管判据不再选中它，免得这类行每轮占满恢复批次。
+    /// </summary>
+    public DateTime? RetiredRevisionSkippedAt { get; set; }
+
     /// <summary>异常终结的 committing 任务是否仍需按 Run 来源清理未发布产物。</summary>
     public bool CleanupPending { get; set; }
 

@@ -254,7 +254,15 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
 
         await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
 
-        Assert.Equal(before, await Raw(run.Id));
+        // 已写成托管版本的只多一个「不予接管」的记号，其余字段逐字不变。
+        var after = await Raw(run.Id);
+        const string skipped = nameof(DesignArtifactRun.RetiredRevisionSkippedAt);
+        if (shape == "revision-already-written")
+        {
+            Assert.False(after[skipped].IsBsonNull);
+            after[skipped] = BsonNull.Value;
+        }
+        Assert.Equal(before, after);
     }
 
     [DesignScopeMongoTheory]
@@ -374,12 +382,20 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         var orphan = OrphanedGeneration("zz-genuine-orphan");
         await InsertAsync(orphan, RetiredScope);
 
-        await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
+        // 每轮只读有限的一批；已落定的被记下后不再被选中，真孤儿在有限轮数内一定轮得到。
+        for (var pass = 0; pass < 3; pass++)
+            await HostedSiteEditRunWorker.RecoverInterruptedRunsAsync(_db, _queue, _events, Now, default);
 
         var settled = await Read(orphan.Id);
         Assert.Equal(RunStatuses.Error, settled.Status);
         Assert.Equal(HostedSiteEditRunWorker.RedeployInterruptedMessage, settled.Error);
-        Assert.Equal(RetiredScope, (await Read("landed-000")).DeploymentSlug);
+        foreach (var id in new[] { "landed-000", "landed-100" })
+        {
+            var landed = await Read(id);
+            Assert.Equal(RetiredScope, landed.DeploymentSlug);
+            Assert.Equal(RunStatuses.Running, landed.Status);
+            Assert.NotNull(landed.RetiredRevisionSkippedAt);
+        }
     }
 
     [DesignScopeMongoTheory]
