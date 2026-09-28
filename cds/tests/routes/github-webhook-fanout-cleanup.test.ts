@@ -222,6 +222,27 @@ describe('一仓多项目：清理请求要对每个项目都发出去', () => {
     expect(new Set(stopped).size).toBe(2);
   });
 
+  it('main 合入 test 的 PR 关闭后不停止 main，也不写已删除墓碑', async () => {
+    addProject('p-main', 'mainp', 'MAP');
+    stateService.addBranch({
+      id: 'mainp-main', projectId: 'p-main', branch: 'main',
+      worktreePath: '/tmp/wt/mainp-main', services: {}, status: 'running',
+      createdAt: new Date().toISOString(),
+    });
+
+    const res = await post(server, 'pull_request', {
+      action: 'closed',
+      repository: { id: 1, full_name: REPO },
+      pull_request: { number: 1227, head: { ref: 'main' }, base: { ref: 'test' }, merged: true },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([]);
+    expect(Object.keys(stateService.getState().removedBranches ?? {})).toHaveLength(0);
+    expect(stateService.getBranch('mainp-main')?.status).toBe('running');
+  });
+
   it('删分支：两个项目都收到停止 + 删除，不是只清第一个', async () => {
     await seedTwoBranches();
 

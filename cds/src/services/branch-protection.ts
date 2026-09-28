@@ -67,7 +67,7 @@ export function describeBranchProtectionReason(reason: BranchProtectionReason): 
  * 刻意不依赖 `Project.defaultBranch` —— 那存的是 CDS 分支 id（预览路由 fallback 用），
  * 可能未配置、也可能与真实主干不符，正是 main 被误降温 / 被误删的根因。
  */
-export function isTrunkBranch(branch: BranchEntry, project?: Project | null): boolean {
+export function isTrunkBranch(branch: Pick<BranchEntry, 'branch'>, project?: Project | null): boolean {
   const branchName = (branch.branch || '').trim();
   if (!branchName) return false;
   const remoteDefault = (project?.gitDefaultBranch || '').trim();

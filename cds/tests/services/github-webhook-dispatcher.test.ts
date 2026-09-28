@@ -832,6 +832,83 @@ describe('GitHubWebhookDispatcher', () => {
       });
     });
 
+    it('does not treat main as a preview when a main-to-test PR opens or closes', async () => {
+      stateService.addBranch({
+        id: 'proj-main', projectId: 'p1', branch: 'main',
+        worktreePath: '/tmp/wt-main', services: {}, status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+      const pullRequest = {
+        number: 1227,
+        state: 'open',
+        head: { ref: 'main', sha: 'abc' },
+        base: { ref: 'test' },
+        html_url: 'https://github.com/octocat/repo/pull/1227',
+        title: 'Merge main into test',
+      };
+
+      const opened = await d.handle('pull_request', {
+        action: 'opened', number: 1227, pull_request: pullRequest,
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(opened.action).toBe('ignored-event');
+      expect(stateService.getBranch('proj-main')?.githubPrNumber).toBeUndefined();
+
+      for (const merged of [true, false]) {
+        const closed = await d.handle('pull_request', {
+          action: 'closed', number: 1227,
+          pull_request: { ...pullRequest, state: 'closed', merged },
+          repository: { full_name: 'octocat/repo' },
+        });
+        expect(closed.action).toBe('ignored-event');
+        expect(closed.branchId).toBe('proj-main');
+        expect(closed.stopRequest).toBeUndefined();
+        expect(closed.tombstoneRequest).toBeUndefined();
+      }
+      expect(stateService.getBranch('proj-main')?.status).toBe('running');
+    });
+
+    it('does not create a tombstone for a missing trunk branch entry', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed', number: 1227,
+        pull_request: {
+          number: 1227, state: 'closed', merged: true,
+          head: { ref: 'main', sha: 'abc' }, base: { ref: 'test' },
+          html_url: 'https://github.com/octocat/repo/pull/1227',
+          title: 'Merge main into test',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('ignored-event');
+      expect(result.stopRequest).toBeUndefined();
+      expect(result.tombstoneRequest).toBeUndefined();
+    });
+
+    it('protects a configured trunk name during PR close', async () => {
+      stateService.updateProject('p1', { gitDefaultBranch: 'stable' });
+      stateService.addBranch({
+        id: 'proj-stable', projectId: 'p1', branch: 'stable',
+        worktreePath: '/tmp/wt-stable', services: {}, status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed', number: 100,
+        pull_request: {
+          number: 100, state: 'closed', merged: true,
+          head: { ref: 'stable', sha: 'abc' }, base: { ref: 'test' },
+          html_url: 'https://github.com/octocat/repo/pull/100',
+          title: 'Merge stable into test',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('ignored-event');
+      expect(result.stopRequest).toBeUndefined();
+      expect(result.tombstoneRequest).toBeUndefined();
+    });
+
     it('returns tombstoneRequest reason=abandoned when PR closed unmerged', async () => {
       const d = buildDispatcher();
       const result = await d.handle('pull_request', {

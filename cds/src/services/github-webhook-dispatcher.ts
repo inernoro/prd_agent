@@ -1267,6 +1267,20 @@ export class GitHubWebhookDispatcher {
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
     const branchId = entry?.id ?? canonicalId;
 
+    // A long-lived trunk can be the head of a PR into another branch. It is
+    // not a disposable preview: opening must not attach PR metadata, and
+    // closing must not stop it or create a removed-branch tombstone.
+    if (
+      (event.action === 'opened' || event.action === 'reopened' || event.action === 'closed')
+      && isTrunkBranch({ branch: branchName }, project)
+    ) {
+      return {
+        action: 'ignored-event',
+        message: `PR #${pr.number} head '${branchName}' is a trunk branch; preview lifecycle ignored`,
+        branchId,
+      };
+    }
+
     // `closed` action — tear down preview containers.
     if (event.action === 'closed') {
       const merged = pr.merged === true;
