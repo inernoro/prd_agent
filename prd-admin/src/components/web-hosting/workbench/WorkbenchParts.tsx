@@ -469,7 +469,10 @@ export function WorkbenchComposer({
       <p className="text-[11px] leading-relaxed text-token-muted">
         {state === 'blocked' && sendDisabledReason
           ? sendDisabledReason
-          : <><span className="font-medium text-token-secondary">{sendLabel}</span>{state === 'busy' ? '' : ` · ${hint}`}</>}
+          : state === 'busy'
+            ? <span className="font-medium text-token-secondary">{sendLabel}</span>
+            // 按钮只剩图标，按下去得到什么由说明行交代；调用方的说明本身已含预计耗时与出处，不再拼按钮文字，免得耗时说两遍。
+            : hint}
       </p>
     </div>
   );

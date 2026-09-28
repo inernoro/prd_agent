@@ -69,10 +69,13 @@ describe('WorkbenchComposer 布局', () => {
     expect(inside.indexOf('会议纪要-1.md')).toBeLessThan(inside.indexOf('aria-label="生成网页 · 约 9–12 分钟"'));
   });
 
-  it('发送按钮只放图标，按下去得到什么写在卡片下方的说明行', () => {
-    const html = render({ value: '给合作方看' });
+  it('发送按钮只放图标，按下去得到什么写在卡片下方的说明行，且不重复按钮文字', () => {
+    const html = render({ value: '给合作方看', hint: '点下去：对话里一步步显示进度；按经验值约 9–12 分钟' });
     expect(html).toContain('data-composer-state="ready"');
-    expect(html).toMatch(/<p[^>]*>.*生成网页 · 约 9–12 分钟.*点下去：对话里一步步显示进度<\/p>/);
+    const hintLine = html.slice(html.lastIndexOf('<p'));
+    expect(hintLine).toContain('点下去：对话里一步步显示进度；按经验值约 9–12 分钟');
+    // 耗时只说一次：按钮文字（含耗时）只在读屏标签与悬停提示里。
+    expect(hintLine).not.toContain('生成网页 · 约 9–12 分钟');
   });
 
   it('不能发送时按钮置灰，说明行换成原因', () => {
