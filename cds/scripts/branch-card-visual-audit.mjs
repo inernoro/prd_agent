@@ -530,6 +530,17 @@ async function main() {
           const fFooter = (await page.textContent('[data-branch-card-id="b-test"] footer')) || '';
           check(fPhase !== 'done' && fPhase !== 'start' && !/部署成功/.test(fFooter),
             `状态落盘失败的那次部署不播「部署成功」，也不停在部署阶段（实际 data-deploy-phase=${fPhase}）`);
+          // 标记只属于那一条事件：接下来一次正常部署照常播「部署成功」
+          const nBuild = { ...fDone, services: services(22331, 'running', { api: { status: 'building' } }), lastDeployStartedAt: iso(-20_000) };
+          branches = branches.map((b) => (b.id === nBuild.id ? nBuild : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), nBuild);
+          await page.waitForTimeout(600);
+          const nDone = { ...nBuild, services: services(22331, 'running') };
+          branches = branches.map((b) => (b.id === nDone.id ? nDone : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), nDone);
+          await page.waitForTimeout(900);
+          const nPhase = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
+          check(nPhase === 'done', `落盘失败之后的下一次正常部署照常播「部署成功」（实际 data-deploy-phase=${nPhase}）`);
         }
 
         // 混合模式分支正在等 CI 镜像，这时手动部署一个源码服务：阶段条按源码三段走，不被等镜像那一段锁成极速版（Codex P2）

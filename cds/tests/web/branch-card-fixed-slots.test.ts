@@ -111,7 +111,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     // 而且带上 stateFlushFailed：卡片离开部署阶段，但不能把接口报失败的这次播成「部署成功」
     expect(routes.slice(flushFail, flushFailReturn)).toContain('emitServiceTransition({ stateFlushFailed: true });');
     expect(page).toContain('if (branch.stateFlushFailed) return;');
-    expect(page).toContain('branch: data.stateFlushFailed ? { ...data.branch, stateFlushFailed: true } : data.branch,');
+    // 标记只属于那一条事件：每条 branch.updated / branch.status 都显式写 true / false，不在合并里残留
+    expect(page).toContain('branch: { ...data.branch, stateFlushFailed: Boolean(data.stateFlushFailed) },');
+    expect(page).toContain('branch: { ...data.branch, status: data.status, stateFlushFailed: false },');
     // 步骤类型只在真的开始部署之后锁定：只是等 CI 镜像那一段不锁
     expect(page).toContain('lockedExpress: lastBuildRef.current?.started ? lastBuildRef.current.express : undefined,');
   });
