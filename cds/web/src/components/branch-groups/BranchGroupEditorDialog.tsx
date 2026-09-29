@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  BRANCH_GROUP_LIMITS,
   BRANCH_GROUP_COLORS,
   BRANCH_GROUP_COLOR_LABELS,
   BRANCH_GROUP_RULE_KINDS,
@@ -102,7 +103,8 @@ export function BranchGroupEditorDialog({
   const update = (patch: Partial<BranchGroup>) => setDraft((current) => (current ? { ...current, ...patch } : current));
   const setRule = (index: number, patch: Partial<{ kind: BranchGroupRuleKind; value: string }>) =>
     update({ rules: draft.rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)) });
-  const canSave = draft.name.trim().length > 0 && !saving;
+  const atRuleLimit = draft.rules.length >= BRANCH_GROUP_LIMITS.rulesPerGroup;
+  const canSave = draft.name.trim().length > 0 && draft.rules.length <= BRANCH_GROUP_LIMITS.rulesPerGroup && !saving;
   const who = actorText(updatedBy);
   const when = formatWhen(updatedAt);
 
@@ -116,14 +118,16 @@ export function BranchGroupEditorDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-1">
+        <div className="min-h-0 flex-1 overflow-y-auto px-1">
+          {/* 保存在路上时整张表单只读：保存发出去的是点击那一刻的草稿，之后再改的内容会随弹窗关闭丢掉（Codex P2，PR #1647）。 */}
+          <fieldset disabled={saving} className="m-0 min-w-0 space-y-5 border-0 p-0" data-branch-group-editor-form>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
             <label className="flex min-w-0 flex-1 flex-col gap-1.5">
               <span className="text-xs font-semibold text-muted-foreground">名称</span>
               <input
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
                 value={draft.name}
-                maxLength={40}
+                maxLength={BRANCH_GROUP_LIMITS.nameLength}
                 placeholder="例如：Claude 在做"
                 onChange={(event) => update({ name: event.target.value })}
               />
@@ -177,7 +181,7 @@ export function BranchGroupEditorDialog({
                   <input
                     className="h-9 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
                     value={rule.value}
-                    maxLength={100}
+                    maxLength={BRANCH_GROUP_LIMITS.ruleValueLength}
                     list={rule.kind === 'tag' ? 'branch-group-tag-options' : undefined}
                     placeholder={rule.kind === 'tag' ? '标签名' : rule.kind === 'prefix' ? '例如 claude/' : '分支名片段'}
                     onChange={(event) => setRule(index, { value: event.target.value })}
@@ -199,16 +203,23 @@ export function BranchGroupEditorDialog({
             <datalist id="branch-group-tag-options">
               {tags.map((tag) => <option key={tag} value={tag} />)}
             </datalist>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="self-start"
-              onClick={() => update({ rules: [...draft.rules, { kind: 'prefix', value: '' }] })}
-            >
-              <Plus />
-              添加规则
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={atRuleLimit}
+                onClick={() => update({ rules: [...draft.rules, { kind: 'prefix', value: '' }] })}
+              >
+                <Plus />
+                添加规则
+              </Button>
+              {atRuleLimit ? (
+                <span className="text-xs text-muted-foreground" data-branch-group-rule-limit>
+                  每组最多 {BRANCH_GROUP_LIMITS.rulesPerGroup} 条规则
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex flex-col gap-2.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 p-3.5" data-branch-group-preview>
@@ -279,13 +290,14 @@ export function BranchGroupEditorDialog({
             <span><span className="mr-1.5 font-mono text-primary">3</span>都没命中：落进「未归组」</span>
             <span>钉入后卡片名字旁出现图钉；拖回「未归组」即取消钉入</span>
           </div>
-          {error ? <div className="text-sm text-destructive" role="alert">{error}</div> : null}
+          </fieldset>
+          {error ?<div className="text-sm text-destructive" role="alert">{error}</div> : null}
         </div>
 
         <DialogFooter className="flex-row flex-wrap items-center gap-2 sm:justify-between">
           {!isNew ? (
             <div className="flex items-center gap-2">
-              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => onDelete(draft.id)}>
+              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" disabled={saving} onClick={() => onDelete(draft.id)}>
                 删除分组
               </Button>
               <span className="text-xs text-muted-foreground">删除只解散分组，不动任何分支</span>

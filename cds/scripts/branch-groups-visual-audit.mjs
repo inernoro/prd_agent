@@ -417,6 +417,31 @@ async function main() {
         check(puts.length - putsBeforeConflict === 1 && /一并撤回/.test(dropBanner),
           `第一步冲突时后面那一步一并撤回、不再发请求（请求 ${puts.length - putsBeforeConflict} 次，「${dropBanner.trim().slice(0, 60)}」）`);
 
+        // 9f. 保存在路上时编辑器整张表单只读；规则加到上限后「添加规则」不可点
+        {
+          const gid = groupStore.groups.find((g) => g.name === 'Codex 别人改过')?.id;
+          await page.click(`[data-branch-group="${gid}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
+          await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+          const dialog = page.getByRole('dialog');
+          const addRule = dialog.getByRole('button', { name: '添加规则' });
+          let guard = 0;
+          while (await addRule.isEnabled() && guard < 40) { await addRule.click(); guard += 1; }
+          const ruleCount = await dialog.getByLabel('规则值').count();
+          const limitHint = Boolean(await page.$('[data-branch-group-rule-limit]'));
+          check(ruleCount === 20 && limitHint, `规则加到 20 条后「添加规则」不可点并提示上限（${ruleCount} 条）`);
+          await dialog.getByRole('button', { name: '取消', exact: true }).click();
+          await page.waitForTimeout(300);
+          await page.click(`[data-branch-group="${gid}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
+          await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+          putDelayMs = 900;
+          await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+          await page.waitForTimeout(150);
+          const lockedWhileSaving = await page.getByRole('dialog').getByPlaceholder('例如：Claude 在做').isDisabled();
+          await page.waitForTimeout(1300);
+          putDelayMs = 0;
+          check(lockedWhileSaving && !(await page.$('[role="dialog"]')), `保存在路上时编辑器表单只读，保存成功后关闭（只读：${lockedWhileSaving}）`);
+        }
+
         // 9c. 标签筛选开着时编辑分组：命中预览仍按项目全部分支算（规则保存后作用于全部分支）
         const openCodexEditor = async () => {
           await page.click(`[data-branch-group="${codexGroupId}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);

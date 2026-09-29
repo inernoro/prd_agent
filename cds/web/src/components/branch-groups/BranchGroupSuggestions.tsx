@@ -9,6 +9,7 @@ import { Plus, Users } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
+  BRANCH_GROUP_LIMITS,
   newBranchGroupId,
   suggestPrefixGroups,
   type BranchGroup,
@@ -33,10 +34,12 @@ export function BranchGroupSuggestions({
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [names, setNames] = useState<Record<string, string>>({});
   useEffect(() => {
-    setChecked(Object.fromEntries(suggestions.map((item) => [item.prefix, item.defaultChecked])));
+    // 默认勾选不超过分组上限：前缀多到超过上限时，只默认勾最多的那几类（Codex P2，PR #1647）。
+    setChecked(Object.fromEntries(suggestions.map((item, index) => [item.prefix, item.defaultChecked && index < BRANCH_GROUP_LIMITS.groups])));
     setNames(Object.fromEntries(suggestions.map((item) => [item.prefix, item.name])));
   }, [suggestions]);
   const picked = suggestions.filter((item) => checked[item.prefix]);
+  const overLimit = picked.length - BRANCH_GROUP_LIMITS.groups;
 
   const create = () => {
     onCreate(picked.map((item) => ({
@@ -85,7 +88,7 @@ export function BranchGroupSuggestions({
                 <input
                   className="h-8 w-36 rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
                   value={names[item.prefix] ?? item.name}
-                  maxLength={40}
+                  maxLength={BRANCH_GROUP_LIMITS.nameLength}
                   aria-label={`${item.prefix} 的组名`}
                   onChange={(event) => setNames((current) => ({ ...current, [item.prefix]: event.target.value }))}
                 />
@@ -95,10 +98,15 @@ export function BranchGroupSuggestions({
           <p className="text-xs text-muted-foreground">只有 1 个分支的前缀默认不勾，免得一上来就一堆单卡小组。</p>
         </div>
       ) : null}
+      {overLimit > 0 ? (
+        <div className="text-sm text-destructive" data-branch-group-suggestion-limit>
+          一个项目最多 {BRANCH_GROUP_LIMITS.groups} 个分组，已勾选 {picked.length} 个，请再取消 {overLimit} 个。
+        </div>
+      ) : null}
       {error ? <div className="text-sm text-destructive" role="alert">{error}</div> : null}
       <div className="flex flex-wrap items-center gap-2">
         {suggestions.length > 0 ? (
-          <Button type="button" disabled={picked.length === 0 || saving} onClick={create}>
+          <Button type="button" disabled={picked.length === 0 || overLimit > 0 || saving} onClick={create}>
             {saving ? '创建中…' : `创建 ${picked.length} 个分组`}
           </Button>
         ) : null}

@@ -17,6 +17,15 @@ export type BranchGroupRuleKind = 'prefix' | 'contains' | 'equals' | 'tag';
 export const BRANCH_GROUP_COLORS: readonly BranchGroupColor[] = ['orange', 'blue', 'green', 'purple', 'gray'];
 export const BRANCH_GROUP_RULE_KINDS: readonly BranchGroupRuleKind[] = ['prefix', 'contains', 'equals', 'tag'];
 
+/** 与后端 BRANCH_GROUP_LIMITS 同值（守卫测试比对）：界面不许给出后端必然拒绝的操作。 */
+export const BRANCH_GROUP_LIMITS = {
+  groups: 30,
+  nameLength: 40,
+  rulesPerGroup: 20,
+  ruleValueLength: 100,
+  pinsPerGroup: 200,
+} as const;
+
 export const BRANCH_GROUP_COLOR_LABELS: Record<BranchGroupColor, string> = {
   orange: '橙',
   blue: '蓝',

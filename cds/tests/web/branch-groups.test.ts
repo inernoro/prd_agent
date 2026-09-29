@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   BRANCH_GROUP_COLORS,
+  BRANCH_GROUP_LIMITS,
   BRANCH_GROUP_RULE_KINDS,
   assignBranchToGroup,
   groupBranches,
@@ -28,6 +29,7 @@ import {
 } from '../../web/src/lib/branchGroups';
 import {
   BRANCH_GROUP_COLORS as SERVER_COLORS,
+  BRANCH_GROUP_LIMITS as SERVER_LIMITS,
   BRANCH_GROUP_RULE_KINDS as SERVER_RULE_KINDS,
 } from '../../src/services/branch-groups';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
@@ -124,6 +126,20 @@ describe('前后端枚举一致', () => {
   it('颜色与规则类型两边完全相同', () => {
     expect([...BRANCH_GROUP_COLORS]).toEqual([...SERVER_COLORS]);
     expect([...BRANCH_GROUP_RULE_KINDS]).toEqual([...SERVER_RULE_KINDS]);
+  });
+
+  it('上限两边一致，界面不给出后端必然拒绝的操作（Codex P2）', () => {
+    expect({ ...BRANCH_GROUP_LIMITS }).toEqual({ ...SERVER_LIMITS });
+  });
+
+  it('编辑器：保存中整张表单只读、规则到上限不能再加；建组建议勾选数超过上限不能创建', () => {
+    const editor = read('components/branch-groups/BranchGroupEditorDialog.tsx');
+    expect(editor).toContain('<fieldset disabled={saving}');
+    expect(editor).toContain('const atRuleLimit = draft.rules.length >= BRANCH_GROUP_LIMITS.rulesPerGroup;');
+    expect(editor).toContain('disabled={atRuleLimit}');
+    const suggestions = read('components/branch-groups/BranchGroupSuggestions.tsx');
+    expect(suggestions).toContain('item.defaultChecked && index < BRANCH_GROUP_LIMITS.groups');
+    expect(suggestions).toContain('disabled={picked.length === 0 || overLimit > 0 || saving}');
   });
 
   it('每个颜色在两个主题里都定义了 token，组头色块类名写全', () => {
