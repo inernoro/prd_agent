@@ -20,6 +20,7 @@ import {
   seeded,
   span,
   typed,
+  type FilmPart,
   type FilmScene,
 } from './filmTimeline';
 
@@ -80,6 +81,10 @@ function SceneSwitch({ scene, lt, t, copy, roster }: { scene: FilmScene; lt: num
   switch (scene.id) {
     case 'open':
       return <OpenScene lt={lt} d={d} copy={copy} />;
+    case 'partMap':
+    case 'partGateway':
+    case 'partCds':
+      return <PartCard part={scene.part ?? 0} lt={lt} d={d} copy={copy} />;
     case 'visual':
       return <VisualScene lt={lt} d={d} t={t} copy={copy} />;
     case 'writing':
@@ -202,9 +207,65 @@ function Headline({
   );
 }
 
-/** 一幕顶上的「大字 + 灰色副标题」。out ∈ [0,1] 是它被推走了几成。 */
-function TitleBlock({ headline, sub, lt, at = 0.1, out = 0, top = 88, size = 112 }: { headline: string; sub?: string; lt: number; at?: number; out?: number; top?: number; size?: number }) {
+/** 三个产品各一支识别色：MAP 陶土、LLMGW 钢青、CDS 松绿。下标与 FilmPart 一致。 */
+const PART_ACCENT = [FILM.clay, FILM.steel, FILM.pine] as const;
+
+/** 这一幕属于哪个产品——读时间轴那张表，不在各幕里各写一遍。 */
+function partOf(id: FilmScene['id']): FilmPart | undefined {
+  return FILM_SCENES.find((s) => s.id === id)?.part;
+}
+
+/** 大字上方的产品小标签：「● MAP · 智能体平台」。 */
+function PartEyebrow({ part, copy, p }: { part: FilmPart; copy: FilmTranslation; p: number }) {
+  const info = copy.parts[part];
+  if (!info) return null;
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 14,
+        marginBottom: 22,
+        fontSize: 26,
+        fontWeight: 600,
+        letterSpacing: '0.04em',
+        color: FILM.gray,
+        opacity: p,
+        transform: `translateY(${(1 - p) * 12}px)`,
+      }}
+    >
+      <span style={{ width: 10, height: 10, borderRadius: 5, background: PART_ACCENT[part], boxShadow: `0 0 14px ${PART_ACCENT[part]}` }} />
+      <span style={{ color: FILM.text, letterSpacing: '0.12em' }}>{info.name}</span>
+      <span style={{ opacity: 0.5 }}>·</span>
+      <span>{info.title}</span>
+    </div>
+  );
+}
+
+/** 一幕顶上的「产品标签 + 大字 + 灰色副标题」。out ∈ [0,1] 是它被推走了几成。 */
+function TitleBlock({
+  headline,
+  sub,
+  lt,
+  at = 0.1,
+  out = 0,
+  top = 70,
+  size = 112,
+  part,
+  copy,
+}: {
+  headline: string;
+  sub?: string;
+  lt: number;
+  at?: number;
+  out?: number;
+  top?: number;
+  size?: number;
+  part?: FilmPart;
+  copy: FilmTranslation;
+}) {
   const subP = easeOutQuart(span(lt, at + 0.45, at + 1.2));
+  const tagP = easeOutQuart(span(lt, at - 0.1, at + 0.5));
   return (
     <div
       style={{
@@ -221,6 +282,7 @@ function TitleBlock({ headline, sub, lt, at = 0.1, out = 0, top = 88, size = 112
         filter: out > 0 ? `blur(${out * 10}px)` : undefined,
       }}
     >
+      {part !== undefined && <PartEyebrow part={part} copy={copy} p={tagP} />}
       <Headline text={headline} lt={lt} at={at} size={size} />
       {sub && (
         <div style={{ marginTop: 22, fontSize: 38, fontWeight: 500, color: FILM.gray, letterSpacing: '-0.01em', opacity: subP, transform: `translateY(${(1 - subP) * 16}px)` }}>
@@ -472,6 +534,56 @@ function OpenScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTranslati
   );
 }
 
+// ═══════════════════════ 分幕卡：MAP / LLMGW / CDS ═══════════════════════
+
+/** 产品名用各自识别色那支渐变（与 PART_ACCENT 同序）。 */
+const PART_GRADIENT = [WORD_GRADIENTS[0], WORD_GRADIENTS[1], WORD_GRADIENTS[2]] as const;
+
+/**
+ * 一小节（2 秒）的分幕卡：告诉观众「接下来这几幕是哪个产品」。
+ * 顶上三颗进度点（第几部分）→ 产品身份（一行识别色小字）→ 巨大的产品名 → 一句灰字。
+ * 最后 0.35 秒整体推近散焦，穿越进这个产品的第一幕。
+ */
+function PartCard({ part, lt, d, copy }: { part: FilmPart; lt: number; d: number; copy: FilmTranslation }) {
+  const info = copy.parts[part];
+  if (!info) return null;
+  const accent = PART_ACCENT[part];
+  const inP = easeOutQuart(span(lt, 0, 0.8));
+  const lineP = easeOutQuart(span(lt, 0.45, 1.1));
+  const out = easeInOutCubic(span(lt, d - 0.35, d));
+  return (
+    <div
+      style={{
+        ...fill,
+        opacity: 1 - out,
+        transform: `scale(${1 + 0.03 * span(lt, 0, d) + out * 0.18})`,
+        filter: out > 0 ? `blur(${out * 16}px)` : undefined,
+      }}
+    >
+      <Bloom x={960} y={560} size={1500} color={accent} alpha={0.55 * inP} />
+      <div style={{ ...fill, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 44, opacity: inP }}>
+          {copy.parts.map((_, i) => (
+            <span
+              key={i}
+              style={{
+                width: i === part ? 44 : 10,
+                height: 10,
+                borderRadius: 5,
+                background: i === part ? accent : i < part ? FILM.textFaint : FILM.lineStrong,
+                boxShadow: i === part ? `0 0 16px ${accent}` : 'none',
+              }}
+            />
+          ))}
+        </div>
+        <div style={{ fontSize: 40, fontWeight: 600, letterSpacing: '0.06em', color: accent, opacity: inP, transform: `translateY(${(1 - inP) * 14}px)` }}>{info.title}</div>
+        <Headline text={info.name} lt={lt} at={0.08} size={250} weight={800} gradient={PART_GRADIENT[part]} style={{ marginTop: 6, letterSpacing: '-0.05em' }} />
+        <div style={{ marginTop: 22, fontSize: 40, fontWeight: 500, color: FILM.gray, opacity: lineP, transform: `translateY(${(1 - lineP) * 14}px)` }}>{info.line}</div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════ 视觉创作 ═══════════════════════
 
 const VISUAL_WIN = { w: 1560, h: 860 };
@@ -523,10 +635,10 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
     <div style={fill}>
       <Bloom x={960} y={760} size={1600} color={FILM.clay} alpha={0.35 * rise} />
       <div style={{ ...fill, transform: `scale(${drift})` }}>
-        <TitleBlock headline={chapter.headline} sub={chapter.line} lt={lt} out={titleOut} />
+        <TitleBlock part={partOf('visual')} copy={copy} headline={chapter.headline} sub={chapter.line} lt={lt} out={titleOut} />
       </div>
       <ProductShot x={winX} y={winY} rise={rise} lift={lift} push={push * drift} originX={focusX} originY={focusY}>
-        <Window w={VISUAL_WIN.w} h={VISUAL_WIN.h} title={`${chapter.title} · Canvas`}>
+        <Window w={VISUAL_WIN.w} h={VISUAL_WIN.h} title={`${chapter.title} · ${copy.labels.canvas}`}>
           {/* 左：对话列 */}
           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 500, borderRight: `1px solid ${FILM.line}`, background: FILM.panelInset }}>
             {sent && (
@@ -648,16 +760,120 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
 
 // ═══════════════════════ 文学与知识库 ═══════════════════════
 
-const GRAPH_NODES = [
-  { x: 270, y: 150 },
-  { x: 110, y: 330 },
-  { x: 420, y: 330 },
-  { x: 250, y: 500 },
-  { x: 470, y: 140 },
-  { x: 80, y: 130 },
-  { x: 450, y: 520 },
-];
-const GRAPH_EDGES: Array<[number, number]> = [[0, 1], [0, 2], [1, 3], [2, 3], [0, 4], [1, 5], [2, 6], [4, 2]];
+/**
+ * 知识星系：一个中心（这一章）+ 六个卫星排成正六边形。
+ * 上一版的毛病都在这里改掉了：卡片不再 3D 斜切；节点是实心发光的球而不是细线空心圈；
+ * 连线在离节点一段距离处就收住，不再穿过圆心和文字；标签一律朝外放，不和任何一条线交叉；
+ * 六边形转了 30 度，中心正下方没有辐条，中心的名字放在那里不会被压住。
+ */
+const GALAXY = { w: 560, h: 764, cx: 280, cy: 372, ring: 188 };
+/** 卫星在六边形上的角度（度，屏幕坐标 y 向下），下标对应 copy.writing.nodes 的 1..6 */
+const SATELLITE_ANGLES: Record<number, number> = { 4: -60, 2: 0, 3: 60, 1: 120, 5: 180, 6: 240 };
+/** 相邻卫星之间只连三条弦，其余交给辐条——线太多就成了一团毛线 */
+const RING_EDGES: Array<[number, number]> = [[4, 2], [3, 1], [5, 6]];
+
+function galaxyNode(i: number): { x: number; y: number; r: number; angle: number } {
+  if (i === 0) return { x: GALAXY.cx, y: GALAXY.cy, r: 34, angle: 90 };
+  const angle = SATELLITE_ANGLES[i] ?? 0;
+  const rad = (angle * Math.PI) / 180;
+  return { x: GALAXY.cx + GALAXY.ring * Math.cos(rad), y: GALAXY.cy + GALAXY.ring * Math.sin(rad), r: 17, angle };
+}
+
+/** 两个节点之间的线段，两头各收进节点边缘外 8px。 */
+function trimmed(a: number, b: number) {
+  const A = galaxyNode(a);
+  const B = galaxyNode(b);
+  const dx = B.x - A.x;
+  const dy = B.y - A.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  return { x1: A.x + ux * (A.r + 8), y1: A.y + uy * (A.r + 8), x2: B.x - ux * (B.r + 8), y2: B.y - uy * (B.r + 8) };
+}
+
+function KnowledgeGalaxy({ lt, copy }: { lt: number; copy: FilmTranslation }) {
+  const colorOf = (i: number) => (i === 0 ? FILM.clay : ACCENT_CYCLE[1 + ((i - 1) % 3)]);
+  const nodeIn = (i: number) => easeOutQuart(span(lt, 0.35 + i * 0.1, 0.95 + i * 0.1));
+  const spokeIn = (i: number) => easeInOutCubic(span(lt, 0.55 + i * 0.1, 1.05 + i * 0.1));
+  const ringIn = (k: number) => easeInOutCubic(span(lt, 1.4 + k * 0.15, 1.9 + k * 0.15));
+  const breathe = beatPulse(lt, 4);
+  return (
+    <svg width={GALAXY.w} height={GALAXY.h} style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
+      <defs>
+        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+          <radialGradient key={i} id={`kg-${i}`} cx="50%" cy="50%" r="50%" fx="36%" fy="32%">
+            <stop offset="0%" stopColor={FILM.text} stopOpacity={0.9} />
+            <stop offset="35%" stopColor={colorOf(i)} stopOpacity={1} />
+            <stop offset="100%" stopColor={colorOf(i)} stopOpacity={0.55} />
+          </radialGradient>
+        ))}
+      </defs>
+      {/* 轨道：极淡的一圈，给六个卫星一个共同的「位置感」 */}
+      <circle cx={GALAXY.cx} cy={GALAXY.cy} r={GALAXY.ring} fill="none" stroke={FILM.lineStrong} strokeDasharray="2 10" opacity={nodeIn(0) * 0.6} />
+      {[1, 2, 3, 4, 5, 6].map((i) => {
+        const p = spokeIn(i);
+        if (p <= 0) return null;
+        const seg = trimmed(0, i);
+        const x2 = lerp(seg.x1, seg.x2, p);
+        const y2 = lerp(seg.y1, seg.y2, p);
+        // 数据从中心往外流：一颗小亮点沿辐条走，两头淡入淡出，不会停在节点上
+        const u = (lt * 0.55 + i * 0.19) % 1;
+        return (
+          <g key={`s${i}`}>
+            <line x1={seg.x1} y1={seg.y1} x2={x2} y2={y2} stroke={colorOf(i)} strokeOpacity={0.45} strokeWidth={2} strokeLinecap="round" />
+            {p >= 1 && <circle cx={lerp(seg.x1, seg.x2, u)} cy={lerp(seg.y1, seg.y2, u)} r={3.2} fill={FILM.text} opacity={Math.sin(u * Math.PI) * 0.9} />}
+          </g>
+        );
+      })}
+      {RING_EDGES.map(([a, b], k) => {
+        const p = ringIn(k);
+        if (p <= 0) return null;
+        const seg = trimmed(a, b);
+        // 弦向外鼓一点，读起来是「绕着中心」而不是「穿过中心」
+        const mx = (seg.x1 + seg.x2) / 2;
+        const my = (seg.y1 + seg.y2) / 2;
+        const ox = mx - GALAXY.cx;
+        const oy = my - GALAXY.cy;
+        const ol = Math.hypot(ox, oy) || 1;
+        const cx = mx + (ox / ol) * 26;
+        const cy = my + (oy / ol) * 26;
+        return (
+          <path
+            key={`r${k}`}
+            d={`M ${seg.x1} ${seg.y1} Q ${cx} ${cy} ${seg.x2} ${seg.y2}`}
+            fill="none"
+            stroke={FILM.textFaint}
+            strokeOpacity={0.5}
+            strokeWidth={1.6}
+            strokeDasharray="1"
+            pathLength={1}
+            strokeDashoffset={1 - p}
+          />
+        );
+      })}
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+        const n = galaxyNode(i);
+        const p = nodeIn(i);
+        if (p <= 0) return null;
+        const hub = i === 0;
+        const rad = (n.angle * Math.PI) / 180;
+        // 标签沿半径方向朝外放；中心的名字放在正下方（那里没有辐条）
+        const lx = hub ? n.x : n.x + Math.cos(rad) * (n.r + 16);
+        const ly = hub ? n.y + n.r + 34 : n.y + Math.sin(rad) * (n.r + 16) + 7;
+        const anchor = hub || Math.abs(Math.cos(rad)) < 0.3 ? 'middle' : Math.cos(rad) > 0 ? 'start' : 'end';
+        return (
+          <g key={`n${i}`} opacity={p}>
+            <circle cx={n.x} cy={n.y} r={n.r * (hub ? 2.4 + breathe * 0.4 : 2)} fill={colorOf(i)} opacity={hub ? 0.14 : 0.1} />
+            <circle cx={n.x} cy={n.y} r={n.r * lerp(0.5, 1, p)} fill={`url(#kg-${i})`} style={{ filter: `drop-shadow(0 0 ${hub ? 18 : 10}px ${colorOf(i)})` }} />
+            <text x={lx} y={ly} textAnchor={anchor} fontSize={hub ? 28 : 22} fontWeight={hub ? 700 : 500} fill={hub ? FILM.text : FILM.textDim}>
+              {copy.writing.nodes[i]}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
 
 function WritingScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTranslation }) {
   const chapter = copy.chapters[1];
@@ -679,7 +895,7 @@ function WritingScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTransl
   return (
     <div style={{ ...fill, transform: `scale(${drift})` }}>
       <Bloom x={1400} y={700} size={1300} color={FILM.pine} alpha={0.3 * rise} />
-      <TitleBlock headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
+      <TitleBlock part={partOf('writing')} copy={copy} headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
       <ProductShot x={170} y={330} rise={rise} tiltFrom={22}>
         <Window w={1040} h={820} title={copy.writing.docTitle}>
           <div style={{ padding: '40px 64px', fontSize: 28, lineHeight: 1.8, color: FILM.textDim }}>
@@ -705,55 +921,19 @@ function WritingScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTransl
           </div>
         </Window>
       </ProductShot>
-      {/* 知识星系：斜着浮在文档右侧，给画面一层纵深 */}
-      <div style={{ ...fill, perspective: 1600 }}>
-        <div
-          style={{
-            position: 'absolute',
-            left: 1250,
-            top: 360,
-            width: 560,
-            height: 640,
-            opacity: graphIn,
-            transform: `translateX(${(1 - graphIn) * 160}px) rotateY(${lerp(-40, -22, graphIn)}deg)`,
-            transformOrigin: '0% 50%',
-            borderRadius: 28,
-            background: FILM.panel,
-            border: `1px solid ${FILM.lineStrong}`,
-            boxShadow: FILM.shadow,
-          }}
-        >
-          <div style={{ padding: '22px 28px', fontSize: 22, color: FILM.textDim, fontWeight: 500 }}>Knowledge</div>
-          <svg width={560} height={640} style={{ position: 'absolute', inset: 0 }}>
-            {GRAPH_EDGES.map(([a, b], i) => {
-              const p = easeInOutCubic(span(lt, 0.6 + i * 0.18, 1.0 + i * 0.18));
-              if (p <= 0) return null;
-              const A = GRAPH_NODES[a];
-              const B = GRAPH_NODES[b];
-              const pulse = (lt * 0.8 + i * 0.17) % 1;
-              return (
-                <g key={i}>
-                  <line x1={A.x} y1={A.y} x2={lerp(A.x, B.x, p)} y2={lerp(A.y, B.y, p)} stroke={FILM.steel} strokeOpacity={0.55} strokeWidth={2.5} />
-                  {p >= 1 && <circle cx={lerp(A.x, B.x, pulse)} cy={lerp(A.y, B.y, pulse)} r={5} fill={FILM.sand} />}
-                </g>
-              );
-            })}
-          </svg>
-          {GRAPH_NODES.map((n, i) => {
-            const p = easeOutQuart(span(lt, 0.3 + i * BEAT * 0.4, 0.7 + i * BEAT * 0.4));
-            if (p <= 0) return null;
-            const c = ACCENT_CYCLE[i % ACCENT_CYCLE.length];
-            const r = i === 0 ? 30 : 20;
-            return (
-              <div key={i} style={{ position: 'absolute', left: n.x - r, top: n.y - r, transform: `scale(${p})`, textAlign: 'center' }}>
-                <div style={{ width: r * 2, height: r * 2, borderRadius: r, background: `${c}33`, border: `2px solid ${c}`, boxShadow: `0 0 ${24 + beatPulse(lt) * 20}px ${c}99` }} />
-                <div style={{ position: 'absolute', left: '50%', top: r * 2 + 8, transform: 'translateX(-50%)', whiteSpace: 'nowrap', fontSize: i === 0 ? 24 : 20, color: i === 0 ? FILM.text : FILM.textDim }}>
-                  {copy.writing.nodes[i]}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+      {/* 知识星系：平放在文档右侧，和文档一起从下方抬起，比文档晚半拍 */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 1250,
+          top: 330,
+          opacity: graphIn,
+          transform: `translateY(${(1 - graphIn) * 120}px)`,
+        }}
+      >
+        <Window w={GALAXY.w} h={GALAXY.h + 56} title={copy.labels.knowledge}>
+          <KnowledgeGalaxy lt={lt} copy={copy} />
+        </Window>
       </div>
     </div>
   );
@@ -774,7 +954,7 @@ function ToolboxFilmScene({ lt, d, copy, roster }: { lt: number; d: number; copy
   return (
     <div style={fill}>
       <Bloom x={960} y={820} size={1700} color={FILM.steel} alpha={0.32} />
-      <TitleBlock headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
+      <TitleBlock part={partOf('toolbox')} copy={copy} headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
       <div style={{ ...fill, perspective: 1800, perspectiveOrigin: '50% 20%', transform: `scale(${dolly})` }}>
         <div style={{ position: 'absolute', left: 90, top: 380, width: 1740, transform: `rotateX(${tilt}deg)`, transformOrigin: '50% 0%' }}>
           {items.map((item, i) => {
@@ -841,7 +1021,7 @@ function WorkflowFilmScene({ lt, d, copy }: { lt: number; d: number; copy: FilmT
   return (
     <div style={{ ...fill, transform: `scale(${drift})` }}>
       <Bloom x={960} y={y} size={1500} color={FILM.clay} alpha={0.3 * appearAll} />
-      <TitleBlock headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
+      <TitleBlock part={partOf('workflow')} copy={copy} headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
       <svg width={STAGE_W} height={STAGE_H} style={{ position: 'absolute', inset: 0 }}>
         {nodes.slice(0, -1).map((_, i) => {
           const xa = x0 + i * gap + nodeW / 2;
@@ -919,7 +1099,7 @@ function ModelsFilmScene({ lt, d, t, copy }: { lt: number; d: number; t: number;
   return (
     <div style={{ ...fill, transform: `scale(${push})`, filter: `brightness(${1 + 0.3 * span(lt, BAR, d)})` }}>
       <Bloom x={560} y={680} size={1400} color={failed ? FILM.pine : FILM.clay} alpha={0.28} />
-      <TitleBlock headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
+      <TitleBlock part={partOf('models')} copy={copy} headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
       <ProductShot x={140} y={360} rise={rise} tiltFrom={20}>
         <div style={{ width: 960, position: 'relative' }}>
           <div
@@ -964,7 +1144,7 @@ function ModelsFilmScene({ lt, d, t, copy }: { lt: number; d: number; t: number;
                   })}
                 </div>
                 <span style={{ minWidth: 190, textAlign: 'right', fontSize: 24, fontWeight: 600, color: isDown ? FILM.danger : isActive ? FILM.pine : FILM.textFaint }}>
-                  {isDown ? copy.models.rateLimited : i === 1 && shift > 0.5 ? copy.models.switched : isActive ? 'primary' : 'standby'}
+                  {isDown ? copy.models.rateLimited : i === 1 && shift > 0.5 ? copy.models.switched : isActive ? copy.models.primary : copy.models.standby}
                 </span>
               </div>
             );
@@ -1012,6 +1192,10 @@ function CdsFilmScene({ lt, d, t, copy }: { lt: number; d: number; t: number; co
   return (
     <div style={{ ...fill, transform: `scale(${punch * drift})` }}>
       <Bloom x={960} y={560} size={1700} color={lt >= ready ? FILM.pine : FILM.clay} alpha={0.35 + 0.2 * readyP} />
+      {/* 所属产品：命令收到顶上之后才出现，落地那一拍画面上只有命令 */}
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 44, display: 'flex', justifyContent: 'center' }}>
+        {partOf('cds') !== undefined && <PartEyebrow part={partOf('cds') as FilmPart} copy={copy} p={settle * (1 - stagesOut)} />}
+      </div>
       {/* 命令行 */}
       <div
         style={{

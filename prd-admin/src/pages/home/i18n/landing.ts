@@ -360,7 +360,11 @@ export interface FilmTranslation {
   writing: { docTitle: string; paragraphs: string[]; nodes: string[] };
   toolbox: { unit: string; search: string };
   workflow: { title: string; schedule: string; nodes: string[]; done: string };
-  models: { poolName: string; rateLimited: string; switched: string; failures: string; statLabel: string; rows: string[] };
+  models: { poolName: string; rateLimited: string; switched: string; failures: string; statLabel: string; primary: string; standby: string; rows: string[] };
+  /** 三张分幕卡：片子里的功能分属哪个产品（顺序与 filmTimeline 的 FilmPart 一致） */
+  parts: Array<{ name: string; title: string; line: string }>;
+  /** 画面里窗口标题等零碎标签 */
+  labels: { canvas: string; knowledge: string };
   cds: { command: string; branch: string; stages: string[]; ready: string; slogan: string };
   /** 快切：每拍一个字 */
   montage: string[];
@@ -1029,6 +1033,8 @@ const zh: TranslationShape = {
       switched: '已自动切换',
       failures: '用户侧失败 0 次',
       statLabel: '次用户侧失败',
+      primary: '主力',
+      standby: '候补',
       rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
     },
     cds: {
@@ -1039,6 +1045,12 @@ const zh: TranslationShape = {
       slogan: 'push 之后，什么都不用做',
     },
     montage: ['写', '画', '查', '编', '跑', '测', '发', '看'],
+    parts: [
+      { name: 'MAP', title: '智能体平台', line: '你每天打开的那个台面' },
+      { name: 'LLMGW', title: '模型网关', line: '每一次调用背后，替你挑模型的那一层' },
+      { name: 'CDS', title: '分支预览', line: '每条分支一套环境，push 完就能打开' },
+    ],
+    labels: { canvas: '画布', knowledge: '知识星系' },
     finale: { brand: 'MAP · 米多智能体生态平台', tagline: '让创造，自由呼吸', cta: '进入 MAP' },
   },
   footer: {
@@ -1659,6 +1671,8 @@ const en: TranslationShape = {
       switched: 'Switched over',
       failures: '0 user-facing failures',
       statLabel: 'user-facing failures',
+      primary: 'primary',
+      standby: 'standby',
       rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
     },
     cds: {
@@ -1669,6 +1683,12 @@ const en: TranslationShape = {
       slogan: 'After push, nothing left to do',
     },
     montage: ['Write', 'Draw', 'Find', 'Build', 'Run', 'Test', 'Ship', 'See'],
+    parts: [
+      { name: 'MAP', title: 'Agent platform', line: 'The desk you open every day' },
+      { name: 'LLMGW', title: 'Model gateway', line: 'The layer that picks a model behind every call' },
+      { name: 'CDS', title: 'Branch previews', line: 'One environment per branch, live right after push' },
+    ],
+    labels: { canvas: 'Canvas', knowledge: 'Knowledge' },
     finale: { brand: 'MAP · MIDOO AGENTIC PLATFORM', tagline: 'Create, freely.', cta: 'Enter MAP' },
   },
   footer: {

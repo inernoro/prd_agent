@@ -18,23 +18,36 @@ export const BAR = BEAT * 4;
 /** 片花的幕。`bars` 是这一幕占几个小节，起止秒数由累加得出，不手写。 */
 export type FilmSceneId =
   | 'open'
+  | 'partMap'
   | 'visual'
   | 'writing'
   | 'toolbox'
   | 'workflow'
+  | 'partGateway'
   | 'models'
+  | 'partCds'
   | 'cds'
   | 'montage'
   | 'finale';
 
-const SCENE_BARS: Array<{ id: FilmSceneId; bars: number }> = [
+/**
+ * 片子里的功能分属三个产品：MAP（智能体平台）、LLMGW（模型网关）、CDS（分支预览）。
+ * 每个产品的第一幕之前插一张分幕卡，报出「接下来是谁」；各功能幕顶上也挂着所属产品的小标签。
+ * part 是 i18n `film.parts` 的下标——幕属于哪个产品只在这张表里声明一次。
+ */
+export type FilmPart = 0 | 1 | 2;
+
+const SCENE_BARS: Array<{ id: FilmSceneId; bars: number; part?: FilmPart; partCard?: boolean }> = [
   { id: 'open', bars: 4 },
-  { id: 'visual', bars: 4 },
-  { id: 'writing', bars: 2 },
-  { id: 'toolbox', bars: 2 },
-  { id: 'workflow', bars: 2 },
-  { id: 'models', bars: 2 },
-  { id: 'cds', bars: 4 },
+  { id: 'partMap', bars: 1, part: 0, partCard: true },
+  { id: 'visual', bars: 4, part: 0 },
+  { id: 'writing', bars: 2, part: 0 },
+  { id: 'toolbox', bars: 2, part: 0 },
+  { id: 'workflow', bars: 2, part: 0 },
+  { id: 'partGateway', bars: 1, part: 1, partCard: true },
+  { id: 'models', bars: 2, part: 1 },
+  { id: 'partCds', bars: 1, part: 2, partCard: true },
+  { id: 'cds', bars: 4, part: 2 },
   { id: 'montage', bars: 2 },
   { id: 'finale', bars: 4 },
 ];
@@ -46,12 +59,16 @@ export interface FilmScene {
   bars: number;
   from: number;
   to: number;
+  /** 属于哪个产品（开场、快切、收口不属于任何一个） */
+  part?: FilmPart;
+  /** 是不是分幕卡 */
+  partCard: boolean;
 }
 
 export const FILM_SCENES: FilmScene[] = (() => {
   let bar = 0;
-  return SCENE_BARS.map(({ id, bars }) => {
-    const scene = { id, bar, bars, from: bar * BAR, to: (bar + bars) * BAR };
+  return SCENE_BARS.map(({ id, bars, part, partCard }) => {
+    const scene = { id, bar, bars, from: bar * BAR, to: (bar + bars) * BAR, part, partCard: Boolean(partCard) };
     bar += bars;
     return scene;
   });

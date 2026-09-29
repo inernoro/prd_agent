@@ -29,6 +29,20 @@ describe('片花时间轴', () => {
     expect(sceneAt(FILM_DURATION - 0.01).id).toBe('finale');
   });
 
+  it('每个产品的第一幕之前都有它的分幕卡，功能幕都标明了属于哪个产品', () => {
+    const cards = FILM_SCENES.filter((s) => s.partCard);
+    expect(cards.map((s) => s.part)).toEqual([0, 1, 2]);
+    for (const card of cards) {
+      const idx = FILM_SCENES.indexOf(card);
+      const next = FILM_SCENES[idx + 1];
+      expect(next.partCard, `${card.id} 后面紧跟的应是功能幕`).toBe(false);
+      expect(next.part, `${card.id} 报的产品和紧跟的那一幕不一致`).toBe(card.part);
+    }
+    for (const id of ['visual', 'writing', 'toolbox', 'workflow', 'models', 'cds'] as const) {
+      expect(FILM_SCENES.find((s) => s.id === id)?.part, id).not.toBeUndefined();
+    }
+  });
+
   it('海报帧落在收口那一幕里，且在片内按钮出现之前（那个位置留给播放键，不许出现一颗画出来的假按钮）', () => {
     expect(sceneAt(POSTER_TIME).id).toBe('finale');
     expect(POSTER_TIME).toBeLessThan(sceneStart('finale') + FINALE_CTA_AT);
@@ -94,6 +108,8 @@ describe('片花文案与画面的数量对得上（中英两份）', () => {
       // 一帧只讲一件事：每一幕都得有自己的大字标题，缺了那一幕就只剩一个没头没尾的界面
       for (const c of film.chapters) expect(c.headline.trim().length, c.title).toBeGreaterThan(0);
       expect(film.models.statLabel.trim().length).toBeGreaterThan(0);
+      // 分幕卡按 FilmPart 下标取文案，三张卡就得有三条
+      expect(film.parts).toHaveLength(FILM_SCENES.filter((s) => s.partCard).length);
       const montage = FILM_SCENES.find((s) => s.id === 'montage');
       expect(film.montage).toHaveLength((montage?.bars ?? 0) * 4);
       expect(film.cds.stages).toHaveLength(SCORE_CUES.cdsStages.length);

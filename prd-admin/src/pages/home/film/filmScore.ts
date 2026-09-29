@@ -1,4 +1,4 @@
-import { BAR, BEAT, FILM_DURATION, sceneStart, seeded } from './filmTimeline';
+import { BAR, BEAT, FILM_DURATION, FILM_SCENES, sceneStart, seeded } from './filmTimeline';
 
 /**
  * 片花配乐：没有一个音频文件，全部由 Web Audio 现场合成。
@@ -202,9 +202,14 @@ export function buildScore(): ScoreEvent[] {
   add(SCORE_CUES.sendPress, 'tick', 0, 0.8);
   SCORE_CUES.tilesDevelop.forEach((at, i) => add(at, 'bell', [74, 77, 81, 86][i], 0.3));
 
-  // ── 模型池：限流时一声下坠的电子音，然后一路上扬到 CDS ──
+  // ── 分幕卡：每报一个产品名，一记沉下去的冲击声 ──
+  for (const s of FILM_SCENES) {
+    if (s.partCard) add(s.from, 'impact', 0, 0.55);
+  }
+
+  // ── 模型池：限流时一声下坠的电子音，然后一路上扬，终点是 CDS 落地那一拍 ──
   add(SCORE_CUES.failover, 'blip', 0, 0.55);
-  add(sceneStart('models'), 'riser', 0, 0.5, BAR * 2);
+  add(sceneStart('cds') - BAR * 2, 'riser', 0, 0.5, BAR * 2);
 
   // ── CDS：落地、逐拍打勾、上线的钟声 ──
   add(sceneStart('cds'), 'impact', 0, 1);
