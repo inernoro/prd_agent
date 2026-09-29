@@ -91,6 +91,10 @@ describe('归组判定：钉入 > 规则按分组顺序 > 未归组', () => {
     const preview = previewGroupHits(groups, groups[1], list);
     expect(preview.hits.map((item) => item.id)).toEqual(['1']);
     expect(preview.taken.map(({ branch, groupName }) => [branch.id, groupName])).toEqual([['2', 'RELEASE']]);
+    // 手动钉入与规则命中分开列：「命中 N 个」只数规则
+    const withPin = previewGroupHits(groups, { ...groups[1], pinnedBranchIds: ['3'] }, list);
+    expect(withPin.hits.map((item) => item.id)).toEqual(['1']);
+    expect(withPin.pinned.map((item) => item.id)).toEqual(['3']);
     // 还没保存的新分组：排在最后参与认领
     const draft = group('new', [{ kind: 'equals', value: 'main' }]);
     expect(previewGroupHits(groups, draft, list).hits.map((item) => item.id)).toEqual(['3']);

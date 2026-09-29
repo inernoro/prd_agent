@@ -752,6 +752,22 @@
      走完的段实心、当前段流光（段内进度后端没有，不编百分比）、排队只放斜纹。
      超过历史中位转 warn，失败停在出事那一段转红，完成时整条补满转成功色。
      颜色全走 token，双主题各自成立。判定源：lib/branchCardPhase.ts。 */
+/* 分支自定义分组：被拎起的卡原位变淡加虚线框；拖影副本倾斜、主色边框、投影（2026-09-29）。 */
+.cds-branch-card-grid [data-dragging='true'] {
+  opacity: 0.45;
+  outline: 2px dashed hsl(var(--primary) / 0.7);
+  outline-offset: 2px;
+}
+.cds-branch-drag-ghost {
+  position: fixed;
+  top: -62.5rem;
+  left: -62.5rem;
+  transform: rotate(-2deg);
+  border-color: hsl(var(--primary)) !important;
+  box-shadow: 0 1.125rem 2.5rem hsl(0 0% 0% / 0.45);
+  pointer-events: none;
+}
+
   .cds-phase-bar {
     position: absolute;
     left: 0;

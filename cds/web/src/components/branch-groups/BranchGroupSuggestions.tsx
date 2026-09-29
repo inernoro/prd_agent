@@ -50,7 +50,7 @@ export function BranchGroupSuggestions({
 
   return (
     <section
-      className="mx-auto flex w-full max-w-[40rem] flex-col gap-4 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-6"
+      className="flex w-full max-w-[40rem] flex-col gap-4 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-6"
       aria-label="按分支前缀建组"
       data-branch-group-suggestions
     >

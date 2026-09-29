@@ -117,30 +117,32 @@ export function groupBranches<T extends GroupableBranch>(groups: BranchGroup[], 
 }
 
 /**
- * 编辑器里的实时命中预览：把「正在编辑的这一组」放回它在列表中的位置算一遍，
- * 分成真正归进来的、以及规则命中但被上方分组（或别组的钉入）先认领走的。
+ * 编辑器里的实时命中预览：把「正在编辑的这一组」放回它在列表中的位置算一遍，分三类——
+ * 按规则归进来的（hits）、被上方分组或别组钉入先认领走的（taken，带认领组名）、
+ * 本组手动钉入的（pinned，与规则命中分开列，不混进「命中 N 个」）。
  */
 export function previewGroupHits<T extends GroupableBranch>(
   groups: BranchGroup[],
   draft: BranchGroup,
   branches: T[],
-): { hits: T[]; taken: Array<{ branch: T; groupName: string }> } {
+): { hits: T[]; pinned: T[]; taken: Array<{ branch: T; groupId: string; groupName: string }> } {
   const index = groups.findIndex((group) => group.id === draft.id);
   const list = index >= 0
     ? groups.map((group) => (group.id === draft.id ? draft : group))
     : [...groups, draft];
   const hits: T[] = [];
-  const taken: Array<{ branch: T; groupName: string }> = [];
+  const pinned: T[] = [];
+  const taken: Array<{ branch: T; groupId: string; groupName: string }> = [];
   for (const branch of branches) {
     const owner = assignBranchToGroup(list, branch);
     if (owner?.groupId === draft.id) {
-      hits.push(branch);
+      (owner.via === 'pin' ? pinned : hits).push(branch);
     } else if (groupRulesMatch(draft, branch) && owner) {
       const name = list.find((group) => group.id === owner.groupId)?.name || '其他分组';
-      taken.push({ branch, groupName: name });
+      taken.push({ branch, groupId: owner.groupId, groupName: name });
     }
   }
-  return { hits, taken };
+  return { hits, pinned, taken };
 }
 
 /** 分支名第一个「/」之前连同斜杠，没有斜杠返回 null。 */

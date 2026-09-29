@@ -1886,10 +1886,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({ error: 'validation', field: normalized.field, message: normalized.message });
       return;
     }
+    // 修改人：Agent / 系统调用记执行者（ai:<name> / system:<x>）；真人优先记登录名，编辑器里好认。
+    const actor = resolveActorFromRequest(req as any);
+    const login = (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login;
     const settings = {
       groups: normalized.groups,
       updatedAt: new Date().toISOString(),
-      updatedBy: resolveActorFromRequest(req as any),
+      updatedBy: actor === 'user' && login ? login : actor,
     };
     stateService.setProjectBranchGroups(project.id, settings);
     stateService.save();

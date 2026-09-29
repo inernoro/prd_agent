@@ -113,7 +113,10 @@ export function BranchGroupHeader({
             <GripVertical className="h-4 w-4" />
           </span>
         ) : (
-          <span className="w-5 shrink-0" aria-hidden />
+          // 未归组固定在最后，不参与排序：把手淡显占位，保持各组头对齐。
+          <span className="inline-flex h-7 w-5 shrink-0 items-center justify-center text-muted-foreground/30" title="「未归组」固定在最后" aria-hidden>
+            <GripVertical className="h-4 w-4" />
+          </span>
         )}
         <button
           type="button"
@@ -127,11 +130,13 @@ export function BranchGroupHeader({
         <span className={`h-2.5 w-2.5 shrink-0 rounded-[0.1875rem] ${BRANCH_GROUP_SWATCH_CLASS[group ? group.color : 'none']}`} aria-hidden />
         <span className="shrink-0 text-base font-semibold text-foreground">{name}</span>
         <span className="shrink-0 font-mono text-sm text-muted-foreground">{count}</span>
+        {group ? null : (
+          <span className="min-w-0 text-sm text-muted-foreground">没被任何分组规则命中，也没有手动钉入</span>
+        )}
         <span className="min-w-0 text-sm">
-          <BranchGroupSummary
-            parts={parts}
-            empty={group ? '这一组现在没有分支' : '没被任何分组规则命中，也没有手动钉入'}
-          />
+          {group || parts.length > 0 ? (
+            <BranchGroupSummary parts={parts} empty="这一组现在没有分支" />
+          ) : null}
         </span>
         {group
           ? ruleChipText(group).map((chip) => (

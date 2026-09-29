@@ -42,6 +42,12 @@ function services(basePort, status, overrides = {}) {
   return out;
 }
 
+const expressRuntime = { kind: 'release', label: '极速版', title: '', activeProfiles: 3, releaseProfiles: 3, sourceProfiles: 0, modes: ['prebuilt'], prebuilt: true };
+const infra = [
+  { id: 'mysql', name: 'mysql', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 10491, status: 'running' },
+  { id: 'redis', name: 'redis', dockerImage: 'redis:7', containerPort: 6379, hostPort: 10487, status: 'running' },
+];
+
 function makeBranches() {
   const base = (id, name, extra) => ({
     id,
@@ -58,8 +64,17 @@ function makeBranches() {
   return [
     base('b-main', 'main', running(22000)),
     base('b-test', 'test', running(22100)),
-    base('b-rel', 'release/2026.09', { ...running(22200) }),
-    base('b-edison', 'claude/beautiful-edison-mx81', { ...running(22300), tags: ['登录重构'] }),
+    // 构建中：启动容器这一段，有历史中位可比
+    base('b-rel', 'release/2026.09', {
+      status: 'building', services: services(22200, 'running', { api: { status: 'building' } }),
+      deployRuntime: expressRuntime, lastDeployStartedAt: iso(-102_000), lastPushAt: iso(-3 * MIN),
+      deployEstimate: { releaseMedianMs: 370_000, releaseSamples: 8, sourceMedianMs: null, sourceSamples: 0 },
+    }),
+    // 等 CI 镜像：旧版本仍在服务
+    base('b-edison', 'claude/beautiful-edison-mx81', {
+      ...running(22300), tags: ['登录重构'],
+      deployRuntime: expressRuntime, ciImageStatus: 'waiting', ciWaitingSince: iso(-73_000), lastPushAt: iso(-1 * MIN),
+    }),
     base('b-scan', 'claude/scan-risk-admin', {
       status: 'error',
       services: services(22400, 'running', { api: { status: 'error', errorMessage: '就绪探测超时（120 秒内 /health 未返回 200）' } }),
@@ -69,7 +84,12 @@ function makeBranches() {
     base('b-dirac', 'claude/laughing-dirac-t4e4ug', running(22500)),
     base('b-old1', 'claude/old-experiment-1', stopped(22600)),
     base('b-old2', 'claude/old-experiment-2', stopped(22700)),
-    base('b-pack', 'codex/packaging-supplier-flow', running(22800)),
+    // 排队等构建槽（第 6 位）
+    base('b-pack', 'codex/packaging-supplier-flow', {
+      status: 'building', services: services(22800, 'running'),
+      buildQueue: { queuedAt: iso(-134_000), ahead: 5, active: 3, max: 3, serviceIds: ['api'] },
+      lastPushAt: iso(-150_000),
+    }),
     base('b-ident', 'codex/identity-menu-clarify', { ...running(22900), tags: ['登录重构'] }),
     base('b-feat', 'feat/solo-branch', stopped(23000)),
   ];
@@ -83,7 +103,7 @@ const profiles = PROFILES.map((id) => ({ id, name: id, containerPort: 8080, dock
 
 function resolve(pathname) {
   if (pathname === '/api/branches') return { branches, capacity: { maxContainers: 200, runningContainers: 30, totalMemGB: 96 } };
-  if (pathname === '/api/infra') return { services: [] };
+  if (pathname === '/api/infra') return { services: infra };
   if (pathname === '/api/build-profiles') return { profiles };
   if (pathname === `/api/projects/${PROJECT_ID}`) {
     return { id: PROJECT_ID, slug: PROJECT_ID, name: '取证项目', cloneStatus: 'ready', branchCount: branches.length };
@@ -225,6 +245,13 @@ async function main() {
         `[${theme}] 组内已停止的收成一行（「${(dormantToggle || '').trim()}」），卡片不占位`);
       const heights = await page.$$eval(`[data-branch-group="${claudeId}"] [data-branch-card-id]`, (els) => els.map((el) => Math.round(el.getBoundingClientRect().height * 10) / 10));
       check(heights.length >= 3 && Math.max(...heights) - Math.min(...heights) <= 1, `[${theme}] 分组里的卡片仍等高（${heights.join(' / ')}）`);
+      const headerText = (await page.textContent('[data-testid="branch-overview-bar"]')) || '';
+      check(/共享基础设施/.test(headerText) && /构建槽/.test(headerText), `[${theme}] 分组视图页头仍有共享基础设施与构建槽`);
+      const codexHeader = (await page.textContent(`[data-branch-group="${codexId}"] [data-branch-group-header]`)) || '';
+      check(/1 个排队/.test(codexHeader), `[${theme}] 组头汇总带排队（「${codexHeader.replace(/\s+/g, ' ').trim()}」）`);
+      check(await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase') === 'ci-waiting'
+        && await page.getAttribute('[data-branch-card-id="b-rel"]', 'data-deploy-phase') === 'start',
+        `[${theme}] 分组视图里构建中 / 等镜像的卡照常显示阶段条`);
       await page.screenshot({ path: path.join(OUT, `2-grouped-${theme}.png`), fullPage: true });
 
       // 窄屏：组头折行、规则片收起，页面不许横向溢出
@@ -249,6 +276,8 @@ async function main() {
 
         // 4. 卡片菜单「移到分组」：拖拽的键盘 / 触屏等价入口
         await page.click('[data-branch-card-id="b-test"] button[aria-label="更多操作"]');
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: path.join(OUT, '3b-move-menu-dark.png') });
         await page.getByRole('menuitem', { name: /Codex 在做/ }).click();
         await page.waitForTimeout(500);
         check(await sectionOf(page, 'b-test') === codexId, '卡片菜单「移到分组」把 test 移进了「Codex 在做」');
@@ -274,7 +303,8 @@ async function main() {
         await valueInputs.last().fill('claude/');
         await page.waitForTimeout(200);
         const after = await page.textContent('[data-branch-group-preview]');
-        check(/现在命中 3 个分支/.test(before || '') && /已归了别的分组/.test(after || ''),
+        // 「命中 N 个」只数规则命中；菜单移进来的 test 在「手动钉入」那一行单独列
+        check(/现在命中 2 个分支/.test(before || '') && /手动钉入 1 个/.test(before || '') && /已归了别的分组/.test(after || ''),
           `编辑规则时命中预览实时刷新，被上方分组先认领的单独列出（前「${(before || '').slice(0, 14)}」）`);
         await page.screenshot({ path: path.join(OUT, '4-editor-dark.png') });
         await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
@@ -286,17 +316,43 @@ async function main() {
         check(order.indexOf(codexId) < order.indexOf(claudeId) && groupStore.groups[0]?.id === codexId,
           `拖组头把手调整分组顺序（${order.join(' → ')}）`);
 
+        // 8b. 从「管理分组 → 新建分组」建一个按标签归组的分组：编辑器里被别组先认领的按组分行，
+        //     拖到最前后它认领带标签的分支，组头出现标签规则片
+        await page.click('[data-branch-group-manage]');
+        await page.getByRole('menuitem', { name: '新建分组' }).click();
+        await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+        await page.getByRole('dialog').getByPlaceholder('例如：Claude 在做').fill('#登录重构');
+        await page.getByRole('dialog').getByRole('combobox', { name: '规则类型' }).first().selectOption('tag');
+        await page.getByRole('dialog').getByLabel('规则值').first().fill('登录重构');
+        await page.waitForTimeout(200);
+        const takenText = await page.textContent('[data-branch-group-taken]').catch(() => '');
+        check(/归了「Claude 在做」/.test(takenText || '') && /归了「Codex 在做」/.test(takenText || ''),
+          `新建标签分组时，被别组认领的按认领组分行说明（「${(takenText || '').replace(/\s+/g, ' ').slice(0, 60)}」）`);
+        check(Boolean(await page.$('[data-branch-group-claim-order]')) && Boolean(await page.$('[data-branch-group-rule-kinds]')),
+          '编辑器常驻认领顺序说明与规则类型提示');
+        await page.screenshot({ path: path.join(OUT, '4b-editor-tag-rule-dark.png') });
+        await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+        await page.waitForTimeout(600);
+        const tagGroupId = groupStore.groups.find((g) => g.name === '#登录重构')?.id;
+        check(Boolean(tagGroupId) && !(await page.$('[role="dialog"]')), '新建分组保存后弹窗关闭、分组写进共享数据');
+        await dragTo(page, `[data-branch-group="${tagGroupId}"] [data-branch-group-header] [draggable="true"]`, `[data-branch-group="${(await sectionOrder(page))[0]}"]`);
+        check(await sectionOf(page, 'b-edison') === tagGroupId && await sectionOf(page, 'b-ident') === tagGroupId,
+          '标签分组挪到最前后认领了带「登录重构」标签的分支');
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.screenshot({ path: path.join(OUT, '6-tag-group-dark.png'), fullPage: true });
+
         // 9. 别人刚改过：保存得到 409，载入最新版本并说清楚
         conflictNext = {
           groups: [...groupStore.groups, { id: 'g-other', name: '别人新建的组', color: 'purple', rules: [{ kind: 'prefix', value: 'feat/' }], pinnedBranchIds: [] }],
           updatedAt: new Date(Date.now() + 1000).toISOString(),
           updatedBy: 'ai:reviewer',
         };
+        const identSectionBefore = await sectionOf(page, 'b-ident');
         await page.click('[data-branch-card-id="b-ident"] button[aria-label="更多操作"]');
         await page.getByRole('menuitem', { name: /Claude 在做/ }).click();
         await page.waitForTimeout(600);
         const banner = await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => null);
-        check(/分组刚被别人改过，已载入最新版本/.test(banner || '') && Boolean(await page.$('[data-branch-group="g-other"]')) && await sectionOf(page, 'b-ident') === codexId,
+        check(/分组刚被别人改过，已载入最新版本/.test(banner || '') && Boolean(await page.$('[data-branch-group="g-other"]')) && await sectionOf(page, 'b-ident') === identSectionBefore,
           `保存冲突时提示并载入最新版本，这次移动没有生效（「${(banner || '').trim().slice(0, 30)}」）`);
         await page.screenshot({ path: path.join(OUT, '5-conflict-dark.png'), fullPage: true });
 

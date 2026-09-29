@@ -49,6 +49,7 @@ import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetai
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
 import {
+  BRANCH_GROUP_COLORS,
   groupBranches,
   moveGroupBefore,
   newBranchGroupId,
@@ -2523,7 +2524,14 @@ export function BranchListPage(): JSX.Element {
   const openNewGroupEditor = useCallback(() => {
     setGroupsSaveError('');
     setGroupEditor({
-      group: { id: newBranchGroupId(), name: '', color: 'gray', rules: [{ kind: 'prefix', value: '' }], pinnedBranchIds: [] },
+      // 默认取第一个还没被用过的颜色（灰留给未归组的观感，排最后）
+      group: {
+        id: newBranchGroupId(),
+        name: '',
+        color: BRANCH_GROUP_COLORS.find((color) => !(branchGroupsRef.current?.groups ?? []).some((group) => group.color === color)) ?? 'orange',
+        rules: [{ kind: 'prefix', value: '' }],
+        pinnedBranchIds: [],
+      },
       isNew: true,
     });
   }, []);
@@ -2535,11 +2543,24 @@ export function BranchListPage(): JSX.Element {
   const BRANCH_DRAG_TYPE = 'application/x-cds-branch';
   const GROUP_DRAG_TYPE = 'application/x-cds-branch-group';
   const onGroupAreaDragStart = useCallback((event: React.DragEvent<HTMLElement>) => {
-    const card = (event.target as HTMLElement).closest?.('[data-branch-card-id]');
+    const card = (event.target as HTMLElement).closest?.('[data-branch-card-id]') as HTMLElement | null;
     const branchId = card?.getAttribute('data-branch-card-id');
-    if (!branchId) return;
+    if (!card || !branchId) return;
     event.dataTransfer.setData(BRANCH_DRAG_TYPE, branchId);
     event.dataTransfer.effectAllowed = 'move';
+    // 被拎起的卡：原位变淡加虚线框（「从这里拿走了」），拖影是一张略倾斜、带主色边框与投影的副本。
+    card.setAttribute('data-dragging', 'true');
+    const ghost = card.cloneNode(true) as HTMLElement;
+    ghost.classList.add('cds-branch-drag-ghost');
+    ghost.style.width = `${card.getBoundingClientRect().width}px`;
+    document.body.appendChild(ghost);
+    const rect = card.getBoundingClientRect();
+    event.dataTransfer.setDragImage(ghost, Math.min(event.clientX - rect.left, rect.width), Math.min(event.clientY - rect.top, rect.height));
+    window.setTimeout(() => ghost.remove(), 0);
+  }, []);
+  const onGroupAreaDragEnd = useCallback((event: React.DragEvent<HTMLElement>) => {
+    (event.target as HTMLElement).closest?.('[data-branch-card-id]')?.removeAttribute('data-dragging');
+    setGroupDropTarget(null);
   }, []);
   const onGroupDragOver = useCallback((event: React.DragEvent<HTMLElement>, targetId: string) => {
     const types = Array.from(event.dataTransfer.types);
@@ -3593,7 +3614,7 @@ export function BranchListPage(): JSX.Element {
         key={id}
         aria-label={group ? group.name : '未归组'}
         data-branch-group={id}
-        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !dropping ? 'opacity-85' : ''}`}
+        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !dropping ? 'opacity-80' : ''}`}
         onDragOver={(event) => onGroupDragOver(event, id)}
         onDragLeave={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -3620,7 +3641,7 @@ export function BranchListPage(): JSX.Element {
         {!collapsed ? (
           <>
             {active.length > 0 ? (
-              <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={() => setGroupDropTarget(null)}>
+              <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={onGroupAreaDragEnd}>
                 {active.map(renderBranchTile)}
               </div>
             ) : null}
@@ -3647,7 +3668,7 @@ export function BranchListPage(): JSX.Element {
                   </span>
                 </button>
                 {dormantOpen ? (
-                  <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={() => setGroupDropTarget(null)}>
+                  <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={onGroupAreaDragEnd}>
                     {dormant.map(renderBranchTile)}
                   </div>
                 ) : null}

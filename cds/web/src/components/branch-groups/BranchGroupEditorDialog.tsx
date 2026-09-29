@@ -6,7 +6,7 @@
  * 命中预览走 lib/branchGroups 的 previewGroupHits——与页面分区同一个判定源。
  */
 import { useEffect, useMemo, useState } from 'react';
-import { GitBranch, Pin, Plus, Tag, X } from 'lucide-react';
+import { ChevronDown, GitBranch, Pin, Plus, Tag, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -37,10 +37,11 @@ function formatWhen(iso: string | null): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
+/** 修改人：服务端优先记登录名；拿不到名字时只说「某位成员」，不拿泛称冒充名字。 */
 function actorText(actor: string | null): string {
   if (!actor) return '';
-  if (actor === 'user') return '成员';
-  if (actor === 'ai') return 'AI';
+  if (actor === 'user') return '某位成员';
+  if (actor === 'ai') return '某个 AI Agent';
   if (actor.startsWith('ai:')) return `AI（${actor.slice(3)}）`;
   if (actor.startsWith('system:')) return '系统';
   return actor;
@@ -81,10 +82,21 @@ export function BranchGroupEditorDialog({
   }, [open, initial]);
 
   const preview = useMemo(
-    () => (draft ? previewGroupHits(groups, draft, branches) : { hits: [], taken: [] }),
+    () => (draft ? previewGroupHits(groups, draft, branches) : { hits: [], pinned: [], taken: [] }),
     [draft, groups, branches],
   );
   const nameById = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.branch])), [branches]);
+  // 被别组认领走的，按认领它的分组分行：用户要知道「归了谁」才知道该挪哪边的顺序或钉入。
+  const takenByGroup = useMemo(() => {
+    const map = new Map<string, { groupName: string; names: string[] }>();
+    for (const item of preview.taken) {
+      const entry = map.get(item.groupId) || { groupName: item.groupName, names: [] };
+      entry.names.push(item.branch.branch);
+      map.set(item.groupId, entry);
+    }
+    return [...map.values()];
+  }, [preview.taken]);
+  const draftIndex = draft ? groups.findIndex((group) => group.id === draft.id) : -1;
 
   if (!draft) return null;
   const update = (patch: Partial<BranchGroup>) => setDraft((current) => (current ? { ...current, ...patch } : current));
@@ -100,7 +112,7 @@ export function BranchGroupEditorDialog({
         <DialogHeader>
           <DialogTitle>{isNew ? '新建分组' : '编辑分组'}</DialogTitle>
           <DialogDescription id="branch-group-editor-desc">
-            {who && when ? `${who}于 ${when} 修改。` : ''}分组对本项目所有成员和 Agent 生效。
+            {!isNew && who && when ? `${who} 于 ${when} 修改。` : ''}分组对本项目所有成员和 Agent 生效。
           </DialogDescription>
         </DialogHeader>
 
@@ -147,7 +159,7 @@ export function BranchGroupEditorDialog({
                 <label className="relative">
                   <span className="sr-only">规则类型</span>
                   <select
-                    className="h-9 w-full appearance-none rounded-md border border-input bg-background pl-8 pr-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    className="h-9 w-full appearance-none rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus:ring-2 focus:ring-ring"
                     value={rule.kind}
                     onChange={(event) => setRule(index, { kind: event.target.value as BranchGroupRuleKind })}
                   >
@@ -158,6 +170,7 @@ export function BranchGroupEditorDialog({
                   <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden>
                     {rule.kind === 'tag' ? <Tag className="h-3.5 w-3.5" /> : <GitBranch className="h-3.5 w-3.5" />}
                   </span>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 </label>
                 <label>
                   <span className="sr-only">规则值</span>
@@ -180,6 +193,9 @@ export function BranchGroupEditorDialog({
                 </button>
               </div>
             ))}
+            <div className="text-xs text-muted-foreground" data-branch-group-rule-kinds>
+              可选：{BRANCH_GROUP_RULE_KINDS.map((kind) => BRANCH_GROUP_RULE_LABELS[kind]).join(' / ')}
+            </div>
             <datalist id="branch-group-tag-options">
               {tags.map((tag) => <option key={tag} value={tag} />)}
             </datalist>
@@ -212,19 +228,23 @@ export function BranchGroupEditorDialog({
                 ) : null}
               </div>
             ) : null}
-            {preview.taken.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-1.5">
+            {takenByGroup.length > 0 ? (
+              <div className="flex flex-col gap-1.5" data-branch-group-taken>
                 <span className="text-xs text-warn">
-                  另有 {preview.taken.length} 个命中但已归了别的分组（分组按顺序认领，靠上的优先；钉入优先于规则）：
+                  另有 {preview.taken.length} 个规则命中、但已归了别的分组（钉入优先，其次靠上的分组先认领）：
                 </span>
-                {preview.taken.slice(0, PREVIEW_LIMIT).map(({ branch, groupName }) => (
-                  <span
-                    key={branch.id}
-                    className="inline-flex h-6 max-w-full items-center truncate rounded-[0.3125rem] bg-[hsl(var(--hairline))] px-2 font-mono text-xs line-through opacity-60"
-                    title={`已归「${groupName}」`}
-                  >
-                    {branch.branch}
-                  </span>
+                {takenByGroup.map((entry) => (
+                  <div key={entry.groupName} className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-warn">归了「{entry.groupName}」：</span>
+                    {entry.names.slice(0, PREVIEW_LIMIT).map((name) => (
+                      <span key={name} className="inline-flex h-6 max-w-full items-center truncate rounded-[0.3125rem] bg-[hsl(var(--hairline))] px-2 font-mono text-xs line-through opacity-60">
+                        {name}
+                      </span>
+                    ))}
+                    {entry.names.length > PREVIEW_LIMIT ? (
+                      <span className="text-xs text-muted-foreground">+ 另外 {entry.names.length - PREVIEW_LIMIT} 个</span>
+                    ) : null}
+                  </div>
                 ))}
               </div>
             ) : null}
@@ -247,6 +267,17 @@ export function BranchGroupEditorDialog({
                 ))}
               </div>
             ) : null}
+          </div>
+          <div className="flex flex-col gap-1 text-xs leading-5 text-muted-foreground" data-branch-group-claim-order>
+            <span className="font-semibold text-foreground">一个分支只归一组，认领顺序：</span>
+            <span><span className="mr-1.5 font-mono text-primary">1</span>手动钉入：拖进组，或在卡片「更多」里选「移到分组」</span>
+            <span>
+              <span className="mr-1.5 font-mono text-primary">2</span>
+              规则：按分组在页面上的顺序，第一个命中的认领（拖组头左侧的把手调顺序）
+              {draftIndex >= 0 ? `；这一组现在排第 ${draftIndex + 1} 个` : '；新分组排在最后'}
+            </span>
+            <span><span className="mr-1.5 font-mono text-primary">3</span>都没命中：落进「未归组」</span>
+            <span>钉入后卡片名字旁出现图钉；拖回「未归组」即取消钉入</span>
           </div>
           {error ? <div className="text-sm text-destructive" role="alert">{error}</div> : null}
         </div>
