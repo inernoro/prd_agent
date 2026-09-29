@@ -378,7 +378,7 @@ export default function SiteEditStage({
         sendDisabled={generating || !instruction.trim() || Boolean(sendBlocker)}
         sendDisabledReason={generating ? undefined : sendBlocker || '先写一句想改哪里'}
         onSend={send}
-        hint={`只改你点名的地方，其余逐字保留；先出草稿，确认后再发布。${runtimeCopy ? runtimeCopy.footnote : ''}`}
+        hint={`只改你点名的地方，先出草稿再发布${runtimeCopy ? ` · ${runtimeCopy.footnote}` : ''}`}
       />
       <input
         ref={screenshotInputRef}
