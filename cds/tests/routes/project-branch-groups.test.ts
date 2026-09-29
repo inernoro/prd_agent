@@ -61,9 +61,12 @@ describe('项目分支自定义分组', () => {
   let server: http.Server;
   /** 模拟登录中间件挂上的 req.cdsUser（CdsUser 的真实字段名） */
   let currentUser: { githubLogin?: string; username?: string } | null = null;
+  /** 模拟服务端中间件按 Agent Key（含 ai-access-key / Bearer 写法）盖上的 req.cdsProjectKey */
+  let currentProjectKey: { projectId: string; keyId: string } | null = null;
 
   beforeEach(() => {
     currentUser = null;
+    currentProjectKey = null;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-branch-groups-test-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     stateService.load();
@@ -82,6 +85,7 @@ describe('项目分支自定义分组', () => {
     app.use(express.json());
     app.use((req, _res, next) => {
       if (currentUser) (req as unknown as { cdsUser?: unknown }).cdsUser = currentUser;
+      if (currentProjectKey) (req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey = currentProjectKey;
       next();
     });
     app.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
@@ -111,6 +115,13 @@ describe('项目分支自定义分组', () => {
     const second = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
     expect(second.status).toBe(200);
     expect(second.body.updatedBy).toBe('bob');
+  });
+
+  it('带项目级 Agent Key 的保存记成 Agent，哪怕请求头不是 x-ai-access-key（Bearer / ai-access-key 写法）', async () => {
+    currentProjectKey = { projectId: 'proj-a', keyId: 'key-1' };
+    const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(res.status).toBe(200);
+    expect(res.body.updatedBy).toBe('ai');
   });
 
   it('写入存储失败：返回 500，内存里的分组与版本号恢复成保存前，之后照常能存', async () => {

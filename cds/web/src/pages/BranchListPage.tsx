@@ -3842,7 +3842,12 @@ export function BranchListPage(): JSX.Element {
             ) : null}
             {list.length === 0 ? (
               <div className="ml-8 mt-2 rounded-lg border border-dashed border-[hsl(var(--hairline))] px-4 py-3 text-xs text-muted-foreground">
-                {group ? '这一组现在没有分支：把卡片拖到这里即可钉入，或编辑规则让新分支自动进来' : '所有分支都已归组'}
+                {!group
+                  ? '所有分支都已归组'
+                  : groupsEditable
+                    ? '这一组现在没有分支：把卡片拖到这里即可钉入，或编辑规则让新分支自动进来'
+                    // 只读（镜像）项目不给出做不到的操作（Codex P2，PR #1647）
+                    : '这一组现在没有分支（分组只读，要在父实例上调整）'}
               </div>
             ) : null}
           </>

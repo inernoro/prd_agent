@@ -56,7 +56,8 @@ export function DropdownMenu({
       top = rect.top - gap - height;
       if (menuHeight > spaceAbove) maxHeight = spaceAbove;
     } else if (menuHeight > spaceBelow) {
-      maxHeight = Math.max(spaceBelow, 120);
+      // 限高只能取实际剩下的空间：再垫一个最小高度，矮视口（横屏、软键盘弹起）里菜单又会伸出视口底部（Codex P2，PR #1647）
+      maxHeight = Math.max(spaceBelow, 0);
     }
     const left = align === 'end' ? rect.right - width : rect.left;
     setCoords({ top, left, maxHeight });
