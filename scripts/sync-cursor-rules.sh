@@ -49,6 +49,7 @@ RULES=(
   "bridge-ops|globs:auto|Page Agent Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填"
   "cds-first-verification|description: 改了可执行代码、准备说「验证过了/编译通过/测试全绿」时阅读|验证的权威位置：每种改动的判据在哪条流水线、push 前后各能拿到什么，交付只给判据与结论"
   "codebase-snapshot|description: 查询项目功能状态/MongoDB 集合/已废弃概念/架构模式时阅读|代码库快照：架构模式、功能注册表、115 个 MongoDB 集合、已废弃概念"
+  "cross-system-stable-id-lifecycle|description: 新增、改名、停用或删除跨服务稳定 ID，或处理默认值、白名单、固定绑定和在途任务引用时阅读|跨系统稳定 ID 引用生命周期：统一登记、阻断、对账、显错和测试契约"
   "data-audit|globs:auto|数据关系审计：新增实体引用时必须审计所有消费端点"
   "doc-types|globs:auto|doc/ 下文档 7 种类型前缀（spec/design/plan/rule/guide/report/debt）"
   "e2e-verification|description: 功能开发完成后准备验收时阅读|端到端验收：API 200 不等于功能正常，必须打开真实页面逐项核查"
