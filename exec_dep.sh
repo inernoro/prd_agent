@@ -30,6 +30,7 @@ set -eu
 #   - PRD_AGENT_DESIGN_OPENDESIGN_IMAGE：覆盖设计执行服务镜像（默认按 REPO + 发布 ref 组装，与 api 同批拉取）
 #   - DESIGN_RUNTIME_API_KEY：api 与 design-opendesign 之间的内部密钥；.env 里没有时自动生成并写入，不打印
 #   - DESIGN_ARTIFACT_PUBLIC_BASE_URL：设计服务回调 api 的公网基址，默认取 PRD_AGENT_PUBLIC_BASE_URL
+#   - DESIGN_RUNTIME_READY_TIMEOUT_SECONDS：发布等待 design-opendesign 容器健康的上限，默认 420 秒
 #   - API_PULL_TIMEOUT_SECONDS：发布镜像整批拉取总超时时间，默认 420 秒
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
@@ -1839,6 +1840,46 @@ wait_for_llmgw_serving_readiness() {
   done
 }
 
+# 设计执行服务是本次发布涉及的专项服务：引擎没就绪就不许记成功（生产发布安全规则条目 3）。
+# 判据只认 compose 里声明的容器健康检查（匿名 /healthz/ready，引擎健康才 200）。
+wait_for_design_runtime_readiness() {
+  design_service="design-opendesign"
+  if ! compose_run config --services 2>/dev/null | grep -Fxq "$design_service"; then
+    echo "Design runtime readiness wait skipped: no $design_service service in compose"
+    return 0
+  fi
+  design_timeout_seconds="${DESIGN_RUNTIME_READY_TIMEOUT_SECONDS:-420}"
+  if ! printf '%s' "$design_timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$design_timeout_seconds" -lt 1 ]; then
+    echo "ERROR: DESIGN_RUNTIME_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
+  echo "Waiting for design runtime readiness: service=$design_service timeout=${design_timeout_seconds}s"
+  design_deadline=$(( $(date +%s) + design_timeout_seconds ))
+  while :; do
+    design_container_id="$(compose_run ps -q "$design_service" 2>/dev/null | head -n 1)"
+    design_running=""
+    design_health="missing"
+    if [ -n "$design_container_id" ]; then
+      design_running="$(docker inspect --format '{{.State.Running}}' "$design_container_id" 2>/dev/null || true)"
+      design_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$design_container_id" 2>/dev/null || true)"
+    fi
+    design_state="running=${design_running:-none},health=$design_health"
+    if [ "$design_running" = "true" ] && [ "$design_health" = "healthy" ]; then
+      echo "Design runtime readiness: PASS $design_service[$design_state]"
+      return 0
+    fi
+    if [ "$design_health" = "unhealthy" ] || [ "$design_running" = "false" ]; then
+      echo "ERROR: design runtime $design_service cannot become ready ($design_state); see: docker logs $design_service" >&2
+      exit 1
+    fi
+    if [ "$(date +%s)" -ge "$design_deadline" ]; then
+      echo "ERROR: design runtime readiness timeout after ${design_timeout_seconds}s: $design_service[$design_state]" >&2
+      exit 1
+    fi
+    sleep 3
+  done
+}
+
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
   release_failure_stage="asset-storage-readiness"
@@ -1867,6 +1908,9 @@ else
   fi
 
   wait_for_llmgw_serving_readiness
+
+  release_failure_stage="design-runtime-readiness"
+  wait_for_design_runtime_readiness
 
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness
