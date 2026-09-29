@@ -59,4 +59,14 @@ describe('versionWorkflowImportParse', () => {
     const rows = parseVersionWorkflowImportCsv(csv, 'initiation');
     expect(rows[0].projectType).toBe('standard');
   });
+
+  it('reads AI POC and global-open fields used by the version registration archive', () => {
+    const csv = [
+      '正式版本号,内部版本号,产品立项方案名称,是否属于AI POC项目,是否全域开放',
+      'V2.3.4,T3.4.5,版本登记联动,是,否',
+    ].join('\n');
+    const rows = parseVersionWorkflowImportCsv(csv, 'release');
+    expect(rows[0].isAiPoc).toBe(true);
+    expect(rows[0].openBrandScope).toBe('否');
+  });
 });

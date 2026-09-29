@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -2163,6 +2164,291 @@ public class ReviewAgentController : ControllerBase
         catch (OperationCanceledException) { }
     }
     // ──────────────────────────────────────────────
+    // 版本号申领与登记档案
+    // ──────────────────────────────────────────────
+
+    /// <summary>当前申请人可用于申领 T 号的已完成评审记录。</summary>
+    [HttpGet("version-registrations/review-sources")]
+    public async Task<IActionResult> ListVersionRegistrationReviewSources(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var usedSubmissionIds = await _db.VersionRegistrations
+            .Find(x => x.ReviewSubmissionId != null && x.SourceType == VersionRegistrationSourceType.ReviewSubmission)
+            .Project(x => x.ReviewSubmissionId!)
+            .ToListAsync(ct);
+        var items = await _db.ReviewSubmissions
+            .Find(x => x.SubmitterId == userId && x.Status == ReviewStatuses.Done && !usedSubmissionIds.Contains(x.Id))
+            .SortByDescending(x => x.CompletedAt)
+            .Project(x => new { x.Id, x.Title, x.FileName, x.IsPassed, x.CompletedAt })
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>可被当前用户用于申领正式 V 号的已完成 T 号登记。</summary>
+    [HttpGet("version-registrations/internal-sources")]
+    public async Task<IActionResult> ListVersionRegistrationInternalSources(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var filter = Builders<VersionRegistration>.Filter.And(
+            Builders<VersionRegistration>.Filter.Eq(x => x.Kind, VersionRegistrationKind.Internal),
+            Builders<VersionRegistration>.Filter.Eq(x => x.Status, VersionRegistrationStatus.Completed));
+        if (!HasManagePermission())
+            filter &= Builders<VersionRegistration>.Filter.Eq(x => x.CreatedBy, userId);
+        var items = await _db.VersionRegistrations.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>查看当前用户的登记记录；管理者可通过 scope=all 对账全量记录。</summary>
+    [HttpGet("version-registrations")]
+    public async Task<IActionResult> ListVersionRegistrations([FromQuery] string scope = "mine", CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        FilterDefinition<VersionRegistration> filter = Builders<VersionRegistration>.Filter.Empty;
+        if (!string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase) || !HasManagePermission())
+            filter = Builders<VersionRegistration>.Filter.Eq(x => x.CreatedBy, userId);
+        var items = await _db.VersionRegistrations.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items, canViewAll = HasManagePermission() }));
+    }
+
+    /// <summary>从本人已完成的评审记录申领内部版本号 T。</summary>
+    [HttpPost("version-registrations/internal")]
+    public async Task<IActionResult> CreateInternalVersionRegistration([FromBody] CreateInternalVersionRegistrationRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(request.ReviewSubmissionId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择一条已完成的产品评审记录"));
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.ReviewSubmissionId.Trim()).FirstOrDefaultAsync(ct);
+        if (submission == null || submission.SubmitterId != userId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评审记录不存在或不属于当前申请人"));
+        if (submission.Status != ReviewStatuses.Done)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评审尚未完成，暂不能申领内部版本号"));
+        if (await _db.VersionRegistrations.Find(x => x.ReviewSubmissionId == submission.Id).AnyAsync(ct))
+            return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已申领过内部版本号"));
+        if (string.IsNullOrWhiteSpace(request.DemandSource))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写需求来源"));
+        if (!request.PlannedProjectAt.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写计划立项时间"));
+        if (!request.NeedUiDesign.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择是否需要 UI 设计"));
+        if (!request.IsAiPoc.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择是否属于 AI POC 项目"));
+
+        var demandSource = FirstPresent(request.DemandSource, internalSource?.DemandSource);
+        var planName = FirstPresent(request.PlanName, internalSource?.PlanName);
+        var planUrl = FirstPresent(request.PlanUrl, internalSource?.PlanUrl);
+        var projectMembers = request.ProjectMemberNames?.Count > 0
+            ? NormalizeNames(request.ProjectMemberNames)
+            : internalSource?.ProjectMemberNames.ToList() ?? new();
+        var isGlobalOpen = request.IsGlobalOpen ?? internalSource?.IsGlobalOpen;
+        if (!isManualT && (!isGlobalOpen.HasValue
+            || string.IsNullOrWhiteSpace(demandSource)
+            || string.IsNullOrWhiteSpace(planName)
+            || string.IsNullOrWhiteSpace(planUrl)
+            || projectMembers.Count == 0
+            || !request.PlannedReleaseAt.HasValue))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请补齐全域开放、需求来源、方案名称、方案地址、项目组成员和计划上线时间"));
+
+        var record = new VersionRegistration
+        {
+            Kind = VersionRegistrationKind.Internal,
+            Code = await IssueVersionRegistrationCodeAsync("T", request.VersionType, ct),
+            SourceType = VersionRegistrationSourceType.ReviewSubmission,
+            ReviewSubmissionId = submission.Id,
+            ProjectType = NormalizeProjectType(request.ProjectType),
+            VersionType = ProductEntityNumbering.NormalizeVersionType(request.VersionType),
+            NeedUiDesign = request.NeedUiDesign,
+            IsAiPoc = request.IsAiPoc,
+            DemandSource = TrimToNull(request.DemandSource),
+            PlanName = TrimToNull(request.PlanName) ?? submission.Title,
+            PlanUrl = TrimToNull(request.PlanUrl),
+            RequirementDescription = TrimToNull(request.RequirementDescription),
+            DepartmentName = TrimToNull(request.DepartmentName),
+            OwnerName = TrimToNull(request.OwnerName),
+            ProjectMemberNames = NormalizeNames(request.ProjectMemberNames),
+            PlannedProjectAt = request.PlannedProjectAt,
+            DevelopmentStatus = TrimToNull(request.DevelopmentStatus),
+            Remark = TrimToNull(request.Remark),
+            CreatedBy = userId,
+            CreatedByName = GetDisplayName(),
+        };
+        await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { record }));
+    }
+
+    /// <summary>从已登记 T 号或手工填写的 T 号申领正式版本号 V。</summary>
+    [HttpPost("version-registrations/formal")]
+    public async Task<IActionResult> CreateFormalVersionRegistration([FromBody] CreateFormalVersionRegistrationRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isManualT = string.Equals(request.SourceMode, VersionRegistrationSourceType.ManualT, StringComparison.Ordinal);
+        VersionRegistration? internalSource = null;
+        if (isManualT)
+        {
+            if (!TryParseVersionCode(request.TCode, "T", out _))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写格式正确的内部版本号，例如 T3.47.3"));
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(request.SourceInternalRegistrationId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已登记的内部版本号"));
+            internalSource = await _db.VersionRegistrations.Find(x => x.Id == request.SourceInternalRegistrationId.Trim()
+                && x.Kind == VersionRegistrationKind.Internal && x.Status == VersionRegistrationStatus.Completed).FirstOrDefaultAsync(ct);
+            if (internalSource == null || (!HasManagePermission() && internalSource.CreatedBy != userId))
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "内部版本号不存在或无权使用"));
+        }
+
+        var record = new VersionRegistration
+        {
+            Kind = VersionRegistrationKind.Formal,
+            Code = await IssueVersionRegistrationCodeAsync("V", request.VersionType ?? internalSource?.VersionType, ct),
+            TCode = isManualT ? request.TCode!.Trim().ToUpperInvariant() : internalSource!.Code,
+            SourceType = isManualT ? VersionRegistrationSourceType.ManualT : VersionRegistrationSourceType.InternalRegistration,
+            SourceInternalRegistrationId = internalSource?.Id,
+            ProjectType = NormalizeProjectType(request.ProjectType ?? internalSource?.ProjectType),
+            VersionType = ProductEntityNumbering.NormalizeVersionType(request.VersionType ?? internalSource?.VersionType),
+            IsGlobalOpen = isGlobalOpen,
+            NeedUiDesign = internalSource?.NeedUiDesign,
+            IsAiPoc = internalSource?.IsAiPoc,
+            DemandSource = demandSource,
+            PlanName = planName,
+            PlanUrl = planUrl,
+            RequirementDescription = FirstPresent(request.RequirementDescription, internalSource?.RequirementDescription),
+            DepartmentName = FirstPresent(request.DepartmentName, internalSource?.DepartmentName),
+            OwnerName = FirstPresent(request.OwnerName, internalSource?.OwnerName),
+            ProjectMemberNames = projectMembers,
+            PlannedProjectAt = internalSource?.PlannedProjectAt,
+            PlannedReleaseAt = request.PlannedReleaseAt,
+            ContractParty = TrimToNull(request.ContractParty),
+            DevelopmentStatus = FirstPresent(request.DevelopmentStatus, internalSource?.DevelopmentStatus),
+            Remark = TrimToNull(request.Remark),
+            CreatedBy = userId,
+            CreatedByName = GetDisplayName(),
+        };
+        await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { record }));
+    }
+
+    /// <summary>导入历史 T/V 登记，并把上传文件和导入结果保存成不可变档案快照。</summary>
+    [HttpPost("version-registrations/import")]
+    public async Task<IActionResult> ImportVersionRegistrations([FromBody] ImportVersionRegistrationsRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (request.Rows == null || request.Rows.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "历史登记表没有可导入的记录"));
+        if (!string.IsNullOrWhiteSpace(request.SourceAttachmentId))
+        {
+            var attachment = await _db.Attachments.Find(x => x.AttachmentId == request.SourceAttachmentId.Trim()).FirstOrDefaultAsync(ct);
+            if (attachment == null || attachment.UploaderId != userId)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "历史文件不存在或不属于当前上传人"));
+        }
+
+        var snapshot = new VersionRegistrationSnapshot
+        {
+            Name = TrimToNull(request.SnapshotName) ?? $"历史导入 {DateTime.Now:yyyy-MM-dd HH:mm}",
+            SourceType = VersionRegistrationSnapshotSourceType.HistoryImport,
+            SourceAttachmentId = TrimToNull(request.SourceAttachmentId),
+            SourceFileName = TrimToNull(request.SourceFileName),
+            CreatedBy = userId,
+            CreatedByName = GetDisplayName(),
+        };
+        foreach (var row in request.Rows)
+        {
+            var prefix = string.Equals(row.Kind, VersionRegistrationKind.Internal, StringComparison.Ordinal) ? "T" : "V";
+            if (!TryParseVersionCode(row.Code, prefix, out var normalizedCode))
+            {
+                snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"缺少或格式错误的 {prefix} 版本号" });
+                continue;
+            }
+            if (await IsVersionCodeTakenAsync(normalizedCode, ct))
+            {
+                snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"版本号 {normalizedCode} 已存在，未重复导入" });
+                continue;
+            }
+            var record = new VersionRegistration
+            {
+                Kind = prefix == "T" ? VersionRegistrationKind.Internal : VersionRegistrationKind.Formal,
+                Code = normalizedCode,
+                TCode = prefix == "V" && TryParseVersionCode(row.TCode, "T", out var normalizedTCode) ? normalizedTCode : null,
+                SourceType = VersionRegistrationSourceType.HistoryImport,
+                ProjectType = NormalizeProjectType(row.ProjectType),
+                VersionType = ProductEntityNumbering.NormalizeVersionType(row.VersionType),
+                NeedUiDesign = row.NeedUiDesign,
+                IsAiPoc = row.IsAiPoc,
+                IsGlobalOpen = row.IsGlobalOpen,
+                DemandSource = TrimToNull(row.DemandSource),
+                PlanName = TrimToNull(row.PlanName),
+                PlanUrl = TrimToNull(row.PlanUrl),
+                RequirementDescription = TrimToNull(row.RequirementDescription),
+                DepartmentName = TrimToNull(row.DepartmentName),
+                OwnerName = TrimToNull(row.OwnerName),
+                ProjectMemberNames = NormalizeNames(row.ProjectMemberNames),
+                PlannedProjectAt = row.PlannedProjectAt,
+                PlannedReleaseAt = row.PlannedReleaseAt,
+                ContractParty = TrimToNull(row.ContractParty),
+                DevelopmentStatus = TrimToNull(row.DevelopmentStatus),
+                Remark = TrimToNull(row.Remark),
+                Status = VersionRegistrationStatus.Completed,
+                CreatedBy = userId,
+                CreatedByName = GetDisplayName(),
+                SourceSnapshotId = snapshot.Id,
+            };
+            await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+            snapshot.Records.Add(CloneVersionRegistration(record));
+            await EnsureVersionRegistrationSequenceFloorAsync(prefix, normalizedCode, ct);
+        }
+        snapshot.ImportedCount = snapshot.Records.Count;
+        snapshot.SkippedCount = snapshot.Errors.Count;
+        await _db.VersionRegistrationSnapshots.InsertOneAsync(snapshot, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { snapshot, created = snapshot.ImportedCount, skipped = snapshot.SkippedCount }));
+    }
+
+    /// <summary>将当前可见登记数据固化为不可变快照，不覆盖任何现有记录。</summary>
+    [HttpPost("version-registrations/snapshots/current")]
+    public async Task<IActionResult> CreateCurrentVersionRegistrationSnapshot([FromBody] CreateVersionRegistrationSnapshotRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        FilterDefinition<VersionRegistration> filter = Builders<VersionRegistration>.Filter.Empty;
+        if (!string.Equals(request.Scope, "all", StringComparison.OrdinalIgnoreCase) || !HasManagePermission())
+            filter = Builders<VersionRegistration>.Filter.Eq(x => x.CreatedBy, userId);
+        var records = await _db.VersionRegistrations.Find(filter).SortBy(x => x.CreatedAt).ToListAsync(ct);
+        var snapshot = new VersionRegistrationSnapshot
+        {
+            Name = TrimToNull(request.Name) ?? $"当前登记快照 {DateTime.Now:yyyy-MM-dd HH:mm}",
+            SourceType = VersionRegistrationSnapshotSourceType.CurrentRegistry,
+            ImportedCount = records.Count,
+            Records = records.Select(CloneVersionRegistration).ToList(),
+            CreatedBy = userId,
+            CreatedByName = GetDisplayName(),
+        };
+        await _db.VersionRegistrationSnapshots.InsertOneAsync(snapshot, cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { snapshot }));
+    }
+
+    /// <summary>查看已保存的历史导入批次和当前登记快照。</summary>
+    [HttpGet("version-registrations/snapshots")]
+    public async Task<IActionResult> ListVersionRegistrationSnapshots([FromQuery] string scope = "mine", CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        FilterDefinition<VersionRegistrationSnapshot> filter = Builders<VersionRegistrationSnapshot>.Filter.Empty;
+        if (!string.Equals(scope, "all", StringComparison.OrdinalIgnoreCase) || !HasManagePermission())
+            filter = Builders<VersionRegistrationSnapshot>.Filter.Eq(x => x.CreatedBy, userId);
+        var snapshots = await _db.VersionRegistrationSnapshots.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync(ct);
+        var items = snapshots.Select(x => new
+        {
+            x.Id,
+            x.Name,
+            x.SourceType,
+            x.SourceFileName,
+            x.ImportedCount,
+            x.SkippedCount,
+            recordCount = x.Records.Count,
+            x.CreatedAt,
+            x.CreatedByName,
+        });
+        return Ok(ApiResponse<object>.Ok(new { items, canViewAll = HasManagePermission() }));
+    }
+
+    // ──────────────────────────────────────────────
     // Webhook 配置（全局，manage 权限）
     // ──────────────────────────────────────────────
 
@@ -2282,6 +2568,205 @@ public class ReviewAgentController : ControllerBase
         var (success, error) = await _webhookService.SendTestAsync(req.WebhookUrl.Trim(), req.Channel ?? WebhookChannel.WeCom, req.MentionAll);
         return Ok(ApiResponse<object>.Ok(new { success, error }));
     }
+
+    private async Task<string> IssueVersionRegistrationCodeAsync(string prefix, string? versionType, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            var current = await _db.VersionRegistrationSequences.Find(x => x.Id == prefix).FirstOrDefaultAsync(ct);
+            if (current == null)
+            {
+                var baseline = await GetVersionRegistrationBaselineAsync(prefix, ct);
+                try
+                {
+                    await _db.VersionRegistrationSequences.InsertOneAsync(new VersionRegistrationSequence
+                    {
+                        Id = prefix,
+                        Major = baseline.Major,
+                        Medium = baseline.Medium,
+                        Minor = baseline.Minor,
+                    }, cancellationToken: ct);
+                }
+                catch (MongoWriteException)
+                {
+                    // 并发首建由其他请求完成，下一轮读取后继续。
+                }
+                continue;
+            }
+
+            var next = NextVersionTuple(current.Major, current.Medium, current.Minor, versionType);
+            var updated = await _db.VersionRegistrationSequences.FindOneAndUpdateAsync(
+                Builders<VersionRegistrationSequence>.Filter.And(
+                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Id, prefix),
+                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Revision, current.Revision)),
+                Builders<VersionRegistrationSequence>.Update
+                    .Set(x => x.Major, next.Major)
+                    .Set(x => x.Medium, next.Medium)
+                    .Set(x => x.Minor, next.Minor)
+                    .Set(x => x.Revision, current.Revision + 1)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                new FindOneAndUpdateOptions<VersionRegistrationSequence> { ReturnDocument = ReturnDocument.After },
+                ct);
+            if (updated != null)
+                return $"{prefix}{updated.Major}.{updated.Medium}.{updated.Minor}";
+        }
+        throw new InvalidOperationException("版本号正在被其他申请占用，请稍后重新提交");
+    }
+
+    private async Task EnsureVersionRegistrationSequenceFloorAsync(string prefix, string code, CancellationToken ct)
+    {
+        if (!TryParseVersionCode(code, prefix, out _, out var incoming)) return;
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            var current = await _db.VersionRegistrationSequences.Find(x => x.Id == prefix).FirstOrDefaultAsync(ct);
+            if (current == null)
+            {
+                try
+                {
+                    await _db.VersionRegistrationSequences.InsertOneAsync(new VersionRegistrationSequence
+                    {
+                        Id = prefix,
+                        Major = incoming.Major,
+                        Medium = incoming.Medium,
+                        Minor = incoming.Minor,
+                    }, cancellationToken: ct);
+                    return;
+                }
+                catch (MongoWriteException)
+                {
+                    continue;
+                }
+            }
+            if (CompareVersionTuple(current.Major, current.Medium, current.Minor, incoming) >= 0) return;
+            var updated = await _db.VersionRegistrationSequences.FindOneAndUpdateAsync(
+                Builders<VersionRegistrationSequence>.Filter.And(
+                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Id, prefix),
+                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Revision, current.Revision)),
+                Builders<VersionRegistrationSequence>.Update
+                    .Set(x => x.Major, incoming.Major)
+                    .Set(x => x.Medium, incoming.Medium)
+                    .Set(x => x.Minor, incoming.Minor)
+                    .Set(x => x.Revision, current.Revision + 1)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                new FindOneAndUpdateOptions<VersionRegistrationSequence> { ReturnDocument = ReturnDocument.After },
+                ct);
+            if (updated != null) return;
+        }
+    }
+
+    private async Task<VersionTuple> GetVersionRegistrationBaselineAsync(string prefix, CancellationToken ct)
+    {
+        var currentCodes = await _db.VersionRegistrations.Find(_ => true).Project(x => x.Code).ToListAsync(ct);
+        var legacyCodes = prefix == "T"
+            ? await _db.ProductInitiations.Find(x => x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync(ct)
+            : await _db.ProductReleases.Find(x => x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync(ct);
+        var max = new VersionTuple(0, 0, 0);
+        foreach (var code in currentCodes.Concat(legacyCodes))
+        {
+            if (TryParseVersionCode(code, prefix, out _, out var parsed) && CompareVersionTuple(parsed, max) > 0)
+                max = parsed;
+        }
+        return max;
+    }
+
+    private async Task<bool> IsVersionCodeTakenAsync(string code, CancellationToken ct)
+    {
+        if (await _db.VersionRegistrations.Find(x => x.Code == code).AnyAsync(ct)) return true;
+        return code.StartsWith("T", StringComparison.OrdinalIgnoreCase)
+            ? await _db.ProductInitiations.Find(x => x.TCode == code && !x.IsDeleted).AnyAsync(ct)
+            : await _db.ProductReleases.Find(x => x.VCode == code && !x.IsDeleted).AnyAsync(ct);
+    }
+
+    private static bool TryParseVersionCode(string? value, string prefix, out string normalized) =>
+        TryParseVersionCode(value, prefix, out normalized, out _);
+
+    private static bool TryParseVersionCode(string? value, string prefix, out string normalized, out VersionTuple tuple)
+    {
+        normalized = string.Empty;
+        tuple = new VersionTuple(0, 0, 0);
+        var text = value?.Trim().ToUpperInvariant() ?? string.Empty;
+        if (!text.StartsWith(prefix, StringComparison.Ordinal) || text.Length <= 1) return false;
+        var parts = text[1..].Split('.');
+        if (parts.Length != 3
+            || !int.TryParse(parts[0], out var major) || major < 0
+            || !int.TryParse(parts[1], out var medium) || medium < 0
+            || !int.TryParse(parts[2], out var minor) || minor < 0)
+            return false;
+        normalized = $"{prefix}{major}.{medium}.{minor}";
+        tuple = new VersionTuple(major, medium, minor);
+        return true;
+    }
+
+    private static VersionTuple NextVersionTuple(int major, int medium, int minor, string? versionType) =>
+        ProductEntityNumbering.NormalizeVersionType(versionType) switch
+        {
+            "major" => new VersionTuple(major + 1, 0, 0),
+            "medium" => new VersionTuple(major, medium + 1, 0),
+            _ => new VersionTuple(major, medium, minor + 1),
+        };
+
+    private static int CompareVersionTuple(VersionTuple left, VersionTuple right) =>
+        CompareVersionTuple(left.Major, left.Medium, left.Minor, right);
+
+    private static int CompareVersionTuple(int major, int medium, int minor, VersionTuple right)
+    {
+        var majorComparison = major.CompareTo(right.Major);
+        if (majorComparison != 0) return majorComparison;
+        var mediumComparison = medium.CompareTo(right.Medium);
+        return mediumComparison != 0 ? mediumComparison : minor.CompareTo(right.Minor);
+    }
+
+    private static string NormalizeProjectType(string? value) =>
+        string.Equals(value, "custom", StringComparison.OrdinalIgnoreCase) || string.Equals(value, "定制", StringComparison.Ordinal)
+            ? "custom"
+            : "standard";
+
+    private static string? TrimToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? FirstPresent(string? preferred, string? fallback) => TrimToNull(preferred) ?? TrimToNull(fallback);
+
+    private static List<string> NormalizeNames(List<string>? values) => (values ?? new List<string>())
+        .SelectMany(value => (value ?? string.Empty).Split(new[] { '、', ',', '，', ';', '；' }, StringSplitOptions.RemoveEmptyEntries))
+        .Select(value => value.Trim())
+        .Where(value => value.Length > 0)
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+    private static VersionRegistration CloneVersionRegistration(VersionRegistration source) => new()
+    {
+        Id = source.Id,
+        Kind = source.Kind,
+        Code = source.Code,
+        TCode = source.TCode,
+        SourceType = source.SourceType,
+        ReviewSubmissionId = source.ReviewSubmissionId,
+        SourceInternalRegistrationId = source.SourceInternalRegistrationId,
+        ProjectType = source.ProjectType,
+        VersionType = source.VersionType,
+        NeedUiDesign = source.NeedUiDesign,
+        IsAiPoc = source.IsAiPoc,
+        IsGlobalOpen = source.IsGlobalOpen,
+        DemandSource = source.DemandSource,
+        PlanName = source.PlanName,
+        PlanUrl = source.PlanUrl,
+        RequirementDescription = source.RequirementDescription,
+        DepartmentName = source.DepartmentName,
+        OwnerName = source.OwnerName,
+        ProjectMemberNames = source.ProjectMemberNames.ToList(),
+        PlannedProjectAt = source.PlannedProjectAt,
+        PlannedReleaseAt = source.PlannedReleaseAt,
+        ContractParty = source.ContractParty,
+        DevelopmentStatus = source.DevelopmentStatus,
+        Remark = source.Remark,
+        Status = source.Status,
+        CreatedBy = source.CreatedBy,
+        CreatedByName = source.CreatedByName,
+        SourceSnapshotId = source.SourceSnapshotId,
+        CreatedAt = source.CreatedAt,
+        UpdatedAt = source.UpdatedAt,
+    };
+
+    private readonly record struct VersionTuple(int Major, int Medium, int Minor);
 }
 
 // ──────────────────────────────────────────────
@@ -2315,4 +2800,63 @@ public class TestReviewWebhookRequest
     public string WebhookUrl { get; set; } = string.Empty;
     public string? Channel { get; set; }
     public bool MentionAll { get; set; }
+}
+
+public class VersionRegistrationFieldsRequest
+{
+    public string? ProjectType { get; set; }
+    public string? VersionType { get; set; }
+    public bool? NeedUiDesign { get; set; }
+    public bool? IsAiPoc { get; set; }
+    public string? DemandSource { get; set; }
+    public string? PlanName { get; set; }
+    public string? PlanUrl { get; set; }
+    public string? RequirementDescription { get; set; }
+    public string? DepartmentName { get; set; }
+    public string? OwnerName { get; set; }
+    public List<string>? ProjectMemberNames { get; set; }
+    public DateTime? PlannedProjectAt { get; set; }
+    public string? DevelopmentStatus { get; set; }
+    public string? Remark { get; set; }
+}
+
+public sealed class CreateInternalVersionRegistrationRequest : VersionRegistrationFieldsRequest
+{
+    public string ReviewSubmissionId { get; set; } = string.Empty;
+}
+
+public sealed class CreateFormalVersionRegistrationRequest : VersionRegistrationFieldsRequest
+{
+    /// <summary>manual_t 或 internal_registration。</summary>
+    public string? SourceMode { get; set; }
+    public string? SourceInternalRegistrationId { get; set; }
+    public string? TCode { get; set; }
+    public bool? IsGlobalOpen { get; set; }
+    public DateTime? PlannedReleaseAt { get; set; }
+    public string? ContractParty { get; set; }
+}
+
+public sealed class ImportVersionRegistrationsRequest
+{
+    public string? SnapshotName { get; set; }
+    public string? SourceAttachmentId { get; set; }
+    public string? SourceFileName { get; set; }
+    public List<VersionRegistrationImportRow>? Rows { get; set; }
+}
+
+public sealed class VersionRegistrationImportRow : VersionRegistrationFieldsRequest
+{
+    public string Kind { get; set; } = VersionRegistrationKind.Internal;
+    public string? Code { get; set; }
+    public string? TCode { get; set; }
+    public bool? IsGlobalOpen { get; set; }
+    public DateTime? PlannedReleaseAt { get; set; }
+    public string? ContractParty { get; set; }
+    public int SourceRow { get; set; }
+}
+
+public sealed class CreateVersionRegistrationSnapshotRequest
+{
+    public string? Name { get; set; }
+    public string? Scope { get; set; }
 }

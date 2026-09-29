@@ -22,6 +22,7 @@ export type VersionWorkflowImportRow = {
   projectAt?: string;
   plannedProjectAt?: string;
   needUiDesign?: boolean;
+  isAiPoc?: boolean;
   developmentStatus?: string;
   remark?: string;
   openBrandScope?: string;
@@ -143,8 +144,9 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const remarkIndex = indexOfHeader(headers, '备注');
   const developmentIndex = indexOfHeader(headers, '开发状态');
   const uiDesignIndex = indexOfHeader(headers, '是否需要ui设计', '是否需要 ui 设计', 'ui设计');
+  const aiPocIndex = indexOfHeader(headers, '是否属于ai poc项目', '是否属于 ai poc 项目', 'ai poc', 'aipoc');
   const announcementIndex = indexOfHeader(headers, '上线公告地址', '公告地址');
-  const openBrandIndex = indexOfHeader(headers, '当前开放品牌', '当前开放范围', '开放范围');
+  const openBrandIndex = indexOfHeader(headers, '是否全域开放', '当前开放品牌', '当前开放范围', '开放范围');
   const teamIndex = indexOfHeader(headers, '项目组成员', '组成员');
   const requirementSourceIndex = indexOfHeader(headers, '需求来源');
   const platformIndex = indexOfHeader(headers, '平台');
@@ -220,6 +222,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       projectAt: dateIndex >= 0 ? parseDateValue(values[dateIndex]) : undefined,
       plannedProjectAt: plannedProjectIndex >= 0 ? parseDateValue(values[plannedProjectIndex]) : undefined,
       needUiDesign: uiDesignIndex >= 0 ? mapBool(values[uiDesignIndex]) : undefined,
+      isAiPoc: aiPocIndex >= 0 ? mapBool(values[aiPocIndex]) : undefined,
       developmentStatus: developmentIndex >= 0 ? values[developmentIndex]?.trim() : undefined,
       remark: remarkIndex >= 0 ? values[remarkIndex]?.trim() : undefined,
       openBrandScope: openBrandIndex >= 0 ? values[openBrandIndex]?.trim() : undefined,

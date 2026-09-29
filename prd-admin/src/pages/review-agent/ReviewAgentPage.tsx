@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell, ListOrdered } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell, ListOrdered, BookOpenCheck } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
 import { ReviewAgentDimensionsModal } from './ReviewAgentDimensionsModal';
 import { ReviewAgentWebhookModal } from './ReviewAgentWebhookModal';
+import { VersionRegistrationDialog } from './VersionRegistrationDialog';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
@@ -37,6 +38,7 @@ export function ReviewAgentPage() {
   const canManage = permissions.includes('review-agent.manage') || permissions.includes('super');
   const [dimsModalOpen, setDimsModalOpen] = useState(false);
   const [webhookModalOpen, setWebhookModalOpen] = useState(false);
+  const [versionRegistrationOpen, setVersionRegistrationOpen] = useState(false);
 
   const [items, setItems] = useState<ReviewSubmission[]>([]);
   const [total, setTotal] = useState(0);
@@ -82,6 +84,14 @@ export function ReviewAgentPage() {
             <h1 className="text-xl font-semibold text-token-primary">产品评审智能体</h1>
             <p className="text-sm text-token-muted mt-0.5">上传产品方案，AI 多维度评审打分</p>
             <div className="flex flex-wrap items-center gap-2 mt-3">
+              <button
+                onClick={() => setVersionRegistrationOpen(true)}
+                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                title="从已完成评审申领 T 号，或从已登记 T 号申领 V 号"
+              >
+                <BookOpenCheck className="w-3.5 h-3.5" />
+                版本号申领
+              </button>
               <button
                 onClick={() => navigate('/review-agent/assessments')}
                 className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
@@ -243,6 +253,7 @@ export function ReviewAgentPage() {
     </div>
       <ReviewAgentDimensionsModal open={dimsModalOpen} onClose={() => setDimsModalOpen(false)} />
       <ReviewAgentWebhookModal open={webhookModalOpen} onClose={() => setWebhookModalOpen(false)} />
+      <VersionRegistrationDialog open={versionRegistrationOpen} onClose={() => setVersionRegistrationOpen(false)} />
     </>
   );
 }

@@ -1082,8 +1082,7 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选产品负责人不存在"));
 
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation!.VersionType;
-        var vCode = initiation?.TCode?.Replace("T", "V", StringComparison.OrdinalIgnoreCase)
-            ?? await GenerateWorkflowCodeAsync("V", versionType);
+        var vCode = await GenerateWorkflowCodeAsync("V", versionType);
         var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
         if (manifest.Count == 0)
@@ -7081,10 +7080,14 @@ public class ProductAgentController : ControllerBase
 
     private async Task<string> GenerateWorkflowCodeAsync(string prefix, string versionType)
     {
-        var codes = prefix == "T"
+        var legacyCodes = prefix == "T"
             ? await _db.ProductInitiations.Find(x => x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync()
             : await _db.ProductReleases.Find(x => x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync();
-        return ProductEntityNumbering.NextWorkflowCode(prefix, versionType, codes);
+        var registrationCodes = await _db.VersionRegistrations
+            .Find(x => x.Code.StartsWith(prefix))
+            .Project(x => x.Code)
+            .ToListAsync();
+        return ProductEntityNumbering.NextWorkflowCode(prefix, versionType, legacyCodes.Concat(registrationCodes));
     }
 
     /// <summary>解析产品负责人列表，同步 OwnerId / OwnerName 反规范化字段。</summary>
