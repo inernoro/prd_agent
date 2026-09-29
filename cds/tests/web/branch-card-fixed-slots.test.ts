@@ -118,6 +118,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page).toContain("const cardPhase = phase?.key === 'ci-waiting' && failed ? null : phase;");
     // 出错类别只按现有构建配置对应的服务算，与出错原因同口径
     expect(page).toContain('branchIssueLabel(branch, projectProfileIds)');
+    // 构建 / 起容器 / 就绪探测的计时从本次部署开始（lastDeployStartedAt）算，排队与等镜像沿用原起点
+    expect(page).toContain("const anchoredToDeployStart = deployInFlight && buildPhase?.key !== 'queued' && buildPhase?.key !== 'ci-waiting';");
     // 耗时预计取哪个样本桶，与阶段条同一个判断：混合分支只重建源码服务时取源码样本
     expect(page).toContain('pickDeployEstimate(branch, phaseIsSourceSequence)');
     // 等 CI 镜像期间有服务真的失败：失败优先，不盖在等镜像下面

@@ -565,14 +565,18 @@ async function main() {
             await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), withEstimate);
             await page.waitForTimeout(700);
             const etaText = (await page.textContent('[data-branch-card-id="b-edison"] [data-footer-status]')) || '';
-            // 页脚是「已用 mm:ss · 还剩 / 超出预计 mm:ss」：已用 ∓ 剩余 反推出取的是哪个样本桶的中位（源码 10 分钟、发布版 1 分钟）
+            // 从页脚反推取的是哪个样本桶的中位（源码 10 分钟、发布版 1 分钟）
             const secs = (t) => { const [m, sec] = t.split(':').map(Number); return m * 60 + sec; };
             // 先去掉「2/3」这种步数，它和紧跟的用时之间没有空格
             const times = [...etaText.replace(/\d\/\d/, ' ').matchAll(/(\d+:\d{2})/g)].map((m) => secs(m[1]));
             const over = /超出预计/.test(etaText);
-            const median = times.length >= 2 ? (over ? times[0] - times[1] : times[0] + times[1]) : NaN;
+            // 未超时是「已用 / 约 预计」，第二个数就是中位；超时是「已用 · 超出预计 X」，中位 = 已用 − X
+            const median = times.length >= 2 ? (over ? times[0] - times[1] : times[1]) : NaN;
             check(Math.abs(median - 600) <= 2,
               `混合分支只重建源码服务时，耗时预计按源码样本（推得中位 ${median}s，「${etaText.trim()}」）`);
+            // 计时从这次部署开始算（2 分钟前），不从很久以前的 lastAccessedAt 算（Codex P2）
+            check(times.length >= 1 && times[0] >= 100 && times[0] <= 180,
+              `从运行中分支单独部署时，计时从本次部署开始（已用 ${times[0]}s，「${etaText.trim()}」）`);
           }
           // 手动部署跑完、CI 仍在等：回到「等镜像」。之后 CI 失败，不许把刚才那次部署播成「部署成功」（Codex P2）
           const backToWait = { ...manual, status: 'running', services: services(22705, 'running') };
