@@ -598,15 +598,18 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
   const chapter = copy.chapters[0];
   const press = SCORE_CUES.sendPress - from;
   const rise = easeOutQuart(span(lt, 0.15, 1.6));
-  // 标题讲完，窗口抬到画面正中给生成让出舞台
-  const raise = easeInOutCubic(span(lt, 2.4, 3.2));
-  const titleOut = easeInOutCubic(span(lt, 2.3, 3.0));
+  // 标题讲完就抬窗：输入框在窗口下部，不抬的话打字那几秒它整个在画面外（2026-09-29 用户截图「靠下了」）。
+  // 顺序固定为：标题亮相 → 窗口抬到位 → 指针走到输入框 → 开始打字 → 踩鼓点按发送
+  const raise = easeInOutCubic(span(lt, 1.2, 1.9));
+  const titleOut = easeInOutCubic(span(lt, 1.1, 1.7));
+  const typeAt = 1.95;
   // 四张图都落定后，镜头推进第一张图，穿越进下一幕
   const push = 1 + 0.55 * easeInOutCubic(span(lt, d - 1.5, d));
   const drift = 1 + 0.03 * span(lt, 0, d);
 
   const promptChars = Array.from(copy.visual.prompt).length;
-  const shownPrompt = lt < press ? typed(copy.visual.prompt, lt, 0.9, promptChars / 2.4) : '';
+  // 打字速度按「打完到按发送之间留 0.25 秒」反推，按发送那一拍由乐谱钉死，不动
+  const shownPrompt = lt < press ? typed(copy.visual.prompt, lt, typeAt, promptChars / Math.max(0.8, press - 0.25 - typeAt)) : '';
   const sent = lt >= press + 0.05;
   const pressP = span(lt, press, press + 0.26);
 
@@ -614,12 +617,12 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
   const inputAim = { x: INPUT_BOX.x + 150, y: INPUT_BOX.y + 70 };
   const sendAim = { x: SEND_BUTTON.x + SEND_BUTTON.size / 2 - 4, y: SEND_BUTTON.y + SEND_BUTTON.size / 2 - 3 };
   const restAim = { x: 1180, y: 520 };
-  const toInput = easeInOutCubic(span(lt, 0.4, 0.9));
+  const toInput = easeInOutCubic(span(lt, typeAt - 0.55, typeAt - 0.05));
   const toSend = easeInOutCubic(span(lt, press - 0.6, press - 0.12));
   const away = easeInOutCubic(span(lt, press + 0.5, press + 1.4));
   const cx = lerp(lerp(lerp(700, inputAim.x, toInput), sendAim.x, toSend), restAim.x, away);
   const cy = lerp(lerp(lerp(900, inputAim.y, toInput), sendAim.y, toSend), restAim.y, away);
-  const cursorAlpha = span(lt, 0.4, 0.7) * (1 - span(lt, press + 2.0, press + 2.6));
+  const cursorAlpha = span(lt, typeAt - 0.7, typeAt - 0.4) * (1 - span(lt, press + 2.0, press + 2.6));
 
   const tiles = SCORE_CUES.tilesDevelop.map((at) => {
     const dev = at - from;
@@ -680,7 +683,7 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
                 height: INPUT_BOX.h,
                 borderRadius: 22,
                 background: FILM.panelRaised,
-                border: `2px solid ${lt > 0.8 && lt < press ? FILM.clay : FILM.lineStrong}`,
+                border: `2px solid ${lt > typeAt - 0.1 && lt < press ? FILM.clay : FILM.lineStrong}`,
                 padding: '18px 90px 18px 22px',
                 fontSize: 24,
                 lineHeight: 1.4,
@@ -688,7 +691,7 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
               }}
             >
               {shownPrompt}
-              {lt > 0.8 && lt < press && <Caret t={lt} height={26} />}
+              {lt > typeAt - 0.1 && lt < press && <Caret t={lt} height={26} />}
               <div
                 aria-label={copy.visual.send}
                 style={{

@@ -387,7 +387,7 @@ export function FilmSection() {
                     />
                   </div>
                 </div>
-                <div className="mt-0.5 sm:mt-1 flex items-center gap-1.5 sm:gap-3 text-[11px] sm:text-[13px]" style={{ color: FILM.textDim, fontFamily: 'var(--font-terminal)' }}>
+                <div className="mt-0.5 sm:mt-1 flex items-center gap-1.5 sm:gap-3 text-[11px] sm:text-[13px]" style={{ color: FILM.textDim, fontFamily: 'var(--font-body)', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.02em' }}>
                   <ControlButton label={playing ? film.controls.pause : film.controls.play} onClick={toggle}>
                     {playing ? <Pause className="w-4 h-4 sm:w-[18px] sm:h-[18px]" /> : ended ? <RotateCcw className="w-4 h-4 sm:w-[18px] sm:h-[18px]" /> : <Play className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />}
                   </ControlButton>
