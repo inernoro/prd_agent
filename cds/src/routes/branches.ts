@@ -322,6 +322,12 @@ type BranchDeployRuntime = {
    */
   prebuilt: boolean;
   /**
+   * 2026-09-29 走极速版（预构建镜像）的是哪几个 profile。一条分支可以一部分服务极速版、一部分源码版，
+   * 只重部署其中一个源码服务时，卡片阶段条要按「这次动的那个服务」选步骤，不能按上面这个「任一」判
+   * （Codex P2，PR #1646）。
+   */
+  prebuiltProfileIds: string[];
+  /**
    * 2026-05-29 P0 止血：期望态 vs 实际态漂移检测。
    *
    * 病根（本次 openvisual 事故暴露）：branch.services 是"上次部署时的快照"，
@@ -440,11 +446,15 @@ function summarizeBranchDeployRuntime(
   let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
   let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
   let prebuilt = false;       // 配置=极速版（任一 profile 走预构建镜像）
+  const prebuiltProfileIds: string[] = [];
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
-    if (effectiveProfile.prebuiltImage === true) prebuilt = true;
+    if (effectiveProfile.prebuiltImage === true) {
+      prebuilt = true;
+      prebuiltProfileIds.push(profile.id);
+    }
     const configMode = effectiveProfile.activeDeployMode;
     const configLabel = configMode
       ? effectiveProfile.deployModes?.[configMode]?.label || configMode
@@ -522,6 +532,7 @@ function summarizeBranchDeployRuntime(
     modes: modeLabels,
     pendingPublish,
     prebuilt,
+    prebuiltProfileIds,
     // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
     drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
