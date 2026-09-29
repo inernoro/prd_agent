@@ -6131,9 +6131,16 @@ const BranchCard = memo(function BranchCard({
   const showsIssue = isError || serviceFailed;
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const quickStartAvailable = canQuickStartBranch(branch);
-  const busySince = isInterim
-    ? branchBusySince(branch, action)
-    : deployInFlight ? branch.lastDeployStartedAt || branchBusySince(branch, action) : undefined;
+  // 真正在构建 / 起容器 / 就绪探测时，计时从这次部署开始的时刻算（服务端在开始构建时写 lastDeployStartedAt）。
+  // 分支从停止或出错单独起一个服务时，聚合状态虽是 building，lastAccessedAt 却是很久以前，
+  // 按它算会一开始就显示几小时、立刻报「超出预计」（Codex P2，PR #1646）。
+  // 排队与等 CI 镜像两段还没开始构建，lastDeployStartedAt 仍是上一次的，沿用原来的起点。
+  const anchoredToDeployStart = deployInFlight && buildPhase?.key !== 'queued' && buildPhase?.key !== 'ci-waiting';
+  const busySince = anchoredToDeployStart
+    ? branch.lastDeployStartedAt || branchBusySince(branch, action)
+    : isInterim
+      ? branchBusySince(branch, action)
+      : deployInFlight ? branch.lastDeployStartedAt || branchBusySince(branch, action) : undefined;
   const buildClock = buildPhase ? (() => {
     // 停止 / 重启 / 前端占位不是部署，不拿部署中位值去比。
     const estimate = isDeployPhase(buildPhase) ? pickDeployEstimate(branch, phaseIsSourceSequence) : null;
