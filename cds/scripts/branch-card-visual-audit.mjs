@@ -66,7 +66,9 @@ function makeBranches() {
   });
   return [
     base('b-main', 'main', {
-      status: 'idle', services: services(22000, 'stopped'),
+      // 僵尸条目：构建配置 legacy-gw 已删，删的时候分支正忙没清掉，条目停在 error。
+      // 它不在项目构建配置里，不许把这条分支算成「出错需要处理」（Codex P2）。
+      status: 'idle', services: { ...services(22000, 'stopped'), 'legacy-gw': { profileId: 'legacy-gw', containerName: 'fixture-legacy-gw', hostPort: 22999, status: 'error', errorMessage: '构建配置已删除' } },
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-18 * 60 * MIN),
       lastDeployAt: iso(-20 * 60 * MIN),
     }),
@@ -240,6 +242,12 @@ async function main() {
       check(phases['b-pack'] === 'queued', `[${theme}] 排队卡 data-deploy-phase=queued（实际 ${phases['b-pack']}）`);
       check(phases['b-edison'] === 'ci-waiting', `[${theme}] 等镜像卡 data-deploy-phase=ci-waiting（实际 ${phases['b-edison']}）`);
       check(phases['b-ident'] === 'ready', `[${theme}] 就绪探测卡 data-deploy-phase=ready（实际 ${phases['b-ident']}）`);
+      // 初始只有 b-scan 真出错；b-main 身上的僵尸 error 条目不计入，也不让卡片进出错态。
+      const headline = (await page.textContent('[data-testid="branch-overview-bar"] h2')) || '';
+      const erroredInitial = Number((headline.match(/(\d+)\s*个出错需要处理/) || [])[1] || 0);
+      check(erroredInitial === 1, `[${theme}] 僵尸服务不计入「出错需要处理」（实际 ${erroredInitial}，「${headline.trim()}」）`);
+      const mainRedeploy = await page.$$eval('[data-branch-card-id="b-main"] button[aria-label^="重新部署"]', (els) => els.length).catch(() => 0);
+      check(phases['b-main'] !== 'failed' && mainRedeploy === 0, `[${theme}] 带僵尸 error 条目的分支卡不进出错态（phase=${phases['b-main']}，重新部署按钮 ${mainRedeploy} 个）`);
       const metaTimes = await page.$$eval('[data-branch-card-id="b-pack"], [data-branch-card-id="b-ident"]', (els) => els.map((el) => el.textContent || ''));
       check(metaTimes.every((t) => /最近推送/.test(t)), `[${theme}] 构建中卡片右侧有「最近推送」时间`);
       for (const f of await footerTruncation(page)) {

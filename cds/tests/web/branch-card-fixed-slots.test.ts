@@ -259,21 +259,21 @@ describe('构建页脚：阶段条接线', () => {
 
   // 页头「出错需要处理」与「重新部署失败项」共用 branchHasDeployFailure：单服务失败、分支仍 running 也算出错。
   const overviewCountsServiceFailures = (source: string) => {
-    expect(source).toContain('if (branchHasDeployFailure(branch)) errored += 1;');
-    expect(source).toContain('if (!branchHasDeployFailure(branch)) continue;');
+    expect(source).toContain('if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;');
+    expect(source).toContain('if (!branchHasDeployFailure(branch, projectProfileIds)) continue;');
     expect(source.match(/function branchHasDeployFailure\(/g)).toHaveLength(1);
   };
 
   // 刷新后没有「刚才那次翻转」：卡片必须从持久的服务状态认出单服务失败，和页头计数一致。
   const cardShowsPersistedServiceFailure = (source: string) => {
-    expect(source).toContain('const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch);');
+    expect(source).toContain('const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch, projectProfileIds);');
     expect(source).toContain('{showsIssue && !failedPhase ? (');
     expect(source).toContain(') : showsIssue || failedPhase ? (');
   };
 
   // 列表排序的「出错置顶」也走同一判据；定位收起分组里的卡片前先展开分组。
   const sortAndFocusWired = (source: string) => {
-    expect(source).toContain('const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);');
+    expect(source).toContain('const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b, projectProfileIds);');
     expect(source).toContain('if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);');
     // 已停止判定取未经标签筛选的全部分支：定位会先清筛选（Codex P2）
     expect(source).toContain('dormantIdsRef.current = new Set(branches.filter((branch) => isDormantBranch(branch, actions[branch.id])).map((branch) => branch.id));');
@@ -287,7 +287,7 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(
       sortAndFocusWired,
       page,
-      mutate(page, 'const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);', "const isErrored = (b: BranchSummary): boolean => b.status === 'error';"),
+      mutate(page, 'const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b, projectProfileIds);', "const isErrored = (b: BranchSummary): boolean => b.status === 'error';"),
     );
   });
 
@@ -307,7 +307,32 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(
       overviewCountsServiceFailures,
       page,
-      mutate(page, 'if (branchHasDeployFailure(branch)) errored += 1;', "if (branch.status === 'error') errored += 1;"),
+      mutate(page, 'if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;', "if (branch.status === 'error') errored += 1;"),
+    );
+  });
+
+  // 僵尸服务（构建配置已删、条目因分支忙没清掉）不算这条分支坏了：判据只认项目配置 + 分支额外服务里还在的 profile；
+  // 配置没取到时不过滤（宁可多报，不静默藏掉真实失败）。
+  const failureIgnoresZombieServices = (source: string) => {
+    expect(source).toContain('if (!projectProfileIds) return failed;');
+    expect(source).toContain('return failed.filter((service) => projectProfileIds.has(service.profileId) || extraIds.has(service.profileId));');
+    expect(source).toContain('return branch.status === \'error\' || failedLiveServices(branch, projectProfileIds).length > 0;');
+    expect(source).toContain('state.status === \'ok\' && state.buildProfilesLoaded');
+    expect(source).toContain('const buildProfilesLoaded = profilesResult.status === \'fulfilled\';');
+    expect(source).toContain('projectProfileIds={projectProfileIds}');
+    // 卡片里的失败文案也走同一份过滤，不再各自扫全部 services
+    expect(source).not.toMatch(/deployFailureMessage\(branch\)/);
+  };
+
+  it('出错判据排除僵尸服务，配置没取到时不过滤', () => {
+    failureIgnoresZombieServices(page);
+  });
+
+  it('红用例：判据退回扫全部 services，守卫变红', () => {
+    expectGuardRedOnMutation(
+      failureIgnoresZombieServices,
+      page,
+      mutate(page, 'return branch.status === \'error\' || failedLiveServices(branch, projectProfileIds).length > 0;', "return branch.status === 'error' || Object.values(branch.services || {}).some((service) => service.status === 'error');"),
     );
   });
 
