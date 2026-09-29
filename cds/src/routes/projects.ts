@@ -28,6 +28,7 @@ import { Router } from 'express';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
+import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { hasActiveGrant } from '../services/identity.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
@@ -613,6 +614,13 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
     customEnv: maskEnvMap(summary.customEnv),
     defaultEnv: maskEnvMap(summary.defaultEnv),
   };
+}
+
+/** 分组保存等落盘的上限：与分支状态落盘同一个环境变量口径（CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS）。 */
+function branchGroupsFlushTimeoutMs(): number {
+  const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return 30_000;
+  return Math.max(100, Math.min(raw, 30_000));
 }
 
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
@@ -1859,7 +1867,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ ok: true, ...settings, readOnly });
   });
 
+  // 同一项目的分组写入排成一条链：落盘要 await，期间第二个请求若先读到还没确认落盘的新版本、
+  // 而前一个随后失败回滚，就会把第二个的结果一起冲掉（Codex P1，PR #1647）。
+  const branchGroupWriteChains = new Map<string, Promise<void>>();
   router.put('/projects/:id/branch-groups', (req, res) => {
+    const key = String(req.params.id);
+    const previous = branchGroupWriteChains.get(key) || Promise.resolve();
+    const run = previous.then(() => putBranchGroups(req, res)).catch((err) => {
+      console.error('[branch-groups] 保存分组时出现未处理的异常', err);
+      if (!res.headersSent) res.status(500).json({ error: 'persist_failed', message: '分组没有保存：服务端出错，请稍后重试' });
+    });
+    branchGroupWriteChains.set(key, run);
+    void run.finally(() => {
+      if (branchGroupWriteChains.get(key) === run) branchGroupWriteChains.delete(key);
+    });
+  });
+
+  async function putBranchGroups(req: import('express').Request, res: import('express').Response): Promise<void> {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
@@ -1920,28 +1944,46 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       updatedAt: new Date(Number.isFinite(previousAt) && nowMs <= previousAt ? previousAt + 1 : nowMs).toISOString(),
       updatedBy: actor === 'user' && login ? login : actor,
     };
-    // 写入存储失败时把内存里的分组与版本号恢复成保存前：否则接口报失败、界面说已撤回，
-    // 下一次 GET 或冲突判定却看到这份「没存成」的分组，之后任意一次成功落盘还会把它写进去（Codex P2，PR #1647）。
+    // 落盘确认之后才回成功：各存储都是延迟写（save 只排队，磁盘 / 数据库错误要到 flush 才浮出来），
+    // 只 try save() 会先回 200、再在后台丢数据（Codex P1，PR #1647）。
+    // 落盘失败或超时就把内存里的分组与版本号恢复成保存前，否则接口报失败、界面说已撤回，
+    // 下一次 GET 或冲突判定却看到这份「没存成」的分组（Codex P2，PR #1647）。
     const previousGroups = project.branchGroups;
     const previousProjectUpdatedAt = project.updatedAt;
+    const requestId = String((req as unknown as { cdsRequestId?: string }).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+    const logFailure = (err: unknown) => {
+      // 原始错误只进服务端日志：里面可能有文件路径、数据库细节（Codex P1，PR #1647）
+      console.error(`[branch-groups] 项目 ${project.id} 的分组落盘失败（request ${requestId || '-'}）`, err);
+    };
     stateService.setProjectBranchGroups(project.id, settings);
+    let flushResult: BoundedFlushResult;
     try {
       stateService.save();
+      flushResult = await waitForFlushWithTimeout(() => stateService.flush(), branchGroupsFlushTimeoutMs(), logFailure);
     } catch (err) {
+      logFailure(err);
+      flushResult = 'failed';
+    }
+    if (flushResult !== 'flushed') {
       const live = stateService.getProject(project.id);
       if (live) {
         if (previousGroups === undefined) delete live.branchGroups;
         else live.branchGroups = previousGroups;
         live.updatedAt = previousProjectUpdatedAt;
       }
-      res.status(500).json({
+      // 把恢复后的状态也排一次写，覆盖掉可能稍后才落下去的那份新版本；这次再失败只影响日志
+      try { stateService.save(); } catch (err) { logFailure(err); }
+      res.status(flushResult === 'timeout' ? 503 : 500).json({
         error: 'persist_failed',
-        message: `分组没有保存：写入存储失败（${(err as Error)?.message || '未知原因'}），已恢复为保存前的版本，请稍后重试`,
+        message: flushResult === 'timeout'
+          ? '分组没有保存：写入存储超时，已恢复为保存前的版本，请稍后重试'
+          : '分组没有保存：写入存储失败，已恢复为保存前的版本，请稍后重试',
+        requestId,
       });
       return;
     }
     res.json({ ok: true, ...settings });
-  });
+  }
 
   router.get('/projects/:id/comment-template', (req, res) => {
     const project = stateService.getProject(req.params.id);

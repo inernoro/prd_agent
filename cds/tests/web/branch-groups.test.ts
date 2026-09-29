@@ -190,6 +190,9 @@ describe('前后端枚举一致', () => {
     const suggestions = read('components/branch-groups/BranchGroupSuggestions.tsx');
     expect(suggestions).toContain('item.defaultChecked && index < BRANCH_GROUP_LIMITS.groups');
     expect(suggestions).toContain('disabled={picked.length === 0 || overLimit > 0 || saving}');
+    // 建议的勾选与组名草稿由页面持有（建组乐观更新会卸载面板，失败回来时草稿要在）
+    expect(read('pages/BranchListPage.tsx')).toContain('draft={suggestionDraft}');
+    expect(suggestions).not.toContain('useState<Record<string, boolean>>');
     // 建议重算时保留用户已改的勾选与组名
     expect(suggestions).toContain('item.prefix in current ? current[item.prefix] : item.defaultChecked');
     expect(suggestions).toContain('item.prefix in current ? current[item.prefix] : item.name');

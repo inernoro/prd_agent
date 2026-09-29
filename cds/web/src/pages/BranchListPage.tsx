@@ -62,7 +62,7 @@ import {
 } from '@/lib/branchGroups';
 import { BranchGroupHeader, type BranchGroupSummaryPart } from '@/components/branch-groups/BranchGroupHeader';
 import { BranchGroupEditorDialog } from '@/components/branch-groups/BranchGroupEditorDialog';
-import { BranchGroupSuggestions } from '@/components/branch-groups/BranchGroupSuggestions';
+import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggestionDraft } from '@/components/branch-groups/BranchGroupSuggestions';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
@@ -1711,6 +1711,8 @@ export function BranchListPage(): JSX.Element {
   const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean; basedOnPending?: boolean } | null>(null);
   const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group' } | null>(null);
   const draggingGroupIdRef = useRef<string | null>(null);
+  // 首次建组建议的勾选与组名草稿放在页面上：建议面板点「创建」就会卸载，失败回来时草稿还在
+  const [suggestionDraft, setSuggestionDraft] = useState<BranchGroupSuggestionDraft>(EMPTY_SUGGESTION_DRAFT);
   // 切项目时把上一个项目的分组残留一并清掉：开着的编辑器、保存中 / 保存失败的提示、拖拽落点。
   // 不清的话，编辑器里上个项目的分组会带着新项目的版本号存进新项目（Codex P2，PR #1647）。
   useEffect(() => {
@@ -1722,6 +1724,7 @@ export function BranchListPage(): JSX.Element {
     setGroupsSaving(false);
     setGroupsSaveError('');
     setGroupDropTarget(null);
+    setSuggestionDraft(EMPTY_SUGGESTION_DRAFT);
     confirmedGroupsRef.current = null;
     pendingGroupUpdatesRef.current = [];
     // 每次进入一个项目都是新的一代：A → B → A 回来后，第一次进 A 时发出的保存响应也不许再写进来
@@ -4247,6 +4250,8 @@ export function BranchListPage(): JSX.Element {
                       branches={branches}
                       saving={groupsSaving}
                       error={groupsSaveError}
+                      draft={suggestionDraft}
+                      onDraftChange={setSuggestionDraft}
                       onCreate={(created) => { void saveBranchGroups((groups) => [...groups, ...created]); }}
                       onBlank={openNewGroupEditor}
                     />

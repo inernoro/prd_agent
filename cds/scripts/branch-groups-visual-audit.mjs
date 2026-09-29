@@ -276,10 +276,22 @@ async function main() {
       const keptName = await claudeName.inputValue();
       const keptCheck = await releaseBox.isChecked();
       check(keptName === '我的 Claude 组' && keptCheck, `[${theme}] 分支事件到来后建议里已改的组名与勾选保留（组名「${keptName}」，release/ 勾选 ${keptCheck}）`);
-      await claudeName.fill('Claude 在做');
       await releaseBox.uncheck();
 
+      // 1c. 建组失败（服务端故障）：面板重新出现时，用户改过的组名与勾选还在（Codex P2，PR #1647）
+      failNext = true;
+      await page.getByRole('button', { name: /^创建 2 个分组$/ }).click();
+      await page.waitForSelector('[data-branch-group-suggestions]', { timeout: 10000 });
+      await page.waitForTimeout(400);
+      const afterFailName = await page.getByLabel('claude/ 的组名').inputValue();
+      const afterFailRelease = await page.locator('[data-branch-group-suggestions] label', { hasText: 'release/' }).locator('input[type="checkbox"]').isChecked();
+      const afterFailCodex = await page.locator('[data-branch-group-suggestions] label', { hasText: 'codex/' }).locator('input[type="checkbox"]').isChecked();
+      check(afterFailName === '我的 Claude 组' && !afterFailRelease && afterFailCodex && groupStore.groups.length === 0,
+        `[${theme}] 建组失败后建议面板回来，改过的组名与勾选都还在（组名「${afterFailName}」，release/ ${afterFailRelease}，codex/ ${afterFailCodex}）`);
+      await page.getByLabel('claude/ 的组名').fill('Claude 在做');
+
       // 2. 一键建组
+      const putsBeforeCreate = puts.length;
       putDelayMs = 700;
       await page.getByRole('button', { name: /^创建 2 个分组$/ }).click();
       await page.waitForTimeout(150);
@@ -293,7 +305,7 @@ async function main() {
       await page.waitForTimeout(500);
       const claudeId = groupStore.groups.find((g) => g.name === 'Claude 在做')?.id;
       const codexId = groupStore.groups.find((g) => g.name === 'Codex 在做')?.id;
-      check(Boolean(claudeId && codexId) && puts.length === 1, `[${theme}] 建组写进了项目共享的分组（PUT ${puts.length} 次，${groupStore.groups.map((g) => g.name).join(' / ')}）`);
+      check(Boolean(claudeId && codexId) && puts.length - putsBeforeCreate === 1, `[${theme}] 建组写进了项目共享的分组（PUT ${puts.length - putsBeforeCreate} 次，${groupStore.groups.map((g) => g.name).join(' / ')}）`);
       check(await sectionOf(page, 'b-scan') === claudeId && await sectionOf(page, 'b-pack') === codexId && await sectionOf(page, 'b-main') === '__ungrouped__',
         `[${theme}] 分支按前缀进了对应分组，main 落在未归组`);
       const claudeHeader = await page.textContent(`[data-branch-group="${claudeId}"] [data-branch-group-header]`);

@@ -4,7 +4,7 @@
  * 不让用户对着空白从零配：CDS 按分支名前缀在本项目里数一遍，列出几类，勾上就建。
  * 只有一个分支的前缀默认不勾，免得一上来就一堆单卡小组。组名是猜的，可以当场改。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { Plus, Users } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -17,22 +17,38 @@ import {
 } from '@/lib/branchGroups';
 import { BRANCH_GROUP_SWATCH_CLASS } from './BranchGroupHeader';
 
+/** 勾选与组名草稿：由页面持有。建组是乐观更新，点「创建」时本组件会卸载；
+ *  草稿放在这里的话，请求失败、面板重新出现时用户改过的内容就全丢了（Codex P2，PR #1647）。 */
+export interface BranchGroupSuggestionDraft {
+  checked: Record<string, boolean>;
+  names: Record<string, string>;
+}
+
+export const EMPTY_SUGGESTION_DRAFT: BranchGroupSuggestionDraft = { checked: {}, names: {} };
+
 export function BranchGroupSuggestions({
   branches,
   saving,
   error,
+  draft,
+  onDraftChange,
   onCreate,
   onBlank,
 }: {
   branches: GroupableBranch[];
   saving: boolean;
   error: string;
+  draft: BranchGroupSuggestionDraft;
+  onDraftChange: Dispatch<SetStateAction<BranchGroupSuggestionDraft>>;
   onCreate: (groups: BranchGroup[]) => void;
   onBlank: () => void;
 }): JSX.Element {
   const suggestions = useMemo(() => suggestPrefixGroups(branches), [branches]);
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [names, setNames] = useState<Record<string, string>>({});
+  const { checked, names } = draft;
+  const setChecked = (update: (current: Record<string, boolean>) => Record<string, boolean>) =>
+    onDraftChange((current) => ({ ...current, checked: update(current.checked) }));
+  const setNames = (update: (current: Record<string, string>) => Record<string, string>) =>
+    onDraftChange((current) => ({ ...current, names: update(current.names) }));
   useEffect(() => {
     // 分支列表每来一条事件都会重算建议；只给新冒出来的前缀填默认值，用户已经改过的勾选和组名原样保留（Codex P2，PR #1647）。
     // 默认勾选不超过分组上限：前缀多到超过上限时，只默认勾最多的那几类。
@@ -44,6 +60,7 @@ export function BranchGroupSuggestions({
       item.prefix,
       item.prefix in current ? current[item.prefix] : item.name,
     ])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggestions]);
   const picked = suggestions.filter((item) => checked[item.prefix]);
   const overLimit = picked.length - BRANCH_GROUP_LIMITS.groups;

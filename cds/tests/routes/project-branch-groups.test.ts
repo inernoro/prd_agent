@@ -129,6 +129,41 @@ describe('项目分支自定义分组', () => {
     expect(retry.status).toBe(200);
   });
 
+  it('落盘（flush）失败：返回 500、恢复保存前的版本，响应里不带存储层原始报错', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const flushSpy = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => { throw new Error('ENOSPC /var/lib/cds/state.json'); });
+    const failed = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+    flushSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe('persist_failed');
+    expect(JSON.stringify(failed.body)).not.toContain('ENOSPC');
+    expect(JSON.stringify(failed.body)).not.toContain('/var/lib');
+    const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
+    expect(after.body.updatedAt).toBe(first.body.updatedAt);
+  });
+
+  it('同一项目的写入排队：前一个落盘失败回滚后，并发的后一个照常存进去，不被回滚冲掉', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const flushSpy = vi.spyOn(stateService, 'flush').mockImplementationOnce(
+      () => new Promise<void>((_, reject) => setTimeout(() => reject(new Error('slow failure')), 80)),
+    );
+    const otherGroup = { ...claudeGroup, id: 'g-other', name: '另一组' };
+    const [a, b] = await Promise.all([
+      request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt }),
+      request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup, otherGroup], baseUpdatedAt: first.body.updatedAt }),
+    ]);
+    flushSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(a.status).toBe(500);
+    expect(b.status).toBe(200);
+    const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude', 'g-other']);
+  });
+
   it('没配过时返回空列表与 null 版本，不编默认分组', async () => {
     const res = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
     expect(res.status).toBe(200);
