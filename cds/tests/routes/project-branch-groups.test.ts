@@ -59,8 +59,11 @@ describe('项目分支自定义分组', () => {
   let tmpDir: string;
   let stateService: StateService;
   let server: http.Server;
+  /** 模拟登录中间件挂上的 req.cdsUser（CdsUser 的真实字段名） */
+  let currentUser: { githubLogin?: string; username?: string } | null = null;
 
   beforeEach(() => {
+    currentUser = null;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-branch-groups-test-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     stateService.load();
@@ -77,6 +80,10 @@ describe('项目分支自定义分组', () => {
     });
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      if (currentUser) (req as unknown as { cdsUser?: unknown }).cdsUser = currentUser;
+      next();
+    });
     app.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
     server = app.listen(0);
   });
@@ -94,6 +101,17 @@ describe('项目分支自定义分组', () => {
     rules: [{ kind: 'prefix', value: ' claude/ ' }, { kind: 'tag', value: '' }],
     pinnedBranchIds: ['b-1'],
   };
+
+  it('真人保存记下登录名：GitHub 登录取 githubLogin，本地账号取 username', async () => {
+    currentUser = { githubLogin: 'alice-gh', username: 'alice' };
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(first.status).toBe(200);
+    expect(first.body.updatedBy).toBe('alice-gh');
+    currentUser = { username: 'bob' };
+    const second = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+    expect(second.status).toBe(200);
+    expect(second.body.updatedBy).toBe('bob');
+  });
 
   it('没配过时返回空列表与 null 版本，不编默认分组', async () => {
     const res = await request(server, 'GET', '/api/projects/proj-a/branch-groups');

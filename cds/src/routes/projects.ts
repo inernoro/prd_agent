@@ -1908,7 +1908,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     // 修改人：Agent / 系统调用记执行者（ai:<name> / system:<x>）；真人优先记登录名，编辑器里好认。
     const actor = resolveActorFromRequest(req as any);
-    const login = (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login;
+    // CdsUser 上是 githubLogin（本地账号与 username 同值）/ username，没有 login 字段（Codex P2，PR #1647）。
+    const cdsUser = (req as unknown as { cdsUser?: { githubLogin?: string; username?: string } }).cdsUser;
+    const login = cdsUser?.githubLogin || cdsUser?.username;
     // 版本号必须严格递增：同一毫秒内的两次写入若拿到同一个时间戳，持旧版本的客户端就能绕过 409
     // （Codex P2，PR #1647）。撞上或落后于上一版时顺延 1 毫秒。
     const previousAt = current?.updatedAt ? Date.parse(current.updatedAt) : Number.NaN;

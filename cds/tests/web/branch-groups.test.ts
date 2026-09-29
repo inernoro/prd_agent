@@ -197,6 +197,9 @@ describe('前后端枚举一致', () => {
     const page = read('pages/BranchListPage.tsx');
     expect(page).toContain('setGroupEditor((current) => (current?.group.id === group.id ? null : current))');
     expect(page).toContain('setGroupEditor((current) => (current?.group.id === groupId ? null : current))');
+    // 在别的保存还没回来时打开的编辑器，非冲突失败后也换回已确认版本（否则再保存会写回被撤回的改动）
+    expect(page).toContain('basedOnPending: pendingGroupUpdatesRef.current.length > 0');
+    expect(page).toContain('if (!editor || editor.isNew || !editor.basedOnPending || !confirmedNow) return editor;');
     // 列表已满时，还没存进列表的新分组不能保存（冲突后保留的新草稿也走这条）
     expect(editor).toContain('const atGroupLimit = draftIndex < 0 && groups.length >= BRANCH_GROUP_LIMITS.groups;');
     expect(editor).toContain('&& !atGroupLimit && !saving');

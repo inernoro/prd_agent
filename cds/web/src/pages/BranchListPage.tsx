@@ -1705,7 +1705,8 @@ export function BranchListPage(): JSX.Element {
   const [groupsSaveError, setGroupsSaveError] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups(projectId));
   const [expandedDormantGroups, setExpandedDormantGroups] = useState<Set<string>>(() => new Set());
-  const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean } | null>(null);
+  /** basedOnPending：打开时还有保存没回来，草稿取自未确认的乐观版本（失败后要换回已确认版本）。 */
+  const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean; basedOnPending?: boolean } | null>(null);
   const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group' } | null>(null);
   const draggingGroupIdRef = useRef<string | null>(null);
   // 切项目时把上一个项目的分组残留一并清掉：开着的编辑器、保存中 / 保存失败的提示、拖拽落点。
@@ -1832,6 +1833,15 @@ export function BranchListPage(): JSX.Element {
           setGroupsSaveError(`分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做${droppedNote}`);
         } else {
           showConfirmedPlusPending();
+          // 在别的保存还没回来时打开的编辑器，草稿取自乐观版本（可能含这次被撤回的钉入 / 新建）；
+          // 不换回已确认版本的话，再点保存会把刚撤回的改动悄悄重新写进去（Codex P2，PR #1647）。
+          // 编辑器自己那次保存失败（打开时没有在途保存）则保留草稿，方便重试。
+          const confirmedNow = confirmedGroupsRef.current;
+          setGroupEditor((editor) => {
+            if (!editor || editor.isNew || !editor.basedOnPending || !confirmedNow) return editor;
+            const fresh = confirmedNow.groups.find((group) => group.id === editor.group.id);
+            return fresh ? { group: fresh, isNew: false } : null;
+          });
           setGroupsSaveError(`保存失败：${body?.message || (error instanceof Error ? error.message : '未知原因')}；这一步已撤回${droppedNote}`);
         }
         return false;
@@ -1841,6 +1851,10 @@ export function BranchListPage(): JSX.Element {
     groupSaveChainRef.current = result;
     return result;
   }, [projectId]);
+  const openExistingGroupEditor = useCallback((group: BranchGroup) => {
+    setGroupsSaveError('');
+    setGroupEditor({ group, isNew: false, basedOnPending: pendingGroupUpdatesRef.current.length > 0 });
+  }, []);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState('');
   const [bulkTagError, setBulkTagError] = useState('');
@@ -3770,7 +3784,7 @@ export function BranchListPage(): JSX.Element {
           parts={summary.parts}
           collapsed={collapsed}
           onToggle={() => toggleGroupCollapsed(id)}
-          onEdit={group && !groupsReadOnly ? () => { setGroupsSaveError(''); setGroupEditor({ group, isNew: false }); } : undefined}
+          onEdit={group && !groupsReadOnly ? () => openExistingGroupEditor(group) : undefined}
           onGripDragStart={group && !groupsReadOnly ? (event) => {
             draggingGroupIdRef.current = group.id;
             event.dataTransfer.setData(GROUP_DRAG_TYPE, group.id);
@@ -4121,7 +4135,7 @@ export function BranchListPage(): JSX.Element {
                       {groupList.map((group) => (
                         <DropdownItem
                           key={group.id}
-                          onSelect={() => { setGroupsSaveError(''); setGroupEditor({ group, isNew: false }); }}
+                          onSelect={() => openExistingGroupEditor(group)}
                         >
                           <Pencil className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 truncate">{group.name}</span>

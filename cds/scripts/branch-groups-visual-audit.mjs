@@ -100,6 +100,8 @@ let groupStore = { groups: [], updatedAt: null, updatedBy: null };
 let conflictNext = null;
 /** 模拟慢网：PUT 延迟这么多毫秒再应答（串行保存那一步用）。 */
 let putDelayMs = 0;
+/** 下一次 PUT 模拟服务端故障（500，非冲突），用完即清。 */
+let failNext = false;
 const puts = [];
 const profiles = PROFILES.map((id) => ({ id, name: id, containerPort: 8080, dockerImage: `fixture/${id}:latest` }));
 
@@ -159,6 +161,11 @@ async function openPage(browser, url, theme) {
         const body = JSON.parse(req.postData() || '{}');
         puts.push(body);
         if (putDelayMs) await new Promise((r) => setTimeout(r, putDelayMs));
+        if (failNext) {
+          failNext = false;
+          await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'internal', message: '模拟服务端故障' }) });
+          return;
+        }
         // 与真实接口同口径：版本号对不上就 409，别拿「最后一次写入者赢」掩盖并发问题。
         if (!conflictNext && (body.baseUpdatedAt ?? null) !== (groupStore.updatedAt ?? null)) {
           await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'stale', message: '分组刚被别人改过', latest: groupStore }) });
@@ -273,7 +280,15 @@ async function main() {
       await releaseBox.uncheck();
 
       // 2. 一键建组
+      putDelayMs = 700;
       await page.getByRole('button', { name: /^创建 2 个分组$/ }).click();
+      await page.waitForTimeout(150);
+      // 建组是乐观更新：请求还在路上时建议面板已经换成分组视图，不存在「请求途中还能改勾选 / 组名」的窗口
+      const suggestionGone = !(await page.$('[data-branch-group-suggestions]'));
+      const sectionsShown = (await page.$$('[data-branch-group]')).length > 1;
+      await page.waitForTimeout(900);
+      putDelayMs = 0;
+      check(suggestionGone && sectionsShown, `[${theme}] 点「创建」后建议面板立即换成分组视图，请求途中没有可改的勾选与组名（面板已撤：${suggestionGone}）`);
       await page.waitForSelector('[data-branch-group="__ungrouped__"]', { timeout: 10000 });
       await page.waitForTimeout(500);
       const claudeId = groupStore.groups.find((g) => g.name === 'Claude 在做')?.id;
@@ -486,6 +501,38 @@ async function main() {
           await page.waitForTimeout(1300);
           putDelayMs = 0;
           check(lockedWhileSaving && !(await page.$('[role="dialog"]')), `保存在路上时编辑器表单只读，保存成功后关闭（只读：${lockedWhileSaving}）`);
+        }
+
+        // 9g. 慢网钉入还没回来时打开编辑器，钉入随后失败（非冲突）：编辑器草稿换回已确认版本，
+        //     再点保存不会把刚撤回的钉入悄悄写回去（Codex P2，PR #1647）
+        {
+          const gid = groupStore.groups.find((g) => g.name === 'Codex 别人改过')?.id;
+          const gname = 'Codex 别人改过';
+          const alreadyPinned = groupStore.groups.find((g) => g.id === gid)?.pinnedBranchIds || [];
+          const assigned = await page.$$eval('[data-branch-group]', (els) => Object.fromEntries(els.flatMap((el) =>
+            [...el.querySelectorAll('[data-branch-card-id]')].map((card) => [card.getAttribute('data-branch-card-id'), el.getAttribute('data-branch-group')]))));
+          const candidate = ['b-ident', 'b-test', 'b-scan', 'b-pack', 'b-relaxed'].find((id) => !alreadyPinned.includes(id) && assigned[id] && assigned[id] !== gid);
+          putDelayMs = 900;
+          failNext = true;
+          await page.click(`[data-branch-card-id="${candidate}"] button[aria-label="更多操作"]`);
+          await page.getByRole('menuitem', { name: new RegExp(gname) }).click();
+          await page.waitForTimeout(100);
+          await page.click(`[data-branch-group="${gid}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
+          await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+          await page.waitForTimeout(1400);
+          putDelayMs = 0;
+          const failBanner = (await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => '')) || '';
+          if (await page.$('[role="dialog"]')) {
+            await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+            await page.waitForTimeout(700);
+          }
+          const pinnedAfter = groupStore.groups.find((g) => g.id === gid)?.pinnedBranchIds || [];
+          check(Boolean(candidate) && /保存失败/.test(failBanner) && !pinnedAfter.includes(candidate),
+            `钉入失败后，期间打开的编辑器不把撤回的钉入写回去（${candidate}，提示「${failBanner.trim().slice(0, 30)}」，存下的钉入 ${pinnedAfter.join(',') || '无'}）`);
+          if (await page.$('[role="dialog"]')) {
+            await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+            await page.waitForTimeout(300);
+          }
         }
 
         // 9c. 标签筛选开着时编辑分组：命中预览仍按项目全部分支算（规则保存后作用于全部分支）
