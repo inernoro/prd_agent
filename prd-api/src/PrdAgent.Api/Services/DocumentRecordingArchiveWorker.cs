@@ -76,6 +76,8 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         {
             try
             {
+                if (!configuration.GetValue<bool>("RecordingChunks:UseObjectStorage"))
+                    throw new InvalidOperationException("录音历史迁移前必须先启用对象分片写入");
                 if (storage is IAssetStorageRuntimeInfo runtime
                     && string.Equals(runtime.ProviderName, AssetStorageProviderResolver.Local,
                         StringComparison.OrdinalIgnoreCase))

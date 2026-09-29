@@ -2145,6 +2145,14 @@ public class DocumentStoreController : ControllerBase
             var confirmedChunks = await _db.DocumentRecordingUploadChunks
                 .Find(c => c.SessionId == sessionId && c.Index == index)
                 .ToListAsync(CancellationToken.None);
+            if (confirmedChunks.Any(c => !string.IsNullOrWhiteSpace(c.StorageKey))
+                && string.Equals(AssetStorageProviderResolver.ResolveProviderName(_config),
+                    AssetStorageProviderResolver.Local, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                        "录音对象存储尚未就绪，请保留录音并稍后重试"));
+            }
             bool retryMatches;
             try
             {
@@ -2178,16 +2186,6 @@ public class DocumentStoreController : ControllerBase
         if (session.UploadedBytes + bytes.LongLength > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小不能超过 20 MB"));
 
-        if (_config.GetValue<bool>("RecordingChunks:UseObjectStorage")
-            && string.Equals(_config["ASPNETCORE_ENVIRONMENT"], "Production", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(AssetStorageProviderResolver.ResolveProviderName(_config),
-                AssetStorageProviderResolver.Local, StringComparison.OrdinalIgnoreCase))
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    "录音对象存储尚未就绪，请稍后重试并保留本地录音"));
-        }
-
         DocumentRecordingUploadChunk existing;
         bool inserted;
         bool payloadMatches;
@@ -2201,6 +2199,14 @@ public class DocumentStoreController : ControllerBase
                 useObjectStorage = await _db.DocumentRecordingUploadChunks
                     .Find(c => c.SessionId == sessionId && c.Index == index && c.StorageKey != null)
                     .AnyAsync(CancellationToken.None);
+            }
+            if (useObjectStorage
+                && string.Equals(AssetStorageProviderResolver.ResolveProviderName(_config),
+                    AssetStorageProviderResolver.Local, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                        "录音对象存储尚未就绪，请稍后重试并保留本地录音"));
             }
             (existing, inserted, payloadMatches) = useObjectStorage
                 ? await DocumentRecordingChunkStore.EnsureObjectChunkAsync(
