@@ -16,7 +16,7 @@ function escapeHtml(value: string): string {
 }
 
 export function isGallerySelection(files: readonly File[]): boolean {
-  return files.length > 1 && files.every(file => IMAGE_EXTENSIONS.has(extensionOf(file.name)));
+  return files.length > 1 && files.every(file => file.size > 0 && IMAGE_EXTENSIONS.has(extensionOf(file.name)));
 }
 
 export function renderGalleryHtml(items: readonly { name: string; path: string }[]): string {
@@ -35,6 +35,8 @@ figure{margin:0;background:Canvas;border:1px solid color-mix(in srgb, CanvasText
 
 /** 多图变成标准 HTML+图片 ZIP，沿用现有托管与分享链，不在 MongoDB 保存图片字节。 */
 export async function createImageGalleryZip(files: readonly File[]): Promise<File> {
+  if (files.some(file => file.size === 0))
+    throw new Error('图片不能为空，请移除空文件后重试');
   if (!isGallerySelection(files))
     throw new Error('多图展示请选择至少两张支持的图片');
   if (files.length > MAX_GALLERY_IMAGES)

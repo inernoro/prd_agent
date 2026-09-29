@@ -435,6 +435,10 @@ public class WebPagesController : ControllerBase
             _ when ImageExtensions.Contains(ext) => BuildImageWrapper(safeAssetName, displayTitle),
             _ => throw new InvalidOperationException($"未识别的包装类型: {ext}"),
         };
+        // 分享页通过 16MB 有界代理读取入口。文本在 HTML 转义后可能膨胀数倍；
+        // 上传前按最终入口字节数校验，并预留空间给托管层可能注入的兼容内容。
+        if (TextExtensions.Contains(ext) && Encoding.UTF8.GetByteCount(indexHtml) > 15 * 1024 * 1024)
+            throw new InvalidOperationException("文本生成的阅读页超过 15MB，无法在分享页稳定预览，请拆分文件后上传");
 
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
@@ -466,7 +470,8 @@ public class WebPagesController : ControllerBase
             var files = archive.Entries.Where(entry => !string.IsNullOrEmpty(entry.Name)).ToList();
             var imageCount = files.Count(entry => entry.FullName.StartsWith("images/", StringComparison.Ordinal)
                 && ImageExtensions.Contains(Path.GetExtension(entry.Name)));
-            return files.Count >= 3 && files.Count <= 51 && imageCount == files.Count - 1
+            return files.Count >= 3 && files.Count <= 51 && files.All(entry => entry.Length > 0)
+                && imageCount == files.Count - 1
                 && files.Any(entry => entry.FullName == "index.html");
         }
         catch (InvalidDataException)

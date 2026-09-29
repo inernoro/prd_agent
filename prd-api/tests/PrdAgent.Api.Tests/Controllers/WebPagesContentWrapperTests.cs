@@ -32,6 +32,19 @@ public class WebPagesContentWrapperTests
     }
 
     [Fact]
+    public void TextWrapper_RejectsEscapedEntryAboveShareReadBudget()
+    {
+        var input = Encoding.UTF8.GetBytes(new string('&', 4 * 1024 * 1024));
+        var method = typeof(WebPagesController).GetMethod("BuildWrapperZip",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+        var error = Assert.Throws<TargetInvocationException>(() =>
+            method!.Invoke(null, ["large.txt", input, ".txt", "large"]));
+        Assert.IsType<InvalidOperationException>(error.InnerException);
+        Assert.Contains("15MB", error.InnerException!.Message);
+    }
+
+    [Fact]
     public void ImageWrapper_UsesEncodedRelativeAssetPath()
     {
         var html = Invoke("BuildImageWrapper", "my image.png", "a<image>");
@@ -50,7 +63,24 @@ public class WebPagesContentWrapperTests
             using var stream = new MemoryStream();
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
                 foreach (var name in names)
-                    archive.CreateEntry(name);
+                {
+                    using var content = archive.CreateEntry(name).Open();
+                    content.WriteByte(1);
+                }
+            return stream.ToArray();
+        }
+        static byte[] ZipWithEmptyImage()
+        {
+            using var stream = new MemoryStream();
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var name in new[] { "index.html", "images/image-01.png" })
+                {
+                    using var content = archive.CreateEntry(name).Open();
+                    content.WriteByte(1);
+                }
+                archive.CreateEntry("images/image-02.jpg");
+            }
             return stream.ToArray();
         }
         var method = typeof(WebPagesController).GetMethod("IsGalleryZip",
@@ -60,6 +90,7 @@ public class WebPagesContentWrapperTests
             [Zip("index.html", "images/image-01.png", "images/image-02.jpg")])));
         Assert.False(Assert.IsType<bool>(method.Invoke(null,
             [Zip("index.html", "images/image-01.png", "app.js")])));
+        Assert.False(Assert.IsType<bool>(method.Invoke(null, [ZipWithEmptyImage()])));
     }
 
     private static string Invoke(string methodName, params object[] args)

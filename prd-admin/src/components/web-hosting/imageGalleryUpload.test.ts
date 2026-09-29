@@ -8,6 +8,7 @@ describe('image gallery upload', () => {
     expect(isGallerySelection([image('one.png'), image('two.webp')])).toBe(true);
     expect(isGallerySelection([image('one.png')])).toBe(false);
     expect(isGallerySelection([image('one.png'), image('two.txt')])).toBe(false);
+    expect(isGallerySelection([image('one.png'), new File([], 'empty.jpg')])).toBe(false);
   });
 
   it('escapes names and keeps images as separate gallery items', () => {
@@ -30,5 +31,12 @@ describe('image gallery upload', () => {
     expect(await zip.file('images/image-01.png')?.async('string')).toBe('first');
     expect(await zip.file('images/image-02.jpg')?.async('string')).toBe('second');
     expect(await zip.file('index.html')?.async('string')).toContain('图片画廊');
+  });
+
+  it('rejects empty image bytes before creating a hosted site', async () => {
+    await expect(createImageGalleryZip([
+      new File(['first'], 'one.png'),
+      new File([], 'empty.jpg'),
+    ])).rejects.toThrow('图片不能为空');
   });
 });
