@@ -1977,6 +1977,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       console.error(`[branch-groups] 项目 ${project.id} 的分组落盘失败（request ${requestId || '-'}）`, err);
     };
     stateService.setProjectBranchGroups(project.id, settings);
+    // 记下这次写入盖上的项目时间戳：等落盘期间别的接口（改名、改配置）也可能推进它，
+    // 回滚时只在它仍是这次写入的值时才恢复，否则会把别人的更新时间倒拨回去（Codex P2，PR #1647）
+    const ownProjectUpdatedAt = stateService.getProject(project.id)?.updatedAt;
     let flushResult: BoundedFlushResult;
     try {
       stateService.save();
@@ -1990,7 +1993,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (live) {
         if (previousGroups === undefined) delete live.branchGroups;
         else live.branchGroups = previousGroups;
-        live.updatedAt = previousProjectUpdatedAt;
+        if (live.updatedAt === ownProjectUpdatedAt) live.updatedAt = previousProjectUpdatedAt;
       }
       // 把恢复后的状态也写一次并等它落盘，覆盖掉可能稍后才落下去的那份新版本。只有这次落盘确认了，
       // 才能对用户说「已恢复」；没确认就如实说存储里是哪一版不确定（Codex P1，PR #1647）。

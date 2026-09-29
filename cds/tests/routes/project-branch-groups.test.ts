@@ -187,6 +187,25 @@ describe('项目分支自定义分组', () => {
     expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude', 'g-other']);
   });
 
+  it('落盘等待期间别的接口推进了项目时间戳：回滚只撤分组，不把那次更新的时间倒拨回去', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const concurrentAt = new Date(Date.now() + 60_000).toISOString();
+    const flushSpy = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => {
+      // 模拟同一时刻另一个接口改了项目（改名 / 改配置）并盖上自己的时间戳
+      const live = stateService.getProject('proj-a');
+      if (live) live.updatedAt = concurrentAt;
+      throw new Error('slow failure');
+    });
+    const failed = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+    flushSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(failed.status).toBe(500);
+    expect(stateService.getProject('proj-a')?.updatedAt).toBe(concurrentAt);
+    const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
+  });
+
   it('恢复写入也没落盘时，不对用户说「已恢复」', async () => {
     const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
