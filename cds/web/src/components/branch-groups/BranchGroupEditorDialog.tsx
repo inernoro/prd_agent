@@ -89,9 +89,9 @@ export function BranchGroupEditorDialog({
   const nameById = useMemo(() => new Map(branches.map((branch) => [branch.id, branch.branch])), [branches]);
   // 被别组认领走的，按认领它的分组分行：用户要知道「归了谁」才知道该挪哪边的顺序或钉入。
   const takenByGroup = useMemo(() => {
-    const map = new Map<string, { groupName: string; names: string[] }>();
+    const map = new Map<string, { groupId: string; groupName: string; names: string[] }>();
     for (const item of preview.taken) {
-      const entry = map.get(item.groupId) || { groupName: item.groupName, names: [] };
+      const entry = map.get(item.groupId) || { groupId: item.groupId, groupName: item.groupName, names: [] };
       entry.names.push(item.branch.branch);
       map.set(item.groupId, entry);
     }
@@ -248,7 +248,8 @@ export function BranchGroupEditorDialog({
                   另有 {preview.taken.length} 个规则命中、但已归了别的分组（钉入优先，其次靠上的分组先认领）：
                 </span>
                 {takenByGroup.map((entry) => (
-                  <div key={entry.groupName} className="flex flex-wrap items-center gap-1.5">
+                  // 按组 id 作 key：组名可以重复（建议里 feat/ 与 feature/ 默认都叫「新功能」，Codex P2，PR #1647）
+                  <div key={entry.groupId} className="flex flex-wrap items-center gap-1.5">
                     <span className="text-xs text-warn">归了「{entry.groupName}」：</span>
                     {entry.names.slice(0, PREVIEW_LIMIT).map((name) => (
                       <span key={name} className="inline-flex h-6 max-w-full items-center truncate rounded-[0.3125rem] bg-[hsl(var(--hairline))] px-2 font-mono text-xs line-through opacity-60">
