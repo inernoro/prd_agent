@@ -142,8 +142,8 @@ describe('页面接线', () => {
   // 页头一句话与每个组头共用 summarizeBranchStates：两处各写一份，组头的「出错」就会和页头对不上。
   const summaryShared = (source: string) => {
     expect(source.match(/function summarizeBranchStates\(/g)).toHaveLength(1);
-    expect(source).toContain('const { parts, queued, slot } = summarizeBranchStates(branches, actions);');
-    expect(source).toContain('const summary = summarizeBranchStates(list, actions);');
+    expect(source).toContain('const { parts, queued, slot } = summarizeBranchStates(branches, actions, projectProfileIds);');
+    expect(source).toContain('const summary = summarizeBranchStates(list, actions, projectProfileIds);');
   };
 
   it('页头汇总与组头汇总走同一个统计函数', () => {
@@ -154,7 +154,7 @@ describe('页面接线', () => {
     expectGuardRedOnMutation(
       summaryShared,
       page,
-      mutate(page, 'const summary = summarizeBranchStates(list, actions);', 'const summary = { parts: [] as BranchGroupSummaryPart[] };'),
+      mutate(page, 'const summary = summarizeBranchStates(list, actions, projectProfileIds);', 'const summary = { parts: [] as BranchGroupSummaryPart[] };'),
     );
   });
 

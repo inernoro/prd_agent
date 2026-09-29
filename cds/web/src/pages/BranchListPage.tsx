@@ -192,6 +192,8 @@ interface BranchSummary {
   mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
+  /** 本分支额外服务（branch-local profile）；后端列表接口随分支下发，env 已脱敏，这里只用 id */
+  extraProfiles?: Array<{ id: string }>;
   resources?: BranchResource[];
   createdAt: string;
   lastPushAt?: string;
@@ -500,6 +502,8 @@ type LoadState =
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
       buildProfiles: BuildProfileSummary[];
+      /** 构建配置这一轮真的取到了。取失败时 buildProfiles 是空数组，不能拿它去认「僵尸服务」。 */
+      buildProfilesLoaded: boolean;
       infraServices: InfraServiceSummary[];
       capacity?: BranchesResponse['capacity'];
       projectWarning?: string;
@@ -830,17 +834,37 @@ function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
 }
 
 /**
- * 分支是否带着部署失败——分支级 error，或任一服务 error。单服务部署失败时别的服务还健康，
- * 分支聚合仍是 running，只看分支状态会漏掉（Codex P2，PR #1646）。
- * 页头「出错需要处理」计数与「重新部署失败项」共用这一个判据，不许各写一份。
+ * 分支眼下「该有」的服务里出错的那些：只认项目构建配置 + 本分支额外服务里还在的 profile。
+ * 删构建配置时分支正忙会跳过清理，留下一条 error 的僵尸条目；后端汇总部署结果时同样排除它们
+ * （branches.ts「只考虑本次 deploy 实际参与的 services」），前端不能拿它判这条分支坏了
+ * （Codex P2，PR #1646）。projectProfileIds 为 null = 构建配置没取到，此时不过滤——
+ * 宁可多报一条，也不能因为配置读失败把真实失败静默藏掉。
  */
-function branchHasDeployFailure(branch: Pick<BranchSummary, 'status' | 'services'>): boolean {
-  return branch.status === 'error' || Object.values(branch.services || {}).some((service) => service.status === 'error');
+function failedLiveServices(
+  branch: Pick<BranchSummary, 'services' | 'extraProfiles'>,
+  projectProfileIds: ReadonlySet<string> | null,
+): ServiceState[] {
+  const failed = Object.values(branch.services || {}).filter((service) => service.status === 'error');
+  if (!projectProfileIds) return failed;
+  const extraIds = new Set((branch.extraProfiles || []).map((profile) => profile.id));
+  return failed.filter((service) => projectProfileIds.has(service.profileId) || extraIds.has(service.profileId));
 }
 
-function deployFailureMessage(branch?: BranchSummary): string {
+/**
+ * 分支是否带着部署失败——分支级 error，或任一「该有」的服务 error。单服务部署失败时别的服务还健康，
+ * 分支聚合仍是 running，只看分支状态会漏掉（Codex P2，PR #1646）。
+ * 页头「出错需要处理」计数、出错置顶、卡片出错呈现与「重新部署失败项」共用这一个判据，不许各写一份。
+ */
+function branchHasDeployFailure(
+  branch: Pick<BranchSummary, 'status' | 'services' | 'extraProfiles'>,
+  projectProfileIds: ReadonlySet<string> | null,
+): boolean {
+  return branch.status === 'error' || failedLiveServices(branch, projectProfileIds).length > 0;
+}
+
+function deployFailureMessage(branch: BranchSummary | undefined, projectProfileIds: ReadonlySet<string> | null): string {
   if (!branch) return '';
-  const failedServices = Object.values(branch.services || {}).filter((svc) => svc.status === 'error');
+  const failedServices = failedLiveServices(branch, projectProfileIds);
   if (branch.status !== 'error' && failedServices.length === 0) return '';
   const label = branchIssueLabel(branch);
   const serviceNames = failedServices.map((svc) => svc.profileId).join(', ');
@@ -1378,6 +1402,7 @@ function isDormantBranch(branch: BranchSummary, action?: BranchAction): boolean 
 function summarizeBranchStates(
   list: BranchSummary[],
   actions: Record<string, BranchAction | undefined>,
+  projectProfileIds: ReadonlySet<string> | null,
 ): {
   errored: number;
   building: number;
@@ -1401,7 +1426,7 @@ function summarizeBranchStates(
       prebuilt: branch.deployRuntime?.prebuilt,
     });
     if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
-    if (branchHasDeployFailure(branch)) errored += 1;
+    if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;
     else if (phase?.key === 'queued') queued += 1;
     else if (phase && isDeployPhase(phase)) building += 1;
     else if (branch.status === 'running') running += 1;
@@ -1919,6 +1944,7 @@ export function BranchListPage(): JSX.Element {
       const config = configResult.status === 'fulfilled' ? configResult.value : {};
       const infraRes = infraResult.status === 'fulfilled' ? infraResult.value : { services: [] };
       const buildProfiles = profilesResult.status === 'fulfilled' ? (profilesResult.value.profiles || []) : [];
+      const buildProfilesLoaded = profilesResult.status === 'fulfilled';
       // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
       // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
       // Bugbot review(PR #590):**不**含 mongo。banner 文案专写 "schema.sql / mysql / postgres",
@@ -1939,6 +1965,7 @@ export function BranchListPage(): JSX.Element {
             previewMode: previewModeRes.mode || 'multi',
             config,
             buildProfiles,
+            buildProfilesLoaded,
             infraServices: infraRes.services || [],
             capacity: branchesRes.capacity,
             projectWarning,
@@ -1960,6 +1987,7 @@ export function BranchListPage(): JSX.Element {
           previewMode: previewModeRes.mode || 'multi',
           config,
           buildProfiles,
+          buildProfilesLoaded,
           infraServices: infraRes.services || [],
           capacity: branchesRes.capacity,
           projectWarning: applied.state.projectWarning || projectWarning,
@@ -2359,11 +2387,17 @@ export function BranchListPage(): JSX.Element {
     () => branches.filter((branch) => selectedBranchIds.includes(branch.id)),
     [branches, selectedBranchIds],
   );
+  // 项目构建配置 id：认「僵尸服务」（配置已删、条目还留在分支上）的依据；没取到就是 null，判据不过滤。
+  const projectProfileIds = useMemo<ReadonlySet<string> | null>(() => (
+    state.status === 'ok' && state.buildProfilesLoaded
+      ? new Set(state.buildProfiles.map((profile) => profile.id))
+      : null
+  ), [state]);
   const failedDeployTargets = useMemo<FailedDeployTarget[]>(() => {
     const targets: FailedDeployTarget[] = [];
     for (const branch of branches) {
-      if (!branchHasDeployFailure(branch)) continue;
-      const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
+      if (!branchHasDeployFailure(branch, projectProfileIds)) continue;
+      const failedServices = failedLiveServices(branch, projectProfileIds);
       if (failedServices.length > 0) {
         for (const service of failedServices) {
           targets.push({
@@ -2381,7 +2415,7 @@ export function BranchListPage(): JSX.Element {
       });
     }
     return targets;
-  }, [branches]);
+  }, [branches, projectProfileIds]);
   const damagedContainerCount = useMemo(() => branches.reduce((count, branch) => (
     count + Object.values(branch.services || {}).filter((service) => (
       Boolean(service.containerName)
@@ -2424,7 +2458,7 @@ export function BranchListPage(): JSX.Element {
     // 2026-05-04 排序优先级:失败/异常 > 收藏 > 最近活跃。失败分支必须置顶,
     // 否则 14 个分支卡均权重渲染,异常分支淹没,接班场景要肉眼扫一遍。
     // 与页头「出错需要处理」、卡片出错呈现同一判据：单服务失败（分支仍 running）也要置顶（Codex P2，PR #1646）。
-    const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);
+    const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b, projectProfileIds);
     // 标签过滤:activeTagFilter 不为空时,只保留 tags 包含该标签的分支
     const filtered = activeTagFilter
       ? branches.filter((b) => (b.tags || []).includes(activeTagFilter))
@@ -2437,7 +2471,7 @@ export function BranchListPage(): JSX.Element {
       if (!!left.isFavorite !== !!right.isFavorite) return left.isFavorite ? -1 : 1;
       return score(right) - score(left);
     });
-  }, [branches, activeTagFilter]);
+  }, [branches, activeTagFilter, projectProfileIds]);
   // 所有已存在的标签集合(去重 + 排序),用于过滤 chip 自动消失等逻辑
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -2589,7 +2623,7 @@ export function BranchListPage(): JSX.Element {
     }
   }, [saveBranchGroups]);
   const branchOverview = useMemo(() => {
-    const { parts, queued, slot } = summarizeBranchStates(branches, actions);
+    const { parts, queued, slot } = summarizeBranchStates(branches, actions, projectProfileIds);
     const infraById = new Map<string, BranchResource>();
     for (const list of branchResourcesById.values()) {
       for (const resource of list) {
@@ -2598,7 +2632,7 @@ export function BranchListPage(): JSX.Element {
     }
     const sharedInfra = Array.from(infraById.values());
     return { total: branches.length, parts, queued, slot, sharedInfra };
-  }, [branches, actions, branchResourcesById]);
+  }, [branches, actions, branchResourcesById, projectProfileIds]);
   // 当前过滤的标签已被全部分支删除时,自动清除过滤
   useEffect(() => {
     if (activeTagFilter && !allTags.includes(activeTagFilter)) {
@@ -2734,7 +2768,7 @@ export function BranchListPage(): JSX.Element {
         const latest = await apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`);
         latestBranch = latest.branches.find((item) => item.id === branch.id);
       }
-      const failure = deployFailureMessage(latestBranch);
+      const failure = deployFailureMessage(latestBranch, projectProfileIds);
       if (failure) {
         setAction(key, finishAction(
           actionRef.current[key],
@@ -2771,7 +2805,7 @@ export function BranchListPage(): JSX.Element {
       ));
       setToast(message);
     }
-  }, [appendActionLog, openBranchDetail, openRunningPreview, projectId, refresh, setAction]);
+  }, [appendActionLog, openBranchDetail, openRunningPreview, projectId, projectProfileIds, refresh, setAction]);
 
   const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
@@ -3573,6 +3607,7 @@ export function BranchListPage(): JSX.Element {
           activityEvents={aiActivityByBranch.get(branch.id) || EMPTY_ACTIVITY}
           capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
           activeTagFilter={activeTagFilter}
+          projectProfileIds={projectProfileIds}
           handlers={cardHandlers}
           groupMenu={groupMenu}
           currentGroupId={groupedView ? groupedBranches.assignment.get(branch.id)?.groupId ?? null : null}
@@ -3599,7 +3634,7 @@ export function BranchListPage(): JSX.Element {
   const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[]): JSX.Element => {
     const id = group ? group.id : '__ungrouped__';
     const collapsed = collapsedGroups.has(id);
-    const summary = summarizeBranchStates(list, actions);
+    const summary = summarizeBranchStates(list, actions, projectProfileIds);
     const active = list.filter((branch) => !isDormantBranch(branch, actions[branch.id]));
     const dormant = list.filter((branch) => isDormantBranch(branch, actions[branch.id]));
     const dormantOpen = expandedDormantGroups.has(id);
@@ -5749,6 +5784,7 @@ const BranchCard = memo(function BranchCard({
   phase,
   activityEvents = EMPTY_ACTIVITY,
   activeTagFilter,
+  projectProfileIds = null,
   handlers,
   groupMenu,
   currentGroupId,
@@ -5757,6 +5793,8 @@ const BranchCard = memo(function BranchCard({
 }: {
   branch: BranchSummary;
   resources: BranchResource[];
+  /** 项目构建配置 id；认僵尸服务用，null = 没取到、不过滤 */
+  projectProfileIds?: ReadonlySet<string> | null;
   action?: BranchAction;
   capacityWarning?: string;
   activityEvents?: ActivityEvent[];
@@ -5886,7 +5924,7 @@ const BranchCard = memo(function BranchCard({
   /* 分支 running、却有服务 error，且眼下不在部署：单服务部署失败后的持久态。刷新页面后
      没有「刚才那次翻转」可看，只能从服务状态认出来；页头「出错需要处理」也是这么算的，
      两处必须一致（Codex P1，PR #1646）。卡片按出错呈现：两行原因 + 「日志 / 重新部署」。 */
-  const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch);
+  const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch, projectProfileIds);
   const showsIssue = isError || serviceFailed;
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const quickStartAvailable = canQuickStartBranch(branch);
@@ -6161,7 +6199,7 @@ const BranchCard = memo(function BranchCard({
             ? `${serviceTotal} 个服务已停止`
             : '没有运行中的服务';
   const metaBadge: { label: string; text: string; title: string } | null = failedPhase
-    ? { label: '', text: statusTimeText, title: deployFailureMessage(branch) }
+    ? { label: '', text: statusTimeText, title: deployFailureMessage(branch, projectProfileIds) }
     : finishing
     ? { label: '', text: '刚刚', title: outcome ? `部署完成于 ${new Date(outcome.at).toLocaleString('zh-CN', { hour12: false })}` : '' }
     : buildPhase
@@ -6534,7 +6572,7 @@ const BranchCard = memo(function BranchCard({
       {showsIssue && !failedPhase ? (
         <div
           className={`mx-5 mt-3 flex h-[3.375rem] min-w-0 flex-col justify-center gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
-          title={deployFailureMessage(branch)}
+          title={deployFailureMessage(branch, projectProfileIds)}
         >
           <div className="flex min-w-0 items-center gap-1.5 text-xs leading-4">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -6542,7 +6580,7 @@ const BranchCard = memo(function BranchCard({
             <span className="ml-auto shrink-0 whitespace-nowrap font-normal opacity-75">{statusTimeText}</span>
           </div>
           <div className="line-clamp-2 break-all text-[0.6875rem] font-normal leading-[0.875rem] text-foreground/85">
-            {deployFailureMessage(branch).replace(`${issueLabel}：`, '')}
+            {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
           </div>
         </div>
       ) : (
@@ -6637,14 +6675,14 @@ const BranchCard = memo(function BranchCard({
           <div
             className={`group flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${isError ? issueClass : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
             title={isError
-              ? deployFailureMessage(branch)
+              ? deployFailureMessage(branch, projectProfileIds)
               : `${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}${branch.lastStopSource === 'webhook' ? '\nGitHub 侧的 PR 合并/关闭、分支删除，或 PR 评论里的停止指令都会走这条路径' : ''}`}
           >
             {isError ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden /> : <PowerOff className="h-3.5 w-3.5 shrink-0" aria-hidden />}
             {isError ? (
               // 出错：直接展示完整失败原因（含"应用代码错误："前缀 + 服务名/就绪探测超时等），
               // 这是唯一的错误提醒——原先卡片底部单独的 BranchFailureHint 已并入此槽位（2026-06-22）。
-              <span className="min-w-0 flex-1 truncate">{deployFailureMessage(branch)}</span>
+              <span className="min-w-0 flex-1 truncate">{deployFailureMessage(branch, projectProfileIds)}</span>
             ) : (
               <>
                 <span className="shrink-0 font-medium text-foreground/80">{stopSourceLabel}</span>
@@ -6919,8 +6957,8 @@ const BranchCard = memo(function BranchCard({
       {!showsIssue || failedPhase ? (
         <div className="mx-5 mt-2.5 flex h-[1.125rem] min-w-0 items-center justify-between gap-3 text-xs leading-[1.125rem] text-muted-foreground">
           {failedPhase ? (
-            <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch)}>
-              {deployFailureMessage(branch).replace(`${issueLabel}：`, '')}
+            <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch, projectProfileIds)}>
+              {deployFailureMessage(branch, projectProfileIds).replace(`${issueLabel}：`, '')}
             </span>
           ) : finishing ? (
             /* 与页脚同样交叉换字：原来那句先留着，新的一句浮上来时它才退场，这一行任何时刻都不空。 */
