@@ -41,6 +41,29 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(source?.key).toBe('build');
   });
 
+  it('极速版与源码版混着的分支：按这次正在部署的服务选步骤，不按「任一走极速版」（Codex P2）', () => {
+    const mixed = { prebuilt: true, prebuiltProfileIds: ['web'] };
+    // 只重部署源码服务 api：本机编译，得是源码版三段
+    const sourceOnly = branchCardPhase({ status: 'running', services: { api: { status: 'building' }, web: { status: 'running' } }, ...mixed });
+    expect(sourceOnly?.key).toBe('build');
+    expect(sourceOnly?.label).toBe('构建并启动');
+    // 只重部署极速版服务 web：拉镜像起容器，四段
+    const expressOnly = branchCardPhase({ status: 'running', services: { api: { status: 'running' }, web: { status: 'building' } }, ...mixed });
+    expect(expressOnly?.key).toBe('start');
+    // 两种一起动：有本机编译就不许说成「启动容器」
+    expect(branchCardPhase({ status: 'building', services: { api: { status: 'building' }, web: { status: 'building' } }, ...mixed })?.key).toBe('build');
+    // 没有服务在动（排队 / 等镜像）时仍按 prebuilt
+    expect(branchCardPhase({ status: 'running', services: { api: { status: 'running' } }, ciImageStatus: 'waiting', ...mixed })?.key).toBe('ci-waiting');
+  });
+
+  it('后端随分支下发走极速版的 profile 列表，页面两处阶段推导都接上', () => {
+    const routes = fs.readFileSync(path.join(WEB_SRC, '../../src/routes/branches.ts'), 'utf8');
+    const page = read('pages/BranchListPage.tsx');
+    expect(routes).toContain('prebuiltProfileIds.push(profile.id);');
+    expect(routes).toMatch(/prebuilt,\n\s+prebuiltProfileIds,/);
+    expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
+  });
+
   it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
     expect(branchCardPhase({ status: 'building', buildQueue: { ahead: 5 }, ciImageStatus: 'waiting', prebuilt: true })?.key).toBe('queued');
     expect(branchCardPhase({ status: 'running', services: running, ciImageStatus: 'waiting' })?.key).toBe('ci-waiting');

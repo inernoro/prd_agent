@@ -256,6 +256,8 @@ interface BranchSummary {
     pendingPublish?: boolean;
     /** 2026-06-23 极速版：任一 profile 走预构建镜像部署模式 */
     prebuilt?: boolean;
+    /** 走极速版的 profile id；阶段条按这次正在部署的服务选步骤 */
+    prebuiltProfileIds?: string[];
     // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
     drift?: {
       expectedCount: number;
@@ -1424,6 +1426,7 @@ function summarizeBranchStates(
       buildQueue: branch.buildQueue,
       ciImageStatus: branch.ciImageStatus,
       prebuilt: branch.deployRuntime?.prebuilt,
+      prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
     });
     if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
     if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;
@@ -5860,6 +5863,7 @@ const BranchCard = memo(function BranchCard({
     buildQueue: branch.buildQueue,
     ciImageStatus: branch.ciImageStatus,
     prebuilt: branch.deployRuntime?.prebuilt,
+    prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });
   // 单服务重建（单个 profile 部署 / webhook 只重建一个服务）时分支仍是 running，

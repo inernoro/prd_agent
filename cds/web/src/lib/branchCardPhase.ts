@@ -41,6 +41,12 @@ export interface BranchCardPhaseInput {
   /** deployRuntime.prebuilt。缺省（SSE 推来的原始分支没有它）按 ciImageStatus 是否存在推断。 */
   prebuilt?: boolean;
   /**
+   * deployRuntime.prebuiltProfileIds：走极速版的 profile。给了就按「这次正在部署的服务」判步骤——
+   * 一条分支可以极速版与源码版混着，只重部署一个源码服务时 prebuilt 仍为 true，
+   * 按它会把本机编译说成「启动容器」（Codex P2，PR #1646）。没给（SSE 原始分支）退回 prebuilt。
+   */
+  prebuiltProfileIds?: string[];
+  /**
    * 前端已发起、服务端状态还没跟上的操作（点了部署，SSE 还没把 status 推成 building）。
    * 给了就在状态判不出阶段时显示单段「处理中」，而不是假装在某一段。
    */
@@ -62,6 +68,11 @@ const SOURCE_STEPS: Array<{ key: BranchCardPhaseKey; label: string }> = [
 
 function isExpress(input: BranchCardPhaseInput): boolean {
   if (input.prebuilt === false) return false;
+  const participants = deployingServiceIds(input.services);
+  if (input.prebuiltProfileIds && participants.length > 0) {
+    const prebuiltIds = new Set(input.prebuiltProfileIds);
+    return participants.every((id) => prebuiltIds.has(id));
+  }
   return input.prebuilt === true || Boolean(input.ciImageStatus);
 }
 
