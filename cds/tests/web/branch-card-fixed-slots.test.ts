@@ -275,6 +275,8 @@ describe('构建页脚：阶段条接线', () => {
   const sortAndFocusWired = (source: string) => {
     expect(source).toContain('const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);');
     expect(source).toContain('if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);');
+    // 已停止判定取未经标签筛选的全部分支：定位会先清筛选（Codex P2）
+    expect(source).toContain('dormantIdsRef.current = new Set(branches.filter((branch) => isDormantBranch(branch, actions[branch.id])).map((branch) => branch.id));');
   };
 
   it('出错置顶按服务级失败算；定位已停止分支前先展开分组', () => {
@@ -311,14 +313,15 @@ describe('构建页脚：阶段条接线', () => {
 
   // 复制集标识与端口 chip 同在一条单行槽：它占一格，端口就少露一个，否则最窄卡宽下「+N」被裁掉。
   const replicaInChipBudget = (source: string) => {
-    expect(source).toContain('const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0) - (ciFailedChip ? 1 : 0);');
+    expect(source).toContain('const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip, driftChip].filter(Boolean).length;');
+    expect(source).toContain('const appChipBudget = Math.max(0, APP_CHIP_FOLD_THRESHOLD - portRowMarkers);');
     // 「CI 失败」只是一个短标记，不再是一整串文字加两个按钮
     expect(source).not.toContain('>切回源码编译</button>');
     expect(source).toContain('? appResources.slice(0, appChipBudget)');
     expect(source).not.toContain('const shown = entries.slice(0, 4);');
   };
 
-  it('复制集标识与「CI 失败」标记都计入端口槽的折叠预算，各只占一格', () => {
+  it('端口行所有附加标记（复制集 / CI 失败 / 基础设施异常 / 配置漂移）都计入折叠预算', () => {
     replicaInChipBudget(page);
   });
 
