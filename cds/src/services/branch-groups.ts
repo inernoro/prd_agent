@@ -43,6 +43,8 @@ export function normalizeBranchGroups(input: unknown): NormalizeBranchGroupsResu
     if (!raw || typeof raw !== 'object') return fail(at, '分组必须是对象');
     const id = typeof raw.id === 'string' ? raw.id.trim() : '';
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return fail(`${at}.id`, 'id 只能用字母、数字、- 和 _，最长 64');
+    // 页面用 __ungrouped__ 表示「未归组」这个虚拟分区（区块 key、收起记忆、拖放落点），真分组不许占用（Codex P2，PR #1647）。
+    if (id === '__ungrouped__') return fail(`${at}.id`, 'id「__ungrouped__」是保留字，表示未归组分区');
     if (seenIds.has(id)) return fail(`${at}.id`, `分组 id「${id}」重复`);
     seenIds.add(id);
     const name = typeof raw.name === 'string' ? raw.name.trim() : '';

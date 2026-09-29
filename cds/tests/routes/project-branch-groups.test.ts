@@ -140,6 +140,7 @@ describe('项目分支自定义分组', () => {
       [[{ ...claudeGroup, name: '   ' }], 'groups[0].name'],
       [[claudeGroup, { ...claudeGroup, name: 'X' }], 'groups[1].id'],
       ['not-an-array', 'groups'],
+      [[{ ...claudeGroup, id: '__ungrouped__' }], 'groups[0].id'],
     ];
     for (const [groups, field] of cases) {
       const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups, baseUpdatedAt: null });
