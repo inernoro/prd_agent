@@ -91,6 +91,9 @@ describe('片花文案与画面的数量对得上（中英两份）', () => {
     const film = translations[lang].film;
     it(`${lang}：六幕字幕、八拍快切、四个部署阶段、五个工作流节点`, () => {
       expect(film.chapters).toHaveLength(6);
+      // 一帧只讲一件事：每一幕都得有自己的大字标题，缺了那一幕就只剩一个没头没尾的界面
+      for (const c of film.chapters) expect(c.headline.trim().length, c.title).toBeGreaterThan(0);
+      expect(film.models.statLabel.trim().length).toBeGreaterThan(0);
       const montage = FILM_SCENES.find((s) => s.id === 'montage');
       expect(film.montage).toHaveLength((montage?.bars ?? 0) * 4);
       expect(film.cds.stages).toHaveLength(SCORE_CUES.cdsStages.length);

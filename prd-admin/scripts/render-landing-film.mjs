@@ -84,10 +84,31 @@ async function main() {
   try {
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
     page.on('pageerror', (err) => console.error('[page]', err.message));
+    // 字体由 Node 侧用 curl 代取：受限网络里浏览器直连 Google Fonts 常被代理拒绝或证书不受信，
+    // 而 curl 走系统信任库与 HTTPS_PROXY。取不到就放行给浏览器自己试，最差退回系统字体——并打一行日志，
+    // 不静默（上一版导出的中文就是悄悄退到了文泉驿，没人发现）。
+    let fontMisses = 0;
+    await page.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, async (route) => {
+      const url = route.request().url();
+      try {
+        const body = execFileSync('curl', ['-sS', '--fail', '--max-time', '30', '-A', 'Mozilla/5.0 (X11; Linux x86_64) Chrome/140 Safari/537.36', url], { maxBuffer: 64 * 1024 * 1024 });
+        const contentType = url.includes('googleapis') ? 'text/css' : 'font/woff2';
+        await route.fulfill({ status: 200, body, headers: { 'content-type': contentType, 'access-control-allow-origin': '*' } });
+      } catch {
+        fontMisses += 1;
+        await route.continue();
+      }
+    });
     await page.goto(url, { waitUntil: 'load', timeout: 120_000 });
     await page.waitForFunction(() => Boolean(window.__film), null, { timeout: 120_000 });
     // 字体没到就开拍，前几帧会是后备字体；等到 fonts.ready（取不到网络字体也会结束，不会卡死）
+    await page.evaluate(() => window.__film.ready);
     await page.evaluate(() => document.fonts.ready);
+    const fontCheck = await page.evaluate(() => ({
+      sc: document.fonts.check('700 40px "Noto Sans SC"', '说'),
+      inter: document.fonts.check('700 40px "Inter"', 'A'),
+    }));
+    console.log(`[film] 字体：Noto Sans SC ${fontCheck.sc ? '已加载' : '未加载'}，Inter ${fontCheck.inter ? '已加载' : '未加载'}，代取失败 ${fontMisses} 次`);
 
     const { duration, poster } = await page.evaluate(() => ({ duration: window.__film.duration, poster: window.__film.poster }));
 

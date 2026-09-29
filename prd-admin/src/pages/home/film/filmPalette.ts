@@ -15,18 +15,25 @@ const [BRAND_DEEP, BRAND, BRAND_LIGHT] = HERO_GRADIENT_STOPS;
 const STEEL = '#6AB6D2';
 const PINE = '#6AD2A2';
 
+/**
+ * 视觉锚点：Apple 发布片（2026-09-28 用户指定）。以下度量按它的发布片取值，改之前先对照：
+ *   · 底：纯黑 #000，没有暗角、噪点、角标 HUD——画面上只有内容
+ *   · 字：正文白 #F5F5F7，副标题灰 #86868B；主标题 110–170px、字重 700、字距 -0.04em
+ *   · 面板：#1C1C1E / #2C2C2E 两档，描边 8% 白，圆角 28px
+ *   · 强调色只落在关键词与关键数字上，不铺满画面
+ */
 export const FILM = {
-  /** 银幕底色，与首页 bg-[#0E0C0A] 同一块黑 */
-  bg: '#0E0C0A',
-  panel: '#181512',
-  panelRaised: '#201C18',
-  panelInset: '#12100E',
+  bg: '#000000',
+  panel: '#1C1C1E',
+  panelRaised: '#2C2C2E',
+  panelInset: '#141416',
   line: 'rgba(255, 255, 255, 0.08)',
-  lineStrong: 'rgba(255, 255, 255, 0.16)',
+  lineStrong: 'rgba(255, 255, 255, 0.14)',
 
-  text: '#F4EDE6',
-  textDim: 'rgba(244, 237, 230, 0.64)',
-  textFaint: 'rgba(244, 237, 230, 0.36)',
+  text: '#F5F5F7',
+  gray: '#86868B',
+  textDim: '#A1A1A6',
+  textFaint: '#6E6E73',
 
   clay: BRAND,
   clayDeep: BRAND_DEEP,
@@ -54,6 +61,8 @@ export const FILM = {
   glass: 'rgba(14, 12, 10, 0.72)',
   /** 快切底色上的斜纹（onBrand 是 CSS 变量，不能再拼透明度后缀，所以单列） */
   stripe: 'rgba(26, 18, 13, 0.09)',
+  /** 标志亮相时扫过的那道高光 */
+  sheen: 'linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.55) 50%, transparent 65%)',
 } as const;
 
 /** 四张生成海报的画法（纯 CSS，无图片资源）。 */
@@ -93,3 +102,11 @@ export const MONTAGE_COLORS = [BRAND, STEEL, PINE, BRAND_LIGHT, BRAND_DEEP, '#5A
 
 /** 知识星系、百宝箱等处按序号取的点缀色。 */
 export const ACCENT_CYCLE = [BRAND, STEEL, PINE, BRAND_LIGHT] as const;
+
+/** 大字的渐变填充（快切每拍一支、关键数字与收口标语用）。每支都从品牌色走向近白，保证黑底上够亮。 */
+export const WORD_GRADIENTS = [
+  HERO_GRADIENT,
+  `linear-gradient(135deg, ${STEEL} 0%, #EAF6FA 100%)`,
+  `linear-gradient(135deg, ${PINE} 0%, #E8FBF2 100%)`,
+  `linear-gradient(135deg, ${BRAND_LIGHT} 0%, #FFF1E2 100%)`,
+] as const;

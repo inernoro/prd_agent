@@ -267,7 +267,7 @@ export function FilmSection() {
               onClick={toggle}
             >
               <div style={{ position: 'absolute', left: 0, top: 0, width: STAGE_W, height: STAGE_H, transform: `scale(${scale})`, transformOrigin: '0 0' }}>
-                <FilmStage t={shownTime} copy={film} roster={roster} hud={started} />
+                <FilmStage t={shownTime} copy={film} roster={roster} />
               </div>
 
               {/* 海报 / 暂停 / 播完：中央大按钮 */}

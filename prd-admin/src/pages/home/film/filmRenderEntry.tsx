@@ -22,6 +22,7 @@ import { FILM_DURATION, POSTER_TIME } from './filmTimeline';
 declare global {
   interface Window {
     __film?: {
+      ready: Promise<unknown>;
       duration: number;
       poster: number;
       seek: (t: number) => Promise<void>;
@@ -77,14 +78,30 @@ function wavBase64(buf: AudioBuffer): string {
   return btoa(bin);
 }
 
+/**
+ * 开拍前把片子里会出现的每一个字的字体分片都拉下来。
+ * 只靠逐帧等 fonts.ready 不够：快切那一拍的字第一次出现就只有 0.5 秒，分片还没到，
+ * 渐变填充的大字会被画成一个实心方块（缺字框被 background-clip 填满了颜色）。
+ */
+async function preloadGlyphs() {
+  const text = JSON.stringify(tr.film) + roster.map((r) => r.name + r.desc).join('');
+  const families = ['"Noto Sans SC"', '"Inter"'];
+  const weights = [500, 600, 700, 800];
+  await Promise.all(families.flatMap((f) => weights.map((w) => document.fonts.load(`${w} 64px ${f}`, text).catch(() => []))));
+}
+
 window.__film = {
+  ready: preloadGlyphs(),
   duration: FILM_DURATION,
   poster: POSTER_TIME,
-  seek: (t) =>
-    new Promise((resolve) => {
-      draw(t);
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    }),
+  // 中文字体按字符区间分片按需下载：这一帧用到了新字，得等那一片到齐再截，否则会闪一帧后备字体
+  seek: async (t) => {
+    draw(t);
+    // 先强制排版一次：字体分片是排版时才发起下载的，不排版 fonts.ready 会立刻返回
+    void document.body.offsetHeight;
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  },
   renderAudio: async () => wavBase64(await renderScoreOffline(48000)),
 };
 draw(0);

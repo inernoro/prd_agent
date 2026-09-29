@@ -355,12 +355,12 @@ export interface FilmTranslation {
   /** 开场两行 */
   open: [string, string];
   /** 下三分之一字幕：六幕各一条 */
-  chapters: Array<{ title: string; line: string }>;
+  chapters: Array<{ title: string; headline: string; line: string }>;
   visual: { prompt: string; send: string; tileDone: string; tileWorking: string };
   writing: { docTitle: string; paragraphs: string[]; nodes: string[] };
   toolbox: { unit: string; search: string };
   workflow: { title: string; schedule: string; nodes: string[]; done: string };
-  models: { poolName: string; rateLimited: string; switched: string; failures: string; rows: string[] };
+  models: { poolName: string; rateLimited: string; switched: string; failures: string; statLabel: string; rows: string[] };
   cds: { command: string; branch: string; stages: string[]; ready: string; slogan: string };
   /** 快切：每拍一个字 */
   montage: string[];
@@ -994,12 +994,12 @@ const zh: TranslationShape = {
     },
     open: ['说一句话。', '剩下的，交给 Agent。'],
     chapters: [
-      { title: '视觉创作', line: '一句话出图，落在画布上，不在聊天记录里' },
-      { title: '文学与知识库', line: '边写边配图，读过的东西自己连成一张网' },
-      { title: '百宝箱', line: '三十几个 Agent，摆在同一个台面上' },
-      { title: '工作流', line: '把一串活儿排好，它自己跑完' },
-      { title: '模型池', line: '一个模型倒下，下一个自己顶上' },
-      { title: 'CDS', line: '分支即环境，push 是唯一那一步' },
+      { title: '视觉创作', headline: '一句话，一张图。', line: '产物落在画布上，不在聊天记录里' },
+      { title: '文学与知识库', headline: '边写，边配图。', line: '读过的东西，自己连成一张网' },
+      { title: '百宝箱', headline: '三十几个 Agent。', line: '摆在同一个台面上' },
+      { title: '工作流', headline: '排好了，它自己跑。', line: '一串活儿，不用人盯' },
+      { title: '模型池', headline: '一个倒下，下一个顶上。', line: '限流、超时、宕机，用户都感觉不到' },
+      { title: 'CDS', headline: 'push，就上线。', line: '分支即环境，push 是唯一那一步' },
     ],
     visual: {
       prompt: '为新品发布会做一张海报：暖色，胶片感',
@@ -1028,6 +1028,7 @@ const zh: TranslationShape = {
       rateLimited: '429 限流',
       switched: '已自动切换',
       failures: '用户侧失败 0 次',
+      statLabel: '次用户侧失败',
       rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
     },
     cds: {
@@ -1623,12 +1624,12 @@ const en: TranslationShape = {
     },
     open: ['Say one sentence.', 'Agents do the rest.'],
     chapters: [
-      { title: 'Visual', line: 'One sentence, one image — on a canvas, not in a chat log' },
-      { title: 'Writing & Knowledge', line: 'Illustrated as you write; what you read links itself up' },
-      { title: 'Toolbox', line: 'Thirty-odd agents on one desk' },
-      { title: 'Workflows', line: 'Line up a chain of work; it runs itself' },
-      { title: 'Model pool', line: 'One model falls over, the next one steps in' },
-      { title: 'CDS', line: 'A branch is an environment; push is the only step' },
+      { title: 'Visual', headline: 'One sentence. One image.', line: 'It lands on a canvas, not in a chat log' },
+      { title: 'Writing & Knowledge', headline: 'Write. It illustrates.', line: 'What you read links itself up' },
+      { title: 'Toolbox', headline: 'Thirty-odd agents.', line: 'All on one desk' },
+      { title: 'Workflows', headline: 'Line it up. It runs.', line: 'A chain of work nobody has to watch' },
+      { title: 'Model pool', headline: 'One falls. The next steps in.', line: 'Rate limits, timeouts, outages — users never notice' },
+      { title: 'CDS', headline: 'Push. It’s live.', line: 'A branch is an environment; push is the only step' },
     ],
     visual: {
       prompt: 'A launch-event poster: warm tones, film grain',
@@ -1657,6 +1658,7 @@ const en: TranslationShape = {
       rateLimited: '429 rate limited',
       switched: 'Switched over',
       failures: '0 user-facing failures',
+      statLabel: 'user-facing failures',
       rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
     },
     cds: {
