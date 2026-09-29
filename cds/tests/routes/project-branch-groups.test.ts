@@ -63,10 +63,13 @@ describe('项目分支自定义分组', () => {
   let currentUser: { githubLogin?: string; username?: string } | null = null;
   /** 模拟服务端中间件按 Agent Key（含 ai-access-key / Bearer 写法）盖上的 req.cdsProjectKey */
   let currentProjectKey: { projectId: string; keyId: string } | null = null;
+  /** 模拟全局 Agent Key（cdsg_）鉴权通过后盖上的 req.cdsAccess */
+  let currentAccess: { keyId: string; access: unknown } | null = null;
 
   beforeEach(() => {
     currentUser = null;
     currentProjectKey = null;
+    currentAccess = null;
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-branch-groups-test-'));
     stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
     stateService.load();
@@ -86,6 +89,7 @@ describe('项目分支自定义分组', () => {
     app.use((req, _res, next) => {
       if (currentUser) (req as unknown as { cdsUser?: unknown }).cdsUser = currentUser;
       if (currentProjectKey) (req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey = currentProjectKey;
+      if (currentAccess) (req as unknown as { cdsAccess?: unknown }).cdsAccess = currentAccess;
       next();
     });
     app.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
@@ -119,6 +123,13 @@ describe('项目分支自定义分组', () => {
 
   it('带项目级 Agent Key 的保存记成 Agent，哪怕请求头不是 x-ai-access-key（Bearer / ai-access-key 写法）', async () => {
     currentProjectKey = { projectId: 'proj-a', keyId: 'key-1' };
+    const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(res.status).toBe(200);
+    expect(res.body.updatedBy).toBe('ai');
+  });
+
+  it('带全局 Agent Key（cdsg_）的保存同样记成 Agent', async () => {
+    currentAccess = { keyId: 'g-key-1', access: { projects: 'all' } };
     const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
     expect(res.status).toBe(200);
     expect(res.body.updatedBy).toBe('ai');

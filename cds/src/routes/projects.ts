@@ -1935,10 +1935,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     // 修改人：Agent / 系统调用记执行者（ai:<name> / system:<x>）；真人优先记登录名，编辑器里好认。
-    // 带项目级 Agent Key 的请求一律算 Agent：通用的 actor 解析只认 x-ai-access-key / x-cds-ai-token 两个头，
-    // 而鉴权也接受 ai-access-key 与 Bearer，那两种写法会被记成真人（Codex P2，PR #1647）。
+    // 按服务端鉴权盖下的凭据标记判定 Agent，而不是再去认请求头的各种写法：CDS 签发的两种 Agent Key
+    // （项目级 cdsp_ → cdsProjectKey，全局 cdsg_ → cdsAccess）无论用哪种头传来，鉴权通过后都会盖上。
+    // 通用 actor 解析只认 x-ai-access-key / x-cds-ai-token 两个头，其余写法会被记成真人（Codex P2 两条，PR #1647）；
+    // 让通用解析认全所有凭据写法是全局改动，记在 debt.cds.md。
     const resolvedActor = resolveActorFromRequest(req as any);
-    const viaAgentKey = Boolean((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey);
+    const authStamps = req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown };
+    const viaAgentKey = Boolean(authStamps.cdsProjectKey || authStamps.cdsAccess);
     const actor = resolvedActor === 'user' && viaAgentKey ? 'ai' : resolvedActor;
     // CdsUser 上是 githubLogin（本地账号与 username 同值）/ username，没有 login 字段（Codex P2，PR #1647）。
     const cdsUser = (req as unknown as { cdsUser?: { githubLogin?: string; username?: string } }).cdsUser;
