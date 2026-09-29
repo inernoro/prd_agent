@@ -75,6 +75,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
+    // 分支 idle 但有服务在部署（从停止状态单独部署一个服务）：不收进「未运行」分组
+    expect(page).toContain('  if (deployingServiceIds(branch.services).length > 0) return false;');
     // 信息槽的模式文案跟阶段条同一个判断：阶段是源码三段时不许还说「极速版」
     expect(page).toContain("const modeText = phaseIsSourceSequence && deployModeLabel(branch) === '极速版' ? '源码编译' : deployModeLabel(branch);");
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);

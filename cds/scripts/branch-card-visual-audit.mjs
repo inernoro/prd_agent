@@ -506,6 +506,22 @@ async function main() {
         });
         check(hiddenBefore && focused.mounted && focused.inView, `收起的「已停止」分组里定位卡片：展开并滚进视野（收起时${hiddenBefore ? '未渲染' : '已渲染'}，定位后${focused.mounted ? '已渲染' : '未渲染'}、${focused.inView ? '在视野内' : '不在视野内'}）`);
         await page.setViewportSize({ width: WIDTH, height: 1180 });
+
+        // 从停止状态单独部署一个服务：分支仍是 idle、只有 api 在 building。它在部署，不许留在收起的「未运行」分组里被藏起来（Codex P2）。
+        await page.click('button[title="清除过滤"]').catch(() => undefined);
+        await page.waitForTimeout(300);
+        if ((await toggle.getAttribute('aria-expanded')) === 'true') await toggle.click();
+        await page.waitForTimeout(300);
+        const relaxedHidden = (await page.$('[data-branch-card-id="b-relaxed"]')) === null;
+        const relaxedDeploying = { ...branches.find((b) => b.id === 'b-relaxed'), services: services(24300, 'stopped', { api: { status: 'building' } }) };
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), relaxedDeploying);
+        await page.waitForTimeout(700);
+        const relaxedShown = await page.evaluate(() => {
+          const el = document.querySelector('[data-branch-card-id="b-relaxed"]');
+          return { mounted: Boolean(el), inDormant: Boolean(el?.closest('section[aria-label="未运行的分支"]')) };
+        });
+        check(relaxedHidden && relaxedShown.mounted && !relaxedShown.inDormant,
+          `停止的分支单独部署一个服务时离开收起的「未运行」分组（部署前${relaxedHidden ? '被收起' : '可见'}，部署中${relaxedShown.mounted ? '已渲染' : '未渲染'}${relaxedShown.inDormant ? '、仍在未运行分组' : ''}）`);
       }
       await context.close();
     }
