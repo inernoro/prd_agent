@@ -24,7 +24,7 @@
  * doc/plan.cds.multi-project-phases.md P4.
  */
 
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
@@ -557,7 +557,10 @@ interface ProjectSummary extends Project, ProjectStats {
 }
 
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
-  return { ...project, ...stats, resourceUsage: usage ?? null };
+  // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
+  // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
+  const { branchGroups: _branchGroups, ...rest } = project;
+  return { ...rest, ...stats, resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
@@ -615,6 +618,9 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
     defaultEnv: maskEnvMap(summary.defaultEnv),
   };
 }
+
+/** 分组保存请求体上限：最大合法配置约 0.8MB（30 组 × 200 个钉入 × 20 条规则），留出余量。 */
+export const BRANCH_GROUPS_BODY_LIMIT = '2mb';
 
 /** 分组保存等落盘的上限：与分支状态落盘同一个环境变量口径（CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS）。 */
 function branchGroupsFlushTimeoutMs(): number {
@@ -1870,7 +1876,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 同一项目的分组写入排成一条链：落盘要 await，期间第二个请求若先读到还没确认落盘的新版本、
   // 而前一个随后失败回滚，就会把第二个的结果一起冲掉（Codex P1，PR #1647）。
   const branchGroupWriteChains = new Map<string, Promise<void>>();
-  router.put('/projects/:id/branch-groups', (req, res) => {
+  // 整份分组每次都整体重发：上限内的合法配置（30 组 × 200 钉入 × 20 条规则）可达数百 KB，
+  // 超过全局 100kb 的 JSON 上限会在进路由前就被 413，之后这个项目再也改不了分组（Codex P2，PR #1647）。
+  // 全局解析器对这条路径放行（server.ts），这里用自带的解析器，上限按最大合法配置留足余量。
+  const branchGroupsJsonParser = express.json({ limit: BRANCH_GROUPS_BODY_LIMIT });
+  router.put('/projects/:id/branch-groups', branchGroupsJsonParser, (req, res) => {
     // 按解析后的项目 id 分队：同一项目用 id 或 slug（大小写不同）访问时必须进同一条队（Codex P2，PR #1647）
     const key = stateService.getProject(req.params.id)?.id ?? String(req.params.id);
     // 排队期间客户端已断开（放弃或重试）：轮到它时直接跳过，不让死请求占着队列等满一轮落盘超时（Codex P2，PR #1647）

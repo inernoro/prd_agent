@@ -1982,6 +1982,9 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
+    //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
+    //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
+    if (req.method === 'PUT' && /^\/api\/projects\/[^/]+\/branch-groups$/.test(req.path)) return next();
     //   - OpenDesign 运行时的模型代理：这条根本不是 CDS 自己的接口，是**转发**给 MAP 的
     //     请求体，CDS 没有任何理由去解析它。而它随对话增长——2026-09-20 实测第 14 次模型
     //     调用时撞上 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），

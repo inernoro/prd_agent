@@ -255,6 +255,45 @@ describe('项目分支自定义分组', () => {
     expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
   });
 
+  it('大体量的合法分组（数百 KB）能存进去：路由自带解析器，不受全局 100kb 上限限制', async () => {
+    // 与生产同形：全局解析器对这条路径放行，由路由自带的解析器接手
+    const bare = express();
+    bare.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
+    const bareServer = bare.listen(0);
+    try {
+      const pins = Array.from({ length: 200 }, (_, i) => `branch-${'x'.repeat(40)}-${i}`);
+      const groups = Array.from({ length: 12 }, (_, g) => ({
+        id: `g-big-${g}`,
+        name: `大组 ${g}`,
+        color: 'blue',
+        rules: Array.from({ length: 20 }, (_, r) => ({ kind: 'contains', value: `${'y'.repeat(80)}-${g}-${r}` })),
+        pinnedBranchIds: pins.map((id) => `${id}-${g}`),
+      }));
+      const body = { groups, baseUpdatedAt: null };
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(150 * 1024);
+      const res = await request(bareServer, 'PUT', '/api/projects/proj-a/branch-groups', body);
+      expect(res.status).toBe(200);
+      expect(res.body.groups).toHaveLength(12);
+    } finally {
+      await new Promise<void>((resolve) => bareServer.close(() => resolve()));
+    }
+  });
+
+  it('项目列表不带分组数据（分组只走专门的接口）', async () => {
+    await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const list = await request(server, 'GET', '/api/projects');
+    expect(list.status).toBe(200);
+    const projects = (list.body.projects || list.body) as Array<{ id: string; branchGroups?: unknown }>;
+    const mine = projects.find((p) => p.id === 'proj-a');
+    expect(mine).toBeTruthy();
+    expect(mine?.branchGroups).toBeUndefined();
+  });
+
+  it('全局 JSON 解析器对分组保存放行，由路由自带的大上限解析器接手', () => {
+    const serverSource = fs.readFileSync(path.join(__dirname, '../../src/server.ts'), 'utf-8');
+    expect(serverSource).toContain("if (req.method === 'PUT' && /^\\/api\\/projects\\/[^/]+\\/branch-groups$/.test(req.path)) return next();");
+  });
+
   it('没配过时返回空列表与 null 版本，不编默认分组', async () => {
     const res = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
     expect(res.status).toBe(200);
