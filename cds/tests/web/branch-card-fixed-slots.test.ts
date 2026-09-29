@@ -127,6 +127,24 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(wired, page, mutate(page, 'data-deploy-phase={deployPhaseAttr}', ''));
   });
 
+  // 「处理中」是任意前端操作（打开预览 / 拉取代码 / 收藏……）的占位，结束不等于部署完成。
+  // 收尾只能由真实部署阶段触发，否则一次「打开预览」就会误播「部署成功」（Codex P2）。
+  const finishOnlyFromRealDeploy = (source: string) => {
+    expect(source).toContain("if (buildPhase && buildClock && buildPhase.key !== 'working') {");
+  };
+
+  it('收尾只由真实部署阶段触发，「处理中」不记为一次构建', () => {
+    finishOnlyFromRealDeploy(page);
+  });
+
+  it('红用例：「处理中」也记为构建，守卫变红', () => {
+    expectGuardRedOnMutation(
+      finishOnlyFromRealDeploy,
+      page,
+      mutate(page, "if (buildPhase && buildClock && buildPhase.key !== 'working') {", 'if (buildPhase && buildClock) {'),
+    );
+  });
+
   it('旧的整条背景填充已退场，不留两套进度表达', () => {
     expect(page).not.toContain('cds-footer-progress-fill');
     expect(css).not.toContain('cds-footer-progress-fill');

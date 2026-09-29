@@ -5440,7 +5440,10 @@ const BranchCard = memo(function BranchCard({
   const [outcomeSeen, setOutcomeSeen] = useState(false);
   const inBuild = Boolean(buildPhase);
   useEffect(() => {
-    if (buildPhase && buildClock) {
+    // 只记真实的部署阶段。「处理中」（working）是打开预览、拉取代码、收藏等任意前端操作
+    // 在服务端状态跟上之前的占位，它结束不代表一次部署完成——记下来就会误播「部署成功」
+    // （Codex P2，PR #1646）。真正的部署一定会经过排队 / 等镜像 / 构建 / 就绪其中一段。
+    if (buildPhase && buildClock && buildPhase.key !== 'working') {
       const prevElapsed = lastBuildRef.current?.elapsedMs || 0;
       lastBuildRef.current = {
         phase: buildPhase,
