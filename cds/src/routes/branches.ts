@@ -14423,6 +14423,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 本轮（单服务）构建起点锚点 —— 与多服务/远端执行器路径一致，供预览等待页
       // ETA 计"已等待"，避免回退到上一轮历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
       entry.lastDeployStartedAt = new Date().toISOString();
+      // 排队时长按轮重置，与整分支部署一致：分支卡按「开始至今 − 排队时长」计净耗时，
+      // 不清的话会减掉上一次部署的排队时长，计时停在 00:00（Codex P2，PR #1646）
+      entry.lastDeployQueueWaitMs = 0;
       stateService.save();
 
       // Pull latest code
