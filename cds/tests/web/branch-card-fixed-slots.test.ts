@@ -73,8 +73,14 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
-    // 单服务部署的每次状态翻转都推事件：building / starting / 结束 / 出错
-    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(4);
+    // 单服务部署的每次状态翻转都推事件：building / starting / 结束（成功、超时、出错都在聚合状态重算后推一次）
+    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(3);
+    // 结束那一条必须排在分支聚合状态重算之后，否则从停止状态起服务时卡片拿到的还是 idle
+    const finalize = routes.indexOf("entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';");
+    const lastEmit = routes.lastIndexOf('emitServiceTransition();');
+    expect(finalize).toBeGreaterThan(0);
+    expect(lastEmit).toBeGreaterThan(finalize);
+    expect(lastEmit - finalize).toBeLessThan(400);
   });
 
   it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
