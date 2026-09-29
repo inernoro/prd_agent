@@ -29,13 +29,25 @@ public sealed class VisualModelPolicyTests
     }
 
     [Fact]
-    public void UnavailableDefaultRemainsVisible_WithoutSubstitution()
+    public void UnavailableDefaultRemainsVisible_ButLosesExecutableDefaultFlag()
     {
         var result = VisualModelPolicyService.Project(Policy(), [Model("image2")]);
-        var unavailable = Assert.Single(result, x => x.IsDefault);
+        var unavailable = Assert.Single(result, x => x.Code == "image1");
         Assert.Equal("image1", unavailable.Code);
         Assert.Equal("GPT Image 1", unavailable.Name);
+        Assert.False(unavailable.IsDefault);
         Assert.Empty(unavailable.Models);
+    }
+
+    [Fact]
+    public void RuntimePolicyIntersectsGatewayCatalog_WithoutInventingFallback()
+    {
+        var result = VisualModelPolicyService.ReconcileForRuntime(Policy(), [Model("image2")]);
+
+        Assert.Equal(["image2"], result.Models.Select(x => x.ModelId));
+        Assert.Equal(string.Empty, result.DefaultModelId);
+        Assert.Null(result.Select(null));
+        Assert.Equal("image2", result.Select("image2"));
     }
 
     [Theory]
