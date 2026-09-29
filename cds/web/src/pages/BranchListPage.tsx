@@ -2266,7 +2266,8 @@ export function BranchListPage(): JSX.Element {
     );
     // 2026-05-04 排序优先级:失败/异常 > 收藏 > 最近活跃。失败分支必须置顶,
     // 否则 14 个分支卡均权重渲染,异常分支淹没,接班场景要肉眼扫一遍。
-    const isErrored = (b: BranchSummary): boolean => b.status === 'error';
+    // 与页头「出错需要处理」、卡片出错呈现同一判据：单服务失败（分支仍 running）也要置顶（Codex P2，PR #1646）。
+    const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);
     // 标签过滤:activeTagFilter 不为空时,只保留 tags 包含该标签的分支
     const filtered = activeTagFilter
       ? branches.filter((b) => (b.tags || []).includes(activeTagFilter))
@@ -2325,6 +2326,10 @@ export function BranchListPage(): JSX.Element {
     () => sortedBranches.filter((branch) => isDormantBranch(branch, actions[branch.id])),
     [sortedBranches, actions],
   );
+  // 定位卡片（搜索下拉 / cds:focus-branch）要知道目标是不是在「已停止」分组里：
+  // 分组收起时那张卡根本没渲染，得先展开（Codex P2，PR #1646）。
+  const dormantIdsRef = useRef<Set<string>>(new Set());
+  dormantIdsRef.current = new Set(dormantBranches.map((branch) => branch.id));
   const branchOverview = useMemo(() => {
     let errored = 0;
     let building = 0;
@@ -3084,16 +3089,21 @@ export function BranchListPage(): JSX.Element {
   // 搜索命中后将卡片设为稳定选中态并滚动到视口中部。选中态保留到下一次
   // 选择其它分支,比临时动画更符合"这是你刚选中的面板"的用户心智。
   const focusBranchCard = useCallback((branchId: string): void => {
+    // 只临时展开、不写回 localStorage：用户收起分组的偏好不因一次定位被改掉。
+    if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);
     setHighlightedBranchId(branchId);
     if (highlightPulseTimerRef.current) {
       window.clearTimeout(highlightPulseTimerRef.current);
       highlightPulseTimerRef.current = null;
     }
     setHighlightPulseBranchId(null);
+    const findCard = () => document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
     requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLElement>(`[data-branch-card-id="${CSS.escape(branchId)}"]`);
+      const el = findCard();
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       requestAnimationFrame(() => {
+        // 刚展开「已停止」分组时，卡片要到这一帧才挂上。
+        if (!el) findCard()?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         setHighlightPulseBranchId(branchId);
         highlightPulseTimerRef.current = window.setTimeout(() => {
           setHighlightPulseBranchId((current) => (current === branchId ? null : current));

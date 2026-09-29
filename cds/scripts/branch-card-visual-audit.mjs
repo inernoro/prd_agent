@@ -459,6 +459,24 @@ async function main() {
         await page.waitForTimeout(900);
         const afterRestart = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
         check(afterRestart !== 'done', `重启结束不播「部署成功」（实际 data-deploy-phase=${afterRestart}）`);
+
+        // 「已停止」分组收起时定位其中一张卡（搜索下拉 / cds:focus-branch）：要先展开分组，卡片真的滚进视野（Codex P2）。
+        await page.evaluate(() => window.scrollTo(0, 0));
+        const toggle = page.locator('section[aria-label="未运行的分支"] > div > button[aria-expanded]').first();
+        if ((await toggle.getAttribute('aria-expanded')) === 'true') await toggle.click();
+        await page.waitForTimeout(300);
+        const hiddenBefore = (await page.$('[data-branch-card-id="b-main"]')) === null;
+        await page.setViewportSize({ width: WIDTH, height: 500 });
+        await page.evaluate((pid) => window.dispatchEvent(new CustomEvent('cds:focus-branch', { detail: { branchId: 'b-main', projectId: pid } })), PROJECT_ID);
+        await page.waitForTimeout(1200);
+        const focused = await page.evaluate(() => {
+          const el = document.querySelector('[data-branch-card-id="b-main"]');
+          if (!el) return { mounted: false, inView: false };
+          const r = el.getBoundingClientRect();
+          return { mounted: true, inView: r.bottom > 0 && r.top < window.innerHeight };
+        });
+        check(hiddenBefore && focused.mounted && focused.inView, `收起的「已停止」分组里定位卡片：展开并滚进视野（收起时${hiddenBefore ? '未渲染' : '已渲染'}，定位后${focused.mounted ? '已渲染' : '未渲染'}、${focused.inView ? '在视野内' : '不在视野内'}）`);
+        await page.setViewportSize({ width: WIDTH, height: 1180 });
       }
       await context.close();
     }

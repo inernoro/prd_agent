@@ -271,6 +271,24 @@ describe('构建页脚：阶段条接线', () => {
     expect(source).toContain(') : showsIssue || failedPhase ? (');
   };
 
+  // 列表排序的「出错置顶」也走同一判据；定位收起分组里的卡片前先展开分组。
+  const sortAndFocusWired = (source: string) => {
+    expect(source).toContain('const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);');
+    expect(source).toContain('if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);');
+  };
+
+  it('出错置顶按服务级失败算；定位已停止分支前先展开分组', () => {
+    sortAndFocusWired(page);
+  });
+
+  it('红用例：排序退回只看分支级 error，守卫变红', () => {
+    expectGuardRedOnMutation(
+      sortAndFocusWired,
+      page,
+      mutate(page, 'const isErrored = (b: BranchSummary): boolean => branchHasDeployFailure(b);', "const isErrored = (b: BranchSummary): boolean => b.status === 'error';"),
+    );
+  });
+
   it('刷新后单服务失败的卡片仍按出错呈现（与页头计数同一判据）', () => {
     cardShowsPersistedServiceFailure(page);
   });
