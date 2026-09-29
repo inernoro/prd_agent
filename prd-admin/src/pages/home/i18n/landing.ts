@@ -351,6 +351,10 @@ export interface FilmTranslation {
     soundOn: string;
     /** 浏览器拿不到音频能力时的如实说明 */
     noAudio: string;
+    /** 成品配乐取不回 / 解不开、退回合成配乐时的如实说明 */
+    trackFallback: string;
+    /** 点了播放、配乐还在解码 */
+    loading: string;
   };
   /** 开场两行 */
   open: [string, string];
@@ -995,6 +999,8 @@ const zh: TranslationShape = {
       fullscreen: '全屏',
       soundOn: '有声',
       noAudio: '当前浏览器不支持网页音频，只播画面',
+      trackFallback: '配乐没加载出来，正在放备用的合成配乐',
+      loading: '配乐加载中',
     },
     open: ['说一句话。', '剩下的，交给 Agent。'],
     chapters: [
@@ -1633,6 +1639,8 @@ const en: TranslationShape = {
       fullscreen: 'Fullscreen',
       soundOn: 'Sound',
       noAudio: 'This browser has no Web Audio, playing picture only',
+      trackFallback: 'Soundtrack failed to load, playing the synthesized backup',
+      loading: 'Loading soundtrack',
     },
     open: ['Say one sentence.', 'Agents do the rest.'],
     chapters: [

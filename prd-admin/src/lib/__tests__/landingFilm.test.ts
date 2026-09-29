@@ -1,8 +1,13 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { translations } from '@/pages/home/i18n/landing';
 import { SCORE_CUES, buildScore } from '@/pages/home/film/filmScore';
-import { BAR, BEAT, FILM_DURATION, FILM_SCENES, FINALE_CTA_AT, POSTER_TIME, TOTAL_BARS, sceneAt, sceneStart } from '@/pages/home/film/filmTimeline';
+import scoreEdit from '@/pages/home/film/scoreEdit.json';
+import { FILM_TRACK_URL } from '@/pages/home/film/filmTrack';
+import { BAR, BEAT, BPM, FILM_DURATION, FILM_SCENES, FINALE_CTA_AT, POSTER_TIME, TOTAL_BARS, sceneAt, sceneStart } from '@/pages/home/film/filmTimeline';
 
 /**
  * 首页片花的契约守卫。
@@ -14,6 +19,8 @@ import { BAR, BEAT, FILM_DURATION, FILM_SCENES, FINALE_CTA_AT, POSTER_TIME, TOTA
  */
 
 const EPS = 1e-6;
+/** x 离最近的整数有多远——拍速不是整数时，`x % 1` 在 0.9999999 这种位置会误判 */
+const offGrid = (x: number) => Math.abs(x - Math.round(x));
 const at = (t: number, inst: string) => buildScore().filter((e) => Math.abs(e.t - t) < 1e-3 && e.inst === inst);
 
 describe('片花时间轴', () => {
@@ -23,7 +30,7 @@ describe('片花时间轴', () => {
       expect(FILM_SCENES[i].from).toBeCloseTo(FILM_SCENES[i - 1].to, 9);
     }
     for (const s of FILM_SCENES) {
-      expect((s.from / BAR) % 1).toBeLessThan(EPS);
+      expect(offGrid(s.from / BAR)).toBeLessThan(EPS);
     }
     expect(FILM_DURATION).toBeCloseTo(TOTAL_BARS * BAR, 9);
     expect(sceneAt(FILM_DURATION - 0.01).id).toBe('finale');
@@ -74,7 +81,7 @@ describe('片花配乐与画面同一张表', () => {
 
   it('底鼓全部落在拍点上（十六分音符网格之外的鼓会让切镜看着「拖」）', () => {
     for (const e of score.filter((x) => x.inst === 'kick')) {
-      expect(((e.t / BEAT) * 2) % 1, `kick @ ${e.t}`).toBeLessThan(1e-3);
+      expect(offGrid((e.t / BEAT) * 2), `kick @ ${e.t}`).toBeLessThan(1e-3);
     }
   });
 
@@ -87,7 +94,7 @@ describe('片花配乐与画面同一张表', () => {
   });
 
   it('按发送键落在强拍上，且在视觉创作那一幕之内', () => {
-    expect((SCORE_CUES.sendPress / BAR) % 1).toBeLessThan(EPS);
+    expect(offGrid(SCORE_CUES.sendPress / BAR)).toBeLessThan(EPS);
     expect(sceneAt(SCORE_CUES.sendPress).id).toBe('visual');
     expect(sceneAt(SCORE_CUES.failover).id).toBe('models');
     for (const t of SCORE_CUES.cdsStages) expect(sceneAt(t).id).toBe('cds');
@@ -97,6 +104,39 @@ describe('片花配乐与画面同一张表', () => {
     const cds = sceneStart('cds');
     const kicks = score.filter((e) => e.inst === 'kick' && e.t >= cds - BEAT * 2 && e.t < cds);
     expect(kicks).toHaveLength(0);
+  });
+});
+
+describe('成品配乐的剪辑表与画面同一张表', () => {
+  const segments = scoreEdit.segments;
+
+  it('拍速取自剪辑表（换一首歌只改那份 JSON，画面跟着走）', () => {
+    expect(BPM).toBe(scoreEdit.source.bpm);
+  });
+
+  it('播放器要取的那段配乐真的在 public/ 里（剪辑脚本的输出路径与播放器地址是同一个）', () => {
+    const rel = FILM_TRACK_URL.replace(/^\//, '');
+    const file = path.resolve(__dirname, '../../../public', rel);
+    expect(fs.existsSync(file), `缺 ${file}：跑 scripts/film/build-score.py 生成`).toBe(true);
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../scripts/film/build-score.py'), 'utf8');
+    expect(src).toContain(`'${path.basename(rel)}'`);
+  });
+
+  it('剪出来的小节数正好等于片长，一小节不多一小节不少', () => {
+    expect(segments.reduce((n, s) => n + s.bars, 0)).toBe(TOTAL_BARS);
+    for (const s of segments) {
+      expect(Number.isInteger(s.songBar) && s.songBar >= 0, `songBar ${s.songBar}`).toBe(true);
+      expect(Number.isInteger(s.bars) && s.bars > 0, `bars ${s.bars}`).toBe(true);
+    }
+  });
+
+  it('每一个剪接点都压在一次切镜上（接缝藏在画面硬切里，耳朵听不出来）', () => {
+    const cuts = new Set(FILM_SCENES.map((s) => s.bar));
+    let bar = 0;
+    for (const s of segments.slice(0, -1)) {
+      bar += s.bars;
+      expect(cuts.has(bar), `第 ${bar} 小节有一个剪接点，但那里没有切镜`).toBe(true);
+    }
   });
 });
 

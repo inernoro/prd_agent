@@ -1,0 +1,16 @@
+{
+  "$comment": "片花配乐的剪辑表（SSOT）：从 Suno 原曲《Big Final Chord》里按小节剪出 29 小节。时间轴的拍速从这里读，剪辑脚本 scripts/film/build-score.py 照它剪，测试断言每个剪接点都落在切镜上。拍速与首个强拍由音频分析得出（起音检测 + 节拍追踪），换曲子要重测。",
+  "source": {
+    "title": "Big Final Chord",
+    "origin": "Suno（用户生成）",
+    "bpm": 121.5,
+    "firstDownbeat": 0.238
+  },
+  "segments": [
+    { "songBar": 0, "bars": 4, "role": "开场：原曲引子，安静，两记远处的鼓" },
+    { "songBar": 23, "bars": 11, "role": "MAP：原曲第一次爆发前那一小节（第 4 拍一记重击）+ 爆发的前 10 小节" },
+    { "songBar": 70, "bars": 8, "role": "LLMGW 蓄力 -> CDS 分幕卡落在原曲抽空的那一小节 -> CDS 落在最后一次爆发" },
+    { "songBar": 86, "bars": 2, "role": "快切：最后一次爆发的收尾两小节" },
+    { "songBar": 90, "bars": 4, "role": "收口：Big Final Chord 本尊，余音消散" }
+  ]
+}

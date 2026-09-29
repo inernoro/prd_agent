@@ -18,6 +18,8 @@ import { createServer } from 'vite';
  *   FILM_OUT    输出 mp4 路径（默认 <tmp>/map-film-<lang>.mp4，同目录另出一张海报 jpg）
  *   FFMPEG      ffmpeg 可执行文件（默认先找 PATH，再找 python imageio-ffmpeg 自带的静态包）
  *   FILM_LIMIT  只渲染前 N 秒（调试用）
+ *   FILM_AUDIO  track | synth（默认 track：用 public/film/landing-score.mp3 那段剪好的成品配乐；
+ *               synth：用 filmScore 离线合成的备用配乐——页面上配乐加载失败时放的就是它）
  *   FILM_STILLS 只出静帧不出视频，逗号分隔的秒数，如 "1.5,12.1,33"（审片用，输出到 FILM_OUT 同目录）
  *
  * 原理：起一个 vite dev server，用无头 Chromium 打开 scripts/film/render.html，
@@ -31,6 +33,8 @@ const LANG = process.env.FILM_LANG === 'en' ? 'en' : 'zh';
 const FPS = Number(process.env.FILM_FPS || 30);
 const OUT = path.resolve(process.env.FILM_OUT || path.join(os.tmpdir(), `map-film-${LANG}.mp4`));
 const LIMIT = process.env.FILM_LIMIT ? Number(process.env.FILM_LIMIT) : null;
+const AUDIO = process.env.FILM_AUDIO === 'synth' ? 'synth' : 'track';
+const TRACK = path.join(ROOT, 'public', 'film', 'landing-score.mp3');
 const STILLS = process.env.FILM_STILLS ? process.env.FILM_STILLS.split(',').map(Number).filter((x) => Number.isFinite(x)) : null;
 
 function findFfmpeg() {
@@ -124,9 +128,16 @@ async function main() {
     }
     const total = LIMIT ? Math.min(duration, LIMIT) : duration;
 
-    console.log(`[film] 配乐离线渲染中（${duration}s）…`);
-    const wav = await page.evaluate(() => window.__film.renderAudio());
-    fs.writeFileSync(wavPath, Buffer.from(wav, 'base64'));
+    let audioPath = TRACK;
+    if (AUDIO === 'synth') {
+      console.log(`[film] 合成配乐离线渲染中（${duration}s）…`);
+      const wav = await page.evaluate(() => window.__film.renderAudio());
+      fs.writeFileSync(wavPath, Buffer.from(wav, 'base64'));
+      audioPath = wavPath;
+    } else if (!fs.existsSync(TRACK)) {
+      throw new Error(`找不到成品配乐 ${TRACK}：先跑 scripts/film/build-score.py，或用 FILM_AUDIO=synth`);
+    }
+    console.log(`[film] 配乐：${AUDIO === 'synth' ? '合成版' : '成品（scoreEdit.json 剪辑）'} ${audioPath}`);
 
     await page.evaluate((t) => window.__film.seek(t), poster);
     await page.screenshot({ path: posterPath, type: 'jpeg', quality: 92 });
@@ -138,9 +149,10 @@ async function main() {
       [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'mjpeg', '-i', '-',
-        '-i', wavPath,
+        '-i', audioPath,
         '-t', String(total),
-        '-af', `afade=t=out:st=${fadeAt}:d=1.2`,
+        // 成品配乐自带收尾淡出；合成版与截短调试时才补一道
+        ...(AUDIO === 'synth' || LIMIT ? ['-af', `afade=t=out:st=${fadeAt}:d=1.2`] : []),
         '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p',
         '-c:a', 'aac', '-b:a', '192k',
         '-movflags', '+faststart',
@@ -166,7 +178,7 @@ async function main() {
     }
     enc.stdin.end();
     await done;
-    console.log(`\n[film] 完成：${OUT}\n[film] 海报：${posterPath}\n[film] 音轨：${wavPath}`);
+    console.log(`\n[film] 完成：${OUT}\n[film] 海报：${posterPath}\n[film] 音轨：${audioPath}`);
   } finally {
     await browser.close();
     await server.close();

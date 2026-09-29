@@ -4,14 +4,19 @@
  * 画面、配乐、进度条章节刻度、导出脚本全部从这一份表取时间——片花最容易坏的地方
  * 是「鼓点和切镜对不上」，而对不上的根因总是同一个：画面按秒写、音乐按拍写，
  * 两边各抄一份，改一处忘一处（`predicate-and-wiring-discipline` 形状 3）。
- * 所以这里只用一个单位：**小节**。120 BPM、4/4 拍，一小节恰好 2 秒，一拍 0.5 秒，
- * 换算零误差，任何一幕的起止都落在小节线上，切镜天然踩在强拍。
+ * 所以这里只用一个单位：**小节**。拍速取自配乐（4/4 拍），任何一幕的起止都落在小节线上，
+ * 切镜天然踩在强拍；配乐的剪接点也全部落在幕与幕之间（见 scoreEdit.json 与守卫测试）。
  *
  * 画面是时间的纯函数：给定 t 就只有一种画法，没有 CSS 动画、没有 setTimeout。
  * 这是它能被拖动进度条、能被逐帧导出成 MP4、并且两者一帧不差的前提。
  */
+import scoreEdit from './scoreEdit.json';
 
-export const BPM = 120;
+/**
+ * 拍速取自配乐剪辑表（scoreEdit.json）：片子按那首歌的小节来切，不是歌去迁就片子。
+ * 121.5 BPM 下一小节 ≈ 1.975 秒；各幕仍按小节计长，换一首歌只改那份 JSON。
+ */
+export const BPM = scoreEdit.source.bpm;
 export const BEAT = 60 / BPM;
 export const BAR = BEAT * 4;
 
