@@ -397,7 +397,9 @@ jobs:
     name: Build design runtime (OpenDesign) image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    # api 有改动时也构建：正式 `exec_dep.sh --commit` 把它与 api 钉到同一 sha（与 llmgw 三个镜像同一口径），
+    # 否则只改 api 的热修分支提交会在整批拉取时找不到本镜像。
+    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
