@@ -30,6 +30,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(branchCardPhase({ status: 'running', services: running })).toBeNull();
     expect(branchCardPhase({ status: 'idle', services: { api: { status: 'stopped' } } })).toBeNull();
     expect(branchCardPhase({ status: 'error', services: running, buildQueue: { ahead: 1 } })).toBeNull();
+    // 分支出错而服务残留 building / starting（排构建槽时失败）：仍是终态，不推构建阶段
+    expect(branchCardPhase({ status: 'error', services: { api: { status: 'building' } }, prebuilt: false })).toBeNull();
+    expect(branchCardPhase({ status: 'error', services: { api: { status: 'starting' } } })).toBeNull();
   });
 
   it('极速版四段、源码版三段——源码版没有「等镜像」，不硬凑空格子', () => {
@@ -77,6 +80,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
     // 单服务部署的每次状态翻转都推事件：building / starting / 结束（成功、超时、出错都在聚合状态重算后推一次）
     expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(3);
+    // 外层失败（如排构建槽时被取消）也推一条，已打开的列表不停在「构建中」
+    expect(routes).toContain('// 失败也要推一条：比如排构建槽时被取消');
     // 结束那一条必须排在分支聚合状态重算之后，否则从停止状态起服务时卡片拿到的还是 idle
     const finalize = routes.indexOf("entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';");
     const lastEmit = routes.lastIndexOf('emitServiceTransition();');
