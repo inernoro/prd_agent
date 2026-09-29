@@ -56,6 +56,7 @@
     <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLeaderboardCatalog.cs" Link="Services\ModelLeaderboard\ModelLeaderboardCatalog.cs" />
     <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLeaderboardScope.cs" Link="Services\ModelLeaderboard\ModelLeaderboardScope.cs" />
     <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLicenseClassifier.cs" Link="Services\ModelLeaderboard\ModelLicenseClassifier.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\ReviewAgent\VersionRegistrationMessageParser.cs" Link="Services\ReviewAgent\VersionRegistrationMessageParser.cs" />
   </ItemGroup>
 
 </Project>

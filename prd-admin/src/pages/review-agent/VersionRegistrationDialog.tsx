@@ -12,9 +12,11 @@ import {
   getVersionRegistrations,
   getVersionRegistrationSnapshots,
   importVersionRegistrations,
+  parseVersionRegistrationMessage,
   type VersionRegistration,
   type VersionRegistrationFields,
   type VersionRegistrationImportRow,
+  type VersionRegistrationMessageParseResult,
   type VersionRegistrationReviewSource,
   type VersionRegistrationSnapshotSummary,
 } from '@/services/real/versionRegistration';
@@ -30,8 +32,8 @@ type FormalSourceMode = 'internal_registration' | 'manual_t';
 type View = 'apply' | 'archive';
 
 type FormState = {
-  projectType: 'standard' | 'custom';
-  versionType: 'major' | 'medium' | 'minor';
+  projectType: '' | 'standard' | 'custom';
+  versionType: '' | 'major' | 'medium' | 'minor';
   needUiDesign: '' | 'yes' | 'no';
   isAiPoc: '' | 'yes' | 'no';
   demandSource: string;
@@ -53,8 +55,8 @@ const FIELD_CLASS = 'w-full rounded-lg border border-token-subtle bg-token-neste
 
 function emptyForm(): FormState {
   return {
-    projectType: 'standard',
-    versionType: 'minor',
+    projectType: '',
+    versionType: '',
     needUiDesign: '',
     isAiPoc: '',
     demandSource: '',
@@ -91,8 +93,8 @@ function splitMembers(value: string): string[] {
 
 function formPayload(form: FormState): VersionRegistrationFields {
   return {
-    projectType: form.projectType,
-    versionType: form.versionType,
+    projectType: form.projectType || undefined,
+    versionType: form.versionType || undefined,
     needUiDesign: boolValue(form.needUiDesign),
     isAiPoc: boolValue(form.isAiPoc),
     demandSource: form.demandSource.trim() || undefined,
@@ -110,8 +112,8 @@ function formPayload(form: FormState): VersionRegistrationFields {
 
 function formFromRegistration(record: VersionRegistration): FormState {
   return {
-    projectType: record.projectType ?? 'standard',
-    versionType: record.versionType ?? 'minor',
+    projectType: record.projectType ?? '',
+    versionType: record.versionType ?? '',
     needUiDesign: boolToChoice(record.needUiDesign),
     isAiPoc: boolToChoice(record.isAiPoc),
     demandSource: record.demandSource ?? '',
@@ -184,6 +186,32 @@ function mapHistoryRow(row: VersionWorkflowImportRow, kind: ApplyKind): VersionR
   };
 }
 
+function formPatchFromMessage(result: VersionRegistrationMessageParseResult): Partial<FormState> {
+  const patch: Partial<FormState> = {};
+  if (result.projectType) patch.projectType = result.projectType;
+  if (result.versionType) patch.versionType = result.versionType;
+  if (result.needUiDesign != null) patch.needUiDesign = boolToChoice(result.needUiDesign);
+  if (result.isAiPoc != null) patch.isAiPoc = boolToChoice(result.isAiPoc);
+  if (result.demandSource) patch.demandSource = result.demandSource;
+  if (result.planName) patch.planName = result.planName;
+  if (result.planUrl) patch.planUrl = result.planUrl;
+  if (result.projectMemberNames?.length) patch.projectMembers = result.projectMemberNames.join('、');
+  if (result.plannedProjectAt) patch.plannedProjectAt = dateOnly(result.plannedProjectAt);
+  if (result.plannedReleaseAt) patch.plannedReleaseAt = dateOnly(result.plannedReleaseAt);
+  if (result.isGlobalOpen != null) patch.isGlobalOpen = boolToChoice(result.isGlobalOpen);
+  return patch;
+}
+
+function messagePlaceholder(kind: ApplyKind): string {
+  return kind === 'internal'
+    ? '粘贴企微中的“版本立项”内容，例如：\n项目类别：非定制\n版本类别：小版本\n是否需要UI设计：否\n需求来源：登康\n计划立项时间：2026.09.30'
+    : '粘贴企微中的“版本上线”内容，例如：\n项目类别：定制\n版本类别：小版本\n是否全域开放：是\n需求来源：拜耳\n项目组成员：宇凡、火巍\n计划上线时间：2026.09.21';
+}
+
+function normalizeMatchText(value?: string | null): string {
+  return value?.replace(/\s+/g, '').trim().toLocaleLowerCase('zh-CN') ?? '';
+}
+
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <label className="block min-w-0">
@@ -196,6 +224,7 @@ function Field({ label, required, children }: { label: string; required?: boolea
 function VersionTypeSelect({ value, onChange }: { value: FormState['versionType']; onChange: (value: FormState['versionType']) => void }) {
   return (
     <select className={FIELD_CLASS} value={value} onChange={(event) => onChange(event.target.value as FormState['versionType'])}>
+      <option value="">请选择版本类别</option>
       <option value="minor">小版本：末位加 1</option>
       <option value="medium">中版本：中位加 1，末位归 0</option>
       <option value="major">大版本：首位加 1，其余归 0</option>
@@ -220,6 +249,7 @@ function InputFields({ form, setForm, mode, strictFormal }: { form: FormState; s
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <Field label="项目类别" required>
         <select className={FIELD_CLASS} value={form.projectType} onChange={(event) => setForm({ projectType: event.target.value as FormState['projectType'] })}>
+          <option value="">请选择项目类别</option>
           <option value="standard">非定制</option>
           <option value="custom">定制</option>
         </select>
@@ -285,6 +315,9 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [view, setView] = useState<View>('apply');
   const [kind, setKind] = useState<ApplyKind | null>(null);
   const [formalSourceMode, setFormalSourceMode] = useState<FormalSourceMode>('internal_registration');
+  const [wecomMessage, setWecomMessage] = useState('');
+  const [messageParsing, setMessageParsing] = useState(false);
+  const [messageParseHint, setMessageParseHint] = useState('');
   const [reviewSources, setReviewSources] = useState<VersionRegistrationReviewSource[]>([]);
   const [internalSources, setInternalSources] = useState<VersionRegistration[]>([]);
   const [records, setRecords] = useState<VersionRegistration[]>([]);
@@ -301,6 +334,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [message, setMessage] = useState('');
   const [issuedCode, setIssuedCode] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const messageParseRequestRef = useRef(0);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -342,7 +376,76 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     setMessage('');
     setIssuedCode('');
     setForm(emptyForm());
+    setWecomMessage('');
+    setMessageParseHint('');
+    messageParseRequestRef.current += 1;
+    setReviewSubmissionId('');
+    setInternalRegistrationId('');
+    setManualTCode('');
   };
+
+  const parseWecomMessage = useCallback(async (text: string, applyResult: boolean) => {
+    if (!kind || text.trim().length < 4) return;
+    const requestId = ++messageParseRequestRef.current;
+    setMessageParsing(true);
+    try {
+      const result = await parseVersionRegistrationMessage({ kind, text });
+      if (requestId !== messageParseRequestRef.current) return;
+      if (result.success) {
+        const parsed = result.data.result;
+        let sourceMatchHint = '';
+        if (applyResult && parsed.matchedFields.length > 0) {
+          const parsedFormPatch = formPatchFromMessage(parsed);
+          let matchedInternalSource: VersionRegistration | undefined;
+          if (kind === 'internal' && parsed.planName) {
+            const normalizedPlanName = normalizeMatchText(parsed.planName);
+            const matchingReview = reviewSources.find((source) => normalizeMatchText(source.title) === normalizedPlanName);
+            if (matchingReview) {
+              setReviewSubmissionId(matchingReview.id);
+              sourceMatchHint = ' 已匹配到产品评审记录。';
+            }
+          }
+          if (kind === 'formal' && parsed.tCode) {
+            const matchingInternal = internalSources.find((source) => source.code.toUpperCase() === parsed.tCode?.toUpperCase());
+            if (matchingInternal) {
+              matchedInternalSource = matchingInternal;
+              setFormalSourceMode('internal_registration');
+              setInternalRegistrationId(matchingInternal.id);
+              sourceMatchHint = ' 已匹配到已登记的内部版本号。';
+            } else {
+              setFormalSourceMode('manual_t');
+              setManualTCode(parsed.tCode);
+              sourceMatchHint = ' 未找到已登记的内部版本号，已带入手工填写 T。';
+            }
+          }
+          setForm((previous) => ({
+            ...previous,
+            ...(matchedInternalSource ? formFromRegistration(matchedInternalSource) : {}),
+            ...parsedFormPatch,
+          }));
+        }
+        setMessageParseHint(parsed.matchedFields.length > 0
+          ? `已识别并回填 ${parsed.matchedFields.length} 项；未识别的字段不会补造内容。${sourceMatchHint}`
+          : '没有识别到可回填字段，现有表单内容保持不变。');
+      } else {
+        setMessageParseHint(result.error.message || '暂时无法识别内容，现有表单内容保持不变。');
+      }
+    } catch {
+      if (requestId === messageParseRequestRef.current)
+        setMessageParseHint('暂时无法识别内容，现有表单内容保持不变。');
+    } finally {
+      if (requestId === messageParseRequestRef.current) setMessageParsing(false);
+    }
+  }, [internalSources, kind, reviewSources]);
+
+  useEffect(() => {
+    if (!kind || wecomMessage.trim().length < 4) {
+      setMessageParseHint('');
+      return undefined;
+    }
+    const timer = window.setTimeout(() => { void parseWecomMessage(wecomMessage, true); }, 600);
+    return () => window.clearTimeout(timer);
+  }, [kind, parseWecomMessage, wecomMessage]);
 
   const chooseReview = (id: string) => {
     setReviewSubmissionId(id);
@@ -360,6 +463,10 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     if (!kind) return;
     setMessage('');
     setIssuedCode('');
+    if (!form.projectType || !form.versionType) {
+      setMessage('请先选择项目类别和版本类别，或粘贴企微登记内容后自动回填');
+      return;
+    }
     setSubmitting(true);
     const base = formPayload(form);
     const result = kind === 'internal'
@@ -500,7 +607,26 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                       <p className="text-sm font-medium text-token-primary">{kind === 'internal' ? '申领内部版本号 T' : '申领正式版本号 V'}</p>
                       <p className="mt-1 text-xs text-token-muted">{kind === 'internal' ? '评审完成后可直接登记，系统会按 T 序列发号。' : '系统会按独立 V 序列发号，不会把 T 前缀直接替换为 V。'}</p>
                     </div>
-                    <button type="button" className="text-xs text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => { setKind(null); setIssuedCode(''); setMessage(''); }}>重新选择</button>
+                    <button type="button" className="text-xs text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => { messageParseRequestRef.current += 1; setKind(null); setIssuedCode(''); setMessage(''); setWecomMessage(''); setMessageParseHint(''); }}>重新选择</button>
+                  </div>
+
+                  <div className="rounded-xl border border-dashed border-indigo-500/40 bg-indigo-500/[0.04] p-4">
+                    <Field label="粘贴企微登记内容">
+                      <textarea
+                        className={`${FIELD_CLASS} min-h-32 resize-y`}
+                        value={wecomMessage}
+                        onChange={(event) => { messageParseRequestRef.current += 1; setWecomMessage(event.target.value); }}
+                        placeholder={messagePlaceholder(kind)}
+                      />
+                    </Field>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs leading-5 text-token-muted">支持“字段：内容”格式。识别到的内容会自动回填，未匹配字段保持空白。</p>
+                      <button type="button" onClick={() => void parseWecomMessage(wecomMessage, true)} disabled={messageParsing || wecomMessage.trim().length < 4} className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--accent-fg-blue)] disabled:cursor-not-allowed disabled:opacity-50">
+                        {messageParsing ? <MapSpinner size={13} /> : null}
+                        {messageParsing ? '正在识别' : '重新识别'}
+                      </button>
+                    </div>
+                    {messageParseHint ? <p className="mt-2 text-xs text-token-secondary">{messageParseHint}</p> : null}
                   </div>
 
                   {kind === 'internal' ? (
@@ -518,7 +644,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                     <div className="space-y-3">
                       <div className="flex flex-wrap gap-2">
                         <button type="button" onClick={() => setFormalSourceMode('internal_registration')} className={`rounded-lg border px-3 py-2 text-sm transition-colors ${formalSourceMode === 'internal_registration' ? 'border-indigo-500 bg-indigo-500/15 text-[color:var(--accent-fg-blue)]' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}>选择已登记 T</button>
-                        <button type="button" onClick={() => { setFormalSourceMode('manual_t'); setForm(emptyForm()); }} className={`rounded-lg border px-3 py-2 text-sm transition-colors ${formalSourceMode === 'manual_t' ? 'border-indigo-500 bg-indigo-500/15 text-[color:var(--accent-fg-blue)]' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}>手工填写 T</button>
+                        <button type="button" onClick={() => { setFormalSourceMode('manual_t'); if (!wecomMessage.trim()) setForm(emptyForm()); }} className={`rounded-lg border px-3 py-2 text-sm transition-colors ${formalSourceMode === 'manual_t' ? 'border-indigo-500 bg-indigo-500/15 text-[color:var(--accent-fg-blue)]' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}>手工填写 T</button>
                       </div>
                       {formalSourceMode === 'internal_registration' ? (
                         <Field label="选择已登记的内部版本号" required>

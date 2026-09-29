@@ -83,6 +83,13 @@ export interface VersionRegistrationImportRow extends VersionRegistrationFields 
   sourceRow: number;
 }
 
+export interface VersionRegistrationMessageParseResult extends VersionRegistrationFields {
+  isGlobalOpen?: boolean | null;
+  plannedReleaseAt?: string;
+  tCode?: string;
+  matchedFields: string[];
+}
+
 export function getVersionRegistrationReviewSources(): Promise<ApiResponse<{ items: VersionRegistrationReviewSource[] }>> {
   return apiRequest('/api/review-agent/version-registrations/review-sources');
 }
@@ -97,6 +104,13 @@ export function getVersionRegistrations(): Promise<ApiResponse<{ items: VersionR
 
 export function getVersionRegistrationSnapshots(): Promise<ApiResponse<{ items: VersionRegistrationSnapshotSummary[]; canViewAll: boolean }>> {
   return apiRequest('/api/review-agent/version-registrations/snapshots');
+}
+
+export function parseVersionRegistrationMessage(input: {
+  kind: VersionRegistrationKind;
+  text: string;
+}): Promise<ApiResponse<{ result: VersionRegistrationMessageParseResult }>> {
+  return apiRequest('/api/review-agent/version-registrations/parse-message', { method: 'POST', body: input });
 }
 
 export function createInternalVersionRegistration(

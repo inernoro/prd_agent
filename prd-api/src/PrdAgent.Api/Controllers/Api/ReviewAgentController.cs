@@ -10,6 +10,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Api.Services.ReviewAgent;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -2210,6 +2211,20 @@ public class ReviewAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items, canViewAll = HasManagePermission() }));
     }
 
+    /// <summary>识别企微版本登记消息中的已知字段；无法识别的字段不会补造值。</summary>
+    [HttpPost("version-registrations/parse-message")]
+    public IActionResult ParseVersionRegistrationMessage([FromBody] ParseVersionRegistrationMessageRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Text))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先粘贴企微登记内容"));
+        if (!string.Equals(request.Kind, VersionRegistrationKind.Internal, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(request.Kind, VersionRegistrationKind.Formal, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择内部 T 或正式 V 申领"));
+
+        var result = VersionRegistrationMessageParser.Parse(request.Text, request.Kind);
+        return Ok(ApiResponse<object>.Ok(new { result }));
+    }
+
     /// <summary>从本人已完成的评审记录申领内部版本号 T。</summary>
     [HttpPost("version-registrations/internal")]
     public async Task<IActionResult> CreateInternalVersionRegistration([FromBody] CreateInternalVersionRegistrationRequest request, CancellationToken ct)
@@ -2224,6 +2239,10 @@ public class ReviewAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评审尚未完成，暂不能申领内部版本号"));
         if (await _db.VersionRegistrations.Find(x => x.ReviewSubmissionId == submission.Id).AnyAsync(ct))
             return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已申领过内部版本号"));
+        if (!IsVersionRegistrationProjectType(request.ProjectType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择项目类别"));
+        if (!IsVersionRegistrationVersionType(request.VersionType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择版本类别"));
         if (string.IsNullOrWhiteSpace(request.DemandSource))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写需求来源"));
         if (!request.PlannedProjectAt.HasValue)
@@ -2285,6 +2304,12 @@ public class ReviewAgentController : ControllerBase
         var demandSource = FirstPresent(request.DemandSource, internalSource?.DemandSource);
         var planName = FirstPresent(request.PlanName, internalSource?.PlanName);
         var planUrl = FirstPresent(request.PlanUrl, internalSource?.PlanUrl);
+        var projectType = request.ProjectType ?? internalSource?.ProjectType;
+        var versionType = request.VersionType ?? internalSource?.VersionType;
+        if (!IsVersionRegistrationProjectType(projectType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择项目类别"));
+        if (!IsVersionRegistrationVersionType(versionType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择版本类别"));
         var projectMembers = request.ProjectMemberNames?.Count > 0
             ? NormalizeNames(request.ProjectMemberNames)
             : internalSource?.ProjectMemberNames.ToList() ?? new();
@@ -2300,12 +2325,12 @@ public class ReviewAgentController : ControllerBase
         var record = new VersionRegistration
         {
             Kind = VersionRegistrationKind.Formal,
-            Code = await IssueVersionRegistrationCodeAsync("V", request.VersionType ?? internalSource?.VersionType, ct),
+            Code = await IssueVersionRegistrationCodeAsync("V", versionType, ct),
             TCode = isManualT ? request.TCode!.Trim().ToUpperInvariant() : internalSource!.Code,
             SourceType = isManualT ? VersionRegistrationSourceType.ManualT : VersionRegistrationSourceType.InternalRegistration,
             SourceInternalRegistrationId = internalSource?.Id,
-            ProjectType = NormalizeProjectType(request.ProjectType ?? internalSource?.ProjectType),
-            VersionType = ProductEntityNumbering.NormalizeVersionType(request.VersionType ?? internalSource?.VersionType),
+            ProjectType = NormalizeProjectType(projectType),
+            VersionType = ProductEntityNumbering.NormalizeVersionType(versionType),
             IsGlobalOpen = isGlobalOpen,
             NeedUiDesign = internalSource?.NeedUiDesign,
             IsAiPoc = internalSource?.IsAiPoc,
@@ -2721,6 +2746,15 @@ public class ReviewAgentController : ControllerBase
             ? "custom"
             : "standard";
 
+    private static bool IsVersionRegistrationProjectType(string? value) =>
+        string.Equals(value, "standard", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, "custom", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsVersionRegistrationVersionType(string? value) =>
+        string.Equals(value, "major", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, "medium", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(value, "minor", StringComparison.OrdinalIgnoreCase);
+
     private static string? TrimToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static string? FirstPresent(string? preferred, string? fallback) => TrimToNull(preferred) ?? TrimToNull(fallback);
@@ -2818,6 +2852,12 @@ public class VersionRegistrationFieldsRequest
     public DateTime? PlannedProjectAt { get; set; }
     public string? DevelopmentStatus { get; set; }
     public string? Remark { get; set; }
+}
+
+public sealed class ParseVersionRegistrationMessageRequest
+{
+    public string? Kind { get; set; }
+    public string? Text { get; set; }
 }
 
 public sealed class CreateInternalVersionRegistrationRequest : VersionRegistrationFieldsRequest
