@@ -34,9 +34,16 @@ export function BranchGroupSuggestions({
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [names, setNames] = useState<Record<string, string>>({});
   useEffect(() => {
-    // 默认勾选不超过分组上限：前缀多到超过上限时，只默认勾最多的那几类（Codex P2，PR #1647）。
-    setChecked(Object.fromEntries(suggestions.map((item, index) => [item.prefix, item.defaultChecked && index < BRANCH_GROUP_LIMITS.groups])));
-    setNames(Object.fromEntries(suggestions.map((item) => [item.prefix, item.name])));
+    // 分支列表每来一条事件都会重算建议；只给新冒出来的前缀填默认值，用户已经改过的勾选和组名原样保留（Codex P2，PR #1647）。
+    // 默认勾选不超过分组上限：前缀多到超过上限时，只默认勾最多的那几类。
+    setChecked((current) => Object.fromEntries(suggestions.map((item, index) => [
+      item.prefix,
+      item.prefix in current ? current[item.prefix] : item.defaultChecked && index < BRANCH_GROUP_LIMITS.groups,
+    ])));
+    setNames((current) => Object.fromEntries(suggestions.map((item) => [
+      item.prefix,
+      item.prefix in current ? current[item.prefix] : item.name,
+    ])));
   }, [suggestions]);
   const picked = suggestions.filter((item) => checked[item.prefix]);
   const overLimit = picked.length - BRANCH_GROUP_LIMITS.groups;

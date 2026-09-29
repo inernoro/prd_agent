@@ -159,6 +159,13 @@ describe('前后端枚举一致', () => {
     const suggestions = read('components/branch-groups/BranchGroupSuggestions.tsx');
     expect(suggestions).toContain('item.defaultChecked && index < BRANCH_GROUP_LIMITS.groups');
     expect(suggestions).toContain('disabled={picked.length === 0 || overLimit > 0 || saving}');
+    // 建议重算时保留用户已改的勾选与组名
+    expect(suggestions).toContain('item.prefix in current ? current[item.prefix] : item.defaultChecked');
+    expect(suggestions).toContain('item.prefix in current ? current[item.prefix] : item.name');
+    // 保存完成只关当时那个编辑器
+    const page = read('pages/BranchListPage.tsx');
+    expect(page).toContain('setGroupEditor((current) => (current?.group.id === group.id ? null : current))');
+    expect(page).toContain('setGroupEditor((current) => (current?.group.id === groupId ? null : current))');
   });
 
   it('每个颜色在两个主题里都定义了 token，组头色块类名写全', () => {

@@ -116,10 +116,12 @@ function resolve(pathname) {
 const FAKE_SSE = `
 (() => {
   const Real = window.EventSource;
+  const live = [];
   class FakeEventSource {
     constructor(url) {
       this.url = String(url); this.listeners = {}; this.readyState = 1;
       if (!this.url.includes('/api/branches/stream')) return new Real(url);
+      live.push(this);
       setTimeout(() => this.onopen && this.onopen({}), 0);
     }
     addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
@@ -127,6 +129,14 @@ const FAKE_SSE = `
     close() { this.readyState = 2; }
   }
   window.EventSource = FakeEventSource;
+  // 脚本用它推一条分支事件，模拟部署中不断到来的 branch.updated
+  window.__cdsFire = (type, data) => {
+    for (const s of live) {
+      if (s.readyState === 2) continue;
+      for (const fn of s.listeners[type] || []) fn({ data: JSON.stringify(data) });
+    }
+    return live.length;
+  };
 })();
 `;
 
@@ -236,6 +246,20 @@ async function main() {
       check(checkedOf('claude/') === true && checkedOf('codex/') === true, `[${theme}] 建议里 claude/、codex/ 默认勾上（${JSON.stringify(suggestionRows)}）`);
       check(checkedOf('release/') === false && checkedOf('feat/') === false, `[${theme}] 只有 1 个分支的前缀默认不勾`);
       await page.screenshot({ path: path.join(OUT, `1-suggestions-${theme}.png`), fullPage: true });
+
+      // 1b. 建议打开期间来了一条分支事件（部署中很常见）：用户已改的组名和勾选不许被重置（Codex P2）
+      const claudeName = page.getByLabel('claude/ 的组名');
+      await claudeName.fill('我的 Claude 组');
+      const releaseBox = page.locator('[data-branch-group-suggestions] label', { hasText: 'release/' }).locator('input[type="checkbox"]');
+      await releaseBox.check();
+      const touched = branches.find((b) => b.id === 'b-main');
+      await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: { ...b, lastAccessedAt: new Date().toISOString() }, projectId: b.projectId }), touched);
+      await page.waitForTimeout(500);
+      const keptName = await claudeName.inputValue();
+      const keptCheck = await releaseBox.isChecked();
+      check(keptName === '我的 Claude 组' && keptCheck, `[${theme}] 分支事件到来后建议里已改的组名与勾选保留（组名「${keptName}」，release/ 勾选 ${keptCheck}）`);
+      await claudeName.fill('Claude 在做');
+      await releaseBox.uncheck();
 
       // 2. 一键建组
       await page.getByRole('button', { name: /^创建 2 个分组$/ }).click();

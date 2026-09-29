@@ -4292,10 +4292,12 @@ export function BranchListPage(): JSX.Element {
               groups.some((item) => item.id === group.id)
                 ? groups.map((item) => (item.id === group.id ? group : item))
                 : [...groups, group]
-            )).then((ok) => { if (ok) setGroupEditor(null); });
+            // 只关「这次保存的那个」编辑器：保存慢时用户可能已取消并打开了另一个组，不能把它一起关掉（Codex P2，PR #1647）
+            )).then((ok) => { if (ok) setGroupEditor((current) => (current?.group.id === group.id ? null : current)); });
           }}
           onDelete={(groupId) => {
-            void saveBranchGroups((groups) => groups.filter((item) => item.id !== groupId)).then((ok) => { if (ok) setGroupEditor(null); });
+            void saveBranchGroups((groups) => groups.filter((item) => item.id !== groupId))
+              .then((ok) => { if (ok) setGroupEditor((current) => (current?.group.id === groupId ? null : current)); });
           }}
         />
         <ReleaseBranchDialog
