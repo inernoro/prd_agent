@@ -2361,7 +2361,9 @@ export function BranchListPage(): JSX.Element {
       if (!data.branch || data.branch.projectId !== projectId) return;
       applySseAction({
         type: 'sseBranchUpsert',
-        branch: data.stateFlushFailed ? { ...data.branch, stateFlushFailed: true } : data.branch,
+        // 显式写 true / false：列表按字段合并，只写 true 会让标记在后续事件里一直残留，
+        // 之后每次成功部署都被压掉「部署成功」（Codex P2，PR #1646）。
+        branch: { ...data.branch, stateFlushFailed: Boolean(data.stateFlushFailed) },
         projectId,
       });
     });
@@ -2382,7 +2384,7 @@ export function BranchListPage(): JSX.Element {
       if (data.branch) {
         applySseAction({
           type: 'sseBranchUpsert',
-          branch: { ...data.branch, status: data.status },
+          branch: { ...data.branch, status: data.status, stateFlushFailed: false },
           projectId,
         });
         return;
