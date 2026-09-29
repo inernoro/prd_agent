@@ -5427,6 +5427,11 @@ const BranchCard = memo(function BranchCard({
     participants: lastBuildRef.current?.serviceIds,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });
+  // 部署中的模式跟阶段条走同一个判断：混着极速版与源码版的分支只重建源码服务时，阶段条是源码三段，
+  // 这里不能还说「极速版」（Codex P2，PR #1646）。deployModeLabel 只看「任一服务走极速版」。
+  const phaseIsSourceSequence = Boolean(buildPhase && isDeployPhase(buildPhase) && buildPhase.steps.length > 1
+    && !buildPhase.steps.some((step) => step.key === 'ci-waiting'));
+  const modeText = phaseIsSourceSequence && deployModeLabel(branch) === '极速版' ? '源码编译' : deployModeLabel(branch);
   // 单服务重建（单个 profile 部署 / webhook 只重建一个服务）时分支仍是 running，
   // 只有 services 里那一个在 building——阶段条认得出来，时钟也得跟着走，
   // 否则页脚停在 00:00、永远不会「超出预计」（Codex P2，PR #1646）。
@@ -5525,8 +5530,8 @@ const BranchCard = memo(function BranchCard({
         : !isDeployPhase(buildPhase)
           ? `${buildPhase.label}；已用时 ${buildClock.text}`
         : buildClock.estimate
-          ? `${buildPhase.label}；以「${deployModeLabel(branch)}」部署；净耗时 ${buildClock.text}，预计 ${formatDurationMs(buildClock.estimate.medianMs)}（近 ${buildClock.estimate.samples} 次成功部署的中位值）`
-          : `${buildPhase.label}；以「${deployModeLabel(branch)}」部署；净耗时 ${buildClock.text}；暂无历史样本，完成后开始累积预计耗时`
+          ? `${buildPhase.label}；以「${modeText}」部署；净耗时 ${buildClock.text}，预计 ${formatDurationMs(buildClock.estimate.medianMs)}（近 ${buildClock.estimate.samples} 次成功部署的中位值）`
+          : `${buildPhase.label}；以「${modeText}」部署；净耗时 ${buildClock.text}；暂无历史样本，完成后开始累积预计耗时`
     : '';
   /* 收尾：只在「构建中 → 运行中 / 出错」这次翻转上播一次。翻转前最后一刻的阶段与耗时
      记在 ref 里——翻转之后 branch 上已经没有这些信息了。卡片不在视野里时先不播，
@@ -5742,7 +5747,6 @@ const BranchCard = memo(function BranchCard({
      构建期间右边不再显示「部署 448s」——同一个数页脚已经在走，重复两遍只会互相打架。 */
   const serviceTotal = serviceCount(branch);
   const rebuildingServices = branchServices.filter((svc) => svc.status === 'building' || svc.status === 'starting' || svc.status === 'restarting');
-  const modeText = deployModeLabel(branch);
   const cardSummary = buildPhase
     ? (() => {
       if ((buildPhase.key === 'ci-waiting' || buildPhase.key === 'queued') && runningCount > 0) return `${modeText} · 旧版本仍在服务`;

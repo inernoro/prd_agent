@@ -72,6 +72,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
+    // 信息槽的模式文案跟阶段条同一个判断：阶段是源码三段时不许还说「极速版」
+    expect(page).toContain("const modeText = phaseIsSourceSequence && deployModeLabel(branch) === '极速版' ? '源码编译' : deployModeLabel(branch);");
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
     // 单服务部署的每次状态翻转都推事件：building / starting / 结束（成功、超时、出错都在聚合状态重算后推一次）
     expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(3);
@@ -80,7 +82,10 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     const lastEmit = routes.lastIndexOf('emitServiceTransition();');
     expect(finalize).toBeGreaterThan(0);
     expect(lastEmit).toBeGreaterThan(finalize);
-    expect(lastEmit - finalize).toBeLessThan(400);
+    // 而且在状态落盘确认之后：落盘失败时接口不报成功，卡片也不能先播「部署成功」
+    const between = routes.slice(finalize, lastEmit);
+    expect(between).toContain("if (flushResult !== 'flushed') {");
+    expect(between).not.toContain("sendSSE(res, 'complete'");
   });
 
   it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
