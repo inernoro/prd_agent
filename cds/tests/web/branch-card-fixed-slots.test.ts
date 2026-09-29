@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase } from '../../web/src/lib/branchCardPhase';
+import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, isDeployStartedPhase } from '../../web/src/lib/branchCardPhase';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 const WEB_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web/src');
@@ -92,11 +92,24 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
 
   it('收尾成败按参与部署的服务判：单服务失败而分支仍 running，不许报成功', () => {
     const services = { api: { status: 'error' }, admin: { status: 'running' } };
-    expect(deployOutcome({ status: 'running', services, participants: ['api'] })).toEqual({ kind: 'failed', failedServiceIds: ['api'] });
+    expect(deployOutcome({ status: 'running', services, participants: ['api'], started: true })).toEqual({ kind: 'failed', failedServiceIds: ['api'] });
     // 没参与这次部署的服务早就是 error：不算这次失败
-    expect(deployOutcome({ status: 'running', services, participants: ['admin'] })).toEqual({ kind: 'done', failedServiceIds: [] });
-    expect(deployOutcome({ status: 'error', services, participants: [] })?.kind).toBe('failed');
-    expect(deployOutcome({ status: 'idle', services, participants: ['admin'] })).toBeNull();
+    expect(deployOutcome({ status: 'running', services, participants: ['admin'], started: true })).toEqual({ kind: 'done', failedServiceIds: [] });
+    expect(deployOutcome({ status: 'error', services, participants: [], started: true })?.kind).toBe('failed');
+    expect(deployOutcome({ status: 'idle', services, participants: ['admin'], started: true })).toBeNull();
+  });
+
+  it('只在排队 / 等镜像里结束的（CI 失败、排队取消）不是一次部署：不报成功', () => {
+    const healthy = { api: { status: 'running' } };
+    // 极速版等镜像时旧版本在跑，CI 失败后 ciImageStatus 翻 failed、分支仍 running
+    expect(deployOutcome({ status: 'running', services: healthy, participants: [], started: false })).toBeNull();
+    // 真失败（分支出错）仍要报
+    expect(deployOutcome({ status: 'error', services: healthy, participants: [], started: false })?.kind).toBe('failed');
+    const phaseOf = (input: Parameters<typeof branchCardPhase>[0]) => branchCardPhase(input)!;
+    expect(isDeployStartedPhase(phaseOf({ status: 'running', ciImageStatus: 'waiting', prebuilt: true }))).toBe(false);
+    expect(isDeployStartedPhase(phaseOf({ status: 'building', buildQueue: { ahead: 0 } } as never))).toBe(false);
+    expect(isDeployStartedPhase(phaseOf({ status: 'building' }))).toBe(true);
+    expect(isDeployStartedPhase(phaseOf({ status: 'starting' }))).toBe(true);
   });
 
   it('只有部署阶段算部署：停止 / 重启 / 前端占位结束都不播「部署成功」', () => {
@@ -174,7 +187,7 @@ describe('构建页脚：阶段条接线', () => {
   it('卡片与页头汇总共用 branchCardPhase 一个判定源', () => {
     const calls = page.split('branchCardPhase({').length - 1;
     expect(calls, '卡片页脚 + 页头汇总两处调用').toBe(2);
-    expect(page).toContain("import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';");
+    expect(page).toContain("import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, isDeployStartedPhase, type BranchCardPhase } from '@/lib/branchCardPhase';");
   });
 
   const wired = (source: string) => {
@@ -227,7 +240,7 @@ describe('构建页脚：阶段条接线', () => {
 
   // 收尾结果必须经 deployOutcome（按参与部署的服务判），不许退回只看 branch.status。
   const outcomeFromParticipants = (source: string) => {
-    expect(source).toContain('const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds });');
+    expect(source).toContain('const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds, started: last.started });');
     expect(source).toContain('...deployingServiceIds(branch.services)');
     expect(source).toContain('const failedPhase = failureStillShowing && outcome ? outcome.phase : null;');
   };
@@ -241,6 +254,44 @@ describe('构建页脚：阶段条接线', () => {
       outcomeFromParticipants,
       page,
       mutate(page, 'const failedPhase = failureStillShowing && outcome ? outcome.phase : null;', "const failedPhase = outcome?.kind === 'failed' && isError ? outcome.phase : null;"),
+    );
+  });
+
+  // 页头「出错需要处理」与「重新部署失败项」共用 branchHasDeployFailure：单服务失败、分支仍 running 也算出错。
+  const overviewCountsServiceFailures = (source: string) => {
+    expect(source).toContain('if (branchHasDeployFailure(branch)) errored += 1;');
+    expect(source).toContain('if (!branchHasDeployFailure(branch)) continue;');
+    expect(source.match(/function branchHasDeployFailure\(/g)).toHaveLength(1);
+  };
+
+  it('页头出错计数算上服务级失败，与重新部署失败项共用一个判据', () => {
+    overviewCountsServiceFailures(page);
+  });
+
+  it('红用例：页头出错计数退回只看分支状态，守卫变红', () => {
+    expectGuardRedOnMutation(
+      overviewCountsServiceFailures,
+      page,
+      mutate(page, 'if (branchHasDeployFailure(branch)) errored += 1;', "if (branch.status === 'error') errored += 1;"),
+    );
+  });
+
+  // 复制集标识与端口 chip 同在一条单行槽：它占一格，端口就少露一个，否则最窄卡宽下「+N」被裁掉。
+  const replicaInChipBudget = (source: string) => {
+    expect(source).toContain('const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0);');
+    expect(source).toContain('? appResources.slice(0, appChipBudget)');
+    expect(source).not.toContain('const shown = entries.slice(0, 4);');
+  };
+
+  it('复制集标识计入端口槽的折叠预算，容器级只占一格', () => {
+    replicaInChipBudget(page);
+  });
+
+  it('红用例：复制集标识不计入预算，守卫变红', () => {
+    expectGuardRedOnMutation(
+      replicaInChipBudget,
+      page,
+      mutate(page, '? appResources.slice(0, appChipBudget)', '? appResources.slice(0, APP_CHIP_FOLD_THRESHOLD)'),
     );
   });
 

@@ -132,6 +132,15 @@ export function isDeployPhase(phase: Pick<BranchCardPhase, 'key'>): boolean {
 
 const DEPLOY_PHASE_KEYS: ReadonlySet<BranchCardPhaseKey> = new Set(['queued', 'ci-waiting', 'build', 'start', 'ready']);
 
+/**
+ * 部署真的动手了没有（在构建、起容器或做就绪探测）。排队与等 CI 镜像只是在等，
+ * 在这两段里结束的——CI 失败、排队被取消——没有产出任何新版本，不许报「部署成功」
+ * （Codex P1，PR #1646）。
+ */
+export function isDeployStartedPhase(phase: Pick<BranchCardPhase, 'key'>): boolean {
+  return phase.key === 'build' || phase.key === 'start' || phase.key === 'ready';
+}
+
 /** 此刻正在部署的服务（building / starting）。收尾要按「这次参与部署的服务」判成败。 */
 export function deployingServiceIds(services?: Record<string, { status: string }>): string[] {
   return Object.entries(services || {})
@@ -148,14 +157,18 @@ export interface DeployOutcome {
 /**
  * 一次部署结束时的成败。不能只看分支聚合状态：单服务部署失败时，别的服务还健康，
  * 分支仍是 running——只看它就会把失败报成「部署成功」（Codex P1，PR #1646）。
- * 分支既不是 running 也不是 error（比如被停掉）时返回 null，不播收尾。
+ * 分支既不是 running 也不是 error（比如被停掉）、或部署根本没动手（只在排队 / 等镜像里结束）
+ * 时返回 null，不播收尾。
  */
 export function deployOutcome(input: {
   status: string;
   services?: Record<string, { status: string }>;
   participants: string[];
+  /** 这次是否真的进入过构建 / 起容器 / 就绪探测。只在等待里结束的不算部署。 */
+  started: boolean;
 }): DeployOutcome | null {
   const failedServiceIds = input.participants.filter((id) => input.services?.[id]?.status === 'error');
+  if (!input.started) return input.status === 'error' ? { kind: 'failed', failedServiceIds } : null;
   if (input.status === 'error' || failedServiceIds.length > 0) return { kind: 'failed', failedServiceIds };
   if (input.status === 'running') return { kind: 'done', failedServiceIds: [] };
   return null;

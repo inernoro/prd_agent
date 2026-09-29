@@ -72,6 +72,9 @@ function makeBranches() {
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
+      // 容器级复制集：三个容器各做了复制。标识与端口挤在同一条单行槽里，「+N」不能被挤出卡片。
+      replicaMode: 'container',
+      replicaSets: Object.fromEntries(['api', 'admin', 'web'].map((id) => [id, { enabled: true, members: [{ status: 'running' }, { status: 'running' }] }])),
       lastDeployAt: iso(-40 * MIN), lastAccessedAt: iso(-5 * MIN),
     }),
     base('b-scan', 'codex/scan-risk-admin-fix-branch', {
@@ -239,6 +242,22 @@ async function main() {
       }
       await page.screenshot({ path: path.join(OUT, `grid-${theme}.png`), fullPage: true });
 
+      // 复制集标识 + 端口 + 「+N」同在一条单行槽：各档视口宽度下「+N」都要完整落在卡片里、点得到。
+      for (const vw of [1920, 1280, 1100, 900, 390]) {
+        await page.setViewportSize({ width: vw, height: 1000 });
+        await page.waitForTimeout(250);
+        const fit = await page.$eval('[data-branch-card-id="b-test"]', (card) => {
+          const btn = [...card.querySelectorAll('button[aria-haspopup="menu"]')].find((b) => /^\+\d+$/.test(b.textContent.trim()));
+          if (!btn) return null;
+          const c = card.getBoundingClientRect();
+          const b = btn.getBoundingClientRect();
+          return { cardW: Math.round(c.width), inside: b.right <= c.right - 8 && b.width > 0 };
+        });
+        check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集卡的「+N」完整落在卡内`);
+      }
+      await page.setViewportSize({ width: WIDTH, height: 1000 });
+      await page.waitForTimeout(250);
+
       if (theme === 'dark') {
         // 同一张卡先未超时、再超时：两种时间写法都留证。
         await shotCard(page, 'b-ident', 'ready-on-time.png');
@@ -384,6 +403,12 @@ async function main() {
         const readyPhase = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
         check(readyPhase === 'ready', `单服务就绪探测仍显示「就绪探测」段（实际 ${readyPhase}）`);
 
+        const erroredCount = async () => {
+          const text = (await page.textContent('[data-testid="branch-overview-bar"] h2')) || '';
+          const m = text.match(/(\d+)\s*个出错需要处理/);
+          return { n: m ? Number(m[1]) : 0, text: text.trim() };
+        };
+        const erroredBefore = await erroredCount();
         // 单服务部署失败：api 落 error，其余服务健康、分支仍 running。不许播「部署成功」（Codex P1）。
         const oneFailed = {
           ...oneSvc,
@@ -399,6 +424,17 @@ async function main() {
         check(partialPhase === 'failed', `单服务部署失败进入失败态（实际 data-deploy-phase=${partialPhase}）`);
         check(/构建失败/.test(partialFooter) && /就绪探测/.test(partialFooter), `单服务失败页脚写「构建失败 · 在「就绪探测」」（实际「${partialFooter.trim()}」）`);
         check(redeployVisible, '单服务失败时直接给出「重新部署」');
+        const erroredAfter = await erroredCount();
+        check(erroredAfter.n === erroredBefore.n + 1, `单服务失败计入页头「出错需要处理」（${erroredBefore.n} → ${erroredAfter.n}，「${erroredAfter.text}」）`);
+
+        // 极速版等 CI 镜像时旧版本在跑，CI 失败后等镜像这一段结束：不是一次部署，不许播「部署成功」（Codex P1）。
+        const ciFailed = { ...branches.find((b) => b.id === 'b-edison'), ciImageStatus: 'failed' };
+        branches = branches.map((b) => (b.id === ciFailed.id ? ciFailed : b));
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), ciFailed);
+        await page.waitForTimeout(900);
+        const ciPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
+        const ciFooter = (await page.textContent('[data-branch-card-id="b-edison"] footer')) || '';
+        check(ciPhase !== 'done' && !/部署成功/.test(ciFooter), `CI 失败结束等镜像不播「部署成功」（实际 data-deploy-phase=${ciPhase}）`);
 
         // 一键重启：原地重启容器，没有构建。回到运行中时不许播「部署成功」（Codex P2）。
         const restarting = { ...oneSvc, status: 'restarting', services: services(22331, 'starting') };

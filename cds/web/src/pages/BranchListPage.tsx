@@ -65,7 +65,7 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { canQuickStartBranch } from '@/lib/branch-quick-actions';
-import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';
+import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, isDeployStartedPhase, type BranchCardPhase } from '@/lib/branchCardPhase';
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
@@ -811,6 +811,15 @@ function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
   if (!url) return;
   avatarLoadStatusCache.set(url, status);
   writeAvatarStorage(url, status);
+}
+
+/**
+ * 分支是否带着部署失败——分支级 error，或任一服务 error。单服务部署失败时别的服务还健康，
+ * 分支聚合仍是 running，只看分支状态会漏掉（Codex P2，PR #1646）。
+ * 页头「出错需要处理」计数与「重新部署失败项」共用这一个判据，不许各写一份。
+ */
+function branchHasDeployFailure(branch: Pick<BranchSummary, 'status' | 'services'>): boolean {
+  return branch.status === 'error' || Object.values(branch.services || {}).some((service) => service.status === 'error');
 }
 
 function deployFailureMessage(branch?: BranchSummary): string {
@@ -2196,6 +2205,7 @@ export function BranchListPage(): JSX.Element {
   const failedDeployTargets = useMemo<FailedDeployTarget[]>(() => {
     const targets: FailedDeployTarget[] = [];
     for (const branch of branches) {
+      if (!branchHasDeployFailure(branch)) continue;
       const failedServices = Object.values(branch.services || {}).filter((service) => service.status === 'error');
       if (failedServices.length > 0) {
         for (const service of failedServices) {
@@ -2207,12 +2217,11 @@ export function BranchListPage(): JSX.Element {
         }
         continue;
       }
-      if (branch.status === 'error') {
-        targets.push({
-          branch,
-          label: `${branch.branch} / 全部分支服务`,
-        });
-      }
+      // 分支级 error 但没有哪个服务单独报错：整分支重部署。
+      targets.push({
+        branch,
+        label: `${branch.branch} / 全部分支服务`,
+      });
     }
     return targets;
   }, [branches]);
@@ -2331,7 +2340,7 @@ export function BranchListPage(): JSX.Element {
         prebuilt: branch.deployRuntime?.prebuilt,
       });
       if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
-      if (branch.status === 'error') errored += 1;
+      if (branchHasDeployFailure(branch)) errored += 1;
       else if (phase?.key === 'queued') queued += 1;
       else if (phase && isDeployPhase(phase)) building += 1;
       else if (branch.status === 'running') running += 1;
@@ -5385,15 +5394,21 @@ const BranchCard = memo(function BranchCard({
   const appResources = portedResources.filter((resource) => resource.source !== 'infra');
   const infraResources = portedResources.filter((resource) => resource.source === 'infra');
   const [portsPopoverOpen, setPortsPopoverOpen] = useState(false);
-  const foldedAppCount = appResources.length > APP_CHIP_FOLD_THRESHOLD
-    ? appResources.length - APP_CHIP_FOLD_THRESHOLD
+  /* 复制集标识与端口 chip 挤在同一条单行槽里。它占一格，端口就少露一个，否则最窄卡宽下
+     排在后面的端口与「+N」会被卡片的 overflow-hidden 裁掉、点不到（Codex P2，PR #1646）。 */
+  const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
+    .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0);
+  const foldedAppCount = appResources.length > appChipBudget
+    ? appResources.length - appChipBudget
     : 0;
   // 端口 chip 单行封顶:超过阈值只展示前 N 个,其余收进「+N」的悬浮浮层
   // (见下方 portsPopover)——保证端口行恒为单行、卡片高度稳定。展开走浮层
   // (position:absolute,浮在本卡之上)而非原地撑开,不推高本卡、不影响整行,
   // 复用 commitMenuOpen 的浮层模式(卡片 overflow-visible + 提 z)。
   const visibleAppResources = foldedAppCount > 0
-    ? appResources.slice(0, APP_CHIP_FOLD_THRESHOLD)
+    ? appResources.slice(0, appChipBudget)
     : appResources;
   const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
@@ -5447,7 +5462,7 @@ const BranchCard = memo(function BranchCard({
      记在 ref 里——翻转之后 branch 上已经没有这些信息了。卡片不在视野里时先不播，
      等它滚进来再播（IntersectionObserver），否则动效在屏幕外白白跑完。 */
   const cardRef = useRef<HTMLElement | null>(null);
-  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[] } | null>(null);
+  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[]; started: boolean } | null>(null);
   const [outcome, setOutcome] = useState<{ kind: 'done' | 'failed'; at: number; phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; failedServiceIds: string[] } | null>(null);
   const [outcomeSeen, setOutcomeSeen] = useState(false);
   const inBuild = Boolean(buildPhase);
@@ -5464,6 +5479,8 @@ const BranchCard = memo(function BranchCard({
         elapsedMs: buildClock.elapsedMs || prevElapsed,
         medianMs: buildClock.estimate?.medianMs ?? lastBuildRef.current?.medianMs ?? null,
         serviceIds,
+        // 真的开始部署了没有：只在排队 / 等镜像里结束的（CI 失败、排队被取消），不算一次部署。
+        started: Boolean(lastBuildRef.current?.started) || serviceIds.length > 0 || isDeployStartedPhase(buildPhase),
       };
     } else if (buildPhase?.key === 'restarting' || buildPhase?.key === 'stopping') {
       // 部署中途转去重启 / 停止：接下来结束的是这个动作，不是那次部署，别拿旧记录播收尾。
@@ -5480,7 +5497,7 @@ const BranchCard = memo(function BranchCard({
     const last = lastBuildRef.current;
     lastBuildRef.current = null;
     if (!last) return;
-    const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds });
+    const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds, started: last.started });
     if (!result) return;
     setOutcome({ ...result, at: Date.now(), phase: last.phase, elapsedMs: last.elapsedMs, medianMs: last.medianMs });
     if (result.kind === 'done') setOutcomeSeen(false);
@@ -6054,10 +6071,7 @@ const BranchCard = memo(function BranchCard({
             主卡只标「已复制」不再列 xN；容器级仍是每容器专属色 chip + xN。健康态不用红
             （红色专属出错——有副本 error 才转红）。 */}
         {(() => {
-          const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets;
-          const entries = Object.entries(replicaSets ?? {})
-            .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
-            .sort(([a], [b]) => a.localeCompare(b));
+          const entries = replicaEntries;
           if (entries.length === 0) return null;
           const mode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode ?? 'container';
           if (mode === 'project') {
@@ -6070,31 +6084,27 @@ const BranchCard = memo(function BranchCard({
               </span>
             );
           }
+          // 容器级：只占一格。一个容器做了复制就写「api x3」；多个就合成「复制集 · N」，明细放 title。
           const projectId = (branch as { projectId?: string }).projectId;
-          const shown = entries.slice(0, 4);
+          const bad = entries.some(([, rs]) => (rs.members ?? []).some((m) => m.status === 'error'));
+          const [firstPid, firstRs] = entries[0];
+          const color = bad ? '#ef4444' : entries.length === 1 ? profileColor(firstPid) : '#6366f1';
+          const detail = entries.map(([pid, rs]) => {
+            const n = rs.members?.length ?? 0;
+            const pidBad = (rs.members ?? []).some((m) => m.status === 'error');
+            return pidBad ? `${pid}：有副本异常，进「运行」页签查看` : `${pid}：复制集 1 主 + ${n} 副本，入口按权重分流`;
+          }).join('\n');
           return (
-            <>
-              {shown.map(([pid, rs]) => {
-                const bad = (rs.members ?? []).some((m) => m.status === 'error');
-                const color = bad ? '#ef4444' : profileColor(pid);
-                const n = rs.members?.length ?? 0;
-                return (
-                  <span key={pid}
-                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium"
-                    style={{ borderColor: `${color}80`, color, background: `${color}1a` }}
-                    title={bad ? `${pid}：有副本异常，进「运行」页签查看` : `${pid}：复制集 1 主 + ${n} 副本，入口按权重分流`}>
-                    <Layers className="h-3.5 w-3.5" />
-                    {profileShortName(pid, projectId)} x{n + 1}
-                  </span>
-                );
-              })}
-              {entries.length > shown.length ? (
-                <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-indigo-500/50 bg-indigo-500/10 px-2 text-xs font-medium text-indigo-500"
-                  title={entries.slice(shown.length).map(([pid, rs]) => `${pid} x${(rs.members?.length ?? 0) + 1}`).join('、')}>
-                  +{entries.length - shown.length}
-                </span>
-              ) : null}
-            </>
+            <span
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium"
+              style={{ borderColor: `${color}80`, color, background: `${color}1a` }}
+              title={detail}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              {entries.length === 1
+                ? `${profileShortName(firstPid, projectId)} x${(firstRs.members?.length ?? 0) + 1}`
+                : `复制集 · ${entries.length}`}
+            </span>
           );
         })()}
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
