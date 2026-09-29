@@ -2233,21 +2233,6 @@ public class ReviewAgentController : ControllerBase
         if (!request.IsAiPoc.HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择是否属于 AI POC 项目"));
 
-        var demandSource = FirstPresent(request.DemandSource, internalSource?.DemandSource);
-        var planName = FirstPresent(request.PlanName, internalSource?.PlanName);
-        var planUrl = FirstPresent(request.PlanUrl, internalSource?.PlanUrl);
-        var projectMembers = request.ProjectMemberNames?.Count > 0
-            ? NormalizeNames(request.ProjectMemberNames)
-            : internalSource?.ProjectMemberNames.ToList() ?? new();
-        var isGlobalOpen = request.IsGlobalOpen ?? internalSource?.IsGlobalOpen;
-        if (!isManualT && (!isGlobalOpen.HasValue
-            || string.IsNullOrWhiteSpace(demandSource)
-            || string.IsNullOrWhiteSpace(planName)
-            || string.IsNullOrWhiteSpace(planUrl)
-            || projectMembers.Count == 0
-            || !request.PlannedReleaseAt.HasValue))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请补齐全域开放、需求来源、方案名称、方案地址、项目组成员和计划上线时间"));
-
         var record = new VersionRegistration
         {
             Kind = VersionRegistrationKind.Internal,
@@ -2296,6 +2281,21 @@ public class ReviewAgentController : ControllerBase
             if (internalSource == null || (!HasManagePermission() && internalSource.CreatedBy != userId))
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "内部版本号不存在或无权使用"));
         }
+
+        var demandSource = FirstPresent(request.DemandSource, internalSource?.DemandSource);
+        var planName = FirstPresent(request.PlanName, internalSource?.PlanName);
+        var planUrl = FirstPresent(request.PlanUrl, internalSource?.PlanUrl);
+        var projectMembers = request.ProjectMemberNames?.Count > 0
+            ? NormalizeNames(request.ProjectMemberNames)
+            : internalSource?.ProjectMemberNames.ToList() ?? new();
+        var isGlobalOpen = request.IsGlobalOpen ?? internalSource?.IsGlobalOpen;
+        if (!isManualT && (!isGlobalOpen.HasValue
+            || string.IsNullOrWhiteSpace(demandSource)
+            || string.IsNullOrWhiteSpace(planName)
+            || string.IsNullOrWhiteSpace(planUrl)
+            || projectMembers.Count == 0
+            || !request.PlannedReleaseAt.HasValue))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请补齐全域开放、需求来源、方案名称、方案地址、项目组成员和计划上线时间"));
 
         var record = new VersionRegistration
         {

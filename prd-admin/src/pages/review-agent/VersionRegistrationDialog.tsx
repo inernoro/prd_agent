@@ -335,8 +335,6 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   }, [open, onClose]);
 
   const selectedReview = useMemo(() => reviewSources.find((item) => item.id === reviewSubmissionId), [reviewSources, reviewSubmissionId]);
-  const selectedInternal = useMemo(() => internalSources.find((item) => item.id === internalRegistrationId), [internalSources, internalRegistrationId]);
-
   const patchForm = (update: Partial<FormState>) => setForm((previous) => ({ ...previous, ...update }));
 
   const chooseKind = (nextKind: ApplyKind) => {
