@@ -10,3 +10,4 @@
 | polish | prd-admin | 片花「知识星系」改用知识库星系的真建树（buildDocGalaxy）、真放射布局（layoutRadial2D）与真数据（本仓库 doc/ 380 篇文档名快照），canvas 逐帧绘制深空、外拱光路、生长波、星芒与流光；文档类型配色抽到 `lib/docGalaxy/docTypeColors.ts` 与星系页共用一份 |
 | fix | prd-admin | 首页「体验地图」色块图的文字被横向拉宽压扁：SVG 由固定 viewBox 非等比拉伸改为量出真实像素后排布，字形不再变形；新增守卫禁止首页在非等比拉伸的 SVG 里写字 |
 | polish | prd-admin | 片花视觉创作一幕：标题讲完即抬窗，打字挪到窗口抬到位之后，输入框全程在画面内（此前打字时输入框落在画面外）；控制条时间改用正文字体等宽数字，不再用像素字体 |
+| feat | prd-admin | 首屏满屏循环样片（未接入首页，待拍板）：`HeroLoop` 两个无字镜头（知识星系生长 / 四张海报显影）配输入框里对应的那句话，16 秒首尾无缝；样片页 `scripts/film/hero-sample.html`，导出脚本新增 `FILM_PAGE` / `FILM_SIZE` / `FILM_DPR` / `FILM_AUDIO=none` |

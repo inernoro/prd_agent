@@ -20,6 +20,10 @@ import { createServer } from 'vite';
  *   FILM_LIMIT  只渲染前 N 秒（调试用）
  *   FILM_AUDIO  track | synth（默认 track：用 public/film/landing-score.mp3 那段剪好的成品配乐；
  *               synth：用 filmScore 离线合成的备用配乐——页面上配乐加载失败时放的就是它）
+ *   FILM_PAGE   换一个导出页（默认 scripts/film/render.html；首屏样片用 scripts/film/hero-sample.html）
+ *   FILM_SIZE   画面尺寸，如 390x844（默认 1920x1080；会作为 ?w=&h= 传给导出页）
+ *   FILM_DPR    像素倍率（默认 1；手机竖屏样片用 2，否则 390 宽的画面糊）
+ *   FILM_AUDIO  另有 none：不带音轨（首屏循环本来就是静音的）
  *   FILM_STILLS 只出静帧不出视频，逗号分隔的秒数，如 "1.5,12.1,33"（审片用，输出到 FILM_OUT 同目录）
  *
  * 原理：起一个 vite dev server，用无头 Chromium 打开 scripts/film/render.html，
@@ -33,7 +37,9 @@ const LANG = process.env.FILM_LANG === 'en' ? 'en' : 'zh';
 const FPS = Number(process.env.FILM_FPS || 30);
 const OUT = path.resolve(process.env.FILM_OUT || path.join(os.tmpdir(), `map-film-${LANG}.mp4`));
 const LIMIT = process.env.FILM_LIMIT ? Number(process.env.FILM_LIMIT) : null;
-const AUDIO = process.env.FILM_AUDIO === 'synth' ? 'synth' : 'track';
+const AUDIO = process.env.FILM_AUDIO === 'synth' ? 'synth' : process.env.FILM_AUDIO === 'none' ? 'none' : 'track';
+const PAGE = process.env.FILM_PAGE || 'scripts/film/render.html';
+const [VW, VH] = (process.env.FILM_SIZE || '1920x1080').split('x').map(Number);
 const TRACK = path.join(ROOT, 'public', 'film', 'landing-score.mp3');
 const STILLS = process.env.FILM_STILLS ? process.env.FILM_STILLS.split(',').map(Number).filter((x) => Number.isFinite(x)) : null;
 
@@ -82,11 +88,11 @@ async function main() {
   });
   await server.listen();
   const port = server.config.server.port ?? server.httpServer?.address()?.port;
-  const url = `http://localhost:${port}/scripts/film/render.html?lang=${LANG}`;
+  const url = `http://localhost:${port}/${PAGE}?lang=${LANG}&w=${VW}&h=${VH}`;
 
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   try {
-    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+    const page = await browser.newPage({ viewport: { width: VW, height: VH }, deviceScaleFactor: Number(process.env.FILM_DPR || 1) });
     page.on('pageerror', (err) => console.error('[page]', err.message));
     // 字体由 Node 侧用 curl 代取：受限网络里浏览器直连 Google Fonts 常被代理拒绝或证书不受信，
     // 而 curl 走系统信任库与 HTTPS_PROXY。取不到就放行给浏览器自己试，最差退回系统字体——并打一行日志，
@@ -134,10 +140,12 @@ async function main() {
       const wav = await page.evaluate(() => window.__film.renderAudio());
       fs.writeFileSync(wavPath, Buffer.from(wav, 'base64'));
       audioPath = wavPath;
+    } else if (AUDIO === 'none') {
+      audioPath = null;
     } else if (!fs.existsSync(TRACK)) {
       throw new Error(`找不到成品配乐 ${TRACK}：先跑 scripts/film/build-score.py，或用 FILM_AUDIO=synth`);
     }
-    console.log(`[film] 配乐：${AUDIO === 'synth' ? '合成版' : '成品（scoreEdit.json 剪辑）'} ${audioPath}`);
+    console.log(`[film] 配乐：${AUDIO === 'synth' ? '合成版' : AUDIO === 'none' ? '无（静音）' : '成品（scoreEdit.json 剪辑）'} ${audioPath ?? ''}`);
 
     await page.evaluate((t) => window.__film.seek(t), poster);
     await page.screenshot({ path: posterPath, type: 'jpeg', quality: 92 });
@@ -149,12 +157,12 @@ async function main() {
       [
         '-y', '-hide_banner', '-loglevel', 'error',
         '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'mjpeg', '-i', '-',
-        '-i', audioPath,
+        ...(audioPath ? ['-i', audioPath] : []),
         '-t', String(total),
         // 成品配乐自带收尾淡出；合成版与截短调试时才补一道
-        ...(AUDIO === 'synth' || LIMIT ? ['-af', `afade=t=out:st=${fadeAt}:d=1.2`] : []),
+        ...(audioPath && (AUDIO === 'synth' || LIMIT) ? ['-af', `afade=t=out:st=${fadeAt}:d=1.2`] : []),
         '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac', '-b:a', '192k',
+        ...(audioPath ? ['-c:a', 'aac', '-b:a', '192k'] : []),
         '-movflags', '+faststart',
         OUT,
       ],

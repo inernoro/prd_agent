@@ -142,15 +142,36 @@ function control(a: Star, b: Star): { x: number; y: number } {
 
 const DPR = 2;
 
-function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d: number) {
+/** 取景：星系中心放在哪、盘面半径多大、挂不挂名字。片花里的窗口用默认值，首屏满屏背景另给。 */
+export interface GalaxyFrame {
+  cx?: number;
+  cy?: number;
+  /** 盘面最外环在屏幕上的半径（像素） */
+  radius?: number;
+  labels?: boolean;
+  dpr?: number;
+  /** 画不画深空底与星场（false = 透明底，只画星图，叠在别的层上） */
+  sky?: boolean;
+  /** 画不画星图本体（false = 只剩深空与星场） */
+  nodes?: boolean;
+  /** 星场一开始就在，不随生长淡入（循环背景的首尾要一致） */
+  starsAlways?: boolean;
+  /** 柔光与星芒的强弱倍数（小屏盘面小、光晕尺寸不变，会糊成一团，要压下去） */
+  glow?: number;
+}
+
+function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d: number, frame: GalaxyFrame = {}) {
   const model = galaxyModel();
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const dpr = frame.dpr ?? DPR;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
 
   // 深空穹顶
-  const cx = w / 2;
-  const cy = h / 2 - 20;
+  const cx = frame.cx ?? w / 2;
+  const cy = frame.cy ?? h / 2 - 20;
+  ctx.clearRect(0, 0, w, h);
+  if (frame.sky !== false) {
   const sky = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h) * 0.75);
   sky.addColorStop(0, FILM.spaceCore);
   sky.addColorStop(1, FILM.spaceEdge);
@@ -160,20 +181,23 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
   // 远景星场：固定种子，只随时间呼吸
   const rnd = seeded(9001);
   ctx.fillStyle = FILM.text;
-  for (let i = 0; i < 170; i += 1) {
+  const starCount = Math.round(170 * Math.max(1, (w * h) / (700 * 764)) ** 0.5);
+  for (let i = 0; i < starCount; i += 1) {
     const x = rnd() * w;
     const y = rnd() * h;
     const r = 0.4 + rnd() * 0.9;
     const phase = rnd() * Math.PI * 2;
-    ctx.globalAlpha = (0.12 + 0.3 * (0.5 + 0.5 * Math.sin(lt * 1.6 + phase))) * easeOutCubic(span(lt, 0, 0.6));
+    ctx.globalAlpha = (0.12 + 0.3 * (0.5 + 0.5 * Math.sin(lt * 1.6 + phase))) * (frame.starsAlways ? 1 : easeOutCubic(span(lt, 0, 0.6)));
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.globalAlpha = 1;
+  }
+  if (frame.nodes === false) return;
 
   // 镜头：缓推 + 缓转
-  const fit = (Math.min(w, h) / 2 - 30) / model.maxR;
+  const fit = (frame.radius ?? Math.min(w, h) / 2 - 30) / model.maxR;
   const zoom = fit * lerp(0.9, 1.06, easeOutCubic(span(lt, 0, d)));
   const rot = lerp(-0.12, 0.05, easeInOutCubic(span(lt, 0, d)));
   const cos = Math.cos(rot);
@@ -222,8 +246,8 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
     // 按层分档：银心最亮、一级枢纽次之、应用分组再次；更深的分组和叶子只留一层薄光，
     // 否则同一环上几百颗星的光晕叠加成一圈发白的光带
     const [spread, alpha] = ([[11, 0.8], [7, 0.55], [5, 0.38], [3.2, 0.16]] as const)[tier];
-    const size = s.r * spread * pop * px;
-    ctx.globalAlpha = alpha;
+    const size = s.r * spread * pop * px * (frame.glow ?? 1);
+    ctx.globalAlpha = alpha * Math.min(1, frame.glow ?? 1);
     ctx.drawImage(glow(s.node.kind === 'root' ? FILM.clay : s.color), s.x - size, s.y - size, size * 2, size * 2);
   }
 
@@ -295,7 +319,7 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
   ctx.shadowColor = FILM.spaceEdge;
   ctx.shadowBlur = 8;
   ctx.textBaseline = 'middle';
-  for (const s of model.labeled) {
+  for (const s of frame.labels === false ? [] : model.labeled) {
     const alpha = easeOutCubic(span(lt, s.born + 0.3, s.born + 0.9));
     if (alpha <= 0) continue;
     const p = toScreen(s);
@@ -312,6 +336,17 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
   }
   ctx.shadowBlur = 0;
   ctx.globalAlpha = 1;
+}
+
+/** 只有星系本体（深空 + 星图），不带左上角篇数与底部图例——给首屏满屏背景用。 */
+export function GalaxyCanvas({ lt, d, w, h, frame }: { lt: number; d: number; w: number; h: number; frame?: GalaxyFrame }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const dpr = frame?.dpr ?? DPR;
+  useLayoutEffect(() => {
+    const ctx = ref.current?.getContext('2d');
+    if (ctx) draw(ctx, lt, w, h, d, frame);
+  }, [lt, w, h, d, frame]);
+  return <canvas ref={ref} width={Math.round(w * dpr)} height={Math.round(h * dpr)} style={{ position: 'absolute', inset: 0, width: w, height: h }} />;
 }
 
 export function FilmGalaxy({ lt, d, w, h, stat }: { lt: number; d: number; w: number; h: number; stat: string }) {

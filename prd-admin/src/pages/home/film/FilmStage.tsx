@@ -420,7 +420,7 @@ function Bloom({ x, y, size, color, alpha }: { x: number; y: number; size: numbe
 }
 
 /** 一张生成海报。develop ∈ [0,1]：0 是还没显影，1 是清晰落定。 */
-function PosterArt({ variant, develop, drift, label }: { variant: number; develop: number; drift: number; label?: ReactNode }) {
+export function PosterArt({ variant, develop, drift, label }: { variant: number; develop: number; drift: number; label?: ReactNode }) {
   const art = POSTER_ART[variant % POSTER_ART.length];
   const blur = lerp(26, 0, easeOutCubic(develop));
   const scale = lerp(1.12, 1, easeOutCubic(develop)) * (1 + drift * 0.05);
