@@ -93,6 +93,10 @@ function makeBranches() {
       status: 'running', services: services(22705, 'running'),
       deployRuntime: expressRuntime, ciImageStatus: 'waiting', ciWaitingSince: iso(-72_000), tags: ['登录重构'],
       lastPushAt: iso(-1 * MIN), lastDeployAt: iso(-3 * 60 * MIN),
+      // 项目级复制集：13 个容器各有一个副本、同属一组，派生出一张复制集卡。成员多到换好几行，
+      // 成员区必须在卡内滚动、「打开详情」留在卡底（Codex P2，PR #1646）。
+      replicaMode: 'project',
+      replicaSets: Object.fromEntries(PROFILES.map((id, i) => [id, { enabled: true, members: [{ id: `rs-${id}`, status: 'running', projectGroupId: 'pg-1', hostPort: 26000 + i }] }])),
     }),
     base('b-pack', 'codex/packaging-supplier-flow', {
       // 排队等构建槽时旧容器照常在跑（真实情况如此），卡片应说「旧版本仍在服务」。
@@ -238,6 +242,32 @@ async function main() {
         console.log(`[${theme}] 第 ${i + 1} 排 ${row.list.map((c) => `${c.id}=${c.h}`).join('  ')}`);
         check(spread <= 1, `[${theme}] 第 ${i + 1} 排卡片等高（差 ${spread.toFixed(1)}px）`);
       });
+      // 复制集卡：与分支卡同高，成员区真的溢出并可在卡内滚动，底部按钮没被挤出卡片
+      const replica = await page.evaluate(() => {
+        const members = document.querySelector('[data-replica-members]');
+        const card = members?.parentElement;
+        const branchCard = document.querySelector('[data-branch-card-id="b-edison"]');
+        const detail = card ? [...card.querySelectorAll('button')].find((b) => b.textContent?.includes('打开详情')) : null;
+        if (!members || !card || !branchCard || !detail) return null;
+        const c = card.getBoundingClientRect();
+        const d = detail.getBoundingClientRect();
+        const before = members.scrollTop;
+        members.scrollTop = members.scrollHeight;
+        const scrolled = members.scrollTop > before;
+        members.scrollTop = 0;
+        return {
+          cardH: Math.round(c.height * 10) / 10,
+          branchH: Math.round(branchCard.getBoundingClientRect().height * 10) / 10,
+          overflow: members.scrollHeight - members.clientHeight,
+          scrolled,
+          overflowY: getComputedStyle(members).overflowY,
+          detailInside: d.bottom <= c.bottom + 0.5 && d.top >= c.top,
+        };
+      });
+      check(Boolean(replica) && Math.abs(replica.cardH - replica.branchH) <= 1,
+        `[${theme}] 复制集卡与分支卡同高（${replica?.cardH} / ${replica?.branchH}）`);
+      check(Boolean(replica) && replica.overflow > 0 && replica.scrolled && replica.detailInside,
+        `[${theme}] 复制集成员多到溢出时在卡内滚动（溢出 ${replica?.overflow}px，滚动 ${replica?.scrolled}，overflow-y ${replica?.overflowY}），「打开详情」仍在卡内`);
       const phases = Object.fromEntries(rows.flatMap((r) => r.list).map((c) => [c.id, c.phase]));
       check(phases['b-pack'] === 'queued', `[${theme}] 排队卡 data-deploy-phase=queued（实际 ${phases['b-pack']}）`);
       check(phases['b-edison'] === 'ci-waiting', `[${theme}] 等镜像卡 data-deploy-phase=ci-waiting（实际 ${phases['b-edison']}）`);
