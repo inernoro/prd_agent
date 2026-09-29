@@ -74,25 +74,25 @@ export function ReviewAgentPage() {
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* 页头 */}
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
             <ClipboardCheck className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
           </div>
           <div>
             <h1 className="text-xl font-semibold text-token-primary">产品评审智能体</h1>
             <p className="text-sm text-token-muted mt-0.5">上传产品方案，AI 多维度评审打分</p>
+            <button
+              onClick={() => navigate('/review-agent/assessments')}
+              className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 mt-3 transition-colors"
+              title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
+            >
+              <ListOrdered className="w-3.5 h-3.5" />
+              需求评估
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <TipsEntryButton compact />
-          <button
-            onClick={() => navigate('/review-agent/assessments')}
-            className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
-            title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
-          >
-            <ListOrdered className="w-3.5 h-3.5" />
-            需求评估
-          </button>
           {canManage && (
             <>
               <button
