@@ -572,6 +572,19 @@ async function main() {
           const afterCiFooter = (await page.textContent('[data-branch-card-id="b-edison"] footer')) || '';
           check(backPhase === 'ci-waiting' && afterCiFail !== 'done' && !/部署成功/.test(afterCiFooter),
             `部署跑完回到等镜像、随后 CI 失败：不把旧部署播成「部署成功」（${backPhase} → ${afterCiFail}）`);
+          // 等镜像期间手动重部署的服务失败了（分支因其余服务仍是 running）：失败优先，卡片按出错呈现（Codex P2）
+          const waitAgain = { ...ciFailedAfter, ciImageStatus: 'waiting', ciWaitingSince: iso(-10_000) };
+          branches = branches.map((b) => (b.id === waitAgain.id ? waitAgain : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), waitAgain);
+          await page.waitForTimeout(500);
+          const failWhileWaiting = { ...waitAgain, services: services(22705, 'running', { api: { status: 'error', errorMessage: '就绪探测超时' } }) };
+          branches = branches.map((b) => (b.id === failWhileWaiting.id ? failWhileWaiting : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), failWhileWaiting);
+          await page.waitForTimeout(700);
+          const failPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
+          const failRedeploy = await page.isVisible('[data-branch-card-id="b-edison"] button[aria-label^="重新部署"]');
+          check(failPhase !== 'ci-waiting' && failRedeploy,
+            `等 CI 镜像期间服务失败：卡片按出错呈现并给出「重新部署」（data-deploy-phase=${failPhase}，重新部署按钮${failRedeploy ? '在' : '不在'}）`);
         }
 
         // 「已停止」分组收起时定位其中一张卡（搜索下拉 / cds:focus-branch）：要先展开分组，卡片真的滚进视野（Codex P2）。

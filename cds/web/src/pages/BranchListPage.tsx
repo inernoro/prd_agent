@@ -5427,7 +5427,7 @@ const BranchCard = memo(function BranchCard({
      其余看净耗时对历史中位，超过中位改说「超出预计」。 */
   // 这次部署的记录（阶段、耗时、参与过的服务）；下面收尾判成败要用，阶段推导也要用它记住的参与服务。
   const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[]; started: boolean; express: boolean } | null>(null);
-  const buildPhase: BranchCardPhase | null = branchCardPhase({
+  const phaseFromState: BranchCardPhase | null = branchCardPhase({
     status: branch.status,
     services: branch.services,
     buildQueue: branch.buildQueue,
@@ -5441,6 +5441,11 @@ const BranchCard = memo(function BranchCard({
     lockedExpress: lastBuildRef.current?.started ? lastBuildRef.current.express : undefined,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });
+  // 「等 CI 镜像」只是被动标记：这期间有服务真的失败了（手动重部署某个服务失败，分支因其余服务仍是 running），
+  // 失败优先，卡片按出错呈现，给出原因与「日志 / 重新部署」，不再盖在等镜像下面（Codex P2，PR #1646）。
+  const buildPhase: BranchCardPhase | null = phaseFromState?.key === 'ci-waiting' && branchHasDeployFailure(branch, projectProfileIds)
+    ? null
+    : phaseFromState;
   // 部署中的模式跟阶段条走同一个判断：混着极速版与源码版的分支只重建源码服务时，阶段条是源码三段，
   // 这里不能还说「极速版」（Codex P2，PR #1646）。deployModeLabel 只看「任一服务走极速版」。
   const phaseIsSourceSequence = Boolean(buildPhase && isDeployPhase(buildPhase) && buildPhase.steps.length > 1
