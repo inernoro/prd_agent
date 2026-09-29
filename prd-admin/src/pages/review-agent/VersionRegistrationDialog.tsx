@@ -591,17 +591,15 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
             <div className="space-y-5">
               {!kind ? (
                 <section aria-label="选择申领类型">
-                  <p className="mb-3 text-sm text-token-secondary">请选择一种申领方式，然后点击对应卡片开始填写。</p>
+                  <p className="mb-3 text-sm text-token-secondary">请选择适合当前情况的一种申请模式；T 与 V 相互独立，点击卡片开始填写。</p>
                   <div className="grid gap-3 md:grid-cols-2">
                     <button type="button" onClick={() => chooseKind('internal')} aria-label="点击开始申领内部版本号 T" className="group rounded-xl border border-token-subtle bg-token-nested p-5 text-left transition-all hover:border-indigo-500/60 hover-bg-soft focus-visible:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40">
-                      <span className="inline-flex rounded-full bg-indigo-500/10 px-2.5 py-1 text-xs font-medium text-[color:var(--accent-fg-blue)]">第一步</span>
-                      <span className="mt-3 block text-sm font-semibold text-token-primary">内部版本号 T</span>
+                      <span className="block text-sm font-semibold text-token-primary">内部版本号 T</span>
                       <span className="mt-2 block text-xs leading-5 text-token-muted">从本人已完成的产品评审记录开始，不再上传截图。填写立项信息后立即生成 T 号。</span>
                       <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)]">点击开始申领 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
                     </button>
                     <button type="button" onClick={() => chooseKind('formal')} aria-label="点击开始申领正式版本号 V" className="group rounded-xl border border-token-subtle bg-token-nested p-5 text-left transition-all hover:border-indigo-500/60 hover-bg-soft focus-visible:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40">
-                      <span className="inline-flex rounded-full bg-indigo-500/10 px-2.5 py-1 text-xs font-medium text-[color:var(--accent-fg-blue)]">第二步</span>
-                      <span className="mt-3 block text-sm font-semibold text-token-primary">正式版本号 V</span>
+                      <span className="block text-sm font-semibold text-token-primary">正式版本号 V</span>
                       <span className="mt-2 block text-xs leading-5 text-token-muted">选择已登记的 T 号带入资料，或在特殊情况下手工填写已有 T 号后继续申领。</span>
                       <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)]">点击开始申领 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
                     </button>
