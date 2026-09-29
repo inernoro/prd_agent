@@ -1871,9 +1871,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 而前一个随后失败回滚，就会把第二个的结果一起冲掉（Codex P1，PR #1647）。
   const branchGroupWriteChains = new Map<string, Promise<void>>();
   router.put('/projects/:id/branch-groups', (req, res) => {
-    const key = String(req.params.id);
+    // 按解析后的项目 id 分队：同一项目用 id 或 slug（大小写不同）访问时必须进同一条队（Codex P2，PR #1647）
+    const key = stateService.getProject(req.params.id)?.id ?? String(req.params.id);
+    // 排队期间客户端已断开（放弃或重试）：轮到它时直接跳过，不让死请求占着队列等满一轮落盘超时（Codex P2，PR #1647）
+    let abandoned = false;
+    res.on('close', () => { if (!res.writableEnded) abandoned = true; });
     const previous = branchGroupWriteChains.get(key) || Promise.resolve();
-    const run = previous.then(() => putBranchGroups(req, res)).catch((err) => {
+    const run = previous.then(() => (abandoned ? undefined : putBranchGroups(req, res))).catch((err) => {
       console.error('[branch-groups] 保存分组时出现未处理的异常', err);
       if (!res.headersSent) res.status(500).json({ error: 'persist_failed', message: '分组没有保存：服务端出错，请稍后重试' });
     });

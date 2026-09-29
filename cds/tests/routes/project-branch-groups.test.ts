@@ -175,6 +175,62 @@ describe('项目分支自定义分组', () => {
     expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude', 'g-other']);
   });
 
+  it('用 id 与不同大小写的 slug 访问同一项目时进同一条写入队列', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const flushSpy = vi.spyOn(stateService, 'flush').mockImplementationOnce(
+      () => new Promise<void>((_, reject) => setTimeout(() => reject(new Error('slow failure')), 80)),
+    );
+    const otherGroup = { ...claudeGroup, id: 'g-other', name: '另一组' };
+    const [a, b] = await Promise.all([
+      request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt }),
+      request(server, 'PUT', '/api/projects/PROJ-A/branch-groups', { groups: [claudeGroup, otherGroup], baseUpdatedAt: first.body.updatedAt }),
+    ]);
+    flushSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(a.status).toBe(500);
+    expect(b.status).toBe(200);
+    const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude', 'g-other']);
+  });
+
+  it('排队期间客户端已断开的写入不再执行，不占着队列', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    let flushCalls = 0;
+    const realFlush = stateService.flush.bind(stateService);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // 前面那个慢请求最后落盘失败、回滚到原版本：排在后面的请求版本号又对得上，只能靠「已放弃就跳过」拦住
+    const flushSpy = vi.spyOn(stateService, 'flush').mockImplementation(async () => {
+      flushCalls += 1;
+      if (flushCalls === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        throw new Error('slow failure');
+      }
+      await realFlush();
+    });
+    const slow = request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: first.body.updatedAt });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // 第二个请求排在慢的那个后面，客户端随即放弃
+    await new Promise<void>((resolve) => {
+      const { port } = server.address() as { port: number };
+      const payload = JSON.stringify({ groups: [], baseUpdatedAt: first.body.updatedAt });
+      const req = http.request({ host: '127.0.0.1', port, method: 'PUT', path: '/api/projects/proj-a/branch-groups', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } });
+      req.on('error', () => resolve());
+      req.write(payload);
+      req.end();
+      setTimeout(() => { req.destroy(); resolve(); }, 30);
+    });
+    const slowRes = await slow;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    flushSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(slowRes.status).toBe(500);
+    // 放弃的那次没有执行：只落过一次盘，分组仍是最初那份（没被放弃的请求清空）
+    expect(flushCalls).toBe(1);
+    const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
+  });
+
   it('没配过时返回空列表与 null 版本，不编默认分组', async () => {
     const res = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
     expect(res.status).toBe(200);

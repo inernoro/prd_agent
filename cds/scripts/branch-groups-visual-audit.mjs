@@ -547,6 +547,37 @@ async function main() {
           }
         }
 
+        // 9h. 慢网钉入还没回来时打开编辑器，钉入随后成功；之后编辑器自己保存失败：
+        //     用户改过的草稿要留着好重试，不能按「取自乐观版本」换掉（Codex P2，PR #1647）
+        {
+          const gid = groupStore.groups.find((g) => g.name === 'Codex 别人改过')?.id;
+          const alreadyPinned = groupStore.groups.find((g) => g.id === gid)?.pinnedBranchIds || [];
+          const assigned = await page.$$eval('[data-branch-group]', (els) => Object.fromEntries(els.flatMap((el) =>
+            [...el.querySelectorAll('[data-branch-card-id]')].map((card) => [card.getAttribute('data-branch-card-id'), el.getAttribute('data-branch-group')]))));
+          const candidate = ['b-ident', 'b-test', 'b-scan', 'b-pack', 'b-relaxed'].find((id) => !alreadyPinned.includes(id) && assigned[id] && assigned[id] !== gid);
+          putDelayMs = 700;
+          await page.click(`[data-branch-card-id="${candidate}"] button[aria-label="更多操作"]`);
+          await page.getByRole('menuitem', { name: /Codex 别人改过/ }).click();
+          await page.waitForTimeout(100);
+          await page.click(`[data-branch-group="${gid}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
+          await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+          await page.waitForTimeout(1000);
+          putDelayMs = 0;
+          const nameInput = page.getByRole('dialog').getByPlaceholder('例如：Claude 在做');
+          await nameInput.fill('Codex 我的改名');
+          failNext = true;
+          await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+          await page.waitForTimeout(700);
+          const stillOpen = Boolean(await page.$('[role="dialog"]'));
+          const keptName = stillOpen ? await nameInput.inputValue() : '';
+          check(stillOpen && keptName === 'Codex 我的改名',
+            `依赖的钉入已成功后，编辑器自己保存失败，草稿保留（弹窗${stillOpen ? '仍开着' : '已关'}，名称「${keptName}」）`);
+          if (stillOpen) {
+            await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+            await page.waitForTimeout(300);
+          }
+        }
+
         // 9c. 标签筛选开着时编辑分组：命中预览仍按项目全部分支算（规则保存后作用于全部分支）
         const openCodexEditor = async () => {
           await page.click(`[data-branch-group="${codexGroupId}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);

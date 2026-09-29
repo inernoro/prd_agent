@@ -1707,8 +1707,10 @@ export function BranchListPage(): JSX.Element {
   const [groupsSaveError, setGroupsSaveError] = useState('');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups(projectId));
   const [expandedDormantGroups, setExpandedDormantGroups] = useState<Set<string>>(() => new Set());
-  /** basedOnPending：打开时还有保存没回来，草稿取自未确认的乐观版本（失败后要换回已确认版本）。 */
-  const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean; basedOnPending?: boolean } | null>(null);
+  /** basedOn：打开时还没回来的那几步保存。草稿取自包含它们的乐观版本；其中哪一步失败被撤回，
+   *  草稿就要换回已确认版本。那几步成功了则与草稿无关——只记「当时有没有在途保存」会在之后
+   *  编辑器自己保存失败时误丢用户的修改（Codex P2，PR #1647）。 */
+  const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean; basedOn?: ReadonlyArray<(groups: BranchGroup[]) => BranchGroup[]> } | null>(null);
   const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group' } | null>(null);
   const draggingGroupIdRef = useRef<string | null>(null);
   // 首次建组建议的勾选与组名草稿放在页面上：建议面板点「创建」就会卸载，失败回来时草稿还在
@@ -1818,7 +1820,8 @@ export function BranchListPage(): JSX.Element {
         if (switchedAway()) return false;
         settle();
         // 撤回排在后面的改动：它们是在这一步的乐观结果上做的，这一步没成，它们的前提也就不在了。
-        const dropped = pendingGroupUpdatesRef.current.length;
+        const droppedUpdates = pendingGroupUpdatesRef.current;
+        const dropped = droppedUpdates.length;
         groupSaveBatchRef.current += 1;
         pendingGroupUpdatesRef.current = [];
         setGroupsSaving(false);
@@ -1842,8 +1845,9 @@ export function BranchListPage(): JSX.Element {
           // 不换回已确认版本的话，再点保存会把刚撤回的改动悄悄重新写进去（Codex P2，PR #1647）。
           // 编辑器自己那次保存失败（打开时没有在途保存）则保留草稿，方便重试。
           const confirmedNow = confirmedGroupsRef.current;
+          const withdrawn = new Set([update, ...droppedUpdates]);
           setGroupEditor((editor) => {
-            if (!editor || editor.isNew || !editor.basedOnPending || !confirmedNow) return editor;
+            if (!editor || editor.isNew || !confirmedNow || !editor.basedOn?.some((dep) => withdrawn.has(dep))) return editor;
             const fresh = confirmedNow.groups.find((group) => group.id === editor.group.id);
             return fresh ? { group: fresh, isNew: false } : null;
           });
@@ -1858,7 +1862,7 @@ export function BranchListPage(): JSX.Element {
   }, [projectId]);
   const openExistingGroupEditor = useCallback((group: BranchGroup) => {
     setGroupsSaveError('');
-    setGroupEditor({ group, isNew: false, basedOnPending: pendingGroupUpdatesRef.current.length > 0 });
+    setGroupEditor({ group, isNew: false, basedOn: [...pendingGroupUpdatesRef.current] });
   }, []);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState('');
