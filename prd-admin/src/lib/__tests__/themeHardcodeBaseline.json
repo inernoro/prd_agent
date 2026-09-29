@@ -41,12 +41,6 @@
     "darkRgbaBg": 0,
     "lightFg": 1
   },
-  "/components/BranchBadge.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/changelog/ChangelogBell.tsx": {
     "whiteAlpha": 1,
     "darkHex": 2,
