@@ -73,62 +73,62 @@ export function ReviewAgentPage() {
     <>
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* 页头 */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
             <ClipboardCheck className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-xl font-semibold text-token-primary">产品评审智能体</h1>
             <p className="text-sm text-token-muted mt-0.5">上传产品方案，AI 多维度评审打分</p>
-            <button
-              onClick={() => navigate('/review-agent/assessments')}
-              className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 mt-3 transition-colors"
-              title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
-            >
-              <ListOrdered className="w-3.5 h-3.5" />
-              需求评估
-            </button>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <button
+                onClick={() => navigate('/review-agent/assessments')}
+                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
+              >
+                <ListOrdered className="w-3.5 h-3.5" />
+                需求评估
+              </button>
+              <TipsEntryButton compact />
+              {canManage && (
+                <>
+                  <button
+                    onClick={() => setWebhookModalOpen(true)}
+                    className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                    title="Webhook 通知配置"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    通知配置
+                  </button>
+                  <button
+                    onClick={() => setDimsModalOpen(true)}
+                    className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                    title="评审维度配置"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                    维度配置
+                  </button>
+                </>
+              )}
+              {canViewAll && (
+                <button
+                  onClick={() => navigate('/review-agent/all')}
+                  className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  全部提交
+                </button>
+              )}
+              <button
+                onClick={() => navigate('/review-agent/submit')}
+                className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                提交方案
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <TipsEntryButton compact />
-          {canManage && (
-            <>
-              <button
-                onClick={() => setWebhookModalOpen(true)}
-                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
-                title="Webhook 通知配置"
-              >
-                <Bell className="w-3.5 h-3.5" />
-                通知配置
-              </button>
-              <button
-                onClick={() => setDimsModalOpen(true)}
-                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
-                title="评审维度配置"
-              >
-                <Settings2 className="w-3.5 h-3.5" />
-                维度配置
-              </button>
-            </>
-          )}
-          {canViewAll && (
-            <button
-              onClick={() => navigate('/review-agent/all')}
-              className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
-            >
-              <Users className="w-3.5 h-3.5" />
-              全部提交
-            </button>
-          )}
-          <button
-            onClick={() => navigate('/review-agent/submit')}
-            className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            提交方案
-          </button>
         </div>
       </div>
 
