@@ -14501,7 +14501,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const svc = entry.services[profile.id];
       svc.status = 'building';
-      // 单服务部署时分支聚合状态一直是 running，只有这一个服务在 building → starting → 结束之间走；
+      // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
+      // 否则卡片只能从服务状态去猜：分支 idle 却有服务在探测、分支 error 却有服务在重建，
+      // 这两种组合和「残留的旧服务状态」分不开（Codex P2 两条，PR #1646）。分支在运行时保持 running 不动。
+      if (entry.status !== 'running') entry.status = 'building';
+      // 单服务部署时分支聚合状态（在运行时）一直是 running，只有这一个服务在 building → starting → 结束之间走；
       // 每次翻转都推一条 branch.updated（事件流会取最新分支下发），分支卡的阶段条、计时与收尾才跟得上。
       // 此前这条路径只在排队时推事件，卡片要等下一次刷新才看得到（Codex P2，PR #1646）。
       const emitServiceTransition = () => branchEvents.emitEvent({
@@ -14683,6 +14687,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // probe (TCP+HTTP). Prevents the 502 window between `docker run` exit
         // and the app binding its port. See .claude/rules/cds-auto-deploy.md.
         svc.status = 'starting';
+        if (entry.status === 'building') entry.status = 'starting';
         stateService.save();
         emitServiceTransition();
         advanceDeploymentRun(deploymentRun?.id, 'starting', {
