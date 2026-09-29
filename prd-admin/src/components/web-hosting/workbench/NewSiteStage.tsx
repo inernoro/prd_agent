@@ -229,8 +229,18 @@ export default function NewSiteStage({
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
   const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
   const eta = generationEtaShort(requestRuntime?.id, requestTiming);
-  /** 说明行只放一行：耗时（没有真实统计时标明是经验值）· 过程中会怎样。 */
-  const etaHint = eta ? `${eta}${requestTiming ? '' : '（经验值）'}` : '';
+  /**
+   * 说明行只放一行：耗时 · 过程中会怎样。没有真实统计时标明是经验值；统计还在读或读不到要分开说，
+   * 读不到若也写成「经验值」，统计接口坏了会被一直当成样本少（降级不许静默）。
+   */
+  const etaSource = requestTiming
+    ? ''
+    : timingState === 'unavailable'
+      ? '（经验值，耗时统计暂时取不到）'
+      : timingState === 'loading'
+        ? '（经验值，正在读取真实耗时）'
+        : '（经验值）';
+  const etaHint = eta ? `${eta}${etaSource}` : '';
   const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
