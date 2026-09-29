@@ -558,6 +558,22 @@ async function main() {
           const manualPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
           check(waitPhase === 'ci-waiting' && manualPhase === 'build',
             `等 CI 镜像时手动部署源码服务，阶段条从「等镜像」换成源码「构建」（${waitPhase} → ${manualPhase}）`);
+          // 耗时预计取源码样本（10 分钟），不取发布版样本（1 分钟）：已用 2 分钟不该报「超出预计」（Codex P2）
+          {
+            const withEstimate = { ...manual, lastDeployStartedAt: iso(-120_000), deployEstimate: { releaseMedianMs: 60_000, releaseSamples: 5, sourceMedianMs: 600_000, sourceSamples: 5 } };
+            branches = branches.map((b) => (b.id === withEstimate.id ? withEstimate : b));
+            await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), withEstimate);
+            await page.waitForTimeout(700);
+            const etaText = (await page.textContent('[data-branch-card-id="b-edison"] [data-footer-status]')) || '';
+            // 页脚是「已用 mm:ss · 还剩 / 超出预计 mm:ss」：已用 ∓ 剩余 反推出取的是哪个样本桶的中位（源码 10 分钟、发布版 1 分钟）
+            const secs = (t) => { const [m, sec] = t.split(':').map(Number); return m * 60 + sec; };
+            // 先去掉「2/3」这种步数，它和紧跟的用时之间没有空格
+            const times = [...etaText.replace(/\d\/\d/, ' ').matchAll(/(\d+:\d{2})/g)].map((m) => secs(m[1]));
+            const over = /超出预计/.test(etaText);
+            const median = times.length >= 2 ? (over ? times[0] - times[1] : times[0] + times[1]) : NaN;
+            check(Math.abs(median - 600) <= 2,
+              `混合分支只重建源码服务时，耗时预计按源码样本（推得中位 ${median}s，「${etaText.trim()}」）`);
+          }
           // 手动部署跑完、CI 仍在等：回到「等镜像」。之后 CI 失败，不许把刚才那次部署播成「部署成功」（Codex P2）
           const backToWait = { ...manual, status: 'running', services: services(22705, 'running') };
           branches = branches.map((b) => (b.id === backToWait.id ? backToWait : b));

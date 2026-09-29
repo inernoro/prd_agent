@@ -996,13 +996,17 @@ function effectiveDeployElapsedMs(branch: BranchSummary, busySince: string | und
  *   - 其余 → 源码/热加载样本
  * 无样本（median=null）时返回 null —— 卡片只显示已耗时，不编造预计值。
  */
-function pickDeployEstimate(branch: BranchSummary): { mode: 'release' | 'source'; medianMs: number; samples: number } | null {
+function pickDeployEstimate(
+  branch: BranchSummary,
+  /** 这次部署实际走的是源码三段（混合分支只重建源码服务）：取源码样本，与阶段条同一判断（Codex P2，PR #1646） */
+  sourceSequence = false,
+): { mode: 'release' | 'source'; medianMs: number; samples: number } | null {
   const est = branch.deployEstimate;
   if (!est) return null;
   const kind = branch.deployRuntime?.kind;
   // pendingPublish=配置已切发布版但容器还没跟上(重建中)，此时 kind 仍报 source；
   // 用户实际在等的是发布版重建，应取发布版样本桶（修复 PR #865 codex P2）。
-  const isRelease = kind === 'release' || kind === 'mixed' || branch.deployRuntime?.pendingPublish === true;
+  const isRelease = !sourceSequence && (kind === 'release' || kind === 'mixed' || branch.deployRuntime?.pendingPublish === true);
   if (isRelease) {
     if (est.releaseMedianMs != null && est.releaseSamples > 0) {
       return { mode: 'release', medianMs: est.releaseMedianMs, samples: est.releaseSamples };
@@ -6108,7 +6112,7 @@ const BranchCard = memo(function BranchCard({
     : deployInFlight ? branch.lastDeployStartedAt || branchBusySince(branch, action) : undefined;
   const buildClock = buildPhase ? (() => {
     // 停止 / 重启 / 前端占位不是部署，不拿部署中位值去比。
-    const estimate = isDeployPhase(buildPhase) ? pickDeployEstimate(branch) : null;
+    const estimate = isDeployPhase(buildPhase) ? pickDeployEstimate(branch, phaseIsSourceSequence) : null;
     if (buildPhase.key === 'queued') {
       return { elapsedMs: 0, estimate, overdue: false, text: `已等 ${formatElapsedFrom(branch.buildQueue?.queuedAt, now)}`, estimateText: '' };
     }
