@@ -6073,7 +6073,7 @@ const BranchCard = memo(function BranchCard({
      排队看已等多久、等 CI 镜像看已等多久（CI 没有历史样本，不给预计），
      其余看净耗时对历史中位，超过中位改说「超出预计」。 */
   // 这次部署的记录（阶段、耗时、参与过的服务）；下面收尾判成败要用，阶段推导也要用它记住的参与服务。
-  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[]; started: boolean; express: boolean } | null>(null);
+  const lastBuildRef = useRef<{ phase: BranchCardPhase; phaseFrozen: boolean; elapsedMs: number; medianMs: number | null; serviceIds: string[]; started: boolean; express: boolean } | null>(null);
   const phaseFromState: BranchCardPhase | null = branchCardPhase({
     status: branch.status,
     services: branch.services,
@@ -6225,8 +6225,14 @@ const BranchCard = memo(function BranchCard({
       const prevElapsed = lastBuildRef.current?.elapsedMs || 0;
       // 这次部署碰过的服务取并集：结束时按它们判成败，而不是只看分支聚合状态。
       const serviceIds = Array.from(new Set([...(lastBuildRef.current?.serviceIds || []), ...deployingServiceIds(branch.services)]));
+      // 失败停在哪一段：某个参与服务第一次出错时，把出错前最后看到的阶段定住。并行部署里兄弟服务
+      // 之后还会推进到「就绪探测」，不定住的话收尾会说成「在就绪探测失败」，而它其实败在构建（Codex P2，PR #1646）
+      const prevBuild = lastBuildRef.current;
+      const participantFailed = serviceIds.some((id) => branch.services?.[id]?.status === 'error');
+      const phaseFrozen = Boolean(prevBuild?.phaseFrozen) || participantFailed;
       lastBuildRef.current = {
-        phase: buildPhase,
+        phase: prevBuild?.phaseFrozen ? prevBuild.phase : participantFailed ? prevBuild?.phase ?? buildPhase : buildPhase,
+        phaseFrozen,
         elapsedMs: buildClock.elapsedMs || prevElapsed,
         medianMs: buildClock.estimate?.medianMs ?? lastBuildRef.current?.medianMs ?? null,
         serviceIds,

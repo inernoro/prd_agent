@@ -78,6 +78,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
+    // 并行部署里失败的那一段要定住，兄弟服务之后推进到就绪探测不改写它（Codex P2，PR #1646）
+    expect(page).toContain("phase: prevBuild?.phaseFrozen ? prevBuild.phase : participantFailed ? prevBuild?.phase ?? buildPhase : buildPhase,");
+    expect(page).toContain("const participantFailed = serviceIds.some((id) => branch.services?.[id]?.status === 'error');");
     expect(page).toContain("express: lastBuildRef.current?.started ? lastBuildRef.current.express : buildPhase.steps.some((step) => step.key === 'ci-waiting'),");
     // 分支 idle 但有服务在部署（从停止状态单独部署一个服务）：不收进「未运行」分组
     expect(page).toContain('  if (deployingServiceIds(branch.services).length > 0) return false;');

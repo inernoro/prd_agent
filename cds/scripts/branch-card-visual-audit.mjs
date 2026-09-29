@@ -400,15 +400,27 @@ async function main() {
         check(/第\s*5\s*位/.test(queueText || ''), `排队位次滚到第 5 位（实际「${(queueText || '').trim()}」）`);
 
         // 失败：packaging 从排队进入构建再失败。
-        const building = { ...branches.find((b) => b.id === 'b-pack'), buildQueue: null, status: 'building' };
+        const building = { ...branches.find((b) => b.id === 'b-pack'), buildQueue: null, status: 'building', services: services(23827, 'running', { api: { status: 'building' }, web: { status: 'building' } }) };
         await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), building);
         await page.waitForTimeout(400);
+        // 并行部署：api 在构建时失败，web 之后推进到就绪探测。收尾要说败在构建，不是败在就绪探测（Codex P2）
+        const apiFailedMidBuild = { ...building, services: services(23827, 'running', { api: { status: 'error', errorMessage: '构建失败' }, web: { status: 'building' } }) };
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), apiFailedMidBuild);
+        await page.waitForTimeout(300);
+        const siblingProbing = { ...building, status: 'starting', services: services(23827, 'running', { api: { status: 'error', errorMessage: '构建失败' }, web: { status: 'starting' } }) };
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), siblingProbing);
+        await page.waitForTimeout(300);
         const failed = { ...building, status: 'error', errorMessage: 'api 启动后退出（退出码 137）', services: services(23827, 'running', { api: { status: 'error', errorMessage: '启动后退出（退出码 137）' } }) };
         await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), failed);
         await page.waitForTimeout(600);
         await shotCard(page, 'b-pack', 'failed.png');
         const failPhase = await page.getAttribute('[data-branch-card-id="b-pack"]', 'data-deploy-phase');
         check(failPhase === 'failed', `构建失败后 data-deploy-phase=failed（实际 ${failPhase}）`);
+        const failedSeg = await page.$$eval('[data-branch-card-id="b-pack"] .cds-phase-seg', (segs) => ({
+          index: segs.findIndex((seg) => seg.classList.contains('cds-phase-seg--failed')),
+          total: segs.length,
+        }));
+        check(failedSeg.index >= 0 && failedSeg.index < failedSeg.total - 1, `并行部署里先败的服务：失败段停在构建，而不是兄弟服务后来走到的就绪探测（失败段 ${failedSeg.index + 1}/${failedSeg.total}）`);
         // 别的卡状态变化会让列表重排；重排挪动 DOM 会把 CSS 动画从头重播。收尾卡必须停在终态。
         const previewOpacity = await page.evaluate(() => {
           const btn = document.querySelector('[data-branch-card-id="b-ident"] button[aria-label="预览"]');
