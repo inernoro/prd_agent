@@ -73,6 +73,8 @@ function makeBranches() {
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
       // 容器级复制集：三个容器各做了复制。标识与端口挤在同一条单行槽里，「+N」不能被挤出卡片。
+      // 同时带「CI 失败」标记（极速版 CI 出镜像失败、旧版本仍在跑）：端口行最挤的情形，只剩一个端口名额。
+      ciImageStatus: 'failed', ciWorkflowConclusion: 'failure', ciWorkflowRunUrl: 'https://github.com/example/actions/runs/1',
       replicaMode: 'container',
       replicaSets: Object.fromEntries(['api', 'admin', 'web'].map((id) => [id, { enabled: true, members: [{ status: 'running' }, { status: 'running' }] }])),
       lastDeployAt: iso(-40 * MIN), lastAccessedAt: iso(-5 * MIN),
@@ -251,9 +253,12 @@ async function main() {
           if (!btn) return null;
           const c = card.getBoundingClientRect();
           const b = btn.getBoundingClientRect();
-          return { cardW: Math.round(c.width), inside: b.right <= c.right - 8 && b.width > 0 };
+          const ci = card.querySelector('button[aria-label^="CI 构建失败"]');
+          const ciRect = ci ? ci.getBoundingClientRect() : null;
+          const ciInside = Boolean(ciRect && ciRect.width > 0 && ciRect.right <= c.right - 8);
+          return { cardW: Math.round(c.width), inside: b.right <= c.right - 8 && b.width > 0 && ciInside };
         });
-        check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集卡的「+N」完整落在卡内`);
+        check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 +「CI 失败」都在时，「CI 失败」与「+N」都完整落在卡内`);
       }
       await page.setViewportSize({ width: WIDTH, height: 1000 });
       await page.waitForTimeout(250);

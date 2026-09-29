@@ -311,12 +311,14 @@ describe('构建页脚：阶段条接线', () => {
 
   // 复制集标识与端口 chip 同在一条单行槽：它占一格，端口就少露一个，否则最窄卡宽下「+N」被裁掉。
   const replicaInChipBudget = (source: string) => {
-    expect(source).toContain('const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0);');
+    expect(source).toContain('const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0) - (ciFailedChip ? 1 : 0);');
+    // 「CI 失败」只是一个短标记，不再是一整串文字加两个按钮
+    expect(source).not.toContain('>切回源码编译</button>');
     expect(source).toContain('? appResources.slice(0, appChipBudget)');
     expect(source).not.toContain('const shown = entries.slice(0, 4);');
   };
 
-  it('复制集标识计入端口槽的折叠预算，容器级只占一格', () => {
+  it('复制集标识与「CI 失败」标记都计入端口槽的折叠预算，各只占一格', () => {
     replicaInChipBudget(page);
   });
 

@@ -5409,7 +5409,9 @@ const BranchCard = memo(function BranchCard({
   const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
     .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
     .sort(([a], [b]) => a.localeCompare(b));
-  const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0);
+  // 「CI 失败」标记同理：极速版 CI 出镜像失败而旧版本还在跑时，它与端口同在这一行（Codex P2，PR #1646）。
+  const ciFailedChip = branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false;
+  const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0) - (ciFailedChip ? 1 : 0);
   const foldedAppCount = appResources.length > appChipBudget
     ? appResources.length - appChipBudget
     : 0;
@@ -6203,27 +6205,35 @@ const BranchCard = memo(function BranchCard({
             2026-07-26 用户拍板：构建中的「状态 + 计时 + 模式/耗时/预计进度」全部
             挪到卡片底部 footer 右下角——顶部这一行构建期间保持端口/容器信息不动。 */}
         {/* 「等待 CI 镜像」2026-09-29 起是页脚阶段条的一段，不再插在端口行里把端口挤换行。 */}
-        {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false ? (
+        {/* 端口行是单行固定槽：这里只放一个短标记，完整说明进 title，动作收成「点标记开详情 + 图标看 CI」，
+            不再用「CI 构建失败 / 查看 / 切回源码编译」一整串把后面的端口与「+N」挤出卡片。 */}
+        {ciFailedChip ? (
           <span
-            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
+            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，可切回源码编译或重试 CI 后再部署。`}
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />
-            CI 构建失败
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onDetail(); }}
+              className="inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
+              aria-label="CI 构建失败，打开分支详情切回源码编译"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />
+              CI 失败
+            </button>
             {branch.ciWorkflowRunUrl ? (
               <a
                 href={branch.ciWorkflowRunUrl}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="font-medium underline-offset-2 hover:underline"
-              >查看</a>
+                className="inline-flex items-center opacity-80 hover:opacity-100"
+                aria-label="查看 CI 运行记录"
+                title="查看 CI 运行记录"
+              >
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </a>
             ) : null}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onDetail(); }}
-              className="font-medium underline-offset-2 hover:underline"
-            >切回源码编译</button>
           </span>
         ) : null}
         {portedResources.length > 0 ? (
