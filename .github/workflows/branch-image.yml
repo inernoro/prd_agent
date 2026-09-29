@@ -23,8 +23,9 @@ name: Branch Image
 # 因此只要 prd-api 改动触发 api/llmgw-serve 镜像，也必须补齐 llmgw/llmgw-web 同 sha tag；
 # workflow_dispatch 仍用于人工补齐不可变镜像组。
 #
-# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）只进 CDS 分支预览，
-# 这一阶段不进正式发布清单（生产 docker-compose.yml 未引用它），所以不参与上面那组同 sha 钉版。
+# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）也进正式发布：exec_dep.sh --commit
+# 把它与上面四个镜像钉到同一 sha。main 每个提交都会构建它（见 design-opendesign-image 的 if），
+# 所以正式发布的 main 提交总有对应的 sha 镜像。
 
 on:
   push:
@@ -396,7 +397,9 @@ jobs:
     name: Build design runtime (OpenDesign) image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    # api 有改动时也构建：正式 `exec_dep.sh --commit` 把它与 api 钉到同一 sha（与 llmgw 三个镜像同一口径），
+    # 否则只改 api 的热修分支提交会在整批拉取时找不到本镜像。
+    if: ${{ needs.changes.outputs.design_opendesign == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -420,9 +423,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.DESIGN_OPENDESIGN_IMAGE }}
+          # latest 只在 main 上打：正式环境 `./exec_dep.sh release`（部署 latest）要拉得到它，
+          # 否则这个新增的必需服务在首次 latest 发布时没有本地镜像可退，compose up 直接失败。
           tags: |
             type=raw,value=sha-${{ github.sha }}
             type=ref,event=branch,prefix=branch-
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v5
