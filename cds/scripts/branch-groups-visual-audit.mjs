@@ -98,6 +98,8 @@ function makeBranches() {
 let branches = makeBranches();
 let groupStore = { groups: [], updatedAt: null, updatedBy: null };
 let conflictNext = null;
+/** 模拟慢网：PUT 延迟这么多毫秒再应答（串行保存那一步用）。 */
+let putDelayMs = 0;
 const puts = [];
 const profiles = PROFILES.map((id) => ({ id, name: id, containerPort: 8080, dockerImage: `fixture/${id}:latest` }));
 
@@ -146,13 +148,19 @@ async function openPage(browser, url, theme) {
       if (req.method() === 'PUT') {
         const body = JSON.parse(req.postData() || '{}');
         puts.push(body);
+        if (putDelayMs) await new Promise((r) => setTimeout(r, putDelayMs));
+        // 与真实接口同口径：版本号对不上就 409，别拿「最后一次写入者赢」掩盖并发问题。
+        if (!conflictNext && (body.baseUpdatedAt ?? null) !== (groupStore.updatedAt ?? null)) {
+          await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'stale', message: '分组刚被别人改过', latest: groupStore }) });
+          return;
+        }
         if (conflictNext) {
           groupStore = conflictNext;
           conflictNext = null;
           await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'stale', message: '分组刚被别人改过', latest: groupStore }) });
           return;
         }
-        groupStore = { groups: body.groups, updatedAt: new Date().toISOString(), updatedBy: 'user' };
+        groupStore = { groups: body.groups, updatedAt: `${new Date().toISOString()}#${puts.length}`, updatedBy: 'user' };
       }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, ...groupStore }) });
       return;
@@ -376,6 +384,22 @@ async function main() {
         const savedName = groupStore.groups.find((g) => g.id === codexGroupId)?.name;
         check(rebasedName === 'Codex 别人改过' && savedName === 'Codex 别人改过',
           `编辑器开着撞上冲突：草稿换成最新版本，再保存不覆盖别人的修改（草稿「${rebasedName}」，存下「${savedName}」）`);
+
+        // 9d. 慢网下连续两次移组：请求串行、各自带上一次确认的版本号，两次都生效，不撞出假冲突
+        putDelayMs = 700;
+        const putsBefore = puts.length;
+        const targetGroupId = groupStore.groups.find((g) => g.name === 'Codex 别人改过')?.id;
+        for (const cardId of ['b-main', 'b-edison']) {
+          await page.click(`[data-branch-card-id="${cardId}"] button[aria-label="更多操作"]`).catch(() => undefined);
+          await page.getByRole('menuitem', { name: /Codex 别人改过/ }).click().catch(() => undefined);
+          await page.waitForTimeout(80);
+        }
+        await page.waitForTimeout(2200);
+        putDelayMs = 0;
+        const pinned = groupStore.groups.find((g) => g.id === targetGroupId)?.pinnedBranchIds || [];
+        const serialBanner = await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => '');
+        check(pinned.includes('b-main') && pinned.includes('b-edison') && !/别人改过，已载入/.test(serialBanner || '') && puts.length - putsBefore === 2,
+          `慢网下连续两次移组都生效、没有假冲突（钉入 ${pinned.join(',') || '无'}，请求 ${puts.length - putsBefore} 次）`);
 
         // 9c. 标签筛选开着时编辑分组：命中预览仍按项目全部分支算（规则保存后作用于全部分支）
         const openCodexEditor = async () => {

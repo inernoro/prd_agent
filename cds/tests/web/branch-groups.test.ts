@@ -182,7 +182,9 @@ describe('页面接线', () => {
 
   // 保存走乐观并发：带 baseUpdatedAt，409 时载入最新版本并说清楚，不静默覆盖别人的修改。
   const saveWithConcurrency = (source: string) => {
-    expect(source).toContain("{ method: 'PUT', body: { groups: nextGroups, baseUpdatedAt: before?.updatedAt ?? null } }");
+    // 每个请求都在服务端上一次确认的版本上重套自己的改动、带那个版本号；请求串行发（Codex P2）
+    expect(source).toContain("{ method: 'PUT', body: { groups: update(base?.groups ?? []), baseUpdatedAt: base?.updatedAt ?? null } }");
+    expect(source).toContain('const result = groupSaveChainRef.current.then(run, run);');
     expect(source).toContain('error.status === 409 && body?.latest');
   };
 
@@ -194,7 +196,7 @@ describe('页面接线', () => {
     expectGuardRedOnMutation(
       saveWithConcurrency,
       page,
-      mutate(page, 'body: { groups: nextGroups, baseUpdatedAt: before?.updatedAt ?? null }', 'body: { groups: nextGroups }'),
+      mutate(page, 'body: { groups: update(base?.groups ?? []), baseUpdatedAt: base?.updatedAt ?? null }', 'body: { groups: update(base?.groups ?? []) }'),
     );
   });
 
@@ -202,7 +204,7 @@ describe('页面接线', () => {
   const projectSwitchSafe = (source: string) => {
     expect(source).toContain('    setGroupEditor(null);\n    setGroupsSaving(false);\n    setGroupsSaveError(\'\');\n    setGroupDropTarget(null);');
     expect(source).toContain('const switchedAway = () => groupsProjectRef.current !== requestProject;');
-    expect(source.match(/if \(switchedAway\(\)\) return false;/g)).toHaveLength(2);
+    expect(source.match(/if \(switchedAway\(\)\) return false;/g)).toHaveLength(3);
     expect(source).toContain('`/api/projects/${encodeURIComponent(requestProject)}/branch-groups`');
   };
 
@@ -215,7 +217,7 @@ describe('页面接线', () => {
   });
 
   it('红用例：保存响应不看项目是否已切换，守卫变红', () => {
-    expectGuardRedOnMutation(projectSwitchSafe, page, mutate(page, '      if (switchedAway()) return false;\n      setBranchGroups({ groups: res.groups', '      setBranchGroups({ groups: res.groups'));
+    expectGuardRedOnMutation(projectSwitchSafe, page, mutate(page, '        if (switchedAway()) return false;\n        confirmedGroupsRef.current = { groups: res.groups', '        confirmedGroupsRef.current = { groups: res.groups'));
   });
 
   it('编辑器预览按项目全部分支算，冲突时草稿换成最新版本', () => {
@@ -223,9 +225,39 @@ describe('页面接线', () => {
     expect(page).toContain('const fresh = latest.groups.find((group) => group.id === editor.group.id);');
   });
 
+  // 串行保存：连续两次改动不许拿同一个旧版本号撞出假冲突。
+  it('红用例：保存不串行（直接并发发请求），守卫变红', () => {
+    expectGuardRedOnMutation(
+      saveWithConcurrency,
+      page,
+      mutate(page, 'const result = groupSaveChainRef.current.then(run, run);', 'const result = run();'),
+    );
+  });
+
+  // 父实例镜像来的项目只读：移组菜单、拖拽、编辑、组头把手都不给，保存直接拒绝（Codex P2）。
+  const readOnlyWired = (source: string) => {
+    expect(source).toContain('const groupsEditable = groupedView && !groupsReadOnly;');
+    expect(source).toContain('    groupsEditable\n      ? { options');
+    expect(source).toContain('onEdit={group && !groupsReadOnly ? () =>');
+    expect(source).toContain('onGripDragStart={group && !groupsReadOnly ? (event) =>');
+    expect(source).toContain('if (confirmedGroupsRef.current?.readOnly) {');
+  };
+
+  it('镜像项目的分组只读，所有改动入口关闭', () => {
+    readOnlyWired(page);
+  });
+
+  it('红用例：镜像项目仍给移组菜单，守卫变红', () => {
+    expectGuardRedOnMutation(readOnlyWired, page, mutate(page, '    groupsEditable\n      ? { options', '    groupedView\n      ? { options'));
+  });
+
+  it('首次建组建议按项目全部分支数', () => {
+    expect(page).toMatch(/<BranchGroupSuggestions\n\s+\/\*[^*]*\*\/\n\s+branches=\{branches\}/);
+  });
+
   it('卡片拿到分组菜单、当前组、钉入组名与可拖动开关', () => {
     expect(page).toContain('groupMenu={groupMenu}');
-    expect(page).toContain('draggableToGroup={groupedView}');
+    expect(page).toContain('draggableToGroup={groupsEditable}');
     expect(page).toContain('draggable={draggableToGroup || undefined}');
     expect(page).toContain('revealInGroupsRef.current(branchId);');
   });

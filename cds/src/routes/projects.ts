@@ -1854,13 +1854,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(404).json({ error: 'project_not_found' });
       return;
     }
-    res.json({ ok: true, ...settings });
+    // 父实例镜像来的项目（预览实例里）只读：分组跟着镜像刷新走，这里改了父实例收不到、下次刷新还会被盖掉。
+    const readOnly = Boolean(stateService.getProject(req.params.id)?.mirror);
+    res.json({ ok: true, ...settings, readOnly });
   });
 
   router.put('/projects/:id/branch-groups', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    if (project.mirror) {
+      res.status(409).json({
+        error: 'mirror_read_only',
+        message: '这是从父实例镜像来的只读项目，分组要在父实例上改；这里改了父实例收不到，下次镜像刷新也会被覆盖',
+      });
       return;
     }
     const mismatch = assertProjectAccess(

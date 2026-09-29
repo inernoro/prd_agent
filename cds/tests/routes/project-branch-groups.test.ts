@@ -179,6 +179,22 @@ describe('项目分支自定义分组', () => {
     expect(get.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
   });
 
+  it('父实例镜像来的项目只读：GET 标明 readOnly，PUT 409 且不落盘（Codex P2）', async () => {
+    const now = new Date().toISOString();
+    stateService.addProject({
+      id: 'proj-m', slug: 'proj-m', name: 'Mirrored', kind: 'git', dockerNetwork: 'cds-proj-m',
+      legacyFlag: false, createdAt: now, updatedAt: now,
+      mirror: { capturedAt: now, source: 'parent-cds' },
+    } as any);
+    const get = await request(server, 'GET', '/api/projects/proj-m/branch-groups');
+    expect(get.body.readOnly).toBe(true);
+    const put = await request(server, 'PUT', '/api/projects/proj-m/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(put.status).toBe(409);
+    expect(put.body.error).toBe('mirror_read_only');
+    expect((await request(server, 'GET', '/api/projects/proj-m/branch-groups')).body.groups).toEqual([]);
+    expect((await request(server, 'GET', '/api/projects/proj-a/branch-groups')).body.readOnly).toBe(false);
+  });
+
   it('项目不存在时 404', async () => {
     expect((await request(server, 'GET', '/api/projects/nope/branch-groups')).status).toBe(404);
     expect((await request(server, 'PUT', '/api/projects/nope/branch-groups', { groups: [] })).status).toBe(404);

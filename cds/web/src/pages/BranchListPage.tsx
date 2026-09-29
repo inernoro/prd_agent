@@ -1706,11 +1706,16 @@ export function BranchListPage(): JSX.Element {
     setGroupsSaving(false);
     setGroupsSaveError('');
     setGroupDropTarget(null);
+    confirmedGroupsRef.current = null;
+    pendingGroupUpdatesRef.current = [];
     if (!projectId) return;
     let cancelled = false;
     apiRequest<BranchGroupsSettings & { ok: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/branch-groups`)
       .then((res) => {
-        if (!cancelled) setBranchGroups({ groups: res.groups || [], updatedAt: res.updatedAt ?? null, updatedBy: res.updatedBy ?? null });
+        if (cancelled) return;
+        const loaded = { groups: res.groups || [], updatedAt: res.updatedAt ?? null, updatedBy: res.updatedBy ?? null, readOnly: Boolean(res.readOnly) };
+        confirmedGroupsRef.current = loaded;
+        setBranchGroups(loaded);
       })
       .catch((error: unknown) => {
         if (!cancelled) setGroupsLoadError(error instanceof Error ? error.message : '分组读取失败');
@@ -1731,49 +1736,79 @@ export function BranchListPage(): JSX.Element {
     });
   }, [projectId]);
   /**
-   * 整体保存分组。先乐观更新让拖拽立刻生效；服务端说「别人刚改过」（409）时载入最新版本并说清楚，
-   * 其它失败回滚到保存前。返回是否保存成功，编辑弹窗据此决定关不关。
+   * 保存分组。调用方给的是「怎么改」（一个把分组列表变成新列表的函数），不是改完的整份列表：
+   *   - 先乐观应用到界面，让拖拽立刻生效；
+   *   - 请求一个接一个发，每个都在服务端上一次确认的版本上重新套用自己的改动、带那个版本号——
+   *     连续拖两下不会拿同一个旧版本号撞出假冲突（Codex P2，PR #1647）；
+   *   - 服务端说「别人刚改过」（409）时载入最新版本并说清楚，其它失败撤掉这一步。
+   * 界面上显示的永远是「服务端确认的版本 + 还在路上的改动」。返回是否保存成功，编辑弹窗据此决定关不关。
    */
   const branchGroupsRef = useRef<BranchGroupsSettings | null>(null);
   branchGroupsRef.current = branchGroups;
-  const saveBranchGroups = useCallback(async (nextGroups: BranchGroup[]): Promise<boolean> => {
-    const before = branchGroupsRef.current;
+  const confirmedGroupsRef = useRef<BranchGroupsSettings | null>(null);
+  const pendingGroupUpdatesRef = useRef<Array<(groups: BranchGroup[]) => BranchGroup[]>>([]);
+  const groupSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const saveBranchGroups = useCallback((update: (groups: BranchGroup[]) => BranchGroup[]): Promise<boolean> => {
     const requestProject = projectId;
-    setGroupsSaving(true);
-    setGroupsSaveError('');
-    setBranchGroups((current) => ({ groups: nextGroups, updatedAt: current?.updatedAt ?? null, updatedBy: current?.updatedBy ?? null }));
     // 保存还没回来用户就切了项目：这次响应属于上一个项目，一律丢弃，不许写进新项目的状态（Codex P2，PR #1647）。
     const switchedAway = () => groupsProjectRef.current !== requestProject;
-    try {
-      const res = await apiRequest<BranchGroupsSettings & { ok: boolean }>(
-        `/api/projects/${encodeURIComponent(requestProject)}/branch-groups`,
-        { method: 'PUT', body: { groups: nextGroups, baseUpdatedAt: before?.updatedAt ?? null } },
-      );
-      if (switchedAway()) return false;
-      setBranchGroups({ groups: res.groups, updatedAt: res.updatedAt, updatedBy: res.updatedBy });
-      return true;
-    } catch (error) {
-      if (switchedAway()) return false;
-      const body = error instanceof ApiError ? (error.body as { latest?: BranchGroupsSettings; message?: string } | null) : null;
-      if (error instanceof ApiError && error.status === 409 && body?.latest) {
-        const latest = body.latest;
-        setBranchGroups(latest);
-        // 开着的编辑器草稿也换成最新版本里的这一组，否则再点保存就会拿旧草稿 + 新版本号把别人的修改覆盖掉
-        // （Codex P2，PR #1647）。这一组已被别人删了就关掉编辑器；新建的组不受影响，草稿保留。
-        setGroupEditor((editor) => {
-          if (!editor || editor.isNew) return editor;
-          const fresh = latest.groups.find((group) => group.id === editor.group.id);
-          return fresh ? { group: fresh, isNew: false } : null;
-        });
-        setGroupsSaveError('分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做');
-      } else {
-        setBranchGroups(before);
-        setGroupsSaveError(`保存失败：${body?.message || (error instanceof Error ? error.message : '未知原因')}；已恢复到保存前`);
-      }
-      return false;
-    } finally {
-      if (!switchedAway()) setGroupsSaving(false);
+    const showConfirmedPlusPending = () => {
+      const confirmed = confirmedGroupsRef.current;
+      if (!confirmed) return;
+      const groups = pendingGroupUpdatesRef.current.reduce((acc, apply) => apply(acc), confirmed.groups);
+      setBranchGroups({ ...confirmed, groups });
+    };
+    if (confirmedGroupsRef.current?.readOnly) {
+      setGroupsSaveError('这是从父实例镜像来的项目，分组只能在父实例上改');
+      return Promise.resolve(false);
     }
+    pendingGroupUpdatesRef.current = [...pendingGroupUpdatesRef.current, update];
+    setGroupsSaving(true);
+    setGroupsSaveError('');
+    setBranchGroups((current) => (current ? { ...current, groups: update(current.groups) } : current));
+    const run = async (): Promise<boolean> => {
+      if (switchedAway()) return false;
+      const base = confirmedGroupsRef.current;
+      const settle = () => {
+        pendingGroupUpdatesRef.current = pendingGroupUpdatesRef.current.filter((item) => item !== update);
+        if (pendingGroupUpdatesRef.current.length === 0) setGroupsSaving(false);
+      };
+      try {
+        const res = await apiRequest<BranchGroupsSettings & { ok: boolean }>(
+          `/api/projects/${encodeURIComponent(requestProject)}/branch-groups`,
+          { method: 'PUT', body: { groups: update(base?.groups ?? []), baseUpdatedAt: base?.updatedAt ?? null } },
+        );
+        if (switchedAway()) return false;
+        confirmedGroupsRef.current = { groups: res.groups, updatedAt: res.updatedAt, updatedBy: res.updatedBy, readOnly: base?.readOnly };
+        settle();
+        showConfirmedPlusPending();
+        return true;
+      } catch (error) {
+        if (switchedAway()) return false;
+        settle();
+        const body = error instanceof ApiError ? (error.body as { latest?: BranchGroupsSettings; message?: string } | null) : null;
+        if (error instanceof ApiError && error.status === 409 && body?.latest) {
+          const latest = body.latest;
+          confirmedGroupsRef.current = { ...latest, readOnly: base?.readOnly };
+          showConfirmedPlusPending();
+          // 开着的编辑器草稿也换成最新版本里的这一组，否则再点保存就会拿旧草稿 + 新版本号把别人的修改覆盖掉
+          // （Codex P2，PR #1647）。这一组已被别人删了就关掉编辑器；新建的组不受影响，草稿保留。
+          setGroupEditor((editor) => {
+            if (!editor || editor.isNew) return editor;
+            const fresh = latest.groups.find((group) => group.id === editor.group.id);
+            return fresh ? { group: fresh, isNew: false } : null;
+          });
+          setGroupsSaveError('分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做');
+        } else {
+          showConfirmedPlusPending();
+          setGroupsSaveError(`保存失败：${body?.message || (error instanceof Error ? error.message : '未知原因')}；这一步已撤回`);
+        }
+        return false;
+      }
+    };
+    const result = groupSaveChainRef.current.then(run, run);
+    groupSaveChainRef.current = result;
+    return result;
   }, [projectId]);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState('');
@@ -2549,15 +2584,18 @@ export function BranchListPage(): JSX.Element {
   /* 「按分组」视图的分区：归组判定只走 lib/branchGroups（钉入 > 规则按组序 > 未归组）。 */
   const groupList = useMemo(() => branchGroups?.groups ?? [], [branchGroups]);
   const groupedView = viewMode === 'groups' && groupList.length > 0;
+  // 父实例镜像来的项目：分组只能看，所有改动入口（移组菜单、拖拽、编辑、新建）都不给（Codex P2，PR #1647）。
+  const groupsReadOnly = Boolean(branchGroups?.readOnly);
+  const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
   const moveBranchToGroup = useCallback((branch: BranchSummary, groupId: string | null) => {
-    void saveBranchGroups(pinBranch(branchGroupsRef.current?.groups ?? [], branch.id, groupId));
+    void saveBranchGroups((groups) => pinBranch(groups, branch.id, groupId));
   }, [saveBranchGroups]);
   const groupMenu = useMemo<BranchGroupMenu | undefined>(() => (
-    groupedView
+    groupsEditable
       ? { options: groupList.map((group) => ({ id: group.id, name: group.name })), onMove: moveBranchToGroup }
       : undefined
-  ), [groupedView, groupList, moveBranchToGroup]);
+  ), [groupsEditable, groupList, moveBranchToGroup]);
   const groupNameById = useMemo(() => new Map(groupList.map((group) => [group.id, group.name])), [groupList]);
   // 定位卡片时（搜索下拉 / cds:focus-branch），分组视图里目标可能在收起的组、或组内收起的「已停止」行里，
   // 卡片根本没渲染——先把它所在的组与那一行展开（只临时展开，不改写收起记忆）。
@@ -2636,14 +2674,13 @@ export function BranchListPage(): JSX.Element {
     event.preventDefault();
     setGroupDropTarget(null);
     const branchId = event.dataTransfer.getData(BRANCH_DRAG_TYPE);
-    const current = branchGroupsRef.current?.groups ?? [];
     if (branchId) {
-      void saveBranchGroups(pinBranch(current, branchId, targetId === '__ungrouped__' ? null : targetId));
+      void saveBranchGroups((groups) => pinBranch(groups, branchId, targetId === '__ungrouped__' ? null : targetId));
       return;
     }
     const fromGroupId = event.dataTransfer.getData(GROUP_DRAG_TYPE) || draggingGroupIdRef.current;
     if (fromGroupId && targetId !== '__ungrouped__' && fromGroupId !== targetId) {
-      void saveBranchGroups(moveGroupBefore(current, fromGroupId, targetId));
+      void saveBranchGroups((groups) => moveGroupBefore(groups, fromGroupId, targetId));
     }
   }, [saveBranchGroups]);
   const branchOverview = useMemo(() => {
@@ -3638,7 +3675,7 @@ export function BranchListPage(): JSX.Element {
           pinnedGroupName={groupedView && groupedBranches.assignment.get(branch.id)?.via === 'pin'
             ? groupNameById.get(groupedBranches.assignment.get(branch.id)?.groupId || '') ?? null
             : null}
-          draggableToGroup={groupedView}
+          draggableToGroup={groupsEditable}
         />
         {rsGroups.map((group, k) => (
           <ReplicaGroupCard
@@ -3688,8 +3725,8 @@ export function BranchListPage(): JSX.Element {
           parts={summary.parts}
           collapsed={collapsed}
           onToggle={() => toggleGroupCollapsed(id)}
-          onEdit={group ? () => { setGroupsSaveError(''); setGroupEditor({ group, isNew: false }); } : undefined}
-          onGripDragStart={group ? (event) => {
+          onEdit={group && !groupsReadOnly ? () => { setGroupsSaveError(''); setGroupEditor({ group, isNew: false }); } : undefined}
+          onGripDragStart={group && !groupsReadOnly ? (event) => {
             draggingGroupIdRef.current = group.id;
             event.dataTransfer.setData(GROUP_DRAG_TYPE, group.id);
             event.dataTransfer.effectAllowed = 'move';
@@ -4017,7 +4054,15 @@ export function BranchListPage(): JSX.Element {
                       </button>
                     ))}
                   </div>
-                  {viewMode === 'groups' && groupList.length > 0 ? (
+                  {viewMode === 'groups' && groupsReadOnly ? (
+                    <span
+                      className="inline-flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-xs text-muted-foreground"
+                      title="这是从父实例镜像来的项目，分组跟着镜像走，要在父实例上改"
+                      data-branch-groups-readonly
+                    >
+                      分组只读（镜像项目）
+                    </span>
+                  ) : viewMode === 'groups' && groupList.length > 0 ? (
                     <DropdownMenu
                       width={240}
                       trigger={(
@@ -4127,12 +4172,15 @@ export function BranchListPage(): JSX.Element {
                     </div>
                   ) : !branchGroups ? (
                     <div className="px-2 text-sm text-muted-foreground">正在读取分组…</div>
+                  ) : groupList.length === 0 && groupsReadOnly ? (
+                    <div className="px-2 text-sm text-muted-foreground">这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。</div>
                   ) : groupList.length === 0 ? (
                     <BranchGroupSuggestions
-                      branches={sortedBranches}
+                      /* 建出来的前缀规则作用于项目全部分支，建议也按全部分支数（Codex P2，PR #1647） */
+                      branches={branches}
                       saving={groupsSaving}
                       error={groupsSaveError}
-                      onCreate={(groups) => { void saveBranchGroups(groups); }}
+                      onCreate={(created) => { void saveBranchGroups((groups) => [...groups, ...created]); }}
                       onBlank={openNewGroupEditor}
                     />
                   ) : (
@@ -4204,14 +4252,14 @@ export function BranchListPage(): JSX.Element {
           error={groupsSaveError}
           onClose={() => setGroupEditor(null)}
           onSave={(group) => {
-            const current = branchGroupsRef.current?.groups ?? [];
-            const exists = current.some((item) => item.id === group.id);
-            const next = exists ? current.map((item) => (item.id === group.id ? group : item)) : [...current, group];
-            void saveBranchGroups(next).then((ok) => { if (ok) setGroupEditor(null); });
+            void saveBranchGroups((groups) => (
+              groups.some((item) => item.id === group.id)
+                ? groups.map((item) => (item.id === group.id ? group : item))
+                : [...groups, group]
+            )).then((ok) => { if (ok) setGroupEditor(null); });
           }}
           onDelete={(groupId) => {
-            const current = branchGroupsRef.current?.groups ?? [];
-            void saveBranchGroups(current.filter((item) => item.id !== groupId)).then((ok) => { if (ok) setGroupEditor(null); });
+            void saveBranchGroups((groups) => groups.filter((item) => item.id !== groupId)).then((ok) => { if (ok) setGroupEditor(null); });
           }}
         />
         <ReleaseBranchDialog

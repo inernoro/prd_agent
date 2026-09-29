@@ -49,6 +49,8 @@ export interface BranchGroupsSettings {
   groups: BranchGroup[];
   updatedAt: string | null;
   updatedBy: string | null;
+  /** 父实例镜像来的项目（预览实例里）：只能看，不能改 */
+  readOnly?: boolean;
 }
 
 /** 判定只需要分支的这三样。 */
