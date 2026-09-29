@@ -362,7 +362,8 @@ describe('构建页脚：阶段条接线', () => {
 
   // 页头「出错需要处理」与「重新部署失败项」共用 branchHasDeployFailure：单服务失败、分支仍 running 也算出错。
   const overviewCountsServiceFailures = (source: string) => {
-    expect(source).toContain('if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;');
+    expect(source).toContain('const failed = branchHasDeployFailure(branch, projectProfileIds);');
+    expect(source).toContain("if (branch.status === 'error' || (failed && !cardPhase)) errored += 1;");
     expect(source).toContain('if (!branchHasDeployFailure(branch, projectProfileIds)) continue;');
     expect(source.match(/function branchHasDeployFailure\(/g)).toHaveLength(1);
   };
@@ -410,7 +411,7 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(
       overviewCountsServiceFailures,
       page,
-      mutate(page, 'if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;', "if (branch.status === 'error') errored += 1;"),
+      mutate(page, 'const failed = branchHasDeployFailure(branch, projectProfileIds);', "const failed = branch.status === 'error';"),
     );
   });
 
