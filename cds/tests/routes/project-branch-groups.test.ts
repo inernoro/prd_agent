@@ -113,6 +113,22 @@ describe('项目分支自定义分组', () => {
     expect(second.body.updatedBy).toBe('bob');
   });
 
+  it('写入存储失败：返回 500，内存里的分组与版本号恢复成保存前，之后照常能存', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(first.status).toBe(200);
+    const saveSpy = vi.spyOn(stateService, 'save').mockImplementationOnce(() => { throw new Error('disk full'); });
+    const failed = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe('persist_failed');
+    saveSpy.mockRestore();
+    const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
+    expect(after.body.updatedAt).toBe(first.body.updatedAt);
+    // 版本号没被那次失败推进：拿失败前的版本号照常能存
+    const retry = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+    expect(retry.status).toBe(200);
+  });
+
   it('没配过时返回空列表与 null 版本，不编默认分组', async () => {
     const res = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
     expect(res.status).toBe(200);

@@ -200,6 +200,9 @@ describe('前后端枚举一致', () => {
     // 在别的保存还没回来时打开的编辑器，非冲突失败后也换回已确认版本（否则再保存会写回被撤回的改动）
     expect(page).toContain('basedOnPending: pendingGroupUpdatesRef.current.length > 0');
     expect(page).toContain('if (!editor || editor.isNew || !editor.basedOnPending || !confirmedNow) return editor;');
+    // 只读（镜像）时不给出拖了也不会生效的把手：把手的渲染条件看回调，不只看是不是真分组
+    const header = read('components/branch-groups/BranchGroupHeader.tsx');
+    expect(header).toContain('{group && onGripDragStart ? (');
     // 「归了别组」的分行按组 id 作 key（组名可重复）
     expect(editor).toContain('<div key={entry.groupId}');
     expect(editor).not.toContain('key={entry.groupName}');

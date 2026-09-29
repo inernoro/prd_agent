@@ -1920,8 +1920,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       updatedAt: new Date(Number.isFinite(previousAt) && nowMs <= previousAt ? previousAt + 1 : nowMs).toISOString(),
       updatedBy: actor === 'user' && login ? login : actor,
     };
+    // 写入存储失败时把内存里的分组与版本号恢复成保存前：否则接口报失败、界面说已撤回，
+    // 下一次 GET 或冲突判定却看到这份「没存成」的分组，之后任意一次成功落盘还会把它写进去（Codex P2，PR #1647）。
+    const previousGroups = project.branchGroups;
+    const previousProjectUpdatedAt = project.updatedAt;
     stateService.setProjectBranchGroups(project.id, settings);
-    stateService.save();
+    try {
+      stateService.save();
+    } catch (err) {
+      const live = stateService.getProject(project.id);
+      if (live) {
+        if (previousGroups === undefined) delete live.branchGroups;
+        else live.branchGroups = previousGroups;
+        live.updatedAt = previousProjectUpdatedAt;
+      }
+      res.status(500).json({
+        error: 'persist_failed',
+        message: `分组没有保存：写入存储失败（${(err as Error)?.message || '未知原因'}），已恢复为保存前的版本，请稍后重试`,
+      });
+      return;
+    }
     res.json({ ok: true, ...settings });
   });
 

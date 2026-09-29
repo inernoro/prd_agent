@@ -101,7 +101,7 @@ export function BranchGroupHeader({
   return (
     <div className="flex min-w-0 flex-col gap-1">
       <div className="flex min-h-10 min-w-0 flex-wrap items-center gap-x-3 gap-y-1" data-branch-group-header={group ? group.id : '__ungrouped__'}>
-        {group ? (
+        {group && onGripDragStart ? (
           <span
             draggable
             onDragStart={onGripDragStart}
@@ -113,8 +113,9 @@ export function BranchGroupHeader({
             <GripVertical className="h-4 w-4" />
           </span>
         ) : (
-          // 未归组固定在最后，不参与排序：把手淡显占位，保持各组头对齐。
-          <span className="inline-flex h-7 w-5 shrink-0 items-center justify-center text-muted-foreground/30" title="「未归组」固定在最后" aria-hidden>
+          // 未归组固定在最后、或分组只读（镜像项目）：不参与排序，把手淡显占位，保持各组头对齐，
+          // 不给出拖了也不会生效的把手（Codex P2，PR #1647）。
+          <span className="inline-flex h-7 w-5 shrink-0 items-center justify-center text-muted-foreground/30" title={group ? '分组只读，不能调整顺序' : '「未归组」固定在最后'} aria-hidden>
             <GripVertical className="h-4 w-4" />
           </span>
         )}
