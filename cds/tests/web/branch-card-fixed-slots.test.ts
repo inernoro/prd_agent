@@ -114,6 +114,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     // 标记只属于那一条事件：每条 branch.updated / branch.status 都显式写 true / false，不在合并里残留
     expect(page).toContain('branch: { ...data.branch, stateFlushFailed: Boolean(data.stateFlushFailed) },');
     expect(page).toContain('branch: { ...data.branch, status: data.status, stateFlushFailed: false },');
+    // 真实部署结束后回到等 CI 镜像：清掉上一次的部署记录，新的等待期不继承「已开始」与步骤锁
+    expect(page).toContain("if (buildPhase.key === 'ci-waiting' && lastBuildRef.current?.started) lastBuildRef.current = null;");
     // 步骤类型只在真的开始部署之后锁定：只是等 CI 镜像那一段不锁
     expect(page).toContain('lockedExpress: lastBuildRef.current?.started ? lastBuildRef.current.express : undefined,');
   });

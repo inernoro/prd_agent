@@ -558,6 +558,20 @@ async function main() {
           const manualPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
           check(waitPhase === 'ci-waiting' && manualPhase === 'build',
             `等 CI 镜像时手动部署源码服务，阶段条从「等镜像」换成源码「构建」（${waitPhase} → ${manualPhase}）`);
+          // 手动部署跑完、CI 仍在等：回到「等镜像」。之后 CI 失败，不许把刚才那次部署播成「部署成功」（Codex P2）
+          const backToWait = { ...manual, status: 'running', services: services(22705, 'running') };
+          branches = branches.map((b) => (b.id === backToWait.id ? backToWait : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), backToWait);
+          await page.waitForTimeout(600);
+          const backPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
+          const ciFailedAfter = { ...backToWait, ciImageStatus: 'failed' };
+          branches = branches.map((b) => (b.id === ciFailedAfter.id ? ciFailedAfter : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), ciFailedAfter);
+          await page.waitForTimeout(900);
+          const afterCiFail = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
+          const afterCiFooter = (await page.textContent('[data-branch-card-id="b-edison"] footer')) || '';
+          check(backPhase === 'ci-waiting' && afterCiFail !== 'done' && !/部署成功/.test(afterCiFooter),
+            `部署跑完回到等镜像、随后 CI 失败：不把旧部署播成「部署成功」（${backPhase} → ${afterCiFail}）`);
         }
 
         // 「已停止」分组收起时定位其中一张卡（搜索下拉 / cds:focus-branch）：要先展开分组，卡片真的滚进视野（Codex P2）。

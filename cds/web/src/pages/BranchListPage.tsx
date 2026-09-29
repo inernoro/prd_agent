@@ -6131,6 +6131,10 @@ const BranchCard = memo(function BranchCard({
     // 「正在停止」是停机，它们结束都不代表一次部署完成——记下来就会误播「部署成功」
     // （Codex P2 两条，PR #1646）。真正的部署一定会经过排队 / 等镜像 / 构建 / 就绪其中一段。
     if (buildPhase && buildClock && isDeployPhase(buildPhase)) {
+      // 真实部署跑完、CI 还在等：卡片回到「等 CI 镜像」，这是一段新的被动等待，不是那次部署的延续。
+      // 清掉上一次的记录（参与服务、已开始、步骤类型锁），否则 CI 之后失败会把旧部署播成「部署成功」，
+      // CI 成功后自动发起的极速版部署又会继承源码的步骤锁（Codex P2，PR #1646）。
+      if (buildPhase.key === 'ci-waiting' && lastBuildRef.current?.started) lastBuildRef.current = null;
       const prevElapsed = lastBuildRef.current?.elapsedMs || 0;
       // 这次部署碰过的服务取并集：结束时按它们判成败，而不是只看分支聚合状态。
       const serviceIds = Array.from(new Set([...(lastBuildRef.current?.serviceIds || []), ...deployingServiceIds(branch.services)]));
