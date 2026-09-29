@@ -222,7 +222,10 @@ describe('前后端枚举一致', () => {
     expect(header).toContain('{group && onGripDragStart ? (');
     // 不会改变任何东西的钉入 / 移出不发请求；按规则归组的分支拖到「未归组」时说清该改哪组的规则
     expect(page).toContain('if (!groupId && !pinnedIn) {');
-    expect(page).toContain('if (groupId && pinnedIn?.id === groupId) return;');
+    expect(page).toContain("if (groupId && pinnedIn?.id === groupId) return { ok: false, reason: '已经钉在这一组', silent: true };");
+    // 拖动悬停的提示与松手后的处理共用 pinVerdict：放下去不会生效时悬停就说清原因、不接受放下
+    expect(page).toContain('pinVerdict(draggingBranchIdRef.current, targetId === \'__ungrouped__\' ? null : targetId)');
+    expect(page).toContain('const verdict = pinVerdict(branchId, groupId);');
     // 只读项目的空分组不提示「拖到这里 / 编辑规则」
     expect(page).toContain("'这一组现在没有分支（分组只读，要在父实例上调整）'");
     // 下拉菜单限高只取实际剩余空间，不垫最小高度（矮视口里会伸出视口）

@@ -1724,7 +1724,10 @@ export function BranchListPage(): JSX.Element {
    *  草稿就要换回已确认版本。那几步成功了则与草稿无关——只记「当时有没有在途保存」会在之后
    *  编辑器自己保存失败时误丢用户的修改（Codex P2，PR #1647）。 */
   const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean; basedOn?: ReadonlyArray<(groups: BranchGroup[]) => BranchGroup[]> } | null>(null);
-  const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group' } | null>(null);
+  /** reject：拖着的这张卡放到这里不会生效（按规则归组的拖去未归组、目标组钉满等），悬停时就说清原因 */
+  const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group'; reject?: string } | null>(null);
+  // 拖动悬停时读不到 dataTransfer 里的分支 id（浏览器只在 drop 时给），拎起时记一份
+  const draggingBranchIdRef = useRef<string | null>(null);
   const draggingGroupIdRef = useRef<string | null>(null);
   // 首次建组建议的勾选与组名草稿放在页面上：建议面板点「创建」就会卸载，失败回来时草稿还在
   const [suggestionDraft, setSuggestionDraft] = useState<BranchGroupSuggestionDraft>(EMPTY_SUGGESTION_DRAFT);
@@ -2665,7 +2668,12 @@ export function BranchListPage(): JSX.Element {
   const groupAssignmentRef = useRef<Map<string, { groupId: string; via: 'pin' | 'rule' }>>(new Map());
   groupAssignmentRef.current = groupedBranches.assignment;
   // 钉入前先看目标组满没满（每组最多 200 个）：满了就说清楚，不发一个后端必然拒绝的请求（Codex P2，PR #1647）。
-  const pinIntoGroup = useCallback((branchId: string, groupId: string | null) => {
+  /**
+   * 把某个分支钉进某组 / 移出（groupId 为 null）会不会生效，以及不生效的原因。拖动悬停的提示与松手后的
+   * 处理共用这一个判断，提示不会承诺一个松手后会被拒绝的结果（Codex P2，PR #1647）。
+   * silent：本来就在那里，什么都不用做，也不用提示。
+   */
+  const pinVerdict = useCallback((branchId: string, groupId: string | null): { ok: true } | { ok: false; reason: string; silent?: boolean } => {
     const current = branchGroupsRef.current?.groups ?? [];
     const pinnedIn = current.find((group) => group.pinnedBranchIds.includes(branchId));
     // 不会改变任何东西的操作不发请求：发了也只是原样替换一次，却推进共享版本号，
@@ -2674,17 +2682,26 @@ export function BranchListPage(): JSX.Element {
       // 按规则归进来的分支，取消钉入之后规则会立刻把它认领回去：拖到「未归组」移不出来，说清楚该改哪儿
       const byRule = groupAssignmentRef.current.get(branchId);
       const ruleGroup = byRule?.via === 'rule' ? current.find((group) => group.id === byRule.groupId) : undefined;
-      if (ruleGroup) setGroupsSaveError(`这个分支是按「${ruleGroup.name}」的规则归进来的，拖到「未归组」移不出来；要移出，请编辑「${ruleGroup.name}」的规则`);
-      return;
+      return ruleGroup
+        ? { ok: false, reason: `这个分支是按「${ruleGroup.name}」的规则归进来的，拖到「未归组」移不出来；要移出，请编辑「${ruleGroup.name}」的规则` }
+        : { ok: false, reason: '已经在未归组', silent: true };
     }
-    if (groupId && pinnedIn?.id === groupId) return;
+    if (groupId && pinnedIn?.id === groupId) return { ok: false, reason: '已经钉在这一组', silent: true };
     const target = groupId ? current.find((group) => group.id === groupId) : undefined;
+    // 钉入前先看目标组满没满（每组最多 200 个）：满了就说清楚，不发一个后端必然拒绝的请求（Codex P2，PR #1647）。
     if (target && !groupAcceptsPin(target, branchId)) {
-      setGroupsSaveError(`「${target.name}」已钉入 ${BRANCH_GROUP_LIMITS.pinsPerGroup} 个分支，到上限了；先在编辑里移除几个，或改用规则归组`);
+      return { ok: false, reason: `「${target.name}」已钉入 ${BRANCH_GROUP_LIMITS.pinsPerGroup} 个分支，到上限了；先在编辑里移除几个，或改用规则归组` };
+    }
+    return { ok: true };
+  }, []);
+  const pinIntoGroup = useCallback((branchId: string, groupId: string | null) => {
+    const verdict = pinVerdict(branchId, groupId);
+    if (!verdict.ok) {
+      if (!verdict.silent) setGroupsSaveError(verdict.reason);
       return;
     }
     void saveBranchGroups((groups) => pinBranch(groups, branchId, groupId));
-  }, [saveBranchGroups]);
+  }, [pinVerdict, saveBranchGroups]);
   const moveBranchToGroup = useCallback((branch: BranchSummary, groupId: string | null) => {
     pinIntoGroup(branch.id, groupId);
   }, [pinIntoGroup]);
@@ -2746,6 +2763,7 @@ export function BranchListPage(): JSX.Element {
     if (!card || !branchId) return;
     event.dataTransfer.setData(BRANCH_DRAG_TYPE, branchId);
     event.dataTransfer.effectAllowed = 'move';
+    draggingBranchIdRef.current = branchId;
     // 被拎起的卡：原位变淡加虚线框（「从这里拿走了」），拖影是一张略倾斜、带主色边框与投影的副本。
     card.setAttribute('data-dragging', 'true');
     const ghost = card.cloneNode(true) as HTMLElement;
@@ -2758,6 +2776,7 @@ export function BranchListPage(): JSX.Element {
   }, []);
   const onGroupAreaDragEnd = useCallback((event: React.DragEvent<HTMLElement>) => {
     (event.target as HTMLElement).closest?.('[data-branch-card-id]')?.removeAttribute('data-dragging');
+    draggingBranchIdRef.current = null;
     setGroupDropTarget(null);
   }, []);
   const onGroupDragOver = useCallback((event: React.DragEvent<HTMLElement>, targetId: string) => {
@@ -2768,10 +2787,19 @@ export function BranchListPage(): JSX.Element {
         ? 'group'
         : null;
     if (!kind) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setGroupDropTarget((current) => (current?.id === targetId && current.kind === kind ? current : { id: targetId, kind }));
-  }, []);
+    // 拖着分支悬停：放下去不会生效就不接受放下，并在组头说清原因（与松手后的判断是同一个）
+    const verdict = kind === 'branch' && draggingBranchIdRef.current
+      ? pinVerdict(draggingBranchIdRef.current, targetId === '__ungrouped__' ? null : targetId)
+      : { ok: true as const };
+    const reject = verdict.ok ? undefined : verdict.reason;
+    if (verdict.ok) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    } else {
+      event.dataTransfer.dropEffect = 'none';
+    }
+    setGroupDropTarget((current) => (current?.id === targetId && current.kind === kind && current.reject === reject ? current : { id: targetId, kind, reject }));
+  }, [pinVerdict]);
   const onGroupDrop = useCallback((event: React.DragEvent<HTMLElement>, targetId: string) => {
     event.preventDefault();
     setGroupDropTarget(null);
@@ -3804,8 +3832,10 @@ export function BranchListPage(): JSX.Element {
     const dropping = groupDropTarget?.id === id ? groupDropTarget : null;
     const dropHint = !dropping
       ? ''
-      : dropping.kind === 'branch'
-        ? group ? `松手放入「${group.name}」· 手动钉入，优先于规则` : '松手移出分组 · 回到按规则归组'
+      : dropping.reject
+        ? dropping.reject
+        : dropping.kind === 'branch'
+        ? group ? `松手放入「${group.name}」· 手动钉入，优先于规则` : '松手取消钉入 · 回到按规则归组'
         : groupDropHintText(groupList, draggingGroupIdRef.current, group);
     return (
       <section

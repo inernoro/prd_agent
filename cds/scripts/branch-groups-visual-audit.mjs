@@ -357,6 +357,22 @@ async function main() {
         check(await sectionOf(page, 'b-main') === '__ungrouped__' && !(await page.$('[data-branch-card-id="b-main"] [data-branch-pinned-group]')),
           '拖回未归组取消钉入，图钉消失');
 
+        // 5a. 拖着按规则归组的卡悬停在「未归组」上：提示当场说清移不出来、该改哪组的规则，
+        //     不再先承诺「松手移出分组」再在松手后拒绝（Codex P2，PR #1647）
+        {
+          await dragTo(page, '[data-branch-card-id="b-scan"]', '[data-branch-group="__ungrouped__"]', { hold: true });
+          const hoverHint = (await page.textContent('[data-branch-group="__ungrouped__"] [data-branch-group-drop-hint]').catch(() => '')) || '';
+          await page.evaluate(() => {
+            const pending = window.__pendingDrag;
+            if (!pending) return;
+            pending.src.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: pending.dataTransfer }));
+            window.__pendingDrag = null;
+          });
+          await page.waitForTimeout(300);
+          check(/的规则归进来的/.test(hoverHint) && !/松手/.test(hoverHint),
+            `拖着按规则归组的卡悬停在未归组：提示说明移不出来（「${hoverHint.trim().slice(0, 40)}」）`);
+        }
+
         // 5b. 按规则归组的卡拖到「未归组」：移不出来（规则会立刻认领回去），不发请求、不推进版本号，
         //     提示去改哪一组的规则（Codex P2，PR #1647）
         {
