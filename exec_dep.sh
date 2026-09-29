@@ -674,6 +674,8 @@ if [ -z "$(printf '%s' "${PRD_AGENT_PUBLIC_BASE_URL:-}" | xargs || true)" ]; the
 fi
 # 同一份部署输入同时驱动公网验收和 LLM Gateway 返回入口，避免两个地址各自漂移。
 export LLMGW_MAP_HOME_URL="${LLMGW_MAP_HOME_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
+# .env 里显式配置的回调基址优先（shell 导出的值会盖过 compose 的 --env-file，所以先读出来再兜底）。
+DESIGN_ARTIFACT_PUBLIC_BASE_URL="$(config_value DESIGN_ARTIFACT_PUBLIC_BASE_URL)"
 export DESIGN_ARTIFACT_PUBLIC_BASE_URL="${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
 echo "Compose project: $COMPOSE_PROJECT_NAME"
 
@@ -688,11 +690,15 @@ persist_release_image_pins
 # api 与 design-opendesign 之间的内部密钥：没人需要知道它的值。shell 或 .env 里已有就原样使用；
 # 都没有时生成一把写进 .env（只追加这一行，不打印值），之后每次发布沿用同一把。
 ensure_design_runtime_api_key() {
+  key_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
   if [ -n "${DESIGN_RUNTIME_API_KEY:-}" ] || [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
+    # persist_release_image_pins 每次发布都按进程 umask 重写 .env；密钥在里面就每次都收回只读属主。
+    if [ -f "$key_dotenv_file" ] && [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
+      chmod 600 "$key_dotenv_file"
+    fi
     echo "Design runtime key: configured"
     return 0
   fi
-  key_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
   key_dotenv_dir="$(dirname -- "$key_dotenv_file")"
   if [ ! -d "$key_dotenv_dir" ]; then
     echo "ERROR: DESIGN_RUNTIME_API_KEY 未配置，且 env 目录不存在，无法自动生成：$key_dotenv_dir" >&2
