@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { branchCardPhase } from '../../web/src/lib/branchCardPhase';
+import { branchCardPhase, isDeployPhase } from '../../web/src/lib/branchCardPhase';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 const WEB_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web/src');
@@ -63,6 +63,28 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     const phase = branchCardPhase({ status: 'running', services: running, pendingActionLabel: '正在拉取代码' });
     expect(phase?.key).toBe('working');
     expect(phase?.steps).toHaveLength(1);
+  });
+
+  it('一键重启（原地重启容器、没有构建）是单段「正在重启」，不冒充就绪探测', () => {
+    const phase = branchCardPhase({ status: 'restarting', prebuilt: true, services: { api: { status: 'starting' } } as never });
+    expect(phase?.key).toBe('restarting');
+    expect(phase?.steps).toHaveLength(1);
+    expect(phase?.showStep).toBe(false);
+  });
+
+  it('恢复部署（restarting 但服务在构建）仍按构建段显示', () => {
+    expect(branchCardPhase({ status: 'restarting', prebuilt: true, services: { api: { status: 'building' } } as never })?.key).toBe('start');
+  });
+
+  it('只有部署阶段算部署：停止 / 重启 / 前端占位结束都不播「部署成功」', () => {
+    const keyOf = (input: Parameters<typeof branchCardPhase>[0]) => branchCardPhase(input)!;
+    expect(isDeployPhase(keyOf({ status: 'building' }))).toBe(true);
+    expect(isDeployPhase(keyOf({ status: 'starting' }))).toBe(true);
+    expect(isDeployPhase(keyOf({ status: 'building', buildQueue: { ahead: 0 } } as never))).toBe(true);
+    expect(isDeployPhase(keyOf({ status: 'running', ciImageStatus: 'waiting', prebuilt: true }))).toBe(true);
+    expect(isDeployPhase(keyOf({ status: 'restarting', services: { api: { status: 'starting' } } as never }))).toBe(false);
+    expect(isDeployPhase(keyOf({ status: 'stopping' }))).toBe(false);
+    expect(isDeployPhase(keyOf({ status: 'running', pendingActionLabel: '正在拉取代码' }))).toBe(false);
   });
 });
 
@@ -110,7 +132,7 @@ describe('构建页脚：阶段条接线', () => {
   it('卡片与页头汇总共用 branchCardPhase 一个判定源', () => {
     const calls = page.split('branchCardPhase({').length - 1;
     expect(calls, '卡片页脚 + 页头汇总两处调用').toBe(2);
-    expect(page).toContain("import { branchCardPhase, type BranchCardPhase } from '@/lib/branchCardPhase';");
+    expect(page).toContain("import { branchCardPhase, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';");
   });
 
   const wired = (source: string) => {
@@ -127,10 +149,10 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(wired, page, mutate(page, 'data-deploy-phase={deployPhaseAttr}', ''));
   });
 
-  // 「处理中」是任意前端操作（打开预览 / 拉取代码 / 收藏……）的占位，结束不等于部署完成。
+  // 「处理中」是任意前端操作的占位、「正在重启」是原地重启，结束都不等于部署完成。
   // 收尾只能由真实部署阶段触发，否则一次「打开预览」就会误播「部署成功」（Codex P2）。
   const finishOnlyFromRealDeploy = (source: string) => {
-    expect(source).toContain("if (buildPhase && buildClock && buildPhase.key !== 'working') {");
+    expect(source).toContain('if (buildPhase && buildClock && isDeployPhase(buildPhase)) {');
   };
 
   it('收尾只由真实部署阶段触发，「处理中」不记为一次构建', () => {
@@ -141,7 +163,7 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(
       finishOnlyFromRealDeploy,
       page,
-      mutate(page, "if (buildPhase && buildClock && buildPhase.key !== 'working') {", 'if (buildPhase && buildClock) {'),
+      mutate(page, 'if (buildPhase && buildClock && isDeployPhase(buildPhase)) {', 'if (buildPhase && buildClock) {'),
     );
   });
 

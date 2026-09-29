@@ -5,14 +5,15 @@
  *   - 排队     ← branch.buildQueue 存在（构建并发闸满了）
  *   - 等镜像   ← 极速版且 ciImageStatus === 'waiting'（GitHub Actions 还在出镜像）
  *   - 构建/启动 ← 分支或任一服务处于 building（源码版在本机编译并起容器，极速版拉镜像并起容器）
- *   - 就绪探测 ← starting / restarting（容器活了，等启动信号或 HTTP/TCP 就绪探测）
+ *   - 就绪探测 ← starting（容器活了，等启动信号或 HTTP/TCP 就绪探测）
+ *   - 正在重启 ← restarting 且没有服务在构建（一键重启 / 冷却唤醒：原地重启容器，没有构建）
  *
  * 极速版四段、源码版三段——源码版没有「等镜像」这一步，硬凑一段空格子就是在编造。
  * 部署日志归纳阶段的是 deploymentPhases.ts（输入是日志行，服务于详情抽屉），与这里
  * 输入不同、用途不同，不要合并。
  */
 
-export type BranchCardPhaseKey = 'queued' | 'ci-waiting' | 'build' | 'start' | 'ready' | 'stopping' | 'working';
+export type BranchCardPhaseKey = 'queued' | 'ci-waiting' | 'build' | 'start' | 'ready' | 'stopping' | 'restarting' | 'working';
 
 export interface BranchCardPhaseStep {
   key: BranchCardPhaseKey;
@@ -69,6 +70,11 @@ export function isWaitingForCiImage(input: Pick<BranchCardPhaseInput, 'ciImageSt
   return input.ciImageStatus === 'waiting' && input.prebuilt !== false;
 }
 
+/** 没有已知阶段序列的动作（停止 / 重启 / 前端占位）：单段，不编造步数。 */
+function single(key: BranchCardPhaseKey, label: string): BranchCardPhase {
+  return { key, label, index: 0, showStep: false, steps: [{ key, label, state: 'current' }] };
+}
+
 function build(steps: Array<{ key: BranchCardPhaseKey; label: string }>, index: number, showStep: boolean): BranchCardPhase {
   const current = steps[index];
   return {
@@ -86,7 +92,7 @@ function build(steps: Array<{ key: BranchCardPhaseKey; label: string }>, index: 
  */
 export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | null {
   if (input.status === 'stopping') {
-    return { key: 'stopping', label: '正在停止', index: 0, showStep: false, steps: [{ key: 'stopping', label: '正在停止', state: 'current' }] };
+    return single('stopping', '正在停止');
   }
   const express = isExpress(input);
   const steps = express ? EXPRESS_STEPS : SOURCE_STEPS;
@@ -100,17 +106,25 @@ export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | 
   if (input.status === 'building' || services.some((svc) => svc.status === 'building')) {
     return build(steps, express ? 2 : 1, true);
   }
-  if (input.status === 'starting' || input.status === 'restarting') {
+  if (input.status === 'starting') {
     return build(steps, steps.length - 1, true);
   }
+  if (input.status === 'restarting') {
+    return single('restarting', '正在重启');
+  }
   if (input.pendingActionLabel) {
-    return {
-      key: 'working',
-      label: input.pendingActionLabel,
-      index: 0,
-      showStep: false,
-      steps: [{ key: 'working', label: input.pendingActionLabel, state: 'current' }],
-    };
+    return single('working', input.pendingActionLabel);
   }
   return null;
 }
+
+/**
+ * 这一段是不是一次真实部署的组成部分。只有部署阶段才计入耗时预计、才会在结束时
+ * 播「部署成功 / 构建失败」收尾——停止、原地重启、前端操作占位都不是部署，
+ * 拿部署中位值去比它们、或在它们结束时报「部署成功」都是在说谎（Codex P2，PR #1646）。
+ */
+export function isDeployPhase(phase: Pick<BranchCardPhase, 'key'>): boolean {
+  return DEPLOY_PHASE_KEYS.has(phase.key);
+}
+
+const DEPLOY_PHASE_KEYS: ReadonlySet<BranchCardPhaseKey> = new Set(['queued', 'ci-waiting', 'build', 'start', 'ready']);

@@ -65,7 +65,7 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { canQuickStartBranch } from '@/lib/branch-quick-actions';
-import { branchCardPhase, type BranchCardPhase } from '@/lib/branchCardPhase';
+import { branchCardPhase, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
@@ -2333,7 +2333,7 @@ export function BranchListPage(): JSX.Element {
       if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
       if (branch.status === 'error') errored += 1;
       else if (phase?.key === 'queued') queued += 1;
-      else if (phase && phase.key !== 'stopping') building += 1;
+      else if (phase && isDeployPhase(phase)) building += 1;
       else if (branch.status === 'running') running += 1;
     }
     const dormant = branches.filter((branch) => isDormantBranch(branch, actions[branch.id])).length;
@@ -5403,7 +5403,8 @@ const BranchCard = memo(function BranchCard({
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });
   const buildClock = buildPhase ? (() => {
-    const estimate = pickDeployEstimate(branch);
+    // 停止 / 重启 / 前端占位不是部署，不拿部署中位值去比。
+    const estimate = isDeployPhase(buildPhase) ? pickDeployEstimate(branch) : null;
     if (buildPhase.key === 'queued') {
       return { elapsedMs: 0, estimate, overdue: false, text: `已等 ${formatElapsedFrom(branch.buildQueue?.queuedAt, now)}`, estimateText: '' };
     }
@@ -5427,6 +5428,8 @@ const BranchCard = memo(function BranchCard({
       ? `构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排在第 ${branch.buildQueue.ahead + 1} 位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`
       : buildPhase.key === 'ci-waiting'
         ? `极速版：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像，完成后自动拉取部署。${isRunning ? '期间旧版本继续服务，预览照常可用。' : ''}`
+        : !isDeployPhase(buildPhase)
+          ? `${buildPhase.label}；已用时 ${buildClock.text}`
         : buildClock.estimate
           ? `${buildPhase.label}；以「${deployModeLabel(branch)}」部署；净耗时 ${buildClock.text}，预计 ${formatDurationMs(buildClock.estimate.medianMs)}（近 ${buildClock.estimate.samples} 次成功部署的中位值）`
           : `${buildPhase.label}；以「${deployModeLabel(branch)}」部署；净耗时 ${buildClock.text}；暂无历史样本，完成后开始累积预计耗时`
@@ -5440,10 +5443,10 @@ const BranchCard = memo(function BranchCard({
   const [outcomeSeen, setOutcomeSeen] = useState(false);
   const inBuild = Boolean(buildPhase);
   useEffect(() => {
-    // 只记真实的部署阶段。「处理中」（working）是打开预览、拉取代码、收藏等任意前端操作
-    // 在服务端状态跟上之前的占位，它结束不代表一次部署完成——记下来就会误播「部署成功」
-    // （Codex P2，PR #1646）。真正的部署一定会经过排队 / 等镜像 / 构建 / 就绪其中一段。
-    if (buildPhase && buildClock && buildPhase.key !== 'working') {
+    // 只记真实的部署阶段。「处理中」是任意前端操作的占位、「正在重启」是原地重启容器、
+    // 「正在停止」是停机，它们结束都不代表一次部署完成——记下来就会误播「部署成功」
+    // （Codex P2 两条，PR #1646）。真正的部署一定会经过排队 / 等镜像 / 构建 / 就绪其中一段。
+    if (buildPhase && buildClock && isDeployPhase(buildPhase)) {
       const prevElapsed = lastBuildRef.current?.elapsedMs || 0;
       lastBuildRef.current = {
         phase: buildPhase,
@@ -5459,7 +5462,7 @@ const BranchCard = memo(function BranchCard({
     }
     const last = lastBuildRef.current;
     lastBuildRef.current = null;
-    if (!last || last.phase.key === 'stopping') return;
+    if (!last) return;
     if (branch.status === 'running') {
       setOutcome({ kind: 'done', at: Date.now(), ...last });
       setOutcomeSeen(false);
