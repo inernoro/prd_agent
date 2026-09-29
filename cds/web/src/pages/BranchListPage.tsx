@@ -53,7 +53,7 @@ import {
   groupAcceptsPin,
   BRANCH_GROUP_COLORS,
   groupBranches,
-  moveGroupBefore,
+  moveGroupOnto,
   newBranchGroupId,
   pinBranch,
   type BranchGroup,
@@ -2716,7 +2716,7 @@ export function BranchListPage(): JSX.Element {
     }
     const fromGroupId = event.dataTransfer.getData(GROUP_DRAG_TYPE) || draggingGroupIdRef.current;
     if (fromGroupId && targetId !== '__ungrouped__' && fromGroupId !== targetId) {
-      void saveBranchGroups((groups) => moveGroupBefore(groups, fromGroupId, targetId));
+      void saveBranchGroups((groups) => moveGroupOnto(groups, fromGroupId, targetId));
     }
   }, [pinIntoGroup, saveBranchGroups]);
   const branchOverview = useMemo(() => {

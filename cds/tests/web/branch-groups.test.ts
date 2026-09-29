@@ -21,7 +21,7 @@ import {
   assignBranchToGroup,
   groupAcceptsPin,
   groupBranches,
-  moveGroupBefore,
+  moveGroupOnto,
   pinBranch,
   previewGroupHits,
   ruleMatches,
@@ -63,7 +63,16 @@ describe('归组判定：钉入 > 规则按分组顺序 > 未归组', () => {
   it('规则都命中时，靠上的分组认领', () => {
     const groups = [group('release', [{ kind: 'contains', value: 'release' }]), group('claude', [{ kind: 'prefix', value: 'claude/' }])];
     expect(assignBranchToGroup(groups, b('1', 'claude/release-notes'))).toEqual({ groupId: 'release', via: 'rule' });
-    expect(assignBranchToGroup(moveGroupBefore(groups, 'claude', 'release'), b('1', 'claude/release-notes'))).toEqual({ groupId: 'claude', via: 'rule' });
+    expect(assignBranchToGroup(moveGroupOnto(groups, 'claude', 'release'), b('1', 'claude/release-notes'))).toEqual({ groupId: 'claude', via: 'rule' });
+  });
+
+  it('拖组头调序：往上放在目标前、往下放在目标后，拖到下一组能下移、拖到最后一组能挪到末尾', () => {
+    const ids = (list: BranchGroup[]) => list.map((item) => item.id);
+    const groups = [group('a', []), group('b', []), group('c', [])];
+    expect(ids(moveGroupOnto(groups, 'a', 'b'))).toEqual(['b', 'a', 'c']);
+    expect(ids(moveGroupOnto(groups, 'a', 'c'))).toEqual(['b', 'c', 'a']);
+    expect(ids(moveGroupOnto(groups, 'c', 'a'))).toEqual(['c', 'a', 'b']);
+    expect(ids(moveGroupOnto(groups, 'b', 'b'))).toEqual(['a', 'b', 'c']);
   });
 
   it('钉入优先于任何规则，哪怕规则所在的组更靠上', () => {

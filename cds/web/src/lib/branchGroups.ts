@@ -228,13 +228,17 @@ export function pinBranch(groups: BranchGroup[], branchId: string, groupId: stri
   });
 }
 
-/** 把 fromId 挪到 toId 前面（拖组头调顺序）。 */
-export function moveGroupBefore(groups: BranchGroup[], fromId: string, toId: string): BranchGroup[] {
+/**
+ * 把 fromId 拖到 toId 的位置（拖组头调顺序）：往上拖放在目标前面，往下拖放在目标后面。
+ * 只有「放在前面」一种时，拖到紧挨着的下一组等于原地不动，也没法挪到最后（Codex P2，PR #1647）。
+ */
+export function moveGroupOnto(groups: BranchGroup[], fromId: string, toId: string): BranchGroup[] {
   if (fromId === toId) return groups;
-  const moving = groups.find((group) => group.id === fromId);
-  if (!moving) return groups;
-  const rest = groups.filter((group) => group.id !== fromId);
-  const at = rest.findIndex((group) => group.id === toId);
-  if (at < 0) return groups;
-  return [...rest.slice(0, at), moving, ...rest.slice(at)];
+  const from = groups.findIndex((group) => group.id === fromId);
+  const to = groups.findIndex((group) => group.id === toId);
+  if (from < 0 || to < 0) return groups;
+  const next = groups.slice();
+  const [moving] = next.splice(from, 1);
+  next.splice(to, 0, moving);
+  return next;
 }
