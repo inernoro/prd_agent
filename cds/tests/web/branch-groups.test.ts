@@ -204,6 +204,8 @@ describe('页面接线', () => {
   const projectSwitchSafe = (source: string) => {
     expect(source).toContain('    setGroupEditor(null);\n    setGroupsSaving(false);\n    setGroupsSaveError(\'\');\n    setGroupDropTarget(null);');
     expect(source).toContain('const switchedAway = () => groupsProjectRef.current !== requestProject;');
+    // 保存队列按项目分开，上一个项目卡住的请求不堵新项目
+    expect(source).toContain('    groupSaveChainRef.current = Promise.resolve();\n');
     expect(source.match(/if \(switchedAway\(\)\) return false;/g)).toHaveLength(3);
     expect(source).toContain('`/api/projects/${encodeURIComponent(requestProject)}/branch-groups`');
   };

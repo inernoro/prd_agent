@@ -14501,6 +14501,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const svc = entry.services[profile.id];
       svc.status = 'building';
+      // 单服务部署时分支聚合状态一直是 running，只有这一个服务在 building → starting → 结束之间走；
+      // 每次翻转都推一条 branch.updated（事件流会取最新分支下发），分支卡的阶段条、计时与收尾才跟得上。
+      // 此前这条路径只在排队时推事件，卡片要等下一次刷新才看得到（Codex P2，PR #1646）。
+      const emitServiceTransition = () => branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: new Date().toISOString() },
+      });
+      emitServiceTransition();
 
       // ── 全局构建并发闸（2026-07-16 复盘补齐）──
       // 此前单服务重部署完全绕过 build-gate，源码编译不受全局并发控制。
@@ -14676,6 +14684,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // and the app binding its port. See .claude/rules/cds-auto-deploy.md.
         svc.status = 'starting';
         stateService.save();
+        emitServiceTransition();
         advanceDeploymentRun(deploymentRun?.id, 'starting', {
           phase: 'start',
           message: `${profile.name} 容器已启动`,
@@ -14740,10 +14749,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logDeploy(id, `${profile.name} 就绪探测超时`);
         }
         stateService.save();
+        emitServiceTransition();
       } catch (err) {
         if (err instanceof BranchOperationSupersededError) throw err;
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
+        emitServiceTransition();
         logEvent({
           step: `build-${profile.id}`,
           status: 'error',

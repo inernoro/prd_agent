@@ -2,7 +2,7 @@
  * 分支自定义分组接口测试。
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -194,6 +194,21 @@ describe('项目分支自定义分组', () => {
     expect(put.body.error).toBe('mirror_read_only');
     expect((await request(server, 'GET', '/api/projects/proj-m/branch-groups')).body.groups).toEqual([]);
     expect((await request(server, 'GET', '/api/projects/proj-a/branch-groups')).body.readOnly).toBe(false);
+  });
+
+  it('同一毫秒内连续两次写入，版本号也不同，持旧版本的写入仍然 409（Codex P2）', async () => {
+    const frozen = Date.now();
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(frozen);
+    try {
+      const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+      const second = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+      expect(second.status).toBe(200);
+      expect(second.body.updatedAt).not.toBe(first.body.updatedAt);
+      const stale = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: first.body.updatedAt });
+      expect(stale.status).toBe(409);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('项目不存在时 404', async () => {

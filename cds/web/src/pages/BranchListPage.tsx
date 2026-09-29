@@ -1427,6 +1427,7 @@ function summarizeBranchStates(
       ciImageStatus: branch.ciImageStatus,
       prebuilt: branch.deployRuntime?.prebuilt,
       prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
+      activeProfileCount: branch.deployRuntime?.activeProfiles,
     });
     if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
     if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;
@@ -1708,6 +1709,8 @@ export function BranchListPage(): JSX.Element {
     setGroupDropTarget(null);
     confirmedGroupsRef.current = null;
     pendingGroupUpdatesRef.current = [];
+    // 保存队列按项目分开：上一个项目卡住的请求不许把新项目的保存堵在后面（Codex P2，PR #1647）。
+    groupSaveChainRef.current = Promise.resolve();
     if (!projectId) return;
     let cancelled = false;
     apiRequest<BranchGroupsSettings & { ok: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/branch-groups`)
@@ -5936,6 +5939,7 @@ const BranchCard = memo(function BranchCard({
     ciImageStatus: branch.ciImageStatus,
     prebuilt: branch.deployRuntime?.prebuilt,
     prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
+    activeProfileCount: branch.deployRuntime?.activeProfiles,
     participants: lastBuildRef.current?.serviceIds,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });

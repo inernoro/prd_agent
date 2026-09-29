@@ -52,6 +52,11 @@ export interface BranchCardPhaseInput {
    */
   participants?: string[];
   /**
+   * deployRuntime.activeProfiles：这条分支一共有几个服务。整分支部署刚开始、还没有服务翻到 building 时
+   * （分支先翻 building），用它判断是不是「全部走极速版」，不按「任一」判（Codex P2，PR #1646）。
+   */
+  activeProfileCount?: number;
+  /**
    * 前端已发起、服务端状态还没跟上的操作（点了部署，SSE 还没把 status 推成 building）。
    * 给了就在状态判不出阶段时显示单段「处理中」，而不是假装在某一段。
    */
@@ -74,9 +79,15 @@ const SOURCE_STEPS: Array<{ key: BranchCardPhaseKey; label: string }> = [
 function isExpress(input: BranchCardPhaseInput): boolean {
   if (input.prebuilt === false) return false;
   const participants = Array.from(new Set([...(input.participants || []), ...deployingServiceIds(input.services)]));
-  if (input.prebuiltProfileIds && participants.length > 0) {
+  if (input.prebuiltProfileIds) {
     const prebuiltIds = new Set(input.prebuiltProfileIds);
-    return participants.every((id) => prebuiltIds.has(id));
+    // 依次认：这次已参与 / 正在动的服务 → 排队里登记的服务 → 这条分支的全部服务。
+    if (participants.length > 0) return participants.every((id) => prebuiltIds.has(id));
+    const queued = (input.buildQueue as { serviceIds?: unknown } | undefined)?.serviceIds;
+    if (Array.isArray(queued) && queued.length > 0) return queued.every((id) => prebuiltIds.has(String(id)));
+    if (typeof input.activeProfileCount === 'number' && input.activeProfileCount > 0) {
+      return prebuiltIds.size >= input.activeProfileCount;
+    }
   }
   return input.prebuilt === true || Boolean(input.ciImageStatus);
 }
