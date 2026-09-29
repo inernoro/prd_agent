@@ -52,6 +52,17 @@ public static class AssetStorageDeletePolicy
             && !segment.Any(char.IsControl));
     }
 
+    /// <summary>只允许删除精确的录音分片对象，不允许目录或任意自定义 key。</summary>
+    public static bool IsRecordingChunkKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^document-recordings/chunks/[0-9a-f]{32}/[0-9]{6,}-[0-9a-f]{64}\.bin$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
     public static bool IsVersionedUserAvatarKey(string? key, string? configuredPrefix = null)
     {
         var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
@@ -265,4 +276,22 @@ public interface IAssetStorage
     /// 构建站点托管文件的 COS key（含 prefix），格式：{prefix}/web-hosting/sites/{siteId}/{filePath}
     /// </summary>
     string BuildSiteKey(string siteId, string filePath);
+
+    /// <summary>录音临时分片的独占物理 key；与网页托管和正式附件隔离。</summary>
+    string BuildRecordingChunkKey(string sessionId, int index, string sha256)
+        => throw new NotSupportedException("当前存储实现不支持录音对象分片");
+}
+
+public static class RecordingChunkKey
+{
+    public static string RelativePath(string sessionId, int index, string sha256)
+    {
+        if (!Guid.TryParseExact(sessionId, "N", out _))
+            throw new ArgumentException("录音会话标识无效", nameof(sessionId));
+        if (index < 0)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        if (sha256.Length != 64 || !sha256.All(Uri.IsHexDigit))
+            throw new ArgumentException("录音分片校验值无效", nameof(sha256));
+        return $"document-recordings/chunks/{sessionId}/{index:D6}-{sha256.ToLowerInvariant()}.bin";
+    }
 }

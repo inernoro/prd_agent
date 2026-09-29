@@ -1800,14 +1800,14 @@ public class DocumentStoreController : ControllerBase
         var cleanupClaim = await ClaimExpiredRecordingUploadsAsync(
             _db.DocumentRecordingUploadSessions,
             expiredBefore,
-            CancellationToken.None);
+            CancellationToken.None,
+            ownerInstanceId: InstanceIdentity.Get(_config));
         var expiredSessions = cleanupClaim.Sessions;
         var expiredSessionIds = expiredSessions.Select(s => s.Id).ToArray();
         await CleanupExpiredRecordingUploadsAsync(
             expiredSessionIds,
-            ids => _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-                c => ids.Contains(c.SessionId),
-                CancellationToken.None),
+            ids => DocumentRecordingChunkStore.DeleteChunksAsync(
+                _db.DocumentRecordingUploadChunks, _assetStorage, ids, CancellationToken.None),
             ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
                 s => ids.Contains(s.Id)
                      && s.CleanupLeaseId == cleanupClaim.LeaseId
@@ -1831,9 +1831,12 @@ public class DocumentStoreController : ControllerBase
         }
         // append/cancel 可在“读到 uploading”后交错：cancel 删除父会话，append 随后才插入分片。
         // 这类分片没有父记录，不能依赖 expired session 查询；按年龄有界扫描并独立回收。
+        var currentOwnerId = InstanceIdentity.Get(_config);
         var orphanCandidateGroups = await _db.DocumentRecordingUploadChunks
             .Aggregate()
-            .Match(c => c.CreatedAt <= expiredBefore.Subtract(RecordingOrphanChunkGrace))
+            .Match(c => c.CreatedAt <= expiredBefore.Subtract(RecordingOrphanChunkGrace)
+                        && (c.OwnerInstanceId == currentOwnerId
+                            || c.StorageKey == null))
             .Group(c => c.SessionId, group => new { SessionId = group.Key })
             .Limit(RecordingOrphanChunkScanLimit)
             .ToListAsync(CancellationToken.None);
@@ -1847,9 +1850,9 @@ public class DocumentStoreController : ControllerBase
             var orphanSessionIds = FindOrphanedRecordingSessionIds(candidateIds, existingSessionIds);
             if (orphanSessionIds.Count > 0)
             {
-                await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-                    c => orphanSessionIds.Contains(c.SessionId),
-                    CancellationToken.None);
+                await DocumentRecordingChunkStore.DeleteOwnedOrphansAsync(
+                    _db.DocumentRecordingUploadChunks, _assetStorage,
+                    orphanSessionIds, currentOwnerId, CancellationToken.None);
             }
         }
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -2142,7 +2145,21 @@ public class DocumentStoreController : ControllerBase
             var confirmedChunks = await _db.DocumentRecordingUploadChunks
                 .Find(c => c.SessionId == sessionId && c.Index == index)
                 .ToListAsync(CancellationToken.None);
-            if (!RecordingChunkRetryMatches(confirmedChunks, bytes))
+            bool retryMatches;
+            try
+            {
+                retryMatches = await DocumentRecordingChunkStore.ConfirmedRetryMatchesAsync(
+                    confirmedChunks, bytes, _assetStorage,
+                    _db.DocumentRecordingUploadChunks, CancellationToken.None);
+            }
+            catch (Exception ex) when (IsAssetStorageFailure(ex))
+            {
+                _logger.LogWarning(ex, "[document-store] 已确认录音分片复核失败 session={SessionId} index={Index}", sessionId, index);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                        "录音分片暂时无法复核，请保留录音并重试"));
+            }
+            if (!retryMatches)
             {
                 return Conflict(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
@@ -2161,21 +2178,50 @@ public class DocumentStoreController : ControllerBase
         if (session.UploadedBytes + bytes.LongLength > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小不能超过 20 MB"));
 
+        if (_config.GetValue<bool>("RecordingChunks:UseObjectStorage")
+            && string.Equals(_config["ASPNETCORE_ENVIRONMENT"], "Production", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(AssetStorageProviderResolver.ResolveProviderName(_config),
+                AssetStorageProviderResolver.Local, StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "录音对象存储尚未就绪，请稍后重试并保留本地录音"));
+        }
+
         DocumentRecordingUploadChunk existing;
         bool inserted;
         bool payloadMatches;
         try
         {
-            (existing, inserted, payloadMatches) = await EnsureRecordingChunkAsync(
-                _db.DocumentRecordingUploadChunks,
-                sessionId,
-                index,
-                bytes,
-                CancellationToken.None);
+            var useObjectStorage = _config.GetValue<bool>("RecordingChunks:UseObjectStorage");
+            if (!useObjectStorage)
+            {
+                // 回滚写入开关时，已创建的对象分片仍必须走对象校验与确认；
+                // 不能仅凭摘要把一个丢失的对象误报为已保护。
+                useObjectStorage = await _db.DocumentRecordingUploadChunks
+                    .Find(c => c.SessionId == sessionId && c.Index == index && c.StorageKey != null)
+                    .AnyAsync(CancellationToken.None);
+            }
+            (existing, inserted, payloadMatches) = useObjectStorage
+                ? await DocumentRecordingChunkStore.EnsureObjectChunkAsync(
+                    _db.DocumentRecordingUploadChunks, _assetStorage,
+                    InstanceIdentity.Get(_config), sessionId, index, bytes, CancellationToken.None)
+                : await EnsureRecordingChunkAsync(
+                    _db.DocumentRecordingUploadChunks,
+                    sessionId,
+                    index,
+                    bytes,
+                    CancellationToken.None);
         }
         catch (InvalidOperationException ex)
         {
             return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (Exception ex) when (IsAssetStorageFailure(ex))
+        {
+            _logger.LogWarning(ex, "[document-store] 录音分片对象写入失败 session={SessionId} index={Index}", sessionId, index);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片暂未保存，请保留录音并重试上传"));
         }
         if (!payloadMatches)
             return Conflict(ApiResponse<object>.Fail(
@@ -2197,15 +2243,15 @@ public class DocumentStoreController : ControllerBase
         if (update.ModifiedCount == 0)
         {
             var latest = await _db.DocumentRecordingUploadSessions.Find(s => s.Id == sessionId).FirstOrDefaultAsync();
-            if (latest?.NextChunkIndex != index + 1)
+            if (latest == null || latest.NextChunkIndex < index + 1)
             {
                 // 会话可能在 append 插入分片后被并发 cancel/complete。该分片从未计入会话，
                 // 立即补偿删除；即使进程在这里退出，上面的独立孤儿扫描也会最终回收。
                 if (inserted)
                 {
-                    await _db.DocumentRecordingUploadChunks.DeleteOneAsync(
-                        c => c.Id == existing.Id,
-                        CancellationToken.None);
+                    await DocumentRecordingChunkStore.DeleteChunkAsync(
+                        _db.DocumentRecordingUploadChunks, _assetStorage,
+                        existing, CancellationToken.None);
                 }
                 return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分片状态发生变化，请查询偏移后重试"));
             }
@@ -2253,7 +2299,8 @@ public class DocumentStoreController : ControllerBase
                 .Find(c => c.SessionId == sessionId && c.Index == index)
                 .FirstOrDefaultAsync(cancellationToken);
             if (existing != null)
-                return (existing, false, RecordingChunkPayloadMatches(existing, bytes));
+                return (existing, false,
+                    DocumentRecordingChunkStore.RetryMatches([existing], bytes));
 
             try
             {
@@ -2268,22 +2315,18 @@ public class DocumentStoreController : ControllerBase
                     .Find(c => c.Id == candidate.Id)
                     .FirstOrDefaultAsync(cancellationToken);
                 if (existing != null)
-                    return (existing, false, RecordingChunkPayloadMatches(existing, bytes));
+                    return (existing, false,
+                        DocumentRecordingChunkStore.RetryMatches([existing], bytes));
             }
         }
 
         throw new InvalidOperationException("录音分片并发状态无法收敛，请查询偏移后重试");
     }
 
-    private static bool RecordingChunkPayloadMatches(
-        DocumentRecordingUploadChunk chunk,
-        byte[] bytes)
-        => chunk.SizeBytes == bytes.LongLength && chunk.Data.AsSpan().SequenceEqual(bytes);
-
     internal static bool RecordingChunkRetryMatches(
         IReadOnlyList<DocumentRecordingUploadChunk> chunks,
         byte[] bytes)
-        => chunks.Count > 0 && chunks.All(chunk => RecordingChunkPayloadMatches(chunk, bytes));
+        => DocumentRecordingChunkStore.RetryMatches(chunks, bytes);
 
     /// <summary>拼接已确认分片，创建正式音频条目；重复完成请求返回同一 entry。</summary>
     [HttpPost("recording-uploads/{sessionId}/complete")]
@@ -2452,10 +2495,12 @@ public class DocumentStoreController : ControllerBase
         {
             // 与后台归档共用同一套完整性校验。旧版本并发 append 可能留下内容相同的
             // 重复 index；它们应被收敛恢复，内容冲突的重复项则必须拒绝。
-            audioBytes = DocumentRecordingArchiveWorker.AssembleChunks(
+            audioBytes = await DocumentRecordingChunkStore.AssembleAsync(
                 chunks,
                 claimed.NextChunkIndex,
-                claimed.UploadedBytes);
+                claimed.UploadedBytes,
+                _assetStorage,
+                CancellationToken.None);
         }
         catch (InvalidOperationException ex)
         {
@@ -2466,6 +2511,19 @@ public class DocumentStoreController : ControllerBase
                 completionLeaseId,
                 CancellationToken.None);
             return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (Exception ex) when (IsAssetStorageFailure(ex))
+        {
+            await ReleaseRecordingCompletionClaimAsync(
+                _db.DocumentRecordingUploadSessions,
+                sessionId,
+                userId,
+                completionLeaseId,
+                CancellationToken.None);
+            _logger.LogWarning(ex, "[document-store] 录音分片读取失败 session={SessionId}", sessionId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "录音分片暂时无法读取，请保留录音并稍后重试"));
         }
         if (audioBytes.LongLength > MaxUploadBytes)
         {
@@ -2678,7 +2736,7 @@ public class DocumentStoreController : ControllerBase
             await EnsurePendingRecordingTranscriptionRunAsync(claimed, pendingEntry);
             _logger.LogError(
                 ex,
-                "[document-store] 录音对象存储暂时不可用，已转入 Mongo 临时恢复队列；正式文件仍以对象存储为准 session={SessionId} entry={EntryId}",
+                "[document-store] 录音正式附件归档暂时不可用，已转入持久分片恢复队列 session={SessionId} entry={EntryId}",
                 sessionId,
                 pendingEntry.Id);
             return Ok(ApiResponse<object>.Ok(new
@@ -2887,9 +2945,17 @@ public class DocumentStoreController : ControllerBase
             DateTime.UtcNow,
             CancellationToken.None);
 
-        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-            c => c.SessionId == sessionId,
-            cancellationToken: CancellationToken.None);
+        try
+        {
+            await DocumentRecordingChunkStore.DeleteChunksAsync(
+                _db.DocumentRecordingUploadChunks, _assetStorage,
+                [sessionId], CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 正式附件和终态已提交；清理失败留给已完成会话的定时回收重试。
+            _logger.LogWarning(ex, "[document-store] 录音分片清理延后 session={SessionId}", sessionId);
+        }
         return true;
     }
 
@@ -3036,11 +3102,24 @@ public class DocumentStoreController : ControllerBase
             || session.Status == DocumentRecordingUploadStatus.Completing)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已完成的录音不能取消上传"));
 
-        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-            c => c.SessionId == sessionId,
+        var cancelLeaseId = Guid.NewGuid().ToString("N");
+        var cancelled = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId && s.UserId == userId
+                 && s.Status == DocumentRecordingUploadStatus.Uploading,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Cancelled)
+                .Set(s => s.CleanupLeaseId, cancelLeaseId)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow)
+                .Set(s => s.ExpiresAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (cancelled.ModifiedCount == 0 && session.Status != DocumentRecordingUploadStatus.Cancelled)
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音状态已变化，请查询后重试"));
+        await DocumentRecordingChunkStore.DeleteChunksAsync(
+            _db.DocumentRecordingUploadChunks, _assetStorage,
+            [sessionId], CancellationToken.None);
         await _db.DocumentRecordingUploadSessions.DeleteOneAsync(
-            s => s.Id == sessionId && s.UserId == userId,
+            s => s.Id == sessionId && s.UserId == userId
+                 && s.Status == DocumentRecordingUploadStatus.Cancelled,
             cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -3520,7 +3599,8 @@ public class DocumentStoreController : ControllerBase
             IMongoCollection<DocumentRecordingUploadSession> sessions,
             DateTime now,
             CancellationToken cancellationToken,
-            int limit = RecordingExpiredCleanupBatchSize)
+            int limit = RecordingExpiredCleanupBatchSize,
+            string? ownerInstanceId = null)
     {
         var staleBefore = now - RecordingCleanupStaleLease;
         var claimableStatus = Builders<DocumentRecordingUploadSession>.Filter.Or(
@@ -3545,6 +3625,9 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Filter.Lte(
                 session => session.ExpiresAt,
                 now));
+        if (!string.IsNullOrWhiteSpace(ownerInstanceId))
+            eligible &= Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                session => session.OwnerInstanceId, ownerInstanceId);
         var candidateIds = await sessions
             .Find(eligible)
             .SortBy(session => session.ExpiresAt)

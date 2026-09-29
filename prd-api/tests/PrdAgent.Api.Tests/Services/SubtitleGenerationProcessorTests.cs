@@ -126,6 +126,7 @@ public class SubtitleGenerationProcessorTests
             // 本用例只走 ASR 分发，不触及「换个整理方式」写回路径；
             // ContentReprocessApplyService 是具体类且携带多层依赖，此处置空即可
             applyService: null!,
+            assetStorage: Mock.Of<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>(),
             logger: NullLogger<SubtitleGenerationProcessor>.Instance);
 
         var resolution = new ModelResolutionResult
@@ -796,6 +797,7 @@ public class SubtitleGenerationProcessorTests
             httpClientFactory: Mock.Of<IHttpClientFactory>(),
             llmCtx: new LLMRequestContextAccessor(),
             applyService: null!,
+            assetStorage: Mock.Of<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>(),
             logger: NullLogger<SubtitleGenerationProcessor>.Instance);
 
     private static ModelResolutionResult BuildDoubaoResolution()

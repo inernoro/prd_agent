@@ -25,6 +25,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentRecordingArchiveWorker> _logger;
     private DateTime _nextExpiredCleanupAt = DateTime.MinValue;
+    private string? _legacyMigrationCursor;
 
     public DocumentRecordingArchiveWorker(
         IServiceScopeFactory scopeFactory,
@@ -71,6 +72,26 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         var legacyOwnerCreatedBeforeUtc = DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration);
         var now = DateTime.UtcNow;
 
+        if (configuration.GetValue<bool>("RecordingChunks:MigrateLegacyData"))
+        {
+            try
+            {
+                if (storage is IAssetStorageRuntimeInfo runtime
+                    && string.Equals(runtime.ProviderName, AssetStorageProviderResolver.Local,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("录音历史分片迁移需要持久对象存储");
+                var migrated = await MigrateOwnedLegacyChunksAsync(
+                    db, storage, instanceId, CancellationToken.None);
+                if (migrated > 0)
+                    _logger.LogInformation("[recording-archive] Migrated {Count} legacy Mongo chunks to object storage", migrated);
+            }
+            catch (Exception ex)
+            {
+                // 迁移失败保留 Data，且不能阻塞正式归档与转录 outbox。
+                _logger.LogError(ex, "[recording-archive] Legacy chunk migration deferred");
+            }
+        }
+
         await ReleaseStaleOwnedArchiveLeasesAsync(
             db.DocumentRecordingUploadSessions,
             instanceId,
@@ -90,7 +111,9 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     db.DocumentRecordingUploadSessions,
                     db.DocumentRecordingUploadChunks,
                     now,
-                    CancellationToken.None);
+                    CancellationToken.None,
+                    storage: storage,
+                    ownerInstanceId: instanceId);
                 if (cleaned > 0)
                 {
                     _logger.LogInformation(
@@ -102,10 +125,22 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             {
                 _logger.LogError(ex, "[recording-archive] Expired archive cleanup failed");
             }
+            try
+            {
+                var orphaned = await CleanupOwnedOrphanChunksAsync(
+                    db, storage, instanceId, now, CancellationToken.None);
+                if (orphaned > 0)
+                    _logger.LogInformation(
+                        "[recording-archive] Cleaned {Count} orphaned recording sessions", orphaned);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[recording-archive] Orphaned chunk cleanup failed");
+            }
         }
 
         // 转录 outbox 必须独立于对象存储归档处理。即使进程在“会话终态提交”与
-        // “run 插入”之间退出，或者 R2/COS 仍不可用，下一轮也会先从 Mongo 分片
+        // “run 插入”之间退出，或者 R2/COS 仍不可用，下一轮也会先从分片清单
         // 恢复固定 ID 的完整音频转录任务，不依赖浏览器再次调用 /complete。
         var recoveredRuns = await RecoverDeferredTranscriptionRunsAsync(
             db.DocumentRecordingUploadSessions,
@@ -145,9 +180,9 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             {
                 // 用户已删除条目是永久状态，不是对象存储瞬时故障。先删分片再删会话，
                 // 即使进程在两步之间退出，下一轮仍能完成清理，不会十年重试并占用 Mongo。
-                await db.DocumentRecordingUploadChunks.DeleteManyAsync(
-                    c => c.SessionId == session.Id,
-                    cancellationToken: CancellationToken.None);
+                await DocumentRecordingChunkStore.DeleteChunksAsync(
+                    db.DocumentRecordingUploadChunks, storage,
+                    [session.Id], CancellationToken.None);
                 await db.DocumentRecordingUploadSessions.DeleteOneAsync(
                     s => s.Id == session.Id
                          && s.OwnerInstanceId == instanceId
@@ -165,7 +200,9 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 .Find(c => c.SessionId == session.Id)
                 .SortBy(c => c.Index)
                 .ToListAsync(CancellationToken.None);
-            var bytes = AssembleChunks(chunks, session.NextChunkIndex, session.UploadedBytes);
+            var bytes = await DocumentRecordingChunkStore.AssembleAsync(
+                chunks, session.NextChunkIndex, session.UploadedBytes,
+                storage, CancellationToken.None);
             var stored = await storage.SaveAsync(
                 bytes,
                 session.MimeType,
@@ -275,7 +312,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     archiveCompletedAt,
                     CancellationToken.None);
             }
-            // 延迟转录可能已经开始读取 Mongo 分片。归档成功与转录读取并发时，只有
+            // 延迟转录可能已经开始读取分片。归档成功与转录读取并发时，只有
             // 不需要延迟转录，或转录已经写出正文，才可释放分片。完成会话更新后必须
             // 回读 run，不能使用 Ensure 返回的旧快照，否则恰好并发完成时仍会泄漏。
             DocumentStoreAgentRun? completedDeferredRun = null;
@@ -290,9 +327,9 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     entryRequiresDeferredTranscription,
                     completedDeferredRun))
             {
-                await db.DocumentRecordingUploadChunks.DeleteManyAsync(
-                    c => c.SessionId == session.Id,
-                    cancellationToken: CancellationToken.None);
+                await DocumentRecordingChunkStore.DeleteChunksAsync(
+                    db.DocumentRecordingUploadChunks, storage,
+                    [session.Id], CancellationToken.None);
             }
             _logger.LogInformation(
                 "[recording-archive] Archived session={SessionId} entry={EntryId} bytes={Bytes}",
@@ -326,6 +363,81 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 attempts,
                 nextAttempt);
         }
+    }
+
+    internal async Task<int> MigrateOwnedLegacyChunksAsync(
+        MongoDbContext db,
+        IAssetStorage storage,
+        string instanceId,
+        CancellationToken cancellationToken)
+    {
+        // 共享 Mongo 的分支预览只能搬自己创建的会话。游标遍历而不是每轮从第一条
+        // 开始，避免已迁移或其他分支的数据永远挡住后续记录。
+        var cursorFilter = _legacyMigrationCursor == null
+            ? Builders<DocumentRecordingUploadSession>.Filter.Empty
+            : Builders<DocumentRecordingUploadSession>.Filter.Gt(s => s.Id, _legacyMigrationCursor);
+        var sessions = await db.DocumentRecordingUploadSessions.Find(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.OwnerInstanceId, instanceId)
+                & cursorFilter)
+            .SortBy(s => s.Id)
+            .Limit(100)
+            .Project(s => s.Id)
+            .ToListAsync(cancellationToken);
+        if (sessions.Count == 0)
+        {
+            _legacyMigrationCursor = null;
+            return 0;
+        }
+
+        var migrated = 0;
+        foreach (var sessionId in sessions)
+        {
+            var legacy = await db.DocumentRecordingUploadChunks
+                .Find(c => c.SessionId == sessionId && c.Data != null)
+                .SortBy(c => c.Index)
+                .Limit(20)
+                .ToListAsync(cancellationToken);
+            foreach (var chunk in legacy)
+            {
+                if (await DocumentRecordingChunkStore.MigrateLegacyChunkAsync(
+                        db.DocumentRecordingUploadChunks, storage, chunk,
+                        instanceId, cancellationToken))
+                    migrated++;
+            }
+            // 本会话一批恰好取满时不能推进游标：下轮需先确认没有更多 Data。
+            // 否则小分片录音可超过 20 片，尾部将被永久跳过。
+            if (legacy.Count == 20) break;
+            _legacyMigrationCursor = sessionId;
+            if (migrated >= 20) break;
+        }
+        return migrated;
+    }
+
+    internal static async Task<int> CleanupOwnedOrphanChunksAsync(
+        MongoDbContext db,
+        IAssetStorage storage,
+        string ownerInstanceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var olderThan = now.AddDays(-2);
+        var candidates = await db.DocumentRecordingUploadChunks.Aggregate()
+            .Match(c => c.CreatedAt <= olderThan
+                        && (c.OwnerInstanceId == ownerInstanceId || c.StorageKey == null))
+            .Group(c => c.SessionId, group => new { SessionId = group.Key })
+            .Limit(500)
+            .ToListAsync(cancellationToken);
+        if (candidates.Count == 0) return 0;
+        var candidateIds = candidates.Select(c => c.SessionId).ToArray();
+        var existingIds = await db.DocumentRecordingUploadSessions
+            .Find(s => candidateIds.Contains(s.Id))
+            .Project(s => s.Id)
+            .ToListAsync(cancellationToken);
+        var existing = existingIds.ToHashSet(StringComparer.Ordinal);
+        var orphanIds = candidateIds.Where(id => !existing.Contains(id)).ToArray();
+        return await DocumentRecordingChunkStore.DeleteOwnedOrphansAsync(
+            db.DocumentRecordingUploadChunks, storage,
+            orphanIds, ownerInstanceId, cancellationToken);
     }
 
     internal static async Task<long> ReleaseStaleOwnedArchiveLeasesAsync(
@@ -424,15 +536,16 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             if (group.Key != index)
                 throw new InvalidOperationException($"录音归档缺少第 {index} 个分片");
             var chunk = group.First();
-            if (chunk.Data.LongLength != chunk.SizeBytes)
+            if (chunk.Data?.LongLength != chunk.SizeBytes)
                 throw new InvalidOperationException($"录音归档第 {index} 个分片大小无效");
             if (group.Skip(1).Any(duplicate =>
                     duplicate.SizeBytes != chunk.SizeBytes
-                    || !duplicate.Data.AsSpan().SequenceEqual(chunk.Data)))
+                    || !(duplicate.Data ?? Array.Empty<byte>()).AsSpan()
+                        .SequenceEqual(chunk.Data ?? Array.Empty<byte>())))
             {
                 throw new InvalidOperationException($"录音归档第 {index} 个分片存在内容冲突");
             }
-            joined.Write(chunk.Data);
+            joined.Write(chunk.Data ?? Array.Empty<byte>());
         }
         if (joined.Length != expectedBytes)
             throw new InvalidOperationException("录音归档分片大小校验失败");
@@ -490,7 +603,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             return null;
 
         // 固定 run ID 让完成接口、归档 Worker、崩溃重试和用户手动重试共同收敛到
-        // 同一个任务。pending entry 建立后即可排队，处理器会直接读取 Mongo 分片；
+        // 同一个任务。pending entry 建立后即可排队，处理器会直接读取已确认分片；
         // 不再把对象存储恢复当作转录的前置条件。
         try
         {
@@ -828,7 +941,8 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         IMongoCollection<DocumentRecordingUploadSession> sessions,
         IMongoCollection<DocumentRecordingUploadChunk> chunks,
         DocumentEntry entry,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IAssetStorage? storage = null)
     {
         var sessionId = entry.Metadata?.GetValueOrDefault("recordingUploadSessionId")?.Trim();
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -841,9 +955,12 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         if (!archiveCompleted)
             return false;
 
-        await chunks.DeleteManyAsync(
-            c => c.SessionId == sessionId,
-            cancellationToken: cancellationToken);
+        if (storage == null)
+            await chunks.DeleteManyAsync(c => c.SessionId == sessionId,
+                cancellationToken: cancellationToken);
+        else
+            await DocumentRecordingChunkStore.DeleteChunksAsync(
+                chunks, storage, [sessionId], cancellationToken);
         return true;
     }
 
@@ -852,13 +969,22 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         IMongoCollection<DocumentRecordingUploadChunk> chunks,
         DateTime now,
         CancellationToken cancellationToken,
-        int limit = 100)
+        int limit = 100,
+        IAssetStorage? storage = null,
+        string? ownerInstanceId = null)
     {
         var batchSize = Math.Clamp(limit, 1, 500);
+        var eligible = Builders<DocumentRecordingUploadSession>.Filter.And(
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed),
+            Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                s => s.DeferredTranscriptionRunPending, true),
+            Builders<DocumentRecordingUploadSession>.Filter.Lte(s => s.ExpiresAt, now));
+        if (!string.IsNullOrWhiteSpace(ownerInstanceId))
+            eligible &= Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                s => s.OwnerInstanceId, ownerInstanceId);
         var expiredSessionIds = await sessions
-            .Find(s => s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed
-                       && !s.DeferredTranscriptionRunPending
-                       && s.ExpiresAt <= now)
+            .Find(eligible)
             .SortBy(s => s.ExpiresAt)
             .Limit(batchSize)
             .Project(s => s.Id)
@@ -868,14 +994,15 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
 
         // 分片必须先删。若第一步失败，会话仍在，下一轮 Worker 可以重试；先删会话
         // 会让残留分片失去可定位的父记录。只处理已归档会话，pending 音频绝不回收。
-        await chunks.DeleteManyAsync(
-            c => expiredSessionIds.Contains(c.SessionId),
-            cancellationToken: cancellationToken);
+        if (storage == null)
+            await chunks.DeleteManyAsync(c => expiredSessionIds.Contains(c.SessionId),
+                cancellationToken: cancellationToken);
+        else
+            await DocumentRecordingChunkStore.DeleteChunksAsync(
+                chunks, storage, expiredSessionIds, cancellationToken);
         await sessions.DeleteManyAsync(
-            s => expiredSessionIds.Contains(s.Id)
-                 && s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed
-                 && !s.DeferredTranscriptionRunPending
-                 && s.ExpiresAt <= now,
+            eligible & Builders<DocumentRecordingUploadSession>.Filter.In(
+                s => s.Id, expiredSessionIds),
             cancellationToken: cancellationToken);
         return expiredSessionIds.Count;
     }
