@@ -75,6 +75,8 @@ function makeBranches() {
       // 容器级复制集：三个容器各做了复制。标识与端口挤在同一条单行槽里，「+N」不能被挤出卡片。
       // 同时带「CI 失败」标记（极速版 CI 出镜像失败、旧版本仍在跑）：端口行最挤的情形，只剩一个端口名额。
       ciImageStatus: 'failed', ciWorkflowConclusion: 'failure', ciWorkflowRunUrl: 'https://github.com/example/actions/runs/1',
+      // 再加配置漂移：端口行上四种附加标记（复制集 / CI 失败 / 基础设施异常 / 漂移）同时出现的最挤情形。
+      deployRuntime: { kind: 'source', drift: { hasDrift: true, expectedCount: 13, healthyCount: 10, missingProfileIds: ['search', 'notify'], unhealthyProfileIds: ['api'] } },
       replicaMode: 'container',
       replicaSets: Object.fromEntries(['api', 'admin', 'web'].map((id) => [id, { enabled: true, members: [{ status: 'running' }, { status: 'running' }] }])),
       lastDeployAt: iso(-40 * MIN), lastAccessedAt: iso(-5 * MIN),
@@ -116,7 +118,8 @@ const profiles = PROFILES.map((id) => ({ id, name: id, containerPort: 8080, dock
 const infra = [
   { id: 'mysql', name: 'mysql', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 10491, status: 'running' },
   { id: 'redis', name: 'redis', dockerImage: 'redis:7', containerPort: 6379, hostPort: 10487, status: 'running' },
-  { id: 'rabbitmq', name: 'rabbitmq', dockerImage: 'rabbitmq:3-management', containerPort: 5672, hostPort: 10488, status: 'running' },
+  // 共享基础设施有一个异常：每张卡的端口行都会多出「基础设施异常」标记。
+  { id: 'rabbitmq', name: 'rabbitmq', dockerImage: 'rabbitmq:3-management', containerPort: 5672, hostPort: 10488, status: 'error' },
 ];
 
 function resolve(pathname) {
@@ -245,7 +248,7 @@ async function main() {
       await page.screenshot({ path: path.join(OUT, `grid-${theme}.png`), fullPage: true });
 
       // 复制集标识 + 端口 + 「+N」同在一条单行槽：各档视口宽度下「+N」都要完整落在卡片里、点得到。
-      for (const vw of [1920, 1280, 1100, 900, 390]) {
+      for (const vw of [1920, 1280, 1100, 1000, 900, 760, 390]) {
         await page.setViewportSize({ width: vw, height: 1000 });
         await page.waitForTimeout(250);
         const fit = await page.$eval('[data-branch-card-id="b-test"]', (card) => {
@@ -253,12 +256,21 @@ async function main() {
           if (!btn) return null;
           const c = card.getBoundingClientRect();
           const b = btn.getBoundingClientRect();
-          const ci = card.querySelector('button[aria-label^="CI 构建失败"]');
-          const ciRect = ci ? ci.getBoundingClientRect() : null;
-          const ciInside = Boolean(ciRect && ciRect.width > 0 && ciRect.right <= c.right - 8);
-          return { cardW: Math.round(c.width), inside: b.right <= c.right - 8 && b.width > 0 && ciInside };
+          const inside = (el) => {
+            const r = el ? el.getBoundingClientRect() : null;
+            return Boolean(r && r.width > 0 && r.right <= c.right - 8);
+          };
+          const infra = [...card.querySelectorAll('span')].find((el) => el.textContent.trim() === '基础设施异常');
+          return {
+            cardW: Math.round(c.width),
+            inside: inside(btn)
+              && inside(card.querySelector('button[aria-label^="CI 构建失败"]'))
+              && inside(infra)
+              && inside(card.querySelector('[data-drift-chip]')),
+          };
         });
-        check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 +「CI 失败」都在时，「CI 失败」与「+N」都完整落在卡内`);
+        if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
+        check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }
       await page.setViewportSize({ width: WIDTH, height: 1000 });
       await page.waitForTimeout(250);
@@ -313,8 +325,9 @@ async function main() {
             });
             await shotCard(page, 'b-ident', `finish-${name}.png`);
             await page.$eval('[data-branch-card-id="b-ident"]', (el) => { for (const a of el.getAnimations({ subtree: true })) a.play(); });
-            const ordered = opacities.length === 3 && opacities[0] > opacities[1] && opacities[1] > opacities[2];
-            check(ordered, `端口依次点亮（800ms 时三个 chip 不透明度 ${opacities.map((o) => o.toFixed(2)).join(' > ')}）`);
+            // 共享基础设施报异常时每张卡的端口行多一个标记、少露一个端口，所以按「至少两个、逐个递减」判。
+            const ordered = opacities.length >= 2 && opacities.every((o, i) => i === 0 || opacities[i - 1] > o);
+            check(ordered, `端口依次点亮（800ms 时 ${opacities.length} 个 chip 不透明度 ${opacities.map((o) => o.toFixed(2)).join(' > ')}）`);
             continue;
           }
           await shotCard(page, 'b-ident', `finish-${name}.png`);
@@ -469,6 +482,9 @@ async function main() {
         await page.evaluate(() => window.scrollTo(0, 0));
         const toggle = page.locator('section[aria-label="未运行的分支"] > div > button[aria-expanded]').first();
         if ((await toggle.getAttribute('aria-expanded')) === 'true') await toggle.click();
+        await page.waitForTimeout(300);
+        // 同时开着标签筛选：main 既被筛掉、又在收起的分组里（Codex P2：已停止判定不能取筛选后的列表）
+        await page.click('button[title="按 #登录重构 过滤"]');
         await page.waitForTimeout(300);
         const hiddenBefore = (await page.$('[data-branch-card-id="b-main"]')) === null;
         await page.setViewportSize({ width: WIDTH, height: 500 });

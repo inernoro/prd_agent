@@ -2328,8 +2328,9 @@ export function BranchListPage(): JSX.Element {
   );
   // 定位卡片（搜索下拉 / cds:focus-branch）要知道目标是不是在「已停止」分组里：
   // 分组收起时那张卡根本没渲染，得先展开（Codex P2，PR #1646）。
+  // 从未经标签筛选的全部分支算：定位会先清掉标签筛选，被筛掉的停止分支也要认得出来（Codex P2）。
   const dormantIdsRef = useRef<Set<string>>(new Set());
-  dormantIdsRef.current = new Set(dormantBranches.map((branch) => branch.id));
+  dormantIdsRef.current = new Set(branches.filter((branch) => isDormantBranch(branch, actions[branch.id])).map((branch) => branch.id));
   const branchOverview = useMemo(() => {
     let errored = 0;
     let building = 0;
@@ -5409,9 +5410,15 @@ const BranchCard = memo(function BranchCard({
   const replicaEntries = Object.entries((branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {})
     .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
     .sort(([a], [b]) => a.localeCompare(b));
-  // 「CI 失败」标记同理：极速版 CI 出镜像失败而旧版本还在跑时，它与端口同在这一行（Codex P2，PR #1646）。
+  // 端口行上所有「有时出现」的附加标记都要占名额：复制集、CI 失败、基础设施异常、配置漂移。
+  // 每多一个，端口就少露一个（全收进「+N」也可以）；只减其中几个，剩下的在最窄卡宽下照样把
+  // 后面的控件挤出卡片（Codex P2 三连，PR #1646）。标记本身也都可收缩、文字截断（完整说明在 title），
+  // 只有「+N」保持原宽——同时出现几个标记最多显示成省略号，不会被裁出卡片。
   const ciFailedChip = branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false;
-  const appChipBudget = APP_CHIP_FOLD_THRESHOLD - (replicaEntries.length > 0 ? 1 : 0) - (ciFailedChip ? 1 : 0);
+  const infraErrorChip = infraResources.some((resource) => resource.status === 'error');
+  const driftChip = Boolean(branch.deployRuntime?.drift?.hasDrift);
+  const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip, driftChip].filter(Boolean).length;
+  const appChipBudget = Math.max(0, APP_CHIP_FOLD_THRESHOLD - portRowMarkers);
   const foldedAppCount = appResources.length > appChipBudget
     ? appResources.length - appChipBudget
     : 0;
@@ -6094,10 +6101,10 @@ const BranchCard = memo(function BranchCard({
           if (mode === 'project') {
             const bad = entries.some(([, rs]) => (rs.members ?? []).some((m) => m.status === 'error'));
             return (
-              <span className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium ${bad ? 'border-destructive/60 bg-destructive/10 text-destructive' : 'border-indigo-500/50 bg-indigo-500/10 text-indigo-500'}`}
+              <span className={`inline-flex h-7 min-w-0 shrink items-center gap-1 rounded-md border px-2 text-xs font-medium ${bad ? 'border-destructive/60 bg-destructive/10 text-destructive' : 'border-indigo-500/50 bg-indigo-500/10 text-indigo-500'}`}
                 title={bad ? '项目级复制集有副本异常，详见右侧复制集卡' : '该分支已做项目级复制：复制集实例组显示在右侧独立卡片'}>
-                <Layers className="h-3.5 w-3.5" />
-                {bad ? '已复制 · 有异常' : '已复制'}
+                <Layers className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 truncate">{bad ? '已复制 · 有异常' : '已复制'}</span>
               </span>
             );
           }
@@ -6113,14 +6120,16 @@ const BranchCard = memo(function BranchCard({
           }).join('\n');
           return (
             <span
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium"
+              className="inline-flex h-7 min-w-0 shrink items-center gap-1 rounded-md border px-2 text-xs font-medium"
               style={{ borderColor: `${color}80`, color, background: `${color}1a` }}
               title={detail}
             >
-              <Layers className="h-3.5 w-3.5" />
-              {entries.length === 1
-                ? `${profileShortName(firstPid, projectId)} x${(firstRs.members?.length ?? 0) + 1}`
-                : `复制集 · ${entries.length}`}
+              <Layers className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">
+                {entries.length === 1
+                  ? `${profileShortName(firstPid, projectId)} x${(firstRs.members?.length ?? 0) + 1}`
+                  : `复制集 · ${entries.length}`}
+              </span>
             </span>
           );
         })()}
@@ -6209,17 +6218,17 @@ const BranchCard = memo(function BranchCard({
             不再用「CI 构建失败 / 查看 / 切回源码编译」一整串把后面的端口与「+N」挤出卡片。 */}
         {ciFailedChip ? (
           <span
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
+            className="inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
             title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，可切回源码编译或重试 CI 后再部署。`}
           >
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDetail(); }}
-              className="inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
+              className="inline-flex min-w-0 items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
               aria-label="CI 构建失败，打开分支详情切回源码编译"
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />
-              CI 失败
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
+              <span className="min-w-0 truncate">CI 失败</span>
             </button>
             {branch.ciWorkflowRunUrl ? (
               <a
@@ -6227,7 +6236,7 @@ const BranchCard = memo(function BranchCard({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center opacity-80 hover:opacity-100"
+                className="inline-flex shrink-0 items-center opacity-80 hover:opacity-100"
                 aria-label="查看 CI 运行记录"
                 title="查看 CI 运行记录"
               >
@@ -6384,13 +6393,14 @@ const BranchCard = memo(function BranchCard({
                 ) : null}
               </span>
             ) : null}
-            {infraResources.some((resource) => resource.status === 'error') ? (
+            {infraErrorChip ? (
               <span
-                className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 text-xs text-destructive"
+                className="inline-flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-2 text-xs text-destructive"
+                data-infra-error-chip
                 title={infraResources.filter((resource) => resource.status === 'error').map((resource) => `${resource.displayName}${resource.errorMessage ? `：${resource.errorMessage}` : ''}`).join('\n')}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-destructive" aria-hidden />
-                基础设施异常
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />
+                <span className="min-w-0 truncate">基础设施异常</span>
               </span>
             ) : null}
             {/* 基础设施托盘 2026-09-29 挪到页头汇总（每张卡都一样，重复 N 遍等于每张卡浪费一行，
@@ -6435,12 +6445,14 @@ const BranchCard = memo(function BranchCard({
                 onDeploy();
               }}
               disabled={busy || isInterim}
-              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs font-medium text-warn transition-colors hover:bg-warn-soft disabled:opacity-50 "
+              className="inline-flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs font-medium text-warn transition-colors hover:bg-warn-soft disabled:opacity-50"
               title={detailLines.join('\n')}
+              aria-label={`${parts.join('，')}，点击重新部署`}
+              data-drift-chip
             >
-              <AlertTriangle className="h-3 w-3" aria-hidden />
-              <span>{parts.join(' · ')}</span>
-              <span className="text-warn/70 /70">重新部署</span>
+              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">{parts.join(' · ')}</span>
+              <span className="shrink-0 text-warn/70">重新部署</span>
             </button>
           );
         })() : null}
