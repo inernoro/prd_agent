@@ -122,7 +122,7 @@ function build(steps: Array<{ key: BranchCardPhaseKey; label: string }>, index: 
 
 /**
  * 卡片此刻处于部署的哪一段；不在部署（运行中、已停止、出错）返回 null。
- * 判定顺序即优先级：排队 > 等镜像 > 构建 > 就绪。
+ * 判定顺序即优先级：排队 > 构建 > 就绪 > 等镜像（等镜像只是标记，真在部署时让位）。
  */
 export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | null {
   if (input.status === 'stopping') {
@@ -137,9 +137,8 @@ export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | 
   if (input.buildQueue && input.status !== 'error') {
     return build(steps, 0, false);
   }
-  if (isWaitingForCiImage(input) && input.status !== 'error') {
-    return build(EXPRESS_STEPS, 1, true);
-  }
+  // 真在部署（构建 / 就绪探测）优先于「等 CI 镜像」：等镜像只是一个挂在分支上的标记，不改分支状态，
+  // 而后端允许在等镜像期间手动部署；先看标记会让整次真实部署都显示成「等待 CI 镜像」（Codex P2，PR #1646）。
   if (input.status === 'building' || services.some((svc) => svc.status === 'building')) {
     return build(steps, express ? 2 : 1, true);
   }
@@ -148,6 +147,9 @@ export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | 
   // 原地重启是 restarting，不走这里（Codex P2，PR #1646）。
   if (input.status === 'starting' || (input.status === 'running' && services.some((svc) => svc.status === 'starting'))) {
     return build(steps, steps.length - 1, true);
+  }
+  if (isWaitingForCiImage(input)) {
+    return build(EXPRESS_STEPS, 1, true);
   }
   if (input.status === 'restarting') {
     return single('restarting', '正在重启');

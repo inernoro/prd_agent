@@ -108,7 +108,12 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(routes.slice(flushFail, flushFailReturn)).toContain('emitServiceTransition();');
   });
 
-  it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
+  it('优先级：排队 > 构建 > 就绪 > 等镜像；等 CI 镜像期间手动部署，阶段条跟着真实部署走', () => {
+    // 后端允许等镜像期间手动部署，分支状态走 building / starting，而 ciImageStatus 仍是 waiting
+    expect(branchCardPhase({ status: 'building', services: { api: { status: 'building' } }, ciImageStatus: 'waiting', prebuilt: true })?.key).toBe('start');
+    expect(branchCardPhase({ status: 'building', services: { api: { status: 'building' } }, ciImageStatus: 'waiting', prebuilt: false })?.key).toBe('build');
+    expect(branchCardPhase({ status: 'starting', services: { api: { status: 'starting' } }, ciImageStatus: 'waiting', prebuilt: true })?.key).toBe('ready');
+    expect(branchCardPhase({ status: 'running', services: { api: { status: 'starting' } }, ciImageStatus: 'waiting', prebuilt: true })?.key).toBe('ready');
     expect(branchCardPhase({ status: 'building', buildQueue: { ahead: 5 }, ciImageStatus: 'waiting', prebuilt: true })?.key).toBe('queued');
     expect(branchCardPhase({ status: 'running', services: running, ciImageStatus: 'waiting' })?.key).toBe('ci-waiting');
     expect(branchCardPhase({ status: 'starting', services: { api: { status: 'starting' } }, prebuilt: true })?.key).toBe('ready');
@@ -229,9 +234,20 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
 
   // 复制集卡固定高度后，成员区必须是卡内唯一可伸缩、可滚动的一格；否则成员多到换好几行时
   // 会把「打开详情 / 预览本组」挤出卡片、被 overflow-hidden 裁掉（Codex P2）。
+  // 真实几何（溢出时卡内滚动、「打开详情」留在卡内）由 scripts/branch-card-visual-audit.mjs 在浏览器里量；
+  // 这里只做 CI 里的廉价兜底：看成员区的类名集合，不依赖类名顺序或 JSX 写法（Codex P2，PR #1646）。
+  const classTokensAfter = (source: string, marker: string): Set<string> => {
+    const at = source.indexOf(marker);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const match = /className="([^"]*)"/.exec(source.slice(at, at + 400));
+    expect(match).not.toBeNull();
+    return new Set((match?.[1] || '').split(/\s+/).filter(Boolean));
+  };
   const replicaMembersScroll = (source: string) => {
-    expect(source).toContain('data-replica-members className="flex min-h-0 max-w-full flex-1 flex-wrap content-start items-center gap-2 overflow-y-auto');
-    expect(source).toContain('<div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-4 pt-3">');
+    const members = classTokensAfter(source, 'data-replica-members');
+    for (const token of ['flex-1', 'min-h-0', 'overflow-y-auto']) expect(members.has(token)).toBe(true);
+    const footerAt = source.lastIndexOf('<div', source.indexOf('>打开详情</Button>', source.indexOf('data-replica-members')));
+    expect(classTokensAfter(source.slice(footerAt), '<div').has('shrink-0')).toBe(true);
   };
 
   it('复制集卡成员区在卡内滚动，操作按钮始终留在卡底', () => {
