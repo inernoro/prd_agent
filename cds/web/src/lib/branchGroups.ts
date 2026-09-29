@@ -24,6 +24,8 @@ export const BRANCH_GROUP_LIMITS = {
   rulesPerGroup: 20,
   ruleValueLength: 100,
   pinsPerGroup: 200,
+  /** 单个钉入分支 id 的最大长度（CDS 分支 id 是 slug，只含字母、数字、. _ - /） */
+  pinIdLength: 200,
 } as const;
 
 export const BRANCH_GROUP_COLOR_LABELS: Record<BranchGroupColor, string> = {

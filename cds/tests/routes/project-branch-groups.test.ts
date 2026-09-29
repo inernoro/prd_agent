@@ -12,6 +12,7 @@ import { createProjectsRouter, isBranchGroupsSaveRequest } from '../../src/route
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { BRANCH_GROUP_LIMITS } from '../../src/services/branch-groups.js';
 
 async function request(
   server: http.Server,
@@ -294,6 +295,41 @@ describe('项目分支自定义分组', () => {
       const res = await request(bareServer, 'PUT', '/api/projects/proj-a/branch-groups', body);
       expect(res.status).toBe(200);
       expect(res.body.groups).toHaveLength(12);
+    } finally {
+      await new Promise<void>((resolve) => bareServer.close(() => resolve()));
+    }
+  });
+
+  it('校验能接受的最大请求也在解析上限之内：钉入 id 限长限字符，超长或带转义字符的 id 回 400 而不是 413（Codex P2）', async () => {
+    const bare = express();
+    bare.use('/api', createProjectsRouter({ stateService, shell: new MockShellExecutor() }));
+    const bareServer = bare.listen(0);
+    try {
+      // 最坏情形：30 组 × 200 个最长钉入 id，每组 20 条每个字符都要转义成 \\u0001 的最长规则值
+      const worstRule = '\u0001'.repeat(BRANCH_GROUP_LIMITS.ruleValueLength);
+      const groups = Array.from({ length: BRANCH_GROUP_LIMITS.groups }, (_, g) => ({
+        id: `g-worst-${g}`,
+        name: '组'.repeat(BRANCH_GROUP_LIMITS.nameLength),
+        color: 'blue',
+        rules: Array.from({ length: BRANCH_GROUP_LIMITS.rulesPerGroup }, () => ({ kind: 'contains', value: worstRule })),
+        pinnedBranchIds: Array.from({ length: BRANCH_GROUP_LIMITS.pinsPerGroup }, (_, i) => `${g}-${i}-`.padEnd(BRANCH_GROUP_LIMITS.pinIdLength, 'x')),
+      }));
+      const body = { groups, baseUpdatedAt: null };
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(1024 * 1024);
+      const ok = await request(bareServer, 'PUT', '/api/projects/proj-a/branch-groups', body);
+      expect(ok.status).toBe(200);
+      // 超长 id / 带需要转义字符的 id：校验拒绝（400），不靠解析上限兜底
+      const tooLong = await request(bareServer, 'PUT', '/api/projects/proj-a/branch-groups', {
+        groups: [{ ...claudeGroup, pinnedBranchIds: ['x'.repeat(BRANCH_GROUP_LIMITS.pinIdLength + 1)] }],
+        baseUpdatedAt: ok.body.updatedAt,
+      });
+      expect(tooLong.status).toBe(400);
+      expect(tooLong.body.field).toBe('groups[0].pinnedBranchIds');
+      const escaped = await request(bareServer, 'PUT', '/api/projects/proj-a/branch-groups', {
+        groups: [{ ...claudeGroup, pinnedBranchIds: ['a"b'] }],
+        baseUpdatedAt: ok.body.updatedAt,
+      });
+      expect(escaped.status).toBe(400);
     } finally {
       await new Promise<void>((resolve) => bareServer.close(() => resolve()));
     }

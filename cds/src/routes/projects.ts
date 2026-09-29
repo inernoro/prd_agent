@@ -619,7 +619,10 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
   };
 }
 
-/** 分组保存请求体上限：最大合法配置约 0.8MB（30 组 × 200 个钉入 × 20 条规则），留出余量。 */
+/**
+ * 分组保存请求体上限。校验能接受的最大请求约 1.6MB（30 组 × 200 个 200 字符的钉入 id + 每组 20 条
+ * 需要转义的 100 字规则），钉入 id 限定为无需 JSON 转义的字符，才让这个上界可推；用例里有最坏情形的实测。
+ */
 export const BRANCH_GROUPS_BODY_LIMIT = '2mb';
 
 /**
