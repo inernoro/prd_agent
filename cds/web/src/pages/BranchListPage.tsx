@@ -5413,6 +5413,8 @@ const BranchCard = memo(function BranchCard({
      阶段只来自 lib/branchCardPhase（唯一判定源）；这里只给阶段配上时间：
      排队看已等多久、等 CI 镜像看已等多久（CI 没有历史样本，不给预计），
      其余看净耗时对历史中位，超过中位改说「超出预计」。 */
+  // 这次部署的记录（阶段、耗时、参与过的服务）；下面收尾判成败要用，阶段推导也要用它记住的参与服务。
+  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[]; started: boolean } | null>(null);
   const buildPhase: BranchCardPhase | null = branchCardPhase({
     status: branch.status,
     services: branch.services,
@@ -5420,6 +5422,7 @@ const BranchCard = memo(function BranchCard({
     ciImageStatus: branch.ciImageStatus,
     prebuilt: branch.deployRuntime?.prebuilt,
     prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
+    participants: lastBuildRef.current?.serviceIds,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });
   // 单服务重建（单个 profile 部署 / webhook 只重建一个服务）时分支仍是 running，
@@ -5527,7 +5530,6 @@ const BranchCard = memo(function BranchCard({
      记在 ref 里——翻转之后 branch 上已经没有这些信息了。卡片不在视野里时先不播，
      等它滚进来再播（IntersectionObserver），否则动效在屏幕外白白跑完。 */
   const cardRef = useRef<HTMLElement | null>(null);
-  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[]; started: boolean } | null>(null);
   const [outcome, setOutcome] = useState<{ kind: 'done' | 'failed'; at: number; phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; failedServiceIds: string[] } | null>(null);
   const [outcomeSeen, setOutcomeSeen] = useState(false);
   const inBuild = Boolean(buildPhase);

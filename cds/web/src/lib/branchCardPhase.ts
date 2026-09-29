@@ -47,6 +47,11 @@ export interface BranchCardPhaseInput {
    */
   prebuiltProfileIds?: string[];
   /**
+   * 这次部署前几拍已经参与过的服务（卡片自己记的并集）。服务各自结束：源码服务先回 running、
+   * 极速版服务还在就绪探测时，只看此刻在动的服务会把源码部署中途翻成极速版步骤（Codex P2，PR #1646）。
+   */
+  participants?: string[];
+  /**
    * 前端已发起、服务端状态还没跟上的操作（点了部署，SSE 还没把 status 推成 building）。
    * 给了就在状态判不出阶段时显示单段「处理中」，而不是假装在某一段。
    */
@@ -68,7 +73,7 @@ const SOURCE_STEPS: Array<{ key: BranchCardPhaseKey; label: string }> = [
 
 function isExpress(input: BranchCardPhaseInput): boolean {
   if (input.prebuilt === false) return false;
-  const participants = deployingServiceIds(input.services);
+  const participants = Array.from(new Set([...(input.participants || []), ...deployingServiceIds(input.services)]));
   if (input.prebuiltProfileIds && participants.length > 0) {
     const prebuiltIds = new Set(input.prebuiltProfileIds);
     return participants.every((id) => prebuiltIds.has(id));

@@ -52,6 +52,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(expressOnly?.key).toBe('start');
     // 两种一起动：有本机编译就不许说成「启动容器」
     expect(branchCardPhase({ status: 'building', services: { api: { status: 'building' }, web: { status: 'building' } }, ...mixed })?.key).toBe('build');
+    // 服务各自结束：源码服务 api 已回 running、极速版 web 还在探测——这次部署编译过源码，不许翻成极速版步骤
+    const staggered = branchCardPhase({ status: 'starting', services: { api: { status: 'running' }, web: { status: 'starting' } }, ...mixed, participants: ['api', 'web'] });
+    expect(staggered?.steps.map((step) => step.label)).toEqual(['排队', '构建并启动', '就绪探测']);
     // 没有服务在动（排队 / 等镜像）时仍按 prebuilt
     expect(branchCardPhase({ status: 'running', services: { api: { status: 'running' } }, ciImageStatus: 'waiting', ...mixed })?.key).toBe('ci-waiting');
   });
@@ -62,6 +65,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(routes).toContain('prebuiltProfileIds.push(profile.id);');
     expect(routes).toMatch(/prebuilt,\n\s+prebuiltProfileIds,/);
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
+    // 卡片把自己记住的参与服务交给阶段推导
+    expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
   });
 
   it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
