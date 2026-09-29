@@ -82,6 +82,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
     // 单服务部署的每次状态翻转都推事件：building / starting / 结束（成功、超时、出错都在聚合状态重算后推一次）
     expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(3);
+    // 分支不在运行（停止 / 出错后重试）时单服务部署带着聚合状态走中间态，卡片不必从服务状态去猜
+    expect(routes).toContain("      if (entry.status !== 'running') entry.status = 'building';");
+    expect(routes).toContain("        if (entry.status === 'building') entry.status = 'starting';");
     // 外层失败（如排构建槽时被取消）也推一条，已打开的列表不停在「构建中」
     expect(routes).toContain('// 失败也要推一条：比如排构建槽时被取消');
     // 结束那一条必须排在分支聚合状态重算之后，否则从停止状态起服务时卡片拿到的还是 idle
