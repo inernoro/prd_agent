@@ -145,6 +145,8 @@ services:
       # 密钥由 exec_dep.sh 在 .env 缺失时自动生成一次，api 与 design-opendesign 共用。
       # 这里不写成必填：回滚脚本等其它 compose 入口不经 exec_dep.sh，缺它时不能挡住无关的恢复动作；
       # 真缺失时两端都会如实报「未配置设计执行服务密钥」，不会静默降级。
+      # 正式环境钉死走设计执行服务：缺密钥时 OpenDesign 明确报「未配置」，而不是自动退回 CDS 会话旧路径。
+      - DesignRuntime__OpenDesign__Transport=service
       - DesignRuntime__OpenDesign__BaseUrl=http://design-opendesign:8093
       - DesignRuntime__OpenDesign__ApiKey=${DESIGN_RUNTIME_API_KEY:-}
       # 设计服务回调 api（取工作区、交结果、模型出口）的公网基址；它的出口会拒绝内网地址，

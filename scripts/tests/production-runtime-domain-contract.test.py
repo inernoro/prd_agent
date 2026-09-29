@@ -18,6 +18,8 @@ assert 'DESIGN_ARTIFACT_PUBLIC_BASE_URL="$(config_value DESIGN_ARTIFACT_PUBLIC_B
 assert 'export DESIGN_ARTIFACT_PUBLIC_BASE_URL="${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"' in DEPLOY
 assert "DesignArtifactRuntime__PublicBaseUrl=${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-}" in COMPOSE
 assert "DesignRuntime__OpenDesign__BaseUrl=http://design-opendesign:8093" in COMPOSE
+# 正式环境不许自动退回 CDS 会话：缺密钥必须显式报不可用。
+assert "DesignRuntime__OpenDesign__Transport=service" in COMPOSE
 # 专项服务必须在静态站切换与成功证据之前通过就绪门禁，否则发布会在设计服务不可用时记成功。
 _compose_up = DEPLOY.index("compose_run up -d --force-recreate $release_services")
 _design_gate = DEPLOY.index("\n  wait_for_design_runtime_readiness\n")
