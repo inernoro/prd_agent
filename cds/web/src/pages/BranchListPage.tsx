@@ -5421,6 +5421,11 @@ const BranchCard = memo(function BranchCard({
   //   4. 异常态保留 chip(因为是负面信号,需要醒目)
   const isRunning = branch.status === 'running';
   const isError = branch.status === 'error';
+  /* 分支 running、却有服务 error，且眼下不在部署：单服务部署失败后的持久态。刷新页面后
+     没有「刚才那次翻转」可看，只能从服务状态认出来；页头「出错需要处理」也是这么算的，
+     两处必须一致（Codex P1，PR #1646）。卡片按出错呈现：两行原因 + 「日志 / 重新部署」。 */
+  const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch);
+  const showsIssue = isError || serviceFailed;
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const quickStartAvailable = canQuickStartBranch(branch);
   const busySince = isInterim
@@ -5554,7 +5559,7 @@ const BranchCard = memo(function BranchCard({
       return `比中位${diff > 0 ? '慢' : '快'} ${formatDurationZh(Math.abs(diff))}`;
     })()
     : '';
-  const deployPhaseAttr = buildPhase ? buildPhase.key : isError || failedPhase ? 'failed' : finishing ? 'done' : undefined;
+  const deployPhaseAttr = buildPhase ? buildPhase.key : showsIssue || failedPhase ? 'failed' : finishing ? 'done' : undefined;
   const phaseBarSource: BranchCardPhase | null = buildPhase || failedPhase || (finishing && outcome ? outcome.phase : null);
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
@@ -5574,9 +5579,9 @@ const BranchCard = memo(function BranchCard({
   const role = branchVisualRole(branch.branch);
   // 停下的卡不再挂角色光晕（main 的绿边绿光读起来像「运行中」），只靠整卡变暗表达「没在跑」。
   const roleCardClass = !isRunning && !isError && !isInterim && !isBusy(branch) ? '' : branchRoleCardClass(role);
-  const issueLabel = isError ? branchIssueLabel(branch) : '';
-  const issueClass = isError ? branchIssueClass(branch) : '';
-  const issueRailClass = isError ? branchIssueRailClass(branch) : '';
+  const issueLabel = showsIssue ? branchIssueLabel(branch) : '';
+  const issueClass = showsIssue ? branchIssueClass(branch) : '';
+  const issueRailClass = showsIssue ? branchIssueRailClass(branch) : '';
   const aiState = aiOperationState(branch, now);
   const isAiOperated = aiState.visible;
   const isAiActive = aiState.active;
@@ -5666,7 +5671,7 @@ const BranchCard = memo(function BranchCard({
     ? '事件触发停止，无需处理'
     : stopReasonText;
   const failureAt = branch.lastDeployStartedAt || branch.lastDeployDispatchAt || branch.lastDeployAt || branch.lastPushAt || branch.createdAt;
-  const statusTimeText = isError || (outcome?.kind === 'failed')
+  const statusTimeText = showsIssue || (outcome?.kind === 'failed')
     ? (failureAt ? formatRelativeTime(failureAt) : '时间未知')
     : (branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知');
   /* 信息槽（端口槽下面那一行）：左边一句「它现在怎样」，右边一个时间。
@@ -5803,12 +5808,12 @@ const BranchCard = memo(function BranchCard({
       ref={cardRef}
       data-branch-card-id={branch.id}
       data-deploy-phase={deployPhaseAttr}
-      className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : showsIssue ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         failedPhase
           // 刚在眼前失败（含单服务部署失败、分支仍 running）：红边框承担「构建失败」信号；
           // 历史错误仍按错误分类配色。
           ? 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/25'
-          : isError
+          : showsIssue
             ? branchIssueCardClass(branch)
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
@@ -6051,7 +6056,7 @@ const BranchCard = memo(function BranchCard({
           每一槽高度写死、内容再多也不换行——高低不齐的根因就是这几处「有时出现、
           有时不出现」的行（CI 标签挤换行、基础设施托盘、被挤下去的时间行、折两行的名字）。
           出错卡把端口槽 + 信息槽合成一块两行的原因说明，总高度与其它卡相同。 */}
-      {isError && !failedPhase ? (
+      {showsIssue && !failedPhase ? (
         <div
           className={`mx-5 mt-3 flex h-[3.375rem] min-w-0 flex-col justify-center gap-0.5 rounded-md border px-2.5 py-1 ${issueClass}`}
           title={deployFailureMessage(branch)}
@@ -6423,7 +6428,7 @@ const BranchCard = memo(function BranchCard({
         )}
       </div>
       )}
-      {!isError || failedPhase ? (
+      {!showsIssue || failedPhase ? (
         <div className="mx-5 mt-2.5 flex h-[1.125rem] min-w-0 items-center justify-between gap-3 text-xs leading-[1.125rem] text-muted-foreground">
           {failedPhase ? (
             <span className="min-w-0 truncate text-destructive" title={deployFailureMessage(branch)}>
@@ -6740,7 +6745,7 @@ const BranchCard = memo(function BranchCard({
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
                 是静态信息且右边的提交历史下拉一点就能看到。AI 一释放就还回去。 */}
-            {failedPhase ? null : isError ? (
+            {failedPhase ? null : showsIssue ? (
               <span className="min-w-0 flex-1" aria-hidden />
             ) : isAiActive ? (
               <span
@@ -6813,7 +6818,7 @@ const BranchCard = memo(function BranchCard({
                 <Eye />
               </Button>
             ) : null
-          ) : isError || failedPhase ? (
+          ) : showsIssue || failedPhase ? (
             <>
               <Button
                 size="sm"

@@ -426,6 +426,15 @@ async function main() {
         check(redeployVisible, '单服务失败时直接给出「重新部署」');
         const erroredAfter = await erroredCount();
         check(erroredAfter.n === erroredBefore.n + 1, `单服务失败计入页头「出错需要处理」（${erroredBefore.n} → ${erroredAfter.n}，「${erroredAfter.text}」）`);
+        // 数完再刷新（前面几步只推给了页面、没写回合成数据的状态，刷新后会复原）。
+        // 刷新页面：没有「刚才那次翻转」可看了，卡片仍要从服务状态认出失败（Codex P1）。
+        await page.reload();
+        await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+        await page.waitForTimeout(1200);
+        const reloadPhase = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
+        const reloadRedeploy = await page.isVisible('[data-branch-card-id="b-test"] button[aria-label^="重新部署"]');
+        await shotCard(page, 'b-test', 'single-service-failed-after-reload.png');
+        check(reloadPhase === 'failed' && reloadRedeploy, `刷新后单服务失败卡仍按出错呈现（data-deploy-phase=${reloadPhase}，重新部署按钮${reloadRedeploy ? '在' : '不在'}）`);
 
         // 极速版等 CI 镜像时旧版本在跑，CI 失败后等镜像这一段结束：不是一次部署，不许播「部署成功」（Codex P1）。
         const ciFailed = { ...branches.find((b) => b.id === 'b-edison'), ciImageStatus: 'failed' };

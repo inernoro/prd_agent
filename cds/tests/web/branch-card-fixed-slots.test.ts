@@ -264,6 +264,21 @@ describe('构建页脚：阶段条接线', () => {
     expect(source.match(/function branchHasDeployFailure\(/g)).toHaveLength(1);
   };
 
+  // 刷新后没有「刚才那次翻转」：卡片必须从持久的服务状态认出单服务失败，和页头计数一致。
+  const cardShowsPersistedServiceFailure = (source: string) => {
+    expect(source).toContain('const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch);');
+    expect(source).toContain('{showsIssue && !failedPhase ? (');
+    expect(source).toContain(') : showsIssue || failedPhase ? (');
+  };
+
+  it('刷新后单服务失败的卡片仍按出错呈现（与页头计数同一判据）', () => {
+    cardShowsPersistedServiceFailure(page);
+  });
+
+  it('红用例：出错呈现退回只看分支级 error，守卫变红', () => {
+    expectGuardRedOnMutation(cardShowsPersistedServiceFailure, page, mutate(page, '{showsIssue && !failedPhase ? (', '{isError && !failedPhase ? ('));
+  });
+
   it('页头出错计数算上服务级失败，与重新部署失败项共用一个判据', () => {
     overviewCountsServiceFailures(page);
   });
