@@ -708,6 +708,8 @@ ensure_design_runtime_api_key() {
   fi
   printf '\nDESIGN_RUNTIME_API_KEY=%s\n' "$generated_key" >> "$key_dotenv_file"
   generated_key=""
+  # .env 可能刚由 persist_release_image_pins 按进程 umask（常见 0644）建出；装了密钥就只许属主读写。
+  chmod 600 "$key_dotenv_file"
   echo "Design runtime key: generated and saved to $key_dotenv_file (value not printed)"
 }
 ensure_design_runtime_api_key

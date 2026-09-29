@@ -421,9 +421,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.DESIGN_OPENDESIGN_IMAGE }}
+          # latest 只在 main 上打：正式环境 `./exec_dep.sh release`（部署 latest）要拉得到它，
+          # 否则这个新增的必需服务在首次 latest 发布时没有本地镜像可退，compose up 直接失败。
           tags: |
             type=raw,value=sha-${{ github.sha }}
             type=ref,event=branch,prefix=branch-
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v5
