@@ -479,11 +479,13 @@ async function main() {
         await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
         await page.waitForTimeout(600);
         const rebasedName = await nameInput.inputValue().catch(() => '');
-        await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
-        await page.waitForTimeout(600);
+        // 草稿换成最新版本后与已存内容相同：保存按钮不可点，不会空推一次版本号（Codex P2，PR #1647）
+        const saveDisabledAfterRebase = await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).isDisabled();
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(400);
         const savedName = groupStore.groups.find((g) => g.id === codexGroupId)?.name;
-        check(rebasedName === 'Codex 别人改过' && savedName === 'Codex 别人改过',
-          `编辑器开着撞上冲突：草稿换成最新版本，再保存不覆盖别人的修改（草稿「${rebasedName}」，存下「${savedName}」）`);
+        check(rebasedName === 'Codex 别人改过' && savedName === 'Codex 别人改过' && saveDisabledAfterRebase,
+          `编辑器开着撞上冲突：草稿换成最新版本，不覆盖别人的修改，且没改动时保存不可点（草稿「${rebasedName}」，存下「${savedName}」，保存${saveDisabledAfterRebase ? '不可点' : '可点'}）`);
 
         // 9d. 慢网下连续两次移组：请求串行、各自带上一次确认的版本号，两次都生效，不撞出假冲突
         putDelayMs = 700;
@@ -494,7 +496,11 @@ async function main() {
           await page.getByRole('menuitem', { name: /Codex 别人改过/ }).click().catch(() => undefined);
           await page.waitForTimeout(80);
         }
+        // 落盘在路上：分组视图里要看得见「正在保存」，存好后消失（Codex P2，PR #1647）
+        const savingShown = Boolean(await page.$('[data-branch-view="groups"] [data-groups-saving]'));
         await page.waitForTimeout(2200);
+        const savingGone = !(await page.$('[data-branch-view="groups"] [data-groups-saving]'));
+        check(savingShown && savingGone, `慢网下移组时显示「正在保存分组」，存好后消失（保存中${savingShown ? '有' : '无'}提示，存好后${savingGone ? '已消失' : '仍在'}）`);
         putDelayMs = 0;
         const pinned = groupStore.groups.find((g) => g.id === targetGroupId)?.pinnedBranchIds || [];
         const serialBanner = await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => '');
@@ -533,6 +539,9 @@ async function main() {
           await page.waitForTimeout(300);
           await page.click(`[data-branch-group="${gid}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
           await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+          // 真改一处再存（没改动时保存不可点）：加一条不会命中任何分支的规则
+          await page.getByRole('dialog').getByRole('button', { name: '添加规则' }).click();
+          await page.getByRole('dialog').getByLabel('规则值').last().fill('zzz-audit-no-match');
           putDelayMs = 900;
           await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
           await page.waitForTimeout(150);
@@ -562,8 +571,12 @@ async function main() {
           putDelayMs = 0;
           const failBanner = (await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => '')) || '';
           if (await page.$('[role="dialog"]')) {
-            await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
-            await page.waitForTimeout(700);
+            // 草稿已换回已确认版本、与已存内容相同时保存不可点，本来就写不回去；可点时点一次验证不会写回
+            const saveBtn = page.getByRole('dialog').getByRole('button', { name: '保存', exact: true });
+            if (await saveBtn.isEnabled()) {
+              await saveBtn.click();
+              await page.waitForTimeout(700);
+            }
           }
           const pinnedAfter = groupStore.groups.find((g) => g.id === gid)?.pinnedBranchIds || [];
           check(Boolean(candidate) && /保存失败/.test(failBanner) && !pinnedAfter.includes(candidate),

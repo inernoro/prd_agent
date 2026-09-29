@@ -4304,6 +4304,14 @@ export function BranchListPage(): JSX.Element {
             ) : (
               viewMode === 'groups' ? (
                 <div className="flex flex-col gap-4" data-branch-view="groups">
+                  {/* 拖拽 / 菜单移组是先乐观挪卡、再排队落盘；落盘慢时（上限 30 秒）要让人看见「还没存住」，
+                      否则看着已经完成，超时后又被撤回，像是自己弹回去的（Codex P2，PR #1647） */}
+                  {groupsSaving && !groupEditor ? (
+                    <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground" role="status" data-groups-saving>
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                      <span>正在保存分组，存好前刷新页面会丢掉这次调整</span>
+                    </div>
+                  ) : null}
                   {groupsSaveError ? (
                     <div className="flex items-center gap-3 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-warn" role="alert">
                       <span className="min-w-0 flex-1">{groupsSaveError}</span>

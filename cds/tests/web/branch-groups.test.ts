@@ -416,4 +416,12 @@ describe('页面接线', () => {
     expect(reset).toBeGreaterThan(0);
     expect(page.slice(reset, reset + 400)).toContain('setExpandedDormantGroups(new Set());');
   });
+
+  it('分组视图里保存在路上时有「正在保存」提示，不让乐观挪动看起来已经完成', () => {
+    const page = read('pages/BranchListPage.tsx');
+    const view = page.indexOf('data-branch-view="groups"');
+    expect(view).toBeGreaterThan(0);
+    expect(page.slice(view, view + 900)).toContain('{groupsSaving && !groupEditor ? (');
+    expect(page.slice(view, view + 900)).toContain('data-groups-saving');
+  });
 });
