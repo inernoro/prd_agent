@@ -1696,8 +1696,6 @@ export function BranchListPage(): JSX.Element {
   const draggingGroupIdRef = useRef<string | null>(null);
   // 切项目时把上一个项目的分组残留一并清掉：开着的编辑器、保存中 / 保存失败的提示、拖拽落点。
   // 不清的话，编辑器里上个项目的分组会带着新项目的版本号存进新项目（Codex P2，PR #1647）。
-  const groupsProjectRef = useRef(projectId);
-  groupsProjectRef.current = projectId;
   useEffect(() => {
     setViewModeState(readBranchViewMode(projectId));
     setCollapsedGroups(readCollapsedGroups(projectId));
@@ -1709,6 +1707,9 @@ export function BranchListPage(): JSX.Element {
     setGroupDropTarget(null);
     confirmedGroupsRef.current = null;
     pendingGroupUpdatesRef.current = [];
+    // 每次进入一个项目都是新的一代：A → B → A 回来后，第一次进 A 时发出的保存响应也不许再写进来
+    // （只比项目 id 会放行它，Codex P2，PR #1647）。
+    groupsEpochRef.current += 1;
     // 保存队列按项目分开：上一个项目卡住的请求不许把新项目的保存堵在后面（Codex P2，PR #1647）。
     groupSaveChainRef.current = Promise.resolve();
     if (!projectId) return;
@@ -1751,10 +1752,16 @@ export function BranchListPage(): JSX.Element {
   const confirmedGroupsRef = useRef<BranchGroupsSettings | null>(null);
   const pendingGroupUpdatesRef = useRef<Array<(groups: BranchGroup[]) => BranchGroup[]>>([]);
   const groupSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const groupsEpochRef = useRef(0);
+  // 一次保存失败后，排在它后面的改动可能依赖它（比如拖进一个还没建成功的组），一并撤回：
+  // 失败时这个批次号加一，旧批次里还没发出的改动不再发（Codex P2，PR #1647）。
+  const groupSaveBatchRef = useRef(0);
   const saveBranchGroups = useCallback((update: (groups: BranchGroup[]) => BranchGroup[]): Promise<boolean> => {
     const requestProject = projectId;
-    // 保存还没回来用户就切了项目：这次响应属于上一个项目，一律丢弃，不许写进新项目的状态（Codex P2，PR #1647）。
-    const switchedAway = () => groupsProjectRef.current !== requestProject;
+    // 保存还没回来用户就切了项目（哪怕又切回来）：这次响应属于上一次进入，一律丢弃（Codex P2，PR #1647）。
+    const requestEpoch = groupsEpochRef.current;
+    const switchedAway = () => groupsEpochRef.current !== requestEpoch;
+    const batch = groupSaveBatchRef.current;
     const showConfirmedPlusPending = () => {
       const confirmed = confirmedGroupsRef.current;
       if (!confirmed) return;
@@ -1771,6 +1778,7 @@ export function BranchListPage(): JSX.Element {
     setBranchGroups((current) => (current ? { ...current, groups: update(current.groups) } : current));
     const run = async (): Promise<boolean> => {
       if (switchedAway()) return false;
+      if (batch !== groupSaveBatchRef.current) return false;
       const base = confirmedGroupsRef.current;
       const settle = () => {
         pendingGroupUpdatesRef.current = pendingGroupUpdatesRef.current.filter((item) => item !== update);
@@ -1789,6 +1797,12 @@ export function BranchListPage(): JSX.Element {
       } catch (error) {
         if (switchedAway()) return false;
         settle();
+        // 撤回排在后面的改动：它们是在这一步的乐观结果上做的，这一步没成，它们的前提也就不在了。
+        const dropped = pendingGroupUpdatesRef.current.length;
+        groupSaveBatchRef.current += 1;
+        pendingGroupUpdatesRef.current = [];
+        setGroupsSaving(false);
+        const droppedNote = dropped > 0 ? `；排在它后面的 ${dropped} 步也一并撤回（它们建立在这一步之上）` : '';
         const body = error instanceof ApiError ? (error.body as { latest?: BranchGroupsSettings; message?: string } | null) : null;
         if (error instanceof ApiError && error.status === 409 && body?.latest) {
           const latest = body.latest;
@@ -1801,10 +1815,10 @@ export function BranchListPage(): JSX.Element {
             const fresh = latest.groups.find((group) => group.id === editor.group.id);
             return fresh ? { group: fresh, isNew: false } : null;
           });
-          setGroupsSaveError('分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做');
+          setGroupsSaveError(`分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做${droppedNote}`);
         } else {
           showConfirmedPlusPending();
-          setGroupsSaveError(`保存失败：${body?.message || (error instanceof Error ? error.message : '未知原因')}；这一步已撤回`);
+          setGroupsSaveError(`保存失败：${body?.message || (error instanceof Error ? error.message : '未知原因')}；这一步已撤回${droppedNote}`);
         }
         return false;
       }

@@ -203,7 +203,9 @@ describe('页面接线', () => {
   // 切项目时：上一个项目的编辑器与保存状态清掉；还在路上的保存响应丢弃，不许写进新项目（Codex P2）。
   const projectSwitchSafe = (source: string) => {
     expect(source).toContain('    setGroupEditor(null);\n    setGroupsSaving(false);\n    setGroupsSaveError(\'\');\n    setGroupDropTarget(null);');
-    expect(source).toContain('const switchedAway = () => groupsProjectRef.current !== requestProject;');
+    // 按「第几次进入」判，不按项目 id：A → B → A 回来后，第一次进 A 的响应同样丢弃
+    expect(source).toContain('const switchedAway = () => groupsEpochRef.current !== requestEpoch;');
+    expect(source).toContain('    groupsEpochRef.current += 1;\n');
     // 保存队列按项目分开，上一个项目卡住的请求不堵新项目
     expect(source).toContain('    groupSaveChainRef.current = Promise.resolve();\n');
     expect(source.match(/if \(switchedAway\(\)\) return false;/g)).toHaveLength(3);
@@ -225,6 +227,20 @@ describe('页面接线', () => {
   it('编辑器预览按项目全部分支算，冲突时草稿换成最新版本', () => {
     expect(page).toMatch(/groups=\{groupList\}\n\s+\/\*[^*]*\*\/\n\s+branches=\{branches\}/);
     expect(page).toContain('const fresh = latest.groups.find((group) => group.id === editor.group.id);');
+  });
+
+  // 一步保存失败，排在它后面、建立在它之上的改动一并撤回，不在最新版本上悄悄空转成功。
+  const dependentsDropped = (source: string) => {
+    expect(source).toContain('if (batch !== groupSaveBatchRef.current) return false;');
+    expect(source).toContain('        groupSaveBatchRef.current += 1;\n        pendingGroupUpdatesRef.current = [];');
+  };
+
+  it('一步保存失败时撤回排在后面的依赖改动', () => {
+    dependentsDropped(page);
+  });
+
+  it('红用例：失败后排队的改动照发，守卫变红', () => {
+    expectGuardRedOnMutation(dependentsDropped, page, mutate(page, '      if (batch !== groupSaveBatchRef.current) return false;\n', ''));
   });
 
   // 串行保存：连续两次改动不许拿同一个旧版本号撞出假冲突。

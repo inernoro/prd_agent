@@ -401,6 +401,22 @@ async function main() {
         check(pinned.includes('b-main') && pinned.includes('b-edison') && !/别人改过，已载入/.test(serialBanner || '') && puts.length - putsBefore === 2,
           `慢网下连续两次移组都生效、没有假冲突（钉入 ${pinned.join(',') || '无'}，请求 ${puts.length - putsBefore} 次）`);
 
+        // 9e. 慢网下第一步撞上冲突：排在它后面的那一步建立在它之上，一并撤回、不再发请求，提示里说清楚
+        putDelayMs = 700;
+        conflictNext = { ...groupStore, updatedAt: `${new Date(Date.now() + 5000).toISOString()}#other`, updatedBy: 'ai:reviewer' };
+        const putsBeforeConflict = puts.length;
+        const tagGroupName = groupStore.groups.find((g) => g.name === '#登录重构')?.name || '#登录重构';
+        for (const cardId of ['b-main', 'b-edison']) {
+          await page.click(`[data-branch-card-id="${cardId}"] button[aria-label="更多操作"]`).catch(() => undefined);
+          await page.getByRole('menuitem', { name: new RegExp(tagGroupName) }).click().catch(() => undefined);
+          await page.waitForTimeout(80);
+        }
+        await page.waitForTimeout(2200);
+        putDelayMs = 0;
+        const dropBanner = (await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => '')) || '';
+        check(puts.length - putsBeforeConflict === 1 && /一并撤回/.test(dropBanner),
+          `第一步冲突时后面那一步一并撤回、不再发请求（请求 ${puts.length - putsBeforeConflict} 次，「${dropBanner.trim().slice(0, 60)}」）`);
+
         // 9c. 标签筛选开着时编辑分组：命中预览仍按项目全部分支算（规则保存后作用于全部分支）
         const openCodexEditor = async () => {
           await page.click(`[data-branch-group="${codexGroupId}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
