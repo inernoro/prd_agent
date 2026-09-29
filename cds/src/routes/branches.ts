@@ -14864,6 +14864,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationFinalStatus = 'failed';
         const flushMessage = branchStateFlushFailureMessage(flushResult, completeMsg);
         failDeploymentRun(deploymentRun?.id, flushMessage, 'state-flush');
+        // 落盘失败也要推一条结束事件：前面已经推过 starting，不推的话已打开的列表会一直停在「就绪探测」，
+        // 而调用方（如引用面板）并不会回头刷新列表（Codex P2，PR #1646）。卡片据此显示容器的真实状态；
+        // 在卡片上额外标出「落盘失败」需要一个新的分支级信号，与整分支部署同一问题一并记在 debt.cds.md。
+        emitServiceTransition();
         sendSSE(res, 'error', {
           message: flushMessage,
           stateFlush: flushResult,
