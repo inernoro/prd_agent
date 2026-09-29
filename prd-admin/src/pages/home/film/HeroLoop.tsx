@@ -17,8 +17,15 @@ import { easeInOutCubic, easeOutCubic, lerp, span, typed } from './filmTimeline'
  */
 export const HERO_LOOP_DURATION = 16;
 
-/** 首屏打开时从这一刻起播：星系已经长好，第一眼就是作品，不是一片空的深空 */
+/** 静止帧（系统开了「减少动态」、或只要一张图时）：星系已经长好的那一刻 */
 export const HERO_LOOP_ENTRY = 5.2;
+
+/**
+ * 实时播放从第 0 秒起播，不跳过「诞生」：标题逐字浮现、输入框里打字、中心一颗微光在蓄力，
+ * 按下的那一拍星系从银心炸开——这是整个首屏最有冲击力的一下。
+ * 之前从 5.2 秒（已经长好）起播，第一眼是一张静态的图，用户原话「第一次进入没有震撼的感觉」。
+ */
+export const HERO_LOOP_START = 0;
 
 interface Shot {
   /** 这一句从哪一刻开始打 */
@@ -88,6 +95,21 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
     [frame],
   );
 
+  // ── 诞生：镜头从银心里往外拉，星系在拉远的过程里长满全屏 ──
+  const birth = galaxyLt; // 0 = 按下「开启创作」之后那一拍
+  const pullBack = lerp(2.1, 1, easeOutCubic(span(birth, 0, 2.8)));
+  const birthFrame: GalaxyFrame = { ...frame, radius: (frame.radius ?? 0) * pullBack };
+  // 冲击波：两圈光环从银心扩出去，第二圈晚半拍、更淡
+  const rings = [0, 0.18].map((delay) => {
+    const p = easeOutCubic(span(birth, delay, delay + 1.4));
+    return { p, alive: birth >= delay && p < 1 };
+  });
+  // 银心闪光：按下那一拍最亮，一秒内退去
+  const flash = birth < 0.12 ? span(birth, -0.06, 0.12) : 1 - span(birth, 0.12, 1.0);
+  // 蓄力：诞生之前，正中一颗微光在呼吸（「有东西要来」）
+  const seed = birth < 0.2 ? span(t, 0.15, 0.9) * (1 - span(birth, 0, 0.2)) * (0.65 + 0.35 * Math.sin(t * 6)) : 0;
+  const coreR = frame.radius ?? 0;
+
   // 镜头 B：四张图的构图。宽屏一行四张、向远处微倾；手机两行两张
   const push = 1 + 0.08 * easeOutCubic(span(t, 9.0, HERO_LOOP_DURATION));
   const tiles = compact
@@ -102,9 +124,62 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
       {/* 镜头 A：知识星系本体，透明底叠在深空上 */}
       {galaxyAlpha > 0 && galaxyLt > -0.1 && (
         <div style={{ position: 'absolute', inset: 0, opacity: galaxyAlpha }}>
-          <GalaxyCanvas lt={galaxyLt} d={7} w={w} h={h} frame={frame} />
+          <GalaxyCanvas lt={galaxyLt} d={7} w={w} h={h} frame={birthFrame} />
         </div>
       )}
+
+      {/* 蓄力的微光 + 诞生的闪光与冲击波（都压在星系上、字下面） */}
+      {galaxyAlpha > 0 && (seed > 0 || flash > 0) && (
+        <div
+          style={{
+            position: 'absolute',
+            left: (frame.cx ?? 0) - coreR * 0.7,
+            top: (frame.cy ?? 0) - coreR * 0.7,
+            width: coreR * 1.4,
+            height: coreR * 1.4,
+            borderRadius: '50%',
+            background: `radial-gradient(circle, ${FILM.galaxyCore} 0%, ${FILM.clay}99 14%, ${FILM.clay}00 55%)`,
+            opacity: Math.max(seed * 0.55, Math.max(0, flash)),
+            transform: `scale(${seed > 0 ? 0.35 + seed * 0.1 : 0.45 + 1.4 * easeOutCubic(span(birth, 0, 1.0))})`,
+            mixBlendMode: 'screen',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {/* 按下那一拍整屏被照亮一下：以银心为圆心的一层泛光，一秒内退去 */}
+      {galaxyAlpha > 0 && flash > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: `radial-gradient(circle at ${frame.cx ?? 0}px ${frame.cy ?? 0}px, ${FILM.galaxyHub}59 0%, ${FILM.galaxyHub}1F ${Math.round(coreR * 0.9)}px, ${FILM.galaxyHub}00 ${Math.round(coreR * 2.2)}px)`,
+            opacity: flash,
+            mixBlendMode: 'screen',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+      {galaxyAlpha > 0 &&
+        rings.map(
+          (r, i) =>
+            r.alive && (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left: (frame.cx ?? 0) - coreR * 2.4 * r.p,
+                  top: (frame.cy ?? 0) - coreR * 2.4 * r.p,
+                  width: coreR * 4.8 * r.p,
+                  height: coreR * 4.8 * r.p,
+                  borderRadius: '50%',
+                  border: `${i === 0 ? 3 : 1}px solid ${FILM.galaxyHub}`,
+                  boxShadow: `0 0 36px ${FILM.galaxyHub}88, inset 0 0 36px ${FILM.galaxyHub}55`,
+                  opacity: (1 - r.p) * (i === 0 ? 0.85 : 0.45),
+                  pointerEvents: 'none',
+                }}
+              />
+            ),
+        )}
 
       {/* 镜头 B：四张图逐张显影 */}
       {postersAlpha > 0 && (

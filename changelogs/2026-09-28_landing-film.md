@@ -13,3 +13,6 @@
 | feat | prd-admin | 首屏满屏循环样片（未接入首页，待拍板）：`HeroLoop` 两个无字镜头（知识星系生长 / 四张海报显影）配输入框里对应的那句话，16 秒首尾无缝；样片页 `scripts/film/hero-sample.html`，导出脚本新增 `FILM_PAGE` / `FILM_SIZE` / `FILM_DPR` / `FILM_AUDIO=none` |
 | feat | prd-admin | 首页第一屏改为满屏无字循环（HeroStage）：背景是知识星系生长与四张海报显影两个镜头，输入框里依次打出生成它们的那句话；手机端标题在上、作品居中、输入框贴底；右下角「观看完整片花」点一下即滚到片花并带声开播；撤掉原两栏首屏、3D 墨滴与地平线装饰；看不见时暂停，系统开启减少动态时停在一帧 |
 | refactor | prd-admin | 品牌渐变色标挪到 `sections/heroGradient.ts`（HeroSection 原样转出），断开 HeroSection 与片花调色板之间的循环引用；色标守卫同步指向新文件 |
+| feat | prd-admin | 首页第一屏第一次进入从第 0 秒起播：标题从失焦里聚出来，打完那句话按下去时整屏被照亮、两圈冲击波扩散、镜头从银心拉远看星系长满全屏（系统开了「减少动态」仍停在长好的那一帧） |
+| fix | prd-admin | iPhone/iPad 上点输入框（登录、各类文本框）不再被 Safari 自动放大且不复原：只在 WebKit 移动端把输入控件字号抬到至少 16px，不禁用双指缩放 |
+| ci | ci | 分支落后于 main 时补建镜像：某组件的构建输入与 main 不一致就构建本提交镜像，修复「分支没碰 prd-api、main 改过 prd-api」时 CI 不建、CDS 又不许借 main 镜像导致整个部署失败 |

@@ -1,10 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowRight, BookOpen, Image as ImageIcon, Play, Volume2 } from 'lucide-react';
 
 import { useLanguage } from '../contexts/LanguageContext';
 import { requestFilmPlay } from '../film/filmEvents';
 import { FILM } from '../film/filmPalette';
-import { HERO_LOOP_DURATION, HERO_LOOP_ENTRY, HeroLoop, heroLoopBeat } from '../film/HeroLoop';
+import { HERO_LOOP_DURATION, HERO_LOOP_ENTRY, HERO_LOOP_START, HeroLoop, heroLoopBeat } from '../film/HeroLoop';
 import { FILM_DURATION, formatClock } from '../film/filmTimeline';
 
 /**
@@ -22,6 +22,28 @@ import { FILM_DURATION, formatClock } from '../film/filmTimeline';
  */
 const AGENT_ICONS = [BookOpen, ImageIcon] as const;
 const NAV_H = 72;
+
+/**
+ * 第一次进来时的入场：标题从失焦里聚出来，副标题与输入框跟半拍。
+ * 与背景循环同一个时钟起点（第 0 秒），所以字聚好、那句话打完、按下去，星系正好炸开。
+ * 只在自己播时挂上；导出样片与「减少动态」都不挂。
+ */
+const INTRO_CSS = `
+@keyframes map-hero-focus {
+  0% { opacity: 0; filter: blur(22px); transform: translateY(18px) scale(1.06); }
+  60% { opacity: 1; }
+  100% { opacity: 1; filter: blur(0); transform: none; }
+}
+@keyframes map-hero-rise {
+  0% { opacity: 0; transform: translateY(14px); }
+  100% { opacity: 1; transform: none; }
+}
+`;
+
+function introStyle(on: boolean, name: 'focus' | 'rise', delay: number, duration: number): CSSProperties | undefined {
+  if (!on) return undefined;
+  return { animation: `map-hero-${name} ${duration}s cubic-bezier(.16,1,.3,1) ${delay}s both` };
+}
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -41,8 +63,9 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
   const hero = copy.hero;
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
-  const [liveT, setLiveT] = useState(HERO_LOOP_ENTRY);
   const reduced = usePrefersReducedMotion();
+  // 实时播放从第 0 秒起（看得到星系诞生）；开了「减少动态」就停在长好的那一帧
+  const [liveT, setLiveT] = useState(HERO_LOOP_START);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -72,7 +95,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
         acc += dt;
         if (now - lastPaint > 32) {
           lastPaint = now;
-          setLiveT((HERO_LOOP_ENTRY + acc) % HERO_LOOP_DURATION);
+          setLiveT((HERO_LOOP_START + acc) % HERO_LOOP_DURATION);
         }
       }
       raf = requestAnimationFrame(tick);
@@ -84,7 +107,9 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
     };
   }, [controlledT, reduced]);
 
-  const t = controlledT ?? liveT;
+  const t = controlledT ?? (reduced ? HERO_LOOP_ENTRY : liveT);
+  // 入场动画只在第一次自己播时跑：导出样片（受控 t）与「减少动态」都不跑
+  const intro = controlledT === undefined && !reduced;
   const { w, h } = box;
   const compact = w > 0 && w < 700;
   const beat = heroLoopBeat(t, hero.loopPrompts);
@@ -100,6 +125,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
       className="relative w-full overflow-hidden"
       style={{ height: '100svh', minHeight: compact ? 620 : 680, maxHeight: 1200, background: FILM.spaceEdge, color: FILM.text, fontFamily: 'var(--font-body)' }}
     >
+      {intro && <style>{INTRO_CSS}</style>}
       {w > 0 && <HeroLoop t={t} w={w} h={h} compact={compact} dpr={controlledT === undefined ? dpr : undefined} />}
 
       {/* 标题块：宽屏居中偏上，手机贴顶 */}
@@ -116,29 +142,32 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
             letterSpacing: '0.22em',
             color: FILM.gray,
             marginBottom: compact ? 14 : 22,
+            ...introStyle(intro, 'rise', 0.05, 0.9),
           }}
         >
           <span style={{ width: compact ? 18 : 28, height: 1, background: FILM.lineStrong }} />
           {hero.brand}
           <span style={{ width: compact ? 18 : 28, height: 1, background: FILM.lineStrong }} />
         </div>
-        <h1
-          style={{
-            margin: 0,
-            fontFamily: 'var(--font-display)',
-            fontSize: compact ? 'clamp(2.3rem, 11vw, 2.9rem)' : 'clamp(3.4rem, 5.6vw, 6.6rem)',
-            fontWeight: 700,
-            lineHeight: 1.04,
-            letterSpacing: '-0.04em',
-            background: FILM.titleGradient,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-            filter: `drop-shadow(0 6px 40px ${FILM.spaceEdge})`,
-          }}
-        >
-          {hero.title}
-        </h1>
+        <div style={introStyle(intro, 'focus', 0.15, 1.5)}>
+          <h1
+            style={{
+              margin: 0,
+              fontFamily: 'var(--font-display)',
+              fontSize: compact ? 'clamp(2.3rem, 11vw, 2.9rem)' : 'clamp(3.4rem, 5.6vw, 6.6rem)',
+              fontWeight: 700,
+              lineHeight: 1.04,
+              letterSpacing: '-0.04em',
+              background: FILM.titleGradient,
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              filter: `drop-shadow(0 6px 40px ${FILM.spaceEdge})`,
+            }}
+          >
+            {hero.title}
+          </h1>
+        </div>
         <p
           style={{
             margin: compact ? '14px auto 0' : '22px auto 0',
@@ -148,6 +177,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
             lineHeight: 1.6,
             color: FILM.textDim,
             textShadow: `0 2px 18px ${FILM.spaceEdge}`,
+            ...introStyle(intro, 'rise', 0.7, 1.0),
           }}
         >
           {hero.tagline}
@@ -163,81 +193,83 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
           ...(compact ? { bottom: 92 } : { top: Math.max(NAV_H + 60, h * 0.25) + (w > 1400 ? 250 : 220) }),
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: compact ? 8 : 14,
-            minHeight: compact ? 58 : 74,
-            padding: compact ? '6px 6px 6px 8px' : '0 8px 0 10px',
-            borderRadius: compact ? 22 : 999,
-            background: `${FILM.panel}C7`,
-            border: `1px solid ${FILM.lineStrong}`,
-            boxShadow: `${FILM.shadow}, inset 0 1px 0 ${FILM.line}`,
-            backdropFilter: 'blur(18px) saturate(140%)',
-            WebkitBackdropFilter: 'blur(18px) saturate(140%)',
-          }}
-        >
-          <span
-            className="shrink-0 inline-flex items-center"
-            style={{ gap: 6, padding: compact ? '6px 10px' : '9px 15px', borderRadius: 999, background: FILM.panelRaised, fontSize: compact ? 12 : 14, color: FILM.text, whiteSpace: 'nowrap' }}
-          >
-            <Icon size={compact ? 13 : 16} color={FILM.sand} />
-            {hero.loopAgents[beat.shot]}
-          </span>
-          <span
-            className="flex-1 min-w-0"
+        <div style={introStyle(intro, 'rise', 0.0, 0.6)}>
+          <div
             style={{
-              fontSize: compact ? 14 : 19,
-              lineHeight: 1.4,
-              color: FILM.text,
-              whiteSpace: compact ? 'normal' : 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
+              display: 'flex',
+              alignItems: 'center',
+              gap: compact ? 8 : 14,
+              minHeight: compact ? 58 : 74,
+              padding: compact ? '6px 6px 6px 8px' : '0 8px 0 10px',
+              borderRadius: compact ? 22 : 999,
+              background: `${FILM.panel}C7`,
+              border: `1px solid ${FILM.lineStrong}`,
+              boxShadow: `${FILM.shadow}, inset 0 1px 0 ${FILM.line}`,
+              backdropFilter: 'blur(18px) saturate(140%)',
+              WebkitBackdropFilter: 'blur(18px) saturate(140%)',
             }}
           >
-            {beat.shown}
             <span
-              aria-hidden
-              style={{ display: 'inline-block', width: 2, height: compact ? 15 : 20, marginLeft: 3, verticalAlign: 'middle', background: FILM.clay, opacity: caretOn ? 1 : 0 }}
-            />
-          </span>
-          <button
-            type="button"
-            onClick={onGetStarted}
-            className="shrink-0 inline-flex items-center transition-transform duration-200 hover:scale-[1.03] active:scale-[0.98]"
-            style={{
-              gap: 8,
-              padding: compact ? '11px 14px' : '14px 26px',
-              borderRadius: 999,
-              background: FILM.brandGradient,
-              color: FILM.onBrand,
-              fontSize: compact ? 13 : 16,
-              fontWeight: 700,
-              fontFamily: 'var(--font-display)',
-              whiteSpace: 'nowrap',
-              transform: `scale(${pressScale})`,
-              boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 30px ${FILM.clay}` : `0 8px 26px ${FILM.spaceEdge}`,
-            }}
-          >
-            {hero.primaryCta}
-            {!compact && <ArrowRight size={16} />}
-          </button>
-        </div>
-        {/* 两个镜头的进度：哪一句正在「生成」背后的画面 */}
-        <div className="flex justify-center" style={{ gap: 6, marginTop: compact ? 10 : 16 }}>
-          {[0, 1].map((i) => (
+              className="shrink-0 inline-flex items-center"
+              style={{ gap: 6, padding: compact ? '6px 10px' : '9px 15px', borderRadius: 999, background: FILM.panelRaised, fontSize: compact ? 12 : 14, color: FILM.text, whiteSpace: 'nowrap' }}
+            >
+              <Icon size={compact ? 13 : 16} color={FILM.sand} />
+              {hero.loopAgents[beat.shot]}
+            </span>
             <span
-              key={i}
+              className="flex-1 min-w-0"
               style={{
-                width: beat.shot === i ? 18 : 6,
-                height: 4,
-                borderRadius: 2,
-                background: beat.shot === i ? FILM.sand : FILM.lineStrong,
-                transition: 'width .4s ease, background .4s ease',
+                fontSize: compact ? 14 : 19,
+                lineHeight: 1.4,
+                color: FILM.text,
+                whiteSpace: compact ? 'normal' : 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
               }}
-            />
-          ))}
+            >
+              {beat.shown}
+              <span
+                aria-hidden
+                style={{ display: 'inline-block', width: 2, height: compact ? 15 : 20, marginLeft: 3, verticalAlign: 'middle', background: FILM.clay, opacity: caretOn ? 1 : 0 }}
+              />
+            </span>
+            <button
+              type="button"
+              onClick={onGetStarted}
+              className="shrink-0 inline-flex items-center transition-transform duration-200 hover:scale-[1.03] active:scale-[0.98]"
+              style={{
+                gap: 8,
+                padding: compact ? '11px 14px' : '14px 26px',
+                borderRadius: 999,
+                background: FILM.brandGradient,
+                color: FILM.onBrand,
+                fontSize: compact ? 13 : 16,
+                fontWeight: 700,
+                fontFamily: 'var(--font-display)',
+                whiteSpace: 'nowrap',
+                transform: `scale(${pressScale})`,
+                boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 30px ${FILM.clay}` : `0 8px 26px ${FILM.spaceEdge}`,
+              }}
+            >
+              {hero.primaryCta}
+              {!compact && <ArrowRight size={16} />}
+            </button>
+          </div>
+          {/* 两个镜头的进度：哪一句正在「生成」背后的画面 */}
+          <div className="flex justify-center" style={{ gap: 6, marginTop: compact ? 10 : 16 }}>
+            {[0, 1].map((i) => (
+              <span
+                key={i}
+                style={{
+                  width: beat.shot === i ? 18 : 6,
+                  height: 4,
+                  borderRadius: 2,
+                  background: beat.shot === i ? FILM.sand : FILM.lineStrong,
+                  transition: 'width .4s ease, background .4s ease',
+                }}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
