@@ -482,6 +482,11 @@ describe('Server route ordering (regression)', () => {
           local: true,
           sso: false,
         },
+        capabilities: {
+          userManagement: true,
+          userActivity: true,
+          durableUsers: false,
+        },
         sso: {
           enabled: false,
           providerId: 'ticket-sso',
@@ -534,7 +539,7 @@ describe('Server route ordering (regression)', () => {
       const meBody = JSON.parse(authedMe.body);
       expect(meBody.user).toMatchObject({
         username: 'operator',
-        authProvider: 'local',
+        authProvider: 'legacy',
         isSystemOwner: true,
       });
 
@@ -551,6 +556,69 @@ describe('Server route ordering (regression)', () => {
         'X-CDS-Token': humanToken,
       });
       expect(replayedHumanHeader.status).toBe(401);
+
+      // The unified local-login endpoint must preserve the original account,
+      // even though it now also accepts persisted local users.
+      const compatibleLogin = await requestJson(server, 'POST', '/api/auth/login', {
+        username: 'operator',
+        password: 'secret',
+      });
+      expect(compatibleLogin.status).toBe(200);
+      const compatibleCookie = (Array.isArray(compatibleLogin.headers['set-cookie'])
+        ? compatibleLogin.headers['set-cookie'][0]
+        : String(compatibleLogin.headers['set-cookie'] || '')).split(';')[0];
+      expect(compatibleCookie).toMatch(/^cds_token=/);
+
+      const duplicateLegacyUser = await requestJson(server, 'POST', '/api/auth/users', {
+        username: 'operator',
+        password: 'another-password-1',
+      }, { Cookie: compatibleCookie });
+      expect(duplicateLegacyUser.status).toBe(409);
+      expect(JSON.parse(duplicateLegacyUser.body)).toMatchObject({ code: 'username_taken' });
+
+      // The original account is the system owner and can provision a persisted
+      // local member without any GitHub OAuth configuration.
+      const created = await requestJson(server, 'POST', '/api/auth/users', {
+        username: 'member',
+        password: 'member-password-1',
+        name: 'Member',
+      }, { Cookie: compatibleCookie });
+      expect(created.status).toBe(201);
+      expect(JSON.parse(created.body).user).toMatchObject({
+        username: 'member',
+        authProvider: 'local',
+        isSystemOwner: false,
+      });
+
+      const memberLogin = await requestJson(server, 'POST', '/api/auth/login', {
+        username: 'member',
+        password: 'member-password-1',
+      });
+      expect(memberLogin.status).toBe(200);
+      const memberCookie = (Array.isArray(memberLogin.headers['set-cookie'])
+        ? memberLogin.headers['set-cookie'][0]
+        : String(memberLogin.headers['set-cookie'] || '')).split(';')[0];
+      expect(memberCookie).toMatch(/^cds_gh_session=/);
+
+      const memberMe = await request(server, '/api/me', { Cookie: memberCookie });
+      expect(memberMe.status).toBe(200);
+      expect(JSON.parse(memberMe.body).user).toMatchObject({
+        username: 'member',
+        authProvider: 'local',
+        isSystemOwner: false,
+      });
+      const deniedUsers = await request(server, '/api/auth/users', { Cookie: memberCookie });
+      expect(deniedUsers.status).toBe(403);
+
+      const ownerUsers = await request(server, '/api/auth/users', { Cookie: compatibleCookie });
+      expect(ownerUsers.status).toBe(200);
+      expect(JSON.parse(ownerUsers.body).users).toHaveLength(1);
+
+      const ownerActivity = await request(server, '/api/auth/activity', { Cookie: compatibleCookie });
+      expect(ownerActivity.status).toBe(200);
+      expect(JSON.parse(ownerActivity.body).activity).toEqual(expect.arrayContaining([
+        expect.objectContaining({ action: 'create-user', targetId: JSON.parse(created.body).user.id }),
+      ]));
     } finally {
       if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
       else process.env.CDS_AUTH_MODE = prevMode;

@@ -1,9 +1,8 @@
 /**
- * Local username + password auth routes — coexists with GitHub OAuth.
+ * Local username + password auth routes — independent from the login provider.
  *
- * These mount in the same `CDS_AUTH_MODE=github` block as the OAuth routes so
- * the session gate (github-auth middleware) protects everything uniformly and
- * local + GitHub users share the exact same session-cookie mechanism.
+ * GitHub OAuth and legacy CDS_USERNAME/CDS_PASSWORD may both coexist with this
+ * router, but neither is a prerequisite for the persisted local-user model.
  *
  * Endpoints (all under /api):
  *   GET  /api/auth/bootstrap-status   → public; { needsBootstrap } when zero users
@@ -22,7 +21,12 @@
 import { Router, type Request, type Response } from 'express';
 import { AuthService, LocalAuthError } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE } from './auth.js';
-import { toPublicUser, type CdsUser } from '../domain/auth.js';
+import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+
+export interface LegacyLocalLoginResult {
+  user: PublicCdsUser;
+  setCookie: string;
+}
 
 export interface AuthLocalRouterDeps {
   authService: AuthService;
@@ -36,6 +40,18 @@ export interface AuthLocalRouterDeps {
    * (PR #865 Codex P1). When false, bootstrap is disabled.
    */
   bootstrapAllowed: boolean;
+  /**
+   * Compatibility hook for the original CDS_USERNAME/CDS_PASSWORD account.
+   * It runs before persisted local-account verification, so the original
+   * credential keeps deterministic ownership even if old data contains the
+   * same username.
+   */
+  legacyLogin?: (
+    input: { username: string; password: string },
+    req: Request,
+  ) => Promise<LegacyLocalLoginResult | null> | LegacyLocalLoginResult | null;
+  /** Usernames owned by external/legacy providers and unavailable for creation. */
+  reservedUsernames?: string[];
 }
 
 interface AuthedRequest extends Request {
@@ -54,6 +70,28 @@ function buildSessionCookie(token: string, expiresAt: string, secure: boolean): 
   ];
   if (secure) parts.push('Secure');
   return parts.join('; ');
+}
+
+function buildLogoutCookie(secure: boolean): string {
+  return [
+    `${GH_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+}
+
+function sessionToken(req: Request): string | null {
+  const match = (req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${GH_SESSION_COOKIE}=([^;]*)`));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 function clientIp(req: Request): string | null {
@@ -86,7 +124,10 @@ function localErrStatus(err: LocalAuthError): number {
 
 export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   const router = Router();
-  const { authService, cookieSecure, bootstrapAllowed } = deps;
+  const { authService, cookieSecure, bootstrapAllowed, legacyLogin } = deps;
+  const reservedUsernames = new Set(
+    (deps.reservedUsernames ?? []).map((username) => String(username).trim().toLowerCase()),
+  );
 
   // ── First-run bootstrap (public) ──
   router.get('/auth/bootstrap-status', async (_req: Request, res: Response) => {
@@ -143,7 +184,18 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       return;
     }
     try {
-      const user = await authService.verifyLocalLogin(String(username), String(password));
+      const normalizedUsername = String(username);
+      const normalizedPassword = String(password);
+      const legacy = await legacyLogin?.(
+        { username: normalizedUsername, password: normalizedPassword },
+        req,
+      );
+      if (legacy) {
+        res.setHeader('Set-Cookie', legacy.setCookie);
+        res.json({ user: legacy.user });
+        return;
+      }
+      const user = await authService.verifyLocalLogin(normalizedUsername, normalizedPassword);
       if (!user) {
         res.status(401).json({ error: '用户名或密码错误' });
         return;
@@ -169,6 +221,16 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       console.error('[auth-local] login failed:', err);
       res.status(500).json({ error: '登录失败' });
     }
+  });
+
+  // ── Local session logout ──
+  // In GitHub mode the OAuth router registers the same path first; in basic
+  // mode this handler owns it. Both clear the shared persisted-session cookie.
+  router.post('/auth/logout', async (req: Request, res: Response) => {
+    const token = sessionToken(req);
+    if (token) await authService.logout(token);
+    res.setHeader('Set-Cookie', buildLogoutCookie(cookieSecure));
+    res.json({ ok: true });
   });
 
   // ── Change own password (authed) ──
@@ -225,8 +287,16 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     if (!me) return;
     const { username, password, name, isSystemOwner } = req.body || {};
     try {
+      const normalizedUsername = String(username || '').trim().toLowerCase();
+      if (reservedUsernames.has(normalizedUsername)) {
+        res.status(409).json({
+          error: `用户名 ${normalizedUsername} 由原始管理员账号占用`,
+          code: 'username_taken',
+        });
+        return;
+      }
       const user = await authService.createLocalUser({
-        username: String(username || ''),
+        username: normalizedUsername,
         password: String(password || ''),
         name: typeof name === 'string' ? name : undefined,
         isSystemOwner: isSystemOwner === true,

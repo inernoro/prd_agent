@@ -180,7 +180,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('从认证状态接口向壳层返回安全的用户展示信息', () => {
     expect(serverSource).toContain("app.get('/api/auth/status', (req, res)");
-    expect(serverSource).toContain("authMode === 'github' && sessionUser");
+    expect(serverSource).toContain("sessionUser?.authProvider");
     expect(serverSource).toContain('avatarUrl: sessionUser.avatarUrl ?? null');
     expect(serverSource).toContain("postLogoutRedirect: ssoIdentity ? '/login' : null");
     expect(shellSource).toContain('user?: ShellUser | null');

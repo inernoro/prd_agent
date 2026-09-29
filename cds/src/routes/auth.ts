@@ -222,6 +222,8 @@ function formatError(err: AuthServiceError): string {
       return `账号未通过组织白名单：${err.message}`;
     case 'oauth_upstream':
       return `GitHub OAuth 流程失败：${err.message}`;
+    case 'oauth_disabled':
+      return '这台 CDS 未启用 GitHub OAuth';
     case 'bootstrap_failed':
       return `首次登录初始化失败：${err.message}`;
     case 'account_disabled':

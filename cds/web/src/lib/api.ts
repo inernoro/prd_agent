@@ -619,7 +619,7 @@ export async function listKnowledgeBaseConnections(): Promise<KnowledgeBaseConne
 
 // ── Local users + activity (auth-local, 2026-06-20) ──
 
-export type CdsAuthProvider = 'github' | 'local' | 'sso';
+export type CdsAuthProvider = 'github' | 'local' | 'legacy' | 'sso';
 
 export interface CdsPublicUser {
   id: string;
@@ -654,6 +654,11 @@ export interface CdsAuthPublicStatus {
     github: boolean;
     local: boolean;
     sso: boolean;
+  };
+  capabilities: {
+    userManagement: boolean;
+    userActivity: boolean;
+    durableUsers: boolean;
   };
   sso?: {
     enabled: boolean;
