@@ -51,6 +51,7 @@ import {
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { normalizeBranchGroups } from '../services/branch-groups.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
@@ -1838,6 +1839,61 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     stateService.save();
     res.json({ ok: true, profile });
+  });
+
+  /**
+   * 分支列表的自定义分组（2026-09-29）：项目级、项目内所有人共享一套。
+   *
+   * PUT 整体替换并带乐观并发：请求里的 baseUpdatedAt 是客户端上次看到的版本，
+   * 与服务端当前不一致说明别人刚改过——返回 409 和最新版本，由界面提示后重放，
+   * 不让两个人的编辑互相静默覆盖。首次保存 baseUpdatedAt 传 null。
+   */
+  router.get('/projects/:id/branch-groups', (req, res) => {
+    const settings = stateService.getProjectBranchGroups(req.params.id);
+    if (!settings) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    res.json({ ok: true, ...settings });
+  });
+
+  router.put('/projects/:id/branch-groups', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const body = (req.body || {}) as { groups?: unknown; baseUpdatedAt?: unknown };
+    const current = stateService.getProjectBranchGroups(project.id);
+    if (body.baseUpdatedAt !== undefined && (body.baseUpdatedAt ?? null) !== (current?.updatedAt ?? null)) {
+      res.status(409).json({
+        error: 'stale',
+        message: '分组刚被别人改过，已返回最新版本；请在最新版本上重新修改',
+        latest: current,
+      });
+      return;
+    }
+    const normalized = normalizeBranchGroups(body.groups);
+    if (!normalized.ok) {
+      res.status(400).json({ error: 'validation', field: normalized.field, message: normalized.message });
+      return;
+    }
+    const settings = {
+      groups: normalized.groups,
+      updatedAt: new Date().toISOString(),
+      updatedBy: resolveActorFromRequest(req as any),
+    };
+    stateService.setProjectBranchGroups(project.id, settings);
+    stateService.save();
+    res.json({ ok: true, ...settings });
   });
 
   router.get('/projects/:id/comment-template', (req, res) => {

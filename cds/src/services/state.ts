@@ -4076,6 +4076,25 @@ export class StateService {
     return true;
   }
 
+  /** 读取项目的分支自定义分组；从未配置过返回空列表（updatedAt 为 null）。 */
+  getProjectBranchGroups(projectId: string): import('../types.js').BranchGroupsSettings | null {
+    const project = this.getProject(projectId);
+    if (!project) return null;
+    return project.branchGroups ?? { groups: [], updatedAt: null, updatedBy: null };
+  }
+
+  /** 整体替换项目的分支分组（调用方负责先经 normalizeBranchGroups 校验）。 */
+  setProjectBranchGroups(
+    projectId: string,
+    settings: import('../types.js').BranchGroupsSettings,
+  ): boolean {
+    const project = this.getProject(projectId);
+    if (!project) return false;
+    project.branchGroups = settings;
+    project.updatedAt = new Date().toISOString();
+    return true;
+  }
+
   /** 读取项目的 Agent 角色声明；从未声明过返回 null。 */
   getProjectAgentProfile(projectId: string): import('../types.js').ProjectAgentProfile | null {
     return this.getProject(projectId)?.agentProfile ?? null;
