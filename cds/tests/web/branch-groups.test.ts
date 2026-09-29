@@ -19,6 +19,7 @@ import {
   BRANCH_GROUP_LIMITS,
   BRANCH_GROUP_RULE_KINDS,
   assignBranchToGroup,
+  groupAcceptsPin,
   groupBranches,
   moveGroupBefore,
   pinBranch,
@@ -126,6 +127,24 @@ describe('前后端枚举一致', () => {
   it('颜色与规则类型两边完全相同', () => {
     expect([...BRANCH_GROUP_COLORS]).toEqual([...SERVER_COLORS]);
     expect([...BRANCH_GROUP_RULE_KINDS]).toEqual([...SERVER_RULE_KINDS]);
+  });
+
+  it('钉入到上限的组不再收新分支，已钉在里面的不受影响；pinBranch 目标满了原样返回', () => {
+    const full = group('g-full', [], Array.from({ length: BRANCH_GROUP_LIMITS.pinsPerGroup }, (_, i) => `b-${i}`));
+    expect(groupAcceptsPin(full, 'b-new')).toBe(false);
+    expect(groupAcceptsPin(full, 'b-3')).toBe(true);
+    const groups = [full, group('g-other', [], ['b-new'])];
+    expect(pinBranch(groups, 'b-new', 'g-full')).toBe(groups);
+    expect(pinBranch(groups, 'b-new', null)[1].pinnedBranchIds).toEqual([]);
+  });
+
+  it('移组菜单标出钉入已满的组、拖放与菜单都先查满没满；新建分组到 30 个上限置灰并兜底', () => {
+    const page = read('pages/BranchListPage.tsx');
+    expect(page).toContain('disabled={(pinned && option.id === currentGroupId) || (option.pinnedFull && !option.pinnedIds?.includes(branch.id))}');
+    expect(page).toContain("pinIntoGroup(branchId, targetId === '__ungrouped__' ? null : targetId);");
+    expect(page).toContain('if (target && !groupAcceptsPin(target, branchId)) {');
+    expect(page).toContain('disabled={groupList.length >= BRANCH_GROUP_LIMITS.groups}');
+    expect(page).toContain('if ((branchGroupsRef.current?.groups.length ?? 0) >= BRANCH_GROUP_LIMITS.groups) {');
   });
 
   it('上限两边一致，界面不给出后端必然拒绝的操作（Codex P2）', () => {

@@ -207,8 +207,18 @@ export function newBranchGroupId(): string {
   return `g-${random}`;
 }
 
-/** 把一个分支钉进某组（groupId 为 null = 取消钉入、回到按规则归组），同时从别组的钉入里拿掉。 */
+/** 这个组还能不能再钉进这个分支：已经钉在里面的永远可以，否则看有没有到上限（每组 200 个）。 */
+export function groupAcceptsPin(group: BranchGroup, branchId: string): boolean {
+  return group.pinnedBranchIds.includes(branchId) || group.pinnedBranchIds.length < BRANCH_GROUP_LIMITS.pinsPerGroup;
+}
+
+/**
+ * 把一个分支钉进某组（groupId 为 null = 取消钉入、回到按规则归组），同时从别组的钉入里拿掉。
+ * 目标组已满时原样返回，不造出后端必然拒绝的列表（入口处另有提示，Codex P2，PR #1647）。
+ */
 export function pinBranch(groups: BranchGroup[], branchId: string, groupId: string | null): BranchGroup[] {
+  const target = groupId ? groups.find((group) => group.id === groupId) : undefined;
+  if (target && !groupAcceptsPin(target, branchId)) return groups;
   return groups.map((group) => {
     const without = group.pinnedBranchIds.filter((id) => id !== branchId);
     return {

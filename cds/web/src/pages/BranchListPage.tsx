@@ -49,6 +49,8 @@ import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetai
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
 import {
+  BRANCH_GROUP_LIMITS,
+  groupAcceptsPin,
   BRANCH_GROUP_COLORS,
   groupBranches,
   moveGroupBefore,
@@ -2605,12 +2607,21 @@ export function BranchListPage(): JSX.Element {
   const groupsReadOnly = Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
-  const moveBranchToGroup = useCallback((branch: BranchSummary, groupId: string | null) => {
-    void saveBranchGroups((groups) => pinBranch(groups, branch.id, groupId));
+  // 钉入前先看目标组满没满（每组最多 200 个）：满了就说清楚，不发一个后端必然拒绝的请求（Codex P2，PR #1647）。
+  const pinIntoGroup = useCallback((branchId: string, groupId: string | null) => {
+    const target = groupId ? (branchGroupsRef.current?.groups ?? []).find((group) => group.id === groupId) : undefined;
+    if (target && !groupAcceptsPin(target, branchId)) {
+      setGroupsSaveError(`「${target.name}」已钉入 ${BRANCH_GROUP_LIMITS.pinsPerGroup} 个分支，到上限了；先在编辑里移除几个，或改用规则归组`);
+      return;
+    }
+    void saveBranchGroups((groups) => pinBranch(groups, branchId, groupId));
   }, [saveBranchGroups]);
+  const moveBranchToGroup = useCallback((branch: BranchSummary, groupId: string | null) => {
+    pinIntoGroup(branch.id, groupId);
+  }, [pinIntoGroup]);
   const groupMenu = useMemo<BranchGroupMenu | undefined>(() => (
     groupsEditable
-      ? { options: groupList.map((group) => ({ id: group.id, name: group.name })), onMove: moveBranchToGroup }
+      ? { options: groupList.map((group) => ({ id: group.id, name: group.name, pinnedFull: group.pinnedBranchIds.length >= BRANCH_GROUP_LIMITS.pinsPerGroup, pinnedIds: group.pinnedBranchIds })), onMove: moveBranchToGroup }
       : undefined
   ), [groupsEditable, groupList, moveBranchToGroup]);
   const groupNameById = useMemo(() => new Map(groupList.map((group) => [group.id, group.name])), [groupList]);
@@ -2635,6 +2646,11 @@ export function BranchListPage(): JSX.Element {
     [branches],
   );
   const openNewGroupEditor = useCallback(() => {
+    // 一个项目最多 30 个分组：到上限就不打开新建编辑器（入口也已置灰，这里兜底，Codex P2，PR #1647）。
+    if ((branchGroupsRef.current?.groups.length ?? 0) >= BRANCH_GROUP_LIMITS.groups) {
+      setGroupsSaveError(`一个项目最多 ${BRANCH_GROUP_LIMITS.groups} 个分组，已到上限；先删掉不用的分组再新建`);
+      return;
+    }
     setGroupsSaveError('');
     setGroupEditor({
       // 默认取第一个还没被用过的颜色（灰留给未归组的观感，排最后）
@@ -2692,14 +2708,14 @@ export function BranchListPage(): JSX.Element {
     setGroupDropTarget(null);
     const branchId = event.dataTransfer.getData(BRANCH_DRAG_TYPE);
     if (branchId) {
-      void saveBranchGroups((groups) => pinBranch(groups, branchId, targetId === '__ungrouped__' ? null : targetId));
+      pinIntoGroup(branchId, targetId === '__ungrouped__' ? null : targetId);
       return;
     }
     const fromGroupId = event.dataTransfer.getData(GROUP_DRAG_TYPE) || draggingGroupIdRef.current;
     if (fromGroupId && targetId !== '__ungrouped__' && fromGroupId !== targetId) {
       void saveBranchGroups((groups) => moveGroupBefore(groups, fromGroupId, targetId));
     }
-  }, [saveBranchGroups]);
+  }, [pinIntoGroup, saveBranchGroups]);
   const branchOverview = useMemo(() => {
     const { parts, queued, slot } = summarizeBranchStates(branches, actions, projectProfileIds);
     const infraById = new Map<string, BranchResource>();
@@ -4100,9 +4116,9 @@ export function BranchListPage(): JSX.Element {
                         </DropdownItem>
                       ))}
                       <DropdownDivider />
-                      <DropdownItem onSelect={openNewGroupEditor}>
+                      <DropdownItem onSelect={openNewGroupEditor} disabled={groupList.length >= BRANCH_GROUP_LIMITS.groups}>
                         <Plus className="h-4 w-4 shrink-0" />
-                        新建分组
+                        {groupList.length >= BRANCH_GROUP_LIMITS.groups ? `新建分组（已到 ${BRANCH_GROUP_LIMITS.groups} 个上限）` : '新建分组'}
                       </DropdownItem>
                     </DropdownMenu>
                   ) : null}
@@ -5682,7 +5698,8 @@ function releaseCheckStatusLabel(status: ReleasePreflightCheck['status']): strin
  */
 /** 所有卡片共用一份（按分组列表 memo），不破坏 BranchCard 的 memo。 */
 interface BranchGroupMenu {
-  options: Array<{ id: string; name: string }>;
+  /** pinnedFull：这个组钉入已到上限，除了已经钉在里面的分支，不能再移进来。 */
+  options: Array<{ id: string; name: string; pinnedFull?: boolean; pinnedIds?: string[] }>;
   /** groupId 为 null = 取消钉入，回到按规则归组。 */
   onMove: (branch: BranchSummary, groupId: string | null) => void;
 }
@@ -7620,11 +7637,15 @@ function BranchMoreMenu({
               <DropdownItem
                 key={option.id}
                 onSelect={() => groupMenu.onMove(branch, option.id)}
-                disabled={pinned && option.id === currentGroupId}
+                disabled={(pinned && option.id === currentGroupId) || (option.pinnedFull && !option.pinnedIds?.includes(branch.id))}
               >
                 <FolderInput className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 truncate">{option.name}</span>
-                {option.id === currentGroupId ? <span className="ml-auto shrink-0 text-xs text-muted-foreground">当前</span> : null}
+                {option.id === currentGroupId
+                  ? <span className="ml-auto shrink-0 text-xs text-muted-foreground">当前</span>
+                  : option.pinnedFull && !option.pinnedIds?.includes(branch.id)
+                    ? <span className="ml-auto shrink-0 text-xs text-muted-foreground">钉入已满</span>
+                    : null}
               </DropdownItem>
             ))}
             {pinned ? (
