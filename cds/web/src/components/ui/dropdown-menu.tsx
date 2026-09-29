@@ -31,7 +31,7 @@ export function DropdownMenu({
   width?: number;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; maxHeight?: number } | null>(null);
   const triggerRef = useRef<HTMLSpanElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -42,9 +42,24 @@ export function DropdownMenu({
     const el = triggerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const top = rect.bottom + 6; // 0.375rem gap below the trigger (was mt-1.5)
+    const gap = 6; // 0.375rem gap below the trigger (was mt-1.5)
+    const margin = 8;
+    // 菜单比下方剩余空间高时（卡片靠近视口底部、菜单项多），往上翻；上下都放不下就限高、菜单内滚动。
+    // 以前总往下开，底部卡片的菜单后半截会落到视口外、点不到（2026-09-29 分组菜单加项后取证发现）。
+    const menuHeight = popoverRef.current?.scrollHeight ?? 0;
+    const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+    const spaceAbove = rect.top - gap - margin;
+    let top = rect.bottom + gap;
+    let maxHeight: number | undefined;
+    if (menuHeight > spaceBelow && spaceAbove > spaceBelow) {
+      const height = Math.min(menuHeight, spaceAbove);
+      top = rect.top - gap - height;
+      if (menuHeight > spaceAbove) maxHeight = spaceAbove;
+    } else if (menuHeight > spaceBelow) {
+      maxHeight = Math.max(spaceBelow, 120);
+    }
     const left = align === 'end' ? rect.right - width : rect.left;
-    setCoords({ top, left });
+    setCoords({ top, left, maxHeight });
   };
 
   useLayoutEffect(() => {
@@ -100,7 +115,12 @@ export function DropdownMenu({
             <div
               ref={popoverRef}
               className="cds-overlay-anim fixed z-[300] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
-              style={{ width, top: coords.top, left: coords.left }}
+              style={{
+                width,
+                top: coords.top,
+                left: coords.left,
+                ...(coords.maxHeight ? { maxHeight: coords.maxHeight, overflowY: 'auto' as const } : {}),
+              }}
               role="menu"
               onClick={(event) => {
                 // Items handle their own clicks; close the menu after any selection.

@@ -123,6 +123,12 @@
     --role-web: 158 64% 52%;
     --role-api: 199 95% 74%;
     --role-worker: 258 90% 66%;
+    /* 分支自定义分组的五个色块（2026-09-29）：有限枚举，两个主题各调过一遍对比度。 */
+    --group-orange: 24 95% 62%;
+    --group-blue: 205 90% 66%;
+    --group-green: 158 60% 50%;
+    --group-purple: 268 70% 72%;
+    --group-gray: 220 8% 58%;
     --graph-call: 239 84% 67%;
     --graph-external: 258 90% 66%;
 
@@ -219,6 +225,12 @@
     --role-web: 160 84% 34%;
     --role-api: 201 98% 39%;
     --role-worker: 262 83% 50%;
+    /* 分支自定义分组的五个色块（2026-09-29）：有限枚举，两个主题各调过一遍对比度。 */
+    --group-orange: 24 90% 44%;
+    --group-blue: 205 85% 38%;
+    --group-green: 160 80% 28%;
+    --group-purple: 268 55% 46%;
+    --group-gray: 220 8% 44%;
     --graph-call: 239 84% 55%;
     --graph-external: 262 83% 50%;
 

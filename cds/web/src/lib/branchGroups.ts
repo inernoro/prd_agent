@@ -1,0 +1,217 @@
+/*
+ * 分支自定义分组的唯一判定源（2026-09-29）。
+ *
+ * 一个分支只归一组，认领顺序固定：
+ *   1. 手动钉入（拖进组、或卡片菜单「移到分组」）——优先于任何规则
+ *   2. 规则：按分组在页面上的顺序，第一个命中的组认领
+ *   3. 都没命中：未归组
+ *
+ * 页面分区、编辑器里的「现在命中 N 个 / 被上方分组占用」、首次建组建议都从这里取，
+ * 不许在页面里另写一份匹配逻辑。分组定义的存取与校验在后端
+ * （cds/src/services/branch-groups.ts），两边的颜色与规则类型枚举由守卫测试比对一致。
+ */
+
+export type BranchGroupColor = 'orange' | 'blue' | 'green' | 'purple' | 'gray';
+export type BranchGroupRuleKind = 'prefix' | 'contains' | 'equals' | 'tag';
+
+export const BRANCH_GROUP_COLORS: readonly BranchGroupColor[] = ['orange', 'blue', 'green', 'purple', 'gray'];
+export const BRANCH_GROUP_RULE_KINDS: readonly BranchGroupRuleKind[] = ['prefix', 'contains', 'equals', 'tag'];
+
+export const BRANCH_GROUP_COLOR_LABELS: Record<BranchGroupColor, string> = {
+  orange: '橙',
+  blue: '蓝',
+  green: '绿',
+  purple: '紫',
+  gray: '灰',
+};
+
+export const BRANCH_GROUP_RULE_LABELS: Record<BranchGroupRuleKind, string> = {
+  prefix: '分支名以…开头',
+  contains: '分支名包含',
+  equals: '分支名完全等于',
+  tag: '带标签',
+};
+
+export interface BranchGroupRule {
+  kind: BranchGroupRuleKind;
+  value: string;
+}
+
+export interface BranchGroup {
+  id: string;
+  name: string;
+  color: BranchGroupColor;
+  rules: BranchGroupRule[];
+  pinnedBranchIds: string[];
+}
+
+export interface BranchGroupsSettings {
+  groups: BranchGroup[];
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+/** 判定只需要分支的这三样。 */
+export interface GroupableBranch {
+  id: string;
+  branch: string;
+  tags?: string[];
+}
+
+export type GroupAssignment = { groupId: string; via: 'pin' | 'rule' };
+
+export function ruleMatches(rule: BranchGroupRule, branch: GroupableBranch): boolean {
+  const value = rule.value.trim();
+  if (!value) return false;
+  switch (rule.kind) {
+    case 'prefix':
+      return branch.branch.startsWith(value);
+    case 'contains':
+      return branch.branch.includes(value);
+    case 'equals':
+      return branch.branch === value;
+    case 'tag':
+      return (branch.tags || []).includes(value.replace(/^#/, ''));
+    default:
+      return false;
+  }
+}
+
+export function groupRulesMatch(group: BranchGroup, branch: GroupableBranch): boolean {
+  return group.rules.some((rule) => ruleMatches(rule, branch));
+}
+
+/** 单个分支归哪组、是怎么归进去的；没归组返回 null。 */
+export function assignBranchToGroup(groups: BranchGroup[], branch: GroupableBranch): GroupAssignment | null {
+  const pinned = groups.find((group) => group.pinnedBranchIds.includes(branch.id));
+  if (pinned) return { groupId: pinned.id, via: 'pin' };
+  const byRule = groups.find((group) => groupRulesMatch(group, branch));
+  return byRule ? { groupId: byRule.id, via: 'rule' } : null;
+}
+
+export interface GroupedBranches<T extends GroupableBranch> {
+  /** 与 groups 同序；每组内保持传入顺序（页面已排好序）。 */
+  sections: Array<{ group: BranchGroup; branches: T[] }>;
+  ungrouped: T[];
+  assignment: Map<string, GroupAssignment>;
+}
+
+export function groupBranches<T extends GroupableBranch>(groups: BranchGroup[], branches: T[]): GroupedBranches<T> {
+  const byGroup = new Map<string, T[]>(groups.map((group) => [group.id, []]));
+  const ungrouped: T[] = [];
+  const assignment = new Map<string, GroupAssignment>();
+  for (const branch of branches) {
+    const hit = assignBranchToGroup(groups, branch);
+    if (hit) {
+      assignment.set(branch.id, hit);
+      byGroup.get(hit.groupId)?.push(branch);
+    } else {
+      ungrouped.push(branch);
+    }
+  }
+  return {
+    sections: groups.map((group) => ({ group, branches: byGroup.get(group.id) || [] })),
+    ungrouped,
+    assignment,
+  };
+}
+
+/**
+ * 编辑器里的实时命中预览：把「正在编辑的这一组」放回它在列表中的位置算一遍，
+ * 分成真正归进来的、以及规则命中但被上方分组（或别组的钉入）先认领走的。
+ */
+export function previewGroupHits<T extends GroupableBranch>(
+  groups: BranchGroup[],
+  draft: BranchGroup,
+  branches: T[],
+): { hits: T[]; taken: Array<{ branch: T; groupName: string }> } {
+  const index = groups.findIndex((group) => group.id === draft.id);
+  const list = index >= 0
+    ? groups.map((group) => (group.id === draft.id ? draft : group))
+    : [...groups, draft];
+  const hits: T[] = [];
+  const taken: Array<{ branch: T; groupName: string }> = [];
+  for (const branch of branches) {
+    const owner = assignBranchToGroup(list, branch);
+    if (owner?.groupId === draft.id) {
+      hits.push(branch);
+    } else if (groupRulesMatch(draft, branch) && owner) {
+      const name = list.find((group) => group.id === owner.groupId)?.name || '其他分组';
+      taken.push({ branch, groupName: name });
+    }
+  }
+  return { hits, taken };
+}
+
+/** 分支名第一个「/」之前连同斜杠，没有斜杠返回 null。 */
+export function branchPrefix(name: string): string | null {
+  const slash = name.indexOf('/');
+  return slash > 0 ? name.slice(0, slash + 1) : null;
+}
+
+const KNOWN_PREFIX_NAMES: Record<string, string> = {
+  'claude/': 'Claude 在做',
+  'codex/': 'Codex 在做',
+  'cursor/': 'Cursor 在做',
+  'release/': '发布线',
+  'hotfix/': '热修',
+  'feat/': '新功能',
+  'feature/': '新功能',
+  'fix/': '修复',
+};
+
+export interface PrefixSuggestion {
+  prefix: string;
+  count: number;
+  name: string;
+  color: BranchGroupColor;
+  /** 只有 1 个分支的前缀默认不勾，免得一上来就一堆单卡小组。 */
+  defaultChecked: boolean;
+}
+
+/** 第一次切到「按分组」时给的建议：按分支名前缀统计，多的在前。 */
+export function suggestPrefixGroups(branches: GroupableBranch[]): PrefixSuggestion[] {
+  const counts = new Map<string, number>();
+  for (const branch of branches) {
+    const prefix = branchPrefix(branch.branch);
+    if (prefix) counts.set(prefix, (counts.get(prefix) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([prefix, count], index) => ({
+      prefix,
+      count,
+      name: KNOWN_PREFIX_NAMES[prefix] || prefix.slice(0, -1),
+      color: BRANCH_GROUP_COLORS[index % (BRANCH_GROUP_COLORS.length - 1)],
+      defaultChecked: count >= 2,
+    }));
+}
+
+export function newBranchGroupId(): string {
+  const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+    : Math.random().toString(36).slice(2, 14);
+  return `g-${random}`;
+}
+
+/** 把一个分支钉进某组（groupId 为 null = 取消钉入、回到按规则归组），同时从别组的钉入里拿掉。 */
+export function pinBranch(groups: BranchGroup[], branchId: string, groupId: string | null): BranchGroup[] {
+  return groups.map((group) => {
+    const without = group.pinnedBranchIds.filter((id) => id !== branchId);
+    return {
+      ...group,
+      pinnedBranchIds: group.id === groupId ? [...without, branchId] : without,
+    };
+  });
+}
+
+/** 把 fromId 挪到 toId 前面（拖组头调顺序）。 */
+export function moveGroupBefore(groups: BranchGroup[], fromId: string, toId: string): BranchGroup[] {
+  if (fromId === toId) return groups;
+  const moving = groups.find((group) => group.id === fromId);
+  if (!moving) return groups;
+  const rest = groups.filter((group) => group.id !== fromId);
+  const at = rest.findIndex((group) => group.id === toId);
+  if (at < 0) return groups;
+  return [...rest.slice(0, at), moving, ...rest.slice(at)];
+}

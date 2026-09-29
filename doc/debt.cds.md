@@ -2307,3 +2307,20 @@ CDS 的系统环境文件有两个读者：`source` 它的 shell，和 Node 启�
 - 取证脚本：`cds/scripts/branch-card-visual-audit.mjs`；同类的窄屏冒烟：`cds/scripts/mobile-layout-smoke.mjs`
 - 源码守卫：`cds/tests/web/branch-card-fixed-slots.test.ts`
 - 阶段判定唯一来源：`cds/web/src/lib/branchCardPhase.ts`
+
+
+## 分支自定义分组的已知边界（2026-09-29）
+
+**状态**：已知边界；负责人：CDS 维护者。
+
+分组按项目存在服务端、项目内共享。当前只在打开页面和自己保存时读写，别人刚改过的分组不会实时推到已经打开的页面；两个人同时改时靠版本号兜底——后保存的人拿到冲突提示和最新版本，修改不会互相静默覆盖，但需要在最新版本上重做一次。完成条件：分组变更走分支事件流推给同项目已打开的页面。
+
+同批留下的边界：
+- 钉入按分支 id 记。分支被删后钉入记录还留着，编辑器里显示「分支已不在」，可一键移除；没有自动清理。
+- 分组视图的浏览器级判据（建组、拖拽钉入、菜单移组、收起、编辑、调序、冲突、定位、窄屏）和卡片等高一样只能本地跑，完成条件同上一节：给离线布局冒烟单开带 Chromium 的 CI 任务。
+- 只有项目共享的一套分组，没有个人私有分组；视图模式与收起状态记在本机浏览器。
+
+### 实现来源（本节）
+
+- 归组判定唯一来源：`cds/web/src/lib/branchGroups.ts`；存取与校验：`cds/src/services/branch-groups.ts`
+- 取证脚本：`cds/scripts/branch-groups-visual-audit.mjs`；守卫：`cds/tests/web/branch-groups.test.ts`、`cds/tests/routes/project-branch-groups.test.ts`

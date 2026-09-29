@@ -37,6 +37,10 @@ import {
   Layers,
   XCircle,
   Zap,
+  FolderInput,
+  Pin,
+  Users,
+  Pencil,
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
@@ -44,6 +48,17 @@ import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
+import {
+  groupBranches,
+  moveGroupBefore,
+  newBranchGroupId,
+  pinBranch,
+  type BranchGroup,
+  type BranchGroupsSettings,
+} from '@/lib/branchGroups';
+import { BranchGroupHeader, type BranchGroupSummaryPart } from '@/components/branch-groups/BranchGroupHeader';
+import { BranchGroupEditorDialog } from '@/components/branch-groups/BranchGroupEditorDialog';
+import { BranchGroupSuggestions } from '@/components/branch-groups/BranchGroupSuggestions';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
@@ -1355,7 +1370,76 @@ function isDormantBranch(branch: BranchSummary, action?: BranchAction): boolean 
   return true;
 }
 
+/**
+ * 一组分支此刻怎样——页头一句话汇总与每个分组的组头共用这一个口径（2026-09-29）。
+ * 同一分支只落一类：出错 > 排队 > 在构建 > 运行中；「未运行」单独数（停止的分支）。
+ */
+function summarizeBranchStates(
+  list: BranchSummary[],
+  actions: Record<string, BranchAction | undefined>,
+): {
+  errored: number;
+  building: number;
+  queued: number;
+  running: number;
+  dormant: number;
+  slot: { active: number; max: number } | null;
+  parts: BranchGroupSummaryPart[];
+} {
+  let errored = 0;
+  let building = 0;
+  let queued = 0;
+  let running = 0;
+  let slot: { active: number; max: number } | null = null;
+  for (const branch of list) {
+    const phase = branchCardPhase({
+      status: branch.status,
+      services: branch.services,
+      buildQueue: branch.buildQueue,
+      ciImageStatus: branch.ciImageStatus,
+      prebuilt: branch.deployRuntime?.prebuilt,
+    });
+    if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
+    if (branchHasDeployFailure(branch)) errored += 1;
+    else if (phase?.key === 'queued') queued += 1;
+    else if (phase && isDeployPhase(phase)) building += 1;
+    else if (branch.status === 'running') running += 1;
+  }
+  const dormant = list.filter((branch) => isDormantBranch(branch, actions[branch.id])).length;
+  const parts = [
+    errored ? { text: `${errored} 个出错需要处理`, tone: 'warn' as const } : null,
+    building ? { text: `${building} 个在构建`, tone: 'info' as const } : null,
+    queued ? { text: `${queued} 个排队`, tone: 'info' as const } : null,
+    running ? { text: `${running} 个运行中`, tone: 'plain' as const } : null,
+    dormant ? { text: `${dormant} 个未运行`, tone: 'plain' as const } : null,
+  ].filter((part): part is BranchGroupSummaryPart => Boolean(part));
+  return { errored, building, queued, running, dormant, slot, parts };
+}
+
 const DORMANT_COLLAPSED_KEY = 'cds_branch_dormant_collapsed';
+const BRANCH_VIEW_MODE_KEY = 'cds_branch_view_mode';
+const BRANCH_GROUP_COLLAPSED_KEY = 'cds_branch_group_collapsed';
+
+type BranchViewMode = 'status' | 'groups';
+
+/** 视图模式与分组收起状态按项目记在本机浏览器：个人习惯，不进项目共享数据。 */
+function readBranchViewMode(projectId: string): BranchViewMode {
+  try {
+    return localStorage.getItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`) === 'groups' ? 'groups' : 'status';
+  } catch {
+    return 'status';
+  }
+}
+
+function readCollapsedGroups(projectId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`${BRANCH_GROUP_COLLAPSED_KEY}:${projectId}`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function readDormantCollapsed(): boolean {
   try {
@@ -1569,6 +1653,78 @@ export function BranchListPage(): JSX.Element {
   // 顶部出现"正在过滤:#xxx ×"chip,点 × 清除。单标签过滤(对齐 legacy)。
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
   const [dormantCollapsed, setDormantCollapsed] = useState<boolean>(() => readDormantCollapsed());
+  /* 自定义分组（2026-09-29）：分组定义按项目存在服务端、项目内共享；视图模式与收起状态只记本机。 */
+  const [viewMode, setViewModeState] = useState<BranchViewMode>(() => readBranchViewMode(projectId));
+  const [branchGroups, setBranchGroups] = useState<BranchGroupsSettings | null>(null);
+  const [groupsLoadError, setGroupsLoadError] = useState('');
+  const [groupsSaving, setGroupsSaving] = useState(false);
+  const [groupsSaveError, setGroupsSaveError] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups(projectId));
+  const [expandedDormantGroups, setExpandedDormantGroups] = useState<Set<string>>(() => new Set());
+  const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean } | null>(null);
+  const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group' } | null>(null);
+  const draggingGroupIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    setViewModeState(readBranchViewMode(projectId));
+    setCollapsedGroups(readCollapsedGroups(projectId));
+    setBranchGroups(null);
+    setGroupsLoadError('');
+    if (!projectId) return;
+    let cancelled = false;
+    apiRequest<BranchGroupsSettings & { ok: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/branch-groups`)
+      .then((res) => {
+        if (!cancelled) setBranchGroups({ groups: res.groups || [], updatedAt: res.updatedAt ?? null, updatedBy: res.updatedBy ?? null });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setGroupsLoadError(error instanceof Error ? error.message : '分组读取失败');
+      });
+    return () => { cancelled = true; };
+  }, [projectId]);
+  const setViewMode = useCallback((mode: BranchViewMode) => {
+    setViewModeState(mode);
+    try { localStorage.setItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`, mode); } catch { /* 隐私模式：只影响记忆 */ }
+  }, [projectId]);
+  const toggleGroupCollapsed = useCallback((groupId: string) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      try { localStorage.setItem(`${BRANCH_GROUP_COLLAPSED_KEY}:${projectId}`, JSON.stringify([...next])); } catch { /* 同上 */ }
+      return next;
+    });
+  }, [projectId]);
+  /**
+   * 整体保存分组。先乐观更新让拖拽立刻生效；服务端说「别人刚改过」（409）时载入最新版本并说清楚，
+   * 其它失败回滚到保存前。返回是否保存成功，编辑弹窗据此决定关不关。
+   */
+  const branchGroupsRef = useRef<BranchGroupsSettings | null>(null);
+  branchGroupsRef.current = branchGroups;
+  const saveBranchGroups = useCallback(async (nextGroups: BranchGroup[]): Promise<boolean> => {
+    const before = branchGroupsRef.current;
+    setGroupsSaving(true);
+    setGroupsSaveError('');
+    setBranchGroups((current) => ({ groups: nextGroups, updatedAt: current?.updatedAt ?? null, updatedBy: current?.updatedBy ?? null }));
+    try {
+      const res = await apiRequest<BranchGroupsSettings & { ok: boolean }>(
+        `/api/projects/${encodeURIComponent(projectId)}/branch-groups`,
+        { method: 'PUT', body: { groups: nextGroups, baseUpdatedAt: before?.updatedAt ?? null } },
+      );
+      setBranchGroups({ groups: res.groups, updatedAt: res.updatedAt, updatedBy: res.updatedBy });
+      return true;
+    } catch (error) {
+      const body = error instanceof ApiError ? (error.body as { latest?: BranchGroupsSettings; message?: string } | null) : null;
+      if (error instanceof ApiError && error.status === 409 && body?.latest) {
+        setBranchGroups(body.latest);
+        setGroupsSaveError('分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做');
+      } else {
+        setBranchGroups(before);
+        setGroupsSaveError(`保存失败：${body?.message || (error instanceof Error ? error.message : '未知原因')}；已恢复到保存前`);
+      }
+      return false;
+    } finally {
+      setGroupsSaving(false);
+    }
+  }, [projectId]);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState('');
   const [bulkTagError, setBulkTagError] = useState('');
@@ -2330,34 +2486,88 @@ export function BranchListPage(): JSX.Element {
   // 分组收起时那张卡根本没渲染，得先展开（Codex P2，PR #1646）。
   const dormantIdsRef = useRef<Set<string>>(new Set());
   dormantIdsRef.current = new Set(dormantBranches.map((branch) => branch.id));
-  const branchOverview = useMemo(() => {
-    let errored = 0;
-    let building = 0;
-    let queued = 0;
-    let running = 0;
-    let slot: { active: number; max: number } | null = null;
-    for (const branch of branches) {
-      const phase = branchCardPhase({
-        status: branch.status,
-        services: branch.services,
-        buildQueue: branch.buildQueue,
-        ciImageStatus: branch.ciImageStatus,
-        prebuilt: branch.deployRuntime?.prebuilt,
-      });
-      if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
-      if (branchHasDeployFailure(branch)) errored += 1;
-      else if (phase?.key === 'queued') queued += 1;
-      else if (phase && isDeployPhase(phase)) building += 1;
-      else if (branch.status === 'running') running += 1;
+  /* 「按分组」视图的分区：归组判定只走 lib/branchGroups（钉入 > 规则按组序 > 未归组）。 */
+  const groupList = useMemo(() => branchGroups?.groups ?? [], [branchGroups]);
+  const groupedView = viewMode === 'groups' && groupList.length > 0;
+  const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
+  const moveBranchToGroup = useCallback((branch: BranchSummary, groupId: string | null) => {
+    void saveBranchGroups(pinBranch(branchGroupsRef.current?.groups ?? [], branch.id, groupId));
+  }, [saveBranchGroups]);
+  const groupMenu = useMemo<BranchGroupMenu | undefined>(() => (
+    groupedView
+      ? { options: groupList.map((group) => ({ id: group.id, name: group.name })), onMove: moveBranchToGroup }
+      : undefined
+  ), [groupedView, groupList, moveBranchToGroup]);
+  const groupNameById = useMemo(() => new Map(groupList.map((group) => [group.id, group.name])), [groupList]);
+  // 定位卡片时（搜索下拉 / cds:focus-branch），分组视图里目标可能在收起的组、或组内收起的「已停止」行里，
+  // 卡片根本没渲染——先把它所在的组与那一行展开（只临时展开，不改写收起记忆）。
+  const revealInGroupsRef = useRef<(branchId: string) => void>(() => undefined);
+  revealInGroupsRef.current = (branchId: string) => {
+    if (!groupedView) return;
+    const sectionId = groupedBranches.assignment.get(branchId)?.groupId ?? '__ungrouped__';
+    setCollapsedGroups((current) => {
+      if (!current.has(sectionId)) return current;
+      const next = new Set(current);
+      next.delete(sectionId);
+      return next;
+    });
+    if (dormantIdsRef.current.has(branchId)) {
+      setExpandedDormantGroups((current) => (current.has(sectionId) ? current : new Set(current).add(sectionId)));
     }
-    const dormant = branches.filter((branch) => isDormantBranch(branch, actions[branch.id])).length;
-    const parts = [
-      errored ? { text: `${errored} 个出错需要处理`, tone: 'warn' as const } : null,
-      building ? { text: `${building} 个在构建`, tone: 'info' as const } : null,
-      queued ? { text: `${queued} 个排队`, tone: 'info' as const } : null,
-      running ? { text: `${running} 个运行中`, tone: 'plain' as const } : null,
-      dormant ? { text: `${dormant} 个未运行`, tone: 'plain' as const } : null,
-    ].filter((part): part is { text: string; tone: 'warn' | 'info' | 'plain' } => Boolean(part));
+  };
+  const allBranchTags = useMemo(
+    () => Array.from(new Set(branches.flatMap((branch) => branch.tags || []))).sort((a, b) => a.localeCompare(b)),
+    [branches],
+  );
+  const openNewGroupEditor = useCallback(() => {
+    setGroupsSaveError('');
+    setGroupEditor({
+      group: { id: newBranchGroupId(), name: '', color: 'gray', rules: [{ kind: 'prefix', value: '' }], pinnedBranchIds: [] },
+      isNew: true,
+    });
+  }, []);
+  /*
+   * 拖拽：卡片拖进组 = 手动钉入（优先于规则）；拖进「未归组」= 取消钉入；
+   * 组头把手拖到另一组上 = 调顺序（靠上的组优先认领规则命中的分支）。
+   * 用两个 MIME 区分拖的是卡还是组；键盘与触屏走卡片菜单「移到分组」。
+   */
+  const BRANCH_DRAG_TYPE = 'application/x-cds-branch';
+  const GROUP_DRAG_TYPE = 'application/x-cds-branch-group';
+  const onGroupAreaDragStart = useCallback((event: React.DragEvent<HTMLElement>) => {
+    const card = (event.target as HTMLElement).closest?.('[data-branch-card-id]');
+    const branchId = card?.getAttribute('data-branch-card-id');
+    if (!branchId) return;
+    event.dataTransfer.setData(BRANCH_DRAG_TYPE, branchId);
+    event.dataTransfer.effectAllowed = 'move';
+  }, []);
+  const onGroupDragOver = useCallback((event: React.DragEvent<HTMLElement>, targetId: string) => {
+    const types = Array.from(event.dataTransfer.types);
+    const kind: 'branch' | 'group' | null = types.includes(BRANCH_DRAG_TYPE)
+      ? 'branch'
+      : types.includes(GROUP_DRAG_TYPE) && targetId !== '__ungrouped__'
+        ? 'group'
+        : null;
+    if (!kind) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setGroupDropTarget((current) => (current?.id === targetId && current.kind === kind ? current : { id: targetId, kind }));
+  }, []);
+  const onGroupDrop = useCallback((event: React.DragEvent<HTMLElement>, targetId: string) => {
+    event.preventDefault();
+    setGroupDropTarget(null);
+    const branchId = event.dataTransfer.getData(BRANCH_DRAG_TYPE);
+    const current = branchGroupsRef.current?.groups ?? [];
+    if (branchId) {
+      void saveBranchGroups(pinBranch(current, branchId, targetId === '__ungrouped__' ? null : targetId));
+      return;
+    }
+    const fromGroupId = event.dataTransfer.getData(GROUP_DRAG_TYPE) || draggingGroupIdRef.current;
+    if (fromGroupId && targetId !== '__ungrouped__' && fromGroupId !== targetId) {
+      void saveBranchGroups(moveGroupBefore(current, fromGroupId, targetId));
+    }
+  }, [saveBranchGroups]);
+  const branchOverview = useMemo(() => {
+    const { parts, queued, slot } = summarizeBranchStates(branches, actions);
     const infraById = new Map<string, BranchResource>();
     for (const list of branchResourcesById.values()) {
       for (const resource of list) {
@@ -3091,6 +3301,7 @@ export function BranchListPage(): JSX.Element {
   const focusBranchCard = useCallback((branchId: string): void => {
     // 只临时展开、不写回 localStorage：用户收起分组的偏好不因一次定位被改掉。
     if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);
+    revealInGroupsRef.current(branchId);
     setHighlightedBranchId(branchId);
     if (highlightPulseTimerRef.current) {
       window.clearTimeout(highlightPulseTimerRef.current);
@@ -3341,6 +3552,12 @@ export function BranchListPage(): JSX.Element {
           capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
           activeTagFilter={activeTagFilter}
           handlers={cardHandlers}
+          groupMenu={groupMenu}
+          currentGroupId={groupedView ? groupedBranches.assignment.get(branch.id)?.groupId ?? null : null}
+          pinnedGroupName={groupedView && groupedBranches.assignment.get(branch.id)?.via === 'pin'
+            ? groupNameById.get(groupedBranches.assignment.get(branch.id)?.groupId || '') ?? null
+            : null}
+          draggableToGroup={groupedView}
         />
         {rsGroups.map((group, k) => (
           <ReplicaGroupCard
@@ -3353,6 +3570,96 @@ export function BranchListPage(): JSX.Element {
           />
         ))}
       </Fragment>
+    );
+  };
+
+  /* 一个分组区块：组头（与页头同口径的一句话汇总）+ 组内运行中 / 构建中的卡片 + 停止的收成一行。 */
+  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[]): JSX.Element => {
+    const id = group ? group.id : '__ungrouped__';
+    const collapsed = collapsedGroups.has(id);
+    const summary = summarizeBranchStates(list, actions);
+    const active = list.filter((branch) => !isDormantBranch(branch, actions[branch.id]));
+    const dormant = list.filter((branch) => isDormantBranch(branch, actions[branch.id]));
+    const dormantOpen = expandedDormantGroups.has(id);
+    const dropping = groupDropTarget?.id === id ? groupDropTarget : null;
+    const dropHint = !dropping
+      ? ''
+      : dropping.kind === 'branch'
+        ? group ? `松手放入「${group.name}」· 手动钉入，优先于规则` : '松手移出分组 · 回到按规则归组'
+        : `松手把分组挪到「${group?.name || ''}」前面`;
+    return (
+      <section
+        key={id}
+        aria-label={group ? group.name : '未归组'}
+        data-branch-group={id}
+        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !dropping ? 'opacity-85' : ''}`}
+        onDragOver={(event) => onGroupDragOver(event, id)}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setGroupDropTarget((current) => (current?.id === id ? null : current));
+          }
+        }}
+        onDrop={(event) => onGroupDrop(event, id)}
+      >
+        <BranchGroupHeader
+          group={group}
+          count={list.length}
+          parts={summary.parts}
+          collapsed={collapsed}
+          onToggle={() => toggleGroupCollapsed(id)}
+          onEdit={group ? () => { setGroupsSaveError(''); setGroupEditor({ group, isNew: false }); } : undefined}
+          onGripDragStart={group ? (event) => {
+            draggingGroupIdRef.current = group.id;
+            event.dataTransfer.setData(GROUP_DRAG_TYPE, group.id);
+            event.dataTransfer.effectAllowed = 'move';
+          } : undefined}
+          onGripDragEnd={() => { draggingGroupIdRef.current = null; setGroupDropTarget(null); }}
+          dropHint={dropHint}
+        />
+        {!collapsed ? (
+          <>
+            {active.length > 0 ? (
+              <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={() => setGroupDropTarget(null)}>
+                {active.map(renderBranchTile)}
+              </div>
+            ) : null}
+            {dormant.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  className="mt-3 flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md border border-dashed border-[hsl(var(--hairline))] px-3 text-left text-xs text-muted-foreground transition-colors hover:border-[hsl(var(--hairline-strong))] hover:text-foreground"
+                  aria-expanded={dormantOpen}
+                  data-branch-group-dormant-toggle={id}
+                  onClick={() => setExpandedDormantGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  })}
+                >
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${dormantOpen ? '' : '-rotate-90'}`} aria-hidden />
+                  <span className="shrink-0 font-medium text-foreground">
+                    {dormantOpen ? '收起' : '另有'} {dormant.length} 个{dormant.every((branch) => canQuickStartBranch(branch)) ? '已停止' : '未运行'}
+                  </span>
+                  <span className="min-w-0 truncate">
+                    {dormant.some((branch) => canQuickStartBranch(branch)) ? '容器保留，展开后可一键启动' : '推送代码或在分支详情里手动部署后启动'}
+                  </span>
+                </button>
+                {dormantOpen ? (
+                  <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={() => setGroupDropTarget(null)}>
+                    {dormant.map(renderBranchTile)}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            {list.length === 0 ? (
+              <div className="ml-8 mt-2 rounded-lg border border-dashed border-[hsl(var(--hairline))] px-4 py-3 text-xs text-muted-foreground">
+                {group ? '这一组现在没有分支：把卡片拖到这里即可钉入，或编辑规则让新分支自动进来' : '所有分支都已归组'}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </section>
     );
   };
 
@@ -3614,6 +3921,48 @@ export function BranchListPage(): JSX.Element {
                       <span>进行中 · 排队 {branchOverview.queued}</span>
                     </span>
                   ) : null}
+                  {/* 视图切换（2026-09-29 自定义分组）：「按状态」是默认视图；「按分组」按项目共享的分组规则分区。 */}
+                  <div className="inline-flex shrink-0 gap-0.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 p-[3px]" role="group" aria-label="分支视图">
+                    {([['status', '按状态'], ['groups', '按分组']] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        aria-pressed={viewMode === mode}
+                        data-branch-view-toggle={mode}
+                        className={`h-7 rounded-md px-3 text-[0.8125rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${viewMode === mode ? 'bg-[hsl(var(--surface-raised))] font-semibold text-foreground shadow-[0_0_0_1px_hsl(var(--hairline-strong))]' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setViewMode(mode)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {viewMode === 'groups' && groupList.length > 0 ? (
+                    <DropdownMenu
+                      width={240}
+                      trigger={(
+                        <Button type="button" variant="outline" size="sm" className="h-8" data-branch-group-manage>
+                          <Users />
+                          管理分组
+                        </Button>
+                      )}
+                    >
+                      <DropdownLabel>编辑分组</DropdownLabel>
+                      {groupList.map((group) => (
+                        <DropdownItem
+                          key={group.id}
+                          onSelect={() => { setGroupsSaveError(''); setGroupEditor({ group, isNew: false }); }}
+                        >
+                          <Pencil className="h-4 w-4 shrink-0" />
+                          <span className="min-w-0 truncate">{group.name}</span>
+                        </DropdownItem>
+                      ))}
+                      <DropdownDivider />
+                      <DropdownItem onSelect={openNewGroupEditor}>
+                        <Plus className="h-4 w-4 shrink-0" />
+                        新建分组
+                      </DropdownItem>
+                    </DropdownMenu>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -3683,43 +4032,74 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
             ) : (
-              <>
-                {activeBranches.length > 0 ? (
-                  <div className="cds-branch-card-grid">
-                    {activeBranches.map(renderBranchTile)}
-                  </div>
-                ) : null}
-                {dormantBranches.length > 0 ? (
-                  <section className={activeBranches.length > 0 ? 'mt-8' : ''} aria-label="未运行的分支">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <button
-                        type="button"
-                        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-[hsl(var(--hairline-strong))] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                        aria-expanded={!dormantCollapsed}
-                        onClick={() => {
-                          const next = !dormantCollapsed;
-                          setDormantCollapsed(next);
-                          try { localStorage.setItem(DORMANT_COLLAPSED_KEY, next ? '1' : '0'); } catch { /* 隐私模式：只影响记忆，不影响开合 */ }
-                        }}
-                      >
-                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${dormantCollapsed ? '-rotate-90' : ''}`} aria-hidden />
-                        {dormantBranches.every((branch) => canQuickStartBranch(branch)) ? '已停止' : '未运行'} · {dormantBranches.length}
-                      </button>
-                      <span className="min-w-0 truncate text-xs text-muted-foreground">
-                        {dormantBranches.some((branch) => canQuickStartBranch(branch))
-                          ? '容器保留，点卡片右下角「一键启动」秒级恢复，不拉代码、不重建镜像'
-                          : '推送代码或在分支详情里手动部署后启动'}
-                      </span>
-                      <span className="h-px min-w-6 flex-1 bg-[hsl(var(--hairline))]" aria-hidden />
+              viewMode === 'groups' ? (
+                <div className="flex flex-col gap-4" data-branch-view="groups">
+                  {groupsSaveError ? (
+                    <div className="flex items-center gap-3 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-warn" role="alert">
+                      <span className="min-w-0 flex-1">{groupsSaveError}</span>
+                      <button type="button" className="shrink-0 text-xs underline-offset-2 hover:underline" onClick={() => setGroupsSaveError('')}>知道了</button>
                     </div>
-                    {!dormantCollapsed ? (
-                      <div className="cds-branch-card-grid mt-4">
-                        {dormantBranches.map(renderBranchTile)}
+                  ) : null}
+                  {groupsLoadError ? (
+                    <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                      分组读取失败：{groupsLoadError}。刷新页面重试；在此之前可切回「按状态」查看全部分支。
+                    </div>
+                  ) : !branchGroups ? (
+                    <div className="px-2 text-sm text-muted-foreground">正在读取分组…</div>
+                  ) : groupList.length === 0 ? (
+                    <BranchGroupSuggestions
+                      branches={sortedBranches}
+                      saving={groupsSaving}
+                      error={groupsSaveError}
+                      onCreate={(groups) => { void saveBranchGroups(groups); }}
+                      onBlank={openNewGroupEditor}
+                    />
+                  ) : (
+                    <>
+                      {groupedBranches.sections.map(({ group, branches: list }) => renderGroupSection(group, list))}
+                      {renderGroupSection(null, groupedBranches.ungrouped)}
+                    </>
+                  )}
+                </div>
+              ) : (
+              <>
+                  {activeBranches.length > 0 ? (
+                    <div className="cds-branch-card-grid">
+                      {activeBranches.map(renderBranchTile)}
+                    </div>
+                  ) : null}
+                  {dormantBranches.length > 0 ? (
+                    <section className={activeBranches.length > 0 ? 'mt-8' : ''} aria-label="未运行的分支">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <button
+                          type="button"
+                          className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-[hsl(var(--hairline-strong))] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                          aria-expanded={!dormantCollapsed}
+                          onClick={() => {
+                            const next = !dormantCollapsed;
+                            setDormantCollapsed(next);
+                            try { localStorage.setItem(DORMANT_COLLAPSED_KEY, next ? '1' : '0'); } catch { /* 隐私模式：只影响记忆，不影响开合 */ }
+                          }}
+                        >
+                          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${dormantCollapsed ? '-rotate-90' : ''}`} aria-hidden />
+                          {dormantBranches.every((branch) => canQuickStartBranch(branch)) ? '已停止' : '未运行'} · {dormantBranches.length}
+                        </button>
+                        <span className="min-w-0 truncate text-xs text-muted-foreground">
+                          {dormantBranches.some((branch) => canQuickStartBranch(branch))
+                            ? '容器保留，点卡片右下角「一键启动」秒级恢复，不拉代码、不重建镜像'
+                            : '推送代码或在分支详情里手动部署后启动'}
+                        </span>
+                        <span className="h-px min-w-6 flex-1 bg-[hsl(var(--hairline))]" aria-hidden />
                       </div>
-                    ) : null}
-                  </section>
-                ) : null}
-              </>
+                      {!dormantCollapsed ? (
+                        <div className="cds-branch-card-grid mt-4">
+                          {dormantBranches.map(renderBranchTile)}
+                        </div>
+                      ) : null}
+                    </section>
+                  ) : null}
+                </>
+              )
             )}
           </div>
         ) : null}
@@ -3729,6 +4109,29 @@ export function BranchListPage(): JSX.Element {
         {/* Branch detail drawer — opens when 详情 is clicked on a card.
             Avoids the page navigation the user explicitly asked us to skip
             ("能在一个页面完成的，切勿跳转页面"). */}
+        <BranchGroupEditorDialog
+          open={Boolean(groupEditor)}
+          initial={groupEditor?.group ?? null}
+          isNew={Boolean(groupEditor?.isNew)}
+          groups={groupList}
+          branches={sortedBranches}
+          tags={allBranchTags}
+          updatedAt={branchGroups?.updatedAt ?? null}
+          updatedBy={branchGroups?.updatedBy ?? null}
+          saving={groupsSaving}
+          error={groupsSaveError}
+          onClose={() => setGroupEditor(null)}
+          onSave={(group) => {
+            const current = branchGroupsRef.current?.groups ?? [];
+            const exists = current.some((item) => item.id === group.id);
+            const next = exists ? current.map((item) => (item.id === group.id ? group : item)) : [...current, group];
+            void saveBranchGroups(next).then((ok) => { if (ok) setGroupEditor(null); });
+          }}
+          onDelete={(groupId) => {
+            const current = branchGroupsRef.current?.groups ?? [];
+            void saveBranchGroups(current.filter((item) => item.id !== groupId)).then((ok) => { if (ok) setGroupEditor(null); });
+          }}
+        />
         <ReleaseBranchDialog
           branch={state.status === 'ok' && releaseBranchId ? state.branches.find((b) => b.id === releaseBranchId) || null : null}
           previewUrl={(() => {
@@ -5130,6 +5533,13 @@ function releaseCheckStatusLabel(status: ReleasePreflightCheck['status']): strin
  * 经 latest-ref 模式产出**恒定引用**的一个对象——这是 BranchCard 能被
  * React.memo 跳过重渲染的前提（旧写法每张卡 17 个内联箭头，浅比较永远不中）。
  */
+/** 所有卡片共用一份（按分组列表 memo），不破坏 BranchCard 的 memo。 */
+interface BranchGroupMenu {
+  options: Array<{ id: string; name: string }>;
+  /** groupId 为 null = 取消钉入，回到按规则归组。 */
+  onMove: (branch: BranchSummary, groupId: string | null) => void;
+}
+
 interface BranchCardHandlers {
   onPreview: (branch: BranchSummary) => void;
   onRelease: (branch: BranchSummary) => void;
@@ -5318,6 +5728,10 @@ const BranchCard = memo(function BranchCard({
   activityEvents = EMPTY_ACTIVITY,
   activeTagFilter,
   handlers,
+  groupMenu,
+  currentGroupId,
+  pinnedGroupName,
+  draggableToGroup,
 }: {
   branch: BranchSummary;
   resources: BranchResource[];
@@ -5342,6 +5756,14 @@ const BranchCard = memo(function BranchCard({
   // 当前激活的标签过滤(给 chip 高亮显示用)
   activeTagFilter?: string | null;
   handlers: BranchCardHandlers;
+  /** 「按分组」视图下的「移到分组」菜单；没有分组时不传，菜单里就不出现这一段。 */
+  groupMenu?: BranchGroupMenu;
+  /** 这张卡此刻归哪组（按钉入或规则）；未归组为 null。 */
+  currentGroupId?: string | null;
+  /** 手动钉入时的组名：名字旁出现图钉。按规则归组的不显示。 */
+  pinnedGroupName?: string | null;
+  /** 「按分组」视图下卡片可拖进组头。 */
+  draggableToGroup?: boolean;
 }): JSX.Element {
   /*
    * BranchTile — compact card inside the adaptive branch grid. Primary
@@ -5820,6 +6242,7 @@ const BranchCard = memo(function BranchCard({
       ref={cardRef}
       data-branch-card-id={branch.id}
       data-deploy-phase={deployPhaseAttr}
+      draggable={draggableToGroup || undefined}
       className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : showsIssue ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         failedPhase
           // 刚在眼前失败（含单服务部署失败、分支仍 running）：红边框承担「构建失败」信号；
@@ -5890,6 +6313,15 @@ const BranchCard = memo(function BranchCard({
                 {branch.branch}
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-warn" /> : null}
+              {pinnedGroupName ? (
+                <Pin
+                  className="h-3 w-3 shrink-0 text-primary"
+                  aria-label={`已手动钉入「${pinnedGroupName}」`}
+                  data-branch-pinned-group={pinnedGroupName}
+                >
+                  <title>{`已手动钉入「${pinnedGroupName}」，优先于规则`}</title>
+                </Pin>
+              ) : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
               {branch.mirror ? (
                 <span
@@ -5934,6 +6366,9 @@ const BranchCard = memo(function BranchCard({
             onToggleDebug={onToggleDebug}
             onEditTags={onEditTags}
             onDelete={onDelete}
+            groupMenu={groupMenu}
+            currentGroupId={currentGroupId ?? null}
+            pinned={Boolean(pinnedGroupName)}
           />
         </div>
       </header>
@@ -6924,6 +7359,9 @@ function BranchMoreMenu({
   onToggleDebug,
   onEditTags,
   onDelete,
+  groupMenu,
+  currentGroupId,
+  pinned,
 }: {
   busy: boolean;
   deleteDisabled: boolean;
@@ -6936,6 +7374,9 @@ function BranchMoreMenu({
   onToggleDebug: () => void;
   onEditTags: () => void;
   onDelete: () => void;
+  groupMenu?: BranchGroupMenu;
+  currentGroupId: string | null;
+  pinned: boolean;
 }): JSX.Element {
   return (
     <>
@@ -7001,6 +7442,30 @@ function BranchMoreMenu({
         </DropdownItem>
         {/* 关联 PR：原本是标题行的一枚徽章，2026-08-05 按用户要求收进本菜单，
             把标题宽度还给分支名。URL 走 lib/github-urls 唯一拼装源。 */}
+        {/* 移到分组：拖拽的键盘 / 触屏等价入口。钉入优先于规则；取消钉入后按规则重新归组。 */}
+        {groupMenu && groupMenu.options.length > 0 ? (
+          <>
+            <DropdownDivider />
+            <DropdownLabel>移到分组</DropdownLabel>
+            {groupMenu.options.map((option) => (
+              <DropdownItem
+                key={option.id}
+                onSelect={() => groupMenu.onMove(branch, option.id)}
+                disabled={pinned && option.id === currentGroupId}
+              >
+                <FolderInput className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 truncate">{option.name}</span>
+                {option.id === currentGroupId ? <span className="ml-auto shrink-0 text-xs text-muted-foreground">当前</span> : null}
+              </DropdownItem>
+            ))}
+            {pinned ? (
+              <DropdownItem onSelect={() => groupMenu.onMove(branch, null)}>
+                <Pin className="h-4 w-4 shrink-0" />
+                取消钉入（按规则归组）
+              </DropdownItem>
+            ) : null}
+          </>
+        ) : null}
         {branch.githubPrNumber && branch.githubRepoFullName ? (
           <DropdownItem
             asChild
