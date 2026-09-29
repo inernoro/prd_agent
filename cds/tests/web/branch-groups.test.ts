@@ -220,6 +220,9 @@ describe('前后端枚举一致', () => {
     // 只读（镜像）时不给出拖了也不会生效的把手：把手的渲染条件看回调，不只看是不是真分组
     const header = read('components/branch-groups/BranchGroupHeader.tsx');
     expect(header).toContain('{group && onGripDragStart ? (');
+    // 不会改变任何东西的钉入 / 移出不发请求；按规则归组的分支拖到「未归组」时说清该改哪组的规则
+    expect(page).toContain('if (!groupId && !pinnedIn) {');
+    expect(page).toContain('if (groupId && pinnedIn?.id === groupId) return;');
     // 只读项目的空分组不提示「拖到这里 / 编辑规则」
     expect(page).toContain("'这一组现在没有分支（分组只读，要在父实例上调整）'");
     // 下拉菜单限高只取实际剩余空间，不垫最小高度（矮视口里会伸出视口）

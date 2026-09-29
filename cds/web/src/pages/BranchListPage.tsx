@@ -2652,9 +2652,24 @@ export function BranchListPage(): JSX.Element {
   const groupsReadOnly = Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
+  // 当前每个分支归哪组、怎么归进去的；拖放 / 菜单移组前用来判断这次操作会不会真的改变什么
+  const groupAssignmentRef = useRef<Map<string, { groupId: string; via: 'pin' | 'rule' }>>(new Map());
+  groupAssignmentRef.current = groupedBranches.assignment;
   // 钉入前先看目标组满没满（每组最多 200 个）：满了就说清楚，不发一个后端必然拒绝的请求（Codex P2，PR #1647）。
   const pinIntoGroup = useCallback((branchId: string, groupId: string | null) => {
-    const target = groupId ? (branchGroupsRef.current?.groups ?? []).find((group) => group.id === groupId) : undefined;
+    const current = branchGroupsRef.current?.groups ?? [];
+    const pinnedIn = current.find((group) => group.pinnedBranchIds.includes(branchId));
+    // 不会改变任何东西的操作不发请求：发了也只是原样替换一次，却推进共享版本号，
+    // 可能让别人同时保存的真实修改撞上冲突（Codex P2，PR #1647）。
+    if (!groupId && !pinnedIn) {
+      // 按规则归进来的分支，取消钉入之后规则会立刻把它认领回去：拖到「未归组」移不出来，说清楚该改哪儿
+      const byRule = groupAssignmentRef.current.get(branchId);
+      const ruleGroup = byRule?.via === 'rule' ? current.find((group) => group.id === byRule.groupId) : undefined;
+      if (ruleGroup) setGroupsSaveError(`这个分支是按「${ruleGroup.name}」的规则归进来的，拖到「未归组」移不出来；要移出，请编辑「${ruleGroup.name}」的规则`);
+      return;
+    }
+    if (groupId && pinnedIn?.id === groupId) return;
+    const target = groupId ? current.find((group) => group.id === groupId) : undefined;
     if (target && !groupAcceptsPin(target, branchId)) {
       setGroupsSaveError(`「${target.name}」已钉入 ${BRANCH_GROUP_LIMITS.pinsPerGroup} 个分支，到上限了；先在编辑里移除几个，或改用规则归组`);
       return;

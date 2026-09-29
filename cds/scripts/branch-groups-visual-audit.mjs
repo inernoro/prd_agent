@@ -357,6 +357,17 @@ async function main() {
         check(await sectionOf(page, 'b-main') === '__ungrouped__' && !(await page.$('[data-branch-card-id="b-main"] [data-branch-pinned-group]')),
           '拖回未归组取消钉入，图钉消失');
 
+        // 5b. 按规则归组的卡拖到「未归组」：移不出来（规则会立刻认领回去），不发请求、不推进版本号，
+        //     提示去改哪一组的规则（Codex P2，PR #1647）
+        {
+          const putsBefore = puts.length;
+          const versionBefore = groupStore.updatedAt;
+          await dragTo(page, '[data-branch-card-id="b-scan"]', '[data-branch-group="__ungrouped__"]');
+          const banner = (await page.textContent('[data-branch-view="groups"] [role="alert"]').catch(() => '')) || '';
+          check(puts.length === putsBefore && groupStore.updatedAt === versionBefore && await sectionOf(page, 'b-scan') === claudeId && /的规则归进来的/.test(banner),
+            `按规则归组的卡拖到未归组不发请求，并提示去改规则（请求 ${puts.length - putsBefore} 次，「${banner.trim().slice(0, 40)}」）`);
+        }
+
         // 6. 收起分组：卡片不渲染，组头汇总照样在
         await page.click(`[data-branch-group="${claudeId}"] button[aria-label="收起Claude 在做"]`);
         await page.waitForTimeout(300);
