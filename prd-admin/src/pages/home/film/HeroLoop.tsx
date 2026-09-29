@@ -67,7 +67,7 @@ export function heroLoopBeat(t: number, prompts: [string, string]): HeroLoopBeat
 }
 
 /** 背景：纯画面，不带任何字。compact = 手机竖屏构图。 */
-export function HeroLoop({ t, w, h, compact = false }: { t: number; w: number; h: number; compact?: boolean }) {
+export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: number; h: number; compact?: boolean; dpr?: number }) {
   const galaxyLt = t - (SHOTS[0].pressAt + 0.1);
   // 镜头 A → B 的交叉溶解，B 收尾淡回深空
   const toB = easeInOutCubic(span(t, 8.0, 9.0));
@@ -78,9 +78,10 @@ export function HeroLoop({ t, w, h, compact = false }: { t: number; w: number; h
   const frame = useMemo<GalaxyFrame>(
     () =>
       compact
-        ? { cx: w * 0.5, cy: h * 0.68, radius: w * 0.72, labels: false, dpr: 2, sky: false, glow: 0.55 }
-        : { cx: w * 0.5, cy: h * 0.6, radius: h * 0.56, labels: false, dpr: 1, sky: false },
-    [compact, w, h],
+        ? // 手机：作品在屏幕正中，标题在上、输入框在下，从上往下读是「标题 → 作品 → 生成它的那句话」
+          { cx: w * 0.5, cy: h * 0.52, radius: w * 0.7, labels: false, dpr: dpr ?? 2, sky: false, glow: 0.55 }
+        : { cx: w * 0.5, cy: h * 0.6, radius: h * 0.56, labels: false, dpr: dpr ?? 1, sky: false },
+    [compact, w, h, dpr],
   );
   const skyFrame = useMemo<GalaxyFrame>(
     () => ({ ...frame, sky: true, nodes: false, starsAlways: true }),
@@ -90,7 +91,7 @@ export function HeroLoop({ t, w, h, compact = false }: { t: number; w: number; h
   // 镜头 B：四张图的构图。宽屏一行四张、向远处微倾；手机两行两张
   const push = 1 + 0.08 * easeOutCubic(span(t, 9.0, HERO_LOOP_DURATION));
   const tiles = compact
-    ? { cols: 2, tw: w * 0.42, th: w * 0.42 * 0.72, gap: w * 0.04, top: h * 0.5 }
+    ? { cols: 2, tw: w * 0.42, th: w * 0.42 * 0.72, gap: w * 0.04, top: h * 0.52 - (w * 0.42 * 0.72 + w * 0.02) }
     : { cols: 4, tw: w * 0.17, th: w * 0.17 * 1.18, gap: w * 0.02, top: h * 0.6 };
   const gridW = tiles.cols * tiles.tw + (tiles.cols - 1) * tiles.gap;
 
@@ -171,7 +172,9 @@ export function HeroLoop({ t, w, h, compact = false }: { t: number; w: number; h
         style={{
           position: 'absolute',
           inset: 0,
-          background: `radial-gradient(ellipse 70% 55% at 50% ${compact ? 34 : 40}%, ${FILM.spaceEdge}B3 0%, ${FILM.spaceEdge}00 70%), linear-gradient(180deg, ${FILM.spaceEdge}CC 0%, ${FILM.spaceEdge}00 22%, ${FILM.spaceEdge}00 78%, ${FILM.spaceEdge}99 100%)`,
+          background: compact
+            ? `linear-gradient(180deg, ${FILM.spaceEdge}F2 0%, ${FILM.spaceEdge}99 24%, ${FILM.spaceEdge}00 38%, ${FILM.spaceEdge}00 66%, ${FILM.spaceEdge}B3 80%, ${FILM.spaceEdge}F2 100%)`
+            : `radial-gradient(ellipse 70% 55% at 50% 40%, ${FILM.spaceEdge}B3 0%, ${FILM.spaceEdge}00 70%), linear-gradient(180deg, ${FILM.spaceEdge}CC 0%, ${FILM.spaceEdge}00 22%, ${FILM.spaceEdge}00 78%, ${FILM.spaceEdge}99 100%)`,
         }}
       />
     </div>

@@ -6,6 +6,7 @@ import { Reveal } from '../components/Reveal';
 import { useLanguage } from '../contexts/LanguageContext';
 import { FILM } from './filmPalette';
 import { FilmScorePlayer } from './filmScore';
+import { FILM_PLAY_EVENT } from './filmEvents';
 import { FilmTrackPlayer, loadFilmTrack, type FilmAudio } from './filmTrack';
 import { FilmStage, STAGE_H, STAGE_W } from './FilmStage';
 import { FILM_DURATION, FILM_SCENES, POSTER_TIME, formatClock } from './filmTimeline';
@@ -204,6 +205,33 @@ export function FilmSection() {
       return !m;
     });
   }, []);
+
+  // ── 首屏「观看完整片花」：同一个手势里建好音频 → 滚过来 → 露出来就从头带声播 ──
+  const pendingPlayRef = useRef(false);
+  useEffect(() => {
+    const onRequest = () => {
+      void ensureAudio();
+      setMuted(false);
+      pendingPlayRef.current = true;
+      frameRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    window.addEventListener(FILM_PLAY_EVENT, onRequest);
+    return () => window.removeEventListener(FILM_PLAY_EVENT, onRequest);
+  }, [ensureAudio]);
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting || !pendingPlayRef.current) return;
+        pendingPlayRef.current = false;
+        void startAt(0);
+      },
+      { threshold: 0.6 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [startAt]);
 
   // ── 滚出视口 / 切走标签页：自动暂停，不在看不见的地方放歌 ──
   useEffect(() => {

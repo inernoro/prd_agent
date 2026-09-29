@@ -483,7 +483,7 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     // 这条渐变已经被手抄过三份（页脚徽标 / 产品预览发送键 / 导航 Logo 的 SVG stop），
     // 每一份都各自漂移、各自配错前景色，而且**抄过去就脱离了守卫视野**——
     // 判据只认得出名字，认不出色值。所以直接禁掉色值副本：
-    // 官网里除 HeroSection（SSOT 所在）外，不许再出现这三个色标。
+    // 官网里除 SSOT 所在的 heroGradient.ts（2026-09-29 从 HeroSection 挪出，断循环引用）外，不许再出现这三个色标。
     const { HERO_GRADIENT_STOPS } = await import('../../pages/home/sections/HeroSection');
     const offenders: string[] = [];
 
@@ -493,7 +493,7 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     const COPY_WINDOW = 240;
     for (const file of walk(path.join(SRC, 'pages/home'))) {
       const rel = file.slice(SRC.length + 1);
-      if (rel.endsWith('sections/HeroSection.tsx')) continue;
+      if (rel.endsWith('sections/heroGradient.ts')) continue;
       const content = fs.readFileSync(file, 'utf8').toLowerCase();
       for (let at = 0; at < content.length; at += COPY_WINDOW / 2) {
         const window = content.slice(at, at + COPY_WINDOW);

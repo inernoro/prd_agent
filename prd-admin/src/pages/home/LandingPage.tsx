@@ -117,13 +117,6 @@ function LandingInner() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleGetStarted = () => navigate('/login');
-  /*
-   * 次 CTA 原来滚到 #cinema —— 那一幕（片花，Coming soon 占位）早就撤了，
-   * 于是这颗按钮点下去什么都不发生，一直是个死链。改成滚到第一幕真面板。
-   */
-  const handleWatchDemo = () => {
-    document.getElementById('literary')?.scrollIntoView({ behavior: 'smooth' });
-  };
 
   /*
    * 导航锚点必须落在真实存在的幕上。
@@ -300,7 +293,7 @@ function LandingInner() {
           屏外区块跳过渲染与内部无限动画的绘制（13 幕全常驻渲染是滚动卡顿主因之一）。
           containIntrinsicSize 提供占位高度估值，避免滚动条跳动。 */}
       <div id="hero">
-        <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />
+        <HeroSection onGetStarted={handleGetStarted} />
       </div>
 
       <div id="stats" style={BELOW_FOLD_SECTION}>

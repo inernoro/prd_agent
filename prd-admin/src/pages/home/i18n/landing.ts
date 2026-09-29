@@ -401,7 +401,14 @@ export interface TranslationShape {
     title: string;
     subtitle: string;
     primaryCta: string;
-    secondaryCta: string;
+    /** 首屏满屏循环上那一行短句（原 subtitle 两行太长，压在画面上太挤） */
+    tagline: string;
+    /** 首屏输入框里依次打出的两句话，分别对应背景的两个镜头（知识星系 / 四张海报） */
+    loopPrompts: [string, string];
+    /** 两句话各由哪个 Agent 接，显示在输入框左侧的小标签上 */
+    loopAgents: [string, string];
+    /** 右下角「观看完整片花」 */
+    watchFilm: string;
     techBarLabel: string;
     techItems: string[];
   };
@@ -447,8 +454,10 @@ const zh: TranslationShape = {
     subtitle:
       '三十几个 Agent 在同一个台面上干活，模型调度和交付环境都在下面接着。你说一句话，产物落在画布或文档里，不是聊天记录里。',
     primaryCta: '进入 MAP',
-    // 原来是「观看片花」，指向的 #cinema 那一幕早就撤了 —— 一颗点下去什么也不发生的按钮
-    secondaryCta: '看它怎么干活',
+    tagline: '说一句话，产物落在画布或文档里，不在聊天记录里',
+    loopPrompts: ['把仓库的 doc/ 目录同步进知识库', '为新品发布会做一张海报：暖色，留白'],
+    loopAgents: ['知识库', '视觉创作'],
+    watchFilm: '观看完整片花',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
@@ -1090,7 +1099,10 @@ const en: TranslationShape = {
     subtitle:
       'Thirty-odd agents working on one desk, with model routing and delivery environments underneath. Say a sentence — the artifact lands on a canvas or in a document, not in a chat log.',
     primaryCta: 'Enter MAP',
-    secondaryCta: 'See it work',
+    tagline: 'Say one sentence. The result lands on a canvas or in a doc, not in a chat log.',
+    loopPrompts: ["Sync this repo's doc/ folder into the knowledge base", 'A launch poster: warm tones, lots of air'],
+    loopAgents: ['Knowledge', 'Visual'],
+    watchFilm: 'Watch the film',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',

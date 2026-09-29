@@ -11,3 +11,5 @@
 | fix | prd-admin | 首页「体验地图」色块图的文字被横向拉宽压扁：SVG 由固定 viewBox 非等比拉伸改为量出真实像素后排布，字形不再变形；新增守卫禁止首页在非等比拉伸的 SVG 里写字 |
 | polish | prd-admin | 片花视觉创作一幕：标题讲完即抬窗，打字挪到窗口抬到位之后，输入框全程在画面内（此前打字时输入框落在画面外）；控制条时间改用正文字体等宽数字，不再用像素字体 |
 | feat | prd-admin | 首屏满屏循环样片（未接入首页，待拍板）：`HeroLoop` 两个无字镜头（知识星系生长 / 四张海报显影）配输入框里对应的那句话，16 秒首尾无缝；样片页 `scripts/film/hero-sample.html`，导出脚本新增 `FILM_PAGE` / `FILM_SIZE` / `FILM_DPR` / `FILM_AUDIO=none` |
+| feat | prd-admin | 首页第一屏改为满屏无字循环（HeroStage）：背景是知识星系生长与四张海报显影两个镜头，输入框里依次打出生成它们的那句话；手机端标题在上、作品居中、输入框贴底；右下角「观看完整片花」点一下即滚到片花并带声开播；撤掉原两栏首屏、3D 墨滴与地平线装饰；看不见时暂停，系统开启减少动态时停在一帧 |
+| refactor | prd-admin | 品牌渐变色标挪到 `sections/heroGradient.ts`（HeroSection 原样转出），断开 HeroSection 与片花调色板之间的循环引用；色标守卫同步指向新文件 |

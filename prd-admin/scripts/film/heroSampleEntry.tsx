@@ -1,14 +1,14 @@
 import ReactDOM from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { BookOpen, Image as ImageIcon, Play, Volume2 } from 'lucide-react';
 import '@/styles/tailwind.css';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
 
-import { translations } from '@/pages/home/i18n/landing';
+import { LanguageProvider } from '@/pages/home/contexts/LanguageContext';
 import { FILM } from '@/pages/home/film/filmPalette';
 import { HERO_LOOP_DURATION, HERO_LOOP_ENTRY, HeroLoop, heroLoopBeat } from '@/pages/home/film/HeroLoop';
-import { FILM_DURATION, formatClock } from '@/pages/home/film/filmTimeline';
+import { translations } from '@/pages/home/i18n/landing';
+import { HeroStage } from '@/pages/home/sections/HeroStage';
 
 /**
  * 首屏样片：把满屏循环背景和现有首屏的导航、主标题、输入框叠在一起，逐帧导出成一段录屏给人拍板。
@@ -24,12 +24,89 @@ const q = new URLSearchParams(window.location.search);
 const W = Number(q.get('w') || 1920);
 const H = Number(q.get('h') || 1080);
 const compact = W < 700;
-const tr = translations.zh;
-const PROMPTS: [string, string] = ['把仓库的 doc/ 目录同步进知识库', '为新品发布会做一张海报：暖色，留白'];
-const AGENTS = [
-  { icon: BookOpen, label: '知识库' },
-  { icon: ImageIcon, label: '视觉创作' },
-];
+/** 手机版式对比稿：a = 正式版（HeroStage），b / c / d 只在样片里，拍板后再决定进不进正式代码 */
+const VARIANT = (q.get('variant') || 'a') as 'a' | 'b' | 'c' | 'd';
+const hero = translations.zh.hero;
+const serif = '"Noto Sans SC", Inter, sans-serif';
+
+function PromptRow({ t, dense }: { t: number; dense?: boolean }) {
+  const beat = heroLoopBeat(t, hero.loopPrompts);
+  const caret = beat.typing && Math.floor(t * 2.2) % 2 === 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: dense ? 50 : 56, padding: '6px 6px 6px 14px', borderRadius: 18, background: `${FILM.panel}C7`, border: `1px solid ${FILM.lineStrong}`, backdropFilter: 'blur(18px)' }}>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 1.4, color: FILM.text }}>
+        <span style={{ color: FILM.sand, marginRight: 8, fontSize: 12 }}>{hero.loopAgents[beat.shot]}</span>
+        {beat.shown}
+        <span style={{ display: 'inline-block', width: 2, height: 14, marginLeft: 3, verticalAlign: 'middle', background: FILM.clay, opacity: caret ? 1 : 0 }} />
+      </span>
+      <span style={{ padding: '10px 14px', borderRadius: 14, background: FILM.brandGradient, color: FILM.onBrand, fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>{hero.primaryCta}</span>
+    </div>
+  );
+}
+
+/** B 杂志封面：作品铺满，大标题靠左压在底部三分之一，输入框在最下 */
+function VariantB({ t }: { t: number }) {
+  return (
+    <div style={{ position: 'absolute', inset: 0 }}>
+      <HeroLoop t={t} w={W} h={H} compact />
+      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: H * 0.5, background: `linear-gradient(180deg, ${FILM.spaceEdge}00, ${FILM.spaceEdge}F2 55%)` }} />
+      <div style={{ position: 'absolute', left: 22, right: 22, bottom: 34 }}>
+        <div style={{ fontSize: 11, letterSpacing: '0.24em', color: FILM.gray, marginBottom: 12 }}>MAP · 米多智能体生态平台</div>
+        <div style={{ fontFamily: serif, fontSize: 50, fontWeight: 800, lineHeight: 1.02, letterSpacing: '-0.045em', background: FILM.titleGradient, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          让创造，
+          <br />
+          自由呼吸
+        </div>
+        <div style={{ marginTop: 12, marginBottom: 22, fontSize: 14, lineHeight: 1.6, color: FILM.textDim, maxWidth: 290 }}>{hero.tagline}</div>
+        <PromptRow t={t} />
+      </div>
+    </div>
+  );
+}
+
+/** C 画框：作品装进居中的圆角画框，画框下像展签一样写着那句提示词 */
+function VariantC({ t }: { t: number }) {
+  const beat = heroLoopBeat(t, hero.loopPrompts);
+  const fw = W - 36;
+  const fh = Math.round(fw * 1.12);
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: FILM.bg }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 84, textAlign: 'center' }}>
+        <div style={{ fontFamily: serif, fontSize: 34, fontWeight: 800, letterSpacing: '-0.04em', background: FILM.titleGradient, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>{hero.title}</div>
+      </div>
+      <div style={{ position: 'absolute', left: 18, top: 150, width: fw, height: fh, borderRadius: 28, overflow: 'hidden', border: `1px solid ${FILM.lineStrong}`, boxShadow: `${FILM.shadow}, 0 0 80px ${FILM.clay}22` }}>
+        <HeroLoop t={t} w={fw} h={fh} compact />
+      </div>
+      <div style={{ position: 'absolute', left: 26, right: 26, top: 150 + fh + 18, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <span style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, background: FILM.brandGradient }} />
+        <div>
+          <div style={{ fontSize: 11, letterSpacing: '0.2em', color: FILM.gray }}>{hero.loopAgents[beat.shot]} · 一句话生成</div>
+          <div style={{ marginTop: 6, fontSize: 16, lineHeight: 1.5, color: FILM.text, minHeight: 48 }}>“{beat.shown}”</div>
+        </div>
+      </div>
+      <div style={{ position: 'absolute', left: 18, right: 18, bottom: 28, display: 'flex', gap: 10 }}>
+        <span style={{ flex: 1, textAlign: 'center', padding: '15px 0', borderRadius: 16, background: FILM.brandGradient, color: FILM.onBrand, fontSize: 15, fontWeight: 700 }}>{hero.primaryCta}</span>
+        <span style={{ padding: '15px 18px', borderRadius: 16, border: `1px solid ${FILM.lineStrong}`, color: FILM.text, fontSize: 14 }}>片花 0:57</span>
+      </div>
+    </div>
+  );
+}
+
+/** D 底部抽屉：作品满屏，标题、提示词、按钮全收进底部一块磨砂面板 */
+function VariantD({ t }: { t: number }) {
+  return (
+    <div style={{ position: 'absolute', inset: 0 }}>
+      <HeroLoop t={t} w={W} h={H + 120} compact />
+      <div style={{ position: 'absolute', left: 10, right: 10, bottom: 10, padding: '22px 18px 18px', borderRadius: 30, background: `${FILM.panel}B8`, border: `1px solid ${FILM.lineStrong}`, backdropFilter: 'blur(24px) saturate(150%)', boxShadow: FILM.shadow }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: FILM.lineStrong, margin: '-8px auto 16px' }} />
+        <div style={{ fontFamily: serif, fontSize: 30, fontWeight: 800, letterSpacing: '-0.04em', color: FILM.text }}>{hero.title}</div>
+        <div style={{ marginTop: 8, marginBottom: 18, fontSize: 13.5, lineHeight: 1.6, color: FILM.textDim }}>{hero.tagline}</div>
+        <PromptRow t={t} dense />
+        <div style={{ marginTop: 14, textAlign: 'center', fontSize: 12.5, color: FILM.gray }}>观看完整片花 · 0:57 · 有声</div>
+      </div>
+    </div>
+  );
+}
 const NAV = ['产品', 'Agent', '工作流', '模型', '开始', '文档'];
 
 const mount = document.getElementById('film');
@@ -41,17 +118,19 @@ document.body.style.height = `${H}px`;
 const root = ReactDOM.createRoot(mount);
 
 function Hero({ t }: { t: number }) {
-  const beat = heroLoopBeat(t, PROMPTS);
-  const agent = AGENTS[beat.shot];
-  const Icon = agent.icon;
-  const pressScale = 1 - 0.08 * Math.sin(Math.PI * beat.press);
-  const s = compact ? 0.5 : 1;
   return (
     <div style={{ position: 'absolute', inset: 0, fontFamily: 'Inter, "Noto Sans SC", sans-serif', color: FILM.text }}>
-      <HeroLoop t={t} w={W} h={H} compact={compact} />
+      {VARIANT === 'a' && (
+        <LanguageProvider>
+          <HeroStage t={t} />
+        </LanguageProvider>
+      )}
+      {VARIANT === 'b' && <VariantB t={t} />}
+      {VARIANT === 'c' && <VariantC t={t} />}
+      {VARIANT === 'd' && <VariantD t={t} />}
 
-      {/* 导航：照现有首屏 */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: compact ? 56 : 76, display: 'flex', alignItems: 'center', padding: compact ? '0 16px' : '0 40px', gap: 14 }}>
+      {/* 导航：首页的导航在 LandingPage 里，样片页照着画一条，只为截图时位置对得上 */}
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: compact ? 56 : 72, display: 'flex', alignItems: 'center', padding: compact ? '0 16px' : '0 40px', gap: 14 }}>
         <span style={{ width: compact ? 30 : 38, height: compact ? 30 : 38, borderRadius: 10, background: FILM.brandGradient, color: FILM.onBrand, display: 'grid', placeItems: 'center', fontSize: compact ? 10 : 12, fontWeight: 800 }}>MAP</span>
         <span style={{ fontSize: compact ? 14 : 17, fontWeight: 600 }}>米多智能体生态平台</span>
         {!compact && (
@@ -63,84 +142,6 @@ function Hero({ t }: { t: number }) {
         )}
         {compact && <span style={{ flex: 1 }} />}
         <span style={{ padding: compact ? '7px 14px' : '10px 20px', borderRadius: 999, background: FILM.brandGradient, color: FILM.onBrand, fontSize: compact ? 13 : 15, fontWeight: 600 }}>登录 / 注册</span>
-      </div>
-
-      {/* 主标题 + 副标题 */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: compact ? 170 : 300, textAlign: 'center', padding: '0 20px' }}>
-        <div style={{ fontSize: compact ? 44 : 104, fontWeight: 800, letterSpacing: '-0.035em', lineHeight: 1.05, textShadow: `0 4px 40px ${FILM.spaceEdge}` }}>{tr.hero.title}</div>
-        <div style={{ marginTop: compact ? 14 : 22, fontSize: compact ? 15 : 24, color: FILM.textDim, textShadow: `0 2px 20px ${FILM.spaceEdge}` }}>
-          说一句话，产物落在画布或文档里，不在聊天记录里
-        </div>
-      </div>
-
-      {/* 输入框：写着背后这幅画面的那句话（可灵首屏最值钱的那一处） */}
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: compact ? 300 : 520,
-          transform: 'translateX(-50%)',
-          width: compact ? W - 32 : 880,
-          minHeight: compact ? 56 : 76,
-          borderRadius: 999,
-          background: `${FILM.panel}CC`,
-          border: `1px solid ${FILM.lineStrong}`,
-          backdropFilter: 'blur(14px)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: compact ? 8 : 14,
-          padding: compact ? '0 6px 0 8px' : '0 8px 0 10px',
-          boxShadow: FILM.shadow,
-        }}
-      >
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, padding: compact ? '6px 10px' : '10px 16px', borderRadius: 999, background: FILM.panelRaised, fontSize: compact ? 12 : 15, color: FILM.text, whiteSpace: 'nowrap' }}>
-          <Icon size={compact ? 14 : 18} color={FILM.sand} />
-          {agent.label}
-        </span>
-        <span style={{ flex: 1, minWidth: 0, fontSize: compact ? 14 : 20, lineHeight: 1.35, padding: compact ? '8px 0' : 0, color: FILM.text, whiteSpace: compact ? 'normal' : 'nowrap', overflow: 'hidden', minHeight: compact ? 38 : undefined, display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
-          {beat.shown}
-          {beat.typing && Math.floor(t * 2.2) % 2 === 0 && <span style={{ display: 'inline-block', width: 2, height: compact ? 16 : 22, marginLeft: 3, background: FILM.clay, verticalAlign: 'middle' }} />}
-        </span>
-        <span
-          style={{
-            padding: compact ? '10px 14px' : '14px 30px',
-            borderRadius: 999,
-            background: FILM.brandGradient,
-            color: FILM.onBrand,
-            fontSize: compact ? 13 : 18,
-            fontWeight: 700,
-            whiteSpace: 'nowrap',
-            transform: `scale(${pressScale})`,
-            boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 ${30 * s}px ${FILM.clay}` : 'none',
-          }}
-        >
-          {tr.hero.primaryCta}
-        </span>
-      </div>
-
-      {/* 右下角：完整片花入口，声音由用户决定 */}
-      <div
-        style={{
-          position: 'absolute',
-          right: compact ? 16 : 40,
-          bottom: compact ? 24 : 36,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: compact ? '8px 14px 8px 8px' : '10px 20px 10px 10px',
-          borderRadius: 999,
-          background: `${FILM.panel}B3`,
-          border: `1px solid ${FILM.lineStrong}`,
-          backdropFilter: 'blur(12px)',
-          fontSize: compact ? 12 : 15,
-          color: FILM.text,
-        }}
-      >
-        <span style={{ width: compact ? 26 : 34, height: compact ? 26 : 34, borderRadius: 999, background: FILM.text, color: FILM.bg, display: 'grid', placeItems: 'center' }}>
-          <Play size={compact ? 12 : 15} style={{ marginLeft: 2 }} />
-        </span>
-        观看完整片花 · {formatClock(FILM_DURATION)}
-        <Volume2 size={compact ? 13 : 16} color={FILM.textDim} />
       </div>
     </div>
   );

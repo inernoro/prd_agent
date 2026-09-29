@@ -9,7 +9,7 @@
  * 色系沿用首页：暖石墨底 + 陶土身份色 + 钢青 / 松绿两支墨色。
  * 品牌渐变的三档色标与其上的前景色直接从 HeroSection（SSOT）取，不抄色值。
  */
-import { HERO_GRADIENT, HERO_GRADIENT_FG, HERO_GRADIENT_STOPS } from '../sections/HeroSection';
+import { HERO_GRADIENT, HERO_GRADIENT_FG, HERO_GRADIENT_STOPS } from '../sections/heroGradient';
 
 const [BRAND_DEEP, BRAND, BRAND_LIGHT] = HERO_GRADIENT_STOPS;
 const STEEL = '#6AB6D2';

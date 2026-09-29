@@ -22,6 +22,7 @@ import { createServer } from 'vite';
  *               synth：用 filmScore 离线合成的备用配乐——页面上配乐加载失败时放的就是它）
  *   FILM_PAGE   换一个导出页（默认 scripts/film/render.html；首屏样片用 scripts/film/hero-sample.html）
  *   FILM_SIZE   画面尺寸，如 390x844（默认 1920x1080；会作为 ?w=&h= 传给导出页）
+ *   FILM_QUERY  额外拼到导出页地址上的参数（如 variant=b，样片页用来切版式）
  *   FILM_DPR    像素倍率（默认 1；手机竖屏样片用 2，否则 390 宽的画面糊）
  *   FILM_AUDIO  另有 none：不带音轨（首屏循环本来就是静音的）
  *   FILM_STILLS 只出静帧不出视频，逗号分隔的秒数，如 "1.5,12.1,33"（审片用，输出到 FILM_OUT 同目录）
@@ -88,7 +89,7 @@ async function main() {
   });
   await server.listen();
   const port = server.config.server.port ?? server.httpServer?.address()?.port;
-  const url = `http://localhost:${port}/${PAGE}?lang=${LANG}&w=${VW}&h=${VH}`;
+  const url = `http://localhost:${port}/${PAGE}?lang=${LANG}&w=${VW}&h=${VH}${process.env.FILM_QUERY ? `&${process.env.FILM_QUERY}` : ''}`;
 
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   try {
