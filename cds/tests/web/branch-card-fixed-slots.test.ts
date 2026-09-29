@@ -86,7 +86,7 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page).toContain("const modeText = phaseIsSourceSequence && deployModeLabel(branch) === '极速版' ? '源码编译' : deployModeLabel(branch);");
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
     // 单服务部署的每次状态翻转都推事件：building / starting / 结束（成功、超时、出错都在聚合状态重算后推一次）
-    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(3);
+    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(4);
     // 分支不在运行（停止 / 出错后重试）时单服务部署带着聚合状态走中间态，卡片不必从服务状态去猜
     expect(routes).toContain("      if (entry.status !== 'running') entry.status = 'building';");
     expect(routes).toContain("        if (entry.status === 'building') entry.status = 'starting';");
@@ -101,6 +101,11 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     const between = routes.slice(finalize, lastEmit);
     expect(between).toContain("if (flushResult !== 'flushed') {");
     expect(between).not.toContain("sendSSE(res, 'complete'");
+    // 落盘失败那条出口同样推结束事件，否则已打开的列表停在「就绪探测」
+    const flushFail = routes.indexOf("if (flushResult !== 'flushed') {", finalize);
+    const flushFailReturn = routes.indexOf('return;', flushFail);
+    expect(flushFail).toBeGreaterThan(finalize);
+    expect(routes.slice(flushFail, flushFailReturn)).toContain('emitServiceTransition();');
   });
 
   it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
