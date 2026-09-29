@@ -603,6 +603,42 @@ async function main() {
             `等 CI 镜像期间服务失败：卡片按出错呈现并给出「重新部署」（data-deploy-phase=${failPhase}，重新部署按钮${failRedeploy ? '在' : '不在'}）`);
         }
 
+        // 出错的分支重新部署：旧服务的 error 还没被覆盖时，页头与卡片一样算「在构建」，不算「出错」（Codex P2）
+        {
+          const overviewText = async () => ((await page.textContent('[data-testid="branch-overview-bar"] h2')) || '').trim();
+          const count = (text, re) => Number((text.match(re) || [])[1] || 0);
+          const before = await overviewText();
+          const retrying = { ...branches.find((b) => b.id === 'b-scan'), status: 'building', lastDeployStartedAt: iso(-10_000) };
+          branches = branches.map((b) => (b.id === retrying.id ? retrying : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), retrying);
+          await page.waitForTimeout(700);
+          const after = await overviewText();
+          const cardPhase = await page.getAttribute('[data-branch-card-id="b-scan"]', 'data-deploy-phase');
+          check(cardPhase === 'build' && count(after, /(\d+)\s*个出错需要处理/) === count(before, /(\d+)\s*个出错需要处理/) - 1
+            && count(after, /(\d+)\s*个在构建/) === count(before, /(\d+)\s*个在构建/) + 1,
+            `出错分支重试时页头与卡片一致算「在构建」（「${before}」→「${after}」）`);
+        }
+
+        // 已删配置留下的僵尸条目带着镜像拉取错误，当前服务是编译失败：出错类别按当前服务算「应用代码错误」（Codex P2）
+        {
+          const main = branches.find((b) => b.id === 'b-main');
+          const zombieMix = {
+            ...main,
+            status: 'running',
+            errorMessage: undefined,
+            services: {
+              ...services(22000, 'running', { api: { status: 'error', errorMessage: 'error TS2322: Type string is not assignable to number' } }),
+              'legacy-gw': { profileId: 'legacy-gw', containerName: 'fixture-legacy-gw', hostPort: 22999, status: 'error', errorMessage: 'image pull access denied: repository does not exist' },
+            },
+          };
+          branches = branches.map((b) => (b.id === zombieMix.id ? zombieMix : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), zombieMix);
+          await page.waitForTimeout(700);
+          const cardText = (await page.textContent('[data-branch-card-id="b-main"]')) || '';
+          check(/应用代码错误/.test(cardText) && !/CDS 运行时错误/.test(cardText),
+            `出错类别不被已删配置的僵尸条目带偏（${/应用代码错误/.test(cardText) ? '应用代码错误' : /CDS 运行时错误/.test(cardText) ? 'CDS 运行时错误' : '无标签'}）`);
+        }
+
         // 「已停止」分组收起时定位其中一张卡（搜索下拉 / cds:focus-branch）：要先展开分组，卡片真的滚进视野（Codex P2）。
         await page.evaluate(() => window.scrollTo(0, 0));
         const toggle = page.locator('section[aria-label="未运行的分支"] > div > button[aria-expanded]').first();

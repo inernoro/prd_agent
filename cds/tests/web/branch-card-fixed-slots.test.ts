@@ -114,6 +114,10 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     // 标记只属于那一条事件：每条 branch.updated / branch.status 都显式写 true / false，不在合并里残留
     expect(page).toContain('branch: { ...data.branch, stateFlushFailed: Boolean(data.stateFlushFailed) },');
     expect(page).toContain('branch: { ...data.branch, status: data.status, stateFlushFailed: false },');
+    // 页头汇总与卡片同一判断：卡片在部署阶段就算在构建，只有被动等镜像让位给真实失败
+    expect(page).toContain("const cardPhase = phase?.key === 'ci-waiting' && failed ? null : phase;");
+    // 出错类别只按现有构建配置对应的服务算，与出错原因同口径
+    expect(page).toContain('branchIssueLabel(branch, projectProfileIds)');
     // 耗时预计取哪个样本桶，与阶段条同一个判断：混合分支只重建源码服务时取源码样本
     expect(page).toContain('pickDeployEstimate(branch, phaseIsSourceSequence)');
     // 等 CI 镜像期间有服务真的失败：失败优先，不盖在等镜像下面
@@ -358,7 +362,8 @@ describe('构建页脚：阶段条接线', () => {
 
   // 页头「出错需要处理」与「重新部署失败项」共用 branchHasDeployFailure：单服务失败、分支仍 running 也算出错。
   const overviewCountsServiceFailures = (source: string) => {
-    expect(source).toContain('if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;');
+    expect(source).toContain('const failed = branchHasDeployFailure(branch, projectProfileIds);');
+    expect(source).toContain("if (branch.status === 'error' || (failed && !cardPhase)) errored += 1;");
     expect(source).toContain('if (!branchHasDeployFailure(branch, projectProfileIds)) continue;');
     expect(source.match(/function branchHasDeployFailure\(/g)).toHaveLength(1);
   };
@@ -406,7 +411,7 @@ describe('构建页脚：阶段条接线', () => {
     expectGuardRedOnMutation(
       overviewCountsServiceFailures,
       page,
-      mutate(page, 'if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;', "if (branch.status === 'error') errored += 1;"),
+      mutate(page, 'const failed = branchHasDeployFailure(branch, projectProfileIds);', "const failed = branch.status === 'error';"),
     );
   });
 

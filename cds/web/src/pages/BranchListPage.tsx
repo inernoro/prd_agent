@@ -881,7 +881,7 @@ function deployFailureMessage(branch: BranchSummary | undefined, projectProfileI
   if (!branch) return '';
   const failedServices = failedLiveServices(branch, projectProfileIds);
   if (branch.status !== 'error' && failedServices.length === 0) return '';
-  const label = branchIssueLabel(branch);
+  const label = branchIssueLabel(branch, projectProfileIds);
   const serviceNames = failedServices.map((svc) => svc.profileId).join(', ');
   if (branch.errorMessage) return `${label}：${branch.errorMessage}`;
   const serviceErrors = failedServices
@@ -1299,10 +1299,15 @@ const BRANCH_ISSUE_LABELS: Record<BranchIssueCategory, string> = {
   'unknown': '未分类错误',
 };
 
-function branchIssueCategory(branch: BranchSummary): BranchIssueCategory {
+function branchIssueCategory(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): BranchIssueCategory {
+  // 只按现有构建配置对应的服务归类：已删配置留下的僵尸条目不参与，否则它的旧错误会把当前失败
+  // 错归成别的类别（出错原因那一行已经滤掉了它，归类必须同口径，Codex P2，PR #1646）。
+  const extraIds = new Set((branch.extraProfiles || []).map((profile) => profile.id));
+  const liveServices = Object.values(branch.services || {}).filter((service) =>
+    !projectProfileIds || projectProfileIds.has(service.profileId) || extraIds.has(service.profileId));
   const text = [
     branch.errorMessage || '',
-    ...Object.values(branch.services || {}).map((service) => service.errorMessage || ''),
+    ...liveServices.map((service) => service.errorMessage || ''),
   ].join('\n').toLowerCase();
   if (!text.trim()) return 'unknown';
 
@@ -1333,12 +1338,12 @@ function branchIssueCategory(branch: BranchSummary): BranchIssueCategory {
   return 'unknown';
 }
 
-function branchIssueLabel(branch: BranchSummary): string {
-  return BRANCH_ISSUE_LABELS[branchIssueCategory(branch)];
+function branchIssueLabel(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
+  return BRANCH_ISSUE_LABELS[branchIssueCategory(branch, projectProfileIds)];
 }
 
-function branchIssueClass(branch: BranchSummary): string {
-  const category = branchIssueCategory(branch);
+function branchIssueClass(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
+  const category = branchIssueCategory(branch, projectProfileIds);
   if (category === 'cds-runtime') {
     return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
   }
@@ -1351,8 +1356,8 @@ function branchIssueClass(branch: BranchSummary): string {
   return 'border-muted-foreground/30 bg-muted/30 text-muted-foreground font-semibold';
 }
 
-function branchIssueRailClass(branch: BranchSummary): string {
-  const category = branchIssueCategory(branch);
+function branchIssueRailClass(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
+  const category = branchIssueCategory(branch, projectProfileIds);
   if (category === 'cds-runtime') return 'bg-destructive';
   if (category === 'app-code') return 'bg-warn';
   if (category === 'deploy-config') return 'bg-warn';
@@ -1361,8 +1366,8 @@ function branchIssueRailClass(branch: BranchSummary): string {
 
 // 错误卡片整体描边/底色/光晕 —— 必须与 badge/rail 同一 category 配色,
 // 否则胶囊显橙(deploy-config)/灰(unknown)而卡片边框还是琥珀,视觉割裂。
-function branchIssueCardClass(branch: BranchSummary): string {
-  const category = branchIssueCategory(branch);
+function branchIssueCardClass(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
+  const category = branchIssueCategory(branch, projectProfileIds);
   if (category === 'cds-runtime') {
     return 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_0.25rem_1rem_-0.25rem_hsl(var(--destructive)/0.35)]';
   }
@@ -1450,9 +1455,13 @@ function summarizeBranchStates(
       activeProfileCount: branch.deployRuntime?.activeProfiles,
     });
     if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
-    if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;
-    else if (phase?.key === 'queued') queued += 1;
-    else if (phase && isDeployPhase(phase)) building += 1;
+    // 与卡片同一个判断：卡片正在走部署阶段（重试时旧服务的 error 还没被覆盖）就算在构建，不算出错；
+    // 只有被动的「等 CI 镜像」让位给真实失败（Codex P2，PR #1646）
+    const failed = branchHasDeployFailure(branch, projectProfileIds);
+    const cardPhase = phase?.key === 'ci-waiting' && failed ? null : phase;
+    if (branch.status === 'error' || (failed && !cardPhase)) errored += 1;
+    else if (cardPhase?.key === 'queued') queued += 1;
+    else if (cardPhase && isDeployPhase(cardPhase)) building += 1;
     else if (branch.status === 'running') running += 1;
   }
   const dormant = list.filter((branch) => isDormantBranch(branch, actions[branch.id])).length;
@@ -6280,9 +6289,9 @@ const BranchCard = memo(function BranchCard({
   const role = branchVisualRole(branch.branch);
   // 停下的卡不再挂角色光晕（main 的绿边绿光读起来像「运行中」），只靠整卡变暗表达「没在跑」。
   const roleCardClass = !isRunning && !isError && !isInterim && !isBusy(branch) ? '' : branchRoleCardClass(role);
-  const issueLabel = showsIssue ? branchIssueLabel(branch) : '';
-  const issueClass = showsIssue ? branchIssueClass(branch) : '';
-  const issueRailClass = showsIssue ? branchIssueRailClass(branch) : '';
+  const issueLabel = showsIssue ? branchIssueLabel(branch, projectProfileIds) : '';
+  const issueClass = showsIssue ? branchIssueClass(branch, projectProfileIds) : '';
+  const issueRailClass = showsIssue ? branchIssueRailClass(branch, projectProfileIds) : '';
   const aiState = aiOperationState(branch, now);
   const isAiOperated = aiState.visible;
   const isAiActive = aiState.active;
@@ -6515,7 +6524,7 @@ const BranchCard = memo(function BranchCard({
           // 历史错误仍按错误分类配色。
           ? 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/25'
           : showsIssue
-            ? branchIssueCardClass(branch)
+            ? branchIssueCardClass(branch, projectProfileIds)
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
