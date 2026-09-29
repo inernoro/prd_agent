@@ -18,10 +18,10 @@ namespace PrdAgent.Tests;
 /// 5. 验证输出结果
 /// 
 /// 前置条件：
-/// 1. API 服务运行在 localhost:8000
-/// 2. 已配置 Vision 类型的模型池（用于图片描述提取和意图解析）
-/// 3. 已配置 Generation 类型的模型池（用于 nano-banana 生图）
-/// 4. 测试用图片资产存在于数据库中
+/// 1. 已通过 PRD_TEST_API_BASE / PRD_TEST_AI_ACCESS_KEY / PRD_TEST_AI_IMPERSONATE 配置测试接口
+/// 2. 已通过 PRD_TEST_MULTI_IMAGE_WORKSPACE_ID 配置测试 Workspace
+/// 3. 已通过 PRD_TEST_MULTI_IMAGE_ASSETS_JSON 配置至少 3 个测试图片资产
+/// 4. 已配置 Vision 和 Generation 类型的模型池
 /// 
 /// 运行命令（CI 不触发，需手动执行）：
 ///   dotnet test tests/PrdAgent.Tests --filter "FullyQualifiedName~MultiImageCompose" --no-build -v n
@@ -33,57 +33,17 @@ public class MultiImageComposeIntegrationTests
 {
     private readonly ITestOutputHelper _output;
 
-    // API 配置
-    private const string ApiBaseUrl = "http://localhost:8000";
-    private const string AiAccessKey = "123";
-    private const string ImpersonateUser = "admin";
+    private static string ApiBaseUrl => GetRequiredEnvironmentVariable("PRD_TEST_API_BASE").TrimEnd('/');
+    private static string AiAccessKey => GetRequiredEnvironmentVariable("PRD_TEST_AI_ACCESS_KEY");
+    private static string ImpersonateUser => GetRequiredEnvironmentVariable("PRD_TEST_AI_IMPERSONATE");
+    private static string TestWorkspaceId => GetRequiredEnvironmentVariable("PRD_TEST_MULTI_IMAGE_WORKSPACE_ID");
 
     // 图片保存目录
     private static readonly string ImageOutputDir = Path.Combine(
         AppContext.BaseDirectory, "..", "..", "..", "GeneratedImages", "MultiImageCompose");
 
-    // 测试用 Workspace 数据（从真实环境获取）
-    private const string TestWorkspaceId = "9d48e9b61f634ce5a5137ca0470be756";
-
-    // 测试用 CDN 基础地址（与生产环境 TENCENT_COS_PUBLIC_BASE_URL 对应）
-    private const string TestCdnBaseUrl = "https://i.map.ebcone.net";
-
-    // 测试用图片资产（来自 workspace 的 coverAssets）
-    private static readonly TestImageAsset[] TestAssets = new[]
-    {
-        new TestImageAsset
-        {
-            Id = "417849bc127c45ada8c5ec0687d39679",
-            Url = $"{TestCdnBaseUrl}/visual-agent/img/s4kazw6vyngzemeijgjx72epve.jpg",
-            Name = "可爱小猫",
-            Width = 1024,
-            Height = 1024
-        },
-        new TestImageAsset
-        {
-            Id = "05bd15a695a341ec89f2525313c5ef30",
-            Url = $"{TestCdnBaseUrl}/visual-agent/img/pgiq7lh7w5r53lhr3dwmwepeg4.jpg",
-            Name = "场景图2",
-            Width = 1024,
-            Height = 1024
-        },
-        new TestImageAsset
-        {
-            Id = "c79b14d5028f45449d58975296b04c79",
-            Url = $"{TestCdnBaseUrl}/visual-agent/img/bxiiju255eibrplott7vsfj7wa.jpg",
-            Name = "场景图3",
-            Width = 1024,
-            Height = 1024
-        },
-        new TestImageAsset
-        {
-            Id = "5d95831a6d9b432795ab2ba7702763de",
-            Url = $"{TestCdnBaseUrl}/visual-agent/img/etabgunimdtprxp6v6qhphdodi.jpg",
-            Name = "高清大图",
-            Width = 2048,
-            Height = 2048
-        }
-    };
+    private static readonly Lazy<TestImageAsset[]> LazyTestAssets = new(LoadTestAssets);
+    private static TestImageAsset[] TestAssets => LazyTestAssets.Value;
 
     public MultiImageComposeIntegrationTests(ITestOutputHelper output)
     {
@@ -1081,6 +1041,58 @@ public class MultiImageComposeIntegrationTests
         {
             return json;
         }
+    }
+
+    private static string GetRequiredEnvironmentVariable(string name)
+    {
+        var value = Environment.GetEnvironmentVariable(name)?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"集成测试缺少必填环境变量 {name}。");
+        }
+
+        return value;
+    }
+
+    private static TestImageAsset[] LoadTestAssets()
+    {
+        var json = GetRequiredEnvironmentVariable("PRD_TEST_MULTI_IMAGE_ASSETS_JSON");
+        TestImageAsset[]? assets;
+
+        try
+        {
+            assets = JsonSerializer.Deserialize<TestImageAsset[]>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("PRD_TEST_MULTI_IMAGE_ASSETS_JSON 不是有效的图片资产 JSON。", ex);
+        }
+
+        if (assets is null || assets.Length < 3)
+        {
+            throw new InvalidOperationException("PRD_TEST_MULTI_IMAGE_ASSETS_JSON 至少需要包含 3 个图片资产。");
+        }
+
+        foreach (var asset in assets)
+        {
+            var hasValidUrl = Uri.TryCreate(asset.Url, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+            if (string.IsNullOrWhiteSpace(asset.Id)
+                || string.IsNullOrWhiteSpace(asset.Name)
+                || !hasValidUrl
+                || asset.Width <= 0
+                || asset.Height <= 0)
+            {
+                throw new InvalidOperationException(
+                    "PRD_TEST_MULTI_IMAGE_ASSETS_JSON 中每个资产都必须提供 id、url、name、width 和 height。");
+            }
+        }
+
+        return assets;
     }
 
     #endregion

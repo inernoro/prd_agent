@@ -19,7 +19,7 @@ describe('defectTitle', () => {
 
   it('skips screenshot noise before selecting a title', () => {
     expect(
-      extractDefectTitle(`图1：https://i.map.ebcone.net/data/defect-agent/img/demo.png
+      extractDefectTitle(`图1：https://cdn.example.test/data/defect-agent/img/demo.png
 
 提交缺陷时未选择用户，点击提交按钮无响应`)
     ).toBe('提交缺陷时未选择用户，点击提交按钮无响应');
