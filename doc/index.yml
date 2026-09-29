@@ -308,6 +308,7 @@ docs:
   plan.platform.mcp-agent-console: "MCP 智能体接入台 · 计划"
   plan.product-agent.pa.competitive-improvements: "PA Agent 可执行任务升级 · 计划"
   plan.product-agent.version-workflow: "产品管理智能体版本流程收尾 · 计划"
+  plan.review-agent.version-registry-master-data: "产品评审智能体版本号主数据 · 计划"
   plan.report-agent.model-governance: "Report Agent 模型质量治理 · 计划"
   plan.report-agent.v3: "Report Agent 采集优先升级 · 计划"
   plan.skill.marketplace-open-api-next: "海鲜市场开放接口产品化 · 计划"

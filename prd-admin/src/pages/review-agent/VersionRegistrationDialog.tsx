@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArrowRight, BookOpenCheck, CheckCircle2, FileSpreadsheet, FileUp, History, Plus, X } from 'lucide-react';
+import { Archive, ArrowRight, BookOpenCheck, CheckCircle2, FileSpreadsheet, FileUp, History, ListFilter, Plus, Search, Settings2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
+  createVersionRegistryApplication,
+  createVersionRegistrySystem,
   createCurrentVersionRegistrationSnapshot,
   createFormalVersionRegistration,
   createInternalVersionRegistration,
+  findVersionRegistryMatches,
+  getPublicVersionRegistrations,
   getVersionRegistrationInternalSources,
   getVersionRegistrationReviewSources,
   getVersionRegistrations,
   getVersionRegistrationSnapshots,
+  getVersionRegistry,
   importVersionRegistrations,
   parseVersionRegistrationMessage,
   type VersionRegistration,
@@ -18,6 +23,9 @@ import {
   type VersionRegistrationImportRow,
   type VersionRegistrationMessageParseResult,
   type VersionRegistrationReviewSource,
+  type VersionRegistryApplication,
+  type VersionRegistryMatch,
+  type VersionRegistrySystem,
   type VersionRegistrationSnapshotSummary,
 } from '@/services/real/versionRegistration';
 import { parseVersionWorkflowImportFile, type VersionWorkflowImportRow } from '@/pages/product-agent/versionWorkflowImportParse';
@@ -29,7 +37,7 @@ interface Props {
 
 type ApplyKind = 'internal' | 'formal';
 type FormalSourceMode = 'internal_registration' | 'manual_t';
-type View = 'apply' | 'archive';
+type View = 'apply' | 'records' | 'registry' | 'archive';
 
 type FormState = {
   projectType: '' | 'standard' | 'custom';
@@ -162,6 +170,8 @@ function mapHistoryVersionType(value?: string): NonNullable<VersionRegistrationF
 
 function mapHistoryRow(row: VersionWorkflowImportRow, kind: ApplyKind): VersionRegistrationImportRow {
   return {
+    systemName: row.systemName,
+    applicationName: row.appName,
     kind,
     code: row.code,
     tCode: row.tCode,
@@ -184,6 +194,12 @@ function mapHistoryRow(row: VersionWorkflowImportRow, kind: ApplyKind): VersionR
     remark: row.remark,
     sourceRow: row.sourceRow,
   };
+}
+
+function registrationMatchesApplication(record: VersionRegistration, application: VersionRegistryApplication): boolean {
+  if (record.applicationId) return record.applicationId === application.id;
+  if (record.applicationName) return normalizeMatchText(record.applicationName) === normalizeMatchText(application.name);
+  return normalizeMatchText(record.planName).includes(normalizeMatchText(application.name));
 }
 
 function formPatchFromMessage(result: VersionRegistrationMessageParseResult): Partial<FormState> {
@@ -311,6 +327,57 @@ function InputFields({ form, setForm, mode, strictFormal }: { form: FormState; s
   );
 }
 
+function VersionRegistrySelect({
+  systems,
+  selectedSystemId,
+  selectedApplicationId,
+  suggestedApplication,
+  onSelectSystem,
+  onSelectApplication,
+  onOpenRegistry,
+}: {
+  systems: VersionRegistrySystem[];
+  selectedSystemId: string;
+  selectedApplicationId: string;
+  suggestedApplication?: VersionRegistryApplication;
+  onSelectSystem: (systemId: string) => void;
+  onSelectApplication: (applicationId: string) => void;
+  onOpenRegistry: () => void;
+}) {
+  const selectedSystem = systems.find((system) => system.id === selectedSystemId);
+  const applications = selectedSystem?.applications ?? [];
+  return (
+    <section className="rounded-xl border border-indigo-500/35 bg-indigo-500/[0.04] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium text-token-primary">先确定系统和应用</h3>
+          <p className="mt-1 text-xs leading-5 text-token-muted">版本号按应用独立分配。粘贴企微内容或选中方案后，系统会优先带出匹配的应用。</p>
+        </div>
+        <button type="button" onClick={onOpenRegistry} className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--accent-fg-blue)] hover:underline">
+          <Settings2 className="h-3.5 w-3.5" />新建系统或应用
+        </button>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Field label="系统" required>
+          <select className={FIELD_CLASS} value={selectedSystemId} onChange={(event) => onSelectSystem(event.target.value)}>
+            <option value="">请选择系统</option>
+            {systems.map((system) => <option key={system.id} value={system.id}>{system.name}</option>)}
+          </select>
+        </Field>
+        <Field label="应用" required>
+          <select className={FIELD_CLASS} value={selectedApplicationId} disabled={!selectedSystemId} onChange={(event) => onSelectApplication(event.target.value)}>
+            <option value="">{selectedSystemId ? '请选择应用' : '请先选择系统'}</option>
+            {applications.map((application) => <option key={application.id} value={application.id}>{application.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      {suggestedApplication ? (
+        <p className="mt-3 text-xs text-[color:var(--accent-fg-blue)]">已从方案匹配到“{suggestedApplication.systemName} / {suggestedApplication.name}”。你仍可手动调整。</p>
+      ) : null}
+    </section>
+  );
+}
+
 export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [view, setView] = useState<View>('apply');
   const [kind, setKind] = useState<ApplyKind | null>(null);
@@ -322,6 +389,20 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [internalSources, setInternalSources] = useState<VersionRegistration[]>([]);
   const [records, setRecords] = useState<VersionRegistration[]>([]);
   const [snapshots, setSnapshots] = useState<VersionRegistrationSnapshotSummary[]>([]);
+  const [registrySystems, setRegistrySystems] = useState<VersionRegistrySystem[]>([]);
+  const [registryMatches, setRegistryMatches] = useState<VersionRegistryMatch[]>([]);
+  const [selectedSystemId, setSelectedSystemId] = useState('');
+  const [selectedApplicationId, setSelectedApplicationId] = useState('');
+  const [publicRecords, setPublicRecords] = useState<VersionRegistration[]>([]);
+  const [publicKind, setPublicKind] = useState<'' | ApplyKind>('');
+  const [publicSystemId, setPublicSystemId] = useState('');
+  const [publicApplicationId, setPublicApplicationId] = useState('');
+  const [publicPerson, setPublicPerson] = useState('');
+  const [publicPlanName, setPublicPlanName] = useState('');
+  const [publicLoading, setPublicLoading] = useState(false);
+  const [newSystemName, setNewSystemName] = useState('');
+  const [newApplicationSystemId, setNewApplicationSystemId] = useState('');
+  const [newApplicationName, setNewApplicationName] = useState('');
   const [reviewSubmissionId, setReviewSubmissionId] = useState('');
   const [internalRegistrationId, setInternalRegistrationId] = useState('');
   const [manualTCode, setManualTCode] = useState('');
@@ -339,17 +420,24 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const reload = useCallback(async () => {
     setLoading(true);
     setMessage('');
-    const [reviewResult, internalResult, recordsResult, snapshotsResult] = await Promise.all([
+    const [reviewResult, internalResult, recordsResult, snapshotsResult, registryResult, publicResult] = await Promise.all([
       getVersionRegistrationReviewSources(),
       getVersionRegistrationInternalSources(),
       getVersionRegistrations(),
       getVersionRegistrationSnapshots(),
+      getVersionRegistry(),
+      getPublicVersionRegistrations(),
     ]);
     if (reviewResult.success) setReviewSources(reviewResult.data.items);
     if (internalResult.success) setInternalSources(internalResult.data.items);
     if (recordsResult.success) setRecords(recordsResult.data.items);
     if (snapshotsResult.success) setSnapshots(snapshotsResult.data.items);
-    const failed = [reviewResult, internalResult, recordsResult, snapshotsResult].find((result) => !result.success);
+    if (registryResult.success) {
+      setRegistrySystems(registryResult.data.systems);
+      setNewApplicationSystemId((previous) => previous || registryResult.data.systems[0]?.id || '');
+    }
+    if (publicResult.success) setPublicRecords(publicResult.data.items);
+    const failed = [reviewResult, internalResult, recordsResult, snapshotsResult, registryResult, publicResult].find((result) => !result.success);
     if (failed && !failed.success) setMessage(failed.error.message || '登记资料加载失败，请稍后重试');
     setLoading(false);
   }, []);
@@ -369,7 +457,34 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   }, [open, onClose]);
 
   const selectedReview = useMemo(() => reviewSources.find((item) => item.id === reviewSubmissionId), [reviewSources, reviewSubmissionId]);
+  const registryApplications = useMemo(() => registrySystems.flatMap((system) => system.applications), [registrySystems]);
+  const suggestedApplication = useMemo(() => {
+    const match = registryMatches[0];
+    return match ? registryApplications.find((application) => application.id === match.id) : undefined;
+  }, [registryApplications, registryMatches]);
+  const visibleInternalSources = useMemo(() => {
+    if (!selectedApplicationId) return internalSources;
+    const application = registryApplications.find((item) => item.id === selectedApplicationId);
+    return application
+      ? internalSources.filter((source) => registrationMatchesApplication(source, application))
+      : [];
+  }, [internalSources, registryApplications, selectedApplicationId]);
+  const publicApplications = useMemo(
+    () => registrySystems.find((system) => system.id === publicSystemId)?.applications ?? registryApplications,
+    [publicSystemId, registryApplications, registrySystems],
+  );
   const patchForm = (update: Partial<FormState>) => setForm((previous) => ({ ...previous, ...update }));
+
+  const chooseSystem = useCallback((systemId: string) => {
+    setSelectedSystemId(systemId);
+    setSelectedApplicationId('');
+  }, []);
+
+  const chooseApplication = useCallback((applicationId: string) => {
+    setSelectedApplicationId(applicationId);
+    const application = registryApplications.find((item) => item.id === applicationId);
+    if (application) setSelectedSystemId(application.systemId);
+  }, [registryApplications]);
 
   const chooseKind = (nextKind: ApplyKind) => {
     setKind(nextKind);
@@ -382,6 +497,9 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     setReviewSubmissionId('');
     setInternalRegistrationId('');
     setManualTCode('');
+    setSelectedSystemId('');
+    setSelectedApplicationId('');
+    setRegistryMatches([]);
   };
 
   const parseWecomMessage = useCallback(async (text: string, applyResult: boolean) => {
@@ -411,6 +529,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
               matchedInternalSource = matchingInternal;
               setFormalSourceMode('internal_registration');
               setInternalRegistrationId(matchingInternal.id);
+              if (matchingInternal.applicationId) chooseApplication(matchingInternal.applicationId);
               sourceMatchHint = ' 已匹配到已登记的内部版本号。';
             } else {
               setFormalSourceMode('manual_t');
@@ -436,7 +555,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     } finally {
       if (requestId === messageParseRequestRef.current) setMessageParsing(false);
     }
-  }, [internalSources, kind, reviewSources]);
+  }, [chooseApplication, internalSources, kind, reviewSources]);
 
   useEffect(() => {
     if (!kind || wecomMessage.trim().length < 4) {
@@ -447,6 +566,38 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     return () => window.clearTimeout(timer);
   }, [kind, parseWecomMessage, wecomMessage]);
 
+  useEffect(() => {
+    const planName = form.planName.trim();
+    if (!kind || planName.length < 2) {
+      setRegistryMatches([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void findVersionRegistryMatches(planName).then((result) => {
+        if (cancelled || !result.success) return;
+        setRegistryMatches(result.data.items);
+        const firstMatch = result.data.items[0];
+        if (firstMatch && !selectedApplicationId) {
+          setSelectedSystemId(firstMatch.systemId);
+          setSelectedApplicationId(firstMatch.id);
+        }
+      });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [form.planName, kind, selectedApplicationId]);
+
+  useEffect(() => {
+    if (!internalRegistrationId || !selectedApplicationId) return;
+    const application = registryApplications.find((item) => item.id === selectedApplicationId);
+    const source = internalSources.find((item) => item.id === internalRegistrationId);
+    if (application && source && !registrationMatchesApplication(source, application))
+      setInternalRegistrationId('');
+  }, [internalRegistrationId, internalSources, registryApplications, selectedApplicationId]);
+
   const chooseReview = (id: string) => {
     setReviewSubmissionId(id);
     const source = reviewSources.find((item) => item.id === id);
@@ -456,7 +607,10 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const chooseInternalSource = (id: string) => {
     setInternalRegistrationId(id);
     const source = internalSources.find((item) => item.id === id);
-    if (source) setForm(formFromRegistration(source));
+    if (source) {
+      setForm(formFromRegistration(source));
+      if (source.applicationId) chooseApplication(source.applicationId);
+    }
   };
 
   const submitApplication = async () => {
@@ -467,8 +621,12 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
       setMessage('请先选择项目类别和版本类别，或粘贴企微登记内容后自动回填');
       return;
     }
+    if (!selectedApplicationId) {
+      setMessage('请先选择系统和应用；版本号会按所选应用独立分配');
+      return;
+    }
     setSubmitting(true);
-    const base = formPayload(form);
+    const base = { ...formPayload(form), applicationId: selectedApplicationId };
     const result = kind === 'internal'
       ? await createInternalVersionRegistration({ ...base, reviewSubmissionId })
       : await createFormalVersionRegistration({
@@ -544,6 +702,69 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     await reload();
   };
 
+  const loadPublicRecords = async () => {
+    setPublicLoading(true);
+    setMessage('');
+    const result = await getPublicVersionRegistrations({
+      kind: publicKind || undefined,
+      systemId: publicSystemId || undefined,
+      applicationId: publicApplicationId || undefined,
+      person: publicPerson,
+      planName: publicPlanName,
+    });
+    setPublicLoading(false);
+    if (!result.success) {
+      setMessage(result.error.message || '公共版本记录读取失败，请稍后重试');
+      return;
+    }
+    setPublicRecords(result.data.items);
+  };
+
+  const createRegistrySystem = async () => {
+    const name = newSystemName.trim();
+    if (!name) {
+      setMessage('请填写要新建的系统名称');
+      return;
+    }
+    setSubmitting(true);
+    setMessage('');
+    const result = await createVersionRegistrySystem(name);
+    setSubmitting(false);
+    if (!result.success) {
+      setMessage(result.error.message || '系统创建失败，请稍后重试');
+      return;
+    }
+    setNewSystemName('');
+    await reload();
+    setNewApplicationSystemId(result.data.system.id);
+    setMessage(result.data.reused ? `系统“${result.data.system.name}”已存在，已直接复用。` : `已创建系统“${result.data.system.name}”。接下来可在右侧新建应用。`);
+  };
+
+  const createRegistryApplication = async () => {
+    const name = newApplicationName.trim();
+    if (!newApplicationSystemId) {
+      setMessage('请先选择应用归属的系统');
+      return;
+    }
+    if (!name) {
+      setMessage('请填写要新建的应用名称');
+      return;
+    }
+    setSubmitting(true);
+    setMessage('');
+    const result = await createVersionRegistryApplication({ systemId: newApplicationSystemId, name });
+    setSubmitting(false);
+    if (!result.success) {
+      setMessage(result.error.message || '应用创建失败，请检查归属系统');
+      return;
+    }
+    setNewApplicationName('');
+    await reload();
+    setSelectedSystemId(result.data.application.systemId);
+    setSelectedApplicationId(result.data.application.id);
+    setMessage(result.data.reused ? `应用“${result.data.application.name}”已存在，已直接复用。` : `已创建应用“${result.data.application.name}”，现在可以返回申领页使用。`);
+  };
+
   if (!open) return null;
 
   const modal = (
@@ -573,12 +794,18 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
           <button type="button" onClick={() => setView('apply')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'apply' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
             申领版本号
           </button>
+          <button type="button" onClick={() => setView('records')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'records' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
+            当前 T/V 记录
+          </button>
+          <button type="button" onClick={() => setView('registry')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'registry' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
+            系统与应用
+          </button>
           <button type="button" onClick={() => setView('archive')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'archive' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
             历史导入与快照
           </button>
         </div>
 
-        <main className="flex-1 overflow-y-auto px-5 py-5 sm:px-6" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+        <main className="flex-1 px-5 py-5 sm:px-6" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {message ? (
             <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${issuedCode ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-[color:var(--accent-fg-amber)]'}`}>
               {message}
@@ -593,15 +820,13 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                 <section aria-label="选择申领类型">
                   <p className="mb-3 text-sm text-token-secondary">请选择适合当前情况的一种申请模式；T 与 V 相互独立，点击卡片开始填写。</p>
                   <div className="grid gap-3 md:grid-cols-2">
-                    <button type="button" onClick={() => chooseKind('internal')} aria-label="点击开始申领内部版本号 T" className="group rounded-xl border border-token-subtle bg-token-nested p-5 text-left transition-all hover:border-indigo-500/60 hover-bg-soft focus-visible:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40">
-                      <span className="block text-sm font-semibold text-token-primary">内部版本号 T</span>
-                      <span className="mt-2 block text-xs leading-5 text-token-muted">从本人已完成的产品评审记录开始，不再上传截图。填写立项信息后立即生成 T 号。</span>
-                      <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)]">点击开始申领 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
-                    </button>
                     <button type="button" onClick={() => chooseKind('formal')} aria-label="点击开始申领正式版本号 V" className="group rounded-xl border border-token-subtle bg-token-nested p-5 text-left transition-all hover:border-indigo-500/60 hover-bg-soft focus-visible:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40">
-                      <span className="block text-sm font-semibold text-token-primary">正式版本号 V</span>
-                      <span className="mt-2 block text-xs leading-5 text-token-muted">选择已登记的 T 号带入资料，或在特殊情况下手工填写已有 T 号后继续申领。</span>
-                      <span className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)]">点击开始申领 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
+                      <span className="block text-xl font-semibold tracking-tight text-token-primary sm:text-2xl">正式版本号 V</span>
+                      <span className="mt-5 inline-flex items-center gap-1.5 text-base font-medium text-[color:var(--accent-fg-blue)]">点击开始申领 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
+                    </button>
+                    <button type="button" onClick={() => chooseKind('internal')} aria-label="点击开始申领内部版本号 T" className="group rounded-xl border border-token-subtle bg-token-nested p-5 text-left transition-all hover:border-indigo-500/60 hover-bg-soft focus-visible:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40">
+                      <span className="block text-xl font-semibold tracking-tight text-token-primary sm:text-2xl">内部版本号 T</span>
+                      <span className="mt-5 inline-flex items-center gap-1.5 text-base font-medium text-[color:var(--accent-fg-blue)]">点击开始申领 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></span>
                     </button>
                   </div>
                 </section>
@@ -634,6 +859,16 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                     {messageParseHint ? <p className="mt-2 text-xs text-token-secondary">{messageParseHint}</p> : null}
                   </div>
 
+                  <VersionRegistrySelect
+                    systems={registrySystems}
+                    selectedSystemId={selectedSystemId}
+                    selectedApplicationId={selectedApplicationId}
+                    suggestedApplication={suggestedApplication}
+                    onSelectSystem={chooseSystem}
+                    onSelectApplication={chooseApplication}
+                    onOpenRegistry={() => setView('registry')}
+                  />
+
                   {kind === 'internal' ? (
                     <Field label="选择已完成的产品评审记录" required>
                       <select className={FIELD_CLASS} value={reviewSubmissionId} onChange={(event) => chooseReview(event.target.value)}>
@@ -655,9 +890,9 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                         <Field label="选择已登记的内部版本号" required>
                           <select className={FIELD_CLASS} value={internalRegistrationId} onChange={(event) => chooseInternalSource(event.target.value)}>
                             <option value="">请选择 T 号</option>
-                            {internalSources.map((source) => <option key={source.id} value={source.id}>{source.code} · {source.planName || '未命名方案'} · {formatDate(source.createdAt)}</option>)}
+                            {visibleInternalSources.map((source) => <option key={source.id} value={source.id}>{source.code} · {source.planName || '未命名方案'} · {formatDate(source.createdAt)}</option>)}
                           </select>
-                          {internalSources.length === 0 ? <p className="mt-1.5 text-xs text-token-muted">暂无本人已登记的 T 号。可先申领 T，或选择“手工填写 T”。</p> : null}
+                          {visibleInternalSources.length === 0 ? <p className="mt-1.5 text-xs text-token-muted">当前应用还没有可选的公共 T 号。可先申领 T，或选择“手工填写 T”。</p> : null}
                         </Field>
                       ) : (
                         <Field label="已有内部版本号 T" required>
@@ -693,6 +928,107 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                   </div>
                 </section>
               ) : null}
+            </div>
+          ) : null}
+
+          {!loading && view === 'records' ? (
+            <div className="space-y-5">
+              <section className="rounded-xl border border-token-subtle bg-token-nested p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-token-primary"><ListFilter className="h-5 w-5 text-[color:var(--accent-fg-blue)]" /><h3 className="text-sm font-medium">当前 T/V 记录</h3></div>
+                    <p className="mt-1 text-xs leading-5 text-token-muted">这是所有申请人共用的只读登记簿。可按人、系统、应用或方案查找，历史记录不会在这里被改写。</p>
+                  </div>
+                  <button type="button" onClick={() => void loadPublicRecords()} disabled={publicLoading} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">
+                    {publicLoading ? <MapSpinner size={15} /> : <Search className="h-4 w-4" />}查询记录
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <Field label="版本类型">
+                    <select className={FIELD_CLASS} value={publicKind} onChange={(event) => setPublicKind(event.target.value as '' | ApplyKind)}>
+                      <option value="">T 与 V 全部</option>
+                      <option value="internal">仅内部 T</option>
+                      <option value="formal">仅正式 V</option>
+                    </select>
+                  </Field>
+                  <Field label="系统">
+                    <select className={FIELD_CLASS} value={publicSystemId} onChange={(event) => { setPublicSystemId(event.target.value); setPublicApplicationId(''); }}>
+                      <option value="">全部系统</option>
+                      {registrySystems.map((system) => <option key={system.id} value={system.id}>{system.name}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="应用">
+                    <select className={FIELD_CLASS} value={publicApplicationId} onChange={(event) => setPublicApplicationId(event.target.value)}>
+                      <option value="">全部应用</option>
+                      {publicApplications.map((application) => <option key={application.id} value={application.id}>{application.name}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="人名">
+                    <input className={FIELD_CLASS} value={publicPerson} onChange={(event) => setPublicPerson(event.target.value)} placeholder="申请人或产品负责人" />
+                  </Field>
+                  <Field label="方案名称">
+                    <input className={FIELD_CLASS} value={publicPlanName} onChange={(event) => setPublicPlanName(event.target.value)} placeholder="输入方案关键词" />
+                  </Field>
+                  <div className="flex items-end">
+                    <button type="button" onClick={() => { setPublicKind(''); setPublicSystemId(''); setPublicApplicationId(''); setPublicPerson(''); setPublicPlanName(''); }} className="px-1 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:underline">清空筛选条件</button>
+                  </div>
+                </div>
+              </section>
+
+              {publicLoading ? <MapSectionLoader text="正在筛选公共版本记录..." /> : null}
+              {!publicLoading && publicRecords.length === 0 ? (
+                <section className="rounded-xl border border-dashed border-token-subtle px-5 py-10 text-center">
+                  <h3 className="text-sm font-medium text-token-primary">还没有符合条件的公共记录</h3>
+                  <p className="mt-2 text-sm text-token-muted">可以调整筛选条件，或先从“申领版本号”登记第一条 T 或 V 记录。</p>
+                  <button type="button" onClick={() => setView('apply')} className="mt-4 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500">去申领版本号</button>
+                </section>
+              ) : null}
+              {!publicLoading && publicRecords.length > 0 ? (
+                <section className="overflow-hidden rounded-xl border border-token-subtle">
+                  <div className="border-b border-token-subtle px-4 py-3 text-xs text-token-muted">共显示 {publicRecords.length} 条公开记录</div>
+                  <div className="divide-y divide-token-subtle">
+                    {publicRecords.map((record) => (
+                      <article key={record.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[8rem_minmax(0,1fr)_9rem] sm:items-center">
+                        <div><p className="font-mono text-sm font-semibold text-[color:var(--accent-fg-blue)]">{record.code}</p><p className="mt-1 text-xs text-token-muted">{record.kind === 'internal' ? '内部 T' : `正式 V${record.tCode ? ` · ${record.tCode}` : ''}`}</p></div>
+                        <div className="min-w-0"><p className="truncate text-sm text-token-primary">{record.planName || '未填写方案名称'}</p><p className="mt-1 truncate text-xs text-token-secondary">{record.systemName || '未归类系统'} / {record.applicationName || '未归类应用'} · {record.ownerName || record.createdByName || '未记录人名'}</p></div>
+                        <p className="text-xs text-token-muted sm:text-right">{formatDate(record.plannedReleaseAt || record.plannedProjectAt || record.createdAt)}</p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!loading && view === 'registry' ? (
+            <div className="space-y-5">
+              <section className="rounded-xl border border-token-subtle bg-token-nested p-4 sm:p-5">
+                <div className="flex items-start gap-3">
+                  <Settings2 className="mt-0.5 h-5 w-5 shrink-0 text-[color:var(--accent-fg-blue)]" />
+                  <div><h3 className="text-sm font-medium text-token-primary">系统与应用</h3><p className="mt-1 text-xs leading-5 text-token-muted">一个系统可包含多个应用，但同名应用只能归属一个系统。这里的变更只影响后续申请，不会改写任何历史登记。</p></div>
+                </div>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="rounded-lg border border-token-subtle p-3">
+                    <p className="text-sm font-medium text-token-primary">新建系统</p>
+                    <div className="mt-3 flex gap-2"><input className={FIELD_CLASS} value={newSystemName} onChange={(event) => setNewSystemName(event.target.value)} placeholder="例如：新的业务系统" /><button type="button" disabled={submitting} onClick={() => void createRegistrySystem()} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-token-subtle px-3 py-2 text-sm text-token-secondary hover-bg-soft disabled:opacity-60">{submitting ? <MapSpinner size={14} /> : <Plus className="h-4 w-4" />}创建</button></div>
+                  </div>
+                  <div className="rounded-lg border border-token-subtle p-3">
+                    <p className="text-sm font-medium text-token-primary">在系统下新建应用</p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><select className={FIELD_CLASS} value={newApplicationSystemId} onChange={(event) => setNewApplicationSystemId(event.target.value)}><option value="">选择系统</option>{registrySystems.map((system) => <option key={system.id} value={system.id}>{system.name}</option>)}</select><input className={FIELD_CLASS} value={newApplicationName} onChange={(event) => setNewApplicationName(event.target.value)} placeholder="例如：新的业务应用" /><button type="button" disabled={submitting} onClick={() => void createRegistryApplication()} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60">{submitting ? <MapSpinner size={14} /> : <Plus className="h-4 w-4" />}创建</button></div>
+                  </div>
+                </div>
+              </section>
+
+              {registrySystems.length === 0 ? <MapSectionLoader text="正在准备系统和应用目录..." /> : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {registrySystems.map((system) => (
+                    <section key={system.id} className="rounded-xl border border-token-subtle bg-token-nested p-4">
+                      <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-medium text-token-primary">{system.name}</h3><span className="text-xs text-token-muted">{system.applications.length} 个应用</span></div>
+                      {system.applications.length === 0 ? <p className="mt-3 text-xs text-token-muted">还没有应用，可以在上方直接添加。</p> : <div className="mt-3 flex flex-wrap gap-2">{system.applications.map((application) => <button type="button" key={application.id} onClick={() => { chooseApplication(application.id); setView('apply'); }} className="rounded-lg border border-token-subtle px-2.5 py-1.5 text-left text-xs text-token-secondary hover-bg-soft hover-text-primary"><span className="block">{application.name}</span><span className="mt-0.5 block text-[11px] text-token-muted">T {application.internalBaselineCode || '未导入'} · V {application.formalBaselineCode || '未导入'}</span></button>)}</div>}
+                    </section>
+                  ))}
+                </div>
+              )}
             </div>
           ) : null}
 

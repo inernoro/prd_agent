@@ -2185,16 +2185,190 @@ public class ReviewAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
-    /// <summary>可被当前用户用于申领正式 V 号的已完成 T 号登记。</summary>
-    [HttpGet("version-registrations/internal-sources")]
-    public async Task<IActionResult> ListVersionRegistrationInternalSources(CancellationToken ct)
+    /// <summary>读取公共系统—应用目录；首次使用时按已核对历史表初始化基础目录。</summary>
+    [HttpGet("version-registrations/registry")]
+    public async Task<IActionResult> GetVersionRegistry(CancellationToken ct)
     {
-        var userId = GetUserId();
+        await EnsureVersionRegistrySeededAsync(ct);
+        var systems = await _db.VersionRegistrySystems.Find(_ => true).SortBy(x => x.Name).ToListAsync(ct);
+        var applications = await _db.VersionRegistryApplications.Find(_ => true)
+            .SortBy(x => x.SystemName).ThenBy(x => x.Name).ToListAsync(ct);
+        var items = systems.Select(system => new
+        {
+            system.Id,
+            system.Name,
+            system.Source,
+            applications = applications.Where(application => application.SystemId == system.Id).Select(application => new
+            {
+                application.Id,
+                application.Name,
+                application.SystemId,
+                application.SystemName,
+                application.InternalBaselineCode,
+                application.FormalBaselineCode,
+                application.Source,
+                application.CreatedAt,
+                application.UpdatedAt,
+            }).ToList(),
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { systems = items }));
+    }
+
+    /// <summary>从方案名称匹配已登记应用，供申领页自动带出系统和应用。</summary>
+    [HttpGet("version-registrations/registry/matches")]
+    public async Task<IActionResult> FindVersionRegistryMatches([FromQuery] string? planName, CancellationToken ct)
+    {
+        await EnsureVersionRegistrySeededAsync(ct);
+        var normalizedPlanName = VersionRegistryCatalog.NormalizeName(planName);
+        if (normalizedPlanName.Length == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<object>() }));
+
+        var items = await _db.VersionRegistryApplications.Find(_ => true).ToListAsync(ct);
+        var matches = items
+            .Where(application => normalizedPlanName.Contains(application.NormalizedName, StringComparison.Ordinal))
+            .OrderByDescending(application => application.NormalizedName.Length)
+            .ThenBy(application => application.Name)
+            .Select(application => new { application.Id, application.Name, application.SystemId, application.SystemName })
+            .ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = matches }));
+    }
+
+    /// <summary>创建共享系统；名称规范化后幂等复用。</summary>
+    [HttpPost("version-registrations/registry/systems")]
+    public async Task<IActionResult> CreateVersionRegistrySystem([FromBody] CreateVersionRegistrySystemRequest request, CancellationToken ct)
+    {
+        var name = TrimToNull(request.Name);
+        if (name == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写系统名称"));
+
+        var normalizedName = VersionRegistryCatalog.NormalizeName(name);
+        var id = VersionRegistryCatalog.CreateSystemId(normalizedName);
+        var existing = await _db.VersionRegistrySystems.Find(system => system.Id == id).FirstOrDefaultAsync(ct);
+        if (existing != null)
+            return Ok(ApiResponse<object>.Ok(new { system = existing, reused = true }));
+
+        var system = new VersionRegistrySystem
+        {
+            Id = id,
+            Name = name,
+            NormalizedName = normalizedName,
+            Source = VersionRegistrySource.Manual,
+            CreatedBy = GetUserId(),
+            CreatedByName = GetDisplayName(),
+        };
+        try
+        {
+            await _db.VersionRegistrySystems.InsertOneAsync(system, cancellationToken: ct);
+        }
+        catch (MongoWriteException)
+        {
+            existing = await _db.VersionRegistrySystems.Find(item => item.Id == id).FirstOrDefaultAsync(ct);
+            if (existing != null)
+                return Ok(ApiResponse<object>.Ok(new { system = existing, reused = true }));
+            throw;
+        }
+        return Ok(ApiResponse<object>.Ok(new { system, reused = false }));
+    }
+
+    /// <summary>创建共享应用；同名应用只能归属一个系统。</summary>
+    [HttpPost("version-registrations/registry/applications")]
+    public async Task<IActionResult> CreateVersionRegistryApplication([FromBody] CreateVersionRegistryApplicationRequest request, CancellationToken ct)
+    {
+        await EnsureVersionRegistrySeededAsync(ct);
+        var systemId = TrimToNull(request.SystemId);
+        var name = TrimToNull(request.Name);
+        if (systemId == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先选择系统"));
+        if (name == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写应用名称"));
+
+        var system = await _db.VersionRegistrySystems.Find(item => item.Id == systemId).FirstOrDefaultAsync(ct);
+        if (system == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "所选系统不存在，请刷新后重试"));
+
+        var normalizedName = VersionRegistryCatalog.NormalizeName(name);
+        var id = VersionRegistryCatalog.CreateApplicationId(normalizedName);
+        var existing = await _db.VersionRegistryApplications.Find(application => application.Id == id).FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            if (existing.SystemId != system.Id)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"应用“{existing.Name}”已归属系统“{existing.SystemName}”，不能重复归属"));
+            return Ok(ApiResponse<object>.Ok(new { application = existing, reused = true }));
+        }
+
+        var application = new VersionRegistryApplication
+        {
+            Id = id,
+            SystemId = system.Id,
+            SystemName = system.Name,
+            Name = name,
+            NormalizedName = normalizedName,
+            Source = VersionRegistrySource.Manual,
+            CreatedBy = GetUserId(),
+            CreatedByName = GetDisplayName(),
+        };
+        try
+        {
+            await _db.VersionRegistryApplications.InsertOneAsync(application, cancellationToken: ct);
+        }
+        catch (MongoWriteException)
+        {
+            existing = await _db.VersionRegistryApplications.Find(item => item.Id == id).FirstOrDefaultAsync(ct);
+            if (existing != null && existing.SystemId == system.Id)
+                return Ok(ApiResponse<object>.Ok(new { application = existing, reused = true }));
+            if (existing != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"应用“{existing.Name}”已归属系统“{existing.SystemName}”，不能重复归属"));
+            throw;
+        }
+        return Ok(ApiResponse<object>.Ok(new { application, reused = false }));
+    }
+
+    /// <summary>所有申请人共享的只读版本登记簿。</summary>
+    [HttpGet("version-registrations/public")]
+    public async Task<IActionResult> ListPublicVersionRegistrations(
+        [FromQuery] string? kind,
+        [FromQuery] string? systemId,
+        [FromQuery] string? applicationId,
+        [FromQuery] string? person,
+        [FromQuery] string? planName,
+        [FromQuery] int limit = 200,
+        CancellationToken ct = default)
+    {
+        FilterDefinition<VersionRegistration> filter = Builders<VersionRegistration>.Filter.Eq(item => item.Status, VersionRegistrationStatus.Completed);
+        if (string.Equals(kind, VersionRegistrationKind.Internal, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(kind, VersionRegistrationKind.Formal, StringComparison.OrdinalIgnoreCase))
+            filter &= Builders<VersionRegistration>.Filter.Eq(item => item.Kind, kind.ToLowerInvariant());
+        var registryScopeFilter = await BuildVersionRegistrationRegistryScopeFilterAsync(systemId, applicationId, ct);
+        if (registryScopeFilter != null)
+            filter &= registryScopeFilter;
+        if (!string.IsNullOrWhiteSpace(person))
+        {
+            var personPattern = new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(person.Trim()), "i");
+            filter &= Builders<VersionRegistration>.Filter.Or(
+                Builders<VersionRegistration>.Filter.Regex(item => item.CreatedByName, personPattern),
+                Builders<VersionRegistration>.Filter.Regex(item => item.OwnerName, personPattern));
+        }
+        if (!string.IsNullOrWhiteSpace(planName))
+            filter &= Builders<VersionRegistration>.Filter.Regex(item => item.PlanName,
+                new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(planName.Trim()), "i"));
+
+        var items = await _db.VersionRegistrations.Find(filter)
+            .SortByDescending(item => item.CreatedAt)
+            .Limit(Math.Clamp(limit, 1, 500))
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>可用于申领正式 V 号的公共已完成 T 号登记。</summary>
+    [HttpGet("version-registrations/internal-sources")]
+    public async Task<IActionResult> ListVersionRegistrationInternalSources([FromQuery] string? applicationId, CancellationToken ct)
+    {
         var filter = Builders<VersionRegistration>.Filter.And(
             Builders<VersionRegistration>.Filter.Eq(x => x.Kind, VersionRegistrationKind.Internal),
             Builders<VersionRegistration>.Filter.Eq(x => x.Status, VersionRegistrationStatus.Completed));
-        if (!HasManagePermission())
-            filter &= Builders<VersionRegistration>.Filter.Eq(x => x.CreatedBy, userId);
+        var registryScopeFilter = await BuildVersionRegistrationRegistryScopeFilterAsync(null, applicationId, ct);
+        if (registryScopeFilter != null)
+            filter &= registryScopeFilter;
         var items = await _db.VersionRegistrations.Find(filter).SortByDescending(x => x.CreatedAt).ToListAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
@@ -2251,11 +2425,18 @@ public class ReviewAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择是否需要 UI 设计"));
         if (!request.IsAiPoc.HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择是否属于 AI POC 项目"));
+        var application = await GetRequiredVersionRegistryApplicationAsync(request.ApplicationId, ct);
+        if (application == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的系统和应用"));
 
         var record = new VersionRegistration
         {
             Kind = VersionRegistrationKind.Internal,
-            Code = await IssueVersionRegistrationCodeAsync("T", request.VersionType, ct),
+            Code = await IssueVersionRegistrationCodeAsync("T", application.Id, request.VersionType, ct),
+            SystemId = application.SystemId,
+            SystemName = application.SystemName,
+            ApplicationId = application.Id,
+            ApplicationName = application.Name,
             SourceType = VersionRegistrationSourceType.ReviewSubmission,
             ReviewSubmissionId = submission.Id,
             ProjectType = NormalizeProjectType(request.ProjectType),
@@ -2286,6 +2467,7 @@ public class ReviewAgentController : ControllerBase
         var userId = GetUserId();
         var isManualT = string.Equals(request.SourceMode, VersionRegistrationSourceType.ManualT, StringComparison.Ordinal);
         VersionRegistration? internalSource = null;
+        VersionRegistryApplication? application = null;
         if (isManualT)
         {
             if (!TryParseVersionCode(request.TCode, "T", out _))
@@ -2297,9 +2479,18 @@ public class ReviewAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已登记的内部版本号"));
             internalSource = await _db.VersionRegistrations.Find(x => x.Id == request.SourceInternalRegistrationId.Trim()
                 && x.Kind == VersionRegistrationKind.Internal && x.Status == VersionRegistrationStatus.Completed).FirstOrDefaultAsync(ct);
-            if (internalSource == null || (!HasManagePermission() && internalSource.CreatedBy != userId))
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "内部版本号不存在或无权使用"));
+            if (internalSource == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "内部版本号不存在，请刷新后重试"));
+            application = await GetRequiredVersionRegistryApplicationAsync(internalSource.ApplicationId, ct);
         }
+
+        application ??= await GetRequiredVersionRegistryApplicationAsync(request.ApplicationId, ct);
+        if (application == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的系统和应用"));
+        if (internalSource != null && !VersionRegistrationMatchesApplication(internalSource, application))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选内部版本号与当前应用不一致，请重新选择"));
+        if (!string.IsNullOrWhiteSpace(request.ApplicationId) && request.ApplicationId.Trim() != application.Id)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选内部版本号与当前应用不一致，请重新选择"));
 
         var demandSource = FirstPresent(request.DemandSource, internalSource?.DemandSource);
         var planName = FirstPresent(request.PlanName, internalSource?.PlanName);
@@ -2325,7 +2516,11 @@ public class ReviewAgentController : ControllerBase
         var record = new VersionRegistration
         {
             Kind = VersionRegistrationKind.Formal,
-            Code = await IssueVersionRegistrationCodeAsync("V", versionType, ct),
+            Code = await IssueVersionRegistrationCodeAsync("V", application.Id, versionType, ct),
+            SystemId = application.SystemId,
+            SystemName = application.SystemName,
+            ApplicationId = application.Id,
+            ApplicationName = application.Name,
             TCode = isManualT ? request.TCode!.Trim().ToUpperInvariant() : internalSource!.Code,
             SourceType = isManualT ? VersionRegistrationSourceType.ManualT : VersionRegistrationSourceType.InternalRegistration,
             SourceInternalRegistrationId = internalSource?.Id,
@@ -2384,7 +2579,8 @@ public class ReviewAgentController : ControllerBase
                 snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"缺少或格式错误的 {prefix} 版本号" });
                 continue;
             }
-            if (await IsVersionCodeTakenAsync(normalizedCode, ct))
+            var application = await ResolveImportedVersionRegistryApplicationAsync(row, ct);
+            if (await IsVersionCodeTakenAsync(normalizedCode, application?.Id, row.ApplicationName, ct))
             {
                 snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"版本号 {normalizedCode} 已存在，未重复导入" });
                 continue;
@@ -2393,6 +2589,10 @@ public class ReviewAgentController : ControllerBase
             {
                 Kind = prefix == "T" ? VersionRegistrationKind.Internal : VersionRegistrationKind.Formal,
                 Code = normalizedCode,
+                SystemId = application?.SystemId,
+                SystemName = FirstPresent(row.SystemName, application?.SystemName),
+                ApplicationId = application?.Id,
+                ApplicationName = FirstPresent(row.ApplicationName, application?.Name),
                 TCode = prefix == "V" && TryParseVersionCode(row.TCode, "T", out var normalizedTCode) ? normalizedTCode : null,
                 SourceType = VersionRegistrationSourceType.HistoryImport,
                 ProjectType = NormalizeProjectType(row.ProjectType),
@@ -2419,7 +2619,8 @@ public class ReviewAgentController : ControllerBase
             };
             await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
             snapshot.Records.Add(CloneVersionRegistration(record));
-            await EnsureVersionRegistrationSequenceFloorAsync(prefix, normalizedCode, ct);
+            if (application != null)
+                await EnsureVersionRegistrationSequenceFloorAsync(prefix, application.Id, normalizedCode, ct);
         }
         snapshot.ImportedCount = snapshot.Records.Count;
         snapshot.SkippedCount = snapshot.Errors.Count;
@@ -2594,19 +2795,174 @@ public class ReviewAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { success, error }));
     }
 
-    private async Task<string> IssueVersionRegistrationCodeAsync(string prefix, string? versionType, CancellationToken ct)
+    private async Task EnsureVersionRegistrySeededAsync(CancellationToken ct)
     {
+        var now = DateTime.UtcNow;
+        var systems = VersionRegistryCatalog.InitialSeeds
+            .GroupBy(seed => seed.SystemName)
+            .Select(group =>
+            {
+                var normalizedName = VersionRegistryCatalog.NormalizeName(group.Key);
+                return new VersionRegistrySystem
+                {
+                    Id = VersionRegistryCatalog.CreateSystemId(normalizedName),
+                    Name = group.Key,
+                    NormalizedName = normalizedName,
+                    Source = VersionRegistrySource.HistorySeed,
+                    CreatedBy = "system",
+                    CreatedByName = "历史登记初始化",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                };
+            })
+            .ToList();
+        var systemOperations = systems.Select(system => new UpdateOneModel<VersionRegistrySystem>(
+            Builders<VersionRegistrySystem>.Filter.Eq(item => item.Id, system.Id),
+            Builders<VersionRegistrySystem>.Update
+                .SetOnInsert(item => item.Name, system.Name)
+                .SetOnInsert(item => item.NormalizedName, system.NormalizedName)
+                .SetOnInsert(item => item.Source, system.Source)
+                .SetOnInsert(item => item.CreatedBy, system.CreatedBy)
+                .SetOnInsert(item => item.CreatedByName, system.CreatedByName)
+                .SetOnInsert(item => item.CreatedAt, system.CreatedAt)
+                .SetOnInsert(item => item.UpdatedAt, system.UpdatedAt))
+        { IsUpsert = true }).ToList();
+        if (systemOperations.Count > 0)
+            await _db.VersionRegistrySystems.BulkWriteAsync(systemOperations, cancellationToken: ct);
+
+        var applicationOperations = VersionRegistryCatalog.InitialSeeds.Select(seed =>
+        {
+            var systemNormalizedName = VersionRegistryCatalog.NormalizeName(seed.SystemName);
+            var applicationNormalizedName = VersionRegistryCatalog.NormalizeName(seed.ApplicationName);
+            var application = new VersionRegistryApplication
+            {
+                Id = VersionRegistryCatalog.CreateApplicationId(applicationNormalizedName),
+                SystemId = VersionRegistryCatalog.CreateSystemId(systemNormalizedName),
+                SystemName = seed.SystemName,
+                Name = seed.ApplicationName,
+                NormalizedName = applicationNormalizedName,
+                InternalBaselineCode = seed.InternalBaselineCode,
+                FormalBaselineCode = seed.FormalBaselineCode,
+                Source = VersionRegistrySource.HistorySeed,
+                CreatedBy = "system",
+                CreatedByName = "历史登记初始化",
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            return new UpdateOneModel<VersionRegistryApplication>(
+                Builders<VersionRegistryApplication>.Filter.Eq(item => item.Id, application.Id),
+                Builders<VersionRegistryApplication>.Update
+                    .SetOnInsert(item => item.SystemId, application.SystemId)
+                    .SetOnInsert(item => item.SystemName, application.SystemName)
+                    .SetOnInsert(item => item.Name, application.Name)
+                    .SetOnInsert(item => item.NormalizedName, application.NormalizedName)
+                    .SetOnInsert(item => item.InternalBaselineCode, application.InternalBaselineCode)
+                    .SetOnInsert(item => item.FormalBaselineCode, application.FormalBaselineCode)
+                    .SetOnInsert(item => item.Source, application.Source)
+                    .SetOnInsert(item => item.CreatedBy, application.CreatedBy)
+                    .SetOnInsert(item => item.CreatedByName, application.CreatedByName)
+                    .SetOnInsert(item => item.CreatedAt, application.CreatedAt)
+                    .SetOnInsert(item => item.UpdatedAt, application.UpdatedAt))
+            { IsUpsert = true };
+        }).ToList();
+        if (applicationOperations.Count > 0)
+            await _db.VersionRegistryApplications.BulkWriteAsync(applicationOperations, cancellationToken: ct);
+    }
+
+    private async Task<VersionRegistryApplication?> GetRequiredVersionRegistryApplicationAsync(string? applicationId, CancellationToken ct)
+    {
+        await EnsureVersionRegistrySeededAsync(ct);
+        var id = TrimToNull(applicationId);
+        return id == null
+            ? null
+            : await _db.VersionRegistryApplications.Find(application => application.Id == id).FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<VersionRegistryApplication?> ResolveImportedVersionRegistryApplicationAsync(VersionRegistrationImportRow row, CancellationToken ct)
+    {
+        var application = await GetRequiredVersionRegistryApplicationAsync(row.ApplicationId, ct);
+        if (application != null) return application;
+
+        var normalizedName = VersionRegistryCatalog.NormalizeName(row.ApplicationName);
+        if (normalizedName.Length == 0) return null;
+        return await _db.VersionRegistryApplications
+            .Find(item => item.NormalizedName == normalizedName)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// 当前应用筛选同时兼容没有应用快照的旧登记：仅在旧方案名称包含应用名称时临时归类，绝不回写历史数据。
+    /// </summary>
+    private async Task<FilterDefinition<VersionRegistration>?> BuildVersionRegistrationRegistryScopeFilterAsync(
+        string? systemId,
+        string? applicationId,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(systemId) && string.IsNullOrWhiteSpace(applicationId))
+            return null;
+
+        List<VersionRegistryApplication> applications;
+        if (!string.IsNullOrWhiteSpace(applicationId))
+        {
+            var application = await GetRequiredVersionRegistryApplicationAsync(applicationId, ct);
+            applications = application == null ? new List<VersionRegistryApplication>() : new List<VersionRegistryApplication> { application };
+        }
+        else
+        {
+            await EnsureVersionRegistrySeededAsync(ct);
+            applications = await _db.VersionRegistryApplications
+                .Find(application => application.SystemId == systemId!.Trim())
+                .ToListAsync(ct);
+        }
+
+        if (applications.Count == 0)
+            return Builders<VersionRegistration>.Filter.Eq(item => item.Id, "__version_registry_no_match__");
+        return Builders<VersionRegistration>.Filter.Or(applications.Select(BuildVersionRegistrationApplicationFilter));
+    }
+
+    private static FilterDefinition<VersionRegistration> BuildVersionRegistrationApplicationFilter(VersionRegistryApplication application)
+    {
+        var legacyPlanPattern = new MongoDB.Bson.BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(application.Name), "i");
+        return Builders<VersionRegistration>.Filter.Or(
+            Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationId, application.Id),
+            Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationName, application.Name),
+            Builders<VersionRegistration>.Filter.And(
+                Builders<VersionRegistration>.Filter.Or(
+                    Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationId, null),
+                    Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationId, string.Empty)),
+                Builders<VersionRegistration>.Filter.Or(
+                    Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationName, null),
+                    Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationName, string.Empty)),
+                Builders<VersionRegistration>.Filter.Regex(item => item.PlanName, legacyPlanPattern)));
+    }
+
+    private static bool VersionRegistrationMatchesApplication(VersionRegistration registration, VersionRegistryApplication application)
+    {
+        if (!string.IsNullOrWhiteSpace(registration.ApplicationId))
+            return string.Equals(registration.ApplicationId, application.Id, StringComparison.Ordinal);
+        if (!string.IsNullOrWhiteSpace(registration.ApplicationName))
+            return string.Equals(
+                VersionRegistryCatalog.NormalizeName(registration.ApplicationName),
+                application.NormalizedName,
+                StringComparison.Ordinal);
+        return VersionRegistryCatalog.NormalizeName(registration.PlanName)
+            .Contains(application.NormalizedName, StringComparison.Ordinal);
+    }
+
+    private async Task<string> IssueVersionRegistrationCodeAsync(string prefix, string applicationId, string? versionType, CancellationToken ct)
+    {
+        var sequenceId = VersionRegistryCatalog.CreateSequenceId(prefix, applicationId);
         for (var attempt = 0; attempt < 12; attempt++)
         {
-            var current = await _db.VersionRegistrationSequences.Find(x => x.Id == prefix).FirstOrDefaultAsync(ct);
+            var current = await _db.VersionRegistrationSequences.Find(x => x.Id == sequenceId).FirstOrDefaultAsync(ct);
             if (current == null)
             {
-                var baseline = await GetVersionRegistrationBaselineAsync(prefix, ct);
+                var baseline = await GetVersionRegistrationBaselineAsync(prefix, applicationId, ct);
                 try
                 {
                     await _db.VersionRegistrationSequences.InsertOneAsync(new VersionRegistrationSequence
                     {
-                        Id = prefix,
+                        Id = sequenceId,
                         Major = baseline.Major,
                         Medium = baseline.Medium,
                         Minor = baseline.Minor,
@@ -2622,7 +2978,7 @@ public class ReviewAgentController : ControllerBase
             var next = NextVersionTuple(current.Major, current.Medium, current.Minor, versionType);
             var updated = await _db.VersionRegistrationSequences.FindOneAndUpdateAsync(
                 Builders<VersionRegistrationSequence>.Filter.And(
-                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Id, prefix),
+                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Id, sequenceId),
                     Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Revision, current.Revision)),
                 Builders<VersionRegistrationSequence>.Update
                     .Set(x => x.Major, next.Major)
@@ -2638,19 +2994,20 @@ public class ReviewAgentController : ControllerBase
         throw new InvalidOperationException("版本号正在被其他申请占用，请稍后重新提交");
     }
 
-    private async Task EnsureVersionRegistrationSequenceFloorAsync(string prefix, string code, CancellationToken ct)
+    private async Task EnsureVersionRegistrationSequenceFloorAsync(string prefix, string applicationId, string code, CancellationToken ct)
     {
         if (!TryParseVersionCode(code, prefix, out _, out var incoming)) return;
+        var sequenceId = VersionRegistryCatalog.CreateSequenceId(prefix, applicationId);
         for (var attempt = 0; attempt < 12; attempt++)
         {
-            var current = await _db.VersionRegistrationSequences.Find(x => x.Id == prefix).FirstOrDefaultAsync(ct);
+            var current = await _db.VersionRegistrationSequences.Find(x => x.Id == sequenceId).FirstOrDefaultAsync(ct);
             if (current == null)
             {
                 try
                 {
                     await _db.VersionRegistrationSequences.InsertOneAsync(new VersionRegistrationSequence
                     {
-                        Id = prefix,
+                        Id = sequenceId,
                         Major = incoming.Major,
                         Medium = incoming.Medium,
                         Minor = incoming.Minor,
@@ -2665,7 +3022,7 @@ public class ReviewAgentController : ControllerBase
             if (CompareVersionTuple(current.Major, current.Medium, current.Minor, incoming) >= 0) return;
             var updated = await _db.VersionRegistrationSequences.FindOneAndUpdateAsync(
                 Builders<VersionRegistrationSequence>.Filter.And(
-                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Id, prefix),
+                    Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Id, sequenceId),
                     Builders<VersionRegistrationSequence>.Filter.Eq(x => x.Revision, current.Revision)),
                 Builders<VersionRegistrationSequence>.Update
                     .Set(x => x.Major, incoming.Major)
@@ -2679,14 +3036,19 @@ public class ReviewAgentController : ControllerBase
         }
     }
 
-    private async Task<VersionTuple> GetVersionRegistrationBaselineAsync(string prefix, CancellationToken ct)
+    private async Task<VersionTuple> GetVersionRegistrationBaselineAsync(string prefix, string applicationId, CancellationToken ct)
     {
-        var currentCodes = await _db.VersionRegistrations.Find(_ => true).Project(x => x.Code).ToListAsync(ct);
-        var legacyCodes = prefix == "T"
-            ? await _db.ProductInitiations.Find(x => x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync(ct)
-            : await _db.ProductReleases.Find(x => x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync(ct);
+        var application = await _db.VersionRegistryApplications.Find(item => item.Id == applicationId).FirstOrDefaultAsync(ct);
+        var currentCodes = application == null
+            ? new List<string>()
+            : await _db.VersionRegistrations.Find(BuildVersionRegistrationApplicationFilter(application))
+                .Project(item => item.Code)
+                .ToListAsync(ct);
         var max = new VersionTuple(0, 0, 0);
-        foreach (var code in currentCodes.Concat(legacyCodes))
+        var baselineCode = prefix == "T" ? application?.InternalBaselineCode : application?.FormalBaselineCode;
+        if (TryParseVersionCode(baselineCode, prefix, out _, out var baseline))
+            max = baseline;
+        foreach (var code in currentCodes)
         {
             if (TryParseVersionCode(code, prefix, out _, out var parsed) && CompareVersionTuple(parsed, max) > 0)
                 max = parsed;
@@ -2694,12 +3056,21 @@ public class ReviewAgentController : ControllerBase
         return max;
     }
 
-    private async Task<bool> IsVersionCodeTakenAsync(string code, CancellationToken ct)
+    private async Task<bool> IsVersionCodeTakenAsync(string code, string? applicationId, string? applicationName, CancellationToken ct)
     {
-        if (await _db.VersionRegistrations.Find(x => x.Code == code).AnyAsync(ct)) return true;
-        return code.StartsWith("T", StringComparison.OrdinalIgnoreCase)
-            ? await _db.ProductInitiations.Find(x => x.TCode == code && !x.IsDeleted).AnyAsync(ct)
-            : await _db.ProductReleases.Find(x => x.VCode == code && !x.IsDeleted).AnyAsync(ct);
+        FilterDefinition<VersionRegistration> filter = Builders<VersionRegistration>.Filter.Eq(item => item.Code, code);
+        if (!string.IsNullOrWhiteSpace(applicationId))
+        {
+            var application = await _db.VersionRegistryApplications.Find(item => item.Id == applicationId.Trim()).FirstOrDefaultAsync(ct);
+            filter &= application == null
+                ? Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationId, applicationId.Trim())
+                : BuildVersionRegistrationApplicationFilter(application);
+        }
+        else if (!string.IsNullOrWhiteSpace(applicationName))
+            filter &= Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationName, applicationName.Trim());
+        else
+            filter &= Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationId, null);
+        return await _db.VersionRegistrations.Find(filter).AnyAsync(ct);
     }
 
     private static bool TryParseVersionCode(string? value, string prefix, out string normalized) =>
@@ -2769,6 +3140,10 @@ public class ReviewAgentController : ControllerBase
     private static VersionRegistration CloneVersionRegistration(VersionRegistration source) => new()
     {
         Id = source.Id,
+        SystemId = source.SystemId,
+        SystemName = source.SystemName,
+        ApplicationId = source.ApplicationId,
+        ApplicationName = source.ApplicationName,
         Kind = source.Kind,
         Code = source.Code,
         TCode = source.TCode,
@@ -2838,6 +3213,8 @@ public class TestReviewWebhookRequest
 
 public class VersionRegistrationFieldsRequest
 {
+    /// <summary>新申请使用的应用主数据；系统由服务端根据应用归属带出。</summary>
+    public string? ApplicationId { get; set; }
     public string? ProjectType { get; set; }
     public string? VersionType { get; set; }
     public bool? NeedUiDesign { get; set; }
@@ -2886,6 +3263,10 @@ public sealed class ImportVersionRegistrationsRequest
 
 public sealed class VersionRegistrationImportRow : VersionRegistrationFieldsRequest
 {
+    /// <summary>历史行当时的系统快照；不覆盖当前主数据。</summary>
+    public string? SystemName { get; set; }
+    /// <summary>历史行当时的应用快照；可用于匹配当前应用主数据。</summary>
+    public string? ApplicationName { get; set; }
     public string Kind { get; set; } = VersionRegistrationKind.Internal;
     public string? Code { get; set; }
     public string? TCode { get; set; }
@@ -2893,6 +3274,17 @@ public sealed class VersionRegistrationImportRow : VersionRegistrationFieldsRequ
     public DateTime? PlannedReleaseAt { get; set; }
     public string? ContractParty { get; set; }
     public int SourceRow { get; set; }
+}
+
+public sealed class CreateVersionRegistrySystemRequest
+{
+    public string? Name { get; set; }
+}
+
+public sealed class CreateVersionRegistryApplicationRequest
+{
+    public string? SystemId { get; set; }
+    public string? Name { get; set; }
 }
 
 public sealed class CreateVersionRegistrationSnapshotRequest

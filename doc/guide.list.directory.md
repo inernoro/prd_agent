@@ -313,6 +313,7 @@
 - [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`
 - [PA Agent 可执行任务升级 · 计划](./plan.product-agent.pa.competitive-improvements.md) `plan.product-agent.pa.competitive-improvements`
 - [产品管理智能体版本流程收尾 · 计划](./plan.product-agent.version-workflow.md) `plan.product-agent.version-workflow`
+- [产品评审智能体版本号主数据 · 计划](./plan.review-agent.version-registry-master-data.md) `plan.review-agent.version-registry-master-data`
 - [Report Agent 模型质量治理 · 计划](./plan.report-agent.model-governance.md) `plan.report-agent.model-governance`
 - [Report Agent 采集优先升级 · 计划](./plan.report-agent.v3.md) `plan.report-agent.v3`
 - [海鲜市场开放接口产品化 · 计划](./plan.skill.marketplace-open-api-next.md) `plan.skill.marketplace-open-api-next`
