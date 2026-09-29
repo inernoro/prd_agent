@@ -315,7 +315,7 @@ describe('项目分支自定义分组', () => {
         pinnedBranchIds: Array.from({ length: BRANCH_GROUP_LIMITS.pinsPerGroup }, (_, i) => `${g}-${i}-`.padEnd(BRANCH_GROUP_LIMITS.pinIdLength, 'x')),
       }));
       const body = { groups, baseUpdatedAt: null };
-      expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(1024 * 1024);
+      expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(2 * 1024 * 1024);
       const ok = await request(bareServer, 'PUT', '/api/projects/proj-a/branch-groups', body);
       expect(ok.status).toBe(200);
       // 超长 id / 带需要转义字符的 id：校验拒绝（400），不靠解析上限兜底
@@ -333,6 +333,16 @@ describe('项目分支自定义分组', () => {
     } finally {
       await new Promise<void>((resolve) => bareServer.close(() => resolve()));
     }
+  });
+
+  it('CDS 能建出的最长分支 id（项目 slug 50 + 「-」+ 分支名 slug 255）可以钉入（Codex P2）', async () => {
+    const longestBranchId = `${'p'.repeat(50)}-${'b'.repeat(255)}`;
+    const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', {
+      groups: [{ ...claudeGroup, pinnedBranchIds: [longestBranchId] }],
+      baseUpdatedAt: null,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.groups[0].pinnedBranchIds).toEqual([longestBranchId]);
   });
 
   it('项目列表不带分组数据（分组只走专门的接口）', async () => {

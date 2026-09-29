@@ -24,8 +24,11 @@ export const BRANCH_GROUP_LIMITS = {
   rulesPerGroup: 20,
   ruleValueLength: 100,
   pinsPerGroup: 200,
-  /** 单个钉入分支 id 的最大长度（CDS 分支 id 是 slug，只含字母、数字、. _ - /） */
-  pinIdLength: 200,
+  /**
+   * 单个钉入分支 id 的最大长度。CDS 能建出的最长分支 id 是「项目 slug（≤50）- 分支名 slug（≤255）」= 306，
+   * 上限必须盖住它，否则长分支名的分支拖进分组必被拒（Codex P2，PR #1647）。
+   */
+  pinIdLength: 320,
 } as const;
 
 export const BRANCH_GROUP_COLOR_LABELS: Record<BranchGroupColor, string> = {

@@ -19,8 +19,11 @@ export const BRANCH_GROUP_LIMITS = {
   rulesPerGroup: 20,
   ruleValueLength: 100,
   pinsPerGroup: 200,
-  /** 单个钉入分支 id 的最大长度（CDS 分支 id 是 slug，只含字母、数字、. _ - /） */
-  pinIdLength: 200,
+  /**
+   * 单个钉入分支 id 的最大长度。CDS 能建出的最长分支 id 是「项目 slug（≤50）- 分支名 slug（≤255）」= 306，
+   * 上限必须盖住它，否则长分支名的分支拖进分组必被拒（Codex P2，PR #1647）。
+   */
+  pinIdLength: 320,
 } as const;
 
 export type NormalizeBranchGroupsResult =
@@ -87,7 +90,7 @@ export function normalizeBranchGroups(input: unknown): NormalizeBranchGroupsResu
       if (typeof pin !== 'string' || !pin.trim()) continue;
       const branchId = pin.trim();
       // 钉入 id 必须像真实分支 id：限定字符集与长度。否则 Agent 直接调接口时，每个 id 都能任意长，
-      // 30 组 × 200 个钉入在校验上合法、整体却超出路由 2MB 的解析上限，先被拦成 413 而不是 400（Codex P2，PR #1647）。
+      // 30 组 × 200 个钉入在校验上合法、整体却超出路由的解析上限，先被拦成 413 而不是 400（Codex P2，PR #1647）。
       // 限定为不需要 JSON 转义的字符，才能从上限推出请求体的最大体积。
       if (!/^[A-Za-z0-9._/-]+$/.test(branchId) || branchId.length > BRANCH_GROUP_LIMITS.pinIdLength) {
         return fail(`${at}.pinnedBranchIds`, `钉入的分支 id 只能含字母、数字、. _ - /，最长 ${BRANCH_GROUP_LIMITS.pinIdLength} 个字符（收到「${branchId.slice(0, 40)}」）`);
