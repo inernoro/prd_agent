@@ -93,6 +93,10 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     const layerBuild = routes.indexOf("          svc.status = 'building';\n          // 每个服务开始构建都推一条");
     expect(layerBuild).toBeGreaterThan(0);
     expect(routes.slice(layerBuild, layerBuild + 600)).toContain("type: 'branch.updated',");
+    // 单服务部署开始时同样按轮清零排队时长（计时 = 开始至今 − 排队时长）
+    const singleStart = routes.indexOf('// 排队时长按轮重置，与整分支部署一致');
+    expect(singleStart).toBeGreaterThan(0);
+    expect(routes.slice(singleStart, singleStart + 300)).toContain('entry.lastDeployQueueWaitMs = 0;');
     // 外层失败（如排构建槽时被取消）也推一条，已打开的列表不停在「构建中」
     expect(routes).toContain('// 失败也要推一条：比如排构建槽时被取消');
     // 结束那一条必须排在分支聚合状态重算之后，否则从停止状态起服务时卡片拿到的还是 idle
