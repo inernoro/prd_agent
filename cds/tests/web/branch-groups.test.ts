@@ -23,6 +23,7 @@ import {
   groupBranches,
   groupDropSide,
   moveGroupOnto,
+  sameBranchGroupContent,
   pinBranch,
   previewGroupHits,
   ruleMatches,
@@ -395,5 +396,24 @@ describe('页面接线', () => {
     expect(page).toContain('draggableToGroup={groupsEditable}');
     expect(page).toContain('draggable={draggableToGroup || undefined}');
     expect(page).toContain('revealInGroupsRef.current(branchId);');
+  });
+
+  it('已有分组没改内容时不许保存；按后端归一化口径比较（去空白、丢空规则）', () => {
+    const base = { id: 'g1', name: 'claude', color: 'orange' as const, rules: [{ kind: 'prefix' as const, value: 'claude/' }], pinnedBranchIds: ['b1'] };
+    expect(sameBranchGroupContent(base, { ...base, name: ' claude ', rules: [{ kind: 'prefix', value: ' claude/ ' }, { kind: 'contains', value: '  ' }] })).toBe(true);
+    expect(sameBranchGroupContent(base, { ...base, name: 'claude2' })).toBe(false);
+    expect(sameBranchGroupContent(base, { ...base, color: 'blue' })).toBe(false);
+    expect(sameBranchGroupContent(base, { ...base, rules: [{ kind: 'contains', value: 'claude/' }] })).toBe(false);
+    expect(sameBranchGroupContent(base, { ...base, pinnedBranchIds: [] })).toBe(false);
+    const editor = read('components/branch-groups/BranchGroupEditorDialog.tsx');
+    expect(editor).toContain('const unchanged = !isNew && initial !== null && sameBranchGroupContent(draft, initial);');
+    expect(editor).toMatch(/const canSave = [^;]*&& !unchanged;/);
+  });
+
+  it('切换项目时清掉已停止行的展开状态，不把上个项目的展开带过去', () => {
+    const page = read('pages/BranchListPage.tsx');
+    const reset = page.indexOf('setCollapsedGroups(readCollapsedGroups(projectId));');
+    expect(reset).toBeGreaterThan(0);
+    expect(page.slice(reset, reset + 400)).toContain('setExpandedDormantGroups(new Set());');
   });
 });

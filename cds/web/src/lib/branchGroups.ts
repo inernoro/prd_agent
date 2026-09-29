@@ -211,6 +211,25 @@ export function newBranchGroupId(): string {
 }
 
 /** 这个组还能不能再钉进这个分支：已经钉在里面的永远可以，否则看有没有到上限（每组 200 个）。 */
+/**
+ * 按后端的归一化口径（名字与规则值去空白、空规则丢掉）比较两份分组是否内容相同。
+ * 编辑器用它挡住「打开、什么都没改、点保存」：那种保存会整份覆盖并推进版本号，
+ * 让别人同时进行的真实修改白白撞上 409，修改记录也会谎称改过（Codex P2，PR #1647）。
+ */
+export function sameBranchGroupContent(a: BranchGroup, b: BranchGroup): boolean {
+  const normalize = (group: BranchGroup) => JSON.stringify([
+    group.id,
+    group.name.trim(),
+    group.color,
+    group.rules
+      .map((rule) => ({ kind: rule.kind, value: rule.value.trim() }))
+      .filter((rule) => rule.value.length > 0)
+      .map((rule) => [rule.kind, rule.value]),
+    group.pinnedBranchIds,
+  ]);
+  return normalize(a) === normalize(b);
+}
+
 export function groupAcceptsPin(group: BranchGroup, branchId: string): boolean {
   return group.pinnedBranchIds.includes(branchId) || group.pinnedBranchIds.length < BRANCH_GROUP_LIMITS.pinsPerGroup;
 }

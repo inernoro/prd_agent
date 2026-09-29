@@ -1736,6 +1736,9 @@ export function BranchListPage(): JSX.Element {
   useEffect(() => {
     setViewModeState(readBranchViewMode(projectId));
     setCollapsedGroups(readCollapsedGroups(projectId));
+    // 已停止行的展开是按分组 id 记的，而「未分组」与同名 id 在各项目里是同一个键：
+    // 不清的话 A 项目展开过的行，进 B 项目时照样展开着（Codex P2，PR #1647）
+    setExpandedDormantGroups(new Set());
     setBranchGroups(null);
     setGroupsLoadError('');
     setGroupEditor(null);

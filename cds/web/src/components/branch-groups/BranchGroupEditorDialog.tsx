@@ -24,6 +24,7 @@ import {
   BRANCH_GROUP_RULE_KINDS,
   BRANCH_GROUP_RULE_LABELS,
   previewGroupHits,
+  sameBranchGroupContent,
   type BranchGroup,
   type BranchGroupRuleKind,
   type GroupableBranch,
@@ -107,7 +108,9 @@ export function BranchGroupEditorDialog({
   // 还没存进列表的新分组：列表已满 30 个时不许保存。入口处已拦，这里兜住「打开时 29 个、别人抢先建了第 30 个、
   // 冲突后草稿保留」这条路，否则每次重试都是一个必被后端拒绝的第 31 个（Codex P2，PR #1647）。
   const atGroupLimit = draftIndex < 0 && groups.length >= BRANCH_GROUP_LIMITS.groups;
-  const canSave = draft.name.trim().length > 0 && draft.rules.length <= BRANCH_GROUP_LIMITS.rulesPerGroup && !atGroupLimit && !saving;
+  // 已有分组打开后没改任何内容就不许保存，否则会空推一次版本号（Codex P2，PR #1647）
+  const unchanged = !isNew && initial !== null && sameBranchGroupContent(draft, initial);
+  const canSave = draft.name.trim().length > 0 && draft.rules.length <= BRANCH_GROUP_LIMITS.rulesPerGroup && !atGroupLimit && !saving && !unchanged;
   const who = actorText(updatedBy);
   const when = formatWhen(updatedAt);
 
