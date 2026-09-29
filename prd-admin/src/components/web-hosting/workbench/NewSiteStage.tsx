@@ -510,7 +510,7 @@ export default function NewSiteStage({
         onSend={send}
         hint={isPpt
           ? '打开 PPT 智能体，要求只预填、不自动发送 · 约几分钟（经验值）'
-          : [etaHint, runtimeCopy ? runtimeCopy.continuity : '做好自动存进网页托管'].filter(Boolean).join(' · ')}
+          : [etaHint, runtimeCopy ? runtimeCopy.continuity : '进度在对话里，成品出现在预览里'].filter(Boolean).join(' · ')}
       />
       <input
         ref={fileInputRef}
