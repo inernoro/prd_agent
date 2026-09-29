@@ -90,6 +90,10 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     // 分支不在运行（停止 / 出错后重试）时单服务部署带着聚合状态走中间态，卡片不必从服务状态去猜
     expect(routes).toContain("      if (entry.status !== 'running') entry.status = 'building';");
     expect(routes).toContain("        if (entry.status === 'building') entry.status = 'starting';");
+    // 整分支部署多层依赖：每个服务开始构建都推一条，下一层构建时卡片不停在上一层的「就绪探测」
+    const layerBuild = routes.indexOf("          svc.status = 'building';\n          // 每个服务开始构建都推一条");
+    expect(layerBuild).toBeGreaterThan(0);
+    expect(routes.slice(layerBuild, layerBuild + 600)).toContain("type: 'branch.updated',");
     // 外层失败（如排构建槽时被取消）也推一条，已打开的列表不停在「构建中」
     expect(routes).toContain('// 失败也要推一条：比如排构建槽时被取消');
     // 结束那一条必须排在分支聚合状态重算之后，否则从停止状态起服务时卡片拿到的还是 idle

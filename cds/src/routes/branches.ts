@@ -13582,6 +13582,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
           const svc = entry.services[profile.id];
           svc.status = 'building';
+          // 每个服务开始构建都推一条：多层依赖部署时，上一层已经把分支广播成 starting，
+          // 下一层开始拉镜像 / 编译时若不推，已打开的列表会一直停在「就绪探测」（Codex P2，PR #1646）。
+          // 事件流会取最新分支下发（分支聚合状态此时仍是 building）。
+          branchEvents.emitEvent({
+            type: 'branch.updated',
+            payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: nowIso() },
+          });
 
           try {
             // 拿到槽位后立即复核租约：排队期间可能已被更高优先级操作取代，
