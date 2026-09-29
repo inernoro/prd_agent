@@ -21,6 +21,7 @@ import {
   assignBranchToGroup,
   groupAcceptsPin,
   groupBranches,
+  groupDropSide,
   moveGroupOnto,
   pinBranch,
   previewGroupHits,
@@ -73,6 +74,27 @@ describe('归组判定：钉入 > 规则按分组顺序 > 未归组', () => {
     expect(ids(moveGroupOnto(groups, 'a', 'c'))).toEqual(['b', 'c', 'a']);
     expect(ids(moveGroupOnto(groups, 'c', 'a'))).toEqual(['c', 'a', 'b']);
     expect(ids(moveGroupOnto(groups, 'b', 'b'))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('拖组头的提示说的一侧，就是调序后真正落的那一侧', () => {
+    const ids = (list: BranchGroup[]) => list.map((item) => item.id);
+    const groups = [group('a', []), group('b', []), group('c', [])];
+    for (const from of ['a', 'b', 'c']) {
+      for (const to of ['a', 'b', 'c']) {
+        const side = groupDropSide(groups, from, to);
+        const moved = ids(moveGroupOnto(groups, from, to));
+        if (!side) {
+          expect(moved).toEqual(['a', 'b', 'c']);
+          continue;
+        }
+        const fromAt = moved.indexOf(from);
+        const toAt = moved.indexOf(to);
+        expect(side === 'before' ? fromAt === toAt - 1 : fromAt === toAt + 1).toBe(true);
+      }
+    }
+    expect(groupDropSide(groups, 'a', 'b')).toBe('after');
+    expect(groupDropSide(groups, 'c', 'a')).toBe('before');
+    expect(groupDropSide(groups, 'a', 'missing')).toBeNull();
   });
 
   it('钉入优先于任何规则，哪怕规则所在的组更靠上', () => {
@@ -175,6 +197,12 @@ describe('前后端枚举一致', () => {
     const page = read('pages/BranchListPage.tsx');
     expect(page).toContain('setGroupEditor((current) => (current?.group.id === group.id ? null : current))');
     expect(page).toContain('setGroupEditor((current) => (current?.group.id === groupId ? null : current))');
+    // 列表已满时，还没存进列表的新分组不能保存（冲突后保留的新草稿也走这条）
+    expect(editor).toContain('const atGroupLimit = draftIndex < 0 && groups.length >= BRANCH_GROUP_LIMITS.groups;');
+    expect(editor).toContain('&& !atGroupLimit && !saving');
+    // 拖组头的提示从同一个判断取落点，不写死「前面」
+    expect(page).toContain('groupDropHintText(groupList, draggingGroupIdRef.current, group)');
+    expect(page).not.toContain('松手把分组挪到「${group?.name || \'\'}」前面');
   });
 
   it('每个颜色在两个主题里都定义了 token，组头色块类名写全', () => {

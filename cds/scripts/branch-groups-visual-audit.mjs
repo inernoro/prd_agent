@@ -213,6 +213,17 @@ async function dragTo(page, fromSelector, toSelector, { hold = false } = {}) {
   await page.waitForTimeout(400);
 }
 
+/** 悬停中的拖拽不松手直接结束（相当于拖到别处放弃），不触发调序。 */
+async function cancelDrag(page) {
+  await page.evaluate(() => {
+    const pending = window.__pendingDrag;
+    if (!pending) return;
+    pending.src.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: pending.dataTransfer }));
+    window.__pendingDrag = null;
+  });
+  await page.waitForTimeout(300);
+}
+
 async function releaseDrag(page) {
   await page.evaluate(() => {
     const pending = window.__pendingDrag;
@@ -341,6 +352,17 @@ async function main() {
         await page.screenshot({ path: path.join(OUT, '4-editor-dark.png') });
         await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
         await page.waitForTimeout(300);
+
+        // 8a. 往下拖组头时，提示说的是「后面」，与松手后的真实落点一致（Codex P2，PR #1647）
+        {
+          const before = await sectionOrder(page);
+          const [upper, lower] = before.indexOf(claudeId) < before.indexOf(codexId) ? [claudeId, codexId] : [codexId, claudeId];
+          await dragTo(page, `[data-branch-group="${upper}"] [data-branch-group-header] [draggable="true"]`, `[data-branch-group="${lower}"]`, { hold: true });
+          const hint = (await page.textContent(`[data-branch-group="${lower}"] [data-branch-group-drop-hint]`).catch(() => '')) || '';
+          await cancelDrag(page);
+          check(/后面/.test(hint) && !/前面/.test(hint) && (await sectionOrder(page)).join() === before.join(),
+            `往下拖组头时提示落在目标后面，放弃拖拽不改顺序（「${hint.trim()}」）`);
+        }
 
         // 8. 拖组头把手调顺序：Codex 挪到 Claude 前面
         await dragTo(page, `[data-branch-group="${codexId}"] [data-branch-group-header] [draggable="true"]`, `[data-branch-group="${claudeId}"]`);

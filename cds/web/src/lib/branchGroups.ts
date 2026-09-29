@@ -229,14 +229,25 @@ export function pinBranch(groups: BranchGroup[], branchId: string, groupId: stri
 }
 
 /**
+ * 拖组头松手后落在目标的哪一侧：往上拖在前面、往下拖在后面，原地或找不到返回 null。
+ * 调序与拖动时的提示都只从这里取，提示不会和实际落点说反（Codex P2，PR #1647）。
+ */
+export function groupDropSide(groups: BranchGroup[], fromId: string, toId: string): 'before' | 'after' | null {
+  if (fromId === toId) return null;
+  const from = groups.findIndex((group) => group.id === fromId);
+  const to = groups.findIndex((group) => group.id === toId);
+  if (from < 0 || to < 0) return null;
+  return from > to ? 'before' : 'after';
+}
+
+/**
  * 把 fromId 拖到 toId 的位置（拖组头调顺序）：往上拖放在目标前面，往下拖放在目标后面。
  * 只有「放在前面」一种时，拖到紧挨着的下一组等于原地不动，也没法挪到最后（Codex P2，PR #1647）。
  */
 export function moveGroupOnto(groups: BranchGroup[], fromId: string, toId: string): BranchGroup[] {
-  if (fromId === toId) return groups;
+  if (!groupDropSide(groups, fromId, toId)) return groups;
   const from = groups.findIndex((group) => group.id === fromId);
   const to = groups.findIndex((group) => group.id === toId);
-  if (from < 0 || to < 0) return groups;
   const next = groups.slice();
   const [moving] = next.splice(from, 1);
   next.splice(to, 0, moving);

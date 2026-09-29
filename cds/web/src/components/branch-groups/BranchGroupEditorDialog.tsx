@@ -104,7 +104,10 @@ export function BranchGroupEditorDialog({
   const setRule = (index: number, patch: Partial<{ kind: BranchGroupRuleKind; value: string }>) =>
     update({ rules: draft.rules.map((rule, i) => (i === index ? { ...rule, ...patch } : rule)) });
   const atRuleLimit = draft.rules.length >= BRANCH_GROUP_LIMITS.rulesPerGroup;
-  const canSave = draft.name.trim().length > 0 && draft.rules.length <= BRANCH_GROUP_LIMITS.rulesPerGroup && !saving;
+  // 还没存进列表的新分组：列表已满 30 个时不许保存。入口处已拦，这里兜住「打开时 29 个、别人抢先建了第 30 个、
+  // 冲突后草稿保留」这条路，否则每次重试都是一个必被后端拒绝的第 31 个（Codex P2，PR #1647）。
+  const atGroupLimit = draftIndex < 0 && groups.length >= BRANCH_GROUP_LIMITS.groups;
+  const canSave = draft.name.trim().length > 0 && draft.rules.length <= BRANCH_GROUP_LIMITS.rulesPerGroup && !atGroupLimit && !saving;
   const who = actorText(updatedBy);
   const when = formatWhen(updatedAt);
 
@@ -291,6 +294,11 @@ export function BranchGroupEditorDialog({
             <span>钉入后卡片名字旁出现图钉；拖回「未归组」即取消钉入</span>
           </div>
           </fieldset>
+          {atGroupLimit ? (
+            <div className="text-sm text-destructive" data-branch-group-limit-reached>
+              本项目已有 {BRANCH_GROUP_LIMITS.groups} 个分组（上限），这个新分组存不进去。先删掉一个不用的分组再建。
+            </div>
+          ) : null}
           {error ?<div className="text-sm text-destructive" role="alert">{error}</div> : null}
         </div>
 

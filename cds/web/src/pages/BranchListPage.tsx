@@ -53,6 +53,7 @@ import {
   groupAcceptsPin,
   BRANCH_GROUP_COLORS,
   groupBranches,
+  groupDropSide,
   moveGroupOnto,
   newBranchGroupId,
   pinBranch,
@@ -859,6 +860,14 @@ function failedLiveServices(
  * 分支聚合仍是 running，只看分支状态会漏掉（Codex P2，PR #1646）。
  * 页头「出错需要处理」计数、出错置顶、卡片出错呈现与「重新部署失败项」共用这一个判据，不许各写一份。
  */
+/** 拖组头时的提示：落点在目标前面还是后面，与 moveGroupOnto 同一个判断。 */
+function groupDropHintText(groups: BranchGroup[], fromId: string | null, target: BranchGroup | null): string {
+  if (!target) return '';
+  const side = fromId ? groupDropSide(groups, fromId, target.id) : null;
+  if (!side) return '松手不改变顺序';
+  return `松手把分组挪到「${target.name}」${side === 'before' ? '前面' : '后面'}`;
+}
+
 function branchHasDeployFailure(
   branch: Pick<BranchSummary, 'status' | 'services' | 'extraProfiles'>,
   projectProfileIds: ReadonlySet<string> | null,
@@ -3740,7 +3749,7 @@ export function BranchListPage(): JSX.Element {
       ? ''
       : dropping.kind === 'branch'
         ? group ? `松手放入「${group.name}」· 手动钉入，优先于规则` : '松手移出分组 · 回到按规则归组'
-        : `松手把分组挪到「${group?.name || ''}」前面`;
+        : groupDropHintText(groupList, draggingGroupIdRef.current, group);
     return (
       <section
         key={id}
