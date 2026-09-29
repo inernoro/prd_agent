@@ -153,7 +153,7 @@ function toGlobalOpen(value?: string): boolean | undefined {
   return undefined;
 }
 
-function mapHistoryVersionType(value?: string): FormState['versionType'] {
+function mapHistoryVersionType(value?: string): NonNullable<VersionRegistrationFields['versionType']> {
   const text = value?.trim().toLowerCase() ?? '';
   if (text.includes('大') || text.includes('major')) return 'major';
   if (text.includes('中') || text.includes('medium')) return 'medium';
