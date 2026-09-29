@@ -640,7 +640,7 @@ function ProjectInitTab(): JSX.Element {
           ) : null}
 
           <p className="text-xs text-muted-foreground">
-            会装到当前项目的技能目录（自动识别 .claude / .cursor / .agents），跟着项目的版本库走，
+            会装到当前项目的技能目录（自动识别 .claude / .agents），跟着项目的版本库走，
             团队每个人拉下来都有。
           </p>
         </>

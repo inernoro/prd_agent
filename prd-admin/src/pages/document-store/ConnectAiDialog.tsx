@@ -188,7 +188,7 @@ export function ConnectAiDialog({ onClose }: Props) {
       );
       if (withPrompt) {
         setPromptCopied(ok);
-        if (ok) toast.success('指令已复制 —— 粘贴到 Claude Code / Cursor 即可');
+        if (ok) toast.success('指令已复制 —— 粘贴到 Claude Code / Codex 即可');
         else toast.error('Key 已生成，但自动复制失败，请点击"复制智能体指令"');
       } else {
         setPlainCopied(ok);
@@ -239,7 +239,7 @@ export function ConnectAiDialog({ onClose }: Props) {
       state: isDone ? 'done' : 'active',
     },
     {
-      title: '粘贴到 Claude Code / Cursor',
+      title: '粘贴到 Claude Code / Codex',
       desc: '发送后 AI 会把 Key 存进本机 secrets 并完成接入',
       state: isDone ? 'active' : 'idle',
     },

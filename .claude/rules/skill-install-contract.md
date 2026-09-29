@@ -19,7 +19,7 @@ paths:
 ```sh
 # 存在几个宿主就装几个；一个都没有时兜底 .agents/skills
 SKILLS_DIRS=""
-for h in .claude .cursor .agents; do
+for h in .claude .agents; do
   [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
 done
 [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
@@ -34,7 +34,7 @@ for d in $SKILLS_DIRS; do mkdir -p "$d"; done
 
 **为什么不是 `~/.claude/skills`**：帮别人建系统时，技能装在你这台机器上，人一走团队什么都不剩。装项目级则技能跟着对方的版本库走，全队 clone 下来都有。
 
-**为什么不能写死 `.claude`**：Cursor 和 Codex 宿主直接就是错的目录。
+**为什么不能写死 `.claude`**：Codex 宿主直接就是错的目录。
 
 ## 二、三处实现必须同步
 
@@ -81,7 +81,7 @@ CDS 只做「浏览 + 按预设装」，数据从 MAP 代理并带缓存兜底�
 
 2026-07-28 用户指出「findmapskills 和 CDS 侧不是一个 SSOT 可能会导致问题」。核实后发现已经在打架：
 
-1. `findmapskills`（两份拷贝都是）教用户装 `~/.claude/skills/`，写死 `.claude`；CDS 引导脚本装项目级三宿主——同一个客户项目会分裂出两处技能库
+1. `findmapskills`（两份拷贝都是）教用户装 `~/.claude/skills/`，写死 `.claude`；CDS 引导脚本装项目级多宿主——同一个客户项目会分裂出两处技能库
 2. `findmapskills` 正文存在两份（`.claude/skills/` 一份、`OfficialSkillTemplates.cs` 一份），注释写着需要人工同步，实测已开始漂移
 3. MAP 套装自己的 `installCommand` 和 `INSTALL.md` 也写着 `~/.claude/skills/`
 

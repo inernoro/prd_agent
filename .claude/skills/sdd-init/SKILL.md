@@ -9,7 +9,7 @@ description: 把刚装好的角色技能套装落地到当前项目——探测�
 
 ## 这个技能解决什么
 
-用户刚把一个角色套装装进项目的技能目录（`.claude/skills` / `.cursor/skills` / `.agents/skills` 三者之一），现在面对的是：一堆不知道何时该用的斜杠命令，和一个没有任何约定的项目目录。
+用户刚把一个角色套装装进项目的技能目录（`.claude/skills` / `.agents/skills` 二者之一），现在面对的是：一堆不知道何时该用的斜杠命令，和一个没有任何约定的项目目录。
 
 技能是零件，**规则和文档骨架才是把零件串起来的机床**。本技能负责装机床：
 
@@ -37,11 +37,11 @@ pwd; git rev-parse --show-toplevel 2>/dev/null || echo "非 git 仓库"
 ls -d CLAUDE.md AGENTS.md doc docs .claude/rules changelogs 2>/dev/null
 
 # 3. 装了哪些技能（判断用户拿的是哪个角色套装）
-#    三个宿主目录都要看：Claude Code 用 .claude、Cursor 用 .cursor、
+#    两个宿主目录都要看：Claude Code 用 .claude，
 #    通用 Agent Skills / Codex 用 .agents。引导脚本装到哪个是按项目现状探测的，
 #    只看 .claude 会把 Codex 项目误判成「一个技能都没装」，接着写错规则文件名、
 #    生成空技能索引。
-for d in .claude/skills .cursor/skills .agents/skills; do
+for d in .claude/skills .agents/skills; do
   [ -d "$d" ] && { echo "== $d"; ls "$d"; }
 done
 cat .cds/bootstrap.json 2>/dev/null   # 引导脚本留的种子：预设、技能目录、装了什么
@@ -82,7 +82,6 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 | 探测到的技能目录 | 规则文件名 |
 |---|---|
 | `.claude/skills` | `CLAUDE.md` |
-| `.cursor/skills` | `AGENTS.md` |
 | `.agents/skills`（通用 Agent Skills / Codex） | `AGENTS.md` |
 
 两种都存在时两个文件都生成，内容相同。下表的 `CLAUDE.md` 按此规则替换成实际文件名。

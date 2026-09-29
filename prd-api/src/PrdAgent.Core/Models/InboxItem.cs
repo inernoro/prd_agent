@@ -6,7 +6,7 @@ namespace PrdAgent.Core.Models;
 /// ⚠️ 骨架状态（2026-04-16）：仅定义数据模型与集合注册，**Controller / Service / Device Flow 认证留待下一次迭代开发**。
 ///
 /// 设计目标：
-/// - 外部系统（Manus / Cursor / 其他知识库）通过 SDK 一键推送任意数据到本系统
+/// - 外部系统（Manus / Codex / 其他知识库）通过 SDK 一键推送任意数据到本系统
 /// - 认证使用交互式 Device Flow（参考 <c>cds/src/routes/github-oauth.ts</c>），默认 30 天有效，可选永久
 /// - 数据先落 Inbox 缓冲，用户在 Inbox 页确认后再归档到对应业务集合（hosted_sites / document_stores / skills / ...）
 /// - 默认路径：公开页（Visibility=public 的 HostedSite）无需 Inbox，Inbox 是用户显式开启的接收通道
@@ -31,7 +31,7 @@ public class InboxItem
     /// <summary>原始载荷（JSON 字符串，保留发送方原始结构）</summary>
     public string Payload { get; set; } = string.Empty;
 
-    /// <summary>来源标识（如 "manus" / "cursor" / "custom-cli/v1"），由 SDK 自报</summary>
+    /// <summary>来源标识（如 "manus" / "codex" / "custom-cli/v1"），由 SDK 自报</summary>
     public string? Source { get; set; }
 
     /// <summary>来源绑定的 Device ID（认证 token 对应的设备）</summary>

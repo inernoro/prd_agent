@@ -33,7 +33,7 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
       key: 'agent',
       title: '智能体接入',
       hint: '推荐',
-      description: '生成 Key 后复制一段指令给 Claude Code / Cursor，让 AI 自动安装 findmapskills 并接通市场。',
+      description: '生成 Key 后复制一段指令给 Claude Code / Codex，让 AI 自动安装 findmapskills 并接通市场。',
       action: '生成 Key 并复制指令',
       icon: Bot,
       onClick: onChooseAgent,

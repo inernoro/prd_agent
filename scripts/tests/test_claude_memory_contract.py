@@ -24,7 +24,6 @@ import pathlib
 import re
 import subprocess
 import sys
-import tempfile
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 RULES_DIR = REPO / ".claude" / "rules"
@@ -257,7 +256,7 @@ def check_module_coverage() -> None:
     second copy that drifts, so this also rejects a CLAUDE.md that duplicates
     the AGENTS.md body instead of importing it.
     """
-    skip = {"node_modules", "dist", "bin", "obj", "build", ".git", ".claude", ".Codex", ".cursor"}
+    skip = {"node_modules", "dist", "bin", "obj", "build", ".git", ".claude", ".Codex"}
     # What matters is the text that actually reaches Claude, so read through imports:
     # a root CLAUDE.md of `@AGENTS.md` still "mentions" whatever AGENTS.md mentions.
     root_text = resolve_imports(REPO / "CLAUDE.md")
@@ -328,73 +327,6 @@ def check_host_specific_rules_are_announced() -> None:
             )
 
 
-def check_cursor_scopes_are_derived() -> None:
-    """The Cursor mirror must derive its globs, never keep a second hand-written copy.
-
-    `.cursor/rules/*.mdc` is generated from `.claude/rules/`. Its scoping used to be
-    a hardcoded table inside sync-cursor-rules.sh, so widening a rule's `paths` left
-    Cursor on the old narrow scope - the rule silently stopped loading there while
-    looking fixed here. `globs:auto` derives from the source instead, which makes
-    that drift unrepresentable; this guard stops anyone pasting a literal list back.
-    """
-    script = REPO / "scripts" / "sync-cursor-rules.sh"
-    if not script.exists():
-        return
-    for i, line in enumerate(script.read_text(encoding="utf-8").splitlines(), 1):
-        m = re.match(r'\s*"([a-z0-9-]+)\|globs:\s*(.+?)\|', line)
-        if m and m.group(2).strip() != "auto":
-            fail(
-                f"scripts/sync-cursor-rules.sh:{i}: rule {m.group(1)} hardcodes globs "
-                f"({m.group(2)[:40]}...). Use `globs:auto` so the scope derives from "
-                ".claude/rules/ and cannot drift from it."
-            )
-
-
-def check_cursor_mirror_is_current() -> None:
-    """Regenerate the Cursor mirror and compare, instead of trusting the mapping.
-
-    Checking only that the mapping says `globs:auto` proves the generator *would*
-    derive the right scope - not that anyone ran it. Editing a source rule and
-    forgetting `sync-cursor-rules.sh` left the tracked `.cursor/rules/*.mdc`
-    stale while this file stayed green, which is the very drift it claims to
-    prevent. So: regenerate into a temp dir and diff every tracked mirror.
-
-    The generated header carries a timestamp, so that line is excluded from the
-    comparison - it changes on every run and says nothing about drift.
-    """
-    script = REPO / "scripts" / "sync-cursor-rules.sh"
-    tracked = REPO / ".cursor" / "rules"
-    if not script.exists() or not tracked.is_dir():
-        return
-
-    def strip_stamp(text: str) -> str:
-        return "\n".join(l for l in text.splitlines() if "生成时间:" not in l)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        proc = subprocess.run(
-            ["bash", str(script)],
-            env={**os.environ, "CURSOR_RULES_DST": tmp},
-            capture_output=True, text=True, cwd=str(REPO),
-        )
-        if proc.returncode != 0:
-            fail(f"sync-cursor-rules.sh failed (exit {proc.returncode}): {proc.stderr.strip()[:300]}")
-            return
-
-        fresh = {p.name: p.read_text(encoding="utf-8") for p in pathlib.Path(tmp).glob("*.mdc")}
-        have = {p.name: p.read_text(encoding="utf-8") for p in tracked.glob("*.mdc")}
-
-        for name in sorted(set(fresh) | set(have)):
-            if name not in have:
-                fail(f".cursor/rules/{name} is missing. Run: bash scripts/sync-cursor-rules.sh")
-            elif name not in fresh:
-                fail(f".cursor/rules/{name} is stale - the generator no longer emits it. "
-                     "Run: bash scripts/sync-cursor-rules.sh")
-            elif strip_stamp(fresh[name]) != strip_stamp(have[name]):
-                fail(f".cursor/rules/{name} does not match what the generator produces from "
-                     ".claude/rules/. Run: bash scripts/sync-cursor-rules.sh and commit the result.")
-        print(f"  cursor mirror: {len(have)} generated files match their source rules")
-
-
 # Numbered clauses AGENTS.md must carry. Deleting one has to be a deliberate act:
 # edit this list and say why. It exists because a bulk rewrite of AGENTS.md silently
 # dropped §5.5 (Review 范围熔断) along with a genuinely obsolete index table - the
@@ -432,8 +364,6 @@ def main() -> int:
     print("Claude memory contract:")
     check_agents_md_clauses_intact()
     check_host_specific_rules_are_announced()
-    check_cursor_scopes_are_derived()
-    check_cursor_mirror_is_current()
     check_rules()
     check_intro_lines()
     check_claude_md_size()

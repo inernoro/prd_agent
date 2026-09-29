@@ -237,7 +237,7 @@ flowchart LR
 | `kb_apply` | 否 | 审批后 | 应用差异到知识库 |
 | `kb_commit` | 否 | 审批后 | 生成版本记录或知识库 commit |
 
-### 7.3 像 Cursor 操作本地文件一样
+### 7.3 像本地编码 Agent 操作文件一样
 
 目标交互：
 

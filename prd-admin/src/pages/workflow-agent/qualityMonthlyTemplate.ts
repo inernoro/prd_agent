@@ -205,7 +205,7 @@ var specialContent = {
     {type:"doc",title:"11月 慢查询分析报告"},
     {type:"doc",title:"11月 数据索引分析报告"},
     {type:"doc",title:"运维SLA月度统计报告"},
-    {type:"ai",title:"Cursor Plan 模式培训 ——《让 AI 从\\"盲从\\"进化到\\"思考\\"》"}
+    {type:"ai",title:"AI Plan 模式培训 ——《让 AI 从\\"盲从\\"进化到\\"思考\\"》"}
   ],
   "12月": [
     {type:"doc",title:"12月 数据库索引分析报告"},

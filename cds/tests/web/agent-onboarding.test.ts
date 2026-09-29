@@ -408,10 +408,9 @@ describe('CDS Agent 接入口令', () => {
     expect(selectedContext.pagePath).not.toBe(sourceContext.pagePath);
   });
 
-  it('列出三个 Agent 的项目级技能目录', () => {
+  it('列出两个 Agent 宿主的项目级技能目录', () => {
     expect(PROJECT_SKILL_PATHS).toEqual([
       { agent: 'Codex / 通用 Agent Skills', path: '.agents/skills' },
-      { agent: 'Cursor', path: '.cursor/skills' },
       { agent: 'Claude Code', path: '.claude/skills' },
     ]);
   });

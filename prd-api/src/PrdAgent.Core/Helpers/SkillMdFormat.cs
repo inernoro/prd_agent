@@ -8,7 +8,7 @@ namespace PrdAgent.Core.Helpers;
 /// SKILL.md 格式序列化/反序列化工具
 ///
 /// 格式设计原则：
-/// - 标准 SKILL.md 字段（name, description）兼容 Claude Code / Cursor / Copilot 等平台
+/// - 标准 SKILL.md 字段（name, description）兼容 Claude Code / Codex / Copilot 等平台
 /// - prd-agent: 命名空间包含我们的扩展字段（其他平台会忽略）
 /// - Markdown body 即为 promptTemplate
 /// </summary>
