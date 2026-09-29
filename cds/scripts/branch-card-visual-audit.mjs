@@ -586,6 +586,21 @@ async function main() {
             const median = times.length >= 2 ? (over ? times[0] - times[1] : times[1]) : NaN;
             check(Math.abs(median - 600) <= 2,
               `混合分支只重建源码服务时，耗时预计按源码样本（推得中位 ${median}s，「${etaText.trim()}」）`);
+            // 本机构建的发布版（非极速版）同样走三段阶段条，但后端把它的成功耗时记在发布版样本桶：
+            // 预计必须取发布版样本（1 分钟），不能因为阶段条是三段就改取源码样本（Codex P2）
+            const localRelease = { ...withEstimate, ciImageStatus: undefined, deployRuntime: { kind: 'release', label: '发布版', title: '', activeProfiles: 13, releaseProfiles: 13, sourceProfiles: 0, modes: ['static'], prebuilt: false } };
+            branches = branches.map((b) => (b.id === localRelease.id ? localRelease : b));
+            await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), localRelease);
+            await page.waitForTimeout(700);
+            const relText = (await page.textContent('[data-branch-card-id="b-edison"] [data-footer-status]')) || '';
+            const relTimes = [...relText.replace(/\d\/\d/, ' ').matchAll(/(\d+:\d{2})/g)].map((m) => secs(m[1]));
+            const relOver = /超出预计/.test(relText);
+            const relMedian = relTimes.length >= 2 ? (relOver ? relTimes[0] - relTimes[1] : relTimes[0] + relTimes[1]) : NaN;
+            check(Math.abs(relMedian - 60) <= 2,
+              `本机构建的发布版部署中，耗时预计按发布版样本（推得中位 ${relMedian}s，「${relText.trim()}」）`);
+            branches = branches.map((b) => (b.id === withEstimate.id ? withEstimate : b));
+            await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), withEstimate);
+            await page.waitForTimeout(300);
             // 计时从这次部署开始算（2 分钟前），不从很久以前的 lastAccessedAt 算（Codex P2）
             check(times.length >= 1 && times[0] >= 100 && times[0] <= 180,
               `从运行中分支单独部署时，计时从本次部署开始（已用 ${times[0]}s，「${etaText.trim()}」）`);

@@ -1004,9 +1004,13 @@ function pickDeployEstimate(
   const est = branch.deployEstimate;
   if (!est) return null;
   const kind = branch.deployRuntime?.kind;
+  // 只有「带极速版的分支这次却在编译源码」才改取源码样本：极速版样本是拉镜像的耗时，和编译没有可比性。
+  // 本机构建的发布版（static 等，非极速版）也走三段阶段条，但后端按分支类型把它记进发布版样本桶，
+  // 三段本身不代表源码，这里必须与后端的归桶一致（Codex P2，PR #1646）。
+  const compilingOnExpress = sourceSequence && branch.deployRuntime?.prebuilt === true;
   // pendingPublish=配置已切发布版但容器还没跟上(重建中)，此时 kind 仍报 source；
   // 用户实际在等的是发布版重建，应取发布版样本桶（修复 PR #865 codex P2）。
-  const isRelease = !sourceSequence && (kind === 'release' || kind === 'mixed' || branch.deployRuntime?.pendingPublish === true);
+  const isRelease = !compilingOnExpress && (kind === 'release' || kind === 'mixed' || branch.deployRuntime?.pendingPublish === true);
   if (isRelease) {
     if (est.releaseMedianMs != null && est.releaseSamples > 0) {
       return { mode: 'release', medianMs: est.releaseMedianMs, samples: est.releaseSamples };
