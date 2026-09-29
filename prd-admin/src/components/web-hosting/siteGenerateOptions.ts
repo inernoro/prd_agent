@@ -40,11 +40,11 @@ export interface RuntimeCardCopy {
   /** 两个大号数字：耗时量级与调用方式。 */
   facts: Array<{ value: string; unit: string }>;
   description: string;
-  /** 「开始生成」旁那句预期说明。 */
+  /** 修改流程说明行里的耗时与过程（一行、不带句号）。 */
   footnote: string;
   /**
-   * 不带耗时数字的那半句（生成过程中会发生什么）。新建网页的提示把耗时换成真实 P50/P95
-   * 或明说的经验值，再接上这半句；footnote 里的数字只剩修改流程在用。
+   * 不带耗时数字的那半句（生成过程中会发生什么）。新建网页的说明行把耗时换成真实中位数
+   * 或标明的经验值，再接上这半句；footnote 里的数字只剩修改流程在用。
    */
   continuity: string;
 }
@@ -58,8 +58,8 @@ export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
       { value: '1', unit: '次模型调用' },
     ],
     description: '一次写完整页，内容最全、速度最快；版式以卡片和列表为主。',
-    footnote: '快速生成约 1 分钟，边写边在预览里出现。',
-    continuity: '边写边在预览里出现。',
+    footnote: '约 1 分钟（经验值）· 边写边出现在预览里',
+    continuity: '边写边出现在预览里',
   },
   'open-design': {
     title: '精细设计',
@@ -69,8 +69,8 @@ export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
       { value: '多', unit: '轮自查修复' },
     ],
     description: '在隔离环境里先定结构、再写、再逐项自查修复；对比表、可展开块更多。可以后台运行。',
-    footnote: '精细设计约 9–12 分钟。关掉窗口任务也会继续，重新打开「生成网页」可接着看进度。',
-    continuity: '关掉窗口任务也会继续，重新打开「生成网页」可接着看进度。',
+    footnote: '约 9–12 分钟（经验值）· 关掉窗口也会继续',
+    continuity: '关掉窗口也会继续',
   },
 };
 

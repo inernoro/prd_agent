@@ -259,9 +259,11 @@ x-cds-deploy-modes:
         - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:branch-main"
       # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**
-      # （design_opendesign 那一组）。声明得比 CI 窄会让 CDS 把旧镜像当新代码发出去。
+      # （design_opendesign 那一组，加上 api 那一组：api 改动时也构建本镜像，供正式发布同 sha 钉版）。
+      # 声明得比 CI 窄会让 CDS 把旧镜像当新代码发出去。
       buildScope:
         - "design-runtime/opendesign/**"
+        - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8093
@@ -565,7 +567,7 @@ services:
       # 本服务只有 express 一种模式，项目里不存在 activeDeployMode，CDS 读取的是基础 profile，
       # 模式里的 buildScope 读不到。缺了它，没改 design-runtime/ 的分支拉不到 sha 镜像时，
       # 回退到 branch-main 会因「无法证明与目标提交等价」被拒，整条分支部署失败。
-      cds.build-scope: "design-runtime/opendesign/**,.github/workflows/branch-image.yml"
+      cds.build-scope: "design-runtime/opendesign/**,prd-api/**,.github/workflows/branch-image.yml"
       # 匿名就绪探针：引擎健康检查通过才 200，否则 503（CDS 把 < 500 当就绪）。它不看 API key——
       # 缺 key 时容器照样就绪，原因由能力接口说清，而不是让整条分支卡在「未就绪」。
       cds.readiness-path: "/healthz/ready"

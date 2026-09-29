@@ -18,7 +18,6 @@ import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
 import { chooseDesignRuntime, displayedDesignRuntime, runtimeFallbackNotice } from '../siteEditPreview';
 import {
   formatGenerationClock,
-  generationEtaSentence,
   generationEtaShort,
   pickGenerationTiming,
   remainingEstimateText,
@@ -34,7 +33,6 @@ import {
 import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, orderRuntimeCards, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
 import { useSiteGenerationRun } from './useSiteGenerationRun';
 import {
-  HTML_PPT_TIMING_NOTE,
   OUTPUT_FORM_ORDER,
   OUTPUT_FORM_REGISTRY,
   buildHtmlPptHandoff,
@@ -231,7 +229,18 @@ export default function NewSiteStage({
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
   const requestTiming = pickGenerationTiming(timingStats, requestRuntime?.id);
   const eta = generationEtaShort(requestRuntime?.id, requestTiming);
-  const etaSentence = generationEtaSentence(requestRuntime?.id, requestTiming, timingState);
+  /**
+   * 说明行只放一行：耗时 · 过程中会怎样。没有真实统计时标明是经验值；统计还在读或读不到要分开说，
+   * 读不到若也写成「经验值」，统计接口坏了会被一直当成样本少（降级不许静默）。
+   */
+  const etaSource = requestTiming
+    ? ''
+    : timingState === 'unavailable'
+      ? '（经验值，耗时统计暂时取不到）'
+      : timingState === 'loading'
+        ? '（经验值，正在读取真实耗时）'
+        : '（经验值）';
+  const etaHint = eta ? `${eta}${etaSource}` : '';
   const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
@@ -510,10 +519,8 @@ export default function NewSiteStage({
         sendDisabledReason={run.generating ? undefined : sendBlocker}
         onSend={send}
         hint={isPpt
-          ? `点下去：带着稿子和要求打开 HTML PPT 智能体（要求只预填、不会自动发送）。${HTML_PPT_TIMING_NOTE}`
-          : runtimeCopy
-          ? `点下去：对话里一步步显示进度，预览里先出骨架、再换成真实页面；${etaSentence ? `${etaSentence}。` : ''}${runtimeCopy.continuity}`
-          : `点下去：对话里一步步显示进度，预览里出真实页面；${etaSentence ? `${etaSentence}。` : ''}做好自动存进网页托管，只有你能看到。`}
+          ? '打开 PPT 智能体，要求只预填、不自动发送 · 约几分钟（经验值）'
+          : [etaHint, runtimeCopy ? runtimeCopy.continuity : '进度在对话里，成品出现在预览里'].filter(Boolean).join(' · ')}
       />
       <input
         ref={fileInputRef}

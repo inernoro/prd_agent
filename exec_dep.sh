@@ -27,6 +27,10 @@ set -eu
 #   - PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1：复用现有 deploy/web/dist，不下载 prd-admin zip；仅用于后端/GW-only shadow 部署
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO + 发布 ref 组装，并优先走 get.miduo.org 镜像代理）
 #   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认按 REPO + 发布 ref 组装；compose 已含 llmgw service，随 up 一起拉起）
+#   - PRD_AGENT_DESIGN_OPENDESIGN_IMAGE：覆盖设计执行服务镜像（默认按 REPO + 发布 ref 组装，与 api 同批拉取）
+#   - DESIGN_RUNTIME_API_KEY：api 与 design-opendesign 之间的内部密钥；.env 里没有时自动生成并写入，不打印
+#   - DESIGN_ARTIFACT_PUBLIC_BASE_URL：设计服务回调 api 的公网基址，默认取 PRD_AGENT_PUBLIC_BASE_URL
+#   - DESIGN_RUNTIME_READY_TIMEOUT_SECONDS：发布等待 design-opendesign 容器健康的上限，默认 420 秒
 #   - API_PULL_TIMEOUT_SECONDS：发布镜像整批拉取总超时时间，默认 420 秒
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
@@ -299,15 +303,17 @@ default_api_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-server:$
 default_llmgw_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw:${TAG}"
 default_llmgw_serve_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-serve:${TAG}"
 default_llmgw_web_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-llmgw-web:${TAG}"
+default_design_opendesign_image="get.miduo.org/ghcr.io/${OWNER}/${REPO_NAME}/prdagent-design-opendesign:${TAG}"
 
 if [ "$release_ref_type" = "commit" ] && [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" != "1" ]; then
-  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
-    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保四个镜像钉到 ${TAG}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
+  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-}" ]; then
+    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保五个镜像钉到 ${TAG}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
   fi
   export PRD_AGENT_API_IMAGE="$default_api_image"
   export PRD_AGENT_LLMGW_IMAGE="$default_llmgw_image"
   export PRD_AGENT_LLMGW_SERVE_IMAGE="$default_llmgw_serve_image"
   export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
+  export PRD_AGENT_DESIGN_OPENDESIGN_IMAGE="$default_design_opendesign_image"
 fi
 
 # 默认后端镜像。latest 兼容旧部署；指定 ref 时钉到不可变 tag，避免 latest 竞态。
@@ -335,6 +341,11 @@ fi
 # 默认直连 ghcr.io，需代理主机会卡住，故一并钉到 get.miduo.org 镜像源。
 if [ -z "${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
   export PRD_AGENT_LLMGW_WEB_IMAGE="$default_llmgw_web_image"
+fi
+
+# 设计执行服务镜像（design-opendesign）。main 的每个提交都会构建 sha-<commit>，与 api 钉同一个 ref。
+if [ -z "${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-}" ]; then
+  export PRD_AGENT_DESIGN_OPENDESIGN_IMAGE="$default_design_opendesign_image"
 fi
 
 intent_value() {
@@ -407,6 +418,7 @@ check_fast_release_intent() {
   check_intent_image_match PRD_AGENT_LLMGW_IMAGE "$PRD_AGENT_LLMGW_IMAGE"
   check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE "$PRD_AGENT_LLMGW_SERVE_IMAGE"
   check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE "$PRD_AGENT_LLMGW_WEB_IMAGE"
+  check_intent_image_match PRD_AGENT_DESIGN_OPENDESIGN_IMAGE "$PRD_AGENT_DESIGN_OPENDESIGN_IMAGE"
 
   echo "Release intent: matched fast.sh warmup (tag=$TAG repo=$REPO)"
 }
@@ -432,6 +444,7 @@ persist_release_image_pins() {
   PRD_AGENT_LLMGW_IMAGE_VALUE="$PRD_AGENT_LLMGW_IMAGE" \
   PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE="$PRD_AGENT_LLMGW_SERVE_IMAGE" \
   PRD_AGENT_LLMGW_WEB_IMAGE_VALUE="$PRD_AGENT_LLMGW_WEB_IMAGE" \
+  PRD_AGENT_DESIGN_OPENDESIGN_IMAGE_VALUE="$PRD_AGENT_DESIGN_OPENDESIGN_IMAGE" \
   python3 - <<'PY'
 import os
 import re
@@ -444,6 +457,7 @@ updates = {
     "PRD_AGENT_LLMGW_IMAGE": os.environ["PRD_AGENT_LLMGW_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_SERVE_IMAGE": os.environ["PRD_AGENT_LLMGW_SERVE_IMAGE_VALUE"],
     "PRD_AGENT_LLMGW_WEB_IMAGE": os.environ["PRD_AGENT_LLMGW_WEB_IMAGE_VALUE"],
+    "PRD_AGENT_DESIGN_OPENDESIGN_IMAGE": os.environ["PRD_AGENT_DESIGN_OPENDESIGN_IMAGE_VALUE"],
 }
 
 lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
@@ -660,6 +674,9 @@ if [ -z "$(printf '%s' "${PRD_AGENT_PUBLIC_BASE_URL:-}" | xargs || true)" ]; the
 fi
 # 同一份部署输入同时驱动公网验收和 LLM Gateway 返回入口，避免两个地址各自漂移。
 export LLMGW_MAP_HOME_URL="${LLMGW_MAP_HOME_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
+# .env 里显式配置的回调基址优先（shell 导出的值会盖过 compose 的 --env-file，所以先读出来再兜底）。
+DESIGN_ARTIFACT_PUBLIC_BASE_URL="$(config_value DESIGN_ARTIFACT_PUBLIC_BASE_URL)"
+export DESIGN_ARTIFACT_PUBLIC_BASE_URL="${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
 echo "Compose project: $COMPOSE_PROJECT_NAME"
 
 if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
@@ -669,6 +686,39 @@ fi
 scripts/llmgw-prod-topology-preflight.sh
 
 persist_release_image_pins
+
+# api 与 design-opendesign 之间的内部密钥：没人需要知道它的值。shell 或 .env 里已有就原样使用；
+# 都没有时生成一把写进 .env（只追加这一行，不打印值），之后每次发布沿用同一把。
+ensure_design_runtime_api_key() {
+  key_dotenv_file="${PRD_AGENT_DOTENV_FILE:-.env}"
+  if [ -n "${DESIGN_RUNTIME_API_KEY:-}" ] || [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
+    # persist_release_image_pins 每次发布都按进程 umask 重写 .env；密钥在里面就每次都收回只读属主。
+    if [ -f "$key_dotenv_file" ] && [ -n "$(read_dotenv_value DESIGN_RUNTIME_API_KEY)" ]; then
+      chmod 600 "$key_dotenv_file"
+    fi
+    echo "Design runtime key: configured"
+    return 0
+  fi
+  key_dotenv_dir="$(dirname -- "$key_dotenv_file")"
+  if [ ! -d "$key_dotenv_dir" ]; then
+    echo "ERROR: DESIGN_RUNTIME_API_KEY 未配置，且 env 目录不存在，无法自动生成：$key_dotenv_dir" >&2
+    exit 1
+  fi
+  generated_key="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  if [ -z "$generated_key" ]; then
+    echo "ERROR: DESIGN_RUNTIME_API_KEY 自动生成失败（python3 secrets 不可用）" >&2
+    exit 1
+  fi
+  if [ ! -f "$key_dotenv_file" ]; then
+    (umask 077 && : > "$key_dotenv_file")
+  fi
+  printf '\nDESIGN_RUNTIME_API_KEY=%s\n' "$generated_key" >> "$key_dotenv_file"
+  generated_key=""
+  # .env 可能刚由 persist_release_image_pins 按进程 umask（常见 0644）建出；装了密钥就只许属主读写。
+  chmod 600 "$key_dotenv_file"
+  echo "Design runtime key: generated and saved to $key_dotenv_file (value not printed)"
+}
+ensure_design_runtime_api_key
 
 if [ ! -f scripts/lib/static-release.sh ]; then
   echo "ERROR: missing scripts/lib/static-release.sh" >&2
@@ -1670,7 +1720,8 @@ else
   echo "  llmgw: $PRD_AGENT_LLMGW_IMAGE"
   echo "  llmgw-serve: $PRD_AGENT_LLMGW_SERVE_IMAGE"
   echo "  llmgw-web: $PRD_AGENT_LLMGW_WEB_IMAGE"
-  # 这里的一次 compose pull 覆盖五个服务，使用 fast.sh 已校准的整批总预算
+  echo "  design-opendesign: $PRD_AGENT_DESIGN_OPENDESIGN_IMAGE"
+  # 这里的一次 compose pull 覆盖六个服务，使用 fast.sh 已校准的整批总预算
   # 420 秒，而不是它的单镜像 180 秒预算。调用方仍可按目标环境显式覆盖，
   # 但不可变发布的失败语义不变。
   pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-420}"
@@ -1681,7 +1732,7 @@ else
     else
       pull_command="$COMPOSE"
     fi
-    if ! timeout "$pull_timeout_seconds" $pull_command pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
+    if ! timeout "$pull_timeout_seconds" $pull_command pull api llmgw llmgw-serve llmgw-serve-b llmgw-web design-opendesign; then
       if [ "$TAG" = "latest" ]; then
         echo "WARN: release image pull skipped or timed out after ${pull_timeout_seconds}s; continuing with existing local images" >&2
       else
@@ -1689,7 +1740,7 @@ else
         exit 1
       fi
     fi
-  elif ! compose_run pull api llmgw llmgw-serve llmgw-serve-b llmgw-web; then
+  elif ! compose_run pull api llmgw llmgw-serve llmgw-serve-b llmgw-web design-opendesign; then
     if [ "$TAG" = "latest" ]; then
       echo "WARN: release image pull failed; continuing with existing local images" >&2
     else
@@ -1797,6 +1848,46 @@ wait_for_llmgw_serving_readiness() {
   done
 }
 
+# 设计执行服务是本次发布涉及的专项服务：引擎没就绪就不许记成功（生产发布安全规则条目 3）。
+# 判据只认 compose 里声明的容器健康检查（匿名 /healthz/ready，引擎健康才 200）。
+wait_for_design_runtime_readiness() {
+  design_service="design-opendesign"
+  if ! compose_run config --services 2>/dev/null | grep -Fxq "$design_service"; then
+    echo "Design runtime readiness wait skipped: no $design_service service in compose"
+    return 0
+  fi
+  design_timeout_seconds="${DESIGN_RUNTIME_READY_TIMEOUT_SECONDS:-420}"
+  if ! printf '%s' "$design_timeout_seconds" | grep -Eq '^[0-9]+$' || [ "$design_timeout_seconds" -lt 1 ]; then
+    echo "ERROR: DESIGN_RUNTIME_READY_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
+  echo "Waiting for design runtime readiness: service=$design_service timeout=${design_timeout_seconds}s"
+  design_deadline=$(( $(date +%s) + design_timeout_seconds ))
+  while :; do
+    design_container_id="$(compose_run ps -q "$design_service" 2>/dev/null | head -n 1)"
+    design_running=""
+    design_health="missing"
+    if [ -n "$design_container_id" ]; then
+      design_running="$(docker inspect --format '{{.State.Running}}' "$design_container_id" 2>/dev/null || true)"
+      design_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$design_container_id" 2>/dev/null || true)"
+    fi
+    design_state="running=${design_running:-none},health=$design_health"
+    if [ "$design_running" = "true" ] && [ "$design_health" = "healthy" ]; then
+      echo "Design runtime readiness: PASS $design_service[$design_state]"
+      return 0
+    fi
+    if [ "$design_health" = "unhealthy" ] || [ "$design_running" = "false" ]; then
+      echo "ERROR: design runtime $design_service cannot become ready ($design_state); see: docker logs $design_service" >&2
+      exit 1
+    fi
+    if [ "$(date +%s)" -ge "$design_deadline" ]; then
+      echo "ERROR: design runtime readiness timeout after ${design_timeout_seconds}s: $design_service[$design_state]" >&2
+      exit 1
+    fi
+    sleep 3
+  done
+}
+
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
   release_failure_stage="asset-storage-readiness"
@@ -1825,6 +1916,9 @@ else
   fi
 
   wait_for_llmgw_serving_readiness
+
+  release_failure_stage="design-runtime-readiness"
+  wait_for_design_runtime_readiness
 
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness

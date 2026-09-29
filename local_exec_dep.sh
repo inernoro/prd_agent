@@ -151,6 +151,14 @@ PY
   echo ""
 fi
 
+# api 与 design-opendesign 之间的内部密钥：两端都由本进程注入，没人需要知道它的值。
+if [ "${DESIGN_RUNTIME_API_KEY:-}" = "" ] && ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?DESIGN_RUNTIME_API_KEY=.+' "$ROOT_DIR/.env" 2>/dev/null; then
+  # 与 JWT_SECRET 同样留一个不依赖 python3 / openssl 的兜底：这把钥匙只在本机两个容器之间对暗号。
+  DESIGN_RUNTIME_API_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))' 2>/dev/null || openssl rand -hex 32 2>/dev/null || echo "local-dev-only-design-runtime-key")"
+  export DESIGN_RUNTIME_API_KEY
+  echo "DESIGN_RUNTIME_API_KEY 未设置，已为本机临时生成（仅当前进程有效）。"
+fi
+
 if [ "$SKIP_COS_CHECK" -ne 1 ]; then
   missing=()
   for k in TENCENT_COS_BUCKET TENCENT_COS_REGION TENCENT_COS_SECRET_ID TENCENT_COS_SECRET_KEY; do
