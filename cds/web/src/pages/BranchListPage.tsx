@@ -1377,6 +1377,9 @@ function runningServiceCount(branch: BranchSummary): number {
 function isDormantBranch(branch: BranchSummary, action?: BranchAction): boolean {
   if (action?.status === 'running') return false;
   if (branch.status !== 'idle' || branch.buildQueue) return false;
+  // 从停止状态单独部署一个服务时，分支聚合状态到结束前一直是 idle，只有那个服务在 building / starting；
+  // 这时它在部署，不许收进「未运行」分组被折叠藏起来（Codex P2，PR #1646）。
+  if (deployingServiceIds(branch.services).length > 0) return false;
   if (branch.deployRuntime?.prebuilt !== false && (branch.ciImageStatus === 'waiting' || branch.ciImageStatus === 'failed')) return false;
   return true;
 }
