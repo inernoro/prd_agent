@@ -311,7 +311,9 @@ public class ImageGenRunWorker : BackgroundService
         var isLayering = IsLayeringRun(run);
         if (!isLayering && run.AppKey == "visual-agent")
         {
-            var policy = (await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct))?.VisualModelPolicy;
+            using var policyScope = _scopeFactory.CreateScope();
+            var policyService = policyScope.ServiceProvider.GetRequiredService<IVisualModelPolicyService>();
+            var policy = await policyService.ReadAsync(ct);
             if (policy?.Select(ResolveExplicitLogicalModelPublicId(run)) is null
                 || string.IsNullOrWhiteSpace(ResolveExplicitLogicalModelPublicId(run)))
             {
