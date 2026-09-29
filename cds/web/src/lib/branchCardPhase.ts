@@ -57,6 +57,12 @@ export interface BranchCardPhaseInput {
    */
   activeProfileCount?: number;
   /**
+   * 这次部署开头已经定下的步骤类型（卡片自己记的）。一次部署只有一种步骤序列：
+   * 源码服务在任何服务级事件广播前就失败、随后只剩极速版服务在探测时，不能中途翻成极速版步骤，
+   * 把失败记到「就绪探测」上（Codex P2，PR #1646）。
+   */
+  lockedExpress?: boolean;
+  /**
    * 前端已发起、服务端状态还没跟上的操作（点了部署，SSE 还没把 status 推成 building）。
    * 给了就在状态判不出阶段时显示单段「处理中」，而不是假装在某一段。
    */
@@ -78,6 +84,7 @@ const SOURCE_STEPS: Array<{ key: BranchCardPhaseKey; label: string }> = [
 
 function isExpress(input: BranchCardPhaseInput): boolean {
   if (input.prebuilt === false) return false;
+  if (typeof input.lockedExpress === 'boolean') return input.lockedExpress;
   const participants = Array.from(new Set([...(input.participants || []), ...deployingServiceIds(input.services)]));
   if (input.prebuiltProfileIds) {
     const prebuiltIds = new Set(input.prebuiltProfileIds);

@@ -63,6 +63,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(branchCardPhase({ status: 'building', services: { api: { status: 'running' }, web: { status: 'running' } }, ...mixed, activeProfileCount: 2 })?.key).toBe('build');
     expect(branchCardPhase({ status: 'building', services: { web: { status: 'running' } }, prebuilt: true, prebuiltProfileIds: ['web'], activeProfileCount: 1 })?.key).toBe('start');
     expect(branchCardPhase({ status: 'building', buildQueue: { ahead: 1, serviceIds: ['api'] }, ...mixed, activeProfileCount: 2 })?.steps).toHaveLength(3);
+    // 部署开头已定为源码步骤：源码服务提前失败、之后只剩极速版服务在探测，也不翻成极速版
+    const locked = branchCardPhase({ status: 'starting', services: { api: { status: 'error' }, web: { status: 'starting' } }, ...mixed, participants: ['web'], lockedExpress: false });
+    expect(locked?.steps.map((step) => step.label)).toEqual(['排队', '构建并启动', '就绪探测']);
     // 没有服务在动（排队 / 等镜像）时仍按 prebuilt
     expect(branchCardPhase({ status: 'running', services: { api: { status: 'running' } }, ciImageStatus: 'waiting', ...mixed })?.key).toBe('ci-waiting');
   });
@@ -75,6 +78,8 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
+    expect(page).toContain('lockedExpress: lastBuildRef.current?.express,');
+    expect(page).toContain("express: lastBuildRef.current?.express ?? buildPhase.steps.some((step) => step.key === 'ci-waiting'),");
     // 分支 idle 但有服务在部署（从停止状态单独部署一个服务）：不收进「未运行」分组
     expect(page).toContain('  if (deployingServiceIds(branch.services).length > 0) return false;');
     // 信息槽的模式文案跟阶段条同一个判断：阶段是源码三段时不许还说「极速版」
