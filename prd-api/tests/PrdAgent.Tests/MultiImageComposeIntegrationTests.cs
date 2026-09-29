@@ -46,7 +46,7 @@ public class MultiImageComposeIntegrationTests
     private const string TestWorkspaceId = "9d48e9b61f634ce5a5137ca0470be756";
 
     // 测试用 CDN 基础地址（与生产环境 TENCENT_COS_PUBLIC_BASE_URL 对应）
-    private const string TestCdnBaseUrl = "https://i.pa.759800.com";
+    private const string TestCdnBaseUrl = "https://i.map.ebcone.net";
 
     // 测试用图片资产（来自 workspace 的 coverAssets）
     private static readonly TestImageAsset[] TestAssets = new[]
