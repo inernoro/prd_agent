@@ -14923,6 +14923,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
       stateService.appendLog(id, opLog);
       stateService.save();
+      // 失败也要推一条：比如排构建槽时被取消，服务停在 building、分支已判 error，
+      // 不推的话已打开的列表一直停在「构建中」直到整页刷新（Codex P2，PR #1646）。
+      branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: new Date().toISOString() },
+      });
       logDeploy(id, `部署失败: ${(err as Error).message}`);
       const flushResult = await flushBranchStateBeforeSuccess({
         source: 'branch-deploy-profile',

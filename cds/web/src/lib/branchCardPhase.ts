@@ -121,6 +121,9 @@ export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | 
   if (input.status === 'stopping') {
     return single('stopping', '正在停止');
   }
+  // 分支已判出错就是终态：服务可能还残留 building（排构建槽时失败，外层只改了分支状态），
+  // 不能再按服务状态推出一个构建阶段、挂着计时器把失败操作藏起来（Codex P2，PR #1646）。
+  if (input.status === 'error') return null;
   const express = isExpress(input);
   const steps = express ? EXPRESS_STEPS : SOURCE_STEPS;
   const services = Object.values(input.services || {});
