@@ -14776,9 +14776,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const hasStarting = statuses.some(s => s === 'starting');
       entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
-      // 结束事件放在聚合状态重算之后：从停止状态单独起一个服务时，分支此前是 idle，
-      // 先推就会让卡片拿到「服务 running、分支 idle」而被放进未运行（Codex P2，PR #1646）。
-      emitServiceTransition();
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
       opLog.finishedAt = new Date().toISOString();
@@ -14868,6 +14865,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         return;
       }
+      // 结束事件放在聚合状态重算与状态落盘之后：从停止状态单独起一个服务时分支此前是 idle，先推会让
+      // 卡片拿到「服务 running、分支 idle」而被放进未运行；落盘失败时接口不报成功，卡片也不该先播
+      // 「部署成功」（Codex P2 两条，PR #1646）。
+      emitServiceTransition();
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
         // 消费方统一读 ok 而非重推导 entry.services。
