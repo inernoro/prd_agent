@@ -123,6 +123,25 @@ describe('卡片等高：固定高度 + 网格拉齐', () => {
     expect(read('components/skeletons/PageSkeletons.tsx')).toContain('flex h-[15.25rem] flex-col');
     expect(page).toContain('relative flex h-[15.25rem] flex-col overflow-hidden rounded-xl border-2');
   });
+
+  // 复制集卡固定高度后，成员区必须是卡内唯一可伸缩、可滚动的一格；否则成员多到换好几行时
+  // 会把「打开详情 / 预览本组」挤出卡片、被 overflow-hidden 裁掉（Codex P2）。
+  const replicaMembersScroll = (source: string) => {
+    expect(source).toContain('data-replica-members className="flex min-h-0 max-w-full flex-1 flex-wrap content-start items-center gap-2 overflow-y-auto');
+    expect(source).toContain('<div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-4 pt-3">');
+  };
+
+  it('复制集卡成员区在卡内滚动，操作按钮始终留在卡底', () => {
+    replicaMembersScroll(page);
+  });
+
+  it('红用例：成员区退回不限高，守卫变红', () => {
+    expectGuardRedOnMutation(
+      replicaMembersScroll,
+      page,
+      mutate(page, 'flex min-h-0 max-w-full flex-1 flex-wrap content-start items-center gap-2 overflow-y-auto', 'flex max-w-full flex-wrap items-center gap-2'),
+    );
+  });
 });
 
 describe('构建页脚：阶段条接线', () => {
@@ -165,6 +184,22 @@ describe('构建页脚：阶段条接线', () => {
       page,
       mutate(page, 'if (buildPhase && buildClock && isDeployPhase(buildPhase)) {', 'if (buildPhase && buildClock) {'),
     );
+  });
+
+  // 单服务重建时分支仍是 running：时钟与起算点必须跟着阶段条走，而不是只看分支级状态，
+  // 否则页脚停在 00:00、永远不会「超出预计」（Codex P2）。
+  const clockFollowsPhase = (source: string) => {
+    expect(source).toContain('const deployInFlight = Boolean(buildPhase && isDeployPhase(buildPhase));');
+    expect(source).toMatch(/useNowTick\(\s*busy\s*\|\| deployInFlight/);
+    expect(source).toContain(': deployInFlight ? branch.lastDeployStartedAt || branchBusySince(branch, action) : undefined;');
+  };
+
+  it('单服务重建也走表：时钟与起算点跟阶段条走', () => {
+    clockFollowsPhase(page);
+  });
+
+  it('红用例：时钟只看分支级状态，守卫变红', () => {
+    expectGuardRedOnMutation(clockFollowsPhase, page, mutate(page, '    || deployInFlight\n', ''));
   });
 
   it('旧的整条背景填充已退场，不留两套进度表达', () => {

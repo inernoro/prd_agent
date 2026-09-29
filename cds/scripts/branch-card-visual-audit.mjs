@@ -50,6 +50,8 @@ function services(basePort, status, overrides = {}) {
   return out;
 }
 
+const expressRuntime = { kind: 'release', label: '极速版', title: '', activeProfiles: 13, releaseProfiles: 13, sourceProfiles: 0, modes: ['prebuilt'], prebuilt: true };
+
 function makeBranches() {
   const base = (id, name, extra) => ({
     id,
@@ -62,7 +64,6 @@ function makeBranches() {
     tags: [],
     ...extra,
   });
-  const expressRuntime = { kind: 'release', label: '极速版', title: '', activeProfiles: 13, releaseProfiles: 13, sourceProfiles: 0, modes: ['prebuilt'], prebuilt: true };
   return [
     base('b-main', 'main', {
       status: 'idle', services: services(22000, 'stopped'),
@@ -355,6 +356,40 @@ async function main() {
         await shotCard(page, 'b-ident', 'finish-6-after-60s.png');
         const settledPhase = await page.getAttribute('[data-branch-card-id="b-ident"]', 'data-deploy-phase');
         check(settledPhase === null, `60 秒后收尾态退场（实际 data-deploy-phase=${settledPhase}）`);
+
+        // 单服务重建：分支保持 running，只有一个服务在 building（单 profile 部署 / webhook 只重建一个服务）。
+        // 阶段条认得出来，时钟也必须从 lastDeployStartedAt 起走，不能停在 00:00（Codex P2）。
+        const oneSvc = {
+          ...branches.find((b) => b.id === 'b-test'),
+          status: 'running',
+          services: services(22331, 'running', { api: { status: 'building' } }),
+          deployRuntime: expressRuntime,
+          lastDeployStartedAt: iso(-65_000),
+        };
+        branches = branches.map((b) => (b.id === oneSvc.id ? oneSvc : b));
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), oneSvc);
+        await page.waitForTimeout(1200);
+        const tickA = (await page.textContent('[data-branch-card-id="b-test"] [data-footer-status]')) || '';
+        await page.waitForTimeout(2200);
+        const tickB = (await page.textContent('[data-branch-card-id="b-test"] [data-footer-status]')) || '';
+        await shotCard(page, 'b-test', 'single-service-rebuild.png');
+        check(await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase') === 'start', '单服务重建认作「启动容器」段');
+        check(/01:0\d/.test(tickA) && tickA !== tickB, `单服务重建时钟从部署开始时刻起走（「${tickA.trim()}」→「${tickB.trim()}」）`);
+
+        // 一键重启：原地重启容器，没有构建。回到运行中时不许播「部署成功」（Codex P2）。
+        const restarting = { ...oneSvc, status: 'restarting', services: services(22331, 'starting') };
+        branches = branches.map((b) => (b.id === restarting.id ? restarting : b));
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), restarting);
+        await page.waitForTimeout(600);
+        // 部署没走完就转成重启：结束的是一次重启，不是那次部署。
+        check(await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase') === 'restarting', '一键重启显示单段「正在重启」');
+        await shotCard(page, 'b-test', 'restarting.png');
+        const restarted = { ...restarting, status: 'running', services: services(22331, 'running') };
+        branches = branches.map((b) => (b.id === restarted.id ? restarted : b));
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), restarted);
+        await page.waitForTimeout(900);
+        const afterRestart = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
+        check(afterRestart !== 'done', `重启结束不播「部署成功」（实际 data-deploy-phase=${afterRestart}）`);
       }
       await context.close();
     }

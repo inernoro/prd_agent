@@ -5250,13 +5250,15 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
   return (
     <div className={`relative flex h-[15.25rem] flex-col overflow-hidden rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
       title={`由 ${branch.branch} 复制出的项目级复制集实例组（非独立 git 分支）：每个容器的第 ${groupIndex + 1} 个副本，入口已按权重负载`}>
-      <div className="flex items-center gap-2 px-5 pt-4">
+      <div className="flex shrink-0 items-center gap-2 px-5 pt-4">
         <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
         <span className="min-w-0 truncate text-base font-semibold">
           {branch.branch}<span className="text-indigo-500">-replicaset-{groupIndex + 1}</span>
         </span>
       </div>
-      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
+      {/* 卡片等高后成员区是唯一可伸缩的一格：成员多到换行时在卡内滚动，
+          不把「打开详情 / 预览本组」挤出卡片（Codex P2，PR #1646）。 */}
+      <div data-replica-members className="flex min-h-0 max-w-full flex-1 flex-wrap content-start items-center gap-2 overflow-y-auto px-5 pt-3">
         {entries.map(([pid, m]) => {
           const color = m?.status === 'error' ? '#ef4444' : profileColor(pid);
           return (
@@ -5270,10 +5272,10 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
           );
         })}
       </div>
-      <div className="px-5 pt-3">
+      <div className="shrink-0 px-5 pt-3">
         <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-indigo-500">复制集成员 · 入口已负载 · 非独立分支</span>
       </div>
-      <div className="mt-auto flex items-center justify-between gap-3 px-5 pb-4 pt-3">
+      <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-4 pt-3">
         <Button type="button" variant="outline" size="sm" onClick={onDetail}>打开详情</Button>
         {previewUrl ? (
           <Button asChild size="sm">
@@ -5345,11 +5347,30 @@ const BranchCard = memo(function BranchCard({
   const onAddTag = (tag: string) => handlers.onAddTag(branch, tag);
   const onRemoveTag = (tag: string) => handlers.onRemoveTag(branch, tag);
   const busy = action?.status === 'running' || isBusy(branch);
+  /* 构建页脚（2026-09-29 改版，取代 2026-09-08 方案 B 的整条背景填充）：
+     构建期间页脚整条交给构建——头像缩小、哈希与提交说明收起、转圈按钮去掉，
+     腾出来的宽度只讲三件事：到哪一段、用了多久、还要多久。
+     阶段只来自 lib/branchCardPhase（唯一判定源）；这里只给阶段配上时间：
+     排队看已等多久、等 CI 镜像看已等多久（CI 没有历史样本，不给预计），
+     其余看净耗时对历史中位，超过中位改说「超出预计」。 */
+  const buildPhase: BranchCardPhase | null = branchCardPhase({
+    status: branch.status,
+    services: branch.services,
+    buildQueue: branch.buildQueue,
+    ciImageStatus: branch.ciImageStatus,
+    prebuilt: branch.deployRuntime?.prebuilt,
+    pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
+  });
+  // 单服务重建（单个 profile 部署 / webhook 只重建一个服务）时分支仍是 running，
+  // 只有 services 里那一个在 building——阶段条认得出来，时钟也得跟着走，
+  // 否则页脚停在 00:00、永远不会「超出预计」（Codex P2，PR #1646）。
+  const deployInFlight = Boolean(buildPhase && isDeployPhase(buildPhase));
   // 计时时钟下沉到卡片内部（原页面级 1s tick 已删）：仅本卡忙碌或 AI 活跃期内
   // 才起 interval，空闲卡零滴答零重渲染。AI 活跃判定用 Date.now() 预探——
   // 活跃时时钟跑起来，TTL 到期后 aiState.active 翻 false 自动停表。
   const now = useNowTick(
     busy
+    || deployInFlight
     || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status)
     || aiOperationState(branch, Date.now()).active,
   );
@@ -5387,21 +5408,9 @@ const BranchCard = memo(function BranchCard({
   const isError = branch.status === 'error';
   const isInterim = busy || ['building', 'starting', 'stopping', 'restarting'].includes(branch.status);
   const quickStartAvailable = canQuickStartBranch(branch);
-  const busySince = isInterim ? branchBusySince(branch, action) : undefined;
-  /* 构建页脚（2026-09-29 改版，取代 2026-09-08 方案 B 的整条背景填充）：
-     构建期间页脚整条交给构建——头像缩小、哈希与提交说明收起、转圈按钮去掉，
-     腾出来的宽度只讲三件事：到哪一段、用了多久、还要多久。
-     阶段只来自 lib/branchCardPhase（唯一判定源）；这里只给阶段配上时间：
-     排队看已等多久、等 CI 镜像看已等多久（CI 没有历史样本，不给预计），
-     其余看净耗时对历史中位，超过中位改说「超出预计」。 */
-  const buildPhase: BranchCardPhase | null = branchCardPhase({
-    status: branch.status,
-    services: branch.services,
-    buildQueue: branch.buildQueue,
-    ciImageStatus: branch.ciImageStatus,
-    prebuilt: branch.deployRuntime?.prebuilt,
-    pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
-  });
+  const busySince = isInterim
+    ? branchBusySince(branch, action)
+    : deployInFlight ? branch.lastDeployStartedAt || branchBusySince(branch, action) : undefined;
   const buildClock = buildPhase ? (() => {
     // 停止 / 重启 / 前端占位不是部署，不拿部署中位值去比。
     const estimate = isDeployPhase(buildPhase) ? pickDeployEstimate(branch) : null;
@@ -5453,6 +5462,11 @@ const BranchCard = memo(function BranchCard({
         elapsedMs: buildClock.elapsedMs || prevElapsed,
         medianMs: buildClock.estimate?.medianMs ?? lastBuildRef.current?.medianMs ?? null,
       };
+    } else if (buildPhase?.key === 'restarting' || buildPhase?.key === 'stopping') {
+      // 部署中途转去重启 / 停止：接下来结束的是这个动作，不是那次部署，别拿旧记录播收尾。
+      // 「处理中」不在此列——手动部署时服务端先翻 running、前端请求后返回，中间那一拍
+      // 就是「处理中」，清掉会让每次手动部署都丢收尾。
+      lastBuildRef.current = null;
     }
   });
   useEffect(() => {
