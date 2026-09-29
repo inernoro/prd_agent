@@ -143,8 +143,10 @@ services:
       # 设计执行服务 design-opendesign：api 经内部网络直连，不对外发布端口。
       # 两项都在时 OpenDesign 走 service 路径（判定只在 prd-api OpenDesignTransportResolver 一处）。
       # 密钥由 exec_dep.sh 在 .env 缺失时自动生成一次，api 与 design-opendesign 共用。
+      # 这里不写成必填：回滚脚本等其它 compose 入口不经 exec_dep.sh，缺它时不能挡住无关的恢复动作；
+      # 真缺失时两端都会如实报「未配置设计执行服务密钥」，不会静默降级。
       - DesignRuntime__OpenDesign__BaseUrl=http://design-opendesign:8093
-      - DesignRuntime__OpenDesign__ApiKey=${DESIGN_RUNTIME_API_KEY:?must set DESIGN_RUNTIME_API_KEY in production (exec_dep.sh generates it into .env when missing)}
+      - DesignRuntime__OpenDesign__ApiKey=${DESIGN_RUNTIME_API_KEY:-}
       # 设计服务回调 api（取工作区、交结果、模型出口）的公网基址；它的出口会拒绝内网地址，
       # 所以只能是正式域名。exec_dep.sh 默认取 PRD_AGENT_PUBLIC_BASE_URL。
       - DesignArtifactRuntime__PublicBaseUrl=${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-}
@@ -351,7 +353,7 @@ services:
     image: ${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-design-opendesign:latest}
     container_name: prdagent-design-opendesign
     environment:
-      - DESIGN_RUNTIME_API_KEY=${DESIGN_RUNTIME_API_KEY:?must set DESIGN_RUNTIME_API_KEY in production (exec_dep.sh generates it into .env when missing)}
+      - DESIGN_RUNTIME_API_KEY=${DESIGN_RUNTIME_API_KEY:-}
     healthcheck:
       # 匿名就绪探针：引擎健康才 200。镜像基于 node，不假定容器里有 curl。
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8093/healthz/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
