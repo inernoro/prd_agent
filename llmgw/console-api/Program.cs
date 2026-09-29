@@ -286,6 +286,14 @@ var videoGenRuns = mapDatabase.GetCollection<BsonDocument>(OfferingReferencePoli
 // 删线路的在途闸两张表都要查，只查一张等于对其中一类任务完全不设防（第 74 轮 review）。
 var directVideoJobOwnerships = mapDatabase.GetCollection<BsonDocument>(
     OfferingReferencePolicy.DirectVideoOwnershipCollectionName);
+// 逻辑模型 PublicId 还会被 MAP 的业务策略、模型绑定密钥和生图任务引用。
+// 两边没有数据库外键，删除前必须显式审计；统一判据见 MapLogicalModelReferencePolicy。
+var mapAppSettings = mapDatabase.GetCollection<BsonDocument>(
+    MapLogicalModelReferencePolicy.AppSettingsCollectionName);
+var mapAgentApiKeys = mapDatabase.GetCollection<BsonDocument>(
+    MapLogicalModelReferencePolicy.AgentApiKeysCollectionName);
+var mapImageGenRuns = mapDatabase.GetCollection<BsonDocument>(
+    MapLogicalModelReferencePolicy.ImageRunsCollectionName);
 var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
@@ -6436,6 +6444,39 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             + "直接删会让那些请求当场失败，或者悄悄换成另一个模型。"
             + "先在模型编辑里把默认与认领转给别的模型，再回来删"),
             jsonOptions, 409);
+    }
+
+    /*
+      网关模型与 MAP 业务配置是跨库引用，没有 Mongo 外键。删除前统一检查所有仍会参与未来执行的
+      PublicId 引用，避免只删目录、留下“默认但不可用”的业务配置。这里不自动替 MAP 换模型：
+      自动替换会把用户选择的模型语义悄悄改掉，正确恢复动作是先在引用处明确迁移，再回来删除。
+
+      三类引用分别覆盖：视觉创作开放策略、MCP/OpenAPI 模型绑定密钥、尚未终结的生图任务。
+      历史日志和用户最近选择不阻断，它们不会再发起调用。过滤器与 MAP 实体的镜像契约由
+      MapLogicalModelReferencePolicyMirrorTests 守住。
+    */
+    var publicId = doc.AsNullableString("PublicId")?.Trim() ?? string.Empty;
+    if (!string.IsNullOrWhiteSpace(publicId))
+    {
+        var visualPolicyCount = await mapAppSettings.CountDocumentsAsync(
+            MapLogicalModelReferencePolicy.BuildVisualPolicyFilter(publicId));
+        var agentApiKeyCount = await mapAgentApiKeys.CountDocumentsAsync(
+            MapLogicalModelReferencePolicy.BuildAgentApiKeyReferenceFilter(publicId));
+        var imageRunCount = await mapImageGenRuns.CountDocumentsAsync(
+            MapLogicalModelReferencePolicy.BuildInFlightImageRunFilter(publicId));
+        if (visualPolicyCount > 0 || agentApiKeyCount > 0 || imageRunCount > 0)
+        {
+            var reasons = new List<string>();
+            if (visualPolicyCount > 0) reasons.Add("视觉创作模型策略");
+            if (agentApiKeyCount > 0) reasons.Add($"{agentApiKeyCount} 把模型绑定密钥");
+            if (imageRunCount > 0) reasons.Add($"{imageRunCount} 个未结束的生图任务");
+            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+                "MODEL_REFERENCED_BY_MAP",
+                $"MAP 仍在引用公开模型「{publicId}」：{string.Join("、", reasons)}。"
+                + "直接删除会留下失效默认值、固定配置或正在执行的任务。"
+                + "请先在 MAP 模型设置和智能体接入台迁移配置，并等待相关生图任务结束后再删除"),
+                jsonOptions, 409);
+        }
     }
 
     /*
