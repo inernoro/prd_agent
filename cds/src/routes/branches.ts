@@ -14515,9 +14515,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 单服务部署时分支聚合状态（在运行时）一直是 running，只有这一个服务在 building → starting → 结束之间走；
       // 每次翻转都推一条 branch.updated（事件流会取最新分支下发），分支卡的阶段条、计时与收尾才跟得上。
       // 此前这条路径只在排队时推事件，卡片要等下一次刷新才看得到（Codex P2，PR #1646）。
-      const emitServiceTransition = () => branchEvents.emitEvent({
+      const emitServiceTransition = (extra: { stateFlushFailed?: boolean } = {}) => branchEvents.emitEvent({
         type: 'branch.updated',
-        payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: new Date().toISOString() },
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ...extra, ts: new Date().toISOString() },
       });
       emitServiceTransition();
 
@@ -14872,9 +14872,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const flushMessage = branchStateFlushFailureMessage(flushResult, completeMsg);
         failDeploymentRun(deploymentRun?.id, flushMessage, 'state-flush');
         // 落盘失败也要推一条结束事件：前面已经推过 starting，不推的话已打开的列表会一直停在「就绪探测」，
-        // 而调用方（如引用面板）并不会回头刷新列表（Codex P2，PR #1646）。卡片据此显示容器的真实状态；
-        // 在卡片上额外标出「落盘失败」需要一个新的分支级信号，与整分支部署同一问题一并记在 debt.cds.md。
-        emitServiceTransition();
+        // 而调用方（如引用面板）并不会回头刷新列表。事件带上 stateFlushFailed，卡片离开部署阶段、显示
+        // 容器的真实状态，但不播「部署成功」——接口这次报的是失败（Codex P2 两条，PR #1646）。
+        emitServiceTransition({ stateFlushFailed: true });
         sendSSE(res, 'error', {
           message: flushMessage,
           stateFlush: flushResult,

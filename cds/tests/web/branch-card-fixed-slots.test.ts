@@ -78,15 +78,14 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
-    expect(page).toContain('lockedExpress: lastBuildRef.current?.express,');
-    expect(page).toContain("express: lastBuildRef.current?.express ?? buildPhase.steps.some((step) => step.key === 'ci-waiting'),");
+    expect(page).toContain("express: lastBuildRef.current?.started ? lastBuildRef.current.express : buildPhase.steps.some((step) => step.key === 'ci-waiting'),");
     // 分支 idle 但有服务在部署（从停止状态单独部署一个服务）：不收进「未运行」分组
     expect(page).toContain('  if (deployingServiceIds(branch.services).length > 0) return false;');
     // 信息槽的模式文案跟阶段条同一个判断：阶段是源码三段时不许还说「极速版」
     expect(page).toContain("const modeText = phaseIsSourceSequence && deployModeLabel(branch) === '极速版' ? '源码编译' : deployModeLabel(branch);");
     expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
     // 单服务部署的每次状态翻转都推事件：building / starting / 结束（成功、超时、出错都在聚合状态重算后推一次）
-    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(4);
+    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(3);
     // 分支不在运行（停止 / 出错后重试）时单服务部署带着聚合状态走中间态，卡片不必从服务状态去猜
     expect(routes).toContain("      if (entry.status !== 'running') entry.status = 'building';");
     expect(routes).toContain("        if (entry.status === 'building') entry.status = 'starting';");
@@ -109,7 +108,12 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     const flushFail = routes.indexOf("if (flushResult !== 'flushed') {", finalize);
     const flushFailReturn = routes.indexOf('return;', flushFail);
     expect(flushFail).toBeGreaterThan(finalize);
-    expect(routes.slice(flushFail, flushFailReturn)).toContain('emitServiceTransition();');
+    // 而且带上 stateFlushFailed：卡片离开部署阶段，但不能把接口报失败的这次播成「部署成功」
+    expect(routes.slice(flushFail, flushFailReturn)).toContain('emitServiceTransition({ stateFlushFailed: true });');
+    expect(page).toContain('if (branch.stateFlushFailed) return;');
+    expect(page).toContain('branch: data.stateFlushFailed ? { ...data.branch, stateFlushFailed: true } : data.branch,');
+    // 步骤类型只在真的开始部署之后锁定：只是等 CI 镜像那一段不锁
+    expect(page).toContain('lockedExpress: lastBuildRef.current?.started ? lastBuildRef.current.express : undefined,');
   });
 
   it('优先级：排队 > 构建 > 就绪 > 等镜像；等 CI 镜像期间手动部署，阶段条跟着真实部署走', () => {
