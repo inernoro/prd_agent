@@ -175,6 +175,8 @@ interface BranchSummary {
   /** 父实例镜像来的只读分支（预览实例专用）：状态是采集时刻的状态，本实例上没有容器 */
   mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
+  /** 仅前端：这条事件来自「部署跑完但分支状态没落盘」，收尾不播「部署成功」 */
+  stateFlushFailed?: boolean;
   services: Record<string, ServiceState>;
   /** 本分支额外服务（branch-local profile）；后端列表接口随分支下发，env 已脱敏，这里只用 id */
   extraProfiles?: Array<{ id: string }>;
@@ -2094,13 +2096,17 @@ export function BranchListPage(): JSX.Element {
       }, 480));
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = parseSseJson<{ branch?: BranchSummary; projectId?: string }>(ev);
+      const data = parseSseJson<{ branch?: BranchSummary; projectId?: string; stateFlushFailed?: boolean }>(ev);
       if (!data) {
         applySseAction({ type: 'sseMalformed', source: 'branch.updated' });
         return;
       }
       if (!data.branch || data.branch.projectId !== projectId) return;
-      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
+      applySseAction({
+        type: 'sseBranchUpsert',
+        branch: data.stateFlushFailed ? { ...data.branch, stateFlushFailed: true } : data.branch,
+        projectId,
+      });
     });
     source.addEventListener('branch.status', (ev) => {
       const data = parseSseJson<{
@@ -5428,7 +5434,9 @@ const BranchCard = memo(function BranchCard({
     prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
     activeProfileCount: branch.deployRuntime?.activeProfiles,
     participants: lastBuildRef.current?.serviceIds,
-    lockedExpress: lastBuildRef.current?.express,
+    // 只在真的开始部署之后才锁：只是在等 CI 镜像的那一段不定步骤类型，否则等镜像期间手动部署源码服务
+    // 会被锁成极速版的「启动容器」（Codex P2，PR #1646）。
+    lockedExpress: lastBuildRef.current?.started ? lastBuildRef.current.express : undefined,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });
   // 部署中的模式跟阶段条走同一个判断：混着极速版与源码版的分支只重建源码服务时，阶段条是源码三段，
@@ -5560,7 +5568,7 @@ const BranchCard = memo(function BranchCard({
         // 真的开始部署了没有：只在排队 / 等镜像里结束的（CI 失败、排队被取消），不算一次部署。
         started: Boolean(lastBuildRef.current?.started) || serviceIds.length > 0 || isDeployStartedPhase(buildPhase),
         // 步骤类型在这次部署第一拍定下，之后不再随服务先后结束而翻转
-        express: lastBuildRef.current?.express ?? buildPhase.steps.some((step) => step.key === 'ci-waiting'),
+        express: lastBuildRef.current?.started ? lastBuildRef.current.express : buildPhase.steps.some((step) => step.key === 'ci-waiting'),
       };
     } else if (buildPhase?.key === 'restarting' || buildPhase?.key === 'stopping') {
       // 部署中途转去重启 / 停止：接下来结束的是这个动作，不是那次部署，别拿旧记录播收尾。
@@ -5577,6 +5585,8 @@ const BranchCard = memo(function BranchCard({
     const last = lastBuildRef.current;
     lastBuildRef.current = null;
     if (!last) return;
+    // 容器起来了、但分支状态没落盘（接口已报错）：不播「部署成功」，卡片直接显示真实状态（Codex P2，PR #1646）
+    if (branch.stateFlushFailed) return;
     const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds, started: last.started });
     if (!result) return;
     setOutcome({ ...result, at: Date.now(), phase: last.phase, elapsedMs: last.elapsedMs, medianMs: last.medianMs });

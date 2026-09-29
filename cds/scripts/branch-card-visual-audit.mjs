@@ -516,6 +516,39 @@ async function main() {
         const afterRestart = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
         check(afterRestart !== 'done', `重启结束不播「部署成功」（实际 data-deploy-phase=${afterRestart}）`);
 
+        // 单服务部署跑完、容器起来了，但分支状态没落盘（接口报错）：卡片离开部署阶段，不许播「部署成功」（Codex P2）
+        {
+          const fBuild = { ...restarted, services: services(22331, 'running', { api: { status: 'building' } }), lastDeployStartedAt: iso(-30_000) };
+          branches = branches.map((b) => (b.id === fBuild.id ? fBuild : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), fBuild);
+          await page.waitForTimeout(600);
+          const fDone = { ...fBuild, services: services(22331, 'running') };
+          branches = branches.map((b) => (b.id === fDone.id ? fDone : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId, stateFlushFailed: true }), fDone);
+          await page.waitForTimeout(900);
+          const fPhase = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
+          const fFooter = (await page.textContent('[data-branch-card-id="b-test"] footer')) || '';
+          check(fPhase !== 'done' && fPhase !== 'start' && !/部署成功/.test(fFooter),
+            `状态落盘失败的那次部署不播「部署成功」，也不停在部署阶段（实际 data-deploy-phase=${fPhase}）`);
+        }
+
+        // 混合模式分支正在等 CI 镜像，这时手动部署一个源码服务：阶段条按源码三段走，不被等镜像那一段锁成极速版（Codex P2）
+        {
+          const mixedRuntime = { kind: 'mixed', label: '混合', title: '', activeProfiles: 13, releaseProfiles: 12, sourceProfiles: 1, modes: ['prebuilt', 'source'], prebuilt: true, prebuiltProfileIds: PROFILES.filter((id) => id !== 'api') };
+          const waiting = { ...branches.find((b) => b.id === 'b-edison'), deployRuntime: mixedRuntime, ciImageStatus: 'waiting', ciWaitingSince: iso(-30_000), status: 'running', services: services(22705, 'running') };
+          branches = branches.map((b) => (b.id === waiting.id ? waiting : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), waiting);
+          await page.waitForTimeout(600);
+          const waitPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
+          const manual = { ...waiting, status: 'building', services: services(22705, 'running', { api: { status: 'building' } }), lastDeployStartedAt: iso(-5_000) };
+          branches = branches.map((b) => (b.id === manual.id ? manual : b));
+          await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), manual);
+          await page.waitForTimeout(600);
+          const manualPhase = await page.getAttribute('[data-branch-card-id="b-edison"]', 'data-deploy-phase');
+          check(waitPhase === 'ci-waiting' && manualPhase === 'build',
+            `等 CI 镜像时手动部署源码服务，阶段条从「等镜像」换成源码「构建」（${waitPhase} → ${manualPhase}）`);
+        }
+
         // 「已停止」分组收起时定位其中一张卡（搜索下拉 / cds:focus-branch）：要先展开分组，卡片真的滚进视野（Codex P2）。
         await page.evaluate(() => window.scrollTo(0, 0));
         const toggle = page.locator('section[aria-label="未运行的分支"] > div > button[aria-expanded]').first();
