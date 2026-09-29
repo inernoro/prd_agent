@@ -5,7 +5,7 @@ set -eu
 # exec_dep.sh, so this script must not block a frontend-only release forever.
 # When both scripts are used, this script writes a release intent file and
 # exec_dep.sh refuses to deploy a different ref. This keeps api / llmgw /
-# llmgw-serve / llmgw-web on the same immutable commit during GW cutover.
+# llmgw-serve / llmgw-web / design-opendesign on the same immutable commit.
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
 if [ -z "$release_ref" ] && [ -n "${PRD_AGENT_DEPLOY_COMMIT:-}" ]; then
@@ -155,20 +155,23 @@ default_api_image="get.miduo.org/ghcr.io/${repo}/prdagent-server:${tag}"
 default_llmgw_image="get.miduo.org/ghcr.io/${repo}/prdagent-llmgw:${tag}"
 default_llmgw_serve_image="get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-serve:${tag}"
 default_llmgw_web_image="get.miduo.org/ghcr.io/${repo}/prdagent-llmgw-web:${tag}"
+default_design_opendesign_image="get.miduo.org/ghcr.io/${repo}/prdagent-design-opendesign:${tag}"
 
 if [ "$release_ref_type" = "commit" ] && [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" != "1" ]; then
-  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}" ]; then
-    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保四个镜像钉到 ${tag}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
+  if [ -n "${PRD_AGENT_API_IMAGE:-}${PRD_AGENT_LLMGW_IMAGE:-}${PRD_AGENT_LLMGW_SERVE_IMAGE:-}${PRD_AGENT_LLMGW_WEB_IMAGE:-}${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-}" ]; then
+    echo "WARN: --commit 发布默认忽略 PRD_AGENT_*_IMAGE 覆盖，确保五个镜像钉到 ${tag}；如确需覆盖请设置 PRD_AGENT_ALLOW_IMAGE_OVERRIDE=1" >&2
   fi
   api_image="$default_api_image"
   llmgw_image="$default_llmgw_image"
   llmgw_serve_image="$default_llmgw_serve_image"
   llmgw_web_image="$default_llmgw_web_image"
+  design_opendesign_image="$default_design_opendesign_image"
 else
   api_image="${PRD_AGENT_API_IMAGE:-$default_api_image}"
   llmgw_image="${PRD_AGENT_LLMGW_IMAGE:-$default_llmgw_image}"
   llmgw_serve_image="${PRD_AGENT_LLMGW_SERVE_IMAGE:-$default_llmgw_serve_image}"
   llmgw_web_image="${PRD_AGENT_LLMGW_WEB_IMAGE:-$default_llmgw_web_image}"
+  design_opendesign_image="${PRD_AGENT_DESIGN_OPENDESIGN_IMAGE:-$default_design_opendesign_image}"
 fi
 # 单张镜像的预热超时。30s 是拍出来的，api 镜像每次都拉不完就被掐断，于是每次发布
 # 都稳定产出一串 "context canceled" —— 这些 warn 级噪音会挤占 CDS buildFailure 那个
@@ -233,6 +236,7 @@ warm_image "api" "$api_image"
 warm_image "llmgw" "$llmgw_image"
 warm_image "llmgw-serve" "$llmgw_serve_image"
 warm_image "llmgw-web" "$llmgw_web_image"
+warm_image "design-opendesign" "$design_opendesign_image"
 
 write_release_intent() {
   if [ -z "$release_intent_file" ]; then
@@ -254,6 +258,7 @@ write_release_intent() {
     printf 'PRD_AGENT_LLMGW_IMAGE=%s\n' "$llmgw_image"
     printf 'PRD_AGENT_LLMGW_SERVE_IMAGE=%s\n' "$llmgw_serve_image"
     printf 'PRD_AGENT_LLMGW_WEB_IMAGE=%s\n' "$llmgw_web_image"
+    printf 'PRD_AGENT_DESIGN_OPENDESIGN_IMAGE=%s\n' "$design_opendesign_image"
     printf 'WRITTEN_AT_UTC=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
   } > "$tmp_intent"
   mv "$tmp_intent" "$release_intent_file"

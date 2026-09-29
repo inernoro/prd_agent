@@ -2144,6 +2144,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PRD_AGENT_LLMGW_IMAGE=%s", fast);
         Assert.Contains("PRD_AGENT_LLMGW_SERVE_IMAGE=%s", fast);
         Assert.Contains("PRD_AGENT_LLMGW_WEB_IMAGE=%s", fast);
+        Assert.Contains("PRD_AGENT_DESIGN_OPENDESIGN_IMAGE=%s", fast);
         Assert.Contains("Release intent written:", fast);
 
         Assert.Contains("intent_value", execDep);
@@ -2156,6 +2157,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_IMAGE", execDep);
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_SERVE_IMAGE", execDep);
         Assert.Contains("check_intent_image_match PRD_AGENT_LLMGW_WEB_IMAGE", execDep);
+        Assert.Contains("check_intent_image_match PRD_AGENT_DESIGN_OPENDESIGN_IMAGE", execDep);
         Assert.Contains("persist_release_image_pins", execDep);
         Assert.Contains("PRD_AGENT_PERSIST_IMAGE_PINS", execDep);
         Assert.Contains("PRD_AGENT_API_IMAGE_VALUE", execDep);

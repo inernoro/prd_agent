@@ -23,8 +23,9 @@ name: Branch Image
 # 因此只要 prd-api 改动触发 api/llmgw-serve 镜像，也必须补齐 llmgw/llmgw-web 同 sha tag；
 # workflow_dispatch 仍用于人工补齐不可变镜像组。
 #
-# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）只进 CDS 分支预览，
-# 这一阶段不进正式发布清单（生产 docker-compose.yml 未引用它），所以不参与上面那组同 sha 钉版。
+# 设计执行服务 prdagent-design-opendesign（design-runtime/opendesign）也进正式发布：exec_dep.sh --commit
+# 把它与上面四个镜像钉到同一 sha。main 每个提交都会构建它（见 design-opendesign-image 的 if），
+# 所以正式发布的 main 提交总有对应的 sha 镜像。
 
 on:
   push:
