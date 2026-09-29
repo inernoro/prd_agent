@@ -190,11 +190,14 @@ export function suggestPrefixGroups(branches: GroupableBranch[]): PrefixSuggesti
     if (prefix) counts.set(prefix, (counts.get(prefix) || 0) + 1);
   }
   return [...counts.entries()]
+    // 超过规则值上限的前缀建不成规则（后端必拒），不作为可一键创建的建议给出（Codex P2，PR #1647）
+    .filter(([prefix]) => prefix.length <= BRANCH_GROUP_LIMITS.ruleValueLength)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([prefix, count], index) => ({
       prefix,
       count,
-      name: KNOWN_PREFIX_NAMES[prefix] || prefix.slice(0, -1),
+      // 猜出来的组名按上限截断：输入框的 maxLength 不会截初始值，超长组名会让一键建组整个被拒
+      name: (KNOWN_PREFIX_NAMES[prefix] || prefix.slice(0, -1)).slice(0, BRANCH_GROUP_LIMITS.nameLength),
       color: BRANCH_GROUP_COLORS[index % (BRANCH_GROUP_COLORS.length - 1)],
       defaultChecked: count >= 2,
     }));

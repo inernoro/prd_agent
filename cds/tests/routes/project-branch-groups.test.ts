@@ -160,6 +160,7 @@ describe('项目分支自定义分组', () => {
     errSpy.mockRestore();
     expect(failed.status).toBe(500);
     expect(failed.body.error).toBe('persist_failed');
+    expect(failed.body.restored).toBe(true);
     expect(JSON.stringify(failed.body)).not.toContain('ENOSPC');
     expect(JSON.stringify(failed.body)).not.toContain('/var/lib');
     const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
@@ -184,6 +185,18 @@ describe('项目分支自定义分组', () => {
     expect(b.status).toBe(200);
     const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
     expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude', 'g-other']);
+  });
+
+  it('恢复写入也没落盘时，不对用户说「已恢复」', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const flushSpy = vi.spyOn(stateService, 'flush').mockImplementation(async () => { throw new Error('disk gone'); });
+    const failed = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
+    flushSpy.mockRestore();
+    errSpy.mockRestore();
+    expect(failed.status).toBe(500);
+    expect(failed.body.restored).toBe(false);
+    expect(failed.body.message).not.toContain('已恢复为保存前的版本');
   });
 
   it('用 id 与不同大小写的 slug 访问同一项目时进同一条写入队列', async () => {
@@ -236,8 +249,8 @@ describe('项目分支自定义分组', () => {
     flushSpy.mockRestore();
     errSpy.mockRestore();
     expect(slowRes.status).toBe(500);
-    // 放弃的那次没有执行：只落过一次盘，分组仍是最初那份（没被放弃的请求清空）
-    expect(flushCalls).toBe(1);
+    // 放弃的那次没有执行：只有慢请求的落盘与它回滚后的恢复落盘两次，分组仍是最初那份（没被放弃的请求清空）
+    expect(flushCalls).toBe(2);
     const after = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
     expect(after.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
   });

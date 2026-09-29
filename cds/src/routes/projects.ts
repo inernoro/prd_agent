@@ -1982,13 +1982,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         else live.branchGroups = previousGroups;
         live.updatedAt = previousProjectUpdatedAt;
       }
-      // 把恢复后的状态也排一次写，覆盖掉可能稍后才落下去的那份新版本；这次再失败只影响日志
-      try { stateService.save(); } catch (err) { logFailure(err); }
+      // 把恢复后的状态也写一次并等它落盘，覆盖掉可能稍后才落下去的那份新版本。只有这次落盘确认了，
+      // 才能对用户说「已恢复」；没确认就如实说存储里是哪一版不确定（Codex P1，PR #1647）。
+      let restoreResult: BoundedFlushResult;
+      try {
+        stateService.save();
+        restoreResult = await waitForFlushWithTimeout(() => stateService.flush(), branchGroupsFlushTimeoutMs(), logFailure);
+      } catch (err) {
+        logFailure(err);
+        restoreResult = 'failed';
+      }
+      const restored = restoreResult === 'flushed';
+      const cause = flushResult === 'timeout' ? '写入存储超时' : '写入存储失败';
       res.status(flushResult === 'timeout' ? 503 : 500).json({
         error: 'persist_failed',
-        message: flushResult === 'timeout'
-          ? '分组没有保存：写入存储超时，已恢复为保存前的版本，请稍后重试'
-          : '分组没有保存：写入存储失败，已恢复为保存前的版本，请稍后重试',
+        restored,
+        message: restored
+          ? `分组没有保存：${cause}，已恢复为保存前的版本，请稍后重试`
+          : `分组没有保存：${cause}，恢复为保存前版本的写入也没能确认完成，存储里暂时可能是任一版本；请稍后刷新，以读到的为准`,
         requestId,
       });
       return;

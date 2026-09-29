@@ -67,6 +67,18 @@ describe('归组判定：钉入 > 规则按分组顺序 > 未归组', () => {
     expect(assignBranchToGroup(moveGroupOnto(groups, 'claude', 'release'), b('1', 'claude/release-notes'))).toEqual({ groupId: 'claude', via: 'rule' });
   });
 
+  it('建组建议不超后端上限：组名截到 40 字，超过 100 字的前缀不作为建议', () => {
+    const longPrefix = `${'x'.repeat(60)}/`;
+    const tooLong = `${'y'.repeat(120)}/`;
+    const suggestions = suggestPrefixGroups([
+      b('1', `${longPrefix}a`), b('2', `${longPrefix}b`),
+      b('3', `${tooLong}a`), b('4', `${tooLong}b`),
+    ]);
+    const long = suggestions.find((item) => item.prefix === longPrefix);
+    expect(long?.name.length).toBe(BRANCH_GROUP_LIMITS.nameLength);
+    expect(suggestions.some((item) => item.prefix === tooLong)).toBe(false);
+  });
+
   it('拖组头调序：往上放在目标前、往下放在目标后，拖到下一组能下移、拖到最后一组能挪到末尾', () => {
     const ids = (list: BranchGroup[]) => list.map((item) => item.id);
     const groups = [group('a', []), group('b', []), group('c', [])];
