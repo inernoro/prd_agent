@@ -2380,6 +2380,7 @@ export function BranchListPage(): JSX.Element {
         ciImageStatus: branch.ciImageStatus,
         prebuilt: branch.deployRuntime?.prebuilt,
         prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
+        activeProfileCount: branch.deployRuntime?.activeProfiles,
       });
       if (branch.buildQueue) slot = { active: branch.buildQueue.active, max: branch.buildQueue.max };
       if (branchHasDeployFailure(branch, projectProfileIds)) errored += 1;
@@ -5422,6 +5423,7 @@ const BranchCard = memo(function BranchCard({
     ciImageStatus: branch.ciImageStatus,
     prebuilt: branch.deployRuntime?.prebuilt,
     prebuiltProfileIds: branch.deployRuntime?.prebuiltProfileIds,
+    activeProfileCount: branch.deployRuntime?.activeProfiles,
     participants: lastBuildRef.current?.serviceIds,
     pendingActionLabel: busy ? PENDING_ACTION_LABELS[action?.kind || ''] || '处理中' : undefined,
   });

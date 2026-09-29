@@ -55,6 +55,11 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     // 服务各自结束：源码服务 api 已回 running、极速版 web 还在探测——这次部署编译过源码，不许翻成极速版步骤
     const staggered = branchCardPhase({ status: 'starting', services: { api: { status: 'running' }, web: { status: 'starting' } }, ...mixed, participants: ['api', 'web'] });
     expect(staggered?.steps.map((step) => step.label)).toEqual(['排队', '构建并启动', '就绪探测']);
+    // 整分支部署刚开始：分支先翻 building、还没有服务在动。混合分支（2 个服务只 1 个极速版）按源码版，
+    // 全部极速版才按极速版；排队时按排队登记的服务判
+    expect(branchCardPhase({ status: 'building', services: { api: { status: 'running' }, web: { status: 'running' } }, ...mixed, activeProfileCount: 2 })?.key).toBe('build');
+    expect(branchCardPhase({ status: 'building', services: { web: { status: 'running' } }, prebuilt: true, prebuiltProfileIds: ['web'], activeProfileCount: 1 })?.key).toBe('start');
+    expect(branchCardPhase({ status: 'building', buildQueue: { ahead: 1, serviceIds: ['api'] }, ...mixed, activeProfileCount: 2 })?.steps).toHaveLength(3);
     // 没有服务在动（排队 / 等镜像）时仍按 prebuilt
     expect(branchCardPhase({ status: 'running', services: { api: { status: 'running' } }, ciImageStatus: 'waiting', ...mixed })?.key).toBe('ci-waiting');
   });
@@ -67,6 +72,9 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
     expect(page.match(/prebuiltProfileIds: branch\.deployRuntime\?\.prebuiltProfileIds,/g)).toHaveLength(2);
     // 卡片把自己记住的参与服务交给阶段推导
     expect(page).toContain('participants: lastBuildRef.current?.serviceIds,');
+    expect(page.match(/activeProfileCount: branch\.deployRuntime\?\.activeProfiles,/g)).toHaveLength(2);
+    // 单服务部署的每次状态翻转都推事件：building / starting / 结束 / 出错
+    expect(routes.match(/emitServiceTransition\(\);/g)).toHaveLength(4);
   });
 
   it('优先级：排队 > 等镜像 > 构建 > 就绪', () => {
