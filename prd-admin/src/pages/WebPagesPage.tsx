@@ -61,7 +61,8 @@ import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/componen
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
 import { DIRECT_PREVIEW_SANDBOX } from '@/components/web-hosting/previewHtml';
-import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
+import { resolveSiteForm, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/components/web-hosting/siteFormRegistry';
+import { createImageGalleryZip } from '@/components/web-hosting/imageGalleryUpload';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
@@ -1462,11 +1463,19 @@ export default function WebPagesPage() {
           compactSlots
           dropzone={{
           hint: '拖文件到此上传',
-          accept: ['.html', '.zip', '.md', '.pdf', '.mp4', '.webm'],
+          accept: [...WEB_HOSTING_UPLOAD_EXTENSIONS],
           // 两阶段：先只上传，再由用户在 dock 内二选一（无密码 / 有密码）创建分享并自动复制链接
           onFiles: async (files) => {
-            const f = files[0];
+            let f = files[0];
             if (!f) return;
+            const gallery = files.length > 1;
+            if (files.length > 1) {
+              try { f = await createImageGalleryZip(files); }
+              catch (error) {
+                toast.error('多图上传失败', error instanceof Error ? error.message : '请只选择图片文件');
+                return;
+              }
+            }
             // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
             // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
             const targetSpace = currentSpace;
@@ -1480,7 +1489,7 @@ export default function WebPagesPage() {
               toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
               return;
             }
-            const up = await uploadSite({ file: f });
+            const up = await uploadSite({ file: f, gallery });
             if (!up.success || !up.data) {
               toast.error('上传失败', up.error?.message || '请稍后重试');
               return;
@@ -3148,6 +3157,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const [tagInput, setTagInput] = useState('');
   const [folder, setFolder] = useState(item?.folder ?? '');
   const [file, setFile] = useState<File | null>(initialFile ?? null);
+  const [gallerySelected, setGallerySelected] = useState(false);
   // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
   const titleEditedRef = useRef(false);
   // 新增上传场景下，文件类型为 .md/.markdown 时把"文件名（去扩展名）"作为默认标题
@@ -3212,11 +3222,17 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   const progress = buildUploadProgress(sent.loaded, sent.total, elapsed, unpack);
 
+  const selectUploadFiles = async (files: File[]) => {
+    if (files.length === 0) return;
+    if (files.length === 1) { setGallerySelected(false); setFile(files[0]); return; }
+    try { setFile(await createImageGalleryZip(files)); setGallerySelected(true); }
+    catch (error) { toast.error('多图上传失败', error instanceof Error ? error.message : '请只选择图片文件'); }
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    void selectUploadFiles(Array.from(e.dataTransfer.files));
   };
 
   const finishSavedSite = useCallback((saved: HostedSite) => {
@@ -3341,7 +3357,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
     try {
       const isZip = file?.name.toLowerCase().endsWith('.zip') ?? false;
-      if (file && isZip) {
+      if (file && isZip && !gallerySelected) {
         const reviewed = await reviewSiteZip({
           file,
           title: title.trim() || undefined,
@@ -3379,7 +3395,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
         if (file) {
           // Reupload
           const res = await reuploadSite(
-            item.id, file, uploadIdRef.current, abortRef.current.signal);
+            item.id, file, uploadIdRef.current, abortRef.current.signal, gallerySelected);
           if (!res.success) {
             // 用户自己按的中止不是故障，不弹红字；也不能继续往下走去改元信息，
             // 否则「已中止」之后站点还是被换掉了。
@@ -3413,6 +3429,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       } else {
         const res = await uploadSite({
           file: file!,
+          gallery: gallerySelected,
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           folder: folder.trim() || undefined,
@@ -3519,7 +3536,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 </span>
               ) : (
                 <span>
-                  这个站点是视频，没有可供阅读的正文，
+                  这个站点没有可供阅读的文字正文，
                   <span style={{ color: 'var(--text-primary)' }}>不支持提问</span>
                   ，访客不会看到提问入口，也不会产生模型消耗。
                 </span>
@@ -3814,16 +3831,17 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   <div className="text-center leading-relaxed">
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
                     <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
-                    <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
+                    <p className="text-xs text-token-muted">Markdown · 常见文本 · 图片（可多选）· PDF · 视频</p>
                     <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
                   </div>
                 )}
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  multiple
+                  accept={WEB_HOSTING_UPLOAD_ACCEPT}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { void selectUploadFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
                 />
               </div>
             ) : (
@@ -3839,9 +3857,10 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+                  multiple
+                  accept={WEB_HOSTING_UPLOAD_ACCEPT}
                   className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) setFile(f); }}
+                  onChange={e => { void selectUploadFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
                 />
               </div>
             )}

@@ -23,7 +23,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { useDockDrag } from '@/components/share-dock';
 import { CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
-import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY } from './siteFormRegistry';
+import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY, WEB_HOSTING_UPLOAD_ACCEPT } from './siteFormRegistry';
 import { fmtSize, relativeTime } from './siteFormat';
 
 /** 网页托管卡片拖进 ShareDock 投放槽时用的 MIME（页面与卡片共用同一个常量，不各写一份）。 */
@@ -292,7 +292,7 @@ export function SiteCard({
         id={`site-replace-${site.id}`}
         type="file"
         className="hidden"
-        accept=".html,.htm,.zip,.md,.markdown,.pdf,.mp4,.webm,.mov,.m4v"
+        accept={WEB_HOSTING_UPLOAD_ACCEPT}
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f) onReplaceFile(f);

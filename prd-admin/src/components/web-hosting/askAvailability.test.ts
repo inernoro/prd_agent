@@ -4,9 +4,11 @@ import { resolve } from 'node:path';
 import { ASK_UNSUPPORTED_ASSET_TYPES, isAskSupported } from './askAvailability';
 
 describe('提问支持形态', () => {
-  it('视频站不支持提问，其余支持', () => {
+  it('没有文字正文的媒体站不支持提问', () => {
     expect(isAskSupported({ wrappedAssetType: 'video' })).toBe(false);
     expect(isAskSupported({ wrappedAssetType: 'VIDEO' })).toBe(false);
+    expect(isAskSupported({ wrappedAssetType: 'image' })).toBe(false);
+    expect(isAskSupported({ wrappedAssetType: 'gallery' })).toBe(false);
     expect(isAskSupported({ wrappedAssetType: 'pdf' })).toBe(true);
     expect(isAskSupported({ wrappedAssetType: 'markdown' })).toBe(true);
     expect(isAskSupported({ wrappedAssetType: null })).toBe(true);
