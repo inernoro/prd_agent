@@ -65,7 +65,7 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { canQuickStartBranch } from '@/lib/branch-quick-actions';
-import { branchCardPhase, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';
+import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
@@ -5447,8 +5447,8 @@ const BranchCard = memo(function BranchCard({
      记在 ref 里——翻转之后 branch 上已经没有这些信息了。卡片不在视野里时先不播，
      等它滚进来再播（IntersectionObserver），否则动效在屏幕外白白跑完。 */
   const cardRef = useRef<HTMLElement | null>(null);
-  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null } | null>(null);
-  const [outcome, setOutcome] = useState<{ kind: 'done' | 'failed'; at: number; phase: BranchCardPhase; elapsedMs: number; medianMs: number | null } | null>(null);
+  const lastBuildRef = useRef<{ phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; serviceIds: string[] } | null>(null);
+  const [outcome, setOutcome] = useState<{ kind: 'done' | 'failed'; at: number; phase: BranchCardPhase; elapsedMs: number; medianMs: number | null; failedServiceIds: string[] } | null>(null);
   const [outcomeSeen, setOutcomeSeen] = useState(false);
   const inBuild = Boolean(buildPhase);
   useEffect(() => {
@@ -5457,10 +5457,13 @@ const BranchCard = memo(function BranchCard({
     // （Codex P2 两条，PR #1646）。真正的部署一定会经过排队 / 等镜像 / 构建 / 就绪其中一段。
     if (buildPhase && buildClock && isDeployPhase(buildPhase)) {
       const prevElapsed = lastBuildRef.current?.elapsedMs || 0;
+      // 这次部署碰过的服务取并集：结束时按它们判成败，而不是只看分支聚合状态。
+      const serviceIds = Array.from(new Set([...(lastBuildRef.current?.serviceIds || []), ...deployingServiceIds(branch.services)]));
       lastBuildRef.current = {
         phase: buildPhase,
         elapsedMs: buildClock.elapsedMs || prevElapsed,
         medianMs: buildClock.estimate?.medianMs ?? lastBuildRef.current?.medianMs ?? null,
+        serviceIds,
       };
     } else if (buildPhase?.key === 'restarting' || buildPhase?.key === 'stopping') {
       // 部署中途转去重启 / 停止：接下来结束的是这个动作，不是那次部署，别拿旧记录播收尾。
@@ -5477,12 +5480,12 @@ const BranchCard = memo(function BranchCard({
     const last = lastBuildRef.current;
     lastBuildRef.current = null;
     if (!last) return;
-    if (branch.status === 'running') {
-      setOutcome({ kind: 'done', at: Date.now(), ...last });
-      setOutcomeSeen(false);
-    } else if (branch.status === 'error') {
-      setOutcome({ kind: 'failed', at: Date.now(), ...last });
-    }
+    const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds });
+    if (!result) return;
+    setOutcome({ ...result, at: Date.now(), phase: last.phase, elapsedMs: last.elapsedMs, medianMs: last.medianMs });
+    if (result.kind === 'done') setOutcomeSeen(false);
+    // branch.services 只在翻转那一刻读：effect 只跟「是否在部署」与分支状态走，服务状态的后续抖动不重判。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inBuild, branch.status]);
   useEffect(() => {
     if (outcome?.kind !== 'done' || outcomeSeen) return;
@@ -5506,10 +5509,13 @@ const BranchCard = memo(function BranchCard({
     const timer = window.setTimeout(() => setOutcome(null), 60_000);
     return () => window.clearTimeout(timer);
   }, [outcome, outcomeSeen]);
+  // 失败态一直留到「分支不再出错、这次失败的服务也不再出错」为止——单服务失败时分支仍是 running。
+  const failureStillShowing = outcome?.kind === 'failed'
+    && (isError || outcome.failedServiceIds.some((id) => branch.services?.[id]?.status === 'error'));
   useEffect(() => {
-    if (outcome?.kind === 'failed' && branch.status !== 'error') setOutcome(null);
+    if (outcome?.kind === 'failed' && !failureStillShowing) setOutcome(null);
     if (outcome?.kind === 'done' && branch.status !== 'running') setOutcome(null);
-  }, [outcome, branch.status]);
+  }, [outcome, branch.status, failureStillShowing]);
   const finishing = outcome?.kind === 'done' && outcomeSeen && isRunning;
   /* 动效只在播出后的 1.9 秒内挂类名（外圈脉冲 1000ms 起、播 780ms），之后换成静态终态。原因：列表会因为别的分支状态变化而重排，
      DOM 节点一挪位置，浏览器就把 CSS 动画从头再播一遍——端口重新变暗、预览按钮重新隐身。 */
@@ -5523,7 +5529,7 @@ const BranchCard = memo(function BranchCard({
     const timer = window.setTimeout(() => setFinishAnimating(false), 1900);
     return () => window.clearTimeout(timer);
   }, [finishing]);
-  const failedPhase = outcome?.kind === 'failed' && isError ? outcome.phase : null;
+  const failedPhase = failureStillShowing && outcome ? outcome.phase : null;
   const finishNote = finishing && outcome && outcome.medianMs && outcome.elapsedMs > 0
     ? (() => {
       const diff = outcome.elapsedMs - outcome.medianMs;
@@ -5531,7 +5537,7 @@ const BranchCard = memo(function BranchCard({
       return `比中位${diff > 0 ? '慢' : '快'} ${formatDurationZh(Math.abs(diff))}`;
     })()
     : '';
-  const deployPhaseAttr = buildPhase ? buildPhase.key : isError ? 'failed' : finishing ? 'done' : undefined;
+  const deployPhaseAttr = buildPhase ? buildPhase.key : isError || failedPhase ? 'failed' : finishing ? 'done' : undefined;
   const phaseBarSource: BranchCardPhase | null = buildPhase || failedPhase || (finishing && outcome ? outcome.phase : null);
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
@@ -5643,7 +5649,7 @@ const BranchCard = memo(function BranchCard({
     ? '事件触发停止，无需处理'
     : stopReasonText;
   const failureAt = branch.lastDeployStartedAt || branch.lastDeployDispatchAt || branch.lastDeployAt || branch.lastPushAt || branch.createdAt;
-  const statusTimeText = isError
+  const statusTimeText = isError || (outcome?.kind === 'failed')
     ? (failureAt ? formatRelativeTime(failureAt) : '时间未知')
     : (branch.lastStoppedAt ? formatRelativeTime(branch.lastStoppedAt) : '时间未知');
   /* 信息槽（端口槽下面那一行）：左边一句「它现在怎样」，右边一个时间。
@@ -5781,11 +5787,12 @@ const BranchCard = memo(function BranchCard({
       data-branch-card-id={branch.id}
       data-deploy-phase={deployPhaseAttr}
       className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${finishAnimating ? 'cds-finish-ring ' : ''}${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
-        isError
-          ? failedPhase
-            // 刚在眼前失败：红边框承担「构建失败」信号；历史错误仍按错误分类配色。
-            ? 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/25'
-            : branchIssueCardClass(branch)
+        failedPhase
+          // 刚在眼前失败（含单服务部署失败、分支仍 running）：红边框承担「构建失败」信号；
+          // 历史错误仍按错误分类配色。
+          ? 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/25'
+          : isError
+            ? branchIssueCardClass(branch)
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
@@ -6723,8 +6730,8 @@ const BranchCard = memo(function BranchCard({
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
                 是静态信息且右边的提交历史下拉一点就能看到。AI 一释放就还回去。 */}
-            {isError ? (
-              failedPhase ? null : <span className="min-w-0 flex-1" aria-hidden />
+            {failedPhase ? null : isError ? (
+              <span className="min-w-0 flex-1" aria-hidden />
             ) : isAiActive ? (
               <span
                 className="cds-ai-activity flex min-w-0 flex-1 items-center gap-2"
@@ -6796,7 +6803,7 @@ const BranchCard = memo(function BranchCard({
                 <Eye />
               </Button>
             ) : null
-          ) : isError ? (
+          ) : isError || failedPhase ? (
             <>
               <Button
                 size="sm"

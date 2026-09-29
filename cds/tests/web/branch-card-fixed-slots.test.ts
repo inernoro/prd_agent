@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { branchCardPhase, isDeployPhase } from '../../web/src/lib/branchCardPhase';
+import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase } from '../../web/src/lib/branchCardPhase';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 const WEB_SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web/src');
@@ -74,6 +74,29 @@ describe('branchCardPhase：阶段只来自真实状态', () => {
 
   it('恢复部署（restarting 但服务在构建）仍按构建段显示', () => {
     expect(branchCardPhase({ status: 'restarting', prebuilt: true, services: { api: { status: 'building' } } as never })?.key).toBe('start');
+  });
+
+  it('单服务部署进入就绪探测时分支仍 running：认作就绪探测段，不提前报成功', () => {
+    const phase = branchCardPhase({ status: 'running', prebuilt: true, services: { api: { status: 'starting' }, admin: { status: 'running' } } });
+    expect(phase?.key).toBe('ready');
+    // 原地重启同样是服务 starting，但分支是 restarting，仍归「正在重启」
+    expect(branchCardPhase({ status: 'restarting', services: { api: { status: 'starting' } } })?.key).toBe('restarting');
+    // 分支 idle 而服务残留 starting（运行时容量对账的调试态）不算部署
+    expect(branchCardPhase({ status: 'idle', services: { api: { status: 'starting' } } })).toBeNull();
+  });
+
+  it('参与部署的服务 = 此刻 building / starting 的那些', () => {
+    expect(deployingServiceIds({ api: { status: 'building' }, admin: { status: 'running' }, web: { status: 'starting' } })).toEqual(['api', 'web']);
+    expect(deployingServiceIds(undefined)).toEqual([]);
+  });
+
+  it('收尾成败按参与部署的服务判：单服务失败而分支仍 running，不许报成功', () => {
+    const services = { api: { status: 'error' }, admin: { status: 'running' } };
+    expect(deployOutcome({ status: 'running', services, participants: ['api'] })).toEqual({ kind: 'failed', failedServiceIds: ['api'] });
+    // 没参与这次部署的服务早就是 error：不算这次失败
+    expect(deployOutcome({ status: 'running', services, participants: ['admin'] })).toEqual({ kind: 'done', failedServiceIds: [] });
+    expect(deployOutcome({ status: 'error', services, participants: [] })?.kind).toBe('failed');
+    expect(deployOutcome({ status: 'idle', services, participants: ['admin'] })).toBeNull();
   });
 
   it('只有部署阶段算部署：停止 / 重启 / 前端占位结束都不播「部署成功」', () => {
@@ -151,7 +174,7 @@ describe('构建页脚：阶段条接线', () => {
   it('卡片与页头汇总共用 branchCardPhase 一个判定源', () => {
     const calls = page.split('branchCardPhase({').length - 1;
     expect(calls, '卡片页脚 + 页头汇总两处调用').toBe(2);
-    expect(page).toContain("import { branchCardPhase, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';");
+    expect(page).toContain("import { branchCardPhase, deployOutcome, deployingServiceIds, isDeployPhase, type BranchCardPhase } from '@/lib/branchCardPhase';");
   });
 
   const wired = (source: string) => {
@@ -200,6 +223,25 @@ describe('构建页脚：阶段条接线', () => {
 
   it('红用例：时钟只看分支级状态，守卫变红', () => {
     expectGuardRedOnMutation(clockFollowsPhase, page, mutate(page, '    || deployInFlight\n', ''));
+  });
+
+  // 收尾结果必须经 deployOutcome（按参与部署的服务判），不许退回只看 branch.status。
+  const outcomeFromParticipants = (source: string) => {
+    expect(source).toContain('const result = deployOutcome({ status: branch.status, services: branch.services, participants: last.serviceIds });');
+    expect(source).toContain('...deployingServiceIds(branch.services)');
+    expect(source).toContain('const failedPhase = failureStillShowing && outcome ? outcome.phase : null;');
+  };
+
+  it('收尾成败按参与部署的服务判，单服务失败也进失败态', () => {
+    outcomeFromParticipants(page);
+  });
+
+  it('红用例：失败态退回只认分支级 error，守卫变红', () => {
+    expectGuardRedOnMutation(
+      outcomeFromParticipants,
+      page,
+      mutate(page, 'const failedPhase = failureStillShowing && outcome ? outcome.phase : null;', "const failedPhase = outcome?.kind === 'failed' && isError ? outcome.phase : null;"),
+    );
   });
 
   it('旧的整条背景填充已退场，不留两套进度表达', () => {

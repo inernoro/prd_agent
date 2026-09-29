@@ -5,7 +5,7 @@
  *   - 排队     ← branch.buildQueue 存在（构建并发闸满了）
  *   - 等镜像   ← 极速版且 ciImageStatus === 'waiting'（GitHub Actions 还在出镜像）
  *   - 构建/启动 ← 分支或任一服务处于 building（源码版在本机编译并起容器，极速版拉镜像并起容器）
- *   - 就绪探测 ← starting（容器活了，等启动信号或 HTTP/TCP 就绪探测）
+ *   - 就绪探测 ← 分支 starting，或分支 running 而某个服务 starting（单服务部署）
  *   - 正在重启 ← restarting 且没有服务在构建（一键重启 / 冷却唤醒：原地重启容器，没有构建）
  *
  * 极速版四段、源码版三段——源码版没有「等镜像」这一步，硬凑一段空格子就是在编造。
@@ -106,7 +106,10 @@ export function branchCardPhase(input: BranchCardPhaseInput): BranchCardPhase | 
   if (input.status === 'building' || services.some((svc) => svc.status === 'building')) {
     return build(steps, express ? 2 : 1, true);
   }
-  if (input.status === 'starting') {
+  // 单服务部署（单个 profile 部署 / webhook 只重建一个服务）时分支保持 running，只有那个服务
+  // 走 building → starting；就绪探测这一段只看分支级 starting 会漏掉，卡片会在探测结束前报成功。
+  // 原地重启是 restarting，不走这里（Codex P2，PR #1646）。
+  if (input.status === 'starting' || (input.status === 'running' && services.some((svc) => svc.status === 'starting'))) {
     return build(steps, steps.length - 1, true);
   }
   if (input.status === 'restarting') {
@@ -128,3 +131,32 @@ export function isDeployPhase(phase: Pick<BranchCardPhase, 'key'>): boolean {
 }
 
 const DEPLOY_PHASE_KEYS: ReadonlySet<BranchCardPhaseKey> = new Set(['queued', 'ci-waiting', 'build', 'start', 'ready']);
+
+/** 此刻正在部署的服务（building / starting）。收尾要按「这次参与部署的服务」判成败。 */
+export function deployingServiceIds(services?: Record<string, { status: string }>): string[] {
+  return Object.entries(services || {})
+    .filter(([, svc]) => svc.status === 'building' || svc.status === 'starting')
+    .map(([id]) => id);
+}
+
+export interface DeployOutcome {
+  kind: 'done' | 'failed';
+  /** 参与这次部署、最后落在 error 的服务。 */
+  failedServiceIds: string[];
+}
+
+/**
+ * 一次部署结束时的成败。不能只看分支聚合状态：单服务部署失败时，别的服务还健康，
+ * 分支仍是 running——只看它就会把失败报成「部署成功」（Codex P1，PR #1646）。
+ * 分支既不是 running 也不是 error（比如被停掉）时返回 null，不播收尾。
+ */
+export function deployOutcome(input: {
+  status: string;
+  services?: Record<string, { status: string }>;
+  participants: string[];
+}): DeployOutcome | null {
+  const failedServiceIds = input.participants.filter((id) => input.services?.[id]?.status === 'error');
+  if (input.status === 'error' || failedServiceIds.length > 0) return { kind: 'failed', failedServiceIds };
+  if (input.status === 'running') return { kind: 'done', failedServiceIds: [] };
+  return null;
+}

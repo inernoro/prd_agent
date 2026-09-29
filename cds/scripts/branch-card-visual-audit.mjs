@@ -376,6 +376,30 @@ async function main() {
         check(await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase') === 'start', '单服务重建认作「启动容器」段');
         check(/01:0\d/.test(tickA) && tickA !== tickB, `单服务重建时钟从部署开始时刻起走（「${tickA.trim()}」→「${tickB.trim()}」）`);
 
+        // 单服务进入就绪探测：分支仍 running、只有 api 在 starting。阶段不能消失（Codex P2）。
+        const oneReady = { ...oneSvc, services: services(22331, 'running', { api: { status: 'starting' } }) };
+        branches = branches.map((b) => (b.id === oneReady.id ? oneReady : b));
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), oneReady);
+        await page.waitForTimeout(600);
+        const readyPhase = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
+        check(readyPhase === 'ready', `单服务就绪探测仍显示「就绪探测」段（实际 ${readyPhase}）`);
+
+        // 单服务部署失败：api 落 error，其余服务健康、分支仍 running。不许播「部署成功」（Codex P1）。
+        const oneFailed = {
+          ...oneSvc,
+          services: services(22331, 'running', { api: { status: 'error', errorMessage: '就绪探测超时（120 秒内 /health 未返回 200）' } }),
+        };
+        branches = branches.map((b) => (b.id === oneFailed.id ? oneFailed : b));
+        await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), oneFailed);
+        await page.waitForTimeout(900);
+        const partialPhase = await page.getAttribute('[data-branch-card-id="b-test"]', 'data-deploy-phase');
+        const partialFooter = (await page.textContent('[data-branch-card-id="b-test"] [data-footer-status]')) || '';
+        const redeployVisible = await page.isVisible('[data-branch-card-id="b-test"] button[aria-label^="重新部署"]');
+        await shotCard(page, 'b-test', 'single-service-failed.png');
+        check(partialPhase === 'failed', `单服务部署失败进入失败态（实际 data-deploy-phase=${partialPhase}）`);
+        check(/构建失败/.test(partialFooter) && /就绪探测/.test(partialFooter), `单服务失败页脚写「构建失败 · 在「就绪探测」」（实际「${partialFooter.trim()}」）`);
+        check(redeployVisible, '单服务失败时直接给出「重新部署」');
+
         // 一键重启：原地重启容器，没有构建。回到运行中时不许播「部署成功」（Codex P2）。
         const restarting = { ...oneSvc, status: 'restarting', services: services(22331, 'starting') };
         branches = branches.map((b) => (b.id === restarting.id ? restarting : b));
