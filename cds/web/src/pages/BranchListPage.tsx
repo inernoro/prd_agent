@@ -1693,11 +1693,19 @@ export function BranchListPage(): JSX.Element {
   const [groupEditor, setGroupEditor] = useState<{ group: BranchGroup; isNew: boolean } | null>(null);
   const [groupDropTarget, setGroupDropTarget] = useState<{ id: string; kind: 'branch' | 'group' } | null>(null);
   const draggingGroupIdRef = useRef<string | null>(null);
+  // 切项目时把上一个项目的分组残留一并清掉：开着的编辑器、保存中 / 保存失败的提示、拖拽落点。
+  // 不清的话，编辑器里上个项目的分组会带着新项目的版本号存进新项目（Codex P2，PR #1647）。
+  const groupsProjectRef = useRef(projectId);
+  groupsProjectRef.current = projectId;
   useEffect(() => {
     setViewModeState(readBranchViewMode(projectId));
     setCollapsedGroups(readCollapsedGroups(projectId));
     setBranchGroups(null);
     setGroupsLoadError('');
+    setGroupEditor(null);
+    setGroupsSaving(false);
+    setGroupsSaveError('');
+    setGroupDropTarget(null);
     if (!projectId) return;
     let cancelled = false;
     apiRequest<BranchGroupsSettings & { ok: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/branch-groups`)
@@ -1730,20 +1738,33 @@ export function BranchListPage(): JSX.Element {
   branchGroupsRef.current = branchGroups;
   const saveBranchGroups = useCallback(async (nextGroups: BranchGroup[]): Promise<boolean> => {
     const before = branchGroupsRef.current;
+    const requestProject = projectId;
     setGroupsSaving(true);
     setGroupsSaveError('');
     setBranchGroups((current) => ({ groups: nextGroups, updatedAt: current?.updatedAt ?? null, updatedBy: current?.updatedBy ?? null }));
+    // 保存还没回来用户就切了项目：这次响应属于上一个项目，一律丢弃，不许写进新项目的状态（Codex P2，PR #1647）。
+    const switchedAway = () => groupsProjectRef.current !== requestProject;
     try {
       const res = await apiRequest<BranchGroupsSettings & { ok: boolean }>(
-        `/api/projects/${encodeURIComponent(projectId)}/branch-groups`,
+        `/api/projects/${encodeURIComponent(requestProject)}/branch-groups`,
         { method: 'PUT', body: { groups: nextGroups, baseUpdatedAt: before?.updatedAt ?? null } },
       );
+      if (switchedAway()) return false;
       setBranchGroups({ groups: res.groups, updatedAt: res.updatedAt, updatedBy: res.updatedBy });
       return true;
     } catch (error) {
+      if (switchedAway()) return false;
       const body = error instanceof ApiError ? (error.body as { latest?: BranchGroupsSettings; message?: string } | null) : null;
       if (error instanceof ApiError && error.status === 409 && body?.latest) {
-        setBranchGroups(body.latest);
+        const latest = body.latest;
+        setBranchGroups(latest);
+        // 开着的编辑器草稿也换成最新版本里的这一组，否则再点保存就会拿旧草稿 + 新版本号把别人的修改覆盖掉
+        // （Codex P2，PR #1647）。这一组已被别人删了就关掉编辑器；新建的组不受影响，草稿保留。
+        setGroupEditor((editor) => {
+          if (!editor || editor.isNew) return editor;
+          const fresh = latest.groups.find((group) => group.id === editor.group.id);
+          return fresh ? { group: fresh, isNew: false } : null;
+        });
         setGroupsSaveError('分组刚被别人改过，已载入最新版本；这次修改没有保存，请在最新版本上重做');
       } else {
         setBranchGroups(before);
@@ -1751,7 +1772,7 @@ export function BranchListPage(): JSX.Element {
       }
       return false;
     } finally {
-      setGroupsSaving(false);
+      if (!switchedAway()) setGroupsSaving(false);
     }
   }, [projectId]);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
@@ -4174,7 +4195,8 @@ export function BranchListPage(): JSX.Element {
           initial={groupEditor?.group ?? null}
           isNew={Boolean(groupEditor?.isNew)}
           groups={groupList}
-          branches={sortedBranches}
+          /* 规则保存后作用于项目全部分支，预览也得按全部算——标签筛选开着时 sortedBranches 只剩一部分（Codex P2，PR #1647） */
+          branches={branches}
           tags={allBranchTags}
           updatedAt={branchGroups?.updatedAt ?? null}
           updatedBy={branchGroups?.updatedBy ?? null}

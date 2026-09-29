@@ -356,6 +356,44 @@ async function main() {
           `保存冲突时提示并载入最新版本，这次移动没有生效（「${(banner || '').trim().slice(0, 30)}」）`);
         await page.screenshot({ path: path.join(OUT, '5-conflict-dark.png'), fullPage: true });
 
+        // 9b. 编辑器开着时撞上冲突：草稿换成最新版本里的这一组，再点保存不许拿旧草稿覆盖别人的修改
+        const codexGroupId = groupStore.groups.find((g) => g.name === 'Codex 在做')?.id;
+        await page.click(`[data-branch-group="${codexGroupId}"] button[aria-label="编辑分组Codex 在做"]`);
+        await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+        conflictNext = {
+          ...groupStore,
+          groups: groupStore.groups.map((g) => (g.id === codexGroupId ? { ...g, name: 'Codex 别人改过' } : g)),
+          updatedAt: new Date(Date.now() + 2000).toISOString(),
+          updatedBy: 'ai:reviewer',
+        };
+        const nameInput = page.getByRole('dialog').getByPlaceholder('例如：Claude 在做');
+        await nameInput.fill('我的改名');
+        await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+        await page.waitForTimeout(600);
+        const rebasedName = await nameInput.inputValue().catch(() => '');
+        await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click();
+        await page.waitForTimeout(600);
+        const savedName = groupStore.groups.find((g) => g.id === codexGroupId)?.name;
+        check(rebasedName === 'Codex 别人改过' && savedName === 'Codex 别人改过',
+          `编辑器开着撞上冲突：草稿换成最新版本，再保存不覆盖别人的修改（草稿「${rebasedName}」，存下「${savedName}」）`);
+
+        // 9c. 标签筛选开着时编辑分组：命中预览仍按项目全部分支算（规则保存后作用于全部分支）
+        const openCodexEditor = async () => {
+          await page.click(`[data-branch-group="${codexGroupId}"] [data-branch-group-header] button[aria-label^="编辑分组"]`);
+          await page.waitForSelector('[data-branch-group-preview]', { timeout: 5000 });
+          const text = (await page.textContent('[data-branch-group-preview]')) || '';
+          await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+          await page.waitForTimeout(300);
+          return (text.match(/现在命中 (\d+) 个分支/) || [])[1] || '0';
+        };
+        const hitsAll = await openCodexEditor();
+        await page.click('button[title="按 #登录重构 过滤"]');
+        await page.waitForTimeout(300);
+        const hitsFiltered = await openCodexEditor();
+        check(hitsAll === hitsFiltered && hitsAll !== '0', `标签筛选不影响编辑器命中预览（全部 ${hitsAll} 个，筛选时 ${hitsFiltered} 个）`);
+        await page.click('button[title="清除过滤"]').catch(() => undefined);
+        await page.waitForTimeout(300);
+
         // 10. 定位收起分组里已停止的卡：先展开组与已停止那一行，再滚进视野
         await page.setViewportSize({ width: WIDTH, height: 500 });
         await page.evaluate(() => window.scrollTo(0, 0));

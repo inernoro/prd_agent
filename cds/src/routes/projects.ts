@@ -1872,8 +1872,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     const body = (req.body || {}) as { groups?: unknown; baseUpdatedAt?: unknown };
+    // 整份替换共享的分组，版本号必须带：不带就跳过并发检查，等于允许静默覆盖别人刚存的修改
+    // （Codex P2，PR #1647）。第一次保存（还没有分组）显式传 null。
+    if (!Object.prototype.hasOwnProperty.call(body, 'baseUpdatedAt')
+      || (body.baseUpdatedAt !== null && typeof body.baseUpdatedAt !== 'string')) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'baseUpdatedAt',
+        message: '缺少 baseUpdatedAt：填上读取分组时拿到的 updatedAt，第一次保存（还没有分组）填 null',
+      });
+      return;
+    }
     const current = stateService.getProjectBranchGroups(project.id);
-    if (body.baseUpdatedAt !== undefined && (body.baseUpdatedAt ?? null) !== (current?.updatedAt ?? null)) {
+    if ((body.baseUpdatedAt ?? null) !== (current?.updatedAt ?? null)) {
       res.status(409).json({
         error: 'stale',
         message: '分组刚被别人改过，已返回最新版本；请在最新版本上重新修改',

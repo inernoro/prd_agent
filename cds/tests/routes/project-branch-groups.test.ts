@@ -126,6 +126,7 @@ describe('项目分支自定义分组', () => {
         { id: 'a', name: 'A', color: 'blue', rules: [], pinnedBranchIds: ['b-1', 'b-2'] },
         { id: 'b', name: 'B', color: 'green', rules: [], pinnedBranchIds: ['b-2', 'b-3'] },
       ],
+      baseUpdatedAt: null,
     });
     expect(put.status).toBe(200);
     expect(put.body.groups[0].pinnedBranchIds).toEqual(['b-1', 'b-2']);
@@ -141,7 +142,7 @@ describe('项目分支自定义分组', () => {
       ['not-an-array', 'groups'],
     ];
     for (const [groups, field] of cases) {
-      const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups });
+      const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups, baseUpdatedAt: null });
       expect(res.status, JSON.stringify(groups)).toBe(400);
       expect(res.body.field).toBe(field);
     }
@@ -164,6 +165,18 @@ describe('项目分支自定义分组', () => {
     });
     expect(fresh.status).toBe(200);
     expect(fresh.body.groups.map((g: { id: string }) => g.id)).toEqual(['mine']);
+  });
+
+  it('不带版本号一律 400，不许跳过并发检查去整份覆盖（Codex P2）', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(first.status).toBe(200);
+    for (const body of [{ groups: [] }, { groups: [], baseUpdatedAt: 42 }]) {
+      const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(res.body.field).toBe('baseUpdatedAt');
+    }
+    const get = await request(server, 'GET', '/api/projects/proj-a/branch-groups');
+    expect(get.body.groups.map((g: { id: string }) => g.id)).toEqual(['g-claude']);
   });
 
   it('项目不存在时 404', async () => {

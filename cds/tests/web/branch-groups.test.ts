@@ -198,6 +198,31 @@ describe('页面接线', () => {
     );
   });
 
+  // 切项目时：上一个项目的编辑器与保存状态清掉；还在路上的保存响应丢弃，不许写进新项目（Codex P2）。
+  const projectSwitchSafe = (source: string) => {
+    expect(source).toContain('    setGroupEditor(null);\n    setGroupsSaving(false);\n    setGroupsSaveError(\'\');\n    setGroupDropTarget(null);');
+    expect(source).toContain('const switchedAway = () => groupsProjectRef.current !== requestProject;');
+    expect(source.match(/if \(switchedAway\(\)\) return false;/g)).toHaveLength(2);
+    expect(source).toContain('`/api/projects/${encodeURIComponent(requestProject)}/branch-groups`');
+  };
+
+  it('切项目时清掉编辑器、丢弃上一个项目的保存响应', () => {
+    projectSwitchSafe(page);
+  });
+
+  it('红用例：切项目不关编辑器，守卫变红', () => {
+    expectGuardRedOnMutation(projectSwitchSafe, page, mutate(page, '    setGroupEditor(null);\n    setGroupsSaving(false);', '    setGroupsSaving(false);'));
+  });
+
+  it('红用例：保存响应不看项目是否已切换，守卫变红', () => {
+    expectGuardRedOnMutation(projectSwitchSafe, page, mutate(page, '      if (switchedAway()) return false;\n      setBranchGroups({ groups: res.groups', '      setBranchGroups({ groups: res.groups'));
+  });
+
+  it('编辑器预览按项目全部分支算，冲突时草稿换成最新版本', () => {
+    expect(page).toMatch(/groups=\{groupList\}\n\s+\/\*[^*]*\*\/\n\s+branches=\{branches\}/);
+    expect(page).toContain('const fresh = latest.groups.find((group) => group.id === editor.group.id);');
+  });
+
   it('卡片拿到分组菜单、当前组、钉入组名与可拖动开关', () => {
     expect(page).toContain('groupMenu={groupMenu}');
     expect(page).toContain('draggableToGroup={groupedView}');
