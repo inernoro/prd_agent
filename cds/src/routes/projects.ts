@@ -1931,6 +1931,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     const current = stateService.getProjectBranchGroups(project.id);
+    const normalized = normalizeBranchGroups(body.groups);
+    // 提交的内容与已存的完全相同（归一化后比较）：不写、不推进版本号、不改修改人，直接回当前版本。
+    // 否则 Agent 直接调接口的空保存会凭空推进版本号，让别人并发的真实修改撞 409、修改记录谎称改过；
+    // 成功响应丢了之后原样重试（带着旧 baseUpdatedAt）也会被判冲突——而那份内容其实已经是现状（Codex P2，PR #1647）。
+    if (normalized.ok && current && JSON.stringify(normalized.groups) === JSON.stringify(current.groups)) {
+      res.json({ ok: true, unchanged: true, ...current });
+      return;
+    }
     if ((body.baseUpdatedAt ?? null) !== (current?.updatedAt ?? null)) {
       res.status(409).json({
         error: 'stale',
@@ -1939,7 +1947,6 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const normalized = normalizeBranchGroups(body.groups);
     if (!normalized.ok) {
       res.status(400).json({ error: 'validation', field: normalized.field, message: normalized.message });
       return;

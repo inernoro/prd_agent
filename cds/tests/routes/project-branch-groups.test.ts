@@ -251,7 +251,8 @@ describe('项目分支自定义分组', () => {
       }
       await realFlush();
     });
-    const slow = request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: first.body.updatedAt });
+    // 慢请求要真改内容：与已存内容相同的提交不落盘（直接回当前版本），就走不到落盘这一步了
+    const slow = request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup, { ...claudeGroup, id: 'g-slow', name: '慢请求' }], baseUpdatedAt: first.body.updatedAt });
     await new Promise((resolve) => setTimeout(resolve, 20));
     // 第二个请求排在慢的那个后面，客户端随即放弃
     await new Promise<void>((resolve) => {
@@ -384,6 +385,27 @@ describe('项目分支自定义分组', () => {
     });
     expect(fresh.status).toBe(200);
     expect(fresh.body.groups.map((g: { id: string }) => g.id)).toEqual(['mine']);
+  });
+
+  it('提交与已存内容相同：不推进版本号、不改修改人；成功响应丢了后带旧版本号原样重试也不判冲突', async () => {
+    const first = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    expect(first.status).toBe(200);
+    const flushSpy = vi.spyOn(stateService, 'flush');
+    // 同内容、带当前版本号：空保存
+    const same = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [{ ...claudeGroup, name: ` ${claudeGroup.name} ` }], baseUpdatedAt: first.body.updatedAt });
+    // 同内容、带过期版本号（上一次的成功响应丢了，原样重试）
+    const retried = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null });
+    const flushes = flushSpy.mock.calls.length;
+    flushSpy.mockRestore();
+    expect(same.status).toBe(200);
+    expect(same.body.updatedAt).toBe(first.body.updatedAt);
+    expect(same.body.updatedBy).toBe(first.body.updatedBy);
+    expect(retried.status).toBe(200);
+    expect(retried.body.updatedAt).toBe(first.body.updatedAt);
+    expect(flushes).toBe(0);
+    // 内容不同的过期写入照旧 409
+    const stale = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: null });
+    expect(stale.status).toBe(409);
   });
 
   it('不带版本号一律 400，不许跳过并发检查去整份覆盖（Codex P2）', async () => {
