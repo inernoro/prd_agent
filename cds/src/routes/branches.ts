@@ -14749,12 +14749,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logDeploy(id, `${profile.name} 就绪探测超时`);
         }
         stateService.save();
-        emitServiceTransition();
       } catch (err) {
         if (err instanceof BranchOperationSupersededError) throw err;
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
-        emitServiceTransition();
         logEvent({
           step: `build-${profile.id}`,
           status: 'error',
@@ -14778,6 +14776,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const hasStarting = statuses.some(s => s === 'starting');
       entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
+      // 结束事件放在聚合状态重算之后：从停止状态单独起一个服务时，分支此前是 idle，
+      // 先推就会让卡片拿到「服务 running、分支 idle」而被放进未运行（Codex P2，PR #1646）。
+      emitServiceTransition();
 
       opLog.status = svc.status === 'running' ? 'completed' : 'error';
       opLog.finishedAt = new Date().toISOString();
