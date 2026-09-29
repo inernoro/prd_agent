@@ -3,6 +3,7 @@ import { BarChart3, Check, Clock, FileText, GitBranch, Send, Sparkles } from 'lu
 
 import type { FilmTranslation, RosterItem } from '../i18n/landing';
 import { toolboxIconPath } from '../scenes/ToolboxScene';
+import { FilmGalaxy } from './FilmGalaxy';
 import { ACCENT_CYCLE, FILM, MONTAGE_COLORS, POSTER_ART, WORD_GRADIENTS } from './filmPalette';
 import { SCORE_CUES } from './filmScore';
 import {
@@ -760,120 +761,8 @@ function VisualScene({ lt, d, t, copy }: { lt: number; d: number; t: number; cop
 
 // ═══════════════════════ 文学与知识库 ═══════════════════════
 
-/**
- * 知识星系：一个中心（这一章）+ 六个卫星排成正六边形。
- * 上一版的毛病都在这里改掉了：卡片不再 3D 斜切；节点是实心发光的球而不是细线空心圈；
- * 连线在离节点一段距离处就收住，不再穿过圆心和文字；标签一律朝外放，不和任何一条线交叉；
- * 六边形转了 30 度，中心正下方没有辐条，中心的名字放在那里不会被压住。
- */
-const GALAXY = { w: 560, h: 764, cx: 280, cy: 372, ring: 188 };
-/** 卫星在六边形上的角度（度，屏幕坐标 y 向下），下标对应 copy.writing.nodes 的 1..6 */
-const SATELLITE_ANGLES: Record<number, number> = { 4: -60, 2: 0, 3: 60, 1: 120, 5: 180, 6: 240 };
-/** 相邻卫星之间只连三条弦，其余交给辐条——线太多就成了一团毛线 */
-const RING_EDGES: Array<[number, number]> = [[4, 2], [3, 1], [5, 6]];
-
-function galaxyNode(i: number): { x: number; y: number; r: number; angle: number } {
-  if (i === 0) return { x: GALAXY.cx, y: GALAXY.cy, r: 34, angle: 90 };
-  const angle = SATELLITE_ANGLES[i] ?? 0;
-  const rad = (angle * Math.PI) / 180;
-  return { x: GALAXY.cx + GALAXY.ring * Math.cos(rad), y: GALAXY.cy + GALAXY.ring * Math.sin(rad), r: 17, angle };
-}
-
-/** 两个节点之间的线段，两头各收进节点边缘外 8px。 */
-function trimmed(a: number, b: number) {
-  const A = galaxyNode(a);
-  const B = galaxyNode(b);
-  const dx = B.x - A.x;
-  const dy = B.y - A.y;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  return { x1: A.x + ux * (A.r + 8), y1: A.y + uy * (A.r + 8), x2: B.x - ux * (B.r + 8), y2: B.y - uy * (B.r + 8) };
-}
-
-function KnowledgeGalaxy({ lt, copy }: { lt: number; copy: FilmTranslation }) {
-  const colorOf = (i: number) => (i === 0 ? FILM.clay : ACCENT_CYCLE[1 + ((i - 1) % 3)]);
-  const nodeIn = (i: number) => easeOutQuart(span(lt, 0.35 + i * 0.1, 0.95 + i * 0.1));
-  const spokeIn = (i: number) => easeInOutCubic(span(lt, 0.55 + i * 0.1, 1.05 + i * 0.1));
-  const ringIn = (k: number) => easeInOutCubic(span(lt, 1.4 + k * 0.15, 1.9 + k * 0.15));
-  const breathe = beatPulse(lt, 4);
-  return (
-    <svg width={GALAXY.w} height={GALAXY.h} style={{ position: 'absolute', inset: 0, overflow: 'visible' }}>
-      <defs>
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-          <radialGradient key={i} id={`kg-${i}`} cx="50%" cy="50%" r="50%" fx="36%" fy="32%">
-            <stop offset="0%" stopColor={FILM.text} stopOpacity={0.9} />
-            <stop offset="35%" stopColor={colorOf(i)} stopOpacity={1} />
-            <stop offset="100%" stopColor={colorOf(i)} stopOpacity={0.55} />
-          </radialGradient>
-        ))}
-      </defs>
-      {/* 轨道：极淡的一圈，给六个卫星一个共同的「位置感」 */}
-      <circle cx={GALAXY.cx} cy={GALAXY.cy} r={GALAXY.ring} fill="none" stroke={FILM.lineStrong} strokeDasharray="2 10" opacity={nodeIn(0) * 0.6} />
-      {[1, 2, 3, 4, 5, 6].map((i) => {
-        const p = spokeIn(i);
-        if (p <= 0) return null;
-        const seg = trimmed(0, i);
-        const x2 = lerp(seg.x1, seg.x2, p);
-        const y2 = lerp(seg.y1, seg.y2, p);
-        // 数据从中心往外流：一颗小亮点沿辐条走，两头淡入淡出，不会停在节点上
-        const u = (lt * 0.55 + i * 0.19) % 1;
-        return (
-          <g key={`s${i}`}>
-            <line x1={seg.x1} y1={seg.y1} x2={x2} y2={y2} stroke={colorOf(i)} strokeOpacity={0.45} strokeWidth={2} strokeLinecap="round" />
-            {p >= 1 && <circle cx={lerp(seg.x1, seg.x2, u)} cy={lerp(seg.y1, seg.y2, u)} r={3.2} fill={FILM.text} opacity={Math.sin(u * Math.PI) * 0.9} />}
-          </g>
-        );
-      })}
-      {RING_EDGES.map(([a, b], k) => {
-        const p = ringIn(k);
-        if (p <= 0) return null;
-        const seg = trimmed(a, b);
-        // 弦向外鼓一点，读起来是「绕着中心」而不是「穿过中心」
-        const mx = (seg.x1 + seg.x2) / 2;
-        const my = (seg.y1 + seg.y2) / 2;
-        const ox = mx - GALAXY.cx;
-        const oy = my - GALAXY.cy;
-        const ol = Math.hypot(ox, oy) || 1;
-        const cx = mx + (ox / ol) * 26;
-        const cy = my + (oy / ol) * 26;
-        return (
-          <path
-            key={`r${k}`}
-            d={`M ${seg.x1} ${seg.y1} Q ${cx} ${cy} ${seg.x2} ${seg.y2}`}
-            fill="none"
-            stroke={FILM.textFaint}
-            strokeOpacity={0.5}
-            strokeWidth={1.6}
-            strokeDasharray="1"
-            pathLength={1}
-            strokeDashoffset={1 - p}
-          />
-        );
-      })}
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => {
-        const n = galaxyNode(i);
-        const p = nodeIn(i);
-        if (p <= 0) return null;
-        const hub = i === 0;
-        const rad = (n.angle * Math.PI) / 180;
-        // 标签沿半径方向朝外放；中心的名字放在正下方（那里没有辐条）
-        const lx = hub ? n.x : n.x + Math.cos(rad) * (n.r + 16);
-        const ly = hub ? n.y + n.r + 34 : n.y + Math.sin(rad) * (n.r + 16) + 7;
-        const anchor = hub || Math.abs(Math.cos(rad)) < 0.3 ? 'middle' : Math.cos(rad) > 0 ? 'start' : 'end';
-        return (
-          <g key={`n${i}`} opacity={p}>
-            <circle cx={n.x} cy={n.y} r={n.r * (hub ? 2.4 + breathe * 0.4 : 2)} fill={colorOf(i)} opacity={hub ? 0.14 : 0.1} />
-            <circle cx={n.x} cy={n.y} r={n.r * lerp(0.5, 1, p)} fill={`url(#kg-${i})`} style={{ filter: `drop-shadow(0 0 ${hub ? 18 : 10}px ${colorOf(i)})` }} />
-            <text x={lx} y={ly} textAnchor={anchor} fontSize={hub ? 28 : 22} fontWeight={hub ? 700 : 500} fill={hub ? FILM.text : FILM.textDim}>
-              {copy.writing.nodes[i]}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
+/** 知识星系窗口的尺寸：星系本体见 FilmGalaxy（知识库星系页的真建树 + 真布局 + 真数据） */
+const GALAXY = { w: 700, h: 764 };
 
 function WritingScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTranslation }) {
   const chapter = copy.chapters[1];
@@ -896,8 +785,8 @@ function WritingScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTransl
     <div style={{ ...fill, transform: `scale(${drift})` }}>
       <Bloom x={1400} y={700} size={1300} color={FILM.pine} alpha={0.3 * rise} />
       <TitleBlock part={partOf('writing')} copy={copy} headline={chapter.headline} sub={chapter.line} lt={lt} at={0.05} />
-      <ProductShot x={170} y={330} rise={rise} tiltFrom={22}>
-        <Window w={1040} h={820} title={copy.writing.docTitle}>
+      <ProductShot x={110} y={330} rise={rise} tiltFrom={22}>
+        <Window w={960} h={820} title={copy.writing.docTitle}>
           <div style={{ padding: '40px 64px', fontSize: 28, lineHeight: 1.8, color: FILM.textDim }}>
             <div style={{ fontSize: 46, color: FILM.text, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 20 }}>{copy.writing.docTitle}</div>
             <p style={{ margin: 0 }}>{shown[0]}</p>
@@ -925,14 +814,14 @@ function WritingScene({ lt, d, copy }: { lt: number; d: number; copy: FilmTransl
       <div
         style={{
           position: 'absolute',
-          left: 1250,
+          left: 1110,
           top: 330,
           opacity: graphIn,
           transform: `translateY(${(1 - graphIn) * 120}px)`,
         }}
       >
         <Window w={GALAXY.w} h={GALAXY.h + 56} title={copy.labels.knowledge}>
-          <KnowledgeGalaxy lt={lt} copy={copy} />
+          <FilmGalaxy lt={lt} d={d} w={GALAXY.w} h={GALAXY.h} stat={copy.labels.galaxyStat} />
         </Window>
       </div>
     </div>

@@ -6,3 +6,5 @@
 | test | prd-admin | 新增片花契约守卫：幕与幕落在小节线上、每次切镜都有鼓点、画面落定时刻与乐谱同一张表、乐谱确定性、中英文案数量对齐 |
 | feat | prd-admin | 片花配乐换成 Suno 成品《Big Final Chord》：按小节从原曲剪出 29 小节（引子 / 第一次爆发 / 蓄力与抽空 / 最后一次爆发 / 终和弦），每个剪接点都压在切镜上；时间轴拍速改读剪辑表 `scoreEdit.json`（121.5 BPM）；配乐取不回时退回合成版并在控制条写明，`data-film-audio` 可机读 |
 | feat | prd-admin | 新增 `scripts/film/build-score.py`：按剪辑表从原曲剪出片花配乐（小节线上 40ms 等功率交叉淡化、收尾淡出、限幅），导出脚本默认改用这段成品配乐，`FILM_AUDIO=synth` 仍可导出合成版 |
+| polish | prd-admin | 片花配乐改为从原曲连续取一整段 29 小节、不再拼接（原曲第 70 小节起：蓄力与抽空配开场，全曲最重的一击落在 MAP 分幕卡，终和弦落在 CDS 第一个部署阶段） |
+| polish | prd-admin | 片花「知识星系」改用知识库星系的真建树（buildDocGalaxy）、真放射布局（layoutRadial2D）与真数据（本仓库 doc/ 380 篇文档名快照），canvas 逐帧绘制深空、外拱光路、生长波、星芒与流光；文档类型配色抽到 `lib/docGalaxy/docTypeColors.ts` 与星系页共用一份 |

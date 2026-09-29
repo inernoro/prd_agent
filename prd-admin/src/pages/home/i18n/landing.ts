@@ -361,14 +361,19 @@ export interface FilmTranslation {
   /** 下三分之一字幕：六幕各一条 */
   chapters: Array<{ title: string; headline: string; line: string }>;
   visual: { prompt: string; send: string; tileDone: string; tileWorking: string };
-  writing: { docTitle: string; paragraphs: string[]; nodes: string[] };
+  writing: { docTitle: string; paragraphs: string[] };
   toolbox: { unit: string; search: string };
   workflow: { title: string; schedule: string; nodes: string[]; done: string };
   models: { poolName: string; rateLimited: string; switched: string; failures: string; statLabel: string; primary: string; standby: string; rows: string[] };
   /** 三张分幕卡：片子里的功能分属哪个产品（顺序与 filmTimeline 的 FilmPart 一致） */
   parts: Array<{ name: string; title: string; line: string }>;
   /** 画面里窗口标题等零碎标签 */
-  labels: { canvas: string; knowledge: string };
+  labels: {
+    canvas: string;
+    knowledge: string;
+    /** 知识星系左上角大数字后面那句（数字是本仓库 doc/ 的真实篇数） */
+    galaxyStat: string;
+  };
   cds: { command: string; branch: string; stages: string[]; ready: string; slogan: string };
   /** 快切：每拍一个字 */
   montage: string[];
@@ -1024,7 +1029,6 @@ const zh: TranslationShape = {
         '她把伞收进门后，发现窗台上那盆薄荷又长高了一截，叶子上还挂着水。',
         '远处有列车驶过，声音被湿漉漉的空气压得很低，听上去像一句没说完的话。',
       ],
-      nodes: ['雨停', '街灯', '河岸', '薄荷', '列车', '第二章', '人物卡'],
     },
     toolbox: { unit: '个常用 Agent', search: '搜索 Agent' },
     workflow: {
@@ -1056,7 +1060,7 @@ const zh: TranslationShape = {
       { name: 'LLMGW', title: '模型网关', line: '每一次调用背后，替你挑模型的那一层' },
       { name: 'CDS', title: '分支预览', line: '每条分支一套环境，push 完就能打开' },
     ],
-    labels: { canvas: '画布', knowledge: '知识星系' },
+    labels: { canvas: '画布', knowledge: '知识星系', galaxyStat: '篇文档，一篇不落在星图里' },
     finale: { brand: 'MAP · 米多智能体生态平台', tagline: '让创造，自由呼吸', cta: '进入 MAP' },
   },
   footer: {
@@ -1664,7 +1668,6 @@ const en: TranslationShape = {
         'She left her umbrella by the door and saw the mint on the sill had grown again, still beaded with water.',
         'A train went by far off, its sound pressed low by the wet air, like a sentence left unfinished.',
       ],
-      nodes: ['Rain', 'Streetlight', 'River', 'Mint', 'Train', 'Chapter 2', 'Cast'],
     },
     toolbox: { unit: 'everyday agents', search: 'Search agents' },
     workflow: {
@@ -1696,7 +1699,7 @@ const en: TranslationShape = {
       { name: 'LLMGW', title: 'Model gateway', line: 'The layer that picks a model behind every call' },
       { name: 'CDS', title: 'Branch previews', line: 'One environment per branch, live right after push' },
     ],
-    labels: { canvas: 'Canvas', knowledge: 'Knowledge' },
+    labels: { canvas: 'Canvas', knowledge: 'Knowledge galaxy', galaxyStat: 'docs, every one on the map' },
     finale: { brand: 'MAP · MIDOO AGENTIC PLATFORM', tagline: 'Create, freely.', cta: 'Enter MAP' },
   },
   footer: {

@@ -63,6 +63,13 @@ export const FILM = {
   stripe: 'rgba(26, 18, 13, 0.09)',
   /** 标志亮相时扫过的那道高光 */
   sheen: 'linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.55) 50%, transparent 65%)',
+
+  // 知识星系那一幕：照知识库星系页的深空穹顶（中心微亮、边缘近黑；色相取钢青，首页不许发靛紫）与「父端亮蓝」光路
+  // 片花是固定深色的银幕，不随明暗主题切换，这两档深色是棘轮允许的「暗色形态专用皮肤」例外
+  spaceCore: '#0B1C26',
+  spaceEdge: '#05060B',
+  galaxyHub: '#A9C8FF',
+  galaxyCore: '#FFF6EC',
 } as const;
 
 /** 四张生成海报的画法（纯 CSS，无图片资源）。 */

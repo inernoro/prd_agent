@@ -1,8 +1,8 @@
 /**
  * 片花的成品配乐：从 Suno 原曲剪出来的那一段（public/film/landing-score.mp3）。
  *
- * 剪法写在 scoreEdit.json，剪辑脚本是 scripts/film/build-score.py——29 小节，逐样本对齐片长，
- * 每个剪接点都压在一次切镜上。时间轴的拍速也读那份 JSON，所以画面与这段音频天然同拍。
+ * 剪法写在 scoreEdit.json（现行是原曲连续一整段 29 小节，不拼接），剪辑脚本是
+ * scripts/film/build-score.py，逐样本对齐片长。时间轴的拍速也读那份 JSON，所以画面与这段音频天然同拍。
  *
  * 播放器与 filmScore 的 FilmScorePlayer 同一个接口（FilmAudio）：音频文件取不到、解不开时，
  * 播放器退回代码合成的那一版，并在控制条上写明（降级必须留痕，不许悄悄换一首歌）。

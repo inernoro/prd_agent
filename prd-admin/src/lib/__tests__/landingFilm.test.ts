@@ -7,6 +7,8 @@ import { translations } from '@/pages/home/i18n/landing';
 import { SCORE_CUES, buildScore } from '@/pages/home/film/filmScore';
 import scoreEdit from '@/pages/home/film/scoreEdit.json';
 import { FILM_TRACK_URL } from '@/pages/home/film/filmTrack';
+import filmDocs from '@/pages/home/film/filmDocs.json';
+import { buildDocGalaxy } from '@/lib/docGalaxy/buildDocGalaxy';
 import { BAR, BEAT, BPM, FILM_DURATION, FILM_SCENES, FINALE_CTA_AT, POSTER_TIME, TOTAL_BARS, sceneAt, sceneStart } from '@/pages/home/film/filmTimeline';
 
 /**
@@ -130,13 +132,28 @@ describe('成品配乐的剪辑表与画面同一张表', () => {
     }
   });
 
-  it('每一个剪接点都压在一次切镜上（接缝藏在画面硬切里，耳朵听不出来）', () => {
+  it('若有剪接点，必须压在一次切镜上（接缝藏在画面硬切里；现行剪法是一整段不拼接）', () => {
     const cuts = new Set(FILM_SCENES.map((s) => s.bar));
     let bar = 0;
     for (const s of segments.slice(0, -1)) {
       bar += s.bars;
       expect(cuts.has(bar), `第 ${bar} 小节有一个剪接点，但那里没有切镜`).toBe(true);
     }
+  });
+});
+
+describe('片花的知识星系是真星系', () => {
+  it('快照里每一篇文档都落在星图上（左上角那句「一篇不落」的依据）', () => {
+    const galaxy = buildDocGalaxy(filmDocs.names.map((name) => ({ id: name, title: name })));
+    expect(filmDocs.names.length).toBeGreaterThan(100);
+    expect(galaxy.root.docCount).toBe(filmDocs.names.length);
+  });
+
+  it('画法走知识库星系的建树与放射布局，不许退回手画的示意图', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../pages/home/film/FilmGalaxy.tsx'), 'utf8');
+    expect(src).toContain('buildDocGalaxy(');
+    expect(src).toContain('layoutRadial2D(');
+    expect(src).toContain("from '@/lib/docGalaxy/docTypeColors'");
   });
 });
 
@@ -154,7 +171,7 @@ describe('片花文案与画面的数量对得上（中英两份）', () => {
       expect(film.montage).toHaveLength((montage?.bars ?? 0) * 4);
       expect(film.cds.stages).toHaveLength(SCORE_CUES.cdsStages.length);
       expect(film.workflow.nodes).toHaveLength(5);
-      expect(film.writing.nodes.length).toBeGreaterThanOrEqual(7);
+      expect(film.labels.galaxyStat.trim().length).toBeGreaterThan(0);
       expect(film.models.rows.length).toBeGreaterThanOrEqual(2);
     });
   }
