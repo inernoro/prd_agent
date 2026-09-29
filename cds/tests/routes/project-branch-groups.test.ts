@@ -19,6 +19,7 @@ async function request(
   method: string,
   urlPath: string,
   body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -30,8 +31,8 @@ async function request(
         path: urlPath,
         method,
         headers: payload
-          ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-          : {},
+          ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...extraHeaders }
+          : { ...extraHeaders },
       },
       (res) => {
         let raw = '';
@@ -120,6 +121,23 @@ describe('项目分支自定义分组', () => {
     const second = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: first.body.updatedAt });
     expect(second.status).toBe(200);
     expect(second.body.updatedBy).toBe('bob');
+  });
+
+  it('已登录的真人带上 x-cds-trigger / x-ai-impersonate 也伪造不了修改人：没有 Agent 凭据就记登录名（Codex P2）', async () => {
+    currentUser = { githubLogin: 'alice-gh', username: 'alice' };
+    const forgedSystem = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null }, { 'x-cds-trigger': 'scheduler' });
+    expect(forgedSystem.status).toBe(200);
+    expect(forgedSystem.body.updatedBy).toBe('alice-gh');
+    const forgedAi = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [], baseUpdatedAt: forgedSystem.body.updatedAt }, { 'x-ai-impersonate': 'reviewer' });
+    expect(forgedAi.status).toBe(200);
+    expect(forgedAi.body.updatedBy).toBe('alice-gh');
+  });
+
+  it('带 Agent 凭据时，AI 的自报名照常记下（凭据本身已被鉴权）', async () => {
+    currentProjectKey = { projectId: 'proj-a', keyId: 'key-1' };
+    const res = await request(server, 'PUT', '/api/projects/proj-a/branch-groups', { groups: [claudeGroup], baseUpdatedAt: null }, { 'x-ai-access-key': 'k', 'x-ai-impersonate': 'reviewer' });
+    expect(res.status).toBe(200);
+    expect(res.body.updatedBy).toMatch(/^ai/);
   });
 
   it('带项目级 Agent Key 的保存记成 Agent，哪怕请求头不是 x-ai-access-key（Bearer / ai-access-key 写法）', async () => {
