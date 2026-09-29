@@ -8,7 +8,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createProjectsRouter } from '../../src/routes/projects.js';
+import { createProjectsRouter, isBranchGroupsSaveRequest } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -311,7 +311,16 @@ describe('项目分支自定义分组', () => {
 
   it('全局 JSON 解析器对分组保存放行，由路由自带的大上限解析器接手', () => {
     const serverSource = fs.readFileSync(path.join(__dirname, '../../src/server.ts'), 'utf-8');
-    expect(serverSource).toContain("if (req.method === 'PUT' && /^\\/api\\/projects\\/[^/]+\\/branch-groups$/.test(req.path)) return next();");
+    expect(serverSource).toContain('if (isBranchGroupsSaveRequest(req.method, req.path)) return next();');
+  });
+
+  it('放行判据与 Express 路由同一套匹配：大小写不敏感、接受末尾斜杠，其他路径与方法不放行（Codex P2）', () => {
+    expect(isBranchGroupsSaveRequest('PUT', '/api/projects/proj-a/branch-groups')).toBe(true);
+    expect(isBranchGroupsSaveRequest('PUT', '/api/projects/proj-a/branch-groups/')).toBe(true);
+    expect(isBranchGroupsSaveRequest('PUT', '/api/projects/proj-a/Branch-Groups')).toBe(true);
+    expect(isBranchGroupsSaveRequest('GET', '/api/projects/proj-a/branch-groups')).toBe(false);
+    expect(isBranchGroupsSaveRequest('PUT', '/api/projects/proj-a/branch-groups/x')).toBe(false);
+    expect(isBranchGroupsSaveRequest('PUT', '/api/projects/proj-a/env')).toBe(false);
   });
 
   it('没配过时返回空列表与 null 版本，不编默认分组', async () => {

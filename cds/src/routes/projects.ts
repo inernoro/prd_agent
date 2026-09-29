@@ -622,6 +622,15 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
 /** 分组保存请求体上限：最大合法配置约 0.8MB（30 组 × 200 个钉入 × 20 条规则），留出余量。 */
 export const BRANCH_GROUPS_BODY_LIMIT = '2mb';
 
+/**
+ * 这个请求是不是分组保存（全局 JSON 解析器要对它放行，交给路由自带的大上限解析器）。
+ * 判据必须与 Express 路由的实际匹配一致：Express 默认大小写不敏感、接受末尾斜杠；
+ * 只认精确小写路径的话，`/branch-groups/` 这类路由照样接的请求会先被全局 100kb 上限拦成 413（Codex P2，PR #1647）。
+ */
+export function isBranchGroupsSaveRequest(method: string, path: string): boolean {
+  return method === 'PUT' && /^\/api\/projects\/[^/]+\/branch-groups\/?$/i.test(path);
+}
+
 /** 分组保存等落盘的上限：与分支状态落盘同一个环境变量口径（CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS）。 */
 function branchGroupsFlushTimeoutMs(): number {
   const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
