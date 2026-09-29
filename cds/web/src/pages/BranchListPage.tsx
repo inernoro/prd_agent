@@ -6781,7 +6781,10 @@ const BranchCard = memo(function BranchCard({
               <Button
                 size="sm"
                 variant="outline"
-                className="h-8 border-[hsl(var(--hairline-strong))] bg-transparent px-2.5 text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"
+                className={`h-8 px-2.5 shadow-none ${failedPhase
+                  // 刚失败时「日志」是第一动作（设计稿 E 态的红框强调）；历史错误里它退回中性。
+                  ? 'border-destructive/55 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive'
+                  : 'border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'}`}
                 title="打开分支详情查看部署日志"
                 aria-label={`查看 ${branch.branch} 的部署日志`}
                 onClick={(event) => {

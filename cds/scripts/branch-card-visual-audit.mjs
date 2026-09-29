@@ -260,21 +260,38 @@ async function main() {
         check(/超出预计/.test(overText || ''), `超过历史中位后改说「超出预计」（实际「${(overText || '').trim()}」）`);
 
         // 收尾：identity-menu 从「就绪探测」翻成运行中。
-        // 先把视口压到 200px 高，让这张卡基本不在视野里：收尾动效不该在屏幕外白白播完。
+        // 先把视口压到 100px 高，让这张卡完全不在视野里：收尾动效不该在屏幕外白白播完。
         const done = { ...branches.find((b) => b.id === 'b-ident'), status: 'running', services: services(24184, 'running'), lastDeployAt: iso(0) };
         branches = branches.map((b) => (b.id === done.id ? done : b));
         await shotCard(page, 'b-ident', 'finish-0-before.png');
-        await page.setViewportSize({ width: WIDTH, height: 200 });
+        await page.setViewportSize({ width: WIDTH, height: 100 });
         await page.evaluate(() => window.scrollTo(0, 0));
         await page.evaluate((b) => window.__cdsFire('branch.updated', { branch: b, projectId: b.projectId }), done);
         await page.waitForTimeout(700);
         const offscreenPhase = await page.getAttribute('[data-branch-card-id="b-ident"]', 'data-deploy-phase');
-        check(offscreenPhase !== 'done', `卡片不在视野里时收尾先不播（实际 data-deploy-phase=${offscreenPhase}）`);
+        const offscreenTop = await page.$eval('[data-branch-card-id="b-ident"]', (el) => Math.round(el.getBoundingClientRect().top));
+        check(offscreenTop >= 100, `取证前提：卡片顶边 ${offscreenTop}px 在 100px 视口之外`);
+        check(offscreenPhase === null, `卡片不在视野里时收尾先不播（实际 data-deploy-phase=${offscreenPhase}）`);
         await page.setViewportSize({ width: WIDTH, height: 1180 });
         const t0 = Date.now();
-        for (const [ms, name] of [[150, '1-150ms'], [450, '2-450ms'], [850, '3-850ms'], [1300, '4-1300ms-ring'], [2000, '5-2000ms']]) {
+        for (const [ms, name] of [[150, '1-150ms'], [450, '2-450ms'], [760, '3a-800ms-stagger'], [850, '3-850ms'], [1300, '4-1300ms-ring'], [2000, '5-2000ms']]) {
           const wait = ms - (Date.now() - t0);
           if (wait > 0) await page.waitForTimeout(wait);
+          if (name.includes('stagger')) {
+            // 端口依次点亮：把卡内动画就地暂停拍一帧，并量前三个端口 chip 的不透明度——
+            // 先点亮的更亮，逐个递减才算「依次」，同时亮起就是没做出来。
+            const opacities = await page.$eval('[data-branch-card-id="b-ident"]', (el) => {
+              // 收尾的所有动画是同一次渲染挂上的，起点相同；统一钉到 800ms（第一个 chip 已播 100ms、
+              // 第二个 60ms、第三个 20ms），比读墙钟可靠——墙钟里还混着观察器回调与渲染的几十毫秒。
+              for (const a of el.getAnimations({ subtree: true })) { a.pause(); a.currentTime = 800; }
+              return [...el.querySelectorAll('.cds-finish-chip')].slice(0, 3).map((c) => Number(getComputedStyle(c).opacity));
+            });
+            await shotCard(page, 'b-ident', `finish-${name}.png`);
+            await page.$eval('[data-branch-card-id="b-ident"]', (el) => { for (const a of el.getAnimations({ subtree: true })) a.play(); });
+            const ordered = opacities.length === 3 && opacities[0] > opacities[1] && opacities[1] > opacities[2];
+            check(ordered, `端口依次点亮（800ms 时三个 chip 不透明度 ${opacities.map((o) => o.toFixed(2)).join(' > ')}）`);
+            continue;
+          }
           await shotCard(page, 'b-ident', `finish-${name}.png`);
           if (name.includes('ring')) {
             const ring = await page.$eval('[data-branch-card-id="b-ident"]', (el) => el.getAnimations().map((a) => a.animationName || ''));
@@ -282,6 +299,7 @@ async function main() {
           }
         }
         const finishedAt = t0;
+
         const donePhase = await page.getAttribute('[data-branch-card-id="b-ident"]', 'data-deploy-phase');
         check(donePhase === 'done', `滚进视野后收尾播出，data-deploy-phase=done（实际 ${donePhase}）`);
 
