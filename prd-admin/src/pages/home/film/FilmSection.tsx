@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Clapperboard, Maximize2, Minimize2, Pause, Play, RotateCcw, Volume2, VolumeX } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Clapperboard, Maximize2, Minimize2, Pause, Play, RotateCcw, Smartphone, Volume2, VolumeX } from 'lucide-react';
 
 import { SectionHeader } from '../components/SectionHeader';
 import { Reveal } from '../components/Reveal';
@@ -50,6 +51,12 @@ export function FilmSection() {
   /** 点了播放、配乐还在解码的那一小段时间 */
   const [loading, setLoading] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  /**
+   * 影院模式：一开播，整页的灯就暗下来——一块纯黑幕布盖住导航、背景纹理和上下两节的字，
+   * 只留片子居中。手机上片子只有一掌宽，旁边再露着别的标题与正文，看片很出戏（2026-09-30 用户反馈）。
+   * 点暗处、按 Esc、片子播完、或者滚走，灯就亮回来；暂停时灯不亮，和影院一样。
+   */
+  const [theater, setTheater] = useState(false);
 
   const frameRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -233,6 +240,35 @@ export function FilmSection() {
     return () => io.disconnect();
   }, [startAt]);
 
+  // ── 影院模式：开播即熄灯，播完 / 滚走 / 点暗处 / Esc 亮灯 ──
+  const wasPlayingRef = useRef(false);
+  useEffect(() => {
+    const was = wasPlayingRef.current;
+    wasPlayingRef.current = playing;
+    if (playing && !was) setTheater(true);
+    if (!playing && was && time >= FILM_DURATION - 0.05) setTheater(false);
+  }, [playing, time]);
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el || !theater) return;
+    // 片子挪到屏幕正中。要等影院模式的尺寸（按屏高收窄）生效之后再量，
+    // 否则横屏手机上先按旧尺寸居中、随后片子变矮，顶上一截就跑出屏幕
+    const raf = requestAnimationFrame(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    const io = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) setTheater(false);
+    }, { threshold: 0.35 });
+    io.observe(el);
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setTheater(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      cancelAnimationFrame(raf);
+      io.disconnect();
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [theater]);
+
   // ── 滚出视口 / 切走标签页：自动暂停，不在看不见的地方放歌 ──
   useEffect(() => {
     const el = frameRef.current;
@@ -314,9 +350,34 @@ export function FilmSection() {
   const state = !started ? 'poster' : loading ? 'loading' : playing ? 'playing' : ended ? 'ended' : 'paused';
 
   return (
-    <section className="relative px-3 sm:px-6 py-20 lg:py-32">
+    <section className="relative px-3 sm:px-6 py-20 lg:py-32" data-film-theater={theater ? 'on' : 'off'}
+      style={{ zIndex: theater ? 61 : undefined }}
+      // 这一节自己压在黑幕之上，片子上下那圈同样是「暗处」，点了也亮灯
+      onClick={(e) => {
+        if (theater && !frameRef.current?.contains(e.target as Node)) setTheater(false);
+      }}
+    >
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            aria-hidden={!theater}
+            onClick={() => setTheater(false)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 60,
+              background: FILM.bg,
+              opacity: theater ? 1 : 0,
+              pointerEvents: theater ? 'auto' : 'none',
+              transition: 'opacity .7s cubic-bezier(.4,0,.2,1)',
+            }}
+          />,
+          document.body,
+        )}
       <div className="max-w-[1280px] mx-auto">
-        <SectionHeader eyebrow={film.eyebrow} Icon={Clapperboard} title={film.title} subtitle={film.subtitle} accent={FILM.clay} />
+        <div style={{ opacity: theater ? 0 : 1, transition: 'opacity .6s ease', pointerEvents: theater ? 'none' : undefined }}>
+          <SectionHeader eyebrow={film.eyebrow} Icon={Clapperboard} title={film.title} subtitle={film.subtitle} accent={FILM.clay} />
+        </div>
 
         <Reveal delay={200} offset={24} duration={2200}>
           <div
@@ -330,6 +391,8 @@ export function FilmSection() {
             data-film-audio={audioSource ?? 'idle'}
             className="group relative mt-14 mx-auto max-w-[1120px] outline-none"
             style={{
+              // 影院模式按屏高收：手机横过来时片子正好占满一屏，不用再上下滚
+              width: theater && !fullscreen ? `min(100%, calc((100svh - 24px) * ${STAGE_W} / ${STAGE_H}))` : undefined,
               borderRadius: fullscreen ? 0 : 'clamp(12px, 2vw, 24px)',
               overflow: 'hidden',
               background: FILM.bg,
@@ -438,6 +501,18 @@ export function FilmSection() {
             )}
           </div>
         </Reveal>
+        {/* 影院模式的一行小字：手机竖着拿时提示横屏，其它屏幕只说怎么回到页面 */}
+        <div
+          className="mt-4 flex items-center justify-center gap-2 text-[12px] sm:text-[13px]"
+          style={{ color: FILM.gray, opacity: theater ? 1 : 0, transition: 'opacity .6s ease .3s', pointerEvents: 'none' }}
+          aria-hidden={!theater}
+        >
+          <Smartphone size={14} className="film-rotate-hint" />
+          <span className="film-rotate-hint">{film.controls.rotateHint}</span>
+          <span className="film-rotate-hint" style={{ color: FILM.textFaint }}>·</span>
+          <span>{film.controls.exitTheater}</span>
+        </div>
+        <style>{`.film-rotate-hint{display:none}@media (max-width:700px) and (orientation:portrait){.film-rotate-hint{display:inline}}`}</style>
       </div>
     </section>
   );

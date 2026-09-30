@@ -349,6 +349,10 @@ export interface FilmTranslation {
     unmute: string;
     fullscreen: string;
     soundOn: string;
+    /** 影院模式下，手机竖着拿时的一句提示 */
+    rotateHint: string;
+    /** 影院模式：点暗处回到页面 */
+    exitTheater: string;
     /** 浏览器拿不到音频能力时的如实说明 */
     noAudio: string;
     /** 成品配乐取不回 / 解不开、退回合成配乐时的如实说明 */
@@ -1012,6 +1016,8 @@ const zh: TranslationShape = {
       unmute: '打开声音',
       fullscreen: '全屏',
       soundOn: '有声',
+      rotateHint: '横过来看，片子里的字更清楚',
+      exitTheater: '点暗处回到页面',
       noAudio: '当前浏览器不支持网页音频，只播画面',
       trackFallback: '配乐没加载出来，正在放备用的合成配乐',
       loading: '配乐加载中',
@@ -1654,6 +1660,8 @@ const en: TranslationShape = {
       unmute: 'Sound on',
       fullscreen: 'Fullscreen',
       soundOn: 'Sound',
+      rotateHint: 'Turn your phone sideways for a sharper picture',
+      exitTheater: 'Tap the dark area to return',
       noAudio: 'This browser has no Web Audio, playing picture only',
       trackFallback: 'Soundtrack failed to load, playing the synthesized backup',
       loading: 'Loading soundtrack',

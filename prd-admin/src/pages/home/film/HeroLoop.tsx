@@ -74,7 +74,7 @@ export function heroLoopBeat(t: number, prompts: [string, string]): HeroLoopBeat
 }
 
 /** 背景：纯画面，不带任何字。compact = 手机竖屏构图。 */
-export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: number; h: number; compact?: boolean; dpr?: number }) {
+export function HeroLoop({ t, w, h, compact = false, dpr, tint }: { t: number; w: number; h: number; compact?: boolean; dpr?: number; tint?: GalaxyFrame['tint'] }) {
   const galaxyLt = t - (SHOTS[0].pressAt + 0.1);
   // 镜头 A → B 的交叉溶解，B 收尾淡回深空
   const toB = easeInOutCubic(span(t, 8.0, 9.0));
@@ -86,9 +86,9 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
     () =>
       compact
         ? // 手机：作品在屏幕正中，标题在上、输入框在下，从上往下读是「标题 → 作品 → 生成它的那句话」
-          { cx: w * 0.5, cy: h * 0.52, radius: w * 0.7, labels: false, dpr: dpr ?? 2, sky: false, glow: 0.55 }
-        : { cx: w * 0.5, cy: h * 0.6, radius: h * 0.56, labels: false, dpr: dpr ?? 1, sky: false },
-    [compact, w, h, dpr],
+          { cx: w * 0.5, cy: h * 0.52, radius: w * 0.7, labels: false, dpr: dpr ?? 2, sky: false, glow: 0.55, tint }
+        : { cx: w * 0.5, cy: h * 0.6, radius: h * 0.56, labels: false, dpr: dpr ?? 1, sky: false, tint },
+    [compact, w, h, dpr, tint],
   );
   const skyFrame = useMemo<GalaxyFrame>(
     () => ({ ...frame, sky: true, nodes: false, starsAlways: true }),
@@ -109,6 +109,7 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
   // 蓄力：诞生之前，正中一颗微光在呼吸（「有东西要来」）
   const seed = birth < 0.2 ? span(t, 0.15, 0.9) * (1 - span(birth, 0, 0.2)) * (0.65 + 0.35 * Math.sin(t * 6)) : 0;
   const coreR = frame.radius ?? 0;
+  const ringColor = tint?.hub ?? FILM.galaxyHub;
 
   // 镜头 B：四张图的构图。宽屏一行四张、向远处微倾；手机两行两张
   const push = 1 + 0.08 * easeOutCubic(span(t, 9.0, HERO_LOOP_DURATION));
@@ -138,7 +139,7 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
             width: coreR * 1.4,
             height: coreR * 1.4,
             borderRadius: '50%',
-            background: `radial-gradient(circle, ${FILM.galaxyCore} 0%, ${FILM.clay}99 14%, ${FILM.clay}00 55%)`,
+            background: `radial-gradient(circle, ${FILM.galaxyCore} 0%, ${tint?.core ?? FILM.clay}99 14%, ${tint?.core ?? FILM.clay}00 55%)`,
             opacity: Math.max(seed * 0.55, Math.max(0, flash)),
             transform: `scale(${seed > 0 ? 0.35 + seed * 0.1 : 0.45 + 1.4 * easeOutCubic(span(birth, 0, 1.0))})`,
             mixBlendMode: 'screen',
@@ -152,7 +153,7 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
           style={{
             position: 'absolute',
             inset: 0,
-            background: `radial-gradient(circle at ${frame.cx ?? 0}px ${frame.cy ?? 0}px, ${FILM.galaxyHub}59 0%, ${FILM.galaxyHub}1F ${Math.round(coreR * 0.9)}px, ${FILM.galaxyHub}00 ${Math.round(coreR * 2.2)}px)`,
+            background: `radial-gradient(circle at ${frame.cx ?? 0}px ${frame.cy ?? 0}px, ${ringColor}59 0%, ${ringColor}1F ${Math.round(coreR * 0.9)}px, ${ringColor}00 ${Math.round(coreR * 2.2)}px)`,
             opacity: flash,
             mixBlendMode: 'screen',
             pointerEvents: 'none',
@@ -172,8 +173,8 @@ export function HeroLoop({ t, w, h, compact = false, dpr }: { t: number; w: numb
                   width: coreR * 4.8 * r.p,
                   height: coreR * 4.8 * r.p,
                   borderRadius: '50%',
-                  border: `${i === 0 ? 3 : 1}px solid ${FILM.galaxyHub}`,
-                  boxShadow: `0 0 36px ${FILM.galaxyHub}88, inset 0 0 36px ${FILM.galaxyHub}55`,
+                  border: `${i === 0 ? 3 : 1}px solid ${ringColor}`,
+                  boxShadow: `0 0 36px ${ringColor}88, inset 0 0 36px ${ringColor}55`,
                   opacity: (1 - r.p) * (i === 0 ? 0.85 : 0.45),
                   pointerEvents: 'none',
                 }}

@@ -8,7 +8,7 @@ import { LanguageProvider } from '@/pages/home/contexts/LanguageContext';
 import { FILM } from '@/pages/home/film/filmPalette';
 import { HERO_LOOP_DURATION, HERO_LOOP_ENTRY, HeroLoop, heroLoopBeat } from '@/pages/home/film/HeroLoop';
 import { translations } from '@/pages/home/i18n/landing';
-import { HeroStage } from '@/pages/home/sections/HeroStage';
+import { HERO_SKIN_DEFAULT, HeroStage, type HeroSkin } from '@/pages/home/sections/HeroStage';
 
 /**
  * 首屏样片：把满屏循环背景和现有首屏的导航、主标题、输入框叠在一起，逐帧导出成一段录屏给人拍板。
@@ -27,6 +27,30 @@ const compact = W < 700;
 /** 手机版式对比稿：a = 正式版（HeroStage），b / c / d 只在样片里，拍板后再决定进不进正式代码 */
 const VARIANT = (q.get('variant') || 'a') as 'a' | 'b' | 'c' | 'd';
 const hero = translations.zh.hero;
+
+/**
+ * 配色对比稿（2026-09-30 用户：「整个系统的配色总是差点高级感」）。?skin=a|b|c|d，只在样片里。
+ *   a 现状：陶土三段渐变按钮 + 暖桃色标题 + 星系按文档类型七彩
+ *   b 素：黑白灰为主，陶土只留在光标上（Apple 发布片的做法：强调色只落一处）
+ *   c 陶：全屏只用陶土一个色相，按钮改实色，星系换成同色系的深浅
+ *   d 冷：白按钮 + 冷银星系，陶土完全退场
+ */
+const SKINS: Record<string, HeroSkin> = {
+  a: HERO_SKIN_DEFAULT,
+  b: {
+    cta: '#F5F5F7', ctaFg: '#1D1D1F', title: '#F5F5F7', accent: '#D97757', chipIcon: '#A1A1A6', dot: '#F5F5F7',
+    galaxy: { hub: '#E8E8ED', leaf: '#8E8E93', core: '#F5F5F7' },
+  },
+  c: {
+    cta: '#D97757', ctaFg: '#1A120D', title: 'linear-gradient(180deg, #FFFFFF 0%, #F4E3D7 100%)', accent: '#D97757', chipIcon: '#D97757', dot: '#D97757',
+    galaxy: { hub: '#F2BFA3', leaf: '#8A6A5C', core: '#D97757' },
+  },
+  d: {
+    cta: '#F5F5F7', ctaFg: '#0B0B0C', title: '#F5F5F7', accent: '#A9C8FF', chipIcon: '#A9C8FF', dot: '#A9C8FF',
+    galaxy: { hub: '#A9C8FF', leaf: '#5B7896', core: '#A9C8FF' },
+  },
+};
+const SKIN = SKINS[q.get('skin') || 'a'] ?? HERO_SKIN_DEFAULT;
 const serif = '"Noto Sans SC", Inter, sans-serif';
 
 function PromptRow({ t, dense }: { t: number; dense?: boolean }) {
@@ -122,7 +146,7 @@ function Hero({ t }: { t: number }) {
     <div style={{ position: 'absolute', inset: 0, fontFamily: 'Inter, "Noto Sans SC", sans-serif', color: FILM.text }}>
       {VARIANT === 'a' && (
         <LanguageProvider>
-          <HeroStage t={t} />
+          <HeroStage t={t} skin={SKIN} />
         </LanguageProvider>
       )}
       {VARIANT === 'b' && <VariantB t={t} />}
@@ -131,7 +155,7 @@ function Hero({ t }: { t: number }) {
 
       {/* 导航：首页的导航在 LandingPage 里，样片页照着画一条，只为截图时位置对得上 */}
       <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: compact ? 56 : 72, display: 'flex', alignItems: 'center', padding: compact ? '0 16px' : '0 40px', gap: 14 }}>
-        <span style={{ width: compact ? 30 : 38, height: compact ? 30 : 38, borderRadius: 10, background: FILM.brandGradient, color: FILM.onBrand, display: 'grid', placeItems: 'center', fontSize: compact ? 10 : 12, fontWeight: 800 }}>MAP</span>
+        <span style={{ width: compact ? 30 : 38, height: compact ? 30 : 38, borderRadius: 10, background: SKIN.cta, color: SKIN.ctaFg, display: 'grid', placeItems: 'center', fontSize: compact ? 10 : 12, fontWeight: 800 }}>MAP</span>
         <span style={{ fontSize: compact ? 14 : 17, fontWeight: 600 }}>米多智能体生态平台</span>
         {!compact && (
           <div style={{ flex: 1, display: 'flex', justifyContent: 'center', gap: 44, fontSize: 15, color: FILM.textDim }}>
@@ -141,7 +165,7 @@ function Hero({ t }: { t: number }) {
           </div>
         )}
         {compact && <span style={{ flex: 1 }} />}
-        <span style={{ padding: compact ? '7px 14px' : '10px 20px', borderRadius: 999, background: FILM.brandGradient, color: FILM.onBrand, fontSize: compact ? 13 : 15, fontWeight: 600 }}>登录 / 注册</span>
+        <span style={{ padding: compact ? '7px 14px' : '10px 20px', borderRadius: 999, background: SKIN.cta, color: SKIN.ctaFg, fontSize: compact ? 13 : 15, fontWeight: 600 }}>登录 / 注册</span>
       </div>
     </div>
   );

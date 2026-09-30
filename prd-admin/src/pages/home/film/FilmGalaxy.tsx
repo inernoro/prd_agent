@@ -158,11 +158,19 @@ export interface GalaxyFrame {
   starsAlways?: boolean;
   /** 柔光与星芒的强弱倍数（小屏盘面小、光晕尺寸不变，会糊成一团，要压下去） */
   glow?: number;
+  /**
+   * 换色（配色对比稿用）：hub = 枢纽与光路，leaf = 全部文档星（不再按类型分色），core = 银心的光晕。
+   * 不传就是知识库星系页的本色。
+   */
+  tint?: { hub?: string; leaf?: string; core?: string };
 }
 
 function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d: number, frame: GalaxyFrame = {}) {
   const model = galaxyModel();
   const dpr = frame.dpr ?? DPR;
+  const tint = frame.tint;
+  const hubColor = tint?.hub ?? FILM.galaxyHub;
+  const colorOf = (s: Star) => (!tint ? s.color : s.node.kind === 'leaf' ? (tint.leaf ?? s.color) : hubColor);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
@@ -222,13 +230,13 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
     ctx.beginPath();
     partialQuad(ctx, parent.x, parent.y, c.x, c.y, s.x, s.y, p);
     if (leaf) {
-      ctx.strokeStyle = s.color;
+      ctx.strokeStyle = colorOf(s);
       ctx.globalAlpha = 0.26;
       ctx.lineWidth = 0.9 * px;
     } else {
       const grad = ctx.createLinearGradient(parent.x, parent.y, s.x, s.y);
-      grad.addColorStop(0, FILM.galaxyHub);
-      grad.addColorStop(1, `${FILM.galaxyHub}33`);
+      grad.addColorStop(0, hubColor);
+      grad.addColorStop(1, `${hubColor}33`);
       ctx.strokeStyle = grad;
       ctx.globalAlpha = parent.node.kind === 'root' ? 0.7 : 0.5;
       ctx.lineWidth = (parent.node.kind === 'root' ? 1.8 : 1.3) * px;
@@ -248,7 +256,7 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
     const [spread, alpha] = ([[11, 0.8], [7, 0.55], [5, 0.38], [3.2, 0.16]] as const)[tier];
     const size = s.r * spread * pop * px * (frame.glow ?? 1);
     ctx.globalAlpha = alpha * Math.min(1, frame.glow ?? 1);
-    ctx.drawImage(glow(s.node.kind === 'root' ? FILM.clay : s.color), s.x - size, s.y - size, size * 2, size * 2);
+    ctx.drawImage(glow(s.node.kind === 'root' ? (tint?.core ?? FILM.clay) : colorOf(s)), s.x - size, s.y - size, size * 2, size * 2);
   }
 
   // 银心与一级枢纽的缓旋星芒
@@ -298,7 +306,7 @@ function draw(ctx: CanvasRenderingContext2D, lt: number, w: number, h: number, d
     if (pop <= 0) continue;
     const leaf = s.node.kind === 'leaf';
     ctx.globalAlpha = Math.min(1, pop);
-    ctx.fillStyle = s.node.kind === 'root' ? FILM.galaxyCore : s.color;
+    ctx.fillStyle = s.node.kind === 'root' ? FILM.galaxyCore : colorOf(s);
     ctx.beginPath();
     ctx.arc(s.x, s.y, Math.max(0, s.r * pop) * px, 0, Math.PI * 2);
     ctx.fill();

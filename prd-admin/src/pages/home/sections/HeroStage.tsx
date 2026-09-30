@@ -40,6 +40,30 @@ const INTRO_CSS = `
 }
 `;
 
+/**
+ * 手机上那句话要折成两行时，只许在词与词之间折（「把仓库的 doc/ 目录 / 同步进知识库」），
+ * 不许把「知识库」拆成「知识 / 库」、更不许剩一个孤字挂在第二行（2026-09-30 用户截图）。
+ * 做法：按词切分，在词的开头插零宽空格作为唯一的换行机会，再配 word-break: keep-all。
+ * 返回逐字数组，方便「已打出的前 n 个字」与「还没打的部分」各自拼接。
+ */
+function phraseChars(text: string): string[] {
+  const chars = Array.from(text);
+  const Segmenter = (Intl as unknown as { Segmenter?: new (l: string, o: { granularity: 'word' }) => { segment: (s: string) => Iterable<{ index: number; segment: string }> } }).Segmenter;
+  if (!Segmenter) return chars;
+  // 单字词（「库」「会」「进」、标点）粘在前一个词上：词典会把「知识库」切成「知识 | 库」，
+  // 照切出来的边界折行，最常见的结果恰好就是一个孤字落在第二行
+  const starts = new Set<number>();
+  for (const seg of new Segmenter('zh', { granularity: 'word' }).segment(text)) {
+    if (Array.from(seg.segment).length > 1) starts.add(seg.index);
+  }
+  let offset = 0;
+  return chars.map((c, i) => {
+    const out = i > 0 && starts.has(offset) ? `\u200B${c}` : c;
+    offset += c.length;
+    return out;
+  });
+}
+
 function introStyle(on: boolean, name: 'focus' | 'rise', delay: number, duration: number): CSSProperties | undefined {
   if (!on) return undefined;
   return { animation: `map-hero-${name} ${duration}s cubic-bezier(.16,1,.3,1) ${delay}s both` };
@@ -58,7 +82,34 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetStarted?: () => void }) {
+/**
+ * 首屏的配色：按钮、标题、强调色、星系四处。默认就是现行品牌色；
+ * 传别的只为配色对比稿（scripts/film/heroSampleEntry.tsx），拍板后再决定默认值改不改。
+ */
+export interface HeroSkin {
+  cta: string;
+  ctaFg: string;
+  /** 主标题的填充（渐变或纯色都行，走 background-clip:text） */
+  title: string;
+  /** 光标、按下时的光、进度点 */
+  accent: string;
+  /** 输入框里 Agent 小标签的图标色 */
+  chipIcon: string;
+  /** 两个镜头的进度点（当前那颗） */
+  dot: string;
+  galaxy?: { hub?: string; leaf?: string; core?: string };
+}
+
+export const HERO_SKIN_DEFAULT: HeroSkin = {
+  cta: FILM.brandGradient,
+  ctaFg: FILM.onBrand,
+  title: FILM.titleGradient,
+  accent: FILM.clay,
+  chipIcon: FILM.sand,
+  dot: FILM.sand,
+};
+
+export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAULT }: { t?: number; onGetStarted?: () => void; skin?: HeroSkin }) {
   const { t: copy } = useLanguage();
   const hero = copy.hero;
   const ref = useRef<HTMLDivElement>(null);
@@ -116,6 +167,9 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
   const Icon = AGENT_ICONS[beat.shot];
   const pressScale = 1 - 0.06 * Math.sin(Math.PI * beat.press);
   const caretOn = beat.typing && Math.floor(t * 2.2) % 2 === 0;
+  // 手机上按整句排好两行再逐字显出来：没打到的字先占着位置（透明），打字过程中行不会跳
+  const parts = compact ? phraseChars(hero.loopPrompts[beat.shot]) : null;
+  const typedCount = Array.from(beat.shown).length;
   const dpr = typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, compact ? 2 : 1.5);
 
   return (
@@ -126,7 +180,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
       style={{ height: '100svh', minHeight: compact ? 620 : 680, maxHeight: 1200, background: FILM.spaceEdge, color: FILM.text, fontFamily: 'var(--font-body)' }}
     >
       {intro && <style>{INTRO_CSS}</style>}
-      {w > 0 && <HeroLoop t={t} w={w} h={h} compact={compact} dpr={controlledT === undefined ? dpr : undefined} />}
+      {w > 0 && <HeroLoop t={t} w={w} h={h} compact={compact} dpr={controlledT === undefined ? dpr : undefined} tint={skin.galaxy} />}
 
       {/* 标题块：宽屏居中偏上，手机贴顶 */}
       <div
@@ -158,7 +212,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
               fontWeight: 700,
               lineHeight: 1.04,
               letterSpacing: '-0.04em',
-              background: FILM.titleGradient,
+              background: skin.title,
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text',
@@ -213,7 +267,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
               className="shrink-0 inline-flex items-center"
               style={{ gap: 6, padding: compact ? '6px 10px' : '9px 15px', borderRadius: 999, background: FILM.panelRaised, fontSize: compact ? 12 : 14, color: FILM.text, whiteSpace: 'nowrap' }}
             >
-              <Icon size={compact ? 13 : 16} color={FILM.sand} />
+              <Icon size={compact ? 13 : 16} color={skin.chipIcon} />
               {hero.loopAgents[beat.shot]}
             </span>
             <span
@@ -223,15 +277,26 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
                 lineHeight: 1.4,
                 color: FILM.text,
                 whiteSpace: compact ? 'normal' : 'nowrap',
+                wordBreak: compact ? 'keep-all' : undefined,
+                // 两行尽量等长：否则浏览器会先把第一行塞满，第二行只剩「知识库」三个字
+                textWrap: compact ? 'balance' : undefined,
+                overflowWrap: compact ? 'anywhere' : undefined,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
               }}
             >
-              {beat.shown}
-              <span
-                aria-hidden
-                style={{ display: 'inline-block', width: 2, height: compact ? 15 : 20, marginLeft: 3, verticalAlign: 'middle', background: FILM.clay, opacity: caretOn ? 1 : 0 }}
-              />
+              {parts ? parts.slice(0, typedCount).join('') : beat.shown}
+              {/* 光标不占宽度，免得它自己挤出一个换行点 */}
+              <span aria-hidden style={{ position: 'relative', display: 'inline-block', width: 0, height: '1em', verticalAlign: 'middle' }}>
+                <span
+                  style={{ position: 'absolute', left: 2, top: '50%', width: 2, height: compact ? 15 : 20, transform: 'translateY(-50%)', background: skin.accent, opacity: caretOn ? 1 : 0 }}
+                />
+              </span>
+              {parts && beat.shown && (
+                <span aria-hidden style={{ color: 'transparent' }}>
+                  {parts.slice(typedCount).join('')}
+                </span>
+              )}
             </span>
             <button
               type="button"
@@ -241,14 +306,14 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
                 gap: 8,
                 padding: compact ? '11px 14px' : '14px 26px',
                 borderRadius: 999,
-                background: FILM.brandGradient,
-                color: FILM.onBrand,
+                background: skin.cta,
+                color: skin.ctaFg,
                 fontSize: compact ? 13 : 16,
                 fontWeight: 700,
                 fontFamily: 'var(--font-display)',
                 whiteSpace: 'nowrap',
                 transform: `scale(${pressScale})`,
-                boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 30px ${FILM.clay}` : `0 8px 26px ${FILM.spaceEdge}`,
+                boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 30px ${skin.accent}` : `0 8px 26px ${FILM.spaceEdge}`,
               }}
             >
               {hero.primaryCta}
@@ -264,7 +329,7 @@ export function HeroStage({ t: controlledT, onGetStarted }: { t?: number; onGetS
                   width: beat.shot === i ? 18 : 6,
                   height: 4,
                   borderRadius: 2,
-                  background: beat.shot === i ? FILM.sand : FILM.lineStrong,
+                  background: beat.shot === i ? skin.dot : FILM.lineStrong,
                   transition: 'width .4s ease, background .4s ease',
                 }}
               />
