@@ -117,4 +117,12 @@ public class ReviewAgentStateGuardsTests
         ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", existing, new VersionRegistrationImportRow()).ShouldBeTrue();
         ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", new VersionRegistration(), new VersionRegistrationImportRow { PlannedProjectAt = new DateTime(2026, 9, 19) }).ShouldBeTrue();
     }
+
+    [Fact]
+    public void 首次版本号申领_没有历史编号时从零基线递增()
+    {
+        ReviewAgentController.NextVersionTuple(0, 0, 0, "minor").ShouldBe(new ReviewAgentController.VersionTuple(0, 0, 1));
+        ReviewAgentController.NextVersionTuple(0, 0, 0, "medium").ShouldBe(new ReviewAgentController.VersionTuple(0, 1, 0));
+        ReviewAgentController.NextVersionTuple(0, 0, 0, "major").ShouldBe(new ReviewAgentController.VersionTuple(1, 0, 0));
+    }
 }

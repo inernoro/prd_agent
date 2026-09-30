@@ -3034,6 +3034,7 @@ public class ReviewAgentController : ControllerBase
             : await _db.VersionRegistrations.Find(BuildVersionRegistrationApplicationFilter(application))
                 .Project(item => item.Code)
                 .ToListAsync(ct);
+        // 没有历史登记或显式基线的应用从 0.0.0 起算，随后按申请版本类型递增。
         var max = new VersionTuple(0, 0, 0);
         var baselineCode = prefix == "T" ? application?.InternalBaselineCode : application?.FormalBaselineCode;
         if (TryParseVersionCode(baselineCode, prefix, out _, out var baseline))
@@ -3145,7 +3146,7 @@ public class ReviewAgentController : ControllerBase
         return true;
     }
 
-    private static VersionTuple NextVersionTuple(int major, int medium, int minor, string? versionType) =>
+    internal static VersionTuple NextVersionTuple(int major, int medium, int minor, string? versionType) =>
         ProductEntityNumbering.NormalizeVersionType(versionType) switch
         {
             "major" => new VersionTuple(major + 1, 0, 0),
@@ -3227,7 +3228,7 @@ public class ReviewAgentController : ControllerBase
         UpdatedAt = source.UpdatedAt,
     };
 
-    private readonly record struct VersionTuple(int Major, int Medium, int Minor);
+    internal readonly record struct VersionTuple(int Major, int Medium, int Minor);
 }
 
 // ──────────────────────────────────────────────
