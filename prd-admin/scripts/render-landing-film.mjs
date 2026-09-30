@@ -74,7 +74,8 @@ async function loadChromium() {
 }
 
 async function main() {
-  const ffmpeg = findFfmpeg();
+  // 只出静帧时用不到编码器：别因为机器上没有带 libx264 的 ffmpeg 就把截图也拦下（Codex P2，PR #1650）
+  const ffmpeg = STILLS ? null : findFfmpeg();
   const chromium = await loadChromium();
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   const wavPath = OUT.replace(/\.mp4$/i, '') + '.wav';

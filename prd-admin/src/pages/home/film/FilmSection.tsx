@@ -203,10 +203,12 @@ export function FilmSection() {
     (to: number) => {
       const clamped = Math.max(0, Math.min(FILM_DURATION - 0.01, to));
       setStarted(true);
-      if (playing) void startAt(clamped);
+      // 配乐还在加载时（第一次点播放、网慢）也要接管：重新发起一次 startAt，它会让等待中的那次作废，
+      // 否则只改了显示的时间，加载完仍从旧位置开播，进度条弹回去（Codex P2，PR #1650）
+      if (playing || loading) void startAt(clamped);
       else setTime(clamped);
     },
-    [playing, startAt],
+    [loading, playing, startAt],
   );
 
   const toggleMute = useCallback(() => {
