@@ -176,3 +176,22 @@ describe('片花文案与画面的数量对得上（中英两份）', () => {
     });
   }
 });
+
+describe('片花标题的时长跟着时间轴走', () => {
+  // 换成 29 小节的 Suno 原曲后片长 57 秒，标题却还写着「五十二秒 / 0:52」（Codex P2，PR #1650）。
+  // 秒数只许由 FilmSection 按 FILM_DURATION 填进 {duration}，文案里不许再出现写死的数字。
+  it('中英文标题都用 {duration} 占位，眉标不带时长', () => {
+    for (const lang of ['zh', 'en'] as const) {
+      const film = translations[lang].film;
+      expect(film.title, lang).toContain('{duration}');
+      expect(film.title.replace('{duration}', ''), lang).not.toMatch(/\d/);
+      expect(film.eyebrow, lang).not.toMatch(/\d/);
+    }
+  });
+
+  it('FilmSection 用 FILM_DURATION 填标题与眉标', () => {
+    const src = fs.readFileSync(path.join(__dirname, '../../pages/home/film/FilmSection.tsx'), 'utf8');
+    expect(src).toMatch(/film\.title\.replace\('\{duration\}',\s*String\(Math\.round\(FILM_DURATION\)\)\)/);
+    expect(src).toMatch(/formatClock\(FILM_DURATION\)/);
+  });
+});

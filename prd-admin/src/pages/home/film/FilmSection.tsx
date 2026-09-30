@@ -395,6 +395,10 @@ export function FilmSection() {
     if (e.buttons & 1) seekFromPointer(e.clientX);
   };
 
+  // 标题里的秒数与眉标后的时钟都从时间轴算：换一段配乐片长就会变，写死在文案里必然对不上
+  // （换成 29 小节的 Suno 原曲后片长是 57 秒，标题却还写着五十二秒——Codex P2，PR #1650）
+  const headerTitle = film.title.replace('{duration}', String(Math.round(FILM_DURATION)));
+  const headerEyebrow = `${film.eyebrow} · ${formatClock(FILM_DURATION)}`;
   const ended = started && !playing && time >= FILM_DURATION - 0.05;
   const shownTime = started ? time : POSTER_TIME;
   const state = !started ? 'poster' : loading ? 'loading' : playing ? 'playing' : ended ? 'ended' : 'paused';
@@ -426,7 +430,7 @@ export function FilmSection() {
         )}
       <div className="max-w-[1280px] mx-auto">
         <div style={{ opacity: theater ? 0 : 1, transition: 'opacity .6s ease', pointerEvents: theater ? 'none' : undefined }}>
-          <SectionHeader eyebrow={film.eyebrow} Icon={Clapperboard} title={film.title} subtitle={film.subtitle} accent={FILM.clay} />
+          <SectionHeader eyebrow={headerEyebrow} Icon={Clapperboard} title={headerTitle} subtitle={film.subtitle} accent={FILM.clay} />
         </div>
 
         <Reveal delay={200} offset={24} duration={2200}>
@@ -434,7 +438,7 @@ export function FilmSection() {
             ref={frameRef}
             tabIndex={0}
             role="region"
-            aria-label={film.title}
+            aria-label={headerTitle}
             onKeyDown={onKey}
             data-film-state={state}
             data-film-time={time.toFixed(2)}

@@ -1005,9 +1005,10 @@ const zh: TranslationShape = {
     },
   ],
   film: {
-    eyebrow: 'FILM · 0:52',
-    title: '五十二秒，看它怎么干活',
-    subtitle: '画面和配乐都是这一页现场算出来的——没有一个视频文件，每一次切镜都踩在鼓点上。建议开声音。',
+    // 时长不写死：{duration} 与眉标后的时钟都由 FilmSection 按时间轴实际片长填（换一段配乐片长就会变）
+    eyebrow: 'FILM',
+    title: '{duration} 秒，看它怎么干活',
+    subtitle: '画面是这一页现场算出来的——没有一个视频文件，每一次切镜都踩在配乐的鼓点上。建议开声音。',
     controls: {
       play: '播放片花',
       pause: '暂停',
@@ -1649,9 +1650,9 @@ const en: TranslationShape = {
     },
   ],
   film: {
-    eyebrow: 'FILM · 0:52',
-    title: 'Fifty-two seconds of it at work',
-    subtitle: 'Picture and score are computed live by this page — there is no video file, and every cut lands on a drum hit. Sound on, if you can.',
+    eyebrow: 'FILM',
+    title: '{duration} seconds of it at work',
+    subtitle: 'The picture is computed live by this page — there is no video file, and every cut lands on a beat of the score. Sound on, if you can.',
     controls: {
       play: 'Play the film',
       pause: 'Pause',

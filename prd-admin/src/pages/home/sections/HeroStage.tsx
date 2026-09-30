@@ -156,6 +156,11 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
   const intro = controlledT === undefined && !reduced;
   const { w, h } = box;
   const compact = w > 0 && w < 700;
+  // 矮屏（手机横放 844x390、矮窗口）：宽屏版式按 680 高排，输入框和片花按钮会掉出首屏（Codex P2，PR #1650）。
+  // 最小高度改成不超过屏高，这里才量得到真实高度；矮于 560 就换一套上半屏紧凑版式。
+  const short = !compact && h > 0 && h < 560;
+  const shortTitle = Math.round(Math.max(34, Math.min(60, h * 0.13)));
+  const shortInputTop = NAV_H + 8 + 23 + shortTitle * 1.04 + 30 + 16;
   const beat = heroLoopBeat(t, hero.loopPrompts);
   const Icon = AGENT_ICONS[beat.shot];
   const textRef = useKeepEndVisible(`${beat.shot}:${beat.shown}`);
@@ -171,7 +176,7 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
       ref={ref}
       data-hero-shot={beat.shot}
       className="relative w-full overflow-hidden"
-      style={{ height: '100svh', minHeight: compact ? 620 : 680, maxHeight: 1200, background: FILM.spaceEdge, color: FILM.text, fontFamily: 'var(--font-body)' }}
+      style={{ height: '100svh', minHeight: compact ? 'min(620px, 100svh)' : 'min(680px, 100svh)', maxHeight: 1200, background: FILM.spaceEdge, color: FILM.text, fontFamily: 'var(--font-body)' }}
     >
       {intro && <style>{INTRO_CSS}</style>}
       {w > 0 && <HeroLoop t={t} w={w} h={h} compact={compact} dpr={controlledT === undefined ? dpr : undefined} tint={skin.galaxy} />}
@@ -179,7 +184,7 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
       {/* 标题块：宽屏居中偏上，手机贴顶 */}
       <div
         className="absolute left-0 right-0 text-center"
-        style={{ top: compact ? NAV_H + 28 : Math.max(NAV_H + 60, h * 0.25), padding: '0 20px' }}
+        style={{ top: compact ? NAV_H + 28 : short ? NAV_H + 8 : Math.max(NAV_H + 60, h * 0.25), padding: '0 20px' }}
       >
         <div
           style={{
@@ -189,7 +194,7 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
             fontSize: compact ? 11 : 13,
             letterSpacing: '0.22em',
             color: FILM.gray,
-            marginBottom: compact ? 14 : 22,
+            marginBottom: compact ? 14 : short ? 10 : 22,
             ...introStyle(intro, 'rise', 0.05, 0.9),
           }}
         >
@@ -202,7 +207,7 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
             style={{
               margin: 0,
               fontFamily: 'var(--font-display)',
-              fontSize: compact ? 'clamp(2.3rem, 11vw, 2.9rem)' : 'clamp(3.4rem, 5.6vw, 6.6rem)',
+              fontSize: compact ? 'clamp(2.3rem, 11vw, 2.9rem)' : short ? `${shortTitle}px` : 'clamp(3.4rem, 5.6vw, 6.6rem)',
               fontWeight: 700,
               lineHeight: 1.04,
               letterSpacing: '-0.04em',
@@ -218,10 +223,10 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
         </div>
         <p
           style={{
-            margin: compact ? '14px auto 0' : '22px auto 0',
+            margin: compact ? '14px auto 0' : short ? '8px auto 0' : '22px auto 0',
             maxWidth: compact ? 300 : 640,
             textWrap: 'balance',
-            fontSize: compact ? 14 : 'clamp(1rem, 1.25vw, 1.35rem)',
+            fontSize: compact || short ? 14 : 'clamp(1rem, 1.25vw, 1.35rem)',
             lineHeight: 1.6,
             color: FILM.textDim,
             textShadow: `0 2px 18px ${FILM.spaceEdge}`,
@@ -237,8 +242,8 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
         className="absolute left-1/2"
         style={{
           transform: 'translateX(-50%)',
-          width: compact ? w - 32 : Math.min(880, w - 80),
-          ...(compact ? { bottom: 92 } : { top: Math.max(NAV_H + 60, h * 0.25) + (w > 1400 ? 250 : 220) }),
+          width: compact ? w - 32 : short ? Math.min(640, w - 80) : Math.min(880, w - 80),
+          ...(compact ? { bottom: 92 } : short ? { top: shortInputTop } : { top: Math.max(NAV_H + 60, h * 0.25) + (w > 1400 ? 250 : 220) }),
         }}
       >
         <div style={introStyle(intro, 'rise', 0.0, 0.6)}>
@@ -253,7 +258,7 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
               display: 'flex',
               alignItems: 'center',
               gap: compact ? 8 : 14,
-              minHeight: compact ? 56 : 72,
+              minHeight: compact ? 56 : short ? 58 : 72,
               padding: compact ? '0 7px 0 8px' : '0 10px 0 10px',
               borderRadius: 999,
               background: `${FILM.panel}C7`,
@@ -285,7 +290,8 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
                 color: FILM.text,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
-                paddingLeft: compact ? 10 : 0,
+                // 左内边距与下面淡出遮罩等宽：没滚动时第一个字不会被遮罩吃掉
+                paddingLeft: 10,
                 // 整行往左滚之后，左沿淡出，别让第一个字被一刀切掉
                 maskImage: 'linear-gradient(90deg, transparent 0, black 10px)',
                 WebkitMaskImage: 'linear-gradient(90deg, transparent 0, black 10px)',
@@ -364,8 +370,8 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
         className="absolute inline-flex items-center transition-transform duration-200 hover:scale-[1.03]"
         style={{
           // 手机上居中（底部已经有输入框，右下角再挂一颗会显得歪）
-          ...(compact ? { left: '50%', translate: '-50% 0' } : { right: 36 }),
-          bottom: compact ? 24 : 32,
+          ...(compact ? { left: '50%', translate: '-50% 0' } : { right: short ? 24 : 36 }),
+          bottom: compact ? 24 : short ? 14 : 32,
           gap: 10,
           padding: compact ? '7px 14px 7px 7px' : '9px 20px 9px 9px',
           borderRadius: 999,
