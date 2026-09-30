@@ -322,6 +322,12 @@ type BranchDeployRuntime = {
    */
   prebuilt: boolean;
   /**
+   * 2026-09-29 走极速版（预构建镜像）的是哪几个 profile。一条分支可以一部分服务极速版、一部分源码版，
+   * 只重部署其中一个源码服务时，卡片阶段条要按「这次动的那个服务」选步骤，不能按上面这个「任一」判
+   * （Codex P2，PR #1646）。
+   */
+  prebuiltProfileIds: string[];
+  /**
    * 2026-05-29 P0 止血：期望态 vs 实际态漂移检测。
    *
    * 病根（本次 openvisual 事故暴露）：branch.services 是"上次部署时的快照"，
@@ -440,11 +446,15 @@ function summarizeBranchDeployRuntime(
   let sourceProfiles = 0;    // 实际以源码在跑 / 未跑的 profile 数
   let pendingPublish = false; // 配置=发布版 但运行现状还没跟上
   let prebuilt = false;       // 配置=极速版（任一 profile 走预构建镜像）
+  const prebuiltProfileIds: string[] = [];
   const modeLabels: string[] = [];
 
   for (const profile of profiles) {
     const effectiveProfile = resolveEffectiveProfile(profile, branch);
-    if (effectiveProfile.prebuiltImage === true) prebuilt = true;
+    if (effectiveProfile.prebuiltImage === true) {
+      prebuilt = true;
+      prebuiltProfileIds.push(profile.id);
+    }
     const configMode = effectiveProfile.activeDeployMode;
     const configLabel = configMode
       ? effectiveProfile.deployModes?.[configMode]?.label || configMode
@@ -522,6 +532,7 @@ function summarizeBranchDeployRuntime(
     modes: modeLabels,
     pendingPublish,
     prebuilt,
+    prebuiltProfileIds,
     // 漂移检测走 deploy-runtime.ts 的纯函数 SSOT(可单测、与本文件解耦)
     drift: computeServiceDrift(profiles.map((p) => p.id), branch.services),
   };
@@ -13571,6 +13582,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
           const svc = entry.services[profile.id];
           svc.status = 'building';
+          // 每个服务开始构建都推一条：多层依赖部署时，上一层已经把分支广播成 starting，
+          // 下一层开始拉镜像 / 编译时若不推，已打开的列表会一直停在「就绪探测」（Codex P2，PR #1646）。
+          // 事件流会取最新分支下发（分支聚合状态此时仍是 building）。
+          branchEvents.emitEvent({
+            type: 'branch.updated',
+            payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: nowIso() },
+          });
 
           try {
             // 拿到槽位后立即复核租约：排队期间可能已被更高优先级操作取代，
@@ -14405,6 +14423,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 本轮（单服务）构建起点锚点 —— 与多服务/远端执行器路径一致，供预览等待页
       // ETA 计"已等待"，避免回退到上一轮历史 op-log 误算（见 BranchEntry.lastDeployStartedAt）。
       entry.lastDeployStartedAt = new Date().toISOString();
+      // 排队时长按轮重置，与整分支部署一致：分支卡按「开始至今 − 排队时长」计净耗时，
+      // 不清的话会减掉上一次部署的排队时长，计时停在 00:00（Codex P2，PR #1646）
+      entry.lastDeployQueueWaitMs = 0;
       stateService.save();
 
       // Pull latest code
@@ -14490,6 +14511,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const svc = entry.services[profile.id];
       svc.status = 'building';
+      // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
+      // 否则卡片只能从服务状态去猜：分支 idle 却有服务在探测、分支 error 却有服务在重建，
+      // 这两种组合和「残留的旧服务状态」分不开（Codex P2 两条，PR #1646）。分支在运行时保持 running 不动。
+      if (entry.status !== 'running') entry.status = 'building';
+      // 单服务部署时分支聚合状态（在运行时）一直是 running，只有这一个服务在 building → starting → 结束之间走；
+      // 每次翻转都推一条 branch.updated（事件流会取最新分支下发），分支卡的阶段条、计时与收尾才跟得上。
+      // 此前这条路径只在排队时推事件，卡片要等下一次刷新才看得到（Codex P2，PR #1646）。
+      const emitServiceTransition = (extra: { stateFlushFailed?: boolean } = {}) => branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ...extra, ts: new Date().toISOString() },
+      });
+      emitServiceTransition();
 
       // ── 全局构建并发闸（2026-07-16 复盘补齐）──
       // 此前单服务重部署完全绕过 build-gate，源码编译不受全局并发控制。
@@ -14664,7 +14697,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // probe (TCP+HTTP). Prevents the 502 window between `docker run` exit
         // and the app binding its port. See .claude/rules/cds-auto-deploy.md.
         svc.status = 'starting';
+        if (entry.status === 'building') entry.status = 'starting';
         stateService.save();
+        emitServiceTransition();
         advanceDeploymentRun(deploymentRun?.id, 'starting', {
           phase: 'start',
           message: `${profile.name} 容器已启动`,
@@ -14839,12 +14874,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationFinalStatus = 'failed';
         const flushMessage = branchStateFlushFailureMessage(flushResult, completeMsg);
         failDeploymentRun(deploymentRun?.id, flushMessage, 'state-flush');
+        // 落盘失败也要推一条结束事件：前面已经推过 starting，不推的话已打开的列表会一直停在「就绪探测」，
+        // 而调用方（如引用面板）并不会回头刷新列表。事件带上 stateFlushFailed，卡片离开部署阶段、显示
+        // 容器的真实状态，但不播「部署成功」——接口这次报的是失败（Codex P2 两条，PR #1646）。
+        emitServiceTransition({ stateFlushFailed: true });
         sendSSE(res, 'error', {
           message: flushMessage,
           stateFlush: flushResult,
         });
         return;
       }
+      // 结束事件放在聚合状态重算与状态落盘之后：从停止状态单独起一个服务时分支此前是 idle，先推会让
+      // 卡片拿到「服务 running、分支 idle」而被放进未运行；落盘失败时接口不报成功，卡片也不该先播
+      // 「部署成功」（Codex P2 两条，PR #1646）。
+      emitServiceTransition();
       sendSSE(res, 'complete', {
         // 2026-05-14 Codex review P2：单服务 redeploy 也下发权威 ok，
         // 消费方统一读 ok 而非重推导 entry.services。
@@ -14899,6 +14942,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.containerLogSnapshots = await captureContainerLogSnapshots(entry, 'deploy-error', new Set([profile.id]));
       stateService.appendLog(id, opLog);
       stateService.save();
+      // 失败也要推一条：比如排构建槽时被取消，服务停在 building、分支已判 error，
+      // 不推的话已打开的列表一直停在「构建中」直到整页刷新（Codex P2，PR #1646）。
+      branchEvents.emitEvent({
+        type: 'branch.updated',
+        payload: { branchId: id, projectId: entry.projectId, patch: {}, ts: new Date().toISOString() },
+      });
       logDeploy(id, `部署失败: ${(err as Error).message}`);
       const flushResult = await flushBranchStateBeforeSuccess({
         source: 'branch-deploy-profile',
