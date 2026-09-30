@@ -87,4 +87,13 @@ public class ReviewAgentStateGuardsTests
         // 评审异常或刚提交，IsPassed 还没被赋值的 case
         ReviewAgentController.CanReuploadOnFailure(Sub(ReviewStatuses.Done, isPassed: null)).ShouldBeFalse();
     }
+
+    [Fact]
+    public void 版本申领_仅Done且已通过的评审可用()
+    {
+        ReviewAgentController.CanUsePassedReviewForVersionRegistration(Sub(ReviewStatuses.Done, isPassed: true)).ShouldBeTrue();
+        ReviewAgentController.CanUsePassedReviewForVersionRegistration(Sub(ReviewStatuses.Done, isPassed: false)).ShouldBeFalse();
+        ReviewAgentController.CanUsePassedReviewForVersionRegistration(Sub(ReviewStatuses.Done, isPassed: null)).ShouldBeFalse();
+        ReviewAgentController.CanUsePassedReviewForVersionRegistration(Sub(ReviewStatuses.Running, isPassed: true)).ShouldBeFalse();
+    }
 }

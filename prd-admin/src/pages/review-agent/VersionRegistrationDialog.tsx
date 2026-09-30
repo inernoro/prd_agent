@@ -510,7 +510,8 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, onClose]);
 
-  const selectedReview = useMemo(() => reviewSources.find((item) => item.id === reviewSubmissionId), [reviewSources, reviewSubmissionId]);
+  const passedReviewSources = useMemo(() => reviewSources.filter((item) => item.isPassed === true), [reviewSources]);
+  const selectedReview = useMemo(() => passedReviewSources.find((item) => item.id === reviewSubmissionId), [passedReviewSources, reviewSubmissionId]);
   const registryApplications = useMemo(() => registrySystems.flatMap((system) => system.applications), [registrySystems]);
   const registryDetailApplication = useMemo(
     () => registryApplications.find((application) => application.id === registryDetailApplicationId),
@@ -575,7 +576,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
           let matchedInternalSource: VersionRegistration | undefined;
           if (kind === 'internal' && parsed.planName) {
             const normalizedPlanName = normalizeMatchText(parsed.planName);
-            const matchingReview = reviewSources.find((source) => normalizeMatchText(source.title) === normalizedPlanName);
+            const matchingReview = passedReviewSources.find((source) => normalizeMatchText(source.title) === normalizedPlanName);
             if (matchingReview) {
               setReviewSubmissionId(matchingReview.id);
               sourceMatchHint = ' 已匹配到产品评审记录。';
@@ -613,7 +614,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     } finally {
       if (requestId === messageParseRequestRef.current) setMessageParsing(false);
     }
-  }, [chooseApplication, internalSources, kind, reviewSources]);
+  }, [chooseApplication, internalSources, kind, passedReviewSources]);
 
   useEffect(() => {
     if (!kind || wecomMessage.trim().length < 4) {
@@ -658,7 +659,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
 
   const chooseReview = (id: string) => {
     setReviewSubmissionId(id);
-    const source = reviewSources.find((item) => item.id === id);
+    const source = passedReviewSources.find((item) => item.id === id);
     if (source) patchForm({ planName: source.title });
   };
 
@@ -949,15 +950,15 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                   />
 
                   {kind === 'internal' ? (
-                    <Field label="选择已完成的产品评审记录" required>
+                    <Field label="选择已通过的产品评审记录" required>
                       <select className={FIELD_CLASS} value={reviewSubmissionId} onChange={(event) => chooseReview(event.target.value)}>
                         <option value="">请选择评审记录</option>
-                        {reviewSources.map((source) => (
-                          <option key={source.id} value={source.id}>{source.title} · {source.isPassed === false ? '未通过' : '已完成'} · {formatDate(source.completedAt)}</option>
+                        {passedReviewSources.map((source) => (
+                          <option key={source.id} value={source.id}>{source.title} · 已通过 · {formatDate(source.completedAt)}</option>
                         ))}
                       </select>
                       {selectedReview ? <p className="mt-1.5 text-xs text-token-muted">已从“{selectedReview.fileName}”带入方案标题，你可以补充或调整登记信息。</p> : null}
-                      {reviewSources.length === 0 ? <p className="mt-1.5 text-xs text-token-muted">暂无可用记录。请先完成一条本人提交的产品评审，已申领过 T 的记录不会重复出现。</p> : null}
+                      {passedReviewSources.length === 0 ? <p className="mt-1.5 text-xs text-token-muted">暂无可用记录。请先完成并通过一条本人提交的产品评审，已申领过 T 的记录不会重复出现。</p> : null}
                     </Field>
                   ) : (
                     <div className="space-y-3">

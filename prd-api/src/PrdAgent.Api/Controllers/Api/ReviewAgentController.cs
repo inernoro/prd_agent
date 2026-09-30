@@ -536,6 +536,11 @@ public class ReviewAgentController : ControllerBase
         && s.IsPassed == false
         && s.RerunCount < 1;
 
+    /// <summary>内部版本号只能从已完成且已通过的产品评审记录申领。</summary>
+    internal static bool CanUsePassedReviewForVersionRegistration(ReviewSubmission s) =>
+        s.Status == ReviewStatuses.Done
+        && s.IsPassed == true;
+
     /// <summary>排行榜聚合中间投影类型（避免匿名类型在 LINQ Project 表达式树中的限制）</summary>
     internal class LeaderboardRow
     {
@@ -2168,7 +2173,7 @@ public class ReviewAgentController : ControllerBase
     // 版本号申领与登记档案
     // ──────────────────────────────────────────────
 
-    /// <summary>当前申请人可用于申领 T 号的已完成评审记录。</summary>
+    /// <summary>当前申请人可用于申领 T 号的已通过评审记录。</summary>
     [HttpGet("version-registrations/review-sources")]
     public async Task<IActionResult> ListVersionRegistrationReviewSources(CancellationToken ct)
     {
@@ -2178,7 +2183,7 @@ public class ReviewAgentController : ControllerBase
             .Project(x => x.ReviewSubmissionId!)
             .ToListAsync(ct);
         var items = await _db.ReviewSubmissions
-            .Find(x => x.SubmitterId == userId && x.Status == ReviewStatuses.Done && !usedSubmissionIds.Contains(x.Id))
+            .Find(x => x.SubmitterId == userId && x.Status == ReviewStatuses.Done && x.IsPassed == true && !usedSubmissionIds.Contains(x.Id))
             .SortByDescending(x => x.CompletedAt)
             .Project(x => new { x.Id, x.Title, x.FileName, x.IsPassed, x.CompletedAt })
             .ToListAsync(ct);
@@ -2399,18 +2404,21 @@ public class ReviewAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { result }));
     }
 
-    /// <summary>从本人已完成的评审记录申领内部版本号 T。</summary>
+    /// <summary>从本人已通过的评审记录申领内部版本号 T。</summary>
     [HttpPost("version-registrations/internal")]
     public async Task<IActionResult> CreateInternalVersionRegistration([FromBody] CreateInternalVersionRegistrationRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
         if (string.IsNullOrWhiteSpace(request.ReviewSubmissionId))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择一条已完成的产品评审记录"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择一条已通过的产品评审记录"));
         var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.ReviewSubmissionId.Trim()).FirstOrDefaultAsync(ct);
         if (submission == null || submission.SubmitterId != userId)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评审记录不存在或不属于当前申请人"));
-        if (submission.Status != ReviewStatuses.Done)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评审尚未完成，暂不能申领内部版本号"));
+        if (!CanUsePassedReviewForVersionRegistration(submission))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                submission.Status != ReviewStatuses.Done
+                    ? "评审尚未完成，暂不能申领内部版本号"
+                    : "仅评审通过的记录可以申领内部版本号"));
         if (await _db.VersionRegistrations.Find(x => x.ReviewSubmissionId == submission.Id).AnyAsync(ct))
             return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已申领过内部版本号"));
         if (!IsVersionRegistrationProjectType(request.ProjectType))
