@@ -16,7 +16,7 @@ import { Section, Field, LoadingBlock, ErrorBlock, CodePill, EmptyBlock } from '
 interface MeUser {
   id: string;
   username: string | null;
-  authProvider?: 'github' | 'local';
+  authProvider?: 'github' | 'local' | 'legacy' | 'sso';
   isSystemOwner: boolean;
   name: string;
 }
@@ -24,7 +24,13 @@ interface MeUser {
 const inputCls =
   'w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
 
-export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.Element {
+export function UsersTab({
+  onToast,
+  durableUsers,
+}: {
+  onToast: (msg: string) => void;
+  durableUsers: boolean;
+}): JSX.Element {
   const [me, setMe] = useState<MeUser | null>(null);
   const [meLoaded, setMeLoaded] = useState(false);
 
@@ -53,7 +59,8 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
   }, []);
 
   const isOwner = me?.isSystemOwner === true;
-  const isLocal = (me?.authProvider ?? 'github') === 'local';
+  const isLocal = me?.authProvider === 'local';
+  const isLegacy = me?.authProvider === 'legacy';
 
   const refreshUsers = async (): Promise<void> => {
     setUsersError('');
@@ -136,12 +143,19 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
 
   return (
     <div className="space-y-8">
+      {!durableUsers ? (
+        <div className="rounded-md border border-border bg-[hsl(var(--surface-sunken))] px-4 py-3 text-sm leading-6 text-muted-foreground">
+          当前认证存储为内存模式，新建账号会在 CDS 重启后丢失。生产环境请配置持久化认证存储后再创建用户。
+        </div>
+      ) : null}
       <Section
         title="修改密码"
         description={
           isLocal
             ? '修改当前本地账号的登录密码。修改后所有会话失效，需要用新密码重新登录。'
-            : '当前账号通过 GitHub OAuth 登录，密码由 GitHub 管理，无需在此修改。'
+            : isLegacy
+              ? '当前使用原始环境变量账号登录，密码继续由 CDS_USERNAME / CDS_PASSWORD 管理。'
+              : '当前账号通过外部身份提供方登录，密码由身份提供方管理，无需在此修改。'
         }
       >
         {isLocal ? (
@@ -177,7 +191,9 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
           </form>
         ) : (
           <div className="rounded-md border border-border bg-card px-4 py-4 text-sm leading-6 text-muted-foreground">
-            GitHub 账号 <CodePill>{me?.username || me?.name || '当前用户'}</CodePill> 的凭据由 GitHub 托管。
+            {isLegacy ? '原始管理员账号' : '外部身份账号'}{' '}
+            <CodePill>{me?.username || me?.name || '当前用户'}</CodePill>{' '}
+            的凭据不在持久化用户库中修改。
           </div>
         )}
       </Section>
@@ -230,7 +246,14 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
             </form>
           </Section>
 
-          <Section title="用户列表" description="系统内所有账号（GitHub 与本地账号），可禁用 / 启用账号或重置本地账号密码。">
+          <Section
+            title="用户列表"
+            description={
+              isLegacy
+                ? '持久化用户库中的账号。当前原始管理员由环境变量管理，因此不重复出现在本列表中。'
+                : '系统内所有持久化账号，可禁用 / 启用账号或重置本地账号密码。'
+            }
+          >
             {usersError ? (
               <ErrorBlock message={usersError} />
             ) : users === null ? (
@@ -267,7 +290,13 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
                           ) : null}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {u.authProvider === 'local' ? '本地账号' : 'GitHub'}
+                          {u.authProvider === 'local'
+                            ? '本地账号'
+                            : u.authProvider === 'legacy'
+                              ? '原始账号'
+                              : u.authProvider === 'sso'
+                                ? 'SSO'
+                                : 'GitHub'}
                         </td>
                         <td className="px-3 py-2">
                           <span

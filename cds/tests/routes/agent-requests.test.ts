@@ -96,6 +96,35 @@ describe('Agent requests observability routes', () => {
     });
   }
 
+  it('持久化系统所有者可管理 Agent 会话，普通本地账号不可获得管理员权限', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-owner-auth-'));
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+
+    const startWithUser = async (isSystemOwner: boolean): Promise<http.Server> => {
+      const app = express();
+      app.use((req, _res, next) => {
+        (req as any).cdsUser = {
+          username: isSystemOwner ? 'owner' : 'member',
+          isSystemOwner,
+          authProvider: 'local',
+        };
+        (req as any).cdsSession = { id: isSystemOwner ? 'owner-session' : 'member-session' };
+        next();
+      });
+      app.use('/api', createRemoteHostsRouter({ stateService }));
+      return new Promise((resolve) => {
+        const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+      });
+    };
+
+    const ownerServer = await startWithUser(true);
+    expect((await request(ownerServer, 'GET', '/api/projects/project-1/agent-sessions')).status).toBe(200);
+    await new Promise<void>((resolve) => ownerServer.close(() => resolve()));
+
+    server = await startWithUser(false);
+    expect((await request(server, 'GET', '/api/projects/project-1/agent-sessions')).status).toBe(401);
+  });
+
   async function waitForSession(projectId: string, token: string, sessionId: string, status: string) {
     let result: Awaited<ReturnType<typeof request>>;
     await vi.waitFor(async () => {

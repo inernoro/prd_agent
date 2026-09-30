@@ -73,6 +73,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -596,9 +597,8 @@ async function resolveRemoteDefaultBranch(shell: IShellExecutor, repoPath: strin
 function hasOwnerAccess(req: unknown, projectId: string): boolean {
   const r = req as {
     cdsProjectKey?: { projectId: string };
-    _cdsCookieAuth?: boolean;
   };
-  if (r._cdsCookieAuth === true) return true;
+  if (isHumanSystemOwner(req)) return true;
   if (r.cdsProjectKey && r.cdsProjectKey.projectId === projectId) return true;
   return false;
 }

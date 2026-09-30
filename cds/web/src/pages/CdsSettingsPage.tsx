@@ -143,15 +143,14 @@ const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
 const AUTH_MODE_LABELS: Record<string, string> = {
   github: 'GitHub OAuth',
-  basic: '账号密码（单账号）',
+  basic: '账号密码',
   sso: 'SSO',
   disabled: '未启用',
 };
 
 /**
- * 用户管理 / 用户痕迹两个 tab 由 auth-local 路由支撑,而该路由**只在
- * authMode==='github' 时挂载**;basic / disabled 部署上 /api/auth/users、
- * /api/auth/activity 根本没注册,直接渲染必然 404。
+ * 用户管理 / 用户痕迹两个 tab 由 auth-local 路由支撑。是否可用由后端
+ * capabilities 明确声明，前端不得再从认证模式名称推断。
  *
  * 2026-08-25 改法修正:此前是「非 github 模式整条 tab 从导航里消失」。用户在
  * basic 部署上看到的现象是「用户管理不见了」,分不清是被砍了、坏了还是被藏了
@@ -220,8 +219,7 @@ export function AuthModeGatedNotice({
         <h3 className="text-base font-semibold">{feature}</h3>
         <p className="mt-1 text-sm text-muted-foreground">
           当前认证模式是 <strong className="text-foreground">{AUTH_MODE_LABELS[mode] || mode}</strong>，
-          {feature}未启用——不是被隐藏，是这个模式下后端没有多用户账号体系
-          （<code className="rounded bg-[hsl(var(--surface-sunken))] px-1 py-0.5 text-xs">/api/auth/users</code> 仅在 GitHub OAuth 模式挂载）。
+          {feature}未启用——不是被隐藏，是这台实例没有开放对应的本地用户能力。
         </p>
       </div>
       {/* SSO 部署的账号在上游身份源里，让他们「改成 github 模式」等于劝人关掉 SSO —— 分开说。 */}
@@ -230,7 +228,7 @@ export function AuthModeGatedNotice({
           <div className="font-medium">这台 CDS 的账号在上游身份源里管理</div>
           <p className="mt-2 text-muted-foreground">
             用户的新增、停用与密码都归发起 SSO 的那套系统管，CDS 侧不再维护第二份账号表，所以本页没有可管理的对象。
-            要在 CDS 自己这一层管账号，只有改用 GitHub OAuth 模式——那会替换掉当前的 SSO 登录方式，属于认证方案变更，请先确认是否真要这么做。
+            如需 CDS 自己管理本地账号，应另行启用账号密码能力，而不是替换现有 SSO 身份源。
           </p>
         </div>
       ) : (
@@ -238,11 +236,10 @@ export function AuthModeGatedNotice({
           <div className="font-medium">要启用多用户</div>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
             <li>
-              给 CDS 设置 <code className="text-foreground">CDS_AUTH_MODE=github</code>，并配好{' '}
-              <code className="text-foreground">CDS_GITHUB_CLIENT_ID</code> /{' '}
-              <code className="text-foreground">CDS_GITHUB_CLIENT_SECRET</code>
+              配置 <code className="text-foreground">CDS_USERNAME</code> /{' '}
+              <code className="text-foreground">CDS_PASSWORD</code> 启用账号密码模式；GitHub OAuth 只是可选登录方式
             </li>
-            <li>重启 CDS；首个登录者可通过 bootstrap 成为系统所有者（需持久化存储后端）</li>
+            <li>生产环境使用持久化认证存储；原始账号登录后即为系统所有者</li>
             <li>回到本页即可创建账号、禁用账号、重置密码，并查看用户痕迹</li>
           </ol>
         </div>
@@ -284,17 +281,26 @@ export function CdsSettingsPage(): JSX.Element {
   // CDS_AUTH_MODE 再重启」——拿推断出来的模式当权威结论，正是 expectation-management
   // 要治的那种失控。所以失败单列一态，给可重试的诊断而不是编一个模式。
   const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | 'probe-failed' | null>(null);
+  const [authCapabilities, setAuthCapabilities] = useState<CdsAuthPublicStatus['capabilities'] | null>(null);
   const [authProbeError, setAuthProbeError] = useState('');
   const [authProbeSeq, setAuthProbeSeq] = useState(0);
-  const authTabsVisible = authMode === 'github';
+  const usersVisible = authCapabilities?.userManagement === true;
+  const activityVisible = authCapabilities?.userActivity === true;
 
   useEffect(() => {
     let alive = true;
     // /api/auth/public-status 在所有认证模式下都挂载(server.ts:1802,早于 github-only 块),
     // 是判定当前模式的权威且安全入口。
     setAuthMode(null);
+    setAuthCapabilities(null);
     fetchAuthPublicStatus()
-      .then((status) => { if (alive) { setAuthMode(status.mode); setAuthProbeError(''); } })
+      .then((status) => {
+        if (alive) {
+          setAuthMode(status.mode);
+          setAuthCapabilities(status.capabilities);
+          setAuthProbeError('');
+        }
+      })
       .catch((err: unknown) => {
         if (!alive) return;
         setAuthMode('probe-failed');
@@ -380,8 +386,11 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'auth' ? <AuthTab /> : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab !== 'users' ? null : authTabsVisible ? (
-                    <UsersTab onToast={setToast} />
+                  {activeTab !== 'users' ? null : usersVisible ? (
+                    <UsersTab
+                      onToast={setToast}
+                      durableUsers={authCapabilities?.durableUsers === true}
+                    />
                   ) : (
                     <AuthModeGatedNotice
                       feature="用户管理"
@@ -393,7 +402,7 @@ export function CdsSettingsPage(): JSX.Element {
                   )}
                 </TabsContent>
                 <TabsContent value="activity">
-                  {activeTab !== 'activity' ? null : authTabsVisible ? (
+                  {activeTab !== 'activity' ? null : activityVisible ? (
                     <ActivityTab />
                   ) : (
                     <AuthModeGatedNotice

@@ -172,7 +172,8 @@ export function AuthTab(): JSX.Element {
           <div className="flex items-start gap-3 text-sm leading-6 text-muted-foreground">
             <KeyRound className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              账号密码模式使用 <code>CDS_USERNAME</code> / <code>CDS_PASSWORD</code>；GitHub OAuth 使用{' '}
+              账号密码模式保留 <code>CDS_USERNAME</code> / <code>CDS_PASSWORD</code> 作为原始管理员凭据，
+              并可在「用户管理」中创建本地账号；生产环境需同时使用持久化认证存储。GitHub OAuth 使用{' '}
               <code>CDS_GITHUB_CLIENT_ID</code> / <code>CDS_GITHUB_CLIENT_SECRET</code> /{' '}
               <code>CDS_ALLOWED_ORGS</code>。这些变量由初始化流程或运维脚本写入环境文件，页面只负责查看状态和退出当前会话。
             </div>
