@@ -121,6 +121,19 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
     return () => ro.disconnect();
   }, []);
 
+  // 标题块实际占到哪儿（标语会随语言、宽度折成两行）：输入框按它往下让，不再假定标语只有一行（Codex P2，PR #1650）
+  const titleRef = useRef<HTMLDivElement>(null);
+  const [titleBottom, setTitleBottom] = useState(0);
+  useLayoutEffect(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    const measure = () => setTitleBottom(el.offsetTop + el.offsetHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // 自己播：约 30 帧/秒（星系转得慢，60 帧是白烧 CPU），滚出视口或切走标签页就不走表
   useEffect(() => {
     if (controlledT !== undefined || reduced) return;
@@ -185,6 +198,7 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
 
       {/* 标题块：宽屏居中偏上，手机贴顶 */}
       <div
+        ref={titleRef}
         className="absolute left-0 right-0 text-center"
         style={{ top: compact ? NAV_H + 28 : short ? NAV_H + 8 : Math.max(NAV_H + 60, h * 0.25), padding: '0 20px' }}
       >
@@ -245,7 +259,9 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
         style={{
           transform: 'translateX(-50%)',
           width: compact ? w - 32 : short ? Math.min(640, w - 80) : Math.min(880, w - 80),
-          ...(compact ? { bottom: 92 } : short ? { top: shortInputTop } : { top: Math.max(NAV_H + 60, h * 0.25) + (w > 1400 ? 250 : 220) }),
+          ...(compact
+            ? { bottom: 92 }
+            : { top: Math.max(short ? shortInputTop : Math.max(NAV_H + 60, h * 0.25) + (w > 1400 ? 250 : 220), titleBottom + (short ? 4 : 24)) }),
         }}
       >
         <div style={introStyle(intro, 'rise', 0.0, 0.6)}>
