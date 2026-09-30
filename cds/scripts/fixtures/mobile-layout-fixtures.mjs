@@ -253,6 +253,26 @@ const PREFIX = [
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
+  /*
+   * 分支自定义分组（2026-09-29 新增的端点，当时漏了登记，冒烟在下一个碰到 cds/ 的 PR 上才红）。
+   * 给一个真实形状的分组，让分支列表按「有分组」那一态渲染，而不是退化成未分组的空态。
+   * 形状对齐 GET /api/projects/:id/branch-groups 的真实返回。
+   */
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [
+      {
+        id: 'fixture-group',
+        name: '窄屏样例分组',
+        color: 'orange',
+        rules: [{ kind: 'prefix', value: 'fixture' }],
+        pinnedBranchIds: [],
+      },
+    ],
+    updatedAt: '2026-09-29T00:00:00.000Z',
+    updatedBy: 'fixture',
+    readOnly: false,
+  })],
   [/^\/api\/projects\/[^/]+\/env$/, () => ({ env: {}, entries: [] })],
   [/^\/api\/projects\/[^/]+\/profiles$/, () => ({ profiles: [] })],
   [/^\/api\/profiles$/, () => ({ profiles: [] })],
