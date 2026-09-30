@@ -20,7 +20,12 @@
 
 import { Router, type Request, type Response } from 'express';
 import { AuthService, LocalAuthError } from '../services/auth-service.js';
-import { GH_SESSION_COOKIE } from './auth.js';
+import {
+  buildLegacyLogoutCookie,
+  buildLogoutCookie,
+  buildSessionCookie,
+  GH_SESSION_COOKIE,
+} from './auth.js';
 import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
 
 export interface LegacyLocalLoginResult {
@@ -56,32 +61,6 @@ export interface AuthLocalRouterDeps {
 
 interface AuthedRequest extends Request {
   cdsUser?: CdsUser;
-}
-
-function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
-  const maxAgeSec = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
-  const parts = [
-    `${GH_SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${maxAgeSec}`,
-    `Expires=${new Date(expiresAt).toUTCString()}`,
-  ];
-  if (secure) parts.push('Secure');
-  return parts.join('; ');
-}
-
-function buildLogoutCookie(secure: boolean): string {
-  return [
-    `${GH_SESSION_COOKIE}=`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    'Max-Age=0',
-    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
-    ...(secure ? ['Secure'] : []),
-  ].join('; ');
 }
 
 function sessionToken(req: Request): string | null {
@@ -163,7 +142,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         summary: '首次启动创建本地系统所有者账号',
         ip: clientIp(req),
       });
-      res.setHeader('Set-Cookie', buildSessionCookie(session.token, session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure),
+      ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
       if (err instanceof LocalAuthError) {
@@ -191,7 +173,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         req,
       );
       if (legacy) {
-        res.setHeader('Set-Cookie', legacy.setCookie);
+        res.setHeader('Set-Cookie', [legacy.setCookie, buildLogoutCookie(cookieSecure)]);
         res.json({ user: legacy.user });
         return;
       }
@@ -211,7 +193,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         summary: '本地账号登录',
         ip: clientIp(req),
       });
-      res.setHeader('Set-Cookie', buildSessionCookie(session.token, session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure),
+      ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
       // 存储后端在 verifyLocalLogin / 建会话 / 记活动时拒绝时，async Express 4
@@ -229,7 +214,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   router.post('/auth/logout', async (req: Request, res: Response) => {
     const token = sessionToken(req);
     if (token) await authService.logout(token);
-    res.setHeader('Set-Cookie', buildLogoutCookie(cookieSecure));
+    res.setHeader('Set-Cookie', [
+      buildLogoutCookie(cookieSecure),
+      buildLegacyLogoutCookie(cookieSecure),
+    ]);
     res.json({ ok: true });
   });
 

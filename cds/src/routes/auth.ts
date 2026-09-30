@@ -22,6 +22,7 @@ import { AuthService, AuthServiceError } from '../services/auth-service.js';
 
 /** Cookie name used for the GitHub session token. Keeps `cds_token` free for legacy auth. */
 export const GH_SESSION_COOKIE = 'cds_gh_session';
+export const LEGACY_SESSION_COOKIE = 'cds_token';
 
 export interface AuthRouterDeps {
   authService: AuthService;
@@ -55,7 +56,7 @@ export function buildSessionCookie(token: string, expiresAt: string, secure: boo
   return parts.join('; ');
 }
 
-function buildLogoutCookie(secure: boolean): string {
+export function buildLogoutCookie(secure: boolean): string {
   const parts = [
     `${GH_SESSION_COOKIE}=`,
     'Path=/',
@@ -66,6 +67,19 @@ function buildLogoutCookie(secure: boolean): string {
   ];
   if (secure) parts.push('Secure');
   return parts.join('; ');
+}
+
+/** Clear the original environment-account cookie when another identity wins. */
+export function buildLegacyLogoutCookie(secure: boolean): string {
+  return [
+    `${LEGACY_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
 }
 
 export function createAuthRouter(deps: AuthRouterDeps): Router {
@@ -104,7 +118,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           null,
       });
 
-      res.setHeader('Set-Cookie', buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure),
+      ]);
       res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
       if (err instanceof AuthServiceError) {
@@ -140,7 +157,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         });
       }
     }
-    res.setHeader('Set-Cookie', buildLogoutCookie(cookieSecure));
+    res.setHeader('Set-Cookie', [
+      buildLogoutCookie(cookieSecure),
+      buildLegacyLogoutCookie(cookieSecure),
+    ]);
     res.json({ ok: true });
   });
 

@@ -142,9 +142,11 @@ describe('Auth routes (P2)', () => {
       );
       expect(cb.status).toBe(302);
       expect(cb.headers.location).toBe('/project-list');
-      const setCookie = cb.headers['set-cookie'];
-      expect(setCookie).toBeTruthy();
-      expect(Array.isArray(setCookie) ? setCookie[0] : setCookie).toContain(GH_SESSION_COOKIE);
+      const setCookie = cb.headers['set-cookie'] as string[];
+      expect(setCookie).toEqual(expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^${GH_SESSION_COOKIE}=`)),
+        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+      ]));
     });
 
     it('400s on an unknown state token', async () => {
@@ -225,7 +227,7 @@ describe('Auth routes (P2)', () => {
   });
 
   describe('POST /api/auth/logout', () => {
-    it('clears the session cookie', async () => {
+    it('clears persisted and legacy session cookies', async () => {
       const login = await request(server, 'GET', '/api/auth/github/login');
       const state = new URL(login.headers.location as string).searchParams.get('state')!;
       const cb = await request(
@@ -239,7 +241,10 @@ describe('Auth routes (P2)', () => {
       expect(logout.status).toBe(200);
       expect(logout.body.ok).toBe(true);
       const clear = logout.headers['set-cookie'] as string[];
-      expect(clear[0]).toContain('Max-Age=0');
+      expect(clear).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+      ]));
 
       // /api/me must now return 401
       const me = await request(server, 'GET', '/api/me', { cookie: cookieValue });

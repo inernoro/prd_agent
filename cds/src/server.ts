@@ -75,7 +75,13 @@ import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
-import { buildSessionCookie, createAuthRouter, GH_SESSION_COOKIE } from './routes/auth.js';
+import {
+  buildLegacyLogoutCookie,
+  buildLogoutCookie,
+  buildSessionCookie,
+  createAuthRouter,
+  GH_SESSION_COOKIE,
+} from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
@@ -2702,7 +2708,10 @@ export function createServer(deps: ServerDeps): express.Express {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
         const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
-        res.setHeader('Set-Cookie', basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure));
+        res.setHeader('Set-Cookie', [
+          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure),
+          buildLogoutCookie(cookieSecure),
+        ]);
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2710,7 +2719,10 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.post('/api/logout', (_req, res) => {
-      res.setHeader('Set-Cookie', clearBasicSessionCookie(cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildLegacyLogoutCookie(cookieSecure),
+        buildLogoutCookie(cookieSecure),
+      ]);
       res.json({ success: true });
     });
   }
@@ -5390,10 +5402,6 @@ export function installSpaFallback(
 function basicSessionCookie(token: string, ttlMs: number, secure: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
   return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
-}
-
-function clearBasicSessionCookie(secure: boolean): string {
-  return `cds_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

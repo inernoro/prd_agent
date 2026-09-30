@@ -466,7 +466,21 @@ describe('Server route ordering (regression)', () => {
       process.env.CDS_PASSWORD = 'secret';
       process.env.CDS_PUBLIC_BASE_URL = 'https://cds.example.test';
 
-      const app = buildRealServerWithEvents([]);
+      const app = buildRealServerWithEvents([], (stateService) => {
+        const now = new Date().toISOString();
+        stateService.addProject({
+          id: 'auth-secret-project',
+          slug: 'auth-secret-project',
+          name: 'Auth Secret Project',
+          kind: 'git',
+          dockerNetwork: 'cds-proj-auth-secret',
+          legacyFlag: false,
+          customEnv: { OWNER_ONLY_SECRET: 'visible-to-owner' },
+          createdAt: now,
+          updatedAt: now,
+        });
+        stateService.setCustomEnvVar('GLOBAL_OWNER_ONLY', 'global-owner-value', '_global');
+      });
       server = await startServer(app);
 
       const res = await request(server, '/api/auth/public-status');
@@ -528,11 +542,15 @@ describe('Server route ordering (regression)', () => {
         req.end();
       });
       expect(login.status).toBe(200);
-      const rawCookie = Array.isArray(login.headers['set-cookie'])
-        ? login.headers['set-cookie'][0]
-        : String(login.headers['set-cookie'] || '');
+      const loginSetCookies = Array.isArray(login.headers['set-cookie'])
+        ? login.headers['set-cookie']
+        : [String(login.headers['set-cookie'] || '')];
+      const rawCookie = loginSetCookies[0];
       const cookie = rawCookie.split(';')[0];
       expect(rawCookie).toContain('; Secure');
+      expect(loginSetCookies).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+      ]));
 
       const authedMe = await request(server, '/api/me', { Cookie: cookie });
       expect(authedMe.status).toBe(200);
@@ -564,10 +582,14 @@ describe('Server route ordering (regression)', () => {
         password: 'secret',
       });
       expect(compatibleLogin.status).toBe(200);
-      const compatibleCookie = (Array.isArray(compatibleLogin.headers['set-cookie'])
-        ? compatibleLogin.headers['set-cookie'][0]
-        : String(compatibleLogin.headers['set-cookie'] || '')).split(';')[0];
+      const compatibleSetCookies = Array.isArray(compatibleLogin.headers['set-cookie'])
+        ? compatibleLogin.headers['set-cookie']
+        : [String(compatibleLogin.headers['set-cookie'] || '')];
+      const compatibleCookie = compatibleSetCookies[0].split(';')[0];
       expect(compatibleCookie).toMatch(/^cds_token=/);
+      expect(compatibleSetCookies).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+      ]));
 
       const duplicateLegacyUser = await requestJson(server, 'POST', '/api/auth/users', {
         username: 'operator',
@@ -595,10 +617,14 @@ describe('Server route ordering (regression)', () => {
         password: 'member-password-1',
       });
       expect(memberLogin.status).toBe(200);
-      const memberCookie = (Array.isArray(memberLogin.headers['set-cookie'])
-        ? memberLogin.headers['set-cookie'][0]
-        : String(memberLogin.headers['set-cookie'] || '')).split(';')[0];
+      const memberSetCookies = Array.isArray(memberLogin.headers['set-cookie'])
+        ? memberLogin.headers['set-cookie']
+        : [String(memberLogin.headers['set-cookie'] || '')];
+      const memberCookie = memberSetCookies[0].split(';')[0];
       expect(memberCookie).toMatch(/^cds_gh_session=/);
+      expect(memberSetCookies).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+      ]));
 
       const memberMe = await request(server, '/api/me', { Cookie: memberCookie });
       expect(memberMe.status).toBe(200);
@@ -609,10 +635,42 @@ describe('Server route ordering (regression)', () => {
       });
       const deniedUsers = await request(server, '/api/auth/users', { Cookie: memberCookie });
       expect(deniedUsers.status).toBe(403);
+      const deniedOperator = await request(server, '/api/cds-system/operator/ops', { Cookie: memberCookie });
+      expect(deniedOperator.status).toBe(403);
+
+      const memberProjects = await request(server, '/api/projects', { Cookie: memberCookie });
+      const memberSecretProject = JSON.parse(memberProjects.body).projects.find(
+        (project: { id: string }) => project.id === 'auth-secret-project',
+      );
+      expect(memberSecretProject.customEnv).toEqual({ OWNER_ONLY_SECRET: '***[masked]***' });
+      const memberEnv = await request(server, '/api/env?scope=_all', { Cookie: memberCookie });
+      expect(JSON.parse(memberEnv.body).env._global).toEqual({ GLOBAL_OWNER_ONLY: '***[masked]***' });
+
+      const persistedOwnerCreated = await requestJson(server, 'POST', '/api/auth/users', {
+        username: 'persisted-owner',
+        password: 'persisted-owner-password-1',
+        name: 'Persisted Owner',
+        isSystemOwner: true,
+      }, { Cookie: compatibleCookie });
+      expect(persistedOwnerCreated.status).toBe(201);
+      const persistedOwnerLogin = await requestJson(server, 'POST', '/api/auth/login', {
+        username: 'persisted-owner',
+        password: 'persisted-owner-password-1',
+      });
+      const persistedOwnerCookie = (persistedOwnerLogin.headers['set-cookie'] as string[])[0].split(';')[0];
+      const ownerOperator = await request(server, '/api/cds-system/operator/ops', { Cookie: persistedOwnerCookie });
+      expect(ownerOperator.status).toBe(200);
+      const ownerProjects = await request(server, '/api/projects', { Cookie: persistedOwnerCookie });
+      const ownerSecretProject = JSON.parse(ownerProjects.body).projects.find(
+        (project: { id: string }) => project.id === 'auth-secret-project',
+      );
+      expect(ownerSecretProject.customEnv).toEqual({ OWNER_ONLY_SECRET: 'visible-to-owner' });
+      const ownerEnv = await request(server, '/api/env?scope=_all', { Cookie: persistedOwnerCookie });
+      expect(JSON.parse(ownerEnv.body).env._global).toEqual({ GLOBAL_OWNER_ONLY: 'global-owner-value' });
 
       const ownerUsers = await request(server, '/api/auth/users', { Cookie: compatibleCookie });
       expect(ownerUsers.status).toBe(200);
-      expect(JSON.parse(ownerUsers.body).users).toHaveLength(1);
+      expect(JSON.parse(ownerUsers.body).users).toHaveLength(2);
 
       const ownerActivity = await request(server, '/api/auth/activity', { Cookie: compatibleCookie });
       expect(ownerActivity.status).toBe(200);
