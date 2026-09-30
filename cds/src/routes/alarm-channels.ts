@@ -59,7 +59,7 @@ function fingerprint(pem: string): string {
 /** 脱敏视图。这是唯一允许出网的形状——任何新增字段都要先问「它是不是秘密」。 */
 export function publicChannel(c: AlarmChannelConfig): Record<string, unknown> {
   const base = {
-    id: c.id, name: c.name, kind: c.kind, enabled: c.enabled,
+    id: c.id, name: c.name, kind: c.kind, enabled: c.enabled, incidentPageUrl: c.incidentPageUrl,
     projects: c.projects, events: c.events,
     createdAt: c.createdAt, updatedAt: c.updatedAt,
   };
@@ -165,9 +165,16 @@ function parseChannelConfig(
     ? body.projects.map((p) => str(p, 128)).filter(Boolean)
     : [];
 
+  const incidentPageUrl = body.incidentPageUrl === undefined ? previous?.incidentPageUrl : str(body.incidentPageUrl, 2048);
+  if (incidentPageUrl) {
+    let parsed: URL;
+    try { parsed = new URL(incidentPageUrl); } catch { return fail('独立事件入口必须是完整 HTTPS 地址'); }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) fail('独立事件入口必须使用 HTTPS 且不能包含凭据');
+  }
   const shell: AlarmChannelConfig = {
     id: previous?.id ?? crypto.randomUUID(),
     name, kind, projects, events,
+    ...(incidentPageUrl ? { incidentPageUrl } : {}),
     enabled: body.enabled === undefined ? (previous?.enabled ?? true) : Boolean(body.enabled),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,

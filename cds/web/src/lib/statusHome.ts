@@ -35,6 +35,16 @@ export function businessProjects(targets: readonly UptimeTargetSummary[], now: n
 
 /** 说明绑定结构化指标 ID，不从名字或错误文本猜测指标含义。 */
 export function explainTarget(target: UptimeTargetSummary): { meaning: string; impact: string; action: string } {
+  if (target.id.startsWith('monitor@self-collection-')) return {
+    meaning: '统一读取 CDS 内部检查数据。一次读取失败会影响多项指标，合并为本事件。',
+    impact: '内部指标暂时无法更新；是否影响实际业务需要结合独立外部检查判断。',
+    action: '先查看独立故障入口，再由管理员核查主机负载、网络与自检接口。不要根据多个超时重复部署。',
+  };
+  if (target.lastSample?.noData) return {
+    meaning: '本轮未取得有效读数，暂时不能判断这一项是否正常。',
+    impact: '没有数据不等于业务故障，也不能解除历史故障。',
+    action: '查看同项目的“自检数据获取”事件，先恢复采集，再复核本项指标。',
+  };
   switch (target.healthCheck?.componentId) {
     case 'webhook.dispatch-unresolved':
       return {

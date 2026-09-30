@@ -18,6 +18,8 @@ describe('build-gate 全局构建并发闸', () => {
 
   beforeEach(() => {
     __resetBuildGateForTest();
+    // 队列契约不依赖运行测试的机器负载；过载行为由下方专门用例注入。
+    setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 2 }));
   });
   afterEach(() => {
     if (savedEnv === undefined) delete process.env.CDS_MAX_CONCURRENT_BUILDS;

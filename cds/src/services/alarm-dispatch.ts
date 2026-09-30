@@ -102,12 +102,24 @@ async function httpSend(
  *
  * 返回值永远是结果，不抛——调用方是探测循环，它不该因为一次通知失败而断掉。
  */
+export function independentIncidentUrl(channel: AlarmChannelConfig, event: AlarmEvent): string | undefined {
+  if (event.projectId !== 'cds-self-monitor' || !channel.incidentPageUrl) return undefined;
+  try {
+    const url = new URL(channel.incidentPageUrl);
+    if (url.protocol !== 'https:' || url.username || url.password) return undefined;
+    if (event.targetId) url.searchParams.set('target', event.targetId);
+    url.searchParams.set('detectedAt', event.detectedAt);
+    return url.toString();
+  } catch { return undefined; }
+}
+
 export async function sendAlarm(
   channel: AlarmChannelConfig,
   event: AlarmEvent,
   opts: { boardUrl?: string; timeoutMs?: number; history?: ServerEventLogSink | null; deliveryKind?: 'alert' | 'drill' } = {},
 ): Promise<AlarmDeliveryResult> {
-  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const boardUrl = independentIncidentUrl(channel, event) || opts.boardUrl;
+  const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
     type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
     targetId: event.targetName, targetName: event.targetName, projectId: event.projectId,
@@ -124,7 +136,8 @@ export async function sendAlarm(
 async function sendAlarmTransport(
   channel: AlarmChannelConfig, event: AlarmEvent, opts: { boardUrl?: string; timeoutMs?: number },
 ): Promise<AlarmDeliveryResult> {
-  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const boardUrl = independentIncidentUrl(channel, event) || opts.boardUrl;
+  const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
     if (channel.kind === 'bark') {

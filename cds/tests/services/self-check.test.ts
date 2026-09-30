@@ -281,22 +281,22 @@ describe('接入 / 通知 / 自身', () => {
     expect(c.output).toContain('演练一次');
   });
 
-  it('前端产物落后于代码：flag 写 1，fail；拿不到自身状态也算 fail', async () => {
+  it('前端产物落后仍为故障；拿不到自身状态保持未知，交由采集事件处理', async () => {
     const stale = await buildSelfCheck(healthyDeps({ selfStatus: () => ({ ready: true, bundleStale: true, headSha: 'deadbee', currentBranch: 'x' }) }));
     expect(stale.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
     const unknown = await buildSelfCheck(healthyDeps({ selfStatus: () => null }));
-    expect(unknown.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
+    expect(unknown.checks['self.bundle-stale']).toMatchObject({ observedValue: null, status: 'warn' });
     expect(unknown.releaseId).toBeUndefined();
   });
 
-  it('刚重启、自身状态缓存还没算完：宽限期内写 null + warn 不响铃；过了宽限还不知道才 fail', async () => {
+  it('自身状态缓存没有有效读数时保持未知，不能伪造产物落后', async () => {
     const notReady = () => ({ ready: false, bundleStale: false, headSha: '', currentBranch: '' });
     const young = await buildSelfCheck(healthyDeps({ selfStatus: notReady, processStartedAt: () => NOW - 30_000 }));
     expect(young.checks['self.bundle-stale']).toMatchObject({ observedValue: null, status: 'warn' });
     expect(young.checks['self.bundle-stale'].output).toContain('还没算完');
     expect(young.releaseId).toBeUndefined();
     const old = await buildSelfCheck(healthyDeps({ selfStatus: notReady, processStartedAt: () => NOW - SELF_STATUS_GRACE_MS - 1000 }));
-    expect(old.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
+    expect(old.checks['self.bundle-stale']).toMatchObject({ observedValue: null, status: 'warn' });
   });
 });
 
@@ -472,7 +472,7 @@ describe('无人打开页面时的产物监控', () => {
       stale = false; broken = true;
       vi.setSystemTime(NOW + 122_000);
       expect(await readSelfCheckRuntimeStatus(selfStatusCache)).toMatchObject({ ready: false });
-      expect(await bundle()).toMatchObject({ observedValue: 1, status: 'fail' });
+      expect(await bundle()).toMatchObject({ observedValue: null, status: 'warn' });
     } finally {
       selfStatusCache._resetForTests();
       vi.useRealTimers();
@@ -482,5 +482,20 @@ describe('无人打开页面时的产物监控', () => {
   it('生产自检接入主动读取函数', () => {
     const source = readFileSync(fileURLToPath(new URL('../../src/index.ts', import.meta.url)), 'utf8');
     expect(source).toContain('selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache)');
+  });
+});
+
+
+describe('自检依赖预算', () => {
+  it('慢统计与慢状态读取在三秒预算后保留未知，其余检查仍可读取', async () => {
+    vi.useFakeTimers();
+    try {
+      const result = buildSelfCheck(healthyDeps({ httpStats: () => new Promise(() => {}), selfStatus: () => new Promise(() => {}) }));
+      await vi.advanceTimersByTimeAsync(3001);
+      const doc = await result;
+      expect(doc.checks['api.error-rate-30m'].observedValue).toBeNull();
+      expect(doc.checks['self.bundle-stale'].observedValue).toBeNull();
+      expect(doc.checks['deploy.stuck'].observedValue).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 });

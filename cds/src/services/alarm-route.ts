@@ -96,6 +96,8 @@ export interface AlarmLastDelivery {
 }
 
 export interface AlarmChannelConfig {
+  /** 独立事件入口，仅用于 CDS 自身告警。 */
+  incidentPageUrl?: string;
   id: string;
   /** 给人看的名字：「我的手机」「运维群」。出现在面板与投递记录里。 */
   name: string;
@@ -200,8 +202,9 @@ export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string 
   const where = event.projectId ? `项目 ${event.projectId}` : '未归属项目';
   if (event.projectId === 'cds-self-monitor') {
     const recovered = event.kind.endsWith('-recovered');
-    return { title: `${event.targetName} ${recovered ? '已稳定恢复' : '指标异常'}`,
-      body: recovered ? '该指标已连续稳定 10 分钟，无需处理。' : `CDS 自检发现异常，需要检查；不等同于业务不可用。${event.message}`,
+    const collection = event.targetId?.startsWith('monitor@self-collection-');
+    return { title: `${event.targetName} ${recovered ? '已稳定恢复' : collection ? '异常' : '指标异常'}`,
+      body: recovered ? '该项检查已连续稳定 10 分钟。其他未解决故障请查看事件详情。' : collection ? `多项内部指标暂时无法更新，已合并为一个事件；业务影响待确认。下一步：查看外部访问结果与处理进展。${event.message}` : `CDS 自检发现异常，需要检查；不等同于业务不可用。${event.message}`,
       level: recovered ? 'passive' : 'active', ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
   }
   if (event.kind === 'business-recovered' || event.kind === 'infra-recovered') {

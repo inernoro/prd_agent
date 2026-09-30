@@ -62,7 +62,8 @@ async function request(
   try {
     const res = await fetch(`http://127.0.0.1:${addr.port}${url}`, {
       method,
-      headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
+      // 每次请求创建独立服务器，禁止复用已关闭且端口可能被复用的连接。
+      headers: { Connection: 'close', ...(body === undefined ? headers : { 'Content-Type': 'application/json', ...headers }) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
@@ -74,7 +75,7 @@ async function request(
     }
     return { status: res.status, body: parsed, text, contentType: res.headers.get('content-type') || '' };
   } finally {
-    server.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }
 

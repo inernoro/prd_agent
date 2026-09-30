@@ -117,7 +117,7 @@ export function TargetDetail({
   const history = useHistory(target.id, range, generatedAt, reloadToken);
   const own = useMemo(() => incidents.filter((i) => i.targetId === target.id).slice(0, 20), [incidents, target.id]);
   const link = sourceLink(target);
-  const isCustom = target.source === 'custom';
+  const isCustom = target.source === 'custom' && !target.id.startsWith('monitor@self-collection-');
   const rangeBuckets = history.status === 'ok' ? history.history.points : null;
   const rangeAvailability = rangeBuckets ? availabilityOfBuckets(rangeBuckets) : null;
   const statusTone = target.status === 'down' ? 'danger' : target.status === 'up' ? 'ok' : target.status === 'unknown' ? 'warn' : 'default';
@@ -223,6 +223,9 @@ export function TargetDetail({
           <p className="text-muted-foreground">立即检查只重新读取状态，不会重试部署或清除故障记录。</p>
           {target.healthCheck?.componentId === 'webhook.dispatch-unresolved' ? <Button variant="outline" asChild><Link to="/project-list">查看项目与部署记录</Link></Button> : null}
         </section>
+        {target.lastSample?.noData ? <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-base leading-relaxed text-warn">
+          本轮没有有效读数。当前状态待确认，历史故障与最后有效检查结果仍保留。
+        </div> : null}
         {target.status === 'down' && target.lastSample?.err ? (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-base leading-relaxed text-destructive">
             <span className="font-medium">最近失败原因：</span>{target.lastSample.err}
