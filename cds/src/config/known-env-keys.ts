@@ -35,7 +35,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   // ── auth ──
   { key: 'CDS_USERNAME', description: 'Dashboard 登录用户名', isSecret: false, group: 'auth' },
   { key: 'CDS_PASSWORD', description: 'Dashboard 登录密码', isSecret: true, group: 'auth' },
-  { key: 'CDS_AUTH_MODE', description: '认证模式（password / oauth-only）', isSecret: false, group: 'auth' },
+  { key: 'CDS_AUTH_MODE', description: '认证模式（disabled / basic / github）', isSecret: false, group: 'auth' },
   { key: 'CDS_SSO_ENABLED', description: '允许通用票据 SSO 登录', isSecret: false, group: 'auth' },
   { key: 'CDS_SSO_PROVIDER_ID', description: 'SSO 提供方稳定标识', isSecret: false, group: 'auth' },
   { key: 'CDS_SSO_LABEL', description: 'SSO 登录按钮名称', isSecret: false, group: 'auth' },

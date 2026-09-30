@@ -3,7 +3,7 @@
  * operator console 能以 root 跑任意 shell、审批/拒绝请求。此前只靠顶层中间件放行
  * AI access key / 项目级 cdsp_ key,导致任何认证调用方都能自请求+自审批执行 root
  * shell,且能读 destructive op 的 confirmText。本测试锁死:run/ops/approve/reject/
- * requests 必须人类 cookie 鉴权(req._cdsCookieAuth===true),AI/项目 key 一律 403。
+ * requests 必须由已登录的系统所有者执行,普通本地用户、AI/项目 key 一律 403。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
@@ -53,9 +53,16 @@ describe('operator-console 人类鉴权门', () => {
     const stateService = new StateService(path.join(tmpDir, 'state.json'));
     const app = express();
     app.use(express.json());
-    // 模拟 server.ts 顶层 auth:带 x-test-human:1 视为人类 cookie 登录
+    // 模拟 server.ts 顶层 auth:持久化会话会同时挂 cdsUser + cdsSession。
     app.use((req, _res, next) => {
-      if (req.headers['x-test-human'] === '1') (req as any)._cdsCookieAuth = true;
+      if (req.headers['x-test-owner'] === '1') {
+        (req as any).cdsUser = { username: 'owner', isSystemOwner: true, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'owner-session' };
+      }
+      if (req.headers['x-test-member'] === '1') {
+        (req as any).cdsUser = { username: 'member', isSystemOwner: false, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'member-session' };
+      }
       next();
     });
     app.use('/api', createOperatorConsoleRouter({
@@ -72,12 +79,13 @@ describe('operator-console 人类鉴权门', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  const HUMAN = { 'x-test-human': '1' };
+  const OWNER = { 'x-test-owner': '1' };
+  const MEMBER = { 'x-test-member': '1' };
 
   it('非人类调用 POST /operator/run → 403(封死 AI/项目 key 跑 root shell)', async () => {
     const res = await request(server, 'POST', '/api/cds-system/operator/run', { opId: 'shell.run', args: { command: 'id' } });
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe('human_auth_required');
+    expect(res.body.error).toBe('human_owner_required');
   });
 
   it('非人类调用 GET /operator/ops → 403(不泄露 confirmText)', async () => {
@@ -92,15 +100,21 @@ describe('operator-console 人类鉴权门', () => {
     expect(r.status).toBe(403);
   });
 
-  it('人类 cookie 调用 GET /operator/ops → 放行(200)', async () => {
-    const res = await request(server, 'GET', '/api/cds-system/operator/ops', undefined, HUMAN);
+  it('普通持久化账号调用 GET /operator/ops → 403', async () => {
+    const res = await request(server, 'GET', '/api/cds-system/operator/ops', undefined, MEMBER);
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('human_owner_required');
+  });
+
+  it('系统所有者调用 GET /operator/ops → 放行(200)', async () => {
+    const res = await request(server, 'GET', '/api/cds-system/operator/ops', undefined, OWNER);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(Array.isArray(res.body.ops)).toBe(true);
   });
 
-  it('人类 cookie 调用 approve(请求不存在)→ 过了鉴权门,落到 404 而非 403', async () => {
-    const res = await request(server, 'POST', '/api/cds-system/operator/requests/nope/approve', {}, HUMAN);
+  it('系统所有者调用 approve(请求不存在)→ 过了鉴权门,落到 404 而非 403', async () => {
+    const res = await request(server, 'POST', '/api/cds-system/operator/requests/nope/approve', {}, OWNER);
     expect(res.status).toBe(404);
   });
 
