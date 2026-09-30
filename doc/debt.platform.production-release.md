@@ -1,8 +1,8 @@
 # 生产发布安全 · 债务台账
 
-> **版本**：v1.3 | **日期**：2026-08-03 | **状态**：部分落地
+> **版本**：v1.4 | **日期**：2026-09-30 | **状态**：部分落地
 
-**一句话**：既有生产发布安全债务已经还清，CDS 双入口表面探针仍有一项待闭环。
+**一句话**：既有生产发布安全债务已大部还清，CDS 双入口探针与 LLMGW 发布探针密钥轮换仍待闭环。
 **谁该读**：做发布评审的人；想追溯当初怎么修的人。
 **读完能做什么**：确认这条线已清账，并查到各项的还债记录。
 
@@ -10,13 +10,14 @@
 
 ## 总览
 
-当前 open: 1 / paid: 8 / 总计: 9
+当前 open: 2 / paid: 8 / 总计: 10
 
 ## 债务列表
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |---|---|---|---|---|---|---|
 | 2026-08-03-cds-split-surface-probe | P2 | 2026-08-03 | 生产表面探针默认假定 MAP、`/health` 与 LLM Gateway 位于同一域名；CDS 预览实际返回 MAP 与 Gateway 两个公开入口，主域名未暴露 `/health`，导致主页面、入口资源与 API 版本正常时仍误报失败 | 对 CDS 双入口预览以 MAP 模式运行生产表面探针 | open | 增加显式的 CDS 双入口拓扑参数或组合探针：主入口检查 HTML、真实 JS/CSS、`/api/version` 与目标提交；Gateway 入口检查页面、Console/Serving 健康和四协议无密钥 401。两部分都通过才判 pass，并补行为测试和真实 CDS 复测 |
+| 2026-09-30-llmgw-production-smoke-key-drift | P1 | 2026-09-30 | GitHub `production` 环境中的 LLMGW 发布后 scoped smoke key 已失效，正式工作流在容器、Serving 与静态包均健康后仍以 `GATEWAY_KEY_INVALID` 阻断并回滚前端；本次只能在受信正式机上用运行中 MAP Legacy Key、显式 `SourceSystem=map` 和原发布脚本完成 7/7 门禁 | 运行 `LLM Gateway Production Stage` 的发布后 D 层 smoke | open | 在 Gateway 控制台轮换专用 runtime service key，同步 `LLMGW_PROD_POST_DEPLOY_SERVICE_KEY`，随后用全新 workflow run 验证 7/7；增加只输出长度与 SHA256 指纹的排队前一致性检查，禁止再次靠重跑猜测 Secret 是否刷新。Legacy Key 仅是本次应急发布手段，不作为长期工作流配置 |
 
 ## 已还的债务（归档）
 
