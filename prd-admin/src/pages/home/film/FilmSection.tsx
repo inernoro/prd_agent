@@ -12,6 +12,9 @@ import { FilmTrackPlayer, loadFilmTrack, type FilmAudio } from './filmTrack';
 import { FilmStage, STAGE_H, STAGE_W } from './FilmStage';
 import { FILM_DURATION, FILM_SCENES, POSTER_TIME, formatClock } from './filmTimeline';
 
+/** 旋转 / 改窗口宽度之后，这么长时间内不让「滚走就亮灯 / 暂停」生效（毫秒） */
+const LAYOUT_SETTLE_MS = 1200;
+
 /**
  * 首页片花 —— 数字条之后、第一幕之前的那块银幕。
  *
@@ -240,6 +243,51 @@ export function FilmSection() {
     return () => io.disconnect();
   }, [startAt]);
 
+  // ── 旋转手机 / 改窗口大小：片子不能跟着布局重排被甩出屏幕 ──
+  // 旋转时上面几节的高度全变了（首屏是 100svh），浏览器保留的是旧的 scrollY，于是片子被甩到屏外；
+  // 紧接着「滚走就亮灯 / 暂停」的判定把它当成用户滚走了——用户看到的就是「视频消失了」
+  // （2026-09-30 横过手机后的反馈）。所以：布局变动前片子在看 / 在放，就在布局稳定后把它挪回屏幕正中，
+  // 并且在这一小段时间里不让可见性判定亮灯或暂停。
+  const layoutShiftAtRef = useRef(0);
+  const frameSeenRef = useRef(false);
+  const playingRef = useRef(false);
+  useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    const seen = new IntersectionObserver(([entry]) => {
+      if (performance.now() - layoutShiftAtRef.current >= LAYOUT_SETTLE_MS) frameSeenRef.current = entry.isIntersecting;
+    }, { threshold: 0.3 });
+    seen.observe(el);
+    let timer = 0;
+    let lastW = window.innerWidth;
+    const onResize = () => {
+      // 手机上地址栏伸缩也会触发 resize，只认宽度变化（旋转、改窗口宽度）
+      if (window.innerWidth === lastW) return;
+      lastW = window.innerWidth;
+      if (!frameSeenRef.current && !playingRef.current) return;
+      layoutShiftAtRef.current = performance.now();
+      window.clearTimeout(timer);
+      // iOS 旋转后要过一会儿才给出最终尺寸：先挪一次，稍后再校正一次
+      const recenter = () => {
+        layoutShiftAtRef.current = performance.now();
+        el.scrollIntoView({ block: 'center', behavior: 'auto' });
+      };
+      requestAnimationFrame(() => requestAnimationFrame(recenter));
+      timer = window.setTimeout(recenter, 450);
+    };
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      seen.disconnect();
+      window.clearTimeout(timer);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+
   // ── 影院模式：开播即熄灯，播完 / 滚走 / 点暗处 / Esc 亮灯 ──
   const wasPlayingRef = useRef(false);
   useEffect(() => {
@@ -255,7 +303,7 @@ export function FilmSection() {
     // 否则横屏手机上先按旧尺寸居中、随后片子变矮，顶上一截就跑出屏幕
     const raf = requestAnimationFrame(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }));
     const io = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) setTheater(false);
+      if (!entry.isIntersecting && performance.now() - layoutShiftAtRef.current >= LAYOUT_SETTLE_MS) setTheater(false);
     }, { threshold: 0.35 });
     io.observe(el);
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -275,7 +323,7 @@ export function FilmSection() {
     if (!el || !playing) return;
     const io = new IntersectionObserver(
       ([entry]) => {
-        if (!entry.isIntersecting && !document.fullscreenElement) pause();
+        if (!entry.isIntersecting && !document.fullscreenElement && performance.now() - layoutShiftAtRef.current >= LAYOUT_SETTLE_MS) pause();
       },
       { threshold: 0.2 },
     );
