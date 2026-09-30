@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { createServer } from 'vite';
 
 /*
@@ -11,6 +12,8 @@ import { createServer } from 'vite';
  * 用法（在 prd-admin 目录下）：
  *   node scripts/render-landing-film.mjs                    # 中文，1080p30，输出到系统临时目录
  *   FILM_LANG=en FILM_FPS=60 FILM_OUT=./film-en.mp4 node scripts/render-landing-film.mjs
+ *
+ * 依赖：无头 Chromium 取自 playwright，它不在 prd-admin 的依赖里，先在仓库根目录跑 `cd cds && pnpm install`。
  *
  * 可选环境变量：
  *   FILM_LANG   zh | en（默认 zh）
@@ -25,6 +28,7 @@ import { createServer } from 'vite';
  *   FILM_QUERY  额外拼到导出页地址上的参数（如 variant=b，样片页用来切版式）
  *   FILM_DPR    像素倍率（默认 1；手机竖屏样片用 2，否则 390 宽的画面糊）
  *   FILM_AUDIO  另有 none：不带音轨（首屏循环本来就是静音的）
+ *   FILM_CHROMIUM  Chromium 可执行文件（默认用 playwright 自带的；版本对不上时指定，如 /opt/pw-browsers/chromium）
  *   FILM_STILLS 只出静帧不出视频，逗号分隔的秒数，如 "1.5,12.1,33"（审片用，输出到 FILM_OUT 同目录）
  *
  * 原理：起一个 vite dev server，用无头 Chromium 打开 scripts/film/render.html，
@@ -63,14 +67,38 @@ function findFfmpeg() {
   throw new Error('找不到带 libx264 的 ffmpeg：设置 FFMPEG=<路径>，或 `pip install imageio-ffmpeg`');
 }
 
-/** playwright 不在 prd-admin 的依赖里（与 landing-seam-audit 等脚本一样用全局安装的那份）；ESM 不认 NODE_PATH，所以回落到 npm 全局目录。 */
+/**
+ * playwright 不是 prd-admin 的依赖（这是离线导出脚本，不该把它带进镜像构建与锁文件）。
+ * 依次找：本目录能解析到的 → npm 全局目录（原有做法，保持不变）→ 仓库里正式声明了它的 cds 工作区（`cd cds && pnpm install`）。
+ * 都找不到就明说该装在哪，不抛一个光秃秃的 ERR_MODULE_NOT_FOUND（Codex P1，PR #1650）。
+ * ESM 不认 NODE_PATH，所以后两处都按文件路径解析后再 import。
+ */
 async function loadChromium() {
+  const tried = [];
   try {
     return (await import('playwright')).chromium;
-  } catch {
+  } catch (e) {
+    tried.push(`prd-admin: ${e.code ?? e.message}`);
+  }
+  try {
     const globalRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim();
     return (await import(pathToFileURL(path.join(globalRoot, 'playwright', 'index.mjs')).href)).chromium;
+  } catch (e) {
+    tried.push(`npm 全局: ${e.code ?? e.message}`);
   }
+  const cdsManifest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../cds/package.json');
+  try {
+    // createRequire 按 require 条件解析到 CJS 入口，具名导出挂在 default 上
+    const mod = await import(pathToFileURL(createRequire(cdsManifest).resolve('playwright')).href);
+    const chromium = mod.chromium ?? mod.default?.chromium;
+    if (!chromium) throw new Error('cds 工作区的 playwright 没有导出 chromium');
+    return chromium;
+  } catch (e) {
+    tried.push(`cds 工作区: ${e.code ?? e.message}`);
+  }
+  throw new Error(
+    `找不到 playwright。在仓库根目录执行 \`cd cds && pnpm install\`（cds 工作区已声明它）后重试。\n已尝试：\n  ${tried.join('\n  ')}`,
+  );
 }
 
 async function main() {
@@ -92,7 +120,11 @@ async function main() {
   const port = server.config.server.port ?? server.httpServer?.address()?.port;
   const url = `http://localhost:${port}/${PAGE}?lang=${LANG}&w=${VW}&h=${VH}${process.env.FILM_QUERY ? `&${process.env.FILM_QUERY}` : ''}`;
 
-  const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+  const browser = await chromium.launch({
+    args: ['--autoplay-policy=no-user-gesture-required'],
+    // 浏览器与 playwright 版本对不上时（如沙箱预装的 /opt/pw-browsers/chromium）可显式指定
+    ...(process.env.FILM_CHROMIUM ? { executablePath: process.env.FILM_CHROMIUM } : {}),
+  });
   try {
     const page = await browser.newPage({ viewport: { width: VW, height: VH }, deviceScaleFactor: Number(process.env.FILM_DPR || 1) });
     page.on('pageerror', (err) => console.error('[page]', err.message));
