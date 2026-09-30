@@ -13,7 +13,10 @@
  * 想用它就 import，不要再抄一遍色值。
  */
 
-export const HERO_GRADIENT_STOPS = ['#CE6B41', '#D97757', '#E0A06B'] as const;
+// 2026-09-30 收成几乎一色（用户：「整个系统的配色总是差点高级感」）：原来三档从赭红跨到杏黄，
+// 大按钮看上去像促销贴纸。现在三档只差一点明度，远看是一块实色陶土，近看留一丝体积感。
+// 名字仍叫渐变、调用方一处不用改；三档保持互不相同，「色标被抄」的守卫才认得出副本。
+export const HERO_GRADIENT_STOPS = ['#D4714F', '#D97757', '#DC7E5F'] as const;
 export const HERO_GRADIENT = `linear-gradient(135deg, ${HERO_GRADIENT_STOPS[0]} 0%, ${HERO_GRADIENT_STOPS[1]} 48%, ${HERO_GRADIENT_STOPS[2]} 100%)`;
 /**
  * 铺在 HERO_GRADIENT 上的文字色。

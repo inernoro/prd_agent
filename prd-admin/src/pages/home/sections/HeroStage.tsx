@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { ArrowRight, BookOpen, Image as ImageIcon, Play, Volume2 } from 'lucide-react';
+import { ArrowUp, BookOpen, CornerDownLeft, Image as ImageIcon, Play, Volume2 } from 'lucide-react';
 
 import { useLanguage } from '../contexts/LanguageContext';
 import { requestFilmPlay } from '../film/filmEvents';
@@ -40,28 +40,16 @@ const INTRO_CSS = `
 }
 `;
 
-/**
- * 手机上那句话要折成两行时，只许在词与词之间折（「把仓库的 doc/ 目录 / 同步进知识库」），
- * 不许把「知识库」拆成「知识 / 库」、更不许剩一个孤字挂在第二行（2026-09-30 用户截图）。
- * 做法：按词切分，在词的开头插零宽空格作为唯一的换行机会，再配 word-break: keep-all。
- * 返回逐字数组，方便「已打出的前 n 个字」与「还没打的部分」各自拼接。
- */
-function phraseChars(text: string): string[] {
-  const chars = Array.from(text);
-  const Segmenter = (Intl as unknown as { Segmenter?: new (l: string, o: { granularity: 'word' }) => { segment: (s: string) => Iterable<{ index: number; segment: string }> } }).Segmenter;
-  if (!Segmenter) return chars;
-  // 单字词（「库」「会」「进」、标点）粘在前一个词上：词典会把「知识库」切成「知识 | 库」，
-  // 照切出来的边界折行，最常见的结果恰好就是一个孤字落在第二行
-  const starts = new Set<number>();
-  for (const seg of new Segmenter('zh', { granularity: 'word' }).segment(text)) {
-    if (Array.from(seg.segment).length > 1) starts.add(seg.index);
-  }
-  let offset = 0;
-  return chars.map((c, i) => {
-    const out = i > 0 && starts.has(offset) ? `\u200B${c}` : c;
-    offset += c.length;
-    return out;
-  });
+const span01 = (x: number) => Math.min(1, Math.max(0, x));
+
+/** 输入框里的字超出一行时，像真输入框一样把末尾（光标所在）滚进视野 */
+function useKeepEndVisible(dep: string) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [dep]);
+  return ref;
 }
 
 function introStyle(on: boolean, name: 'focus' | 'rise', delay: number, duration: number): CSSProperties | undefined {
@@ -100,13 +88,18 @@ export interface HeroSkin {
   galaxy?: { hub?: string; leaf?: string; core?: string };
 }
 
+/**
+ * 现行配色（2026-09-30 定为「陶」）：全屏只有陶土一个色相——发送键、光标、进度点、星系都是它的深浅，
+ * 标题近乎纯白。对比稿里另外三套（现状 / 素 / 冷）留在样片页，见 scripts/film/heroSampleEntry.tsx。
+ */
 export const HERO_SKIN_DEFAULT: HeroSkin = {
-  cta: FILM.brandGradient,
+  cta: FILM.clay,
   ctaFg: FILM.onBrand,
   title: FILM.titleGradient,
   accent: FILM.clay,
-  chipIcon: FILM.sand,
-  dot: FILM.sand,
+  chipIcon: FILM.clay,
+  dot: FILM.clay,
+  galaxy: { hub: FILM.galaxyWarmHub, leaf: FILM.galaxyWarmLeaf, core: FILM.clay },
 };
 
 export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAULT }: { t?: number; onGetStarted?: () => void; skin?: HeroSkin }) {
@@ -165,11 +158,12 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
   const compact = w > 0 && w < 700;
   const beat = heroLoopBeat(t, hero.loopPrompts);
   const Icon = AGENT_ICONS[beat.shot];
+  const textRef = useKeepEndVisible(`${beat.shot}:${beat.shown}`);
   const pressScale = 1 - 0.06 * Math.sin(Math.PI * beat.press);
   const caretOn = beat.typing && Math.floor(t * 2.2) % 2 === 0;
-  // 手机上按整句排好两行再逐字显出来：没打到的字先占着位置（透明），打字过程中行不会跳
-  const parts = compact ? phraseChars(hero.loopPrompts[beat.shot]) : null;
-  const typedCount = Array.from(beat.shown).length;
+  // 回车键帽：整句打完就亮出来，按下的那一拍沉下去，按完淡掉
+  const keycap = beat.ready ? Math.max(0, 1 - span01((beat.press - 0.6) / 0.4)) : 0;
+  const sendLit = beat.ready || beat.press > 0;
   const dpr = typeof window === 'undefined' ? 1 : Math.min(window.devicePixelRatio || 1, compact ? 2 : 1.5);
 
   return (
@@ -248,14 +242,20 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
         }}
       >
         <div style={introStyle(intro, 'rise', 0.0, 0.6)}>
+          {compact && (
+            <div className="flex items-center" style={{ gap: 6, marginBottom: 10, paddingLeft: 6, fontSize: 12, color: FILM.gray, letterSpacing: '0.04em' }}>
+              <Icon size={13} color={skin.chipIcon} />
+              {hero.loopAgents[beat.shot]}
+            </div>
+          )}
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: compact ? 8 : 14,
-              minHeight: compact ? 58 : 74,
-              padding: compact ? '6px 6px 6px 8px' : '0 8px 0 10px',
-              borderRadius: compact ? 22 : 999,
+              minHeight: compact ? 56 : 72,
+              padding: compact ? '0 7px 0 8px' : '0 10px 0 10px',
+              borderRadius: 999,
               background: `${FILM.panel}C7`,
               border: `1px solid ${FILM.lineStrong}`,
               boxShadow: `${FILM.shadow}, inset 0 1px 0 ${FILM.line}`,
@@ -263,61 +263,80 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
               WebkitBackdropFilter: 'blur(18px) saturate(140%)',
             }}
           >
+            {/* 这句话交给哪个 Agent：宽屏放在框里左侧，手机放到框上方（框里只留那句话与发送键） */}
+            {!compact && (
+              <span
+                className="shrink-0 inline-flex items-center"
+                style={{ gap: 6, padding: '9px 15px', borderRadius: 999, background: FILM.panelRaised, fontSize: 14, color: FILM.text, whiteSpace: 'nowrap' }}
+              >
+                <Icon size={16} color={skin.chipIcon} />
+                {hero.loopAgents[beat.shot]}
+              </span>
+            )}
+            {/* 那句话：永远一行。超出时像真输入框一样整行往左滚，末尾的字与光标始终看得见 */}
             <span
-              className="shrink-0 inline-flex items-center"
-              style={{ gap: 6, padding: compact ? '6px 10px' : '9px 15px', borderRadius: 999, background: FILM.panelRaised, fontSize: compact ? 12 : 14, color: FILM.text, whiteSpace: 'nowrap' }}
-            >
-              <Icon size={compact ? 13 : 16} color={skin.chipIcon} />
-              {hero.loopAgents[beat.shot]}
-            </span>
-            <span
+              ref={textRef}
               className="flex-1 min-w-0"
               style={{
-                fontSize: compact ? 14 : 19,
+                display: 'flex',
+                alignItems: 'center',
+                fontSize: compact ? 15 : 19,
                 lineHeight: 1.4,
                 color: FILM.text,
-                whiteSpace: compact ? 'normal' : 'nowrap',
-                wordBreak: compact ? 'keep-all' : undefined,
-                // 两行尽量等长：否则浏览器会先把第一行塞满，第二行只剩「知识库」三个字
-                textWrap: compact ? 'balance' : undefined,
-                overflowWrap: compact ? 'anywhere' : undefined,
+                whiteSpace: 'nowrap',
                 overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                paddingLeft: compact ? 10 : 0,
+                // 整行往左滚之后，左沿淡出，别让第一个字被一刀切掉
+                maskImage: 'linear-gradient(90deg, transparent 0, black 10px)',
+                WebkitMaskImage: 'linear-gradient(90deg, transparent 0, black 10px)',
               }}
             >
-              {parts ? parts.slice(0, typedCount).join('') : beat.shown}
-              {/* 光标不占宽度，免得它自己挤出一个换行点 */}
-              <span aria-hidden style={{ position: 'relative', display: 'inline-block', width: 0, height: '1em', verticalAlign: 'middle' }}>
-                <span
-                  style={{ position: 'absolute', left: 2, top: '50%', width: 2, height: compact ? 15 : 20, transform: 'translateY(-50%)', background: skin.accent, opacity: caretOn ? 1 : 0 }}
-                />
+              <span className="shrink-0">{beat.shown}</span>
+              <span
+                aria-hidden
+                className="shrink-0"
+                style={{ display: 'inline-block', width: 2, height: compact ? 17 : 20, marginLeft: 3, background: skin.accent, opacity: caretOn ? 1 : 0 }}
+              />
+              {/* 回车键帽：打完才出现，按下那一拍沉一下 */}
+              <span
+                aria-hidden
+                className="shrink-0 inline-flex items-center justify-center"
+                style={{
+                  marginLeft: 8,
+                  width: compact ? 26 : 30,
+                  height: compact ? 22 : 26,
+                  borderRadius: 6,
+                  border: `1px solid ${FILM.lineStrong}`,
+                  borderBottomWidth: beat.press > 0 && beat.press < 1 ? 1 : 2,
+                  color: FILM.textDim,
+                  background: FILM.panelRaised,
+                  opacity: keycap,
+                  transform: `translateY(${beat.press > 0 && beat.press < 1 ? 1 : 0}px) scale(${0.9 + 0.1 * keycap})`,
+                  transition: intro ? 'opacity .25s ease' : undefined,
+                }}
+              >
+                <CornerDownLeft size={compact ? 13 : 15} />
               </span>
-              {parts && beat.shown && (
-                <span aria-hidden style={{ color: 'transparent' }}>
-                  {parts.slice(typedCount).join('')}
-                </span>
-              )}
             </span>
+            {/* 唯一的按钮：一个发送键。没字时是暗的，整句打完亮起陶土色 */}
             <button
               type="button"
               onClick={onGetStarted}
-              className="shrink-0 inline-flex items-center transition-transform duration-200 hover:scale-[1.03] active:scale-[0.98]"
+              aria-label={hero.primaryCta}
+              title={hero.primaryCta}
+              className="shrink-0 grid place-items-center rounded-full transition-transform duration-200 hover:scale-[1.06] active:scale-[0.96]"
               style={{
-                gap: 8,
-                padding: compact ? '11px 14px' : '14px 26px',
-                borderRadius: 999,
-                background: skin.cta,
-                color: skin.ctaFg,
-                fontSize: compact ? 13 : 16,
-                fontWeight: 700,
-                fontFamily: 'var(--font-display)',
-                whiteSpace: 'nowrap',
+                width: compact ? 42 : 52,
+                height: compact ? 42 : 52,
+                background: sendLit ? skin.cta : FILM.panelRaised,
+                color: sendLit ? skin.ctaFg : FILM.gray,
                 transform: `scale(${pressScale})`,
-                boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 30px ${skin.accent}` : `0 8px 26px ${FILM.spaceEdge}`,
+                boxShadow: beat.press > 0 && beat.press < 1 ? `0 0 28px ${skin.accent}` : 'none',
+                // 逐帧导出时不挂过渡：每一帧都是跳着 seek 的，过渡会让截图停在半亮
+                transition: intro ? 'background .35s ease, color .35s ease' : undefined,
               }}
             >
-              {hero.primaryCta}
-              {!compact && <ArrowRight size={16} />}
+              <ArrowUp size={compact ? 20 : 22} strokeWidth={2.4} />
             </button>
           </div>
           {/* 两个镜头的进度：哪一句正在「生成」背后的画面 */}

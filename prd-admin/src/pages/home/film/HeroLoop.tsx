@@ -45,6 +45,12 @@ const POSTER_DESIGN_W = 468;
 /** 镜头 B 的四张图各自在哪一刻开始显影 */
 const DEVELOP_AT = [10.25, 10.65, 11.05, 11.45];
 
+/**
+ * 打完字到按下回车之间留的空档：句末先亮出一个回车键帽，停一拍再按下去。
+ * 用户原话（2026-09-30）：「输入完之后出现回车键的，而且也只有一个发送 icon」。
+ */
+const ENTER_LEAD = 0.75;
+
 export interface HeroLoopBeat {
   /** 当前是哪一句（0 = 知识库，1 = 视觉创作） */
   shot: 0 | 1;
@@ -52,8 +58,10 @@ export interface HeroLoopBeat {
   shown: string;
   /** 光标是否在闪（正在打字） */
   typing: boolean;
-  /** 「开启创作」按钮按下的进度（0..1，一次完整手势） */
+  /** 按下回车 / 发送的进度（0..1，一次完整手势） */
   press: number;
+  /** 这一句已经整句打完、还没被清空（回车键帽与发送键亮起的判据） */
+  ready: boolean;
 }
 
 /** 输入框那一层读这个：此刻该显示哪一句、打到第几个字、按钮按没按。 */
@@ -61,15 +69,17 @@ export function heroLoopBeat(t: number, prompts: [string, string]): HeroLoopBeat
   const shot: 0 | 1 = t >= SHOTS[1].typeAt - 0.4 ? 1 : 0;
   const { typeAt, pressAt } = SHOTS[shot];
   const text = prompts[shot];
-  const cps = Array.from(text).length / Math.max(0.6, pressAt - 0.25 - typeAt);
+  const total = Array.from(text).length;
+  const cps = total / Math.max(0.6, pressAt - ENTER_LEAD - typeAt);
   // 按下之后字还留着，到下一句开打之前清空；末尾淡回深空时也清空，和第 0 秒一致
   const clearAt = shot === 0 ? SHOTS[1].typeAt - 0.4 : HERO_LOOP_DURATION - 1.0;
   const shown = t < clearAt ? typed(text, t, typeAt, cps) : '';
   return {
     shot,
     shown,
-    typing: t >= typeAt - 0.2 && t < pressAt,
+    typing: t >= typeAt - 0.2 && Array.from(shown).length < total,
     press: span(t, pressAt, pressAt + 0.26),
+    ready: total > 0 && Array.from(shown).length >= total,
   };
 }
 

@@ -47,7 +47,8 @@ export const FILM = {
   brandGradient: HERO_GRADIENT,
   /** 铺在品牌渐变上的深墨字（两主题同为深墨，对比度见 HeroSection 的说明） */
   onBrand: HERO_GRADIENT_FG,
-  titleGradient: 'linear-gradient(180deg, #FFFFFF 0%, #FBF0E7 55%, #E7C3A8 100%)',
+  // 主标题：近乎纯白，只在下沿留一点暖（原来收在桃色 #E7C3A8，和陶土按钮、蓝星系三种颜色打架）
+  titleGradient: 'linear-gradient(180deg, #FFFFFF 0%, #FFFFFF 50%, #F3E4D9 100%)',
 
   vignette: 'radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.62) 100%)',
   ambient:
@@ -70,6 +71,9 @@ export const FILM = {
   spaceEdge: '#05060B',
   galaxyHub: '#A9C8FF',
   galaxyCore: '#FFF6EC',
+  // 首屏循环用的暖色星系：只取陶土一个色相的深浅，不按文档类型七彩（片花里那一幕仍照真实产品配色）
+  galaxyWarmHub: '#F2BFA3',
+  galaxyWarmLeaf: '#8A6A5C',
 } as const;
 
 /** 四张生成海报的画法（纯 CSS，无图片资源）。 */
