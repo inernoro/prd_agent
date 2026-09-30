@@ -39,7 +39,7 @@ def inspect(config, now):
         unknown = [t for t in targets if (t.get('lastSample') or {}).get('noData') or now * 1000 - (t.get('lastSample') or {}).get('t', 0) > 660_000]
         collection_down = any(t['id'].startswith('monitor@self-collection-') and t['status'] == 'down' for t in targets)
         # 公开快照只发布结论；内部指标值、地址、异常和其他项目一律不外发。
-        metrics = [{'id': t['id'], 'name': t['name'], 'startedAt': iso(t['openIncidentSince']/1000) if t.get('openIncidentSince') else None, 'state': 'unknown' if t in unknown else t['status']}
+        metrics = [{'id': t['id'], 'name': t['name'], 'startedAt': iso(t['openIncidentSince']/1000) if t.get('openIncidentSince') else None, 'state': 'unknown' if t in unknown else t['status'], 'lastKnownState': t['status']}
                    for t in targets if not t['id'].startswith('monitor@self-collection-')]
         data_ok = fresh and bool(targets) and not collection_down and not any(t.get('observeMode') != 'passive' or t.get('sampleCount') != 0 for t in unknown)
         return {'reachable': root_ok, 'dataOk': data_ok, 'metrics': metrics, 'observedAt': iso(now),
@@ -58,6 +58,8 @@ def advance(state, observation, now):
         state['failures'] = 0
         state['healthySince'] = None
     state['checkedAt'] = now
+    if not observation.get('metrics') and state.get('observation', {}).get('metrics'):
+        observation['metrics'] = [{**metric, 'state': 'unknown'} for metric in state['observation']['metrics']]
     state['observation'] = observation
     event = state.get('incident')
     transition = None

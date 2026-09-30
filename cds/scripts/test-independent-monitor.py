@@ -35,6 +35,11 @@ class IndependentMonitorTest(unittest.TestCase):
         config={'cdsBase':'https://example.com','headers':{'key':'secret'},'bark':{'key':'secret'}}
         state={'headers':config['headers'],'deliveries':[{'private':'secret'}],'observation':{'rawError':'secret'}}
         self.assertNotIn('secret',str(m.public_snapshot(state,config,2000)))
+    def test_outage_preserves_last_known_unresolved_target(self):
+        state={'observation':{'metrics':[{'id':'m1','name':'Webhook','state':'down','lastKnownState':'down'}]}}
+        m.advance(state,{'reason':'unreachable','metrics':[]},1000)
+        self.assertEqual(state['observation']['metrics'][0]['state'],'unknown')
+        self.assertEqual(state['observation']['metrics'][0]['lastKnownState'],'down')
     def test_snapshot_failure_keeps_notification_pending(self):
         state={'failures':2,'checkedAt':1000}
         with patch.object(m,'inspect',return_value={'reason':'unreachable'}),patch.object(m,'publish',side_effect=RuntimeError()):
