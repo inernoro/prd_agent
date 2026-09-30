@@ -155,10 +155,12 @@ export function HeroStage({ t: controlledT, onGetStarted, skin = HERO_SKIN_DEFAU
   // 入场动画只在第一次自己播时跑：导出样片（受控 t）与「减少动态」都不跑
   const intro = controlledT === undefined && !reduced;
   const { w, h } = box;
-  const compact = w > 0 && w < 700;
   // 矮屏（手机横放 844x390、矮窗口）：宽屏版式按 680 高排，输入框和片花按钮会掉出首屏（Codex P2，PR #1650）。
-  // 最小高度改成不超过屏高，这里才量得到真实高度；矮于 560 就换一套上半屏紧凑版式。
-  const short = !compact && h > 0 && h < 560;
+  // 最小高度改成不超过屏高，这里才量得到真实高度；横着且矮于 560 就换一套上半屏紧凑版式。
+  // 判据只看高度与朝向、不看宽度：667x375、568x320 这类窄屏横放手机若按宽度落进竖屏版式，
+  // 标题从顶上排、输入框贴底，两头在 375 高里撞到一起（Codex P2 第二轮）。
+  const short = w > 0 && h > 0 && h < 560 && w > h;
+  const compact = w > 0 && w < 700 && !short;
   const shortTitle = Math.round(Math.max(34, Math.min(60, h * 0.13)));
   const shortInputTop = NAV_H + 8 + 23 + shortTitle * 1.04 + 30 + 16;
   const beat = heroLoopBeat(t, hero.loopPrompts);

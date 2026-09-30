@@ -363,6 +363,9 @@ export function FilmSection() {
   };
 
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    // 焦点在片内的按钮上时，空格是那颗按钮自己的点击：交给浏览器，别在这里再切一次播放——
+    // 否则播放键被切两次等于没按，静音键、全屏键按空格还会顺带暂停（Codex P2，PR #1650）
+    if (e.key === ' ' && e.target !== e.currentTarget && (e.target as HTMLElement).closest('button, a, input, select, textarea')) return;
     if (e.key === ' ' || e.key === 'k') {
       e.preventDefault();
       toggle();
