@@ -24,10 +24,11 @@
  * doc/plan.cds.multi-project-phases.md P4.
  */
 
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
+import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { hasActiveGrant } from '../services/identity.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
@@ -51,6 +52,7 @@ import {
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { normalizeBranchGroups } from '../services/branch-groups.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
 import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
@@ -555,7 +557,10 @@ interface ProjectSummary extends Project, ProjectStats {
 }
 
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
-  return { ...project, ...stats, resourceUsage: usage ?? null };
+  // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
+  // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
+  const { branchGroups: _branchGroups, ...rest } = project;
+  return { ...rest, ...stats, resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
@@ -612,6 +617,28 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
     customEnv: maskEnvMap(summary.customEnv),
     defaultEnv: maskEnvMap(summary.defaultEnv),
   };
+}
+
+/**
+ * 分组保存请求体上限。校验能接受的最大请求约 2.4MB（30 组 × 200 个 320 字符的钉入 id + 每组 20 条
+ * 需要转义的 100 字规则），钉入 id 限定为无需 JSON 转义的字符，才让这个上界可推；用例里有最坏情形的实测。
+ */
+export const BRANCH_GROUPS_BODY_LIMIT = '4mb';
+
+/**
+ * 这个请求是不是分组保存（全局 JSON 解析器要对它放行，交给路由自带的大上限解析器）。
+ * 判据必须与 Express 路由的实际匹配一致：Express 默认大小写不敏感、接受末尾斜杠；
+ * 只认精确小写路径的话，`/branch-groups/` 这类路由照样接的请求会先被全局 100kb 上限拦成 413（Codex P2，PR #1647）。
+ */
+export function isBranchGroupsSaveRequest(method: string, path: string): boolean {
+  return method === 'PUT' && /^\/api\/projects\/[^/]+\/branch-groups\/?$/i.test(path);
+}
+
+/** 分组保存等落盘的上限：与分支状态落盘同一个环境变量口径（CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS）。 */
+function branchGroupsFlushTimeoutMs(): number {
+  const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return 30_000;
+  return Math.max(100, Math.min(raw, 30_000));
 }
 
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
@@ -1839,6 +1866,181 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     stateService.save();
     res.json({ ok: true, profile });
   });
+
+  /**
+   * 分支列表的自定义分组（2026-09-29）：项目级、项目内所有人共享一套。
+   *
+   * PUT 整体替换并带乐观并发：请求里的 baseUpdatedAt 是客户端上次看到的版本，
+   * 与服务端当前不一致说明别人刚改过——返回 409 和最新版本，由界面提示后重放，
+   * 不让两个人的编辑互相静默覆盖。首次保存 baseUpdatedAt 传 null。
+   */
+  router.get('/projects/:id/branch-groups', (req, res) => {
+    const settings = stateService.getProjectBranchGroups(req.params.id);
+    if (!settings) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    // 父实例镜像来的项目（预览实例里）只读：分组跟着镜像刷新走，这里改了父实例收不到、下次刷新还会被盖掉。
+    const readOnly = Boolean(stateService.getProject(req.params.id)?.mirror);
+    res.json({ ok: true, ...settings, readOnly });
+  });
+
+  // 同一项目的分组写入排成一条链：落盘要 await，期间第二个请求若先读到还没确认落盘的新版本、
+  // 而前一个随后失败回滚，就会把第二个的结果一起冲掉（Codex P1，PR #1647）。
+  const branchGroupWriteChains = new Map<string, Promise<void>>();
+  // 整份分组每次都整体重发：上限内的合法配置（30 组 × 200 钉入 × 20 条规则）可达数百 KB，
+  // 超过全局 100kb 的 JSON 上限会在进路由前就被 413，之后这个项目再也改不了分组（Codex P2，PR #1647）。
+  // 全局解析器对这条路径放行（server.ts），这里用自带的解析器，上限按最大合法配置留足余量。
+  const branchGroupsJsonParser = express.json({ limit: BRANCH_GROUPS_BODY_LIMIT });
+  router.put('/projects/:id/branch-groups', branchGroupsJsonParser, (req, res) => {
+    // 按解析后的项目 id 分队：同一项目用 id 或 slug（大小写不同）访问时必须进同一条队（Codex P2，PR #1647）
+    const key = stateService.getProject(req.params.id)?.id ?? String(req.params.id);
+    // 排队期间客户端已断开（放弃或重试）：轮到它时直接跳过，不让死请求占着队列等满一轮落盘超时（Codex P2，PR #1647）
+    let abandoned = false;
+    res.on('close', () => { if (!res.writableEnded) abandoned = true; });
+    const previous = branchGroupWriteChains.get(key) || Promise.resolve();
+    const run = previous.then(() => (abandoned ? undefined : putBranchGroups(req, res))).catch((err) => {
+      console.error('[branch-groups] 保存分组时出现未处理的异常', err);
+      if (!res.headersSent) res.status(500).json({ error: 'persist_failed', message: '分组没有保存：服务端出错，请稍后重试' });
+    });
+    branchGroupWriteChains.set(key, run);
+    void run.finally(() => {
+      if (branchGroupWriteChains.get(key) === run) branchGroupWriteChains.delete(key);
+    });
+  });
+
+  async function putBranchGroups(req: import('express').Request, res: import('express').Response): Promise<void> {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    if (project.mirror) {
+      res.status(409).json({
+        error: 'mirror_read_only',
+        message: '这是从父实例镜像来的只读项目，分组要在父实例上改；这里改了父实例收不到，下次镜像刷新也会被覆盖',
+      });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const body = (req.body || {}) as { groups?: unknown; baseUpdatedAt?: unknown };
+    // 整份替换共享的分组，版本号必须带：不带就跳过并发检查，等于允许静默覆盖别人刚存的修改
+    // （Codex P2，PR #1647）。第一次保存（还没有分组）显式传 null。
+    if (!Object.prototype.hasOwnProperty.call(body, 'baseUpdatedAt')
+      || (body.baseUpdatedAt !== null && typeof body.baseUpdatedAt !== 'string')) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'baseUpdatedAt',
+        message: '缺少 baseUpdatedAt：填上读取分组时拿到的 updatedAt，第一次保存（还没有分组）填 null',
+      });
+      return;
+    }
+    const current = stateService.getProjectBranchGroups(project.id);
+    const normalized = normalizeBranchGroups(body.groups);
+    // 提交的内容与已存的完全相同（归一化后比较）：不写、不推进版本号、不改修改人，直接回当前版本。
+    // 否则 Agent 直接调接口的空保存会凭空推进版本号，让别人并发的真实修改撞 409、修改记录谎称改过；
+    // 成功响应丢了之后原样重试（带着旧 baseUpdatedAt）也会被判冲突——而那份内容其实已经是现状（Codex P2，PR #1647）。
+    if (normalized.ok && current && JSON.stringify(normalized.groups) === JSON.stringify(current.groups)) {
+      res.json({ ok: true, unchanged: true, ...current });
+      return;
+    }
+    if ((body.baseUpdatedAt ?? null) !== (current?.updatedAt ?? null)) {
+      res.status(409).json({
+        error: 'stale',
+        message: '分组刚被别人改过，已返回最新版本；请在最新版本上重新修改',
+        latest: current,
+      });
+      return;
+    }
+    if (!normalized.ok) {
+      res.status(400).json({ error: 'validation', field: normalized.field, message: normalized.message });
+      return;
+    }
+    // 修改人：Agent / 系统调用记执行者（ai:<name> / system:<x>）；真人优先记登录名，编辑器里好认。
+    // 按服务端鉴权盖下的凭据标记判定 Agent，而不是再去认请求头的各种写法：CDS 签发的两种 Agent Key
+    // （项目级 cdsp_ → cdsProjectKey，全局 cdsg_ → cdsAccess）无论用哪种头传来，鉴权通过后都会盖上。
+    // 通用 actor 解析只认 x-ai-access-key / x-cds-ai-token 两个头，其余写法会被记成真人（Codex P2 两条，PR #1647）；
+    // 让通用解析认全所有凭据写法是全局改动，记在 debt.cds.md。
+    // 身份只认服务端鉴权盖下的标记，不认调用方自己带的请求头：`x-cds-trigger` / `x-ai-impersonate`
+    // 谁都能加，已登录的真人带上它们就能把修改人伪造成 system:* 或任意 AI（Codex P2，PR #1647）。
+    // 所以 Agent / 系统署名只在确有 Agent 凭据时采用（此时 AI 名字取请求头里的自报名，凭据本身已被鉴权）。
+    const resolvedActor = resolveActorFromRequest(req as any);
+    const authStamps = req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown };
+    const viaAgentKey = Boolean(authStamps.cdsProjectKey || authStamps.cdsAccess);
+    const actor = viaAgentKey ? (resolvedActor.startsWith('ai') ? resolvedActor : 'ai') : 'user';
+    // CdsUser 上是 githubLogin（本地账号与 username 同值）/ username，没有 login 字段（Codex P2，PR #1647）。
+    const cdsUser = (req as unknown as { cdsUser?: { githubLogin?: string; username?: string } }).cdsUser;
+    const login = cdsUser?.githubLogin || cdsUser?.username;
+    // 版本号必须严格递增：同一毫秒内的两次写入若拿到同一个时间戳，持旧版本的客户端就能绕过 409
+    // （Codex P2，PR #1647）。撞上或落后于上一版时顺延 1 毫秒。
+    const previousAt = current?.updatedAt ? Date.parse(current.updatedAt) : Number.NaN;
+    const nowMs = Date.now();
+    const settings = {
+      groups: normalized.groups,
+      updatedAt: new Date(Number.isFinite(previousAt) && nowMs <= previousAt ? previousAt + 1 : nowMs).toISOString(),
+      updatedBy: actor === 'user' && login ? login : actor,
+    };
+    // 落盘确认之后才回成功：各存储都是延迟写（save 只排队，磁盘 / 数据库错误要到 flush 才浮出来），
+    // 只 try save() 会先回 200、再在后台丢数据（Codex P1，PR #1647）。
+    // 落盘失败或超时就把内存里的分组与版本号恢复成保存前，否则接口报失败、界面说已撤回，
+    // 下一次 GET 或冲突判定却看到这份「没存成」的分组（Codex P2，PR #1647）。
+    const previousGroups = project.branchGroups;
+    const previousProjectUpdatedAt = project.updatedAt;
+    const requestId = String((req as unknown as { cdsRequestId?: string }).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
+    const logFailure = (err: unknown) => {
+      // 原始错误只进服务端日志：里面可能有文件路径、数据库细节（Codex P1，PR #1647）
+      console.error(`[branch-groups] 项目 ${project.id} 的分组落盘失败（request ${requestId || '-'}）`, err);
+    };
+    stateService.setProjectBranchGroups(project.id, settings);
+    // 记下这次写入盖上的项目时间戳：等落盘期间别的接口（改名、改配置）也可能推进它，
+    // 回滚时只在它仍是这次写入的值时才恢复，否则会把别人的更新时间倒拨回去（Codex P2，PR #1647）
+    const ownProjectUpdatedAt = stateService.getProject(project.id)?.updatedAt;
+    let flushResult: BoundedFlushResult;
+    try {
+      stateService.save();
+      flushResult = await waitForFlushWithTimeout(() => stateService.flush(), branchGroupsFlushTimeoutMs(), logFailure);
+    } catch (err) {
+      logFailure(err);
+      flushResult = 'failed';
+    }
+    if (flushResult !== 'flushed') {
+      const live = stateService.getProject(project.id);
+      if (live) {
+        if (previousGroups === undefined) delete live.branchGroups;
+        else live.branchGroups = previousGroups;
+        if (live.updatedAt === ownProjectUpdatedAt) live.updatedAt = previousProjectUpdatedAt;
+      }
+      // 把恢复后的状态也写一次并等它落盘，覆盖掉可能稍后才落下去的那份新版本。只有这次落盘确认了，
+      // 才能对用户说「已恢复」；没确认就如实说存储里是哪一版不确定（Codex P1，PR #1647）。
+      let restoreResult: BoundedFlushResult;
+      try {
+        stateService.save();
+        restoreResult = await waitForFlushWithTimeout(() => stateService.flush(), branchGroupsFlushTimeoutMs(), logFailure);
+      } catch (err) {
+        logFailure(err);
+        restoreResult = 'failed';
+      }
+      const restored = restoreResult === 'flushed';
+      const cause = flushResult === 'timeout' ? '写入存储超时' : '写入存储失败';
+      res.status(flushResult === 'timeout' ? 503 : 500).json({
+        error: 'persist_failed',
+        restored,
+        message: restored
+          ? `分组没有保存：${cause}，已恢复为保存前的版本，请稍后重试`
+          : `分组没有保存：${cause}，恢复为保存前版本的写入也没能确认完成，存储里暂时可能是任一版本；请稍后刷新，以读到的为准`,
+        requestId,
+      });
+      return;
+    }
+    res.json({ ok: true, ...settings });
+  }
 
   router.get('/projects/:id/comment-template', (req, res) => {
     const project = stateService.getProject(req.params.id);
