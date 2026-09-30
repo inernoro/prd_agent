@@ -355,9 +355,12 @@ export function FilmSection() {
     [],
   );
 
+  // iPhone 上的 Safari 只给 <video> 全屏，普通元素没有 requestFullscreen：按钮会点了没反应。
+  // 不支持就不摆这颗按钮（手机上横屏看片走影院模式），也不响应 f 键（Codex P2，PR #1650）
+  const canFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled === true;
   const toggleFullscreen = () => {
     const el = frameRef.current;
-    if (!el) return;
+    if (!el || !canFullscreen) return;
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
     else void el.requestFullscreen?.().catch(() => undefined);
   };
@@ -375,6 +378,12 @@ export function FilmSection() {
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       seek(timeRef.current - 4);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      seek(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      seek(FILM_DURATION);
     } else if (e.key === 'm') {
       toggleMute();
     } else if (e.key === 'f') {
@@ -518,9 +527,12 @@ export function FilmSection() {
                   onPointerDown={onBarDown}
                   onPointerMove={onBarMove}
                   role="slider"
+                  // 声明了 slider 就得能被键盘聚焦；方向键 / Home / End 冒泡给播放区的 onKey 处理（Codex P2，PR #1650）
+                  tabIndex={0}
                   aria-valuemin={0}
                   aria-valuemax={Math.round(FILM_DURATION)}
                   aria-valuenow={Math.round(time)}
+                  aria-valuetext={formatClock(time)}
                   aria-label="seek"
                 >
                   <div className="relative w-full h-[4px] rounded-full" style={{ background: FILM.lineStrong }}>
@@ -550,9 +562,11 @@ export function FilmSection() {
                       {muted ? <VolumeX className="w-4 h-4 sm:w-[18px] sm:h-[18px]" /> : <Volume2 className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />}
                     </ControlButton>
                   )}
-                  <ControlButton label={film.controls.fullscreen} onClick={toggleFullscreen}>
-                    {fullscreen ? <Minimize2 className="w-4 h-4 sm:w-[18px] sm:h-[18px]" /> : <Maximize2 className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />}
-                  </ControlButton>
+                  {canFullscreen && (
+                    <ControlButton label={film.controls.fullscreen} onClick={toggleFullscreen}>
+                      {fullscreen ? <Minimize2 className="w-4 h-4 sm:w-[18px] sm:h-[18px]" /> : <Maximize2 className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />}
+                    </ControlButton>
+                  )}
                 </div>
               </div>
             )}
