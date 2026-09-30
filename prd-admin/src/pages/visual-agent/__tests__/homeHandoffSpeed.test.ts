@@ -63,7 +63,16 @@ describe('首页点发送后立刻进画板', () => {
     expect(submitBody).toContain('measureDataUrl(selectedImage.previewUrl)');
     expect(submitBody).toMatch(/imageSize/);
     expect(TAB).toContain('initialImageSizeRef');
-    expect(TAB).toMatch(/data\.imageSize/);
+    expect(TAB).toMatch(/handoff\.imageSize/);
+  });
+
+  it('【关键】data URL 参考图必须走交接包独立字段，不能再借消息标记传递', () => {
+    // buildInlineImageToken 会拒绝 data:/blob:；把首页预览图交给它会得到空字符串，
+    // 页面仍显示缩略图，但画板只收到文字，最终静默变成文生图。
+    expect(submitBody).toContain('createVisualAgentHandoffPayload({');
+    expect(submitBody).toMatch(/inlineImage:\s*selectedImage/);
+    expect(TAB).toContain('parseVisualAgentHandoff(stored)');
+    expect(MOBILE).toContain('parseVisualAgentHandoff(stored)');
   });
 
   it('【关键】首页带入的图必须直接递给发送，不靠 setState 刷新', () => {
@@ -185,7 +194,7 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
   });
 
   it('【关键】手机端也认交接包里的模型，不再退回第一个可用池', () => {
-    expect(MOBILE).toMatch(/data\.modelId/);
+    expect(MOBILE).toMatch(/handoff\.modelId/);
     expect(MOBILE).toMatch(/setPickedPoolId\(handedModelId\)/);
     // **读了还得读对**。上一版守卫到上一行为止就收工了，而那两行当时都成立：
     // 交接包确实读了、setPickedPoolId 确实调了——存进去的却是带前缀的选项 id

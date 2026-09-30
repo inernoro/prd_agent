@@ -34,7 +34,8 @@ import type { ImageAsset } from '@/services/contracts/visualAgent';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 import type { ModelAdapterInfo } from '@/services/contracts/models';
 import { buildVisualAgentModelOptions, selectVisualModel, visualImageSizeChoices } from '../ai-chat/visualAgentModelOptions';
-import { buildInlineImageToken, parseInlinePrompt, tryParseWxH } from '@/lib/visualAgentPromptUtils';
+import { buildInlineImageToken, tryParseWxH } from '@/lib/visualAgentPromptUtils';
+import { parseVisualAgentHandoff } from '@/lib/visualAgentHandoff';
 
 // 与 AdvancedVisualAgentTab 的持久化契约一致（schemaVersion=1）
 const PERSIST_SCHEMA_VERSION = 1;
@@ -198,15 +199,16 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       const stored = sessionStorage.getItem(sessionKey);
       if (!stored) return;
       sessionStorage.removeItem(sessionKey);
-      const data = JSON.parse(stored) as { messageText?: string; assetId?: string | null; modelId?: string };
-      const parsed = parseInlinePrompt(String(data.messageText ?? ''));
+      const handoff = parseVisualAgentHandoff(stored);
+      if (!handoff) return;
+      const parsed = handoff.prompt;
       if (parsed.text) {
         pendingInitRef.current = {
           text: parsed.text,
           size: parsed.size,
-          assetId: data.assetId,
+          assetId: handoff.assetId,
           // 首页现在不再预先上传参考图（跳转不等那个往返），assetId 通常是空的，
-          // 图只存在于 messageText 里的 [IMAGE src=dataURL]。只认 assetId 的话，
+          // 图存在交接包的独立 inlineImage 字段里。只认 assetId 的话，
           // 手机用户传的照片会被整个忽略，还照样扣一次生成（Codex PR #1476 P1）。
           inlineImage: parsed.inlineImage ?? null,
         };
@@ -229,7 +231,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       // 所以这里不再手写方向，而是**归一到选项 id 这个口径**：先剥再加，
       // 无论交接包给的是哪一种写法，结果都是同一个规范形式。判据纪律形状 6：
       // 读到的值真实存在不代表它是这里真正生效的那个。
-      const raw = String(data.modelId || '').trim();
+      const raw = handoff.modelId;
       const handedModelId = raw ? visualModelOptionIdOf(poolIdFromVisualModelOptionId(raw)) : '';
       if (handedModelId) setPickedPoolId(handedModelId);
     } catch {
