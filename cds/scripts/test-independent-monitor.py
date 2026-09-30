@@ -40,5 +40,13 @@ class IndependentMonitorTest(unittest.TestCase):
         with patch.object(m,'inspect',return_value={'reason':'unreachable'}),patch.object(m,'publish',side_effect=RuntimeError()):
             with self.assertRaises(RuntimeError):m.tick({'cdsBase':'https://example.com'},state,1060)
         self.assertEqual(state['pending']['transition'],'down')
+    def test_fresh_cds_report_does_not_duplicate_internal_notification(self):
+        state={'failures':2,'checkedAt':1000}
+        with patch.object(m,'inspect',return_value={'reason':'collection','notifyEligible':False}),patch.object(m,'publish'):
+            m.tick({'cdsBase':'https://example.com'},state,1060)
+        self.assertIsNotNone(state['incident']);self.assertNotIn('pending',state)
+        with patch.object(m,'inspect',return_value={'reason':'collection','notifyEligible':True}),patch.object(m,'publish'):
+            m.tick({'cdsBase':'https://example.com'},state,1120)
+        self.assertEqual(state['pending']['transition'],'down')
 
 if __name__=='__main__':unittest.main()

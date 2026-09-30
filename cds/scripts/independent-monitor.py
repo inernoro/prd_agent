@@ -43,10 +43,13 @@ def inspect(config, now):
                    for t in targets if not t['id'].startswith('monitor@self-collection-')]
         data_ok = fresh and bool(targets) and not collection_down and not any(t.get('observeMode') != 'passive' or t.get('sampleCount') != 0 for t in unknown)
         return {'reachable': root_ok, 'dataOk': data_ok, 'metrics': metrics, 'observedAt': iso(now),
-                'summaryAt': iso(generated), 'reason': 'unreachable' if not root_ok else 'collection' if not data_ok else None}
+                'summaryAt': iso(generated),
+                # 能取得新鲜汇总时，真实指标/采集告警由 CDS 负责，外部不重复发送。
+                'notifyEligible': not root_ok or not fresh or any(now * 1000 - (t.get('lastSample') or {}).get('t', 0) > 660_000 for t in targets),
+                'reason': 'unreachable' if not root_ok else 'collection' if not data_ok else None}
     except Exception:
         return {'reachable': root_ok, 'dataOk': False, 'metrics': [], 'observedAt': iso(now),
-                'reason': 'collection' if root_ok else 'unreachable'}
+                'notifyEligible': True, 'reason': 'collection' if root_ok else 'unreachable'}
 
 
 def advance(state, observation, now):
@@ -132,12 +135,17 @@ def publish(config, snapshot):
 def tick(config, state, now):
     observation = inspect(config, now)
     transition = advance(state, observation, now)
-    if transition:
+    event = state.get('incident')
+    eligible = observation.get('notifyEligible', True)
+    if transition == 'recovered':
         state['pending'] = {'transition': transition, 'attempts': 0, 'nextAt': now}
+    elif event and eligible and (state.get('notificationIncidentId') != event['id'] or transition == 'escalated'):
+        state['notificationIncidentId'] = event['id']
+        state['pending'] = {'transition': 'escalated' if transition == 'escalated' else 'down', 'attempts': 0, 'nextAt': now}
     # 页面先留证，再发通知；手机链接不会指向尚未发布的事件。
     publish(config, public_snapshot(state, config, now))
     pending = state.get('pending')
-    if pending and config.get('bark') and now >= pending['nextAt']:
+    if pending and (eligible or pending['transition'] == 'recovered') and config.get('bark') and now >= pending['nextAt']:
         accepted = notify(config, state, pending['transition'], now)
         pending['attempts'] += 1
         pending['nextAt'] = now + 300
