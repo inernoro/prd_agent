@@ -24,6 +24,7 @@ import {
   buildLegacyLogoutCookie,
   buildLogoutCookie,
   buildSessionCookie,
+  buildSsoLogoutCookie,
   GH_SESSION_COOKIE,
 } from './auth.js';
 import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
@@ -145,6 +146,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       res.setHeader('Set-Cookie', [
         buildSessionCookie(session.token, session.expiresAt, cookieSecure),
         buildLegacyLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
@@ -173,7 +175,11 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         req,
       );
       if (legacy) {
-        res.setHeader('Set-Cookie', [legacy.setCookie, buildLogoutCookie(cookieSecure)]);
+        res.setHeader('Set-Cookie', [
+          legacy.setCookie,
+          buildLogoutCookie(cookieSecure),
+          buildSsoLogoutCookie(cookieSecure),
+        ]);
         res.json({ user: legacy.user });
         return;
       }
@@ -196,6 +202,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       res.setHeader('Set-Cookie', [
         buildSessionCookie(session.token, session.expiresAt, cookieSecure),
         buildLegacyLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
       ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
@@ -217,6 +224,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     res.setHeader('Set-Cookie', [
       buildLogoutCookie(cookieSecure),
       buildLegacyLogoutCookie(cookieSecure),
+      buildSsoLogoutCookie(cookieSecure),
     ]);
     res.json({ ok: true });
   });

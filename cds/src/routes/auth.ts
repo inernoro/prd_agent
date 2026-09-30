@@ -23,6 +23,7 @@ import { AuthService, AuthServiceError } from '../services/auth-service.js';
 /** Cookie name used for the GitHub session token. Keeps `cds_token` free for legacy auth. */
 export const GH_SESSION_COOKIE = 'cds_gh_session';
 export const LEGACY_SESSION_COOKIE = 'cds_token';
+export const SSO_SESSION_COOKIE = 'cds_sso_session';
 
 export interface AuthRouterDeps {
   authService: AuthService;
@@ -82,6 +83,19 @@ export function buildLegacyLogoutCookie(secure: boolean): string {
   ].join('; ');
 }
 
+/** Clear the ticket-SSO cookie when another human identity provider wins. */
+export function buildSsoLogoutCookie(secure: boolean): string {
+  return [
+    `${SSO_SESSION_COOKIE}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+}
+
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const router = Router();
   const { authService, publicBaseUrl, cookieSecure } = deps;
@@ -121,6 +135,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       res.setHeader('Set-Cookie', [
         buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure),
         buildLegacyLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
       ]);
       res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
@@ -160,6 +175,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     res.setHeader('Set-Cookie', [
       buildLogoutCookie(cookieSecure),
       buildLegacyLogoutCookie(cookieSecure),
+      buildSsoLogoutCookie(cookieSecure),
     ]);
     res.json({ ok: true });
   });

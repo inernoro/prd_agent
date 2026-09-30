@@ -101,6 +101,9 @@ describe('Local auth routes (with gate)', () => {
     expect(boot.body.user.isSystemOwner).toBe(true);
     expect(boot.body.user).not.toHaveProperty('passwordHash');
     expect(boot.body.user).not.toHaveProperty('passwordSalt');
+    expect(boot.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+    ]));
     const cookie = sessionCookieFrom(boot);
 
     // Bootstrap is now closed.
@@ -122,6 +125,9 @@ describe('Local auth routes (with gate)', () => {
     });
     expect(login.status).toBe(200);
     expect(login.body.user.username).toBe('member');
+    expect(login.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+    ]));
     const memberCookie = sessionCookieFrom(login);
 
     // Member cannot list users (not owner).

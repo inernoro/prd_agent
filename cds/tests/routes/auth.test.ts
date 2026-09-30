@@ -146,6 +146,7 @@ describe('Auth routes (P2)', () => {
       expect(setCookie).toEqual(expect.arrayContaining([
         expect.stringMatching(new RegExp(`^${GH_SESSION_COOKIE}=`)),
         expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
     });
 
@@ -244,6 +245,7 @@ describe('Auth routes (P2)', () => {
       expect(clear).toEqual(expect.arrayContaining([
         expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
         expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       // /api/me must now return 401

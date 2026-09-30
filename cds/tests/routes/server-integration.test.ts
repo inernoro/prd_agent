@@ -550,6 +550,7 @@ describe('Server route ordering (regression)', () => {
       expect(rawCookie).toContain('; Secure');
       expect(loginSetCookies).toEqual(expect.arrayContaining([
         expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       const authedMe = await request(server, '/api/me', { Cookie: cookie });
@@ -589,6 +590,7 @@ describe('Server route ordering (regression)', () => {
       expect(compatibleCookie).toMatch(/^cds_token=/);
       expect(compatibleSetCookies).toEqual(expect.arrayContaining([
         expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       const duplicateLegacyUser = await requestJson(server, 'POST', '/api/auth/users', {
@@ -624,6 +626,7 @@ describe('Server route ordering (regression)', () => {
       expect(memberCookie).toMatch(/^cds_gh_session=/);
       expect(memberSetCookies).toEqual(expect.arrayContaining([
         expect.stringMatching(/^cds_token=.*Max-Age=0/),
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
       ]));
 
       const memberMe = await request(server, '/api/me', { Cookie: memberCookie });

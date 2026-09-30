@@ -79,6 +79,7 @@ import {
   buildLegacyLogoutCookie,
   buildLogoutCookie,
   buildSessionCookie,
+  buildSsoLogoutCookie,
   createAuthRouter,
   GH_SESSION_COOKIE,
 } from './routes/auth.js';
@@ -2716,6 +2717,7 @@ export function createServer(deps: ServerDeps): express.Express {
         res.setHeader('Set-Cookie', [
           basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure),
           buildLogoutCookie(cookieSecure),
+          buildSsoLogoutCookie(cookieSecure),
         ]);
         res.json({ success: true });
       } else {
@@ -2727,6 +2729,7 @@ export function createServer(deps: ServerDeps): express.Express {
       res.setHeader('Set-Cookie', [
         buildLegacyLogoutCookie(cookieSecure),
         buildLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
       ]);
       res.json({ success: true });
     });
