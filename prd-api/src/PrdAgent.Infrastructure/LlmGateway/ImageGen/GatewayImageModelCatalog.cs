@@ -110,7 +110,7 @@ public static class GatewayImageModelCatalog
     private static SizeOption? ParseSizeOption(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        var parts = raw.Trim().Split(['x', 'X', '×', '*'], StringSplitOptions.RemoveEmptyEntries);
+        var parts = raw.Trim().Split(new[] { 'x', 'X', '×', '*' }, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2
             || !int.TryParse(parts[0].Trim(), out var width)
             || !int.TryParse(parts[1].Trim(), out var height)
