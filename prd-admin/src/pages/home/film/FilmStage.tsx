@@ -23,6 +23,7 @@ import {
   typed,
   type FilmPart,
   type FilmScene,
+  type FilmSceneId,
 } from './filmTimeline';
 
 /**
@@ -77,32 +78,38 @@ export function FilmStage({ t, copy, roster }: StageProps) {
 
 const fill: CSSProperties = { position: 'absolute', inset: 0 };
 
+interface SceneRenderArgs {
+  scene: FilmScene;
+  lt: number;
+  d: number;
+  t: number;
+  copy: FilmTranslation;
+  roster: RosterItem[];
+}
+
+const renderPartCard = ({ scene, lt, d, copy }: SceneRenderArgs) => <PartCard part={scene.part ?? 0} lt={lt} d={d} copy={copy} />;
+
+/**
+ * 幕 → 画面的注册表。用 Record 而不是 switch：时间轴里新增一幕却忘了登记画面时，
+ * 这里直接编译不过，而不是那一段悄悄黑屏（Codex P1，PR #1650；frontend-architecture 注册表模式）。
+ */
+const SCENE_RENDERERS: Record<FilmSceneId, (a: SceneRenderArgs) => ReactNode> = {
+  open: ({ lt, d, copy }) => <OpenScene lt={lt} d={d} copy={copy} />,
+  partMap: renderPartCard,
+  partGateway: renderPartCard,
+  partCds: renderPartCard,
+  visual: ({ lt, d, t, copy }) => <VisualScene lt={lt} d={d} t={t} copy={copy} />,
+  writing: ({ lt, d, copy }) => <WritingScene lt={lt} d={d} copy={copy} />,
+  toolbox: ({ lt, d, copy, roster }) => <ToolboxFilmScene lt={lt} d={d} copy={copy} roster={roster} />,
+  workflow: ({ lt, d, copy }) => <WorkflowFilmScene lt={lt} d={d} copy={copy} />,
+  models: ({ lt, d, t, copy }) => <ModelsFilmScene lt={lt} d={d} t={t} copy={copy} />,
+  cds: ({ lt, d, t, copy }) => <CdsFilmScene lt={lt} d={d} t={t} copy={copy} />,
+  montage: ({ lt, copy }) => <MontageScene lt={lt} copy={copy} />,
+  finale: ({ lt, d, copy }) => <FinaleScene lt={lt} d={d} copy={copy} />,
+};
+
 function SceneSwitch({ scene, lt, t, copy, roster }: { scene: FilmScene; lt: number; t: number; copy: FilmTranslation; roster: RosterItem[] }) {
-  const d = scene.to - scene.from;
-  switch (scene.id) {
-    case 'open':
-      return <OpenScene lt={lt} d={d} copy={copy} />;
-    case 'partMap':
-    case 'partGateway':
-    case 'partCds':
-      return <PartCard part={scene.part ?? 0} lt={lt} d={d} copy={copy} />;
-    case 'visual':
-      return <VisualScene lt={lt} d={d} t={t} copy={copy} />;
-    case 'writing':
-      return <WritingScene lt={lt} d={d} copy={copy} />;
-    case 'toolbox':
-      return <ToolboxFilmScene lt={lt} d={d} copy={copy} roster={roster} />;
-    case 'workflow':
-      return <WorkflowFilmScene lt={lt} d={d} copy={copy} />;
-    case 'models':
-      return <ModelsFilmScene lt={lt} d={d} t={t} copy={copy} />;
-    case 'cds':
-      return <CdsFilmScene lt={lt} d={d} t={t} copy={copy} />;
-    case 'montage':
-      return <MontageScene lt={lt} copy={copy} />;
-    case 'finale':
-      return <FinaleScene lt={lt} d={d} copy={copy} />;
-  }
+  return <>{SCENE_RENDERERS[scene.id]({ scene, lt, d: scene.to - scene.from, t, copy, roster })}</>;
 }
 
 // ═══════════════════════ 动效语言 ═══════════════════════

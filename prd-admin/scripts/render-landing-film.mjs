@@ -24,7 +24,7 @@ import { createServer } from 'vite';
  *   FILM_AUDIO  track | synth（默认 track：用 public/film/landing-score.mp3 那段剪好的成品配乐；
  *               synth：用 filmScore 离线合成的备用配乐——页面上配乐加载失败时放的就是它）
  *   FILM_PAGE   换一个导出页（默认 scripts/film/render.html；首屏样片用 scripts/film/hero-sample.html）
- *   FILM_SIZE   画面尺寸，如 390x844（默认 1920x1080；会作为 ?w=&h= 传给导出页）
+ *   FILM_SIZE   画面尺寸，如 390x844（默认 1920x1080；会作为 ?w=&h= 传给导出页。默认导出页固定 1920x1080，给别的尺寸会直接报错退出）
  *   FILM_QUERY  额外拼到导出页地址上的参数（如 variant=b，样片页用来切版式）
  *   FILM_DPR    像素倍率（默认 1；手机竖屏样片用 2，否则 390 宽的画面糊）
  *   FILM_AUDIO  另有 none：不带音轨（首屏循环本来就是静音的）
@@ -45,6 +45,13 @@ const LIMIT = process.env.FILM_LIMIT ? Number(process.env.FILM_LIMIT) : null;
 const AUDIO = process.env.FILM_AUDIO === 'synth' ? 'synth' : process.env.FILM_AUDIO === 'none' ? 'none' : 'track';
 const PAGE = process.env.FILM_PAGE || 'scripts/film/render.html';
 const [VW, VH] = (process.env.FILM_SIZE || '1920x1080').split('x').map(Number);
+// 默认导出页把片子钉死在 1920x1080（片花本体按这块画布逐帧计算），不读 ?w=&h=；
+// 这时给 FILM_SIZE 只会缩小浏览器视口、导出被裁掉的一角（Codex P2，PR #1650）。
+// 只有像 hero-sample.html 这样会读 ?w=&h= 的导出页才接受别的尺寸。
+if (PAGE === 'scripts/film/render.html' && (VW !== 1920 || VH !== 1080)) {
+  console.error(`FILM_SIZE=${process.env.FILM_SIZE} 对默认导出页无效：片花固定 1920x1080。需要别的尺寸请导出后再缩放，或换一个读取 ?w=&h= 的导出页（FILM_PAGE）。`);
+  process.exit(2);
+}
 const TRACK = path.join(ROOT, 'public', 'film', 'landing-score.mp3');
 const STILLS = process.env.FILM_STILLS ? process.env.FILM_STILLS.split(',').map(Number).filter((x) => Number.isFinite(x)) : null;
 
