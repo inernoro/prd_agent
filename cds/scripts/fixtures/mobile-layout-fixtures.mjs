@@ -250,6 +250,21 @@ const PREFIX = [
     branches,
     capacity: { maxContainers: 40, runningContainers: 9, totalMemGB: 96 },
   })],
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [
+      {
+        id: 'fixture-active-work',
+        name: '正在开发',
+        color: 'blue',
+        rules: [{ kind: 'prefix', value: 'feature/' }],
+        pinnedBranchIds: [],
+      },
+    ],
+    updatedAt: '2026-09-02T09:40:00.000Z',
+    updatedBy: 'user',
+    readOnly: false,
+  })],
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
