@@ -391,289 +391,319 @@ function noiseSource(bus: VoiceBus): AudioBufferSourceNode {
  * 在 `at` 时刻奏响一个事件。`skip` 是这个音已经过去了多久（拖动进度条落在长音中间时 > 0）：
  * 持续型音色从中途切入，打击乐直接不响。
  */
+
+interface VoiceArgs {
+  bus: VoiceBus;
+  e: ScoreEvent;
+  at: number;
+  skip: number;
+  ctx: VoiceBus['mixer']['ctx'];
+  v: number;
+}
+type Voice = (a: VoiceArgs) => void;
+
+const voiceKick: Voice = ({ bus, at, ctx, v }) => {
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.frequency.setValueAtTime(165, at);
+  osc.frequency.exponentialRampToValueAtTime(44, at + 0.13);
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(v * 1.1, at + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 0.42);
+  osc.connect(g);
+  sendTo(bus, g, 1, 0, 0);
+  track(bus, osc, at, at + 0.45);
+  const click = noiseSource(bus);
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 3000;
+  const cg = ctx.createGain();
+  cg.gain.setValueAtTime(v * 0.25, at);
+  cg.gain.exponentialRampToValueAtTime(0.001, at + 0.012);
+  click.connect(hp);
+  hp.connect(cg);
+  sendTo(bus, cg, 1, 0, 0);
+  track(bus, click, at, at + 0.02);
+};
+
+const voiceClap: Voice = ({ bus, at, ctx, v }) => {
+  const src = noiseSource(bus);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1500;
+  bp.Q.value = 0.9;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  for (let i = 0; i < 3; i += 1) {
+    g.gain.setValueAtTime(v * 0.8, at + i * 0.011);
+    g.gain.exponentialRampToValueAtTime(v * 0.15, at + i * 0.011 + 0.009);
+  }
+  g.gain.setValueAtTime(v * 0.7, at + 0.034);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 0.24);
+  src.connect(bp);
+  bp.connect(g);
+  sendTo(bus, g, 0.9, 0.35, 0);
+  track(bus, src, at, at + 0.26);
+};
+
+const voiceHat: Voice = ({ bus, e, at, ctx, v }) => {
+  const open = e.inst === 'openhat';
+  const src = noiseSource(bus);
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = open ? 6500 : 8000;
+  const g = ctx.createGain();
+  const len = open ? 0.26 : 0.045;
+  g.gain.setValueAtTime(v * 0.55, at);
+  g.gain.exponentialRampToValueAtTime(0.001, at + len);
+  src.connect(hp);
+  hp.connect(g);
+  sendTo(bus, g, 0.8, open ? 0.12 : 0, 0);
+  track(bus, src, at, at + len + 0.02);
+};
+
+const voiceBass: Voice = ({ bus, e, at, skip, ctx, v }) => {
+  const dur = Math.max(0.05, e.dur - skip);
+  const f = hz(e.midi);
+  const saw = ctx.createOscillator();
+  saw.type = 'sawtooth';
+  saw.frequency.value = f;
+  const sub = ctx.createOscillator();
+  sub.frequency.value = f;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.Q.value = 5;
+  lp.frequency.setValueAtTime(skip > 0 ? 300 : 1100, at);
+  lp.frequency.exponentialRampToValueAtTime(280, at + 0.16);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(v * 0.42, at + 0.006);
+  g.gain.setValueAtTime(v * 0.36, at + dur);
+  g.gain.exponentialRampToValueAtTime(0.001, at + dur + 0.07);
+  const sg = ctx.createGain();
+  sg.gain.value = 0.9;
+  saw.connect(lp);
+  sub.connect(sg);
+  lp.connect(g);
+  sg.connect(g);
+  sendTo(bus, g, 1, 0, 0);
+  track(bus, saw, at, at + dur + 0.1);
+  track(bus, sub, at, at + dur + 0.1);
+};
+
+const voicePad: Voice = ({ bus, e, at, skip, ctx, v }) => {
+  const dur = Math.max(0.1, e.dur - skip);
+  const attack = skip > 0 ? 0.15 : Math.min(0.55, dur * 0.4);
+  const g = ctx.createGain();
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 1500;
+  lp.Q.value = 0.6;
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.linearRampToValueAtTime(v * 0.1, at + attack);
+  g.gain.setValueAtTime(v * 0.1, at + dur);
+  g.gain.linearRampToValueAtTime(0.0001, at + dur + 1.2);
+  lp.connect(g);
+  for (const detune of [-10, 0, 10]) {
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = hz(e.midi);
+    osc.detune.value = detune;
+    osc.connect(lp);
+    track(bus, osc, at, at + dur + 1.25);
+  }
+  sendTo(bus, g, 0.75, 0.55, 0);
+};
+
+const voiceArp: Voice = ({ bus, e, at, ctx, v }) => {
+  const f = hz(e.midi);
+  const tri = ctx.createOscillator();
+  tri.type = 'triangle';
+  tri.frequency.value = f;
+  const sq = ctx.createOscillator();
+  sq.type = 'square';
+  sq.frequency.value = f;
+  const sqg = ctx.createGain();
+  sqg.gain.value = 0.22;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(4200, at);
+  lp.frequency.exponentialRampToValueAtTime(900, at + 0.2);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(v * 0.5, at + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 0.24);
+  tri.connect(lp);
+  sq.connect(sqg);
+  sqg.connect(lp);
+  lp.connect(g);
+  sendTo(bus, g, 0.7, 0.22, 0.45);
+  track(bus, tri, at, at + 0.26);
+  track(bus, sq, at, at + 0.26);
+};
+
+const voiceLead: Voice = ({ bus, e, at, skip, ctx, v }) => {
+  const dur = Math.max(0.05, e.dur - skip);
+  const f = hz(e.midi);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 2600;
+  lp.Q.value = 1.2;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.linearRampToValueAtTime(v * 0.2, at + 0.02);
+  g.gain.setValueAtTime(v * 0.17, at + dur);
+  g.gain.exponentialRampToValueAtTime(0.001, at + dur + 0.18);
+  const vib = ctx.createOscillator();
+  vib.frequency.value = 5.2;
+  const vibDepth = ctx.createGain();
+  vibDepth.gain.value = 9;
+  vib.connect(vibDepth);
+  for (const detune of [-7, 7]) {
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = f;
+    osc.detune.value = detune;
+    vibDepth.connect(osc.detune);
+    osc.connect(lp);
+    track(bus, osc, at, at + dur + 0.2);
+  }
+  track(bus, vib, at, at + dur + 0.2);
+  lp.connect(g);
+  sendTo(bus, g, 0.75, 0.3, 0.35);
+};
+
+const voiceBell: Voice = ({ bus, e, at, ctx, v }) => {
+  const f = hz(e.midi);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(v * 0.45, at + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 1.8);
+  for (const [ratio, amp] of [[1, 1], [2.76, 0.35], [5.4, 0.12]] as const) {
+    const osc = ctx.createOscillator();
+    osc.frequency.value = f * ratio;
+    const og = ctx.createGain();
+    og.gain.value = amp;
+    osc.connect(og);
+    og.connect(g);
+    track(bus, osc, at, at + 1.85);
+  }
+  sendTo(bus, g, 0.6, 0.6, 0.25);
+};
+
+const voiceRiser: Voice = ({ bus, e, at, skip, ctx, v }) => {
+  const p0 = e.dur > 0 ? Math.min(1, skip / e.dur) : 0;
+  const remain = Math.max(0.05, e.dur - skip);
+  const end = at + remain;
+  const src = noiseSource(bus);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 2.5;
+  bp.frequency.setValueAtTime(300 * Math.pow(20, p0), at);
+  bp.frequency.exponentialRampToValueAtTime(6000, end);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(Math.max(0.0001, v * 0.5 * p0 * p0), at);
+  g.gain.linearRampToValueAtTime(v * 0.5, end);
+  g.gain.linearRampToValueAtTime(0.0001, end + 0.04);
+  src.connect(bp);
+  bp.connect(g);
+  sendTo(bus, g, 0.7, 0.4, 0);
+  track(bus, src, at, end + 0.06);
+};
+
+const voiceImpact: Voice = ({ bus, at, ctx, v }) => {
+  const osc = ctx.createOscillator();
+  osc.frequency.setValueAtTime(62, at);
+  osc.frequency.exponentialRampToValueAtTime(28, at + 1.4);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(v * 0.95, at + 0.006);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 1.9);
+  osc.connect(g);
+  sendTo(bus, g, 1, 0.3, 0);
+  track(bus, osc, at, at + 2);
+  const src = noiseSource(bus);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(5000, at);
+  lp.frequency.exponentialRampToValueAtTime(300, at + 0.7);
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(v * 0.45, at);
+  ng.gain.exponentialRampToValueAtTime(0.001, at + 0.9);
+  src.connect(lp);
+  lp.connect(ng);
+  sendTo(bus, ng, 0.7, 0.9, 0);
+  track(bus, src, at, at + 1);
+};
+
+const voicePlop: Voice = ({ bus, at, ctx, v }) => {
+  const osc = ctx.createOscillator();
+  osc.frequency.setValueAtTime(1100, at);
+  osc.frequency.exponentialRampToValueAtTime(190, at + 0.09);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, at);
+  g.gain.exponentialRampToValueAtTime(v * 0.5, at + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 0.2);
+  osc.connect(g);
+  sendTo(bus, g, 0.7, 0.7, 0.3);
+  track(bus, osc, at, at + 0.22);
+};
+
+const voiceTick: Voice = ({ bus, at, ctx, v }) => {
+  const osc = ctx.createOscillator();
+  osc.frequency.value = 2400;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(v * 0.3, at);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 0.035);
+  osc.connect(g);
+  sendTo(bus, g, 0.8, 0.2, 0.2);
+  track(bus, osc, at, at + 0.04);
+};
+
+const voiceBlip: Voice = ({ bus, at, ctx, v }) => {
+  const osc = ctx.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(880, at);
+  osc.frequency.exponentialRampToValueAtTime(140, at + 0.22);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 1800;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(v * 0.28, at);
+  g.gain.exponentialRampToValueAtTime(0.001, at + 0.26);
+  osc.connect(lp);
+  lp.connect(g);
+  sendTo(bus, g, 0.8, 0.3, 0.3);
+  track(bus, osc, at, at + 0.28);
+};
+
+/**
+ * 乐器 → 发声函数的注册表。用 Record 而不是 switch：新增一种乐器却忘了写它怎么响时，
+ * 这里直接编译不过，而不是备用配乐里那一声悄悄没了（Codex P1，PR #1650；frontend-architecture 注册表模式）。
+ */
+const VOICES: Record<Instrument, Voice> = {
+  kick: voiceKick,
+  clap: voiceClap,
+  hat: voiceHat,
+  openhat: voiceHat,
+  bass: voiceBass,
+  pad: voicePad,
+  arp: voiceArp,
+  lead: voiceLead,
+  bell: voiceBell,
+  riser: voiceRiser,
+  impact: voiceImpact,
+  plop: voicePlop,
+  tick: voiceTick,
+  blip: voiceBlip,
+};
+
 export function playEvent(bus: VoiceBus, e: ScoreEvent, at: number, skip = 0): void {
   if (skip > 0 && !SUSTAINED.has(e.inst)) return;
   const { ctx } = bus.mixer;
   const v = e.vel;
 
-  switch (e.inst) {
-    case 'kick': {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.frequency.setValueAtTime(165, at);
-      osc.frequency.exponentialRampToValueAtTime(44, at + 0.13);
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(v * 1.1, at + 0.004);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.42);
-      osc.connect(g);
-      sendTo(bus, g, 1, 0, 0);
-      track(bus, osc, at, at + 0.45);
-      const click = noiseSource(bus);
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = 3000;
-      const cg = ctx.createGain();
-      cg.gain.setValueAtTime(v * 0.25, at);
-      cg.gain.exponentialRampToValueAtTime(0.001, at + 0.012);
-      click.connect(hp);
-      hp.connect(cg);
-      sendTo(bus, cg, 1, 0, 0);
-      track(bus, click, at, at + 0.02);
-      break;
-    }
-    case 'clap': {
-      const src = noiseSource(bus);
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.value = 1500;
-      bp.Q.value = 0.9;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      for (let i = 0; i < 3; i += 1) {
-        g.gain.setValueAtTime(v * 0.8, at + i * 0.011);
-        g.gain.exponentialRampToValueAtTime(v * 0.15, at + i * 0.011 + 0.009);
-      }
-      g.gain.setValueAtTime(v * 0.7, at + 0.034);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.24);
-      src.connect(bp);
-      bp.connect(g);
-      sendTo(bus, g, 0.9, 0.35, 0);
-      track(bus, src, at, at + 0.26);
-      break;
-    }
-    case 'hat':
-    case 'openhat': {
-      const open = e.inst === 'openhat';
-      const src = noiseSource(bus);
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = open ? 6500 : 8000;
-      const g = ctx.createGain();
-      const len = open ? 0.26 : 0.045;
-      g.gain.setValueAtTime(v * 0.55, at);
-      g.gain.exponentialRampToValueAtTime(0.001, at + len);
-      src.connect(hp);
-      hp.connect(g);
-      sendTo(bus, g, 0.8, open ? 0.12 : 0, 0);
-      track(bus, src, at, at + len + 0.02);
-      break;
-    }
-    case 'bass': {
-      const dur = Math.max(0.05, e.dur - skip);
-      const f = hz(e.midi);
-      const saw = ctx.createOscillator();
-      saw.type = 'sawtooth';
-      saw.frequency.value = f;
-      const sub = ctx.createOscillator();
-      sub.frequency.value = f;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.Q.value = 5;
-      lp.frequency.setValueAtTime(skip > 0 ? 300 : 1100, at);
-      lp.frequency.exponentialRampToValueAtTime(280, at + 0.16);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(v * 0.42, at + 0.006);
-      g.gain.setValueAtTime(v * 0.36, at + dur);
-      g.gain.exponentialRampToValueAtTime(0.001, at + dur + 0.07);
-      const sg = ctx.createGain();
-      sg.gain.value = 0.9;
-      saw.connect(lp);
-      sub.connect(sg);
-      lp.connect(g);
-      sg.connect(g);
-      sendTo(bus, g, 1, 0, 0);
-      track(bus, saw, at, at + dur + 0.1);
-      track(bus, sub, at, at + dur + 0.1);
-      break;
-    }
-    case 'pad': {
-      const dur = Math.max(0.1, e.dur - skip);
-      const attack = skip > 0 ? 0.15 : Math.min(0.55, dur * 0.4);
-      const g = ctx.createGain();
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 1500;
-      lp.Q.value = 0.6;
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.linearRampToValueAtTime(v * 0.1, at + attack);
-      g.gain.setValueAtTime(v * 0.1, at + dur);
-      g.gain.linearRampToValueAtTime(0.0001, at + dur + 1.2);
-      lp.connect(g);
-      for (const detune of [-10, 0, 10]) {
-        const osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.value = hz(e.midi);
-        osc.detune.value = detune;
-        osc.connect(lp);
-        track(bus, osc, at, at + dur + 1.25);
-      }
-      sendTo(bus, g, 0.75, 0.55, 0);
-      break;
-    }
-    case 'arp': {
-      const f = hz(e.midi);
-      const tri = ctx.createOscillator();
-      tri.type = 'triangle';
-      tri.frequency.value = f;
-      const sq = ctx.createOscillator();
-      sq.type = 'square';
-      sq.frequency.value = f;
-      const sqg = ctx.createGain();
-      sqg.gain.value = 0.22;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.setValueAtTime(4200, at);
-      lp.frequency.exponentialRampToValueAtTime(900, at + 0.2);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(v * 0.5, at + 0.004);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.24);
-      tri.connect(lp);
-      sq.connect(sqg);
-      sqg.connect(lp);
-      lp.connect(g);
-      sendTo(bus, g, 0.7, 0.22, 0.45);
-      track(bus, tri, at, at + 0.26);
-      track(bus, sq, at, at + 0.26);
-      break;
-    }
-    case 'lead': {
-      const dur = Math.max(0.05, e.dur - skip);
-      const f = hz(e.midi);
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 2600;
-      lp.Q.value = 1.2;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.linearRampToValueAtTime(v * 0.2, at + 0.02);
-      g.gain.setValueAtTime(v * 0.17, at + dur);
-      g.gain.exponentialRampToValueAtTime(0.001, at + dur + 0.18);
-      const vib = ctx.createOscillator();
-      vib.frequency.value = 5.2;
-      const vibDepth = ctx.createGain();
-      vibDepth.gain.value = 9;
-      vib.connect(vibDepth);
-      for (const detune of [-7, 7]) {
-        const osc = ctx.createOscillator();
-        osc.type = 'sawtooth';
-        osc.frequency.value = f;
-        osc.detune.value = detune;
-        vibDepth.connect(osc.detune);
-        osc.connect(lp);
-        track(bus, osc, at, at + dur + 0.2);
-      }
-      track(bus, vib, at, at + dur + 0.2);
-      lp.connect(g);
-      sendTo(bus, g, 0.75, 0.3, 0.35);
-      break;
-    }
-    case 'bell': {
-      const f = hz(e.midi);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(v * 0.45, at + 0.003);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 1.8);
-      for (const [ratio, amp] of [[1, 1], [2.76, 0.35], [5.4, 0.12]] as const) {
-        const osc = ctx.createOscillator();
-        osc.frequency.value = f * ratio;
-        const og = ctx.createGain();
-        og.gain.value = amp;
-        osc.connect(og);
-        og.connect(g);
-        track(bus, osc, at, at + 1.85);
-      }
-      sendTo(bus, g, 0.6, 0.6, 0.25);
-      break;
-    }
-    case 'riser': {
-      const p0 = e.dur > 0 ? Math.min(1, skip / e.dur) : 0;
-      const remain = Math.max(0.05, e.dur - skip);
-      const end = at + remain;
-      const src = noiseSource(bus);
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.Q.value = 2.5;
-      bp.frequency.setValueAtTime(300 * Math.pow(20, p0), at);
-      bp.frequency.exponentialRampToValueAtTime(6000, end);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(Math.max(0.0001, v * 0.5 * p0 * p0), at);
-      g.gain.linearRampToValueAtTime(v * 0.5, end);
-      g.gain.linearRampToValueAtTime(0.0001, end + 0.04);
-      src.connect(bp);
-      bp.connect(g);
-      sendTo(bus, g, 0.7, 0.4, 0);
-      track(bus, src, at, end + 0.06);
-      break;
-    }
-    case 'impact': {
-      const osc = ctx.createOscillator();
-      osc.frequency.setValueAtTime(62, at);
-      osc.frequency.exponentialRampToValueAtTime(28, at + 1.4);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(v * 0.95, at + 0.006);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 1.9);
-      osc.connect(g);
-      sendTo(bus, g, 1, 0.3, 0);
-      track(bus, osc, at, at + 2);
-      const src = noiseSource(bus);
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.setValueAtTime(5000, at);
-      lp.frequency.exponentialRampToValueAtTime(300, at + 0.7);
-      const ng = ctx.createGain();
-      ng.gain.setValueAtTime(v * 0.45, at);
-      ng.gain.exponentialRampToValueAtTime(0.001, at + 0.9);
-      src.connect(lp);
-      lp.connect(ng);
-      sendTo(bus, ng, 0.7, 0.9, 0);
-      track(bus, src, at, at + 1);
-      break;
-    }
-    case 'plop': {
-      const osc = ctx.createOscillator();
-      osc.frequency.setValueAtTime(1100, at);
-      osc.frequency.exponentialRampToValueAtTime(190, at + 0.09);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, at);
-      g.gain.exponentialRampToValueAtTime(v * 0.5, at + 0.003);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.2);
-      osc.connect(g);
-      sendTo(bus, g, 0.7, 0.7, 0.3);
-      track(bus, osc, at, at + 0.22);
-      break;
-    }
-    case 'tick': {
-      const osc = ctx.createOscillator();
-      osc.frequency.value = 2400;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(v * 0.3, at);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.035);
-      osc.connect(g);
-      sendTo(bus, g, 0.8, 0.2, 0.2);
-      track(bus, osc, at, at + 0.04);
-      break;
-    }
-    case 'blip': {
-      const osc = ctx.createOscillator();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(880, at);
-      osc.frequency.exponentialRampToValueAtTime(140, at + 0.22);
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 1800;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(v * 0.28, at);
-      g.gain.exponentialRampToValueAtTime(0.001, at + 0.26);
-      osc.connect(lp);
-      lp.connect(g);
-      sendTo(bus, g, 0.8, 0.3, 0.3);
-      track(bus, osc, at, at + 0.28);
-      break;
-    }
-  }
+  VOICES[e.inst]({ bus, e, at, skip, ctx, v });
 }
 
 // ═══════════════════════════ 播放 ═══════════════════════════

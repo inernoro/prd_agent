@@ -29,3 +29,4 @@
 | fix | prd-admin | 片花播放器在不支持元素全屏的浏览器（iPhone Safari）上不再显示点了没反应的全屏键；进度条可被键盘聚焦，方向键 / Home / End 跳转并带可读时间 |
 | refactor | prd-admin | 片花各幕的画面分派由 switch 改为按幕登记的注册表，时间轴新增一幕却漏登记画面时编译不过；导出脚本在默认导出页上给非 1920x1080 的 FILM_SIZE 直接报错，不再导出被裁掉的一角 |
 | fix | prd-admin | 片花配乐加载期间切走标签页，加载完不再在后台开播；导出脚本头注释写明首次使用要先装 Chromium（playwright install chromium） |
+| refactor | prd-admin | 备用合成配乐的乐器发声由 switch 改为按乐器登记的注册表，新增乐器却漏写发声时编译不过 |
