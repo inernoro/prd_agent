@@ -69,6 +69,7 @@ import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledS
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
@@ -6183,8 +6184,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function hasProjectScopedOrCookieAuth(req: Request, projectId: string): boolean {
     const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
-    const cookieAuth = (req as any)._cdsCookieAuth === true;
-    return cookieAuth || Boolean(projKey && projKey.projectId === projectId);
+    return isHumanSystemOwner(req) || Boolean(projKey && projKey.projectId === projectId);
   }
 
   function requireSecretRevealAccess(req: Request, res: Response, projectId: string): boolean {
@@ -6223,7 +6223,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (explicit === 'owner' || explicit === 'admin') return 'admin';
     if (explicit === 'developer' || explicit === 'dev') return 'developer';
     if (explicit === 'member' || explicit === 'viewer' || explicit === 'read-only') return 'member';
-    if ((req as any)._cdsCookieAuth === true) return 'admin';
+    if (isHumanSystemOwner(req)) return 'admin';
     if ((req as any).cdsProjectKey) return 'developer';
     if ((req as any)._aiSession) return 'developer';
     return 'member';
@@ -11203,8 +11203,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // + plaintext. Lock it down: only cdsp_ project key matching this
     // project, or human cookie auth, may reveal.
     const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
-    const cookieAuth = (req as any)._cdsCookieAuth === true;
-    const ownerOk = (projKey && projKey.projectId === projectId) || cookieAuth;
+    const ownerOk = (projKey && projKey.projectId === projectId) || isHumanSystemOwner(req);
     if (!ownerOk) {
       res.status(403).json({
         error: 'forbidden_secret_reveal',
@@ -19103,14 +19102,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // gets `***[masked]***` — UI keeps rendering "X env vars configured" but
     // no machine credential walks away with the secret material.
     const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
-    const cookieAuth = (req as any)._cdsCookieAuth === true;
+    const humanOwner = isHumanSystemOwner(req);
     const maskValues = (env: Record<string, string>): Record<string, string> => {
       const out: Record<string, string> = {};
       for (const k of Object.keys(env || {})) out[k] = '***[masked]***';
       return out;
     };
     const ownerOkFor = (s: string): boolean => {
-      if (cookieAuth) return true;
+      if (humanOwner) return true;
       if (projKey && projKey.projectId === s) return true;
       return false;
     };
@@ -19121,7 +19120,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const raw = stateService.getCustomEnvRaw();
       // _all spans every scope incl. _global; only cookie auth (admin UI)
       // may see plaintext. Any token-based caller gets full mask.
-      if (cookieAuth) {
+      if (humanOwner) {
         res.json({ env: raw, scope: '_all' });
         return;
       }

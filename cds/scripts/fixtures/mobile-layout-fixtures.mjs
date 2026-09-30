@@ -266,6 +266,13 @@ const PREFIX = [
     readOnly: false,
   })],
   [/^\/api\/projects\/[^/]+$/, () => project],
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [],
+    updatedAt: null,
+    updatedBy: null,
+    readOnly: false,
+  })],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
   [/^\/api\/projects\/[^/]+\/env$/, () => ({ env: {}, entries: [] })],

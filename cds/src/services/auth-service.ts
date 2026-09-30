@@ -47,6 +47,7 @@ export class AuthServiceError extends Error {
       | 'state_mismatch'
       | 'org_not_allowed'
       | 'oauth_upstream'
+      | 'oauth_disabled'
       | 'bootstrap_failed'
       | 'account_disabled',
     message: string,
@@ -137,7 +138,7 @@ class StateStore {
 
 export class AuthService {
   private readonly store: AuthStore;
-  private readonly github: GitHubOAuthClient;
+  private readonly github: GitHubOAuthClient | null;
   private readonly config: Required<Omit<AuthServiceConfig, 'allowedOrgs'>> & {
     allowedOrgs: string[];
   };
@@ -151,11 +152,11 @@ export class AuthService {
 
   constructor(deps: {
     store: AuthStore;
-    github: GitHubOAuthClient;
+    github?: GitHubOAuthClient | null;
     config: AuthServiceConfig;
   }) {
     this.store = deps.store;
-    this.github = deps.github;
+    this.github = deps.github ?? null;
     this.config = {
       allowedOrgs: deps.config.allowedOrgs,
       sessionTtlMs: deps.config.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS,
@@ -176,6 +177,9 @@ export class AuthService {
    * and store a CSRF state token we'll verify on callback.
    */
   startLogin(redirectUri: string, postLoginRedirect: string): { authorizeUrl: string; state: string } {
+    if (!this.github) {
+      throw new AuthServiceError('oauth_disabled', 'GitHub OAuth is not enabled for this CDS instance');
+    }
     const state = this.stateStore.create(postLoginRedirect);
     const authorizeUrl = this.github.buildAuthorizeUrl(state, redirectUri);
     return { authorizeUrl, state };
@@ -193,6 +197,9 @@ export class AuthService {
     userAgent: string | null;
     ipAddress: string | null;
   }): Promise<LoginResult & { redirect: string }> {
+    if (!this.github) {
+      throw new AuthServiceError('oauth_disabled', 'GitHub OAuth is not enabled for this CDS instance');
+    }
     const stateEntry = this.stateStore.consume(params.state);
     if (!stateEntry) {
       throw new AuthServiceError('state_mismatch', 'OAuth state token is missing or already consumed');
