@@ -25,6 +25,7 @@ import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { resolveUserCredential } from './identity.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
+import { isAuthenticatedHuman } from '../services/human-auth.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
@@ -261,9 +262,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   function decider(req: import('express').Request): string {
     // github 模式身份在 cdsUser.githubLogin(不是 .login),否则审计里全是 'operator'、
     // 签发的 AgentKey.createdBy 也丢了「谁批的」。两个字段都读。
-    const gh = (req as unknown as { cdsUser?: { login?: string; githubLogin?: string } }).cdsUser;
+    const gh = (req as unknown as {
+      cdsUser?: { login?: string; githubLogin?: string; username?: string };
+    }).cdsUser;
     if (gh?.githubLogin) return gh.githubLogin;
     if (gh?.login) return gh.login;
+    if (gh?.username) return gh.username;
     if ((req as unknown as { _cdsCookieAuth?: boolean })._cdsCookieAuth) return 'cookie';
     return 'operator';
   }
@@ -275,9 +279,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   function requireHumanOperator(req: import('express').Request, res: import('express').Response): boolean {
     // disabled 模式全站无鉴权,dashboard 用户即操作员 → 放行(否则本地 dev 用不了)。
     if (authDisabled) return true;
-    const r = req as unknown as { _cdsCookieAuth?: boolean; cdsUser?: { login?: string; githubLogin?: string } };
-    const isHuman = r._cdsCookieAuth === true || !!(r.cdsUser && (r.cdsUser.login || r.cdsUser.githubLogin));
-    if (!isHuman) {
+    if (!isAuthenticatedHuman(req)) {
       res.status(403).json({
         error: 'human_approval_required',
         message: '授权审批必须由登录用户在 CDS 界面完成,机器密钥(API key)不可批准/拒绝授权申请。',

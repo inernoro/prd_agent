@@ -107,6 +107,12 @@ function makeHarness(): {
   app.use((req, _res, next) => {
     if (req.headers['x-test-cookie-auth'] === '1') {
       (req as any)._cdsCookieAuth = true;
+      (req as any)._cdsBasicHumanAuth = true;
+      (req as any).cdsUser = {
+        username: 'owner',
+        isSystemOwner: true,
+        authProvider: 'legacy',
+      };
     }
     if (req.headers['x-test-project-key'] === '1') {
       (req as any).cdsProjectKey = { projectId: 'prd-agent', keyId: 'test-key' };

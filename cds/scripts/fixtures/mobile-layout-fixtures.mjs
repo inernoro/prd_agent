@@ -251,6 +251,13 @@ const PREFIX = [
     capacity: { maxContainers: 40, runningContainers: 9, totalMemGB: 96 },
   })],
   [/^\/api\/projects\/[^/]+$/, () => project],
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({
+    ok: true,
+    groups: [],
+    updatedAt: null,
+    updatedBy: null,
+    readOnly: false,
+  })],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
   /*

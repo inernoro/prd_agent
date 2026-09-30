@@ -75,8 +75,16 @@ import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
-import { createAuthRouter } from './routes/auth.js';
+import {
+  buildLegacyLogoutCookie,
+  buildLogoutCookie,
+  buildSessionCookie,
+  buildSsoLogoutCookie,
+  createAuthRouter,
+  GH_SESSION_COOKIE,
+} from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
+import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
   TICKET_SSO_COOKIE,
   buildTicketSsoSessionCookie,
@@ -633,20 +641,24 @@ function requestHeadersForLogs(req: express.Request, res: express.Response): Rec
   return redactHeaders(req.headers) ?? {};
 }
 
-function legacyAuthUser(username: string, authMode: 'disabled' | 'basic') {
+function legacyAuthUser(username: string, authMode: 'disabled' | 'basic'): CdsUser {
+  const now = new Date().toISOString();
   return {
     id: authMode === 'basic' ? `basic:${username}` : 'anonymous',
+    githubId: authMode === 'basic' ? -2 : -1,
     username,
     githubLogin: '',
-    authProvider: 'local',
+    authProvider: authMode === 'basic' ? 'legacy' : 'local',
     name: username,
     email: null,
     avatarUrl: null,
     orgs: [],
+    orgsCheckedAt: now,
     isSystemOwner: authMode === 'basic',
     status: 'active',
     lastLoginAt: null,
-    createdAt: '',
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -2448,6 +2460,36 @@ export function createServer(deps: ServerDeps): express.Express {
   // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
   const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
   const sessionTtlMs = sessionTtlDays * 24 * 60 * 60 * 1000;
+  // Persisted local users are an authentication capability, not a GitHub-only
+  // feature. Both basic and github modes load the same store/service; GitHub
+  // merely contributes an additional login provider when configured.
+  const localUserManagementEnabled = authMode === 'basic' || authMode === 'github';
+  const allowedOrgs = (process.env.CDS_ALLOWED_ORGS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const authStore: AuthStore | null = localUserManagementEnabled
+    ? (deps.authStore ?? new MemoryAuthStore())
+    : null;
+  let githubClient: GitHubOAuthClient | null = null;
+  if (authMode === 'github') {
+    const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
+    const ghClientSecret = process.env.CDS_GITHUB_CLIENT_SECRET;
+    if (!ghClientId || !ghClientSecret) {
+      throw new Error(
+        'CDS_AUTH_MODE=github requires CDS_GITHUB_CLIENT_ID and CDS_GITHUB_CLIENT_SECRET to be set',
+      );
+    }
+    githubClient = new GitHubOAuthClient({ clientId: ghClientId, clientSecret: ghClientSecret });
+  }
+  const authService = authStore
+    ? new AuthService({
+        store: authStore,
+        github: githubClient,
+        config: { allowedOrgs, sessionTtlMs },
+      })
+    : null;
+  if (authService) app.locals.cdsAuthService = authService;
   const ticketSsoStateStore = new TicketSsoStateStore();
   const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
@@ -2542,6 +2584,11 @@ export function createServer(deps: ServerDeps): express.Express {
         local: authMode === 'basic' || authMode === 'github',
         sso: sso.enabled,
       },
+      capabilities: {
+        userManagement: localUserManagementEnabled,
+        userActivity: localUserManagementEnabled,
+        durableUsers: Boolean(authStore && !(authStore instanceof MemoryAuthStore)),
+      },
       sso,
     });
   });
@@ -2617,30 +2664,9 @@ export function createServer(deps: ServerDeps): express.Express {
   // P2 uses an in-memory AuthStore; P3 will swap it out for a MongoDB
   // implementation behind the same interface, no consumer changes required.
   if (authMode === 'github') {
-    const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
-    const ghClientSecret = process.env.CDS_GITHUB_CLIENT_SECRET;
-    if (!ghClientId || !ghClientSecret) {
-      throw new Error(
-        'CDS_AUTH_MODE=github requires CDS_GITHUB_CLIENT_ID and CDS_GITHUB_CLIENT_SECRET to be set',
-      );
+    if (!authStore || !githubClient || !authService) {
+      throw new Error('GitHub authentication services were not initialized');
     }
-    const allowedOrgs = (process.env.CDS_ALLOWED_ORGS || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    // FU-02: use the pre-initialised mongo backend when provided by index.ts,
-    // otherwise fall back to the in-process memory store (default / test).
-    const authStore: AuthStore = deps.authStore ?? new MemoryAuthStore();
-    const githubClient = new GitHubOAuthClient({
-      clientId: ghClientId,
-      clientSecret: ghClientSecret,
-    });
-    // 登录有效期走上面那份统一策略（默认 7 天 + 用后自动延长，CDS_SESSION_TTL_DAYS 可调）。
-    const authService = new AuthService({
-      store: authStore,
-      github: githubClient,
-      config: { allowedOrgs, sessionTtlMs },
-    });
 
     app.use(
       '/api',
@@ -2678,11 +2704,6 @@ export function createServer(deps: ServerDeps): express.Express {
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
     app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
 
-    // Expose the authService so downstream routers can record user activity
-    // at high-value touchpoints (deploy / stop / publish / report) when a
-    // session user is in scope. Optional — readers must null-check.
-    app.locals.cdsAuthService = authService;
-
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
     );
@@ -2693,7 +2714,11 @@ export function createServer(deps: ServerDeps): express.Express {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
         const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
-        res.setHeader('Set-Cookie', basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure));
+        res.setHeader('Set-Cookie', [
+          basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure),
+          buildLogoutCookie(cookieSecure),
+          buildSsoLogoutCookie(cookieSecure),
+        ]);
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2701,7 +2726,11 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.post('/api/logout', (_req, res) => {
-      res.setHeader('Set-Cookie', clearBasicSessionCookie(cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildLegacyLogoutCookie(cookieSecure),
+        buildLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
+      ]);
       res.json({ success: true });
     });
   }
@@ -2710,15 +2739,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // instance cannot advertise login while leaving dashboard/API routes open.
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
-    app.use((req, res, next) => {
+    app.use(async (req, res, next) => {
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
       if ((req as typeof req & { cdsSsoIdentity?: unknown }).cdsSsoIdentity) return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/auth/sso' || req.path === '/api/login' || req.path === '/api/logout') return next();
-      // basic 模式下本地账号路由(github 模式才挂载)未注册：放行让其落到 404，
-      // 登录页据 404 回退到 /api/login，保住单用户 basic 部署仍可登录(修复 PR #865
-      // codex P1「basic-auth 登录回退被 401 截断」)。
+      // 本地登录和首启状态必须先放行到 auth-local router；旧版服务未挂载
+      // 时仍会落到 404，登录页据此回退 /api/login，保住原始单账号部署。
       if (req.path === '/api/auth/login' || req.path === '/api/auth/bootstrap' || req.path === '/api/auth/bootstrap-status') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
       // 被动授权:免密发起/轮询授权申请(github 模式同样放行,否则 agent 401)。
@@ -3215,7 +3243,32 @@ export function createServer(deps: ServerDeps): express.Express {
       // 故这两个路径无条件放行;真正危险的 approve/reject/list 仍走下方鉴权。
       if (isPublicAccessRequestRoute(reqMethod, reqPath)) return next();
 
-      // Check human cookie auth
+      // Persisted local-account session. In basic mode this is checked before
+      // the legacy environment credential so both account systems can coexist
+      // without weakening machine-key separation.
+      const persistedToken = parseCookie(req.headers.cookie || '', GH_SESSION_COOKIE);
+      let persistedSession = null;
+      try {
+        persistedSession = authService
+          ? await authService.validateSession(persistedToken ?? null)
+          : null;
+      } catch (error) {
+        next(error);
+        return;
+      }
+      if (persistedSession) {
+        if (persistedSession.renewed && persistedToken) {
+          res.setHeader(
+            'Set-Cookie',
+            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure),
+          );
+        }
+        (req as any).cdsUser = persistedSession.user;
+        (req as any).cdsSession = persistedSession.session;
+        return next();
+      }
+
+      // Check original environment-account auth.
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const humanCookieValid = authEnabled
@@ -3231,6 +3284,7 @@ export function createServer(deps: ServerDeps): express.Express {
           res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure));
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
+          (req as any).cdsUser = legacyAuthUser(cdsUser!, 'basic');
         }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-
@@ -3285,6 +3339,29 @@ export function createServer(deps: ServerDeps): express.Express {
       console.log('  Auth: SSO-only mode');
     }
   }
+
+  // Basic mode now exposes the same persisted local-user routes as GitHub
+  // mode. Public bootstrap stays closed because the original environment
+  // account already exists and acts as the system owner.
+  if (authMode === 'basic' && authService) {
+    app.use('/api', createAuthLocalRouter({
+      authService,
+      cookieSecure,
+      bootstrapAllowed: false,
+      reservedUsernames: cdsUser ? [cdsUser] : [],
+      legacyLogin: ({ username, password }) => {
+        if (username !== cdsUser || password !== cdsPass) return null;
+        return {
+          user: toPublicUser(legacyAuthUser(cdsUser!, 'basic')),
+          setCookie: basicSessionCookie(
+            issueHumanSessionToken(cdsUser!, cdsPass!),
+            sessionTtlMs,
+            cookieSecure,
+          ),
+        };
+      },
+    }));
+  }
   if (authMode === 'disabled' && !publicTicketSsoConfig(resolveSsoConfig()).enabled) {
     console.warn(
       '  Auth warning: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
@@ -3307,6 +3384,13 @@ export function createServer(deps: ServerDeps): express.Express {
           cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
           cdsSession?: unknown;
         };
+        if (
+          request.cdsSession
+          && request.cdsUser?.isSystemOwner === true
+          && request.cdsUser.authProvider !== 'sso'
+        ) {
+          return true;
+        }
         if (authMode === 'basic') {
           const cookieToken = readCookie(req.headers.cookie, 'cds_token');
           const headerToken = typeof req.headers['x-cds-token'] === 'string'
@@ -3315,11 +3399,7 @@ export function createServer(deps: ServerDeps): express.Express {
           return verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs)
             || tokenMatches(headerToken, validToken);
         }
-        return Boolean(
-          request.cdsSession
-          && request.cdsUser?.isSystemOwner === true
-          && request.cdsUser.authProvider !== 'sso',
-        );
+        return false;
       },
     }),
   );
@@ -3329,9 +3409,11 @@ export function createServer(deps: ServerDeps): express.Express {
       const request = req as typeof req & {
         cdsSsoIdentity?: { username: string; displayName: string; email?: string | null };
         _cdsCookieAuth?: boolean;
+        cdsUser?: CdsUser;
+        cdsSession?: { createdAt?: string; expiresAt?: string };
       };
       const ssoIdentity = request.cdsSsoIdentity;
-      if (authMode !== 'disabled' && !ssoIdentity) {
+      if (authMode !== 'disabled' && !ssoIdentity && !request.cdsUser) {
         // The outer basic-auth gate validates both the cds_token cookie and
         // the supported X-CDS-Token header, then stamps this human marker.
         // Trust that single validation result so /api/me stays consistent
@@ -3341,8 +3423,11 @@ export function createServer(deps: ServerDeps): express.Express {
           return;
         }
       }
-      const username = ssoIdentity?.username || (authMode === 'basic' ? cdsUser : 'anonymous');
-      const user = legacyAuthUser(username || 'anonymous', authMode);
+      const username = ssoIdentity?.username
+        || request.cdsUser?.username
+        || request.cdsUser?.githubLogin
+        || (authMode === 'basic' ? cdsUser : 'anonymous');
+      const user = request.cdsUser ?? legacyAuthUser(username || 'anonymous', authMode);
       res.json({
         username,
         user: ssoIdentity
@@ -3353,7 +3438,16 @@ export function createServer(deps: ServerDeps): express.Express {
               email: ssoIdentity.email ?? null,
               authProvider: resolveSsoConfig().providerId,
             }
-          : user,
+          : {
+              ...toPublicUser(user),
+              orgs: user.orgs,
+            },
+        session: request.cdsSession
+          ? {
+              createdAt: request.cdsSession.createdAt ?? null,
+              expiresAt: request.cdsSession.expiresAt ?? null,
+            }
+          : null,
         authMode,
         authEnabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       });
@@ -3363,11 +3457,13 @@ export function createServer(deps: ServerDeps): express.Express {
   app.get('/api/auth/status', (req, res) => {
     const sessionUser = (req as {
       cdsUser?: {
+        id?: string;
         username?: string | null;
         githubLogin?: string | null;
         name?: string | null;
         avatarUrl?: string | null;
         isSystemOwner?: boolean;
+        authProvider?: string;
       };
     }).cdsUser;
     const ssoIdentity = (req as typeof req & {
@@ -3375,11 +3471,8 @@ export function createServer(deps: ServerDeps): express.Express {
     }).cdsSsoIdentity;
     const activeProvider = ssoIdentity
       ? 'sso'
-      : authMode === 'github' && sessionUser
-        ? 'github'
-        : authMode === 'basic'
-          ? 'local'
-          : null;
+      : sessionUser?.authProvider
+        ?? (authMode === 'basic' ? 'legacy' : null);
     const user = ssoIdentity
       ? {
           username: ssoIdentity.username,
@@ -3387,16 +3480,18 @@ export function createServer(deps: ServerDeps): express.Express {
           authProvider: resolveSsoConfig().providerId,
           isSystemOwner: false,
         }
-      : authMode === 'github' && sessionUser
+      : sessionUser
       ? {
+          id: sessionUser.id ?? null,
           username: sessionUser.username ?? null,
           githubLogin: sessionUser.githubLogin ?? null,
           name: sessionUser.name ?? sessionUser.githubLogin ?? sessionUser.username ?? null,
           avatarUrl: sessionUser.avatarUrl ?? null,
           isSystemOwner: Boolean(sessionUser.isSystemOwner),
+          authProvider: sessionUser.authProvider ?? (authMode === 'github' ? 'github' : 'legacy'),
         }
       : authMode === 'basic'
-        ? { username: cdsUser }
+        ? { username: cdsUser, authProvider: 'legacy', isSystemOwner: true }
         : null;
     res.json({
       mode: ssoIdentity ? 'sso' : authMode,
@@ -3404,10 +3499,12 @@ export function createServer(deps: ServerDeps): express.Express {
       activeProvider,
       logoutEndpoint: ssoIdentity
         ? '/api/auth/sso/logout'
-        : authMode === 'github'
+        : sessionUser && sessionUser.authProvider !== 'legacy'
           ? '/api/auth/logout'
           : authMode === 'basic'
             ? '/api/logout'
+            : authMode === 'github'
+              ? '/api/auth/logout'
             : null,
       postLogoutRedirect: ssoIdentity ? '/login' : null,
       user,
@@ -5313,10 +5410,6 @@ export function installSpaFallback(
 function basicSessionCookie(token: string, ttlMs: number, secure: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
   return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
-}
-
-function clearBasicSessionCookie(secure: boolean): string {
-  return `cds_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

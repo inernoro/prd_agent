@@ -1,6 +1,11 @@
 import { Router, type Request, type Response } from 'express';
 import type { CdsSsoConfig } from '../types.js';
-import { GH_SESSION_COOKIE } from './auth.js';
+import {
+  GH_SESSION_COOKIE,
+  SSO_SESSION_COOKIE,
+  buildLegacyLogoutCookie,
+  buildLogoutCookie,
+} from './auth.js';
 import {
   TicketSsoExchangeError,
   TicketSsoSessionStore,
@@ -11,7 +16,7 @@ import {
   publicTicketSsoConfig,
 } from '../services/ticket-sso.js';
 
-export const TICKET_SSO_COOKIE = 'cds_sso_session';
+export const TICKET_SSO_COOKIE = SSO_SESSION_COOKIE;
 
 export interface TicketSsoRouterDeps {
   resolveConfig: () => CdsSsoConfig;
@@ -152,14 +157,15 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         deps.tokenExchangeTimeoutMs,
       );
       const session = deps.sessionStore.create(identity);
-      res.setHeader(
-        'Set-Cookie',
+      res.setHeader('Set-Cookie', [
         sessionCookie(
           session.token,
           session.expiresAt,
           deps.cookieSecure || state.callbackUrl.startsWith('https://'),
         ),
-      );
+        buildLogoutCookie(deps.cookieSecure || state.callbackUrl.startsWith('https://')),
+        buildLegacyLogoutCookie(deps.cookieSecure || state.callbackUrl.startsWith('https://')),
+      ]);
       res.json({
         success: true,
         redirect: state.redirect || config.defaultRedirect || '/project-list',

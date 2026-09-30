@@ -85,9 +85,22 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
       if (req.method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(req.path)) return next();
       if (req.method === 'POST' && req.path === '/api/bootstrap-access-requests') return next();
       if (req.method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(req.path)) return next();
-      // 默认模拟人类 cookie 登录;带 x-machine-key 头时模拟「机器密钥通过全局鉴权
-      // 但不是人」—— 用于验证 approve/reject 拒绝机器密钥。
-      if (req.headers['x-machine-key'] !== '1') (req as any)._cdsCookieAuth = true;
+      // 默认模拟原始账号的人类 cookie 登录;带 x-local-user 时模拟持久化本地会话;
+      // 带 x-machine-key 时模拟「机器密钥通过全局鉴权但不是人」。
+      if (req.headers['x-machine-key'] !== '1') {
+        if (req.headers['x-local-user'] === '1') {
+          (req as any).cdsUser = {
+            username: 'local-owner', isSystemOwner: true, authProvider: 'local',
+          };
+          (req as any).cdsSession = { id: 'local-session' };
+        } else {
+          (req as any)._cdsCookieAuth = true;
+          (req as any)._cdsBasicHumanAuth = true;
+          (req as any).cdsUser = {
+            username: 'legacy-owner', isSystemOwner: true, authProvider: 'legacy',
+          };
+        }
+      }
       next();
     });
     app.use('/api', createAccessRequestsRouter({ stateService }));
@@ -239,6 +252,20 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(poll.body.status).toBe('pending');
     // 人类(默认 cookie)可以批准
     expect((await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
+  });
+
+  it('持久化本地会话可以列出、批准和拒绝授权申请', async () => {
+    const local = { 'x-local-user': '1' };
+    const first = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'approve' });
+    const second = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'reject' });
+
+    expect((await request(server, 'GET', '/api/access-requests', undefined, local)).status).toBe(200);
+    expect((await request(server, 'POST', `/api/access-requests/${first.body.requestId}/approve`, {}, local)).status).toBe(200);
+    expect((await request(server, 'POST', `/api/access-requests/${second.body.requestId}/reject`, { reason: '不批' }, local)).status).toBe(200);
+
+    const decided = stateService.listAccessRequests();
+    expect(decided.find((item) => item.id === first.body.requestId)?.decidedBy).toBe('local-owner');
+    expect(decided.find((item) => item.id === second.body.requestId)?.decidedBy).toBe('local-owner');
   });
 
   // 回归(真实环境抓到):发起存的是 project.id,调用方用 slug 轮询时不能误判 404。
