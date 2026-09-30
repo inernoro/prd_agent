@@ -8,12 +8,12 @@
  * 2026-09-16 之前这里画的是缩略版二维图，固定 180px 高、只按宽度缩放，宽屏上被裁得只剩
  * 「入口」一枚节点——文案说 2 个服务挂在壳下面，图里一个都没有。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Expand, Maximize2, Wrench, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
-import { RelationEmptyState, RelationGraph, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
+import { RelationEmptyState, RelationGraph, RelationLegend, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
 import { FlowFacts, RelationFlowSkeleton, RelationFlowStrip, layoutFlow } from './RelationFlowStrip';
 
 export function useRelationPayload(branchId: string | undefined): { state: { status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string }; reload: () => void } {
@@ -31,7 +31,12 @@ export function useRelationPayload(branchId: string | undefined): { state: { sta
 
 const SEV_LABEL: Record<LintFindingView['severity'], string> = { error: '错误', warn: '警告', info: '建议' };
 const SEV_CLS: Record<LintFindingView['severity'], string> = { error: 'border-destructive/60 text-destructive', warn: 'border-warn/60 bg-warn-soft text-warn', info: 'border-[hsl(var(--hairline-strong))] text-muted-foreground' };
-const SEV_STRIPE: Record<LintFindingView['severity'], string> = { error: 'hsl(var(--bad))', warn: 'hsl(var(--warn))', info: 'hsl(var(--hairline-strong))' };
+/** 严重度落在整张卡上：描一圈淡色边 + 极淡底色（设计稿 03）。不用左侧色条——那是模板化卡片的通病 */
+const SEV_CARD: Record<LintFindingView['severity'], CSSProperties> = {
+  error: { borderColor: 'hsl(var(--bad) / .45)', background: 'color-mix(in srgb, hsl(var(--bad)) 6%, hsl(var(--background)))' },
+  warn: { borderColor: 'hsl(var(--warn) / .45)', background: 'color-mix(in srgb, hsl(var(--warn-soft)) 60%, hsl(var(--background)))' },
+  info: { borderColor: 'hsl(var(--hairline))', background: 'hsl(var(--background))' },
+};
 
 /**
  * 体检结论列表。每条是上下堆叠的一张卡：严重度 + 规则名 / 说明 / 涉及服务 / 修法 + 去配置。
@@ -46,8 +51,9 @@ export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }
       {findings.map((f, i) => (
         <div
           key={`${f.rule}-${i}`}
-          className="cds-surface-sunken cds-hairline flex min-w-0 flex-col gap-1.5 rounded-md p-2.5 transition-colors duration-150 hover:bg-[hsl(var(--surface-raised))]"
-          style={{ borderLeft: `3px solid ${SEV_STRIPE[f.severity]}` }}
+          className="flex min-w-0 flex-col gap-2 rounded-[0.625rem] border px-3.5 py-3 transition-[border-color,box-shadow] duration-150 hover:shadow-[0_0_0_3px_hsl(var(--warn)/.18)]"
+          style={SEV_CARD[f.severity]}
+          tabIndex={onPick ? 0 : undefined}
           data-finding={f.rule}
           data-severity={f.severity}
           onMouseEnter={() => onPick?.(f.services.length ? f.services : null)}
@@ -57,16 +63,16 @@ export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }
         >
           <div className="flex min-w-0 items-center gap-2">
             <span className={`inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-2 text-[0.75rem] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
-            <b className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] text-foreground" title={f.rule}>{f.rule}</b>
+            <b className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] font-semibold text-foreground" title={f.rule}>{f.rule}</b>
           </div>
-          <div className="text-[0.88rem] leading-relaxed text-foreground-muted [overflow-wrap:anywhere]">{f.message}</div>
+          <p className="m-0 text-[0.875rem] leading-[1.6] text-foreground-muted [overflow-wrap:anywhere] [text-wrap:pretty]">{f.message}</p>
           {f.services.length > 1 ? (
             <div className="flex flex-wrap gap-1" aria-label="涉及的服务">
-              {f.services.map((id) => <span key={id} className="max-w-full truncate rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1.5 font-mono text-[0.72rem] text-foreground-muted">{id}</span>)}
+              {f.services.map((id) => <span key={id} className="max-w-full truncate rounded-[0.3rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-[0.45rem] font-mono text-[0.72rem] leading-[1.25rem] text-foreground-muted">{id}</span>)}
             </div>
           ) : null}
-          <div className="flex min-w-0 items-start justify-between gap-2 border-t border-dashed border-[hsl(var(--hairline))] pt-1.5">
-            <div className="min-w-0 flex-1 text-[0.8125rem] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">修法：{f.fix}</div>
+          <div className="flex min-w-0 items-center justify-between gap-3 border-t border-dashed border-[hsl(var(--hairline))] pt-2">
+            <div className="min-w-0 flex-1 text-[0.8125rem] leading-[1.55] text-muted-foreground [overflow-wrap:anywhere]">修法：{f.fix}</div>
             {onConfigure ? <Button variant="outline" size="sm" className="h-[1.625rem] shrink-0" onClick={(e) => { e.stopPropagation(); onConfigure(); }} title="到配置页签改 compose 声明"><Wrench />去配置</Button> : null}
           </div>
         </div>
@@ -79,21 +85,48 @@ export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }
  * 展开视图与全屏页共用的主体：问题带在上（横跨整宽、自适应多列），关系图在下填满剩余高度。
  * 此前问题栏是右侧 17.5rem 的窄列，和图抢宽度，两边都被挤坏。
  */
+function useNarrow(query = '(max-width: 639px)'): boolean {
+  const get = (): boolean => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(query).matches;
+  const [narrow, setNarrow] = useState(get);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(query);
+    const on = (): void => setNarrow(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [query]);
+  return narrow;
+}
+
 export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems = false }: { data: RelationPayload; entryHost?: string; onConfigure?: () => void; onlyProblems?: boolean }): JSX.Element {
   const [highlight, setHighlight] = useState<string[] | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const narrow = useNarrow();
   const findings = onlyProblems ? data.lint.findings.filter((f) => f.severity !== 'info') : data.lint.findings;
   const count = (sev: LintFindingView['severity']): number => data.lint.findings.filter((f) => f.severity === sev).length;
+  // 手机上问题带只先放要处理的（错误 / 警告），建议收成一行，免得问题带吃掉整屏（设计稿 04）
+  const actionable = findings.filter((f) => f.severity !== 'info');
+  const folded = narrow && !showAll && actionable.length > 0 && actionable.length < findings.length;
+  const visible = folded ? actionable : findings;
+  const hidden = findings.filter((f) => !visible.includes(f));
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="relation-workspace">
-      <div className="max-h-[40%] shrink-0 overflow-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-[0.75rem] font-bold text-muted-foreground">
-          需要处理 · {findings.length} 条
+      <div className="max-h-[45%] shrink-0 overflow-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 sm:px-[1.375rem] sm:py-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-[0.78rem] text-muted-foreground">
+          <b className="font-semibold text-foreground-muted">需要处理 · {findings.length} 条</b>
           {(['error', 'warn', 'info'] as const).map((sev) => (count(sev) ? <span key={sev} className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.6875rem] font-semibold ${SEV_CLS[sev]}`}>{count(sev)} {SEV_LABEL[sev]}</span> : null))}
-          {findings.length > 0 ? <span className="font-normal">悬停一条，图上点亮涉及的服务</span> : null}
+          {findings.length > 0 ? <span className="ml-1 hidden sm:inline">悬停一条，图上点亮它涉及的服务</span> : null}
         </div>
-        <FindingsList findings={findings} onPick={setHighlight} onConfigure={onConfigure} layout="grid" />
+        <FindingsList findings={visible} onPick={setHighlight} onConfigure={onConfigure} layout="grid" />
+        {folded ? (
+          <button type="button" className="mt-2.5 flex h-8 w-full items-center justify-between rounded-md px-1 text-[0.8125rem] text-foreground-muted transition-colors hover:text-foreground" onClick={() => setShowAll(true)} data-testid="relation-findings-more">
+            <span className="truncate">另有 {hidden.length} 条建议 · <span className="font-mono">{hidden.map((f) => f.rule).join(' / ')}</span></span>
+            <span className="shrink-0 text-muted-foreground">展开</span>
+          </button>
+        ) : null}
       </div>
-      <RelationGraph payload={data} highlight={highlight} entryHost={entryHost} className="min-h-0 flex-1" />
+      <RelationGraph payload={data} highlight={highlight} entryHost={entryHost} hideLegend className="min-h-0 flex-1" />
+      <RelationLegend className="hidden h-10 shrink-0 border-t border-[hsl(var(--hairline))] px-[1.375rem] sm:flex" />
     </div>
   );
 }
@@ -175,23 +208,22 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
       ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 条警告</span>
       : <span className="inline-flex h-[1.3rem] items-center rounded-full border border-ok/50 bg-ok-soft px-2 text-[0.75rem] font-semibold text-ok">无问题</span>;
   const body = variant === 'row' ? (
-    /* 行式（指挥台底部）：一行读完——标题与结论在左、流向条居中撑满、事实与按钮靠右；窄了自然折行 */
-    <div className={`flex flex-col gap-3 rounded-xl border bg-[hsl(var(--surface-raised))] px-[1.3rem] py-3.5 transition-colors duration-150 ${tone}`} data-testid="relation-card" data-variant="row">
-      {/* 第一行：标题、结论（截断带 title）、事实、动作；第二行：流向条满宽——抽屉宽度下三列并排放不下流向条，宁可两行也不裁 chip */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-        <div className="flex items-center gap-2 text-base font-bold">关系{pill}</div>
-        <div className="min-w-[12rem] flex-1 truncate text-[0.8125rem] text-foreground-muted" title={relationHeadline(data)}>{relationHeadline(data)}</div>
-        <FlowFacts facts={model.facts} />
-        <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
-          <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
-        </div>
+    /* 行式（分支详情总览，设计稿 01）：标题行放动作，结论句完整显示不截断，其下事实行、两条泳道、问题卡 */
+    <section className={`flex flex-col gap-4 rounded-[0.875rem] border bg-[hsl(var(--surface-raised))] px-[1.375rem] pb-[1.375rem] pt-5 transition-colors duration-150 ${tone}`} data-testid="relation-card" data-variant="row">
+      <div className="flex items-center gap-2.5">
+        <h2 className="m-0 text-[1.0625rem] font-bold">关系</h2>
+        {pill}
+        <span className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
+        <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
       </div>
+      <p className="m-0 text-[0.875rem] leading-[1.7] text-foreground-muted [text-wrap:pretty]">{relationHeadline(data)}</p>
+      <FlowFacts facts={model.facts} />
       <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击展开查看">
         <RelationFlowStrip model={model} />
       </div>
       {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} layout="grid" /> : null}
-    </div>
+    </section>
   ) : shell(tone, (
     <>
       <div className="flex flex-wrap items-center gap-2 text-base font-bold">
@@ -216,10 +248,10 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
            被盖住的关系卡只露出半截 chip（2026-09-30 用户：「一边是遮挡，一边是折叠压缩」） */
         <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:p-4 lg:p-8" role="dialog" aria-modal="true" aria-label="关系图" data-testid="relation-sheet">
           <div className="absolute inset-0 bg-[hsl(var(--status-ink))]/55 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
-          <div className="relative flex w-full max-w-[96rem] flex-col overflow-hidden border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl sm:rounded-xl">
+          <div className="relative flex w-full max-w-[96rem] flex-col overflow-hidden border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl sm:rounded-2xl">
             <div className="flex h-[3.25rem] shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
-              <span className="text-sm font-bold">关系</span>
-              <span className="min-w-0 truncate font-mono text-[0.6875rem] text-muted-foreground">{data.branch}</span>
+              <h2 className="m-0 text-base font-bold">关系</h2>
+              <span className="hidden min-w-0 truncate font-mono text-[0.78rem] text-muted-foreground sm:inline">{data.branch}</span>
               {errors ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 错误</span> : null}
               {warnings ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 警告</span> : null}
               <span className="flex-1" />

@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { layoutFlow, RelationFlowStrip, RelationFlowSkeleton } from '../../web/src/components/branch/RelationFlowStrip.js';
+import { FlowFacts, layoutFlow, RelationFlowStrip, RelationFlowSkeleton } from '../../web/src/components/branch/RelationFlowStrip.js';
 import { formatDeployedAgo, formatUptime } from '../../web/src/components/branch/OverviewPanel.js';
 import { relationHeadline, type RelationPayload } from '../../web/src/components/branch/RelationGraph.js';
 
@@ -69,7 +69,7 @@ describe('layoutFlow', () => {
   });
   it('事实行的六个数字与图同源', () => {
     const m = layoutFlow(payload());
-    expect(m.facts).toEqual({ sites: 1, services: 4, prefixes: 3, infra: 2, refs: 0, errors: 0, warnings: 1 });
+    expect(m.facts).toEqual({ sites: 1, services: 4, prefixes: 3, subdomains: 0, infra: 2, refs: 0, errors: 0, warnings: 1 });
   });
   it('主域名没有壳时不静默：壳列放一枚说明 chip，其余服务仍全部出现', () => {
     const p = payload();
@@ -125,7 +125,7 @@ describe('RelationFlowStrip 渲染', () => {
   it('骨架与真实流向条同一副外形（同一 testid 前缀、同一圆角与底色），卡片高度不跳', () => {
     const real = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(payload()) }));
     const ghost = renderToStaticMarkup(createElement(RelationFlowSkeleton, { note: '正在算' }));
-    for (const cls of ['rounded-[0.75rem]', 'bg-[hsl(var(--surface-sunken))]', 'py-4']) { expect(real).toContain(cls); expect(ghost).toContain(cls); }
+    for (const cls of ['rounded-[0.75rem]', 'bg-[hsl(var(--surface-sunken))]', 'pb-4', 'pt-3.5']) { expect(real).toContain(cls); expect(ghost).toContain(cls); }
   });
   it('徽标不占语义色：redis 不用 --bad，mongo 不用 --ok（红色只在「坏了」时出现）', () => {
     const src = fs.readFileSync(path.join(SRC, 'components/branch/RelationFlowStrip.tsx'), 'utf8');
@@ -260,5 +260,32 @@ describe('问题卡与展开视图（2026-09-30「一边是遮挡，一边是折
     const page = stripComments(fs.readFileSync(path.join(SRC, 'pages/BranchRelationsPage.tsx'), 'utf8'));
     expect(page).toContain('<RelationWorkspace');
     expect(page).not.toContain('w-[20rem]');
+  });
+});
+
+describe('设计稿对齐（2026-09-30 用户：「按设计稿改代码」）', () => {
+  it('问题卡的严重度落在整张卡上，不再用左侧色条', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    expect(card).not.toMatch(/borderLeft/);
+    expect(card).toContain('SEV_CARD[f.severity]');
+  });
+  it('展开视图：图例放底栏，手机上建议收成一行', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    const ws = card.slice(card.indexOf('export function RelationWorkspace'));
+    expect(ws).toContain('hideLegend');
+    expect(ws).toContain('<RelationLegend');
+    expect(ws).toContain('data-testid="relation-findings-more"');
+  });
+  it('总览行式卡：结论句完整显示，不再单行截断', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    const row = card.slice(card.indexOf("variant === 'row' ? ("), card.indexOf(') : shell(tone'));
+    expect(row).toContain('{relationHeadline(data)}</p>');
+    expect(row).not.toMatch(/truncate[^"]*" title=\{relationHeadline/);
+  });
+  it('事实行：为零的子域 / 基础设施 / 跨项目引用不占位', () => {
+    const html = renderToStaticMarkup(createElement(FlowFacts, { facts: { sites: 9, services: 11, prefixes: 7, subdomains: 8, infra: 0, refs: 0, errors: 0, warnings: 1 } }));
+    expect(html).toContain('子域');
+    expect(html).not.toContain('共享基础设施');
+    expect(html).not.toContain('跨项目引用');
   });
 });

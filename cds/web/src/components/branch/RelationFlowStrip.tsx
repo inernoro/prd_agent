@@ -43,7 +43,7 @@ export interface FlowModel {
   tail: FlowChip[];
   /** 成员列 → 尾列 */
   tailLinks: FlowLink[];
-  facts: { sites: number; services: number; prefixes: number; infra: number; refs: number; errors: number; warnings: number };
+  facts: { sites: number; services: number; prefixes: number; subdomains: number; infra: number; refs: number; errors: number; warnings: number };
 }
 
 const ROLE_KIND: Record<RoleView, FlowKind> = { web: 'web', api: 'api', worker: 'job' };
@@ -151,18 +151,22 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
   return {
     entry: { id: 'entry', kind: 'gw', name: entryHost || `分支 ${payload.branch}`, sub: entryHost ? '入口 · 按域名与前缀分流' : '入口 · 按域名与前缀分流（域名未就绪）' },
     shells, subsites, members, shellLinks, tail, tailLinks,
-    facts: { sites: graph.sites.length, services: nodes.length, prefixes, infra: graph.nodes.filter((n) => n.kind === 'infra').length, refs, errors: lint.summary.errors, warnings: lint.summary.warnings },
+    facts: { sites: graph.sites.length, services: nodes.length, prefixes, subdomains: allSubs.length, infra: graph.nodes.filter((n) => n.kind === 'infra').length, refs, errors: lint.summary.errors, warnings: lint.summary.warnings },
   };
 }
 
 /** 事实行：结论之下的一行数字，让人不点开就能核对这张图值不值得看。 */
 export function FlowFacts({ facts }: { facts: FlowModel['facts'] }): JSX.Element {
   const tone = facts.errors ? 'text-bad' : facts.warnings ? 'text-warn' : 'text-ok';
-  const item = (n: number, label: string) => <span className="whitespace-nowrap"><b className="font-semibold text-foreground-muted">{n}</b> {label}</span>;
+  // 为零的可选项不占位（没有子域 / 基础设施 / 跨项目引用就不写「0 个」），读起来只剩有信息的数字
+  const items: Array<[number, string]> = [[facts.sites, '站点'], [facts.services, '服务'], [facts.prefixes, '前缀']];
+  if (facts.subdomains) items.push([facts.subdomains, '子域']);
+  if (facts.infra) items.push([facts.infra, '共享基础设施']);
+  if (facts.refs) items.push([facts.refs, '跨项目引用']);
   const dot = <span aria-hidden className="h-[3px] w-[3px] rounded-full bg-[hsl(var(--hairline-strong))]" />;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted-foreground" data-testid="relation-facts">
-      {item(facts.sites, '站点')}{dot}{item(facts.services, '服务')}{dot}{item(facts.prefixes, '前缀')}{dot}{item(facts.infra, '共享基础设施')}{dot}{item(facts.refs, '跨项目引用')}{dot}
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.8125rem] text-muted-foreground" data-testid="relation-facts">
+      {items.map(([n, label]) => <span key={label} className="inline-flex items-center gap-2.5 whitespace-nowrap"><span><b className="font-semibold text-foreground-muted">{n}</b> {label}</span>{dot}</span>)}
       <span className="whitespace-nowrap">体检 <b className={`font-semibold ${tone}`}>{facts.errors} 错 {facts.warnings} 警</b></span>
     </div>
   );
@@ -269,11 +273,11 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
 
   const flow = (
     <div
-      className="overflow-x-auto rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
+      className="overflow-x-auto rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 pb-4 pt-3.5"
       style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
       data-testid="relation-strip-main"
     >
-      {model.subsites.length > 0 ? <LaneHead title={`主域名${model.entry.name.includes('.') ? ` · ${model.entry.name}` : ''}`} note="壳承接 /，其余按前缀分流" /> : null}
+      <LaneHead title={`主域名${model.entry.name.includes('.') ? ` · ${model.entry.name}` : ''}`} note="壳承接 /，其余按前缀分流" mono={model.entry.name.includes('.')} />
       {/* 内层 w-full + 显式最小宽（各列基准宽之和）：装得下就按比例撑满（列会长到 1.6 倍基准宽），装不下先缩回基准宽，
           再不够才横向滚动。此前是 min-w-max：不换行的长服务名把每列的内在宽度撑到 1.6 倍，明明缩回基准宽就放得下，
           却被挤出右沿（2026-09-30）。justify-center 配 overflow 会把左端裁掉、还滚不回来，所以居中靠 mx-auto 而不是 justify */}
@@ -313,10 +317,11 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
   );
 }
 
-function LaneHead({ title, note }: { title: string; note: string }): JSX.Element {
+function LaneHead({ title, note, mono }: { title: string; note: string; /** 标题里带域名时，域名那段用等宽 */ mono?: boolean }): JSX.Element {
+  const [head, ...rest] = title.split(' · ');
   return (
-    <div className="mb-2.5 flex min-w-0 items-baseline justify-between gap-3 text-[0.75rem] text-muted-foreground">
-      <span className="min-w-0 truncate font-bold" title={title}>{title}</span>
+    <div className="mb-3 flex min-w-0 items-baseline justify-between gap-4 text-[0.75rem] text-muted-foreground">
+      <span className="min-w-0 truncate font-semibold text-foreground-muted" title={title}>{head}{rest.length ? <> · <span className={mono ? 'font-mono font-medium' : ''}>{rest.join(' · ')}</span></> : null}</span>
       <span className="hidden shrink-0 sm:inline">{note}</span>
     </div>
   );
@@ -326,8 +331,10 @@ function LaneHead({ title, note }: { title: string; note: string }): JSX.Element
 export function RelationFlowSkeleton({ note, tone = 'muted' }: { note: string; tone?: 'muted' | 'bad' }): JSX.Element {
   const ghost = (w: number, i: number) => <div key={i} className="min-w-0 flex-1 rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-background/60 motion-safe:animate-pulse" style={{ maxWidth: w, height: ROW_H, animationDelay: `${i * 120}ms` }} />;
   return (
-    <div className="relative flex items-center justify-center gap-8 overflow-hidden rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4" data-testid="relation-strip-skeleton">
-      {[W.entry, W.shell, W.member, W.infra].map((w, i) => ghost(w, i))}
+    <div className="relative flex flex-col overflow-hidden rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 pb-4 pt-3.5" data-testid="relation-strip-skeleton">
+      {/* 与真实流向条同一副外形：一行泳道标题 + 一排 chip，数据到了只换内容不换高度 */}
+      <div className="mb-3 h-[1.125rem] w-40 rounded bg-background/60 motion-safe:animate-pulse" />
+      <div className="flex items-center justify-center gap-8">{[W.entry, W.shell, W.member, W.infra].map((w, i) => ghost(w, i))}</div>
       <div className={`absolute inset-x-0 bottom-1.5 text-center text-[0.8125rem] ${tone === 'bad' ? 'text-destructive' : 'text-muted-foreground'}`}>{note}</div>
     </div>
   );

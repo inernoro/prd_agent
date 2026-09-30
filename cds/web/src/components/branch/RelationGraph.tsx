@@ -17,9 +17,19 @@ export interface LintFindingView { rule: string; severity: 'error' | 'warn' | 'i
 export interface ReferenceView { profileId: string; key: string; kind: 'cds-ref' | 'url' | 'name-hint' | 'platform'; resolved?: Array<{ url: string | null; status: string; target: { projectId?: string; projectSlug?: string; branchId?: string; branchName?: string; serviceId: string }; ref: { projectRef: string; serviceId: string; branchRef?: string } }>; matchedBranch?: { branchId: string; projectId: string; branchName: string; status: string } | null }
 export interface RelationPayload { branchId: string; projectId: string; branch: string; status?: string; graph: ServiceGraphView; lint: { findings: LintFindingView[]; summary: { errors: number; warnings: number; infos: number } }; references: ReferenceView[] }
 
-const CARD_W = 200, CARD_H = 52, EXT_W = CARD_W + 60, GAP_X = 24, GAP_Y = 56, ROW_GAP = 16, SITE_PAD = 16, SITE_LABEL = 28, FRAME_GAP = 28;
-/** 左侧走线槽：入口到第二个及以后站点框的线沿这里下行，不穿过上面的框 */
-const GUTTER = 40, RIGHT_PAD = 16, MIN_W = 560;
+/**
+ * 两档几何（设计稿「CDS 关系视图改版」02 / 04 画板）：
+ * - 桌面档：卡片 280×56，壳到成员 52，同框行距 16，框间距 24；左侧 56px 走线槽，入口到后面站点框的线沿它下行
+ * - 手机档：前缀成员改成带竖线的树状列表，其余网格两列，卡片 44 高——不再把桌面布局整体缩到 0.6 倍
+ */
+interface Geo { compact: boolean; cardW: number; cardH: number; gapX: number; gapY: number; rowGap: number; pad: number; label: number; frameGap: number; gutter: number; right: number; entryGap: number }
+const WIDE: Geo = { compact: false, cardW: 280, cardH: 56, gapX: 24, gapY: 52, rowGap: 16, pad: 16, label: 34, frameGap: 24, gutter: 56, right: 32, entryGap: 32 };
+const COMPACT: Geo = { compact: true, cardW: 0, cardH: 44, gapX: 12, gapY: 12, rowGap: 8, pad: 12, label: 30, frameGap: 16, gutter: 24, right: 12, entryGap: 16 };
+/** 窄于这个宽度切手机档；再窄于 MIN_W 才整体缩小 */
+export const RELATION_COMPACT_BELOW = 640;
+const MIN_W = 320;
+/** 手机档树状列表：成员卡相对壳缩进多少，竖线在缩进的中间 */
+const TREE_INDENT = 40;
 const ROLE_LABEL: Record<RoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
 // 颜色只许走主题 token（cds-theme-tokens）：这里存 token 名，用到时包 hsl(var(...))，双主题各自成立
 const ROLE_TOKEN: Record<RoleView, string> = { web: '--role-web', api: '--role-api', worker: '--role-worker' };
@@ -35,14 +45,18 @@ export interface RelationLayout {
   entry: Pos;
   /**
    * inferred：这条关系是按名约定推断出来的（compose 里没声明），画虚线；其余一律实线。
-   * route=side：入口到第二个及以后的站点框，沿左侧走线槽下行，进框的左沿
+   * route=side：入口到第二个及以后的站点框，沿左侧走线槽（x=via）下行，进框的左沿
+   * route=bus：一对多的直角线，先下到 y=via 这条横线，再横到目标正上方落下（壳到前缀成员）
+   * route=tree：手机档树状列表，从 x=via 的竖线横进目标左沿
    */
-  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string; inferred?: boolean; route?: 'side' }>;
+  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string; inferred?: boolean; route?: 'side' | 'bus' | 'tree'; via?: number }>;
   externals: Array<{ id: string; label: string; sub: string; status: string; pos: Pos; broken: boolean }>;
   /** 同一个服务同时是主域名壳和子域壳（double-public-surface）时，后一个站点里用别名节点，这里映射回真实 id */
   aliasOf: Map<string, string>;
   /** 节点第二行的覆盖文案：子域网格里写「子域 xxx」，而不是这个服务在主域名下的前缀 */
   subOf: Map<string, string>;
+  /** 手机档（成员树状、网格两列） */
+  compact: boolean;
 }
 
 const svc = (id: string): string => id.replace(/^service:/, '');
@@ -58,7 +72,16 @@ const textW = (t: string, size: number): number => Array.from(t).reduce((w, ch) 
 export function layoutRelations(payload: RelationPayload, width = 960): RelationLayout {
   const { graph, references } = payload;
   const W = Math.max(MIN_W, Math.round(width));
-  const frameX = GUTTER, frameW = W - GUTTER - RIGHT_PAD, innerW = frameW - SITE_PAD * 2, innerX = frameX + SITE_PAD;
+  const base = W < RELATION_COMPACT_BELOW ? COMPACT : WIDE;
+  const frameX = base.gutter, frameW = W - base.gutter - base.right, innerW = frameW - base.pad * 2, innerX = frameX + base.pad;
+  // 手机档卡片宽由容器决定：网格两列正好铺满
+  // 桌面档卡片宽在 232–280 之间按容器自适应：固定 280 时 1300 宽的浮层只排得下 3 列，第 4 个前缀成员掉到第二行、总线被上一行的卡挡住
+  const wideCols = Math.max(1, Math.floor((innerW + base.gapX) / (232 + base.gapX)));
+  const G: Geo = base.compact
+    ? { ...base, cardW: Math.floor((innerW - base.gapX) / 2) }
+    : { ...base, cardW: Math.min(base.cardW, Math.floor((innerW - (wideCols - 1) * base.gapX) / wideCols)) };
+  const CARD_W = G.cardW, CARD_H = G.cardH, GAP_X = G.gapX, GAP_Y = G.gapY, ROW_GAP = G.rowGap, SITE_PAD = G.pad, SITE_LABEL = G.label, FRAME_GAP = G.frameGap;
+  const EXT_W = G.compact ? innerW : CARD_W + 60;
   const colsFor = (cardW: number): number => Math.max(1, Math.floor((innerW + GAP_X) / (cardW + GAP_X)));
   const rowW = (n: number, cardW = CARD_W): number => (n <= 0 ? 0 : n * cardW + (n - 1) * GAP_X);
 
@@ -139,18 +162,25 @@ export function layoutRelations(payload: RelationPayload, width = 960): Relation
     return f;
   };
 
-  const entry: Pos = { x: frameX + (frameW - 200) / 2, y: 16, w: 200, h: 56 };
-  let y = entry.y + entry.h + 40;
+  const heroW = G.compact ? innerW : CARD_W;
+  const entry: Pos = { x: innerX + (innerW - heroW) / 2, y: G.compact ? 12 : 16, w: heroW, h: G.compact ? 48 : CARD_H };
+  let y = entry.y + entry.h + G.entryGap;
+  const trunkX = innerX + TREE_INDENT / 2;
   // 框角写用户语言，不写实现术语（「壳在上 · 前缀成员在下」「forwarder」这类字读的人接不上）
   for (const b of stacked) {
     const top = y;
     let cursor = top + SITE_LABEL;
-    if (b.shell) { pos.set(b.shell, { x: innerX + (innerW - CARD_W) / 2, y: cursor, w: CARD_W, h: CARD_H }); cursor += CARD_H + GAP_Y; }
+    if (b.shell) { pos.set(b.shell, { x: innerX + (innerW - heroW) / 2, y: cursor, w: heroW, h: G.compact ? 48 : CARD_H }); cursor += (G.compact ? 48 : CARD_H) + GAP_Y; }
     let bottom = b.shell ? cursor - GAP_Y : cursor;
-    if (b.members.length > 0) { bottom = grid(b.members, cursor); cursor = bottom + GAP_Y; }
+    if (b.members.length > 0 && G.compact && b.shell) {
+      // 手机档：前缀成员一行一个，缩进挂在壳下面的竖线上
+      b.members.forEach((m, i) => pos.set(m, { x: innerX + TREE_INDENT, y: cursor + i * (CARD_H + ROW_GAP), w: innerW - TREE_INDENT, h: CARD_H }));
+      bottom = cursor + b.members.length * (CARD_H + ROW_GAP) - ROW_GAP;
+      cursor = bottom + GAP_Y;
+    } else if (b.members.length > 0) { bottom = grid(b.members, cursor); cursor = bottom + GAP_Y; }
     if (b.attached.length > 0) bottom = grid(b.attached, cursor);
-    const label = b.site.kind === 'main' ? '同一个域名' : `子域 ${b.site.subdomain}`;
-    const sub = b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '壳是按名兜底出来的，其余按前缀分流' : '壳承接根路径，其余按前缀分流') : '子域下再按前缀分流';
+    const label = b.site.kind === 'main' ? '主域名' : `子域 ${b.site.subdomain}`;
+    const sub = b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '壳是按名兜底出来的，其余按前缀分流' : '壳承接 /，其余按前缀分流') : '子域下再按前缀分流';
     frame(b.site.id, label, sub, top, bottom, 'site');
     y = bottom + SITE_PAD + FRAME_GAP;
   }
@@ -196,14 +226,15 @@ export function layoutRelations(payload: RelationPayload, width = 960): Relation
     if (i === 0 && hp) edges.push({ from: entry, to: hp, kind: 'entry', key: `entry-${b.site.id}`, inferred });
     else {
       const f = frameOf(b.site.id);
-      if (f) edges.push({ from: entry, to: { x: f.x, y: f.y, w: 0, h: SITE_LABEL }, kind: 'entry', key: `entry-${b.site.id}`, inferred, route: 'side' });
+      if (f) edges.push({ from: entry, to: { x: f.x, y: f.y, w: 0, h: SITE_LABEL }, kind: 'entry', key: `entry-${b.site.id}`, inferred, route: 'side', via: G.gutter / 2 });
     }
     if (b.shell) {
       const sp = pos.get(b.shell)!;
       for (const m of b.members) {
         const mp = pos.get(m); if (!mp) continue;
         const info = b.site.members.find((x) => x.id === real(m));
-        edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名推断' : ''), key: `prefix-${m}`, inferred: Boolean(info?.viaConvention) });
+        const route = G.compact ? { route: 'tree' as const, via: trunkX } : { route: 'bus' as const, via: sp.y + sp.h + GAP_Y / 2 };
+        edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名推断' : ''), key: `prefix-${m}`, inferred: Boolean(info?.viaConvention), ...route });
       }
     }
   });
@@ -212,7 +243,7 @@ export function layoutRelations(payload: RelationPayload, width = 960): Relation
     // 没有堆叠站点（只有子域）时入口直接落到子域网格上沿，否则走左侧槽
     edges.push(stacked.length === 0
       ? { from: entry, to: { x: subsFrame.x + subsFrame.w / 2 - 1, y: subsFrame.y, w: 2, h: 0 }, kind: 'entry', key: `entry-${subsFrameKey}` }
-      : { from: entry, to: { x: subsFrame.x, y: subsFrame.y, w: 0, h: SITE_LABEL }, kind: 'entry', key: `entry-${subsFrameKey}`, route: 'side' });
+      : { from: entry, to: { x: subsFrame.x, y: subsFrame.y, w: 0, h: SITE_LABEL }, kind: 'entry', key: `entry-${subsFrameKey}`, route: 'side', via: G.gutter / 2 });
   }
   const at = (id: string): Pos | undefined => pos.get(id);
   for (const e of graph.edges) {
@@ -225,16 +256,27 @@ export function layoutRelations(payload: RelationPayload, width = 960): Relation
     if (!a || !e) continue;
     edges.push({ from: a, to: e.pos, kind: x.broken ? 'broken' : 'ref', label: x.label, key: `ref-${x.from}-${x.ext}-${x.label}` });
   }
-  return { width: W, height: Math.max(y - FRAME_GAP + 16, 320), pos, frames, entry, edges, externals, aliasOf, subOf };
+  return { width: W, height: Math.max(y - FRAME_GAP + 16, G.compact ? 200 : 320), pos, frames, entry, edges, externals, aliasOf, subOf, compact: G.compact };
 }
 
-function edgePath(a: Pos, b: Pos, route?: 'side'): string {
-  if (route === 'side') {
+type Edge = RelationLayout['edges'][number];
+function edgePath({ from: a, to: b, route, via }: Edge): string {
+  if (route === 'side' && via !== undefined) {
     // 从入口左沿出，沿左侧走线槽下行，拐进目标框左沿（框标题那一行的高度）
-    const sx = a.x, sy = a.y + a.h / 2, gx = GUTTER / 2, ty = b.y + b.h / 2, tx = b.x, r = 8;
-    return `M${sx},${sy} H${gx + r} Q${gx},${sy} ${gx},${sy + r} V${ty - r} Q${gx},${ty} ${gx + r},${ty} H${tx}`;
+    const sx = a.x, sy = a.y + a.h / 2, gx = via, ty = b.y + b.h / 2, tx = b.x, r = 8;
+    return `M${sx},${sy} H${gx + r} Q${gx},${sy} ${gx},${sy + r} V${ty - r} Q${gx},${ty} ${gx + r},${ty} H${tx - 2}`;
+  }
+  if (route === 'bus' && via !== undefined) {
+    // 一对多：壳下沿 → 横线 → 目标正上方落下；多条线共用竖干和横线，读起来是一条总线
+    const ax = a.x + a.w / 2, ay = a.y + a.h, bx = b.x + b.w / 2, by = b.y - 2;
+    return ax === bx ? `M${ax},${ay} V${by}` : `M${ax},${ay} V${via} H${bx} V${by}`;
+  }
+  if (route === 'tree' && via !== undefined) {
+    const ay = a.y + a.h, by = b.y + b.h / 2;
+    return `M${via},${ay} V${by} H${b.x - 2}`;
   }
   const ax = a.x + a.w / 2, ay = a.y + a.h, bx = b.x + b.w / 2, by = b.y;
+  if (by >= ay && Math.abs(ax - bx) < 1) return `M${ax},${ay} V${by - 2}`;
   if (by >= ay) { const my = (ay + by) / 2; return `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`; }
   // 目标在旁边或上方：从右侧出、左侧进
   const sx = a.x + a.w, sy = a.y + a.h / 2, tx = b.x, ty = b.y + b.h / 2, mx = (sx + tx) / 2;
@@ -253,7 +295,27 @@ const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: stri
 };
 const INFERRED_DASH = '3 4';
 
-export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost }: { payload: RelationPayload; compact?: boolean; /** 悬停问题卡时点亮的服务（一条问题可能涉及多个服务） */ highlight?: string | string[] | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
+const CHIP_SHADOW = '0 1px 2px hsl(0 0% 0% / .18)';
+/** 卡片外框：与设计稿同一副——圆角 12、1.5px 发丝边，出问题时描成语义色 */
+const chipBox = (p: Pos, ring?: string): CSSProperties => ({ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, boxSizing: 'border-box', borderRadius: 12, border: `1.5px solid ${ring ?? 'hsl(var(--hairline))'}`, boxShadow: CHIP_SHADOW, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px 0 10px', transition: 'opacity 150ms, box-shadow 150ms' });
+
+/** 卡片内容：徽标 / 名称（+ 旁注）/ 第二行（前缀用等宽）/ 问题数。入口、服务、外部引用共用这一份。 */
+function NodeBody({ compact, badge, badgeBg, badgeInferred, badgeTitle, name, nameTitle, note, sub, mono, pill }: { compact: boolean; badge: string; badgeBg: string; badgeInferred?: boolean; badgeTitle?: string; name: string; nameTitle?: string; note?: string; sub: string; mono?: boolean; pill?: { text: string; tone: 'warn' | 'bad' | 'ok'; title?: string } }): JSX.Element {
+  const size = compact ? 22 : 26;
+  const pillCls = pill?.tone === 'bad' ? 'border-destructive/60 text-destructive' : pill?.tone === 'ok' ? 'border-ok/50 bg-ok-soft text-ok' : 'border-warn/60 bg-warn-soft text-warn';
+  return (
+    <>
+      <span className={`inline-flex shrink-0 items-center justify-center font-extrabold tracking-wide text-primary-foreground ${badgeInferred ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ width: size, height: size, borderRadius: compact ? 6 : 7, fontSize: compact ? 8 : 9, background: badgeBg }} title={badgeTitle}>{badge}</span>
+      <span className="flex min-w-0 flex-1 flex-col" style={{ gap: compact ? 2 : 3 }}>
+        <span className="truncate font-semibold leading-tight text-foreground" style={{ fontSize: compact ? 13 : 14 }} title={nameTitle ?? name}>{name}{note ? <span className="ml-1.5 font-normal text-muted-foreground" style={{ fontSize: 11 }}>{note}</span> : null}</span>
+        <span className={`truncate leading-tight text-muted-foreground ${mono ? 'font-mono' : ''}`} style={{ fontSize: mono ? (compact ? 10.5 : 11) : (compact ? 11 : 11.5) }} title={sub}>{sub}</span>
+      </span>
+      {pill ? <span className={`inline-flex shrink-0 items-center rounded-full border font-semibold ${pillCls}`} style={{ height: 18, padding: '0 6px', fontSize: 10.5 }} title={pill.title}>{pill.text}</span> : null}
+    </>
+  );
+}
+
+export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost, hideLegend = false }: { payload: RelationPayload; compact?: boolean; /** 图例由外层底栏承担时关掉浮层图例 */ hideLegend?: boolean; /** 悬停问题卡时点亮的服务（一条问题可能涉及多个服务） */ highlight?: string | string[] | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
   const nodeById = new Map(payload.graph.nodes.map((n) => [n.kind === 'service' ? (n.rawId ?? svc(n.id)) : n.id, n]));
   const findingsOf = (id: string) => payload.lint.findings.filter((f) => f.services.includes(id) && f.severity !== 'info');
   // 按容器宽度排版：宽度量到之后重新排，卡片按列折行、字号 1:1；只有窄于最小画布宽时才整体缩小
@@ -295,15 +357,17 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             <marker id="rgArrBad" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--bad))" /></marker>
           </defs>
           {layout.frames.map((f) => {
-            const title = f.key === 'main' && entryHost ? `${f.label} · ${entryHost}` : f.label;
+            // 手机档框太窄放不下域名，域名已经写在入口卡上
+            const title = f.key === 'main' && entryHost && !layout.compact ? `${f.label} · ${entryHost}` : f.label;
             // 框标题与右侧说明挤不下时只留标题：窄画布里两段字叠在一起比少一句说明更难读
-            const fits = textW(title, 11) + textW(f.sub, 10) + 40 < f.w;
+            const fits = textW(title, 12) + textW(f.sub, 11.5) + 48 < f.w;
+            const ty = f.y + (layout.compact ? 19 : 22);
             return (
               <g key={f.key}>
-                <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.35}
-                  stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1.2" />
-                <text x={f.x + 14} y={f.y + 18} fontSize="11" fontWeight="700" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--muted-foreground))'}>{title}</text>
-                {fits ? <text x={f.x + f.w - 14} y={f.y + 18} fontSize="10" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{f.sub}</text> : null}
+                <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.4}
+                  stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1" />
+                <text x={f.x + 20} y={ty} fontSize={layout.compact ? 11.5 : 12} fontWeight="650" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--foreground-muted))'}>{title}</text>
+                {fits ? <text x={f.x + f.w - 20} y={ty} fontSize={layout.compact ? 11 : 11.5} textAnchor="end" fill="hsl(var(--muted-foreground))">{f.sub}</text> : null}
               </g>
             );
           })}
@@ -317,7 +381,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             const label = raw && raw.length > 26 ? `${raw.slice(0, 25)}…` : raw;
             return (
               <g key={e.key} opacity={dim(lit.size === 0 || edgeTouches(e.key))}>
-                <path d={edgePath(e.from, e.to, e.route)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
+                <path d={edgePath(e)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
                 {label ? (
                   <>
                     <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
@@ -328,9 +392,8 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             );
           })}
         </svg>
-        <div className="cds-surface-raised cds-hairline" style={{ position: 'absolute', left: layout.entry.x, top: layout.entry.y, width: layout.entry.w, height: layout.entry.h, borderRadius: 12, padding: '8px 10px', fontSize: 12 }}>
-          <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-call') }}>GW</span>入口</div>
-          <div className={`mt-1 truncate text-[10px] text-muted-foreground ${entryHost ? 'font-mono' : ''}`} title={entryHost ?? payload.branch}>{entryHost ?? `分支 ${payload.branch}`}</div>
+        <div className="bg-background" data-node="entry" style={{ ...chipBox(layout.entry), opacity: dim(lit.size === 0) }}>
+          <NodeBody compact={layout.compact} badge="GW" badgeBg={tone('--graph-call')} name="入口" sub={entryHost ?? `分支 ${payload.branch}`} mono={Boolean(entryHost)} />
         </div>
         {Array.from(layout.pos.entries()).map(([id, p]) => {
           const realId = layout.aliasOf.get(id) ?? id;
@@ -339,48 +402,44 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           const isInfra = n.kind === 'infra';
           const role = n.role ?? 'api';
           const bad = findingsOf(realId);
+          const isErr = bad.some((f) => f.severity === 'error');
           const glow = lit.has(realId);
           // 基础设施徽标不占语义色：redis 不用 --bad（红色只在「坏了」时出现）、mongo 不用 --ok
           const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--series-5' : '--series-2') : ROLE_TOKEN[role];
-          const color = tone(token);
+          const override = layout.subOf.get(id);
+          const prefixes = (n.pathPrefixes ?? []).join(' · ');
+          const sub = isInfra ? '共享实例 · 所有分支共用' : override ?? (prefixes || (n.subdomain ? `子域 ${n.subdomain}` : '内网 · 不对外'));
           return (
             <div key={id} className="bg-background" data-node={id} data-role={isInfra ? 'infra' : role}
-              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: glow ? `0 0 0 3px ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .35)' : 'hsl(var(--warn) / .35)'}, 0 4px 12px hsl(0 0% 0% / .25)` : '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(lit.size === 0 || glow), transition: 'opacity 150ms, box-shadow 150ms' }}>
-              <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ background: color }} title={n.roleReason}>
-                  {isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]}
-                </span>
-                <span className="min-w-0 flex-1 truncate" title={realId}>{n.name || realId}{id !== realId ? <span className="ml-1 text-[9px] font-normal text-muted-foreground">同一服务</span> : null}</span>
-                {bad.length > 0 ? <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
-              </div>
-              <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground">
-                {isInfra ? '共享实例 · 所有分支共用' : layout.subOf.get(id) ?? ((n.pathPrefixes ?? []).join(' ') || (n.subdomain ? `子域 ${n.subdomain}` : '内网 · 不对外'))}
-              </div>
+              style={{ ...chipBox(p, bad.length ? (isErr ? 'hsl(var(--bad) / .75)' : 'hsl(var(--warn) / .78)') : undefined), boxShadow: glow ? `0 0 0 4px ${isErr ? 'hsl(var(--bad) / .28)' : 'hsl(var(--warn) / .28)'}` : CHIP_SHADOW, opacity: dim(lit.size === 0 || glow) }}>
+              <NodeBody compact={layout.compact} badge={isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]} badgeBg={tone(token)} badgeInferred={!isInfra && Boolean(n.roleSource) && n.roleSource !== 'declared'} badgeTitle={n.roleReason}
+                name={n.name || realId} nameTitle={realId} note={id !== realId ? '同一服务' : undefined} sub={sub} mono={!isInfra && !override && Boolean(prefixes)}
+                pill={bad.length > 0 ? { text: layout.compact ? String(bad.length) : `${bad.length} 问题`, tone: isErr ? 'bad' : 'warn', title: bad.map((f) => f.message).join('\n') } : undefined} />
             </div>
           );
         })}
         {layout.externals.map((e) => (
-          <div key={e.id} className="bg-background" data-node={e.id} style={{ position: 'absolute', left: e.pos.x, top: e.pos.y, width: e.pos.w, height: e.pos.h, borderRadius: 12, border: `1.5px solid ${e.broken ? 'hsl(var(--bad) / .7)' : 'hsl(var(--info) / .5)'}`, fontSize: 12, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)' }}>
-            <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-              <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-external') }}>EXT</span>
-              <span className="min-w-0 flex-1 truncate">{e.label}</span>
-              <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${e.broken ? 'border-destructive/60 text-destructive' : 'border-ok/50 bg-ok-soft text-ok'}`}>{e.broken ? (e.status === 'running' ? '可达' : e.status === 'stopped' ? '已停止' : '断裂') : '可达'}</span>
-            </div>
-            <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground" title={e.sub}>{e.sub}</div>
+          <div key={e.id} className="bg-background" data-node={e.id} style={{ ...chipBox(e.pos, e.broken ? 'hsl(var(--bad) / .75)' : 'hsl(var(--info) / .55)'), opacity: dim(lit.size === 0) }}>
+            <NodeBody compact={layout.compact} badge="EXT" badgeBg={tone('--graph-external')} name={e.label} sub={e.sub}
+              pill={{ text: e.broken ? (e.status === 'stopped' ? '已停止' : '断裂') : '可达', tone: e.broken ? 'bad' : 'ok' }} />
           </div>
         ))}
       </div>
-      {!compact ? (
-        /* 图例：每一项自己不换行（窄抽屉里「声明的关系」曾被折成两行三个字一坨），整行按项折行 */
-        <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-4 gap-y-1 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground" data-testid="relation-legend">
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
-        </div>
-      ) : null}
+      {!compact && !hideLegend ? <RelationLegend className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex max-w-[calc(100%-1rem)] rounded-md px-3 py-1.5" /> : null}
+    </div>
+  );
+}
+
+/** 图例：展开视图与全屏页放在底栏（设计稿 02），独立使用 RelationGraph 时浮在图左下。每一项自己不换行，整行按项折行 */
+export function RelationLegend({ className }: { className?: string }): JSX.Element {
+  return (
+    <div className={`flex-wrap items-center gap-x-5 gap-y-1 text-[0.75rem] text-muted-foreground ${className ?? 'flex'}`} data-testid="relation-legend">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
     </div>
   );
 }

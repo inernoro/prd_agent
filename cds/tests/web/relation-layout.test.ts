@@ -119,3 +119,34 @@ describe('关系图颜色只走主题 token', () => {
     }
   });
 });
+
+describe('两档几何（设计稿「CDS 关系视图改版」02 / 04）', () => {
+  it('桌面档：卡片 280 宽，壳到前缀成员走直角总线', () => {
+    const l = layoutRelations(manySubs(), 1289);
+    expect(l.compact).toBe(false);
+    expect(l.pos.get('imp-admin')!.w).toBeGreaterThanOrEqual(232);
+    expect(l.pos.get('imp-admin')!.w).toBeLessThanOrEqual(280);
+    // 4 个前缀成员同一行（此前固定 280 宽时第 4 个掉到第二行）
+    expect(new Set(['imp-api', 'imp-open-platform-api', 'imp-vendor-api'].map((id) => l.pos.get(id)!.y)).size).toBe(1);
+    const prefix = l.edges.filter((e) => e.kind === 'prefix');
+    expect(prefix.length).toBe(3);
+    for (const e of prefix) expect(e.route).toBe('bus');
+    // 4 列：8 个子域排两行
+    const subs = l.frames.find((f) => f.key === 'subdomains')!;
+    const ys = new Set(Array.from(l.pos.values()).filter((p) => p.y > subs.y && p.y < subs.y + subs.h).map((p) => p.y));
+    expect(ys.size).toBe(2);
+  });
+  it('手机档（390 宽）：不整体缩小，前缀成员改成缩进的树状列表，子域两列', () => {
+    const l = layoutRelations(manySubs(), 374);
+    expect(l.compact).toBe(true);
+    expect(l.width).toBe(374);
+    const shell = l.pos.get('imp-admin')!;
+    const members = ['imp-api', 'imp-open-platform-api', 'imp-vendor-api'].map((id) => l.pos.get(id)!);
+    for (const m of members) { expect(m.x).toBeGreaterThan(shell.x); expect(m.x + m.w).toBeLessThanOrEqual(374); }
+    expect(new Set(members.map((m) => m.x)).size).toBe(1);
+    for (const e of l.edges.filter((x) => x.kind === 'prefix')) expect(e.route).toBe('tree');
+    const subs = l.frames.find((f) => f.key === 'subdomains')!;
+    const xs = new Set(Array.from(l.pos.values()).filter((p) => p.y > subs.y && p.y < subs.y + subs.h).map((p) => p.x));
+    expect(xs.size).toBe(2);
+  });
+});
