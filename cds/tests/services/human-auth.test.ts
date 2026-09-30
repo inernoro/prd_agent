@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
-import { isHumanSystemOwner } from '../../src/services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../../src/services/human-auth.js';
+
+describe('isAuthenticatedHuman', () => {
+  it('accepts persisted local, GitHub, SSO, and legacy human sessions', () => {
+    for (const authProvider of ['local', 'github', 'sso']) {
+      expect(isAuthenticatedHuman({
+        cdsUser: { username: 'human', authProvider },
+        cdsSession: { id: `${authProvider}-session` },
+      })).toBe(true);
+    }
+    expect(isAuthenticatedHuman({
+      _cdsBasicHumanAuth: true,
+      cdsUser: { username: 'legacy', authProvider: 'legacy' },
+    })).toBe(true);
+  });
+
+  it('rejects marker-only, user-only, session-only, and machine requests', () => {
+    expect(isAuthenticatedHuman({ _cdsBasicHumanAuth: true })).toBe(false);
+    expect(isAuthenticatedHuman({ cdsUser: { username: 'detached' } })).toBe(false);
+    expect(isAuthenticatedHuman({ cdsSession: { id: 'detached' } })).toBe(false);
+    expect(isAuthenticatedHuman({ _cdsCookieAuth: true })).toBe(false);
+    expect(isAuthenticatedHuman({})).toBe(false);
+  });
+});
 
 describe('isHumanSystemOwner', () => {
   it('accepts persisted and legacy system-owner sessions', () => {
