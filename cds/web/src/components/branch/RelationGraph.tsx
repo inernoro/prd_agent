@@ -17,7 +17,9 @@ export interface LintFindingView { rule: string; severity: 'error' | 'warn' | 'i
 export interface ReferenceView { profileId: string; key: string; kind: 'cds-ref' | 'url' | 'name-hint' | 'platform'; resolved?: Array<{ url: string | null; status: string; target: { projectId?: string; projectSlug?: string; branchId?: string; branchName?: string; serviceId: string }; ref: { projectRef: string; serviceId: string; branchRef?: string } }>; matchedBranch?: { branchId: string; projectId: string; branchName: string; status: string } | null }
 export interface RelationPayload { branchId: string; projectId: string; branch: string; status?: string; graph: ServiceGraphView; lint: { findings: LintFindingView[]; summary: { errors: number; warnings: number; infos: number } }; references: ReferenceView[] }
 
-const CARD_W = 200, CARD_H = 52, GAP_X = 28, GAP_Y = 64, SITE_PAD = 14, SITE_LABEL = 22, SITE_GAP = 36;
+const CARD_W = 200, CARD_H = 52, EXT_W = CARD_W + 60, GAP_X = 24, GAP_Y = 56, ROW_GAP = 16, SITE_PAD = 16, SITE_LABEL = 28, FRAME_GAP = 28;
+/** 左侧走线槽：入口到第二个及以后站点框的线沿这里下行，不穿过上面的框 */
+const GUTTER = 40, RIGHT_PAD = 16, MIN_W = 560;
 const ROLE_LABEL: Record<RoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
 // 颜色只许走主题 token（cds-theme-tokens）：这里存 token 名，用到时包 hsl(var(...))，双主题各自成立
 const ROLE_TOKEN: Record<RoleView, string> = { web: '--role-web', api: '--role-api', worker: '--role-worker' };
@@ -31,21 +33,40 @@ export interface RelationLayout {
   pos: Map<string, Pos>;
   frames: Frame[];
   entry: Pos;
-  /** inferred：这条关系是按名约定推断出来的（compose 里没声明），画虚线；其余一律实线 */
-  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string; inferred?: boolean }>;
+  /**
+   * inferred：这条关系是按名约定推断出来的（compose 里没声明），画虚线；其余一律实线。
+   * route=side：入口到第二个及以后的站点框，沿左侧走线槽下行，进框的左沿
+   */
+  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string; inferred?: boolean; route?: 'side' }>;
   externals: Array<{ id: string; label: string; sub: string; status: string; pos: Pos; broken: boolean }>;
   /** 同一个服务同时是主域名壳和子域壳（double-public-surface）时，后一个站点里用别名节点，这里映射回真实 id */
   aliasOf: Map<string, string>;
+  /** 节点第二行的覆盖文案：子域网格里写「子域 xxx」，而不是这个服务在主域名下的前缀 */
+  subOf: Map<string, string>;
 }
 
 const svc = (id: string): string => id.replace(/^service:/, '');
+/** SVG 文字的估算宽度：中日韩字符按一个字号宽，其余按 0.6 个字号 */
+const textW = (t: string, size: number): number => Array.from(t).reduce((w, ch) => w + (/[\u2e80-\uffff]/.test(ch) ? size : size * 0.6), 0);
 
-export function layoutRelations(payload: RelationPayload, minWidth = 900): RelationLayout {
+/**
+ * 布局按「给定宽度」排，而不是先排成一长条再整体缩小（2026-09-30 用户截图：8 个子域并排成
+ * 2000px 宽，半屏里缩到字看不清、右边还被裁掉，下半截整片空着）。
+ * 站点框自上而下堆叠：主域名（壳 → 前缀成员 → 内网服务）→ 带成员的子域 → 子域网格 → 外部项目 → 其它 → 共享基础设施。
+ * 每一块里的卡片按宽度折行成网格，字号始终 1:1。
+ */
+export function layoutRelations(payload: RelationPayload, width = 960): RelationLayout {
   const { graph, references } = payload;
+  const W = Math.max(MIN_W, Math.round(width));
+  const frameX = GUTTER, frameW = W - GUTTER - RIGHT_PAD, innerW = frameW - SITE_PAD * 2, innerX = frameX + SITE_PAD;
+  const colsFor = (cardW: number): number => Math.max(1, Math.floor((innerW + GAP_X) / (cardW + GAP_X)));
+  const rowW = (n: number, cardW = CARD_W): number => (n <= 0 ? 0 : n * cardW + (n - 1) * GAP_X);
+
   const nodeById = new Map(graph.nodes.filter((n) => n.kind === 'service').map((n) => [n.rawId ?? svc(n.id), n]));
   const ids = Array.from(nodeById.keys());
   const placed = new Set<string>();
   const aliasOf = new Map<string, string>();
+  const subOf = new Map<string, string>();
   const real = (id: string): string => aliasOf.get(id) ?? id;
   // 一个服务既有主域名路由又有子域（后端会报 double-public-surface）时，两个站点都要画它：
   // 第一次出现用真实 id，之后的站点用 `id@站点` 别名，别名映射回真实节点（Codex 八轮 P2）
@@ -57,8 +78,9 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
   };
   const callers = (id: string): string[] => graph.edges.filter((e) => e.from.startsWith('service:') && svc(e.to) === id).map((e) => svc(e.from));
 
-  // 站点块：壳 / 前缀成员 / 内网服务（只被本站服务调用的）
-  const blocks = graph.sites.map((site) => {
+  // 主域名先认领：同一个服务既是主域名前缀成员又是子域壳时，真实 id 留在主域名，子域网格里用别名
+  const ordered = [...graph.sites].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'main' ? -1 : 1));
+  const blocks = ordered.map((site) => {
     const shell = site.shellId && nodeById.has(site.shellId) ? claim(site.shellId, site.id) : undefined;
     const members = site.members.filter((m) => nodeById.has(m.id)).map((m) => claim(m.id, site.id));
     return { site, shell, members, attached: [] as string[] };
@@ -67,17 +89,17 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
     if (!nodeById.has(id) || placed.has(id)) continue;
     const cs = callers(id);
     if (cs.length === 0) continue;
-    const owner = blocks.find((b) => cs.every((c) => (b.shell && c === real(b.shell)) || b.members.some((m) => real(m) === c)));
+    const owner = blocks.find((b) => cs.every((c) => (b.shell && real(b.shell) === c) || b.members.some((m) => real(m) === c)));
     if (!owner) continue;
     owner.attached.push(id); placed.add(id);
   }
   const rest = ids.filter((id) => !placed.has(id));
+  // 只有一个壳、没有成员也没挂内网服务的子域：收进一张「子域」网格，一格一站
+  const isSimpleSub = (b: (typeof blocks)[number]): boolean => b.site.kind === 'subdomain' && Boolean(b.shell) && b.members.length === 0 && b.attached.length === 0;
+  const stacked = blocks.filter((b) => !isSimpleSub(b));
+  const simpleSubs = blocks.filter(isSimpleSub);
 
-  const rowW = (n: number): number => (n <= 0 ? 0 : n * CARD_W + (n - 1) * GAP_X);
-  const blockW = (b: (typeof blocks)[number]): number => Math.max(b.shell ? CARD_W : 0, rowW(b.members.length), rowW(b.attached.length));
-  const sitesW = blocks.reduce((s, b) => s + blockW(b) + SITE_PAD * 2, 0) + Math.max(0, blocks.length - 1) * SITE_GAP;
-
-  // 外部项目框：跨项目引用（引用变量或手写网址指向别的项目分支）
+  // 外部项目：跨项目引用（引用变量或手写网址指向别的项目分支）
   const externals: RelationLayout['externals'] = [];
   const extEdges: Array<{ from: string; ext: string; broken: boolean; label: string }> = [];
   for (const r of references) {
@@ -86,78 +108,96 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
         if (!x.target.projectId || x.target.projectId === payload.projectId) continue;
         const id = `ext:${x.target.projectId}:${x.target.branchId ?? x.target.branchName ?? ''}:${x.ref.serviceId}`;
         const broken = x.status !== 'running';
-        if (!externals.some((e) => e.id === id)) externals.push({ id, label: `${x.ref.serviceId} · ${x.target.branchName ?? '?'}`, sub: `${x.target.projectSlug ?? x.ref.projectRef} · 引用自 ${r.profileId} ${r.key}`, status: x.status, pos: { x: 0, y: 0, w: CARD_W + 60, h: CARD_H }, broken });
+        if (!externals.some((e) => e.id === id)) externals.push({ id, label: `${x.ref.serviceId} · ${x.target.branchName ?? '?'}`, sub: `${x.target.projectSlug ?? x.ref.projectRef} · 引用自 ${r.profileId} ${r.key}`, status: x.status, pos: { x: 0, y: 0, w: EXT_W, h: CARD_H }, broken });
         extEdges.push({ from: r.profileId, ext: id, broken, label: r.key });
       }
     } else if (r.kind === 'url' && r.matchedBranch && r.matchedBranch.projectId !== payload.projectId) {
       const id = `ext:${r.matchedBranch.projectId}:${r.matchedBranch.branchId}:url`;
       const broken = r.matchedBranch.status !== 'running';
-      if (!externals.some((e) => e.id === id)) externals.push({ id, label: `分支 ${r.matchedBranch.branchName}`, sub: `手写网址 · ${r.profileId} ${r.key}`, status: r.matchedBranch.status, pos: { x: 0, y: 0, w: CARD_W + 60, h: CARD_H }, broken });
+      if (!externals.some((e) => e.id === id)) externals.push({ id, label: `分支 ${r.matchedBranch.branchName}`, sub: `手写网址 · ${r.profileId} ${r.key}`, status: r.matchedBranch.status, pos: { x: 0, y: 0, w: EXT_W, h: CARD_H }, broken });
       extEdges.push({ from: r.profileId, ext: id, broken, label: r.key });
     }
   }
-  const extW = externals.length > 0 ? CARD_W + 60 + SITE_PAD * 2 : 0;
-  const width = Math.max(minWidth, sitesW + (extW ? extW + SITE_GAP : 0) + 40);
 
   const pos = new Map<string, Pos>();
   const frames: Frame[] = [];
-  const entry: Pos = { x: (width - 180) / 2, y: 16, w: 180, h: 64 };
-  let y = entry.y + entry.h + 56;
-  const shellY = y + SITE_LABEL;
-  const memberY = shellY + CARD_H + GAP_Y;
-  let x = Math.max(12, (width - sitesW - (extW ? extW + SITE_GAP : 0)) / 2);
-  let bottom = shellY + CARD_H;
-  for (const b of blocks) {
-    const bw = blockW(b);
-    const inner = x + SITE_PAD;
-    if (b.shell) pos.set(b.shell, { x: inner + (bw - CARD_W) / 2, y: shellY, w: CARD_W, h: CARD_H });
-    const place = (list: string[], ry: number): void => {
-      const start = inner + (bw - rowW(list.length)) / 2;
-      list.forEach((id, i) => pos.set(id, { x: start + i * (CARD_W + GAP_X), y: ry, w: CARD_W, h: CARD_H }));
-    };
-    place(b.members, memberY);
-    const attachedY = b.members.length > 0 ? memberY + CARD_H + GAP_Y : shellY + CARD_H + GAP_Y;
-    if (b.attached.length === 1 && b.members.length <= 1) {
-      const cp = pos.get(callers(b.attached[0])[0] ?? '') ?? pos.get(b.shell ?? '');
-      pos.set(b.attached[0], { x: cp ? cp.x : inner, y: attachedY, w: CARD_W, h: CARD_H });
-    } else place(b.attached, attachedY);
-    const last = b.attached.length > 0 ? attachedY + CARD_H : b.members.length > 0 ? memberY + CARD_H : shellY + CARD_H;
-    // 框角写用户语言，不写实现术语（「壳在上 · 前缀成员在下」「forwarder」这类字读的人接不上）
-    frames.push({ key: b.site.id, label: b.site.kind === 'main' ? '同一个域名' : `子域 ${b.site.subdomain}`, sub: b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '壳是按名兜底出来的，其余按前缀分流' : '壳承接根路径，其余按前缀分流') : '整站归这一个服务', x, y, w: bw + SITE_PAD * 2, h: last + SITE_PAD - y, tone: 'site' });
-    bottom = Math.max(bottom, last + SITE_PAD);
-    x += bw + SITE_PAD * 2 + SITE_GAP;
+  /** 一组卡片按列数折行、每行居中；返回最后一行的下沿 */
+  const grid = (list: string[], top: number, cardW = CARD_W, put: (id: string, p: Pos) => void = (id, p) => pos.set(id, p)): number => {
+    if (list.length === 0) return top;
+    const cols = colsFor(cardW);
+    for (let i = 0; i < list.length; i += cols) {
+      const row = list.slice(i, i + cols);
+      const start = innerX + (innerW - rowW(row.length, cardW)) / 2;
+      const y = top + Math.floor(i / cols) * (CARD_H + ROW_GAP);
+      row.forEach((id, j) => put(id, { x: start + j * (cardW + GAP_X), y, w: cardW, h: CARD_H }));
+    }
+    return top + Math.ceil(list.length / cols) * (CARD_H + ROW_GAP) - ROW_GAP;
+  };
+  const frame = (key: string, label: string, sub: string, top: number, bottom: number, toneName: Frame['tone']): Frame => {
+    const f: Frame = { key, label, sub, x: frameX, y: top, w: frameW, h: bottom + SITE_PAD - top, tone: toneName };
+    frames.push(f);
+    return f;
+  };
+
+  const entry: Pos = { x: frameX + (frameW - 200) / 2, y: 16, w: 200, h: 56 };
+  let y = entry.y + entry.h + 40;
+  // 框角写用户语言，不写实现术语（「壳在上 · 前缀成员在下」「forwarder」这类字读的人接不上）
+  for (const b of stacked) {
+    const top = y;
+    let cursor = top + SITE_LABEL;
+    if (b.shell) { pos.set(b.shell, { x: innerX + (innerW - CARD_W) / 2, y: cursor, w: CARD_W, h: CARD_H }); cursor += CARD_H + GAP_Y; }
+    let bottom = b.shell ? cursor - GAP_Y : cursor;
+    if (b.members.length > 0) { bottom = grid(b.members, cursor); cursor = bottom + GAP_Y; }
+    if (b.attached.length > 0) bottom = grid(b.attached, cursor);
+    const label = b.site.kind === 'main' ? '同一个域名' : `子域 ${b.site.subdomain}`;
+    const sub = b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '壳是按名兜底出来的，其余按前缀分流' : '壳承接根路径，其余按前缀分流') : '子域下再按前缀分流';
+    frame(b.site.id, label, sub, top, bottom, 'site');
+    y = bottom + SITE_PAD + FRAME_GAP;
   }
-  // 入口对齐到第一个站点（通常是主域名）正上方，而不是整图居中：宽图在半屏里居中会把入口推到看不见的右侧
-  if (frames.length > 0) entry.x = Math.max(12, frames[0].x + frames[0].w / 2 - entry.w / 2);
+  const subsFrameKey = 'subdomains';
+  if (simpleSubs.length > 0) {
+    const top = y;
+    const list = simpleSubs.map((b) => { subOf.set(b.shell!, `子域 ${b.site.subdomain ?? ''}`); return b.shell!; });
+    const bottom = grid(list, top + SITE_LABEL);
+    frame(subsFrameKey, `子域 · ${simpleSubs.length} 个`, '每个子域整站归一个服务', top, bottom, 'site');
+    y = bottom + SITE_PAD + FRAME_GAP;
+  }
   if (externals.length > 0) {
-    const ex = x, ey = y;
-    externals.forEach((e, i) => { e.pos = { x: ex + SITE_PAD, y: ey + SITE_LABEL + i * (CARD_H + 16), w: CARD_W + 60, h: CARD_H }; });
-    const eh = SITE_LABEL + externals.length * (CARD_H + 16) - 16 + SITE_PAD;
-    frames.push({ key: 'external', label: '外部项目', sub: '跨项目引用，走公网入口', x: ex, y: ey, w: extW, h: eh, tone: 'external' });
-    bottom = Math.max(bottom, ey + eh);
+    const top = y;
+    const bottom = grid(externals.map((e) => e.id), top + SITE_LABEL, EXT_W, (id, p) => { const e = externals.find((z) => z.id === id); if (e) e.pos = p; });
+    frame('external', '外部项目', '跨项目引用，走公网入口', top, bottom, 'external');
+    y = bottom + SITE_PAD + FRAME_GAP;
   }
-  y = bottom + GAP_Y;
-  // 剩余（游离或多方调用的内网）服务：一排居中
+  // 剩余（游离或多方调用的内网）服务
   if (rest.length > 0) {
-    const start = Math.max(12, (width - rowW(rest.length)) / 2);
-    rest.forEach((id, i) => pos.set(id, { x: start + i * (CARD_W + GAP_X), y, w: CARD_W, h: CARD_H }));
-    y += CARD_H + GAP_Y;
+    const top = y;
+    const bottom = grid(rest, top + SITE_LABEL);
+    frame('rest', '其它服务', '内网服务，或被多个站点共同调用', top, bottom, 'site');
+    y = bottom + SITE_PAD + FRAME_GAP;
   }
-  // 共享基础设施
   const infra = graph.nodes.filter((n) => n.kind === 'infra');
   if (infra.length > 0) {
-    const iw = rowW(infra.length) + SITE_PAD * 2;
-    const ix = Math.max(12, (width - iw) / 2);
-    infra.forEach((n, i) => pos.set(n.id, { x: ix + SITE_PAD + i * (CARD_W + GAP_X), y: y + SITE_LABEL, w: CARD_W, h: CARD_H }));
-    frames.push({ key: 'infra', label: '共享基础设施 · 同项目所有分支共用同一实例', sub: '', x: ix, y, w: iw, h: SITE_LABEL + CARD_H + SITE_PAD, tone: 'infra' });
-    y += SITE_LABEL + CARD_H + SITE_PAD + 24;
+    const top = y;
+    const bottom = grid(infra.map((n) => n.id), top + SITE_LABEL);
+    frame('infra', '共享基础设施', '同项目所有分支共用同一实例', top, bottom, 'infra');
+    y = bottom + SITE_PAD + FRAME_GAP;
   }
 
+  // 入口对齐第一个站点的壳（没有壳就对齐框中线）
+  const firstHead = stacked[0] ? pos.get(stacked[0].shell ?? stacked[0].members[0] ?? '') : undefined;
+  if (firstHead && stacked[0]?.shell) entry.x = firstHead.x + (firstHead.w - entry.w) / 2;
+
   const edges: RelationLayout['edges'] = [];
-  for (const b of blocks) {
+  const frameOf = (key: string): Frame | undefined => frames.find((f) => f.key === key);
+  stacked.forEach((b, i) => {
     const head = b.shell ?? b.members[0];
     const hp = head ? pos.get(head) : undefined;
-    if (hp) edges.push({ from: entry, to: hp, kind: 'entry', key: `entry-${b.site.id}`, inferred: b.site.kind === 'main' && b.site.shellSource === 'convention' });
+    const inferred = b.site.kind === 'main' && b.site.shellSource === 'convention';
+    if (i === 0 && hp) edges.push({ from: entry, to: hp, kind: 'entry', key: `entry-${b.site.id}`, inferred });
+    else {
+      const f = frameOf(b.site.id);
+      if (f) edges.push({ from: entry, to: { x: f.x, y: f.y, w: 0, h: SITE_LABEL }, kind: 'entry', key: `entry-${b.site.id}`, inferred, route: 'side' });
+    }
     if (b.shell) {
       const sp = pos.get(b.shell)!;
       for (const m of b.members) {
@@ -166,21 +206,34 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
         edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名推断' : ''), key: `prefix-${m}`, inferred: Boolean(info?.viaConvention) });
       }
     }
+  });
+  const subsFrame = frameOf(subsFrameKey);
+  if (subsFrame) {
+    // 没有堆叠站点（只有子域）时入口直接落到子域网格上沿，否则走左侧槽
+    edges.push(stacked.length === 0
+      ? { from: entry, to: { x: subsFrame.x + subsFrame.w / 2 - 1, y: subsFrame.y, w: 2, h: 0 }, kind: 'entry', key: `entry-${subsFrameKey}` }
+      : { from: entry, to: { x: subsFrame.x, y: subsFrame.y, w: 0, h: SITE_LABEL }, kind: 'entry', key: `entry-${subsFrameKey}`, route: 'side' });
   }
+  const at = (id: string): Pos | undefined => pos.get(id);
   for (const e of graph.edges) {
-    const a = pos.get(svc(e.from)); const to = e.to.startsWith('infra:') ? pos.get(e.to) : pos.get(svc(e.to));
+    const a = at(svc(e.from)); const to = e.to.startsWith('infra:') ? at(e.to) : at(svc(e.to));
     if (!a || !to) continue;
     edges.push({ from: a, to, kind: e.to.startsWith('infra:') ? 'infra' : 'call', label: e.to.startsWith('infra:') ? undefined : (e.declared ? '声明' : e.envKeys[0] ?? 'depends_on'), key: `call-${e.from}-${e.to}` });
   }
   for (const x of extEdges) {
-    const a = pos.get(x.from); const e = externals.find((z) => z.id === x.ext);
+    const a = at(x.from); const e = externals.find((z) => z.id === x.ext);
     if (!a || !e) continue;
     edges.push({ from: a, to: e.pos, kind: x.broken ? 'broken' : 'ref', label: x.label, key: `ref-${x.from}-${x.ext}-${x.label}` });
   }
-  return { width, height: Math.max(y, 320), pos, frames, entry, edges, externals, aliasOf };
+  return { width: W, height: Math.max(y - FRAME_GAP + 16, 320), pos, frames, entry, edges, externals, aliasOf, subOf };
 }
 
-function edgePath(a: Pos, b: Pos): string {
+function edgePath(a: Pos, b: Pos, route?: 'side'): string {
+  if (route === 'side') {
+    // 从入口左沿出，沿左侧走线槽下行，拐进目标框左沿（框标题那一行的高度）
+    const sx = a.x, sy = a.y + a.h / 2, gx = GUTTER / 2, ty = b.y + b.h / 2, tx = b.x, r = 8;
+    return `M${sx},${sy} H${gx + r} Q${gx},${sy} ${gx},${sy + r} V${ty - r} Q${gx},${ty} ${gx + r},${ty} H${tx}`;
+  }
   const ax = a.x + a.w / 2, ay = a.y + a.h, bx = b.x + b.w / 2, by = b.y;
   if (by >= ay) { const my = (ay + by) / 2; return `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`; }
   // 目标在旁边或上方：从右侧出、左侧进
@@ -200,11 +253,10 @@ const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: stri
 };
 const INFERRED_DASH = '3 4';
 
-export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost }: { payload: RelationPayload; compact?: boolean; highlight?: string | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
-  const layout = layoutRelations(payload, compact ? 720 : 960);
+export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost }: { payload: RelationPayload; compact?: boolean; /** 悬停问题卡时点亮的服务（一条问题可能涉及多个服务） */ highlight?: string | string[] | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
   const nodeById = new Map(payload.graph.nodes.map((n) => [n.kind === 'service' ? (n.rawId ?? svc(n.id)) : n.id, n]));
   const findingsOf = (id: string) => payload.lint.findings.filter((f) => f.services.includes(id) && f.severity !== 'info');
-  // 按容器宽度整体缩放（半屏抽屉、缩略卡、窄屏全屏都能整图入镜，不靠横向滚动找入口）
+  // 按容器宽度排版：宽度量到之后重新排，卡片按列折行、字号 1:1；只有窄于最小画布宽时才整体缩小
   const hostRef = useRef<HTMLDivElement>(null);
   const [hostW, setHostW] = useState(0);
   useEffect(() => {
@@ -215,10 +267,14 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
     setHostW(el.clientWidth);
     return () => ro.disconnect();
   }, []);
+  const avail = hostW > 0 ? hostW - (compact ? 8 : 16) : (compact ? 720 : 960);
+  const layout = layoutRelations(payload, avail);
   // 非缩略模式最小缩到 0.6：再小就看不清字，改为横向滚动
-  const fit = hostW > 0 ? (hostW - (compact ? 8 : 16)) / layout.width : (compact ? 640 / layout.width : 1);
+  const fit = avail / layout.width;
   const scale = compact ? Math.min(1, fit) : Math.min(1, Math.max(0.6, fit));
-  const dim = (touch: boolean): number => (!highlight ? 1 : touch ? 1 : 0.28);
+  const lit = new Set(highlight == null ? [] : Array.isArray(highlight) ? highlight : [highlight]);
+  const dim = (touch: boolean): number => (lit.size === 0 ? 1 : touch ? 1 : 0.28);
+  const edgeTouches = (key: string): boolean => Array.from(lit).some((id) => key.includes(id));
   // 一个 service 都没有：一枚入口节点漂在整张空画布上，比什么都不画更难看（2026-09-16 用户截图）。
   // 这里直接给空态，画布、图例都不出。
   if (payload.graph.nodes.every((n) => n.kind !== 'service')) {
@@ -238,23 +294,30 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             <marker id="rgArrRef" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--info))" /></marker>
             <marker id="rgArrBad" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--bad))" /></marker>
           </defs>
-          {layout.frames.map((f) => (
-            <g key={f.key}>
-              <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.35}
-                stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1.2" />
-              <text x={f.x + 12} y={f.y + 15} fontSize="10" fontWeight="700" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--muted-foreground))'}>{f.key === 'main' && entryHost ? `${f.label} · ${entryHost}` : f.label}</text>
-              <text x={f.x + f.w - 12} y={f.y + 15} fontSize="9" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{f.sub}</text>
-            </g>
-          ))}
+          {layout.frames.map((f) => {
+            const title = f.key === 'main' && entryHost ? `${f.label} · ${entryHost}` : f.label;
+            // 框标题与右侧说明挤不下时只留标题：窄画布里两段字叠在一起比少一句说明更难读
+            const fits = textW(title, 11) + textW(f.sub, 10) + 40 < f.w;
+            return (
+              <g key={f.key}>
+                <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.35}
+                  stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1.2" />
+                <text x={f.x + 14} y={f.y + 18} fontSize="11" fontWeight="700" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--muted-foreground))'}>{title}</text>
+                {fits ? <text x={f.x + f.w - 14} y={f.y + 18} fontSize="10" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{f.sub}</text> : null}
+              </g>
+            );
+          })}
           {layout.edges.map((e, idx) => {
             const st = EDGE_STYLE[e.kind];
             const t = 0.42 + (idx % 3) * 0.16;
             const lx = e.from.x + e.from.w / 2 + (e.to.x + e.to.w / 2 - e.from.x - e.from.w / 2) * t;
             const ly = e.from.y + e.from.h + (e.to.y - e.from.y - e.from.h) * t + 3;
-            const label = e.label && e.label.length > 26 ? `${e.label.slice(0, 25)}…` : e.label;
+            // 入口与前缀线不挂标签：前缀已经写在成员卡的第二行，线上再写一遍只会叠字
+            const raw = e.kind === 'entry' || e.kind === 'prefix' ? undefined : e.label;
+            const label = raw && raw.length > 26 ? `${raw.slice(0, 25)}…` : raw;
             return (
-              <g key={e.key} opacity={dim(!highlight || e.key.includes(highlight))}>
-                <path d={edgePath(e.from, e.to)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
+              <g key={e.key} opacity={dim(lit.size === 0 || edgeTouches(e.key))}>
+                <path d={edgePath(e.from, e.to, e.route)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
                 {label ? (
                   <>
                     <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
@@ -276,12 +339,13 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           const isInfra = n.kind === 'infra';
           const role = n.role ?? 'api';
           const bad = findingsOf(realId);
+          const glow = lit.has(realId);
           // 基础设施徽标不占语义色：redis 不用 --bad（红色只在「坏了」时出现）、mongo 不用 --ok
           const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--series-5' : '--series-2') : ROLE_TOKEN[role];
           const color = tone(token);
           return (
             <div key={id} className="bg-background" data-node={id} data-role={isInfra ? 'infra' : role}
-              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(!highlight || realId === highlight) }}>
+              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: glow ? `0 0 0 3px ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .35)' : 'hsl(var(--warn) / .35)'}, 0 4px 12px hsl(0 0% 0% / .25)` : '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(lit.size === 0 || glow), transition: 'opacity 150ms, box-shadow 150ms' }}>
               <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
                 <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ background: color }} title={n.roleReason}>
                   {isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]}
@@ -290,7 +354,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
                 {bad.length > 0 ? <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
               </div>
               <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground">
-                {isInfra ? '共享实例 · 所有分支共用' : n.subdomain ? `子域 ${n.subdomain}` : (n.pathPrefixes ?? []).join(' ') || '内网 · 不对外'}
+                {isInfra ? '共享实例 · 所有分支共用' : layout.subOf.get(id) ?? ((n.pathPrefixes ?? []).join(' ') || (n.subdomain ? `子域 ${n.subdomain}` : '内网 · 不对外'))}
               </div>
             </div>
           );

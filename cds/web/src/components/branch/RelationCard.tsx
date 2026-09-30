@@ -1,16 +1,16 @@
 /*
- * RelationCard — 分支总览页的「关系」卡 + 半屏抽屉（plan.cds.service-relations 第四 / 五批）。
+ * RelationCard — 分支总览页的「关系」卡 + 展开视图（plan.cds.service-relations 第四 / 五批）。
  *
  * 卡上三层：一句结论（先判断再数字）→ 一行事实（站点 / 服务 / 前缀 / 基础设施 / 引用 / 体检）
  * → 一行流向条（RelationFlowStrip）。有错误或警告时卡片边框变色，并把「需要处理」贴在流向条下面。
- * 二维分层图只留给半屏抽屉与全屏页（独立路由，可分享）。
+ * 二维分层图只留给展开视图（居中大浮层）与全屏页（独立路由，可分享）。
  *
  * 2026-09-16 之前这里画的是缩略版二维图，固定 180px 高、只按宽度缩放，宽屏上被裁得只剩
  * 「入口」一枚节点——文案说 2 个服务挂在壳下面，图里一个都没有。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Maximize2, PanelRightOpen, Wrench, X } from 'lucide-react';
+import { Expand, Maximize2, Wrench, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
 import { RelationEmptyState, RelationGraph, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
@@ -31,21 +31,69 @@ export function useRelationPayload(branchId: string | undefined): { state: { sta
 
 const SEV_LABEL: Record<LintFindingView['severity'], string> = { error: '错误', warn: '警告', info: '建议' };
 const SEV_CLS: Record<LintFindingView['severity'], string> = { error: 'border-destructive/60 text-destructive', warn: 'border-warn/60 bg-warn-soft text-warn', info: 'border-[hsl(var(--hairline-strong))] text-muted-foreground' };
+const SEV_STRIPE: Record<LintFindingView['severity'], string> = { error: 'hsl(var(--bad))', warn: 'hsl(var(--warn))', info: 'hsl(var(--hairline-strong))' };
 
-export function FindingsList({ findings, onPick, onConfigure }: { findings: LintFindingView[]; onPick?: (serviceId: string | null) => void; /** 给了就在每条后面放「去配置」，跳到能改它的地方 */ onConfigure?: () => void }): JSX.Element {
+/**
+ * 体检结论列表。每条是上下堆叠的一张卡：严重度 + 规则名 / 说明 / 涉及服务 / 修法 + 去配置。
+ * 此前严重度、正文、按钮三列并排，放进 17.5rem 的侧栏时正文只剩七八个字宽，
+ * 「double-public-surface」被折成三行（2026-09-30 用户截图）。
+ * layout=grid 时按宽度自动排多列（展开视图与总览卡的整行宽度下用）。
+ */
+export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }: { findings: LintFindingView[]; /** 悬停一条时点亮它涉及的全部服务 */ onPick?: (serviceIds: string[] | null) => void; /** 给了就在每条后面放「去配置」，跳到能改它的地方 */ onConfigure?: () => void; layout?: 'stack' | 'grid' }): JSX.Element {
   if (findings.length === 0) return <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-[0.92rem] text-ok">体检无发现：关系清楚，配置没有冲突。</div>;
   return (
-    <div className="flex flex-col gap-2" data-testid="relation-findings">
+    <div className={layout === 'grid' ? 'grid grid-cols-[repeat(auto-fill,minmax(min(100%,21rem),1fr))] gap-2.5' : 'flex flex-col gap-2'} data-testid="relation-findings">
       {findings.map((f, i) => (
-        <div key={`${f.rule}-${i}`} className="cds-surface-sunken cds-hairline flex cursor-pointer items-start gap-2.5 rounded-md p-2.5 transition-colors duration-150" onMouseEnter={() => onPick?.(f.services[0] ?? null)} onMouseLeave={() => onPick?.(null)}>
-          <span className={`mt-px inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-2 text-[0.75rem] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
-          <div className="min-w-0 flex-1">
-            <div className="text-[0.92rem] text-foreground-muted"><b className="font-mono text-[0.8125rem] text-foreground">{f.rule}</b> · {f.message}</div>
-            <div className="mt-1 text-[0.8125rem] text-muted-foreground">修法：{f.fix}</div>
+        <div
+          key={`${f.rule}-${i}`}
+          className="cds-surface-sunken cds-hairline flex min-w-0 flex-col gap-1.5 rounded-md p-2.5 transition-colors duration-150 hover:bg-[hsl(var(--surface-raised))]"
+          style={{ borderLeft: `3px solid ${SEV_STRIPE[f.severity]}` }}
+          data-finding={f.rule}
+          data-severity={f.severity}
+          onMouseEnter={() => onPick?.(f.services.length ? f.services : null)}
+          onMouseLeave={() => onPick?.(null)}
+          onFocus={() => onPick?.(f.services.length ? f.services : null)}
+          onBlur={() => onPick?.(null)}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span className={`inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-2 text-[0.75rem] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
+            <b className="min-w-0 flex-1 truncate font-mono text-[0.8125rem] text-foreground" title={f.rule}>{f.rule}</b>
           </div>
-          {onConfigure ? <Button variant="outline" size="sm" className="h-[1.625rem] shrink-0" onClick={(e) => { e.stopPropagation(); onConfigure(); }} title="到配置页签改 compose 声明"><Wrench />去配置</Button> : null}
+          <div className="text-[0.88rem] leading-relaxed text-foreground-muted [overflow-wrap:anywhere]">{f.message}</div>
+          {f.services.length > 1 ? (
+            <div className="flex flex-wrap gap-1" aria-label="涉及的服务">
+              {f.services.map((id) => <span key={id} className="max-w-full truncate rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-1.5 font-mono text-[0.72rem] text-foreground-muted">{id}</span>)}
+            </div>
+          ) : null}
+          <div className="flex min-w-0 items-start justify-between gap-2 border-t border-dashed border-[hsl(var(--hairline))] pt-1.5">
+            <div className="min-w-0 flex-1 text-[0.8125rem] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">修法：{f.fix}</div>
+            {onConfigure ? <Button variant="outline" size="sm" className="h-[1.625rem] shrink-0" onClick={(e) => { e.stopPropagation(); onConfigure(); }} title="到配置页签改 compose 声明"><Wrench />去配置</Button> : null}
+          </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * 展开视图与全屏页共用的主体：问题带在上（横跨整宽、自适应多列），关系图在下填满剩余高度。
+ * 此前问题栏是右侧 17.5rem 的窄列，和图抢宽度，两边都被挤坏。
+ */
+export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems = false }: { data: RelationPayload; entryHost?: string; onConfigure?: () => void; onlyProblems?: boolean }): JSX.Element {
+  const [highlight, setHighlight] = useState<string[] | null>(null);
+  const findings = onlyProblems ? data.lint.findings.filter((f) => f.severity !== 'info') : data.lint.findings;
+  const count = (sev: LintFindingView['severity']): number => data.lint.findings.filter((f) => f.severity === sev).length;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" data-testid="relation-workspace">
+      <div className="max-h-[40%] shrink-0 overflow-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[0.75rem] font-bold text-muted-foreground">
+          需要处理 · {findings.length} 条
+          {(['error', 'warn', 'info'] as const).map((sev) => (count(sev) ? <span key={sev} className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.6875rem] font-semibold ${SEV_CLS[sev]}`}>{count(sev)} {SEV_LABEL[sev]}</span> : null))}
+          {findings.length > 0 ? <span className="font-normal">悬停一条，图上点亮涉及的服务</span> : null}
+        </div>
+        <FindingsList findings={findings} onPick={setHighlight} onConfigure={onConfigure} layout="grid" />
+      </div>
+      <RelationGraph payload={data} highlight={highlight} entryHost={entryHost} className="min-h-0 flex-1" />
     </div>
   );
 }
@@ -81,7 +129,6 @@ export function RelationCardSkeleton({ badge = '正在体检', note = '正在算
 export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'card' }: { branchId: string; /** 主入口地址：入口 chip 上写域名；没有就写分支名 */ previewUrl?: string; /** 「去配置」的落点（配置页签） */ onConfigure?: () => void; /** row = 指挥台底部的一行（标题、流向条、事实、按钮排成一排）；card = 独立卡片 */ variant?: RelationCardVariant }): JSX.Element | null {
   const { state, reload } = useRelationPayload(branchId);
   const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState<string | null>(null);
   const navigate = useNavigate();
   useEffect(() => {
     if (!open) return undefined;
@@ -109,7 +156,7 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
     ));
   }
   const data = state.data;
-  // 零服务：不出事实行、不出流向条、不给半屏 / 全屏按钮——全零的数字和一枚孤零零的入口 chip 只会显得没做完
+  // 零服务：不出事实行、不出流向条、不给展开 / 全屏按钮——全零的数字和一枚孤零零的入口 chip 只会显得没做完
   if (data.graph.nodes.every((n) => n.kind !== 'service')) {
     return shell('border-[hsl(var(--hairline))]', (
       <>
@@ -136,54 +183,50 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
         <div className="min-w-[12rem] flex-1 truncate text-[0.8125rem] text-foreground-muted" title={relationHeadline(data)}>{relationHeadline(data)}</div>
         <FlowFacts facts={model.facts} />
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏</Button>
+          <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
           <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
         </div>
       </div>
-      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击半屏查看">
+      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击展开查看">
         <RelationFlowStrip model={model} />
       </div>
-      {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} /> : null}
+      {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} layout="grid" /> : null}
     </div>
   ) : shell(tone, (
     <>
       <div className="flex flex-wrap items-center gap-2 text-base font-bold">
         关系{pill}
         <span className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏查看</Button>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="展开查看关系图与需要处理的事项"><Expand />展开</Button>
         <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
       </div>
       <div className="text-[0.92rem] leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
       <FlowFacts facts={model.facts} />
-      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击半屏查看">
+      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击展开查看">
         <RelationFlowStrip model={model} />
       </div>
-      {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} /> : null}
+      {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} layout="grid" /> : null}
     </>
   ));
   return (
     <>
       {body}
       {open ? (
-        <div className="fixed inset-0 z-50" role="dialog" aria-label="关系图" data-testid="relation-drawer">
-          <div className="absolute inset-0 bg-[hsl(var(--status-ink))]/40" onClick={() => setOpen(false)} />
-          <div className="absolute inset-y-0 right-0 flex w-[min(100vw,47.5rem)] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl">
-            <div className="flex h-[3.25rem] items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
+        /* 展开视图：居中大浮层，四周留边、底下一层均匀遮罩。此前是右侧半屏抽屉，盖住一半总览，
+           被盖住的关系卡只露出半截 chip（2026-09-30 用户：「一边是遮挡，一边是折叠压缩」） */
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center p-0 sm:p-4 lg:p-8" role="dialog" aria-modal="true" aria-label="关系图" data-testid="relation-sheet">
+          <div className="absolute inset-0 bg-[hsl(var(--status-ink))]/55 backdrop-blur-[2px]" onClick={() => setOpen(false)} />
+          <div className="relative flex w-full max-w-[96rem] flex-col overflow-hidden border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] shadow-2xl sm:rounded-xl">
+            <div className="flex h-[3.25rem] shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
               <span className="text-sm font-bold">关系</span>
-              <span className="font-mono text-[0.6875rem] text-muted-foreground">{data.branch}</span>
-              {errors ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 错误</span> : null}
-              {warnings ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 警告</span> : null}
+              <span className="min-w-0 truncate font-mono text-[0.6875rem] text-muted-foreground">{data.branch}</span>
+              {errors ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 错误</span> : null}
+              {warnings ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 警告</span> : null}
               <span className="flex-1" />
-              <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)}><Maximize2 />全屏</Button>
+              <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} aria-label="关闭"><X /></Button>
             </div>
-            <div className="flex min-h-0 flex-1">
-              <RelationGraph payload={data} highlight={highlight} entryHost={entryHost} className="min-w-0 flex-1" style={{ height: '100%' }} />
-              <div className="w-[17.5rem] shrink-0 overflow-auto border-l border-[hsl(var(--hairline))] p-3">
-                <div className="mb-2 text-[0.6875rem] font-bold text-muted-foreground">需要处理</div>
-                <FindingsList findings={data.lint.findings} onPick={setHighlight} onConfigure={onConfigure ? () => { setOpen(false); onConfigure(); } : undefined} />
-              </div>
-            </div>
+            <RelationWorkspace data={data} entryHost={entryHost} onConfigure={onConfigure ? () => { setOpen(false); onConfigure(); } : undefined} />
           </div>
         </div>
       ) : null}

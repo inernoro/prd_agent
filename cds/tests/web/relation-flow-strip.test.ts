@@ -80,6 +80,39 @@ describe('layoutFlow', () => {
   });
 });
 
+describe('子域泳道（2026-09-30：8 个子域壳曾和主域名壳挤在同一列）', () => {
+  function withSubs(): RelationPayload {
+    const p = payload();
+    p.graph.nodes.push(
+      { id: 'service:portal', rawId: 'portal', name: 'portal', kind: 'service', subdomain: 'portal', role: 'web' },
+      { id: 'service:worker', rawId: 'worker', name: 'worker', kind: 'service', subdomain: 'worker', role: 'worker' },
+    );
+    p.graph.sites.push(
+      { id: 'sub:portal', kind: 'subdomain', subdomain: 'portal', shellId: 'portal', shellSource: 'declared', members: [], conflicts: [] },
+      { id: 'sub:worker', kind: 'subdomain', subdomain: 'worker', shellId: 'worker', shellSource: 'declared', members: [], conflicts: [] },
+      // 同一服务既是主域名前缀成员又是子域壳：两处都要出现
+      { id: 'sub:api', kind: 'subdomain', subdomain: 'api', shellId: 'api', shellSource: 'declared', members: [], conflicts: [] },
+    );
+    return p;
+  }
+  it('只有壳的子域进 subsites，不进壳列；壳列只剩主域名壳', () => {
+    const m = layoutFlow(withSubs());
+    expect(m.shells.map((c) => c.id)).toEqual(['admin-web']);
+    expect(m.subsites.map((c) => c.id)).toEqual(['portal', 'worker', 'api']);
+    expect(m.subsites[0].sub).toBe('子域 portal');
+    expect(m.members.map((c) => c.id)).toContain('api');
+    const all = new Set([...m.shells, ...m.members, ...m.subsites, ...m.tail].map((c) => c.id));
+    for (const n of withSubs().graph.nodes) expect(all.has(n.rawId ?? n.id), n.id).toBe(true);
+  });
+  it('渲染成独立的子域泳道（网格），主域名泳道不再被拉高', () => {
+    const html = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(withSubs()) }));
+    expect(html).toContain('data-testid="relation-strip-subsites"');
+    expect(html).toContain('子域 · 3 个');
+    expect(html).toContain('repeat(auto-fill');
+    for (const id of ['portal', 'worker']) expect(html).toContain(`data-node="${id}"`);
+  });
+});
+
 describe('RelationFlowStrip 渲染', () => {
   it('每个服务与基础设施都渲染成 data-node，出问题的节点带 data-problem', () => {
     const html = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(payload(), 'main.example.test') }));
@@ -200,5 +233,32 @@ describe('尺寸校准（2026-09-17「很矮小，大小不一」）', () => {
     const line = relationHeadline(p);
     expect(line).toContain('admin-web（演示）');
     expect(line).not.toMatch(/主域名下 admin-web 是壳/);
+  });
+});
+
+describe('问题卡与展开视图（2026-09-30「一边是遮挡，一边是折叠压缩」）', () => {
+  it('问题卡上下堆叠：规则名、说明、修法各占一行，多服务列成标签', async () => {
+    const { FindingsList } = await import('../../web/src/components/branch/RelationCard.js');
+    const html = renderToStaticMarkup(createElement(FindingsList, {
+      layout: 'grid',
+      onConfigure: () => undefined,
+      findings: [{ rule: 'role-by-name', severity: 'info', services: ['imp-api', 'imp-vendor-api'], message: '角色靠服务名推断', fix: '写上 cds.role' }],
+    }));
+    expect(html).toContain('flex min-w-0 flex-col');
+    expect(html).toContain('auto-fill');
+    expect(html).toContain('data-severity="info"');
+    expect(html).toContain('修法：写上 cds.role');
+    expect(html).toContain('aria-label="涉及的服务"');
+  });
+  it('展开视图是居中大浮层，不再是右侧半屏抽屉；问题带在图上方而不是 17.5rem 侧栏', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    expect(card).toContain('data-testid="relation-sheet"');
+    expect(card).not.toContain('w-[min(100vw,47.5rem)]');
+    expect(card).not.toContain('w-[17.5rem]');
+    const ws = card.slice(card.indexOf('export function RelationWorkspace'));
+    expect(ws.indexOf('<FindingsList')).toBeLessThan(ws.indexOf('<RelationGraph'));
+    const page = stripComments(fs.readFileSync(path.join(SRC, 'pages/BranchRelationsPage.tsx'), 'utf8'));
+    expect(page).toContain('<RelationWorkspace');
+    expect(page).not.toContain('w-[20rem]');
   });
 });

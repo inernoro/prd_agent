@@ -6,6 +6,8 @@
  * 「2 个服务挂在壳下面」，图里一个都没有（2026-09-16 用户：「第一眼就很一般」）。
  *
  * 缩略态换一种读法：从左到右一行读完，入口 → 壳 → 前缀成员 → 共享基础设施 / 外部引用。
+ * 只有一个壳的子域另起一条泳道排成网格（2026-09-30：8 个子域壳曾和主域名壳挤在同一列，
+ * 流向条被拉到 600px 高，入口悬在中间、左侧整片空白）。
  * 前缀写在节点里，线上不挂标签；灰实线 = 域名与前缀分流，紫实线 = 环境变量引用 / 调用，
  * 蓝 = 跨项目引用，红 = 断裂；虚线只留给「按名推断」。出问题的节点自己描边并挂「N 问题」。
  *
@@ -29,8 +31,10 @@ export interface FlowChip {
 export interface FlowLink { from: number; to: number; kind: 'prefix' | 'call' | 'ref' | 'broken' }
 export interface FlowModel {
   entry: FlowChip;
-  /** 壳列：主域名壳在前，子域壳随后；主域名没有壳时是一枚灰 chip */
+  /** 壳列：主域名壳在前，带前缀成员的子域壳随后；主域名没有壳时是一枚灰 chip */
   shells: FlowChip[];
+  /** 子域泳道：只有一个壳、下面没有成员的子域，一格一站。同一服务同时是主域名成员时两处都画 */
+  subsites: FlowChip[];
   /** 成员列：主域名前缀成员在前，其余（内网 / 游离）服务随后 */
   members: FlowChip[];
   /** 壳列 → 成员列：只有前缀成员有线 */
@@ -67,7 +71,10 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
   };
 
   const main = graph.sites.find((s) => s.kind === 'main');
-  const subs = graph.sites.filter((s) => s.kind === 'subdomain');
+  const allSubs = graph.sites.filter((s) => s.kind === 'subdomain');
+  const isSimpleSub = (s: (typeof allSubs)[number]): boolean => Boolean(s.shellId && nodeById.has(s.shellId)) && !s.members.some((m) => nodeById.has(m.id));
+  const subs = allSubs.filter((s) => !isSimpleSub(s));
+  const simpleSubs = allSubs.filter(isSimpleSub);
   const placed = new Set<string>();
 
   const shells: FlowChip[] = [];
@@ -101,9 +108,11 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
       placed.add(m.id);
     }
   }
+  const subsites: FlowChip[] = simpleSubs.map((s) => chipOf(s.shellId!, `子域 ${s.subdomain ?? ''}`));
+  const inSubsite = new Set(simpleSubs.map((s) => s.shellId!));
   for (const n of nodes) {
     const id = n.rawId ?? svc(n.id);
-    if (placed.has(id)) continue;
+    if (placed.has(id) || inSubsite.has(id)) continue;
     members.push(chipOf(id, n.subdomain ? `子域 ${n.subdomain}` : '内网 · 不对外'));
     placed.add(id);
   }
@@ -141,7 +150,7 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
   const prefixes = graph.sites.reduce((s, site) => s + site.members.reduce((m, x) => m + x.prefixes.length, 0), 0);
   return {
     entry: { id: 'entry', kind: 'gw', name: entryHost || `分支 ${payload.branch}`, sub: entryHost ? '入口 · 按域名与前缀分流' : '入口 · 按域名与前缀分流（域名未就绪）' },
-    shells, members, shellLinks, tail, tailLinks,
+    shells, subsites, members, shellLinks, tail, tailLinks,
     facts: { sites: graph.sites.length, services: nodes.length, prefixes, infra: graph.nodes.filter((n) => n.kind === 'infra').length, refs, errors: lint.summary.errors, warnings: lint.summary.warnings },
   };
 }
@@ -227,7 +236,8 @@ function Column({ chips, width, offset = 0 }: { chips: FlowChip[]; width: number
 
 const W = { entry: 280, shell: 236, member: 236, infra: 176, ext: 248, conn: 56 } as const;
 /** 窄容器（< FLOW_NARROW_PX）下的一档：列折成计数 chip 之外，每枚 chip 与连接器也收窄 */
-const W_NARROW = { entry: 176, shell: 200, member: 200, infra: 164, ext: 200, conn: 42 } as const;
+// 窄档合计约 720px：分支详情抽屉里关系卡内宽约 770px，此前 866px 的窄档仍把尾列挤出右沿（2026-09-30 截图）
+const W_NARROW = { entry: 140, shell: 168, member: 168, infra: 140, ext: 168, conn: 34 } as const;
 
 /** 流向条本体。SSR / 首帧按宽版渲染，量到容器宽度后再决定要不要折叠。 */
 export function RelationFlowStrip({ model, className }: { model: FlowModel; className?: string }): JSX.Element {
@@ -254,19 +264,20 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
   const tailLinks = narrow && (model.members.length > 1 || model.tail.length > 1)
     ? (model.tailLinks.length ? [{ from: 0, to: 0, kind: model.tailLinks.some((l) => l.kind === 'broken') ? 'broken' as const : 'call' as const }] : [])
     : model.tailLinks;
+  const rowMin = w.entry + w.conn + w.shell + (members.length > 0 ? w.conn + w.member : 0) + (tail.length > 0 ? w.conn + tailW : 0);
   const inferredMembers = new Set(members.map((c, i) => (c.inferred ? i : -1)).filter((i) => i >= 0));
 
-  return (
+  const flow = (
     <div
-      ref={hostRef}
-      className={`overflow-x-auto rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4 ${className ?? ''}`}
+      className="overflow-x-auto rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
       style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
-      data-testid="relation-strip"
-      data-narrow={narrow ? 'true' : undefined}
+      data-testid="relation-strip-main"
     >
-      {/* 内层 w-full + min-w-max：装得下就按比例撑满（列会长到 1.6 倍基准宽），装不下就保持 max-content 横向滚动——
-          justify-center 配 overflow 会把左端裁掉、还滚不回来，所以居中靠 mx-auto 而不是 justify */}
-      <div className="mx-auto flex w-full min-w-max items-center justify-center">
+      {model.subsites.length > 0 ? <LaneHead title={`主域名${model.entry.name.includes('.') ? ` · ${model.entry.name}` : ''}`} note="壳承接 /，其余按前缀分流" /> : null}
+      {/* 内层 w-full + 显式最小宽（各列基准宽之和）：装得下就按比例撑满（列会长到 1.6 倍基准宽），装不下先缩回基准宽，
+          再不够才横向滚动。此前是 min-w-max：不换行的长服务名把每列的内在宽度撑到 1.6 倍，明明缩回基准宽就放得下，
+          却被挤出右沿（2026-09-30）。justify-center 配 overflow 会把左端裁掉、还滚不回来，所以居中靠 mx-auto 而不是 justify */}
+      <div className="mx-auto flex w-full items-center justify-center" style={{ minWidth: rowMin }}>
         <Column chips={[model.entry]} width={w.entry} />
         <Connector links={[{ from: 0, to: 0, kind: 'prefix' }]} leftRows={1} rightRows={model.shells.length} width={w.conn} />
         <Column chips={model.shells} width={w.shell} offset={1} />
@@ -283,6 +294,30 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
           </>
         ) : null}
       </div>
+    </div>
+  );
+
+  return (
+    <div ref={hostRef} className={`flex min-w-0 flex-col gap-2.5 ${className ?? ''}`} data-testid="relation-strip" data-narrow={narrow ? 'true' : undefined}>
+      {flow}
+      {model.subsites.length > 0 ? (
+        /* 子域泳道：一格一站，按宽度自动排列数（宽屏 4 列、半屏 2 列），不再把卡片拉高 */
+        <div className="rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3" data-testid="relation-strip-subsites">
+          <LaneHead title={`子域 · ${model.subsites.length} 个`} note="每个子域整站归一个服务" />
+          <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${narrow ? 200 : 236}px, 1fr))` }}>
+            {model.subsites.map((c, i) => <Chip key={`${c.id}-${i}`} chip={c} index={1 + model.shells.length + members.length + tail.length + i} />)}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LaneHead({ title, note }: { title: string; note: string }): JSX.Element {
+  return (
+    <div className="mb-2.5 flex min-w-0 items-baseline justify-between gap-3 text-[0.75rem] text-muted-foreground">
+      <span className="min-w-0 truncate font-bold" title={title}>{title}</span>
+      <span className="hidden shrink-0 sm:inline">{note}</span>
     </div>
   );
 }

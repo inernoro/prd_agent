@@ -1,21 +1,20 @@
 /*
  * BranchRelationsPage — 全屏关系图（plan.cds.service-relations 第四批）。独立路由，可分享。
- * 与总览缩略卡、半屏抽屉、cdscli topology 读同一份 service-graph 数据。
+ * 与总览关系卡、展开视图、cdscli topology 读同一份 service-graph 数据。
  */
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Copy, Minimize2, RefreshCw } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
-import { FindingsList, useRelationPayload } from '@/components/branch/RelationCard';
-import { RelationGraph, relationHeadline } from '@/components/branch/RelationGraph';
+import { RelationWorkspace, useRelationPayload } from '@/components/branch/RelationCard';
+import { relationHeadline } from '@/components/branch/RelationGraph';
 
 export function BranchRelationsPage(): JSX.Element {
   const { branchId } = useParams<{ branchId: string }>();
   const navigate = useNavigate();
   const { state, reload } = useRelationPayload(branchId);
   const [onlyProblems, setOnlyProblems] = useState(false);
-  const [highlight, setHighlight] = useState<string | null>(null);
   const data = state.status === 'ok' ? state.data : null;
   return (
     <AppShell
@@ -47,14 +46,9 @@ export function BranchRelationsPage(): JSX.Element {
         {data ? (
           <div className="flex h-full min-h-0 flex-col gap-3">
             <div className="text-xs text-foreground-muted">{relationHeadline(data)}</div>
-            <div className="flex min-h-0 flex-1 gap-3">
-              <div className="cds-surface-sunken cds-hairline min-w-0 flex-1 overflow-hidden rounded-lg">
-                <RelationGraph payload={data} highlight={highlight} style={{ height: '100%' }} />
-              </div>
-              <div className="w-[20rem] shrink-0 overflow-auto rounded-lg border border-[hsl(var(--hairline))] p-3">
-                <div className="mb-2 text-[0.6875rem] font-bold text-muted-foreground">需要处理 · 按严重度</div>
-                <FindingsList findings={onlyProblems ? data.lint.findings.filter((f) => f.severity !== 'info') : data.lint.findings} onPick={setHighlight} />
-              </div>
+            {/* 与展开视图同一个主体：问题带在上、关系图在下，不再是右侧窄栏 */}
+            <div className="cds-hairline flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-[hsl(var(--surface-base))]">
+              <RelationWorkspace data={data} onlyProblems={onlyProblems} />
             </div>
           </div>
         ) : null}
