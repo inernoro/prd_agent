@@ -168,6 +168,12 @@ export function FilmSection() {
       const audio = await job;
       if (run !== runRef.current) return;
       setLoading(false);
+      // 配乐加载期间用户切走了标签页：可见性暂停那一路只在 playing 时才挂上，错过的切换事件不会重放，
+      // 这里补判一次——停在起点不开播，免得在看不见的地方放歌、回来时片子跳了一截（Codex P2，PR #1650）
+      if (document.hidden) {
+        setPlaying(false);
+        return;
+      }
       const ctx = ctxRef.current;
       if (audio && ctx) {
         if (ctx.state === 'suspended') void ctx.resume();

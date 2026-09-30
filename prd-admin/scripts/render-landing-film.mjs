@@ -13,7 +13,9 @@ import { createServer } from 'vite';
  *   node scripts/render-landing-film.mjs                    # 中文，1080p30，输出到系统临时目录
  *   FILM_LANG=en FILM_FPS=60 FILM_OUT=./film-en.mp4 node scripts/render-landing-film.mjs
  *
- * 依赖：无头 Chromium 取自 playwright，它不在 prd-admin 的依赖里，先在仓库根目录跑 `cd cds && pnpm install`。
+ * 依赖：无头 Chromium 取自 playwright，它不在 prd-admin 的依赖里。干净的检出第一次用，在仓库根目录先装包、再装浏览器：
+ *   cd cds && pnpm install && pnpm exec playwright install chromium
+ * （playwright 包本身不带浏览器，第二步不能省；已有别的 Chromium 可以不装，改用 FILM_CHROMIUM 指过去。）
  *
  * 可选环境变量：
  *   FILM_LANG   zh | en（默认 zh）
