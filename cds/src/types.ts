@@ -3659,6 +3659,62 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+export interface StandbyMirrorBranchFingerprint {
+  name: string;
+  commitSha: string | null;
+  status: string;
+}
+
+/** 备用 CDS 之间只交换不可逆指纹与版本事实，不交换环境变量明文。 */
+export interface StandbyMirrorFingerprint {
+  protocolVersion: 1;
+  projectId: string;
+  repository: string | null;
+  defaultBranch: string | null;
+  configHash: string;
+  secretKeyHash: string;
+  secretKeyCount: number;
+  branches: StandbyMirrorBranchFingerprint[];
+  generatedAt: string;
+}
+
+export interface StandbyMirrorAudit {
+  id: string;
+  checkedAt: string;
+  peerId: string;
+  remoteProjectId: string;
+  remoteReachable: boolean;
+  protocolReady: boolean;
+  repositoryMatches: boolean;
+  configMatches: boolean;
+  secretKeysMatch: boolean;
+  defaultBranchMatches: boolean;
+  dataSnapshotReady: boolean;
+  readyForFailover: boolean;
+  missingBranches: string[];
+  divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  performance: {
+    samples: number;
+    healthP50Ms: number | null;
+    healthP95Ms: number | null;
+    fingerprintMs: number | null;
+    localFingerprintMs: number;
+  };
+  error?: string;
+}
+
+export interface StandbyMirrorConfig {
+  peerId: string;
+  remoteProjectId: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  /** 自动切流必须经过独立发布门，第一阶段固定 false。 */
+  autoFailover: false;
+  updatedAt: string;
+  lastAudit?: StandbyMirrorAudit;
+  history?: StandbyMirrorAudit[];
+}
+
 export interface Project {
   /** 父实例镜像来的只读项目（预览实例专用） */
   mirror?: PreviewMirrorTag;
@@ -3682,6 +3738,8 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
+  /** 主备对账策略与最近证据。缺省表示该项目尚未启用备用站。 */
+  standbyMirror?: StandbyMirrorConfig;
   /** URL-friendly slug (may equal id, usually kebab-case). */
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
