@@ -388,28 +388,9 @@ public class ImageMasterController : ControllerBase
         if (articleContentChanged)
         {
             update = update.Set(x => x.ArticleContent, request!.ArticleContent);
-            // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
-            if (ws.ArticleWorkflow != null)
-            {
-                history.Insert(0, ws.ArticleWorkflow);
-                if (history.Count > 10) history = history.Take(10).ToList();
-            }
-            // 清空后续阶段：清 markers/images/articleContentWithMarkers
-            var newWorkflow = new ArticleIllustrationWorkflow
-            {
-                Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
-                Phase = 1, // Editing
-                Markers = new List<ArticleIllustrationMarker>(),
-                ExpectedImageCount = null,
-                DoneImageCount = 0,
-                AssetIdByMarkerIndex = new Dictionary<string, string>(),
-                UpdatedAt = now
-            };
-            update = update
-                .Set(x => x.ArticleWorkflow, newWorkflow)
-                .Set(x => x.ArticleWorkflowHistory, history)
-                .Set(x => x.ArticleContentWithMarkers, null);
+            // 提交型复位（版本 +1、旧流程进历史、清标记）：与文学页 PUT 共用同一处判定
+            var reset = PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetUpdate(ws, now);
+            update = Builders<ImageMasterWorkspace>.Update.Combine(update, reset);
 
             // 旧配图不再删除：盖上旧版本号归入「历史配图」（用户要能回看；智能体生成的图也不能被这一下抹掉）。
             await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0);

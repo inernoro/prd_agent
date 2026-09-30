@@ -215,9 +215,19 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        var update = Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        var now = DateTime.UtcNow;
+        var update = Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, now);
+        // 正文真的换了 = 提交型修改：配图方案升一版、旧标记失效（旧图保留进历史）。
+        // 页面一直按这个语义调用它（上传文章处的注释写着「会触发 version++，清空后续阶段」），
+        // 但这个入口此前只改了正文——旧标记与带标记正文原样挂在新正文上。
+        var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent)
+            && !string.Equals(request.ArticleContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
+        if (articleContentChanged)
+            update = Builders<ImageMasterWorkspace>.Update.Combine(update,
+                LiteraryIllustrationArchive.ContentResetUpdate(ws, now).Set(x => x.ArticleContent, request!.ArticleContent));
+        else if (request?.ArticleContent != null)
+            update = update.Set(x => x.ArticleContent, request.ArticleContent);
         if (request?.Title != null) update = update.Set(x => x.Title, request.Title.Trim());
-        if (request?.ArticleContent != null) update = update.Set(x => x.ArticleContent, request.ArticleContent);
         if (request?.ScenarioType != null) update = update.Set(x => x.ScenarioType, request.ScenarioType.Trim());
         if (request?.FolderName != null) update = update.Set(x => x.FolderName, request.FolderName.Trim());
         if (request?.MemberUserIds != null) update = update.Set(x => x.MemberUserIds, request.MemberUserIds.Select(x => x.Trim()).Where(x => x != adminId).Distinct().ToList());
@@ -228,7 +238,9 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             update = update.Set(x => x.SelectedPromptId, string.IsNullOrEmpty(pid) ? null : pid);
         }
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: ct);
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: CancellationToken.None);
+        if (articleContentChanged)
+            await LiteraryIllustrationArchive.StampUnversionedAsync(_db, ws.Id, ws.ArticleWorkflow?.Version ?? 0);
         var updated = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { workspace = updated }));
     }

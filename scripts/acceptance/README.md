@@ -33,3 +33,26 @@ node scripts/acceptance/active-tasks-driver.mjs "$(python3 .claude/skills/cds/cl
 
 `active-tasks-fixture.txt` 是 AI 拆解那一步的输入 —— 一份真实的、会议纪要体的待办清单，
 不是一行一件的干净列表。用干净列表测等于没测：按行切的老路子也能过。
+
+## literary-mcp-driver.py —— 文学创作 MCP
+
+上一轮验收只问「图出来了没有」，于是三类问题全部漏掉：用户点名的风格/水印有没有真的用上、
+网页与智能体轮流改同一篇之后数据还对不对、旧图有没有被删。这条 driver 专测这三类，
+每条判据都走真实 MCP 网关（`/api/mcp`，与外部智能体看到的一致），网页侧用同一账号的登录态。
+
+| 段 | 判据（机读） |
+|---|---|
+| 前置 | 指定的风格 / 水印存在且**不是**默认那套——否则「指定」与「默认」分不出来，判据永远绿 |
+| 建稿 | 全角写法与 6 个标记能建；同一幂等键原样重试回同一篇、换内容报冲突；空描述被拒 |
+| 生图 | 一次入队 6 张；回执里的风格/水印 ID 等于指定那套；原样重试不重复入队；换尺寸报冲突 |
+| 闭环 | 600s 内 6 张都有 url，且 url 走水印存储路径；`watermark=none` 那张不走 |
+| 交叉写 | 网页改一个标记后另外几张图一张不少；带标记改稿升版且旧图全进历史；网页重新上传正文后旧标记失效、历史不少 |
+
+```bash
+export MAP_BASE="$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1 | awk '{print $NF}')"
+export MAP_MCP_KEY='sk-ak-...' MAP_USER='<账号>' MAP_PASSWORD='<口令>'
+python3 scripts/acceptance/literary-mcp-driver.py
+```
+
+执行者只做三件事：设变量、跑脚本、把 `$LIT_OUT/verdict.json` 原样贴回来，外加脚本最后打印的那两张截图。
+不许改判据，不许把 FAIL 解释成 PASS——判断已经写在脚本里，不交给执行者。

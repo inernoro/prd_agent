@@ -15,6 +15,36 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public static class LiteraryIllustrationArchive
 {
+    /// <summary>
+    /// 「正文换了」的提交型复位：版本 +1、旧流程进历史、清标记与带标记正文。
+    ///
+    /// 这段判断曾只写在 ImageMaster 的更新接口里；文学页拆出自己的 PUT 之后没带过来，
+    /// 于是网页上给一篇文章重新上传正文时，旧标记和旧配图方案原样挂在新正文上（刷新后又回来）。
+    /// 两个入口现在都调这一处。调用方负责在写库后调用 <see cref="StampUnversionedAsync"/>。
+    /// </summary>
+    public static UpdateDefinition<ImageMasterWorkspace> ContentResetUpdate(ImageMasterWorkspace ws, DateTime now)
+    {
+        var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
+        if (ws.ArticleWorkflow != null)
+        {
+            history.Insert(0, ws.ArticleWorkflow);
+            if (history.Count > 10) history = history.Take(10).ToList();
+        }
+        return Builders<ImageMasterWorkspace>.Update
+            .Set(x => x.ArticleWorkflow, new ArticleIllustrationWorkflow
+            {
+                Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
+                Phase = 1, // Editing
+                Markers = new List<ArticleIllustrationMarker>(),
+                ExpectedImageCount = null,
+                DoneImageCount = 0,
+                AssetIdByMarkerIndex = new Dictionary<string, string>(),
+                UpdatedAt = now,
+            })
+            .Set(x => x.ArticleWorkflowHistory, history)
+            .Set(x => x.ArticleContentWithMarkers, null);
+    }
+
     /// <summary>把该工作区里带插入位、但没有版本号的配图归到 <paramref name="version"/>。</summary>
     public static Task StampUnversionedAsync(MongoDbContext db, string workspaceId, int version)
         => db.ImageAssets.UpdateManyAsync(

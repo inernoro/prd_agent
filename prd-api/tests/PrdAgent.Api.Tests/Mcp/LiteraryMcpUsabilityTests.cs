@@ -260,6 +260,40 @@ public class LiteraryMcpUsabilityTests
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
 
+    [Fact]
+    public async Task 网页上重新上传正文_旧标记失效并升版_旧图进历史()
+    {
+        // 文学页的 PUT 此前只改正文：旧标记与带标记正文原样挂在新正文上，刷新后又回到旧状态。
+        var (db, name, connection) = NewDb("literary_web_put");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "网页改稿", MarkedContent = "旧正文。\n[插图]: 书店\n", ClientRequestId = "w-1",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            await db.ImageAssets.InsertOneAsync(new ImageAsset
+            {
+                Id = "old-web", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, Url = "https://example.test/old.png",
+            });
+
+            var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            Assert.IsType<OkObjectResult>(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "全新上传的正文。", Title = "新标题" }, CancellationToken.None));
+
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            Assert.Equal(2, ws.ArticleWorkflow!.Version);
+            Assert.Empty(ws.ArticleWorkflow.Markers);
+            Assert.Null(ws.ArticleContentWithMarkers);
+            Assert.Equal("新标题", ws.Title);
+            Assert.Equal(1, (await db.ImageAssets.Find(x => x.Id == "old-web").SingleAsync()).ArticleWorkflowVersion);
+
+            // 正文没变只改标题：不升版
+            Assert.IsType<OkObjectResult>(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "全新上传的正文。", Title = "再改标题" }, CancellationToken.None));
+            Assert.Equal(2, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
     // ───────────── 网页定向写：不再整份覆盖 ─────────────
 
     [Fact]
