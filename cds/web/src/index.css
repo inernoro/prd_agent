@@ -123,6 +123,12 @@
     --role-web: 158 64% 52%;
     --role-api: 199 95% 74%;
     --role-worker: 258 90% 66%;
+    /* 分支自定义分组的五个色块（2026-09-29）：有限枚举，两个主题各调过一遍对比度。 */
+    --group-orange: 24 95% 62%;
+    --group-blue: 205 90% 66%;
+    --group-green: 158 60% 50%;
+    --group-purple: 268 70% 72%;
+    --group-gray: 220 8% 58%;
     --graph-call: 239 84% 67%;
     --graph-external: 258 90% 66%;
 
@@ -219,6 +225,12 @@
     --role-web: 160 84% 34%;
     --role-api: 201 98% 39%;
     --role-worker: 262 83% 50%;
+    /* 分支自定义分组的五个色块（2026-09-29）：有限枚举，两个主题各调过一遍对比度。 */
+    --group-orange: 24 90% 44%;
+    --group-blue: 205 85% 38%;
+    --group-green: 160 80% 28%;
+    --group-purple: 268 55% 46%;
+    --group-gray: 220 8% 44%;
     --graph-call: 239 84% 55%;
     --graph-external: 262 83% 50%;
 
@@ -453,7 +465,9 @@
     --cds-branch-card-gap: 1rem;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, max(var(--cds-branch-card-min), calc((100% - 4 * var(--cds-branch-card-gap)) / 5))), 1fr));
-    align-items: start;
+    /* 等高（2026-09-29）：卡片本身是固定槽位、固定高度，stretch 再兜一层——
+       任何一张卡将来多长出一行，同排其它卡跟着拉齐，而不是回到高低不齐。 */
+    align-items: stretch;
     gap: var(--cds-branch-card-gap);
   }
 
@@ -463,7 +477,7 @@
      卡片开着 tag 编辑器 / AI 面板 / commit 菜单或 error 态时由 JSX 侧不加本类。 */
   .cds-cv-auto {
     content-visibility: auto;
-    contain-intrinsic-size: auto 15rem;
+    contain-intrinsic-size: auto 15.25rem;
   }
 
   /*
@@ -523,6 +537,8 @@
   }
   .cds-branch-card-enter {
     animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    /* 同 .cds-finish-ring：卡片根的 duration-150 会经 tailwindcss-animate 把它截成 150ms。 */
+    animation-duration: 440ms !important;
   }
   /* 关系流向条的 chip 错峰淡入（2026-09-16）：每枚延迟 40ms，尊重「减少动态效果」。 */
   @keyframes cds-relation-chip-in {
@@ -566,6 +582,7 @@
   .cds-branch-card-leave {
     pointer-events: none;
     animation: cds-branch-card-leave 340ms cubic-bezier(0.4, 0, 1, 1) forwards;
+    animation-duration: 340ms !important;
   }
   /* 尊重系统「减少动态效果」偏好:不播过渡,直接给最终「收起」态(高度归零),
    * 否则卡片只是透明但仍占满布局空间,要等 ~360ms 移除定时器才让位。
@@ -730,52 +747,207 @@
     animation: cds-branch-busy-rim 1.8s ease-in-out infinite;
   }
 
-  /* 方案 B（2026-09-08 用户拍板）：构建期间分支卡页脚的背景就是进度条。
-     确定进度：淡蓝填充从左往右推进，右缘一条亮线；超过历史中位转 warn。
-     不确定（排队 / 无历史样本）：铺满缓慢流动的斜纹，只表示「在等」，不编百分比。
-     颜色全走 token，双主题各自成立。 */
-  .cds-footer-progress-fill {
+  /* 分支卡构建阶段条（2026-09-29 改版，取代 2026-09-08 方案 B 的整条背景填充）。
+     页脚顶边一条细线，分成「排队 / 等镜像 / 启动容器 / 就绪探测」几段（源码版三段）：
+     走完的段实心、当前段流光（段内进度后端没有，不编百分比）、排队只放斜纹。
+     超过历史中位转 warn，失败停在出事那一段转红，完成时整条补满转成功色。
+     颜色全走 token，双主题各自成立。判定源：lib/branchCardPhase.ts。 */
+/* 分支自定义分组：被拎起的卡原位变淡加虚线框；拖影副本倾斜、主色边框、投影（2026-09-29）。 */
+.cds-branch-card-grid [data-dragging='true'] {
+  opacity: 0.45;
+  outline: 2px dashed hsl(var(--primary) / 0.7);
+  outline-offset: 2px;
+}
+.cds-branch-drag-ghost {
+  position: fixed;
+  top: -62.5rem;
+  left: -62.5rem;
+  transform: rotate(-2deg);
+  border-color: hsl(var(--primary)) !important;
+  box-shadow: 0 1.125rem 2.5rem hsl(0 0% 0% / 0.45);
+  pointer-events: none;
+}
+
+  .cds-phase-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -1px;
+    z-index: 1;
+    display: flex;
+    gap: 3px;
+    height: 3px;
+    pointer-events: none;
+  }
+  .cds-phase-seg {
+    position: relative;
+    flex: 1 1 0;
+    overflow: hidden;
+    background: hsl(var(--hairline-strong));
+  }
+  .cds-phase-seg--done {
+    background: hsl(var(--info));
+  }
+  .cds-phase-seg--current {
+    background: hsl(var(--info) / 0.3);
+  }
+  .cds-phase-seg--current::after {
+    content: '';
     position: absolute;
     inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background: linear-gradient(90deg, hsl(var(--info) / 0.18), hsl(var(--info) / 0.1));
-    border-right: 1px solid hsl(var(--info) / 0.55);
-    box-shadow: 0 0 1.125rem -0.25rem hsl(var(--info) / 0.7);
-    transition: width 700ms ease-out;
+    background: linear-gradient(90deg, transparent, hsl(var(--info)), transparent);
+    animation: cds-phase-shimmer 1.4s linear infinite;
+  }
+  .cds-phase-seg--waiting {
+    background: repeating-linear-gradient(-45deg, hsl(var(--info) / 0.8) 0 0.25rem, hsl(var(--info) / 0.2) 0.25rem 0.5rem);
+    background-size: 0.7071rem 100%;
+    animation: cds-phase-stripe 1s linear infinite;
+  }
+  .cds-phase-bar--overdue .cds-phase-seg--done {
+    background: hsl(var(--warn));
+  }
+  .cds-phase-bar--overdue .cds-phase-seg--current {
+    background: hsl(var(--warn) / 0.3);
+  }
+  .cds-phase-bar--overdue .cds-phase-seg--current::after {
+    background: linear-gradient(90deg, transparent, hsl(var(--warn)), transparent);
+  }
+  .cds-phase-bar--failed .cds-phase-seg--done {
+    opacity: 0.45;
+  }
+  .cds-phase-seg--failed {
+    background: hsl(var(--destructive));
+  }
+  @keyframes cds-phase-shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
+  }
+  @keyframes cds-phase-stripe {
+    to { background-position: 0.7071rem 0; }
   }
 
-  .cds-footer-progress-fill--overdue {
-    background: linear-gradient(90deg, hsl(var(--warn) / 0.18), hsl(var(--warn) / 0.1));
-    border-right-color: hsl(var(--warn) / 0.55);
-    box-shadow: 0 0 1.125rem -0.25rem hsl(var(--warn) / 0.7);
+  /* 构建完成的一次性收尾（约 1.2s，只在「构建中 → 运行中」翻转时播一次）：
+     0–300ms 阶段条补满并转成功色 → 300–700ms 高光扫过页脚、文字上下交叉换成「部署成功」
+     → 700–1000ms 端口标签依次点亮、预览按钮放大淡入 → 1000ms 起一次成功色外圈脉冲。 */
+  .cds-phase-bar--finish .cds-phase-seg {
+    background: hsl(var(--info));
+    animation: cds-phase-to-ok 300ms ease-out forwards;
+  }
+  .cds-phase-bar--finish {
+    animation: cds-phase-settle 400ms 1200ms ease-out forwards;
+  }
+  /* 收尾动效播完后的静态终态（见卡片里的 finishAnimating：重排不会让它重播）。 */
+  .cds-phase-bar--done {
+    opacity: 0.5;
+  }
+  .cds-phase-bar--done .cds-phase-seg {
+    background: hsl(var(--ok));
+  }
+  .cds-finish-sweep {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    background: linear-gradient(100deg, transparent, hsl(var(--ok) / 0.3), transparent);
+    transform: translateX(-110%);
+    animation: cds-finish-sweep 520ms 300ms ease-out forwards;
+  }
+  .cds-finish-text-out {
+    animation: cds-finish-text-out 160ms 300ms ease-in forwards;
+  }
+  .cds-finish-text-in {
+    opacity: 0;
+    animation: cds-finish-text-in 320ms 460ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .cds-finish-chip {
+    animation: cds-finish-chip 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .cds-finish-pop {
+    opacity: 0;
+    animation: cds-finish-pop 300ms 820ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  /* 卡片根上挂着 Tailwind 的 duration-150（给 hover 过渡用），而 tailwindcss-animate 让 duration-*
+     同时改写 animation-duration，且 utilities 层压过这里——不加 !important，780ms 的脉冲会被
+     静默截成 150ms（2026-09-29 取证脚本量出来的：动画名在、时长被改）。 */
+  .cds-finish-ring {
+    animation: cds-finish-ring 780ms 1000ms cubic-bezier(0.16, 1, 0.3, 1);
+    animation-duration: 780ms !important;
+  }
+  .cds-finish-note {
+    opacity: 0;
+    animation: cds-finish-text-in 320ms 900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .cds-finish-note-out {
+    animation: cds-finish-text-out 160ms 820ms ease-in forwards;
+  }
+  @keyframes cds-phase-to-ok {
+    to { background: hsl(var(--ok)); }
+  }
+  @keyframes cds-phase-settle {
+    to { opacity: 0.5; }
+  }
+  @keyframes cds-finish-sweep {
+    to { transform: translateX(260%); }
+  }
+  @keyframes cds-finish-text-out {
+    to { opacity: 0; transform: translateY(-0.375rem); }
+  }
+  @keyframes cds-finish-text-in {
+    from { opacity: 0; transform: translateY(0.375rem); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes cds-finish-chip {
+    from { opacity: 0.4; }
+    to { opacity: 1; }
+  }
+  @keyframes cds-finish-pop {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes cds-finish-ring {
+    0% { box-shadow: 0 0 0 0 hsl(var(--ok) / 0); }
+    40% { box-shadow: 0 0 0 1px hsl(var(--ok) / 0.7), 0 0 0 0.5rem hsl(var(--ok) / 0.16); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--ok) / 0); }
   }
 
-  .cds-footer-progress-fill--indeterminate {
-    width: 100%;
-    border-right: 0;
-    box-shadow: none;
-    background: repeating-linear-gradient(
-      -45deg,
-      hsl(var(--info) / 0.1) 0 0.625rem,
-      hsl(var(--info) / 0.04) 0.625rem 1.25rem
-    );
-    background-size: 1.7675rem 100%;
-    animation: cds-footer-progress-sweep 1.2s linear infinite;
+  /* 排队位次变化时新数字从下方滚进来（旧数字随 key 卸载），让「前面的人走了」看得见。 */
+  .cds-roll-in {
+    display: inline-block;
+    animation: cds-roll-in 420ms cubic-bezier(0.16, 1, 0.3, 1);
   }
-
-  @keyframes cds-footer-progress-sweep {
-    to {
-      background-position: 1.7675rem 0;
-    }
+  @keyframes cds-roll-in {
+    from { opacity: 0; transform: translateY(70%); }
+    to { opacity: 1; transform: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .cds-footer-progress-fill {
-      transition: none;
-    }
-    .cds-footer-progress-fill--indeterminate {
+    .cds-phase-seg--current::after,
+    .cds-phase-seg--waiting,
+    .cds-roll-in,
+    .cds-finish-chip,
+    .cds-finish-ring {
       animation: none;
+    }
+    .cds-phase-bar--finish,
+    .cds-phase-bar--finish .cds-phase-seg {
+      animation: none;
+      background: hsl(var(--ok));
+      opacity: 0.5;
+    }
+    .cds-phase-bar--finish {
+      background: transparent;
+    }
+    .cds-finish-sweep,
+    .cds-finish-text-out,
+    .cds-finish-note-out {
+      display: none;
+    }
+    .cds-finish-text-in,
+    .cds-finish-pop,
+    .cds-finish-note {
+      animation: none;
+      opacity: 1;
     }
   }
 

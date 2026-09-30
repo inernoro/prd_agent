@@ -3583,6 +3583,40 @@ export type ProjectAgentExperienceId = 'newcomer' | 'experienced';
  * 后者要等 cdscli 上报才能确认，所以字段叫 declaredAt 而不是 confirmedAt，
  * 避免把一次声明读成一次验证。
  */
+/**
+ * 分支列表的自定义分组（2026-09-29）。按项目存、项目内所有人和 Agent 共享一套。
+ *
+ * 一个分支只归一组，认领顺序：手动钉入 → 规则（按分组顺序，第一个命中的认领）→ 未归组。
+ * 判定在前端（lib/branchGroups.ts）；这里只存定义，校验在 services/branch-groups.ts。
+ * 颜色是有限枚举而不是任意色值：五个色块在两个主题下都预先调过对比度。
+ */
+export type BranchGroupColor = 'orange' | 'blue' | 'green' | 'purple' | 'gray';
+/** prefix：分支名以…开头；contains：包含；equals：完全等于；tag：带这个标签。 */
+export type BranchGroupRuleKind = 'prefix' | 'contains' | 'equals' | 'tag';
+
+export interface BranchGroupRule {
+  kind: BranchGroupRuleKind;
+  value: string;
+}
+
+export interface BranchGroup {
+  id: string;
+  name: string;
+  color: BranchGroupColor;
+  /** 满足任意一条即归入。 */
+  rules: BranchGroupRule[];
+  /** 手动钉入的分支 id（拖进来的），优先于任何规则。 */
+  pinnedBranchIds: string[];
+}
+
+export interface BranchGroupsSettings {
+  /** 数组顺序即页面顺序，也是规则认领的优先级。 */
+  groups: BranchGroup[];
+  updatedAt: string | null;
+  /** 最后一次修改是谁做的（actor-resolver 的口径：user / ai / ai:<name>）。 */
+  updatedBy: string | null;
+}
+
 export interface ProjectAgentProfile {
   role: ProjectAgentRoleId;
   experience: ProjectAgentExperienceId;
@@ -4053,6 +4087,8 @@ export interface Project {
    * 只是一份声明，不是权限：它不参与任何鉴权判断，改它不影响 Agent 能做什么。
    */
   agentProfile?: ProjectAgentProfile;
+  /** 分支列表的自定义分组；没配过为缺省（页面按「按状态」视图呈现，并给出按前缀建组的建议）。 */
+  branchGroups?: BranchGroupsSettings;
   /**
    * PR_C.1 起新增的项目级运营计数。每次部署 / 拉取 / 调试 / AI 操作时
    * 由 StateService 内部 helper 自增。所有字段 optional，未设视作 0。
