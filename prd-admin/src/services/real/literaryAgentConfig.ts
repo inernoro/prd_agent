@@ -513,6 +513,39 @@ export async function getLiteraryAgentWorkspaceDetailReal(input: { id: string; m
   );
 }
 
+export type LiteraryIllustrationHistoryItem = {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  prompt?: string | null;
+  markerIndex?: number | null;
+  markerText?: string | null;
+  workflowVersion?: number | null;
+  isCurrent: boolean;
+  createdAt: string;
+};
+
+export type LiteraryIllustrationHistory = {
+  workspaceId: string;
+  currentVersion: number;
+  total: number;
+  currentCount: number;
+  groups: Array<{
+    workflowVersion: number | null;
+    isCurrentVersion: boolean;
+    items: LiteraryIllustrationHistoryItem[];
+  }>;
+};
+
+/** 这篇文章生成过的全部配图（含改稿 / 重新规划 / 重新生成之前的旧版本），按版本分组。 */
+export async function getLiteraryIllustrationHistoryReal(input: { id: string }) {
+  return await apiRequest<LiteraryIllustrationHistory>(
+    api.literaryAgent.workspaces.illustrationHistory(encodeURIComponent(input.id)),
+    { method: 'GET' }
+  );
+}
+
 export async function uploadLiteraryAgentWorkspaceAssetReal(input: {
   id: string;
   data?: string;

@@ -79,8 +79,16 @@ public class LiteraryMcpJourneyTests
                 FolderName = "初稿", ClientRequestId = "draft-1",
             }, CancellationToken.None));
             var id = created.GetProperty("workspaceId").GetString()!;
-            Assert.Equal(id, Data(await drafts.CreateWorkspace(new() { ClientRequestId = "draft-1" }, CancellationToken.None))
-                .GetProperty("workspaceId").GetString());
+            // 建稿回执直接带版本与标记序号，不必再读一遍才能生图。
+            Assert.Equal(1, created.GetProperty("workflowVersion").GetInt32());
+            Assert.Equal(2, created.GetProperty("illustrations").GetArrayLength());
+            // 原样重试 → 同一篇；同一个幂等键换了内容 → 冲突，不能把旧文章当新建结果悄悄返回。
+            Assert.Equal(id, Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "验收文章", MarkedContent = "第一段。\n[插图]: 书店\n第二段。\n[插图]: 茶杯\n",
+                FolderName = "初稿", ClientRequestId = "draft-1",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString());
+            Assert.IsType<ConflictObjectResult>(await drafts.CreateWorkspace(new() { ClientRequestId = "draft-1" }, CancellationToken.None));
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
             Assert.Equal(2, read.GetProperty("illustrations").GetArrayLength());
             Assert.Equal("初稿", read.GetProperty("folderName").GetString());

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -254,6 +255,69 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 这篇文章生成过的全部配图，按配图方案版本分组（当前版本在前）。
+    ///
+    /// 改稿、重新规划标记、同一位置重新生成都不会删除旧图——它们只是不再挂在正文上。
+    /// 用户要回看「这篇文章所有的图」时就读这里；智能体（MCP）生成的图同样在内。
+    /// </summary>
+    [HttpGet("{id}/illustration-history")]
+    public async Task<IActionResult> GetIllustrationHistory(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var assets = await _db.ImageAssets
+            .Find(x => x.WorkspaceId == ws.Id)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(1000)
+            .ToListAsync(ct);
+        var current = PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        var currentIds = current.Values.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+        var currentVersion = ws.ArticleWorkflow?.Version ?? 0;
+        var markerText = ws.ArticleWorkflow?.Markers?.GroupBy(m => m.Index).ToDictionary(g => g.Key, g => g.First().Text)
+            ?? new Dictionary<int, string>();
+
+        var items = assets.Select(a => new
+        {
+            id = a.Id,
+            url = a.Url,
+            width = a.Width,
+            height = a.Height,
+            prompt = a.Prompt,
+            markerIndex = a.ArticleInsertionIndex,
+            markerText = a.OriginalMarkerText
+                ?? (a.ArticleInsertionIndex is { } mi && (a.ArticleWorkflowVersion ?? currentVersion) == currentVersion
+                    && markerText.TryGetValue(mi, out var t) ? t : null),
+            workflowVersion = a.ArticleWorkflowVersion,
+            isCurrent = currentIds.Contains(a.Id),
+            createdAt = a.CreatedAt,
+        }).ToList();
+
+        var groups = items
+            .GroupBy(x => x.workflowVersion ?? (x.isCurrent ? currentVersion : -1))
+            .OrderByDescending(g => g.Key == currentVersion)
+            .ThenByDescending(g => g.Key)
+            .Select(g => new
+            {
+                workflowVersion = g.Key < 0 ? (int?)null : g.Key,
+                isCurrentVersion = g.Key == currentVersion,
+                items = g.OrderBy(x => x.markerIndex ?? int.MaxValue).ThenByDescending(x => x.createdAt).ToList(),
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workspaceId = ws.Id,
+            currentVersion,
+            total = items.Count,
+            currentCount = currentIds.Count,
+            groups,
+        }));
     }
 
     /// <summary>
@@ -589,18 +653,17 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
         if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
 
-        // Dedup: remove previous asset at same insertion index
-        if (asset.ArticleInsertionIndex.HasValue)
+        // 同一位置的旧图不再删除（用户要能在「历史配图」里找回）；新图盖当前版本号并挂上指针，
+        // 「当前挂哪张」由指针 + 版本判定，不再靠「同位置只留一张」来保证。
+        if (asset.ArticleInsertionIndex.HasValue && ws.ArticleWorkflow != null)
         {
-            await _db.ImageAssets.DeleteManyAsync(
-                Builders<ImageAsset>.Filter.And(
-                    Builders<ImageAsset>.Filter.Eq(x => x.WorkspaceId, ws.Id),
-                    Builders<ImageAsset>.Filter.Eq(x => x.ArticleInsertionIndex, asset.ArticleInsertionIndex),
-                    Builders<ImageAsset>.Filter.Ne(x => x.Id, asset.Id)
-                ), ct);
+            await LiteraryIllustrationArchive.StampUnversionedAsync(_db, ws.Id, ws.ArticleWorkflow.Version);
+            asset.ArticleWorkflowVersion = ws.ArticleWorkflow.Version;
         }
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+        if (asset.ArticleInsertionIndex.HasValue && ws.ArticleWorkflow != null)
+            await LiteraryMarkerWrites.PointMarkerAsync(_db, ws.Id, ws.ArticleWorkflow.Version, asset.ArticleInsertionIndex.Value, asset.Id);
 
         // Update assetsHash
         var newAssetsHash = Guid.NewGuid().ToString("N");

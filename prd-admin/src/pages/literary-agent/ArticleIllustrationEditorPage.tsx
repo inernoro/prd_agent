@@ -61,7 +61,8 @@ import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryMode
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History } from 'lucide-react';
+import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -505,6 +506,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 刻意不在打开期间实时重算列表：否则更靠前的 marker 后完成插入会让已打开的图悄悄错位（违反"最小惊讶"）。
   // 新完成的配图重新打开灯箱即可看到。
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
+  // 历史配图：改稿 / 重新规划 / 重新生成前的旧图都不删，在这里按版本找回
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
@@ -2895,6 +2898,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                style={{ color: 'var(--text-secondary)' }}
+                title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
+              >
+                <History size={13} />
+                <span>历史配图</span>
+              </button>
               {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
               <TipsEntryButton compact />
             </div>
@@ -5010,6 +5023,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
         }
       />
+
+      <IllustrationHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} workspaceId={workspaceId} />
 
       {/* 图片灯箱（可放大/缩小/拖拽预览）。列表在打开时已快照，避免打开期间靠前 marker 完成插入导致错位 */}
       {lightbox && (

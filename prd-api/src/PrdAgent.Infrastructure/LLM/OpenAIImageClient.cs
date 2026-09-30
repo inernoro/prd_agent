@@ -3006,6 +3006,36 @@ public class OpenAIImageClient : IImageGenerationClient
             return null;
         }
 
+        // 业务 run 显式指定了水印（智能体按名称/ID 选中的那套，或明确不打）：以它为准，
+        // 不再按「账号给该应用绑定的第一套」去猜。归属已在入队时校验，这里仍按 UserId 再限一次。
+        var explicitWatermarkId = (_ctxAccessor?.Current?.WatermarkConfigId ?? string.Empty).Trim();
+        if (explicitWatermarkId.Length > 0)
+        {
+            if (string.Equals(explicitWatermarkId, WatermarkSelection.None, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Watermark disabled explicitly for this run (user {UserId}).", userId);
+                return null;
+            }
+            var chosen = await _db.WatermarkConfigs
+                .Find(x => x.Id == explicitWatermarkId && x.UserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (chosen == null)
+            {
+                // 入队后这套水印被删了。不静默换成别的一套：宁可不打，并留下可查的告警。
+                _logger.LogWarning("Explicit watermark {WatermarkId} not found for user {UserId}; image generated without watermark.",
+                    explicitWatermarkId, userId);
+                return null;
+            }
+            chosen.FontKey = _fontRegistry.NormalizeFontKey(chosen.FontKey);
+            var (chosenOk, chosenMessage) = WatermarkSpecValidator.Validate(chosen, _fontRegistry.FontKeys);
+            if (!chosenOk)
+            {
+                _logger.LogWarning("Explicit watermark {WatermarkId} invalid for user {UserId}: {Message}", explicitWatermarkId, userId, chosenMessage);
+                return null;
+            }
+            return chosen;
+        }
+
         _logger.LogInformation("[Watermark Debug] Querying database: UserId={UserId}, AppKey={AppKey}", userId, appKey);
 
         // 先查询所有该用户的水印配置，用于诊断

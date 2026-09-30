@@ -185,6 +185,13 @@ public class ImageGenRun
     public int? ArticleWorkflowVersion { get; set; }
 
     /// <summary>
+    /// 本次生图指定的水印配置 id。null = 沿用账号给该应用绑定的那套（原行为）；
+    /// <see cref="WatermarkSelection.None"/> = 这次明确不打水印。
+    /// 由入队方校验归属，Worker 经 LlmRequestContext 透传给打水印的那一层。
+    /// </summary>
+    public string? WatermarkConfigId { get; set; }
+
+    /// <summary>
     /// 可选：周报海报场景下，关联的海报 ID。Worker 完成时会回填对应页面 ImageUrl。
     /// </summary>
     public string? WeeklyPosterId { get; set; }

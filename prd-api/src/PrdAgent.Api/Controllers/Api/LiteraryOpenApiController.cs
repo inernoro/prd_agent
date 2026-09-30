@@ -103,27 +103,20 @@ public class LiteraryOpenApiController : ControllerBase
 
         if (format != null && format != "plain" && format != "illustrated")
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "format 只能是 plain 或 illustrated。"));
+
+        // 当前每个标记挂哪张图：与网页详情、投稿、导出同一个判定源，不再各自「按 index 取最新」。
+        var allAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id).ToListAsync(ct);
+        LiteraryMcpWorkflow.RecoverVersionedAssets(ws, allAssets);
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, allAssets);
+        var urls = current.ToDictionary(kv => kv.Key, kv => Request.ResolveAbsoluteUrl(kv.Value.Url) ?? kv.Value.Url);
+
         var full = ws.ArticleContent ?? string.Empty;
         if (format == "illustrated" && ws.ArticleContentWithMarkers != null)
-        {
-            var assetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values.ToList() ?? new List<string>();
-            var version = ws.ArticleWorkflow?.Version;
-            var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id
-                && (assetIds.Contains(x.Id) || (version.HasValue && x.ArticleWorkflowVersion == version.Value))).ToListAsync(ct);
-            LiteraryMcpWorkflow.RecoverVersionedAssets(ws, assets);
-            var mapping = ws.ArticleWorkflow?.AssetIdByMarkerIndex ?? new Dictionary<string, string>();
-            var urls = new Dictionary<int, string>();
-            foreach (var (index, id) in mapping)
-            {
-                var asset = assets.FirstOrDefault(x => x.Id == id);
-                if (asset != null && int.TryParse(index, out var i) && Request.ResolveAbsoluteUrl(asset.Url) is { } url)
-                    urls[i] = url;
-            }
             full = LiteraryMcpWorkflow.Render(ws.ArticleContentWithMarkers, urls);
-        }
         var from = offset > 0 ? Math.Min(offset, full.Length) : 0;
         var take = limit is > 0 and <= MaxContentChars ? limit : DefaultReadChars;
         var slice = full.Substring(from, Math.Min(take, full.Length - from));
+        var currentIds = current.Values.Select(a => a.Id).ToHashSet();
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -131,7 +124,17 @@ public class LiteraryOpenApiController : ControllerBase
             title = ws.Title,
             folderName = ws.FolderName,
             workflowVersion = ws.ArticleWorkflow?.Version ?? 0,
-            illustrations = ws.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status, runId = m.RunId }),
+            illustrations = ws.ArticleWorkflow?.Markers.Select(m => new
+            {
+                index = m.Index, prompt = m.Text,
+                status = current.ContainsKey(m.Index) && m.Status != "running" ? "done" : m.Status,
+                runId = m.RunId,
+                errorMessage = m.ErrorMessage,
+                assetId = current.TryGetValue(m.Index, out var a) ? a.Id : null,
+                url = urls.TryGetValue(m.Index, out var u) ? u : null,
+            }),
+            // 改稿 / 重新规划后，旧版本的图不删，只是不再挂在正文上；页面「历史配图」能看到它们。
+            historyImageCount = allAssets.Count(x => !currentIds.Contains(x.Id)),
             content = slice,
             offset = from,
             contentChars = full.Length,
@@ -159,16 +162,21 @@ public class LiteraryOpenApiController : ControllerBase
     public async Task<IActionResult> CreateWorkspace([FromBody] CreateWorkspaceRequest? req, CancellationToken ct)
     {
         var userId = GetBoundUserId();
-        var title = (req?.Title ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(title)) title = "未命名";
-        if (title.Length > 40) title = title[..40].Trim();
-
-        var validation = LiteraryMcpWorkflow.Validate(req?.Content, req?.MarkedContent, req?.FolderName);
+        var marked = req?.MarkedContent is { } rawMarked ? LiteraryMcpWorkflow.NormalizeMarkedContent(rawMarked) : null;
+        var validation = LiteraryMcpWorkflow.Validate(req?.Content, marked, req?.FolderName);
         if (validation != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, validation));
-        var content = req?.MarkedContent is { } marked ? LiteraryMcpWorkflow.PlainContent(marked) : req?.Content ?? string.Empty;
+        var content = marked != null ? LiteraryMcpWorkflow.PlainContent(marked) : req?.Content ?? string.Empty;
         if (content.Length > MaxContentChars)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限，请分次写入"));
+
+        var title = (req?.Title ?? string.Empty).Trim();
+        // 不给标题时从正文第一行取：原来一律叫「未命名」，智能体建几篇列表里就是一排分不清的「未命名」。
+        if (string.IsNullOrWhiteSpace(title)) title = TitleFromContent(content) ?? "未命名";
+        if (title.Length > 40) title = title[..40].Trim();
+        var folderName = string.IsNullOrWhiteSpace(req?.FolderName) ? null : req.FolderName.Trim();
+        var requestFingerprint = LiteraryWorkspaceHash.Sha256Hex(
+            string.Join("\u0001", (req?.Title ?? string.Empty).Trim(), req?.Content ?? string.Empty, marked ?? string.Empty, folderName ?? string.Empty));
 
         var now = DateTime.UtcNow;
         var assetsHash = Guid.NewGuid().ToString("N");
@@ -186,10 +194,11 @@ public class LiteraryOpenApiController : ControllerBase
             CanvasHash = string.Empty,
             ContentHash = LiteraryWorkspaceHash.ComputeContentHash(string.Empty, assetsHash),
             ArticleContent = string.IsNullOrEmpty(content) ? null : content,
-            FolderName = string.IsNullOrWhiteSpace(req?.FolderName) ? null : req.FolderName.Trim(),
-            ArticleContentWithMarkers = req?.MarkedContent,
-            ArticleWorkflow = req?.MarkedContent is { } prepared ? LiteraryMcpWorkflow.Prepare(prepared) : null,
+            FolderName = folderName,
+            ArticleContentWithMarkers = marked,
+            ArticleWorkflow = marked != null ? LiteraryMcpWorkflow.Prepare(marked) : null,
             SuppressAutoSubmit = true,
+            CreateRequestFingerprint = deterministicId != null ? requestFingerprint : null,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -202,12 +211,41 @@ public class LiteraryOpenApiController : ControllerBase
             var existed = await _db.ImageMasterWorkspaces
                 .Find(x => x.Id == deterministicId && x.OwnerUserId == userId)
                 .FirstOrDefaultAsync(ct);
-            if (existed != null)
-                return Ok(ApiResponse<object>.Ok(new { workspaceId = existed.Id, title = existed.Title, deduplicated = true }));
-            throw;
+            if (existed == null) throw;
+            // 同一个 clientRequestId 带着不同的内容再来，是「复用了幂等键」而不是「重试」。
+            // 以前这里直接把旧文章当成新建结果返回，智能体随后的配图、改稿全落到错的文章上。
+            if (existed.CreateRequestFingerprint != null && existed.CreateRequestFingerprint != requestFingerprint)
+                return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT",
+                    "这个 clientRequestId 已经建过另一篇内容不同的文章。新建一篇请换一个新的 clientRequestId；重试请原样提交上次的内容。"));
+            return Ok(ApiResponse<object>.Ok(CreatedPayload(existed, deduplicated: true)));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { workspaceId = ws.Id, title = ws.Title }));
+        return Ok(ApiResponse<object>.Ok(CreatedPayload(ws, deduplicated: false)));
+    }
+
+    /// <summary>建稿回执直接带上版本号与标记序号，省掉「建完再读一遍才能生图」那一跳。</summary>
+    private static object CreatedPayload(ImageMasterWorkspace ws, bool deduplicated) => new
+    {
+        workspaceId = ws.Id,
+        title = ws.Title,
+        folderName = ws.FolderName,
+        deduplicated,
+        workflowVersion = ws.ArticleWorkflow?.Version ?? 0,
+        illustrations = ws.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status })
+            ?? Enumerable.Empty<object>(),
+        next = ws.ArticleWorkflow?.Markers.Count > 0
+            ? "用 map_literary_generate_image 传 markerIndexes（可一次传全部）与 workflowVersion 生成配图；风格/水印/尺寸可选，先用 map_literary_list_presets 看有哪些。"
+            : null,
+    };
+
+    internal static string? TitleFromContent(string? content)
+    {
+        foreach (var line in (content ?? string.Empty).Split('\n'))
+        {
+            var t = line.Trim().TrimStart('#', '>', '-', '*', ' ').Trim();
+            if (t.Length > 0) return t.Length > 40 ? t[..40].Trim() : t;
+        }
+        return null;
     }
 
     /// <summary>把「这把密钥 + 这个 clientRequestId」压成确定性工作区 id；没给幂等键就返回 null 走随机 id。</summary>
@@ -227,6 +265,12 @@ public class LiteraryOpenApiController : ControllerBase
         /// `mode=replace` 传了才有「期间被改过就不覆盖」这层保护；append 本来就带条件写入。
         /// </summary>
         public string? ExpectedUpdatedAt { get; set; }
+
+        /// <summary>
+        /// 带 [插图]: 标记的整篇正文，与 Content 互斥、只能整篇覆盖。改稿后要重新配图就走这里：
+        /// 正文与标记一起换成新的一版，旧版配图保留在工作区历史里，不删除。
+        /// </summary>
+        public string? MarkedContent { get; set; }
     }
 
     /// <summary>写工作区正文：整篇覆盖或接着往下写。</summary>
@@ -248,10 +292,18 @@ public class LiteraryOpenApiController : ControllerBase
         // 省略 content 与显式给空串是两件事：前者是「没说要写什么」，后者是「明确要清空」。
         // 合成一件的话，直连打一个 {} 过来（mode 默认 replace）就把整篇正文清空、配图流程复位，
         // 接口还回成功 —— 一次拼错的请求造成的破坏，比这条接口能做的任何事都大。
-        var contentError = McpInputBounds.RequireContent(req?.Content);
-        if (contentError != null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, contentError));
-        var incoming = req!.Content!;
+        var marked = req?.MarkedContent is { } rawMarked ? LiteraryMcpWorkflow.NormalizeMarkedContent(rawMarked) : null;
+        if (marked == null)
+        {
+            var contentError = McpInputBounds.RequireContent(req?.Content);
+            if (contentError != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, contentError));
+        }
+        // 标记当正文写进去，以前会被原样存成文字、配图流程却清空——智能体以为能配图，实际一张也配不了。
+        var markedError = LiteraryMcpWorkflow.Validate(req?.Content, marked, null);
+        if (markedError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, markedError));
+        var incoming = marked != null ? LiteraryMcpWorkflow.PlainContent(marked) : req!.Content!;
 
         // mode 只认三种：不给（默认整篇覆盖）、replace、append。写错一个字母不能默默走覆盖 ——
         // 智能体想追加一段、结果整篇正文被那一段替换掉，是这条接口能造成的最大破坏，
@@ -261,6 +313,9 @@ public class LiteraryOpenApiController : ControllerBase
         if (!append && rawMode.Length > 0 && !string.Equals(rawMode, "replace", StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"mode 只能是 replace 或 append，收到的是「{rawMode}」。不传 mode 默认整篇覆盖。"));
+        if (append && marked != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "markedContent 只能整篇覆盖（mode=replace）：标记的序号按全文计算，接在末尾会和已有配图对不上。"));
         // replace 是整篇覆盖，此前只按 workspaceId 过滤、无条件写下去：智能体 T0 读到、
         // 用户 T1 在界面上改了、智能体 T2 拿旧稿覆盖 —— 用户那次编辑就没了。
         // append 那一路本来就带「正文还是我读到的那份」这个条件，缺的一直是 replace 这一半。
@@ -287,7 +342,8 @@ public class LiteraryOpenApiController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"正文超过 {MaxContentChars} 字上限（追加后 {merged.Length} 字），请精简或分篇"));
 
-        var changed = !string.Equals(merged, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
+        // 带标记重写一律算「变了」：即便正文逐字相同，配图方案也换成了新的一版。
+        var changed = marked != null || !string.Equals(merged, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
         var update = Builders<ImageMasterWorkspace>.Update
             .Set(x => x.ArticleContent, merged)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -304,19 +360,22 @@ public class LiteraryOpenApiController : ControllerBase
                 history.Insert(0, ws.ArticleWorkflow);
                 if (history.Count > 10) history = history.Take(10).ToList();
             }
+            var nextVersion = (ws.ArticleWorkflow?.Version ?? 0) + 1;
             update = update
-                .Set(x => x.ArticleWorkflow, new ArticleIllustrationWorkflow
-                {
-                    Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
-                    Phase = 1,
-                    Markers = new List<ArticleIllustrationMarker>(),
-                    ExpectedImageCount = null,
-                    DoneImageCount = 0,
-                    AssetIdByMarkerIndex = new Dictionary<string, string>(),
-                    UpdatedAt = DateTime.UtcNow,
-                })
+                .Set(x => x.ArticleWorkflow, marked != null
+                    ? LiteraryMcpWorkflow.Prepare(marked, nextVersion)
+                    : new ArticleIllustrationWorkflow
+                    {
+                        Version = nextVersion,
+                        Phase = 1,
+                        Markers = new List<ArticleIllustrationMarker>(),
+                        ExpectedImageCount = null,
+                        DoneImageCount = 0,
+                        AssetIdByMarkerIndex = new Dictionary<string, string>(),
+                        UpdatedAt = DateTime.UtcNow,
+                    })
                 .Set(x => x.ArticleWorkflowHistory, history)
-                .Set(x => x.ArticleContentWithMarkers, null);
+                .Set(x => x.ArticleContentWithMarkers, marked);
         }
 
         // 写回一律带条件，只是条件不同：
@@ -360,12 +419,21 @@ public class LiteraryOpenApiController : ControllerBase
                     : "这篇正文在你准备覆盖的这段时间里被改过，本次覆盖没有执行。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"));
         }
 
+        // 盖上旧版本号，让还没盖版本的旧配图明确归入「历史」，不会被按 index 猜回新标记上。
+        if (changed)
+            await LiteraryIllustrationArchive.StampUnversionedAsync(_db, ws.Id, ws.ArticleWorkflow?.Version ?? 0);
+
+        var written = changed ? await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(CancellationToken.None) : ws;
         return Ok(ApiResponse<object>.Ok(new
         {
             workspaceId = ws.Id,
             title = ws.Title,
             contentChars = merged.Length,
             mode = append ? "append" : "replace",
+            workflowVersion = written?.ArticleWorkflow?.Version ?? 0,
+            illustrations = written?.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status })
+                ?? Enumerable.Empty<object>(),
+            updatedAt = written == null ? null : McpRevision.Token(written.UpdatedAt),
         }));
     }
 }

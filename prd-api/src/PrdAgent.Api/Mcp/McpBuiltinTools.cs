@@ -22,6 +22,9 @@ public sealed class McpToolParam
 
     /// <summary>可选枚举值（如 sort=hot|new）</summary>
     public string[]? EnumValues { get; init; }
+
+    /// <summary>Type=array 时元素的 JSON Schema 类型（integer / string ...）；不填则元素类型不限。</summary>
+    public string? ItemsType { get; init; }
 }
 
 /// <summary>
@@ -358,7 +361,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_get_workspace",
-            Description = "读一个文学创作工作区的正文。改稿、续写、以及冲突后重读都用它；正文很长时用 offset 分段读，返回里的 hasMore 说明还有没有。返回里的 updatedAt 是版本令牌：要整篇覆盖时把它原样传给 map_literary_write_content 的 expectedUpdatedAt。",
+            Description = "读一个文学创作工作区的正文与配图进度。illustrations[] 给出每个标记的 status 与图片 url（生图后轮询它即可，一次看全部）；format=illustrated 返回把已完成配图插在原位的 Markdown。改稿、续写、以及冲突后重读都用它；正文很长时用 offset 分段读，hasMore 说明还有没有。updatedAt 是版本令牌：整篇覆盖时原样传给 map_literary_write_content 的 expectedUpdatedAt。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "GET",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}",
@@ -372,31 +375,40 @@ public static class McpBuiltinTools
         },
         new McpToolDef
         {
+            Name = "map_literary_list_presets",
+            Description = "列出这个账号在文学创作里能选的风格（参考图配置）、水印配置和尺寸，并标出不传参数时默认用哪一套。用户点名「用 XX 风格 / XX 水印」时先调它，再把名称或 ID 传给 map_literary_generate_image。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "GET",
+            PathTemplate = "/api/open/literary/presets",
+        },
+        new McpToolDef
+        {
             Name = "map_literary_create_workspace",
-            Description = "新建私有文学工作区，可带初稿及文件夹。需要配图时传 markedContent（与 content 互斥）：正文中独立行写 [插图]: 画面描述，支持 1-4 张。读取工作区取得标记索引与 workflowVersion，再调用 map_literary_generate_image。归档到文件夹不等于公开发布。",
+            Description = "新建私有文学工作区，可带初稿及文件夹。需要配图时传 markedContent（与 content 互斥）：正文中独立一行写 [插图]: 画面描述（全角冒号、【插图】也认），单篇 1-20 张。返回里直接带 workflowVersion 与 illustrations[].index，可立刻调用 map_literary_generate_image。不给 title 时取正文第一行。同一个 clientRequestId 只对应一篇：内容不同会返回 IDEMPOTENCY_CONFLICT。归档到文件夹不等于公开发布。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces",
             Params = new List<McpToolParam>
             {
-                new() { Name = "title", In = "body", Description = "工作区标题，最长 40 字，留空为「未命名」" },
-                new() { Name = "content", In = "body", Description = "初稿正文，可留空" },
-                new() { Name = "markedContent", In = "body", Description = "含 1-4 行 [插图]: 描述 的完整文章，与 content 互斥；最多 200000 字，每个描述最多 4000 字" },
+                new() { Name = "title", In = "body", Description = "工作区标题，最长 40 字；留空取正文第一行" },
+                new() { Name = "content", In = "body", Description = "初稿正文（不配图时用），可留空；不能含 [插图] 标记" },
+                new() { Name = "markedContent", In = "body", Description = "含 1-20 行 [插图]: 描述 的完整文章，与 content 互斥；最多 200000 字，每个描述最多 4000 字，描述不能为空" },
                 new() { Name = "folderName", In = "body", Description = "文学创作内文件夹名称，最长 80 字；不填写为未分类，不公开发布" },
-                new() { Name = "clientRequestId", In = "body", Description = "幂等键" },
+                new() { Name = "clientRequestId", In = "body", Description = "幂等键：一篇文章一个值，重试原样提交" },
             },
         },
         new McpToolDef
         {
             Name = "map_literary_write_content",
-            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。先用 map_literary_list_workspaces 拿 workspaceId，改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉；不传这个参数就没有这层保护。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
+            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。改稿后要重新配图时传 markedContent（带 [插图]: 标记的整篇，只能 replace）：旧版配图保留在历史里、不删除，返回新的 workflowVersion 与 illustrations。改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}/content",
             Params = new List<McpToolParam>
             {
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "工作区 id" },
-                new() { Name = "content", In = "body", Required = true, Description = "正文内容" },
+                new() { Name = "content", In = "body", Description = "正文内容（不带配图标记）；与 markedContent 二选一" },
+                new() { Name = "markedContent", In = "body", Description = "带 [插图]: 标记的整篇正文（1-20 个标记），用于改稿后重新配图；与 content 二选一，只能整篇覆盖" },
                 new() { Name = "mode", In = "body", Description = "replace（默认）或 append", EnumValues = new[] { "replace", "append" } },
                 new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇正文时它的 updatedAt。mode=replace 传了才有「期间被改过就不覆盖」这层保护。" },
             },
@@ -405,15 +417,19 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_generate_image",
-            Description = "为文学工作区一个现有配图标记生成一张图，使用文学创作模型和当前用户参考图配置，保存到该工作区并回填原文位置。每次一张，异步返回 runId。超时重试必须保持 clientRequestId；查询终态后用 get_workspace(format=illustrated) 取图文稿。",
+            Description = "为文学工作区的配图标记生成图片，保存到该工作区并回填原文位置。markerIndexes 可一次传多个（每个标记一个独立任务），markerIndex 只生一张，二选一。风格 style、水印 watermark 可传名称或 ID（none 表示不用），不传就用账号默认那套；可选值先用 map_literary_list_presets 查。size 传比例（16:9）或 宽x高。返回里 applied 说明实际套用了哪套风格/水印/尺寸。异步执行：之后用 map_literary_get_workspace 看 illustrations[].status/url，一次看全部。超时重试必须保持 clientRequestId 与其它参数不变。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/images",
             Params = new List<McpToolParam>
             {
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
-                new() { Name = "markerIndex", In = "body", Type = "integer", Required = true, Description = "get_workspace 返回的 illustrations[].index，从 0 开始" },
-                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "get_workspace 返回的 workflowVersion，改稿后旧版本不能生成" },
-                new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一张图一个值，原样重试使用同一个值" },
+                new() { Name = "markerIndexes", In = "body", Type = "array", ItemsType = "integer", Description = "批量：要生成的标记序号列表（illustrations[].index，从 0 开始），最多 20 个" },
+                new() { Name = "markerIndex", In = "body", Type = "integer", Description = "单张：一个标记序号；与 markerIndexes 二选一" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "建稿 / 读取工作区返回的 workflowVersion，改稿后旧版本不能生成" },
+                new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一次请求一个值，原样重试使用同一个值" },
+                new() { Name = "style", In = "body", Description = "风格（参考图配置）名称或 ID；none = 不用参考图；不传 = 账号当前启用的那套" },
+                new() { Name = "watermark", In = "body", Description = "水印配置名称或 ID；none = 不打水印；不传 = 账号给文学创作绑定的那套" },
+                new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、16:9、3:4，或 宽x高如 1376x768；不传为 1024x1024" },
             },
         },
         new McpToolDef

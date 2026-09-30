@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Core.Services;
@@ -5,15 +6,63 @@ namespace PrdAgent.Core.Services;
 /// <summary>开放接口与网页共用配图标记格式；规划不调用模型，生成仍交给 ImageGenRunWorker。</summary>
 public static class LiteraryMcpWorkflow
 {
+    /// <summary>单篇配图标记上限。原来是 4：长文配不全，智能体只能把一篇拆成几个工作区，列表因此变乱。</summary>
+    public const int MaxMarkers = 20;
+
+    /// <summary>
+    /// 行首的标记变体：`[插图]:` 之外，智能体写中文时常写成全角冒号 `[插图]：`、全角括号 `【插图】：`。
+    /// 标记提取器（前后端各一份、必须逐字一致）只认 `[插图]:`，所以变体在**入口**统一改写成标准形，
+    /// 不去动提取器本身——那会让网页那份提取器的索引与后端错开。
+    /// </summary>
+    private static readonly Regex LineMarkerVariant = new(
+        // 只许吃行内空白（[ \t]），不许 \s：\s 会跨过换行，把「[插图]：」下一行的正文并成画面描述。
+        @"^(?<indent>[ \t]*)[\[【][ \t]*插图[ \t]*[\]】][ \t]*[:：][ \t]*(?<desc>[^\n]*)$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    /// <summary>把换行统一成 \n、把行首标记变体改写成标准的 `[插图]: 描述`。</summary>
+    public static string NormalizeMarkedContent(string markedContent)
+    {
+        var text = markedContent.Replace("\r\n", "\n").Replace('\r', '\n');
+        return LineMarkerVariant.Replace(text, m => $"{m.Groups["indent"].Value}[插图]: {m.Groups["desc"].Value.Trim()}");
+    }
+
+    /// <summary>正文里是否带着（任一变体的）配图标记。用来拦下「把标记当正文写进去」这种静默错误。</summary>
+    public static bool ContainsMarkers(string? content)
+        => !string.IsNullOrEmpty(content)
+           && (LineMarkerVariant.IsMatch(content) || ArticleMarkerExtractor.Extract(content).Count > 0);
+
+    /// <summary>
+    /// 校验带标记正文。调用方必须先 <see cref="NormalizeMarkedContent"/>。
+    /// </summary>
     public static string? Validate(string? content, string? markedContent, string? folderName)
     {
         if (folderName?.Trim().Length > 80) return "文件夹名称不能超过 80 字。";
-        if (markedContent == null) return null;
+        if (markedContent == null)
+        {
+            if (ContainsMarkers(content))
+                return "正文里带有 [插图]: 标记。需要配图请把整篇放进 markedContent（与 content 互斥）；只写正文请去掉这些标记。";
+            return null;
+        }
         if (!string.IsNullOrEmpty(content)) return "content 与 markedContent 只能传一个，避免正文与配图位置不一致。";
         if (markedContent.Length > 200_000) return "带标记正文不能超过 200000 字。";
+
+        // 空描述必须在提取前拦住：提取正则的 \s* 会跨过换行，把下一段正文当成画面描述，
+        // 而去标记时那一段正文也会被一起删掉——静默丢稿。
+        var lines = markedContent.Split('\n');
+        var seen = 0;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var trimmed = lines[i].TrimStart();
+            if (!trimmed.StartsWith("[插图]:", StringComparison.Ordinal)) continue;
+            seen++;
+            if (trimmed["[插图]:".Length..].Trim().Length == 0)
+                return $"第 {seen} 个配图标记（第 {i + 1} 行）没有画面描述。格式是独立一行：[插图]: 画面描述。";
+        }
+
         var markers = ArticleMarkerExtractor.Extract(markedContent);
-        if (markers.Count is < 1 or > 4) return "请在正文独立行使用 [插图]: 画面描述，单篇支持 1-4 个配图标记。";
-        if (markers.Any(m => m.Text.Length > 4000)) return "每张配图的画面描述不能超过 4000 字。";
+        if (markers.Count < 1 || markers.Count > MaxMarkers)
+            return $"请在正文独立行使用 [插图]: 画面描述，单篇支持 1-{MaxMarkers} 个配图标记（当前 {markers.Count} 个）。";
+        if (markers.Any(m => m.Text.Trim().Length > 4000)) return "每张配图的画面描述不能超过 4000 字。";
         if (string.IsNullOrWhiteSpace(PlainContent(markedContent))) return "请同时提供文章正文，不能只有配图标记。";
         return null;
     }
@@ -26,15 +75,15 @@ public static class LiteraryMcpWorkflow
         return result;
     }
 
-    public static ArticleIllustrationWorkflow Prepare(string markedContent) => new()
+    public static ArticleIllustrationWorkflow Prepare(string markedContent, int version = 1) => new()
     {
-        Version = 1,
+        Version = version,
         Phase = 2,
         ExpectedImageCount = ArticleMarkerExtractor.Extract(markedContent).Count,
         Markers = ArticleMarkerExtractor.Extract(markedContent).Select(m => new ArticleIllustrationMarker
         {
-            Index = m.Index, Text = m.Text, Status = "idle",
-            PlanItem = new ArticleIllustrationPlanItem { Prompt = m.Text, Count = 1, Size = "1024x1024" },
+            Index = m.Index, Text = m.Text.Trim(), Status = "idle",
+            PlanItem = new ArticleIllustrationPlanItem { Prompt = m.Text.Trim(), Count = 1, Size = "1024x1024" },
         }).ToList(),
     };
 
@@ -69,16 +118,65 @@ public static class LiteraryMcpWorkflow
         return changed;
     }
 
+    /// <summary>
+    /// 「这篇文章当前每个标记挂的是哪张图」的唯一判定源。
+    ///
+    /// 网页不再在改稿 / 重新规划时硬删旧配图（用户要看历史），于是同一个工作区里会同时躺着
+    /// 当前版本与历史版本的图。投稿、导出、详情此前各自「按 index 取最新一张」，
+    /// 旧版本的图会顶掉当前版本——判据必须收敛到这里，按版本认。
+    ///
+    /// 顺序：权威指针（AssetIdByMarkerIndex）→ 同版本且带 index 的最新一张 →
+    /// 未盖版本号的存量图（改造前的历史数据，只在还没有任何版本化资产时才认）。
+    /// </summary>
+    public static Dictionary<int, ImageAsset> SelectCurrent(ImageMasterWorkspace workspace, IEnumerable<ImageAsset> assets)
+    {
+        var workflow = workspace.ArticleWorkflow;
+        var list = assets.Where(a => a.WorkspaceId == workspace.Id && a.ArticleInsertionIndex.HasValue).ToList();
+        var result = new Dictionary<int, ImageAsset>();
+        var markerIndexes = workflow?.Markers?.Select(m => m.Index).ToHashSet();
+        bool InScope(int index) => markerIndexes == null || markerIndexes.Count == 0 || markerIndexes.Contains(index);
+
+        foreach (var (key, id) in workflow?.AssetIdByMarkerIndex ?? new Dictionary<string, string>())
+        {
+            if (!int.TryParse(key, out var index) || !InScope(index)) continue;
+            var asset = list.FirstOrDefault(a => a.Id == id);
+            if (asset != null) result[index] = asset;
+        }
+
+        var version = workflow?.Version;
+        foreach (var group in list.Where(a => a.ArticleWorkflowVersion.HasValue && a.ArticleWorkflowVersion == version)
+                     .GroupBy(a => a.ArticleInsertionIndex!.Value))
+        {
+            if (!result.ContainsKey(group.Key) && InScope(group.Key))
+                result[group.Key] = group.OrderByDescending(a => a.CreatedAt).First();
+        }
+
+        if (!list.Any(a => a.ArticleWorkflowVersion.HasValue))
+        {
+            foreach (var group in list.GroupBy(a => a.ArticleInsertionIndex!.Value))
+            {
+                if (!result.ContainsKey(group.Key) && InScope(group.Key))
+                    result[group.Key] = group.OrderByDescending(a => a.CreatedAt).First();
+            }
+        }
+        return result;
+    }
+
     /// <summary>按标记索引替换而非按成功张数顺移：第二张先完成也不能占第一张的位置。</summary>
-    public static string Render(string markedContent, IReadOnlyDictionary<int, string> urls)
+    public static string Render(string markedContent, IReadOnlyDictionary<int, string> urls, bool allowRelative = false)
     {
         var result = markedContent;
         foreach (var marker in ArticleMarkerExtractor.Extract(markedContent).AsEnumerable().Reverse())
         {
-            if (!urls.TryGetValue(marker.Index, out var url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                || (uri.Scheme != "https" && uri.Scheme != "http")) continue;
+            if (!urls.TryGetValue(marker.Index, out var url) || string.IsNullOrWhiteSpace(url)) continue;
+            string target;
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && (uri.Scheme == "https" || uri.Scheme == "http"))
+                target = uri.AbsoluteUri;
+            else if (allowRelative && url.StartsWith('/'))
+                target = url;
+            else continue;
             result = result.Remove(marker.StartPos, marker.EndPos - marker.StartPos)
-                .Insert(marker.StartPos, $"![配图 {marker.Index + 1}](<{uri.AbsoluteUri}>)");
+                .Insert(marker.StartPos, $"![配图 {marker.Index + 1}](<{target}>)");
         }
         return result;
     }

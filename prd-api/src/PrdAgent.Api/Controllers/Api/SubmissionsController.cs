@@ -628,20 +628,17 @@ public class SubmissionsController : ControllerBase
                 articleContent = workspace.ArticleContent;
             }
 
-            // 文学创作 = Space 整体投递，每个插入位取最新一张图
+            // 文学创作 = Space 整体投递，每个插入位取「当前挂着的那张」。
+            // 改稿 / 重新规划后旧版配图会保留在工作区（历史配图），按 index 取最新会让旧版图顶掉当前图。
             var allAssets = await _db.ImageAssets
                 .Find(x => x.WorkspaceId == submission.WorkspaceId)
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync();
 
-            // 有 index 的按 index 分组取最新（同一位置重新生成时去重）
-            var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
-            var deduped = withIndex.Count > 0
-                ? withIndex
-                    .GroupBy(a => a.ArticleInsertionIndex!.Value)
-                    .Select(g => g.First())
-                    .ToList()
-                : new List<ImageAsset>();
+            var current = workspace != null
+                ? PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(workspace, allAssets)
+                : new Dictionary<int, ImageAsset>();
+            var deduped = current.Values.ToList();
 
             // 无 index 的图（历史数据/部署过渡期）也保留，不遗漏
             var dedupedIds = deduped.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
@@ -1412,12 +1409,16 @@ public class SubmissionsController : ControllerBase
             var coverWidth = 0;
             var coverHeight = 0;
 
-            // 尝试获取 workspace 的配图
-            var firstAsset = await _db.ImageAssets
+            // 尝试获取 workspace 的配图：优先当前挂在正文上的第一张，历史版本的图不当封面
+            var wsAssets = await _db.ImageAssets
                 .Find(x => x.WorkspaceId == ws.Id)
                 .SortBy(x => x.ArticleInsertionIndex)
                 .ThenBy(x => x.CreatedAt)
-                .FirstOrDefaultAsync();
+                .ToListAsync();
+            var currentAssets = PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(ws, wsAssets);
+            var firstAsset = currentAssets.Count > 0
+                ? currentAssets.OrderBy(kv => kv.Key).First().Value
+                : wsAssets.FirstOrDefault(a => !a.ArticleInsertionIndex.HasValue) ?? wsAssets.FirstOrDefault();
             if (firstAsset != null)
             {
                 coverUrl = firstAsset.Url;

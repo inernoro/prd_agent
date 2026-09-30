@@ -269,8 +269,12 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
     private static int ReadImageCount(ActionExecutingContext context)
     {
         foreach (var arg in context.ActionArguments.Values)
+        {
             if (arg is VisualOpenApiController.GenerateImageRequest g)
                 return VisualOpenApiController.ResolveImageCount(g);
+            if (arg is LiteraryImageOpenApiController.GenerateRequest lg)
+                return LiteraryImageOpenApiController.RequestedImageCount(lg.MarkerIndex, lg.MarkerIndexes);
+        }
         return VisualOpenApiController.ResolveImageCount(null);
     }
 

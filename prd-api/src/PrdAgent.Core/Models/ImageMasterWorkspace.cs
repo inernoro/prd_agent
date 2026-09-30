@@ -100,6 +100,13 @@ public class ImageMasterWorkspace
     /// </summary>
     public bool SuppressAutoSubmit { get; set; }
 
+    /// <summary>
+    /// 开放接口建稿时请求载荷的指纹（标题 / 正文 / 带标记正文 / 文件夹）。
+    /// 同一个 clientRequestId 带着不同内容再来时据此回冲突，而不是悄悄把旧文章当成新建结果返回。
+    /// 网页建的工作区与存量数据为 null，不参与比对。
+    /// </summary>
+    public string? CreateRequestFingerprint { get; set; }
+
     /// <summary>首次公开时间</summary>
     public DateTime? PublishedAt { get; set; }
 }
