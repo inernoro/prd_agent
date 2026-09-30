@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArrowRight, BookOpenCheck, CheckCircle2, FileSpreadsheet, FileUp, History, ListFilter, Plus, Search, Settings2, X } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, BookOpenCheck, CheckCircle2, FileSpreadsheet, FileUp, History, ListFilter, Plus, Search, Settings2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -37,7 +37,7 @@ interface Props {
 
 type ApplyKind = 'internal' | 'formal';
 type FormalSourceMode = 'internal_registration' | 'manual_t';
-type View = 'apply' | 'records' | 'registry' | 'archive';
+type View = 'apply' | 'records' | 'registry' | 'application-records' | 'archive';
 
 type FormState = {
   projectType: '' | 'standard' | 'custom';
@@ -60,6 +60,17 @@ type FormState = {
 };
 
 const FIELD_CLASS = 'w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none transition-colors focus:border-indigo-500/70 placeholder-token-muted';
+
+const PROJECT_TYPE_LABELS: Record<VersionRegistration['projectType'], string> = {
+  standard: '非定制',
+  custom: '定制',
+};
+
+const VERSION_TYPE_LABELS: Record<VersionRegistration['versionType'], string> = {
+  minor: '小版本',
+  medium: '中版本',
+  major: '大版本',
+};
 
 function emptyForm(): FormState {
   return {
@@ -237,6 +248,46 @@ function Field({ label, required, children }: { label: string; required?: boolea
   );
 }
 
+function ApplicationRecordList({ records }: { records: VersionRegistration[] }) {
+  if (records.length === 0) {
+    return (
+      <section className="rounded-xl border border-dashed border-token-subtle px-5 py-10 text-center">
+        <h4 className="text-sm font-medium text-token-primary">这个应用还没有版本登记</h4>
+        <p className="mt-2 text-sm text-token-muted">后续从“申领版本号”选择该应用完成登记后，T 与 V 记录都会显示在这里。</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-3" aria-label="应用版本详细记录">
+      {records.map((record) => (
+        <article key={record.id} className="rounded-xl border border-token-subtle bg-token-nested p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="font-mono text-base font-semibold text-[color:var(--accent-fg-blue)]">{record.code}</p>
+              <p className="mt-1 text-xs text-token-muted">
+                {record.kind === 'internal' ? '内部版本号 T' : `正式版本号 V${record.tCode ? ` · 对应 ${record.tCode}` : ''}`}
+                {' · '}{PROJECT_TYPE_LABELS[record.projectType]} · {VERSION_TYPE_LABELS[record.versionType]}
+              </p>
+            </div>
+            <p className="text-xs text-token-muted">{formatDate(record.plannedReleaseAt || record.plannedProjectAt || record.createdAt)}</p>
+          </div>
+          <h4 className="mt-4 text-sm font-medium text-token-primary">{record.planName || '未填写方案名称'}</h4>
+          <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+            <div><dt className="text-token-muted">需求来源</dt><dd className="mt-0.5 text-token-secondary">{record.demandSource || '未填写'}</dd></div>
+            <div><dt className="text-token-muted">产品负责人</dt><dd className="mt-0.5 text-token-secondary">{record.ownerName || record.createdByName || '未填写'}</dd></div>
+            <div><dt className="text-token-muted">项目组成员</dt><dd className="mt-0.5 text-token-secondary">{record.projectMemberNames.length > 0 ? record.projectMemberNames.join('、') : '未填写'}</dd></div>
+            <div><dt className="text-token-muted">登记来源</dt><dd className="mt-0.5 text-token-secondary">{record.sourceType === 'history_import' ? '历史导入' : '当前申领'}</dd></div>
+          </dl>
+          {record.planUrl ? <p className="mt-3 break-all text-xs text-[color:var(--accent-fg-blue)]">方案地址：{record.planUrl}</p> : null}
+          {record.requirementDescription ? <p className="mt-3 whitespace-pre-wrap rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs leading-5 text-token-secondary">{record.requirementDescription}</p> : null}
+          {record.remark ? <p className="mt-2 text-xs leading-5 text-token-muted">备注：{record.remark}</p> : null}
+        </article>
+      ))}
+    </section>
+  );
+}
+
 function VersionTypeSelect({ value, onChange }: { value: FormState['versionType']; onChange: (value: FormState['versionType']) => void }) {
   return (
     <select className={FIELD_CLASS} value={value} onChange={(event) => onChange(event.target.value as FormState['versionType'])}>
@@ -400,6 +451,9 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [publicPerson, setPublicPerson] = useState('');
   const [publicPlanName, setPublicPlanName] = useState('');
   const [publicLoading, setPublicLoading] = useState(false);
+  const [registryDetailApplicationId, setRegistryDetailApplicationId] = useState('');
+  const [applicationRecords, setApplicationRecords] = useState<VersionRegistration[]>([]);
+  const [applicationRecordsLoading, setApplicationRecordsLoading] = useState(false);
   const [newSystemName, setNewSystemName] = useState('');
   const [newApplicationSystemId, setNewApplicationSystemId] = useState('');
   const [newApplicationName, setNewApplicationName] = useState('');
@@ -458,6 +512,10 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
 
   const selectedReview = useMemo(() => reviewSources.find((item) => item.id === reviewSubmissionId), [reviewSources, reviewSubmissionId]);
   const registryApplications = useMemo(() => registrySystems.flatMap((system) => system.applications), [registrySystems]);
+  const registryDetailApplication = useMemo(
+    () => registryApplications.find((application) => application.id === registryDetailApplicationId),
+    [registryApplications, registryDetailApplicationId],
+  );
   const suggestedApplication = useMemo(() => {
     const match = registryMatches[0];
     return match ? registryApplications.find((application) => application.id === match.id) : undefined;
@@ -720,6 +778,27 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     setPublicRecords(result.data.items);
   };
 
+  const openApplicationRecords = async (application: VersionRegistryApplication) => {
+    setRegistryDetailApplicationId(application.id);
+    setApplicationRecords([]);
+    setApplicationRecordsLoading(true);
+    setMessage('');
+    setView('application-records');
+    const result = await getPublicVersionRegistrations({ applicationId: application.id });
+    setApplicationRecordsLoading(false);
+    if (!result.success) {
+      setMessage(result.error.message || '应用版本记录读取失败，请稍后重试');
+      return;
+    }
+    setApplicationRecords(result.data.items);
+  };
+
+  const returnToRegistry = () => {
+    setRegistryDetailApplicationId('');
+    setApplicationRecords([]);
+    setView('registry');
+  };
+
   const createRegistrySystem = async () => {
     const name = newSystemName.trim();
     if (!name) {
@@ -797,7 +876,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
           <button type="button" onClick={() => setView('records')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'records' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
             当前 T/V 记录
           </button>
-          <button type="button" onClick={() => setView('registry')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'registry' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
+          <button type="button" onClick={returnToRegistry} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'registry' || view === 'application-records' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
             系统与应用
           </button>
           <button type="button" onClick={() => setView('archive')} className={`rounded-lg px-3 py-1.5 text-sm transition-colors ${view === 'archive' ? 'bg-indigo-600 text-white' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}>
@@ -1000,6 +1079,22 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
             </div>
           ) : null}
 
+          {!loading && view === 'application-records' ? (
+            <div className="space-y-5">
+              <section className="rounded-xl border border-token-subtle bg-token-nested p-4 sm:p-5">
+                <button type="button" onClick={returnToRegistry} className="inline-flex items-center gap-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)] hover:underline">
+                  <ArrowLeft className="h-4 w-4" />返回系统与应用
+                </button>
+                <div className="mt-4">
+                  <p className="text-xs text-token-muted">{registryDetailApplication?.systemName || '系统与应用'}</p>
+                  <h3 className="mt-1 text-xl font-semibold text-token-primary">{registryDetailApplication?.name || '应用'}的版本记录</h3>
+                  <p className="mt-2 text-sm leading-6 text-token-secondary">这里展示该应用的公开 T 与 V 登记明细，历史记录只读，不会被这里的操作改写。</p>
+                </div>
+              </section>
+              {applicationRecordsLoading ? <MapSectionLoader text="正在读取应用的版本记录..." /> : <ApplicationRecordList records={applicationRecords} />}
+            </div>
+          ) : null}
+
           {!loading && view === 'registry' ? (
             <div className="space-y-5">
               <section className="rounded-xl border border-token-subtle bg-token-nested p-4 sm:p-5">
@@ -1024,7 +1119,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                   {registrySystems.map((system) => (
                     <section key={system.id} className="rounded-xl border border-token-subtle bg-token-nested p-4">
                       <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-medium text-token-primary">{system.name}</h3><span className="text-xs text-token-muted">{system.applications.length} 个应用</span></div>
-                      {system.applications.length === 0 ? <p className="mt-3 text-xs text-token-muted">还没有应用，可以在上方直接添加。</p> : <div className="mt-3 flex flex-wrap gap-2">{system.applications.map((application) => <button type="button" key={application.id} onClick={() => { chooseApplication(application.id); setView('apply'); }} className="rounded-lg border border-token-subtle px-2.5 py-1.5 text-left text-xs text-token-secondary hover-bg-soft hover-text-primary"><span className="block">{application.name}</span><span className="mt-0.5 block text-[11px] text-token-muted">T {application.internalBaselineCode || '未导入'} · V {application.formalBaselineCode || '未导入'}</span></button>)}</div>}
+                      {system.applications.length === 0 ? <p className="mt-3 text-xs text-token-muted">还没有应用，可以在上方直接添加。</p> : <div className="mt-3 flex flex-wrap gap-2">{system.applications.map((application) => <button type="button" key={application.id} onClick={() => void openApplicationRecords(application)} aria-label={`查看${application.name}的详细版本记录`} className="group rounded-lg border border-token-subtle px-3 py-2 text-left text-sm text-token-secondary transition-colors hover-bg-soft hover-text-primary focus-visible:border-indigo-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40"><span className="block font-medium text-token-primary">{application.name}</span><span className="mt-1 inline-flex items-center gap-1 text-xs text-[color:var(--accent-fg-blue)]">查看详细记录 <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" /></span></button>)}</div>}
                     </section>
                   ))}
                 </div>
