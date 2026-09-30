@@ -45,4 +45,15 @@ public sealed class VersionRegistryCatalogTests
         Assert.Equal("T6.18.9", brandConsole.InternalBaselineCode);
         Assert.Equal("V4.26.1", brandConsole.FormalBaselineCode);
     }
+
+    [Fact]
+    public void InitialSystemNames_保留完整历史系统目录()
+    {
+        var systems = VersionRegistryCatalog.InitialSystemNames;
+
+        Assert.Equal(5, systems.Count);
+        Assert.Equal(systems.Count, systems.Select(VersionRegistryCatalog.NormalizeName).Distinct().Count());
+        Assert.Contains("赋码采集关联系统", systems);
+        Assert.All(VersionRegistryCatalog.InitialSeeds, seed => Assert.Contains(seed.SystemName, systems));
+    }
 }

@@ -2798,15 +2798,14 @@ public class ReviewAgentController : ControllerBase
     private async Task EnsureVersionRegistrySeededAsync(CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var systems = VersionRegistryCatalog.InitialSeeds
-            .GroupBy(seed => seed.SystemName)
-            .Select(group =>
+        var systems = VersionRegistryCatalog.InitialSystemNames
+            .Select(systemName =>
             {
-                var normalizedName = VersionRegistryCatalog.NormalizeName(group.Key);
+                var normalizedName = VersionRegistryCatalog.NormalizeName(systemName);
                 return new VersionRegistrySystem
                 {
                     Id = VersionRegistryCatalog.CreateSystemId(normalizedName),
-                    Name = group.Key,
+                    Name = systemName,
                     NormalizedName = normalizedName,
                     Source = VersionRegistrySource.HistorySeed,
                     CreatedBy = "system",

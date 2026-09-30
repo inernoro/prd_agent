@@ -64,6 +64,18 @@ public static class VersionRegistryCatalog
     /// 由 2026-09-29 的 T/V 历史登记表归并而来；冲突应用以最新计划立项或上线日期所属系统为准。
     /// 仅保留主数据和每个应用的最高编号基线，完整历史仍通过导入快照保存。
     /// </summary>
+    public static IReadOnlyList<string> InitialSystemNames { get; } = new List<string>
+    {
+        "产业路由器",
+        "大数据引擎系统",
+        "赋码采集关联系统",
+        "平台支撑系统",
+        "IMP",
+    };
+
+    /// <summary>
+    /// 应用归属按冲突规则保留一个当前系统；系统目录独立于当前应用，避免历史系统因冲突处理而消失。
+    /// </summary>
     public static IReadOnlyList<VersionRegistrySeed> InitialSeeds { get; } = new List<VersionRegistrySeed>
     {
         new("产业路由器", "新经销助手", "T1.7.0", "V1.6.1"),
