@@ -171,6 +171,7 @@ public class VersionRegistrationSnapshot
     public string? SourceAttachmentId { get; set; }
     public string? SourceFileName { get; set; }
     public int ImportedCount { get; set; }
+    public int UpdatedCount { get; set; }
     public int SkippedCount { get; set; }
     public List<VersionRegistration> Records { get; set; } = new();
     public List<VersionRegistrationImportError> Errors { get; set; } = new();

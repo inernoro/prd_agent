@@ -96,4 +96,25 @@ public class ReviewAgentStateGuardsTests
         ReviewAgentController.CanUsePassedReviewForVersionRegistration(Sub(ReviewStatuses.Done, isPassed: null)).ShouldBeFalse();
         ReviewAgentController.CanUsePassedReviewForVersionRegistration(Sub(ReviewStatuses.Running, isPassed: true)).ShouldBeFalse();
     }
+
+    [Fact]
+    public void 历史导入_同应用同版本号以最新业务日期覆盖()
+    {
+        var existing = new VersionRegistration { PlannedProjectAt = new DateTime(2026, 9, 20), PlannedReleaseAt = new DateTime(2026, 9, 21) };
+
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", existing, new VersionRegistrationImportRow { PlannedProjectAt = new DateTime(2026, 9, 22) }).ShouldBeTrue();
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", existing, new VersionRegistrationImportRow { PlannedProjectAt = new DateTime(2026, 9, 20) }).ShouldBeTrue();
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", existing, new VersionRegistrationImportRow { PlannedProjectAt = new DateTime(2026, 9, 19) }).ShouldBeFalse();
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("V", existing, new VersionRegistrationImportRow { PlannedReleaseAt = new DateTime(2026, 9, 22) }).ShouldBeTrue();
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("V", existing, new VersionRegistrationImportRow { PlannedReleaseAt = new DateTime(2026, 9, 20) }).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 历史导入_缺少业务日期时采用本次导入记录()
+    {
+        var existing = new VersionRegistration { PlannedProjectAt = new DateTime(2026, 9, 20) };
+
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", existing, new VersionRegistrationImportRow()).ShouldBeTrue();
+        ReviewAgentController.ShouldReplaceVersionRegistrationFromImport("T", new VersionRegistration(), new VersionRegistrationImportRow { PlannedProjectAt = new DateTime(2026, 9, 19) }).ShouldBeTrue();
+    }
 }

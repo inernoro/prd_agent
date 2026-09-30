@@ -54,6 +54,7 @@ export interface VersionRegistrationSnapshotSummary {
   sourceType: 'history_import' | 'current_registry';
   sourceFileName?: string | null;
   importedCount: number;
+  updatedCount: number;
   skippedCount: number;
   recordCount: number;
   createdAt: string;
@@ -205,7 +206,7 @@ export function importVersionRegistrations(input: {
   sourceAttachmentId: string;
   sourceFileName: string;
   rows: VersionRegistrationImportRow[];
-}): Promise<ApiResponse<{ created: number; skipped: number }>> {
+}): Promise<ApiResponse<{ created: number; updated: number; skipped: number }>> {
   return apiRequest('/api/review-agent/version-registrations/import', { method: 'POST', body: input });
 }
 

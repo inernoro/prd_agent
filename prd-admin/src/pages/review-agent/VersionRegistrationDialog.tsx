@@ -736,7 +736,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
         setMessage(result.error.message || '历史登记导入失败');
         return;
       }
-      setMessage(`历史导入已完成：新增 ${result.data.created} 条，跳过 ${result.data.skipped} 条。原文件和本次结果已存为快照。`);
+      setMessage(`历史导入已完成：新增 ${result.data.created} 条，更新 ${result.data.updated} 条，跳过 ${result.data.skipped} 条。原文件和本次结果已存为快照。`);
       setHistoryFile(null);
       if (fileRef.current) fileRef.current.value = '';
       await reload();
@@ -1135,7 +1135,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                   <FileSpreadsheet className="mt-0.5 h-5 w-5 shrink-0 text-[color:var(--accent-fg-blue)]" />
                   <div>
                     <h3 className="text-sm font-medium text-token-primary">导入历史登记表</h3>
-                    <p className="mt-1 text-xs leading-5 text-token-muted">支持 CSV、XLS、XLSX。系统保留你上传的原文件、解析后的记录和跳过原因，作为不可变历史快照；不会覆盖已有版本号。</p>
+                    <p className="mt-1 text-xs leading-5 text-token-muted">支持 CSV、XLS、XLSX。系统保留原文件和本次结果快照；同一应用的同一版本号按最新业务日期更新，较旧记录会跳过。T 以计划立项时间判断，V 以计划上线时间判断。</p>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1178,7 +1178,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                     {snapshots.map((snapshot) => (
                       <div key={snapshot.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-token-subtle bg-token-nested px-3 py-3">
                         <div className="min-w-0"><p className="truncate text-sm text-token-primary">{snapshot.name}</p><p className="mt-1 text-xs text-token-muted">{snapshot.sourceType === 'history_import' ? `历史导入${snapshot.sourceFileName ? ` · ${snapshot.sourceFileName}` : ''}` : '当前登记快照'} · {formatDate(snapshot.createdAt)}</p></div>
-                        <div className="text-right text-xs text-token-secondary"><p>{snapshot.recordCount} 条记录</p>{snapshot.sourceType === 'history_import' ? <p className="mt-1 text-token-muted">新增 {snapshot.importedCount}，跳过 {snapshot.skippedCount}</p> : null}</div>
+                        <div className="text-right text-xs text-token-secondary"><p>{snapshot.recordCount} 条记录</p>{snapshot.sourceType === 'history_import' ? <p className="mt-1 text-token-muted">新增 {snapshot.importedCount}，更新 {snapshot.updatedCount}，跳过 {snapshot.skippedCount}</p> : null}</div>
                       </div>
                     ))}
                   </div>

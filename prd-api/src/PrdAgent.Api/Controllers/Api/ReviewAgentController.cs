@@ -2579,6 +2579,8 @@ public class ReviewAgentController : ControllerBase
             CreatedBy = userId,
             CreatedByName = GetDisplayName(),
         };
+        var created = 0;
+        var updated = 0;
         foreach (var row in request.Rows)
         {
             var prefix = string.Equals(row.Kind, VersionRegistrationKind.Internal, StringComparison.Ordinal) ? "T" : "V";
@@ -2588,52 +2590,32 @@ public class ReviewAgentController : ControllerBase
                 continue;
             }
             var application = await ResolveImportedVersionRegistryApplicationAsync(row, ct);
-            if (await IsVersionCodeTakenAsync(normalizedCode, application?.Id, row.ApplicationName, ct))
+            var existing = await FindVersionRegistrationByCodeAsync(normalizedCode, application?.Id, row.ApplicationName, ct);
+            if (existing != null && !ShouldReplaceVersionRegistrationFromImport(prefix, existing, row))
             {
-                snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"版本号 {normalizedCode} 已存在，未重复导入" });
+                snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"版本号 {normalizedCode} 已存在且当前登记日期更晚，已保留较新的记录" });
                 continue;
             }
-            var record = new VersionRegistration
+            var record = CreateImportedVersionRegistration(row, application, prefix, normalizedCode, snapshot.Id, userId, existing);
+            if (existing == null)
             {
-                Kind = prefix == "T" ? VersionRegistrationKind.Internal : VersionRegistrationKind.Formal,
-                Code = normalizedCode,
-                SystemId = application?.SystemId,
-                SystemName = FirstPresent(row.SystemName, application?.SystemName),
-                ApplicationId = application?.Id,
-                ApplicationName = FirstPresent(row.ApplicationName, application?.Name),
-                TCode = prefix == "V" && TryParseVersionCode(row.TCode, "T", out var normalizedTCode) ? normalizedTCode : null,
-                SourceType = VersionRegistrationSourceType.HistoryImport,
-                ProjectType = NormalizeProjectType(row.ProjectType),
-                VersionType = ProductEntityNumbering.NormalizeVersionType(row.VersionType),
-                NeedUiDesign = row.NeedUiDesign,
-                IsAiPoc = row.IsAiPoc,
-                IsGlobalOpen = row.IsGlobalOpen,
-                DemandSource = TrimToNull(row.DemandSource),
-                PlanName = TrimToNull(row.PlanName),
-                PlanUrl = TrimToNull(row.PlanUrl),
-                RequirementDescription = TrimToNull(row.RequirementDescription),
-                DepartmentName = TrimToNull(row.DepartmentName),
-                OwnerName = TrimToNull(row.OwnerName),
-                ProjectMemberNames = NormalizeNames(row.ProjectMemberNames),
-                PlannedProjectAt = row.PlannedProjectAt,
-                PlannedReleaseAt = row.PlannedReleaseAt,
-                ContractParty = TrimToNull(row.ContractParty),
-                DevelopmentStatus = TrimToNull(row.DevelopmentStatus),
-                Remark = TrimToNull(row.Remark),
-                Status = VersionRegistrationStatus.Completed,
-                CreatedBy = userId,
-                CreatedByName = GetDisplayName(),
-                SourceSnapshotId = snapshot.Id,
-            };
-            await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+                await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+                created++;
+            }
+            else
+            {
+                await _db.VersionRegistrations.ReplaceOneAsync(item => item.Id == existing.Id, record, cancellationToken: ct);
+                updated++;
+            }
             snapshot.Records.Add(CloneVersionRegistration(record));
             if (application != null)
                 await EnsureVersionRegistrationSequenceFloorAsync(prefix, application.Id, normalizedCode, ct);
         }
-        snapshot.ImportedCount = snapshot.Records.Count;
+        snapshot.ImportedCount = created;
+        snapshot.UpdatedCount = updated;
         snapshot.SkippedCount = snapshot.Errors.Count;
         await _db.VersionRegistrationSnapshots.InsertOneAsync(snapshot, cancellationToken: ct);
-        return Ok(ApiResponse<object>.Ok(new { snapshot, created = snapshot.ImportedCount, skipped = snapshot.SkippedCount }));
+        return Ok(ApiResponse<object>.Ok(new { snapshot, created, updated, skipped = snapshot.SkippedCount }));
     }
 
     /// <summary>将当前可见登记数据固化为不可变快照，不覆盖任何现有记录。</summary>
@@ -2674,6 +2656,7 @@ public class ReviewAgentController : ControllerBase
             x.SourceType,
             x.SourceFileName,
             x.ImportedCount,
+            x.UpdatedCount,
             x.SkippedCount,
             recordCount = x.Records.Count,
             x.CreatedAt,
@@ -3063,7 +3046,7 @@ public class ReviewAgentController : ControllerBase
         return max;
     }
 
-    private async Task<bool> IsVersionCodeTakenAsync(string code, string? applicationId, string? applicationName, CancellationToken ct)
+    private async Task<VersionRegistration?> FindVersionRegistrationByCodeAsync(string code, string? applicationId, string? applicationName, CancellationToken ct)
     {
         FilterDefinition<VersionRegistration> filter = Builders<VersionRegistration>.Filter.Eq(item => item.Code, code);
         if (!string.IsNullOrWhiteSpace(applicationId))
@@ -3077,7 +3060,69 @@ public class ReviewAgentController : ControllerBase
             filter &= Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationName, applicationName.Trim());
         else
             filter &= Builders<VersionRegistration>.Filter.Eq(item => item.ApplicationId, null);
-        return await _db.VersionRegistrations.Find(filter).AnyAsync(ct);
+        return await _db.VersionRegistrations.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    internal static bool ShouldReplaceVersionRegistrationFromImport(string prefix, VersionRegistration existing, VersionRegistrationImportRow incoming)
+    {
+        var existingBusinessDate = GetVersionRegistrationBusinessDate(prefix, existing.PlannedProjectAt, existing.PlannedReleaseAt);
+        var incomingBusinessDate = GetVersionRegistrationBusinessDate(prefix, incoming.PlannedProjectAt, incoming.PlannedReleaseAt);
+        return !existingBusinessDate.HasValue
+            || !incomingBusinessDate.HasValue
+            || incomingBusinessDate.Value >= existingBusinessDate.Value;
+    }
+
+    private static DateTime? GetVersionRegistrationBusinessDate(string prefix, DateTime? plannedProjectAt, DateTime? plannedReleaseAt) =>
+        string.Equals(prefix, "V", StringComparison.Ordinal)
+            ? plannedReleaseAt ?? plannedProjectAt
+            : plannedProjectAt ?? plannedReleaseAt;
+
+    private VersionRegistration CreateImportedVersionRegistration(
+        VersionRegistrationImportRow row,
+        VersionRegistryApplication? application,
+        string prefix,
+        string normalizedCode,
+        string snapshotId,
+        string userId,
+        VersionRegistration? existing)
+    {
+        var record = existing == null ? new VersionRegistration() : CloneVersionRegistration(existing);
+        record.Kind = prefix == "T" ? VersionRegistrationKind.Internal : VersionRegistrationKind.Formal;
+        record.Code = normalizedCode;
+        record.SystemId = application?.SystemId;
+        record.SystemName = FirstPresent(row.SystemName, application?.SystemName);
+        record.ApplicationId = application?.Id;
+        record.ApplicationName = FirstPresent(row.ApplicationName, application?.Name);
+        record.TCode = prefix == "V" && TryParseVersionCode(row.TCode, "T", out var normalizedTCode) ? normalizedTCode : null;
+        record.SourceType = VersionRegistrationSourceType.HistoryImport;
+        record.ReviewSubmissionId = null;
+        record.SourceInternalRegistrationId = null;
+        record.ProjectType = NormalizeProjectType(row.ProjectType);
+        record.VersionType = ProductEntityNumbering.NormalizeVersionType(row.VersionType);
+        record.NeedUiDesign = row.NeedUiDesign;
+        record.IsAiPoc = row.IsAiPoc;
+        record.IsGlobalOpen = row.IsGlobalOpen;
+        record.DemandSource = TrimToNull(row.DemandSource);
+        record.PlanName = TrimToNull(row.PlanName);
+        record.PlanUrl = TrimToNull(row.PlanUrl);
+        record.RequirementDescription = TrimToNull(row.RequirementDescription);
+        record.DepartmentName = TrimToNull(row.DepartmentName);
+        record.OwnerName = TrimToNull(row.OwnerName);
+        record.ProjectMemberNames = NormalizeNames(row.ProjectMemberNames);
+        record.PlannedProjectAt = row.PlannedProjectAt;
+        record.PlannedReleaseAt = row.PlannedReleaseAt;
+        record.ContractParty = TrimToNull(row.ContractParty);
+        record.DevelopmentStatus = TrimToNull(row.DevelopmentStatus);
+        record.Remark = TrimToNull(row.Remark);
+        record.Status = VersionRegistrationStatus.Completed;
+        record.SourceSnapshotId = snapshotId;
+        record.UpdatedAt = DateTime.UtcNow;
+        if (existing == null)
+        {
+            record.CreatedBy = userId;
+            record.CreatedByName = GetDisplayName();
+        }
+        return record;
     }
 
     private static bool TryParseVersionCode(string? value, string prefix, out string normalized) =>
