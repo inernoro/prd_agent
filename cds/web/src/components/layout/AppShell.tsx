@@ -524,14 +524,14 @@ function RailNav({
           to="/reports"
           className="cds-rail-item"
           data-active={active === 'reports' ? 'true' : 'false'}
-          aria-label="验收报告"
-          title="验收报告（CDS 自托管 HTML / Markdown）"
+          aria-label="验收中心"
+          title="测试清单 / 执行任务 / 历史矩阵 / 验收报告"
           onClick={onNavigate}
           onMouseEnter={preloadReportsPage}
           onFocus={preloadReportsPage}
         >
           <FileText />
-          <span className="cds-rail-full">验收报告</span>
+          <span className="cds-rail-full">验收中心</span>
           <span className="cds-rail-short">报告</span>
         </Link>
         <Link

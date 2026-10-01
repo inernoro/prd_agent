@@ -28,6 +28,30 @@
 | 环境变量 | `/api/env*` | scope 感知 _global / projectId |
 | Agent Key | `/api/projects/:id/agent-keys`, `/api/global-agent-keys` | 签发 / 吊销 |
 | 自更新 | `/api/self-*` | 切 CDS 自身分支 |
+| 结构化验收 | `/api/acceptance/*` | 模板版本、任务领取、逐项结果和历史矩阵 |
+
+## 结构化验收
+
+所有读写沿用 CDS 身份，项目级 Key 仅能访问所属项目。任务领取票据只在领取响应返回，后续读取不返回票据或摘要。
+
+| 方法 | 路径 | CLI 等价 |
+|------|------|----------|
+| GET / POST | `/api/acceptance/templates` | `acceptance templates / publish --file` |
+| GET | `/api/acceptance/templates/:id` | 模板读取（可指定 version） |
+| GET / POST | `/api/acceptance/tasks` | `acceptance tasks / create --template` |
+| GET | `/api/acceptance/tasks/:id` | `acceptance get` |
+| POST | `/api/acceptance/tasks/:id/claim` | `acceptance claim --agent` |
+| POST | `/api/acceptance/tasks/:id/heartbeat` | `acceptance heartbeat` |
+| POST | `/api/acceptance/tasks/:id/release` | `acceptance release` |
+| POST | `/api/acceptance/tasks/:id/results/:caseId` | `acceptance result --case --file` |
+| POST | `/api/acceptance/tasks/:id/complete` | `acceptance complete` |
+| POST | `/api/acceptance/tasks/:id/cancel` | 页面取消待执行任务 |
+| GET | `/api/acceptance/matrix` | `acceptance matrix` |
+| POST | `/api/acceptance/tasks/:id/report` | `acceptance report-source` |
+| POST | `/api/acceptance/tasks/:id/bind-report` | `acceptance bind-report --report` |
+
+归档走已有 `POST /api/reports`，携带任务 `sourceId`；规范正文与结果不一致时拒绝归档。
+`acceptance archive-report` 顺序执行报告源、归档、绑定。绑定成功只代表持久化关联，线上打开仍为待验证，不能自动放行发布。
 
 ## AI 配对
 

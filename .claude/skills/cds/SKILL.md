@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.6
+  version: 0.17.0
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.5 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.17.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -111,6 +111,31 @@ $CLI report-folder list [--project <id>]
 ```
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
+
+## 结构化验收任务
+
+`acceptance` 命令族把清单、每轮任务、逐项结果与报告关联起来，不创建定时器，不触发发布。
+正式环境巡检默认 `production`，无需指定分支或冻结待发布版本；已观测版本仅作追溯。
+
+```bash
+$CLI acceptance templates --project <projectId>
+$CLI acceptance publish --project <projectId> --file <结构化清单.json>
+$CLI acceptance create --project <projectId> --template <templateId>
+$CLI acceptance tasks --project <projectId>
+$CLI acceptance claim <taskId> --agent Codex
+$CLI acceptance get <taskId>
+$CLI acceptance heartbeat <taskId>
+$CLI acceptance result <taskId> --case <caseId> --file <逐项结果.json>
+$CLI acceptance complete <taskId>
+$CLI acceptance archive-report <taskId>
+$CLI acceptance matrix --project <projectId> --template <templateId> --environment production
+```
+
+执行者必须按冻结清单走真实业务路径，再回填断言、实际结果、线上证据与清理回读。
+领取票据由 CLI 私密保存，禁止放入结果文件、命令参数或聊天；长任务按 30 秒心跳续租，离开时 `release`。
+同一 submissionId 重发幂等；第一次失败最多重试一次，重试通过仍为 flaky，不算稳定通过。
+`archive-report` 复用现有验收报告归档并绑定，不会把草稿或本地存储标为交付完成。
+返回 `pending-verify-open` 后必须再按验收技能验证线上深链；本命令不代替浏览器取证、通知或发布批准。
 
 ## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
 

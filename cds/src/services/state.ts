@@ -411,6 +411,8 @@ export class StateService {
     this.reportObjects = store;
   }
 
+  isReportObjectStoreConfigured(): boolean { return this.reportObjects.isConfigured(); }
+
   /**
    * P4 Part 18 (D.3): swap the backing store at runtime. Used by the
    * "switch storage mode" flow in the Settings panel to go from
@@ -1052,6 +1054,28 @@ export class StateService {
 
   getState(): Readonly<CdsState> {
     return this.state;
+  }
+
+  /** 验收切片在 flush 成功前不对读取发布，失败不留下虚假领取状态。 */
+  async persistAcceptanceState(
+    templates: import('../acceptance-types.js').AcceptanceTemplate[],
+    tasks: import('../acceptance-types.js').StoredAcceptanceTask[],
+  ): Promise<void> {
+    const previousTemplates = this.state.acceptanceTemplates;
+    const previousTasks = this.state.acceptanceTasks;
+    // backingStore.save 可以排队，故必须等待 flush；不能用 save 的返回值冒充落库。
+    this.state.acceptanceTemplates = templates;
+    this.state.acceptanceTasks = tasks;
+    try {
+      this.save([{ kind: 'global' }]);
+      await this.flush();
+    } catch (error) {
+      this.state.acceptanceTemplates = previousTemplates;
+      this.state.acceptanceTasks = previousTasks;
+      // 尝试撤回可能已入队的快照；失败仍向调用者报告，不返回租约票据。
+      try { this.save([{ kind: 'global' }]); await this.flush(); } catch { /* 原错误为权威结果 */ }
+      throw error;
+    }
   }
 
   // ── Scheduled jobs ──

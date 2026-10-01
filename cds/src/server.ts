@@ -39,6 +39,8 @@ import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createAcceptanceTasksRouter } from './routes/acceptance-tasks.js';
+import { AcceptanceTaskService, startAcceptanceLeaseReaper } from './services/acceptance-tasks.js';
 import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
@@ -1808,6 +1810,11 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const acceptanceTaskService = new AcceptanceTaskService(deps.stateService);
+  const acceptanceLeaseReaper = startAcceptanceLeaseReaper(acceptanceTaskService);
+  app.locals.acceptanceTaskService = acceptanceTaskService;
+  app.locals.stopAcceptanceLeaseReaper = acceptanceLeaseReaper.stop;
+  app.once('close', acceptanceLeaseReaper.stop);
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -1994,6 +2001,7 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
+    if (req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')) return next();
     //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
     //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
     if (isBranchGroupsSaveRequest(req.method, req.path)) return next();
@@ -2057,6 +2065,13 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.state = { ok: false, detail: (err as Error).message };
       overallOk = false;
     }
+
+    const acceptanceHealth = acceptanceTaskService.health();
+    checks.acceptanceLeases = {
+      ok: acceptanceHealth.ok,
+      detail: acceptanceHealth.ok ? '单权威进程租约收敛正常' : '验收持久层或租约收敛未完成，请检查 /api/acceptance/health',
+    };
+    if (!acceptanceHealth.ok) overallOk = false;
 
     // Check 2: docker reachable (use a lightweight `docker version --format` call)
     try {
@@ -4807,6 +4822,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
+  app.use('/api/acceptance', createAcceptanceTasksRouter({ service: acceptanceTaskService }));
 
   // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。

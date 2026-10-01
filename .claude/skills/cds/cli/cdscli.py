@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3208,6 +3208,170 @@ def cmd_branch_extra_remove(args: argparse.Namespace) -> None:
 
 
 # ── 验收报告 / 报告文件夹（CDS 自托管，POST /api/reports + /api/report-folders）──
+# 结构化验收复用同一认证与请求实现；领取票据只存 git 忽略的私有文件，不进入 stdout。
+def _acceptance_id(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,119}", value) or value in ("constructor", "prototype"):
+        die("任务或用例编号格式不正确", code=1)
+    return urllib.parse.quote(value, safe="")
+
+
+def _acceptance_json_file(filename: str) -> dict[str, Any]:
+    try:
+        with open(filename, encoding="utf-8") as f:
+            value = json.load(f)
+    except (OSError, ValueError):
+        die("无法读取验收数据文件，请检查文件是否存在且为有效 JSON", code=1)
+    if not isinstance(value, dict):
+        die("验收数据必须是 JSON 对象", code=1)
+    if "leaseToken" in value:
+        die("验收数据文件不得包含领取票据；票据由 CLI 安全装载", code=1)
+    return value
+
+
+def _acceptance_lease_path(task_id: str) -> str:
+    _acceptance_id(task_id)
+    root = _workspace_root()
+    return os.path.join(root, ".cds", "acceptance-leases", task_id + ".json")
+
+
+def _acceptance_lease(task_id: str) -> str:
+    filename = _acceptance_lease_path(task_id)
+    try:
+        info = os.lstat(filename)
+        if os.path.islink(filename) or info.st_mode & 0o077:
+            die("领取票据文件权限不安全，请重新领取任务", code=1)
+        with open(filename, encoding="utf-8") as f:
+            value = json.load(f)
+        if value.get("taskId") != task_id or value.get("host") != _cds_base():
+            die("领取票据不属于当前任务或 CDS 入口，请重新领取", code=1)
+        token = value.get("leaseToken")
+        if not isinstance(token, str) or not token:
+            raise ValueError("empty lease")
+        return token
+    except (OSError, ValueError, AttributeError):
+        die("没有可用的领取票据，请先领取任务", code=1)
+
+
+def cmd_acceptance(args: argparse.Namespace) -> None:
+    action = args.action
+    project = getattr(args, "project", None) or os.environ.get("CDS_PROJECT_ID", "")
+    base = "/api/acceptance"
+    if action in ("templates", "tasks", "matrix"):
+        filters = {k: v for k, v in {
+            "projectId": project, "templateId": getattr(args, "template", None),
+            "environment": getattr(args, "environment", None),
+        }.items() if v}
+        body = _call("GET", base + "/" + action + ("?" + urllib.parse.urlencode(filters) if filters else ""))
+    elif action == "publish":
+        payload = _acceptance_json_file(args.file)
+        if project:
+            payload["projectId"] = project
+        body = _call("POST", base + "/templates", body=payload)
+    elif action == "create":
+        payload = {"projectId": project, "templateId": args.template, "environment": args.environment}
+        if args.title:
+            payload["title"] = args.title
+        if args.case:
+            payload["caseIds"] = args.case
+        body = _call("POST", base + "/tasks", body=payload)
+    else:
+        task_id = args.id
+        path = base + "/tasks/" + _acceptance_id(task_id)
+        if action == "get":
+            body = _call("GET", path)
+        elif action == "claim":
+            # 预先确认本地安全存储可写，不能先领取再把票据丢掉。
+            filename = _acceptance_lease_path(task_id)
+            directory = os.path.dirname(filename)
+            if os.path.islink(directory) or os.path.islink(os.path.dirname(directory)):
+                die("领取票据目录不能是符号链接", code=1)
+            try:
+                os.makedirs(directory, mode=0o700, exist_ok=True)
+                os.chmod(directory, 0o700)
+                _exclude_local_path(_workspace_root(), "/.cds/acceptance-leases/")
+                fd = os.open(filename + ".pending", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except OSError:
+                die("无法安全保存领取票据，请检查目录权限或未完成的本地领取操作；本次尚未领取任务", code=1)
+            try:
+                body = _call("POST", path + "/claim", body={"agentName": args.agent})
+                token = body.get("leaseToken")
+                if not isinstance(token, str) or not token:
+                    die("服务没有返回有效领取票据，任务未能开始", code=1)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    fd = -1
+                    json.dump({"taskId": task_id, "host": _cds_base(), "leaseToken": token}, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(filename + ".pending", filename)
+                body = {"task": body.get("task"), "leaseStored": True}
+            finally:
+                if fd != -1:
+                    os.close(fd)
+                if os.path.exists(filename + ".pending"):
+                    os.unlink(filename + ".pending")
+        elif action in ("heartbeat", "release", "complete", "result"):
+            payload = _acceptance_json_file(args.file) if action == "result" else {}
+            payload["leaseToken"] = _acceptance_lease(task_id)
+            suffix = "/results/" + _acceptance_id(args.case) if action == "result" else "/" + action
+            body = _call("POST", path + suffix, body=payload)
+            if action in ("release", "complete"):
+                os.unlink(_acceptance_lease_path(task_id))
+        elif action == "report-source":
+            body = _call("POST", path + "/report", body={})
+        elif action == "bind-report":
+            body = _call("POST", path + "/bind-report", body={"reportId": args.report})
+        elif action == "archive-report":
+            draft = _call("POST", path + "/report", body={})
+            task = draft.get("task", {})
+            if task.get("report"):
+                body = {"task": task, "report": task["report"]}
+            else:
+                source = draft.get("report", {})
+                payload = {k: source[k] for k in ("title", "format", "content", "sourceId", "verdict", "defectCounts") if k in source}
+                payload.update({"projectId": task.get("projectId"), "folderPath": "核心功能巡检"})
+                created = _call("POST", "/api/reports", body=payload, timeout=60).get("report", {})
+                report_id = created.get("id")
+                if not report_id:
+                    die("归档未返回报告编号，任务报告未完成", code=1)
+                body = _call("POST", path + "/bind-report", body={"reportId": report_id})
+            # 这里不执行浏览器 verify-open，更不发送通知或发布。
+            body["delivery"] = "pending-verify-open"
+        else:
+            die("不支持的结构化验收动作", code=1)
+    ok(body)
+
+
+def _register_acceptance_parser(sub: Any) -> None:
+    commands = sub.add_parser("acceptance", help="结构化验收：清单、领取、回填、报告和历史矩阵").add_subparsers(dest="action", required=True)
+    for name in ("templates", "tasks", "matrix"):
+        p = commands.add_parser(name, help="读取结构化验收数据")
+        p.add_argument("--project")
+        p.add_argument("--template")
+        p.add_argument("--environment", choices=["production", "cds"])
+        p.set_defaults(func=cmd_acceptance)
+    p = commands.add_parser("publish", help="发布结构化清单的新版本")
+    p.add_argument("--file", required=True)
+    p.add_argument("--project")
+    p.set_defaults(func=cmd_acceptance)
+    p = commands.add_parser("create", help="从清单生成一轮待领取任务；不触发发布")
+    p.add_argument("--template", required=True)
+    p.add_argument("--project")
+    p.add_argument("--environment", choices=["production", "cds"], default="production")
+    p.add_argument("--title")
+    p.add_argument("--case", action="append")
+    p.set_defaults(func=cmd_acceptance)
+    for name in ("get", "claim", "heartbeat", "release", "complete", "result", "report-source", "bind-report", "archive-report"):
+        p = commands.add_parser(name, help="逐项执行验收；领取票据不会打印")
+        p.add_argument("id", help="任务编号")
+        if name == "claim":
+            p.add_argument("--agent", default="cdscli-agent")
+        if name == "result":
+            p.add_argument("--case", required=True)
+            p.add_argument("--file", required=True, help="不含凭据的逐项执行结果 JSON")
+        if name == "bind-report":
+            p.add_argument("--report", required=True)
+        p.set_defaults(func=cmd_acceptance)
+
 # 本会话沉淀:把「视觉取证 → 自托管验收报告 → 项目/文件夹归类 → 直达深链」做成一等公民。
 # 取证管线(chromium 穿 agent 代理 + 截图入库)见 cli/acceptance/ 与 reference/acceptance-reports.md。
 
@@ -3273,6 +3437,8 @@ def cmd_report_create(args: argparse.Namespace) -> None:
         payload["prNumber"] = args.pr
     if getattr(args, "deploy_mode", None):
         payload["deployMode"] = args.deploy_mode
+    if getattr(args, "source_id", None):
+        payload["sourceId"] = args.source_id
     if getattr(args, "defects", None):
         # --defects 接受 JSON('{"p0":0,"p1":2}') 或 'p0=0,p1=2' 两种写法。
         raw = args.defects.strip()
@@ -9529,6 +9695,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sd.add_argument("id", help="scheduledJobId")
     sd.set_defaults(func=cmd_schedule_delete)
 
+    _register_acceptance_parser(sub)
+
     # 验收报告(CDS 自托管 HTML/Markdown,登录态门控,可按项目/文件夹归类)
     rep = sub.add_parser("report", help="验收报告:列出/查看/创建/删除/直达深链").add_subparsers(dest="sub", required=True)
     rl = rep.add_parser("list", help="列出报告(可 --project / --folder 过滤)")
@@ -9551,6 +9719,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--commit", help="被验收 commit SHA(E1 部署上下文)")
     rc.add_argument("--pr", type=int, help="关联 PR 编号(E1,便于 E4 回写)")
     rc.add_argument("--deploy-mode", help="部署模式(fast/source/preview)")
+    rc.add_argument("--source-id", help="结构化验收任务或其他权威来源编号")
     rc.add_argument("--defects", help="缺陷计数,JSON('{\"p0\":0,\"p1\":2}')或 'p0=0,p1=2'")
     rc.set_defaults(func=cmd_report_create)
     rd = rep.add_parser("delete"); rd.add_argument("id"); rd.set_defaults(func=cmd_report_delete)

@@ -2110,7 +2110,12 @@ export interface DeletedProjectWorktreeTombstone {
   requestedAt: string;
 }
 
+export type { AcceptanceCase, AcceptanceTemplate, AcceptanceTask, AcceptanceSubmission, AcceptanceSummary, AcceptanceEnvironment, AcceptanceEvidence, AcceptanceReportSource } from './acceptance-types.js';
+
 export interface CdsState {
+  /** 不可变模板版本与任务快照；跟随现有 backingStore 持久化。 */
+  acceptanceTemplates?: import('./acceptance-types.js').AcceptanceTemplate[];
+  acceptanceTasks?: import('./acceptance-types.js').StoredAcceptanceTask[];
   /** Routing rules */
   routingRules: RoutingRule[];
   /** Build profiles */

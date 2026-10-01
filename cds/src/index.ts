@@ -4661,6 +4661,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
+  app.locals.stopAcceptanceLeaseReaper?.();
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
