@@ -63,9 +63,11 @@ test('后端自检的结论按服务自己说的来，不替它降级（真执�
   // 普通 warn 要显示成「需关注」，不能吞掉
   assert.equal(deepCheckOutcome('mongo:required-indexes', { status: 'warn', output: '缺 5 条' }).status, 'warn');
   // 只有「没流量、证明不了」那几项的 warn 才按正常显示，且原话照样带出
-  const quiet = deepCheckOutcome('visual-image:requests', { status: 'warn', output: '最近没有调用' });
+  const quiet = deepCheckOutcome('visual-image:requests', { status: 'warn', output: '最近没有调用', observedValue: 0 });
   assert.equal(quiet.status, 'pass');
   assert.equal(quiet.observed, '最近没有调用');
+  // 有样本时的 warn 不能压：耗时真超预算就是需关注（Codex 在 PR #1655 指出）
+  assert.equal(deepCheckOutcome('visual-image:latency', { status: 'warn', output: '耗时超预算', observedValue: 98000 }).status, 'warn');
   // 服务新申报、这里没登记的项不能被丢掉：归到后端运行健康，结论照搬
   const unknown = deepCheckOutcome('brand-new:check', { status: 'fail', output: '新判据报红' });
   assert.equal(unknown.featureLine, 'platform-runtime');
@@ -137,4 +139,12 @@ test('一个检查整体抛异常时，它名下的每一项都记失败；主�
   const tail = script.slice(script.indexOf('// ── 主流程 ──'));
   const finallyEnd = tail.indexOf('if (browser) await browser.close()');
   assert.ok(tail.indexOf("markRemainingNotRun('本轮检查中途中断") > finallyEnd, '主流程之后缺少无条件兜底补登');
+});
+
+test('48 小时冒烟心跳只认运行器自己的标题格式', () => {
+  const fn = script.slice(script.indexOf('function checkStableSmokeFreshness'), script.indexOf('async function checkEnvironment'));
+  const rx = new RegExp(fn.match(/\.filter\(\(x\) => \/(.+?)\/\.test/)[1]);
+  assert.ok(rx.test('核心业务稳定冒烟 stsmk-20261002-1019-3a7aab'));
+  assert.ok(!rx.test('发布验收 · 核心业务稳定冒烟 · 2026-09-30'), '发布验收报告不是 48 小时心跳');
+  assert.ok(!rx.test('功能验收 · 核心业务稳定冒烟失败取证 · 2026-09-14'));
 });

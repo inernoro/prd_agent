@@ -158,6 +158,23 @@ export function headline(s) {
   return `${c.lines} 条核心功能里 ${c.pass} 条正常，${parts.join('；')}。`;
 }
 
+/**
+ * 归档标题：CDS 列表里最先被看到的就是它，必须和结论一致。
+ * 环境 / 前置项出问题时功能线大多是「未执行」，按异常条数写会变成「0 条功能线异常」，
+ * 恰好把一次几乎什么都没验成的运行说成没问题（Codex 在 PR #1655 指出）。
+ */
+export function archiveTitle(s) {
+  const day = s.at.slice(0, 10);
+  const c = s.counts;
+  let tail;
+  if (s.environment.some((r) => r.status !== 'pass' && r.fatal)) tail = `被测环境不可用，${c.notRun} 条功能线没验成`;
+  else if (s.environment.some((r) => r.status !== 'pass')) tail = `前置项有问题，${c.fail} 条异常、${c.notRun} 条没验成`;
+  else if (s.verdict === 'pass') tail = '全部正常';
+  else if (c.fail) tail = `${c.fail} 条功能线异常`;
+  else tail = [c.notRun ? `${c.notRun} 条没验成` : '', c.warn ? `${c.warn} 条需关注` : ''].filter(Boolean).join('、');
+  return `每日核心功能验收 · ${day} · ${tail}`;
+}
+
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 const mdCell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\n+/g, ' ');
 const lineStatusLabel = (st) => (st === 'exempt' ? '不在每日范围' : STATUS[st].label);

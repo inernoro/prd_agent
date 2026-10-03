@@ -37,8 +37,10 @@ export const EXTRA_LINES = Object.freeze([
  * 后端深度自检（GET /api/healthz/deep，application/health+json，免登录）每一项归哪条功能线。
  * 自检是服务自己申报的判据（degradation-must-alarm 层 2），这里只做「归属 + 人话 + 下一步」。
  *
- * quietWarn：这一项的 warn 只表示「最近没流量、证明不了」，不代表有问题——
+ * quietWarn：这一项的 warn **在没有样本时**只表示「最近没流量、证明不了」，不代表有问题——
  * 每日例程不花钱生图，所以没流量是常态，照实写进「观察到的」，不升级成需关注。
+ * 只有观测值为 0（没有样本）才压；有样本时的 warn（如耗时超预算、失败率超标）照常是需关注
+ * （Codex 在 PR #1655 指出：整项压掉会把真超标也判成正常）。
  *
  * 自检里新出现、这里没登记的项不会被丢掉：deepCheckOutcome 把它归到「后端运行健康」，
  * 原样带出服务自己写的结论（服务加了判据，报告自动多一行，不用改这里）。
@@ -77,7 +79,8 @@ export function deepCheckOutcome(key, check, { endpointDown = false } = {}) {
   };
   const st = String(check?.status || '').toLowerCase();
   let status = st === 'pass' ? 'pass' : st === 'warn' ? 'warn' : st === 'fail' ? 'fail' : 'not-run';
-  if (status === 'warn' && m.quietWarn) status = 'pass';
+  const noSample = check?.observedValue === 0 || check?.observedValue == null;
+  if (status === 'warn' && m.quietWarn && noSample) status = 'pass';
   const value = check?.observedValue != null ? `${check.observedValue}${check.observedUnit ? ` ${check.observedUnit}` : ''}` : '';
   return {
     id: `DEEP-${key}`,

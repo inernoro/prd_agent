@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { outcome, summarize, renderMarkdown, renderHtml, headline } from '../smoke/lib/daily-report.mjs';
+import { outcome, summarize, renderMarkdown, renderHtml, headline, archiveTitle } from '../smoke/lib/daily-report.mjs';
 
 const catalog = JSON.parse(readFileSync(
   new URL('../../.claude/skills/stable-smoke/reference/business-function-catalog.json', import.meta.url), 'utf8',
@@ -94,4 +94,13 @@ test('非致命前置项失败（如对象存储）时，不许说「都没能�
   assert.match(headline(s), /前置项有问题：对象存储读写就绪/);
   // 非 environment 的结果即便传了 fatal 也不算致命
   assert.equal(outcome({ id: 'X', featureLine: 'recording', title: 't', method: 'm', status: 'pass', fatal: true }).fatal, false);
+});
+
+test('归档标题和结论一致：环境不可达时不许写成「0 条功能线异常」', () => {
+  const env = outcome({ id: 'ENV-01', featureLine: 'environment', title: '被测环境可达', method: 'm', status: 'fail', observed: '503', next: '重新部署', fatal: true });
+  const down = summarize({ results: [env], catalog, exempt: { 'release-recovery': '交给发布门禁验证，每日不触发发布' }, base: 'x', at: '2026-10-03T00:00:00Z' });
+  assert.match(archiveTitle(down), /被测环境不可用/);
+  assert.doesNotMatch(archiveTitle(down), /0 条功能线异常/);
+  const bad = summarize({ results: [outcome({ id: 'B', featureLine: 'llm-gateway', title: 't', method: 'm', status: 'fail', next: 'n' })], catalog, base: 'x', at: '2026-10-03T00:00:00Z' });
+  assert.match(archiveTitle(bad), /1 条功能线异常/);
 });

@@ -50,7 +50,7 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readScoped } from './lib/scoped-text.mjs';
-import { outcome, summarize, renderMarkdown, renderHtml } from './lib/daily-report.mjs';
+import { outcome, summarize, renderMarkdown, renderHtml, archiveTitle } from './lib/daily-report.mjs';
 import { DAILY_EXEMPT, EXTRA_LINES, DEEP_CHECK_MAP, deepCheckOutcome } from './lib/daily-catalog.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -841,7 +841,10 @@ function checkStableSmokeFreshness() {
     return;
   }
   const latest = items
-    .filter((x) => /稳定冒烟/.test(x.title || '') && !/失败取证/.test(x.title || ''))
+    // 只认运行器自己的标题格式（scripts/stable-smoke-run.mjs：「核心业务稳定冒烟 <runId>」）。
+    // 原先含「稳定冒烟」就算，会把「发布验收 · 核心业务稳定冒烟」这类别的报告当成心跳。
+    // 已知边界：定时与手动运行的报告目前没有字段可区分，见 doc/debt.acceptance.daily-anchors.md
+    .filter((x) => /^核心业务稳定冒烟 stsmk-/.test(x.title || ''))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
   if (!latest) {
     record({ ...base, status: 'fail', observed: 'CDS 验收中心里找不到任何稳定冒烟报告', next: '检查 stable-smoke-48h 本地自动化是否还在、是否改了报告标题' });
@@ -1047,10 +1050,9 @@ function cdsDeepLink(id) {
 function archive(mdPath, s, sha) {
   const cli = path.join(REPO, '.claude/skills/cds/cli/cdscli.py');
   const day = s.at.slice(0, 10);
-  const failedLines = s.lines.filter((l) => l.status === 'fail').length;
   try {
     const out = execFileSync('python3', [cli, 'report', 'create',
-      '--title', `每日核心功能验收 · ${day} · ${{ pass: '全部正常', conditional: '部分未验或需关注', fail: `${failedLines} 条功能线异常` }[s.verdict]}`,
+      '--title', archiveTitle(s),
       '--html-file', mdPath, '--format', 'md', '--project', 'prd-agent', '--folder-path', `每日核心功能验收/${day.slice(0, 7)}`,
       '--verdict', s.verdict, '--tier', '每日只读冒烟', '--branch', 'main', ...(sha ? ['--commit', sha] : [])],
     { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
