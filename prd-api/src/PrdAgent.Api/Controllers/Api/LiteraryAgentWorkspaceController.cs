@@ -220,7 +220,8 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // 正文真的换了 = 提交型修改：配图方案升一版、旧标记失效（旧图保留进历史）。
         // 页面一直按这个语义调用它（上传文章处的注释写着「会触发 version++，清空后续阶段」），
         // 但这个入口此前只改了正文——旧标记与带标记正文原样挂在新正文上。
-        var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent)
+        // 清空也算换稿（如上传了一个空文件）：旧标记、带标记正文与挂图指针不能挂在空文章上。
+        var articleContentChanged = request?.ArticleContent != null
             && !string.Equals(request.ArticleContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
         if (articleContentChanged)
         {

@@ -490,6 +490,15 @@ public class LiteraryMcpUsabilityTests
             // 正文没变只改标题：不升版
             Assert.IsType<OkObjectResult>(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "全新上传的正文。", Title = "再改标题" }, CancellationToken.None));
             Assert.Equal(2, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version);
+
+            // 清空正文（如上传了空文件）同样算换稿：带标记的旧方案不能挂在空文章上
+            var marked = Data(await drafts.WriteContent(id, new() { MarkedContent = "又一版。\n[插图]: 茶杯\n" }, CancellationToken.None));
+            var markedVersion = marked.GetProperty("workflowVersion").GetInt32();
+            Assert.IsType<OkObjectResult>(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "" }, CancellationToken.None));
+            var cleared = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            Assert.Equal(markedVersion + 1, cleared.ArticleWorkflow!.Version);
+            Assert.Empty(cleared.ArticleWorkflow.Markers);
+            Assert.Null(cleared.ArticleContentWithMarkers);
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
@@ -581,6 +590,18 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None));
             Assert.Equal(new[] { 0 }, rewritten.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
             Assert.Equal(new[] { 1 }, rewritten.GetProperty("needsGeneration").EnumerateArray().Select(x => x.GetInt32()));
+
+            // 只改了描述、还没重画：挂着的仍是按旧描述画的图（图上记着生成时的描述），
+            // 照新描述写回不能把它当成新描述的图沿用
+            var pending = await Seed("ep-3");
+            await db.ImageAssets.UpdateManyAsync(x => x.WorkspaceId == pending, Builders<ImageAsset>.Update.Set(x => x.OriginalMarkerText, "窗边的猫"));
+            await db.ImageAssets.UpdateOneAsync(x => x.Id == $"{pending}-a0", Builders<ImageAsset>.Update.Set(x => x.OriginalMarkerText, "书店门口"));
+            var notRedrawn = Data(await drafts.WriteContent(pending, new()
+            {
+                MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边打盹的橘猫\n",
+            }, CancellationToken.None));
+            Assert.Equal(new[] { 0 }, notRedrawn.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
+            Assert.Equal(new[] { 1 }, notRedrawn.GetProperty("needsGeneration").EnumerateArray().Select(x => x.GetInt32()));
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }

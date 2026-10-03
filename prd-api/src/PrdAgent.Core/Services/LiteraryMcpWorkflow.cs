@@ -178,8 +178,8 @@ public static class LiteraryMcpWorkflow
     /// 改稿时把「画面描述没变」的标记原样接上它现在那张图，只让新增 / 改过描述的标记等待生成。
     ///
     /// 以前改一节正文，整篇配图方案作废、6 张图全部要重画：用户满意的图、刚修好的那张一起被换掉，
-    /// 既费钱又出乎意料。判据只认描述文本（去首尾空白、压缩连续空白后逐字相等），旧标记一侧取
-    /// <see cref="EffectivePrompt"/>——网页改过的描述才是那张图对应的描述，原始描述不再算数；
+    /// 既费钱又出乎意料。判据只认描述文本（去首尾空白、压缩连续空白后逐字相等），旧图一侧取
+    /// <see cref="MountedImagePrompt"/>——网页改过并重画的以改后描述为准，只改了描述、还没重画的图不算「描述没变」；
     /// 同一段描述出现多次时按出现顺序一一对应，一张旧图只接一次。
     /// 返回接上的标记序号；<paramref name="next"/> 被就地改写。
     /// </summary>
@@ -191,7 +191,7 @@ public static class LiteraryMcpWorkflow
         var current = SelectCurrent(previous, assetList);
         var pool = (previous.ArticleWorkflow?.Markers ?? new List<ArticleIllustrationMarker>())
             .Where(m => current.ContainsKey(m.Index))
-            .Select(m => (key: Normalize(EffectivePrompt(m)), asset: current[m.Index], runId: m.RunId))
+            .Select(m => (key: Normalize(MountedImagePrompt(current[m.Index], m)), asset: current[m.Index], runId: m.RunId))
             .Where(p => p.key.Length > 0)
             .ToList();
         if (pool.Count == 0)
@@ -205,7 +205,7 @@ public static class LiteraryMcpWorkflow
                 pool = archived.Markers
                     .Select(m => (m, id: archived.AssetIdByMarkerIndex.TryGetValue(m.Index.ToString(), out var v) ? v : null))
                     .Where(x => x.id != null && byId.ContainsKey(x.id))
-                    .Select(x => (key: Normalize(EffectivePrompt(x.m)), asset: byId[x.id!], runId: x.m.RunId))
+                    .Select(x => (key: Normalize(MountedImagePrompt(byId[x.id!], x.m)), asset: byId[x.id!], runId: x.m.RunId))
                     .Where(p => p.key.Length > 0)
                     .ToList();
                 if (pool.Count > 0) break;
@@ -234,6 +234,18 @@ public static class LiteraryMcpWorkflow
         }
         next.DoneImageCount = next.AssetIdByMarkerIndex.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
         return carried;
+    }
+
+    /// <summary>
+    /// 沿用时一张挂着的图按哪段描述算：默认是标记当前生效的描述（历史接口给出的上一组描述也是它，
+    /// 照着写回一定接得上）。只有标记描述被改过、而图上记着的生成时描述与改后的对不上——即改了描述还没重画——
+    /// 才按图上记的算，这张旧图不能冒充新描述的图。早期图上记的描述可能带风格前缀，判错时只会多重画一张，不会错配。
+    /// </summary>
+    public static string MountedImagePrompt(ImageAsset asset, ArticleIllustrationMarker marker)
+    {
+        var effective = EffectivePrompt(marker);
+        if (string.IsNullOrWhiteSpace(marker.DraftText) || string.IsNullOrWhiteSpace(asset.OriginalMarkerText)) return effective;
+        return Normalize(asset.OriginalMarkerText) == Normalize(effective) ? effective : asset.OriginalMarkerText;
     }
 
     /// <summary>
