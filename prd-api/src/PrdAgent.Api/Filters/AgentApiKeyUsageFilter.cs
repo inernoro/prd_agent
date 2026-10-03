@@ -179,6 +179,11 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         if (!ok && verdict.ReservedKind != null)
             await _usage.ReleaseAsync(keyId, verdict.ReservedKind, verdict.ReservedAmount, verdict.ReservedDay,
                 CancellationToken.None);
+        // 批量生图里有的是重放、有的没排上：按请求张数预占的额度，退回没真正入队的差额。
+        // 与 MCP 网关同一个读法（McpArtifactExtractor.QueuedImages），直连这条路以前只在失败时退。
+        var unqueued = ok ? McpUsageService.UnqueuedImages(verdict, QueuedImagesOf(executed.Result)) : 0;
+        if (unqueued > 0)
+            await _usage.ReleaseAsync(keyId, verdict.ReservedKind!, unqueued, verdict.ReservedDay, CancellationToken.None);
 
         await LogAsync(http, principal, keyId, toolName, capability, isWrite, imageCount,
             ok ? "success" : "error", status,
@@ -277,6 +282,14 @@ public sealed class AgentApiKeyUsageFilter : IAsyncActionFilter, IOrderedFilter
         }
         return VisualOpenApiController.ResolveImageCount(null);
     }
+
+    private static readonly System.Text.Json.JsonSerializerOptions ResponseJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    /// <summary>控制器回执里报告的真正新入队张数（data.queuedImages），读法与网关同一个函数。</summary>
+    internal static int? QueuedImagesOf(IActionResult? result)
+        => result is ObjectResult { Value: not null } body
+            ? McpArtifactExtractor.QueuedImages(System.Text.Json.JsonSerializer.Serialize(body.Value, ResponseJson))
+            : null;
 
     private static IActionResult Reject(string reason) => new ObjectResult(
         ApiResponse<object>.Fail(ErrorCodes.RATE_LIMITED, reason))

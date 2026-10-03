@@ -139,7 +139,9 @@ public static class LiteraryMcpWorkflow
     /// 旧版本的图会顶掉当前版本——判据必须收敛到这里，按版本认。
     ///
     /// 顺序：权威指针（AssetIdByMarkerIndex）→ 同版本且带 index 的最新一张 →
-    /// 未盖版本号的存量图（改造前的历史数据，只在还没有任何版本化资产时才认）。
+    /// 未盖版本号的存量图（改造前的历史数据），按位置逐个兜底。
+    /// 换稿时会先给未盖版本的图盖上旧版本号，所以还没盖的只可能属于当前这一版；
+    /// 以前是「工作区里出现任何一张带版本的图就整体不再兜底」，改造后重画一张，其余旧图就从正文、导出、投稿里一起消失。
     /// </summary>
     public static Dictionary<int, ImageAsset> SelectCurrent(ImageMasterWorkspace workspace, IEnumerable<ImageAsset> assets)
     {
@@ -164,13 +166,10 @@ public static class LiteraryMcpWorkflow
                 result[group.Key] = group.OrderByDescending(a => a.CreatedAt).First();
         }
 
-        if (!list.Any(a => a.ArticleWorkflowVersion.HasValue))
+        foreach (var group in list.Where(a => !a.ArticleWorkflowVersion.HasValue).GroupBy(a => a.ArticleInsertionIndex!.Value))
         {
-            foreach (var group in list.GroupBy(a => a.ArticleInsertionIndex!.Value))
-            {
-                if (!result.ContainsKey(group.Key) && InScope(group.Key))
-                    result[group.Key] = group.OrderByDescending(a => a.CreatedAt).First();
-            }
+            if (!result.ContainsKey(group.Key) && InScope(group.Key))
+                result[group.Key] = group.OrderByDescending(a => a.CreatedAt).First();
         }
         return result;
     }
@@ -199,16 +198,17 @@ public static class LiteraryMcpWorkflow
         {
             // 当前一张都没挂（典型：网页刚换过正文，标记全作废）——拿最近一次存档里「换稿前在用的那组」来接。
             // 以前这时带标记写回一张都接不上，智能体只能逐张去历史里放回。
-            var archived = previous.ArticleWorkflowHistory?.FirstOrDefault(w => w.ArchivedAt != null);
-            if (archived != null)
+            // 连着两次换纯正文时，最近那份存档本身就是空的（那一版没有标记），要往前找最近一份真能接上的。
+            var byId = assetList.Where(a => a.WorkspaceId == previous.Id).ToDictionary(a => a.Id);
+            foreach (var archived in (previous.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>()).Where(w => w.ArchivedAt != null))
             {
-                var byId = assetList.Where(a => a.WorkspaceId == previous.Id).ToDictionary(a => a.Id);
                 pool = archived.Markers
                     .Select(m => (m, id: archived.AssetIdByMarkerIndex.TryGetValue(m.Index.ToString(), out var v) ? v : null))
                     .Where(x => x.id != null && byId.ContainsKey(x.id))
                     .Select(x => (key: Normalize(EffectivePrompt(x.m)), asset: byId[x.id!], runId: x.m.RunId))
                     .Where(p => p.key.Length > 0)
                     .ToList();
+                if (pool.Count > 0) break;
             }
         }
         if (pool.Count == 0) return carried;

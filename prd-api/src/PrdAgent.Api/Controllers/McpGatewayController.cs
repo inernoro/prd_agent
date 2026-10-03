@@ -504,9 +504,9 @@ public class McpGatewayController : ControllerBase
         else
         {
             // 批量生图里有的是重放、有的没排上：只为真正新入队的那几张扣额度，其余按占坑那天退回
-            if (verdict.ReservedKind == McpUsageService.KindImage
-                && McpArtifactExtractor.QueuedImages(respBody) is int queued && queued < verdict.ReservedAmount)
-                await _usage.ReleaseAsync(log.KeyId, verdict.ReservedKind, verdict.ReservedAmount - queued, verdict.ReservedDay, ct);
+            var unqueued = McpUsageService.UnqueuedImages(verdict, McpArtifactExtractor.QueuedImages(respBody));
+            if (unqueued > 0)
+                await _usage.ReleaseAsync(log.KeyId, verdict.ReservedKind!, unqueued, verdict.ReservedDay, ct);
             ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
         }
         await _usage.LogAsync(log, ct);

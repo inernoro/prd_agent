@@ -101,6 +101,80 @@ public class LiteraryMcpUsabilityTests
         Assert.DoesNotContain("old-", rendered);
     }
 
+    [Fact]
+    public void 改造前的旧图_只重画一张其余照样挂着()
+    {
+        // 改造前的文章：图都没盖版本号、也没有挂图指针。重画第 2 张后它带了版本号，
+        // 以前「工作区出现任何带版本的图就整体不再兜底」，第 1 张从正文、导出、投稿里一起消失。
+        var ws = new ImageMasterWorkspace
+        {
+            Id = "w",
+            ArticleWorkflow = new() { Version = 1, Markers = new() { new() { Index = 0 }, new() { Index = 1 } } },
+        };
+        var t0 = DateTime.UtcNow;
+        var assets = new List<ImageAsset>
+        {
+            new() { Id = "legacy-0", WorkspaceId = "w", ArticleInsertionIndex = 0, CreatedAt = t0 },
+            new() { Id = "legacy-1", WorkspaceId = "w", ArticleInsertionIndex = 1, CreatedAt = t0 },
+            new() { Id = "redrawn-1", WorkspaceId = "w", ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, CreatedAt = t0.AddMinutes(3) },
+        };
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        Assert.Equal("legacy-0", current[0].Id);
+        Assert.Equal("redrawn-1", current[1].Id);
+    }
+
+    [Fact]
+    public void 连着两次换纯正文后_带标记写回仍能接上最近一组在用的图()
+    {
+        // 最近那份存档来自第二次换纯正文，那一版没有标记、是空的；要往前找最近一份真能接上的
+        var ws = new ImageMasterWorkspace
+        {
+            Id = "w",
+            ArticleWorkflow = new() { Version = 3, Markers = new() },
+            ArticleWorkflowHistory = new()
+            {
+                new() { Version = 2, Markers = new(), ArchivedAt = DateTime.UtcNow, ArchivedReason = LiteraryArchiveReason.WebContent },
+                new()
+                {
+                    Version = 1, ArchivedAt = DateTime.UtcNow.AddMinutes(-5), ArchivedReason = LiteraryArchiveReason.WebContent,
+                    Markers = new() { new() { Index = 0, Text = "书店门口" }, new() { Index = 1, Text = "窗边的猫" } },
+                    AssetIdByMarkerIndex = new() { ["0"] = "a0", ["1"] = "a1" },
+                },
+            },
+        };
+        var assets = new List<ImageAsset>
+        {
+            new() { Id = "a0", WorkspaceId = "w", ArticleInsertionIndex = 0, ArticleWorkflowVersion = 1 },
+            new() { Id = "a1", WorkspaceId = "w", ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1 },
+        };
+        var next = LiteraryMcpWorkflow.Prepare("一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n", 4);
+        var carried = LiteraryMcpWorkflow.CarryOverUnchanged(next, ws, assets, DateTime.UtcNow);
+        Assert.Equal(new[] { 0, 1 }, carried);
+        Assert.Equal("a0", next.AssetIdByMarkerIndex["0"]);
+    }
+
+    [Fact]
+    public void 生图额度退还_网关与直连同一个算法()
+    {
+        var day = DateTime.UtcNow.Date;
+        var image = McpQuotaVerdict.Reserved(McpUsageService.KindImage, 3, day);
+        Assert.Equal(3, McpUsageService.UnqueuedImages(image, 0));   // 整批重放
+        Assert.Equal(2, McpUsageService.UnqueuedImages(image, 1));   // 部分重放 / 没排上
+        Assert.Equal(0, McpUsageService.UnqueuedImages(image, 3));
+        Assert.Equal(0, McpUsageService.UnqueuedImages(image, null)); // 下游没报就不退
+        Assert.Equal(0, McpUsageService.UnqueuedImages(McpQuotaVerdict.Reserved(McpUsageService.KindWrite, 1, day), 0));
+
+        // 直连那条路读控制器回执的口径，与网关读响应体的口径一致
+        Assert.Equal(1, PrdAgent.Api.Filters.AgentApiKeyUsageFilter.QueuedImagesOf(
+            new OkObjectResult(ApiResponse<object>.Ok(new { runs = new[] { 1 }, queuedImages = 1 }))));
+        Assert.Null(PrdAgent.Api.Filters.AgentApiKeyUsageFilter.QueuedImagesOf(new OkObjectResult(ApiResponse<object>.Ok(new { runId = "r" }))));
+
+        // 接线：两条路都必须调用这个算法，删掉任何一处调用这条用例都会红
+        var root = FindRepoRoot();
+        foreach (var rel in new[] { "prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs", "prd-api/src/PrdAgent.Api/Filters/AgentApiKeyUsageFilter.cs" })
+            Assert.Contains("McpUsageService.UnqueuedImages(", File.ReadAllText(Path.Combine(root, rel)));
+    }
+
     // ───────────── 端到端：风格 / 水印 / 尺寸 / 批量 ─────────────
 
     [Fact]
