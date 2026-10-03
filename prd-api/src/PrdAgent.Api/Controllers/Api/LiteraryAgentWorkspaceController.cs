@@ -457,12 +457,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
         // 文章配图场景：只返回当前版本的图片，隐藏重新生成的旧版本
         List<ImageAsset> assets;
-        var currentAssetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Distinct()
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (ws.ScenarioType == "article-illustration" && currentAssetIds != null && currentAssetIds.Count > 0)
+        if (LiteraryIllustrationHistory.ShowsCurrentOnly(ws))
         {
             assets = await LiteraryIllustrationHistory.LoadCurrentForDetailAsync(_db, ws, ct);
         }

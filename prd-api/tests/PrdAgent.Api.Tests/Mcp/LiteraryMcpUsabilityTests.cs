@@ -206,6 +206,12 @@ public class LiteraryMcpUsabilityTests
             var moved = history.Single(i => i.GetProperty("assetId").GetString() == "legacy-0");
             Assert.True(moved.GetProperty("isCurrent").GetBoolean());
             Assert.Equal(1, moved.GetProperty("markerIndex").GetInt32());
+
+            // 整篇换成全新的标记、新版本还没出图：指针表是空的，旧图都保留着，详情不能把它们当成当前图返回
+            Data(await drafts.WriteContent(id, new() { MarkedContent = "全新的一段。\n[插图]: 海边的灯塔\n" }, CancellationToken.None));
+            Assert.Empty(Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray());
+            Assert.Contains(Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray(),
+                i => i.GetProperty("assetId").GetString() == "redrawn-1"); // 旧图仍能在历史里找到
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
@@ -788,6 +794,15 @@ public class LiteraryMcpUsabilityTests
             // 挂图带版本条件，挂不上（期间换了稿）必须让调用方知道，丢掉返回值就会把失败报成成功
             if (System.Text.RegularExpressions.Regex.IsMatch(text, @"(?m)^\s*await\s+[\w.]*PointMarkerAsync\("))
                 offenders.Add($"{Path.GetFileName(file)}：调用 PointMarkerAsync 却没看返回值");
+            // 详情接口按「指针表有没有值」决定只给当前图：改稿后指针清空、旧图保留，就会把旧版图当成当前图
+            if (text.Contains("currentAssetIds.Count > 0"))
+                offenders.Add($"{Path.GetFileName(file)}：按指针表是否为空决定详情给不给全部图，应改用 LiteraryIllustrationHistory.ShowsCurrentOnly");
+        }
+        foreach (var detail in new[] { "LiteraryAgentWorkspaceController.cs", "ImageMasterController.cs" })
+        {
+            var path = Directory.GetFiles(src, detail, SearchOption.AllDirectories).Single();
+            if (!File.ReadAllText(path).Contains("LiteraryIllustrationHistory.ShowsCurrentOnly(ws)"))
+                offenders.Add($"{detail}：工作区详情没有走 LiteraryIllustrationHistory.ShowsCurrentOnly");
         }
         Assert.True(offenders.Count == 0, string.Join("\n", offenders));
     }

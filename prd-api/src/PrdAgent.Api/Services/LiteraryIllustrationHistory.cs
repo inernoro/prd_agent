@@ -34,6 +34,14 @@ public static class LiteraryIllustrationHistory
     /// 编辑页详情要的「当前挂在正文上的图」。走 <see cref="LiteraryMcpWorkflow.SelectCurrent"/>，与导出、投稿同一个判定：
     /// 以前详情只要有一个指针就只按指针取，改造前的旧文章重画一张后，刷新页面其余位置全变成没图。
     /// </summary>
+    /// <summary>
+    /// 详情接口该不该只给当前挂图：有配图方案的文章配图工作区一律只给，指针表为空也一样——
+    /// 改稿 / 重新规划后新版本还没出图时指针是空的，而旧图保留着，这时返回全部就会把旧版图当成当前图。
+    /// 没有配图方案的早期工作区照旧返回全部。两个详情接口共用这一个判据。
+    /// </summary>
+    public static bool ShowsCurrentOnly(ImageMasterWorkspace ws)
+        => ws.ScenarioType == "article-illustration" && ws.ArticleWorkflow != null;
+
     public static async Task<List<ImageAsset>> LoadCurrentForDetailAsync(MongoDbContext db, ImageMasterWorkspace ws, CancellationToken ct)
         => LiteraryMcpWorkflow.SelectCurrent(ws, await LoadAssetsAsync(db, ws.Id, ct))
             .OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
