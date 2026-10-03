@@ -130,7 +130,8 @@ describe('RelationFlowStrip 渲染', () => {
   it('徽标不占语义色：redis 不用 --bad，mongo 不用 --ok（红色只在「坏了」时出现）', () => {
     const src = fs.readFileSync(path.join(SRC, 'components/branch/RelationFlowStrip.tsx'), 'utf8');
     const kindLine = src.split('\n').find((l) => l.startsWith('const KIND_TOKEN'))!;
-    expect(kindLine).not.toMatch(/--bad|--ok|--warn/);
+    // 词边界：徽标用的是 --badge-* 对，它的前缀恰好是 --bad，不加边界会误报
+    expect(kindLine).not.toMatch(/--(bad|ok|warn)\b/);
     const graph = fs.readFileSync(path.join(SRC, 'components/branch/RelationGraph.tsx'), 'utf8');
     expect(graph).not.toContain("'--bad' : '--ok'");
   });

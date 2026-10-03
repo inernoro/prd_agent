@@ -2340,3 +2340,22 @@ CDS 的系统环境文件有两个读者：`source` 它的 shell，和 Node 启�
 
 - 归组判定唯一来源：`cds/web/src/lib/branchGroups.ts`；存取与校验：`cds/src/services/branch-groups.ts`
 - 取证脚本：`cds/scripts/branch-groups-visual-audit.mjs`；守卫：`cds/tests/web/branch-groups.test.ts`、`cds/tests/routes/project-branch-groups.test.ts`
+## 关系视图的已知边界（2026-10-03）
+
+**状态**：已知边界；负责人：CDS 维护者。
+
+关系视图（总览关系卡、展开浮层、全屏页）现在由两层机械判据看守：几何判据（G1–G8：卡片不重叠、不出画布、线不穿卡、线不压标题、两条线不叠成一段等，同构样本 19 档宽度 + 300 份随机样本 × 5 档宽度）随 CDS 单测跑；浏览器判据（横向溢出、截断、文字被挤成窄条、对比度、悬停联动等，4 份样本 × 5 档视口 × 双主题）挂在 CDS CI 上。文件位置见本节末「实现来源」。下面是它们没管到、或这次刻意没做的部分。
+
+- 浏览器判据所在的 CDS CI 只在 PR 指向 main / develop 时触发，普通 feature 分支 push 不跑；改关系视图的人在开 PR 之前要本地跑一次 `pnpm --dir cds run audit:relation-visual`（约 150 秒）。
+- 框标题的截断与让位按估算字宽计算，不是真实测量。浏览器判据 S4 会抓「标题压卡片 / 出框 / 有线从字上穿过」，所以估算偏差不会造成重叠，最多让标题比必要的早一点截断。
+- `--warn` 在白天作为文字落在淡黄底上只有 2.92 的对比度。本次只在关系视图改用新增的 `--warn-ink` / `--ok-ink`，CDS 其它页面的警告字仍用 `--warn`。完成条件：全站警告 / 正常文字统一改走 `*-ink`，或把白天的 `--warn` 压到 32% 亮度后复核所有实色填充的用法。
+- 依赖线只走行间隙与右侧走线槽。依赖很多时右侧槽会变宽、站点框随之收窄（手机上网格降为单列），图会变长；没有按依赖密度切换布局的策略。
+- 同一对服务之间既有前缀分流又声明了依赖时，依赖并入那条前缀线（悬停提示写明「同时声明了依赖」），不另画一条贴着它走的线。
+- 线上不再显示环境变量名（会和卡片、别的线打架），改为悬停提示。触屏上没有悬停，看不到这部分信息。完成条件：点击一条线时在侧边列出它的来源、目标与环境变量。
+- 本分支没有部署到 CDS 预览（CDS Self 项目下没有这条分支），判据跑的是真实组件 + 合成数据，以及本地用 `cdscli topology` 取到的真实分支快照；真实快照不进仓库（与窄屏布局冒烟的合成数据同一条约定）。
+
+### 实现来源（本节）
+
+- 布局与走线（纯函数）：`cds/web/src/components/branch/relationLayout.ts`
+- 几何判据：`cds/tests/web/relation-geometry.ts`、`cds/tests/web/relation-geometry.test.ts`；同构样本：`cds/tests/web/fixtures/relation-shape-alpha.json`
+- 浏览器判据：`cds/scripts/relation-visual-audit.mjs`；样本：`cds/scripts/fixtures/relation-fixtures.mjs`

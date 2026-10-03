@@ -43,7 +43,8 @@ describe('layoutRelations', () => {
     // 两个入口线：每个站点一条；第二条沿左侧走线槽，不穿过主域名框
     const entries = l.edges.filter((e) => e.kind === 'entry');
     expect(entries).toHaveLength(2);
-    expect(entries[1].route).toBe('side');
+    // 第二条从入口左沿出发（走左侧走线槽），不是从入口下沿直落
+    expect(entries[1].d.startsWith(`M${l.entry.x},`)).toBe(true);
   });
 });
 
@@ -110,11 +111,12 @@ describe('关系图颜色只走主题 token', () => {
   it('源码里没有硬编码的十六进制颜色，角色与线色都经 hsl(var(--...))', () => {
     const src = fs.readFileSync(SRC, 'utf8');
     expect(src.match(/#[0-9a-f]{6}\b/gi) ?? []).toEqual([]);
-    for (const token of ['--role-web', '--role-api', '--role-worker', '--graph-call', '--graph-external']) expect(src).toContain(token);
+    // 徽标走专用的 --badge-* 对（实色底 + 墨色字，两个主题各验过对比度），线色走 --graph-call
+    for (const token of ['--badge-web', '--badge-api', '--badge-job', '--badge-gw', '--badge-ext', '--badge-ink', '--graph-call']) expect(src).toContain(token);
   });
-  it('五个 token 在两个主题块里都有定义', () => {
+  it('关系图用到的 token 在两个主题块里都有定义', () => {
     const css = fs.readFileSync(path.resolve(__dirname, '../../web/src/index.css'), 'utf8');
-    for (const token of ['--role-web', '--role-api', '--role-worker', '--graph-call', '--graph-external']) {
+    for (const token of ['--role-web', '--role-api', '--role-worker', '--graph-call', '--graph-external', '--badge-web', '--badge-api', '--badge-job', '--badge-gw', '--badge-ext', '--badge-db', '--badge-r', '--badge-ink', '--warn-ink', '--ok-ink']) {
       expect(css.match(new RegExp(`${token}:`, 'g'))?.length, token).toBe(2);
     }
   });
@@ -130,7 +132,12 @@ describe('两档几何（设计稿「CDS 关系视图改版」02 / 04）', () =>
     expect(new Set(['imp-api', 'imp-open-platform-api', 'imp-vendor-api'].map((id) => l.pos.get(id)!.y)).size).toBe(1);
     const prefix = l.edges.filter((e) => e.kind === 'prefix');
     expect(prefix.length).toBe(3);
-    for (const e of prefix) expect(e.route).toBe('bus');
+    // 直角总线：壳下沿中点出发 → 下到总线 → 横到成员正上方 → 落下
+    const shell = l.pos.get('imp-admin')!;
+    for (const e of prefix) {
+      expect(e.d.startsWith(`M${shell.x + shell.w / 2},${shell.y + shell.h} V`)).toBe(true);
+      expect(e.d).toMatch(/^M[\d.]+,[\d.]+ V[\d.]+ H[\d.]+ V[\d.]+$/);
+    }
     // 4 列：8 个子域排两行
     const subs = l.frames.find((f) => f.key === 'subdomains')!;
     const ys = new Set(Array.from(l.pos.values()).filter((p) => p.y > subs.y && p.y < subs.y + subs.h).map((p) => p.y));
@@ -144,7 +151,11 @@ describe('两档几何（设计稿「CDS 关系视图改版」02 / 04）', () =>
     const members = ['imp-api', 'imp-open-platform-api', 'imp-vendor-api'].map((id) => l.pos.get(id)!);
     for (const m of members) { expect(m.x).toBeGreaterThan(shell.x); expect(m.x + m.w).toBeLessThanOrEqual(374); }
     expect(new Set(members.map((m) => m.x)).size).toBe(1);
-    for (const e of l.edges.filter((x) => x.kind === 'prefix')) expect(e.route).toBe('tree');
+    // 树状：从壳下方缩进处的竖线出发，横进成员卡左沿
+    for (const e of l.edges.filter((x) => x.kind === 'prefix')) {
+      expect(e.d.startsWith(`M${shell.x + 20},${shell.y + shell.h} V`)).toBe(true);
+      expect(e.d.endsWith(`H${e.to.x - 2}`)).toBe(true);
+    }
     const subs = l.frames.find((f) => f.key === 'subdomains')!;
     const xs = new Set(Array.from(l.pos.values()).filter((p) => p.y > subs.y && p.y < subs.y + subs.h).map((p) => p.x));
     expect(xs.size).toBe(2);

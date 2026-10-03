@@ -30,7 +30,7 @@ export function useRelationPayload(branchId: string | undefined): { state: { sta
 }
 
 const SEV_LABEL: Record<LintFindingView['severity'], string> = { error: '错误', warn: '警告', info: '建议' };
-const SEV_CLS: Record<LintFindingView['severity'], string> = { error: 'border-destructive/60 text-destructive', warn: 'border-warn/60 bg-warn-soft text-warn', info: 'border-[hsl(var(--hairline-strong))] text-muted-foreground' };
+const SEV_CLS: Record<LintFindingView['severity'], string> = { error: 'border-destructive/60 text-bad', warn: 'border-warn/60 bg-warn-soft text-[hsl(var(--warn-ink))]', info: 'border-[hsl(var(--hairline-strong))] text-muted-foreground' };
 /** 严重度落在整张卡上：描一圈淡色边 + 极淡底色（设计稿 03）。不用左侧色条——那是模板化卡片的通病 */
 const SEV_CARD: Record<LintFindingView['severity'], CSSProperties> = {
   error: { borderColor: 'hsl(var(--bad) / .45)', background: 'color-mix(in srgb, hsl(var(--bad)) 6%, hsl(var(--background)))' },
@@ -45,9 +45,9 @@ const SEV_CARD: Record<LintFindingView['severity'], CSSProperties> = {
  * layout=grid 时按宽度自动排多列（展开视图与总览卡的整行宽度下用）。
  */
 export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }: { findings: LintFindingView[]; /** 悬停一条时点亮它涉及的全部服务 */ onPick?: (serviceIds: string[] | null) => void; /** 给了就在每条后面放「去配置」，跳到能改它的地方 */ onConfigure?: () => void; layout?: 'stack' | 'grid' }): JSX.Element {
-  if (findings.length === 0) return <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-[0.92rem] text-ok">体检无发现：关系清楚，配置没有冲突。</div>;
+  if (findings.length === 0) return <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-[0.92rem] text-[hsl(var(--ok-ink))]">体检无发现：关系清楚，配置没有冲突。</div>;
   return (
-    <div className={layout === 'grid' ? 'grid grid-cols-[repeat(auto-fill,minmax(min(100%,21rem),1fr))] gap-2.5' : 'flex flex-col gap-2'} data-testid="relation-findings">
+    <div className={layout === 'grid' ? 'grid grid-cols-[repeat(auto-fill,minmax(min(100%,21rem),1fr))] items-start gap-2.5' : 'flex flex-col gap-2'} data-testid="relation-findings">
       {findings.map((f, i) => (
         <div
           key={`${f.rule}-${i}`}
@@ -56,6 +56,7 @@ export function FindingsList({ findings, onPick, onConfigure, layout = 'stack' }
           tabIndex={onPick ? 0 : undefined}
           data-finding={f.rule}
           data-severity={f.severity}
+          data-finding-services={f.services.join(' ')}
           onMouseEnter={() => onPick?.(f.services.length ? f.services : null)}
           onMouseLeave={() => onPick?.(null)}
           onFocus={() => onPick?.(f.services.length ? f.services : null)}
@@ -182,8 +183,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
   if (state.status === 'error') {
     return shell('border-destructive/50', (
       <>
-        <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">读取失败</span><span className="flex-1" /><Button variant="ghost" size="sm" onClick={reload}>重试</Button></div>
-        <div className="text-[0.92rem] text-destructive">关系图读取失败：{state.message}</div>
+        <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-bad">读取失败</span><span className="flex-1" /><Button variant="ghost" size="sm" onClick={reload}>重试</Button></div>
+        <div className="text-[0.92rem] text-bad">关系图读取失败：{state.message}</div>
         <RelationFlowSkeleton note="拿不到服务图，流向条画不出来；重试或看容器日志" tone="bad" />
       </>
     ));
@@ -203,10 +204,10 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
   const model = layoutFlow(data, entryHost);
   const actionable = data.lint.findings.filter((f) => f.severity !== 'info');
   const pill = errors
-    ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 处配置错误</span>
+    ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-bad">{errors} 处配置错误</span>
     : warnings
-      ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 条警告</span>
-      : <span className="inline-flex h-[1.3rem] items-center rounded-full border border-ok/50 bg-ok-soft px-2 text-[0.75rem] font-semibold text-ok">无问题</span>;
+      ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-[hsl(var(--warn-ink))]">{warnings} 条警告</span>
+      : <span className="inline-flex h-[1.3rem] items-center rounded-full border border-ok/50 bg-ok-soft px-2 text-[0.75rem] font-semibold text-[hsl(var(--ok-ink))]">无问题</span>;
   const body = variant === 'row' ? (
     /* 行式（分支详情总览，设计稿 01）：标题行放动作，结论句完整显示不截断，其下事实行、两条泳道、问题卡 */
     <section className={`flex flex-col gap-4 rounded-[0.875rem] border bg-[hsl(var(--surface-raised))] px-[1.375rem] pb-[1.375rem] pt-5 transition-colors duration-150 ${tone}`} data-testid="relation-card" data-variant="row">
@@ -252,8 +253,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
             <div className="flex h-[3.25rem] shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
               <h2 className="m-0 text-base font-bold">关系</h2>
               <span className="hidden min-w-0 truncate font-mono text-[0.78rem] text-muted-foreground sm:inline">{data.branch}</span>
-              {errors ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 错误</span> : null}
-              {warnings ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 警告</span> : null}
+              {errors ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-bad">{errors} 错误</span> : null}
+              {warnings ? <span className="inline-flex h-[1.3rem] shrink-0 items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-[hsl(var(--warn-ink))]">{warnings} 警告</span> : null}
               <span className="flex-1" />
               <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} aria-label="关闭"><X /></Button>

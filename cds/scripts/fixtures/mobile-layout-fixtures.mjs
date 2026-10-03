@@ -253,6 +253,9 @@ const PREFIX = [
   [/^\/api\/projects\/[^/]+$/, () => project],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
+  // 分支自定义分组（PR #1647）。形状对齐 GET /projects/:id/branch-groups：未分组时就是这个空壳。
+  // 2026-10-03 由 relation-visual-audit 的「未登记路径」判据报出来——此前分支列表拿 {} 走了空态。
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({ ok: true, groups: [], updatedAt: null, updatedBy: null, readOnly: false })],
   [/^\/api\/projects\/[^/]+\/env$/, () => ({ env: {}, entries: [] })],
   [/^\/api\/projects\/[^/]+\/profiles$/, () => ({ profiles: [] })],
   [/^\/api\/profiles$/, () => ({ profiles: [] })],
