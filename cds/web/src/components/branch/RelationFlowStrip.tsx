@@ -319,35 +319,66 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
   );
 }
 
-/** 竖排：入口、壳各占一行；成员挂在壳下的竖线上（树状）；共享 / 外部在最后，两列网格 */
+/**
+ * 竖排的分组：每个壳只带它真正连着的成员（按 shellLinks 的 from / to），没有连线的成员单独成组。
+ * 不能「所有成员都挂在第一个壳下」：内网服务、别的子域壳的成员会被画成主域名壳的前缀成员，
+ * 连线表达的关系就是错的（Codex P1，PR #1654）。
+ */
+export function stackedGroups(model: FlowModel): { groups: Array<{ shell: FlowChip; members: FlowChip[] }>; loose: FlowChip[] } {
+  const owner = new Map<number, number>();
+  for (const l of model.shellLinks) if (!owner.has(l.to)) owner.set(l.to, l.from);
+  const groups = model.shells.map((shell) => ({ shell, members: [] as FlowChip[] }));
+  const loose: FlowChip[] = [];
+  model.members.forEach((c, i) => {
+    const from = owner.get(i);
+    if (from !== undefined && groups[from]) groups[from].members.push(c);
+    else loose.push(c);
+  });
+  return { groups, loose };
+}
+
+/** 竖排：入口在上；每个壳下面用竖线挂它自己的成员；没连在任何壳下的服务单列一组、不画连线；共享 / 外部在最后 */
 function StackedFlow({ model }: { model: FlowModel }): JSX.Element {
   const line = 'bg-[hsl(var(--hairline-strong))]';
-  const linked = new Set(model.shellLinks.map((l) => l.to));
+  const { groups, loose } = stackedGroups(model);
   let n = 0;
+  const grid = (chips: FlowChip[], min: number) => (
+    <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${min}px), 1fr))` }}>{chips.map((c) => <Chip key={c.id} chip={c} index={n++} />)}</div>
+  );
   return (
     <div className="flex min-w-0 flex-col" data-testid="relation-strip-stacked">
       <Chip chip={model.entry} index={n++} />
-      <span aria-hidden className={`ml-[1.375rem] h-3 w-px ${line}`} />
-      <div className="flex min-w-0 flex-col gap-2.5">{model.shells.map((c) => <Chip key={c.id} chip={c} index={n++} />)}</div>
-      {model.members.length > 0 ? (
-        <div className="flex min-w-0 flex-col pt-2.5">
-          {model.members.map((c, i) => {
-            const last = i === model.members.length - 1;
-            return (
-              <div key={c.id} className="relative pb-2.5 pl-10 last:pb-0" data-tree-linked={linked.has(i) ? 'true' : undefined}>
-                {/* 竖线：从上一行延续下来，最后一个成员只画到自己中线 */}
-                <span aria-hidden className={`absolute left-[1.375rem] top-[-0.625rem] w-px ${line}`} style={{ height: last ? 'calc(50% + 0.625rem)' : 'calc(100% + 0.625rem)' }} />
-                <span aria-hidden className={`absolute left-[1.375rem] top-1/2 h-px w-[1.125rem] ${line} ${c.inferred ? 'opacity-60' : ''}`} />
-                <Chip chip={c} index={n++} />
-              </div>
-            );
-          })}
+      {groups.map(({ shell, members }) => (
+        <div key={shell.id} className="flex min-w-0 flex-col" data-stack-group={shell.id}>
+          <span aria-hidden className={`ml-[1.375rem] h-3 w-px ${line}`} />
+          <Chip chip={shell} index={n++} />
+          {members.length > 0 ? (
+            <div className="flex min-w-0 flex-col pt-2.5">
+              {members.map((c, i) => {
+                const last = i === members.length - 1;
+                return (
+                  <div key={c.id} className="relative pb-2.5 pl-10 last:pb-0" data-tree-member={c.id}>
+                    {/* 竖线：从上一行延续下来，最后一个成员只画到自己中线 */}
+                    <span aria-hidden className={`absolute left-[1.375rem] top-[-0.625rem] w-px ${line}`} style={{ height: last ? 'calc(50% + 0.625rem)' : 'calc(100% + 0.625rem)' }} />
+                    <span aria-hidden className={`absolute left-[1.375rem] top-1/2 h-px w-[1.125rem] ${line} ${c.inferred ? 'opacity-60' : ''}`} />
+                    <Chip chip={c} index={n++} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ))}
+      {loose.length > 0 ? (
+        <div className="mt-3 border-t border-dashed border-[hsl(var(--hairline))] pt-3" data-testid="relation-strip-loose">
+          <div className="mb-2 text-[0.75rem] text-muted-foreground">其它服务（内网服务，或没有挂在任何壳下）</div>
+          {grid(loose, 200)}
         </div>
       ) : null}
       {model.tail.length > 0 ? (
         <div className="mt-3 border-t border-dashed border-[hsl(var(--hairline))] pt-3">
           <div className="mb-2 text-[0.75rem] text-muted-foreground">共享基础设施与跨项目引用</div>
-          <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 160px), 1fr))' }}>{model.tail.map((c) => <Chip key={c.id} chip={c} index={n++} />)}</div>
+          {grid(model.tail, 160)}
         </div>
       ) : null}
     </div>

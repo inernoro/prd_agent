@@ -104,7 +104,8 @@ export function RelationWorkspace({ data, entryHost, onConfigure, onlyProblems =
   const [showAll, setShowAll] = useState(false);
   const narrow = useNarrow();
   const findings = onlyProblems ? data.lint.findings.filter((f) => f.severity !== 'info') : data.lint.findings;
-  const count = (sev: LintFindingView['severity']): number => data.lint.findings.filter((f) => f.severity === sev).length;
+  // 计数按当前显示的这批算：「只看问题」滤掉建议之后，标题里不能还挂着「5 建议」（Codex P2，PR #1654）
+  const count = (sev: LintFindingView['severity']): number => findings.filter((f) => f.severity === sev).length;
   // 手机上问题带只先放要处理的（错误 / 警告），建议收成一行，免得问题带吃掉整屏（设计稿 04）
   const actionable = findings.filter((f) => f.severity !== 'info');
   const folded = narrow && !showAll && actionable.length > 0 && actionable.length < findings.length;

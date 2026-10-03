@@ -290,3 +290,29 @@ describe('设计稿对齐（2026-09-30 用户：「按设计稿改代码」）',
     expect(html).not.toContain('跨项目引用');
   });
 });
+
+describe('Codex 评审（PR #1654）', () => {
+  it('P1 竖排按真实连线分组：内网服务不挂在壳下，子域壳的成员挂在它自己的壳下', async () => {
+    const { stackedGroups } = await import('../../web/src/components/branch/RelationFlowStrip.js');
+    const p = payload();
+    p.graph.nodes.push(
+      { id: 'service:portal', rawId: 'portal', name: 'portal', kind: 'service', subdomain: 'portal', role: 'web' },
+      { id: 'service:docs', rawId: 'docs', name: 'docs', kind: 'service', role: 'web' },
+    );
+    p.graph.sites.push({ id: 'sub:portal', kind: 'subdomain', subdomain: 'portal', shellId: 'portal', shellSource: 'declared', members: [{ id: 'docs', prefixes: ['/docs/'] }], conflicts: [] });
+    const { groups, loose } = stackedGroups(layoutFlow(p));
+    expect(groups.map((g) => [g.shell.id, g.members.map((c) => c.id)])).toEqual([['admin-web', ['api', 'files']], ['portal', ['docs']]]);
+    expect(loose.map((c) => c.id)).toEqual(['cron']);
+  });
+  it('P2 全屏页「只看问题」时，标题计数按显示出来的这批算，不再挂着被滤掉的建议', async () => {
+    const { RelationWorkspace } = await import('../../web/src/components/branch/RelationCard.js');
+    const p = payload();
+    p.lint.findings.push({ rule: 'role-by-name', severity: 'info', services: ['api'], message: '角色靠名字推断', fix: '写 cds.role' });
+    const all = renderToStaticMarkup(createElement(RelationWorkspace, { data: p }));
+    const only = renderToStaticMarkup(createElement(RelationWorkspace, { data: p, onlyProblems: true }));
+    expect(all).toContain('需要处理 · 2 条');
+    expect(all).toContain('>1 建议</span>');
+    expect(only).toContain('需要处理 · 1 条');
+    expect(only).not.toContain(' 建议</span>');
+  });
+});
