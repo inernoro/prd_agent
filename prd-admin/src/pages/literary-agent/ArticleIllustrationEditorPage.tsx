@@ -3540,19 +3540,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </Button>
           ))}
 
-          {/* 生成设置：一行四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
+          {/* 生成设置：四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
               行尾图标按钮打开完整配置页。参照 Apple HIG 的弹出按钮：长得像下拉就必须就地给出选项。 */}
           <div
             className="mt-2.5 pt-2.5 border-t flex items-center gap-1.5"
             style={{ borderColor: 'var(--border-subtle)' }}
             data-testid="literary-generation-settings"
           >
-            {/* 风格与水印的名字最长、也最要紧，给它们更宽的列；两头「自动」类短值收窄。
-                「这是本文自己的设定」由悬停说明与菜单里的「跟随账号默认」项交代，不再挤占按钮文字 */}
-            <div
-              className="grid gap-1.5 flex-1 min-w-0"
-              style={{ gridTemplateColumns: 'minmax(0, 0.75fr) minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, 0.75fr)' }}
-            >
+            {/* 两行两列：右栏只有三百来像素，四个挤一行时风格、水印的名字被截成「全域…」「水印…」，
+                看不出用的是哪一套。「这是本文自己的设定」由悬停说明与菜单说明交代，不占按钮文字 */}
+            <div className="grid grid-cols-2 gap-1.5 flex-1 min-w-0">
               <QuickMenu
                 title="提示词风格"
                 width={260}
