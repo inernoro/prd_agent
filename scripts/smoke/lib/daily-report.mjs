@@ -177,7 +177,10 @@ export function archiveTitle(s) {
 }
 
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-const mdCell = (v) => String(v ?? '').replace(/\|/g, '\\|').replace(/\n+/g, ' ');
+// 动态文本（账号名、页面报错、自检输出……）一律当不可信：先做 HTML 转义，再挡掉 Markdown 的链接语法。
+// 归档版经 CDS 的 marked 渲染进允许脚本的 iframe，原样透传 <script> 或 [x](javascript:…) 就是一次
+// 存储型 XSS（Codex 在 PR #1655 指出）。徽标、<br>、截图标签是本模块自己生成的，在转义之后再拼进去。
+const mdCell = (v) => esc(v).replace(/\[/g, '&#91;').replace(/\]/g, '&#93;').replace(/\|/g, '\\|').replace(/\n+/g, ' ');
 const lineStatusLabel = (st) => (st === 'exempt' ? '不在每日范围' : STATUS[st].label);
 // 归档版的状态徽标：CDS 用 marked 渲染，表格里的行内 HTML 会原样保留。颜色只是加强，文字照样在。
 const BADGE = { fail: '#cf222e;color:#fff', 'not-run': '#fff4d6;color:#9a6700', warn: '#fff4d6;color:#9a6700', pass: '#e6f4ea;color:#1a7f37', exempt: '#eef0f2;color:#57606a' };
@@ -193,9 +196,9 @@ export function renderMarkdown(s, { reportUrl, full = false } = {}) {
   const out = [];
   out.push(`## 每日核心功能验收 · ${s.at.slice(0, 10)}`);
   out.push('');
-  out.push(`**${headline(s)}**`);
+  out.push(`**${mdCell(headline(s))}**`);
   out.push('');
-  out.push(`被测环境：${s.base}${reportUrl ? ` · [完整报告（含截图）](${reportUrl})` : ''}`);
+  out.push(`被测环境：${mdCell(s.base)}${reportUrl ? ` · [完整报告（含截图）](${reportUrl})` : ''}`);
   out.push('');
   out.push('| 状态 | 核心功能 | 级别 | 今日检查通过 | 问题与下一步 |');
   out.push('|---|---|---|---|---|');
@@ -220,8 +223,8 @@ export function renderMarkdown(s, { reportUrl, full = false } = {}) {
   out.push('| 结果 | 功能 | 验收项 | 怎么验 | 观察到的 | 入口 |');
   out.push('|---|---|---|---|---|---|');
   for (const r of [...s.environment, ...s.results.filter((x) => x.featureLine !== 'environment')]) {
-    const seen = r.next ? `${r.observed}<br>**下一步：${r.next}**` : r.observed;
-    out.push(`| ${badge(r.status)} | ${mdCell(label.get(r.featureLine) || r.featureLine)} | ${mdCell(r.title)} | ${mdCell(r.method)} | ${mdCell(seen)} | ${r.link ? `[打开](${r.link})` : '—'} |`);
+    const seen = r.next ? `${mdCell(r.observed)}<br>**下一步：${mdCell(r.next)}**` : mdCell(r.observed);
+    out.push(`| ${badge(r.status)} | ${mdCell(label.get(r.featureLine) || r.featureLine)} | ${mdCell(r.title)} | ${mdCell(r.method)} | ${seen} | ${r.link ? `[打开](${r.link})` : '—'} |`);
   }
   const shots = s.results.filter((r) => r.status !== 'pass' && r.shot);
   if (shots.length) {
@@ -229,9 +232,9 @@ export function renderMarkdown(s, { reportUrl, full = false } = {}) {
     out.push('### 异常与需关注项的现场截图');
     for (const r of shots) {
       out.push('');
-      out.push(`**${STATUS[r.status].label} · ${r.title}**：${r.observed}`);
+      out.push(`**${STATUS[r.status].label} · ${mdCell(r.title)}**：${mdCell(r.observed)}`);
       out.push('');
-      out.push(`<img src="${r.shot}" alt="${esc(r.title)}" style="max-width:100%;border:1px solid #8884;border-radius:6px">`);
+      out.push(`<img src="${r.shot}" alt="${mdCell(r.title)}" style="max-width:100%;border:1px solid #8884;border-radius:6px">`);
     }
   }
   out.push('');

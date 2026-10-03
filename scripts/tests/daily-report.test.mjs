@@ -112,3 +112,16 @@ test('环境不可达时，首句写实际没验成的条数，不把独立验�
   assert.match(headline(s), new RegExp(`^被测环境本身不可用，${s.counts.notRun} 条核心功能没能验`));
   assert.ok(s.counts.notRun < s.counts.lines);
 });
+
+test('动态文本里的 HTML 与链接语法在两版 Markdown 里都被转义，可信徽标保持原样', () => {
+  // Codex 在 PR #1655 指出：CDS 用 marked 把归档报告渲染进允许脚本的 iframe，原样透传就是存储型 XSS
+  const evil = '<script>alert(1)</script> [点我](javascript:alert(1))';
+  const results = [outcome({ id: 'X', featureLine: 'identity-access', title: evil, method: evil, status: 'fail', observed: evil, next: evil, shot: 'data:image/jpeg;base64,AAAA' })];
+  const s = summarize({ results, catalog, base: 'x', at: '2026-10-03T00:00:00Z' });
+  for (const md of [renderMarkdown(s), renderMarkdown(s, { full: true })]) {
+    assert.ok(!md.includes('<script'), '出现了未转义的 <script>');
+    assert.ok(!md.includes('](javascript:'), '动态文本拼出了可点击的 javascript: 链接');
+    assert.ok(md.includes('&lt;script&gt;'), '转义后的文本应当仍然可读');
+  }
+  assert.match(renderMarkdown(s, { full: true }), /<span style="[^"]*">异常<\/span>/, '可信徽标被误转义了');
+});
