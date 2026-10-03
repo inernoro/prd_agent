@@ -355,6 +355,7 @@ public class LiteraryOpenApiController : ControllerBase
             .Set(x => x.ArticleContent, merged)
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
+        var carriedOver = new List<int>();
         if (changed)
         {
             // 正文换了，之前那轮配图的标记就不再对应这篇文章了。界面侧（ImageMasterController）
@@ -368,10 +369,16 @@ public class LiteraryOpenApiController : ControllerBase
                 if (history.Count > 10) history = history.Take(10).ToList();
             }
             var nextVersion = (ws.ArticleWorkflow?.Version ?? 0) + 1;
+            ArticleIllustrationWorkflow? prepared = null;
+            if (marked != null)
+            {
+                prepared = LiteraryMcpWorkflow.Prepare(marked, nextVersion);
+                // 描述没变的标记接上原来那张图：改一节正文只需要为改动的那几节重新生成
+                var existingAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id).ToListAsync(ct);
+                carriedOver = LiteraryMcpWorkflow.CarryOverUnchanged(prepared, ws, existingAssets, DateTime.UtcNow);
+            }
             update = update
-                .Set(x => x.ArticleWorkflow, marked != null
-                    ? LiteraryMcpWorkflow.Prepare(marked, nextVersion)
-                    : new ArticleIllustrationWorkflow
+                .Set(x => x.ArticleWorkflow, prepared ?? new ArticleIllustrationWorkflow
                     {
                         Version = nextVersion,
                         Phase = 1,
@@ -438,8 +445,12 @@ public class LiteraryOpenApiController : ControllerBase
             contentChars = merged.Length,
             mode = append ? "append" : "replace",
             workflowVersion = written?.ArticleWorkflow?.Version ?? 0,
-            illustrations = written?.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status })
+            illustrations = written?.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status, url = m.Url })
                 ?? Enumerable.Empty<object>(),
+            // 描述没变、沿用原图的标记；其余（needsGeneration）才需要调用生图
+            reusedImages = carriedOver,
+            needsGeneration = written?.ArticleWorkflow?.Markers.Where(m => !carriedOver.Contains(m.Index)).Select(m => m.Index)
+                ?? Enumerable.Empty<int>(),
             updatedAt = written == null ? null : McpRevision.Token(written.UpdatedAt),
         }));
     }

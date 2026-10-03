@@ -269,6 +269,65 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    public class IllustrationPrefsRequest
+    {
+        /// <summary>风格（参考图配置）ID 或名称；none = 不用参考图；null = 不改这一项。</summary>
+        public string? Style { get; set; }
+        /// <summary>水印配置 ID 或名称；none = 不打水印；null = 不改这一项。</summary>
+        public string? Watermark { get; set; }
+        /// <summary>true = 清除这篇文章的设定，之后跟随账号默认。</summary>
+        public bool Clear { get; set; }
+    }
+
+    /// <summary>
+    /// 设置 / 清除这篇文章记住的配图风格与水印。网页编辑页顶栏改选时调它：
+    /// 有设定的文章改的是这篇文章，不再去动账号级的「当前启用」，智能体与网页读写同一份。
+    /// </summary>
+    [HttpPut("{id}/illustration-prefs")]
+    public async Task<IActionResult> SetIllustrationPrefs(string id, [FromBody] IllustrationPrefsRequest? request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+        if (ws.ScenarioType != "article-illustration")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只有文学创作的文章能设置配图风格与水印"));
+
+        LiteraryIllustrationPrefs? prefs = null;
+        if (request?.Clear != true)
+        {
+            prefs = ws.IllustrationPrefs ?? new LiteraryIllustrationPrefs();
+            if (!string.IsNullOrWhiteSpace(request?.Style))
+            {
+                var (style, error) = await LiteraryIllustrationChoices.ResolveStyleAsync(_db, adminId, request.Style, ct);
+                if (error != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", error));
+                prefs.StyleId = style!.StyleId;
+            }
+            if (!string.IsNullOrWhiteSpace(request?.Watermark))
+            {
+                var (watermark, error) = await LiteraryIllustrationChoices.ResolveWatermarkAsync(_db, adminId, request.Watermark, ct);
+                if (error != null) return BadRequest(ApiResponse<object>.Fail("WATERMARK_NOT_FOUND", error));
+                prefs.WatermarkId = watermark!.WatermarkId;
+            }
+            prefs.UpdatedAt = DateTime.UtcNow;
+        }
+
+        // 不动 UpdatedAt：它是正文的版本令牌，改配图设定不该让智能体手里的令牌失效
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id,
+            Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs, prefs), cancellationToken: CancellationToken.None);
+        var effective = await LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, prefs, ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            illustrationPrefs = prefs,
+            effective = new
+            {
+                style = new { styleId = effective.style.StyleId, name = effective.style.Label, source = effective.styleSource },
+                watermark = new { watermarkId = effective.watermark.WatermarkId, name = effective.watermark.Label, source = effective.watermarkSource },
+                notes = effective.notes,
+            },
+        }));
+    }
+
     /// <summary>
     /// 这篇文章生成过的全部配图，按配图方案版本分组（当前版本在前）。
     ///
@@ -403,13 +462,27 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // 兜底：旧数据中 markers 存在但 assetIdByMarkerIndex 为空，通过 prompt 文本匹配修复关联
         await TryBackfillMarkerAssetsAsync(ws, assets, ct);
 
+        // 这篇文章自己的配图设定（智能体或网页为它指定过时才有）：页面顶栏据此显示「本文」的风格与水印
+        object? illustrationChoice = null;
+        if (ws.IllustrationPrefs != null)
+        {
+            var effective = await LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, ws.IllustrationPrefs, ct);
+            illustrationChoice = new
+            {
+                style = new { styleId = effective.style.StyleId, name = effective.style.Label, source = effective.styleSource },
+                watermark = new { watermarkId = effective.watermark.WatermarkId, name = effective.watermark.Label, source = effective.watermarkSource },
+                notes = effective.notes,
+            };
+        }
+
         return Ok(ApiResponse<object>.Ok(new
         {
             workspace = ws,
             messages = messages.OrderBy(x => x.CreatedAt).ToList(),
             assets,
             canvas,
-            viewport
+            viewport,
+            illustrationChoice,
         }));
     }
 

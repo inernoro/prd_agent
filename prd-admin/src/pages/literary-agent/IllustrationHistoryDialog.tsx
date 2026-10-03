@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Download, History, RefreshCw } from 'lucide-react';
+import { Download, History, ImageOff, RefreshCw } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -133,12 +133,7 @@ export function IllustrationHistoryDialog({
                         style={{ aspectRatio: '3 / 4', background: 'var(--bg-sunken)' }}
                         title="点击放大"
                       >
-                        <img
-                          src={item.url}
-                          alt={captionOf(item)}
-                          loading="lazy"
-                          className="absolute inset-0 w-full h-full object-cover"
-                        />
+                        <HistoryThumb url={item.url} label={item.markerIndex != null ? `配图 ${item.markerIndex + 1}` : '配图'} />
                         {item.isCurrent && (
                           <span
                             className="absolute left-2 top-2 px-1.5 py-0.5 rounded text-[11px] font-medium"
@@ -193,5 +188,32 @@ export function IllustrationHistoryDialog({
         />
       )}
     </>
+  );
+}
+
+/**
+ * 缩略图。加载失败时给一块干净的占位，而不是让浏览器把替代文字（可能是一长段提示词）铺满卡片。
+ */
+function HistoryThumb({ url, label }: { url: string; label: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <span
+        className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-xs"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        <ImageOff size={20} />
+        图片暂时加载不出来
+      </span>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={label}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="absolute inset-0 w-full h-full object-cover"
+    />
   );
 }

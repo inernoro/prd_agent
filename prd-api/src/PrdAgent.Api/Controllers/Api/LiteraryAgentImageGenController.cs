@@ -275,9 +275,48 @@ public class LiteraryAgentImageGenController : ControllerBase
         var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
 
+        // 这篇文章记住了风格 / 水印（智能体或网页上为这篇指定过）：网页生图同样按它来。
+        // 以前这里只认账号当前启用的那套，同一篇文章在网页上重画一张，水印就换成了账号默认，
+        // 一篇文章里出现两种水印。判据与开放接口共用 LiteraryIllustrationChoices，一处说了算。
+        var articlePrefsApplied = false;
+        string? articleReferencePrompt = null;
+        string? articleWatermarkId = null;
+        if (initImageAssetSha256 == null && workspaceId != null)
+        {
+            var prefsWs = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == workspaceId && x.ScenarioType == "article-illustration")
+                .FirstOrDefaultAsync(ct);
+            var canUse = prefsWs != null && (prefsWs.OwnerUserId == adminId || (prefsWs.MemberUserIds?.Contains(adminId) ?? false));
+            if (canUse && prefsWs!.IllustrationPrefs != null)
+            {
+                var chosen = await PrdAgent.Api.Services.LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, prefsWs.IllustrationPrefs, ct);
+                articlePrefsApplied = true;
+                initImageAssetSha256 = chosen.style.Sha;
+                articleReferencePrompt = chosen.style.PromptPrefix;
+                articleWatermarkId = chosen.watermark.WatermarkId;
+                foreach (var note in chosen.notes)
+                    _logger.LogWarning("LiteraryAgent 网页生图沿用文章设定时降级：{Note} workspace={WorkspaceId}", note, workspaceId);
+
+                // 页面按「账号当前启用的风格」挑的模型池（文生图 / 图生图）。文章自己的风格让场景翻转时，
+                // 页面钉住的模型属于另一个池，不能带过去——交给 Worker 按正确场景从模型池解析。
+                var accountActive = await _db.ReferenceImageConfigs
+                    .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
+                    .FirstOrDefaultAsync(ct);
+                var accountIsImg2Img = accountActive != null && !string.IsNullOrWhiteSpace(accountActive.ImageSha256);
+                if ((initImageAssetSha256 != null) != accountIsImg2Img && (platformId != null || modelId != null || cfgModelId != null))
+                {
+                    _logger.LogInformation("LiteraryAgent 文章设定改变了生图场景，放弃页面钉住的模型 {PlatformId}/{ModelId}，改由模型池解析。workspace={WorkspaceId}",
+                        platformId, modelId, workspaceId);
+                    platformId = null;
+                    modelId = null;
+                    cfgModelId = null;
+                }
+            }
+        }
+
         // 检查是否有激活的参考图配置（必须按用户隔离）
         bool hasActiveReferenceImage = false;
-        if (initImageAssetSha256 == null)
+        if (initImageAssetSha256 == null && !articlePrefsApplied)
         {
             var activeRefConfig = await _db.ReferenceImageConfigs
                 .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
@@ -311,10 +350,10 @@ public class LiteraryAgentImageGenController : ControllerBase
         }
 
         // 参考图风格提示词（用于追加到生图 prompt）
-        string? referenceImagePrompt = null;
+        string? referenceImagePrompt = articleReferencePrompt;
 
-        // 若未指定参考图，自动从当前用户的配置中获取底图
-        if (initImageAssetSha256 == null)
+        // 若未指定参考图（且这篇文章没有自己的设定），自动从当前用户的配置中获取底图
+        if (initImageAssetSha256 == null && !articlePrefsApplied)
         {
             // 优先从新的 ReferenceImageConfigs 获取当前用户激活的配置
             var activeRefConfig = await _db.ReferenceImageConfigs
@@ -371,6 +410,7 @@ public class LiteraryAgentImageGenController : ControllerBase
             AppKey = AppKey, // 硬编码 literary-agent
             ArticleMarkerIndex = articleMarkerIndex,
             ArticleWorkflowVersion = articleWorkflowVersion,
+            WatermarkConfigId = articleWatermarkId,
             InitImageAssetSha256 = initImageAssetSha256,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow

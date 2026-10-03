@@ -565,6 +565,7 @@ export const api = {
       detail: (id: string) => `/api/literary-agent/workspaces/${id}/detail`,
       assets: (id: string) => `/api/literary-agent/workspaces/${id}/assets`,
       illustrationHistory: (id: string) => `/api/literary-agent/workspaces/${id}/illustration-history`,
+      illustrationPrefs: (id: string) => `/api/literary-agent/workspaces/${id}/illustration-prefs`,
     },
     config: {
       get: () => '/api/literary-agent/config',

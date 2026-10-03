@@ -6,11 +6,14 @@ using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using StyleChoice = PrdAgent.Api.Services.LiteraryIllustrationChoices.StyleChoice;
+using WatermarkChoice = PrdAgent.Api.Services.LiteraryIllustrationChoices.WatermarkChoice;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -42,18 +45,6 @@ public class LiteraryImageOpenApiController(
         public string? Size { get; set; }
     }
 
-    private const string AppKey = "literary-agent";
-    private const string DefaultSize = "1024x1024";
-    private const string LegacyStyleId = "legacy-default";
-
-    /// <summary>比例 → 1K 档尺寸。与前端 imageAspectOptions 的 size1k 列同源（文学页的尺寸选项就是这张表）。</summary>
-    internal static readonly IReadOnlyDictionary<string, string> AspectSizes = new Dictionary<string, string>
-    {
-        ["1:1"] = "1024x1024", ["4:3"] = "1200x896", ["3:4"] = "896x1200", ["4:5"] = "928x1152",
-        ["5:4"] = "1152x928", ["16:9"] = "1376x768", ["9:16"] = "768x1376", ["2:3"] = "848x1264",
-        ["3:2"] = "1264x848", ["21:9"] = "1584x672",
-    };
-
     /// <summary>这次请求要占几格生图额度：批量按去重后的标记数，单张为 1。网关与直连两条闸门共用这一处。</summary>
     public static int RequestedImageCount(int? markerIndex, IEnumerable<int>? markerIndexes)
     {
@@ -62,99 +53,20 @@ public class LiteraryImageOpenApiController(
         return 1;
     }
 
-    internal sealed record StyleChoice(string? StyleId, string Label, string? Sha, string? PromptPrefix);
-    internal sealed record WatermarkChoice(string WatermarkId, string Label);
+    private const string AppKey = LiteraryIllustrationChoices.AppKey;
+    private const string LegacyStyleId = LiteraryIllustrationChoices.LegacyStyleId;
+    private const string DefaultSize = LiteraryIllustrationChoices.DefaultSize;
+    internal static IReadOnlyDictionary<string, string> AspectSizes => LiteraryIllustrationChoices.AspectSizes;
 
-    private static bool IsNone(string value)
-        => value.Equals("none", StringComparison.OrdinalIgnoreCase) || value is "无" or "不使用" or "不要";
+    internal Task<(StyleChoice? choice, string? error)> ResolveStyleAsync(string userId, string? style, CancellationToken ct)
+        => LiteraryIllustrationChoices.ResolveStyleAsync(db, userId, style, ct);
 
-    /// <summary>
-    /// 风格（参考图配置）按 ID 或名称选。不传时与网页完全同一个判据：当前启用且有参考图的那套 →
-    /// 历史的全局参考图 → 无。选中的结果会回给调用方，不再让它猜「平台到底套了哪一套」。
-    /// </summary>
-    internal async Task<(StyleChoice? choice, string? error)> ResolveStyleAsync(string userId, string? style, CancellationToken ct)
-    {
-        var wanted = style?.Trim();
-        var configs = await db.ReferenceImageConfigs.Find(x => x.AppKey == AppKey && x.CreatedByAdminId == userId).ToListAsync(ct);
-        if (string.IsNullOrEmpty(wanted))
-        {
-            var active = configs.FirstOrDefault(x => x.IsActive && !string.IsNullOrWhiteSpace(x.ImageSha256));
-            if (active != null)
-                return (new StyleChoice(active.Id, active.Name, active.ImageSha256!.Trim().ToLowerInvariant(),
-                    string.IsNullOrWhiteSpace(active.Prompt) ? null : active.Prompt), null);
-            var legacy = await LegacyStyleAsync(ct);
-            return (legacy ?? new StyleChoice("none", "不使用参考图", null, null), null);
-        }
-        if (IsNone(wanted)) return (new StyleChoice("none", "不使用参考图", null, null), null);
-        if (wanted == LegacyStyleId)
-        {
-            var legacy = await LegacyStyleAsync(ct);
-            return legacy == null ? (null, "系统默认参考图不存在，请用 map_literary_list_presets 查看可用风格。") : (legacy, null);
-        }
-        var hits = configs.Where(x => x.Id == wanted).ToList();
-        if (hits.Count == 0)
-            hits = configs.Where(x => string.Equals(x.Name?.Trim(), wanted, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (hits.Count == 0)
-        {
-            var names = configs.Select(x => $"「{x.Name}」").ToList();
-            return (null, names.Count == 0
-                ? $"没有叫「{wanted}」的风格：这个账号在文学创作里还没有任何参考图配置，请先在页面「风格/参考图」里建一套，或传 none。"
-                : $"没有叫「{wanted}」的风格。可用的有：{string.Join("、", names)}（也可传 none）。");
-        }
-        if (hits.Count > 1)
-            return (null, $"有 {hits.Count} 套风格都叫「{wanted}」，请改传 ID：{string.Join("、", hits.Select(x => x.Id))}。");
-        var hit = hits[0];
-        var sha = string.IsNullOrWhiteSpace(hit.ImageSha256) ? null : hit.ImageSha256.Trim().ToLowerInvariant();
-        return (new StyleChoice(hit.Id, hit.Name, sha, string.IsNullOrWhiteSpace(hit.Prompt) ? null : hit.Prompt), null);
-    }
+    private Task<StyleChoice?> LegacyStyleAsync(CancellationToken ct) => LiteraryIllustrationChoices.LegacyStyleAsync(db, ct);
 
-    private async Task<StyleChoice?> LegacyStyleAsync(CancellationToken ct)
-    {
-        var legacy = await db.LiteraryAgentConfigs.Find(x => x.Id == AppKey).FirstOrDefaultAsync(ct);
-        return string.IsNullOrWhiteSpace(legacy?.ReferenceImageSha256) ? null
-            : new StyleChoice(LegacyStyleId, "系统默认参考图", legacy.ReferenceImageSha256.Trim().ToLowerInvariant(), null);
-    }
+    internal Task<(WatermarkChoice? choice, string? error)> ResolveWatermarkAsync(string userId, string? watermark, CancellationToken ct)
+        => LiteraryIllustrationChoices.ResolveWatermarkAsync(db, userId, watermark, ct);
 
-    /// <summary>
-    /// 水印按 ID 或名称选。不传时在**入队这一刻**就把「账号给文学创作绑定的那套」钉进任务，
-    /// 执行时不再重新猜——入队后改了绑定，也不会让已经排上的任务换一套水印。
-    /// </summary>
-    internal async Task<(WatermarkChoice? choice, string? error)> ResolveWatermarkAsync(string userId, string? watermark, CancellationToken ct)
-    {
-        var wanted = watermark?.Trim();
-        var configs = await db.WatermarkConfigs.Find(x => x.UserId == userId).ToListAsync(ct);
-        if (string.IsNullOrEmpty(wanted))
-        {
-            var bound = configs.FirstOrDefault(x => x.AppKeys != null && x.AppKeys.Contains(AppKey));
-            return (bound == null ? new WatermarkChoice(WatermarkSelection.None, "不打水印（账号未给文学创作绑定水印）")
-                : new WatermarkChoice(bound.Id, bound.Name), null);
-        }
-        if (IsNone(wanted)) return (new WatermarkChoice(WatermarkSelection.None, "不打水印"), null);
-        var hits = configs.Where(x => x.Id == wanted).ToList();
-        if (hits.Count == 0)
-            hits = configs.Where(x => string.Equals(x.Name?.Trim(), wanted, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (hits.Count == 0)
-        {
-            var names = configs.Select(x => $"「{x.Name}」").ToList();
-            return (null, names.Count == 0
-                ? $"没有叫「{wanted}」的水印：这个账号还没有任何水印配置，请先在页面「水印」里建一套，或传 none。"
-                : $"没有叫「{wanted}」的水印。可用的有：{string.Join("、", names)}（也可传 none）。");
-        }
-        if (hits.Count > 1)
-            return (null, $"有 {hits.Count} 套水印都叫「{wanted}」，请改传 ID：{string.Join("、", hits.Select(x => x.Id))}。");
-        return (new WatermarkChoice(hits[0].Id, hits[0].Name), null);
-    }
-
-    internal static (string? size, string? error) ResolveSize(string? size)
-    {
-        var wanted = size?.Trim();
-        if (string.IsNullOrEmpty(wanted)) return (DefaultSize, null);
-        if (AspectSizes.TryGetValue(wanted.Replace('：', ':'), out var mapped)) return (mapped, null);
-        var m = System.Text.RegularExpressions.Regex.Match(wanted.ToLowerInvariant().Replace('×', 'x').Replace('*', 'x'), @"^(\d{3,4})x(\d{3,4})$");
-        if (m.Success && int.Parse(m.Groups[1].Value) is >= 256 and <= 4096 && int.Parse(m.Groups[2].Value) is >= 256 and <= 4096)
-            return ($"{m.Groups[1].Value}x{m.Groups[2].Value}", null);
-        return (null, $"尺寸「{wanted}」认不出来。传比例（{string.Join(" / ", AspectSizes.Keys)}）或 宽x高（256-4096）。");
-    }
+    internal static (string? size, string? error) ResolveSize(string? size) => LiteraryIllustrationChoices.ResolveSize(size);
 
     /// <summary>这个账号在文学创作里能选的风格、水印、尺寸，以及不传时会用哪一套。</summary>
     [HttpGet("presets")]

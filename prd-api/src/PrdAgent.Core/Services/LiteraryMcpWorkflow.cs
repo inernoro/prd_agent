@@ -162,6 +162,51 @@ public static class LiteraryMcpWorkflow
         return result;
     }
 
+    /// <summary>
+    /// 改稿时把「画面描述没变」的标记原样接上它现在那张图，只让新增 / 改过描述的标记等待生成。
+    ///
+    /// 以前改一节正文，整篇配图方案作废、6 张图全部要重画：用户满意的图、刚修好的那张一起被换掉，
+    /// 既费钱又出乎意料。判据只认描述文本（去首尾空白、压缩连续空白后逐字相等），
+    /// 同一段描述出现多次时按出现顺序一一对应，一张旧图只接一次。
+    /// 返回接上的标记序号；<paramref name="next"/> 被就地改写。
+    /// </summary>
+    public static List<int> CarryOverUnchanged(ArticleIllustrationWorkflow next, ImageMasterWorkspace previous,
+        IEnumerable<ImageAsset> assets, DateTime now)
+    {
+        var carried = new List<int>();
+        var oldMarkers = previous.ArticleWorkflow?.Markers;
+        if (oldMarkers == null || oldMarkers.Count == 0) return carried;
+        var current = SelectCurrent(previous, assets);
+        var pool = oldMarkers
+            .Where(m => current.ContainsKey(m.Index))
+            .Select(m => (keys: new[] { Normalize(m.Text), Normalize(m.DraftText) }.Where(k => k.Length > 0).ToHashSet(),
+                          asset: current[m.Index]))
+            .ToList();
+        next.AssetIdByMarkerIndex ??= new Dictionary<string, string>();
+        next.AssetRunAtByMarkerIndex ??= new Dictionary<string, DateTime>();
+        foreach (var marker in next.Markers.OrderBy(m => m.Index))
+        {
+            var key = Normalize(marker.Text);
+            var hit = pool.FindIndex(p => p.keys.Contains(key));
+            if (hit < 0) continue;
+            var asset = pool[hit].asset;
+            pool.RemoveAt(hit);
+            var k = marker.Index.ToString();
+            next.AssetIdByMarkerIndex[k] = asset.Id;
+            next.AssetRunAtByMarkerIndex[k] = now;
+            marker.AssetId = asset.Id;
+            marker.Url = asset.Url;
+            marker.Status = "done";
+            marker.ErrorMessage = null;
+            carried.Add(marker.Index);
+        }
+        next.DoneImageCount = next.AssetIdByMarkerIndex.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+        return carried;
+    }
+
+    private static string Normalize(string? text)
+        => string.Join(' ', (text ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     /// <summary>按标记索引替换而非按成功张数顺移：第二张先完成也不能占第一张的位置。</summary>
     public static string Render(string markedContent, IReadOnlyDictionary<int, string> urls, bool allowRelative = false)
     {

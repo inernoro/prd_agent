@@ -507,9 +507,25 @@ export async function getLiteraryAgentWorkspaceDetailReal(input: { id: string; m
     assets: any[];
     canvas: any;
     viewport?: any;
+    illustrationChoice?: LiteraryIllustrationChoice | null;
   }>(
     `${api.literaryAgent.workspaces.detail(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
+  );
+}
+
+/** 一篇文章自己的配图风格与水印（智能体或网页为它指定过时才有）。source：remembered = 这篇记住的；account-default = 账号默认。 */
+export type LiteraryIllustrationChoice = {
+  style: { styleId?: string | null; name: string; source: 'remembered' | 'account-default' | string };
+  watermark: { watermarkId: string; name: string; source: 'remembered' | 'account-default' | string };
+  notes: string[];
+};
+
+/** 设置 / 清除这篇文章的配图风格与水印。style / watermark 传配置 ID 或 none；clear = 回到跟随账号默认。 */
+export async function setLiteraryIllustrationPrefsReal(input: { id: string; style?: string; watermark?: string; clear?: boolean }) {
+  return await apiRequest<{ illustrationPrefs: unknown; effective: LiteraryIllustrationChoice }>(
+    api.literaryAgent.workspaces.illustrationPrefs(encodeURIComponent(input.id)),
+    { method: 'PUT', body: { style: input.style, watermark: input.watermark, clear: input.clear ?? false } }
   );
 }
 

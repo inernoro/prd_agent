@@ -13,6 +13,8 @@ using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Mcp;
@@ -338,6 +340,105 @@ public class LiteraryMcpUsabilityTests
             // 正文没变只改标题：不升版
             Assert.IsType<OkObjectResult>(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "全新上传的正文。", Title = "再改标题" }, CancellationToken.None));
             Assert.Equal(2, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
+    public async Task 改一节正文只重画改动的那一节_其余沿用原图()
+    {
+        // 验收里撞出来的：只压缩第二节，整篇 6 张图全部作废重画，用户满意的图一起被换掉
+        var (db, name, connection) = NewDb("literary_carry_over");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "沿用", MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n三。\n[插图]: 茶杯\n", ClientRequestId = "co-1",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            ws.ArticleWorkflow!.AssetIdByMarkerIndex = new() { ["0"] = "a0", ["1"] = "a1", ["2"] = "a2" };
+            await db.ImageMasterWorkspaces.ReplaceOneAsync(x => x.Id == id, ws);
+            await db.ImageAssets.InsertManyAsync(new[] { 0, 1, 2 }.Select(i => new ImageAsset
+            {
+                Id = $"a{i}", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = i, ArticleWorkflowVersion = 1,
+                Url = $"https://example.test/a{i}.png",
+            }));
+
+            var written = Data(await drafts.WriteContent(id, new()
+            {
+                MarkedContent = "一。\n[插图]：书店门口\n二改短了。\n[插图]: 窗边打盹的橘猫\n三。\n[插图]:  茶杯 \n",
+            }, CancellationToken.None));
+            Assert.Equal(new[] { 0, 2 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
+            Assert.Equal(new[] { 1 }, written.GetProperty("needsGeneration").EnumerateArray().Select(x => x.GetInt32()));
+
+            var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None, "illustrated"));
+            var ill = read.GetProperty("illustrations").EnumerateArray().ToList();
+            Assert.Equal("https://example.test/a0.png", ill[0].GetProperty("url").GetString());
+            Assert.Equal(JsonValueKind.Null, ill[1].GetProperty("url").ValueKind);
+            Assert.Equal("https://example.test/a2.png", ill[2].GetProperty("url").GetString());
+            Assert.Equal(1, read.GetProperty("historyImageCount").GetInt32());
+            Assert.Contains("a0.png", read.GetProperty("content").GetString());
+            Assert.Contains("a2.png", read.GetProperty("content").GetString());
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
+    public async Task 网页上重画也按这篇文章的风格水印来_顶栏改的是这篇文章()
+    {
+        // 验收里撞出来的：智能体按「水印配置1」配好图，客户在网页上重画一张，水印变成了账号默认
+        var (db, name, connection) = NewDb("literary_web_prefs");
+        try
+        {
+            await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig { Id = "pink", AppKey = "literary-agent", CreatedByAdminId = "writer", Name = "全域粉销风格", ImageSha256 = "PINK", Prompt = "粉色系" });
+            await db.WatermarkConfigs.InsertManyAsync(new[]
+            {
+                new WatermarkConfig { Id = "wm-default", UserId = "writer", Name = "黑白", AppKeys = new() { "literary-agent" } },
+                new WatermarkConfig { Id = "wm-1", UserId = "writer", Name = "水印配置1", AppKeys = new() },
+            });
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var images = WithUser(new LiteraryImageOpenApiController(db, new FixedModelSelection()), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "正文。\n[插图]: 书店\n", ClientRequestId = "web-1",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            Data(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "g", Style = "全域粉销风格", Watermark = "水印配置1" }, CancellationToken.None));
+
+            // 网页详情告诉页面：这篇文章有自己的风格与水印
+            var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            var detail = Data(await ui.GetWorkspaceDetail(id));
+            Assert.Equal("wm-1", detail.GetProperty("illustrationChoice").GetProperty("watermark").GetProperty("watermarkId").GetString());
+
+            // 网页上重画（页面还钉着按账号默认挑的文生图模型）
+            var web = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!, new LLMRequestContextAccessor(),
+                NullLogger<LiteraryAgentImageGenController>.Instance), "writer");
+            var created = Data(await web.CreateRun(new CreateImageGenRunRequest
+            {
+                WorkspaceId = id, ArticleMarkerIndex = 0, PlatformId = "p-text2img", ModelId = "m-text2img",
+                Items = new() { new() { Prompt = "书店", Count = 1 } },
+            }, CancellationToken.None));
+            var run = await db.ImageGenRuns.Find(x => x.Id == created.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Equal("wm-1", run.WatermarkConfigId);
+            Assert.Equal("pink", run.InitImageAssetSha256);
+            Assert.StartsWith("粉色系", run.Items[0].Prompt);
+            Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, run.AppCallerCode);
+            Assert.Null(run.ModelId); // 场景翻转后不带过去另一个池的模型
+
+            // 网页顶栏改水印：写进这篇文章，不动账号绑定
+            Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Watermark = "none" }, CancellationToken.None));
+            Assert.Equal(WatermarkSelection.None, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!.WatermarkId);
+            Assert.Contains("literary-agent", (await db.WatermarkConfigs.Find(x => x.Id == "wm-default").SingleAsync()).AppKeys);
+            // 清除后回到账号默认
+            Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Clear = true }, CancellationToken.None));
+            Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs);
+            var plain = Data(await web.CreateRun(new CreateImageGenRunRequest
+            {
+                WorkspaceId = id, ArticleMarkerIndex = 0, Items = new() { new() { Prompt = "书店", Count = 1 } },
+            }, CancellationToken.None));
+            var plainRun = await db.ImageGenRuns.Find(x => x.Id == plain.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Null(plainRun.WatermarkConfigId);
+            Assert.Null(plainRun.InitImageAssetSha256);
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
