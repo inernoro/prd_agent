@@ -833,6 +833,19 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, run.AppCallerCode);
             Assert.Null(run.ModelId); // 场景翻转后不带过去另一个池的模型
 
+            // 只有文字提示词、没有参考图的风格：网页重画同样要带上它（智能体那条路一直带）
+            await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig { Id = "ink", AppKey = "literary-agent", CreatedByAdminId = "writer", Name = "水墨", Prompt = "水墨淡彩" });
+            Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Style = "水墨" }, CancellationToken.None));
+            var inkCreated = Data(await web.CreateRun(new CreateImageGenRunRequest
+            {
+                WorkspaceId = id, ArticleMarkerIndex = 0, Items = new() { new() { Prompt = "书店", Count = 1 } },
+            }, CancellationToken.None));
+            var inkRun = await db.ImageGenRuns.Find(x => x.Id == inkCreated.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Null(inkRun.InitImageAssetSha256);
+            Assert.StartsWith("水墨淡彩", inkRun.Items[0].Prompt);
+            Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, inkRun.AppCallerCode);
+            Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Style = "全域粉销风格" }, CancellationToken.None));
+
             // 网页顶栏改水印：写进这篇文章，不动账号绑定
             Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Watermark = "none" }, CancellationToken.None));
             Assert.Equal(WatermarkSelection.None, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!.WatermarkId);

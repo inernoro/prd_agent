@@ -2945,6 +2945,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <button
                 type="button"
                 onClick={() => setHistoryOpen(true)}
+                data-tour-id="literary-editor-history"
                 className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
                 style={{ color: 'var(--text-secondary)' }}
                 title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"

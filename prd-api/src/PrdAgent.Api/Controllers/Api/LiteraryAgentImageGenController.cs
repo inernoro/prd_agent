@@ -380,7 +380,8 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
         // DisplayPrompt 在追加前保存原始用户 prompt，避免系统提示词泄漏到消息记录
-        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
+        // 文章自己的风格可以只有文字提示词、没有参考图（与智能体那条路同一口径：有前缀就拼），不能因为没图就丢掉
+        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && (initImageAssetSha256 != null || articlePrefsApplied))
         {
             for (var i = 0; i < plan.Count; i++)
             {
