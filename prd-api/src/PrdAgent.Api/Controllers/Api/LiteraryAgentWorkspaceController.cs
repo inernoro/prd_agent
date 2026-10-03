@@ -330,13 +330,27 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             illustrationPrefs = prefs,
-            effective = new
-            {
-                style = new { styleId = effective.style.StyleId, name = effective.style.Label, source = effective.styleSource },
-                watermark = new { watermarkId = effective.watermark.WatermarkId, name = effective.watermark.Label, source = effective.watermarkSource },
-                notes = effective.notes,
-            },
+            effective = ArticleChoiceView(prefs, effective),
         }));
+    }
+
+    /// <summary>
+    /// 页面顶栏读的「本文风格 / 水印」。missing = 这篇记住过、但那套已被删除，本次按账号默认出图：
+    /// 页面据此提示用户，而不是照旧写「本文自己的设定」让人带着回退的那套去花额度。
+    /// 判据是状态（记住过 + 结果来源是账号默认），不去匹配 notes 里的文案。
+    /// </summary>
+    private static object ArticleChoiceView(
+        LiteraryIllustrationPrefs? prefs,
+        (LiteraryIllustrationChoices.StyleChoice style, string styleSource, LiteraryIllustrationChoices.WatermarkChoice watermark, string watermarkSource, List<string> notes) effective)
+    {
+        var styleMissing = !string.IsNullOrWhiteSpace(prefs?.StyleId) && effective.styleSource == "account-default";
+        var watermarkMissing = !string.IsNullOrWhiteSpace(prefs?.WatermarkId) && effective.watermarkSource == "account-default";
+        return new
+        {
+            style = new { styleId = effective.style.StyleId, name = effective.style.Label, source = effective.styleSource, missing = styleMissing },
+            watermark = new { watermarkId = effective.watermark.WatermarkId, name = effective.watermark.Label, source = effective.watermarkSource, missing = watermarkMissing },
+            notes = effective.notes,
+        };
     }
 
     /// <summary>
@@ -485,12 +499,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (ws.IllustrationPrefs != null && ws.OwnerUserId == adminId)
         {
             var effective = await LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, ws.IllustrationPrefs, ct);
-            illustrationChoice = new
-            {
-                style = new { styleId = effective.style.StyleId, name = effective.style.Label, source = effective.styleSource },
-                watermark = new { watermarkId = effective.watermark.WatermarkId, name = effective.watermark.Label, source = effective.watermarkSource },
-                notes = effective.notes,
-            };
+            illustrationChoice = ArticleChoiceView(ws.IllustrationPrefs, effective);
         }
 
         return Ok(ApiResponse<object>.Ok(new

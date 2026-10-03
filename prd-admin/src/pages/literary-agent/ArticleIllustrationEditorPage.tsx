@@ -63,7 +63,7 @@ import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryMode
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
@@ -800,6 +800,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [workspaceId]);
   // ---- 生成设置的就地菜单：风格图 / 水印直接切换，不必打开完整配置页 ----
   const activeRefConfig = referenceImageConfigs.find((c) => c.isActive) ?? null;
+  // 顶栏「本文风格 / 水印」有三种状态，文案要分开说：这篇记住的 / 这篇没单独指定、跟随账号默认 /
+  // 记住的那套已被删除、正按账号默认出图。最后一种以前也写成「本文自己的设定」，用户带着回退的那套去花额度却不知道。
+  type ArticlePref = { name: string; source: string; missing?: boolean };
+  const articlePrefNote = (kind: string, item: ArticlePref | undefined): React.ReactNode => {
+    if (!item) return undefined;
+    if (item.missing) {
+      return (
+        <span style={{ color: 'var(--accent-fg-amber)' }}>
+          {`这篇文章原先记住的${kind}已被删除，现在按账号默认「${item.name}」出图。重新选一套即可记到本文。`}
+        </span>
+      );
+    }
+    if (item.source !== 'remembered') return `这篇文章没单独指定${kind}，跟随账号默认；在这里选一套会记到本文，智能体和网页重画都按它来`;
+    return `这里选的是这篇文章自己的${kind}，智能体和网页重画都按它来`;
+  };
+  const articlePrefTitle = (kind: string, item: ArticlePref) =>
+    item.missing ? `本文的${kind}：原先记住的已被删除，正按账号默认「${item.name}」出图`
+      : item.source !== 'remembered' ? `本文的${kind}：跟随账号默认「${item.name}」`
+        : `本文的${kind}：${item.name}（这篇文章自己的设定，智能体与网页生图都按它来）`;
   // 改这篇文章自己的设定（智能体与网页读写同一份）。clear = 回到跟随账号默认
   const applyArticleChoice = async (input: { style?: string; watermark?: string; clear?: boolean }) => {
     const res = await setLiteraryIllustrationPrefsReal({ id: workspaceId, ...input });
@@ -3583,18 +3602,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="风格参考图"
                 width={260}
-                note={articleChoice ? '这里选的是这篇文章自己的风格，智能体和网页重画都按它来' : undefined}
+                note={articlePrefNote('风格', articleChoice?.style)}
                 // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
                 onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
                 trigger={
                   <PopupButton
-                    icon={<ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
+                    icon={articleChoice?.style.missing
+                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                      : <ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
+                    warning={!!articleChoice?.style.missing}
                     value={articleChoice
                       ? (articleChoice.style.styleId === 'none' ? '无' : articleChoice.style.name)
                       : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
                     isSet={articleChoice ? articleChoice.style.styleId !== 'none' : !!activeRefConfig}
                     title={articleChoice
-                      ? `本文的风格：${articleChoice.style.name}（这篇文章自己的设定，智能体与网页生图都按它来）`
+                      ? articlePrefTitle('风格', articleChoice.style)
                       : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
                     aria-label="风格参考图"
                   />
@@ -3645,17 +3667,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="水印"
                 width={240}
-                note={articleChoice ? '这里选的是这篇文章自己的水印，智能体和网页重画都按它来' : undefined}
+                note={articlePrefNote('水印', articleChoice?.watermark)}
                 onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
                 trigger={
                   <PopupButton
-                    icon={<Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
+                    icon={articleChoice?.watermark.missing
+                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                      : <Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
+                    warning={!!articleChoice?.watermark.missing}
                     value={articleChoice
                       ? (articleChoice.watermark.watermarkId === 'none' ? '关' : articleChoice.watermark.name)
                       : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
                     isSet={articleChoice ? articleChoice.watermark.watermarkId !== 'none' : watermarkStatus.enabled}
                     title={articleChoice
-                      ? `本文的水印：${articleChoice.watermark.name}（这篇文章自己的设定，智能体与网页生图都按它来）`
+                      ? articlePrefTitle('水印', articleChoice.watermark)
                       : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
                     aria-label="水印"
                   />

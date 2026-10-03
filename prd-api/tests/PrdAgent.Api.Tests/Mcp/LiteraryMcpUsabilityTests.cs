@@ -743,6 +743,17 @@ public class LiteraryMcpUsabilityTests
             Assert.Null(helperRun.WatermarkConfigId);
             Assert.Null(helperRun.InitImageAssetSha256);
 
+            // 记住的风格被删了：页面拿到结构化的失效标记，按账号默认出图但要提示，不能再说成「本文自己的设定」
+            Assert.False(Data(await ui.GetWorkspaceDetail(id)).GetProperty("illustrationChoice").GetProperty("style").GetProperty("missing").GetBoolean());
+            await db.ReferenceImageConfigs.DeleteOneAsync(x => x.Id == "pink");
+            var afterDelete = Data(await ui.GetWorkspaceDetail(id)).GetProperty("illustrationChoice");
+            Assert.True(afterDelete.GetProperty("style").GetProperty("missing").GetBoolean());
+            Assert.Equal("account-default", afterDelete.GetProperty("style").GetProperty("source").GetString());
+            Assert.False(afterDelete.GetProperty("watermark").GetProperty("missing").GetBoolean()); // 水印仍是本文记住的「不打」
+            // 只指定过水印、风格本来就跟随账号默认：不算失效
+            var onlyWm = Data(await ui.SetIllustrationPrefs(id, new() { Style = "none" }, CancellationToken.None)).GetProperty("effective");
+            Assert.False(onlyWm.GetProperty("style").GetProperty("missing").GetBoolean());
+
             // 清除后回到账号默认
             Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Clear = true }, CancellationToken.None));
             Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs);

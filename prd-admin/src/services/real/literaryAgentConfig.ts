@@ -514,10 +514,13 @@ export async function getLiteraryAgentWorkspaceDetailReal(input: { id: string; m
   );
 }
 
-/** 一篇文章自己的配图风格与水印（智能体或网页为它指定过时才有）。source：remembered = 这篇记住的；account-default = 账号默认。 */
+/**
+ * 一篇文章自己的配图风格与水印（智能体或网页为它指定过时才有）。source：remembered = 这篇记住的；account-default = 账号默认。
+ * missing = 这篇记住过、但那套已被删除，本次按账号默认出图（页面要提示，不能再说成「本文自己的设定」）。
+ */
 export type LiteraryIllustrationChoice = {
-  style: { styleId?: string | null; name: string; source: 'remembered' | 'account-default' | string };
-  watermark: { watermarkId: string; name: string; source: 'remembered' | 'account-default' | string };
+  style: { styleId?: string | null; name: string; source: 'remembered' | 'account-default' | string; missing?: boolean };
+  watermark: { watermarkId: string; name: string; source: 'remembered' | 'account-default' | string; missing?: boolean };
   notes: string[];
 };
 
