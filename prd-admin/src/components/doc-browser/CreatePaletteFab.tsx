@@ -4,6 +4,7 @@ import { ChevronDown, Plus } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { claimCornerClearance } from './cornerClearance';
 import {
   CREATE_PALETTE_DOUBLE_ACTIVATION_MS,
   isCreatePaletteDoubleActivation,
@@ -31,6 +32,7 @@ export type PaletteAction = {
   /** 分组：点击展开/收起子动作（再次点击可收起） */
   children?: PaletteAction[];
 };
+
 
 export function CreatePaletteFab({ actions, onDoubleActivation }: {
   actions: PaletteAction[];
@@ -60,6 +62,16 @@ export function CreatePaletteFab({ actions, onDoubleActivation }: {
   useEffect(() => {
     if (!open) setExpandedGroup(null);
   }, [open]);
+
+  // 桌面端向全局浮层声明「右下角这块被主操作按钮占着」：AppShell 的通知卡片 / 铃铛
+  // 按 --page-fab-clearance 上移让位。曾经两者都贴右下角，周报提醒卡片（z-120）把「+」
+  // 整个盖住，真实点击落进卡片——是每日核心功能验收的命中测试抓出来的。
+  // 由按钮自己声明而不是 AppShell 按路由判断：哪个页面挂了「+」，哪个页面就自动让位。
+  const occupiesCorner = !isMobile && actions.length > 0;
+  useEffect(() => {
+    if (!occupiesCorner) return;
+    return claimCornerClearance();
+  }, [occupiesCorner]);
 
   if (actions.length === 0) return null;
 
