@@ -154,6 +154,7 @@ public class LiteraryMcpUsabilityTests
             };
             var batch = Data(await images.Generate(id, request, CancellationToken.None));
             Assert.Equal(3, batch.GetProperty("runs").GetArrayLength());
+            Assert.Equal(3, batch.GetProperty("queuedImages").GetInt32());
             Assert.Equal("style-b", batch.GetProperty("applied").GetProperty("style").GetProperty("styleId").GetString());
             Assert.Equal("wm-1", batch.GetProperty("applied").GetProperty("watermark").GetProperty("watermarkId").GetString());
 
@@ -173,6 +174,12 @@ public class LiteraryMcpUsabilityTests
             var retry = Data(await images.Generate(id, request, CancellationToken.None));
             Assert.All(retry.GetProperty("runs").EnumerateArray(), r => Assert.True(r.GetProperty("deduplicated").GetBoolean()));
             Assert.Equal(3, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
+            // 整批都是重放：根上标出去重、真正入队 0 张，网关据此把预占的 3 张额度全退回
+            Assert.True(retry.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(0, retry.GetProperty("queuedImages").GetInt32());
+            Assert.True(McpArtifactExtractor.IsDeduplicated(JsonSerializer.Serialize(new { success = true, data = retry })));
+            Assert.Equal(1, McpArtifactExtractor.QueuedImages("{\"success\":true,\"data\":{\"queuedImages\":1}}"));
+            Assert.Null(McpArtifactExtractor.QueuedImages("{\"success\":true,\"data\":{}}"));
 
             // 同一个幂等键换了尺寸 → 冲突，不回放
             request.Size = "1:1";
@@ -217,6 +224,18 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("account-default", fallback.GetProperty("applied").GetProperty("style").GetProperty("source").GetString());
             Assert.Contains("已不存在", fallback.GetProperty("applied").GetProperty("notes")[0].GetString());
 
+            // 点名的风格在重试前被删了：同一个 clientRequestId 照样回放原任务，不报「风格不存在」
+            request.Size = "16:9";
+            var replayAfterDelete = Data(await images.Generate(id, request, CancellationToken.None));
+            Assert.True(replayAfterDelete.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, replayAfterDelete.GetProperty("applied").ValueKind);
+
+            // 只写明确指定的那一项：入队期间网页顶栏改了水印，不会被读到的旧快照改回去
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id, Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.WatermarkId, "wm-web"));
+            await images.RememberExplicitPrefsAsync(id, "writer", "style-a", null, null);
+            var kept = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!;
+            Assert.Equal(("style-a", "wm-web", "1376x768"), (kept.StyleId, kept.WatermarkId, kept.Size));
+
             // 从没指定过的文章：不传就是账号默认，入队时把账号绑定的水印钉进任务
             var fresh = Data(await drafts.CreateWorkspace(new()
             {
@@ -232,6 +251,16 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("aaa", defaultRun.InitImageAssetSha256);
             Assert.Equal("account-default", single.GetProperty("applied").GetProperty("style").GetProperty("source").GetString());
             Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == freshId).SingleAsync()).IllustrationPrefs);
+
+            // 账号默认水印在重试前换了：没点名的项不算请求本身，同一个 clientRequestId 照样回放
+            await db.WatermarkConfigs.UpdateOneAsync(x => x.Id == "wm-2", Builders<WatermarkConfig>.Update.Set(x => x.AppKeys, new List<string>()));
+            await db.WatermarkConfigs.UpdateOneAsync(x => x.Id == "wm-1", Builders<WatermarkConfig>.Update.Set(x => x.AppKeys, new List<string> { "literary-agent" }));
+            var replayAfterDefault = Data(await images.Generate(freshId, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "g-default",
+            }, CancellationToken.None));
+            Assert.True(replayAfterDefault.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(defaultRun.Id, replayAfterDefault.GetProperty("runId").GetString());
 
             // none 明确不打水印、不用参考图
             var none = Data(await images.Generate(freshId, new()

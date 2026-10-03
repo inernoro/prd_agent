@@ -145,7 +145,6 @@ public class LiteraryImageOpenApiController(
             styleSource = "account-default";
             notes.Add("这篇文章上次用的风格已不存在，本次改用账号默认风格。");
         }
-        if (styleError != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
 
         var watermarkSource = explicitWatermark ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.WatermarkId) ? "remembered" : "account-default";
         var (watermark, watermarkError) = await ResolveWatermarkAsync(userId, explicitWatermark ? req.Watermark : remembered?.WatermarkId, ct);
@@ -155,7 +154,6 @@ public class LiteraryImageOpenApiController(
             watermarkSource = "account-default";
             notes.Add("这篇文章上次用的水印已不存在，本次改用账号默认水印。");
         }
-        if (watermarkError != null) return BadRequest(ApiResponse<object>.Fail("WATERMARK_NOT_FOUND", watermarkError));
 
         // 单张沿用原幂等键（已发出去的重试仍能命中）；批量按「请求 + 标记」派生，每个标记一个独立任务。
         string IdemFor(int index)
@@ -168,18 +166,25 @@ public class LiteraryImageOpenApiController(
         var results = new List<object>();
         var pending = new List<int>();
         var newlyQueued = 0;
+        // 重放只比「这次请求本身说了什么」：账号默认、文章记住的那套都是会变的状态，
+        // 重试前它们变了（甚至被删了），同一个 clientRequestId 也必须照样回放原任务。
+        var explicitSizeValue = explicitSize ? size : null;
+        var explicitStyleValue = explicitStyle ? style : null;
+        var explicitWatermarkValue = explicitWatermark ? watermark : null;
         foreach (var index in indexes)
         {
             var key = IdemFor(index);
             var previous = await db.ImageGenRuns.Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == key).FirstOrDefaultAsync(ct);
             if (previous == null) { pending.Add(index); continue; }
-            if (IsReplayConflict(previous, workspaceId, index, req.WorkflowVersion.Value, size!, style!, watermark!))
+            if (IsReplayConflict(previous, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
                 return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求（工作区、标记、风格、水印或尺寸不同），请为新的请求使用新的值。"));
             results.Add(new { markerIndex = index, runId = previous.Id, deduplicated = true });
         }
 
         if (pending.Count > 0)
         {
+            if (styleError != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
+            if (watermarkError != null) return BadRequest(ApiResponse<object>.Fail("WATERMARK_NOT_FOUND", watermarkError));
             var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId && x.OwnerUserId == userId
                 && x.ScenarioType == "article-illustration").FirstOrDefaultAsync(ct);
             if (ws == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文学工作区不存在或不属于你。"));
@@ -247,7 +252,7 @@ public class LiteraryImageOpenApiController(
                 {
                     var existing = await db.ImageGenRuns.Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == idem).FirstOrDefaultAsync(CancellationToken.None);
                     if (existing == null) throw;
-                    if (IsReplayConflict(existing, workspaceId, index, req.WorkflowVersion.Value, size!, style, watermark))
+                    if (IsReplayConflict(existing, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
                         return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求，请为新的请求使用新的值。"));
                     results.Add(new { markerIndex = index, runId = existing.Id, deduplicated = true });
                     continue;
@@ -266,45 +271,78 @@ public class LiteraryImageOpenApiController(
         // 至少真入队了一张，才把这次明确指定的项记到文章上（只改指定了的那几项，没指定的保持原样）。
         if (newlyQueued > 0 && (explicitStyle || explicitWatermark || explicitSize))
         {
-            var merged = remembered ?? new LiteraryIllustrationPrefs();
-            if (explicitStyle) merged.StyleId = style!.StyleId;
-            if (explicitWatermark) merged.WatermarkId = watermark!.WatermarkId;
-            if (explicitSize) merged.Size = size;
-            merged.UpdatedAt = DateTime.UtcNow;
+            // 只写明确指定的那几项：整份写回读到的旧快照，会把入队期间网页顶栏刚改的另一项改回去。
             // 不动 UpdatedAt：它是正文的版本令牌，记住偏好不该让智能体手里的令牌失效。
-            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == workspaceId && x.OwnerUserId == userId,
-                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs, merged), cancellationToken: CancellationToken.None);
+            await RememberExplicitPrefsAsync(workspaceId, userId,
+                explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null);
         }
 
         const string hint = "图在服务端生成，关掉客户端也不会断。每 5-10 秒调用一次 map_literary_get_workspace 看 illustrations[].status（done 即有 url），全部 done 后用 format=illustrated 取图文稿；也可用 map_literary_get_image_run 查单张。";
         // source：explicit = 本次指定；remembered = 沿用这篇文章上次指定的；account-default = 账号默认
-        var applied = new
+        // 全部是重放、且当前预设已解析不出时（重试前被删了），没有可回报的「这次套了哪套」：applied 为空，原任务照旧
+        object? applied = style == null || watermark == null ? null : new
         {
-            style = new { styleId = style!.StyleId, name = style.Label, source = styleSource },
-            watermark = new { watermarkId = watermark!.WatermarkId, name = watermark.Label, source = watermarkSource },
+            style = new { styleId = style.StyleId, name = style.Label, source = styleSource },
+            watermark = new { watermarkId = watermark.WatermarkId, name = watermark.Label, source = watermarkSource },
             size, sizeSource,
             notes,
         };
+        // queuedImages：这次真正新入队的张数。网关按请求张数预占日额度，按它把重放与没排上的退回去
         if (!batch)
         {
             var only = JsonSerializer.SerializeToElement(results[0]);
             var runId = only.TryGetProperty("runId", out var r) ? r.GetString() : null;
             var dedup = only.TryGetProperty("deduplicated", out var d) && d.GetBoolean();
             return Ok(ApiResponse<object>.Ok(dedup
-                ? new { runId, deduplicated = true, applied, hint }
-                : new { runId, status = "queued", total = 1, applied, hint }));
+                ? new { runId, deduplicated = true, queuedImages = 0, applied, hint }
+                : new { runId, status = "queued", total = 1, queuedImages = newlyQueued, applied, hint }));
         }
-        return Ok(ApiResponse<object>.Ok(new { workspaceId, runs = results, total = results.Count, applied, hint }));
+        var allReplayed = newlyQueued == 0 && results.Count > 0 && results.All(x =>
+            JsonSerializer.SerializeToElement(x).TryGetProperty("deduplicated", out var d) && d.GetBoolean());
+        return Ok(ApiResponse<object>.Ok(allReplayed
+            ? new { workspaceId, runs = results, total = results.Count, deduplicated = true, queuedImages = 0, applied, hint }
+            : (object)new { workspaceId, runs = results, total = results.Count, queuedImages = newlyQueued, applied, hint }));
     }
 
-    /// <summary>同一个幂等键再来时，只有「同一件事」才回放；换了工作区 / 标记 / 版本 / 风格 / 水印 / 尺寸一律冲突。</summary>
+    /// <summary>
+    /// 同一个幂等键再来时，只有「同一件事」才回放；换了工作区 / 标记 / 版本，或这次明确指定的风格 / 水印 / 尺寸
+    /// 与原任务不同，一律冲突。没有明确指定的项不比：它取自账号默认或文章记住的那套，是会变的状态，不是请求本身。
+    /// 明确指定的项此刻解析不出（重试前被删了）时同样不比，原任务就是那次请求的结果。
+    /// </summary>
     private static bool IsReplayConflict(ImageGenRun previous, string workspaceId, int markerIndex, int version,
-        string size, StyleChoice style, WatermarkChoice watermark)
+        string? explicitSize, StyleChoice? explicitStyle, WatermarkChoice? explicitWatermark)
         => previous.WorkspaceId != workspaceId || previous.ArticleMarkerIndex != markerIndex
            || previous.ArticleWorkflowVersion != version
-           || (previous.Size != null && previous.Size != size)
-           || (previous.WatermarkConfigId != null && previous.WatermarkConfigId != watermark.WatermarkId)
-           || !string.Equals(previous.InitImageAssetSha256, style.Sha, StringComparison.Ordinal);
+           || (explicitSize != null && previous.Size != null && previous.Size != explicitSize)
+           || (explicitWatermark != null && previous.WatermarkConfigId != null && previous.WatermarkConfigId != explicitWatermark.WatermarkId)
+           || (explicitStyle != null && !string.Equals(previous.InitImageAssetSha256, explicitStyle.Sha, StringComparison.Ordinal));
+
+    /// <summary>
+    /// 把这次明确指定的风格 / 水印 / 尺寸记到文章上，只动给了的那几项。
+    /// 文章还没有设定（或被网页清空成 null）时没有字段可按路径改，就整份建一个只含这几项的；
+    /// 两步都带「当时是否为空」的条件，夹在中间被别人建好了就再按字段改一次。
+    /// </summary>
+    internal async Task RememberExplicitPrefsAsync(string workspaceId, string userId, string? styleId, string? watermarkId, string? size)
+    {
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var U = Builders<ImageMasterWorkspace>.Update;
+        var owned = F.And(F.Eq(x => x.Id, workspaceId), F.Eq(x => x.OwnerUserId, userId));
+        var now = DateTime.UtcNow;
+        var sets = new List<UpdateDefinition<ImageMasterWorkspace>> { U.Set(x => x.IllustrationPrefs!.UpdatedAt, now) };
+        if (styleId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.StyleId, styleId));
+        if (watermarkId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.WatermarkId, watermarkId));
+        if (size != null) sets.Add(U.Set(x => x.IllustrationPrefs!.Size, size));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var patched = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Ne(x => x.IllustrationPrefs, null)),
+                U.Combine(sets), cancellationToken: CancellationToken.None);
+            if (patched.MatchedCount > 0) return;
+            var created = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Eq(x => x.IllustrationPrefs, null)),
+                U.Set(x => x.IllustrationPrefs, new LiteraryIllustrationPrefs { StyleId = styleId, WatermarkId = watermarkId, Size = size, UpdatedAt = now }),
+                cancellationToken: CancellationToken.None);
+            if (created.MatchedCount > 0) return;
+        }
+    }
 
     internal async Task<bool> ClaimWorkflowAsync(ImageMasterWorkspace ws, ImageGenRun run)
     {
