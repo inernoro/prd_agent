@@ -540,6 +540,12 @@ export type LiteraryIllustrationHistoryItem = {
   workflowVersion?: number | null;
   isCurrent: boolean;
   createdAt: string;
+  /** 什么时候不再挂在正文上；仍在用或算不出来时为空 */
+  replacedAt?: string | null;
+  /** 为什么被换下（后端给的人话） */
+  replacedReason?: string | null;
+  /** 是不是上一次换稿前在用的那组里的一张 */
+  inLastSet?: boolean;
 };
 
 export type LiteraryIllustrationHistory = {
@@ -547,6 +553,13 @@ export type LiteraryIllustrationHistory = {
   currentVersion: number;
   total: number;
   currentCount: number;
+  /** 每次换稿前真正挂在正文上的那组（新到旧，存档时记下的） */
+  previousSets?: Array<{
+    workflowVersion: number;
+    archivedAt?: string | null;
+    reason: string;
+    images: Array<{ markerIndex: number; assetId: string; url: string; description?: string | null }>;
+  }>;
   /** 当前正文里有哪些配图位置，旧图只能放回这些位置 */
   markerIndexes?: number[];
   groups: Array<{

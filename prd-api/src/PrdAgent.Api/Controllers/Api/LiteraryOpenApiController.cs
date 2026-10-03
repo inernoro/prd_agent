@@ -374,19 +374,14 @@ public class LiteraryOpenApiController : ControllerBase
             // 在正文提交时会 version++、清标记、清带标记正文，并删掉旧配图资产。
             // 这里做同样的复位，但**不删资产** —— 删除是收不回来的动作，本期不开放给智能体；
             // 图还留在工作区里，只是不再挂在已经变了的正文上。差异记在 debt.platform.md。
-            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
-            if (ws.ArticleWorkflow != null)
-            {
-                history.Insert(0, ws.ArticleWorkflow);
-                if (history.Count > 10) history = history.Take(10).ToList();
-            }
+            var existingAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id).ToListAsync(ct);
+            var history = LiteraryIllustrationArchive.ArchiveCurrent(ws, existingAssets, DateTime.UtcNow, LiteraryArchiveReason.AgentRewrite);
             var nextVersion = (ws.ArticleWorkflow?.Version ?? 0) + 1;
             ArticleIllustrationWorkflow? prepared = null;
             if (marked != null)
             {
                 prepared = LiteraryMcpWorkflow.Prepare(marked, nextVersion);
                 // 描述没变的标记接上原来那张图：改一节正文只需要为改动的那几节重新生成
-                var existingAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id).ToListAsync(ct);
                 carriedOver = LiteraryMcpWorkflow.CarryOverUnchanged(prepared, ws, existingAssets, DateTime.UtcNow);
             }
             update = update
@@ -485,6 +480,13 @@ public class LiteraryOpenApiController : ControllerBase
             {
                 assetId = i.Id, url = i.Url, markerIndex = i.MarkerIndex, description = i.MarkerText,
                 workflowVersion = i.WorkflowVersion, isCurrent = i.IsCurrent, createdAt = i.CreatedAt,
+                replacedAt = i.ReplacedAt, replacedReason = i.ReplacedReason, inLastSet = i.InLastSet,
+            }),
+            // 每次换稿前真正挂在正文上的那组（新到旧）。用户说「恢复成上传前的」就取第一组
+            previousSets = history.PreviousSets.Select(set => new
+            {
+                workflowVersion = set.WorkflowVersion, archivedAt = set.ArchivedAt, reason = set.Reason,
+                images = set.Images.Select(i => new { markerIndex = i.MarkerIndex, assetId = i.AssetId, url = i.Url, description = i.Description }),
             }),
         }));
     }

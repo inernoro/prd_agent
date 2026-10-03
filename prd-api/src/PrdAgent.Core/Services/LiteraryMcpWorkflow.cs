@@ -175,14 +175,30 @@ public static class LiteraryMcpWorkflow
         IEnumerable<ImageAsset> assets, DateTime now)
     {
         var carried = new List<int>();
-        var oldMarkers = previous.ArticleWorkflow?.Markers;
-        if (oldMarkers == null || oldMarkers.Count == 0) return carried;
-        var current = SelectCurrent(previous, assets);
-        var pool = oldMarkers
+        var assetList = assets as IReadOnlyCollection<ImageAsset> ?? assets.ToList();
+        var current = SelectCurrent(previous, assetList);
+        var pool = (previous.ArticleWorkflow?.Markers ?? new List<ArticleIllustrationMarker>())
             .Where(m => current.ContainsKey(m.Index))
             .Select(m => (key: Normalize(EffectivePrompt(m)), asset: current[m.Index], runId: m.RunId))
             .Where(p => p.key.Length > 0)
             .ToList();
+        if (pool.Count == 0)
+        {
+            // 当前一张都没挂（典型：网页刚换过正文，标记全作废）——拿最近一次存档里「换稿前在用的那组」来接。
+            // 以前这时带标记写回一张都接不上，智能体只能逐张去历史里放回。
+            var archived = previous.ArticleWorkflowHistory?.FirstOrDefault(w => w.ArchivedAt != null);
+            if (archived != null)
+            {
+                var byId = assetList.Where(a => a.WorkspaceId == previous.Id).ToDictionary(a => a.Id);
+                pool = archived.Markers
+                    .Select(m => (m, id: archived.AssetIdByMarkerIndex.TryGetValue(m.Index.ToString(), out var v) ? v : null))
+                    .Where(x => x.id != null && byId.ContainsKey(x.id))
+                    .Select(x => (key: Normalize(EffectivePrompt(x.m)), asset: byId[x.id!], runId: x.m.RunId))
+                    .Where(p => p.key.Length > 0)
+                    .ToList();
+            }
+        }
+        if (pool.Count == 0) return carried;
         next.AssetIdByMarkerIndex ??= new Dictionary<string, string>();
         next.AssetRunAtByMarkerIndex ??= new Dictionary<string, DateTime>();
         foreach (var marker in next.Markers.OrderBy(m => m.Index))

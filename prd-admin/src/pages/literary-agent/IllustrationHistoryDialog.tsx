@@ -86,6 +86,7 @@ export function IllustrationHistoryDialog({
       ? '这篇文章还没有生成过配图'
       : `共 ${data.total} 张，正文当前使用 ${data.currentCount} 张，其余 ${data.total - data.currentCount} 张是改稿或重新生成前的版本`
     : null;
+  const lastSet = data?.previousSets?.[0];
 
   return (
     <>
@@ -116,6 +117,12 @@ export function IllustrationHistoryDialog({
             {headline && (
               <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
                 {headline}。旧图不会被删除，改稿、重新规划标记后都能在这里找回。
+              </div>
+            )}
+            {lastSet && (
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {lastSet.archivedAt ? `${new Date(lastSet.archivedAt).toLocaleString()} ` : ''}
+                {lastSet.reason}之前，正文挂着的是标「换稿前在用」的 {lastSet.images.length} 张。
               </div>
             )}
             {loading && !data && (
@@ -158,14 +165,21 @@ export function IllustrationHistoryDialog({
                         title="点击放大"
                       >
                         <HistoryThumb url={item.url} label={item.markerIndex != null ? `配图 ${item.markerIndex + 1}` : '配图'} />
-                        {item.isCurrent && (
+                        {item.isCurrent ? (
                           <span
                             className="absolute left-2 top-2 px-1.5 py-0.5 rounded text-[11px] font-medium"
                             style={{ background: 'var(--bg-elevated)', color: 'var(--accent-fg-success)' }}
                           >
                             正在使用
                           </span>
-                        )}
+                        ) : item.inLastSet ? (
+                          <span
+                            className="absolute left-2 top-2 px-1.5 py-0.5 rounded text-[11px] font-medium"
+                            style={{ background: 'var(--bg-elevated)', color: 'var(--accent-fg-info)' }}
+                          >
+                            换稿前在用
+                          </span>
+                        ) : null}
                       </button>
                       <figcaption className="px-2 py-1.5 flex items-start gap-1.5">
                         <div className="flex-1 min-w-0">
@@ -180,8 +194,13 @@ export function IllustrationHistoryDialog({
                             {item.markerText || item.prompt || '（无描述）'}
                           </div>
                           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                            {new Date(item.createdAt).toLocaleString()}
+                            {new Date(item.createdAt).toLocaleString()} 生成
                           </div>
+                          {!item.isCurrent && item.replacedReason && (
+                            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }} title={item.replacedReason}>
+                              {item.replacedAt ? `${new Date(item.replacedAt).toLocaleString()} 换下` : '已换下'} · {item.replacedReason}
+                            </div>
+                          )}
                         </div>
                         {restorable(item) && (
                           <button

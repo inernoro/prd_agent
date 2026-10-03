@@ -389,7 +389,9 @@ public class ImageMasterController : ControllerBase
         {
             update = update.Set(x => x.ArticleContent, request!.ArticleContent);
             // 提交型复位（版本 +1、旧流程进历史、清标记）：与文学页 PUT 共用同一处判定
-            var reset = PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetUpdate(ws, now);
+            var resetAssets = await PrdAgent.Api.Services.LiteraryIllustrationHistory.LoadAssetsAsync(_db, wid, ct);
+            var reset = PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetUpdate(
+                ws, resetAssets, now, PrdAgent.Api.Services.LiteraryArchiveReason.WebContent);
             update = Builders<ImageMasterWorkspace>.Update.Combine(update, reset);
 
             // 旧配图不再删除：盖上旧版本号归入「历史配图」（用户要能回看；智能体生成的图也不能被这一下抹掉）。
@@ -2600,13 +2602,10 @@ public class ImageMasterController : ControllerBase
             // 保存生成的内容到 workspace，并触发"提交型修改"逻辑（version++、清后续、清旧配图）
             var now = DateTime.UtcNow;
 
-            // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
-            if (ws.ArticleWorkflow != null)
-            {
-                history.Insert(0, ws.ArticleWorkflow);
-                if (history.Count > 10) history = history.Take(10).ToList();
-            }
+            // 当前配图方案存进历史：记下那一刻真正挂在正文上的图与换下原因（与另外两处换稿共用）
+            var replanAssets = await PrdAgent.Api.Services.LiteraryIllustrationHistory.LoadAssetsAsync(_db, wid, CancellationToken.None);
+            var history = PrdAgent.Api.Services.LiteraryIllustrationArchive.ArchiveCurrent(
+                ws, replanAssets, now, PrdAgent.Api.Services.LiteraryArchiveReason.Replan);
 
             // 重置 images 进度。旧配图不再删除：盖上旧版本号归入「历史配图」。
             // 服务器权威性设计：数据库操作使用 CancellationToken.None，确保数据完整持久化

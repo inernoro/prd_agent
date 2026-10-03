@@ -38,6 +38,16 @@ public class ArticleIllustrationWorkflow
     public Dictionary<string, DateTime> AssetRunAtByMarkerIndex { get; set; } = new();
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 这一版被换下的时间。只在存进 ArticleWorkflowHistory 时写入，当前版本恒为空。
+    /// 存档时 AssetIdByMarkerIndex 会被改写成「那一刻真正挂在正文上的图」，于是历史里每一版
+    /// 都是一份可信的「换稿前在用的那组」，用户说「恢复成上传前的」不用再按生成时间去猜。
+    /// </summary>
+    public DateTime? ArchivedAt { get; set; }
+
+    /// <summary>被换下的原因，取值见 LiteraryArchiveReason（网页换正文 / 智能体整篇重写 / 网页重新生成标记）。</summary>
+    public string? ArchivedReason { get; set; }
 }
 
 public class ArticleIllustrationMarker

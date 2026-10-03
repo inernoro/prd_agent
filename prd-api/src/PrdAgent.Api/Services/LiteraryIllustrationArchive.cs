@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services;
@@ -22,14 +23,10 @@ public static class LiteraryIllustrationArchive
     /// 于是网页上给一篇文章重新上传正文时，旧标记和旧配图方案原样挂在新正文上（刷新后又回来）。
     /// 两个入口现在都调这一处。调用方负责在写库后调用 <see cref="StampUnversionedAsync"/>。
     /// </summary>
-    public static UpdateDefinition<ImageMasterWorkspace> ContentResetUpdate(ImageMasterWorkspace ws, DateTime now)
+    public static UpdateDefinition<ImageMasterWorkspace> ContentResetUpdate(
+        ImageMasterWorkspace ws, IEnumerable<ImageAsset> assets, DateTime now, string reason)
     {
-        var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
-        if (ws.ArticleWorkflow != null)
-        {
-            history.Insert(0, ws.ArticleWorkflow);
-            if (history.Count > 10) history = history.Take(10).ToList();
-        }
+        var history = ArchiveCurrent(ws, assets, now, reason);
         return Builders<ImageMasterWorkspace>.Update
             .Set(x => x.ArticleWorkflow, new ArticleIllustrationWorkflow
             {
@@ -45,12 +42,63 @@ public static class LiteraryIllustrationArchive
             .Set(x => x.ArticleContentWithMarkers, null);
     }
 
+    /// <summary>
+    /// 把当前配图方案存进历史（最多 10 份），三处换稿入口（网页换正文、智能体整篇重写、网页重新生成标记）都走这里。
+    ///
+    /// 存的不是方案原样：AssetIdByMarkerIndex 改写成那一刻<b>真正挂在正文上</b>的图（与正文、导出同一个判定源，
+    /// 含手动放回的旧图、按版本推断出来的图），并记下换下的时间与原因。以前三处各抄一份「原样塞进历史」，
+    /// 用户说「恢复成上传前最后用的」时，只能按生成时间去猜，手动放回过旧图就猜错。
+    /// </summary>
+    public static List<ArticleIllustrationWorkflow> ArchiveCurrent(
+        ImageMasterWorkspace ws, IEnumerable<ImageAsset> assets, DateTime now, string reason)
+    {
+        var history = (ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>()).ToList();
+        var workflow = ws.ArticleWorkflow;
+        if (workflow == null) return history;
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        history.Insert(0, new ArticleIllustrationWorkflow
+        {
+            Version = workflow.Version,
+            Phase = workflow.Phase,
+            Markers = workflow.Markers,
+            ExpectedImageCount = workflow.ExpectedImageCount,
+            DoneImageCount = current.Count,
+            AssetIdByMarkerIndex = current.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value.Id),
+            AssetRunAtByMarkerIndex = workflow.AssetRunAtByMarkerIndex,
+            UpdatedAt = workflow.UpdatedAt,
+            ArchivedAt = now,
+            ArchivedReason = LiteraryArchiveReason.Normalize(reason),
+        });
+        return history.Count > 10 ? history.Take(10).ToList() : history;
+    }
+
     /// <summary>把该工作区里带插入位、但没有版本号的配图归到 <paramref name="version"/>。</summary>
     public static Task StampUnversionedAsync(MongoDbContext db, string workspaceId, int version)
         => db.ImageAssets.UpdateManyAsync(
             x => x.WorkspaceId == workspaceId && x.ArticleInsertionIndex != null && x.ArticleWorkflowVersion == null,
             Builders<ImageAsset>.Update.Set(x => x.ArticleWorkflowVersion, version),
             cancellationToken: CancellationToken.None);
+}
+
+/// <summary>配图方案被换下的原因：有限取值，人话标签只在这一处。</summary>
+public static class LiteraryArchiveReason
+{
+    public const string WebContent = "web-content";
+    public const string AgentRewrite = "agent-rewrite";
+    public const string Replan = "replan";
+
+    private static readonly Dictionary<string, string> Labels = new(StringComparer.Ordinal)
+    {
+        [WebContent] = "网页上换了正文",
+        [AgentRewrite] = "智能体整篇重写",
+        [Replan] = "网页重新生成配图标记",
+    };
+
+    public static string Normalize(string reason)
+        => Labels.ContainsKey(reason) ? reason : throw new ArgumentOutOfRangeException(nameof(reason), reason, "未登记的换稿原因");
+
+    /// <summary>早期存进历史的方案没有记原因，读作「换稿」。</summary>
+    public static string Label(string? reason) => reason != null && Labels.TryGetValue(reason, out var label) ? label : "换稿";
 }
 
 /// <summary>

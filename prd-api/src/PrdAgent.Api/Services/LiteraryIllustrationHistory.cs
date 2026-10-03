@@ -13,13 +13,22 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public static class LiteraryIllustrationHistory
 {
+    /// <param name="ReplacedAt">什么时候不再挂在正文上；仍在用或算不出来时为空</param>
+    /// <param name="ReplacedReason">为什么被换下（人话）</param>
+    /// <param name="InLastSet">是不是「上一次换稿前在用的那组」里的一张</param>
     public sealed record Item(
         string Id, string Url, int Width, int Height, string? Prompt,
-        int? MarkerIndex, string? MarkerText, int? WorkflowVersion, bool IsCurrent, DateTime CreatedAt);
+        int? MarkerIndex, string? MarkerText, int? WorkflowVersion, bool IsCurrent, DateTime CreatedAt,
+        DateTime? ReplacedAt, string? ReplacedReason, bool InLastSet);
 
     public sealed record Group(int? WorkflowVersion, bool IsCurrentVersion, List<Item> Items);
 
-    public sealed record Result(int CurrentVersion, int Total, int CurrentCount, List<Group> Groups);
+    public sealed record SetImage(int MarkerIndex, string AssetId, string Url, string? Description);
+
+    /// <summary>某一次换稿前挂在正文上的那一组图（存档时记下的，不是按生成时间推断的）。</summary>
+    public sealed record PreviousSet(int WorkflowVersion, DateTime? ArchivedAt, string Reason, List<SetImage> Images);
+
+    public sealed record Result(int CurrentVersion, int Total, int CurrentCount, List<Group> Groups, List<PreviousSet> PreviousSets);
 
     public static async Task<List<ImageAsset>> LoadAssetsAsync(MongoDbContext db, string workspaceId, CancellationToken ct)
         => await db.ImageAssets.Find(x => x.WorkspaceId == workspaceId)
@@ -36,17 +45,65 @@ public static class LiteraryIllustrationHistory
             .ToDictionary(g => g.Key, g => LiteraryMcpWorkflow.EffectivePrompt(g.First()))
             ?? new Dictionary<int, string>();
 
-        var items = assets.Select(a => new Item(
-            a.Id,
-            resolveUrl == null ? a.Url : resolveUrl(a.Url),
-            a.Width, a.Height, a.Prompt,
-            a.ArticleInsertionIndex,
-            a.OriginalMarkerText
-                ?? (a.ArticleInsertionIndex is { } mi && (a.ArticleWorkflowVersion ?? currentVersion) == currentVersion
-                    && markerText.TryGetValue(mi, out var t) ? t : null),
-            a.ArticleWorkflowVersion,
-            currentIds.Contains(a.Id),
-            a.CreatedAt)).ToList();
+        string Url(string u) => resolveUrl == null ? u : resolveUrl(u);
+        var byId = assets.ToDictionary(a => a.Id, StringComparer.Ordinal);
+
+        // 存档里记着每次换稿前真正在用的那组：从新到旧
+        var archived = (ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>())
+            .Where(w => w.AssetIdByMarkerIndex.Count > 0)
+            .ToList();
+        var previousSets = archived.Take(5).Select(w => new PreviousSet(
+            w.Version, w.ArchivedAt, LiteraryArchiveReason.Label(w.ArchivedReason),
+            w.AssetIdByMarkerIndex
+                .Select(kv => (ok: int.TryParse(kv.Key, out var idx), idx, id: kv.Value))
+                .Where(x => x.ok && byId.ContainsKey(x.id))
+                .OrderBy(x => x.idx)
+                .Select(x => new SetImage(x.idx, x.id, Url(byId[x.id].Url),
+                    byId[x.id].OriginalMarkerText ?? w.Markers.Where(m => m.Index == x.idx).Select(LiteraryMcpWorkflow.EffectivePrompt).FirstOrDefault()))
+                .ToList()))
+            .Where(set => set.Images.Count > 0)
+            .ToList();
+        var lastSetIds = previousSets.FirstOrDefault()?.Images.Select(i => i.AssetId).ToHashSet(StringComparer.Ordinal)
+            ?? new HashSet<string>(StringComparer.Ordinal);
+
+        // 换下时间：在存档里 = 那次换稿的时间；不在存档里 = 同一位置随后换上了别的图（重画或放回）
+        (DateTime? at, string? reason) ReplacedOf(ImageAsset a)
+        {
+            if (currentIds.Contains(a.Id)) return (null, null);
+            var inArchive = archived.FirstOrDefault(w => w.AssetIdByMarkerIndex.ContainsValue(a.Id));
+            if (inArchive != null) return (inArchive.ArchivedAt, LiteraryArchiveReason.Label(inArchive.ArchivedReason));
+            if (a.ArticleInsertionIndex is not { } mi) return (null, null);
+            var later = assets
+                .Where(o => o.Id != a.Id && o.ArticleInsertionIndex == mi && o.ArticleWorkflowVersion == a.ArticleWorkflowVersion && o.CreatedAt > a.CreatedAt)
+                .Select(o => (DateTime?)o.CreatedAt);
+            // 放回的旧图比它生成得早，靠生成时间看不出来——查这张图所属那一版（当前或存档）里这个位置后来挂图的时间
+            var ownVersion = a.ArticleWorkflowVersion == currentVersion ? ws.ArticleWorkflow
+                : archived.FirstOrDefault(w => w.Version == a.ArticleWorkflowVersion);
+            if (ownVersion?.AssetRunAtByMarkerIndex?.TryGetValue(mi.ToString(), out var pointedAt) == true
+                && pointedAt > a.CreatedAt
+                && ownVersion.AssetIdByMarkerIndex.TryGetValue(mi.ToString(), out var pointedId) && pointedId != a.Id)
+                later = later.Append(pointedAt);
+            var when = later.Min();
+            return (when, when == null ? null : "同一位置换上了别的图（重画或放回）");
+        }
+
+        var items = assets.Select(a =>
+        {
+            var (replacedAt, replacedReason) = ReplacedOf(a);
+            return new Item(
+                a.Id,
+                Url(a.Url),
+                a.Width, a.Height, a.Prompt,
+                a.ArticleInsertionIndex,
+                a.OriginalMarkerText
+                    ?? (a.ArticleInsertionIndex is { } mi && (a.ArticleWorkflowVersion ?? currentVersion) == currentVersion
+                        && markerText.TryGetValue(mi, out var t) ? t : null),
+                a.ArticleWorkflowVersion,
+                currentIds.Contains(a.Id),
+                a.CreatedAt,
+                replacedAt, replacedReason,
+                lastSetIds.Contains(a.Id));
+        }).ToList();
 
         var groups = items
             .GroupBy(x => x.WorkflowVersion ?? (x.IsCurrent ? currentVersion : -1))
@@ -58,7 +115,7 @@ public static class LiteraryIllustrationHistory
                 g.OrderBy(x => x.MarkerIndex ?? int.MaxValue).ThenByDescending(x => x.CreatedAt).ToList()))
             .ToList();
 
-        return new Result(currentVersion, items.Count, currentIds.Count, groups);
+        return new Result(currentVersion, items.Count, currentIds.Count, groups, previousSets);
     }
 
     public enum RestoreFailure { None, NoMarkers, MarkerNotFound, AssetNotFound, VersionChanged }

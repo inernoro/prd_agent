@@ -508,6 +508,85 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 换稿前在用的那组被存档_带标记写回自动沿用_历史标出换下时间()
+    {
+        // MCP-LIT-06：客户说「恢复成上传前最后用的」，智能体只能按生成时间猜；
+        // 手动放回过旧图时，最晚生成的那张恰恰不是在用的那张
+        var (db, name, connection) = NewDb("literary_lit06");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "六号债", MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n", ClientRequestId = "lit06",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            var t0 = DateTime.UtcNow.AddMinutes(-10);
+            await db.ImageAssets.InsertManyAsync(new[]
+            {
+                new ImageAsset { Id = "a0", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, ArticleWorkflowVersion = 1, Url = "https://example.test/a0.png", OriginalMarkerText = "书店门口", CreatedAt = t0 },
+                new ImageAsset { Id = "a1-old", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/a1-old.png", OriginalMarkerText = "窗边的猫", CreatedAt = t0 },
+                new ImageAsset { Id = "a1-new", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/a1-new.png", OriginalMarkerText = "窗边的猫", CreatedAt = t0.AddMinutes(1) },
+            });
+            await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 0, "a0");
+            await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "a1-new");
+            await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "a1-old"); // 用户又放回了旧的那张
+
+            // 网页上换了正文：标记作废
+            var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            Data(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "一。本文为验收用稿。\n二。\n" }, CancellationToken.None));
+
+            // 历史：上一组是存档时真正在用的 a0 + a1-old，不是最晚生成的 a1-new
+            var history = Data(await drafts.GetHistory(id, CancellationToken.None));
+            var lastSet = history.GetProperty("previousSets").EnumerateArray().First();
+            Assert.Equal("网页上换了正文", lastSet.GetProperty("reason").GetString());
+            Assert.Equal(new[] { "a0", "a1-old" }, lastSet.GetProperty("images").EnumerateArray().Select(i => i.GetProperty("assetId").GetString()));
+            var images = history.GetProperty("images").EnumerateArray().ToDictionary(i => i.GetProperty("assetId").GetString()!);
+            Assert.True(images["a1-old"].GetProperty("inLastSet").GetBoolean());
+            Assert.Equal("网页上换了正文", images["a1-old"].GetProperty("replacedReason").GetString());
+            Assert.False(images["a1-new"].GetProperty("inLastSet").GetBoolean());
+            Assert.StartsWith("同一位置换上了别的图", images["a1-new"].GetProperty("replacedReason").GetString());
+            Assert.NotEqual(JsonValueKind.Null, images["a1-new"].GetProperty("replacedAt").ValueKind);
+
+            // 智能体带同样的描述写回：两张都自动接上换稿前那组，不用逐张放回
+            var written = Data(await drafts.WriteContent(id, new()
+            {
+                MarkedContent = "一。本文为验收用稿。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n",
+            }, CancellationToken.None));
+            Assert.Equal(new[] { 0, 1 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
+            var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None)).GetProperty("illustrations").EnumerateArray().ToList();
+            Assert.Equal("https://example.test/a1-old.png", read[1].GetProperty("url").GetString());
+
+            // 这次整篇重写也留了档：上一组变成刚才写回前的那份（空的不算一组）
+            var again = Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("previousSets").EnumerateArray().First();
+            Assert.Equal("网页上换了正文", again.GetProperty("reason").GetString());
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
+    public void 配图方案进历史只许走统一存档()
+    {
+        // 三处换稿各抄一份「原样塞进历史」：存下的不是当时真正在用的图，也没有换下时间与原因。
+        // 新增入口若再手抄一份，「恢复成上传前的」就又回到按生成时间去猜。
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !(File.Exists(Path.Combine(dir.FullName, "CLAUDE.md")) && Directory.Exists(Path.Combine(dir.FullName, "prd-api"))))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        var src = Path.Combine(dir!.FullName, "prd-api", "src");
+        var offenders = new List<string>();
+        foreach (var file in Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories).Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        {
+            var text = File.ReadAllText(file);
+            if (text.Contains("Insert(0, ws.ArticleWorkflow") && !file.EndsWith("LiteraryIllustrationArchive.cs"))
+                offenders.Add($"{Path.GetFileName(file)}：手抄了「把当前方案塞进历史」");
+            if (text.Contains(".Set(x => x.ArticleWorkflowHistory") && !file.EndsWith("LiteraryIllustrationArchive.cs")
+                && !text.Contains("ArchiveCurrent(") && !text.Contains("ContentResetUpdate("))
+                offenders.Add($"{Path.GetFileName(file)}：写了配图方案历史却没走 LiteraryIllustrationArchive.ArchiveCurrent");
+        }
+        Assert.True(offenders.Count == 0, string.Join("\n", offenders));
+    }
+
+    [Fact]
     public async Task 网页上重画也按这篇文章的风格水印来_顶栏改的是这篇文章()
     {
         // 验收里撞出来的：智能体按「水印配置1」配好图，客户在网页上重画一张，水印变成了账号默认

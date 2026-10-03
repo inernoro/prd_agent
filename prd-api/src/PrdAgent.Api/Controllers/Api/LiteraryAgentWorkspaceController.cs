@@ -223,8 +223,12 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent)
             && !string.Equals(request.ArticleContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
         if (articleContentChanged)
+        {
+            var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(_db, ws.Id, ct);
             update = Builders<ImageMasterWorkspace>.Update.Combine(update,
-                LiteraryIllustrationArchive.ContentResetUpdate(ws, now).Set(x => x.ArticleContent, request!.ArticleContent));
+                LiteraryIllustrationArchive.ContentResetUpdate(ws, assets, now, LiteraryArchiveReason.WebContent)
+                    .Set(x => x.ArticleContent, request!.ArticleContent));
+        }
         else if (request?.ArticleContent != null)
             update = update.Set(x => x.ArticleContent, request.ArticleContent);
         if (request?.Title != null) update = update.Set(x => x.Title, request.Title.Trim());
@@ -353,6 +357,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             // 当前有哪些标记位置可以把旧图放回去
             markerIndexes = ws.ArticleWorkflow?.Markers.Select(m => m.Index).OrderBy(i => i).ToList() ?? new List<int>(),
             groups = history.Groups,
+            previousSets = history.PreviousSets,
         }));
     }
 
