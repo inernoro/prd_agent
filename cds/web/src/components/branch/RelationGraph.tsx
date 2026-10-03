@@ -7,7 +7,7 @@
  * compact 模式给总览缩略卡用：同一套布局按比例缩小，不另画一份。
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { edgePath, frameLabels, layoutRelations, type EdgeKind, type Pos } from './relationLayout';
+import { edgePath, edgeTooltip, frameLabels, layoutRelations, type EdgeKind, type Pos } from './relationLayout';
 
 export type RoleView = 'web' | 'api' | 'worker';
 export interface GraphNodeView { id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; dockerImage?: string; role?: RoleView; roleSource?: string; roleReason?: string }
@@ -18,7 +18,7 @@ export interface LintFindingView { rule: string; severity: 'error' | 'warn' | 'i
 export interface ReferenceView { profileId: string; key: string; kind: 'cds-ref' | 'url' | 'name-hint' | 'platform'; resolved?: Array<{ url: string | null; status: string; target: { projectId?: string; projectSlug?: string; branchId?: string; branchName?: string; serviceId: string }; ref: { projectRef: string; serviceId: string; branchRef?: string } }>; matchedBranch?: { branchId: string; projectId: string; branchName: string; status: string } | null }
 export interface RelationPayload { branchId: string; projectId: string; branch: string; status?: string; graph: ServiceGraphView; lint: { findings: LintFindingView[]; summary: { errors: number; warnings: number; infos: number } }; references: ReferenceView[] }
 
-export { layoutRelations, edgePath, frameLabels } from './relationLayout';
+export { layoutRelations, edgePath, edgeTooltip, frameLabels } from './relationLayout';
 export type { RelationLayout, LayoutEdge } from './relationLayout';
 
 const ROLE_LABEL: Record<RoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
@@ -119,7 +119,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           {layout.edges.map((e) => {
             const st = EDGE_STYLE[e.kind];
             // 线上不挂字：字会压住卡片和别的线（判据 G6 / G7 管不到字），环境变量名放到悬停提示里
-            const tip = e.kind === 'prefix' ? `前缀 ${e.label ?? ''}${e.alsoDepends ? ' · 同时声明了依赖' : ''}` : e.label;
+            const tip = edgeTooltip(e);
             return (
               <g key={e.key} opacity={dim(lit.size === 0 || edgeTouches(e.key))} data-edge={e.key} data-edge-kind={e.kind}>
                 {tip ? <title>{tip}</title> : null}

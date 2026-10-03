@@ -34,6 +34,8 @@ export interface LayoutEdge {
   d: string;
   /** 这条前缀线同时也是一条依赖（同一对服务的依赖线并入这条，不再另画一条） */
   alsoDepends?: boolean;
+  /** 并入的那条依赖自己的标签（环境变量名 / 声明的依赖 / depends_on）：并线后它只剩这一处可见 */
+  dependsLabel?: string;
 }
 export interface RelationLayout {
   width: number; height: number;
@@ -366,14 +368,17 @@ function layoutPass(payload: RelationPayload, width: number, extras: Extras): { 
     const isInfra = e.to.startsWith('infra:');
     const a = svc(e.from), b = isInfra ? e.to : svc(e.to);
     const pe = isInfra ? undefined : prefixByPair.get(`${a}>${b}`);
+    const callLabel = e.envKeys.join(' · ') || (e.declared ? '声明的依赖' : e.dependsOn ? 'depends_on' : undefined);
     if (pe) {
-      // 这对服务之间已经有一条前缀分流线：依赖并入那条线，不再另画一条贴着它走的线
+      // 这对服务之间已经有一条前缀分流线：依赖并入那条线，不再另画一条贴着它走的线。
+      // 依赖自己的标签（是哪个环境变量连过去的）一起带过去，否则并线后这条证据就没了（Codex P2，PR #1654）
       pe.alsoDepends = true;
+      if (callLabel) pe.dependsLabel = pe.dependsLabel ? `${pe.dependsLabel} · ${callLabel}` : callLabel;
       continue;
     }
     const pair = isInfra ? (cardOf(b) && instances(a)[0] ? [instances(a)[0], b] as [string, string] : undefined) : choose(a, b);
     if (!pair || pair[0] === pair[1]) continue;
-    wants.push({ key: `call-${e.from}-${e.to}`, kind: isInfra ? 'infra' : 'call', label: e.envKeys.join(' · ') || (e.declared ? '声明的依赖' : e.dependsOn ? 'depends_on' : undefined), s: pair[0], t: pair[1] });
+    wants.push({ key: `call-${e.from}-${e.to}`, kind: isInfra ? 'infra' : 'call', label: callLabel, s: pair[0], t: pair[1] });
   }
   for (const x of extEdges) {
     const s = instances(x.from)[0];
@@ -510,5 +515,12 @@ function layoutPass(payload: RelationPayload, width: number, extras: Extras): { 
 /** 路径就是布局给的那一条（判据 G5–G8 与渲染层读同一份，没有第二种画法） */
 export function edgePath(e: LayoutEdge): string {
   return e.d;
+}
+
+/** 线的悬停提示：线上不挂字，环境变量名、前缀这些证据只在这里出现 */
+export function edgeTooltip(e: LayoutEdge): string | undefined {
+  if (e.kind !== 'prefix') return e.label;
+  const dep = e.alsoDepends ? ` · 同时声明了依赖${e.dependsLabel ? `（${e.dependsLabel}）` : ''}` : '';
+  return `前缀 ${e.label ?? ''}${dep}`;
 }
 

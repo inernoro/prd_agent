@@ -313,6 +313,18 @@ describe('Codex 评审（PR #1654）', () => {
     expect(html).toContain('被 api、cron 使用');
     expect(html).toContain('被 api、files 使用');
   });
+  it('P2 壳经环境变量调用前缀成员时并成一条线，悬停提示里仍留着环境变量名', async () => {
+    const { layoutRelations, edgeTooltip } = await import('../../web/src/components/branch/RelationGraph.js');
+    const p = payload();
+    p.graph.edges.push({ from: 'service:admin-web', to: 'service:api', envKeys: ['API_BASE_URL'], dependsOn: false });
+    for (const width of [390, 1280]) {
+      const edges = layoutRelations(p, width).edges.filter((e) => e.key.includes('api') && !e.key.includes('infra'));
+      expect(edges.filter((e) => e.kind === 'call' && e.key.includes('admin-web'))).toEqual([]);
+      const merged = edges.find((e) => e.kind === 'prefix' && e.alsoDepends);
+      expect(merged, `宽 ${width}`).toBeTruthy();
+      expect(edgeTooltip(merged!)).toBe('前缀 /api/ /hubs/ · 同时声明了依赖（API_BASE_URL）');
+    }
+  });
   it('P2 全屏页「只看问题」时，标题计数按显示出来的这批算，不再挂着被滤掉的建议', async () => {
     const { RelationWorkspace } = await import('../../web/src/components/branch/RelationCard.js');
     const p = payload();
