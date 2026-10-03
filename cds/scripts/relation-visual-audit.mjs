@@ -20,7 +20,7 @@
  *   S5 宽屏（≥1280）下同构样本的服务名一个都不截断
  *   S6 悬停一条问题：它涉及的服务点亮，其余淡出
  *   S7 窄屏（<640）有建议时只先放要处理的，建议收成一行
- *   S8 按 Esc 关得掉
+ *   S8 按 Esc 关得掉浮层，且只关浮层（分支详情抽屉还在）
  *   F1 从关系卡点「全屏」进入的全屏页：整页不横向溢出、图不出横向滚动条、服务都画出来、卡片不重叠、对比度与截断同上
  *   T1 所有文字与背后底色的对比度 ≥ 4.5（≥18.66px 粗体或 ≥24px 时 ≥ 3）
  *   P1 页面没有报错；没有未登记的 /api 路径（避免页面拿空数据走空态而判据照绿）
@@ -289,6 +289,8 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(200);
     check((await sheet.count()) === 0, where, 'S8 按 Esc 关不掉展开视图');
+    // Esc 只该关浮层：下面的分支详情抽屉与关系卡还在（此前一次 Esc 连抽屉一起关掉、退回分支列表）
+    check(await card.isVisible(), where, 'S8 按 Esc 把分支详情抽屉也一起关掉了，用户被退回分支列表');
 
     // F1 全屏页：从关系卡点「全屏」进入（真人路径），整页不横向溢出、图不出横向滚动条、服务都画出来、卡片不重叠
     if ((await sheet.count()) === 0) {

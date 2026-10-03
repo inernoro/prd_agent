@@ -166,9 +166,15 @@ export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'car
   const navigate = useNavigate();
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // 捕获阶段先接住 Esc 并截停：分支详情抽屉也在 window 上听 Esc，冒泡阶段两个都会触发，
+    // 按一下 Esc 就连浮层带抽屉一起关掉、退回分支列表（2026-10-03 relation-visual-audit S8 抓到）
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopImmediatePropagation();
+      setOpen(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [open]);
   const entryHost = previewUrl ? previewUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : undefined;
   const fullHref = `/branch-relations/${encodeURIComponent(branchId)}`;
