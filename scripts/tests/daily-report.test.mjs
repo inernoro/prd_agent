@@ -43,7 +43,7 @@ test('挂在台账之外的功能线上的结果会被拒收', () => {
 });
 
 test('被测环境不可达时，结论第一句就说环境，不说功能', () => {
-  const env = outcome({ id: 'ENV', featureLine: 'environment', title: '被测环境可达', method: 'curl', status: 'fail', observed: '首页 HTTP 503', next: '去 CDS 重新部署 main' });
+  const env = outcome({ id: 'ENV', featureLine: 'environment', title: '被测环境可达', method: 'curl', status: 'fail', observed: '首页 HTTP 503', next: '去 CDS 重新部署 main', fatal: true });
   const s = summarize({ results: [env], catalog, base: 'x', at: '2026-10-03T00:00:00Z' });
   assert.equal(s.verdict, 'fail');
   assert.match(headline(s), /^被测环境本身不可用/);
@@ -79,4 +79,19 @@ test('归档用的完整版：每一项检查都在明细里，异常项带截�
   // 归档版状态带颜色徽标，但文字仍在（色弱 / 纯文本渲染也读得出）；短版保持纯文本
   assert.match(full, /<span style="[^"]*">需关注<\/span>/);
   assert.ok(!renderMarkdown(s).includes('<span'), '短版不该带 HTML');
+});
+
+test('非致命前置项失败（如对象存储）时，不许说「都没能验」，其余结果照常进结论', () => {
+  // Codex 在 PR #1655 指出：对象存储失败时其余检查照样跑了，首句却说全都没验，和表格自相矛盾
+  const results = [
+    outcome({ id: 'ENV-01', featureLine: 'environment', title: '被测环境可达', method: 'm', status: 'pass', fatal: true }),
+    outcome({ id: 'ENV-02', featureLine: 'environment', title: '对象存储读写就绪', method: 'm', status: 'fail', observed: '存储未就绪', next: '查桶' }),
+    ok('A', 'web-hosting-sharing'),
+  ];
+  const s = summarize({ results, catalog, base: 'x', at: '2026-10-03T00:00:00Z' });
+  assert.equal(s.verdict, 'fail');
+  assert.doesNotMatch(headline(s), /都没能验/);
+  assert.match(headline(s), /前置项有问题：对象存储读写就绪/);
+  // 非 environment 的结果即便传了 fatal 也不算致命
+  assert.equal(outcome({ id: 'X', featureLine: 'recording', title: 't', method: 'm', status: 'pass', fatal: true }).fatal, false);
 });

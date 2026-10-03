@@ -799,6 +799,11 @@ async function checkDeepHealth() {
   for (const [key, val] of Object.entries(checks)) {
     for (const c of (Array.isArray(val) ? val : [val])) record(deepCheckOutcome(key, c));
   }
+  // 已登记、但这次自检里没出现的项：不能静默跳过（Codex 在 PR #1655 指出）。
+  // 否则自检一改名或删掉某项，同一功能线上的其他项照样把那一行判成「正常」。
+  for (const key of Object.keys(DEEP_CHECK_MAP)) {
+    if (!(key in checks)) record(deepCheckOutcome(key, undefined));
+  }
   return r.json;
 }
 
@@ -853,7 +858,7 @@ async function checkEnvironment() {
   const commit = ver.json?.commit ? String(ver.json.commit).slice(0, 8) : '';
   const up = head === 200 && ver.status === 200;
   record({
-    id: 'ENV-01', featureLine: 'environment', title: '被测环境可达',
+    id: 'ENV-01', featureLine: 'environment', title: '被测环境可达', fatal: true,
     method: '请求首页与 /api/version',
     status: up ? 'pass' : 'fail',
     observed: up ? `首页 200，运行版本 ${commit}` : `首页 HTTP ${head || '连不上'}，版本接口 HTTP ${ver.status || '连不上'}`,
@@ -861,13 +866,22 @@ async function checkEnvironment() {
     link: PUBLIC,
   });
   if (!up) return null;
-  const st = ready.json?.status;
+  // 只认 asset-storage 这个组件自己的结论，外加写入与公网读取都真的验证过——不看顶层 status：
+  // 那是应用级汇总（ApplicationReadiness），存储挂了它未必跟着变（Codex 在 PR #1655 指出）。
+  // 专用的 /health/assets/ready 不走公网 /api 反代，打过去落到前端页面，所以从这里取组件明细。
+  const comps = Array.isArray(ready.json?.components) ? ready.json.components : null;
+  const storage = comps?.find((c) => c?.name === 'asset-storage');
+  const notReady = (comps || []).filter((c) => c?.ready !== true).map((c) => c?.name);
+  const storageOk = storage?.ready === true && ready.json?.writeVerified === true && ready.json?.publicReadVerified === true;
   record({
     id: 'ENV-02', featureLine: 'environment', title: '对象存储读写就绪',
-    method: '请求 /api/health/ready（后端会真写一次、读一次对象存储）',
-    status: ready.status === 200 && st === 'healthy' ? 'pass' : 'fail',
-    observed: ready.status === 200 ? `${ready.json?.provider || ''} ${st}` : `HTTP ${ready.status}`,
+    method: '请求 /api/health/ready，断言其中 asset-storage 组件就绪，且后端真写入、真经公网读回过一次',
+    status: storageOk ? 'pass' : 'fail',
+    observed: !comps ? `就绪接口没有给出组件明细（HTTP ${ready.status}）`
+      : storageOk ? `${ready.json?.provider || ''} 写入与公网读取均已验证`
+        : `对象存储未就绪${notReady.length ? `（未就绪组件：${notReady.join('、')}）` : ''}，写入验证=${ready.json?.writeVerified}，公网读取验证=${ready.json?.publicReadVerified}`,
     next: '对象存储不可用会让上传、托管、截图全部失败：查存储凭据与桶',
+    tech: `GET /api/health/ready -> ${ready.status} status=${ready.json?.status}`,
   });
   return commit;
 }
@@ -992,6 +1006,8 @@ if (MD_OUT) fs.writeFileSync(MD_OUT, md);
 console.log(`\n${md}`);
 if (!KEEP) console.log('\n（网页托管的验收站点会复用，不重复创建；要清理就去主控台删掉标题带「[每日验收]」的那几个）');
 if (exitCode === 0 && summary.verdict !== 'pass') exitCode = 1;
+// 要求了归档却没归档成：证据没落地，计划任务不能当成功（Codex 在 PR #1655 指出）
+if (ARCHIVE && !reportUrl && exitCode === 0) exitCode = 1;
 process.exit(exitCode);
 
 /** CDS 报告的直达深链只认 cdscli 给的（CLAUDE.md §11：不自己拼地址）。拿不到就留空。 */

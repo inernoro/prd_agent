@@ -53,6 +53,8 @@ export function outcome(p) {
     link: p.link || '',
     shot: p.shot || '',
     tech: p.tech || '',
+    // 只有前置项才可能是致命的：它失败意味着后面一项都没验成
+    fatal: p.featureLine === 'environment' && Boolean(p.fatal),
   };
 }
 
@@ -135,7 +137,9 @@ function rankLine(l) {
 /** 第一句话：先给结论（conclusion-before-numbers）。 */
 export function headline(s) {
   const c = s.counts;
-  const envBad = s.environment.find((r) => r.status !== 'pass');
+  // 只有「被测环境可达」这一项失败（ENV-01，致命）才能说「都没能验」。对象存储、账号这类
+  // 非致命前置项失败时其余检查照样跑了，这么说会和表格自相矛盾（Codex 在 PR #1655 指出）。
+  const envBad = s.environment.find((r) => r.status !== 'pass' && r.fatal);
   if (envBad) {
     return `被测环境本身不可用，今天 ${c.lines} 条核心功能都没能验：${envBad.observed}。下一步：${envBad.next}`;
   }
@@ -146,6 +150,8 @@ export function headline(s) {
   const nr = s.lines.filter((l) => l.status === 'not-run').map((l) => l.label);
   const wn = s.lines.filter((l) => l.status === 'warn').map((l) => l.label);
   const parts = [];
+  const envIssues = s.environment.filter((r) => r.status !== 'pass').map((r) => r.title);
+  if (envIssues.length) parts.push(`前置项有问题：${envIssues.join('、')}`);
   if (bad.length) parts.push(`${bad.length} 条异常：${bad.join('、')}`);
   if (nr.length) parts.push(`${nr.length} 条没验成：${nr.join('、')}`);
   if (wn.length) parts.push(`${wn.length} 条需关注：${wn.join('、')}`);

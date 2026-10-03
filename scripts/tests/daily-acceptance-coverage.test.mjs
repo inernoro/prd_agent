@@ -73,6 +73,11 @@ test('后端自检的结论按服务自己说的来，不替它降级（真执�
   assert.ok(unknown.next, '新申报项也必须带下一步');
   // 自检没给状态 = 没验成，不是通过
   assert.equal(deepCheckOutcome('db:roundtrip', {}).status, 'not-run');
+  // 已登记的项在自检里整个消失（改名 / 删除）：必须是「未执行」且说清是消失了，不许静默跳过
+  const gone = deepCheckOutcome('model-catalog:selector-runtime-contract', undefined);
+  assert.equal(gone.status, 'not-run');
+  assert.match(gone.observed, /没有这一项/);
+  assert.equal(gone.featureLine, 'llm-gateway');
 });
 
 test('知识库「+」只许单击：双击会直接开始录音、去要麦克风权限', () => {
@@ -97,4 +102,16 @@ test('守卫自己必须接在闸上（每个输入都登记进 CI 过滤器）'
   ).test(file);
   const missing = GUARD_INPUTS.filter((f) => !patterns.some((p) => covers(p, f)));
   assert.deepEqual(missing, [], `这些被守文件没登记进 release_scripts 过滤器：${missing.join(', ')}`);
+});
+
+test('主脚本会把「已登记但自检里缺席」的项补登为未执行', () => {
+  // Codex 在 PR #1655 指出：只遍历自检返回的键，删掉一项就从报告里静默消失
+  const fn = script.slice(script.indexOf('async function checkDeepHealth'), script.indexOf('function checkStableSmokeFreshness'));
+  assert.match(fn, /Object\.keys\(DEEP_CHECK_MAP\)/, 'checkDeepHealth 没有遍历已登记的自检项');
+  assert.match(fn, /deepCheckOutcome\(key, undefined\)/, '缺席的已登记项没有被补登');
+});
+
+test('要求归档却没归档成，退出码不能是 0', () => {
+  // Codex 在 PR #1655 指出：归档失败时照样 exit 0，计划任务会当成成功、证据丢失
+  assert.match(script, /if \(ARCHIVE && !reportUrl && exitCode === 0\) exitCode = 1;/);
 });

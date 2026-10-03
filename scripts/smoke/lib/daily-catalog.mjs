@@ -85,8 +85,14 @@ export function deepCheckOutcome(key, check) {
     title: m.title,
     method: '读后端深度自检（服务自己跑一遍真实链路后申报的结论）',
     status,
-    observed: check?.output || (status === 'not-run' ? '自检没给出这一项的结论' : ''),
-    next: status === 'not-run' ? '自检没给结论：看 /api/healthz/deep 的原始响应' : m.next,
+    observed: check?.output || (status === 'not-run'
+      ? (check === undefined ? '后端深度自检里没有这一项' : '自检没给出这一项的结论')
+      : ''),
+    next: status === 'not-run'
+      ? (check === undefined
+        ? '自检里没有这一项了：确认后端是删了还是改了名；改名就同步 DEEP_CHECK_MAP'
+        : '自检没给结论：看 /api/healthz/deep 的原始响应')
+      : m.next,
     tech: `${key} status=${check?.status ?? '缺失'}${value ? ` observed=${value}` : ''}`,
   };
 }
