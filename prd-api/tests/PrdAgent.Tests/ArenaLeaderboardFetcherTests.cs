@@ -589,10 +589,12 @@ public class ArenaLeaderboardFetcherTests
     [Fact]
     public void EnsureUsable_厂商几乎全空时拒绝整份()
     {
-        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事
+        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事。
+        // 判据现在只认 truncate 这一个词，所以要把它改掉才能让厂商格失配
+        // （原先改成 text-xs-v2 在新判据下照样命中，这条用例就不再测它声称的东西了）。
         var renamed = RealFixture.Replace(
             "text-text-secondary truncate text-xs",
-            "text-text-secondary truncate text-xs-v2", StringComparison.Ordinal);
+            "text-text-secondary ellipsis text-xs", StringComparison.Ordinal);
         Assert.NotEqual(RealFixture, renamed);
 
         var parsed = ArenaLeaderboardFetcher.Parse(renamed);

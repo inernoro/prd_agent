@@ -183,7 +183,7 @@ export function CreatePaletteFab({ actions, onDoubleActivation }: {
       <AnimatePresence>
         {open && (
           <motion.div
-            className="fixed inset-0 z-[58]"
+            className="fixed inset-0 z-[125]"
             style={{ background: 'rgba(0,0,0,0.38)' }}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -194,7 +194,9 @@ export function CreatePaletteFab({ actions, onDoubleActivation }: {
         )}
       </AnimatePresence>
 
-      <div className="fixed z-[60]" style={{ bottom, right }}>
+      {/* 菜单展开时整组提到全局通知卡片（z-120）之上：卡片已为「+」让出了按钮的位置，
+          但菜单是向上展开的，层级低于卡片就会被盖住上面几项。收起时回到原层级，不挡卡片。 */}
+      <div className={`fixed ${open ? 'z-[130]' : 'z-[60]'}`} style={{ bottom, right }}>
         {/* 竖排动作菜单：固定行距，永不遮挡；超长时列内滚动 */}
         <AnimatePresence>
           {open && (
