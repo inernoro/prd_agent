@@ -15,6 +15,7 @@ import { CdsScene } from './scenes/CdsScene';
 import { Interlude } from './components/Interlude';
 import { SCENE_HUE } from './scenes/sceneTokens';
 import { StartScene } from './scenes/StartScene';
+import { FilmSection } from './film/FilmSection';
 import { StaticBackdrop } from './components/StaticBackdrop';
 import { InkFieldBackdrop } from '@/components/backgrounds/InkFieldBackdrop';
 import { LanguageToggle } from './components/LanguageToggle';
@@ -26,6 +27,7 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
  * 结构（十幕）：
  *   1 · Hero（第一屏就是视觉创作工作台——本系统的核心，不是通用对话壳）
  *   2 · StatsStrip
+ *   2½ · FilmSection     ← 片花：52 秒，画面与配乐都由代码按同一张时间轴实时生成（`film/`）
  *   3 · LiteraryScene    ← 文学创作 `/literary-agent`：左文右图，可切风格
  *   4 · KnowledgeScene   ← 知识库 `/document-store`：三栏阅读器 + 划词浮层 + 知识星系
  *   5 · LayersScene      ← 三层一体：MAP / LLMGW / CDS 各一块真实界面切片
@@ -115,13 +117,6 @@ function LandingInner() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleGetStarted = () => navigate('/login');
-  /*
-   * 次 CTA 原来滚到 #cinema —— 那一幕（片花，Coming soon 占位）早就撤了，
-   * 于是这颗按钮点下去什么都不发生，一直是个死链。改成滚到第一幕真面板。
-   */
-  const handleWatchDemo = () => {
-    document.getElementById('literary')?.scrollIntoView({ behavior: 'smooth' });
-  };
 
   /*
    * 导航锚点必须落在真实存在的幕上。
@@ -298,11 +293,16 @@ function LandingInner() {
           屏外区块跳过渲染与内部无限动画的绘制（13 幕全常驻渲染是滚动卡顿主因之一）。
           containIntrinsicSize 提供占位高度估值，避免滚动条跳动。 */}
       <div id="hero">
-        <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />
+        <HeroSection onGetStarted={handleGetStarted} />
       </div>
 
       <div id="stats" style={BELOW_FOLD_SECTION}>
         <StatsStrip />
+      </div>
+
+      {/* 片花不挂 content-visibility：它自己只在点了播放之后才逐帧重绘，海报态是一张静帧 */}
+      <div id="film">
+        <FilmSection />
       </div>
 
       <div id="literary" style={BELOW_FOLD_SECTION}>
