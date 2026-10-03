@@ -530,6 +530,7 @@ public class LiteraryMcpUsabilityTests
             await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 0, "a0");
             await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "a1-new");
             await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "a1-old"); // 用户又放回了旧的那张
+            await db.ImageAssets.UpdateOneAsync(x => x.Id == "a0", Builders<ImageAsset>.Update.Set(x => x.OriginalMarkerText, "粉色系，书店门口")); // 早期数据：图上记的是带风格前缀的整段
 
             // 网页上换了正文：标记作废
             var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
@@ -547,10 +548,11 @@ public class LiteraryMcpUsabilityTests
             Assert.StartsWith("同一位置换上了别的图", images["a1-new"].GetProperty("replacedReason").GetString());
             Assert.NotEqual(JsonValueKind.Null, images["a1-new"].GetProperty("replacedAt").ValueKind);
 
-            // 智能体带同样的描述写回：两张都自动接上换稿前那组，不用逐张放回
+            // 智能体照着上一组给的描述写回：两张都自动接上换稿前那组，不用逐张放回
+            var descriptions = lastSet.GetProperty("images").EnumerateArray().Select(i => i.GetProperty("description").GetString()).ToList();
             var written = Data(await drafts.WriteContent(id, new()
             {
-                MarkedContent = "一。本文为验收用稿。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n",
+                MarkedContent = $"一。本文为验收用稿。\n[插图]: {descriptions[0]}\n二。\n[插图]: {descriptions[1]}\n",
             }, CancellationToken.None));
             Assert.Equal(new[] { 0, 1 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None)).GetProperty("illustrations").EnumerateArray().ToList();

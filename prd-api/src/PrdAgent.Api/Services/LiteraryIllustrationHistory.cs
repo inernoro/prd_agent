@@ -58,8 +58,10 @@ public static class LiteraryIllustrationHistory
                 .Select(kv => (ok: int.TryParse(kv.Key, out var idx), idx, id: kv.Value))
                 .Where(x => x.ok && byId.ContainsKey(x.id))
                 .OrderBy(x => x.idx)
+                // 描述取那一版标记的生效描述：带标记写回时沿用就是拿它来比对的，照着它写回一定接得上
                 .Select(x => new SetImage(x.idx, x.id, Url(byId[x.id].Url),
-                    byId[x.id].OriginalMarkerText ?? w.Markers.Where(m => m.Index == x.idx).Select(LiteraryMcpWorkflow.EffectivePrompt).FirstOrDefault()))
+                    w.Markers.Where(m => m.Index == x.idx).Select(LiteraryMcpWorkflow.EffectivePrompt).FirstOrDefault()
+                        ?? byId[x.id].OriginalMarkerText))
                 .ToList()))
             .Where(set => set.Images.Count > 0)
             .ToList();
