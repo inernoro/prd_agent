@@ -16,6 +16,7 @@
     "smoke:mobile-layout": "node scripts/mobile-layout-smoke.mjs",
     "smoke:mobile-layout:offline": "node scripts/mobile-layout-smoke.mjs --offline",
     "smoke:agent-starter-mobile": "node scripts/agent-starter-mobile-probe.mjs",
+    "audit:relation-visual": "node scripts/relation-visual-audit.mjs --no-shots",
     "install:web": "pnpm --dir web install --frozen-lockfile",
     "test": "vitest run",
     "test:watch": "vitest"
