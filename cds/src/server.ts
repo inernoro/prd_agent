@@ -107,6 +107,8 @@ import {
 } from './services/ticket-sso.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
+import { createHumanProjectAccessMiddleware } from './middleware/human-project-access.js';
+import { createUserProjectAccessRouter } from './routes/user-project-access.js';
 import { resolveActorFromRequest } from './services/actor-resolver.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
@@ -1240,6 +1242,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
     [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
     [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
+    [/^(GET|PUT) \/auth\/users\/[^/]+\/projects$/, '管理用户项目授权'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
@@ -3403,6 +3406,9 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
+
+  app.use(createHumanProjectAccessMiddleware(deps.stateService));
+  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
