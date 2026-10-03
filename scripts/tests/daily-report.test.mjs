@@ -104,3 +104,11 @@ test('归档标题和结论一致：环境不可达时不许写成「0 条功能
   const bad = summarize({ results: [outcome({ id: 'B', featureLine: 'llm-gateway', title: 't', method: 'm', status: 'fail', next: 'n' })], catalog, base: 'x', at: '2026-10-03T00:00:00Z' });
   assert.match(archiveTitle(bad), /1 条功能线异常/);
 });
+
+test('环境不可达时，首句写实际没验成的条数，不把独立验过的那一行也算进去', () => {
+  const env = outcome({ id: 'ENV-01', featureLine: 'environment', title: '被测环境可达', method: 'm', status: 'fail', observed: '503', next: '重新部署', fatal: true });
+  const stable = outcome({ id: 'S', featureLine: 'stability-foundation', title: '心跳', method: 'm', status: 'pass' });
+  const s = summarize({ results: [env, stable], catalog, base: 'x', at: '2026-10-03T00:00:00Z' });
+  assert.match(headline(s), new RegExp(`^被测环境本身不可用，${s.counts.notRun} 条核心功能没能验`));
+  assert.ok(s.counts.notRun < s.counts.lines);
+});

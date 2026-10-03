@@ -141,7 +141,8 @@ export function headline(s) {
   // 非致命前置项失败时其余检查照样跑了，这么说会和表格自相矛盾（Codex 在 PR #1655 指出）。
   const envBad = s.environment.find((r) => r.status !== 'pass' && r.fatal);
   if (envBad) {
-    return `被测环境本身不可用，今天 ${c.lines} 条核心功能都没能验：${envBad.observed}。下一步：${envBad.next}`;
+    // 写实际没验成的条数：「稳定性基线」那一行查的是 CDS，不依赖被测环境，照样验了
+    return `被测环境本身不可用，${c.notRun} 条核心功能没能验：${envBad.observed}。下一步：${envBad.next}`;
   }
   if (s.verdict === 'pass') {
     return `${c.lines} 条核心功能全部正常（${c.checksPass}/${c.checks} 项检查通过）。`;
