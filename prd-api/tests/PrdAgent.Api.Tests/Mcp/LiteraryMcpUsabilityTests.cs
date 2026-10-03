@@ -385,6 +385,57 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 网页改过的描述智能体读得到_整篇重写不冲掉也不错配图()
+    {
+        // 验收里撞出来的：客户在网页上改了第一张的描述并重画，智能体读稿拿到的还是原始描述，
+        // 整篇重写把描述改了回去，却凭原始描述把按新描述画的图接了回来——图和描述对不上
+        var (db, name, connection) = NewDb("literary_effective_prompt");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            async Task<string> Seed(string requestId)
+            {
+                var id = Data(await drafts.CreateWorkspace(new()
+                {
+                    Title = "描述", MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n", ClientRequestId = requestId,
+                }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+                var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+                ws.ArticleWorkflow!.Markers[1].DraftText = "窗边打盹的橘猫"; // 网页编辑只写 DraftText
+                ws.ArticleWorkflow.AssetIdByMarkerIndex = new() { ["0"] = $"{id}-a0", ["1"] = $"{id}-a1" };
+                await db.ImageMasterWorkspaces.ReplaceOneAsync(x => x.Id == id, ws);
+                await db.ImageAssets.InsertManyAsync(new[] { 0, 1 }.Select(i => new ImageAsset
+                {
+                    Id = $"{id}-a{i}", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = i, ArticleWorkflowVersion = 1,
+                    Url = $"https://example.test/{id}-a{i}.png",
+                }));
+                return id;
+            }
+
+            var id = await Seed("ep-1");
+            var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
+            Assert.Equal("窗边打盹的橘猫", read.GetProperty("illustrations").EnumerateArray().ElementAt(1).GetProperty("prompt").GetString());
+
+            // 照读到的描述原样写回：两张都沿用
+            var kept = Data(await drafts.WriteContent(id, new()
+            {
+                MarkedContent = "一。\n[插图]: 书店门口\n二改短了。\n[插图]: 窗边打盹的橘猫\n",
+            }, CancellationToken.None));
+            Assert.Equal(new[] { 0, 1 }, kept.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
+            Assert.Equal("窗边打盹的橘猫", kept.GetProperty("illustrations").EnumerateArray().ElementAt(1).GetProperty("prompt").GetString());
+
+            // 拿过期的原始描述写回：按新描述画的那张不许接回去，老实标成要重画
+            var stale = await Seed("ep-2");
+            var rewritten = Data(await drafts.WriteContent(stale, new()
+            {
+                MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n",
+            }, CancellationToken.None));
+            Assert.Equal(new[] { 0 }, rewritten.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
+            Assert.Equal(new[] { 1 }, rewritten.GetProperty("needsGeneration").EnumerateArray().Select(x => x.GetInt32()));
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
     public async Task 网页上重画也按这篇文章的风格水印来_顶栏改的是这篇文章()
     {
         // 验收里撞出来的：智能体按「水印配置1」配好图，客户在网页上重画一张，水印变成了账号默认

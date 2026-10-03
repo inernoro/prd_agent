@@ -126,7 +126,7 @@ public class LiteraryOpenApiController : ControllerBase
             workflowVersion = ws.ArticleWorkflow?.Version ?? 0,
             illustrations = ws.ArticleWorkflow?.Markers.Select(m => new
             {
-                index = m.Index, prompt = m.Text,
+                index = m.Index, prompt = LiteraryMcpWorkflow.EffectivePrompt(m),
                 status = current.ContainsKey(m.Index) && m.Status != "running" ? "done" : m.Status,
                 runId = m.RunId,
                 errorMessage = m.ErrorMessage,
@@ -238,7 +238,7 @@ public class LiteraryOpenApiController : ControllerBase
         folderName = ws.FolderName,
         deduplicated,
         workflowVersion = ws.ArticleWorkflow?.Version ?? 0,
-        illustrations = ws.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status })
+        illustrations = ws.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = LiteraryMcpWorkflow.EffectivePrompt(m), status = m.Status })
             ?? Enumerable.Empty<object>(),
         next = ws.ArticleWorkflow?.Markers.Count > 0
             ? "用 map_literary_generate_image 传 markerIndexes（可一次传全部）与 workflowVersion 生成配图；风格/水印/尺寸可选，先用 map_literary_list_presets 看有哪些。"
@@ -445,7 +445,7 @@ public class LiteraryOpenApiController : ControllerBase
             contentChars = merged.Length,
             mode = append ? "append" : "replace",
             workflowVersion = written?.ArticleWorkflow?.Version ?? 0,
-            illustrations = written?.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = m.Text, status = m.Status, url = m.Url })
+            illustrations = written?.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = LiteraryMcpWorkflow.EffectivePrompt(m), status = m.Status, url = m.Url })
                 ?? Enumerable.Empty<object>(),
             // 描述没变、沿用原图的标记；其余（needsGeneration）才需要调用生图
             reusedImages = carriedOver,

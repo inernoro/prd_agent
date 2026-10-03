@@ -3547,7 +3547,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             style={{ borderColor: 'var(--border-subtle)' }}
             data-testid="literary-generation-settings"
           >
-            <div className="grid grid-cols-4 gap-1.5 flex-1 min-w-0">
+            {/* 风格与水印的名字最长、也最要紧，给它们更宽的列；两头「自动」类短值收窄。
+                「这是本文自己的设定」由悬停说明与菜单里的「跟随账号默认」项交代，不再挤占按钮文字 */}
+            <div
+              className="grid gap-1.5 flex-1 min-w-0"
+              style={{ gridTemplateColumns: 'minmax(0, 0.75fr) minmax(0, 1.25fr) minmax(0, 1.25fr) minmax(0, 0.75fr)' }}
+            >
               <QuickMenu
                 title="提示词风格"
                 width={260}
@@ -3581,13 +3586,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="风格参考图"
                 width={260}
+                note={articleChoice ? '这里选的是这篇文章自己的风格，智能体和网页重画都按它来' : undefined}
                 // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
                 onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
                 trigger={
                   <PopupButton
                     icon={<ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
                     value={articleChoice
-                      ? `本文 · ${articleChoice.style.styleId === 'none' ? '无' : articleChoice.style.name}`
+                      ? (articleChoice.style.styleId === 'none' ? '无' : articleChoice.style.name)
                       : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
                     isSet={articleChoice ? articleChoice.style.styleId !== 'none' : !!activeRefConfig}
                     title={articleChoice
@@ -3642,12 +3648,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="水印"
                 width={240}
+                note={articleChoice ? '这里选的是这篇文章自己的水印，智能体和网页重画都按它来' : undefined}
                 onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
                 trigger={
                   <PopupButton
                     icon={<Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
                     value={articleChoice
-                      ? `本文 · ${articleChoice.watermark.watermarkId === 'none' ? '关' : articleChoice.watermark.name}`
+                      ? (articleChoice.watermark.watermarkId === 'none' ? '关' : articleChoice.watermark.name)
                       : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
                     isSet={articleChoice ? articleChoice.watermark.watermarkId !== 'none' : watermarkStatus.enabled}
                     title={articleChoice

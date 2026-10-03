@@ -191,7 +191,7 @@ public class LiteraryImageOpenApiController(
             var tooLong = pending.Where(i =>
             {
                 var m = ws.ArticleWorkflow.Markers.First(x => x.Index == i);
-                var p = string.IsNullOrWhiteSpace(m.DraftText) ? m.Text : m.DraftText;
+                var p = LiteraryMcpWorkflow.EffectivePrompt(m);
                 return string.IsNullOrWhiteSpace(p) || p.Length > 4000;
             }).ToList();
             if (tooLong.Count > 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
@@ -211,7 +211,7 @@ public class LiteraryImageOpenApiController(
             foreach (var index in pending)
             {
                 var marker = ws.ArticleWorkflow.Markers.First(m => m.Index == index);
-                var prompt = string.IsNullOrWhiteSpace(marker.DraftText) ? marker.Text : marker.DraftText;
+                var prompt = LiteraryMcpWorkflow.EffectivePrompt(marker);
                 var effectivePrompt = style.PromptPrefix != null ? $"{style.PromptPrefix}\n\n{prompt}" : prompt;
                 var idem = IdemFor(index);
                 var run = new ImageGenRun

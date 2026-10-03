@@ -166,7 +166,8 @@ public static class LiteraryMcpWorkflow
     /// 改稿时把「画面描述没变」的标记原样接上它现在那张图，只让新增 / 改过描述的标记等待生成。
     ///
     /// 以前改一节正文，整篇配图方案作废、6 张图全部要重画：用户满意的图、刚修好的那张一起被换掉，
-    /// 既费钱又出乎意料。判据只认描述文本（去首尾空白、压缩连续空白后逐字相等），
+    /// 既费钱又出乎意料。判据只认描述文本（去首尾空白、压缩连续空白后逐字相等），旧标记一侧取
+    /// <see cref="EffectivePrompt"/>——网页改过的描述才是那张图对应的描述，原始描述不再算数；
     /// 同一段描述出现多次时按出现顺序一一对应，一张旧图只接一次。
     /// 返回接上的标记序号；<paramref name="next"/> 被就地改写。
     /// </summary>
@@ -179,15 +180,15 @@ public static class LiteraryMcpWorkflow
         var current = SelectCurrent(previous, assets);
         var pool = oldMarkers
             .Where(m => current.ContainsKey(m.Index))
-            .Select(m => (keys: new[] { Normalize(m.Text), Normalize(m.DraftText) }.Where(k => k.Length > 0).ToHashSet(),
-                          asset: current[m.Index]))
+            .Select(m => (key: Normalize(EffectivePrompt(m)), asset: current[m.Index]))
+            .Where(p => p.key.Length > 0)
             .ToList();
         next.AssetIdByMarkerIndex ??= new Dictionary<string, string>();
         next.AssetRunAtByMarkerIndex ??= new Dictionary<string, DateTime>();
         foreach (var marker in next.Markers.OrderBy(m => m.Index))
         {
             var key = Normalize(marker.Text);
-            var hit = pool.FindIndex(p => p.keys.Contains(key));
+            var hit = pool.FindIndex(p => p.key == key);
             if (hit < 0) continue;
             var asset = pool[hit].asset;
             pool.RemoveAt(hit);
@@ -203,6 +204,16 @@ public static class LiteraryMcpWorkflow
         next.DoneImageCount = next.AssetIdByMarkerIndex.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
         return carried;
     }
+
+    /// <summary>
+    /// 标记「当前生效的画面描述」：网页上改过（DraftText）就以改后的为准，否则是原始描述。
+    ///
+    /// 网页改描述只写 DraftText，原始 Text 不动。以前 MCP 读稿与回执只给 Text，智能体拿到过期描述，
+    /// 整篇重写时把网页的修改冲掉，又凭旧描述把按新描述画的图接了回去——图和描述对不上。
+    /// 凡是对外说「这个标记的描述是什么」、以及「描述变没变」的判断，一律走这里。
+    /// </summary>
+    public static string EffectivePrompt(ArticleIllustrationMarker marker)
+        => string.IsNullOrWhiteSpace(marker.DraftText) ? marker.Text : marker.DraftText.Trim();
 
     private static string Normalize(string? text)
         => string.Join(' ', (text ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
