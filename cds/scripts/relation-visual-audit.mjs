@@ -347,9 +347,20 @@ async function main() {
   if (failures.length) {
     console.log(`\n未通过 ${failures.length} 项：`);
     for (const f of failures) console.log(`  FAIL ${f}`);
+    // CI 上同时写成 annotation：job 日志要另一个主机下载，annotation 走 API 就读得到。
+    // 一步最多显示 10 条 error annotation，所以合并成一条、按 30 项截断
+    if (process.env.GITHUB_ACTIONS) {
+      const esc = (s) => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+      const body = failures.slice(0, 30).join('\n') + (failures.length > 30 ? `\n……另有 ${failures.length - 30} 项` : '');
+      console.log(`::error title=关系视图视觉审计未通过 ${failures.length} 项::${esc(body)}`);
+    }
     process.exit(1);
   }
   console.log('全部通过');
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+main().catch((err) => {
+  console.error(err);
+  if (process.env.GITHUB_ACTIONS) console.log(`::error title=关系视图视觉审计崩溃::${String(err?.stack ?? err).slice(0, 2000).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
+  process.exit(1);
+});
