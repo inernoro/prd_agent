@@ -214,6 +214,7 @@ public static class LiteraryMcpWorkflow
             marker.AssetId = asset.Id;
             marker.Url = asset.Url;
             marker.RunId = runId; // 沿用的图保留它当初那次生成的记录，否则读稿看不出这张图从哪来
+            if (!next.AdoptedAssetIds.Contains(asset.Id)) next.AdoptedAssetIds.Add(asset.Id);
             marker.Status = "done";
             marker.ErrorMessage = null;
             carried.Add(marker.Index);

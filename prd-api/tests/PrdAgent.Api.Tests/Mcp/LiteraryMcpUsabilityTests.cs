@@ -561,6 +561,15 @@ public class LiteraryMcpUsabilityTests
             // 这次整篇重写也留了档：上一组变成刚才写回前的那份（空的不算一组）
             var again = Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("previousSets").EnumerateArray().First();
             Assert.Equal("网页上换了正文", again.GetProperty("reason").GetString());
+
+            // 沿用回来的 a1-old 再被「放回」a1-new 顶掉：换下时间是被顶掉的那一刻，不是早先那次换稿
+            var beforeRestore = DateTime.UtcNow;
+            Data(await drafts.RestoreImage(id, 1, new() { AssetId = "a1-new", WorkflowVersion = 3 }, CancellationToken.None));
+            var after = Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray()
+                .ToDictionary(i => i.GetProperty("assetId").GetString()!);
+            Assert.StartsWith("同一位置换上了别的图", after["a1-old"].GetProperty("replacedReason").GetString());
+            Assert.True(after["a1-old"].GetProperty("replacedAt").GetDateTime() >= beforeRestore.AddSeconds(-1));
+            Assert.True(after["a1-new"].GetProperty("isCurrent").GetBoolean());
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }

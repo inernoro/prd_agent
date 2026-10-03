@@ -68,22 +68,31 @@ public static class LiteraryIllustrationHistory
         var lastSetIds = previousSets.FirstOrDefault()?.Images.Select(i => i.AssetId).ToHashSet(StringComparer.Ordinal)
             ?? new HashSet<string>(StringComparer.Ordinal);
 
-        // 换下时间：在存档里 = 那次换稿的时间；不在存档里 = 同一位置随后换上了别的图（重画或放回）
+        // 换下时间：先找这张图最后一次在用的那一版（它生成的那版、被沿用 / 放回进去的那版、存档时在用的那版），
+        // 再看它在那一版里是怎么下来的：存档时还挂着 = 那次换稿换下；否则 = 那一版里同位置换上了别的图。
+        // 只按「哪份存档里有它」判断会出错：存档后又被沿用回来、再被放回顶掉的图，会错显成早先那次换稿。
+        var timeline = archived.AsEnumerable().Reverse().ToList(); // 旧 → 新
+        if (ws.ArticleWorkflow != null) timeline.Add(ws.ArticleWorkflow);
         (DateTime? at, string? reason) ReplacedOf(ImageAsset a)
         {
             if (currentIds.Contains(a.Id)) return (null, null);
-            var inArchive = archived.FirstOrDefault(w => w.AssetIdByMarkerIndex.ContainsValue(a.Id));
-            if (inArchive != null) return (inArchive.ArchivedAt, LiteraryArchiveReason.Label(inArchive.ArchivedReason));
-            if (a.ArticleInsertionIndex is not { } mi) return (null, null);
+            var last = timeline.LastOrDefault(w =>
+                w.AssetIdByMarkerIndex.ContainsValue(a.Id)
+                || (w.AdoptedAssetIds?.Contains(a.Id) ?? false)
+                || (a.ArticleWorkflowVersion != null && a.ArticleWorkflowVersion == w.Version));
+            if (last == null) return (null, null);
+            if (last.ArchivedAt != null && last.AssetIdByMarkerIndex.ContainsValue(a.Id))
+                return (last.ArchivedAt, LiteraryArchiveReason.Label(last.ArchivedReason));
+            if (last.ArchivedAt == null && ws.ArticleWorkflow != null && !ReferenceEquals(last, ws.ArticleWorkflow) && last.AssetIdByMarkerIndex.ContainsValue(a.Id))
+                return (null, LiteraryArchiveReason.Label(last.ArchivedReason)); // 早期存档：没有时间
+            var marker = last.AssetIdByMarkerIndex.FirstOrDefault(kv => kv.Value == a.Id).Key
+                ?? a.ArticleInsertionIndex?.ToString();
+            if (marker == null) return (null, null);
             var later = assets
-                .Where(o => o.Id != a.Id && o.ArticleInsertionIndex == mi && o.ArticleWorkflowVersion == a.ArticleWorkflowVersion && o.CreatedAt > a.CreatedAt)
+                .Where(o => o.Id != a.Id && o.ArticleInsertionIndex?.ToString() == marker && o.ArticleWorkflowVersion == last.Version && o.CreatedAt > a.CreatedAt)
                 .Select(o => (DateTime?)o.CreatedAt);
-            // 放回的旧图比它生成得早，靠生成时间看不出来——查这张图所属那一版（当前或存档）里这个位置后来挂图的时间
-            var ownVersion = a.ArticleWorkflowVersion == currentVersion ? ws.ArticleWorkflow
-                : archived.FirstOrDefault(w => w.Version == a.ArticleWorkflowVersion);
-            if (ownVersion?.AssetRunAtByMarkerIndex?.TryGetValue(mi.ToString(), out var pointedAt) == true
-                && pointedAt > a.CreatedAt
-                && ownVersion.AssetIdByMarkerIndex.TryGetValue(mi.ToString(), out var pointedId) && pointedId != a.Id)
+            if (last.AssetRunAtByMarkerIndex?.TryGetValue(marker, out var pointedAt) == true
+                && last.AssetIdByMarkerIndex.TryGetValue(marker, out var pointedId) && pointedId != a.Id)
                 later = later.Append(pointedAt);
             var when = later.Min();
             return (when, when == null ? null : "同一位置换上了别的图（重画或放回）");
@@ -165,6 +174,9 @@ public static class LiteraryIllustrationHistory
             };
         }
         await LiteraryMarkerWrites.PatchMarkerAsync(db, ws.Id, workflowVersion, markerIndex, fields, planItem);
+        await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id,
+            Builders<ImageMasterWorkspace>.Update.AddToSet("articleWorkflow.adoptedAssetIds", asset.Id),
+            cancellationToken: CancellationToken.None);
         return new(RestoreFailure.None,
             description == null ? "已放回。这张图是早期生成的，没有记下当初的描述，标记描述保持不变。" : null,
             markerIndex, asset.Url, description ?? LiteraryMcpWorkflow.EffectivePrompt(marker));

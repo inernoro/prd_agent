@@ -68,6 +68,7 @@ public static class LiteraryIllustrationArchive
             UpdatedAt = workflow.UpdatedAt,
             ArchivedAt = now,
             ArchivedReason = LiteraryArchiveReason.Normalize(reason),
+            AdoptedAssetIds = workflow.AdoptedAssetIds ?? new List<string>(),
         });
         return history.Count > 10 ? history.Take(10).ToList() : history;
     }

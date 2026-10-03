@@ -48,6 +48,13 @@ public class ArticleIllustrationWorkflow
 
     /// <summary>被换下的原因，取值见 LiteraryArchiveReason（网页换正文 / 智能体整篇重写 / 网页重新生成标记）。</summary>
     public string? ArchivedReason { get; set; }
+
+    /// <summary>
+    /// 这一版里挂过、但生成于别的版本的图（改稿沿用、从历史放回）。只增不减。
+    /// 用来判断一张旧图「最后一次在用是哪一版」：没有它，沿用回来又被放回顶掉的图，
+    /// 历史里会错显成早先那次换稿被换下。
+    /// </summary>
+    public List<string> AdoptedAssetIds { get; set; } = new();
 }
 
 public class ArticleIllustrationMarker
