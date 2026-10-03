@@ -3523,6 +3523,37 @@ interface DataPlanResult {
   manualBridge: Array<{ store: string; download: string; restore: string; note: string }>;
 }
 
+interface StandbyAudit {
+  checkedAt: string;
+  remoteReachable: boolean;
+  protocolReady: boolean;
+  repositoryMatches: boolean;
+  configMatches: boolean;
+  secretKeysMatch: boolean;
+  defaultBranchMatches: boolean;
+  dataSnapshotReady: boolean;
+  readyForFailover: boolean;
+  missingBranches: string[];
+  divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  performance: {
+    samples: number;
+    healthP50Ms: number | null;
+    healthP95Ms: number | null;
+    fingerprintMs: number | null;
+    localFingerprintMs: number;
+  };
+  error?: string;
+}
+
+interface StandbyConfig {
+  peerId: string;
+  remoteProjectId: string;
+  enabled: boolean;
+  intervalMinutes: number;
+  autoFailover: false;
+  lastAudit?: StandbyAudit;
+}
+
 function ProjectMigrationTab({
   projectId,
   onToast,
@@ -3547,6 +3578,13 @@ function ProjectMigrationTab({
 
   const [scanning, setScanning] = useState(false);
   const [dataPlan, setDataPlan] = useState<DataPlanResult | null>(null);
+  const [standby, setStandby] = useState<StandbyConfig | null>(null);
+  const [standbyRemoteProjectId, setStandbyRemoteProjectId] = useState(projectId);
+  const [standbyEnabled, setStandbyEnabled] = useState(false);
+  const [standbyInterval, setStandbyInterval] = useState(15);
+  const [savingStandby, setSavingStandby] = useState(false);
+  const [auditingStandby, setAuditingStandby] = useState(false);
+  const [auditElapsedSeconds, setAuditElapsedSeconds] = useState(0);
 
   // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
   // ② 旧项目的慢响应到达时用 liveProjectId 丢弃,避免覆盖新项目视图(Bugbot High「Stale migration preview leak」)。
@@ -3556,6 +3594,8 @@ function ProjectMigrationTab({
     setPeers(null); setPreview(null); setSelectedPeerId('');
     setReplicateResult(null); setDataPlan(null); setShowYaml(false);
     setReplicating(null); setScanning(false);
+    setStandby(null); setStandbyRemoteProjectId(projectId); setStandbyEnabled(false);
+    setStandbyInterval(15); setSavingStandby(false); setAuditingStandby(false);
   }, [projectId]);
 
   const loadPeers = useCallback(async () => {
@@ -3589,7 +3629,34 @@ function ProjectMigrationTab({
     }
   }, [base, onToast, projectId]);
 
-  useEffect(() => { void loadPeers(); void loadPreview(); }, [loadPeers, loadPreview]);
+  const loadStandby = useCallback(async () => {
+    const reqPid = projectId;
+    try {
+      const res = await fetch(apiUrl(`${base}/standby`), { credentials: 'include' });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (!res.ok) { onToast(`加载备用站设置失败:${body.error || res.status}`); return; }
+      const config = (body.config || null) as StandbyConfig | null;
+      setStandby(config);
+      if (config) {
+        setSelectedPeerId((current) => current || config.peerId);
+        setStandbyRemoteProjectId(config.remoteProjectId);
+        setStandbyEnabled(config.enabled);
+        setStandbyInterval(config.intervalMinutes);
+      }
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`加载备用站设置异常:${(err as Error).message}`);
+    }
+  }, [base, onToast, projectId]);
+
+  useEffect(() => { void loadPeers(); void loadPreview(); void loadStandby(); }, [loadPeers, loadPreview, loadStandby]);
+
+  useEffect(() => {
+    if (!auditingStandby) { setAuditElapsedSeconds(0); return undefined; }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setAuditElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1_000);
+    return () => window.clearInterval(timer);
+  }, [auditingStandby]);
 
   const addPeer = useCallback(async () => {
     if (!newUrl.trim()) { onToast('请填写目标节点地址'); return; }
@@ -3692,6 +3759,61 @@ function ProjectMigrationTab({
       if (reqPid === liveProjectId.current) setScanning(false);
     }
   }, [base, selectedPeerId, onToast]);
+
+  const saveStandby = useCallback(async (): Promise<boolean> => {
+    if (!selectedPeerId) { onToast('请先选择一个迁移目标'); return false; }
+    if (!standbyRemoteProjectId.trim()) { onToast('请填写目标项目 ID'); return false; }
+    const reqPid = projectId;
+    setSavingStandby(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/standby`), {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: selectedPeerId,
+          remoteProjectId: standbyRemoteProjectId.trim(),
+          enabled: standbyEnabled,
+          intervalMinutes: standbyInterval,
+        }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return false;
+      if (!res.ok) { onToast(`保存备用站设置失败:${body.error || res.status}`); return false; }
+      setStandby(body.config as StandbyConfig);
+      onToast('备用站设置已保存');
+      return true;
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`保存备用站设置异常:${(err as Error).message}`);
+      return false;
+    } finally {
+      if (reqPid === liveProjectId.current) setSavingStandby(false);
+    }
+  }, [base, onToast, projectId, selectedPeerId, standbyEnabled, standbyInterval, standbyRemoteProjectId]);
+
+  const auditStandby = useCallback(async () => {
+    if (!(await saveStandby())) return;
+    const reqPid = projectId;
+    setAuditingStandby(true);
+    try {
+      const res = await fetch(apiUrl(`${base}/standby/audit`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: selectedPeerId, remoteProjectId: standbyRemoteProjectId.trim() }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (body.audit) {
+        setStandby((current) => current ? { ...current, lastAudit: body.audit as StandbyAudit } : current);
+      }
+      if (!res.ok) onToast(`备用站核对未通过:${body.audit?.error || body.error || res.status}`);
+      else onToast(body.audit?.readyForFailover ? '备用站已具备切换条件' : '核对完成，仍有未通过项');
+      await loadStandby();
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`备用站核对异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setAuditingStandby(false);
+    }
+  }, [base, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
 
   if (!peers) return <LoadingBlock label="加载迁移设置…" />;
 
@@ -3840,7 +3962,102 @@ function ProjectMigrationTab({
         ) : null}
       </section>
 
-      {/* 3. 数据迁移(扫描,高级折叠) */}
+      {/* 3. 备用站持续核对 */}
+      <section className="rounded-md border border-[hsl(var(--hairline))] p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" />
+              <h4 className="text-sm font-semibold">备用站核对</h4>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              对比配置指纹、密钥项、主分支提交、数据快照证据与访问耗时。密钥值不会跨节点传输，自动切流保持关闭。
+            </p>
+          </div>
+          <Button type="button" size="sm" onClick={() => void auditStandby()} disabled={auditingStandby || savingStandby || !selectedPeerId}>
+            {auditingStandby ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {auditingStandby ? `正在核对 ${auditElapsedSeconds}s` : '保存并立即核对'}
+          </Button>
+        </div>
+
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            目标项目 ID
+            <input
+              className={monoInputClass}
+              style={{ width: '17.5rem' }}
+              value={standbyRemoteProjectId}
+              onChange={(event) => setStandbyRemoteProjectId(event.target.value)}
+              placeholder={projectId}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            自动核对间隔（分钟）
+            <input
+              className={monoInputClass}
+              style={{ width: '9rem' }}
+              type="number"
+              min={5}
+              max={1440}
+              value={standbyInterval}
+              onChange={(event) => setStandbyInterval(Number(event.target.value))}
+            />
+          </label>
+          <label className="flex items-center gap-2 pb-2 text-sm">
+            <input type="checkbox" checked={standbyEnabled} onChange={(event) => setStandbyEnabled(event.target.checked)} />
+            按间隔持续核对
+          </label>
+          <Button type="button" variant="outline" size="sm" onClick={() => void saveStandby()} disabled={savingStandby || auditingStandby || !selectedPeerId}>
+            {savingStandby ? <Loader2 className="animate-spin" /> : <Save />} 保存设置
+          </Button>
+        </div>
+
+        {standby?.lastAudit ? (
+          <div className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">核对项</th>
+                  <th className="px-3 py-2 font-medium">结果</th>
+                  <th className="px-3 py-2 font-medium">证据</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['目标 CDS', standby.lastAudit.remoteReachable, standby.lastAudit.protocolReady ? '可达，协议兼容' : (standby.lastAudit.error || '不可达')],
+                  ['代码仓库', standby.lastAudit.repositoryMatches, standby.lastAudit.repositoryMatches ? '两端绑定同一仓库' : '仓库身份不同或缺失'],
+                  ['配置与密钥项', standby.lastAudit.configMatches && standby.lastAudit.secretKeysMatch, `配置 ${standby.lastAudit.configMatches ? '一致' : '不一致'}，密钥项 ${standby.lastAudit.secretKeysMatch ? '齐全' : '有差异'}`],
+                  ['主分支提交', standby.lastAudit.defaultBranchMatches, standby.lastAudit.defaultBranchMatches ? '提交一致' : '提交不一致或缺少主分支'],
+                  ['数据快照', standby.lastAudit.dataSnapshotReady, standby.lastAudit.dataSnapshotReady ? '已有完成的迁移证据' : '尚无完成的迁移证据'],
+                ].map(([label, passed, evidence]) => (
+                  <tr key={String(label)} className="border-t border-[hsl(var(--hairline))]">
+                    <td className="px-3 py-2 font-medium">{String(label)}</td>
+                    <td className={`px-3 py-2 ${passed ? 'text-ok' : 'text-warn'}`}>{passed ? '通过' : '未通过'}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{String(evidence)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2 font-medium">控制面耗时</td>
+                  <td className="px-3 py-2">{standby.lastAudit.performance.samples} 次样本</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    目标健康 p50 {standby.lastAudit.performance.healthP50Ms ?? '-'} ms，p95 {standby.lastAudit.performance.healthP95Ms ?? '-'} ms，指纹 {standby.lastAudit.performance.fingerprintMs ?? '-'} ms
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div className={`border-t border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium ${standby.lastAudit.readyForFailover ? 'text-ok' : 'text-warn'}`}>
+              {standby.lastAudit.readyForFailover ? '全部门禁通过，可以进入切流演练' : '尚不允许切流，请先处理表格中的未通过项'}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">核对于 {new Date(standby.lastAudit.checkedAt).toLocaleString()}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] p-4 text-center text-sm text-muted-foreground">
+            尚无核对记录。选择上方目标节点，填写目标项目 ID 后运行一次核对。
+          </div>
+        )}
+      </section>
+
+      {/* 4. 数据迁移(扫描,高级折叠) */}
       <details className="rounded-md border border-[hsl(var(--hairline))] p-4">
         <summary className="flex cursor-pointer items-center gap-2">
           <Database className="h-4 w-4" />
