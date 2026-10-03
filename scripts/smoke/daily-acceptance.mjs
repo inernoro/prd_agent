@@ -1,48 +1,72 @@
 #!/usr/bin/env node
 /**
- * 每日关键功能验收 —— 断言「产物真的出现在屏幕上」，不是「代码写对了」。
+ * 每日核心功能验收 —— 断言「产物真的出现在屏幕上 / 后端真的答得上来」，不是「代码写对了」。
+ *
+ * 覆盖面：业务功能台账（.claude/skills/stable-smoke/reference/business-function-catalog.json）
+ * 里的**全部**核心功能线，每条至少一项每日检查，或在 DAILY_EXEMPT 里写明为什么交给 48 小时那一轮。
+ * 功能清单只认台账这一份：每日清单挂在台账之外的功能线上，报告直接拒收
+ * （守卫 scripts/tests/daily-acceptance-coverage.test.mjs 会在 CI 上把漏掉的功能线报红）。
+ *
+ * 输出：一张「核心功能一览」红绿表（异常置顶，每条异常带下一步）+ 逐项明细 + 截图。
+ *   --json  原始结果   --md  给 Routine 回复与推送用的表格   --html  本地看的完整报告（含截图）
+ *   --archive  把完整版（明细 + 异常截图）归档进 CDS 验收中心并打印直达深链（需要 CDS 凭据，cdscli 自己处理）
  *
  * 为什么需要它：2026-08-23~25 白屏缺陷连续三轮才修好，而仓库里 1500+ 条测试全绿。
  * 原因是那些测试测的都是源码与纯函数，而白屏的形态恰恰是**源码全对、产物没出来**。
- * 能测红它的判据只有一条：**iframe 里真的有字**。
+ * 2026-10-03 又暴露了另一半：main 预览所有容器崩溃时，旧版例程只回一句「环境不可达」就收工，
+ * 没有表、没有下一步；而后端深度自检早就报着模型目录契约失配，没有任何每日判据读它。
  *
- * 同期还漏掉一个「看得见点不动」——批量勾选框被 hover 条整条盖住。它躲过所有检查，
- * 是因为程序化 `.click()` 会绕过命中测试。所以这里的交互一律走**真实指针序列**。
+ * 交互一律走**真实指针序列**：程序化 `.click()` 会绕过命中测试
+ * （「批量勾选框被 hover 条整条盖住」就是这么溜过去的）。
  *
  * 用法：
- *   node scripts/smoke/daily-acceptance.mjs --base http://127.0.0.1:7801 [--json out.json]
+ *   node scripts/smoke/daily-acceptance.mjs --base http://127.0.0.1:7801 \
+ *     --public-base https://main-prd-agent.miduo.org --md out.md --html out.html [--archive]
  *
  * --base 指向**能被浏览器打开**的地址。沙箱里公网域名浏览器直连会 ERR_CONNECTION_RESET，
  * 先用 .claude/skills/sandbox-net 起两跳隧道，再把 --base 指到本地端口。
+ * --public-base 只用于报告里「打开这一屏」的链接（读报告的人点的是公网地址，不是隧道）。
  *
  * 凭据只从环境变量取（MAP_USER / MAP_PASSWORD），不写进文件、不打印。
- * 退出码：0 全过 / 1 有用例红 / 2 参数或前置条件问题（这种不算「功能坏了」）。
+ * 退出码：0 全部正常 / 1 有异常或需关注 / 2 被测环境或前置条件不可用（报告照样产出）。
  *
- * 已排进计划任务：Routine `trig_017sNsVhR9oSVa5SKbVLwC8i`「每日关键功能验收（网页托管）」，
- * 每天 01:05 UTC（北京时间 09:05）在一个全新会话里跑，失败推送 + 邮件。
+ * 已排进计划任务：Routine `trig_017sNsVhR9oSVa5SKbVLwC8i`「每日核心功能验收」，
+ * 每天 01:00 UTC（北京时间 09:00）在一个全新会话里跑，失败推送 + 邮件。
  * 被测环境钉死在 https://main-prd-agent.miduo.org（main 分支预览）——不跟着功能分支跑，
  * 否则分支一合并这条例程就永远拿不到地址。同一环境上还有 48 小时一轮的稳定冒烟
- * （Routine `trig_01ALxMepdiLx49Qhw3ZdvoXC`，走 .claude/skills/stable-smoke）。
- * 两者分工：本脚本管「产物有没有出现」的快判据，稳定冒烟管全业务线的双环境矩阵。
- * 改 cron 或停用走 claude.ai 的 Routines 界面，或让 agent 调 update_trigger / delete_trigger。
+ * （走 .claude/skills/stable-smoke）。分工：本脚本只跑只读、零成本的检查，
+ * 真生成（出图、出视频、转录、解析）的完整闭环归 48 小时那一轮；本脚本反过来盯着
+ * 「48 小时那一轮自己还在不在跑」（stability-foundation 那一行）。
  *
- * 加一条用例的成本：往 FORMS 加一行（形态类），或往主流程加一个 checkXxx（交互类）。
- * 加之前先问一句：**这条断言能被测红吗？** 不能测红的用例比没有更糟——
- * 它会让下一个人以为这件事已经验过了。
+ * 加一条用例的成本：往 PAGES / API_CHECKS / DEEP_CHECK_MAP 加一行（形态类），
+ * 或往主流程加一个 checkXxx（交互类）。加之前先问一句：**这条断言能被测红吗？**
+ * 不能测红的用例比没有更糟——它会让下一个人以为这件事已经验过了。
  */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readScoped } from './lib/scoped-text.mjs';
+import { outcome, summarize, renderMarkdown, renderHtml } from './lib/daily-report.mjs';
+import { DAILY_EXEMPT, EXTRA_LINES, DEEP_CHECK_MAP, deepCheckOutcome } from './lib/daily-catalog.mjs';
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CATALOG = JSON.parse(fs.readFileSync(
+  path.join(REPO, '.claude/skills/stable-smoke/reference/business-function-catalog.json'), 'utf8',
+));
 
 const require_ = createRequire(path.join(process.cwd(), 'noop.js'));
 let chromium;
-try {
-  ({ chromium } = require_('playwright-core'));
-} catch {
-  try { ({ chromium } = require_('playwright')); } catch { /* 下面统一报 */ }
+// 先找工作目录里的，再找全局装的（云端会话的 Node 全局目录里自带 playwright）
+const globalRoot = (() => { try { return execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim(); } catch { return null; } })();
+for (const req of [require_, globalRoot && createRequire(path.join(globalRoot, 'playwright', 'noop.js'))].filter(Boolean)) {
+  for (const mod of ['playwright-core', 'playwright']) {
+    if (chromium) break;
+    try { ({ chromium } = req(mod)); } catch { /* 下面统一报 */ }
+  }
 }
 
 function arg(name, dflt) {
@@ -50,20 +74,21 @@ function arg(name, dflt) {
   return i < 0 ? dflt : process.argv[i + 1];
 }
 const BASE = (arg('--base') || '').replace(/\/$/, '');
+const PUBLIC = (arg('--public-base') || BASE).replace(/\/$/, '');
 const JSON_OUT = arg('--json', null);
+const MD_OUT = arg('--md', null);
+const HTML_OUT = arg('--html', null);
+const ARCHIVE = process.argv.includes('--archive');
 const KEEP = process.argv.includes('--keep-fixtures');
 if (!BASE) {
   console.error('必填：--base <浏览器能打开的地址>');
   process.exit(2);
 }
-if (!process.env.MAP_USER || !process.env.MAP_PASSWORD) {
-  console.error('缺少 MAP_USER / MAP_PASSWORD 环境变量 —— 没有登录态就只能测到匿名那一层，等于没测。');
-  process.exit(2);
-}
-if (!chromium) {
-  console.error('找不到 playwright-core。这条验收必须真的开浏览器，装不上就如实报失败，不要降级成 curl。');
-  process.exit(2);
-}
+// 缺凭据 / 缺浏览器不再直接退出：照样产出整张表，全部标「未执行」并写清缺什么。
+// 只回一句话就收工，读的人看不出哪些功能没被验、该找谁补。
+const PRECONDITION = !process.env.MAP_USER || !process.env.MAP_PASSWORD
+  ? '缺少 MAP_USER / MAP_PASSWORD 环境变量，没有登录态就只能测到匿名那一层'
+  : (!chromium ? '找不到 playwright / playwright-core，这条验收必须真的开浏览器，不许降级成 curl' : null);
 const CHROME = process.env.CHROME_BIN
   || (fs.existsSync('/opt/pw-browsers')
     ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
@@ -127,22 +152,116 @@ const FORMS = [
 // 「资产库」，并把取证范围收进 scope 里（见下面 checkPageAlive）。
 // 同类交叉核对由 scripts/tests/daily-acceptance-anchors.test.mjs 机械保证。
 const PAGES = [
-  { key: 'shell',      route: '/',               anchor: '选一个智能体开始创作',   minChars: 60, label: '导航与应用外壳' },
+  { key: 'shell',      route: '/',               anchor: '选一个智能体开始创作',   minChars: 60, label: '首页与导航外壳',
+    featureLine: 'navigation-shell', id: 'DAILY-SHELL-01' },
   { key: 'web-pages',  route: '/web-pages',      anchor: '资产库',               minChars: 80, label: '网页托管主控台',
-    scope: '[data-acceptance-scope="web-pages"]' },
-  { key: 'doc-store',  route: '/document-store', anchor: '新建知识库',           minChars: 60, label: '知识库 / 文件解析' },
-  { key: 'defect',     route: '/defect-agent',   anchor: '提交缺陷',             minChars: 60, label: '缺陷管理' },
+    scope: '[data-acceptance-scope="web-pages"]', featureLine: 'web-hosting-sharing', id: 'DAILY-WEB-01' },
+  { key: 'doc-store',  route: '/document-store', anchor: '新建知识库',           minChars: 60, label: '知识库首页',
+    featureLine: 'knowledge-assets', id: 'DAILY-KB-01' },
+  { key: 'defect',     route: '/defect-agent',   anchor: '提交缺陷',             minChars: 60, label: '缺陷管理',
+    featureLine: 'defect-management', id: 'DAILY-DEFECT-01' },
   // 锚点跟着改版走：旧文案「AI 驱动的设计助手，让创作更简单」在视觉创作改版时被删掉了
   // （理由见 .design/visual-agent-home/canvas.json：放到任何产品上都成立，等于没说），
   // 而这里没跟着改，于是页面好好的却天天判红。换成改版后的主标题——它是这条路由独有的。
-  { key: 'visual',     route: '/visual-agent',   anchor: '今天做什么图？',         minChars: 60, label: '视觉创作' },
+  { key: 'visual',     route: '/visual-agent',   anchor: '今天做什么图？',         minChars: 60, label: '视觉创作工作区',
+    featureLine: 'visual-creation', id: 'DAILY-VISUAL-01' },
+  // 以下 2026-10-03 随「每日验收覆盖全部核心功能线」补上。锚点取自各页面自己的标题 / 按钮，
+  // 都不在左侧导航 label 里（守卫会交叉核对）。
+  { key: 'video',      route: '/video-agent',    anchor: '先看见故事，再开始生成', minChars: 40, label: '视频创作工作台',
+    featureLine: 'video-creation', id: 'DAILY-VIDEO-01' },
+  { key: 'literary',   route: '/literary-agent', anchor: '新建文件夹和文章',       minChars: 40, label: '文学创作作品列表',
+    featureLine: 'literary-creation', id: 'DAILY-LIT-01' },
+  { key: 'open-platform', route: '/open-platform', anchor: '邮箱通道',            minChars: 40, label: '开放平台',
+    featureLine: 'llm-gateway', id: 'DAILY-GW-01' },
+  { key: 'notifications', route: '/?panel=notifications', anchor: '站内通知、待处理事项与外部推送订阅', minChars: 40,
+    label: '站内通知面板', featureLine: 'map-notifications', id: 'DAILY-NOTIFY-01' },
+];
+
+/**
+ * 只读接口判据：每条都断言到「业务数据真的回来了」，不是只看 HTTP 200。
+ * assert 返回 null 表示通过，返回字符串就是给人读的失败原因。
+ * 选的都是会真打 Mongo / 真解析模型池的接口——后端一崩、模型池一空，这里立刻红。
+ */
+const API_CHECKS = [
+  { id: 'DAILY-AUTH-02', featureLine: 'identity-access', title: '登录后能取到当前用户与权限',
+    path: '/api/authz/me',
+    assert: (d) => (d?.username === process.env.MAP_USER ? null : `返回的用户是「${d?.username}」，不是登录的那个账号`),
+    observed: (d) => `当前用户 ${d.displayName || d.username}，${(d.effectivePermissions || []).length} 项权限`,
+    next: '会话建立了却取不到用户：查 authz 接口与 users 集合' },
+  { id: 'DAILY-KB-02', featureLine: 'knowledge-assets', title: '知识库列表能从数据库读出来',
+    path: '/api/document-store/stores?page=1&pageSize=5',
+    assert: (d) => (typeof d?.total === 'number' ? null : '响应里没有 total，列表结构变了'),
+    observed: (d) => `共 ${d.total} 个知识库`,
+    next: '列表读不出来：查文档空间接口日志与 Mongo 连接' },
+  { id: 'DAILY-REC-02', featureLine: 'recording', title: '录音转写的整理风格能取到',
+    path: '/api/document-store/transcribe-styles',
+    assert: (d) => ((d?.items || []).length ? null : '整理风格是空的，录音结束后无从选择'),
+    observed: (d) => `${d.items.length} 种整理风格`,
+    next: '风格注册表为空：查 DocumentStore 转写风格的配置' },
+  { id: 'DAILY-VIDEO-02', featureLine: 'video-creation', title: '视频项目能读出来、视频模型池非空',
+    path: '/api/video-agent/models',
+    assert: (d) => (Array.isArray(d) && d.length ? null : '视频模型池是空的，点生成必然失败'),
+    observed: (d) => `视频模型 ${d.length} 个`,
+    next: '去模型网关给视频创作挂上可用的逻辑模型' },
+  { id: 'DAILY-VIDEO-03', featureLine: 'video-creation', title: '视频生成记录能读出来',
+    path: '/api/video-agent/runs?limit=5',
+    assert: (d) => (typeof d?.total === 'number' ? null : '响应里没有 total'),
+    observed: (d) => `历史生成 ${d.total} 次`,
+    next: '查 video-agent runs 接口日志' },
+  { id: 'DAILY-LIT-02', featureLine: 'literary-creation', title: '文学创作作品能读出来、对话模型池非空',
+    path: '/api/literary-agent/config/models/chat',
+    assert: (d) => (Array.isArray(d) && d.length ? null : '文学创作的对话模型池是空的，流式创作必然失败'),
+    observed: (d) => `对话模型 ${d.length} 个`,
+    next: '去模型网关给文学创作挂上可用的对话模型' },
+  { id: 'DAILY-VISUAL-02', featureLine: 'visual-creation', title: '生图模型池非空',
+    path: '/api/visual-agent/image-gen/models',
+    assert: (d) => (Array.isArray(d) && d.length ? null : '生图模型池是空的，点生成必然失败'),
+    observed: (d) => `生图模型 ${d.length} 个`,
+    next: '去模型网关给视觉创作挂上可用的生图模型（返回 503 时先看网关是否在线）' },
+  { id: 'DAILY-VISUAL-03', featureLine: 'visual-creation', title: '视觉创作工作区能读出来',
+    path: '/api/visual-agent/image-master/workspaces?limit=5',
+    assert: (d) => (Array.isArray(d?.items) ? null : '响应里没有 items'),
+    observed: (d) => `读到 ${d.items.length} 个工作区`,
+    next: '查 image-master 工作区接口日志与 Mongo' },
+  { id: 'DAILY-MULTI-01', featureLine: 'multi-image-creation', title: '多图参考（视觉理解 + 图生图）模型池非空',
+    path: '/api/visual-agent/image-gen/models/vision',
+    assert: (d) => (Array.isArray(d) && d.length ? null : '多图参考用的视觉模型池是空的'),
+    observed: (d) => `视觉理解模型 ${d.length} 个`,
+    next: '去模型网关给视觉创作的 vision 场景挂上模型' },
+  { id: 'DAILY-MULTI-02', featureLine: 'multi-image-creation', title: '图生图模型池非空',
+    path: '/api/visual-agent/image-gen/models/img2img',
+    assert: (d) => (Array.isArray(d) && d.length ? null : '图生图模型池是空的，带参考图生成必然失败'),
+    observed: (d) => `图生图模型 ${d.length} 个`,
+    next: '去模型网关给视觉创作的 img2img 场景挂上模型' },
+  { id: 'DAILY-WEB-05', featureLine: 'web-hosting-sharing', title: '托管站点列表能读出来',
+    path: '/api/web-pages?limit=5',
+    assert: (d) => (typeof d?.total === 'number' ? null : '响应里没有 total'),
+    observed: (d) => `共 ${d.total} 个站点`,
+    next: '查 web-pages 列表接口日志' },
+  { id: 'DAILY-NOTIFY-02', featureLine: 'map-notifications', title: '站内通知列表能读出来',
+    path: '/api/dashboard/notifications',
+    assert: (d) => (Array.isArray(d?.items) ? null : '响应里没有 items'),
+    observed: (d) => `${d.items.length} 条通知`,
+    next: '查 dashboard/notifications 接口与 admin_notifications 集合' },
 ];
 
 const results = [];
-const record = (name, ok, detail) => {
-  results.push({ name, ok, detail });
-  console.log(`${ok ? '[通过]' : '[失败]'} ${name}${detail ? ` —— ${detail}` : ''}`);
+/** 所有结果都经由 outcome() 构造：异常 / 未执行不写下一步，直接抛错（见 lib/daily-report.mjs）。 */
+const record = (p) => {
+  const r = outcome(p);
+  results.push(r);
+  console.log(`[${{ pass: '正常', fail: '异常', warn: '需关注', 'not-run': '未执行' }[r.status]}] ${r.title}${r.observed ? ` —— ${r.observed}` : ''}`);
+  return r;
 };
+const link = (route) => `${PUBLIC}${route}`;
+
+/** 截一张小图进报告。截不到不影响判定（截图是证据，不是判据）。 */
+async function thumb(page) {
+  try {
+    const buf = await page.screenshot({ type: 'jpeg', quality: 45 });
+    return `data:image/jpeg;base64,${buf.toString('base64')}`;
+  } catch { return ''; }
+}
 
 async function api(pathname, { method = 'GET', token, body, form } = {}) {
   const headers = {};
@@ -218,6 +337,7 @@ async function ensureShare(token, site) {
 
 /** 分享页的产物判据：iframe 不能停在 about:blank，里面必须真的有字。 */
 async function checkShareArtifact(ctx, form, token4Url) {
+  const shareUrl = `${BASE}/s/wp/${token4Url}`;
   const page = await ctx.newPage();
   const bad = [];
   page.on('response', (r) => {
@@ -232,7 +352,7 @@ async function checkShareArtifact(ctx, form, token4Url) {
     else if (isFrameDoc) bad.push(`${r.status()} 跨源文档 ${u.slice(0, 60)}`);
   });
   page.on('pageerror', (e) => bad.push(`pageerror: ${e.message.slice(0, 60)}`));
-  await page.goto(`${BASE}/s/wp/${token4Url}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(shareUrl, { waitUntil: 'domcontentloaded' });
   // LLM 无关的静态站点，但服务端要去 COS 取原文；给足时间，别用超时假装成失败
   await page.waitForTimeout(12000);
   const mode = await page.evaluate(() => {
@@ -283,6 +403,7 @@ async function checkShareArtifact(ctx, form, token4Url) {
     if (el) pixels = await distinctColorCount(el);
   }
   const probe = { mode, chars, pixels };
+  const shot = await thumb(page);
   // 关页必须排在**所有**取证之后：页一关，帧就没了，之后任何 evaluate 都只会抛异常，
   // 而那种异常长得跟「页面真的没内容」一模一样，判据会永远红。
   await page.close();
@@ -293,12 +414,36 @@ async function checkShareArtifact(ctx, form, token4Url) {
   // 都判成健康——那正是这条验收要防的形态。
   const pixelOk = !form.textual && typeof pixels === 'number' && pixels >= 8;
   const ok = mode !== 'about:blank' && mode !== 'no-iframe' && (textOk || pixelOk);
-  record(
-    `分享页产物可见 · ${form.key}`,
-    ok && bad.length === 0,
-    `mode=${probe.mode} 正文字数=${probe.chars} 标记${markerHit ? '命中' : '缺失'}${probe.pixels != null ? ` 像素色数=${probe.pixels}` : ''}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
-  );
+  const pass = ok && bad.length === 0;
+  record({
+    id: `DAILY-WEB-SHARE-${form.key}`,
+    featureLine: 'web-hosting-sharing',
+    title: `匿名访客打开 ${form.key === 'html' ? 'HTML' : 'Markdown'} 站的分享链接能看到正文`,
+    method: '以未登录访客打开公开分享链接，读 iframe 里的正文，必须出现上传时写进去的那句话',
+    status: pass ? 'pass' : 'fail',
+    observed: pass ? `正文 ${probe.chars} 字，上传的那句话出现了`
+      : (markerHit ? `正文出来了但页面有异常：${bad.slice(0, 2).join(' / ')}` : `分享页里没有看到上传的正文（${probe.mode === 'about:blank' || probe.mode === 'no-iframe' ? '内容框是空的' : `正文 ${probe.chars} 字`}）`),
+    next: '这是白屏回归：先看分享页的托管内容能否从对象存储取到，再看渲染链路（srcDoc / 直连）',
+    link: `${PUBLIC}/s/wp/${token4Url}`,
+    shot,
+    tech: `mode=${probe.mode} chars=${probe.chars} marker=${markerHit}${probe.pixels != null ? ` pixels=${probe.pixels}` : ''}${bad.length ? ` errors=${bad.join(' / ')}` : ''}`,
+  });
 }
+
+const checkboxResult = (ok, observed, shot) => ({
+  id: 'DAILY-WEB-02', featureLine: 'web-hosting-sharing', title: '主控台的批量勾选框真的点得动',
+  method: '用真实鼠标移到勾选框上按下再松开（不用程序化点击，它会绕过遮挡判断），看右栏是否进入「选中的站点」',
+  status: ok ? 'pass' : 'fail', observed,
+  next: '勾选框可能又被悬浮条盖住了：在主控台上手点一次复现，再查卡片悬浮条的层级',
+  link: link('/web-pages'), shot,
+});
+const popoverResult = (ok, observed, shot) => ({
+  id: 'DAILY-WEB-03', featureLine: 'web-hosting-sharing', title: '站点卡上的「分享」能就地展开下拉',
+  method: '鼠标移到站点卡上，在悬浮条里用真实鼠标点「分享」，下拉里必须出现生成链接或分享设置',
+  status: ok ? 'pass' : 'fail', observed,
+  next: '在主控台上手点一次「分享」复现，再查悬浮条按钮与下拉的挂载',
+  link: link('/web-pages'), shot,
+});
 
 /**
  * 主控台的批量勾选：必须用真实指针序列。
@@ -313,7 +458,7 @@ async function checkCheckboxHittable(ctx) {
     .then((h) => h.boundingBox())
     .catch(() => null);
   if (!box) {
-    record('主控台勾选框可点（真实指针）', false, '等了 25s 页面上仍然没有勾选框');
+    record(checkboxResult(false, '等了 25 秒页面上仍然没有勾选框', await thumb(page)));
     await page.close();
     return;
   }
@@ -327,8 +472,9 @@ async function checkCheckboxHittable(ctx) {
     const aside = [...document.querySelectorAll('aside')].pop();
     return (aside?.innerText || '').split('\n')[0] || '';
   });
+  const shot = await thumb(page);
   await page.close();
-  record('主控台勾选框可点（真实指针）', railHead.includes('选中的站点'), `右栏首行「${railHead}」`);
+  record(checkboxResult(railHead.includes('选中的站点'), `点完后右栏首行是「${railHead}」`, shot));
 }
 
 /**
@@ -348,7 +494,7 @@ async function checkSharePopover(ctx) {
     .then((h) => h.boundingBox())
     .catch(() => null);
   if (!card) {
-    record('分享下拉能打开（真实指针）', false, '等了 25s 页面上仍然没有站点卡');
+    record(popoverResult(false, '等了 25 秒页面上仍然没有站点卡', await thumb(page)));
     await page.close();
     return;
   }
@@ -356,7 +502,7 @@ async function checkSharePopover(ctx) {
   await page.waitForTimeout(400);
   const btn = await page.locator('button[aria-label="分享"], button[aria-label^="管理分享"]').first().boundingBox().catch(() => null);
   if (!btn) {
-    record('分享下拉能打开（真实指针）', false, 'hover 条里找不到分享按钮');
+    record(popoverResult(false, '鼠标移到站点卡上，悬浮条里没有分享按钮', await thumb(page)));
     await page.close();
     return;
   }
@@ -367,11 +513,12 @@ async function checkSharePopover(ctx) {
   await page.waitForTimeout(1200);
 
   const text = await page.evaluate(() => document.body.innerText);
+  const shot = await thumb(page);
   await page.close();
   // 两种形态都算开：没链接时是「生成链接并复制」，有链接时是那几行设置
   const opened = text.includes('生成链接并复制') || text.includes('谁能打开');
-  record('分享下拉能打开（真实指针）', opened && bad.length === 0,
-    opened ? (bad.length ? `但有 JS 异常：${bad[0]}` : '') : '点完没有下拉文案');
+  record(popoverResult(opened && bad.length === 0,
+    opened ? (bad.length ? `下拉开了，但页面有脚本异常：${bad[0]}` : '下拉展开，能拿到分享链接') : '点完没有出现分享下拉', shot));
 }
 
 /**
@@ -478,6 +625,7 @@ async function checkPageAlive(ctx, page4) {
   // 而不是只能扫源码字面量。它会被序列化成源码丢进浏览器，约束见那个文件的注释。
   let appeared = false;
   let final = null;
+  let shot = '';
   // 这一段任何一步抛出，page 都必须关掉：漏掉的页会把隧道连接一直攥着，
   // 于是「一条用例坏」滚成「后面每条都 goto 超时」，红的原因被彻底盖住。
   try {
@@ -489,6 +637,7 @@ async function checkPageAlive(ctx, page4) {
       await page.waitForTimeout(500);
     }
     final = await page.evaluate(readScoped, [page4.scope || null, null]);
+    shot = await thumb(page);
   } finally {
     await page.close().catch(() => {});
   }
@@ -496,62 +645,381 @@ async function checkPageAlive(ctx, page4) {
 
   const enough = text.length >= page4.minChars;
   const anchored = appeared;
-  record(
-    `页面产物可见 · ${page4.label}`,
-    enough && anchored && bad.length === 0,
-    `正文${text.length}字 锚点「${page4.anchor}」${anchored ? '命中' : '缺失（等了 25 秒）'}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
-  );
+  const ok = enough && anchored && bad.length === 0;
+  record({
+    id: page4.id,
+    featureLine: page4.featureLine,
+    title: `${page4.label}能打开并渲染出内容`,
+    method: `登录后打开 ${page4.route}，等这一屏自己才有的字样「${page4.anchor}」出现（最多 25 秒），且页面没有报错`,
+    status: ok ? 'pass' : 'fail',
+    observed: ok ? `「${page4.anchor}」出现，正文 ${text.length} 字`
+      : (!anchored ? `等了 25 秒没看到「${page4.anchor}」，页面可能白屏或卡在加载`
+        : (bad.length ? `内容出来了，但页面有报错：${bad.slice(0, 2).join(' / ')}` : `内容太少（${text.length} 字）`)),
+    next: !anchored
+      ? '先在浏览器里打开这一屏看是白屏还是改了文案；改了文案就同步本脚本 PAGES 里的锚点'
+      : '按报错里的接口去 api 容器日志找对应请求',
+    link: link(page4.route),
+    shot,
+    tech: `chars=${text.length} anchor=${anchored}${bad.length ? ` errors=${bad.join(' / ')}` : ''}`,
+  });
+}
+
+/**
+ * 知识库「+」菜单里的三个入口：录音转笔记、上传文件、解析短视频。
+ * 这三条功能线（录音 / 文件解析 / 短视频解析）的每日判据就是「入口真的在、真的点得开」——
+ * 真转录、真解析要花钱且要清理，归 48 小时那一轮。
+ *
+ * 只**单击**一次「+」：双击会直接开始录音（会去要麦克风权限）。
+ * 菜单只在点开后才渲染，所以这一步同时证明了按钮没被遮挡、点击能响应。
+ */
+async function checkCreateMenu(ctx) {
+  const page = await ctx.newPage();
+  const bad = [];
+  page.on('pageerror', (e) => bad.push(e.message.slice(0, 60)));
+  const seen = { rec: false, upload: false, video: false };
+  let shot = '';
+  let reason = '';
+  let cover = null;
+  let coverShot = '';
+  try {
+    await page.goto(`${BASE}/document-store`, { waitUntil: 'domcontentloaded' });
+    const fab = await page.waitForSelector('[data-tour-id="doc-create-fab"]', { timeout: 25000, state: 'visible' })
+      .then((h) => h.boundingBox()).catch(() => null);
+    if (!fab) {
+      reason = '等了 25 秒页面上没有右下角的「+」按钮';
+    } else {
+      // 先问命中测试：鼠标落点上最顶层的元素是不是「+」自己。
+      // 2026-10-03 实测「周报提交提醒」浮窗整块盖在「+」上，真实鼠标点进了浮窗，
+      // 菜单当然不出来——那不是三个入口坏了，是一个遮挡问题，要单独报、写清是谁盖的。
+      // 报完把那层浮窗挪开再验入口，免得一个提醒浮窗把三条功能线都误报成异常。
+      const cx = fab.x + fab.width / 2;
+      const cy = fab.y + fab.height / 2;
+      cover = await page.evaluate(([x, y]) => {
+        const top = document.elementFromPoint(x, y);
+        if (!top || top.closest('[data-tour-id="doc-create-fab"]')) return null;
+        // 找到盖住它的那一整块浮层（最外层的 fixed 祖先），取它的首行字当名字
+        let layer = top;
+        for (let el = top; el && el !== document.body; el = el.parentElement) {
+          if (getComputedStyle(el).position === 'fixed') layer = el;
+        }
+        const name = (layer.innerText || top.innerText || top.tagName).trim().split('\n').filter(Boolean).slice(0, 2).join(' ');
+        layer.setAttribute('data-acceptance-cover', '1');
+        return name.slice(0, 40) || top.tagName;
+      }, [cx, cy]);
+      if (cover) {
+        coverShot = await thumb(page);
+        await page.evaluate(() => document.querySelector('[data-acceptance-cover]')?.style.setProperty('display', 'none', 'important'));
+      }
+      await page.mouse.move(cx, cy);
+      await page.mouse.down();
+      await page.waitForTimeout(60);
+      await page.mouse.up();
+      await page.waitForTimeout(900);
+      const hasText = (t) => page.evaluate((x) => document.body.innerText.includes(x), t);
+      seen.rec = await hasText('录音转笔记');
+      // 「上传与导入」是分组，子项要再点开一层
+      const group = await page.getByText('上传与导入', { exact: true }).first().boundingBox().catch(() => null);
+      if (group) {
+        await page.mouse.move(group.x + group.width / 2, group.y + group.height / 2);
+        await page.mouse.down();
+        await page.waitForTimeout(60);
+        await page.mouse.up();
+        await page.waitForTimeout(600);
+      }
+      seen.upload = await hasText('上传文件');
+      seen.video = await hasText('解析短视频');
+      if (!seen.rec && !group) reason = '点完「+」菜单没有展开';
+      else if (!group) reason = '菜单里没有「上传与导入」分组';
+    }
+    shot = await thumb(page);
+  } finally {
+    await page.close().catch(() => {});
+  }
+  const common = {
+    method: '在知识库首页用真实鼠标单击右下角「+」，菜单里必须出现这个入口（「上传与导入」分组要再点开一层）',
+    link: link('/document-store'),
+    shot,
+    tech: `rec=${seen.rec} upload=${seen.upload} video=${seen.video}${bad.length ? ` errors=${bad.join(' / ')}` : ''}`,
+  };
+  const one = (id, featureLine, title, hit) => record({
+    ...common, id, featureLine, title,
+    status: hit && !bad.length ? 'pass' : 'fail',
+    observed: hit ? (bad.length ? `入口在，但页面有脚本异常：${bad[0]}` : '入口在，点得开') : (reason || '点开「+」后菜单里没有这一项'),
+    next: '在知识库首页手点一次「+」复现，再查 CreatePaletteFab 的菜单项与权限判断',
+  });
+  record({
+    id: 'DAILY-KB-03', featureLine: 'knowledge-assets', title: '知识库右下角「+」没有被其他浮层盖住',
+    method: '取「+」按钮中心点，问浏览器那个位置最上层的元素是不是它自己（真实用户点下去点到的就是那个元素）',
+    status: !cover ? 'pass' : 'warn',
+    observed: cover ? `「+」被「${cover}」盖住，用户得先关掉它才点得到` : '「+」在最上层，点得到',
+    next: '让这个浮层避开右下角的主操作按钮（挪位置或在知识库页收起），否则用户点「+」会点进浮层',
+    link: link('/document-store'),
+    shot: coverShot,
+    tech: cover ? `elementFromPoint 命中 ${cover}` : '',
+  });
+  one('DAILY-REC-01', 'recording', '知识库「+」里有「录音转笔记」入口', seen.rec);
+  one('DAILY-FILE-01', 'file-parsing', '知识库「+」里有「上传文件」入口', seen.upload);
+  one('DAILY-SHORTVIDEO-01', 'short-video-parsing', '知识库「+」里有「解析短视频」入口', seen.video);
+}
+
+/** 只读接口：每条都断言业务数据，不止 HTTP 200。 */
+async function runApiChecks(token) {
+  for (const c of API_CHECKS) {
+    let r;
+    try {
+      r = await api(c.path, { token });
+    } catch (e) {
+      record({ id: c.id, featureLine: c.featureLine, title: c.title, method: `登录后请求 ${c.path}`,
+        status: 'fail', observed: `请求没发出去：${e.message.slice(0, 60)}`, next: '确认被测环境与隧道还在', tech: c.path });
+      continue;
+    }
+    const why = r.json?.success ? c.assert(r.json.data) : `接口返回失败（HTTP ${r.status}）：${r.json?.error?.message || '无可读原因'}`;
+    record({
+      id: c.id, featureLine: c.featureLine, title: c.title,
+      method: `登录后请求 ${c.path}，断言返回的业务数据（不只看 HTTP 200）`,
+      status: why ? 'fail' : 'pass',
+      observed: why || c.observed(r.json.data),
+      next: c.next,
+      tech: `GET ${c.path} -> ${r.status}${r.json?.error?.code ? ` ${r.json.error.code}` : ''}`,
+    });
+  }
+}
+
+/** 后端深度自检：服务自己跑一遍关键链路后申报的结论，逐项归到功能线。 */
+async function checkDeepHealth() {
+  const r = await api('/api/healthz/deep').catch((e) => ({ status: 0, json: null, text: e.message }));
+  const checks = r.json?.checks;
+  if (!checks || typeof checks !== 'object') {
+    record({ id: 'DEEP-endpoint', featureLine: 'platform-runtime', title: '后端深度自检能读到',
+      method: '请求 /api/healthz/deep（免登录，application/health+json）',
+      status: 'fail', observed: `自检端点没有给出结论（HTTP ${r.status}）`,
+      next: '后端可能没起来或版本太旧：看 CDS 上 api 容器的状态与日志', tech: String(r.text || '').slice(0, 120) });
+    return null;
+  }
+  for (const [key, val] of Object.entries(checks)) {
+    for (const c of (Array.isArray(val) ? val : [val])) record(deepCheckOutcome(key, c));
+  }
+  return r.json;
+}
+
+/**
+ * 48 小时稳定冒烟自己还在不在跑。它是真生成闭环的唯一判据，它停了，
+ * 「每日只读 + 48 小时真生成」这套分工就塌了一半，而且不会有任何东西变红。
+ * 读 CDS 验收中心里最近一份「核心业务稳定冒烟」报告的时间与结论。
+ */
+function checkStableSmokeFreshness() {
+  const base = {
+    id: 'DAILY-STABLE-01', featureLine: 'stability-foundation',
+    title: '48 小时稳定冒烟按时跑了、且最近一轮通过',
+    method: '查 CDS 验收中心里最近一份「核心业务稳定冒烟」报告：50 小时内没有就是停跑了；结论不通过算异常、部分通过算需关注',
+  };
+  let items;
+  try {
+    const out = execFileSync('python3', [path.join(REPO, '.claude/skills/cds/cli/cdscli.py'), 'report', 'list', '--project', 'prd-agent'],
+      { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const d = JSON.parse(out).data;
+    items = Array.isArray(d) ? d : (d?.reports || d?.items || []);
+  } catch (e) {
+    record({ ...base, status: 'not-run', observed: '读不到 CDS 验收中心（缺 CDS 凭据或 CDS 不可达）',
+      next: '确认运行环境里有 CDS_HOST 与 CDS 凭据，cdscli report list 能跑通', tech: String(e.message).slice(0, 160) });
+    return;
+  }
+  const latest = items
+    .filter((x) => /稳定冒烟/.test(x.title || '') && !/失败取证/.test(x.title || ''))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+  if (!latest) {
+    record({ ...base, status: 'fail', observed: 'CDS 验收中心里找不到任何稳定冒烟报告', next: '检查 stable-smoke-48h 本地自动化是否还在、是否改了报告标题' });
+    return;
+  }
+  const hours = (Date.now() - Date.parse(latest.createdAt)) / 3600000;
+  const verdict = { pass: '通过', conditional: '部分通过', fail: '不通过' }[latest.verdict] || latest.verdict || '未知';
+  const stale = hours > 50;
+  record({
+    ...base,
+    // 停跑或不通过 = 异常；按时跑了但只部分通过（有项没执行）= 需关注
+    status: stale || latest.verdict === 'fail' ? 'fail' : (latest.verdict === 'pass' ? 'pass' : 'warn'),
+    observed: `最近一轮在 ${hours.toFixed(0)} 小时前，结论「${verdict}」${stale ? '，已经超过 48 小时没跑' : ''}`,
+    next: stale ? '48 小时那一轮停了：检查 stable-smoke-48h 本地自动化是否还在运行' : '打开那份报告看「执行覆盖账本」里没通过 / 没执行的项',
+    link: cdsDeepLink(latest.id),
+    tech: `${latest.title} · ${latest.createdAt}`,
+  });
+}
+
+/** 被测环境本身：首页、版本、对象存储就绪。这一步不过，后面整张表都标「未执行」并写明原因。 */
+async function checkEnvironment() {
+  const head = await fetch(`${BASE}/`).then((r) => r.status).catch(() => 0);
+  const ver = await api('/api/version').catch(() => ({ status: 0 }));
+  const ready = await api('/api/health/ready').catch(() => ({ status: 0 }));
+  const commit = ver.json?.commit ? String(ver.json.commit).slice(0, 8) : '';
+  const up = head === 200 && ver.status === 200;
+  record({
+    id: 'ENV-01', featureLine: 'environment', title: '被测环境可达',
+    method: '请求首页与 /api/version',
+    status: up ? 'pass' : 'fail',
+    observed: up ? `首页 200，运行版本 ${commit}` : `首页 HTTP ${head || '连不上'}，版本接口 HTTP ${ver.status || '连不上'}`,
+    next: '去 CDS 看 main 分支预览的状态；容器崩了就重新部署（cdscli branch deploy prd-agent-main）',
+    link: PUBLIC,
+  });
+  if (!up) return null;
+  const st = ready.json?.status;
+  record({
+    id: 'ENV-02', featureLine: 'environment', title: '对象存储读写就绪',
+    method: '请求 /api/health/ready（后端会真写一次、读一次对象存储）',
+    status: ready.status === 200 && st === 'healthy' ? 'pass' : 'fail',
+    observed: ready.status === 200 ? `${ready.json?.provider || ''} ${st}` : `HTTP ${ready.status}`,
+    next: '对象存储不可用会让上传、托管、截图全部失败：查存储凭据与桶',
+  });
+  return commit;
+}
+
+/** 前置失败时，把还没跑的检查项全部登记成「未执行」，整张表照样产出。 */
+function markRemainingNotRun(reason, next) {
+  const done = new Set(results.map((r) => r.id));
+  const planned = [
+    ...FORMS.map((f) => ({ id: `DAILY-WEB-SHARE-${f.key}`, featureLine: 'web-hosting-sharing', title: `匿名访客打开 ${f.key === 'html' ? 'HTML' : 'Markdown'} 站的分享链接能看到正文` })),
+    ...PAGES.map((p4) => ({ id: p4.id, featureLine: p4.featureLine, title: `${p4.label}能打开并渲染出内容` })),
+    ...API_CHECKS.map((c) => ({ id: c.id, featureLine: c.featureLine, title: c.title })),
+    { id: 'DAILY-KB-03', featureLine: 'knowledge-assets', title: '知识库右下角「+」没有被其他浮层盖住' },
+    { id: 'DAILY-REC-01', featureLine: 'recording', title: '知识库「+」里有「录音转笔记」入口' },
+    { id: 'DAILY-FILE-01', featureLine: 'file-parsing', title: '知识库「+」里有「上传文件」入口' },
+    { id: 'DAILY-SHORTVIDEO-01', featureLine: 'short-video-parsing', title: '知识库「+」里有「解析短视频」入口' },
+    { id: 'DAILY-WEB-02', featureLine: 'web-hosting-sharing', title: '主控台的批量勾选框真的点得动' },
+    { id: 'DAILY-WEB-03', featureLine: 'web-hosting-sharing', title: '站点卡上的「分享」能就地展开下拉' },
+    { id: 'DEEP-endpoint', featureLine: 'platform-runtime', title: '后端深度自检能读到' },
+  ];
+  for (const p of planned) {
+    if (!done.has(p.id)) record({ ...p, method: '—', status: 'not-run', observed: reason, next });
+  }
 }
 
 // ── 主流程 ──
 let exitCode = 0;
+const startedAt = new Date().toISOString();
+let commit = '';
+let browser;
 try {
-  const session = await login();
-  console.log(`登录成功：${session.user?.username}`);
-
-  const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
-  const auth = {
-    state: {
-      isAuthenticated: true, user: session.user, token: session.accessToken,
-      refreshToken: session.refreshToken, sessionKey: session.sessionKey,
-      permissions: [], permissionsLoaded: false, isRoot: session.user?.role === 'ADMIN', menuCatalog: [],
-    },
-    version: 0,
-  };
-  const ctx = await browser.newContext({
-    viewport: { width: 1600, height: 1000 },
-    storageState: { cookies: [], origins: [{ origin: BASE, localStorage: [{ name: 'prd-admin-auth', value: JSON.stringify(auth) }] }] },
-  });
-
-  for (const form of FORMS) {
-    try {
-      const site = await ensureSite(session.accessToken, form);
-      const share = await ensureShare(session.accessToken, site);
-      await checkShareArtifact(ctx, form, share.token);
-    } catch (e) {
-      record(`分享页产物可见 · ${form.key}`, false, `前置失败：${e.message}`);
+  commit = await checkEnvironment();
+  if (commit === null) {
+    markRemainingNotRun('被测环境不可达，没能开始验', '先恢复被测环境（见「被测环境可达」那一行），再手动重跑本脚本');
+    exitCode = 2;
+  } else {
+    await checkDeepHealth();
+    checkStableSmokeFreshness();
+    if (PRECONDITION) {
+      record({ id: 'ENV-03', featureLine: 'environment', title: '验收账号与浏览器就绪', method: '检查环境变量与 playwright',
+        status: 'fail', observed: PRECONDITION, next: '在运行环境补齐凭据或依赖后重跑' });
+      markRemainingNotRun(PRECONDITION, '补齐后重跑本脚本');
+      exitCode = 2;
+    } else {
+      let session;
+      try {
+        session = await login();
+        record({ id: 'DAILY-AUTH-01', featureLine: 'identity-access', title: '验收账号能用账号密码登录',
+          method: '请求 /api/v1/auth/login，必须拿到访问令牌', status: 'pass',
+          observed: `以 ${session.user?.displayName || session.user?.username} 登录成功` });
+      } catch (e) {
+        record({ id: 'DAILY-AUTH-01', featureLine: 'identity-access', title: '验收账号能用账号密码登录',
+          method: '请求 /api/v1/auth/login，必须拿到访问令牌', status: 'fail', observed: e.message,
+          next: '账号被锁 / 改密 / 关闭了密码登录：在用户管理里核对验收账号状态' });
+        markRemainingNotRun('登录失败，后面的检查都需要登录态', '先修好登录（见「验收账号能用账号密码登录」那一行）');
+        exitCode = 2;
+      }
+      if (session) {
+        await runApiChecks(session.accessToken);
+        browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+        const auth = {
+          state: {
+            isAuthenticated: true, user: session.user, token: session.accessToken,
+            refreshToken: session.refreshToken, sessionKey: session.sessionKey,
+            permissions: [], permissionsLoaded: false, isRoot: session.user?.role === 'ADMIN', menuCatalog: [],
+          },
+          version: 0,
+        };
+        const ctx = await browser.newContext({
+          viewport: { width: 1600, height: 1000 },
+          storageState: { cookies: [], origins: [{ origin: BASE, localStorage: [{ name: 'prd-admin-auth', value: JSON.stringify(auth) }] }] },
+        });
+        // 每一步各自兜住：一条用例抛异常只让它自己那一行变红，不拖垮整张表
+        const guard = async (fallback, fn) => {
+          try { await fn(); } catch (e) { record({ ...fallback, method: '—', status: 'fail', observed: `检查过程抛异常：${e.message.slice(0, 80)}`, next: '先手动重跑一次排除抖动；稳定复现就按异常信息查' }); }
+        };
+        for (const form of FORMS) {
+          await guard({ id: `DAILY-WEB-SHARE-${form.key}`, featureLine: 'web-hosting-sharing', title: `匿名访客打开 ${form.key === 'html' ? 'HTML' : 'Markdown'} 站的分享链接能看到正文` }, async () => {
+            const site = await ensureSite(session.accessToken, form);
+            const share = await ensureShare(session.accessToken, site);
+            await checkShareArtifact(ctx, form, share.token);
+          });
+        }
+        for (const p4 of PAGES) {
+          await guard({ id: p4.id, featureLine: p4.featureLine, title: `${p4.label}能打开并渲染出内容` }, () => checkPageAlive(ctx, p4));
+        }
+        await guard({ id: 'DAILY-REC-01', featureLine: 'recording', title: '知识库「+」里有「录音转笔记」入口' }, () => checkCreateMenu(ctx));
+        await guard({ id: 'DAILY-WEB-02', featureLine: 'web-hosting-sharing', title: '主控台的批量勾选框真的点得动' }, () => checkCheckboxHittable(ctx));
+        await guard({ id: 'DAILY-WEB-03', featureLine: 'web-hosting-sharing', title: '站点卡上的「分享」能就地展开下拉' }, () => checkSharePopover(ctx));
+        await ctx.close();
+      }
     }
   }
-
-  for (const p4 of PAGES) {
-    try { await checkPageAlive(ctx, p4); } catch (e) { record(`页面产物可见 · ${p4.label}`, false, e.message.slice(0, 80)); }
-  }
-
-  await checkCheckboxHittable(ctx);
-  await checkSharePopover(ctx);
-  await ctx.close();
-  await browser.close();
 } catch (e) {
-  record('前置：登录 / 浏览器', false, e.message);
+  record({ id: 'ENV-99', featureLine: 'environment', title: '验收脚本自身运行', method: '—', status: 'fail',
+    observed: `脚本在前置阶段抛异常：${e.message.slice(0, 120)}`, next: '这是验收工具的问题不是产品问题：按异常修脚本后重跑' });
+  markRemainingNotRun('验收脚本前置阶段出错', '修好脚本后重跑');
   exitCode = 2;
+} finally {
+  if (browser) await browser.close().catch(() => {});
 }
 
-const failed = results.filter((r) => !r.ok);
-console.log(`\n合计 ${results.length} 条，失败 ${failed.length} 条`);
-if (JSON_OUT) {
-  fs.writeFileSync(JSON_OUT, JSON.stringify({ base: BASE, at: new Date().toISOString(), results }, null, 1));
-  console.log(`明细：${JSON_OUT}`);
+const summary = summarize({
+  results, catalog: CATALOG, exempt: DAILY_EXEMPT, extraLines: EXTRA_LINES,
+  base: PUBLIC, at: startedAt, env: commit ? `运行版本 ${commit}` : '',
+});
+const failed = results.filter((r) => r.status !== 'pass');
+console.log(`\n合计 ${results.length} 项检查，${failed.length} 项不是「正常」`);
+if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify({ base: PUBLIC, at: startedAt, verdict: summary.verdict, results }, null, 1));
+let reportUrl = '';
+// HTML 版只给本地看（CDS 对执行类 HTML 有模板准入）；归档进 CDS 的是完整版 Markdown。
+if (HTML_OUT) fs.writeFileSync(HTML_OUT, renderHtml(summary));
+if (ARCHIVE) {
+  const fullPath = path.join(os.tmpdir(), `daily-acceptance-${Date.now()}.md`);
+  fs.writeFileSync(fullPath, renderMarkdown(summary, { full: true }));
+  reportUrl = archive(fullPath, summary, commit);
+  fs.rmSync(fullPath, { force: true });
 }
-if (!KEEP) console.log('（验收站点会复用，不重复创建；要清理就去主控台删掉标题带「[每日验收]」的那几个）');
-if (failed.length && exitCode === 0) exitCode = 1;
+const md = renderMarkdown(summary, { reportUrl });
+if (MD_OUT) fs.writeFileSync(MD_OUT, md);
+console.log(`\n${md}`);
+if (!KEEP) console.log('\n（网页托管的验收站点会复用，不重复创建；要清理就去主控台删掉标题带「[每日验收]」的那几个）');
+if (exitCode === 0 && summary.verdict !== 'pass') exitCode = 1;
 process.exit(exitCode);
+
+/** CDS 报告的直达深链只认 cdscli 给的（CLAUDE.md §11：不自己拼地址）。拿不到就留空。 */
+function cdsDeepLink(id) {
+  if (!id) return '';
+  try {
+    const out = execFileSync('python3', [path.join(REPO, '.claude/skills/cds/cli/cdscli.py'), 'report', 'deeplink', id],
+      { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
+    return JSON.parse(out)?.data?.url || '';
+  } catch { return ''; }
+}
+
+/** 归档进 CDS 验收中心，返回直达深链。归档失败如实报，不回退成本地文件交付。 */
+function archive(mdPath, s, sha) {
+  const cli = path.join(REPO, '.claude/skills/cds/cli/cdscli.py');
+  const day = s.at.slice(0, 10);
+  const failedLines = s.lines.filter((l) => l.status === 'fail').length;
+  try {
+    const out = execFileSync('python3', [cli, 'report', 'create',
+      '--title', `每日核心功能验收 · ${day} · ${{ pass: '全部正常', conditional: '部分未验或需关注', fail: `${failedLines} 条功能线异常` }[s.verdict]}`,
+      '--html-file', mdPath, '--format', 'md', '--project', 'prd-agent', '--folder-path', `每日核心功能验收/${day.slice(0, 7)}`,
+      '--verdict', s.verdict, '--tier', '每日只读冒烟', '--branch', 'main', ...(sha ? ['--commit', sha] : [])],
+    { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
+    const d = JSON.parse(out);
+    const id = d?.data?.id || d?.data?.report?.id;
+    const url = cdsDeepLink(id);
+    console.log(url ? `已归档 CDS 验收中心：${url}` : `已归档，但没拿到深链：${out.slice(0, 200)}`);
+    return url || '';
+  } catch (e) {
+    console.error(`归档 CDS 验收中心失败：${String(e.stderr || e.message).slice(0, 300)}`);
+    return '';
+  }
+}
