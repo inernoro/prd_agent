@@ -69,7 +69,7 @@ export const DEEP_CHECK_MAP = Object.freeze({
 });
 
 /** 自检里服务自己写的状态 → 报告状态。服务说 fail 就是 fail，这里不替它降级。 */
-export function deepCheckOutcome(key, check) {
+export function deepCheckOutcome(key, check, { endpointDown = false } = {}) {
   const m = DEEP_CHECK_MAP[key] || {
     featureLine: 'platform-runtime',
     title: `后端自检：${key}`,
@@ -86,12 +86,14 @@ export function deepCheckOutcome(key, check) {
     method: '读后端深度自检（服务自己跑一遍真实链路后申报的结论）',
     status,
     observed: check?.output || (status === 'not-run'
-      ? (check === undefined ? '后端深度自检里没有这一项' : '自检没给出这一项的结论')
+      ? (endpointDown ? '后端深度自检整体没有给出结论，这一项没验成'
+        : check === undefined ? '后端深度自检里没有这一项' : '自检没给出这一项的结论')
       : ''),
     next: status === 'not-run'
-      ? (check === undefined
-        ? '自检里没有这一项了：确认后端是删了还是改了名；改名就同步 DEEP_CHECK_MAP'
-        : '自检没给结论：看 /api/healthz/deep 的原始响应')
+      ? (endpointDown ? '先修好自检端点（见「后端深度自检能读到」那一行）再重跑'
+        : check === undefined
+          ? '自检里没有这一项了：确认后端是删了还是改了名；改名就同步 DEEP_CHECK_MAP'
+          : '自检没给结论：看 /api/healthz/deep 的原始响应')
       : m.next,
     tech: `${key} status=${check?.status ?? '缺失'}${value ? ` observed=${value}` : ''}`,
   };

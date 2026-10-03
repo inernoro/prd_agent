@@ -115,3 +115,26 @@ test('要求归档却没归档成，退出码不能是 0', () => {
   // Codex 在 PR #1655 指出：归档失败时照样 exit 0，计划任务会当成成功、证据丢失
   assert.match(script, /if \(ARCHIVE && !reportUrl && exitCode === 0\) exitCode = 1;/);
 });
+
+test('深度自检整体打不通时，已登记的每一项都落表为未执行', () => {
+  // Codex 在 PR #1655 指出：整体失败那条路径提前 return，已登记项全部消失
+  const down = deepCheckOutcome('model-catalog:selector-runtime-contract', undefined, { endpointDown: true });
+  assert.equal(down.status, 'not-run');
+  assert.match(down.observed, /整体没有给出结论/);
+  const fn = script.slice(script.indexOf('async function checkDeepHealth'), script.indexOf('function checkStableSmokeFreshness'));
+  const earlyReturn = fn.slice(0, fn.indexOf('return null;'));
+  assert.match(earlyReturn, /deepCheckOutcome\(key, undefined, \{ endpointDown: true \}\)/, '整体失败路径没有逐项补登');
+});
+
+test('一个检查整体抛异常时，它名下的每一项都记失败；主流程结束前统一补齐没跑到的项', () => {
+  // Codex 在 PR #1655 指出：知识库「+」检查抛异常只记了录音一项，其余三项成了没原因的空行
+  assert.match(script, /await guard\(CREATE_MENU_RESULTS, \(\) => checkCreateMenu\(ctx\)\)/);
+  const ids = [...script.slice(script.indexOf('const CREATE_MENU_RESULTS'), script.indexOf('/** 只读接口')).matchAll(/id: '([A-Z0-9-]+)'/g)].map((m) => m[1]);
+  const menu = script.slice(script.indexOf('async function checkCreateMenu'), script.indexOf('const CREATE_MENU_RESULTS'));
+  const produced = [...menu.matchAll(/(?:id: |one\()'([A-Z0-9-]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...ids].sort(), [...new Set(produced)].sort(), 'CREATE_MENU_RESULTS 与 checkCreateMenu 实际产出的项不一致');
+  // 兜底调用必须在 try/finally 之后、无条件执行
+  const tail = script.slice(script.indexOf('// ── 主流程 ──'));
+  const finallyEnd = tail.indexOf('if (browser) await browser.close()');
+  assert.ok(tail.indexOf("markRemainingNotRun('本轮检查中途中断") > finallyEnd, '主流程之后缺少无条件兜底补登');
+});

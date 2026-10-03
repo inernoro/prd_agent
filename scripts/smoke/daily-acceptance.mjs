@@ -762,6 +762,14 @@ async function checkCreateMenu(ctx) {
   one('DAILY-SHORTVIDEO-01', 'short-video-parsing', '知识库「+」里有「解析短视频」入口', seen.video);
 }
 
+/** checkCreateMenu 一次产出的全部结果。它整体抛异常时，这几项要一起记失败，不能只记第一项。 */
+const CREATE_MENU_RESULTS = [
+  { id: 'DAILY-KB-03', featureLine: 'knowledge-assets', title: '知识库右下角「+」没有被其他浮层盖住' },
+  { id: 'DAILY-REC-01', featureLine: 'recording', title: '知识库「+」里有「录音转笔记」入口' },
+  { id: 'DAILY-FILE-01', featureLine: 'file-parsing', title: '知识库「+」里有「上传文件」入口' },
+  { id: 'DAILY-SHORTVIDEO-01', featureLine: 'short-video-parsing', title: '知识库「+」里有「解析短视频」入口' },
+];
+
 /** 只读接口：每条都断言业务数据，不止 HTTP 200。 */
 async function runApiChecks(token) {
   for (const c of API_CHECKS) {
@@ -794,6 +802,9 @@ async function checkDeepHealth() {
       method: '请求 /api/healthz/deep（免登录，application/health+json）',
       status: 'fail', observed: `自检端点没有给出结论（HTTP ${r.status}）`,
       next: '后端可能没起来或版本太旧：看 CDS 上 api 容器的状态与日志', tech: String(r.text || '').slice(0, 120) });
+    // 已登记的各项也要逐条落表：否则模型目录契约这类项整个消失，所在功能线会被
+    // 其他检查判成「正常」（Codex 在 PR #1655 指出）
+    for (const key of Object.keys(DEEP_CHECK_MAP)) record(deepCheckOutcome(key, undefined, { endpointDown: true }));
     return null;
   }
   for (const [key, val] of Object.entries(checks)) {
@@ -894,13 +905,14 @@ function markRemainingNotRun(reason, next) {
     ...PAGES.map((p4) => ({ id: p4.id, featureLine: p4.featureLine, title: `${p4.label}能打开并渲染出内容` })),
     { id: 'DAILY-AUTH-01', featureLine: 'identity-access', title: '验收账号能用账号密码登录' },
     ...API_CHECKS.map((c) => ({ id: c.id, featureLine: c.featureLine, title: c.title })),
-    { id: 'DAILY-KB-03', featureLine: 'knowledge-assets', title: '知识库右下角「+」没有被其他浮层盖住' },
-    { id: 'DAILY-REC-01', featureLine: 'recording', title: '知识库「+」里有「录音转笔记」入口' },
-    { id: 'DAILY-FILE-01', featureLine: 'file-parsing', title: '知识库「+」里有「上传文件」入口' },
-    { id: 'DAILY-SHORTVIDEO-01', featureLine: 'short-video-parsing', title: '知识库「+」里有「解析短视频」入口' },
+    ...CREATE_MENU_RESULTS,
     { id: 'DAILY-WEB-02', featureLine: 'web-hosting-sharing', title: '主控台的批量勾选框真的点得动' },
     { id: 'DAILY-WEB-03', featureLine: 'web-hosting-sharing', title: '站点卡上的「分享」能就地展开下拉' },
-    { id: 'DEEP-endpoint', featureLine: 'platform-runtime', title: '后端深度自检能读到' },
+    { id: 'DAILY-STABLE-01', featureLine: 'stability-foundation', title: '48 小时稳定冒烟按时跑了、且最近一轮通过' },
+    // 自检读到了就有逐项结果、没有 DEEP-endpoint 那一行；一项都没读到才补「能读到」那一行
+    ...(results.some((r) => r.id.startsWith('DEEP-'))
+      ? [] : [{ id: 'DEEP-endpoint', featureLine: 'platform-runtime', title: '后端深度自检能读到' }]),
+    ...Object.entries(DEEP_CHECK_MAP).map(([key, m]) => ({ id: `DEEP-${key}`, featureLine: m.featureLine, title: m.title })),
   ];
   for (const p of planned) {
     if (!done.has(p.id)) record({ ...p, method: '—', status: 'not-run', observed: reason, next });
@@ -956,8 +968,16 @@ try {
           storageState: { cookies: [], origins: [{ origin: BASE, localStorage: [{ name: 'prd-admin-auth', value: JSON.stringify(auth) }] }] },
         });
         // 每一步各自兜住：一条用例抛异常只让它自己那一行变红，不拖垮整张表
-        const guard = async (fallback, fn) => {
-          try { await fn(); } catch (e) { record({ ...fallback, method: '—', status: 'fail', observed: `检查过程抛异常：${e.message.slice(0, 80)}`, next: '先手动重跑一次排除抖动；稳定复现就按异常信息查' }); }
+        // 一个检查可能产出多项结果：抛异常时它名下还没落表的每一项都记失败、带原因
+        // （只记第一项，其余就成了没原因的空行——Codex 在 PR #1655 指出）
+        const guard = async (fallbacks, fn) => {
+          const list = Array.isArray(fallbacks) ? fallbacks : [fallbacks];
+          try { await fn(); } catch (e) {
+            const done = new Set(results.map((x) => x.id));
+            for (const fb of list) {
+              if (!done.has(fb.id)) record({ ...fb, method: '—', status: 'fail', observed: `检查过程抛异常：${e.message.slice(0, 80)}`, next: '先手动重跑一次排除抖动；稳定复现就按异常信息查' });
+            }
+          }
         };
         for (const form of FORMS) {
           await guard({ id: `DAILY-WEB-SHARE-${form.key}`, featureLine: 'web-hosting-sharing', title: `匿名访客打开 ${form.key === 'html' ? 'HTML' : 'Markdown'} 站的分享链接能看到正文` }, async () => {
@@ -969,7 +989,7 @@ try {
         for (const p4 of PAGES) {
           await guard({ id: p4.id, featureLine: p4.featureLine, title: `${p4.label}能打开并渲染出内容` }, () => checkPageAlive(ctx, p4));
         }
-        await guard({ id: 'DAILY-REC-01', featureLine: 'recording', title: '知识库「+」里有「录音转笔记」入口' }, () => checkCreateMenu(ctx));
+        await guard(CREATE_MENU_RESULTS, () => checkCreateMenu(ctx));
         await guard({ id: 'DAILY-WEB-02', featureLine: 'web-hosting-sharing', title: '主控台的批量勾选框真的点得动' }, () => checkCheckboxHittable(ctx));
         await guard({ id: 'DAILY-WEB-03', featureLine: 'web-hosting-sharing', title: '站点卡上的「分享」能就地展开下拉' }, () => checkSharePopover(ctx));
         await ctx.close();
@@ -984,6 +1004,9 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
 }
+// 兜底：无论走了哪条路径，计划里的每一项都必须出现在表里。没跑到的明说没跑到，
+// 不许因为某段流程中途退出就从报告里静默消失（Codex 在 PR #1655 连续两轮指出同一形状）
+markRemainingNotRun('本轮检查中途中断，这一项没跑到', '看本次运行日志里中断前的最后一条输出，修好后重跑');
 
 const summary = summarize({
   results, catalog: CATALOG, exempt: DAILY_EXEMPT, extraLines: EXTRA_LINES,
