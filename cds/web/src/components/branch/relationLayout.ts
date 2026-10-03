@@ -413,7 +413,15 @@ function layoutPass(payload: RelationPayload, width: number, extras: Extras): { 
     const span = sideGap(id, side);
     const list = centerTaken.has(k) ? FRACTIONS.slice(1) : FRACTIONS;
     const taken = new Set(ports.get(k) ?? []);
-    const free = list.map((f) => p.x + p.w * f).find((x) => !taken.has(x) && !verticals.some((v) => Math.abs(v.x - x) < 4 && v.lo < span.hi && v.hi > span.lo));
+    const clear = (x: number): boolean => !taken.has(x) && !verticals.some((v) => Math.abs(v.x - x) < 4 && v.lo < span.hi && v.hi > span.lo);
+    // 固定比例用完（一张卡同一侧出线超过 13 条）后按 4px 一格、由中间向两边找空位；
+    // 以前是全挤到最后一个比例上，后面的线叠成一段分不出来（Codex P2，PR #1654）
+    const fine = (): number[] => {
+      const out: number[] = [];
+      for (let d = 0; d <= p.w / 2 - 8; d += 4) out.push(p.x + p.w / 2 + d, p.x + p.w / 2 - d);
+      return out;
+    };
+    const free = list.map((f) => p.x + p.w * f).find(clear) ?? fine().find(clear);
     const x = free ?? p.x + p.w * list[Math.min(taken.size, list.length - 1)];
     ports.set(k, [...taken, x]);
     verticals.push({ x, lo: span.lo, hi: span.hi });

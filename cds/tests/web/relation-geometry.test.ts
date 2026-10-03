@@ -51,6 +51,37 @@ describe('同构样本没有被简化掉（它要替真实分支挡住同一批�
   });
 });
 
+describe('同一侧出线很多（Codex P2，PR #1654）', () => {
+  // 一个服务连 N 个内网依赖：固定的端口位置只有 13 个，用完后不许全挤在最后一个位置上（G8）
+  const fanOut = (n: number): RelationPayload => {
+    const deps = Array.from({ length: n }, (_, i) => `dep-${String(i + 1).padStart(2, '0')}`);
+    const svc = (id: string, extra: Record<string, unknown> = {}) => ({ id: `service:${id}`, rawId: id, name: id, kind: 'service' as const, role: 'api' as const, ...extra });
+    return {
+      branchId: 'b', projectId: 'p', branch: 'fan-out', status: 'running',
+      graph: {
+        nodes: [svc('shell', { role: 'web', pathPrefixes: ['/'] }), svc('hub', { pathPrefixes: ['/api/'] }), ...deps.map((d) => svc(d))],
+        edges: deps.map((d) => ({ from: 'service:hub', to: `service:${d}`, envKeys: [`${d.toUpperCase().replace('-', '_')}_URL`], dependsOn: false })),
+        layers: [],
+        sites: [{ id: 'main', kind: 'main', shellId: 'shell', shellSource: 'declared', members: [{ id: 'hub', prefixes: ['/api/'] }], conflicts: [] }],
+        internal: deps,
+      },
+      lint: { findings: [], summary: { errors: 0, warnings: 0, infos: 0 } },
+      references: [],
+    } as RelationPayload;
+  };
+  // 20 条只测 ≥390：320 宽时右侧走线槽要排 20 条轨道，把这张卡挤到 68px，按 4px 间距排不下 20 个出口，
+  // 那是画布的物理上限（记在 doc/debt.cds.md「关系视图」一节），不是端口分配的缺陷
+  for (const [n, widths] of [[14, [320, 390, 768, 1280, 1920]], [20, [390, 768, 1280, 1920]]] as const) {
+    for (const width of widths) {
+      it(`${n} 条依赖从同一张卡出发，宽 ${width}：G1–G8 零违规`, () => {
+        const p = fanOut(n);
+        const report = auditLayout(layoutRelations(p, width), p);
+        expect(report.violations, report.violations.join('\n')).toEqual([]);
+      });
+    }
+  }
+});
+
 describe('随机极端样本（固定种子，可复现）', () => {
   const failures: string[] = [];
   const widths = [320, 390, 768, 1289, 1920];
