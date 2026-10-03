@@ -1,8 +1,8 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// 录音分片上传会话。音频总量仍受文档上传 20 MB 上限约束，分片单独落 Mongo，
-/// 完成时按 Index 拼接后写入正式附件存储。
+/// 录音分片上传会话。音频总量仍受文档上传 20 MB 上限约束；新分片实体在对象存储，
+/// Mongo 只保留清单和写入状态。历史 Mongo 字节由迁移任务逐步搬走。
 /// </summary>
 public class DocumentRecordingUploadSession
 {
@@ -36,7 +36,7 @@ public class DocumentRecordingUploadSession
     /// </summary>
     public bool DeferredTranscriptionRunPending { get; set; }
 
-    /// <summary>正式对象存储归档状态。R2/COS 不可用时为 pending，Mongo 分片继续保留。</summary>
+    /// <summary>正式对象存储归档状态。失败时保留已确认的分片对象供后台重试。</summary>
     public string ArchiveStatus { get; set; } = DocumentRecordingArchiveStatus.None;
 
     public int ArchiveAttempts { get; set; }
@@ -85,16 +85,30 @@ public class DocumentRecordingUploadSession
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(1);
 }
 
-/// <summary>录音上传分片。单片限制为 1 MB，避免触碰 Mongo 单文档上限。</summary>
+/// <summary>录音上传分片清单；Data 仅用于读取和迁移历史内联字节。</summary>
 public class DocumentRecordingUploadChunk
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string SessionId { get; set; } = string.Empty;
 
+    /// <summary>对象分片所属部署实例，防止共享 Mongo 的预览分支跨桶清理。</summary>
+    public string OwnerInstanceId { get; set; } = string.Empty;
+
     public int Index { get; set; }
 
-    public byte[] Data { get; set; } = Array.Empty<byte>();
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public byte[]? Data { get; set; }
+
+    public string? StorageKey { get; set; }
+
+    public string? Sha256 { get; set; }
+
+    /// <summary>对象已确认写入。false 是可恢复的上传意图，不计入会话偏移。</summary>
+    public bool ObjectStored { get; set; }
+
+    /// <summary>回收意图；写入方必须停止重传，清理方可在崩溃后重试。</summary>
+    public bool Deleting { get; set; }
 
     public long SizeBytes { get; set; }
 
