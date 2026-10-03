@@ -681,6 +681,7 @@ async function checkCreateMenu(ctx) {
   let reason = '';
   let cover = null;
   let coverShot = '';
+  let fabFound = false;
   try {
     await page.goto(`${BASE}/document-store`, { waitUntil: 'domcontentloaded' });
     const fab = await page.waitForSelector('[data-tour-id="doc-create-fab"]', { timeout: 25000, state: 'visible' })
@@ -688,6 +689,7 @@ async function checkCreateMenu(ctx) {
     if (!fab) {
       reason = '等了 25 秒页面上没有右下角的「+」按钮';
     } else {
+      fabFound = true;
       // 先问命中测试：鼠标落点上最顶层的元素是不是「+」自己。
       // 2026-10-03 实测「周报提交提醒」浮窗整块盖在「+」上，真实鼠标点进了浮窗，
       // 菜单当然不出来——那不是三个入口坏了，是一个遮挡问题，要单独报、写清是谁盖的。
@@ -750,9 +752,13 @@ async function checkCreateMenu(ctx) {
   record({
     id: 'DAILY-KB-03', featureLine: 'knowledge-assets', title: '知识库右下角「+」没有被其他浮层盖住',
     method: '取「+」按钮中心点，问浏览器那个位置最上层的元素是不是它自己（真实用户点下去点到的就是那个元素）',
-    status: !cover ? 'pass' : 'warn',
-    observed: cover ? `「+」被「${cover}」盖住，用户得先关掉它才点得到` : '「+」在最上层，点得到',
-    next: '让这个浮层避开右下角的主操作按钮（挪位置或在知识库页收起），否则用户点「+」会点进浮层',
+    // 按钮压根没出现时不能因为「没找到遮挡物」判成正常（Codex 在 PR #1655 指出）
+    status: !fabFound ? 'fail' : (cover ? 'warn' : 'pass'),
+    observed: !fabFound ? (reason || '页面上没有右下角的「+」按钮')
+      : (cover ? `「+」被「${cover}」盖住，用户得先关掉它才点得到` : '「+」在最上层，点得到'),
+    next: !fabFound
+      ? '在知识库首页确认「+」是否还在；没了就查 CreatePaletteFab 的挂载条件与权限判断'
+      : '让这个浮层避开右下角的主操作按钮（挪位置或在知识库页收起），否则用户点「+」会点进浮层',
     link: link('/document-store'),
     shot: coverShot,
     tech: cover ? `elementFromPoint 命中 ${cover}` : '',

@@ -148,3 +148,10 @@ test('48 小时冒烟心跳只认运行器自己的标题格式', () => {
   assert.ok(!rx.test('发布验收 · 核心业务稳定冒烟 · 2026-09-30'), '发布验收报告不是 48 小时心跳');
   assert.ok(!rx.test('功能验收 · 核心业务稳定冒烟失败取证 · 2026-09-14'));
 });
+
+test('「+」按钮压根没出现时，遮挡那一行不能判正常', () => {
+  // Codex 在 PR #1655 指出：没找到按钮时 cover 为空，原判据把它当成「没被盖住」
+  const fn = script.slice(script.indexOf('async function checkCreateMenu'), script.indexOf('const CREATE_MENU_RESULTS'));
+  assert.match(fn, /status: !fabFound \? 'fail'/, '遮挡判定没有先确认按钮存在');
+  assert.ok(fn.indexOf('fabFound = true') > fn.indexOf('if (!fab)'), 'fabFound 只能在真的拿到按钮之后置真');
+});
