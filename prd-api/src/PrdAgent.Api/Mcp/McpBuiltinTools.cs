@@ -417,7 +417,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_generate_image",
-            Description = "为文学工作区的配图标记生成图片，保存到该工作区并回填原文位置。markerIndexes 可一次传多个（每个标记一个独立任务），markerIndex 只生一张，二选一。风格 style、水印 watermark 可传名称或 ID（none 表示不用），不传就用账号默认那套；可选值先用 map_literary_list_presets 查。size 传比例（16:9）或 宽x高。返回里 applied 说明实际套用了哪套风格/水印/尺寸。异步执行：之后用 map_literary_get_workspace 看 illustrations[].status/url，一次看全部。超时重试必须保持 clientRequestId 与其它参数不变。",
+            Description = "为文学工作区的配图标记生成图片，保存到该工作区并回填原文位置。markerIndexes 可一次传多个（每个标记一个独立任务），markerIndex 只生一张，二选一。风格 style、水印 watermark 可传名称或 ID（none 表示不用）；不传时沿用这篇文章上次指定的那套，从没指定过才用账号默认；可选值先用 map_literary_list_presets 查。size 传比例（16:9）或 宽x高。返回里 applied 说明实际套用了哪套风格/水印/尺寸以及来源（explicit 本次指定 / remembered 沿用上次 / account-default 账号默认）。异步执行：之后用 map_literary_get_workspace 看 illustrations[].status/url，一次看全部。超时重试必须保持 clientRequestId 与其它参数不变。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/images",
             Params = new List<McpToolParam>
@@ -427,9 +427,9 @@ public static class McpBuiltinTools
                 new() { Name = "markerIndex", In = "body", Type = "integer", Description = "单张：一个标记序号；与 markerIndexes 二选一" },
                 new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "建稿 / 读取工作区返回的 workflowVersion，改稿后旧版本不能生成" },
                 new() { Name = "clientRequestId", In = "body", Required = true, Description = "1-200 字的幂等键，一次请求一个值，原样重试使用同一个值" },
-                new() { Name = "style", In = "body", Description = "风格（参考图配置）名称或 ID；none = 不用参考图；不传 = 账号当前启用的那套" },
-                new() { Name = "watermark", In = "body", Description = "水印配置名称或 ID；none = 不打水印；不传 = 账号给文学创作绑定的那套" },
-                new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、16:9、3:4，或 宽x高如 1376x768；不传为 1024x1024" },
+                new() { Name = "style", In = "body", Description = "风格（参考图配置）名称或 ID；none = 不用参考图；不传 = 沿用这篇文章上次指定的，没有则账号当前启用的那套" },
+                new() { Name = "watermark", In = "body", Description = "水印配置名称或 ID；none = 不打水印；不传 = 沿用这篇文章上次指定的，没有则账号给文学创作绑定的那套" },
+                new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、16:9、3:4，或 宽x高如 1376x768；不传 = 沿用这篇文章上次指定的，没有则 1024x1024" },
             },
         },
         new McpToolDef

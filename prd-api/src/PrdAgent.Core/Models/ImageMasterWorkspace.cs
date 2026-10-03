@@ -107,7 +107,22 @@ public class ImageMasterWorkspace
     /// </summary>
     public string? CreateRequestFingerprint { get; set; }
 
+    /// <summary>
+    /// 这篇文章上次**明确指定**过的配图风格 / 水印 / 尺寸（智能体经开放接口传入时记下）。
+    /// 之后生图不再传时沿用它，而不是退回账号默认：用户说「重画一张」，预期当然是原来那套。
+    /// 从没指定过为 null，此时用账号默认。
+    /// </summary>
+    public LiteraryIllustrationPrefs? IllustrationPrefs { get; set; }
+
     /// <summary>首次公开时间</summary>
     public DateTime? PublishedAt { get; set; }
 }
 
+/// <summary>一篇文学文章记住的配图选择。值与生图接口的参数同形：风格 / 水印存配置 ID（或 none），尺寸存宽x高。</summary>
+public class LiteraryIllustrationPrefs
+{
+    public string? StyleId { get; set; }
+    public string? WatermarkId { get; set; }
+    public string? Size { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}

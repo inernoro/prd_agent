@@ -135,6 +135,13 @@ public class LiteraryOpenApiController : ControllerBase
             }),
             // 改稿 / 重新规划后，旧版本的图不删，只是不再挂在正文上；页面「历史配图」能看到它们。
             historyImageCount = allAssets.Count(x => !currentIds.Contains(x.Id)),
+            // 这篇文章记住的配图选择：生图不传 style / watermark / size 时沿用它们
+            illustrationPrefs = ws.IllustrationPrefs == null ? null : new
+            {
+                styleId = ws.IllustrationPrefs.StyleId,
+                watermarkId = ws.IllustrationPrefs.WatermarkId,
+                size = ws.IllustrationPrefs.Size,
+            },
             content = slice,
             offset = from,
             contentChars = full.Length,

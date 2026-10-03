@@ -210,11 +210,39 @@ public class LiteraryImageOpenApiController(
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 $"请传 markerIndex 或 markerIndexes（最多 {LiteraryMcpWorkflow.MaxMarkers} 个）、workflowVersion 和 1-200 字的 clientRequestId；前两项来自读取工作区，重试保持同一个 clientRequestId。"));
         var userId = UserId;
-        var (size, sizeError) = ResolveSize(req.Size);
+        // 这次没传的项，先沿用这篇文章上次明确指定的那套，再退回账号默认。
+        // 用户说「重画一张」「按新稿重新配」时不会再报一遍风格水印，预期却一定是原来那套。
+        var remembered = await db.ImageMasterWorkspaces
+            .Find(x => x.Id == workspaceId && x.OwnerUserId == userId && x.ScenarioType == "article-illustration")
+            .Project(x => x.IllustrationPrefs).FirstOrDefaultAsync(ct);
+        var notes = new List<string>();
+        var explicitStyle = !string.IsNullOrWhiteSpace(req.Style);
+        var explicitWatermark = !string.IsNullOrWhiteSpace(req.Watermark);
+        var explicitSize = !string.IsNullOrWhiteSpace(req.Size);
+
+        var sizeSource = explicitSize ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.Size) ? "remembered" : "account-default";
+        var (size, sizeError) = ResolveSize(explicitSize ? req.Size : remembered?.Size);
         if (sizeError != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
-        var (style, styleError) = await ResolveStyleAsync(userId, req.Style, ct);
+
+        var styleSource = explicitStyle ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.StyleId) ? "remembered" : "account-default";
+        var (style, styleError) = await ResolveStyleAsync(userId, explicitStyle ? req.Style : remembered?.StyleId, ct);
+        if (styleError != null && styleSource == "remembered")
+        {
+            // 记住的那套已经被删了：不静默换，回执里写明本次改用了账号默认。
+            (style, styleError) = await ResolveStyleAsync(userId, null, ct);
+            styleSource = "account-default";
+            notes.Add("这篇文章上次用的风格已不存在，本次改用账号默认风格。");
+        }
         if (styleError != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
-        var (watermark, watermarkError) = await ResolveWatermarkAsync(userId, req.Watermark, ct);
+
+        var watermarkSource = explicitWatermark ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.WatermarkId) ? "remembered" : "account-default";
+        var (watermark, watermarkError) = await ResolveWatermarkAsync(userId, explicitWatermark ? req.Watermark : remembered?.WatermarkId, ct);
+        if (watermarkError != null && watermarkSource == "remembered")
+        {
+            (watermark, watermarkError) = await ResolveWatermarkAsync(userId, null, ct);
+            watermarkSource = "account-default";
+            notes.Add("这篇文章上次用的水印已不存在，本次改用账号默认水印。");
+        }
         if (watermarkError != null) return BadRequest(ApiResponse<object>.Fail("WATERMARK_NOT_FOUND", watermarkError));
 
         // 单张沿用原幂等键（已发出去的重试仍能命中）；批量按「请求 + 标记」派生，每个标记一个独立任务。
@@ -227,6 +255,7 @@ public class LiteraryImageOpenApiController(
 
         var results = new List<object>();
         var pending = new List<int>();
+        var newlyQueued = 0;
         foreach (var index in indexes)
         {
             var key = IdemFor(index);
@@ -318,11 +347,32 @@ public class LiteraryImageOpenApiController(
                     throw;
                 }
                 results.Add(new { markerIndex = index, runId = run.Id, status = "queued" });
+                newlyQueued++;
             }
         }
 
+        // 至少真入队了一张，才把这次明确指定的项记到文章上（只改指定了的那几项，没指定的保持原样）。
+        if (newlyQueued > 0 && (explicitStyle || explicitWatermark || explicitSize))
+        {
+            var merged = remembered ?? new LiteraryIllustrationPrefs();
+            if (explicitStyle) merged.StyleId = style!.StyleId;
+            if (explicitWatermark) merged.WatermarkId = watermark!.WatermarkId;
+            if (explicitSize) merged.Size = size;
+            merged.UpdatedAt = DateTime.UtcNow;
+            // 不动 UpdatedAt：它是正文的版本令牌，记住偏好不该让智能体手里的令牌失效。
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == workspaceId && x.OwnerUserId == userId,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs, merged), cancellationToken: CancellationToken.None);
+        }
+
         const string hint = "图在服务端生成，关掉客户端也不会断。每 5-10 秒调用一次 map_literary_get_workspace 看 illustrations[].status（done 即有 url），全部 done 后用 format=illustrated 取图文稿；也可用 map_literary_get_image_run 查单张。";
-        var applied = new { style = new { styleId = style!.StyleId, name = style.Label }, watermark = new { watermarkId = watermark!.WatermarkId, name = watermark.Label }, size };
+        // source：explicit = 本次指定；remembered = 沿用这篇文章上次指定的；account-default = 账号默认
+        var applied = new
+        {
+            style = new { styleId = style!.StyleId, name = style.Label, source = styleSource },
+            watermark = new { watermarkId = watermark!.WatermarkId, name = watermark.Label, source = watermarkSource },
+            size, sizeSource,
+            notes,
+        };
         if (!batch)
         {
             var only = JsonSerializer.SerializeToElement(results[0]);

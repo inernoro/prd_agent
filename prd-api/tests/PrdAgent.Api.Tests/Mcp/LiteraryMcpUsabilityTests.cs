@@ -176,17 +176,65 @@ public class LiteraryMcpUsabilityTests
             request.Size = "1:1";
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, request, CancellationToken.None));
 
-            // 不传水印时，入队那一刻就把账号绑定的那套钉进任务；none 明确不打
-            var single = Data(await images.Generate(id, new()
+            // 「重画一张」不再报风格水印：沿用这篇文章上次指定的那套，而不是退回账号默认（蓝色 / 默认水印）
+            var redraw = Data(await images.Generate(id, new()
             {
-                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "g-default",
+                MarkerIndex = 2, WorkflowVersion = version, ClientRequestId = "g-redraw",
+            }, CancellationToken.None));
+            var redrawRun = await db.ImageGenRuns.Find(x => x.Id == redraw.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Equal("bbb", redrawRun.InitImageAssetSha256);
+            Assert.Equal("wm-1", redrawRun.WatermarkConfigId);
+            Assert.Equal("1376x768", redrawRun.Size);
+            Assert.Equal("remembered", redraw.GetProperty("applied").GetProperty("style").GetProperty("source").GetString());
+            Assert.Equal("remembered", redraw.GetProperty("applied").GetProperty("watermark").GetProperty("source").GetString());
+
+            // 只换水印：风格与尺寸照旧沿用，水印改成新指定的并被记住
+            var onlyWm = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "g-only-wm", Watermark = "水印配置2",
+            }, CancellationToken.None));
+            var onlyWmRun = await db.ImageGenRuns.Find(x => x.Id == onlyWm.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Equal("bbb", onlyWmRun.InitImageAssetSha256);
+            Assert.Equal("wm-2", onlyWmRun.WatermarkConfigId);
+            var prefs = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!;
+            Assert.Equal("style-b", prefs.StyleId);
+            Assert.Equal("wm-2", prefs.WatermarkId);
+            Assert.Equal("1376x768", prefs.Size);
+            // 读工作区能看到记住的选择
+            var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
+            Assert.Equal("style-b", read.GetProperty("illustrationPrefs").GetProperty("styleId").GetString());
+
+            // 记住的风格被删了：不报错卡住，也不静默换——回执写明改用了账号默认
+            await db.ReferenceImageConfigs.DeleteOneAsync(x => x.Id == "style-b");
+            var fallback = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 1, WorkflowVersion = version, ClientRequestId = "g-fallback",
+            }, CancellationToken.None));
+            var fallbackRun = await db.ImageGenRuns.Find(x => x.Id == fallback.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Equal("aaa", fallbackRun.InitImageAssetSha256);
+            Assert.Equal("account-default", fallback.GetProperty("applied").GetProperty("style").GetProperty("source").GetString());
+            Assert.Contains("已不存在", fallback.GetProperty("applied").GetProperty("notes")[0].GetString());
+
+            // 从没指定过的文章：不传就是账号默认，入队时把账号绑定的水印钉进任务
+            var fresh = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "另一篇。\n[插图]: 灯塔\n", ClientRequestId = "article-2",
+            }, CancellationToken.None));
+            var freshId = fresh.GetProperty("workspaceId").GetString()!;
+            var single = Data(await images.Generate(freshId, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "g-default",
             }, CancellationToken.None));
             var defaultRun = await db.ImageGenRuns.Find(x => x.Id == single.GetProperty("runId").GetString()).SingleAsync();
             Assert.Equal("wm-2", defaultRun.WatermarkConfigId);
             Assert.Equal("aaa", defaultRun.InitImageAssetSha256);
-            var none = Data(await images.Generate(id, new()
+            Assert.Equal("account-default", single.GetProperty("applied").GetProperty("style").GetProperty("source").GetString());
+            Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == freshId).SingleAsync()).IllustrationPrefs);
+
+            // none 明确不打水印、不用参考图
+            var none = Data(await images.Generate(freshId, new()
             {
-                MarkerIndex = 1, WorkflowVersion = version, ClientRequestId = "g-none", Style = "none", Watermark = "none",
+                MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "g-none", Style = "none", Watermark = "none",
             }, CancellationToken.None));
             var noneRun = await db.ImageGenRuns.Find(x => x.Id == none.GetProperty("runId").GetString()).SingleAsync();
             Assert.Equal(WatermarkSelection.None, noneRun.WatermarkConfigId);
