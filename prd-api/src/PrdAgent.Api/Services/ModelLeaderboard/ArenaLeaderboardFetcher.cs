@@ -86,9 +86,18 @@ public class ArenaLeaderboardFetcher
     private static readonly Regex MarginRegex = new(
         @"(?:±|&plusmn;)\s*([\d.]+)%", RegexOptions.Compiled);
 
-    /// <summary>厂商与授权，页面里是「Anthropic · Proprietary」这种一段式文本。</summary>
+    /// <summary>
+    /// 厂商与授权，页面里是「Anthropic · Proprietary」这种一段式文本。
+    ///
+    /// 认的是「class 里带 truncate、且紧接着就闭合」的 span：模型名那个 span 后面还跟着
+    /// title 属性，天然不命中，于是行内第一个命中的就是厂商格。不再认完整的 Tailwind 类名——
+    /// 2026-09-30 agent 榜把厂商格改成了外层 flex + 内层 <c>&lt;span class="truncate"&gt;</c>，
+    /// 旧写法在 agent 榜上 0 命中，整榜因厂商覆盖率不足被拒收、快照停在原地 60 多小时，
+    /// 是每日核心功能验收读后端深度自检时发现的。新写法对两版标记都成立，
+    /// 线上 agent / code 两榜逐行对比：旧写法认得的行结果完全一致，agent 榜 0 → 51。
+    /// </summary>
     private static readonly Regex OrgRegex = new(
-        @"text-text-secondary truncate text-xs"">([^<]+)<", RegexOptions.Compiled);
+        @"<span class=""[^""]*\btruncate\b[^""]*"">([^<]+)<", RegexOptions.Compiled);
 
     /// <summary>行首那三个裸数字：名次、名次区间下界、上界。</summary>
     private static readonly Regex BareNumberRegex = new(@">(\d+)<", RegexOptions.Compiled);
@@ -260,7 +269,7 @@ public class ArenaLeaderboardFetcher
                 "多半是页面结构变了；本次不写库，保留上一份快照。");
         }
 
-        // 厂商的覆盖率。OrgRegex 认的是对方生成出来的那串 Tailwind 类名，
+        // 厂商的覆盖率。OrgRegex 认的是对方生成出来的 class（现在只认 truncate 这一个词），
         // 一旦重排或改名，每一行的 organization / license 会**双双变 null**，而条目数与
         // 形状判定照样通过：页面上所有模型的厂商栏空着，「仅开源」筛选被静默清空
         // （isOpenSource(null) 一律判闭源）——又一次「降级而不响铃」
