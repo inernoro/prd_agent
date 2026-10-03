@@ -70,6 +70,7 @@ import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildS
 import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
@@ -4745,6 +4746,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // branch.projectId. Legacy/global events without project identity are
     // ignored so a malformed event cannot blank or mutate another project.
     const eventMatchesFilter = (type: string, payload: any): boolean => {
+      if (isScopedHuman(req)) {
+        const projectId = payload?.branch?.projectId || payload?.projectId
+          || (payload?.branchId && stateService.getBranch(payload.branchId)?.projectId);
+        if (!projectId || !canHumanAccessProject(req, stateService, projectId)) return false;
+      }
       if (!projectFilter) return true;
       if (payload?.branch?.projectId) return payload.branch.projectId === projectFilter;
       if (payload?.projectId) return payload.projectId === projectFilter;
@@ -4755,12 +4761,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // hints. Dashboard list authority is GET /api/branches?project=...
     // so clients must not treat this event as permission to replace the
     // full branch list.
-    const all = stateService.getAllBranches();
+    const all = stateService.getAllBranches().filter(b => canHumanAccessProject(req, stateService, b.projectId || 'default'));
     const snapshot = projectFilter
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
     for (const branch of snapshot) reconcileBranchStatus(branch);
-    safeSend('snapshot', { branches: snapshot.map(branchForView), projectId: projectFilter || undefined, ts: nowIso() });
+    safeSend('snapshot', { branches: snapshot.map(branch => branchForHumanView(req, branch)), projectId: projectFilter || undefined, ts: nowIso() });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
@@ -4771,7 +4777,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 流式 branch.status / branch.updated 事件同样要给 extraProfiles env 脱敏（Bugbot Medium
       // 「SSE leaks extra service secrets」）：此前只有初始 snapshot 走了 branchForView，后续事件
       // 直接从 state 取原始 branch，订阅者会收到额外服务明文密钥。这里统一过 branchForView。
-      return branchForView(withSha);
+      return branchForHumanView(req, withSha);
     };
     const anyHandler = (envelope: any) => {
       if (!envelope || !envelope.type) return;
@@ -5125,6 +5131,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.setHeader('Server-Timing', Object.entries(result.timings)
       .map(([name, duration]) => `${name};dur=${duration}`)
       .join(', '));
+    if (isScopedHuman(req)) {
+      const payload = result.payload as { branches: BranchEntry[]; defaultBranch?: string; capacity?: unknown };
+      res.json({
+        ...payload,
+        branches: payload.branches.filter(b => canHumanAccessProject(req, stateService, b.projectId || 'default')).map(b => branchForHumanView(req, b)),
+        // Global capacity/default branch describe projects this user may not see.
+        capacity: undefined,
+        defaultBranch: projectFilter ? stateService.getDefaultBranchFor(projectFilter) : undefined,
+      });
+      return;
+    }
     // widget(预览页)请求带 x-cds-source-* 头，必须走 res.json 让 server.ts 的跨项目
     // 过滤 wrapper 逐请求裁剪；dashboard(无 source 头)无需裁剪，直接发预序列化串，
     // 把每请求的全量再序列化省掉——这是高并发下单线程的主要可省成本。
@@ -6107,7 +6124,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(m.status).json(m.body);
       return;
     }
-    res.json({ branch: branchForView(branch) });
+    res.json({ branch: branchForHumanView(req, branch) });
   });
 
   router.get('/branches/:id/resources', async (req, res) => {
@@ -15754,7 +15771,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 仅对额外服务脱敏（项目 profile 的既有行为不动）。
     const extraProfileIds = new Set((entry.extraProfiles || []).map((p) => p.id));
     const payload = profiles.map(profile => {
-      const isExtra = extraProfileIds.has(profile.id);
+      const isExtra = extraProfileIds.has(profile.id) || isScopedHuman(req);
       const override = entry.profileOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
@@ -15767,12 +15784,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return {
         profileId: profile.id,
         profileName: profile.name,
-        baseline: isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile,
+        baseline: profileForHumanView(req, isExtra && profile.env ? { ...profile, env: maskSecrets(profile.env) } : profile),
         // override 也要对额外服务脱敏（Codex P1「Mask override env in profile-overrides GET」）：PUT 现可给
         // extra profile 存 env 覆盖，GET 若把 override.env 原样回吐就泄露密钥（baseline/effective 已脱敏，
         // 唯独 override 漏）。与 PUT 响应同口径。
         override: isExtra && override?.env ? { ...override, env: maskSecrets(override.env) } : (override || null),
-        effective,
+        effective: profileForHumanView(req, effective),
         cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
       };
@@ -17342,7 +17359,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(mGet.status).json(mGet.body);
       return;
     }
-    res.json({ extraProfiles: maskExtraProfilesEnv(entry.extraProfiles || []) || [] });
+    res.json({ extraProfiles: (maskExtraProfilesEnv(entry.extraProfiles || []) || []).map(profile => profileForHumanView(req, profile)) });
   });
 
   router.put('/branches/:id/extra-services', async (req, res) => {
@@ -18015,7 +18032,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const source = projectFilter
       ? stateService.getBuildProfilesForProject(projectFilter)
       : stateService.getBuildProfiles();
-    const profiles = source.map(p => ({
+    const profiles = source.filter(p => canHumanAccessProject(req, stateService, p.projectId || 'default')).map(p => profileForHumanView(req, {
       ...p,
       env: p.env ? maskSecrets(p.env) : p.env,
     }));

@@ -12,6 +12,7 @@ import {
   type CdsPublicUser,
 } from '@/lib/api';
 import { Section, Field, LoadingBlock, ErrorBlock, CodePill, EmptyBlock } from '../components';
+import { UserProjectAccessDialog } from '../components/UserProjectAccessDialog';
 
 interface MeUser {
   id: string;
@@ -48,6 +49,7 @@ export function UsersTab({
   const [newPassword, setNewPassword] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [grantUser, setGrantUser] = useState<CdsPublicUser | null>(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -251,7 +253,7 @@ export function UsersTab({
             description={
               isLegacy
                 ? '持久化用户库中的账号。当前原始管理员由环境变量管理，因此不重复出现在本列表中。'
-                : '系统内所有持久化账号，可禁用 / 启用账号或重置本地账号密码。'
+                : '系统内所有持久化账号，可管理项目授权、禁用 / 启用账号或重置本地账号密码。'
             }
           >
             {usersError ? (
@@ -261,8 +263,8 @@ export function UsersTab({
             ) : users.length === 0 ? (
               <EmptyBlock title="还没有用户" description="创建第一个本地账号，或邀请成员通过 GitHub 登录。" />
             ) : (
-              <div className="overflow-hidden rounded-md border border-border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-md border border-border">
+                <table className="w-full min-w-[42rem] text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
                     <tr>
                       <th className="px-3 py-2 font-semibold">账号</th>
@@ -314,6 +316,11 @@ export function UsersTab({
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex justify-end gap-2">
+                            {!u.isSystemOwner ? (
+                              <Button type="button" variant="outline" size="sm" onClick={() => setGrantUser(u)}>
+                                项目授权
+                              </Button>
+                            ) : null}
                             {u.authProvider === 'local' ? (
                               <Button type="button" variant="outline" size="sm" onClick={() => void resetPassword(u)}>
                                 重置密码
@@ -342,6 +349,7 @@ export function UsersTab({
           </div>
         </Section>
       )}
+      <UserProjectAccessDialog user={grantUser} onClose={() => setGrantUser(null)} onToast={onToast} />
     </div>
   );
 }
