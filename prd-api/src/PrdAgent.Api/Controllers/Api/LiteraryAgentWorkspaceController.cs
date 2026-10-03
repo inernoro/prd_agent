@@ -342,54 +342,53 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        var assets = await _db.ImageAssets
-            .Find(x => x.WorkspaceId == ws.Id)
-            .SortByDescending(x => x.CreatedAt)
-            .Limit(1000)
-            .ToListAsync(ct);
-        var current = PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(ws, assets);
-        var currentIds = current.Values.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
-        var currentVersion = ws.ArticleWorkflow?.Version ?? 0;
-        var markerText = ws.ArticleWorkflow?.Markers?.GroupBy(m => m.Index).ToDictionary(g => g.Key, g => g.First().Text)
-            ?? new Dictionary<int, string>();
-
-        var items = assets.Select(a => new
-        {
-            id = a.Id,
-            url = a.Url,
-            width = a.Width,
-            height = a.Height,
-            prompt = a.Prompt,
-            markerIndex = a.ArticleInsertionIndex,
-            markerText = a.OriginalMarkerText
-                ?? (a.ArticleInsertionIndex is { } mi && (a.ArticleWorkflowVersion ?? currentVersion) == currentVersion
-                    && markerText.TryGetValue(mi, out var t) ? t : null),
-            workflowVersion = a.ArticleWorkflowVersion,
-            isCurrent = currentIds.Contains(a.Id),
-            createdAt = a.CreatedAt,
-        }).ToList();
-
-        var groups = items
-            .GroupBy(x => x.workflowVersion ?? (x.isCurrent ? currentVersion : -1))
-            .OrderByDescending(g => g.Key == currentVersion)
-            .ThenByDescending(g => g.Key)
-            .Select(g => new
-            {
-                workflowVersion = g.Key < 0 ? (int?)null : g.Key,
-                isCurrentVersion = g.Key == currentVersion,
-                items = g.OrderBy(x => x.markerIndex ?? int.MaxValue).ThenByDescending(x => x.createdAt).ToList(),
-            })
-            .ToList();
-
+        var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(_db, ws.Id, ct);
+        var history = LiteraryIllustrationHistory.Build(ws, assets);
         return Ok(ApiResponse<object>.Ok(new
         {
             workspaceId = ws.Id,
-            currentVersion,
-            total = items.Count,
-            currentCount = currentIds.Count,
-            groups,
+            currentVersion = history.CurrentVersion,
+            total = history.Total,
+            currentCount = history.CurrentCount,
+            // 当前有哪些标记位置可以把旧图放回去
+            markerIndexes = ws.ArticleWorkflow?.Markers.Select(m => m.Index).OrderBy(i => i).ToList() ?? new List<int>(),
+            groups = history.Groups,
         }));
     }
+
+    public sealed class RestoreIllustrationRequest
+    {
+        /// <summary>放到哪个标记上；不填 = 这张图当初所在的位置</summary>
+        public int? MarkerIndex { get; set; }
+    }
+
+    /// <summary>
+    /// 把历史里的一张旧图放回正文的某个配图位置（默认它当初的位置）。被换下的那张同样留在历史里。
+    /// </summary>
+    [HttpPost("{id}/illustration-history/{assetId}/restore")]
+    public async Task<IActionResult> RestoreIllustration(string id, string assetId, [FromBody] RestoreIllustrationRequest? request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var asset = await _db.ImageAssets.Find(x => x.Id == assetId && x.WorkspaceId == ws.Id).FirstOrDefaultAsync(ct);
+        var markerIndex = request?.MarkerIndex ?? asset?.ArticleInsertionIndex ?? -1;
+        var result = await LiteraryIllustrationHistory.RestoreAsync(_db, ws, assetId, markerIndex, ws.ArticleWorkflow?.Version ?? 0, ct);
+        return RestoreResponse(result);
+    }
+
+    internal IActionResult RestoreResponse(LiteraryIllustrationHistory.RestoreResult result) => result.Failure switch
+    {
+        LiteraryIllustrationHistory.RestoreFailure.None => Ok(ApiResponse<object>.Ok(new
+        {
+            markerIndex = result.MarkerIndex, url = result.Url, description = result.Description, note = result.Message,
+        })),
+        LiteraryIllustrationHistory.RestoreFailure.AssetNotFound => NotFound(ApiResponse<object>.Fail("IMAGE_NOT_FOUND", result.Message!)),
+        LiteraryIllustrationHistory.RestoreFailure.VersionChanged => Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", result.Message!)),
+        _ => BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Message!)),
+    };
 
     /// <summary>
     /// 获取工作区详情（包含消息、资源、画布等）

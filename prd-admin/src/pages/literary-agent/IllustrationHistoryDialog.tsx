@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Download, History, ImageOff, RefreshCw } from 'lucide-react';
+import { Download, History, ImageOff, RefreshCw, RotateCcw } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { toast } from '@/lib/toast';
 import {
   getLiteraryIllustrationHistoryReal,
+  restoreLiteraryIllustrationReal,
   type LiteraryIllustrationHistory,
   type LiteraryIllustrationHistoryItem,
 } from '@/services/real/literaryAgentConfig';
@@ -14,21 +16,43 @@ import {
  *
  * 改稿、重新规划标记、同一位置重新生成都不再删除旧图——它们只是不再挂在正文上。
  * 这里按配图方案版本分组列出，当前挂在正文里的标「正在使用」；智能体（MCP）生成的图同样在内。
+ * 没在用的旧图可以「放回」它当初的位置（智能体用 map_literary_restore_image 走的是同一处）。
  */
 export function IllustrationHistoryDialog({
   open,
   onOpenChange,
   workspaceId,
+  onRestored,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
+  /** 放回成功后让编辑页重读，正文与配图卡片跟着换 */
+  onRestored?: () => void;
 }) {
   const [data, setData] = useState<LiteraryIllustrationHistory | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [lightbox, setLightbox] = useState<{ images: string[]; captions: string[]; index: number } | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+
+  const restorable = (item: LiteraryIllustrationHistoryItem) =>
+    !item.isCurrent && item.markerIndex != null && (data?.markerIndexes ?? []).includes(item.markerIndex);
+
+  const restore = async (item: LiteraryIllustrationHistoryItem) => {
+    if (item.markerIndex == null || restoringId) return;
+    setRestoringId(item.id);
+    const res = await restoreLiteraryIllustrationReal({ id: workspaceId, assetId: item.id, markerIndex: item.markerIndex });
+    setRestoringId(null);
+    if (!res.success) {
+      toast.error(res.error?.message || '放回失败');
+      return;
+    }
+    toast.success(res.data?.note || `已把这张放回配图 ${item.markerIndex + 1}，换下的那张也留在这里`);
+    setReloadKey((k) => k + 1);
+    onRestored?.();
+  };
 
   useEffect(() => {
     if (!open || !workspaceId) return;
@@ -159,6 +183,19 @@ export function IllustrationHistoryDialog({
                             {new Date(item.createdAt).toLocaleString()}
                           </div>
                         </div>
+                        {restorable(item) && (
+                          <button
+                            type="button"
+                            onClick={() => void restore(item)}
+                            disabled={restoringId != null}
+                            className="shrink-0 h-6 px-1.5 inline-flex items-center gap-1 rounded hover-bg-soft text-[11px]"
+                            style={{ color: 'var(--accent-fg-info)' }}
+                            title={`把这张放回配图 ${item.markerIndex! + 1}（正在用的那张会留在历史里）`}
+                          >
+                            {restoringId === item.id ? <MapSpinner size={11} /> : <RotateCcw size={11} />}
+                            放回
+                          </button>
+                        )}
                         <a
                           href={item.url}
                           target="_blank"

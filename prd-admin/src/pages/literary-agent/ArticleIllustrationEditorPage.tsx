@@ -5083,7 +5083,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         }
       />
 
-      <IllustrationHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} workspaceId={workspaceId} />
+      <IllustrationHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} workspaceId={workspaceId} onRestored={() => void loadWorkspace()} />
 
       {/* 图片灯箱（可放大/缩小/拖拽预览）。列表在打开时已快照，避免打开期间靠前 marker 完成插入导致错位 */}
       {lightbox && (

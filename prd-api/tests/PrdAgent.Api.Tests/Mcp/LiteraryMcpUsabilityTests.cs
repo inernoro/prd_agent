@@ -436,6 +436,78 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 智能体按当前描述读带标记全文_只改一张描述_能从历史放回旧图()
+    {
+        // 验收里智能体的原话：读稿去掉了标记只能靠空行猜位置；改一张描述只能整篇重写；
+        // 沿用的图 runId 变空看不出来历；想换回旧图没有工具，只能让用户去网页（网页其实也没有）
+        var (db, name, connection) = NewDb("literary_lit05");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "五号债", MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n", ClientRequestId = "lit05",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            ws.ArticleWorkflow!.AssetIdByMarkerIndex = new() { ["0"] = "a0", ["1"] = "a1" };
+            ws.ArticleWorkflow.Markers[0].RunId = "run-0";
+            await db.ImageMasterWorkspaces.ReplaceOneAsync(x => x.Id == id, ws);
+            await db.ImageAssets.InsertManyAsync(new[]
+            {
+                new ImageAsset { Id = "a0", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, ArticleWorkflowVersion = 1, Url = "https://example.test/a0.png", OriginalMarkerText = "书店门口" },
+                new ImageAsset { Id = "a1", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/a1.png", OriginalMarkerText = "窗边的猫" },
+            });
+
+            // 只改一张描述：正文与另一张不动；拿过期配图版本、或读稿后被网页改过（版本令牌不符）都要 409
+            var token = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None)).GetProperty("updatedAt").GetString();
+            Assert.IsType<ConflictObjectResult>(await drafts.UpdateIllustrationPrompt(id, 1, new() { Prompt = "窗边打盹的橘猫", WorkflowVersion = 9, ExpectedUpdatedAt = token }, CancellationToken.None));
+            Assert.IsType<BadRequestObjectResult>(await drafts.UpdateIllustrationPrompt(id, 1, new() { Prompt = "窗边打盹的橘猫", WorkflowVersion = 1 }, CancellationToken.None));
+            await LiteraryMarkerWrites.PatchMarkerAsync(db, id, 1, 0, new Dictionary<string, object?> { ["draftText"] = "书店门口的雨" }, null); // 网页上改了另一张
+            Assert.IsType<ConflictObjectResult>(await drafts.UpdateIllustrationPrompt(id, 1, new() { Prompt = "窗边打盹的橘猫", WorkflowVersion = 1, ExpectedUpdatedAt = token }, CancellationToken.None));
+            await LiteraryMarkerWrites.PatchMarkerAsync(db, id, 1, 0, new Dictionary<string, object?> { ["draftText"] = "书店门口" }, null);
+            token = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None)).GetProperty("updatedAt").GetString();
+            Data(await drafts.UpdateIllustrationPrompt(id, 1, new() { Prompt = "窗边打盹的橘猫", WorkflowVersion = 1, ExpectedUpdatedAt = token }, CancellationToken.None));
+
+            // format=marked：标记就在原位，写的是当前描述
+            var marked = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None, "marked"));
+            Assert.Equal("marked", marked.GetProperty("format").GetString());
+            Assert.Equal("一。\n[插图]: 书店门口\n二。\n[插图]: 窗边打盹的橘猫\n", marked.GetProperty("content").GetString());
+
+            // 按新描述出了新图，原样写回读到的全文：两张都沿用，沿用的那张保留原 runId
+            await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "a1b", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/a1b.png", OriginalMarkerText = "窗边打盹的橘猫", CreatedAt = DateTime.UtcNow.AddMinutes(1) });
+            await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "a1b");
+            var rewritten = Data(await drafts.WriteContent(id, new() { MarkedContent = marked.GetProperty("content").GetString() }, CancellationToken.None));
+            Assert.Equal(new[] { 0, 1 }, rewritten.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
+            var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
+            Assert.Equal("run-0", read.GetProperty("illustrations").EnumerateArray().First().GetProperty("runId").GetString());
+
+            // 历史：智能体能看到全部三张，被换下的 a1 不在正文上
+            var history = Data(await drafts.GetHistory(id, CancellationToken.None));
+            var images = history.GetProperty("images").EnumerateArray().ToList();
+            Assert.Equal(3, images.Count);
+            Assert.False(images.Single(i => i.GetProperty("assetId").GetString() == "a1").GetProperty("isCurrent").GetBoolean());
+
+            // 放回旧图：图和描述一起回到当初那一对
+            var restored = Data(await drafts.RestoreImage(id, 1, new() { AssetId = "a1", WorkflowVersion = 2 }, CancellationToken.None));
+            Assert.Equal("窗边的猫", restored.GetProperty("prompt").GetString());
+            var after = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None)).GetProperty("illustrations").EnumerateArray().ElementAt(1);
+            Assert.Equal("https://example.test/a1.png", after.GetProperty("url").GetString());
+            Assert.Equal("窗边的猫", after.GetProperty("prompt").GetString());
+            Assert.IsType<NotFoundObjectResult>(await drafts.RestoreImage(id, 1, new() { AssetId = "别人的图", WorkflowVersion = 2 }, CancellationToken.None));
+
+            // 网页「历史配图」的放回按钮走同一处：不传位置就放回它当初的位置
+            var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            Data(await ui.RestoreIllustration(id, "a1b", null, CancellationToken.None));
+            var web = Data(await ui.GetIllustrationHistory(id, CancellationToken.None));
+            var current = web.GetProperty("groups").EnumerateArray().SelectMany(g => g.GetProperty("items").EnumerateArray())
+                .Where(i => i.GetProperty("isCurrent").GetBoolean()).Select(i => i.GetProperty("id").GetString()).OrderBy(x => x);
+            Assert.Equal(new[] { "a0", "a1b" }, current);
+            Assert.Equal(new[] { 0, 1 }, web.GetProperty("markerIndexes").EnumerateArray().Select(x => x.GetInt32()));
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
     public async Task 网页上重画也按这篇文章的风格水印来_顶栏改的是这篇文章()
     {
         // 验收里撞出来的：智能体按「水印配置1」配好图，客户在网页上重画一张，水印变成了账号默认
@@ -602,8 +674,10 @@ public class LiteraryMcpUsabilityTests
         return controller;
     }
 
+    // 与线上一致用驼峰命名（Program.cs 配的是 CamelCase）；否则带类型的返回对象在测试里是另一套字段名
     private static JsonElement Data(IActionResult result) => JsonSerializer.SerializeToElement(
-        Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data);
+        Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data,
+        new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
     private sealed class FixedModelSelection : ILiteraryMcpModelSelectionService
     {

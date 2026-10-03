@@ -101,8 +101,8 @@ public class LiteraryOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND",
                 "工作区不存在、不属于你，或者不是文学创作的工作区"));
 
-        if (format != null && format != "plain" && format != "illustrated")
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "format 只能是 plain 或 illustrated。"));
+        if (format != null && format != "plain" && format != "illustrated" && format != "marked")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "format 只能是 plain、marked 或 illustrated。"));
 
         // 当前每个标记挂哪张图：与网页详情、投稿、导出同一个判定源，不再各自「按 index 取最新」。
         var allAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id).ToListAsync(ct);
@@ -111,8 +111,18 @@ public class LiteraryOpenApiController : ControllerBase
         var urls = current.ToDictionary(kv => kv.Key, kv => Request.ResolveAbsoluteUrl(kv.Value.Url) ?? kv.Value.Url);
 
         var full = ws.ArticleContent ?? string.Empty;
-        if (format == "illustrated" && ws.ArticleContentWithMarkers != null)
-            full = LiteraryMcpWorkflow.Render(ws.ArticleContentWithMarkers, urls);
+        var served = "plain";
+        string? formatNote = null;
+        var hasMarkers = ws.ArticleContentWithMarkers != null && (ws.ArticleWorkflow?.Markers.Count ?? 0) > 0;
+        if (format is "illustrated" or "marked" && !hasMarkers)
+            // 不静默降级：说清楚这次给的是原稿以及为什么
+            formatNote = "这篇文章现在没有配图标记，返回的是原稿（plain）。要配图请用 map_literary_write_content 传 markedContent。";
+        else if (format == "illustrated")
+            (full, served) = (LiteraryMcpWorkflow.Render(ws.ArticleContentWithMarkers!, urls), "illustrated");
+        else if (format == "marked")
+            (full, served) = (LiteraryMcpWorkflow.RenderMarked(ws.ArticleContentWithMarkers!,
+                ws.ArticleWorkflow!.Markers.GroupBy(m => m.Index).ToDictionary(g => g.Key, g => LiteraryMcpWorkflow.EffectivePrompt(g.First()))),
+                "marked");
         var from = offset > 0 ? Math.Min(offset, full.Length) : 0;
         var take = limit is > 0 and <= MaxContentChars ? limit : DefaultReadChars;
         var slice = full.Substring(from, Math.Min(take, full.Length - from));
@@ -143,6 +153,8 @@ public class LiteraryOpenApiController : ControllerBase
                 size = ws.IllustrationPrefs.Size,
             },
             content = slice,
+            format = served,
+            formatNote,
             offset = from,
             contentChars = full.Length,
             hasMore = from + slice.Length < full.Length,
@@ -454,4 +466,133 @@ public class LiteraryOpenApiController : ControllerBase
             updatedAt = written == null ? null : McpRevision.Token(written.UpdatedAt),
         }));
     }
+    /// <summary>这篇文章生成过的全部配图（含已被换下的），与网页「历史配图」同一份；放回某张旧图前先读它拿 assetId。</summary>
+    [HttpGet("workspaces/{workspaceId}/history")]
+    [RequireScope(ScopeUse)]
+    public async Task<IActionResult> GetHistory(string workspaceId, CancellationToken ct)
+    {
+        var ws = await FindOwnedAsync(workspaceId, ct);
+        if (ws == null) return WorkspaceNotFound();
+        var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(_db, ws.Id, ct);
+        var history = LiteraryIllustrationHistory.Build(ws, assets, u => Request.ResolveAbsoluteUrl(u) ?? u);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workspaceId = ws.Id,
+            workflowVersion = history.CurrentVersion,
+            total = history.Total,
+            currentCount = history.CurrentCount,
+            images = history.Groups.SelectMany(g => g.Items).Select(i => new
+            {
+                assetId = i.Id, url = i.Url, markerIndex = i.MarkerIndex, description = i.MarkerText,
+                workflowVersion = i.WorkflowVersion, isCurrent = i.IsCurrent, createdAt = i.CreatedAt,
+            }),
+        }));
+    }
+
+    public class UpdateIllustrationRequest
+    {
+        public string? Prompt { get; set; }
+        public int? WorkflowVersion { get; set; }
+        /// <summary>读稿时拿到的 updatedAt。网页上改描述不升配图版本号，只靠 workflowVersion 拦不住「改了别人刚改的描述」。</summary>
+        public string? ExpectedUpdatedAt { get; set; }
+    }
+
+    /// <summary>
+    /// 只改一个配图标记的画面描述，正文和其它标记都不动（与网页上改描述同一处写入）。
+    /// 以前要改一张图的描述只能整篇带标记重写，智能体得自己拼回全文，拼错就冲掉别人的修改。
+    /// 只改描述不重画：之后对这个标记调用生图才会出新图。
+    /// </summary>
+    [HttpPost("workspaces/{workspaceId}/illustrations/{markerIndex:int}/prompt")]
+    [RequireScope(ScopeUse)]
+    public async Task<IActionResult> UpdateIllustrationPrompt(string workspaceId, int markerIndex, [FromBody] UpdateIllustrationRequest? req, CancellationToken ct)
+    {
+        var prompt = (req?.Prompt ?? string.Empty).Trim();
+        if (prompt.Length == 0 || prompt.Length > 4000)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 需为 1-4000 字的画面描述。"));
+        if (req?.WorkflowVersion is not { } version)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "workflowVersion 必填：传读稿返回的 workflowVersion。"));
+        var ws = await FindOwnedAsync(workspaceId, ct);
+        if (ws == null) return WorkspaceNotFound();
+        var marker = ws.ArticleWorkflow?.Markers.FirstOrDefault(m => m.Index == markerIndex);
+        if (marker == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"配图标记 {markerIndex} 不存在（这篇共 {ws.ArticleWorkflow?.Markers.Count ?? 0} 个，从 0 开始）。"));
+
+        switch (McpRevision.Check(req.ExpectedUpdatedAt, ws.UpdatedAt))
+        {
+            case RevisionCheck.NotProvided:
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "expectedUpdatedAt 必填：把 map_literary_get_workspace 回的 updatedAt 原样传回来。没有它就可能盖掉用户刚在网页上改的描述。"));
+            case RevisionCheck.Unparsable:
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "expectedUpdatedAt 认不出来。把 map_literary_get_workspace 回的 updatedAt 原样传回来即可。"));
+            case RevisionCheck.Mismatch:
+                return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                    "这篇文章在你读到之后被改过（可能是用户在网页上改了描述），这次没有改。请先用 map_literary_get_workspace 重读，再决定怎么改。"));
+        }
+
+        var planItem = new ArticleIllustrationPlanItem { Prompt = prompt, Count = marker.PlanItem?.Count ?? 1, Size = marker.PlanItem?.Size };
+        // 版本令牌的条件带进真正那条更新里，否则校验与写入之间仍有空档
+        var written = await LiteraryMarkerWrites.PatchMarkerAsync(_db, ws.Id, version, markerIndex,
+            new Dictionary<string, object?> { ["draftText"] = prompt }, planItem, unchangedSince: ws.UpdatedAt);
+        if (!written)
+            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                "配图方案已经更新（正文被改过或重新规划了标记），这次没有改。请先用 map_literary_get_workspace 重读，再按新的 workflowVersion 改。"));
+        var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workspaceId = ws.Id,
+            markerIndex,
+            prompt,
+            workflowVersion = version,
+            next = $"描述已更新，图还没换。要按新描述出图，对标记 {markerIndex} 调用 map_literary_generate_image。",
+            updatedAt = latest == null ? null : McpRevision.Token(latest.UpdatedAt),
+        }));
+    }
+
+    public class RestoreImageRequest
+    {
+        public string? AssetId { get; set; }
+        public int? WorkflowVersion { get; set; }
+    }
+
+    /// <summary>把历史里的某张旧图放回指定配图位置，不重新生成；被换下的那张同样留在历史里。</summary>
+    [HttpPost("workspaces/{workspaceId}/illustrations/{markerIndex:int}/restore")]
+    [RequireScope(ScopeUse)]
+    public async Task<IActionResult> RestoreImage(string workspaceId, int markerIndex, [FromBody] RestoreImageRequest? req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req?.AssetId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "assetId 必填：先用 map_literary_list_history 找到要放回的那张。"));
+        if (req.WorkflowVersion is not { } version)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "workflowVersion 必填：传读稿返回的 workflowVersion。"));
+        var ws = await FindOwnedAsync(workspaceId, ct);
+        if (ws == null) return WorkspaceNotFound();
+
+        var result = await LiteraryIllustrationHistory.RestoreAsync(_db, ws, req.AssetId.Trim(), markerIndex, version, ct);
+        return result.Failure switch
+        {
+            LiteraryIllustrationHistory.RestoreFailure.None => Ok(ApiResponse<object>.Ok(new
+            {
+                workspaceId = ws.Id,
+                markerIndex,
+                url = Request.ResolveAbsoluteUrl(result.Url) ?? result.Url,
+                prompt = result.Description,
+                note = result.Message,
+            })),
+            LiteraryIllustrationHistory.RestoreFailure.AssetNotFound => NotFound(ApiResponse<object>.Fail("IMAGE_NOT_FOUND", result.Message!)),
+            LiteraryIllustrationHistory.RestoreFailure.VersionChanged => Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", result.Message!)),
+            _ => BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Message!)),
+        };
+    }
+
+    private Task<ImageMasterWorkspace?> FindOwnedAsync(string workspaceId, CancellationToken ct)
+    {
+        var userId = GetBoundUserId();
+        return _db.ImageMasterWorkspaces
+            .Find(x => x.Id == workspaceId && x.OwnerUserId == userId && x.ScenarioType == ScenarioType)
+            .FirstOrDefaultAsync(ct)!;
+    }
+
+    private NotFoundObjectResult WorkspaceNotFound()
+        => NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "工作区不存在、不属于你，或者不是文学创作的工作区"));
 }

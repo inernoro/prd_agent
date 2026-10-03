@@ -180,7 +180,7 @@ public static class LiteraryMcpWorkflow
         var current = SelectCurrent(previous, assets);
         var pool = oldMarkers
             .Where(m => current.ContainsKey(m.Index))
-            .Select(m => (key: Normalize(EffectivePrompt(m)), asset: current[m.Index]))
+            .Select(m => (key: Normalize(EffectivePrompt(m)), asset: current[m.Index], runId: m.RunId))
             .Where(p => p.key.Length > 0)
             .ToList();
         next.AssetIdByMarkerIndex ??= new Dictionary<string, string>();
@@ -190,13 +190,14 @@ public static class LiteraryMcpWorkflow
             var key = Normalize(marker.Text);
             var hit = pool.FindIndex(p => p.key == key);
             if (hit < 0) continue;
-            var asset = pool[hit].asset;
+            var (_, asset, runId) = pool[hit];
             pool.RemoveAt(hit);
             var k = marker.Index.ToString();
             next.AssetIdByMarkerIndex[k] = asset.Id;
             next.AssetRunAtByMarkerIndex[k] = now;
             marker.AssetId = asset.Id;
             marker.Url = asset.Url;
+            marker.RunId = runId; // 沿用的图保留它当初那次生成的记录，否则读稿看不出这张图从哪来
             marker.Status = "done";
             marker.ErrorMessage = null;
             carried.Add(marker.Index);
@@ -217,6 +218,26 @@ public static class LiteraryMcpWorkflow
 
     private static string Normalize(string? text)
         => string.Join(' ', (text ?? string.Empty).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>
+    /// 带标记的整篇正文，每个标记行写的是它<b>当前生效</b>的描述（网页改过的以改后为准）。
+    ///
+    /// 智能体改稿要整篇带标记写回；以前读稿只给去掉标记的正文，它得靠空行猜每个标记原来在哪，
+    /// 而标记里存的又是最初的描述——照着写回就把网页上的修改冲掉了。拿这份原样改、原样写回即可。
+    /// </summary>
+    public static string RenderMarked(string markedContent, IReadOnlyDictionary<int, string> prompts)
+    {
+        var result = markedContent;
+        foreach (var marker in ArticleMarkerExtractor.Extract(markedContent).AsEnumerable().Reverse())
+        {
+            if (!prompts.TryGetValue(marker.Index, out var prompt) || string.IsNullOrWhiteSpace(prompt)) continue;
+            // 描述要占一整行：网页编辑框里敲的换行压成空格，否则下一行会被当成正文
+            var oneLine = string.Join(' ', prompt.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            result = result.Remove(marker.StartPos, marker.EndPos - marker.StartPos)
+                .Insert(marker.StartPos, $"[插图]: {oneLine}");
+        }
+        return result;
+    }
 
     /// <summary>按标记索引替换而非按成功张数顺移：第二张先完成也不能占第一张的位置。</summary>
     public static string Render(string markedContent, IReadOnlyDictionary<int, string> urls, bool allowRelative = false)

@@ -361,7 +361,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_get_workspace",
-            Description = "读一个文学创作工作区的正文与配图进度。illustrations[] 给出每个标记的 status 与图片 url（生图后轮询它即可，一次看全部）；format=illustrated 返回把已完成配图插在原位的 Markdown。改稿、续写、以及冲突后重读都用它；正文很长时用 offset 分段读，hasMore 说明还有没有。updatedAt 是版本令牌：整篇覆盖时原样传给 map_literary_write_content 的 expectedUpdatedAt。",
+            Description = "读一个文学创作工作区的正文与配图进度。illustrations[] 给出每个标记当前的描述 prompt、status、图片 url 与 assetId（生图后轮询它即可，一次看全部）。format=marked 返回带 [插图]: 标记的整篇（标记里是当前描述，含用户在网页上改过的），改稿重配时拿它改、原样作为 markedContent 写回；format=illustrated 返回把已完成配图插在原位的 Markdown；plain 是不带标记的原稿。只改某一张图的描述用 map_literary_update_illustration，不必整篇重写。正文很长时用 offset 分段读，hasMore 说明还有没有。updatedAt 是版本令牌：整篇覆盖时原样传给 map_literary_write_content 的 expectedUpdatedAt。historyImageCount 是被换下的旧图数，明细用 map_literary_list_history。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "GET",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}",
@@ -370,7 +370,7 @@ public static class McpBuiltinTools
                 new() { Name = "workspaceId", In = "path", Required = true, Description = "工作区 id" },
                 new() { Name = "offset", In = "query", Type = "integer", Description = "从第几个字开始读（默认 0）" },
                 new() { Name = "limit", In = "query", Type = "integer", Description = "本次最多读多少字（默认 20000）" },
-                new() { Name = "format", In = "query", Description = "plain 原稿；illustrated 按真实标记位置返回已完成配图的 Markdown，未完成保留标记", EnumValues = new[] { "plain", "illustrated" } },
+                new() { Name = "format", In = "query", Description = "plain 原稿（不带标记）；marked 带 [插图]: 当前描述 的整篇，改稿重配用它；illustrated 按真实标记位置返回已完成配图的 Markdown，未完成保留标记", EnumValues = new[] { "plain", "marked", "illustrated" } },
             },
         },
         new McpToolDef
@@ -400,7 +400,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_write_content",
-            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。改稿后要重新配图时传 markedContent（带 [插图]: 标记的整篇，只能 replace）：画面描述没变的标记会沿用原来那张图（reusedImages），只需为 needsGeneration 里的标记调用生图；被换下的旧图保留在历史里、不删除。返回新的 workflowVersion 与 illustrations。改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
+            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。改稿后要重新配图时传 markedContent（带 [插图]: 标记的整篇，只能 replace；先用 map_literary_get_workspace format=marked 读回再改，标记里的描述是当前值）：画面描述没变的标记会沿用原来那张图（reusedImages），只需为 needsGeneration 里的标记调用生图；被换下的旧图保留在历史里、不删除。返回新的 workflowVersion 与 illustrations。改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}/content",
@@ -430,6 +430,43 @@ public static class McpBuiltinTools
                 new() { Name = "style", In = "body", Description = "风格（参考图配置）名称或 ID；none = 不用参考图；不传 = 沿用这篇文章上次指定的，没有则账号当前启用的那套" },
                 new() { Name = "watermark", In = "body", Description = "水印配置名称或 ID；none = 不打水印；不传 = 沿用这篇文章上次指定的，没有则账号给文学创作绑定的那套" },
                 new() { Name = "size", In = "body", Description = "尺寸：比例如 1:1、16:9、3:4，或 宽x高如 1376x768；不传 = 沿用这篇文章上次指定的，没有则 1024x1024" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_update_illustration",
+            Description = "只改一个配图标记的画面描述，正文和其它标记都不动（与用户在网页上改描述是同一处）。改完图不会自动换：要按新描述出图，再对这个标记调用 map_literary_generate_image。读稿之后文章被改过（包括用户在网页上改描述）会返回 409，重读后再改。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/illustrations/{markerIndex}/prompt",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
+                new() { Name = "markerIndex", In = "path", Type = "integer", Required = true, Description = "标记序号（illustrations[].index，从 0 开始）" },
+                new() { Name = "prompt", In = "body", Required = true, Description = "新的画面描述，1-4000 字" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "读稿返回的 workflowVersion" },
+                new() { Name = "expectedUpdatedAt", In = "body", Required = true, Description = "读稿返回的 updatedAt，原样传回；期间用户在网页上改过就返回 409，不会盖掉对方的修改" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_list_history",
+            Description = "列出这篇文章生成过的全部配图，含重画、改稿后被换下的旧图（与网页「历史配图」同一份）。每张给 assetId、url、当时所在的标记 markerIndex、当时的描述、是否正挂在正文上。用户说「换回原来那张」时先用它找到 assetId，再调 map_literary_restore_image。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "GET", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/history",
+            Params = new List<McpToolParam> { new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" } },
+        },
+        new McpToolDef
+        {
+            Name = "map_literary_restore_image",
+            Description = "把历史里的一张旧图放回指定配图位置，不重新生成、不消耗额度；被换下的那张同样留在历史里。图若记着当初的描述，标记描述会一并换成它（返回的 prompt），保证图和描述对得上。",
+            RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
+            Method = "POST", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/illustrations/{markerIndex}/restore",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" },
+                new() { Name = "markerIndex", In = "path", Type = "integer", Required = true, Description = "放到哪个标记上（从 0 开始）" },
+                new() { Name = "assetId", In = "body", Required = true, Description = "map_literary_list_history 返回的 assetId" },
+                new() { Name = "workflowVersion", In = "body", Type = "integer", Required = true, Description = "读稿返回的 workflowVersion" },
             },
         },
         new McpToolDef

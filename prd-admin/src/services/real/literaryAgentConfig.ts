@@ -547,6 +547,8 @@ export type LiteraryIllustrationHistory = {
   currentVersion: number;
   total: number;
   currentCount: number;
+  /** 当前正文里有哪些配图位置，旧图只能放回这些位置 */
+  markerIndexes?: number[];
   groups: Array<{
     workflowVersion: number | null;
     isCurrentVersion: boolean;
@@ -559,6 +561,14 @@ export async function getLiteraryIllustrationHistoryReal(input: { id: string }) 
   return await apiRequest<LiteraryIllustrationHistory>(
     api.literaryAgent.workspaces.illustrationHistory(encodeURIComponent(input.id)),
     { method: 'GET' }
+  );
+}
+
+/** 把历史里的一张旧图放回正文的配图位置（默认它当初的位置）；图若记着当初的描述，标记描述一并换回。 */
+export async function restoreLiteraryIllustrationReal(input: { id: string; assetId: string; markerIndex?: number }) {
+  return await apiRequest<{ markerIndex: number; url: string; description?: string | null; note?: string | null }>(
+    api.literaryAgent.workspaces.restoreIllustration(encodeURIComponent(input.id), encodeURIComponent(input.assetId)),
+    { method: 'POST', body: { markerIndex: input.markerIndex } }
   );
 }
 

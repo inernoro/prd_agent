@@ -66,9 +66,10 @@ public static class LiteraryMarkerWrites
     private static readonly string[] MarkerFields = { "draftText", "status", "runId", "errorMessage", "url" };
 
     /// <summary>更新一个标记的显示字段。返回 false 表示版本已变或标记不存在（调用方应重读）。</summary>
+    /// <param name="unchangedSince">给了就再加一个条件：工作区自那个版本令牌之后没被改过（覆盖描述时防冲掉别人的修改）</param>
     public static async Task<bool> PatchMarkerAsync(
         MongoDbContext db, string workspaceId, int version, int markerIndex,
-        IReadOnlyDictionary<string, object?> fields, ArticleIllustrationPlanItem? planItem)
+        IReadOnlyDictionary<string, object?> fields, ArticleIllustrationPlanItem? planItem, DateTime? unchangedSince = null)
     {
         var F = Builders<ImageMasterWorkspace>.Filter;
         var U = Builders<ImageMasterWorkspace>.Update;
@@ -85,9 +86,11 @@ public static class LiteraryMarkerWrites
             updates.Add(U.Set($"articleWorkflow.markers.$[m].{name}", value));
         }
         if (planItem != null) updates.Add(U.Set("articleWorkflow.markers.$[m].planItem", planItem));
+        var filter = F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version),
+            F.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == markerIndex));
+        if (unchangedSince is { } since) filter = F.And(filter, F.Eq(x => x.UpdatedAt, since));
         var result = await db.ImageMasterWorkspaces.UpdateOneAsync(
-            F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version),
-                F.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == markerIndex)),
+            filter,
             U.Combine(updates),
             new UpdateOptions { ArrayFilters = new[] { MarkerFilter(markerIndex) } },
             CancellationToken.None);
