@@ -13,6 +13,7 @@
  *   C3 文字没有被挤成窄条：问题卡说明至少 200px 宽；任何 16 字以上的文字块不许被挤到 180px 以下、3 行以上
  *      （后一条不依赖任何标记，旧版组件上照样量得到——「一词一行」就是这么被抓出来的）
  *   C4 关系卡的流向条把每个服务与基础设施都列出来了（不折叠成「N 个服务」）
+ *   C5 流向条竖排时，每个共享基础设施 / 跨项目引用都带一行「被谁使用」
  *   S1 展开后的浮层整个落在视口里
  *   S2 关系图没有横向滚动条，图上的卡片互不重叠
  *   S3 每个服务与基础设施都画出来了
@@ -21,6 +22,7 @@
  *   S6 悬停一条问题：它涉及的服务点亮，其余淡出
  *   S7 窄屏（<640）有建议时只先放要处理的，建议收成一行
  *   S8 按 Esc 关得掉浮层，且只关浮层（分支详情抽屉还在）
+ *   S9 带悬停提示（环境变量名 / 前缀）的线，鼠标真的落得到线上
  *   F1 从关系卡点「全屏」进入的全屏页：整页不横向溢出、图不出横向滚动条、服务都画出来、卡片不重叠、对比度与截断同上
  *   T1 所有文字与背后底色的对比度 ≥ 4.5（≥18.66px 粗体或 ≥24px 时 ≥ 3）
  *   P1 页面没有报错；没有未登记的 /api 路径（避免页面拿空数据走空态而判据照绿）
@@ -192,6 +194,18 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
     const expectStrip = payload.graph.nodes.map((n) => (n.kind === 'service' ? (n.rawId ?? n.id.replace(/^service:/, '')) : n.id));
     const missingStrip = expectStrip.filter((id) => !stripIds.includes(id));
     if (payload.graph.nodes.some((n) => n.kind === 'service')) check(missingStrip.length === 0, where, `C4 流向条漏了：${missingStrip.join('、')}`);
+    // C5 竖排时，每个共享 / 外部 chip 都带一行「谁在用它」，而且这一行看得见（竖排没有连线可依）
+    const tailInfo = await card.evaluate((el) => {
+      const st = el.querySelector('[data-testid="relation-strip-stacked"]');
+      if (!st) return null;
+      return [...st.querySelectorAll('[data-node]')].filter((c) => /^(infra:|ext:)/.test(c.getAttribute('data-node'))).map((c) => {
+        const wrap = c.closest('[data-tail]');
+        const line = wrap?.querySelector(':scope > div:last-child:not([data-node])');
+        const r = line?.getBoundingClientRect();
+        return { id: c.getAttribute('data-node'), ok: Boolean(line && line.textContent.trim() && r.width >= 48 && r.height > 0) };
+      });
+    });
+    if (tailInfo) { const bad = tailInfo.filter((t) => !t.ok).map((t) => t.id); check(bad.length === 0, where, `C5 竖排里这些共享 / 外部服务看不出是谁在用：${bad.join('、')}`); }
     // C3 问题卡说明的宽度
     const narrowest = await card.evaluate((el) => Math.min(Infinity, ...[...el.querySelectorAll('[data-finding] p')].map((p) => p.getBoundingClientRect().width)));
     check(narrowest === Infinity || narrowest >= 200, where, `C3 关系卡里的问题说明只有 ${Math.round(narrowest)}px 宽`);
@@ -217,7 +231,7 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
       }
       // S4 框标题：不压卡片、不出框、没有线穿过
       const labelIssues = [];
-      const paths = [...graph.querySelectorAll('path[d]')].filter((p) => p.closest('[data-edge]'));
+      const paths = [...graph.querySelectorAll('path[d]:not([data-edge-hit])')].filter((p) => p.closest('[data-edge]'));
       const samples = paths.map((p) => {
         const len = p.getTotalLength(); const m = p.getScreenCTM(); const pts = [];
         for (let s = 0; s <= len; s += 3) { const q = p.getPointAtLength(s); pts.push({ x: m.a * q.x + m.c * q.y + m.e, y: m.b * q.x + m.d * q.y + m.f }); }
@@ -231,12 +245,39 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
         for (const n of nodes) if (tb.left < n.r.right && n.r.left < tb.right && tb.top < n.r.bottom && n.r.top < tb.bottom) labelIssues.push(`「${name}」压住卡片 ${n.id}`);
         for (const s of samples) if (s.pts.some((p) => p.x > tb.left + 1 && p.x < tb.right - 1 && p.y > tb.top + 1 && p.y < tb.bottom - 1)) labelIssues.push(`线 ${s.key} 穿过「${name}」`);
       }
+      // S9 带提示的线悬停得到：沿线取点，至少一点 elementFromPoint 落回这条线自己
+      //   （外层 svg 是 pointerEvents:none，只有命中线开了 stroke 命中；没它提示永远出不来）。
+      //   不算数的点：落在关系图之外的（滚出可见区、压在底栏图例或遮罩下），以及与另一条线
+      //   重合的共用段（同一个壳出发的前缀线共用主干，几何判据 G8 允许，那里显示哪一条的提示都对）。
+      //   一条线只剩这两类点时跳过——它此刻看不见，或者看得见的部分都是共用段。
+      const unreachableTips = [];
+      const near = (pts, q) => pts.some((r) => Math.abs(r.x - q.x) <= 1.5 && Math.abs(r.y - q.y) <= 1.5);
+      const byKey = new Map(samples.map((x) => [x.key, x.pts]));
+      for (const s of samples) {
+        const g = graph.querySelector(`[data-edge="${CSS.escape(s.key)}"]`);
+        if (!g || !g.querySelector(':scope > title')) continue;
+        let own = false; let counted = 0;
+        for (const q of s.pts) {
+          if (q.x <= 1 || q.y <= 1 || q.x >= innerWidth - 1 || q.y >= innerHeight - 1) continue;
+          const hit = document.elementFromPoint(q.x, q.y);
+          if (!hit || !graph.contains(hit)) continue;
+          const he = hit.closest('[data-edge]');
+          if (he === g) { own = true; break; }
+          if (he && near(byKey.get(he.getAttribute('data-edge')) ?? [], q)) continue;
+          counted += 1;
+        }
+        if (!own && counted > 0) unreachableTips.push(s.key);
+      }
       // S5 服务名是否被截
-      const truncatedNames = [...graph.querySelectorAll('[data-node] [data-node-name]')].filter((s) => s.scrollWidth > s.clientWidth + 1).map((s) => s.textContent);
+      // 用文字的真实像素宽（Range），不用 scrollWidth：后者取整，0.6px 的溢出量不出来，而它照样出省略号
+      const truncatedNames = [...graph.querySelectorAll('[data-node] [data-node-name]')].filter((s) => {
+        const r = document.createRange(); r.selectNodeContents(s);
+        return r.getBoundingClientRect().width > s.clientWidth + 0.25;
+      }).map((s) => s.textContent);
       return {
         panel: { left: r.left, top: r.top, right: r.right, bottom: r.bottom }, vw: innerWidth, vh: innerHeight,
         graphScroll: { sw: graph.scrollWidth, cw: graph.clientWidth },
-        ids: nodes.map((n) => n.id), overlaps, labelIssues: [...new Set(labelIssues)], truncatedNames,
+        ids: nodes.map((n) => n.id), overlaps, labelIssues: [...new Set(labelIssues)], truncatedNames, unreachableTips,
       };
     });
     check(sheetInfo.panel.left >= -0.5 && sheetInfo.panel.top >= -0.5 && sheetInfo.panel.right <= sheetInfo.vw + 0.5 && sheetInfo.panel.bottom <= sheetInfo.vh + 0.5, where, `S1 浮层超出视口 ${JSON.stringify(sheetInfo.panel)}`);
@@ -247,6 +288,7 @@ async function runCase(browser, url, fixtureName, payload, viewport, theme) {
     const missing = expected.filter((id) => !drawn.has(id));
     check(missing.length === 0, where, `S3 没画出来：${missing.join('、')}`);
     check(sheetInfo.labelIssues.length === 0, where, `S4 ${sheetInfo.labelIssues.slice(0, 5).join('；')}`);
+    check(sheetInfo.unreachableTips.length === 0, where, `S9 这些线的悬停提示够不到：${sheetInfo.unreachableTips.slice(0, 5).join('、')}`);
     if (fixtureName === 'shape-alpha' && viewport.width >= 1280) check(sheetInfo.truncatedNames.length === 0, where, `S5 宽屏下服务名被截断：${sheetInfo.truncatedNames.join('、')}`);
     await auditScope(page, `${where} 展开视图`, '[data-testid="relation-sheet"]');
     const narrowestInSheet = await sheet.evaluate((el) => Math.min(Infinity, ...[...el.querySelectorAll('[data-finding] p')].map((p) => p.getBoundingClientRect().width)));

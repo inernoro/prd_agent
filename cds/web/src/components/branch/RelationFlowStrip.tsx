@@ -337,8 +337,21 @@ export function stackedGroups(model: FlowModel): { groups: Array<{ shell: FlowCh
   return { groups, loose };
 }
 
+/**
+ * 竖排的尾列：每个共享基础设施 / 跨项目引用带上「谁在用它」。横排靠 tailLinks 画线表达，
+ * 竖排没有连线，只剩一排孤立的 chip 就看不出是哪个服务连着它（Codex P2，PR #1654）。
+ * 壳直连基础设施不进 tailLinks（横排也不画），这里如实说「流向条里没有成员直接连它」。
+ */
+export function stackedTail(model: FlowModel): Array<{ chip: FlowChip; sources: string[]; broken: boolean }> {
+  return model.tail.map((chip, i) => {
+    const links = model.tailLinks.filter((l) => l.to === i);
+    const sources = [...new Set(links.map((l) => model.members[l.from]?.name).filter((x): x is string => Boolean(x)))];
+    return { chip, sources, broken: links.some((l) => l.kind === 'broken') };
+  });
+}
+
 /** 竖排：入口在上；每个壳下面用竖线挂它自己的成员；没连在任何壳下的服务单列一组、不画连线；共享 / 外部在最后 */
-function StackedFlow({ model }: { model: FlowModel }): JSX.Element {
+export function StackedFlow({ model }: { model: FlowModel }): JSX.Element {
   const line = 'bg-[hsl(var(--hairline-strong))]';
   const { groups, loose } = stackedGroups(model);
   let n = 0;
@@ -378,7 +391,17 @@ function StackedFlow({ model }: { model: FlowModel }): JSX.Element {
       {model.tail.length > 0 ? (
         <div className="mt-3 border-t border-dashed border-[hsl(var(--hairline))] pt-3">
           <div className="mb-2 text-[0.75rem] text-muted-foreground">共享基础设施与跨项目引用</div>
-          {grid(model.tail, 160)}
+          <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 200px), 1fr))' }}>
+            {stackedTail(model).map(({ chip, sources, broken }) => {
+              const who = sources.length ? `${broken ? '断裂 · ' : ''}被 ${sources.join('、')} 使用` : '流向条里没有成员直接连它，见全图';
+              return (
+                <div key={chip.id} className="flex min-w-0 flex-col gap-1" data-tail={chip.id} data-tail-from={sources.join(',')}>
+                  <Chip chip={chip} index={n++} />
+                  <div className={`truncate pl-1 text-[0.75rem] ${broken ? 'text-bad' : 'text-muted-foreground'}`} title={who}>{who}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </div>

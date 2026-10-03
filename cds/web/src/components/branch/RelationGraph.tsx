@@ -123,6 +123,9 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             return (
               <g key={e.key} opacity={dim(lit.size === 0 || edgeTouches(e.key))} data-edge={e.key} data-edge-kind={e.kind}>
                 {tip ? <title>{tip}</title> : null}
+                {/* 外层 svg 是 pointerEvents:none（不挡卡片），提示要靠这条透明的宽命中线才悬停得到；
+                    线本身只有 1.5px，直接拿它当命中区几乎点不中（Codex P2，PR #1654） */}
+                {tip ? <path d={edgePath(e)} fill="none" stroke="transparent" strokeWidth={10} style={{ pointerEvents: 'stroke', cursor: 'help' }} data-edge-hit="" /> : null}
                 <path d={edgePath(e)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} strokeLinejoin="round" opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
               </g>
             );

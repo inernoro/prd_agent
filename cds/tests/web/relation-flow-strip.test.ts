@@ -304,6 +304,15 @@ describe('Codex 评审（PR #1654）', () => {
     expect(groups.map((g) => [g.shell.id, g.members.map((c) => c.id)])).toEqual([['admin-web', ['api', 'files']], ['portal', ['docs']]]);
     expect(loose.map((c) => c.id)).toEqual(['cron']);
   });
+  it('P2 竖排的尾列带上「谁在用它」：数据库与跨项目引用不再是一排孤立的 chip', async () => {
+    const { stackedTail, StackedFlow } = await import('../../web/src/components/branch/RelationFlowStrip.js');
+    const model = layoutFlow(payload());
+    expect(stackedTail(model).map((t) => [t.chip.id, t.sources])).toEqual([['infra:mongo', ['api', 'cron']], ['infra:redis', ['api', 'files']]]);
+    const html = renderToStaticMarkup(createElement(StackedFlow, { model }));
+    expect(html).toContain('data-tail-from="api,cron"');
+    expect(html).toContain('被 api、cron 使用');
+    expect(html).toContain('被 api、files 使用');
+  });
   it('P2 全屏页「只看问题」时，标题计数按显示出来的这批算，不再挂着被滤掉的建议', async () => {
     const { RelationWorkspace } = await import('../../web/src/components/branch/RelationCard.js');
     const p = payload();

@@ -61,6 +61,8 @@ const COMPACT: Geo = { compact: true, cardW: 0, cardH: 44, heroH: 48, gapX: 12, 
 /** 窄于这个宽度切手机档；再窄于 MIN_W 才整体缩小 */
 const RELATION_COMPACT_BELOW = 640;
 const RELATION_MIN_W = 320;
+/** 桌面档卡片里名字区以外占掉的宽度，见 gridW 的注释 */
+const NAME_CHROME = 65;
 /** 手机档树状列表：成员卡相对壳缩进多少，竖线在缩进的中间 */
 const TREE_INDENT = 40;
 /** 同一个空隙里相邻两条线的间距 */
@@ -271,10 +273,20 @@ function layoutPass(payload: RelationPayload, width: number, extras: Extras): { 
     y = f.y + f.h + G.frameGap;
     return f;
   };
-  const subsFrame = gridFrame('subdomains', `子域 · ${simpleSubs.length} 个`, '每个子域整站归一个服务', 'site', simpleSubs.map((b) => { subOf.set(b.shell!, `子域 ${b.site.subdomain ?? ''}`); return b.shell!; }), G.cardW);
+  // 网格框（子域 / 其它服务 / 基础设施）的卡宽按框里最长的名字放宽到桌面上限：G.cardW 是为了让主域名
+  // 一排放下 4 个前缀成员才压到 232 的，网格框没有这个约束。卡里名字区 = 卡宽 − NAME_CHROME
+  // （边框 3 + 内边距 22 + 徽标 26 + 间距 10，再留 4 的余量）。textW 按 0.62em 估、比真实字宽偏大，
+  // 是有意的保守。1280 宽时「acme-worker-product-batch」在 255 的卡里溢出 0.6px，换个 Chromium 版本就截断
+  // （2026-10-03 relation-visual-audit S5，CI 上复现）
+  const nameOf = (id: string): string => (nodeById.get(real(id))?.name || graph.nodes.find((n) => n.id === id)?.name || id);
+  const gridW = (list: string[]): number => (G.compact ? G.cardW
+    : Math.min(base.cardW, innerW, Math.max(G.cardW, Math.ceil(Math.max(0, ...list.map((id) => textW(nameOf(id), 14))) + NAME_CHROME))));
+  const subsList = simpleSubs.map((b) => { subOf.set(b.shell!, `子域 ${b.site.subdomain ?? ''}`); return b.shell!; });
+  const subsFrame = gridFrame('subdomains', `子域 · ${simpleSubs.length} 个`, '每个子域整站归一个服务', 'site', subsList, gridW(subsList));
   gridFrame('external', '外部项目', '跨项目引用，走公网入口', 'external', externals.map((e) => e.id), EXT_W, (id, p) => { const e = externals.find((z) => z.id === id); if (e) e.pos = p; });
-  gridFrame('rest', '其它服务', '内网服务，或被多个站点共同调用', 'site', rest, G.cardW);
-  gridFrame('infra', '共享基础设施', '同项目所有分支共用同一实例', 'infra', graph.nodes.filter((n) => n.kind === 'infra').map((n) => n.id), G.cardW);
+  gridFrame('rest', '其它服务', '内网服务，或被多个站点共同调用', 'site', rest, gridW(rest));
+  const infraList = graph.nodes.filter((n) => n.kind === 'infra').map((n) => n.id);
+  gridFrame('infra', '共享基础设施', '同项目所有分支共用同一实例', 'infra', infraList, gridW(infraList));
   const height = Math.max(y - G.frameGap + 16, G.compact ? 200 : 320);
 
   // ---------- 3. 走线 ----------
