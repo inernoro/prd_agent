@@ -89,6 +89,20 @@ public class LiteraryMcpJourneyTests
                 FolderName = "初稿", ClientRequestId = "draft-1",
             }, CancellationToken.None)).GetProperty("workspaceId").GetString());
             Assert.IsType<ConflictObjectResult>(await drafts.CreateWorkspace(new() { ClientRequestId = "draft-1" }, CancellationToken.None));
+            // 升级前建的文章没有请求指纹：照样按内容判断，换了内容的同一个幂等键仍是冲突，原样重试仍回同一篇
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Unset(x => x.CreateRequestFingerprint));
+            Assert.IsType<ConflictObjectResult>(await drafts.CreateWorkspace(new() { ClientRequestId = "draft-1" }, CancellationToken.None));
+            Assert.IsType<ConflictObjectResult>(await drafts.CreateWorkspace(new()
+            {
+                Title = "验收文章", MarkedContent = "第一段。\n[插图]: 书店\n第二段。\n[插图]: 换了一张\n",
+                FolderName = "初稿", ClientRequestId = "draft-1",
+            }, CancellationToken.None));
+            Assert.Equal(id, Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "验收文章", MarkedContent = "第一段。\n[插图]: 书店\n第二段。\n[插图]: 茶杯\n",
+                FolderName = "初稿", ClientRequestId = "draft-1",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString());
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
             Assert.Equal(2, read.GetProperty("illustrations").GetArrayLength());
             Assert.Equal("初稿", read.GetProperty("folderName").GetString());

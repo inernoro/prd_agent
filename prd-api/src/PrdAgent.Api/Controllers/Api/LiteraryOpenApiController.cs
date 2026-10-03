@@ -233,13 +233,31 @@ public class LiteraryOpenApiController : ControllerBase
             if (existed == null) throw;
             // 同一个 clientRequestId 带着不同的内容再来，是「复用了幂等键」而不是「重试」。
             // 以前这里直接把旧文章当成新建结果返回，智能体随后的配图、改稿全落到错的文章上。
-            if (existed.CreateRequestFingerprint != null && existed.CreateRequestFingerprint != requestFingerprint)
+            // 本次改动之前建的文章没有存请求指纹：按库里记下的正文、标记、文件夹、标题逐项比，
+            // 不能因为缺指纹就一律当成重试放行。
+            var sameRequest = existed.CreateRequestFingerprint != null
+                ? existed.CreateRequestFingerprint == requestFingerprint
+                : LegacyCreateMatches(existed, req?.Title, content, marked, folderName, title);
+            if (!sameRequest)
                 return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT",
                     "这个 clientRequestId 已经建过另一篇内容不同的文章。新建一篇请换一个新的 clientRequestId；重试请原样提交上次的内容。"));
             return Ok(ApiResponse<object>.Ok(CreatedPayload(existed, deduplicated: true)));
         }
 
         return Ok(ApiResponse<object>.Ok(CreatedPayload(ws, deduplicated: false)));
+    }
+
+    /// <summary>
+    /// 没有请求指纹的旧记录，用库里落下的字段判断「这次是不是同一个建稿请求」。
+    /// 旧版存的是未规范化的标记原文，这里规范化后再比；没给标题时标题由正文推出，不单独比。
+    /// </summary>
+    internal static bool LegacyCreateMatches(ImageMasterWorkspace existed, string? requestTitle, string content, string? marked, string? folderName, string title)
+    {
+        if ((existed.ArticleContent ?? string.Empty) != content) return false;
+        if (!string.Equals(existed.FolderName, folderName, StringComparison.Ordinal)) return false;
+        if (!string.IsNullOrWhiteSpace(requestTitle) && existed.Title != title) return false;
+        var existedMarked = existed.ArticleContentWithMarkers is { } raw ? LiteraryMcpWorkflow.NormalizeMarkedContent(raw) : null;
+        return existedMarked == marked;
     }
 
     /// <summary>建稿回执直接带上版本号与标记序号，省掉「建完再读一遍才能生图」那一跳。</summary>
