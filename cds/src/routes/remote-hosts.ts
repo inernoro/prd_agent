@@ -63,6 +63,7 @@ import {
   type WorkspaceTransferRequest,
 } from '../services/agent-workspace-session-runtime.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 const AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS = [0, 250, 750] as const;
 
@@ -2995,7 +2996,9 @@ interface CdsManagedRuntimeResult {
 function authenticateProjectRequest(
   req: {
     headers: { authorization?: string | string[] | undefined };
-    _cdsCookieAuth?: boolean;
+    _cdsBasicHumanAuth?: boolean;
+    cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
+    cdsSession?: unknown;
     _aiSession?: unknown;
     cdsProjectKey?: { projectId: string; keyId: string };
   },
@@ -3003,10 +3006,9 @@ function authenticateProjectRequest(
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true; partnerBaseUrl?: string; principalKey: string } | { ok: false; status: number; code: string; message: string } {
-  // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
-  // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
-  // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
-  if (req._cdsCookieAuth === true) {
+  // [#746 obs-auth] 仪表盘系统所有者放行。原始账号 cookie 与持久化本地/GitHub
+  // 会话统一走共享 owner 判据；普通本地账号不得获得跨项目 admin 等价权限。
+  if (isHumanSystemOwner(req)) {
     return { ok: true, principalKey: 'cookie-admin' };
   }
   // server.ts also stamps scoped connection tokens as AI sessions. Preserve that

@@ -35,6 +35,7 @@
   "/pages/defect-agent/components/KanbanBoard.tsx": 6,
   "/pages/document-store/ReprocessChatDrawer.tsx": 2,
   "/pages/home/components/SectionHeader.tsx": 2,
+  "/pages/home/film/FilmStage.tsx": 4,
   "/pages/home/sections/AgentGrid.tsx": 2,
   "/pages/home/sections/CommunityPulse.tsx": 3,
   "/pages/home/sections/DesktopDownload.tsx": 3,

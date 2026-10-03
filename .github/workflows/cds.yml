@@ -114,6 +114,13 @@ jobs:
       - name: Mobile layout smoke (offline)
         run: pnpm run smoke:mobile-layout:offline
 
+      # 关系视图视觉审计（2026-10-03）。关系图出过的问题全是几何与渲染问题：图被裁、问题卡一词一行、
+      # 线从卡片上穿过、徽标字看不清——编译、类型、单测全绿时照样会出。这一步按真人路径
+      # （分支列表 → 详情 → 关系卡 → 展开）在 5 档视口 × 双主题下量：横向溢出、截断、窄条、
+      # 重叠、对比度、悬停联动。判据清单在脚本文件头。
+      - name: Relation view visual audit (offline)
+        run: pnpm run audit:relation-visual
+
   docker-build:
     name: Docker Build Check
     runs-on: ubuntu-latest
