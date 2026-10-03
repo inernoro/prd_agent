@@ -144,4 +144,32 @@ public static class LiteraryIllustrationChoices
         }
         return (style!, styleSource, watermark!, watermarkSource, notes);
     }
+
+    /// <summary>
+    /// 把这次明确指定的风格 / 水印 / 尺寸记到文章上，只动给了的那几项。
+    /// 文章还没有设定（或被网页清空成 null）时没有字段可按路径改，就整份建一个只含这几项的；
+    /// 两步都带「当时是否为空」的条件，夹在中间被别人建好了就再按字段改一次。
+    /// 智能体生图与网页顶栏都走这里：整份写回读到的快照，会把另一个入口刚改的那一项改回去。
+    /// </summary>
+    public static async Task RememberExplicitAsync(MongoDbContext db, string workspaceId, string ownerUserId, string? styleId, string? watermarkId, string? size)
+    {
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var U = Builders<ImageMasterWorkspace>.Update;
+        var owned = F.And(F.Eq(x => x.Id, workspaceId), F.Eq(x => x.OwnerUserId, ownerUserId));
+        var now = DateTime.UtcNow;
+        var sets = new List<UpdateDefinition<ImageMasterWorkspace>> { U.Set(x => x.IllustrationPrefs!.UpdatedAt, now) };
+        if (styleId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.StyleId, styleId));
+        if (watermarkId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.WatermarkId, watermarkId));
+        if (size != null) sets.Add(U.Set(x => x.IllustrationPrefs!.Size, size));
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var patched = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Ne(x => x.IllustrationPrefs, null)),
+                U.Combine(sets), cancellationToken: CancellationToken.None);
+            if (patched.MatchedCount > 0) return;
+            var created = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Eq(x => x.IllustrationPrefs, null)),
+                U.Set(x => x.IllustrationPrefs, new LiteraryIllustrationPrefs { StyleId = styleId, WatermarkId = watermarkId, Size = size, UpdatedAt = now }),
+                cancellationToken: CancellationToken.None);
+            if (created.MatchedCount > 0) return;
+        }
+    }
 }

@@ -1568,7 +1568,7 @@ public class ImageGenRunWorker : BackgroundService
                 : null,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
-        if (asset.OriginalMarkerText != null && asset.OriginalMarkerText.Length > 200) asset.OriginalMarkerText = asset.OriginalMarkerText[..200].Trim();
+        asset.OriginalMarkerText = PrdAgent.Core.Services.LiteraryMcpWorkflow.ClampOriginalMarkerText(asset.OriginalMarkerText);
 
         var sizeForMeta = string.IsNullOrWhiteSpace(effectiveSize) ? requestedSize : effectiveSize!;
         if (TryParseWxH(sizeForMeta, out var w, out var h))

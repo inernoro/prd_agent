@@ -8,6 +8,19 @@ public static class LiteraryMcpWorkflow
 {
     /// <summary>单篇配图标记上限。原来是 4：长文配不全，智能体只能把一篇拆成几个工作区，列表因此变乱。</summary>
     public const int MaxMarkers = 20;
+    /// <summary>单个配图标记的画面描述上限。标记校验、改单张描述、生图、以及图上记下的原始描述都按它，不另设更短的截断。</summary>
+    public const int MaxPromptChars = 4000;
+
+    /// <summary>
+    /// 图上记下的原始描述。放回旧图时会原样写回标记，所以上限必须与标记一致：
+    /// 以前截到 200 字，放回一张长描述的图，标记描述就被悄悄改短，之后重画与改稿沿用都按短的那段走。
+    /// </summary>
+    public static string? ClampOriginalMarkerText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var t = text.Trim();
+        return t.Length > MaxPromptChars ? t[..MaxPromptChars].Trim() : t;
+    }
 
     /// <summary>
     /// 行首的标记变体：`[插图]:` 之外，智能体写中文时常写成全角冒号 `[插图]：`、全角括号 `【插图】：`。
@@ -62,7 +75,7 @@ public static class LiteraryMcpWorkflow
         var markers = ArticleMarkerExtractor.Extract(markedContent);
         if (markers.Count < 1 || markers.Count > MaxMarkers)
             return $"请在正文独立行使用 [插图]: 画面描述，单篇支持 1-{MaxMarkers} 个配图标记（当前 {markers.Count} 个）。";
-        if (markers.Any(m => m.Text.Trim().Length > 4000)) return "每张配图的画面描述不能超过 4000 字。";
+        if (markers.Any(m => m.Text.Trim().Length > MaxPromptChars)) return $"每张配图的画面描述不能超过 {MaxPromptChars} 字。";
         if (string.IsNullOrWhiteSpace(PlainContent(markedContent))) return "请同时提供文章正文，不能只有配图标记。";
         return null;
     }

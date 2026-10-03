@@ -232,7 +232,7 @@ public class LiteraryMcpUsabilityTests
 
             // 只写明确指定的那一项：入队期间网页顶栏改了水印，不会被读到的旧快照改回去
             await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id, Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.WatermarkId, "wm-web"));
-            await images.RememberExplicitPrefsAsync(id, "writer", "style-a", null, null);
+            await LiteraryIllustrationChoices.RememberExplicitAsync(db, id, "writer", "style-a", null, null);
             var kept = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!;
             Assert.Equal(("style-a", "wm-web", "1376x768"), (kept.StyleId, kept.WatermarkId, kept.Size));
 
@@ -526,12 +526,26 @@ public class LiteraryMcpUsabilityTests
 
             // 网页「历史配图」的放回按钮走同一处：不传位置就放回它当初的位置
             var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
-            Data(await ui.RestoreIllustration(id, "a1b", null, CancellationToken.None));
+            // 页面得带上打开历史时看到的方案版本：不带不放，带了旧版本（期间改过稿）拒绝且什么都不动
+            Assert.IsType<BadRequestObjectResult>(await ui.RestoreIllustration(id, "a1b", null, CancellationToken.None));
+            var beforeStale = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.AssetIdByMarkerIndex["1"];
+            Assert.IsType<ConflictObjectResult>(await ui.RestoreIllustration(id, "a1b", new() { WorkflowVersion = 1 }, CancellationToken.None));
+            Assert.Equal(beforeStale, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.AssetIdByMarkerIndex["1"]);
+            Data(await ui.RestoreIllustration(id, "a1b", new() { WorkflowVersion = 2 }, CancellationToken.None));
             var web = Data(await ui.GetIllustrationHistory(id, CancellationToken.None));
             var current = web.GetProperty("groups").EnumerateArray().SelectMany(g => g.GetProperty("items").EnumerateArray())
                 .Where(i => i.GetProperty("isCurrent").GetBoolean()).Select(i => i.GetProperty("id").GetString()).OrderBy(x => x);
             Assert.Equal(new[] { "a0", "a1b" }, current);
             Assert.Equal(new[] { 0, 1 }, web.GetProperty("markerIndexes").EnumerateArray().Select(x => x.GetInt32()));
+
+            // 长描述的图放回后，标记描述一字不少（图上记的原始描述与标记同一个上限）
+            var longPrompt = string.Concat(Enumerable.Repeat("窗边打盹的橘猫，阳光斜照在书脊上。", 30));
+            Assert.True(longPrompt.Length > 200);
+            await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "a1long", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 2, Url = "https://example.test/a1long.png",
+                OriginalMarkerText = LiteraryMcpWorkflow.ClampOriginalMarkerText(longPrompt) });
+            Data(await ui.RestoreIllustration(id, "a1long", new() { WorkflowVersion = 2 }, CancellationToken.None));
+            var restoredMarker = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers.Single(m => m.Index == 1);
+            Assert.Equal(longPrompt, LiteraryMcpWorkflow.EffectivePrompt(restoredMarker));
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
@@ -641,7 +655,7 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
-    public void 配图方案进历史只许走统一存档()
+    public void 配图方案进历史只许走统一存档_原始描述统一限长_挂图必看结果()
     {
         // 三处换稿各抄一份「原样塞进历史」：存下的不是当时真正在用的图，也没有换下时间与原因。
         // 新增入口若再手抄一份，「恢复成上传前的」就又回到按生成时间去猜。
@@ -659,6 +673,12 @@ public class LiteraryMcpUsabilityTests
             if (text.Contains(".Set(x => x.ArticleWorkflowHistory") && !file.EndsWith("LiteraryIllustrationArchive.cs")
                 && !text.Contains("ArchiveCurrent(") && !text.Contains("ContentResetUpdate("))
                 offenders.Add($"{Path.GetFileName(file)}：写了配图方案历史却没走 LiteraryIllustrationArchive.ArchiveCurrent");
+            // 图上记的原始描述放回时会原样写回标记：只许经 ClampOriginalMarkerText 限长，别处再截一刀就会把标记悄悄改短
+            if (System.Text.RegularExpressions.Regex.IsMatch(text, @"OriginalMarkerText(\.Length\s*>|\[\.\.)") && !file.EndsWith("LiteraryMcpWorkflow.cs"))
+                offenders.Add($"{Path.GetFileName(file)}：自行截短了 OriginalMarkerText，应改用 LiteraryMcpWorkflow.ClampOriginalMarkerText");
+            // 挂图带版本条件，挂不上（期间换了稿）必须让调用方知道，丢掉返回值就会把失败报成成功
+            if (System.Text.RegularExpressions.Regex.IsMatch(text, @"(?m)^\s*await\s+[\w.]*PointMarkerAsync\("))
+                offenders.Add($"{Path.GetFileName(file)}：调用 PointMarkerAsync 却没看返回值");
         }
         Assert.True(offenders.Count == 0, string.Join("\n", offenders));
     }

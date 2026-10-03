@@ -273,7 +273,7 @@ public class LiteraryImageOpenApiController(
         {
             // 只写明确指定的那几项：整份写回读到的旧快照，会把入队期间网页顶栏刚改的另一项改回去。
             // 不动 UpdatedAt：它是正文的版本令牌，记住偏好不该让智能体手里的令牌失效。
-            await RememberExplicitPrefsAsync(workspaceId, userId,
+            await LiteraryIllustrationChoices.RememberExplicitAsync(db, workspaceId, userId,
                 explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null);
         }
 
@@ -316,33 +316,6 @@ public class LiteraryImageOpenApiController(
            || (explicitSize != null && previous.Size != null && previous.Size != explicitSize)
            || (explicitWatermark != null && previous.WatermarkConfigId != null && previous.WatermarkConfigId != explicitWatermark.WatermarkId)
            || (explicitStyle != null && !string.Equals(previous.InitImageAssetSha256, explicitStyle.Sha, StringComparison.Ordinal));
-
-    /// <summary>
-    /// 把这次明确指定的风格 / 水印 / 尺寸记到文章上，只动给了的那几项。
-    /// 文章还没有设定（或被网页清空成 null）时没有字段可按路径改，就整份建一个只含这几项的；
-    /// 两步都带「当时是否为空」的条件，夹在中间被别人建好了就再按字段改一次。
-    /// </summary>
-    internal async Task RememberExplicitPrefsAsync(string workspaceId, string userId, string? styleId, string? watermarkId, string? size)
-    {
-        var F = Builders<ImageMasterWorkspace>.Filter;
-        var U = Builders<ImageMasterWorkspace>.Update;
-        var owned = F.And(F.Eq(x => x.Id, workspaceId), F.Eq(x => x.OwnerUserId, userId));
-        var now = DateTime.UtcNow;
-        var sets = new List<UpdateDefinition<ImageMasterWorkspace>> { U.Set(x => x.IllustrationPrefs!.UpdatedAt, now) };
-        if (styleId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.StyleId, styleId));
-        if (watermarkId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.WatermarkId, watermarkId));
-        if (size != null) sets.Add(U.Set(x => x.IllustrationPrefs!.Size, size));
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            var patched = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Ne(x => x.IllustrationPrefs, null)),
-                U.Combine(sets), cancellationToken: CancellationToken.None);
-            if (patched.MatchedCount > 0) return;
-            var created = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Eq(x => x.IllustrationPrefs, null)),
-                U.Set(x => x.IllustrationPrefs, new LiteraryIllustrationPrefs { StyleId = styleId, WatermarkId = watermarkId, Size = size, UpdatedAt = now }),
-                cancellationToken: CancellationToken.None);
-            if (created.MatchedCount > 0) return;
-        }
-    }
 
     internal async Task<bool> ClaimWorkflowAsync(ImageMasterWorkspace ws, ImageGenRun run)
     {

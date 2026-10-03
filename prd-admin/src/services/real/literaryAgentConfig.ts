@@ -578,10 +578,10 @@ export async function getLiteraryIllustrationHistoryReal(input: { id: string }) 
 }
 
 /** 把历史里的一张旧图放回正文的配图位置（默认它当初的位置）；图若记着当初的描述，标记描述一并换回。 */
-export async function restoreLiteraryIllustrationReal(input: { id: string; assetId: string; markerIndex?: number }) {
+export async function restoreLiteraryIllustrationReal(input: { id: string; assetId: string; markerIndex?: number; workflowVersion: number }) {
   return await apiRequest<{ markerIndex: number; url: string; description?: string | null; note?: string | null }>(
     api.literaryAgent.workspaces.restoreIllustration(encodeURIComponent(input.id), encodeURIComponent(input.assetId)),
-    { method: 'POST', body: { markerIndex: input.markerIndex } }
+    { method: 'POST', body: { markerIndex: input.markerIndex, workflowVersion: input.workflowVersion } }
   );
 }
 

@@ -41,12 +41,17 @@ export function IllustrationHistoryDialog({
     !item.isCurrent && item.markerIndex != null && (data?.markerIndexes ?? []).includes(item.markerIndex);
 
   const restore = async (item: LiteraryIllustrationHistoryItem) => {
-    if (item.markerIndex == null || restoringId) return;
+    if (item.markerIndex == null || restoringId || !data) return;
     setRestoringId(item.id);
-    const res = await restoreLiteraryIllustrationReal({ id: workspaceId, assetId: item.id, markerIndex: item.markerIndex });
+    // 带上打开时看到的方案版本：期间文章被改稿或重新规划过，服务端会拒绝，而不是挂到同序号的新标记上
+    const res = await restoreLiteraryIllustrationReal({
+      id: workspaceId, assetId: item.id, markerIndex: item.markerIndex, workflowVersion: data.currentVersion,
+    });
     setRestoringId(null);
     if (!res.success) {
       toast.error(res.error?.message || '放回失败');
+      // 方案已更新：重新拉一遍，按新方案展示可放回的位置
+      if (res.error?.code === 'WORKSPACE_CONTENT_CHANGED') setReloadKey((k) => k + 1);
       return;
     }
     toast.success(res.data?.note || `已把这张放回配图 ${item.markerIndex + 1}，换下的那张也留在这里`);

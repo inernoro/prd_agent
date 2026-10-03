@@ -1326,7 +1326,7 @@ public class ImageMasterController : ControllerBase
             OriginalMarkerText = string.IsNullOrWhiteSpace(request?.OriginalMarkerText) ? null : request!.OriginalMarkerText!.Trim(),
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
-        if (asset.OriginalMarkerText != null && asset.OriginalMarkerText.Length > 200) asset.OriginalMarkerText = asset.OriginalMarkerText[..200].Trim();
+        asset.OriginalMarkerText = PrdAgent.Core.Services.LiteraryMcpWorkflow.ClampOriginalMarkerText(asset.OriginalMarkerText);
         if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
         if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
 
@@ -1375,7 +1375,10 @@ public class ImageMasterController : ControllerBase
             var idx = asset.ArticleInsertionIndex.Value;
             if (ws.ArticleWorkflow != null)
             {
-                await PrdAgent.Api.Services.LiteraryMarkerWrites.PointMarkerAsync(_db, wid, ws.ArticleWorkflow.Version, idx, asset.Id);
+                // 挂不上 = 存图期间配图方案换了版本：图留在历史里，但不能报成「已挂到正文」
+                if (!await PrdAgent.Api.Services.LiteraryMarkerWrites.PointMarkerAsync(_db, wid, ws.ArticleWorkflow.Version, idx, asset.Id))
+                    return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                        "保存图片期间这篇文章的配图方案已更新，这张图没有挂到正文上（已留在历史配图里）。请刷新后重试。"));
             }
             else
             {

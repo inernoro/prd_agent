@@ -69,4 +69,14 @@ public class LiteraryMcpWorkflowTests
         Assert.NotNull(LiteraryMcpWorkflow.Validate(null, "正文\n[插图]: " + new string('图', 4001), null));
         Assert.NotNull(LiteraryMcpWorkflow.Validate(null, null, new string('夹', 81)));
     }
+
+    [Fact]
+    public void 图上记下的原始描述与标记同一个上限_不再截到200字()
+    {
+        var text = new string('猫', 1200);
+        Assert.Equal(text, LiteraryMcpWorkflow.ClampOriginalMarkerText("  " + text + "  "));
+        Assert.Equal(LiteraryMcpWorkflow.MaxPromptChars, LiteraryMcpWorkflow.ClampOriginalMarkerText(new string('猫', 5000))!.Length);
+        Assert.Null(LiteraryMcpWorkflow.ClampOriginalMarkerText("   "));
+    }
+
 }
