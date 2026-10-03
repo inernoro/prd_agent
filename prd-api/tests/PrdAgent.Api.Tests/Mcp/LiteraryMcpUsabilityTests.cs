@@ -206,6 +206,12 @@ public class LiteraryMcpUsabilityTests
             var moved = history.Single(i => i.GetProperty("assetId").GetString() == "legacy-0");
             Assert.True(moved.GetProperty("isCurrent").GetBoolean());
             Assert.Equal(1, moved.GetProperty("markerIndex").GetInt32());
+            // 作品详情同样按挂的位置报：两个位置各一张、序号 0 和 1，不再两张都报生成时的 0
+            await db.Submissions.InsertOneAsync(new Submission { Id = "sub-detail", OwnerUserId = "writer", ContentType = "literary", WorkspaceId = id, IsPublic = true });
+            var subs = WithAdminUser(new SubmissionsController(db, null!, NullLogger<SubmissionsController>.Instance), "writer");
+            var related = Data(await subs.GetSubmissionDetail("sub-detail")).GetProperty("relatedAssets").EnumerateArray().ToList();
+            Assert.Equal(new[] { 0, 1 }, related.Select(a => a.GetProperty("articleInsertionIndex").GetInt32()).ToArray());
+            Assert.All(related, a => Assert.Equal("legacy-0", a.GetProperty("id").GetString()));
 
             // 整篇换成全新的标记、新版本还没出图：指针表是空的，旧图都保留着，详情不能把它们当成当前图返回
             Data(await drafts.WriteContent(id, new() { MarkedContent = "全新的一段。\n[插图]: 海边的灯塔\n" }, CancellationToken.None));

@@ -638,29 +638,28 @@ public class SubmissionsController : ControllerBase
             var current = workspace != null
                 ? PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(workspace, allAssets)
                 : new Dictionary<int, ImageAsset>();
-            var deduped = current.Values.ToList();
+            // 位置取「现在挂在哪」（字典的 key），不取图生成时的位置：放回到别的标记上的图，
+            // 按生成位置排会重号、漏号，作品详情里配图顺序就乱了。
+            var mounted = current.OrderBy(kv => kv.Key)
+                .Select(kv => (asset: kv.Value, index: (int?)kv.Key)).ToList();
 
             // 无 index 的图（历史数据/部署过渡期）也保留，不遗漏
-            var dedupedIds = deduped.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+            var mountedIds = mounted.Select(m => m.asset.Id).ToHashSet(StringComparer.Ordinal);
             var withoutIndex = allAssets
-                .Where(a => !a.ArticleInsertionIndex.HasValue && !dedupedIds.Contains(a.Id))
-                .ToList();
+                .Where(a => !a.ArticleInsertionIndex.HasValue && !mountedIds.Contains(a.Id))
+                .OrderBy(a => a.CreatedAt)
+                .Select(a => (asset: a, index: (int?)null));
 
-            var assets = deduped.Concat(withoutIndex)
-                .OrderBy(a => a.ArticleInsertionIndex ?? int.MaxValue)
-                .ThenBy(a => a.CreatedAt)
-                .ToList();
-
-            relatedAssets = assets.Select(a => (object)new
+            relatedAssets = mounted.Concat(withoutIndex).Select(m => (object)new
             {
-                a.Id,
-                a.Url,
-                a.Width,
-                a.Height,
-                a.Prompt,
-                a.OriginalMarkerText,
-                a.ArticleInsertionIndex,
-                a.CreatedAt,
+                m.asset.Id,
+                m.asset.Url,
+                m.asset.Width,
+                m.asset.Height,
+                m.asset.Prompt,
+                m.asset.OriginalMarkerText,
+                ArticleInsertionIndex = m.index,
+                m.asset.CreatedAt,
             }).ToList();
         }
 
