@@ -749,3 +749,7 @@ processed:
   - 2026-09-29_cds-local-multi-user-auth.md
   - 2026-09-29_entropy-cleanup.md
   - 2026-09-30_entropy-cleanup.md
+  - 2026-09-30_cds-relation-view-redesign.md
+  - 2026-10-01_entropy-cleanup.md
+  - 2026-10-03_daily-acceptance-findings-fix.md
+  - 2026-10-03_daily-core-acceptance.md
