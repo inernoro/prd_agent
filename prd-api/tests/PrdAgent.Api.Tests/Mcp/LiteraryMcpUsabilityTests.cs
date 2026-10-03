@@ -175,6 +175,41 @@ public class LiteraryMcpUsabilityTests
             Assert.Contains("McpUsageService.UnqueuedImages(", File.ReadAllText(Path.Combine(root, rel)));
     }
 
+    [Fact]
+    public async Task 编辑页详情与历史配图_按当前实际挂图返回()
+    {
+        var (db, name, connection) = NewDb("literary_detail_current");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n", ClientRequestId = "detail",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            var t0 = DateTime.UtcNow;
+            // 改造前的旧图（无版本号、无指针）+ 只重画了第 2 张（带版本、有指针）
+            await db.ImageAssets.InsertManyAsync(new[]
+            {
+                new ImageAsset { Id = "legacy-0", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, Url = "https://example.test/l0.png", CreatedAt = t0 },
+                new ImageAsset { Id = "legacy-1", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, Url = "https://example.test/l1.png", CreatedAt = t0 },
+                new ImageAsset { Id = "redrawn-1", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/r1.png", CreatedAt = t0.AddMinutes(2) },
+            });
+            await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "redrawn-1");
+
+            var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            var ids = Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray().Select(a => a.GetProperty("id").GetString()).ToList();
+            Assert.Equal(new[] { "legacy-0", "redrawn-1" }, ids); // 刷新后第 1 张不再变成没图，被换下的 legacy-1 不混进来
+
+            // 把第 1 张的旧图放到第 2 个位置：历史里它报的是现在挂的位置，不是生成时的位置
+            Data(await drafts.RestoreImage(id, 1, new() { AssetId = "legacy-0", WorkflowVersion = 1 }, CancellationToken.None));
+            var history = Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray().ToList();
+            var moved = history.Single(i => i.GetProperty("assetId").GetString() == "legacy-0");
+            Assert.True(moved.GetProperty("isCurrent").GetBoolean());
+            Assert.Equal(1, moved.GetProperty("markerIndex").GetInt32());
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
     // ───────────── 端到端：风格 / 水印 / 尺寸 / 批量 ─────────────
 
     [Fact]

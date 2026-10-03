@@ -464,11 +464,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
         if (ws.ScenarioType == "article-illustration" && currentAssetIds != null && currentAssetIds.Count > 0)
         {
-            assets = await _db.ImageAssets
-                .Find(x => x.WorkspaceId == ws.Id && currentAssetIds.Contains(x.Id))
-                .SortBy(x => x.ArticleInsertionIndex)
-                .ThenBy(x => x.CreatedAt)
-                .ToListAsync(ct);
+            assets = await LiteraryIllustrationHistory.LoadCurrentForDetailAsync(_db, ws, ct);
         }
         else
         {

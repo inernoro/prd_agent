@@ -30,6 +30,14 @@ public static class LiteraryIllustrationHistory
 
     public sealed record Result(int CurrentVersion, int Total, int CurrentCount, List<Group> Groups, List<PreviousSet> PreviousSets);
 
+    /// <summary>
+    /// 编辑页详情要的「当前挂在正文上的图」。走 <see cref="LiteraryMcpWorkflow.SelectCurrent"/>，与导出、投稿同一个判定：
+    /// 以前详情只要有一个指针就只按指针取，改造前的旧文章重画一张后，刷新页面其余位置全变成没图。
+    /// </summary>
+    public static async Task<List<ImageAsset>> LoadCurrentForDetailAsync(MongoDbContext db, ImageMasterWorkspace ws, CancellationToken ct)
+        => LiteraryMcpWorkflow.SelectCurrent(ws, await LoadAssetsAsync(db, ws.Id, ct))
+            .OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
+
     public static async Task<List<ImageAsset>> LoadAssetsAsync(MongoDbContext db, string workspaceId, CancellationToken ct)
         => await db.ImageAssets.Find(x => x.WorkspaceId == workspaceId)
             .SortByDescending(x => x.CreatedAt).Limit(1000).ToListAsync(ct);
@@ -39,6 +47,9 @@ public static class LiteraryIllustrationHistory
     {
         var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
         var currentIds = current.Values.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+        // 正在用的图报它现在挂在哪，不报它生成时的位置：放回到别的位置后，智能体按回来的序号操作必须落在对的标记上
+        var mountedAt = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (index, asset) in current) mountedAt.TryAdd(asset.Id, index);
         var currentVersion = ws.ArticleWorkflow?.Version ?? 0;
         // 资产自己记下的描述优先；没有（早期数据）才借当前版本同位置标记的描述
         var markerText = ws.ArticleWorkflow?.Markers?.GroupBy(m => m.Index)
@@ -101,11 +112,12 @@ public static class LiteraryIllustrationHistory
         var items = assets.Select(a =>
         {
             var (replacedAt, replacedReason) = ReplacedOf(a);
+            var markerIndex = mountedAt.TryGetValue(a.Id, out var at) ? at : a.ArticleInsertionIndex;
             return new Item(
                 a.Id,
                 Url(a.Url),
                 a.Width, a.Height, a.Prompt,
-                a.ArticleInsertionIndex,
+                markerIndex,
                 a.OriginalMarkerText
                     ?? (a.ArticleInsertionIndex is { } mi && (a.ArticleWorkflowVersion ?? currentVersion) == currentVersion
                         && markerText.TryGetValue(mi, out var t) ? t : null),
