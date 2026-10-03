@@ -296,6 +296,10 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
         if (ws.ScenarioType != "article-illustration")
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只有文学创作的文章能设置配图风格与水印"));
+        // 文章记住的是作者账号里的风格 / 水印 ID，协作者选的是自己账号里的，存进来作者那边查不到
+        if (ws.OwnerUserId != adminId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                "这篇文章的配图风格与水印由作者设定；协作者生图按自己账号的风格与水印。"));
 
         LiteraryIllustrationPrefs? prefs = null;
         if (request?.Clear != true)
@@ -468,7 +472,8 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
         // 这篇文章自己的配图设定（智能体或网页为它指定过时才有）：页面顶栏据此显示「本文」的风格与水印
         object? illustrationChoice = null;
-        if (ws.IllustrationPrefs != null)
+        // 只给作者本人：协作者生图不套文章设定（见 SetIllustrationPrefs），页面照旧显示并修改他自己账号的设定
+        if (ws.IllustrationPrefs != null && ws.OwnerUserId == adminId)
         {
             var effective = await LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, ws.IllustrationPrefs, ct);
             illustrationChoice = new

@@ -182,6 +182,48 @@ public static class LiteraryMarkerWrites
         return true;
     }
 
+    /// <summary>
+    /// 把一张旧图放回指定标记：指针、标记显示字段、描述、「被放回过」记录在<b>同一次</b>带版本条件的写入里完成。
+    /// 以前拆成「挂指针」与「改标记」两步，中间换了稿，第二步落空却照样报成功——界面说放回了，新方案里其实没有它。
+    /// 返回 false 表示版本已变或标记不存在（调用方应重读）。
+    /// </summary>
+    /// <param name="description">图当初的描述；为空则只换图、描述保持不变</param>
+    public static async Task<bool> RestoreMarkerAsync(
+        MongoDbContext db, string workspaceId, int version, int markerIndex, ImageAsset asset,
+        string? description, ArticleIllustrationPlanItem? planItem)
+    {
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var U = Builders<ImageMasterWorkspace>.Update;
+        var now = DateTime.UtcNow;
+        var key = markerIndex.ToString();
+        var filter = F.And(F.Eq(x => x.Id, workspaceId), F.Ne(x => x.ArticleWorkflow, null), VersionIs(version),
+            F.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == markerIndex));
+        var update = U.Set($"articleWorkflow.assetIdByMarkerIndex.{key}", asset.Id)
+            .Set($"articleWorkflow.assetRunAtByMarkerIndex.{key}", now)
+            .Set("articleWorkflow.updatedAt", now)
+            .Set(x => x.UpdatedAt, now)
+            .AddToSet("articleWorkflow.adoptedAssetIds", asset.Id)
+            .Set("articleWorkflow.markers.$[m].status", "done")
+            .Set("articleWorkflow.markers.$[m].assetId", asset.Id)
+            .Set("articleWorkflow.markers.$[m].url", asset.Url)
+            // runId 指向的是被换下那张图的任务，留着会误导；放回的图用 assetId 识别
+            .Set("articleWorkflow.markers.$[m].runId", (string?)null)
+            .Set("articleWorkflow.markers.$[m].errorMessage", (string?)null)
+            .Set("articleWorkflow.markers.$[m].updatedAt", now);
+        if (description != null) update = update.Set("articleWorkflow.markers.$[m].draftText", description);
+        if (planItem != null) update = update.Set("articleWorkflow.markers.$[m].planItem", planItem);
+        var result = await db.ImageMasterWorkspaces.UpdateOneAsync(filter, update,
+            new UpdateOptions { ArrayFilters = new[] { MarkerFilter(markerIndex) } }, CancellationToken.None);
+        if (result.MatchedCount == 0) return false;
+
+        // 完成张数是派生值，按写入后的指针重算（不参与「放没放回去」的判定）
+        var latest = await db.ImageMasterWorkspaces.Find(F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version))).FirstOrDefaultAsync(CancellationToken.None);
+        var done = latest?.ArticleWorkflow?.AssetIdByMarkerIndex?.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count() ?? 0;
+        await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version)),
+            U.Set(x => x.ArticleWorkflow!.DoneImageCount, done), cancellationToken: CancellationToken.None);
+        return true;
+    }
+
     /// <summary>版本判据。很早的工作区文档里没有 version 字段（读出来是默认值 0），0 版要把「字段缺失」一并认下。</summary>
     private static FilterDefinition<ImageMasterWorkspace> VersionIs(int version)
     {

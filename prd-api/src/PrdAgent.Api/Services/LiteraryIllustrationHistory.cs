@@ -156,27 +156,15 @@ public static class LiteraryIllustrationHistory
         if (asset == null)
             return new(RestoreFailure.AssetNotFound, "这张图不属于这篇文章，或已不存在。先读一遍历史配图拿到 assetId。", markerIndex, null, null);
 
-        if (!await LiteraryMarkerWrites.PointMarkerAsync(db, ws.Id, workflowVersion, markerIndex, asset.Id))
-            return new(RestoreFailure.VersionChanged, "配图方案已经更新（正文被改过或重新规划了标记），请重读后再放回。", markerIndex, null, null);
-
         var description = string.IsNullOrWhiteSpace(asset.OriginalMarkerText) ? null : asset.OriginalMarkerText.Trim();
-        // runId 指向的是被换下那张图的任务，留着会误导；放回的图用 assetId 识别
-        var fields = new Dictionary<string, object?> { ["url"] = asset.Url, ["runId"] = null };
-        ArticleIllustrationPlanItem? planItem = null;
-        if (description != null)
+        var planItem = description == null ? null : new ArticleIllustrationPlanItem
         {
-            fields["draftText"] = description;
-            planItem = new ArticleIllustrationPlanItem
-            {
-                Prompt = description,
-                Count = marker.PlanItem?.Count ?? 1,
-                Size = marker.PlanItem?.Size,
-            };
-        }
-        await LiteraryMarkerWrites.PatchMarkerAsync(db, ws.Id, workflowVersion, markerIndex, fields, planItem);
-        await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id,
-            Builders<ImageMasterWorkspace>.Update.AddToSet("articleWorkflow.adoptedAssetIds", asset.Id),
-            cancellationToken: CancellationToken.None);
+            Prompt = description,
+            Count = marker.PlanItem?.Count ?? 1,
+            Size = marker.PlanItem?.Size,
+        };
+        if (!await LiteraryMarkerWrites.RestoreMarkerAsync(db, ws.Id, workflowVersion, markerIndex, asset, description, planItem))
+            return new(RestoreFailure.VersionChanged, "配图方案已经更新（正文被改过或重新规划了标记），请重读后再放回。", markerIndex, null, null);
         return new(RestoreFailure.None,
             description == null ? "已放回。这张图是早期生成的，没有记下当初的描述，标记描述保持不变。" : null,
             markerIndex, asset.Url, description ?? LiteraryMcpWorkflow.EffectivePrompt(marker));

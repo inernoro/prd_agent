@@ -444,7 +444,8 @@ public class LiteraryOpenApiController : ControllerBase
         if (changed)
             await LiteraryIllustrationArchive.StampUnversionedAsync(_db, ws.Id, ws.ArticleWorkflow?.Version ?? 0);
 
-        var written = changed ? await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(CancellationToken.None) : ws;
+        // 一律回读：正文没变时这次写入照样换了 UpdatedAt，拿进函数时那份 ws 回令牌，调用方下一次带令牌写就会被误判冲突。
+        var written = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new
         {
             workspaceId = ws.Id,

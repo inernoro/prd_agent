@@ -286,7 +286,9 @@ public class LiteraryAgentImageGenController : ControllerBase
             var prefsWs = await _db.ImageMasterWorkspaces
                 .Find(x => x.Id == workspaceId && x.ScenarioType == "article-illustration")
                 .FirstOrDefaultAsync(ct);
-            var canUse = prefsWs != null && (prefsWs.OwnerUserId == adminId || (prefsWs.MemberUserIds?.Contains(adminId) ?? false));
+            // 只有作者本人生图才套文章设定：记住的风格 / 水印 ID 属于作者账号，协作者账号里查不到，
+            // 套上去只会静默退回协作者自己的默认（水印在出图时还会因归属不符被丢掉）。协作者照旧按自己账号的设定。
+            var canUse = prefsWs != null && prefsWs.OwnerUserId == adminId;
             if (canUse && prefsWs!.IllustrationPrefs != null)
             {
                 var chosen = await PrdAgent.Api.Services.LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, prefsWs.IllustrationPrefs, ct);

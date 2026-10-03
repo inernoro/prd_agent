@@ -508,6 +508,43 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 原样写回拿到的令牌能直接接着写_放回遇到换稿整体不生效()
+    {
+        // review 指出的两处：正文没变的覆盖照样换了 UpdatedAt，却回了旧令牌；
+        // 放回拆成两次写，中间换了稿，后一半落空仍报成功
+        var (db, name, connection) = NewDb("literary_tokens");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "一。\n[插图]: 书店门口\n", ClientRequestId = "tok",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
+            var token = read.GetProperty("updatedAt").GetString();
+            await Task.Delay(5); // 让这次写入的时间戳与读到的不同
+
+            var same = Data(await drafts.WriteContent(id, new() { Content = read.GetProperty("content").GetString(), ExpectedUpdatedAt = token }, CancellationToken.None));
+            var fresh = same.GetProperty("updatedAt").GetString();
+            Assert.Equal(McpRevision.Token((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).UpdatedAt), fresh);
+            Data(await drafts.UpdateIllustrationPrompt(id, 0, new() { Prompt = "书店门口的雨", WorkflowVersion = 1, ExpectedUpdatedAt = fresh }, CancellationToken.None));
+
+            await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "old", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, ArticleWorkflowVersion = 1, Url = "https://example.test/old.png", OriginalMarkerText = "书店门口" });
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            // 读到的是第 1 版，放回前文章已被重写成第 2 版：不许报成功，也不许在新方案上留下半截
+            var rewritten = Data(await drafts.WriteContent(id, new() { MarkedContent = "二。\n[插图]: 窗边的猫\n" }, CancellationToken.None));
+            Assert.Equal(2, rewritten.GetProperty("workflowVersion").GetInt32());
+            var result = await LiteraryIllustrationHistory.RestoreAsync(db, ws, "old", 0, 1, CancellationToken.None);
+            Assert.Equal(LiteraryIllustrationHistory.RestoreFailure.VersionChanged, result.Failure);
+            var after = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!;
+            Assert.Empty(after.AssetIdByMarkerIndex);
+            Assert.Empty(after.AdoptedAssetIds);
+            Assert.Equal("窗边的猫", LiteraryMcpWorkflow.EffectivePrompt(after.Markers.Single()));
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
     public async Task 换稿前在用的那组被存档_带标记写回自动沿用_历史标出换下时间()
     {
         // MCP-LIT-06：客户说「恢复成上传前最后用的」，智能体只能按生成时间猜；
@@ -642,6 +679,21 @@ public class LiteraryMcpUsabilityTests
             Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Watermark = "none" }, CancellationToken.None));
             Assert.Equal(WatermarkSelection.None, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!.WatermarkId);
             Assert.Contains("literary-agent", (await db.WatermarkConfigs.Find(x => x.Id == "wm-default").SingleAsync()).AppKeys);
+            // 协作者：文章记住的是作者账号里的 ID，他那边查不到——不套、不给改，照旧按他自己账号的设定
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id, Builders<ImageMasterWorkspace>.Update.Set(x => x.MemberUserIds, new List<string> { "helper" }));
+            var helperUi = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "helper");
+            Assert.Equal(403, Assert.IsType<ObjectResult>(await helperUi.SetIllustrationPrefs(id, new() { Watermark = "none" }, CancellationToken.None)).StatusCode);
+            Assert.Equal(JsonValueKind.Null, Data(await helperUi.GetWorkspaceDetail(id)).GetProperty("illustrationChoice").ValueKind);
+            var helperWeb = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!, new LLMRequestContextAccessor(),
+                NullLogger<LiteraryAgentImageGenController>.Instance), "helper");
+            var helperCreated = Data(await helperWeb.CreateRun(new CreateImageGenRunRequest
+            {
+                WorkspaceId = id, ArticleMarkerIndex = 0, Items = new() { new() { Prompt = "书店", Count = 1 } },
+            }, CancellationToken.None));
+            var helperRun = await db.ImageGenRuns.Find(x => x.Id == helperCreated.GetProperty("runId").GetString()).SingleAsync();
+            Assert.Null(helperRun.WatermarkConfigId);
+            Assert.Null(helperRun.InitImageAssetSha256);
+
             // 清除后回到账号默认
             Assert.IsType<OkObjectResult>(await ui.SetIllustrationPrefs(id, new() { Clear = true }, CancellationToken.None));
             Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs);
