@@ -878,6 +878,7 @@ function markRemainingNotRun(reason, next) {
   const planned = [
     ...FORMS.map((f) => ({ id: `DAILY-WEB-SHARE-${f.key}`, featureLine: 'web-hosting-sharing', title: `匿名访客打开 ${f.key === 'html' ? 'HTML' : 'Markdown'} 站的分享链接能看到正文` })),
     ...PAGES.map((p4) => ({ id: p4.id, featureLine: p4.featureLine, title: `${p4.label}能打开并渲染出内容` })),
+    { id: 'DAILY-AUTH-01', featureLine: 'identity-access', title: '验收账号能用账号密码登录' },
     ...API_CHECKS.map((c) => ({ id: c.id, featureLine: c.featureLine, title: c.title })),
     { id: 'DAILY-KB-03', featureLine: 'knowledge-assets', title: '知识库右下角「+」没有被其他浮层盖住' },
     { id: 'DAILY-REC-01', featureLine: 'recording', title: '知识库「+」里有「录音转笔记」入口' },
@@ -900,6 +901,7 @@ let browser;
 try {
   commit = await checkEnvironment();
   if (commit === null) {
+    checkStableSmokeFreshness(); // 查的是 CDS，不依赖被测环境
     markRemainingNotRun('被测环境不可达，没能开始验', '先恢复被测环境（见「被测环境可达」那一行），再手动重跑本脚本');
     exitCode = 2;
   } else {
