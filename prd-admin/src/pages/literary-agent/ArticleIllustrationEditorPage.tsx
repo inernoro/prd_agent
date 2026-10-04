@@ -3636,7 +3636,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
                       disabled={referenceImageSaving}
                       onSelect={() => {
-                        if (articleChoice) { if (articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
+                        if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
                         if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
                       }}
                     />
@@ -3647,7 +3647,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
                         disabled={referenceImageSaving}
                         onSelect={() => {
-                          if (articleChoice) { if (articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
+                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
                           if (!c.isActive) void switchReferenceImage(c, true);
                         }}
                       />
