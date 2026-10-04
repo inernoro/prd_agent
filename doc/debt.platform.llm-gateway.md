@@ -1,11 +1,64 @@
 # LLM 网关与模型池 · 债务台账
 
-> **版本**：v3.0 | **日期**：2026-08-13 | **状态**：开发中
+> **版本**：v3.1 | **日期**：2026-10-04 | **状态**：开发中
 
 **一句话**：网关与模型池的债务总表，含协议路由收口与多次生产取证记录。
 **谁该读**：接手网关的工程师；做发布判断的人。
 **读完能做什么**：查清某条债务的状态与对应证据。
 
+
+## serving 内部的 legacy 配置兜底还在（2026-10-04）
+
+**状态**：未还
+
+2026-10-04 删掉了 MAP 侧的进程内直连、影子比对与模式开关，MAP 只剩 HTTP 一条路径。
+但网关 serving 自己的解析链最后还有一档兜底：内部租户、且没有打开
+`DisableMapConfigFallbackForRegisteredAppCallers` 时，网关里没配置的调用方会退回
+MAP 库里的旧配置选模（`LLMConfigs` 活动配置、环境变量里的 Claude key、MAP 平台与模型表）。
+
+为什么没一起删：它运行在 serving 里，决定的是「网关替还没迁配置的调用方选哪个模型」，
+不是 MAP 走哪条路。删除当天正式机 API 还跑在 inproc（只有少数调用方在白名单里走 HTTP），
+切到 HTTP 之后，其余调用方很可能正靠这一档选模；直接删会把它们变成「解析不到模型」。
+
+与 `2026-08-25-map-legacy-model-collections-still-fallback`（MAP 旧集合兜底）是同一件事的两半，一起还。
+
+**还债的样子**：
+1. 新版本上线后，看网关请求日志里 `ResolutionType` 为 `LegacyConfig` / `LegacyEnvironment` 的调用方清单；
+2. 把这些调用方在网关控制台绑定到对外模型（配置权威报告的 `mapFallbackObjectsRemaining` 归零）；
+3. 部署侧把 `LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers` 置 true 观察一个稳定窗口；
+4. 删掉解析链第四档、MAP 配置回落查找与 serving 对 MAP 主库的兼容连接，连同 `InMemoryModelResolver` 的 legacy 分支。
+
+## 发布闸门不真调模型（2026-10-04）
+
+**状态**：未还
+
+发布后的网关探测是必过项，但它验的是「带 key 能进、路由与依赖就绪、构建 commit 一致、无 key 被拒」，
+**不会真的调一次上游模型**。真调模型的 D 层 smoke（`gw-smoke.py`）只在部署方显式给了业务 smoke key
+（`LLMGW_POST_DEPLOY_SERVICE_KEY`，或显式的探测 key）时默认运行；只有 compose 必填的 `LLMGW_SERVE_KEY` 时跳过并在日志写明。
+
+所以供应商密钥过期、上游地址失效这类问题，发布本身拦不住，要靠上线后的常设探针或第一次业务调用暴露。
+
+没在删老路径那次一起做的原因：强制它就要求正式机先签发并配置一把业务 smoke key，否则每次发布都会被挡住，
+属于新增的部署前置条件，不是「删老路径」本身的回归。
+
+**还债的样子**：在网关控制台为发布签一把只够跑 smoke 的 scoped key 写进正式机 `.env`，
+然后把 `LLMGW_POST_DEPLOY_RUN_SMOKE` 的缺省改为必跑、缺 key 即拒绝发布。
+
+## 切换前的历史日志 MAP 页面看不到了（2026-10-04）
+
+**状态**：未还
+
+MAP 的模型调用全部经网关之后，请求日志只由 serving 写进网关库。MAP 进程里
+`MongoDbContext.LlmRequestLogs` 已改指网关库，并限定在内部租户（外部租户的日志看不到、改不到、删不到）。
+
+留下的边界：正式机此前走进程内路径，那段时间的日志在业务库 `prdagent.llmrequestlogs`，
+MAP 页面不再读它。它不影响任何功能，只是历史查询要直接查库。
+
+**还债的样子**：按需把历史日志一次性迁进网关库（补上内部租户的 `TenantId`），或随保留期过后整集合删除。
+
+同一次改动还停掉了 MAP 的日志 running 超时纠错（它按 MAP 的超时口径会把网关仍在执行的长请求误改成失败）。
+serving 自己没有这道纠错，所以进程崩溃时留下的 running 记录不会自动收口，只影响日志页的状态显示。
+**还债的样子**：在 serving 里按请求自身的超时口径做纠错（谁写的谁收口），不要再由 MAP 代管。
 
 ## InMemoryModelResolver 是已删子系统留下的化石（2026-09-15）
 
@@ -182,7 +235,7 @@ legacy 兜底），然后连同 `InMemoryModelResolver` 一起删。
 | 2026-07-09-gw-config-authority-not-migrated | high | 2026-07-09 | GW-owned appCaller、模型池、平台、模型、Exchange、key 和控制台治理能力已经落地，生产也已开启 active caller MAP fallback 退场门；但 `2026-07-10` 快照只有 `active=3`、`configured=15`、`disabled=1`，resolver 对 configured/discovered caller 仍可能读取 MAP 路由配置。执行经过 GW HTTP 不等于全部模型池权威已经迁移 | 宣称“GW 已成为全部 AI 请求的唯一配置权威”或准备让外部系统长期接入 GW 时 | paid | 生产 config-authority 为 ready，MAP fallback 0，configured/active caller 均由 GW-owned 池解析；静态和运行时守卫持续防漂移 |
 | 2026-07-10-appcaller-unique-index | high | 2026-07-10 | `llmgw_app_callers` 缺少 `(AppCallerCode, RequestType)` 复合唯一索引；生产已出现 `literary-agent.illustration.text2img::generation` 重复 configured 记录，并发首次登记可能继续制造重复 | appCaller 被动注册、状态变更或模型池绑定时 | paid | 历史重复已归档并写操作审计，生产重复为 0，大小写不敏感复合唯一索引已建立并通过幂等迁移验证 |
 | 2026-07-10-gw-pool-health-wrong-database | high | 2026-07-10 | active 路由读取 `llm_gateway.llmgw_model_pools`，但成功/失败健康更新仍可能写 MAP `model_groups`，导致 GW-owned 成员的健康状态陈旧 | provider 失败、fallback 或健康熔断时 | paid | 合同测试断言 GW 数据域写回；生产快照显示 GW 池健康时间更新而 MAP 池停留在部署前 |
-| 2026-07-10-production-mode-fail-open | critical | 2026-07-10 | Program、compose 和发布脚本在 mode 缺失时默认 `inproc`，生产漏配环境变量会静默退回旧执行架构 | 新主机部署、环境变量丢失或脚本重构时 | paid | 生产缺 Mode 已改为拒绝启动；同一生产镜像隔离运行验证 fail-closed，回滚仍要求显式破玻璃动作 |
+| 2026-07-10-production-mode-fail-open | critical | 2026-07-10 | Program、compose 和发布脚本在 mode 缺失时默认 `inproc`，生产漏配环境变量会静默退回旧执行架构 | 新主机部署、环境变量丢失或脚本重构时 | paid | 生产缺 Mode 已改为拒绝启动；同一生产镜像隔离运行验证 fail-closed；2026-10-04 模式开关整体删除，MAP 已没有可退回的 inproc |
 | 2026-07-11-appcaller-static-runtime-authority | high | 2026-07-11 | serving 会把首次请求写入 `llm_gateway.llmgw_app_callers`，但 `LlmGateway.TryValidateAppCaller` 曾要求命中 MAP `AppCallerRegistry` 静态常量 | 外部系统或新 MAP 功能只按目标协议携带 appCallerCode、未先修改 MAP 代码常量时 | paid | PR #1070 已把运行时准入改为 canonical 格式和 modelType 后缀；生产动态 caller、预算、并发、scoped key、failover 与清理验收全部通过 |
 | 2026-07-11-release-probe-transport-label | medium | 2026-07-11 | 当前提交 19 条日志中有 1 条发布探针记录标为 `inproc`，且 `SourceSystem/IngressProtocol` 为空；其余 18 条为 `http` | 操作者按 transport 过滤判断 MAP 是否回退时 | paid | PR #1076 已统一注入 `release-probe / gw-native / http / IsHealthProbe=true`；最终生产 commit 的 25 条发布门日志均为 `transport=http` |
 | 2026-07-11-appcaller-mixed-route-policy-drift | medium | 2026-07-11 | registry 仅保存单值 `LastObservedModelPolicy`；同一 appCaller 合法混用 auto 与 pinned 时，后一次请求会覆盖观测值并让 runtime gate 反复报告 route drift | 生产 preflight 使用 auto，但验收或实验请求使用 pinned 时 | paid | PR #1076 改为累计 observed policy/pool/parameter 集合，配置值命中集合即无漂移；最终视频 pinned 治理后 runtime gate `blocked=0` |

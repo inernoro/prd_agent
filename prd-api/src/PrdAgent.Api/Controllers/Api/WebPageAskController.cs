@@ -636,7 +636,7 @@ public class WebPageAskController : ControllerBase
                 // Context 必须显式填。网关跑在 http 模式（生产主路径）时请求要跨进程，
                 // 进程内的 LlmRequestContext 过不去——serving 侧拿不到 UserId，
                 // 访问控制会以 "User not found" 的形式拒掉整条请求（llm-gateway 规则记着这个坑）。
-                // 只 BeginScope 不填 Context，在 inproc 下能跑、切到 http 就整个功能挂掉。
+                // 只 BeginScope 不填 Context，整个功能会直接挂掉。
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,

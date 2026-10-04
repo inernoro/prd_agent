@@ -6539,10 +6539,6 @@ function safeChart(canvasId, config) {
                     // 不在 google/gemini 排除内,若误走 chat-audio 会把音频丢失导致 ASR 失败(Codex P2)。
                     var llmCtx = sp.GetService<ILLMRequestContextAccessor>();
                     var triggeredBy = variables.GetValueOrDefault("__triggeredBy") ?? "workflow-system";
-                    var forceFullShadowSample = string.Equals(
-                        variables.GetValueOrDefault("__forceFullShadowSample"),
-                        "true",
-                        StringComparison.OrdinalIgnoreCase);
                     using var asrScope = llmCtx?.BeginScope(new LlmRequestContext(
                         RequestId: variables.GetValueOrDefault("__executionId") ?? Guid.NewGuid().ToString("N"),
                         GroupId: null,
@@ -6553,8 +6549,7 @@ function safeChart(canvasId, config) {
                         DocumentHash: null,
                         SystemPromptRedacted: "[WORKFLOW_VIDEO_TO_TEXT_ASR]",
                         RequestType: ModelTypes.Asr,
-                        AppCallerCode: resolvedCaller!,
-                        ForceFullShadowSample: forceFullShadowSample));
+                        AppCallerCode: resolvedCaller!));
                     if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
                             gwRes.ActualModel,
                             gwRes.Protocol,

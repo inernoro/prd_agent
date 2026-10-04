@@ -422,16 +422,6 @@
       ]
     },
     {
-      "id": "shadow",
-      "routes": [
-        "/shadow"
-      ],
-      "pagePath": "llmgw/web/src/pages/ShadowPage.tsx",
-      "tutorialSourceIds": [
-        "chapter-29"
-      ]
-    },
-    {
       "id": "governance",
       "routes": [
         "/governance"

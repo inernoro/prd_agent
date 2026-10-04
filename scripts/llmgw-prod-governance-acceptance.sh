@@ -80,7 +80,6 @@ cleanup_database() {
     db.llmgw_provider_concurrency_slots.deleteMany({ TenantId: tenantId, ResourceKey: /llmgw-acceptance/ });
     db.llmgw_service_keys.deleteMany({ TenantId: tenantId, Name: "governance-acceptance-temporary" });
     db.llmrequestlogs.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
-    db.llmshadow_comparisons.deleteMany({ TenantId: tenantId, AppCallerCode: caller });
   " >/dev/null 2>&1 || true
 }
 

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Seed LLM Gateway shadow evidence through real MAP API entry points.
+Drive real MAP API entry points so they call the LLM Gateway over HTTP.
 
-This script intentionally drives MAP endpoints, not /gw/v1 directly. In
-LlmGateway:Mode=shadow, MAP writes the shadow comparison rows that later gate
-canary/http rollout. Defaults are text-only and low cost; raw/image/video/ASR
-paths must be added explicitly by flags.
+This script intentionally drives MAP endpoints, not /gw/v1 directly: the point
+is to prove that a real MAP business entry reaches llmgw-serve and succeeds.
+scripts/llmgw-final-acceptance.py uses it per acceptance cell and then checks
+the gateway log for a transport=http record of the same appCaller.
+Defaults are text-only and low cost; raw/image/video/ASR paths must be added
+explicitly by flags.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from typing import Any
 
 
 DEFAULT_BASE = "http://127.0.0.1:5500"
-FORCE_SHADOW_SAMPLE_KEY = ""
+USER_AGENT = "llmgw-map-acceptance-seed/1.0"
 
 
 @dataclass(frozen=True)
@@ -65,12 +67,10 @@ def request_json(
 ) -> ApiResult:
     data: bytes | None = None
     req_headers = dict(headers or {})
-    if FORCE_SHADOW_SAMPLE_KEY:
-        req_headers.setdefault("X-Llmgw-Shadow-Sample-Key", FORCE_SHADOW_SAMPLE_KEY)
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req_headers.setdefault("Content-Type", "application/json")
-    req_headers.setdefault("User-Agent", "llmgw-map-shadow-seed/1.0")
+    req_headers.setdefault("User-Agent", USER_AGENT)
     req = urllib.request.Request(url, data=data, headers=req_headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -92,7 +92,7 @@ def request_multipart(
     timeout: float = 60,
     allow_error: bool = False,
 ) -> ApiResult:
-    boundary = "----llmgw-map-shadow-seed-" + secrets.token_hex(16)
+    boundary = "----llmgw-map-acceptance-seed-" + secrets.token_hex(16)
     chunks: list[bytes] = []
     for name, value in (fields or {}).items():
         chunks.append(f"--{boundary}\r\n".encode("ascii"))
@@ -108,10 +108,8 @@ def request_multipart(
         chunks.append(b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode("ascii"))
     req_headers = dict(headers or {})
-    if FORCE_SHADOW_SAMPLE_KEY:
-        req_headers.setdefault("X-Llmgw-Shadow-Sample-Key", FORCE_SHADOW_SAMPLE_KEY)
     req_headers.setdefault("Content-Type", f"multipart/form-data; boundary={boundary}")
-    req_headers.setdefault("User-Agent", "llmgw-map-shadow-seed/1.0")
+    req_headers.setdefault("User-Agent", USER_AGENT)
     req = urllib.request.Request(url, data=b"".join(chunks), headers=req_headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -206,11 +204,11 @@ def create_seed_user_and_login(
         join_url(base, "/api/users"),
         {
             "username": seed_username,
-            "displayName": "LLMGW Shadow Seed",
+            "displayName": "LLMGW Acceptance Seed",
             "role": seed_role,
             "password": seed_password,
         },
-        headers={**bearer(admin_token), "Idempotency-Key": f"llmgw-shadow-seed-{seed_username}"},
+        headers={**bearer(admin_token), "Idempotency-Key": f"llmgw-acceptance-seed-{seed_username}"},
         timeout=timeout,
         allow_error=True,
     )
@@ -236,10 +234,10 @@ def create_seed_user_and_login(
 
 
 def create_document(base: str, token: str, timeout: float, tag: str) -> tuple[str, str]:
-    title = f"LLMGW shadow seed {tag}"
+    title = f"LLMGW acceptance seed {tag}"
     content = (
         "# Intro\n"
-        "This is a short production shadow evidence document.\n\n"
+        "This is a short production acceptance evidence document.\n\n"
         "## Scope\n"
         "Answer briefly. Do not perform external actions.\n"
     )
@@ -277,7 +275,7 @@ def call_session_chat(base: str, token: str, session_id: str, timeout: float, ta
     result = request_json(
         "POST",
         join_url(base, f"/api/v1/sessions/{urllib.parse.quote(session_id)}/messages/run"),
-        {"content": f"Shadow evidence ping {tag}. Reply with one short sentence."},
+        {"content": f"Acceptance ping {tag}. Reply with one short sentence."},
         headers=bearer(token),
         timeout=timeout,
     )
@@ -304,8 +302,8 @@ def create_open_platform_app(base: str, admin_token: str, user_id: str, group_id
         "POST",
         join_url(base, "/api/open-platform/apps"),
         {
-            "appName": f"LLMGW Shadow Seed {tag}",
-            "description": "Temporary low-risk shadow evidence seed",
+            "appName": f"LLMGW Acceptance Seed {tag}",
+            "description": "Temporary low-risk acceptance evidence seed",
             "boundUserId": user_id,
             "boundGroupId": group_id,
             "ignoreUserSystemPrompt": False,
@@ -332,7 +330,7 @@ def call_open_platform_chat(base: str, api_key: str, group_id: str, timeout: flo
             "messages": [
                 {
                     "role": "user",
-                    "content": f"Open Platform shadow evidence ping {tag}. Reply with one short sentence.",
+                    "content": f"Open Platform acceptance evidence ping {tag}. Reply with one short sentence.",
                 }
             ],
         },
@@ -349,8 +347,8 @@ def create_open_api_key(base: str, token: str, timeout: float, tag: str) -> str:
         "POST",
         join_url(base, "/api/agent-api-keys"),
         {
-            "name": f"LLMGW OpenAPI Shadow Seed {tag}",
-            "description": "Temporary low-risk OpenAI-compatible shadow evidence seed",
+            "name": f"LLMGW OpenAPI Acceptance Seed {tag}",
+            "description": "Temporary low-risk OpenAI-compatible acceptance evidence seed",
             "scopes": ["open-api:call"],
             "ttlDays": 1,
         },
@@ -374,7 +372,7 @@ def call_open_api_chat(base: str, api_key: str, timeout: float, tag: str) -> Non
             "messages": [
                 {
                     "role": "user",
-                    "content": f"OpenAI compatible chat shadow evidence ping {tag}. Reply with one short sentence.",
+                    "content": f"OpenAI compatible chat acceptance evidence ping {tag}. Reply with one short sentence.",
                 }
             ],
         },
@@ -392,7 +390,7 @@ def call_open_api_image(base: str, api_key: str, timeout: float, tag: str, size:
         join_url(base, "/api/v1/images/generations"),
         {
             "model": "auto",
-            "prompt": f"Minimal shadow evidence icon {tag}: a blue square on a white background.",
+            "prompt": f"Minimal acceptance evidence icon {tag}: a blue square on a white background.",
             "n": 1,
             "size": size,
             "response_format": response_format,
@@ -450,7 +448,7 @@ def call_desktop_chat_run(
         "POST",
         join_url(base, f"/api/v1/sessions/{urllib.parse.quote(session_id)}/messages/run"),
         {
-            "content": f"Desktop chat shadow evidence ping {tag}. Reply with one short sentence.",
+            "content": f"Desktop chat acceptance evidence ping {tag}. Reply with one short sentence.",
         },
         headers=bearer(token),
         timeout=timeout,
@@ -585,7 +583,7 @@ def call_model_lab_run(base: str, token: str, timeout: float, tag: str, model: d
         join_url(base, "/api/lab/model/runs/stream"),
         {
             "suite": "Speed",
-            "promptText": f"Model Lab shadow evidence ping {tag}. Reply with one short sentence.",
+            "promptText": f"Model Lab acceptance evidence ping {tag}. Reply with one short sentence.",
             "params": {
                 "temperature": 0.1,
                 "maxTokens": 64,
@@ -623,11 +621,11 @@ def call_arena_run(
         "POST",
         join_url(base, "/api/lab/arena/runs"),
         {
-            "prompt": f"Arena shadow evidence ping {tag}. Reply with one short sentence.",
-            "groupKey": "llmgw-shadow",
+            "prompt": f"Arena acceptance evidence ping {tag}. Reply with one short sentence.",
+            "groupKey": "llmgw-acceptance",
             "slots": [
                 {
-                    "slotId": f"llmgw-shadow-{tag}",
+                    "slotId": f"llmgw-acceptance-{tag}",
                     "platformId": model["platformId"],
                     "modelId": model["modelId"],
                     "label": model["name"],
@@ -636,7 +634,7 @@ def call_arena_run(
             ],
             "attachmentIds": [],
         },
-        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-arena-{tag}"},
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-acceptance-arena-{tag}"},
         timeout=timeout,
     )
     data = api_data(result, "arena create run")
@@ -660,7 +658,7 @@ def call_tutorial_email_send(base: str, token: str, timeout: float, tag: str) ->
         "POST",
         join_url(base, "/api/tutorial-email/generate"),
         {
-            "topic": f"LLM Gateway shadow send evidence {tag}",
+            "topic": f"LLM Gateway send acceptance evidence {tag}",
             "style": "plain operational email",
             "language": "中文",
             "extraRequirements": "内容简短，只生成一段欢迎说明和一个按钮。",
@@ -671,51 +669,147 @@ def call_tutorial_email_send(base: str, token: str, timeout: float, tag: str) ->
     api_data(result, "tutorial email generate")
 
 
-def call_report_agent_generate(base: str, release_commit: str, timeout: float, tag: str) -> dict[str, Any]:
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llmgw-report-agent-shadow-seed.py")
-    evidence_out = os.path.join("/tmp", f"llmgw-report-agent-shadow-seed-{tag}.json")
-    cmd = [
-        sys.executable,
-        script_path,
-        "--base",
-        base,
-        "--release-commit",
-        release_commit,
-        "--iterations",
-        "1",
-        "--week-year",
-        "2099",
-        "--start-week",
-        "1",
-        "--timeout",
-        str(int(max(timeout, 180))),
-        "--no-sample-raise",
-        "--evidence-out",
-        evidence_out,
-    ]
-    env = None
-    if FORCE_SHADOW_SAMPLE_KEY:
-        env = {**os.environ, "LLMGW_SHADOW_SAMPLE_KEY": FORCE_SHADOW_SAMPLE_KEY}
-    result = subprocess.run(cmd, text=True, capture_output=True, timeout=max(timeout + 90, 240), check=False, env=env)
-    if result.returncode != 0:
-        detail = (result.stdout + "\n" + result.stderr).strip()
-        raise RuntimeError(f"report-agent shadow seed failed rc={result.returncode}: {detail[:1000]}")
+REPORT_AGENT_SEED_JOB_TITLE = "llmgw-acceptance-seed"
+REPORT_AGENT_SEED_WEEK_YEAR = 2099
+
+
+def run_command(cmd: list[str], timeout: float = 120) -> str:
+    result = subprocess.run(cmd, check=True, text=True, capture_output=True, timeout=timeout)
+    return result.stdout
+
+
+def docker_env(container: str, key: str) -> str:
+    return run_command(["docker", "exec", container, "sh", "-lc", f'printf %s "${key}"']).strip()
+
+
+def mongosh_json(database: str, script: str) -> Any:
+    text = run_command(["docker", "exec", "prdagent-mongodb", "mongosh", database, "--quiet", "--eval", script]).strip()
+    return json.loads(text) if text else None
+
+
+def discover_report_team_template() -> tuple[str, str]:
+    team_id = read_env_secret("LLMGW_REPORT_AGENT_SEED_TEAM_ID")
+    template_id = read_env_secret("LLMGW_REPORT_AGENT_SEED_TEMPLATE_ID")
+    if team_id and template_id:
+        return team_id, template_id
+    data = mongosh_json("prdagent", r"""
+const team = db.report_teams.findOne({});
+if (!team) throw new Error("report_teams is empty");
+const template = db.report_templates.findOne({$or:[{TeamId:team._id},{TeamIds:team._id}]})
+  || db.report_templates.findOne({IsDefault:true})
+  || db.report_templates.findOne({});
+if (!template) throw new Error("report_templates is empty");
+print(JSON.stringify({teamId: team._id, templateId: template._id}));
+""") or {}
+    return team_id or str(data["teamId"]), template_id or str(data["templateId"])
+
+
+def ensure_report_seed_member(team_id: str) -> None:
+    mongosh_json("prdagent", f"""
+db.report_team_members.updateOne(
+  {{UserId:"root", TeamId:{json.dumps(team_id)}}},
+  {{$setOnInsert:{{
+    _id:"llmgw-acceptance-seed-root",
+    TeamId:{json.dumps(team_id)},
+    UserId:"root",
+    UserName:"LLMGW Acceptance Seed",
+    AvatarFileName:null,
+    Role:"member",
+    JobTitle:{json.dumps(REPORT_AGENT_SEED_JOB_TITLE)},
+    IdentityMappings:{{}},
+    JoinedAt:new Date()
+  }}}},
+  {{upsert:true}}
+);
+print(JSON.stringify({{ok:true}}));
+""")
+
+
+def cleanup_report_seed_data(team_id: str) -> dict[str, Any]:
+    week_year = REPORT_AGENT_SEED_WEEK_YEAR
+    return mongosh_json("prdagent", f"""
+const teamId = {json.dumps(team_id)};
+const weekYear = {int(week_year)};
+const member = db.report_team_members.deleteMany({{
+  UserId:"root", TeamId:teamId, Role:"member", JobTitle:{json.dumps(REPORT_AGENT_SEED_JOB_TITLE)}
+}});
+const reports = db.report_weekly_reports.deleteMany({{UserId:"root", TeamId:teamId, WeekYear:weekYear}});
+const start = new Date(Date.UTC(weekYear, 0, 1));
+const end = new Date(Date.UTC(weekYear + 1, 0, 1));
+const daily = db.report_daily_logs.deleteMany({{UserId:"root", Date:{{$gte:start, $lt:end}}}});
+print(JSON.stringify({{
+  memberDeleted: member.deletedCount,
+  reportsDeleted: reports.deletedCount,
+  dailyLogsDeleted: daily.deletedCount
+}}));
+""") or {}
+
+
+def call_report_agent_generate(
+    base: str,
+    timeout: float,
+    tag: str,
+    root_username: str,
+    root_password: str,
+) -> dict[str, Any]:
+    # report-agent 周报 AI 草稿要求调用者是团队成员，所以按原有做法：
+    # 以 root 登录、临时加入第一个团队、写一条日报、生成一份 2099 年的 AI 草稿，结束后清理。
+    team_id, template_id = discover_report_team_template()
+    username = root_username or docker_env("prdagent-api", "ROOT_ACCESS_USERNAME")
+    password = root_password or docker_env("prdagent-api", "ROOT_ACCESS_PASSWORD")
+    request_timeout = max(timeout, 180)
+    token, _ = login(base, username, password, request_timeout)
+    week = 1
+    cleanup: dict[str, Any] = {}
     try:
-        with open(evidence_out, "r", encoding="utf-8") as handle:
-            evidence = json.load(handle)
+        cleanup_report_seed_data(team_id)
+        ensure_report_seed_member(team_id)
+        monday = datetime.fromisocalendar(REPORT_AGENT_SEED_WEEK_YEAR, week, 1)
+        daily = request_json(
+            "POST",
+            join_url(base, "/api/report-agent/daily-logs"),
+            {
+                "date": monday.strftime("%Y-%m-%d"),
+                "items": [
+                    {
+                        "content": f"LLMGW acceptance seed {tag}: validated report-agent gateway routing and model response observability.",
+                        "category": "development",
+                        "tags": ["LLMGW"],
+                        "durationMinutes": 45,
+                    },
+                ],
+            },
+            headers=bearer(token),
+            timeout=request_timeout,
+        )
+        api_data(daily, "report-agent save daily log")
+        started = time.time()
+        draft = request_json(
+            "POST",
+            join_url(base, "/api/report-agent/reports"),
+            {
+                "teamId": team_id,
+                "templateId": template_id,
+                "weekYear": REPORT_AGENT_SEED_WEEK_YEAR,
+                "weekNumber": week,
+                "creationMode": "ai-draft",
+            },
+            headers=bearer(token),
+            timeout=request_timeout,
+        )
+        data = api_data(draft, "report-agent ai draft") or {}
+        ai_error = data.get("aiGenerationError") if isinstance(data, dict) else None
+        if ai_error:
+            raise RuntimeError(f"report-agent ai draft returned aiGenerationError: {str(ai_error)[:500]}")
+        return {
+            "teamId": team_id,
+            "templateId": template_id,
+            "elapsedSeconds": round(time.time() - started, 3),
+        }
     finally:
-        try:
-            os.remove(evidence_out)
-        except OSError:
-            pass
-    if int(evidence.get("succeeded") or 0) < 1 or int(evidence.get("failed") or 0) > 0:
-        raise RuntimeError(f"report-agent shadow seed did not succeed: {json.dumps(evidence, ensure_ascii=False)[:1000]}")
-    return {
-        "succeeded": evidence.get("succeeded"),
-        "failed": evidence.get("failed"),
-        "shadowAfter": evidence.get("shadow_after"),
-        "cleanup": evidence.get("cleanup"),
-    }
+        if not read_env_secret("LLMGW_REPORT_AGENT_SEED_KEEP_DATA"):
+            cleanup = cleanup_report_seed_data(team_id)
+            print(f"report-agent seed cleanup: {json.dumps(cleanup, ensure_ascii=False)}")
 
 
 def resolve_image_gen_model(base: str, token: str, timeout: float) -> tuple[str, str]:
@@ -858,7 +952,7 @@ def call_image_worker_text2img_run(
             "maxConcurrency": 1,
             "appKey": "visual-agent",
         },
-        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-text2img-{tag}"},
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-acceptance-image-worker-text2img-{tag}"},
         timeout=timeout,
     )
     data = api_data(result, "image worker text2img create run")
@@ -905,7 +999,7 @@ def call_image_worker_img2img_run(
             "appKey": "visual-agent",
             "initImageAssetSha256": image_ref_sha,
         },
-        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-img2img-{tag}"},
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-acceptance-image-worker-img2img-{tag}"},
         timeout=timeout,
     )
     data = api_data(result, "image worker img2img create run")
@@ -920,10 +1014,10 @@ def create_image_master_workspace(base: str, token: str, timeout: float, tag: st
         "POST",
         join_url(base, "/api/visual-agent/image-master/workspaces"),
         {
-            "title": f"LLMGW shadow seed {tag}",
+            "title": f"LLMGW acceptance seed {tag}",
             "scenarioType": "image-gen",
         },
-        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-master-workspace-{tag}"},
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-acceptance-image-master-workspace-{tag}"},
         timeout=timeout,
     )
     data = api_data(result, "image master create workspace")
@@ -966,7 +1060,7 @@ def call_image_worker_vision_run(
                 f"tag={tag}. Combine only flat color rectangles, one circle, and a neutral background. "
                 "No people, no faces, no logos, no letters, no readable text, no symbols."
             ),
-            "targetKey": f"llmgw-shadow-vision-{tag}",
+            "targetKey": f"llmgw-acceptance-vision-{tag}",
             "platformId": platform_id,
             "modelId": model_id,
             "size": size,
@@ -977,7 +1071,7 @@ def call_image_worker_vision_run(
                 "No people, no logos, no readable text, no symbols."
             ),
         },
-        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-image-worker-vision-{tag}"},
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-acceptance-image-worker-vision-{tag}"},
         timeout=timeout,
     )
     data = api_data(result, "image worker vision create run")
@@ -1084,7 +1178,7 @@ def call_visual_video_direct_run(
             "directResolution": resolution,
             "directDuration": duration_seconds,
         },
-        headers={**bearer(token), "Idempotency-Key": f"llmgw-shadow-visual-video-direct-{tag}"},
+        headers={**bearer(token), "Idempotency-Key": f"llmgw-acceptance-visual-video-direct-{tag}"},
         timeout=timeout,
     )
     data = api_data(result, "visual video direct create run")
@@ -1098,7 +1192,7 @@ def create_transcript_workspace(base: str, token: str, timeout: float, tag: str)
     result = request_json(
         "POST",
         join_url(base, "/api/transcript-agent/workspaces"),
-        {"title": f"LLMGW shadow seed {tag}"},
+        {"title": f"LLMGW acceptance seed {tag}"},
         headers=bearer(token),
         timeout=timeout,
     )
@@ -1120,7 +1214,7 @@ def upload_transcript_audio(
     result = request_multipart(
         "POST",
         join_url(base, f"/api/transcript-agent/workspaces/{urllib.parse.quote(workspace_id)}/items/upload"),
-        files={"file": (f"llmgw-shadow-{tag}.wav", wav_bytes, "audio/wav")},
+        files={"file": (f"llmgw-acceptance-{tag}.wav", wav_bytes, "audio/wav")},
         headers=bearer(token),
         timeout=timeout,
     )
@@ -1221,9 +1315,9 @@ def call_video_to_doc_asr(
         join_url(base, "/api/video-agent/v2d/runs"),
         {
             "videoUrl": video_url,
-            "videoTitle": f"LLMGW shadow video-to-doc ASR {tag}",
+            "videoTitle": f"LLMGW acceptance video-to-doc ASR {tag}",
             "language": "auto",
-            "systemPrompt": "Summarize the transcript briefly for LLM Gateway shadow evidence.",
+            "systemPrompt": "Summarize the transcript briefly for LLM Gateway acceptance evidence.",
         },
         headers=bearer(token),
         timeout=timeout,
@@ -1279,13 +1373,13 @@ def call_video_to_text_asr_workflow(
     script_code = (
         "result = { items: [{ "
         f"videoUrl: {json.dumps(video_url)}, "
-        f"title: {json.dumps('LLMGW shadow video-to-text ASR ' + tag)} "
+        f"title: {json.dumps('LLMGW acceptance video-to-text ASR ' + tag)} "
         "}] };"
     )
     workflow_body = {
-        "name": f"LLMGW shadow video-to-text ASR {tag}",
-        "description": "Temporary workflow for LLM Gateway video-to-text ASR shadow evidence.",
-        "tags": ["llmgw-shadow"],
+        "name": f"LLMGW acceptance video-to-text ASR {tag}",
+        "description": "Temporary workflow for LLM Gateway video-to-text ASR acceptance evidence.",
+        "tags": ["llmgw-acceptance"],
         "variables": [],
         "triggers": [],
         "nodes": [
@@ -1373,10 +1467,10 @@ def create_document_store(base: str, token: str, timeout: float, tag: str) -> st
         "POST",
         join_url(base, "/api/document-store/stores"),
         {
-            "name": f"LLMGW shadow seed {tag}",
+            "name": f"LLMGW acceptance seed {tag}",
             "description": "Temporary LLM Gateway subtitle evidence store",
             "appKey": "document-store",
-            "tags": ["llmgw-shadow"],
+            "tags": ["llmgw-acceptance"],
             "isPublic": False,
         },
         headers=bearer(token),
@@ -1400,7 +1494,7 @@ def upload_document_store_audio(
     result = request_multipart(
         "POST",
         join_url(base, f"/api/document-store/stores/{urllib.parse.quote(store_id)}/upload"),
-        files={"file": (f"llmgw-shadow-{tag}.wav", wav_bytes, "audio/wav")},
+        files={"file": (f"llmgw-acceptance-{tag}.wav", wav_bytes, "audio/wav")},
         headers=bearer(token),
         timeout=timeout,
     )
@@ -1470,28 +1564,6 @@ def call_document_store_subtitle_asr(
 def fetch_gateway_health(gw_base: str, timeout: float) -> dict[str, Any]:
     result = request_json("GET", join_url(gw_base, "/healthz"), timeout=timeout)
     return parse_json_object(result.body, "gateway healthz")
-
-
-def fetch_shadow_summary(
-    gw_base: str,
-    key: str,
-    timeout: float,
-    since_hours: float,
-    release_commit: str,
-    kind: str | None = None,
-) -> dict[str, Any]:
-    query: dict[str, str] = {"sinceHours": str(since_hours)}
-    if release_commit:
-        query["releaseCommit"] = release_commit
-    if kind:
-        query["kind"] = kind
-    url = join_url(gw_base, "/shadow-comparisons") + "?" + urllib.parse.urlencode(query)
-    result = request_json("GET", url, headers={"X-Gateway-Key": key}, timeout=timeout)
-    doc = parse_json_object(result.body, "shadow comparisons")
-    summary = doc.get("summary")
-    if not isinstance(summary, dict):
-        raise RuntimeError(f"shadow comparisons missing summary: {result.body[:500]}")
-    return summary
 
 
 def read_env_secret(*names: str) -> str:
@@ -1571,55 +1643,11 @@ def write_evidence(path: str, evidence: dict[str, Any]) -> None:
         handle.write("\n")
 
 
-def format_summary(label: str, summary: dict[str, Any]) -> str:
-    return (
-        f"{label}: total={summary.get('total', 0)} "
-        f"allMatch={summary.get('allMatch', 0)} "
-        f"critical={summary.get('critical', 0)} "
-        f"httpFail={summary.get('httpFail', 0)} "
-        f"coverageHours={summary.get('coverageHours', 0)}"
-    )
-
-
-def wait_for_shadow_growth(
-    gw_base: str,
-    key: str,
-    timeout: float,
-    since_hours: float,
-    release_commit: str,
-    baselines: dict[str, int],
-    expected_growth: dict[str, int],
-    poll_seconds: float,
-    poll_interval_seconds: float,
-) -> None:
-    pending = {k: v for k, v in expected_growth.items() if v > 0}
-    if not pending or poll_seconds <= 0:
-        return
-
-    deadline = time.monotonic() + poll_seconds
-    while True:
-        remaining: dict[str, tuple[int, int]] = {}
-        for kind, growth in pending.items():
-            summary = fetch_shadow_summary(gw_base, key, timeout, since_hours, release_commit, kind)
-            total = int(summary.get("total", 0) or 0)
-            target = baselines.get(kind, 0) + growth
-            if total < target:
-                remaining[kind] = (total, target)
-        if not remaining:
-            return
-        if time.monotonic() >= deadline:
-            detail = ", ".join(f"{kind}={total}/{target}" for kind, (total, target) in remaining.items())
-            print(f"shadow growth wait timed out: {detail}")
-            return
-        time.sleep(max(0.5, poll_interval_seconds))
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Seed LLM Gateway shadow evidence through MAP API.")
+    parser = argparse.ArgumentParser(description="Drive real MAP API entry points through the LLM Gateway for acceptance evidence.")
     parser.add_argument("--base", default=os.environ.get("PRD_AGENT_BASE", DEFAULT_BASE), help="MAP API base URL")
     parser.add_argument("--gw-base", default=os.environ.get("LLMGW_GATE_BASE") or os.environ.get("GW_BASE") or "", help="Gateway /gw/v1 base URL")
-    parser.add_argument("--gw-key", default=read_env_secret("LLMGW_GATE_KEY", "GW_KEY", "LLMGW_SERVE_KEY"), help="Gateway key, preferably via env")
-    parser.add_argument("--force-shadow-sample", action="store_true", help="Force full shadow sampling for seeded MAP requests via an internal key-checked header")
+    parser.add_argument("--gw-key", default=read_env_secret("LLMGW_GATE_KEY", "GW_KEY", "LLMGW_SERVE_KEY"), help="Gateway key used to resolve a pinned chat model from /gw/v1/pools; preferably via env")
     parser.add_argument("--admin-token", default=read_env_secret("PRD_TEST_ADMIN_TOKEN", "MAP_ADMIN_TOKEN"), help="Existing MAP admin JWT")
     parser.add_argument("--root-username", default=read_env_secret("ROOT_ACCESS_USERNAME") or "root", help="Root username for login")
     parser.add_argument("--root-password", default=read_env_secret("ROOT_ACCESS_PASSWORD"), help="Root password for login, preferably via env")
@@ -1627,8 +1655,7 @@ def main() -> int:
     parser.add_argument("--skip-text-seeds", action="store_true", help="Skip default document/session-chat/preview seeds; use for focused image, vision, or ASR acceptance")
     parser.add_argument("--sleep-seconds", type=float, default=0, help="Sleep between iterations")
     parser.add_argument("--timeout", type=float, default=90, help="HTTP timeout seconds")
-    parser.add_argument("--since-hours", type=float, default=168, help="Shadow summary window")
-    parser.add_argument("--release-commit", default="", help="Release commit filter; defaults to gateway health commit")
+    parser.add_argument("--release-commit", default="", help="Release commit recorded in evidence; defaults to gateway health commit")
     parser.add_argument("--skip-preview-ask", action="store_true", help="Only run session chat, skip preview-ask")
     parser.add_argument("--include-desktop-chat-run", action="store_true", help="Also seed and wait one desktop chat run per iteration")
     parser.add_argument("--include-open-platform", action="store_true", help="Also seed one non-stream Open Platform call per iteration")
@@ -1637,23 +1664,23 @@ def main() -> int:
     parser.add_argument("--include-model-lab-run", action="store_true", help="Also seed one Model Lab pinned gateway run per iteration")
     parser.add_argument("--include-arena-run", action="store_true", help="Also seed one Arena pinned gateway run per iteration")
     parser.add_argument("--include-tutorial-email-send", action="store_true", help="Also seed one admin non-stream SendAsync call per iteration")
-    parser.add_argument("--include-report-agent-generate", action="store_true", help="Also seed one report-agent.generate::chat SendAsync call per iteration")
+    parser.add_argument("--include-report-agent-generate", action="store_true", help="Also seed one report-agent.generate::chat SendAsync call per iteration; needs docker access to prdagent-mongodb and prdagent-api")
     parser.add_argument("--include-image-raw", action="store_true", help="Also seed one real image raw call per iteration")
     parser.add_argument("--include-image-worker-text2img", action="store_true", help="Also seed one ImageGenRunWorker text2img run per iteration")
     parser.add_argument("--include-image-worker-img2img", action="store_true", help="Also seed one ImageGenRunWorker img2img run per iteration; requires --image-ref-shas")
     parser.add_argument("--include-image-worker-vision", action="store_true", help="Also seed one ImageGenRunWorker multi-image vision run per iteration; requires at least two --image-ref-shas")
     parser.add_argument("--include-video-direct", action="store_true", help="Also seed one video-agent direct video submit raw call per iteration")
     parser.add_argument("--include-visual-video-direct", action="store_true", help="Also seed one visual-agent direct video run per iteration")
-    parser.add_argument("--max-video-submits", type=int, default=read_env_int("LLMGW_SHADOW_MAX_VIDEO_SUBMITS", 3), help="Maximum video submit requests allowed unless --allow-high-cost-video is set")
+    parser.add_argument("--max-video-submits", type=int, default=read_env_int("LLMGW_ACCEPTANCE_SEED_MAX_VIDEO_SUBMITS", 3), help="Maximum video submit requests allowed unless --allow-high-cost-video is set")
     parser.add_argument("--allow-high-cost-video", action="store_true", help="Explicitly allow video seed batches above --max-video-submits")
     parser.add_argument("--include-transcript-asr", action="store_true", help="Also seed one transcript-agent ASR raw run per iteration")
     parser.add_argument("--include-document-store-subtitle-asr", action="store_true", help="Also seed one document-store subtitle ASR raw run per iteration")
     parser.add_argument("--include-video-to-doc-asr", action="store_true", help="Also seed one video-agent v2d ASR raw run per iteration; requires --asr-video-url")
     parser.add_argument("--include-video-to-text-asr-workflow", action="store_true", help="Also seed one workflow video-to-text ASR raw run per iteration; requires --asr-video-url")
-    parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
-    parser.add_argument("--image-model-id", default=read_env_secret("LLMGW_SHADOW_IMAGE_MODEL_ID"), help="Pinned image model id; defaults to first enabled image model from /api/mds")
-    parser.add_argument("--image-ref-shas", default=read_env_secret("LLMGW_SHADOW_IMAGE_REF_SHAS"), help="Comma-separated existing image asset sha256 values for img2img/vision evidence")
-    parser.add_argument("--asr-video-url", default=read_env_secret("LLMGW_SHADOW_ASR_VIDEO_URL"), help="Reachable MP4/video URL for v2d and video-to-text ASR shadow evidence")
+    parser.add_argument("--image-platform-id", default=read_env_secret("LLMGW_ACCEPTANCE_SEED_IMAGE_PLATFORM_ID"), help="Pinned image platform id; defaults to first enabled image model from /api/mds")
+    parser.add_argument("--image-model-id", default=read_env_secret("LLMGW_ACCEPTANCE_SEED_IMAGE_MODEL_ID"), help="Pinned image model id; defaults to first enabled image model from /api/mds")
+    parser.add_argument("--image-ref-shas", default=read_env_secret("LLMGW_ACCEPTANCE_SEED_IMAGE_REF_SHAS"), help="Comma-separated existing image asset sha256 values for img2img/vision evidence")
+    parser.add_argument("--asr-video-url", default=read_env_secret("LLMGW_ACCEPTANCE_SEED_ASR_VIDEO_URL"), help="Reachable MP4/video URL for v2d and video-to-text ASR evidence")
     parser.add_argument("--image-size", default="1024x1024", help="Image seed size")
     parser.add_argument("--image-response-format", default="url", help="Image seed response format")
     parser.add_argument("--image-worker-poll-seconds", type=float, default=360, help="How long to wait for ImageGenRunWorker runs")
@@ -1668,15 +1695,11 @@ def main() -> int:
     parser.add_argument("--asr-wav-seconds", type=float, default=1.5, help="Generated WAV duration for ASR seed paths")
     parser.add_argument("--asr-run-poll-seconds", type=float, default=360, help="How long to wait for transcript/document-store ASR runs")
     parser.add_argument("--asr-run-poll-interval-seconds", type=float, default=5, help="ASR run poll interval")
-    parser.add_argument("--settle-seconds", type=float, default=8, help="Wait before querying shadow summaries because send/raw shadow writes are async")
-    parser.add_argument("--summary-poll-seconds", type=float, default=0, help="Poll shadow summaries until expected kind counts grow; useful during 100% sampling windows")
-    parser.add_argument("--summary-poll-interval-seconds", type=float, default=5, help="Shadow summary poll interval")
     parser.add_argument("--continue-on-error", action="store_true", help="Run remaining seed paths after a path fails; exits non-zero if any path failed")
     parser.add_argument("--evidence-out", default="", help="Optional JSON evidence output path; secrets are not written")
     parser.add_argument("--seed-username", default="", help="Optional reusable business user for open-platform seeding")
-    parser.add_argument("--seed-password", default=read_env_secret("LLMGW_SHADOW_SEED_PASSWORD"), help="Password for --seed-username; omit for auto generated one-shot user")
+    parser.add_argument("--seed-password", default=read_env_secret("LLMGW_ACCEPTANCE_SEED_PASSWORD"), help="Password for --seed-username; omit for auto generated one-shot user")
     args = parser.parse_args()
-    global FORCE_SHADOW_SAMPLE_KEY
 
     if args.iterations < 1:
         raise SystemExit("--iterations must be >= 1")
@@ -1712,17 +1735,12 @@ def main() -> int:
             "Reduce --iterations or pass --allow-high-cost-video after confirming provider budget."
         )
 
-    if args.force_shadow_sample:
-        if not args.gw_key.strip():
-            raise SystemExit("--force-shadow-sample requires --gw-key or LLMGW_GATE_KEY/GW_KEY/LLMGW_SERVE_KEY")
-        FORCE_SHADOW_SAMPLE_KEY = args.gw_key.strip()
-
     base = args.base.rstrip("/")
     gw_base = (args.gw_base or join_url(base, "/gw/v1")).rstrip("/")
 
     if args.include_video_to_doc_asr or args.include_video_to_text_asr_workflow:
         if not args.asr_video_url.strip():
-            raise SystemExit("--asr-video-url or LLMGW_SHADOW_ASR_VIDEO_URL is required for video ASR evidence")
+            raise SystemExit("--asr-video-url or LLMGW_ACCEPTANCE_SEED_ASR_VIDEO_URL is required for video ASR evidence")
 
     release_commit = args.release_commit.strip()
     if not release_commit:
@@ -1778,7 +1796,7 @@ def main() -> int:
             seed_username = "llmgw_seed_" + datetime.now(timezone.utc).strftime("%m%d%H%M%S")
             seed_password = secrets.token_urlsafe(24)
         elif not seed_password:
-            raise SystemExit("--seed-password or LLMGW_SHADOW_SEED_PASSWORD is required when --seed-username is set")
+            raise SystemExit("--seed-password or LLMGW_ACCEPTANCE_SEED_PASSWORD is required when --seed-username is set")
         seed_role = (
             "ADMIN"
             if (
@@ -1839,7 +1857,6 @@ def main() -> int:
             "allowHighCostVideo": bool(args.allow_high_cost_video),
         },
         "steps": [],
-        "summaries": {},
     }
 
     print(f"base={base}")
@@ -1870,18 +1887,6 @@ def main() -> int:
         print(f"asrSeedWavBytes={len(wav_bytes)}")
     if args.include_video_to_doc_asr or args.include_video_to_text_asr_workflow:
         print("asrVideoUrl=provided")
-
-    baseline_counts: dict[str, int] = {}
-    if args.gw_key:
-        for kind in ("send", "stream", "raw"):
-            baseline_counts[kind] = int(fetch_shadow_summary(
-                gw_base,
-                args.gw_key,
-                args.timeout,
-                args.since_hours,
-                release_commit,
-                kind,
-            ).get("total", 0) or 0)
 
     stream_successes = 0
     send_successes = 0
@@ -2035,7 +2040,7 @@ def main() -> int:
                 evidence,
                 f"{prefix}.report_agent_generate",
                 args.continue_on_error,
-                lambda: call_report_agent_generate(base, release_commit, args.timeout, tag),
+                lambda: call_report_agent_generate(base, args.timeout, tag, args.root_username, args.root_password),
             )
             if report_step.ok:
                 send_successes += 1
@@ -2236,38 +2241,9 @@ def main() -> int:
         if index + 1 < args.iterations and args.sleep_seconds > 0:
             time.sleep(args.sleep_seconds)
 
-    if args.gw_key:
-        if args.settle_seconds > 0:
-            time.sleep(args.settle_seconds)
-        wait_for_shadow_growth(
-            gw_base,
-            args.gw_key,
-            args.timeout,
-            args.since_hours,
-            release_commit,
-            baseline_counts,
-            {
-                "stream": stream_successes,
-                "send": send_successes,
-                "raw": raw_successes,
-            },
-            args.summary_poll_seconds,
-            args.summary_poll_interval_seconds,
-        )
-        for label, kind in (
-            ("shadow/global", None),
-            ("shadow/send", "send"),
-            ("shadow/stream", "stream"),
-            ("shadow/raw", "raw"),
-        ):
-            summary = fetch_shadow_summary(gw_base, args.gw_key, args.timeout, args.since_hours, release_commit, kind)
-            evidence["summaries"][label] = summary
-            print(format_summary(label, summary))
-    else:
-        print("shadow summary skipped: missing gateway key")
-
     failed_steps = [step for step in evidence.get("steps", []) if not step.get("ok")]
-    evidence["expectedGrowth"] = {
+    # 每类调用成功次数；网关侧是否真的收到，由 llmgw-final-acceptance.py 查 transport=http 日志确认。
+    evidence["successCounts"] = {
         "stream": stream_successes,
         "send": send_successes,
         "raw": raw_successes,
