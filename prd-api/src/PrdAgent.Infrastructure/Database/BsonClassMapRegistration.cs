@@ -307,6 +307,9 @@ public static class BsonClassMapRegistration
                 cm.MapMember(x => x.AssetIdByMarkerIndex).SetElementName("assetIdByMarkerIndex");
                 cm.MapMember(x => x.AssetRunAtByMarkerIndex).SetElementName("assetRunAtByMarkerIndex");
                 cm.MapMember(x => x.UpdatedAt).SetElementName("updatedAt");
+                cm.MapMember(x => x.ArchivedAt).SetElementName("archivedAt");
+                cm.MapMember(x => x.ArchivedReason).SetElementName("archivedReason");
+                cm.MapMember(x => x.AdoptedAssetIds).SetElementName("adoptedAssetIds");
                 cm.SetIgnoreExtraElements(true);
             });
         }

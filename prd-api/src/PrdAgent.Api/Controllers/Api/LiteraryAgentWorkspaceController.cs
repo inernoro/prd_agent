@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -114,10 +115,15 @@ public class LiteraryAgentWorkspaceController : ControllerBase
                 .Find(x => x.WorkspaceId != null && wsIds.Contains(x.WorkspaceId))
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync(ct);
-            foreach (var a in allAssets)
+            // 卡片封面取「正文现在挂着的第一张」，与详情、导出同一个判定源：放回旧图后封面要跟着换，
+            // 改稿后还没出新图时也不能把历史配图摆上封面。没有配图方案的早期工作区照旧取最新一张。
+            var byWs = allAssets.Where(a => a.WorkspaceId != null).GroupBy(a => a.WorkspaceId!)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+            foreach (var w in items)
             {
-                if (a.WorkspaceId != null && !latestIllustrationMap.ContainsKey(a.WorkspaceId))
-                    latestIllustrationMap[a.WorkspaceId] = a;
+                if (!byWs.TryGetValue(w.Id, out var list)) continue;
+                var cover = LiteraryIllustrationHistory.CoverOf(w, list);
+                if (cover != null) latestIllustrationMap[w.Id] = cover;
             }
         }
 
@@ -143,7 +149,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             var coverHash = (ws.CoverHash ?? string.Empty).Trim();
             var coverStale = !string.IsNullOrWhiteSpace(contentHash) && !string.Equals(contentHash, coverHash, StringComparison.Ordinal);
 
-            // Latest illustration URL for card cover (newest generated image)
+            // 卡片封面：当前挂着的第一张（见上）
             var latestUrl = latestIllustrationMap.TryGetValue(ws.Id, out var latestAsset) ? latestAsset.Url : null;
 
             return new
@@ -214,9 +220,9 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        var update = Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        var now = DateTime.UtcNow;
+        var update = Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, now);
         if (request?.Title != null) update = update.Set(x => x.Title, request.Title.Trim());
-        if (request?.ArticleContent != null) update = update.Set(x => x.ArticleContent, request.ArticleContent);
         if (request?.ScenarioType != null) update = update.Set(x => x.ScenarioType, request.ScenarioType.Trim());
         if (request?.FolderName != null) update = update.Set(x => x.FolderName, request.FolderName.Trim());
         if (request?.MemberUserIds != null) update = update.Set(x => x.MemberUserIds, request.MemberUserIds.Select(x => x.Trim()).Where(x => x != adminId).Distinct().ToList());
@@ -227,7 +233,23 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             update = update.Set(x => x.SelectedPromptId, string.IsNullOrEmpty(pid) ? null : pid);
         }
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: ct);
+        // 正文真的换了 = 提交型修改：配图方案升一版、旧标记失效（旧图保留进历史）。
+        // 页面一直按这个语义调用它（上传文章处的注释写着「会触发 version++，清空后续阶段」），
+        // 但这个入口此前只改了正文——旧标记与带标记正文原样挂在新正文上。
+        if (LiteraryIllustrationArchive.IsContentChange(ws, request?.ArticleContent))
+        {
+            var outcome = await LiteraryIllustrationArchive.WriteContentResetAsync(
+                _db, ws, request!.ArticleContent!, update, LiteraryArchiveReason.WebContent, ct);
+            if (outcome == LiteraryIllustrationArchive.ContentResetOutcome.WorkspaceGone)
+                return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 在保存过程中被删除了"));
+            if (outcome == LiteraryIllustrationArchive.ContentResetOutcome.KeptChanging)
+                return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "这篇文章正被别处连续修改，正文没有保存，请刷新后再试。"));
+        }
+        else
+        {
+            if (request?.ArticleContent != null) update = update.Set(x => x.ArticleContent, request.ArticleContent);
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id, update, cancellationToken: CancellationToken.None);
+        }
         var updated = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(new { workspace = updated }));
     }
@@ -255,6 +277,155 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
+
+    public class IllustrationPrefsRequest
+    {
+        /// <summary>风格（参考图配置）ID 或名称；none = 不用参考图；null = 不改这一项。</summary>
+        public string? Style { get; set; }
+        /// <summary>水印配置 ID 或名称；none = 不打水印；null = 不改这一项。</summary>
+        public string? Watermark { get; set; }
+        /// <summary>true = 清除这篇文章的设定，之后跟随账号默认。</summary>
+        public bool Clear { get; set; }
+    }
+
+    /// <summary>
+    /// 设置 / 清除这篇文章记住的配图风格与水印。网页编辑页顶栏改选时调它：
+    /// 有设定的文章改的是这篇文章，不再去动账号级的「当前启用」，智能体与网页读写同一份。
+    /// </summary>
+    [HttpPut("{id}/illustration-prefs")]
+    public async Task<IActionResult> SetIllustrationPrefs(string id, [FromBody] IllustrationPrefsRequest? request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+        if (ws.ScenarioType != "article-illustration")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只有文学创作的文章能设置配图风格与水印"));
+        // 文章记住的是作者账号里的风格 / 水印 ID，协作者选的是自己账号里的，存进来作者那边查不到
+        if (ws.OwnerUserId != adminId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                "这篇文章的配图风格与水印由作者设定；协作者生图按自己账号的风格与水印。"));
+
+        // 不动 UpdatedAt：它是正文的版本令牌，改配图设定不该让智能体手里的令牌失效
+        if (request?.Clear == true)
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == ws.Id,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs, (LiteraryIllustrationPrefs?)null), cancellationToken: CancellationToken.None);
+        }
+        else
+        {
+            string? styleId = null, watermarkId = null;
+            if (!string.IsNullOrWhiteSpace(request?.Style))
+            {
+                var (style, error) = await LiteraryIllustrationChoices.ResolveStyleAsync(_db, adminId, request.Style, ct);
+                if (error != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", error));
+                styleId = style!.StyleId;
+            }
+            if (!string.IsNullOrWhiteSpace(request?.Watermark))
+            {
+                var (watermark, error) = await LiteraryIllustrationChoices.ResolveWatermarkAsync(_db, adminId, request.Watermark, ct);
+                if (error != null) return BadRequest(ApiResponse<object>.Fail("WATERMARK_NOT_FOUND", error));
+                watermarkId = watermark!.WatermarkId;
+            }
+            // 只写这次改的那一项：两个标签页一个改风格、一个改水印，整份写回会让后到的把先到的那项改回去
+            await LiteraryIllustrationChoices.RememberExplicitAsync(_db, ws.Id, ws.OwnerUserId, styleId, watermarkId, null);
+        }
+        var prefs = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).Project(x => x.IllustrationPrefs).FirstOrDefaultAsync(CancellationToken.None);
+        var effective = await LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, prefs, ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            illustrationPrefs = prefs,
+            effective = ArticleChoiceView(prefs, effective),
+        }));
+    }
+
+    /// <summary>
+    /// 页面顶栏读的「本文风格 / 水印」。missing = 这篇记住过、但那套已被删除，本次按账号默认出图：
+    /// 页面据此提示用户，而不是照旧写「本文自己的设定」让人带着回退的那套去花额度。
+    /// 判据是状态（记住过 + 结果来源是账号默认），不去匹配 notes 里的文案。
+    /// </summary>
+    private static object ArticleChoiceView(
+        LiteraryIllustrationPrefs? prefs,
+        (LiteraryIllustrationChoices.StyleChoice style, string styleSource, LiteraryIllustrationChoices.WatermarkChoice watermark, string watermarkSource, List<string> notes) effective)
+    {
+        var styleMissing = !string.IsNullOrWhiteSpace(prefs?.StyleId) && effective.styleSource == "account-default";
+        var watermarkMissing = !string.IsNullOrWhiteSpace(prefs?.WatermarkId) && effective.watermarkSource == "account-default";
+        return new
+        {
+            style = new { styleId = effective.style.StyleId, name = effective.style.Label, source = effective.styleSource, missing = styleMissing },
+            watermark = new { watermarkId = effective.watermark.WatermarkId, name = effective.watermark.Label, source = effective.watermarkSource, missing = watermarkMissing },
+            notes = effective.notes,
+        };
+    }
+
+    /// <summary>
+    /// 这篇文章生成过的全部配图，按配图方案版本分组（当前版本在前）。
+    ///
+    /// 改稿、重新规划标记、同一位置重新生成都不会删除旧图——它们只是不再挂在正文上。
+    /// 用户要回看「这篇文章所有的图」时就读这里；智能体（MCP）生成的图同样在内。
+    /// </summary>
+    [HttpGet("{id}/illustration-history")]
+    public async Task<IActionResult> GetIllustrationHistory(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(_db, ws.Id, ct);
+        var history = LiteraryIllustrationHistory.Build(ws, assets);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            workspaceId = ws.Id,
+            currentVersion = history.CurrentVersion,
+            total = history.Total,
+            currentCount = history.CurrentCount,
+            // 当前有哪些标记位置可以把旧图放回去
+            markerIndexes = ws.ArticleWorkflow?.Markers.Select(m => m.Index).OrderBy(i => i).ToList() ?? new List<int>(),
+            groups = history.Groups,
+            previousSets = history.PreviousSets,
+        }));
+    }
+
+    public sealed class RestoreIllustrationRequest
+    {
+        /// <summary>放到哪个标记上；不填 = 这张图当初所在的位置</summary>
+        public int? MarkerIndex { get; set; }
+        /// <summary>页面打开历史配图时看到的配图方案版本（历史接口回的 currentVersion），必填</summary>
+        public int? WorkflowVersion { get; set; }
+    }
+
+    /// <summary>
+    /// 把历史里的一张旧图放回正文的某个配图位置（默认它当初的位置）。被换下的那张同样留在历史里。
+    /// </summary>
+    [HttpPost("{id}/illustration-history/{assetId}/restore")]
+    public async Task<IActionResult> RestoreIllustration(string id, string assetId, [FromBody] RestoreIllustrationRequest? request, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        // 版本取页面所见的那一版，不取此刻库里的：页面停留期间文章被改稿或重新规划过，
+        // 同一个序号已经是另一段描述，按新版本放回就会把旧图挂到不相干的标记上。
+        if (request?.WorkflowVersion is not { } seenVersion)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少页面所见的配图方案版本，请刷新历史配图后再放回。"));
+        var asset = await _db.ImageAssets.Find(x => x.Id == assetId && x.WorkspaceId == ws.Id).FirstOrDefaultAsync(ct);
+        var markerIndex = request.MarkerIndex ?? asset?.ArticleInsertionIndex ?? -1;
+        var result = await LiteraryIllustrationHistory.RestoreAsync(_db, ws, assetId, markerIndex, seenVersion, ct);
+        return RestoreResponse(result);
+    }
+
+    internal IActionResult RestoreResponse(LiteraryIllustrationHistory.RestoreResult result) => result.Failure switch
+    {
+        LiteraryIllustrationHistory.RestoreFailure.None => Ok(ApiResponse<object>.Ok(new
+        {
+            markerIndex = result.MarkerIndex, url = result.Url, description = result.Description, note = result.Message,
+        })),
+        LiteraryIllustrationHistory.RestoreFailure.AssetNotFound => NotFound(ApiResponse<object>.Fail("IMAGE_NOT_FOUND", result.Message!)),
+        LiteraryIllustrationHistory.RestoreFailure.VersionChanged => Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", result.Message!)),
+        _ => BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Message!)),
+    };
 
     /// <summary>
     /// 获取工作区详情（包含消息、资源、画布等）
@@ -291,18 +462,9 @@ public class LiteraryAgentWorkspaceController : ControllerBase
 
         // 文章配图场景：只返回当前版本的图片，隐藏重新生成的旧版本
         List<ImageAsset> assets;
-        var currentAssetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Distinct()
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (ws.ScenarioType == "article-illustration" && currentAssetIds != null && currentAssetIds.Count > 0)
+        if (LiteraryIllustrationHistory.ShowsCurrentOnly(ws))
         {
-            assets = await _db.ImageAssets
-                .Find(x => x.WorkspaceId == ws.Id && currentAssetIds.Contains(x.Id))
-                .SortBy(x => x.ArticleInsertionIndex)
-                .ThenBy(x => x.CreatedAt)
-                .ToListAsync(ct);
+            assets = await LiteraryIllustrationHistory.LoadCurrentForDetailAsync(_db, ws, ct);
         }
         else
         {
@@ -327,13 +489,23 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // 兜底：旧数据中 markers 存在但 assetIdByMarkerIndex 为空，通过 prompt 文本匹配修复关联
         await TryBackfillMarkerAssetsAsync(ws, assets, ct);
 
+        // 这篇文章自己的配图设定（智能体或网页为它指定过时才有）：页面顶栏据此显示「本文」的风格与水印
+        object? illustrationChoice = null;
+        // 只给作者本人：协作者生图不套文章设定（见 SetIllustrationPrefs），页面照旧显示并修改他自己账号的设定
+        if (ws.IllustrationPrefs != null && ws.OwnerUserId == adminId)
+        {
+            var effective = await LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, ws.IllustrationPrefs, ct);
+            illustrationChoice = ArticleChoiceView(ws.IllustrationPrefs, effective);
+        }
+
         return Ok(ApiResponse<object>.Ok(new
         {
             workspace = ws,
             messages = messages.OrderBy(x => x.CreatedAt).ToList(),
             assets,
             canvas,
-            viewport
+            viewport,
+            illustrationChoice,
         }));
     }
 
@@ -585,22 +757,25 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             OriginalMarkerText = string.IsNullOrWhiteSpace(request?.OriginalMarkerText) ? null : request!.OriginalMarkerText!.Trim(),
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
-        if (asset.OriginalMarkerText != null && asset.OriginalMarkerText.Length > 200) asset.OriginalMarkerText = asset.OriginalMarkerText[..200].Trim();
+        asset.OriginalMarkerText = PrdAgent.Core.Services.LiteraryMcpWorkflow.ClampOriginalMarkerText(asset.OriginalMarkerText);
         if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
         if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
 
-        // Dedup: remove previous asset at same insertion index
-        if (asset.ArticleInsertionIndex.HasValue)
+        // 同一位置的旧图不再删除（用户要能在「历史配图」里找回）；新图盖当前版本号并挂上指针，
+        // 「当前挂哪张」由指针 + 版本判定，不再靠「同位置只留一张」来保证。
+        if (asset.ArticleInsertionIndex.HasValue && ws.ArticleWorkflow != null)
         {
-            await _db.ImageAssets.DeleteManyAsync(
-                Builders<ImageAsset>.Filter.And(
-                    Builders<ImageAsset>.Filter.Eq(x => x.WorkspaceId, ws.Id),
-                    Builders<ImageAsset>.Filter.Eq(x => x.ArticleInsertionIndex, asset.ArticleInsertionIndex),
-                    Builders<ImageAsset>.Filter.Ne(x => x.Id, asset.Id)
-                ), ct);
+            await LiteraryIllustrationArchive.StampUnversionedAsync(_db, ws.Id, ws.ArticleWorkflow.Version);
+            asset.ArticleWorkflowVersion = ws.ArticleWorkflow.Version;
         }
 
         await _db.ImageAssets.InsertOneAsync(asset, cancellationToken: ct);
+        // 挂不上 = 存图期间配图方案换了版本（改稿或重新规划）。图已作为上一版的图留在历史里，
+        // 但不能报成功：页面会把新方案里同序号的标记当成已完成，而那里其实没有挂任何图。
+        if (asset.ArticleInsertionIndex.HasValue && ws.ArticleWorkflow != null
+            && !await LiteraryMarkerWrites.PointMarkerAsync(_db, ws.Id, ws.ArticleWorkflow.Version, asset.ArticleInsertionIndex.Value, asset.Id))
+            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                "保存图片期间这篇文章的配图方案已更新，这张图没有挂到正文上（已留在历史配图里）。请刷新后重试。"));
 
         // Update assetsHash
         var newAssetsHash = Guid.NewGuid().ToString("N");

@@ -63,8 +63,20 @@ public class LiteraryMcpWorkflowTests
         Assert.NotNull(LiteraryMcpWorkflow.Validate("正文", Article, null));
         Assert.NotNull(LiteraryMcpWorkflow.Validate(null, "只有正文", null));
         Assert.NotNull(LiteraryMcpWorkflow.Validate(null, "[插图]: 只有图", null));
-        Assert.NotNull(LiteraryMcpWorkflow.Validate(null, "正文\n" + string.Concat(Enumerable.Repeat("[插图]: 图\n", 5)), null));
+        // 上限从 4 放到 20（长文配不全是智能体把一篇拆成多个工作区、列表变乱的原因之一）
+        Assert.Null(LiteraryMcpWorkflow.Validate(null, "正文\n" + string.Concat(Enumerable.Repeat("[插图]: 图\n", 5)), null));
+        Assert.NotNull(LiteraryMcpWorkflow.Validate(null, "正文\n" + string.Concat(Enumerable.Repeat("[插图]: 图\n", LiteraryMcpWorkflow.MaxMarkers + 1)), null));
         Assert.NotNull(LiteraryMcpWorkflow.Validate(null, "正文\n[插图]: " + new string('图', 4001), null));
         Assert.NotNull(LiteraryMcpWorkflow.Validate(null, null, new string('夹', 81)));
     }
+
+    [Fact]
+    public void 图上记下的原始描述与标记同一个上限_不再截到200字()
+    {
+        var text = new string('猫', 1200);
+        Assert.Equal(text, LiteraryMcpWorkflow.ClampOriginalMarkerText("  " + text + "  "));
+        Assert.Equal(LiteraryMcpWorkflow.MaxPromptChars, LiteraryMcpWorkflow.ClampOriginalMarkerText(new string('猫', 5000))!.Length);
+        Assert.Null(LiteraryMcpWorkflow.ClampOriginalMarkerText("   "));
+    }
+
 }
