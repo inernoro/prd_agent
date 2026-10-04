@@ -44,8 +44,8 @@ set -eu
 #   - PRD_AGENT_RELEASE_EVIDENCE_DIR：不可覆盖的发布证据目录，默认 $HOME/prd-agent-release-evidence
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 #   - LLMGW_GATE_BASE / GW_BASE：发布后网关探测使用的 serving base URL（形如 https://host/gw/v1）；
-#     与 LLMGW_GATE_KEY 同时配置时，发布后强制跑 serving probe 与 gw-smoke，未配置则只校验容器健康并在日志里写明
-#   - LLMGW_GATE_KEY / GW_KEY：发布后网关探测使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#     未设时由 PRD_AGENT_PUBLIC_BASE_URL + PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH（默认 /llmgw/gw/v1）推出，发布后必跑带 key 的 serving probe
+#   - LLMGW_GATE_KEY / GW_KEY：发布后网关探测使用的 X-Gateway-Key；未设时回退 .env 的 LLMGW_SERVE_KEY，三者皆空则拒绝发布
 #   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层业务 smoke 使用的 scoped service key；
 #     未设时兼容回退 LLMGW_GATE_KEY。
 #   - LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY：四协议 canary 使用的 scoped service key；
@@ -58,7 +58,7 @@ set -eu
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
-#   - LLMGW_GATE_RUN_SMOKE：发布后是否运行 gw-smoke.py，默认 1
+#   - LLMGW_GATE_RUN_SMOKE：发布后是否运行 gw-smoke.py（会真调模型）；显式给了探测 key 或业务 smoke key 时默认 1，否则默认 0
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - GW_SMOKE_JSON_OUT / GW_SMOKE_REPORT_MD：保存 post-deploy D 层 smoke 证据
 
@@ -1155,22 +1155,32 @@ ensure_ffmpeg() {
 ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
 
 # MAP 只有一条模型调用路径（独立网关 serving），发布前不再有影子样本门禁。
-# 发布后对网关的外部探测需要 gate base 与 key；两者都配置了才跑，没配置就明说跳过，
-# 网关容器本身的健康仍由 wait_for_llmgw_serving_readiness 强制校验。
+# 发布后必须带 key 探测一次公网网关：地址默认由 PRD_AGENT_PUBLIC_BASE_URL 推出，
+# key 默认取 .env 里的 LLMGW_SERVE_KEY，所以不需要额外配置；拿不到 key 就拒绝发布。
 prepare_llmgw_post_deploy_verification() {
   LLMGW_POST_DEPLOY_VERIFY_NEEDED=0
-  gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
-  gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
-  if [ -z "$gate_base" ] || [ -z "$gate_key" ]; then
-    echo "LLM Gateway post-deploy probe: not configured (LLMGW_GATE_BASE / LLMGW_GATE_KEY 未配置)；只校验网关容器健康，不做外部探测"
-    return 0
+  public_serving_base="${PRD_AGENT_PUBLIC_BASE_URL%/}${PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH:-/llmgw/gw/v1}"
+  gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-$public_serving_base}}"
+  explicit_gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-}}"
+  gate_key="${explicit_gate_key:-$(config_value LLMGW_SERVE_KEY)}"
+  if [ -z "$gate_key" ]; then
+    echo "ERROR: LLM Gateway post-deploy probe 需要 key：LLMGW_GATE_KEY / GW_KEY / LLMGW_SERVE_KEY 均为空，拒绝发布。" >&2
+    exit 1
   fi
   for required_script in scripts/llmgw-serving-probe.py scripts/gw-smoke.py; do
     if [ ! -f "$required_script" ]; then
-      echo "ERROR: LLM Gateway post-deploy probe 已配置但缺少 $required_script，拒绝发布。" >&2
+      echo "ERROR: LLM Gateway post-deploy probe 缺少 $required_script，拒绝发布。" >&2
       exit 1
     fi
   done
+
+  # D 层 smoke 会真的调模型：显式给了探测 key 或业务 smoke key 才默认跑，只有 serve key 时默认跳过。
+  if [ -n "$explicit_gate_key" ] || [ -n "${LLMGW_POST_DEPLOY_SERVICE_KEY:-}" ]; then
+    LLMGW_POST_DEPLOY_RUN_SMOKE="${LLMGW_GATE_RUN_SMOKE:-1}"
+  else
+    LLMGW_POST_DEPLOY_RUN_SMOKE="${LLMGW_GATE_RUN_SMOKE:-0}"
+  fi
+  echo "LLM Gateway post-deploy probe target: $gate_base"
 
   expect_commit=""
   case "$TAG" in
@@ -1224,18 +1234,18 @@ run_llmgw_post_deploy_verification_if_needed() {
     if [ -n "$expect_commit" ]; then
       probe_args="$probe_args --expect-commit $expect_commit"
     fi
-    echo "LLM Gateway post-deploy serving probe: required (healthz commit stability + no-key auth)"
+    echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
     # shellcheck disable=SC2086
-    python3 scripts/llmgw-serving-probe.py $probe_args
+    LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py $probe_args
   else
     echo "WARN: LLM Gateway post-deploy serving probe skipped because LLMGW_GATE_RUN_SERVING_PROBE=0" >&2
   fi
 
-  if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ]; then
+  if [ "${LLMGW_POST_DEPLOY_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"
     GW_BASE="$gate_base" GW_KEY="$smoke_key" GW_TIMEOUT="${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}" GW_EXPECT_COMMIT="$expect_commit" python3 scripts/gw-smoke.py
   else
-    echo "WARN: LLM Gateway post-deploy D-layer smoke skipped because LLMGW_GATE_RUN_SMOKE=0" >&2
+    echo "LLM Gateway post-deploy D-layer smoke: skipped（只有 serve key 时默认不调模型；要跑请设 LLMGW_POST_DEPLOY_SERVICE_KEY 或 LLMGW_GATE_RUN_SMOKE=1）"
   fi
 
   protocol_canary_arg=""

@@ -233,9 +233,50 @@ function Start-BranchTester {
 }
 
 # Start backend server
+# MAP calls models only through the standalone LLM gateway serving, so the backend starts it too.
+# Explicitly set values win; otherwise serving listens on localhost:5091 (same host port as
+# docker-compose.dev.yml), both sides share the repo dev key, and serving reuses the API dev
+# Jwt:Secret so it can decrypt platform keys stored in the local database.
+$LlmgwLocalUrl = if ($env:LLMGW_LOCAL_URL) { $env:LLMGW_LOCAL_URL } else { "http://localhost:5091" }
+if (-not $env:LlmGateway__ServeBaseUrl) { $env:LlmGateway__ServeBaseUrl = $LlmgwLocalUrl }
+if (-not $env:LlmGwServe__ApiKey) { $env:LlmGwServe__ApiKey = "dev-llmgw-serve-key" }
+
+function Start-LlmgwServingJob {
+    $jwtSecret = $env:Jwt__Secret
+    if (-not $jwtSecret) {
+        try {
+            $devSettings = Get-Content "$ScriptDir\prd-api\src\PrdAgent.Api\appsettings.Development.json" -Raw | ConvertFrom-Json
+            $jwtSecret = $devSettings.Jwt.Secret
+        } catch {}
+    }
+    return Start-Job -ScriptBlock {
+        param($projectPath, $url, $jwtSecret)
+        try {
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [Console]::InputEncoding = $utf8NoBom
+            [Console]::OutputEncoding = $utf8NoBom
+            $OutputEncoding = $utf8NoBom
+        } catch {}
+
+        if (-not $env:ASPNETCORE_ENVIRONMENT) { $env:ASPNETCORE_ENVIRONMENT = "Development" }
+        $env:ASPNETCORE_URLS = $url
+        if ($jwtSecret) { $env:Jwt__Secret = $jwtSecret }
+        dotnet run --no-launch-profile --project $projectPath 2>&1 | ForEach-Object { "[llmgw] $_" }
+    } -ArgumentList "$ScriptDir\llmgw\serving\PrdAgent.LlmGateway.csproj", $LlmgwLocalUrl, $jwtSecret
+}
+
 function Start-Backend {
+    Write-Info "Starting LLM gateway serving at $LlmgwLocalUrl in background..."
+    $llmgwJob = Start-LlmgwServingJob
     Write-Info "Starting backend server..."
-    dotnet watch run --project "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
+    try {
+        dotnet watch run --project "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
+    }
+    finally {
+        Receive-Job -Job $llmgwJob -ErrorAction SilentlyContinue
+        Stop-Job -Job $llmgwJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $llmgwJob -ErrorAction SilentlyContinue
+    }
 }
 
 # Start admin panel
@@ -333,6 +374,10 @@ function Start-All {
         dotnet watch run --project $projectPath 2>&1 | ForEach-Object { "[api] $_" }
     } -ArgumentList "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
 
+    # Start local LLM gateway serving in background (MAP model calls only go through it)
+    Write-Info "Starting LLM gateway serving at $LlmgwLocalUrl in background..."
+    $llmgwJob = Start-LlmgwServingJob
+
     # Start admin in background
     Write-Info "Starting admin panel in background..."
     $adminJob = Start-Job -ScriptBlock {
@@ -377,19 +422,21 @@ function Start-All {
     
     Write-Success "All services started!"
     Write-Info "Backend Job ID: $($backendJob.Id)"
+    Write-Info "LLM Gateway Serving Job ID: $($llmgwJob.Id)"
     Write-Info "Admin Panel Job ID: $($adminJob.Id)"
     Write-Info "Desktop Job ID: $($desktopJob.Id)"
-    Write-Info "Press Ctrl+C to stop all services, or run: Stop-Job $($backendJob.Id),$($adminJob.Id),$($desktopJob.Id)"
+    Write-Info "Press Ctrl+C to stop all services, or run: Stop-Job $($backendJob.Id),$($llmgwJob.Id),$($adminJob.Id),$($desktopJob.Id)"
     
     try {
         # Output job results continuously
         while ($true) {
             Receive-Job -Job $backendJob -ErrorAction SilentlyContinue
+            Receive-Job -Job $llmgwJob -ErrorAction SilentlyContinue
             Receive-Job -Job $adminJob -ErrorAction SilentlyContinue
             Receive-Job -Job $desktopJob -ErrorAction SilentlyContinue
             
             # Check if jobs are still running
-            if ($backendJob.State -ne "Running" -and $adminJob.State -ne "Running" -and $desktopJob.State -ne "Running") {
+            if ($backendJob.State -ne "Running" -and $llmgwJob.State -ne "Running" -and $adminJob.State -ne "Running" -and $desktopJob.State -ne "Running") {
                 break
             }
             
@@ -400,9 +447,11 @@ function Start-All {
         # Cleanup jobs
         Write-Info "Stopping services..."
         Stop-Job -Job $backendJob -ErrorAction SilentlyContinue
+        Stop-Job -Job $llmgwJob -ErrorAction SilentlyContinue
         Stop-Job -Job $adminJob -ErrorAction SilentlyContinue
         Stop-Job -Job $desktopJob -ErrorAction SilentlyContinue
         Remove-Job -Job $backendJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $llmgwJob -ErrorAction SilentlyContinue
         Remove-Job -Job $adminJob -ErrorAction SilentlyContinue
         Remove-Job -Job $desktopJob -ErrorAction SilentlyContinue
     }
@@ -419,7 +468,7 @@ function Show-Help {
     Write-Host "  admin      Start admin panel (prd-admin)"
     Write-Host "  desktop    Start desktop client (prd-desktop)"
     Write-Host "  bt         Start CDS (cds)"
-    Write-Host "  all        Start backend + admin + desktop together (single console output)"
+    Write-Host "  all        Start backend (API + LLM gateway serving) + admin + desktop together (single console output)"
     Write-Host "  check      Run desktop CI-equivalent checks"
     Write-Host "  ci         Run local CI checks (server + admin + desktop)"
     Write-Host "  version    Show recent 10 versions; pass a version to sync+tag+push"

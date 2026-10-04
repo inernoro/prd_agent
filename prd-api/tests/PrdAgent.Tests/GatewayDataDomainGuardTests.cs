@@ -1857,10 +1857,14 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("llmgw-release-gate.py", script);
         Assert.DoesNotContain("llmgw-rollback-inproc.sh", script);
         Assert.DoesNotContain("--require-runtime-gates", script);
-
+        // 发布后探测：容器健康强制等待，之后再从公网入口带 key 探一次。
         // 发布后探测：配了 gate base 与 key 才跑，没配就在日志里明说，容器健康仍强制等待。
         Assert.Contains("prepare_llmgw_post_deploy_verification", script);
-        Assert.Contains("LLM Gateway post-deploy probe: not configured", script);
+        // 发布后必须带 key 探测网关：地址可由公网根地址推出，key 拿不到就拒绝发布，不许静默跳过。
+        Assert.DoesNotContain("LLM Gateway post-deploy probe: not configured", script);
+        Assert.Contains("${PRD_AGENT_PUBLIC_LLMGW_SERVING_BASE_PATH:-/llmgw/gw/v1}", script);
+        Assert.Contains("$(config_value LLMGW_SERVE_KEY)", script);
+        Assert.Contains("LLMGW_GATE_KEY=\"$gate_key\" python3 scripts/llmgw-serving-probe.py", script);
         Assert.Contains("wait_for_llmgw_serving_readiness", script);
         Assert.Contains("LLMGW_POST_DEPLOY_VERIFY_NEEDED", script);
         Assert.Contains("LLMGW_POST_DEPLOY_GATE_BASE", script);

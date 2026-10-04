@@ -29,7 +29,7 @@
 ## 发布与回滚
 
 - 发布只有一种：`fast.sh --commit <40 位提交号> && exec_dep.sh --commit <同一提交号>`。不再需要配置模式，也不再需要经阶段脚本调用。
-- 发布脚本强制等待 serving 容器健康；配了网关探测地址与 key 时，额外跑构建 commit 一致性、无 key 拒绝与 D 层 smoke。
+- 发布脚本强制等待 serving 容器健康，随后从公网网关入口（由 `PRD_AGENT_PUBLIC_BASE_URL` 推出）带 `.env` 里的 serve key 探一次：带 key 就绪、构建 commit 一致、无 key 被拒，任一不过即发布失败；拿不到 key 直接拒绝发布。会真调模型的 D 层 smoke 只在显式给了探测 key 或业务 smoke key 时默认跑。
 - 回滚 = 用上一个提交号重新发布。MAP 没有可以退回的进程内旧路径，也不该有。
 
 ## 还留着的两处
