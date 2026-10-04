@@ -189,7 +189,6 @@ public sealed class GatewayLifecycleRunRecord
     public DateTime? CompletedAt { get; set; }
     public long ExpiredRequestLogs { get; set; }
     public long SensitiveLogs { get; set; }
-    public long ExpiredShadowComparisons { get; set; }
     public long ExpiredOperationAudits { get; set; }
     public long ExpiredLoginAudits { get; set; }
     public long ExpiredMultipartObjects { get; set; }
@@ -197,7 +196,6 @@ public sealed class GatewayLifecycleRunRecord
     public long DeletedMultipartObjects { get; set; }
     public DateTime? OldestExpiredRequestLogAt { get; set; }
     public DateTime? OldestSensitiveLogAt { get; set; }
-    public DateTime? OldestExpiredShadowAt { get; set; }
     public DateTime? OldestExpiredOperationAuditAt { get; set; }
     public DateTime? OldestExpiredLoginAuditAt { get; set; }
     public DateTime? OldestExpiredMultipartAt { get; set; }

@@ -1798,16 +1798,16 @@ public sealed class ConfigAuthorityGapItem
     public string Detail { get; set; } = "";
 }
 
-// ── 运行态发布 gate 聚合：只读回答“是否可以切 full-http” ──
+// ── 运行态发布 gate 聚合：只读回答“当前 commit 能否放行发布” ──
 public sealed class RuntimeGatesData
 {
     public string Status { get; set; } = "waiting";
     public string? ReleaseCommit { get; set; }
-    public bool ReadyForHttpFull { get; set; }
+    // 字段名沿用（发布脚本按名读取）；含义是「全部 blocking gate 均为 pass」。
+    public bool ReadyForRelease { get; set; }
     public int Passed { get; set; }
     public int Blocked { get; set; }
     public int Waiting { get; set; }
-    public int Retained { get; set; }
     public string GeneratedAt { get; set; } = string.Empty;
     public List<RuntimeGateItem> Items { get; set; } = new();
 }
@@ -1881,38 +1881,6 @@ public sealed class GatewayAppCallerItem
     public string? CreatedAt { get; set; }
     public string? UpdatedAt { get; set; }
 }
-
-// ── 影子比对（只读）──
-public sealed class ShadowData { public ShadowSummary Summary { get; set; } = new(); public List<ShadowItem> Recent { get; set; } = new(); }
-public sealed class ShadowSummary
-{
-    public long Total { get; set; }
-    public long AllMatch { get; set; }
-    public long Critical { get; set; }
-    public long HttpFail { get; set; }
-    public double? SinceHours { get; set; }
-    public string? Since { get; set; }
-    public string? ReleaseCommit { get; set; }
-    public string? FirstComparedAt { get; set; }
-    public string? LastComparedAt { get; set; }
-    public double CoverageHours { get; set; }
-}
-public sealed class ShadowItem
-{
-    public string Id { get; set; } = ""; public string Kind { get; set; } = ""; public string? RequestId { get; set; }
-    public string? ReleaseCommit { get; set; }
-    public string AppCallerCode { get; set; } = ""; public string ModelType { get; set; } = ""; public string? ComparedAt { get; set; }
-    public long ShadowDurationMs { get; set; } public bool HttpOk { get; set; } public string? HttpError { get; set; }
-    public bool AllMatch { get; set; } public bool HasCritical { get; set; }
-    public ShadowSnapshotItem Inproc { get; set; } = new(); public ShadowSnapshotItem Http { get; set; } = new();
-    public List<ShadowMismatchItem> Mismatches { get; set; } = new(); public bool? TextMatches { get; set; }
-}
-public sealed class ShadowSnapshotItem
-{
-    public bool Success { get; set; } public string? ActualModel { get; set; } public string? Protocol { get; set; }
-    public string? PlatformType { get; set; } public string? ResolutionType { get; set; } public string? ModelGroupId { get; set; } public bool IsFallback { get; set; }
-}
-public sealed class ShadowMismatchItem { public string Field { get; set; } = ""; public string? Inproc { get; set; } public string? Http { get; set; } public string Severity { get; set; } = ""; }
 
 public sealed class ServiceKeyCreateRequest
 {

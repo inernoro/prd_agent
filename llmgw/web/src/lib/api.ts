@@ -53,7 +53,6 @@ import type {
   BulkUpdateGatewayAppCallersRequest,
   BulkUpdateGatewayAppCallersResult,
   OperationAuditsData,
-  ShadowData,
   PlatformItem,
   PlatformDeleteBlockers,
   ModelDeleteBlockers,
@@ -883,9 +882,6 @@ export function getOperationAudits(params?: {
       sinceHours: params?.sinceHours,
     },
   });
-}
-export function getShadowComparisons(params?: { limit?: number; appCallerCode?: string; kind?: string; releaseCommit?: string; sinceHours?: number }): Promise<ApiResponse<ShadowData>> {
-  return apiRequest<ShadowData>('/shadow-comparisons', { query: { limit: params?.limit, appCallerCode: params?.appCallerCode, kind: params?.kind, releaseCommit: params?.releaseCommit, sinceHours: params?.sinceHours } });
 }
 
 export function getPromptPolicy(appCallerId: string): Promise<ApiResponse<PromptPolicyData>> {

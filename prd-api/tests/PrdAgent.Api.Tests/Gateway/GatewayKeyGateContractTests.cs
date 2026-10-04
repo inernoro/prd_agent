@@ -1174,7 +1174,6 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gemini/v1beta/models/gemini-test:streamGenerateContent" },
         new object[] { HttpMethod.Get, "/gw/v1/pools?appCallerCode=demo.app::chat&modelType=chat" },
         new object[] { HttpMethod.Get, "/gw/v1/image-models?appCallerCode=demo.app::image-gen" },
-        new object[] { HttpMethod.Get, "/gw/v1/shadow-comparisons?sinceHours=24" },
     };
 
     [Theory]
@@ -3661,30 +3660,6 @@ public class GatewayKeyGateContractTests
             var response = await app.GetTestClient().SendAsync(request);
 
             response.StatusCode.ShouldBe(HttpStatusCode.OK);
-            authorizer.SourceSystem.ShouldBe("external");
-            authorizer.AppCallerCode.ShouldBeEmpty();
-            authorizer.RequiredScope.ShouldBe(GatewayLegacyProbeScopes.Route);
-        }
-        finally
-        {
-            await app.StopAsync();
-        }
-    }
-
-    [Fact]
-    public async Task ShadowComparisons_UsesServerDerivedLegacyPreflightScope()
-    {
-        var authorizer = new CapturingScopedKeyAuthorizer(_ => false);
-        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
-        await app.StartAsync();
-        try
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/shadow-comparisons?sinceHours=48");
-            request.Headers.Add("X-Gateway-Key", "legacy-or-scoped-key");
-
-            var response = await app.GetTestClient().SendAsync(request);
-
-            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
             authorizer.SourceSystem.ShouldBe("external");
             authorizer.AppCallerCode.ShouldBeEmpty();
             authorizer.RequiredScope.ShouldBe(GatewayLegacyProbeScopes.Route);

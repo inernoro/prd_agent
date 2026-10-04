@@ -947,7 +947,7 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("wm-1", detail.GetProperty("illustrationChoice").GetProperty("watermark").GetProperty("watermarkId").GetString());
 
             // 网页上重画（页面还钉着按账号默认挑的文生图模型）
-            var web = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!, new LLMRequestContextAccessor(),
+            var web = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!,
                 NullLogger<LiteraryAgentImageGenController>.Instance), "writer");
             var created = Data(await web.CreateRun(new CreateImageGenRunRequest
             {
@@ -983,7 +983,7 @@ public class LiteraryMcpUsabilityTests
             var helperUi = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "helper");
             Assert.Equal(403, Assert.IsType<ObjectResult>(await helperUi.SetIllustrationPrefs(id, new() { Watermark = "none" }, CancellationToken.None)).StatusCode);
             Assert.Equal(JsonValueKind.Null, Data(await helperUi.GetWorkspaceDetail(id)).GetProperty("illustrationChoice").ValueKind);
-            var helperWeb = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!, new LLMRequestContextAccessor(),
+            var helperWeb = WithAdminUser(new LiteraryAgentImageGenController(db, new InMemoryRunEventStore(), null!,
                 NullLogger<LiteraryAgentImageGenController>.Instance), "helper");
             var helperCreated = Data(await helperWeb.CreateRun(new CreateImageGenRunRequest
             {
