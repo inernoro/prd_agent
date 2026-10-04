@@ -146,7 +146,10 @@ public static class LiteraryMcpWorkflow
     public static Dictionary<int, ImageAsset> SelectCurrent(ImageMasterWorkspace workspace, IEnumerable<ImageAsset> assets)
     {
         var workflow = workspace.ArticleWorkflow;
-        var list = assets.Where(a => a.WorkspaceId == workspace.Id && a.ArticleInsertionIndex.HasValue).ToList();
+        // 指针是权威记录：按 id 在工作区全部图里找，不要求图自己记着插入位置——
+        // 没记位置的早期图被放回某个标记后，指针指着它，先按插入位置筛掉就会让它从详情、导出、投稿里消失。
+        var all = assets.Where(a => a.WorkspaceId == workspace.Id).ToList();
+        var list = all.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
         var result = new Dictionary<int, ImageAsset>();
         var markerIndexes = workflow?.Markers?.Select(m => m.Index).ToHashSet();
         bool InScope(int index) => markerIndexes == null || markerIndexes.Count == 0 || markerIndexes.Contains(index);
@@ -154,7 +157,7 @@ public static class LiteraryMcpWorkflow
         foreach (var (key, id) in workflow?.AssetIdByMarkerIndex ?? new Dictionary<string, string>())
         {
             if (!int.TryParse(key, out var index) || !InScope(index)) continue;
-            var asset = list.FirstOrDefault(a => a.Id == id);
+            var asset = all.FirstOrDefault(a => a.Id == id);
             if (asset != null) result[index] = asset;
         }
 

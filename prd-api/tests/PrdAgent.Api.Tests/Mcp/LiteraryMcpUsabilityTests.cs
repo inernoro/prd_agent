@@ -223,6 +223,15 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal(new[] { 0, 1 }, related.Select(a => a.GetProperty("articleInsertionIndex").GetInt32()).ToArray());
             Assert.All(related, a => Assert.Equal("legacy-0", a.GetProperty("id").GetString()));
 
+            // 没记插入位置的早期图被放回第 2 个位置：指针指着它，详情、历史都得认它是当前挂着的图
+            await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "no-index", OwnerUserId = "writer", WorkspaceId = id, Url = "https://example.test/ni.png", CreatedAt = t0.AddMinutes(-5) });
+            Data(await drafts.RestoreImage(id, 1, new() { AssetId = "no-index", WorkflowVersion = 1 }, CancellationToken.None));
+            var afterLegacy = Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray().Select(a => a.GetProperty("id").GetString()).ToList();
+            Assert.Equal(new[] { "legacy-0", "no-index" }, afterLegacy);
+            var legacyItem = Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray()
+                .Single(i => i.GetProperty("assetId").GetString() == "no-index");
+            Assert.True(legacyItem.GetProperty("isCurrent").GetBoolean());
+
             // 整篇换成全新的标记、新版本还没出图：指针表是空的，旧图都保留着，详情不能把它们当成当前图返回
             Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = "全新的一段。\n[插图]: 海边的灯塔\n" }, CancellationToken.None));
             Assert.Empty(Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray());

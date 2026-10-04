@@ -2718,8 +2718,9 @@ public class ImageMasterController : ControllerBase
         // 只取「当前每个标记挂的那张」：历史配图现在会保留在工作区里，按 index 顺序逐个替换
         // 会让同一位置的旧图、重新生成的图各占一个标记，整篇错位。
         var allAssets = await _db.ImageAssets
-            .Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null)
+            .Find(x => x.WorkspaceId == wid)
             .ToListAsync(ct);
+        // 不在查询里按插入位置筛：放回到某个标记上的早期图可能没记位置，指针仍指着它
         var current = PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(ws, allAssets);
         var assets = current.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
 
