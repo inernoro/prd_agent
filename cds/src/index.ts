@@ -112,7 +112,8 @@ import { installProcessFuse } from './services/process-fuse.js';
 import { AuditLiveness, recordAuditFailure } from './services/audit-liveness.js';
 import { reconcileSelfUpdateOutcome } from './services/self-update-outcome.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
-import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
+import { AutoWakeAdmission } from './services/auto-wake-admission.js';
+import { reconcileHostRebootBranch, shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
 import { readPreviewMirror, registerLoadedPreviewMirror } from './services/preview-mirror.js';
@@ -2999,6 +3000,7 @@ proxyService.setScheduler(schedulerService);
 // scheduler-cooled branches; this callback double-guards the same. Errored /
 // crashed / user-stopped branches are never revived here. Kill-switch:
 // CDS_PREVIEW_AUTOWAKE=0 disables it (falls back to the diagnostic page).
+const autoWakeAdmission = new AutoWakeAdmission();
 if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   // #1 重启中断分支按需自愈：访问到一个被 CDS self-update/崩溃重启打断的 error 分支时，
   // 走一次完整重部署（中断分支容器可能没建好，docker restart 不够）。demand-driven + 代理侧
@@ -3117,6 +3119,16 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     const isProjectPaused = () =>
       stateService.getProjects?.().find((p) => p.id === branch.projectId)?.paused === true;
     if (!isAutoWakeEligible(branch, { projectPaused: isProjectPaused() })) return;
+    const releaseAdmission = autoWakeAdmission.tryAcquire(slug);
+    if (!releaseAdmission) {
+      activeServerEventLogStore?.record({
+        category: 'system', severity: 'warn', source: 'proxy.preview-auto-wake',
+        action: 'branch.auto-wake.deferred', projectId: branch.projectId, branchId: slug,
+        message: 'CDS 暂缓自动唤醒：其他分支正在恢复或宿主资源不足，容器已保留，稍后访问可重试',
+        details: { holder: autoWakeAdmission.snapshot() },
+      });
+      return;
+    }
     const services = Object.values(branch.services);
 
     // executorId（远端执行器）那一条已经在 isAutoWakeEligible 里了，不在这里重复判——
@@ -3135,14 +3147,20 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     // so the wake preempts scheduler-cooling (30) while still deferring to real
     // operations: auto-lifecycle (40), webhook deploy (50), manual restart/
     // deploy (80). Semantically accurate too — this is an automatic restart.
-    const lease = beginBackgroundBranchOperation({
-      branchId: slug,
-      kind: 'auto-restart',
-      trigger: 'scheduler',
-      actor: 'scheduler',
-      source: 'proxy.preview-auto-wake',
-      reason: '预览访问自动唤醒（调度器降温分支，docker restart 未重建代码）',
-    });
+    let lease: BranchOperationLease | null;
+    try {
+      lease = beginBackgroundBranchOperation({
+        branchId: slug,
+        kind: 'auto-restart',
+        trigger: 'scheduler',
+        actor: 'scheduler',
+        source: 'proxy.preview-auto-wake',
+        reason: '预览访问自动唤醒（CDS 停机或宿主重启后恢复，docker restart 未重建代码）',
+      });
+    } catch (err) {
+      releaseAdmission();
+      throw err;
+    }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     try {
@@ -3185,6 +3203,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       const failed: string[] = [];
       for (const svc of services) {
         lease?.assertCurrent(`auto-wake before ${svc.profileId}`);
+        if (!autoWakeAdmission.hasHeadroom()) throw new Error('宿主资源不足，已停止继续唤醒；请稍后重新启动分支');
         const ok = await containerService.restartServiceInPlace(svc.containerName, undefined, {
           projectId: branch.projectId,
           branchId: branch.id,
@@ -3399,7 +3418,8 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       // superseded: leave state to the new owner; swallow so the proxy doesn't
       // log a misleading "auto-wake failed".
     } finally {
-      completeBackgroundBranchOperation(lease, branchOperationFinalStatus);
+      try { completeBackgroundBranchOperation(lease, branchOperationFinalStatus); }
+      finally { releaseAdmission(); }
     }
   });
 }
@@ -3949,8 +3969,19 @@ janitorService.setRemoveFn(async (slug: string) => {
     const appContainers = appDiscovery.containers;
     const branches = stateService.getAllBranches();
     let appReconciled = 0;
+    const hostBootedAtMs = Date.now() - os.uptime() * 1000;
 
     for (const branch of branches) {
+      if (appDiscovery.ok && reconcileHostRebootBranch(branch, appContainers, hostBootedAtMs,
+        stateService.getProjects().find((p) => p.id === branch.projectId)?.paused === true)) {
+        appReconciled++;
+        activeServerEventLogStore?.record({
+          category: 'container', severity: 'warn', source: 'startup-reconcile',
+          action: 'branch.reconcile.host-reboot', projectId: branch.projectId, branchId: branch.id,
+          message: branch.lastStopReason!,
+          details: { hostBootedAt: new Date(hostBootedAtMs).toISOString(), services: Object.keys(branch.services) },
+        });
+      }
       if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
         activeServerEventLogStore?.record({
           category: 'container',

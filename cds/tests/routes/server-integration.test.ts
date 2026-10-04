@@ -165,7 +165,7 @@ async function requestRaw(
   server: http.Server,
   method: string,
   urlPath: string,
-  payload: string,
+  payload: string | Buffer,
   headers: http.OutgoingHttpHeaders = {},
 ): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
@@ -381,6 +381,58 @@ describe('Server route ordering (regression)', () => {
       },
     });
   }
+
+  it.each([68, 512 * 1024])('preserves %i-byte screenshots across asynchronous basic authentication and HTTP logging', async (size) => {
+    const logs: HttpLogRecord[] = [];
+    vi.stubEnv('CDS_AUTH_MODE', 'basic');
+    vi.stubEnv('CDS_USERNAME', 'fixture-admin');
+    vi.stubEnv('CDS_PASSWORD', 'fixture-password');
+    vi.stubEnv('CDS_AI_ACCESS_KEY', 'fixture-upload-key');
+    vi.stubEnv('CDS_CACHE_BASE', path.join(tmpDir, 'cache'));
+    try {
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true);
+      // A persisted-session lookup can yield while the request body arrives.
+      vi.spyOn(app.locals.cdsAuthService, 'validateSession').mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return null;
+      });
+      server = await startServer(app);
+      const pngSource = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+      const png = Buffer.alloc(size);
+      pngSource.copy(png);
+      const upload = await requestRaw(server, 'POST', '/api/reports/assets', png, {
+        'Content-Type': 'image/png', 'X-AI-Access-Key': 'fixture-upload-key',
+      });
+      expect(upload.status).toBe(201);
+      const { asset } = JSON.parse(upload.body);
+      expect(asset.sizeBytes).toBe(png.length);
+      const download = await request(server, new URL(asset.url, 'http://localhost').pathname);
+      expect(download.status).toBe(200);
+      expect(download.contentType).toContain('image/png');
+      expect(fs.readFileSync(path.join(tmpDir, 'report-assets', asset.name))).toEqual(png);
+      const log = logs.find((row) => row.path === '/api/reports/assets');
+      expect(log?.status).toBe(201);
+      expect(log?.request?.bodyBytes).toBe(png.length);
+      expect(log?.request?.bodyPreview).toContain('omitted binary body');
+      // Reports bypass the global JSON parser as well; the same async gap
+      // must preserve large text bodies, while normal JSON logging still works.
+      const content = '# Uploaded report\n' + 'evidence '.repeat(15_000);
+      const report = await requestJson(server, 'POST', '/api/reports', {
+        title: 'Upload regression', format: 'md', content,
+      }, { 'X-AI-Access-Key': 'fixture-upload-key' });
+      expect(report.status).toBe(201);
+      const meta = JSON.parse(report.body).report;
+      expect(fs.readFileSync(path.join(tmpDir, 'reports', `${meta.id}.md`), 'utf8')).toBe(content);
+      expect(logs.find((row) => row.path === '/api/reports')?.request?.bodyBytes).toBeGreaterThan(100 * 1024);
+      const denied = await requestRaw(server, 'POST', '/api/reports/assets', png, {
+        'Content-Type': 'image/png', 'X-AI-Access-Key': 'invalid-key',
+      });
+      expect(denied.status).toBe(401);
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('real createServer exposes queryable /api/server-events before branch router fallback', async () => {
     const app = buildRealServerWithEvents([

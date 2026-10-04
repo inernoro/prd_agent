@@ -3220,13 +3220,13 @@ export class ContainerService {
 
   async discoverAppContainersWithStatus(): Promise<{
     ok: boolean;
-    containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>;
+    containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
   }> {
     const result = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
     );
 
-    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>();
+    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
     if (result.exitCode !== 0) return { ok: false, containers: discovered };
     if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
@@ -3245,6 +3245,26 @@ export class ContainerService {
           profileId: profileMatch[1],
           ...(networkMatch?.[1] ? { network: networkMatch[1] } : {}),
         });
+      }
+    }
+    // Batch inspection only for exited containers, never expose environment or
+    // credentials. Failed inspection leaves metadata unknown: recovery fails closed.
+    const exited = [...discovered.values()].filter((c) => !c.running);
+    if (exited.length) {
+      const inspection = await this.shell.exec(
+        `docker inspect --format '{{.Name}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.State.FinishedAt}}' ${exited.map((c) => this.shellQuote(c.containerName)).join(' ')}`,
+        { timeout: 30_000 },
+      );
+      if (inspection.exitCode === 0) {
+        const byName = new Map(exited.map((c) => [c.containerName, c]));
+        for (const line of inspection.stdout.trim().split('\n')) {
+          const [name, code, oom, finishedAt] = line.split('|');
+          const found = byName.get(name?.replace(/^\//, ''));
+          if (!found || !/^-?\d+$/.test(code || '') || !['true', 'false'].includes(oom)) continue;
+          found.exitCode = Number(code);
+          found.oomKilled = oom === 'true';
+          found.finishedAt = finishedAt;
+        }
       }
     }
     return { ok: true, containers: discovered };
