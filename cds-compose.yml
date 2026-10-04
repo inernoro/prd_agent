@@ -353,6 +353,7 @@ services:
       # 口令里一个 @ 就能把主机名解析歪。
       MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
+      LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
       # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
       # 必须是 host:port,user=,password= 这个格式，所以这里用原始 USER/PASSWORD 自己拼，

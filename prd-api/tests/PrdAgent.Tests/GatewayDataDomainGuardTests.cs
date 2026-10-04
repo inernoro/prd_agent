@@ -221,13 +221,23 @@ public class GatewayDataDomainGuardTests
     public void Api_LlmRequestLogReaders_ReadGatewayDatabase()
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
-        Assert.Contains(
-            "new MongoDbContext(mongoConnectionString, mongoDatabaseName, llmRequestLogDatabaseName: llmGatewayDatabaseName)",
-            program);
+        Assert.Contains("llmRequestLogDatabaseName: llmGatewayDatabaseName", program);
+        // 网关库单独部署时，MAP 必须用与 serving 同一个连接串去读，否则读到另一台机器上的空库。
+        Assert.Contains("llmRequestLogConnectionString: llmGatewayMongoConnectionString", program);
+        Assert.Contains("builder.Configuration[\"LlmGateway:MongoConnectionString\"]", program);
+        var compose = ReadRepoFile("docker-compose.yml");
+        Assert.True(
+            compose.Split("LlmGateway__MongoConnectionString", StringSplitOptions.None).Length - 1 >= 4,
+            "正式 compose 的 api、控制台与两份 serving 必须使用同一 GW Mongo 配置入口");
 
         var context = new PrdAgent.Infrastructure.Database.MongoDbContext("mongodb://localhost:27017", "prdagent", "llm_gateway");
         Assert.Equal("llm_gateway", context.LlmRequestLogs.Database.DatabaseNamespace.DatabaseName);
         Assert.Equal("prdagent", context.Users.Database.DatabaseNamespace.DatabaseName);
+
+        var separated = new PrdAgent.Infrastructure.Database.MongoDbContext(
+            "mongodb://map-host:27017", "prdagent", "llm_gateway", "mongodb://gw-host:27017");
+        Assert.Equal("gw-host", separated.LlmRequestLogs.Database.Client.Settings.Server.Host);
+        Assert.Equal("map-host", separated.Users.Database.Client.Settings.Server.Host);
 
         var standalone = new PrdAgent.Infrastructure.Database.MongoDbContext("mongodb://localhost:27017", "llm_gateway");
         Assert.Equal("llm_gateway", standalone.LlmRequestLogs.Database.DatabaseNamespace.DatabaseName);
@@ -242,7 +252,7 @@ public class GatewayDataDomainGuardTests
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
 
-        Assert.Contains("new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName)", program);
+        Assert.Contains("new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName)", program);
         Assert.Contains(
             "builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>\n    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());",
             program);

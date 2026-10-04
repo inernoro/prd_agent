@@ -46,6 +46,7 @@ ALL_LLMGW_PID=""
 ALL_ADMIN_PID=""
 ALL_DESKTOP_PID=""
 ALL_STOPPING=0
+ALL_EXIT_CODE=0
 
 prefix_lines() {
     local prefix="$1"
@@ -172,7 +173,7 @@ stop_all_services() {
     done
 
     log_success "All services stopped!"
-    exit 0
+    exit "${ALL_EXIT_CODE:-0}"
 }
 
 # MAP 的模型调用只走独立网关 serving，本地起后端必须连同 serving 一起起。
@@ -194,12 +195,53 @@ start_llmgw_serving() {
         dotnet run --no-launch-profile
 }
 
+# 等本地网关 healthz 通过才算起来了；进程提前退出（编译失败、端口被占）或超时都判失败，
+# 否则 API 照常起来、所有模型调用却都失败，而启动器还在说「已启动」。
+wait_for_llmgw_ready() {
+    local pid="$1"
+    local timeout_s="${LLMGW_LOCAL_READY_TIMEOUT:-300}"
+    local start
+    start=$(date +%s)
+    if ! command -v curl >/dev/null 2>&1; then
+        log_warn "未找到 curl，跳过本地网关就绪检查（$LLMGW_LOCAL_URL/gw/v1/healthz）"
+        return 0
+    fi
+    log_info "Waiting for LLM gateway serving: $LLMGW_LOCAL_URL/gw/v1/healthz ..."
+    while true; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log_error "LLM gateway serving 启动失败：进程已退出（编译错误或端口被占用），见上方 [llmgw] 日志"
+            return 1
+        fi
+        if curl -fsS -m 3 "$LLMGW_LOCAL_URL/gw/v1/healthz" >/dev/null 2>&1; then
+            log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
+            return 0
+        fi
+        if [ $(( $(date +%s) - start )) -ge "$timeout_s" ]; then
+            log_error "LLM gateway serving ${timeout_s}s 内未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz），见上方 [llmgw] 日志"
+            return 1
+        fi
+        sleep 2
+    done
+}
+
+LLMGW_BACKEND_PID=""
+cleanup_backend_llmgw() {
+    if [ -n "$LLMGW_BACKEND_PID" ]; then
+        kill_tree "$LLMGW_BACKEND_PID" TERM 2>/dev/null
+        LLMGW_BACKEND_PID=""
+    fi
+}
+
 # 启动后端服务
 start_backend() {
     log_info "Starting LLM gateway serving at $LLMGW_LOCAL_URL in background..."
     ( start_llmgw_serving 2>&1 | prefix_lines "[llmgw] " ) &
-    local llmgw_pid=$!
-    trap 'kill_tree "$llmgw_pid" TERM 2>/dev/null; exit 0' INT TERM EXIT
+    LLMGW_BACKEND_PID=$!
+    # 退出时停掉网关，并保留 API 的真实退出码（不能用 exit 0 把失败吞掉）。
+    trap 'rc=$?; cleanup_backend_llmgw; exit $rc' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    wait_for_llmgw_ready "$LLMGW_BACKEND_PID" || exit 1
     log_info "Starting backend server..."
     cd "$SCRIPT_DIR/prd-api/src/PrdAgent.Api"
     dotnet run
@@ -505,6 +547,11 @@ start_all() {
         pnpm tauri:dev
     ) 2>&1 | prefix_lines "[desktop] " ) &
     ALL_DESKTOP_PID=$!
+
+    if ! wait_for_llmgw_ready "$ALL_LLMGW_PID"; then
+        ALL_EXIT_CODE=1
+        stop_all_services
+    fi
 
     log_success "All services started!"
     log_info "API PID: $ALL_API_PID"

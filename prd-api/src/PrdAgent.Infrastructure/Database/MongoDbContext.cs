@@ -22,16 +22,27 @@ public class MongoDbContext
     /// 模型请求日志所在库。MAP 的模型调用全部经独立网关，日志由 serving 写进网关库；
     /// MAP 进程传网关库名，让日志页、成本统计等读者读到同一份。不传则与业务库相同（serving 自身即如此）。
     /// </param>
-    public MongoDbContext(string connectionString, string databaseName, string? llmRequestLogDatabaseName = null)
+    /// <param name="llmRequestLogConnectionString">
+    /// 网关库单独部署在另一台 Mongo 时传它的连接串（与 serving 的 LlmGateway:MongoConnectionString 同源）；不传则与业务库同一连接。
+    /// </param>
+    public MongoDbContext(
+        string connectionString,
+        string databaseName,
+        string? llmRequestLogDatabaseName = null,
+        string? llmRequestLogConnectionString = null)
     {
         // 注册 BSON 类映射（替代注解方式）
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
         _database = client.GetDatabase(databaseName);
+        var logClient = string.IsNullOrWhiteSpace(llmRequestLogConnectionString)
+                        || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
+            ? client
+            : new MongoClient(llmRequestLogConnectionString);
         _llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
             ? _database
-            : client.GetDatabase(llmRequestLogDatabaseName);
+            : logClient.GetDatabase(llmRequestLogDatabaseName);
         
         // 索引由 DBA 手动创建，禁止应用启动时自动创建
         // 索引定义文档：doc/guide.platform.mongodb-indexes.md

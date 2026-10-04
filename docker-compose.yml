@@ -127,6 +127,8 @@ services:
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       # 旧变量保留一版兼容；运行时两者任一为 true 都会对全部 registered caller fail-closed。
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
+      # 网关库单独部署时与 serving 同一个连接串，MAP 的日志页 / 成本统计才读得到 serving 写的日志。
+      - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       # 经 gateway nginx 在两个 serving 实例间负载均衡；不再把 MAP 固定到单实例。
       - LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}

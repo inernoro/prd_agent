@@ -135,9 +135,17 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 var llmGatewayDatabaseName = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
+// 网关库可以单独部署在另一台 Mongo：取值口径与 llmgw serving 的 Program.cs 一致，未配置时回落业务库连接。
+var llmGatewayMongoConnectionString = builder.Configuration["LlmGateway:MongoConnectionString"]
+    ?? builder.Configuration["LLMGW_MONGO_CONNECTION_STRING"];
+if (string.IsNullOrWhiteSpace(llmGatewayMongoConnectionString)) llmGatewayMongoConnectionString = mongoConnectionString;
 // 模型请求日志由网关 serving 写进网关库，MAP 侧日志页 / 成本统计读同一份，不再读业务库里的旧集合。
-builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName, llmRequestLogDatabaseName: llmGatewayDatabaseName));
-builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName));
+builder.Services.AddSingleton(new MongoDbContext(
+    mongoConnectionString,
+    mongoDatabaseName,
+    llmRequestLogDatabaseName: llmGatewayDatabaseName,
+    llmRequestLogConnectionString: llmGatewayMongoConnectionString));
+builder.Services.AddSingleton(new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();

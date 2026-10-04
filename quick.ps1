@@ -265,11 +265,44 @@ function Start-LlmgwServingJob {
     } -ArgumentList "$ScriptDir\llmgw\serving\PrdAgent.LlmGateway.csproj", $LlmgwLocalUrl, $jwtSecret
 }
 
+# Report the gateway as started only after /gw/v1/healthz answers. If the serving job exits early
+# (compile error, port in use) or never becomes healthy, fail instead of leaving an API whose
+# every model call errors out while the launcher claims success.
+function Wait-LlmgwReady {
+    param($Job)
+    $timeoutSec = if ($env:LLMGW_LOCAL_READY_TIMEOUT) { [int]$env:LLMGW_LOCAL_READY_TIMEOUT } else { 300 }
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    Write-Info "Waiting for LLM gateway serving: $LlmgwLocalUrl/gw/v1/healthz ..."
+    while ($true) {
+        # Send job output to the host, not the pipeline: anything left in the pipeline becomes part of the return value.
+        Receive-Job -Job $Job -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+        if ($Job.State -ne "Running") {
+            Write-Err "LLM gateway serving failed to start (job $($Job.State)); see the [llmgw] output above"
+            return $false
+        }
+        try {
+            $resp = Invoke-WebRequest -Uri "$LlmgwLocalUrl/gw/v1/healthz" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+            if ($resp.StatusCode -eq 200) {
+                Write-Success "LLM gateway serving ready at $LlmgwLocalUrl"
+                return $true
+            }
+        } catch {}
+        if ((Get-Date) -gt $deadline) {
+            Write-Err "LLM gateway serving not ready within ${timeoutSec}s ($LlmgwLocalUrl/gw/v1/healthz); see the [llmgw] output above"
+            return $false
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
 function Start-Backend {
     Write-Info "Starting LLM gateway serving at $LlmgwLocalUrl in background..."
     $llmgwJob = Start-LlmgwServingJob
-    Write-Info "Starting backend server..."
     try {
+        if (-not (Wait-LlmgwReady -Job $llmgwJob)) {
+            exit 1
+        }
+        Write-Info "Starting backend server..."
         dotnet watch run --project "$ScriptDir\prd-api\src\PrdAgent.Api\PrdAgent.Api.csproj"
     }
     finally {
@@ -420,6 +453,14 @@ function Start-All {
         pnpm -C $dir tauri:dev 2>&1 | ForEach-Object { "[desktop] $_" }
     } -ArgumentList "$ScriptDir\prd-desktop"
     
+    if (-not (Wait-LlmgwReady -Job $llmgwJob)) {
+        foreach ($job in @($backendJob, $llmgwJob, $adminJob, $desktopJob)) {
+            Stop-Job -Job $job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job -ErrorAction SilentlyContinue
+        }
+        exit 1
+    }
+
     Write-Success "All services started!"
     Write-Info "Backend Job ID: $($backendJob.Id)"
     Write-Info "LLM Gateway Serving Job ID: $($llmgwJob.Id)"
