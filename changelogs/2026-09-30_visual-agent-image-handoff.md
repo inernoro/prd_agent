@@ -7,3 +7,4 @@
 | test | prd-api | 增加参考图数量契约及 image2、2.5 等逻辑模型通用引用审计矩阵 |
 | refactor | platform | 删除已停用的 Cursor 规则镜像、同步脚本与宿主安装分支，收敛到 Claude 和通用 Agent 两套目录 |
 | test | cds | 更新技能安装跨端契约，防止重新生成或分发 Cursor 目录 |
+| docs | visual-agent | 记录 image2.5 正式上游单线路超时的验收证据与恢复条件 |
