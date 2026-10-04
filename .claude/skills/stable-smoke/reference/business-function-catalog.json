@@ -275,10 +275,10 @@
       "requiredCaseIds": ["CORE-001", "CORE-005", "CORE-006", "COMMON-003", "COMMON-004"],
       "regressionCaseIds": ["REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001"],
       "cdsOnlyRegressionCaseIds": ["REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001"],
-      "sourcePrefixes": [".claude/skills/stable-smoke/", "scripts/stable-smoke-", "scripts/render-stable-smoke-report.mjs", "e2e/specs/stable-smoke.spec.ts"],
+      "sourcePrefixes": [".claude/skills/stable-smoke/", ".claude/skills/create-visual-test-to-kb/scripts/", "scripts/stable-smoke-", "scripts/render-stable-smoke-report.mjs", "e2e/specs/stable-smoke.spec.ts"],
       "cdsPolicy": "目录校验、变更映射、48 小时节拍、报告准入、失败通知和证据保留",
       "productionPolicy": "只执行安全矩阵；自身失败不得伪装为业务通过",
-      "artifactAssertions": ["计划固定 catalogVersion 与 commit", "未映射变更可见", "条件通过或失败必通知"],
+      "artifactAssertions": ["计划固定 catalogVersion 与 commit", "未映射变更可见", "条件通过或失败必通知", "报告真实展开完整版后核对完整正文", "异常与重叠运行无已验证报告时禁止通知"],
       "cleanup": "本地运行目录按策略回收，CDS 报告和回归台账永久保留",
       "rollback": "稳定冒烟故障不直接改生产；通过 CDS 回滚被判定异常的产品版本"
     }
