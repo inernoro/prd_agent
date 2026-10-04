@@ -460,6 +460,30 @@ test('验收报告使用真实技术附录链接替换占位地址', () => {
   assert.match(report, /https:\/\/cds\.example\/reports\?id=1/);
 });
 
+test('主管报告为只读 Markdown 中的内部导航补齐真实锚点', () => {
+  const functional = `# 报告
+
+## 模块验收总览
+
+| 模块 | 查看步骤 | 查看缺陷 | 查看方法 |
+|---|---|---|---|
+| 只读检查 | [查看](#逐模块视觉取证任务) | [查看](#视觉异常证据索引) | [查看](#关联测试方法) |
+
+## 关联测试方法
+
+- 只读健康检查
+
+## 逐模块视觉取证任务
+
+本轮不要求截图。`;
+  const report = composeSupervisorReport(functional, '# 视觉\n');
+
+  for (const target of ['关联测试方法', '逐模块视觉取证任务', '视觉异常证据索引']) {
+    assert.match(report, new RegExp(`<a id="${target}"></a>`));
+  }
+  assert.match(report, /本轮没有可列出的视觉异常证据/);
+});
+
 test('视觉门禁报告会合成满足归档准入字段的模块总览', () => {
   const functional = `# 功能报告
 
