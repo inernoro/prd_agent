@@ -213,7 +213,7 @@ wait_for_llmgw_ready() {
             return 1
         fi
         if curl -fsS -m 3 "$LLMGW_LOCAL_URL/gw/v1/healthz" >/dev/null 2>&1; then
-            log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
+            wait_for_llmgw_dependencies
             return 0
         fi
         if [ $(( $(date +%s) - start )) -ge "$timeout_s" ]; then
@@ -224,11 +224,63 @@ wait_for_llmgw_ready() {
     done
 }
 
+# 进程活着之后再看依赖就绪（网关库、密钥解密、路由、场景能力）。全新的本地库还没配网关时
+# 这一步本来就过不了，而开发者正要先把应用跑起来去配置，所以不就绪不退出——但必须明说，
+# 并把 readyz 里没过的组件打出来，不能报成「已就绪」。
+LLMGW_LOCAL_READY_STATE="unknown"
+wait_for_llmgw_dependencies() {
+    local grace_s="${LLMGW_LOCAL_READY_GRACE:-60}"
+    local start
+    start=$(date +%s)
+    while true; do
+        if curl -fsS -m 5 "$LLMGW_LOCAL_URL/gw/v1/healthz/ready" >/dev/null 2>&1; then
+            LLMGW_LOCAL_READY_STATE="ready"
+            log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
+            return 0
+        fi
+        if [ $(( $(date +%s) - start )) -ge "$grace_s" ]; then
+            break
+        fi
+        sleep 2
+    done
+    LLMGW_LOCAL_READY_STATE="not-ready"
+    log_warn "LLM gateway serving 进程在线但依赖未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz/ready 非 200），模型调用会失败。未通过的组件："
+    curl -sS -m 10 -H "X-Gateway-Key: $LlmGwServe__ApiKey" "$LLMGW_LOCAL_URL/gw/v1/readyz" 2>&1 | head -c 1500
+    echo
+    log_warn "全新本地库通常是还没在网关控制台配置平台与模型；配好后无需重启，就绪探针会自动转绿。"
+}
+
 LLMGW_BACKEND_PID=""
 cleanup_backend_llmgw() {
     if [ -n "$LLMGW_BACKEND_PID" ]; then
         kill_tree "$LLMGW_BACKEND_PID" TERM 2>/dev/null
-        LLMGW_BACKEND_PID=""
+        # 进程活着之后再看依赖就绪（网关库、密钥解密、路由、场景能力）。全新的本地库还没配网关时
+# 这一步本来就过不了，而开发者正要先把应用跑起来去配置，所以不就绪不退出——但必须明说，
+# 并把 readyz 里没过的组件打出来，不能报成「已就绪」。
+LLMGW_LOCAL_READY_STATE="unknown"
+wait_for_llmgw_dependencies() {
+    local grace_s="${LLMGW_LOCAL_READY_GRACE:-60}"
+    local start
+    start=$(date +%s)
+    while true; do
+        if curl -fsS -m 5 "$LLMGW_LOCAL_URL/gw/v1/healthz/ready" >/dev/null 2>&1; then
+            LLMGW_LOCAL_READY_STATE="ready"
+            log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
+            return 0
+        fi
+        if [ $(( $(date +%s) - start )) -ge "$grace_s" ]; then
+            break
+        fi
+        sleep 2
+    done
+    LLMGW_LOCAL_READY_STATE="not-ready"
+    log_warn "LLM gateway serving 进程在线但依赖未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz/ready 非 200），模型调用会失败。未通过的组件："
+    curl -sS -m 10 -H "X-Gateway-Key: $LlmGwServe__ApiKey" "$LLMGW_LOCAL_URL/gw/v1/readyz" 2>&1 | head -c 1500
+    echo
+    log_warn "全新本地库通常是还没在网关控制台配置平台与模型；配好后无需重启，就绪探针会自动转绿。"
+}
+
+LLMGW_BACKEND_PID=""
     fi
 }
 
@@ -553,7 +605,11 @@ start_all() {
         stop_all_services
     fi
 
-    log_success "All services started!"
+    if [ "$LLMGW_LOCAL_READY_STATE" = "ready" ]; then
+        log_success "All services started!"
+    else
+        log_warn "All services started, but LLM gateway serving is NOT ready (model calls will fail until it is)."
+    fi
     log_info "API PID: $ALL_API_PID"
     log_info "LLM gateway serving PID: $ALL_LLMGW_PID"
     log_info "Admin PID: $ALL_ADMIN_PID"

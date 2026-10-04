@@ -283,7 +283,7 @@ function Wait-LlmgwReady {
         try {
             $resp = Invoke-WebRequest -Uri "$LlmgwLocalUrl/gw/v1/healthz" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
             if ($resp.StatusCode -eq 200) {
-                Write-Success "LLM gateway serving ready at $LlmgwLocalUrl"
+                Wait-LlmgwDependencies
                 return $true
             }
         } catch {}
@@ -293,6 +293,39 @@ function Wait-LlmgwReady {
         }
         Start-Sleep -Seconds 2
     }
+}
+
+# After the process is up, check dependency readiness (gateway Mongo, key decryption, routing,
+# scenario capability). A fresh local database fails this until the gateway is configured, and the
+# developer needs the app running to configure it, so not-ready does not abort -- but it is reported
+# loudly with the failing components instead of being announced as ready.
+$script:LlmgwReadyState = "unknown"
+function Wait-LlmgwDependencies {
+    $graceSec = if ($env:LLMGW_LOCAL_READY_GRACE) { [int]$env:LLMGW_LOCAL_READY_GRACE } else { 60 }
+    $deadline = (Get-Date).AddSeconds($graceSec)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $ready = Invoke-WebRequest -Uri "$LlmgwLocalUrl/gw/v1/healthz/ready" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            if ($ready.StatusCode -eq 200) {
+                $script:LlmgwReadyState = "ready"
+                Write-Success "LLM gateway serving ready at $LlmgwLocalUrl"
+                return
+            }
+        } catch {}
+        Start-Sleep -Seconds 2
+    }
+    $script:LlmgwReadyState = "not-ready"
+    Write-Warn "LLM gateway serving is up but its dependencies are NOT ready ($LlmgwLocalUrl/gw/v1/healthz/ready is not 200); model calls will fail. Failing components:"
+    try {
+        $detail = Invoke-WebRequest -Uri "$LlmgwLocalUrl/gw/v1/readyz" -Headers @{ "X-Gateway-Key" = $env:LlmGwServe__ApiKey } -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        Write-Host $detail.Content
+    } catch {
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            Write-Host $reader.ReadToEnd()
+        }
+    }
+    Write-Warn "A fresh local database usually just lacks gateway platforms/models; once configured, readiness turns green without a restart."
 }
 
 function Start-Backend {
@@ -461,7 +494,11 @@ function Start-All {
         exit 1
     }
 
-    Write-Success "All services started!"
+    if ($script:LlmgwReadyState -eq "ready") {
+        Write-Success "All services started!"
+    } else {
+        Write-Warn "All services started, but LLM gateway serving is NOT ready (model calls will fail until it is)."
+    }
     Write-Info "Backend Job ID: $($backendJob.Id)"
     Write-Info "LLM Gateway Serving Job ID: $($llmgwJob.Id)"
     Write-Info "Admin Panel Job ID: $($adminJob.Id)"

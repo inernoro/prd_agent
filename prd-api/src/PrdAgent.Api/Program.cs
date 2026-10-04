@@ -140,11 +140,16 @@ var llmGatewayMongoConnectionString = builder.Configuration["LlmGateway:MongoCon
     ?? builder.Configuration["LLMGW_MONGO_CONNECTION_STRING"];
 if (string.IsNullOrWhiteSpace(llmGatewayMongoConnectionString)) llmGatewayMongoConnectionString = mongoConnectionString;
 // 模型请求日志由网关 serving 写进网关库，MAP 侧日志页 / 成本统计读同一份，不再读业务库里的旧集合。
+// 网关库里还有外部租户的日志：MAP 只看、只改、只删内部租户那一份。
+var llmGatewayInternalTenantId = builder.Configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configuredTenantId
+    ? configuredTenantId
+    : PrdAgent.Core.LlmGateway.GatewayTenantDefaults.InternalTenantId;
 builder.Services.AddSingleton(new MongoDbContext(
     mongoConnectionString,
     mongoDatabaseName,
     llmRequestLogDatabaseName: llmGatewayDatabaseName,
-    llmRequestLogConnectionString: llmGatewayMongoConnectionString));
+    llmRequestLogConnectionString: llmGatewayMongoConnectionString,
+    llmRequestLogTenantId: llmGatewayInternalTenantId));
 builder.Services.AddSingleton(new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();

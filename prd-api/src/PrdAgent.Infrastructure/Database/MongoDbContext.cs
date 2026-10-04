@@ -11,7 +11,7 @@ namespace PrdAgent.Infrastructure.Database;
 public class MongoDbContext
 {
     private readonly IMongoDatabase _database;
-    private readonly IMongoDatabase _llmRequestLogDatabase;
+    private readonly IMongoCollection<LlmRequestLog> _llmRequestLogs;
 
     /// <summary>
     /// 暴露底层 IMongoDatabase 实例（用于 DropCollectionAsync 等高级操作）
@@ -25,11 +25,16 @@ public class MongoDbContext
     /// <param name="llmRequestLogConnectionString">
     /// 网关库单独部署在另一台 Mongo 时传它的连接串（与 serving 的 LlmGateway:MongoConnectionString 同源）；不传则与业务库同一连接。
     /// </param>
+    /// <param name="llmRequestLogTenantId">
+    /// 网关日志集合由全部租户共用。MAP 进程传内部租户 ID，日志的每一次读写都被限定在这个租户上；
+    /// serving 自己要写所有租户的日志，不传。
+    /// </param>
     public MongoDbContext(
         string connectionString,
         string databaseName,
         string? llmRequestLogDatabaseName = null,
-        string? llmRequestLogConnectionString = null)
+        string? llmRequestLogConnectionString = null,
+        string? llmRequestLogTenantId = null)
     {
         // 注册 BSON 类映射（替代注解方式）
         BsonClassMapRegistration.Register();
@@ -40,9 +45,15 @@ public class MongoDbContext
                         || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
             ? client
             : new MongoClient(llmRequestLogConnectionString);
-        _llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
+        var llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
             ? _database
             : logClient.GetDatabase(llmRequestLogDatabaseName);
+        var llmRequestLogs = llmRequestLogDatabase.GetCollection<LlmRequestLog>("llmrequestlogs");
+        _llmRequestLogs = string.IsNullOrWhiteSpace(llmRequestLogTenantId)
+            ? llmRequestLogs
+            : new ScopedMongoCollection<LlmRequestLog>(
+                llmRequestLogs,
+                Builders<LlmRequestLog>.Filter.Eq(x => x.TenantId, llmRequestLogTenantId.Trim()));
         
         // 索引由 DBA 手动创建，禁止应用启动时自动创建
         // 索引定义文档：doc/guide.platform.mongodb-indexes.md
@@ -89,7 +100,7 @@ public class MongoDbContext
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
-    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _llmRequestLogDatabase.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _llmRequestLogs;
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");

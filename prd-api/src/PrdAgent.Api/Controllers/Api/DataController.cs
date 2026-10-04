@@ -792,7 +792,8 @@ public class DataController : ControllerBase
         if (requested.Contains("llmlogs") || requested.Contains("llmrequestlogs") || requested.Contains("logs"))
         {
             matchedAny = true;
-            // 日志集合在网关库里且带网关建的 TTL 索引：只删文档，不 drop 集合。
+            // 日志集合在网关库里、由全部租户共用且带网关建的 TTL 索引：只删文档、不 drop 集合，
+            // 且 _db.LlmRequestLogs 已限定在内部租户，删不到外部租户的日志。
             var deletedLogs = await _db.LlmRequestLogs.DeleteManyAsync(_ => true);
             payload.LlmRequestLogs = deletedLogs.DeletedCount;
         }

@@ -225,6 +225,8 @@ public class GatewayDataDomainGuardTests
         // 网关库单独部署时，MAP 必须用与 serving 同一个连接串去读，否则读到另一台机器上的空库。
         Assert.Contains("llmRequestLogConnectionString: llmGatewayMongoConnectionString", program);
         Assert.Contains("builder.Configuration[\"LlmGateway:MongoConnectionString\"]", program);
+        // 网关库里还有外部租户的日志：MAP 的日志读写一律限定在内部租户（行为见 ScopedMongoCollectionTests）。
+        Assert.Contains("llmRequestLogTenantId: llmGatewayInternalTenantId", program);
         var compose = ReadRepoFile("docker-compose.yml");
         Assert.True(
             compose.Split("LlmGateway__MongoConnectionString", StringSplitOptions.None).Length - 1 >= 4,
@@ -285,6 +287,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("builder.Services.AddSingleton(new MongoDbContext(mongoConn, mongoDb));", program);
         Assert.Contains("builder.Services.AddSingleton(new LlmGatewayDataContext(gatewayMongoConn, gatewayDb));", program);
         Assert.Contains("builder.Configuration[\"LlmGateway:MongoConnectionString\"]", program);
+        // serving 写的是全部租户的日志，它的日志集合不能被限定在某个租户上。
+        Assert.DoesNotContain("llmRequestLogTenantId", program);
         Assert.Contains("new LlmRequestLogBackground(\n        sp.GetRequiredService<LlmGatewayDataContext>().Context", program);
         Assert.Contains("new LlmRequestLogWriter(\n        sp.GetRequiredService<LlmGatewayDataContext>().Context", program);
         Assert.Contains("new GatewayAppSettingsService(", program);
