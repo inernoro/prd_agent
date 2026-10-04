@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LLM Gateway serving availability and auth probe.
 
-This read-only probe is meant for S5/S6 rollout evidence. It checks protected
+This read-only probe runs after every production deploy (exec_dep.sh). It checks protected
 /gw/v1/readyz dependencies with a key, repeatedly checks /gw/v1/healthz without a key,
 verifies the reported commit is stable, and checks that protected endpoints
 reject unauthenticated access.
@@ -102,7 +102,6 @@ def _default_protected_checks() -> list[dict]:
     return [
         {"method": "GET", "path": "/route-self-test", "body": None},
         {"method": "GET", "path": "/pools?appCallerCode=report-agent.generate%3A%3Achat&modelType=chat", "body": None},
-        {"method": "GET", "path": "/shadow-comparisons", "body": None},
         {"method": "POST", "path": "/resolve", "body": chat_body},
         {"method": "POST", "path": "/send", "body": chat_body},
         {"method": "POST", "path": "/stream", "body": chat_body},

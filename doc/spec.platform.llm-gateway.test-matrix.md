@@ -46,7 +46,7 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 | D9 上下文 | 系统提示词 / 多轮 messages / 文档注入 / ImageReferences | A(流到日志) + D(多轮真打) | 字段不丢、UserId 非空 | Context 缺 UserId → 日志 UserId 空被发现 |
 | D10 环境 | 正常 / 实验室 `prd-agent-web.lab::*` / 模型实验室 `model-lab.run` / 竞技场 `arena.battle` | A + D | 各入口能解析、不串 | lab 单模型却落默认池 → 报 |
 | D11 上游中断 | 500 / 超时 / 连接重置 / 畸形SSE / 空响应 | B(解析健壮) + C(→Fail) | 不崩，归一为失败且可观测(blackhole/failed) | **主 canary**：桩必返错 → 断言 Success=false 且被记 |
-| D12 负载/极速 | 并发 N / inproc vs http / keepalive / 断开不取消(server-authority) | C(并发) + D(真并发) | 并发不串租户、断开不取消上游 | 并发下 resolve 串号 → 报 |
+| D12 负载/极速 | 并发 N / keepalive / 断开不取消(server-authority) | C(并发) + D(真并发) | 并发不串租户、断开不取消上游 | 并发下 resolve 串号 → 报 |
 | D13 演示/桩 | StubOpenAIController chat / stub-image / 确定性返回 | C/D 用桩平台 | 桩稳定可重放 | 桩平台未注册 → 用例报缺前置 |
 | D14 一平台多请求方式 | per-pool-item / per-model protocol 覆盖同 platform | A | 同 platform 出不同 protocol | 覆盖被忽略仍用 platformType → 报 |
 | D15 AppCaller 多池边界 | 获准池 / 默认池 / 未知池 / 越权池 / 类型错误 | A + C + D | 只解析获准池；未知和越权 fail-closed | 用户选 A 实际落 B → critical |

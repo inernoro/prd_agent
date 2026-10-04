@@ -1,6 +1,6 @@
 # LLM 网关物理独立设计 · 设计
 
-> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v2.1 | **日期**：2026-10-04 | **状态**：已落地
 
 > **范围**：MAP 与独立 LLM Gateway 的控制面、数据面和迁移边界
 
@@ -12,7 +12,7 @@
 
 LLM Gateway 已从 MAP 业务进程中剥离为独立 serving 数据面和独立 console 控制面。生产主路径由 MAP 的 `HttpLlmGatewayClient` 跨进程调用 `llmgw-serve`；模型解析、上游发送、协议转换、模型池健康、网关日志和配置权威均在网关侧完成。
 
-MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池与平台配置权威。旧 `inproc` 与 `shadow` 实现仅用于迁移证据和显式破玻璃回滚，不能成为生产漏配时的静默默认值。
+MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池与平台配置权威。MAP 只有这一条模型调用路径：进程内直连（`inproc`）、影子比对（`shadow`）和模式开关已于 2026-10 删除，失败靠发布版本回退，不靠运行时切换。
 
 ## 2. 组件与职责
 
@@ -22,7 +22,7 @@ MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池�
 | `llmgw-serve` | resolve、send、stream、raw、协议适配、模型池、网关日志 | 部署内网 |
 | `llmgw` console API | 账号、权限、配置、审计、日志与发布证据 | 经 `llmgw-web` 访问 |
 | `llmgw-web` | 网关运维控制台 | 命名预览入口 |
-| `llm_gateway` 数据库 | 网关配置、账号、审计、请求日志和 shadow 证据 | 网关服务专用 |
+| `llm_gateway` 数据库 | 网关配置、账号、审计和请求日志 | 网关服务专用 |
 
 控制台后端和 serving 后端不应作为普通公网业务页面发布。浏览器只访问控制台 Web；MAP 与 Web 在部署内网调用对应后端。
 
@@ -58,7 +58,7 @@ MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池�
 - `healthz`、`readyz` 和路由自检；
 - `resolve`、`invoke`、`send`、`stream` 与 `raw`；
 - request cancel 与 status；
-- profile test、pools、client stream 和 shadow comparisons。
+- profile test、pools 和 client stream。
 
 兼容入口覆盖 OpenAI Responses、Chat、Images，Anthropic Messages 和 Gemini generate/stream。兼容入口仍必须经过同一租户、权限、预算、解析、日志和协议适配链，不能另建直连旁路。
 
@@ -74,7 +74,7 @@ MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池�
 
 流式调用由 serving 读取上游并按 SSE 透传，MAP 只做协议代理和业务事件映射。客户端断开、业务取消和服务超时必须传播到上游请求；长流不能依赖普通短请求超时。
 
-首字节、结束原因、工具调用数、token、requestId 和 transport 应由权威执行进程记录。日志与影子写入失败不能改变已经产生的模型结果，但必须留下可观测告警。
+首字节、结束原因、工具调用数、token、requestId 和 transport 应由权威执行进程记录。日志写入失败不能改变已经产生的模型结果，但必须留下可观测告警。
 
 ### 3.6 响应与 Server Authority
 
@@ -82,17 +82,11 @@ MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池�
 
 错误响应必须区分鉴权、预算、无可用模型、协议不支持、上游失败、超时、取消和网关不可用。MAP 不应把网关 5xx 改写成空成功结果，也不能在失败时静默直连模型。
 
-## 4. 运行模式与迁移
+## 4. 唯一调用路径
 
-| 模式 | 权威路径 | 用途 |
-| --- | --- | --- |
-| `http` | 独立 serving | 生产目标和当前主路径 |
-| `shadow` | 非白名单走 inproc，后台比对 HTTP；白名单走 HTTP | 切流前积累证据 |
-| `inproc` | MAP 进程内旧实现 | 本地开发或显式破玻璃回滚 |
+MAP 的全部模型调用都经 `HttpLlmGatewayClient` 打到独立 serving，生产、CDS 预览与本地开发一致，没有运行时开关可以切换。迁移期曾有三种模式（`inproc` 进程内直连、`shadow` 影子比对、`http`），以及按调用方灰度的白名单与配套的分阶段发布脚本；它们只服务于切换本身，切换完成后已整体删除。
 
-生产必须显式配置模式。`HttpAppCallerAllowlist` 用于按 appCaller 灰度，不得长期形成双权威。shadow 默认只比较解析，完整内容采样必须受百分比和 allowlist 控制，避免无界双倍模型费用。
-
-每条请求记录真实 transport。shadow 编排状态不能覆盖实际 `inproc` 或 `http` 传输事实。
+每条请求记录真实 transport。存量日志里的 `inproc` / `shadow` 是迁移期写入的历史值。
 
 ## 5. 配置与数据权威
 
@@ -101,7 +95,7 @@ MAP 保留业务上下文、业务 Run 和自身日志，不再拥有模型池�
 - appCaller 注册与模型池绑定；
 - 平台、模型、exchange 和协议配置；
 - scoped service key、租户和权限；
-- 网关请求日志、shadow comparison、操作与登录审计；
+- 网关请求日志、操作与登录审计；
 - 发布 gate 和配置迁移证据。
 
 MAP 数据库继续保存 MAP 业务日志、会话、Run 和业务产物。两侧通过 requestId、sessionId、appCaller 和 traceId 关联，不把两种日志混成单一集合。
@@ -133,30 +127,26 @@ console Web 既可能挂在根路径，也可能挂在独立子域的子路径�
 | 日志或对象存储失败 | 主调用按策略继续或失败，但记录告警 |
 | 单 serving 失效 | 内部负载均衡转到健康实例 |
 | 配置或协议回归 | 阻断 release gate，回滚发布 |
-| 必须恢复旧路径 | 显式执行破玻璃回滚到 `inproc`，并记录操作 |
+| 新版本整体有问题 | 用上一个提交号走一遍正常发布流程 |
 
-回滚是受控运维动作，不是应用代码里的自动 fallback。恢复 HTTP 前必须重新跑当前 commit 的健康、协议、transport 和真实 appCaller 证据。
+回滚是受控运维动作，不是应用代码里的自动 fallback；MAP 没有可以退回的进程内旧路径。
 
 ## 8. 发布门禁
 
-进入或维持 full-http 至少需要：
+每次发布至少需要：
 
-- serving `healthz`、`readyz` 和构建 commit 一致；
-- 原生与兼容协议合同测试通过；
-- scoped key、租户隔离、预算和安全出站测试通过；
-- 当前版本无非预期 direct/inproc transport；
-- active appCaller 具备真实 send、stream 或 raw 证据；
-- shadow critical 与 httpFail 为零，或满足维护发布的受控证据保留规则；
-- 配置权威报告 ready，MAP fallback 对象已按门禁收口；
-- 回滚脚本 dry-run 和 serving 真机 smoke 通过。
+- serving 容器健康检查通过（发布脚本强制等待）；
+- 配置了网关探测地址与 key 时，serving `healthz` 构建 commit 一致、无 key 请求被拒、D 层 smoke 通过；
+- 原生与兼容协议合同测试、scoped key、租户隔离、预算和安全出站测试在 CI 通过；
+- 当前版本无非预期 direct transport。
 
 可执行命令、样本阈值和波次进度只维护在计划、测试矩阵与脚本中，不复制到本设计。
 
 ## 9. 当前状态与剩余边界
 
-已落地：生产 full-http 主路径、独立 serving、独立控制台、网关数据域、协议兼容入口、日志 transport、shadow 证据、配置权威与发布 gate。
+已落地：MAP 只走独立 serving、独立控制台、网关数据域、协议兼容入口、日志 transport 与配置权威。
 
-仍保留但不承载正常生产流量：MAP 内 `LlmGateway`、`ShadowLlmGateway` 和部分 legacy resolver。它们的删除窗口、跨项目隔离和剩余风险记录在计划与债务文档中。保留旧代码不代表允许新调用绕过网关。
+`LlmGateway` 类仍在 `PrdAgent.Infrastructure`，但它是 serving 的执行引擎，MAP 不再构造它（源码守卫 `Api_LlmGateway_IsHttpOnly`）。serving 内部的 legacy 配置兜底（未在网关配置的调用方退回 MAP 旧配置选模）仍保留，删除前提记在 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)。
 
 ## 10. 关联文档
 

@@ -28,7 +28,6 @@ public class LiteraryAgentImageGenController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
     private readonly ILlmGateway _gateway;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<LiteraryAgentImageGenController> _logger;
 
     private const string AppKey = "literary-agent";
@@ -38,13 +37,11 @@ public class LiteraryAgentImageGenController : ControllerBase
         MongoDbContext db,
         IRunEventStore runStore,
         ILlmGateway gateway,
-        ILLMRequestContextAccessor llmRequestContext,
         ILogger<LiteraryAgentImageGenController> logger)
     {
         _db = db;
         _runStore = runStore;
         _gateway = gateway;
-        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -362,7 +359,6 @@ public class LiteraryAgentImageGenController : ControllerBase
             AppKey = AppKey, // 硬编码 literary-agent
             ArticleMarkerIndex = articleMarkerIndex,
             InitImageAssetSha256 = initImageAssetSha256,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

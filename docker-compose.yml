@@ -123,13 +123,7 @@ services:
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       - OpenRouter__Referer=${OPENROUTER_REFERER:-}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜路径），无独立渲染容器
-      # 跨进程 LLM 网关开关：生产必须显式设置。http 让 MAP 调用经 HttpLlmGatewayClient
-      # 打到 llmgw-serve；inproc 只允许破玻璃回滚脚本显式设置，禁止漏配静默回退。
-      - LlmGateway__Mode=${LLMGW_MODE}
-      - LlmGateway__LogicalModelsRequireHttp=${LLMGW_LOGICAL_MODELS_REQUIRE_HTTP:-true}
-      - LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}
-      - LlmGateway__ShadowFullSamplePercent=${LLMGW_SHADOW_FULL_SAMPLE_PERCENT:-0}
-      - LlmGateway__ShadowFullSampleAppCallerAllowlist=${LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST:-}
+      # MAP 的模型调用全部经 HttpLlmGatewayClient 打到独立网关 serving（没有其它路径可切）。
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       # 旧变量保留一版兼容；运行时两者任一为 true 都会对全部 registered caller fail-closed。
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
@@ -180,9 +174,9 @@ services:
     restart: unless-stopped
 
   # 独立 LLM serving 网关 llmgw-serve —— DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*。
-  # 主库只承载 MAP 业务依赖；appCaller、模型池、平台、exchange、请求日志和 shadow 证据均从
+  # 主库只承载 MAP 业务依赖；appCaller、模型池、平台、exchange 和请求日志均从
   # LlmGateway__DatabaseName（默认 llm_gateway）读取。ApiKeyCrypto__Secret 与资产存储由两实例共享。
-  # MAP 置 LlmGateway__Mode=http 时跨进程打到这里；生产缺少 mode 时 API 拒绝启动。
+  # MAP 的全部模型调用都跨进程打到这里。
   llmgw-serve:
     image: ${PRD_AGENT_LLMGW_SERVE_IMAGE:-ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:latest}
     container_name: prdagent-llmgw-serve
@@ -215,7 +209,6 @@ services:
       - LlmGateway__Retention__EnableTtlIndexes=${LLMGW_RETENTION_ENABLE_TTL_INDEXES:-true}
       - LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}
       - LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}
-      - LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}
       - LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}
       - LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}
       - LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}
@@ -224,8 +217,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     healthcheck:
@@ -270,7 +261,6 @@ services:
       - LlmGateway__Retention__EnableTtlIndexes=${LLMGW_RETENTION_ENABLE_TTL_INDEXES:-true}
       - LlmGateway__Retention__RequestLogDays=${LLMGW_RETENTION_REQUEST_LOG_DAYS:-90}
       - LlmGateway__Retention__SensitiveBodyDays=${LLMGW_RETENTION_SENSITIVE_BODY_DAYS:-7}
-      - LlmGateway__Retention__ShadowDays=${LLMGW_RETENTION_SHADOW_DAYS:-30}
       - LlmGateway__Retention__AuditDays=${LLMGW_RETENTION_AUDIT_DAYS:-180}
       - LlmGateway__Retention__SuccessfulMultipartHours=${LLMGW_RETENTION_SUCCESSFUL_MULTIPART_HOURS:-24}
       - LlmGateway__Retention__FailedMultipartHours=${LLMGW_RETENTION_FAILED_MULTIPART_HOURS:-72}
@@ -278,8 +268,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     healthcheck:
@@ -307,7 +295,6 @@ services:
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
       - LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS:-false}
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
-      - LlmGateway__RolloutLedgerPath=/app/.llmgw-release-evidence/rollout-ledger.jsonl
       # 控制台只在已认领到 GW 的平台/模型/Exchange 上写密钥；加密密钥必须与 api / llmgw-serve 一致。
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api, llmgw and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
@@ -329,8 +316,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - ./.llmgw-release-evidence:/app/.llmgw-release-evidence:ro
     depends_on:
       - mongodb
     networks:

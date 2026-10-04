@@ -20,15 +20,10 @@ public record LlmRequestContext(
     string? ModelGroupId = null,
     string? ModelGroupName = null,
     /// <summary>
-    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
+    /// 网关传输路径观测标记（S2）：http / direct / admin-probe。
     /// 仅真实直连路径需要显式设置 direct；网关路径由各自的日志构建点权威标注，不依赖此字段。
     /// </summary>
     string? GatewayTransport = null,
-    /// <summary>
-    /// 内部发布取证开关：当前请求强制执行完整 shadow 比对。
-    /// 仅由服务端校验过的内部采样 header 设置；普通用户请求保持 false。
-    /// </summary>
-    bool ForceFullShadowSample = false,
     /// <summary>
     /// 内部健康探针标记：探针必须走真实网关链路，但日志和发布 gate 需要把它与用户流量区分开。
     /// </summary>

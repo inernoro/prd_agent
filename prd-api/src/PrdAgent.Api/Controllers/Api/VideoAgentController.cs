@@ -29,7 +29,6 @@ public class VideoAgentController : ControllerBase
     private readonly IRunEventStore _runStore;
     private readonly MongoDbContext _db;
     private readonly IModelPoolQueryService _modelPoolQuery;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<VideoAgentController> _logger;
@@ -45,7 +44,6 @@ public class VideoAgentController : ControllerBase
         MongoDbContext db,
         IModelPoolQueryService modelPoolQuery,
         IOpenRouterVideoClient videoClient,
-        ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
         IHttpClientFactory httpClientFactory,
         IDataProtectionProvider dataProtectionProvider,
@@ -56,7 +54,6 @@ public class VideoAgentController : ControllerBase
         _db = db;
         _modelPoolQuery = modelPoolQuery;
         _videoClient = videoClient;
-        _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -1052,7 +1049,6 @@ public class VideoAgentController : ControllerBase
             VideoTitle = request?.VideoTitle?.Trim(),
             SystemPrompt = request?.SystemPrompt?.Trim(),
             Language = (request?.Language ?? "auto").Trim(),
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

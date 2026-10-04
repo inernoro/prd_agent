@@ -43,48 +43,24 @@ set -eu
 #   - PRD_AGENT_ASSET_STORAGE_READINESS_ATTEMPTS / INTERVAL_SECONDS / TIMEOUT_SECONDS：存储发布门禁重试参数
 #   - PRD_AGENT_RELEASE_EVIDENCE_DIR：不可覆盖的发布证据目录，默认 $HOME/prd-agent-release-evidence
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
-#   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
-#   - LLMGW_HTTP_APP_CALLER_ALLOWLIST：灰度入口列表；非空时这些入口会走 http 权威，也必须先通过 release gate
-#   - LLMGW_CANARY_STAGE：灰度阶段，allowlist 非空且非全量 http 时必填；枚举 intent-text/chat/streaming/vision/image/asr/video-asr
-#   - LLMGW_SHADOW_FULL_SAMPLE_PERCENT：shadow 模式非流式完整比对采样比例，默认 0
-#     非 0 时会强制部署后 serving probe + gw-smoke 校验，但不会要求已有 shadow 样本数
-#   - LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST：shadow 模式下强制 full sample 的 appCaller 列表；
-#     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
-#   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
-#   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
+#   - LLMGW_GATE_BASE / GW_BASE：发布后网关探测使用的 serving base URL（形如 https://host/gw/v1）；
+#     与 LLMGW_GATE_KEY 同时配置时，发布后强制跑 serving probe 与 gw-smoke，未配置则只校验容器健康并在日志里写明
+#   - LLMGW_GATE_KEY / GW_KEY：发布后网关探测使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
 #   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层业务 smoke 使用的 scoped service key；
 #     未设时兼容回退 LLMGW_GATE_KEY。
 #   - LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY：四协议 canary 使用的 scoped service key；
 #     sourceSystem 应与 canary 请求的 X-Gateway-Source 一致。未设时兼容回退业务 smoke key。
-#     全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke/canary 复用 legacy key。
 #   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
 #   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
-#   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
-#   - LLMGW_GATE_MIN_PER_APP：每个 appCaller 最小样本数，默认 30
-#   - LLMGW_GATE_SHADOW_SINCE_HOURS：http/canary 发布只接受最近 N 小时 shadow 样本，默认 48
-#   - LLMGW_GATE_MIN_COVERAGE_HOURS：http/canary 发布要求 shadow 样本覆盖至少 N 小时，默认 24；设 0 可关闭
-#   - LLMGW_GATE_HEALTH_SAMPLES：全量 http 前 healthz 连续采样次数，默认 3
+#   - LLMGW_GATE_HEALTH_SAMPLES：发布后 healthz 连续采样次数，默认 3
 #   - LLMGW_GATE_HEALTH_INTERVAL_SECONDS：healthz 连续采样间隔秒数，默认 5
-#   - LLMGW_GATE_APP_CALLERS：逗号/分号分隔的 appCallerCode 列表，逐个 gate
-#   - LLMGW_GATE_FULL_HTTP_APP_CALLERS：全量 http 未显式设置 LLMGW_GATE_APP_CALLERS 时默认逐个 gate 的核心入口列表
-#   - LLMGW_GATE_REQUIRED_KINDS：逗号/分号分隔的 kind[:min] 列表，例如 send:30,stream:30，防 resolve-only 放行
-#     全量 LLMGW_MODE=http 时若未显式设置，默认要求 send/stream/raw 各达到 LLMGW_GATE_MIN_PER_APP（默认 30）
-#   - LLMGW_GATE_REQUIRED_APP_KINDS：逗号/分号分隔的 appCallerCode:kind:min 列表，例如 report-agent.generate::chat:send:30
-#     全量 LLMGW_MODE=http 时若未显式设置，默认要求核心 send/stream/raw 入口逐个达到样本门槛
-#   - LLMGW_GATE_FULL_HTTP_APP_KINDS：全量 http 未显式设置 LLMGW_GATE_REQUIRED_APP_KINDS 时默认逐个 gate 的 appCallerCode:kind:min 列表
-#   - LLMGW_GATE_CANARY_KIND_MIN：canary 阶段默认 kind 样本门槛，默认跟随 LLMGW_GATE_MIN_PER_APP
-#   - LLMGW_GATE_CANARY_APP_KIND_MIN：canary 阶段 raw app-kind 样本门槛，默认跟随 LLMGW_GATE_CANARY_KIND_MIN
-#   - LLMGW_GATE_CANARY_APP_KINDS：canary 阶段自定义 appCallerCode:kind:min 列表
-#   - LLMGW_GATE_JSON_OUT：可选，保存 release gate JSON 证据报告（不含密钥）
-#   - LLMGW_GATE_REPORT_MD：可选，保存 release gate Markdown 证据报告（不含密钥）
-#   - LLMGW_GATE_RUN_SERVING_PROBE：是否在 http/canary 发布时强制运行 llmgw-serving-probe.py，默认 1
+#   - LLMGW_GATE_RUN_SERVING_PROBE：发布后是否运行 llmgw-serving-probe.py，默认 1
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
-#   - LLMGW_GATE_RUN_SMOKE：是否在 http/canary 发布时强制运行 gw-smoke.py，默认 1
+#   - LLMGW_GATE_RUN_SMOKE：发布后是否运行 gw-smoke.py，默认 1
 #   - LLMGW_GATE_SMOKE_TIMEOUT_SECONDS：gw-smoke.py 单请求超时，默认 120
 #   - GW_SMOKE_JSON_OUT / GW_SMOKE_REPORT_MD：保存 post-deploy D 层 smoke 证据
-#   - LLMGW_SKIP_RELEASE_GATE=1：仅紧急回滚/人工强制时跳过 http gate（会打印警告）
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
 LLMGW_VERIFY_ONLY="${LLMGW_VERIFY_ONLY:-0}"
@@ -527,106 +503,7 @@ config_value() {
   return 0
 }
 
-llmgw_mode_value() {
-  value="$(config_value LLMGW_MODE LlmGateway__Mode)"
-  printf '%s' "$value"
-}
-
-llmgw_allowlist_value() {
-  config_value LLMGW_HTTP_APP_CALLER_ALLOWLIST LlmGateway__HttpAppCallerAllowlist
-}
-
-llmgw_shadow_sample_value() {
-  value="$(config_value LLMGW_SHADOW_FULL_SAMPLE_PERCENT LlmGateway__ShadowFullSamplePercent)"
-  if [ -z "$value" ]; then
-    value="0"
-  fi
-  printf '%s' "$value"
-}
-
-llmgw_shadow_sample_allowlist_value() {
-  config_value LLMGW_SHADOW_FULL_SAMPLE_APP_CALLER_ALLOWLIST LlmGateway__ShadowFullSampleAppCallerAllowlist
-}
-
-guard_llmgw_prod_stage_context_if_needed() {
-  mode_raw="$(llmgw_mode_value)"
-  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
-  if [ -z "$mode" ]; then
-    echo "ERROR: LLMGW_MODE 未配置；生产发布必须显式设置 http、shadow，或通过回滚脚本设置 inproc。" >&2
-    exit 1
-  fi
-  case "$mode" in
-    http|shadow|inproc) ;;
-    *)
-      echo "ERROR: LLMGW_MODE=$mode 非法；允许值为 http、shadow、inproc。" >&2
-      exit 1
-      ;;
-  esac
-  allowlist_raw="$(llmgw_allowlist_value)"
-  allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_raw="$(llmgw_shadow_sample_value)"
-  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
-  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
-  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  maintenance_baseline_commit="$(printf '%s' "${LLMGW_MAINTENANCE_BASELINE_COMMIT:-}" | tr 'A-F' 'a-f' | xargs || true)"
-  maintenance_baseline_json="$(printf '%s' "${LLMGW_MAINTENANCE_BASELINE_JSON:-}" | xargs || true)"
-  maintenance_release=0
-  if [ -n "$maintenance_baseline_commit" ] || [ -n "$maintenance_baseline_json" ]; then
-    if ! printf '%s' "$maintenance_baseline_commit" | grep -Eq '^[0-9a-f]{40}$'; then
-      echo "ERROR: LLMGW_MAINTENANCE_BASELINE_COMMIT must be a complete 40-character commit." >&2
-      exit 1
-    fi
-    if [ -z "$maintenance_baseline_json" ] || [ ! -f "$maintenance_baseline_json" ]; then
-      echo "ERROR: maintenance release requires an existing LLMGW_MAINTENANCE_BASELINE_JSON." >&2
-      exit 1
-    fi
-    python3 - "$maintenance_baseline_json" "$maintenance_baseline_commit" <<'PY'
-import json
-import sys
-
-path, expected = sys.argv[1:3]
-with open(path, "r", encoding="utf-8") as handle:
-    report = json.load(handle)
-failures = report.get("failures") or []
-if report.get("verdict") != "pass" or str(report.get("commit") or "").lower() != expected or failures:
-    raise SystemExit("ERROR: maintenance baseline JSON is not a matching pass result")
-if str(report.get("stage") or "").lower() != "http-full" or not report.get("releaseGateJson"):
-    raise SystemExit("ERROR: maintenance baseline JSON is missing audited http-full evidence")
-PY
-    maintenance_release=1
-    echo "LLM Gateway maintenance release: audited baseline accepted commit=$maintenance_baseline_commit"
-  fi
-  shadow_sample_enabled=0
-  if [ "$mode" = "shadow" ]; then
-    case "$shadow_sample_compact" in
-      ""|0|0.0|0.00|0.000)
-        ;;
-      *)
-        shadow_sample_enabled=1
-        ;;
-    esac
-    if [ -n "$shadow_sample_allowlist_compact" ]; then
-      shadow_sample_enabled=1
-    fi
-  fi
-  release_gate_required=0
-  if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
-    release_gate_required=1
-  fi
-  if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    return 0
-  fi
-
-  if [ "${LLMGW_PROD_STAGE_ACTIVE:-}" != "1" ] || [ -z "$(printf '%s' "${LLMGW_PROD_STAGE:-}" | xargs || true)" ]; then
-    echo "ERROR: LLM Gateway shadow/canary/http 发布必须通过 scripts/llmgw-prod-stage.sh 执行。" >&2
-    echo "       直接运行 exec_dep.sh 会绕过 rollout ledger、生产预检和阶段顺序审计。" >&2
-    echo "       示例：scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute" >&2
-    exit 1
-  fi
-}
-
 check_fast_release_intent
-guard_llmgw_prod_stage_context_if_needed
 
 if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
@@ -1277,167 +1154,23 @@ ensure_ffmpeg() {
 
 ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
 
-run_llmgw_release_gate_if_needed() {
+# MAP 只有一条模型调用路径（独立网关 serving），发布前不再有影子样本门禁。
+# 发布后对网关的外部探测需要 gate base 与 key；两者都配置了才跑，没配置就明说跳过，
+# 网关容器本身的健康仍由 wait_for_llmgw_serving_readiness 强制校验。
+prepare_llmgw_post_deploy_verification() {
   LLMGW_POST_DEPLOY_VERIFY_NEEDED=0
-  LLMGW_POST_DEPLOY_GATE_BASE=""
-  LLMGW_POST_DEPLOY_GATE_KEY=""
-  LLMGW_POST_DEPLOY_SMOKE_KEY=""
-  LLMGW_POST_DEPLOY_EXPECT_COMMIT=""
-
-  mode_raw="$(llmgw_mode_value)"
-  mode="$(printf '%s' "$mode_raw" | tr 'A-Z' 'a-z' | xargs)"
-  allowlist_raw="$(llmgw_allowlist_value)"
-  allowlist_compact="$(printf '%s' "$allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_raw="$(llmgw_shadow_sample_value)"
-  shadow_sample_compact="$(printf '%s' "$shadow_sample_raw" | xargs || true)"
-  shadow_sample_allowlist_raw="$(llmgw_shadow_sample_allowlist_value)"
-  shadow_sample_allowlist_compact="$(printf '%s' "$shadow_sample_allowlist_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  shadow_sample_enabled=0
-  if [ "$mode" = "shadow" ]; then
-    case "$shadow_sample_compact" in
-      ""|0|0.0|0.00|0.000)
-        ;;
-      *)
-        shadow_sample_enabled=1
-        ;;
-    esac
-    if [ -n "$shadow_sample_allowlist_compact" ]; then
-      shadow_sample_enabled=1
-    fi
-  fi
-  release_gate_required=0
-  if [ "$mode" = "http" ] || [ -n "$allowlist_compact" ]; then
-    release_gate_required=1
-  fi
-  if [ "$release_gate_required" != "1" ] && [ "$shadow_sample_enabled" != "1" ]; then
-    echo "LLM Gateway release gate: skipped (LLMGW_MODE=$mode, allowlist=empty, shadowSample=${shadow_sample_compact:-0}, shadowSampleAllowlist=empty)"
-    return 0
-  fi
-
-  if [ "${LLMGW_PROD_STAGE_ACTIVE:-}" != "1" ] || [ -z "$(printf '%s' "${LLMGW_PROD_STAGE:-}" | xargs || true)" ]; then
-    echo "ERROR: LLM Gateway shadow/canary/http 发布必须通过 scripts/llmgw-prod-stage.sh 执行。" >&2
-    echo "       直接运行 exec_dep.sh 会绕过 rollout ledger、生产预检和阶段顺序审计。" >&2
-    echo "       示例：scripts/llmgw-prod-stage.sh --stage shadow-start --commit <40位SHA> --execute" >&2
-    exit 1
-  fi
-
-  canary_stage=""
-  canary_allowed_app_callers=""
-  if [ -n "$allowlist_compact" ] && [ "$mode" != "http" ]; then
-    canary_stage="$(printf '%s' "${LLMGW_CANARY_STAGE:-}" | tr 'A-Z' 'a-z' | xargs || true)"
-    case "$canary_stage" in
-      intent-text)
-        canary_allowed_app_callers="report-agent.generate::chat"
-        ;;
-      chat)
-        canary_allowed_app_callers="report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat"
-        ;;
-      streaming)
-        canary_allowed_app_callers="report-agent.generate::chat prd-agent-desktop.chat.sendmessage::chat open-platform-agent.proxy::chat"
-        ;;
-      vision)
-        canary_allowed_app_callers="visual-agent.image.vision::generation"
-        ;;
-      image)
-        canary_allowed_app_callers="visual-agent.image-gen.generate::generation visual-agent.image.text2img::generation visual-agent.image.img2img::generation"
-        ;;
-      asr)
-        canary_allowed_app_callers="document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
-        ;;
-      video-asr)
-        canary_allowed_app_callers="video-agent.videogen::video-gen visual-agent.videogen::video-gen document-store.subtitle::asr transcript-agent.transcribe::asr video-agent.v2d.transcribe::asr video-agent.video-to-text::asr"
-        ;;
-      "")
-        echo "ERROR: LLM Gateway canary 发布设置了 LLMGW_HTTP_APP_CALLER_ALLOWLIST，但未设置 LLMGW_CANARY_STAGE。" >&2
-        echo "       允许阶段：intent-text/chat/streaming/vision/image/asr/video-asr；必须按低风险到高风险逐段推进。" >&2
-        exit 1
-        ;;
-      *)
-        echo "ERROR: LLMGW_CANARY_STAGE=$canary_stage 不合法；允许 intent-text/chat/streaming/vision/image/asr/video-asr。" >&2
-        exit 1
-        ;;
-    esac
-
-    old_ifs="$IFS"
-    IFS=',;'
-    for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
-      app_trimmed="$(printf '%s' "$app" | xargs)"
-      if [ -n "$app_trimmed" ]; then
-        case " $canary_allowed_app_callers " in
-          *" $app_trimmed "*)
-            ;;
-          *)
-            echo "ERROR: LLM Gateway canary 阶段 $canary_stage 不允许入口 $app_trimmed。" >&2
-            echo "       本阶段允许：$canary_allowed_app_callers" >&2
-            exit 1
-            ;;
-        esac
-      fi
-    done
-    IFS="$old_ifs"
-    echo "LLM Gateway canary stage: $canary_stage allowlist=$allowlist_compact"
-  fi
-
-  if [ "${LLMGW_SKIP_RELEASE_GATE:-}" = "1" ]; then
-    echo "ERROR: LLMGW_SKIP_RELEASE_GATE=1 is not allowed when LLM Gateway release evidence is required." >&2
-    echo "       Use scripts/llmgw-rollback-inproc.sh for emergency rollback; do not bypass shadow/canary/http gates." >&2
-    exit 1
-  fi
-
-  if [ ! -f "scripts/llmgw-release-gate.py" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-release-gate.py，拒绝发布。" >&2
-    exit 1
-  fi
-  if [ "${LLMGW_GATE_RUN_SMOKE:-1}" != "0" ] && [ ! -f "scripts/gw-smoke.py" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/gw-smoke.py，拒绝发布。" >&2
-    exit 1
-  fi
-  if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ] && [ ! -f "scripts/llmgw-serving-probe.py" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-serving-probe.py，拒绝发布。" >&2
-    exit 1
-  fi
-  if [ ! -f "scripts/llmgw-disk-space-guard.sh" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布但缺少 scripts/llmgw-disk-space-guard.sh，拒绝发布。" >&2
-    exit 1
-  fi
-  scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
-
-  provider_audit_required=0
-  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$canary_stage" = "video-asr" ]; then
-    provider_audit_required=1
-  fi
-  if [ "$provider_audit_required" = "1" ]; then
-    if [ ! -f "scripts/llmgw-prod-provider-config-audit.py" ]; then
-      echo "ERROR: LLM Gateway http/video-asr 发布但缺少 scripts/llmgw-prod-provider-config-audit.py，拒绝发布。" >&2
-      exit 1
-    fi
-    provider_audit_args=""
-    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_JSON_OUT:-}" | xargs || true)" ]; then
-      provider_audit_args="$provider_audit_args --json-out $LLMGW_PROVIDER_AUDIT_JSON_OUT"
-    fi
-    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_REPORT_MD:-}" | xargs || true)" ]; then
-      provider_audit_args="$provider_audit_args --report-md $LLMGW_PROVIDER_AUDIT_REPORT_MD"
-    fi
-    if [ -n "$(printf '%s' "${LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON:-}" | xargs || true)" ]; then
-      provider_audit_args="$provider_audit_args --seed-evidence-json $LLMGW_PROVIDER_AUDIT_SEED_EVIDENCE_JSON"
-    fi
-    echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
-    # shellcheck disable=SC2086
-    python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
-  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
-    echo "LLM Gateway provider config audit: inherited from audited full-http maintenance baseline"
-  fi
-
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
   gate_key="${LLMGW_GATE_KEY:-${GW_KEY:-${LLMGW_SERVE_KEY:-}}}"
-  if [ -z "$gate_base" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_BASE 或 GW_BASE（形如 https://host/gw/v1）以校验 serving 与 shadow 证据。" >&2
-    exit 1
+  if [ -z "$gate_base" ] || [ -z "$gate_key" ]; then
+    echo "LLM Gateway post-deploy probe: not configured (LLMGW_GATE_BASE / LLMGW_GATE_KEY 未配置)；只校验网关容器健康，不做外部探测"
+    return 0
   fi
-  if [ -z "$gate_key" ]; then
-    echo "ERROR: LLM Gateway http/canary/shadow sample 发布需要提供 LLMGW_GATE_KEY/GW_KEY 或 LLMGW_SERVE_KEY 以读取 /gw/v1/shadow-comparisons 并运行 smoke。" >&2
-    exit 1
-  fi
+  for required_script in scripts/llmgw-serving-probe.py scripts/gw-smoke.py; do
+    if [ ! -f "$required_script" ]; then
+      echo "ERROR: LLM Gateway post-deploy probe 已配置但缺少 $required_script，拒绝发布。" >&2
+      exit 1
+    fi
+  done
 
   expect_commit=""
   case "$TAG" in
@@ -1451,136 +1184,6 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_GATE_KEY="$gate_key"
   LLMGW_POST_DEPLOY_SMOKE_KEY="${LLMGW_POST_DEPLOY_SERVICE_KEY:-$gate_key}"
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
-
-  if [ "$maintenance_release" = "1" ]; then
-    # 维护发布已经通过 maintenance baseline 审计继承了完整 http-full
-    # shadow 证据。当前 serving API 要求 shadow-comparisons 必须显式带
-    # appCaller，因此不能再发起旧版的全局无 appCaller 查询。这里只跳过
-    # 已继承的 global cells；健康、commit、部署后 smoke 与公网门禁仍照常执行。
-    args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"
-  else
-    args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
-  fi
-  args="$args --since-hours ${LLMGW_GATE_SHADOW_SINCE_HOURS:-48}"
-  gate_min_coverage_hours="${LLMGW_GATE_MIN_COVERAGE_HOURS:-}"
-  if [ "$release_gate_required" = "1" ] && [ -z "$(printf '%s' "$gate_min_coverage_hours" | xargs || true)" ]; then
-    gate_min_coverage_hours="24"
-    echo "LLM Gateway release gate: http/canary 未设置 LLMGW_GATE_MIN_COVERAGE_HOURS，默认要求 shadow 证据覆盖 24 小时"
-  fi
-  if [ -n "$(printf '%s' "$gate_min_coverage_hours" | xargs || true)" ]; then
-    args="$args --min-coverage-hours $gate_min_coverage_hours"
-  fi
-  args="$args --health-samples ${LLMGW_GATE_HEALTH_SAMPLES:-3} --health-interval ${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}"
-  require_config_authority_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_CONFIG_AUTHORITY:-}" | xargs || true)"
-  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$require_config_authority_compact" = "1" ] || [ "$require_config_authority_compact" = "true" ]; then
-    args="$args --require-config-authority"
-    echo "LLM Gateway release gate: requiring GW config-authority report for http/full rollout"
-  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
-    echo "LLM Gateway release gate: config-authority inherited from audited full-http maintenance baseline"
-  fi
-  if [ -n "${LLMGW_GATE_JSON_OUT:-}" ]; then
-    args="$args --json-out $LLMGW_GATE_JSON_OUT"
-  fi
-  if [ -n "${LLMGW_GATE_REPORT_MD:-}" ]; then
-    args="$args --report-md $LLMGW_GATE_REPORT_MD"
-  fi
-  shadow_release_commit="$(printf '%s' "${LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit}" | xargs || true)"
-  if [ -n "$shadow_release_commit" ]; then
-    args="$args --shadow-release-commit $shadow_release_commit"
-  fi
-
-  old_ifs="$IFS"
-  IFS=',;'
-  gate_app_callers_raw="${LLMGW_GATE_APP_CALLERS:-}"
-  gate_app_callers_compact="$(printf '%s' "$gate_app_callers_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$gate_app_callers_compact" ]; then
-    gate_app_callers_raw="${LLMGW_GATE_FULL_HTTP_APP_CALLERS:-report-agent.generate::chat,prd-agent-desktop.chat.sendmessage::chat,prd-agent-desktop.preview-ask.section::chat,open-platform-agent.proxy::chat,open-api.proxy::chat,open-api.proxy::generation,prd-agent-web.model-lab.run::chat,prd-agent.arena.battle::chat,tutorial-email.generate::chat,visual-agent.image-gen.generate::generation,visual-agent.image.text2img::generation,visual-agent.image.img2img::generation,visual-agent.image.vision::generation,video-agent.videogen::video-gen,visual-agent.videogen::video-gen,document-store.subtitle::asr,transcript-agent.transcribe::asr,video-agent.v2d.transcribe::asr,video-agent.video-to-text::asr}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_APP_CALLERS，默认要求核心入口逐个达标"
-  fi
-  for app in ${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}; do
-    app_trimmed="$(printf '%s' "$app" | xargs)"
-    if [ -n "$app_trimmed" ]; then
-      args="$args --app-caller $app_trimmed"
-    fi
-  done
-  for app in ${gate_app_callers_raw}; do
-    app_trimmed="$(printf '%s' "$app" | xargs)"
-    if [ -n "$app_trimmed" ]; then
-      args="$args --app-caller $app_trimmed"
-    fi
-  done
-  IFS="$old_ifs"
-
-  old_ifs="$IFS"
-  IFS=',;'
-  required_kinds_raw="${LLMGW_GATE_REQUIRED_KINDS:-}"
-  required_kinds_compact="$(printf '%s' "$required_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$required_kinds_compact" ]; then
-    full_http_kind_min="${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
-    required_kinds_raw="send:${full_http_kind_min},stream:${full_http_kind_min},raw:${full_http_kind_min}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
-  elif [ -n "$canary_stage" ] && [ -z "$required_kinds_compact" ]; then
-    canary_kind_min="${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}"
-    case "$canary_stage" in
-      intent-text|chat)
-        required_kinds_raw="send:${canary_kind_min}"
-        ;;
-      streaming)
-        required_kinds_raw="stream:${canary_kind_min}"
-        ;;
-      vision|image|asr|video-asr)
-        required_kinds_raw="raw:${canary_kind_min}"
-        ;;
-    esac
-    echo "LLM Gateway release gate: canary 阶段 $canary_stage 未设置 LLMGW_GATE_REQUIRED_KINDS，默认要求 $required_kinds_raw"
-  fi
-  for kind_req in ${required_kinds_raw}; do
-    kind_req_trimmed="$(printf '%s' "$kind_req" | xargs)"
-    if [ -n "$kind_req_trimmed" ]; then
-      args="$args --require-kind $kind_req_trimmed"
-    fi
-  done
-  required_app_kinds_raw="${LLMGW_GATE_REQUIRED_APP_KINDS:-}"
-  required_app_kinds_compact="$(printf '%s' "$required_app_kinds_raw" | tr ',;\n\r' '    ' | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ] && [ -z "$required_app_kinds_compact" ]; then
-    full_http_app_kind_min="${LLMGW_GATE_FULL_HTTP_APP_KIND_MIN:-${LLMGW_GATE_FULL_HTTP_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
-    required_app_kinds_raw="${LLMGW_GATE_FULL_HTTP_APP_KINDS:-report-agent.generate::chat:send:${full_http_app_kind_min},prd-agent-desktop.chat.sendmessage::chat:stream:${full_http_app_kind_min},prd-agent-desktop.preview-ask.section::chat:stream:${full_http_app_kind_min},open-platform-agent.proxy::chat:stream:${full_http_app_kind_min},open-api.proxy::chat:send:${full_http_app_kind_min},open-api.proxy::generation:raw:${full_http_app_kind_min},prd-agent-web.model-lab.run::chat:stream:${full_http_app_kind_min},prd-agent.arena.battle::chat:stream:${full_http_app_kind_min},tutorial-email.generate::chat:send:${full_http_app_kind_min},visual-agent.image-gen.generate::generation:raw:${full_http_app_kind_min},visual-agent.image.text2img::generation:raw:${full_http_app_kind_min},visual-agent.image.img2img::generation:raw:${full_http_app_kind_min},visual-agent.image.vision::generation:raw:${full_http_app_kind_min},video-agent.videogen::video-gen:raw:${full_http_app_kind_min},visual-agent.videogen::video-gen:raw:${full_http_app_kind_min},document-store.subtitle::asr:raw:${full_http_app_kind_min},transcript-agent.transcribe::asr:raw:${full_http_app_kind_min},video-agent.v2d.transcribe::asr:raw:${full_http_app_kind_min},video-agent.video-to-text::asr:raw:${full_http_app_kind_min}}"
-    echo "LLM Gateway release gate: LLMGW_MODE=http 未设置 LLMGW_GATE_REQUIRED_APP_KINDS，默认要求核心 send/stream/raw 入口逐个具备 app-kind 样本"
-  elif [ -n "$canary_stage" ] && [ -z "$required_app_kinds_compact" ]; then
-    canary_app_kind_min="${LLMGW_GATE_CANARY_APP_KIND_MIN:-${LLMGW_GATE_CANARY_KIND_MIN:-${LLMGW_GATE_MIN_PER_APP:-30}}}"
-    case "$canary_stage" in
-      vision)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image.vision::generation:raw:${canary_app_kind_min}}"
-        ;;
-      image)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-visual-agent.image-gen.generate::generation:raw:${canary_app_kind_min},visual-agent.image.text2img::generation:raw:${canary_app_kind_min},visual-agent.image.img2img::generation:raw:${canary_app_kind_min}}"
-        ;;
-      asr)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
-        ;;
-      video-asr)
-        required_app_kinds_raw="${LLMGW_GATE_CANARY_APP_KINDS:-video-agent.videogen::video-gen:raw:${canary_app_kind_min},visual-agent.videogen::video-gen:raw:${canary_app_kind_min},document-store.subtitle::asr:raw:${canary_app_kind_min},transcript-agent.transcribe::asr:raw:${canary_app_kind_min},video-agent.v2d.transcribe::asr:raw:${canary_app_kind_min},video-agent.video-to-text::asr:raw:${canary_app_kind_min}}"
-        ;;
-    esac
-    if [ -n "$required_app_kinds_raw" ]; then
-      echo "LLM Gateway release gate: canary 阶段 $canary_stage 默认要求 raw app-kind 样本逐个达标"
-    fi
-  fi
-  for app_kind_req in ${required_app_kinds_raw}; do
-    app_kind_req_trimmed="$(printf '%s' "$app_kind_req" | xargs)"
-    if [ -n "$app_kind_req_trimmed" ]; then
-      args="$args --require-app-kind $app_kind_req_trimmed"
-    fi
-  done
-  IFS="$old_ifs"
-
-  if [ "$release_gate_required" = "1" ]; then
-    echo "LLM Gateway release gate: required before deploy (selected shadow evidence commit; new commit probes run after compose up)"
-    # shellcheck disable=SC2086
-    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args
-  else
-    echo "LLM Gateway release gate: skipped shadow sample startup (LLMGW_MODE=$mode, shadowSample=${shadow_sample_compact:-0}); serving/smoke verification runs after compose up"
-  fi
 }
 
 run_llmgw_post_deploy_verification_if_needed() {
@@ -1689,30 +1292,9 @@ run_llmgw_post_deploy_verification_if_needed() {
       fi
       ;;
   esac
-
-  require_runtime_gates_compact="$(printf '%s' "${LLMGW_GATE_REQUIRE_RUNTIME_GATES:-}" | xargs || true)"
-  if [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
-    echo "LLM Gateway post-deploy runtime gates: skipped for audited full-http maintenance release; serving probe and requested canaries remain required"
-  elif [ "$mode" = "http" ] || [ "$require_runtime_gates_compact" = "1" ] || [ "$require_runtime_gates_compact" = "true" ]; then
-    echo "LLM Gateway post-deploy runtime gates: required (/gw/runtime-gates readyForHttpFull)"
-    runtime_gate_expect_arg=""
-    if [ -n "$expect_commit" ]; then
-      runtime_gate_expect_arg="--expect-commit $expect_commit"
-    fi
-    if [ "$mode" = "http" ] && [ "${LLMGW_PROD_STAGE:-}" = "http-full" ]; then
-      echo "LLM Gateway post-deploy runtime gates: allowing self-finalizing full_http_rollout_ledger only"
-      runtime_gate_expect_arg="$runtime_gate_expect_arg --allow-pending-http-full-ledger"
-    fi
-    # shellcheck disable=SC2086
-    GW_KEY="$gate_key" python3 scripts/llmgw-release-gate.py $args $runtime_gate_expect_arg $protocol_canary_arg --require-runtime-gates
-  else
-    echo "LLM Gateway post-deploy runtime gates: skipped (not full http)"
-  fi
 }
 
-if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
-  echo "LLM Gateway verify-only: skipping image pull"
-elif [ -n "${SKIP_API_PULL:-}" ]; then
+if [ -n "${SKIP_API_PULL:-}" ]; then
   echo "Skipping release image pull (SKIP_API_PULL=1)"
 else
   echo "Pulling release images:"
@@ -1750,7 +1332,7 @@ else
   fi
 fi
 
-run_llmgw_release_gate_if_needed
+prepare_llmgw_post_deploy_verification
 
 refresh_gateway_after_compose() {
   gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"

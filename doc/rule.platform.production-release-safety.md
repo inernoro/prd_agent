@@ -128,7 +128,7 @@
 
 - `exec_dep.sh`：不可变静态产物必须通过 SHA256；在 gateway 已挂载的稳定 `deploy/web/dist` 根目录内，用 `.staging-*` 离线解压和校验，再通过 `scripts/lib/static-release.sh` 把目录精确归一为 `755`、文件归一为 `644`，最后原子切换 `current`，`previous` 保存上一版。Nginx 的 standalone root 固定指向 bind 根内的 `current`，切换不需要重建容器。
 - 代理稳定：非 gateway 服务重建后立即使用当前配置原地 reload gateway，先刷新 API 与 LLMGW 容器地址，再等待较长的 Serving readiness；静态切换后的任一强制阶段失败都会恢复 previous，并再次执行 `nginx -t` 与 reload 后复跑公网表面探针。`llmgw-rollback-inproc.sh` 和 `llmgw-restore-shadow-safe.sh` 同样只重启 API、原地 reload gateway。正常发布、静态复用、inproc 回滚和 shadow 恢复都不改变 gateway 容器 IP。
-- `scripts/prd-agent-public-surface-smoke.py`：验证根 HTML、实际同源 JS/CSS、根级 `/health`、`/api/version`、LLMGW 页面及 Console/Serving 双健康；发布后强制运行，并由 `llmgw-shadow-watch.yml` 每 6 小时独立运行。
+- `scripts/prd-agent-public-surface-smoke.py`：验证根 HTML、实际同源 JS/CSS、根级 `/health`、`/api/version`、LLMGW 页面及 Console/Serving 双健康；发布后强制运行。
 - `scripts/prd-agent-release-evidence.py`：按唯一发布编号写不可覆盖 JSON，记录操作者、主机、release PID、开始结束时间、ref、产物 URL 与 hash、静态链接和权限、公网探针、首个失败阶段和回滚结果。
 - `./exec_dep.sh release`：保留 latest 兼容语义并提示迁移到不可变 `--commit`；`--help` 同时展示兼容与推荐命令。
 - `scripts/llmgw-prod-preflight.py`：`_diagnose_route_self_test_failure` 把 `gateway_route_self_test` 的失败收敛为「一个主要原因 + 一条恢复动作」，401/403 明确指向凭据与运行态不一致并点破“预检在部署之前跑、重试不会自愈”，服务不可达 / 协议缺失 / 用例不通过各自独立归因；放行时不写入归因字段。

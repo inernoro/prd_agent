@@ -514,7 +514,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var adapter = GetAdapterForResolution(resolution);
 
             // 3. 发送请求。候选模型已在 Resolve 阶段一次性算好；发送阶段只消费结果，不再二次 resolve。
-            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
@@ -815,7 +815,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 yield break;
             }
 
-            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+            var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
             var retryResolutions = GetProviderRetryResolutions(resolution, request);
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
@@ -2346,7 +2346,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // 应用显式能力。只有切换 Provider candidate 或调用方未提供 wire 请求时才完整重建。
         string? logId = null;
         GatewayProviderConcurrencyLease? providerLease = null;
-        var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+        var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
         List<LlmProviderAttempt>? rawProviderAttempts = null;
 
         try
@@ -3112,7 +3112,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         var wsUrl = ResolveDoubaoStreamAsrUrl(resolution);
         var requestBodyForLog = BuildDoubaoStreamAsrRequestLogBody(request);
         var logId = await StartRawLogAsync(request, gatewayResolution, wsUrl, requestBodyForLog, startedAt, ct);
-        var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+        var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
         var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
 
         try
@@ -4429,7 +4429,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
                     ExchangeTransformerType: resolution.ExchangeTransformerType,
-                    ProviderAttempts: BuildProviderAttempts(resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
+                    ProviderAttempts: BuildProviderAttempts(resolution, request.Context?.GatewayTransport ?? GatewayTransports.Http),
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
@@ -4467,7 +4467,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关路径。若 serving 端处理来自 MAP 的跨进程请求，
                     // MAP 侧 HttpLlmGatewayClient 已把 Context.GatewayTransport 置为 "http" 过线，此处尊重之。
-                    GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
+                    GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Http),
                 ct);
         }
         catch (Exception ex)
@@ -4800,7 +4800,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ExchangeId: resolution.ExchangeId,
                     ExchangeName: resolution.ExchangeName,
                     ExchangeTransformerType: resolution.ExchangeTransformerType,
-                    ProviderAttempts: BuildProviderAttempts(resolution, request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
+                    ProviderAttempts: BuildProviderAttempts(resolution, request.Context?.GatewayTransport ?? GatewayTransports.Http),
                     ImageReferences: request.Context?.ImageReferences,
                     IsFallback: resolution.IsFallback ? true : null,
                     FallbackReason: resolution.FallbackReason,
@@ -4834,7 +4834,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ProviderTaskId: request.Context?.ProviderTaskId,
                     // S2：默认进程内网关 raw 路径（生图/视频等）。serving 端处理跨进程请求时，
                     // MAP 侧已把 Context.GatewayTransport 置为 "http"，此处尊重之。
-                    GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Inproc),
+                    GatewayTransport: request.Context?.GatewayTransport ?? GatewayTransports.Http),
                 ct);
         }
         catch (Exception ex)

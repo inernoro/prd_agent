@@ -1632,94 +1632,6 @@ public static class GatewayHttpEndpoints
                 cancellation?.Dispose();
             }
         });
-
-        // 影子比对读端点（观测）：X-Gateway-Key 门内，读 llm_gateway.llmshadow_comparisons 给汇总 + 最近 N 条。
-        // 灰度翻 http 前看「inproc vs http 逐字段一致性」的窗口（去黑盒）。
-        app.MapGet("/gw/v1/shadow-comparisons", async (
-            // [FromServices] 必填：GET 端点不允许「推断 body」参数，IServiceProvider 若被推断为 body，
-            // RequestDelegateFactory 在首个请求构建 endpoint matcher 时会抛
-            // InvalidOperationException（"Body was inferred but the method does not allow inferred body
-            // parameters"），进而拖垮整张路由表（含 healthz / 全部 /gw/v1/*）。见 GatewayKeyGateContractTests。
-            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
-            HttpContext http,
-            int? limit,
-            int? failureLimit,
-            string? appCallerCode,
-            string? kind,
-            string? releaseCommit,
-            double? sinceHours) =>
-        {
-            var n = Math.Clamp(limit ?? 50, 1, 500);
-            var db = services.GetService<LlmGatewayDataContext>()?.Context
-                ?? services.GetRequiredService<MongoDbContext>();
-            var col = db.LlmShadowComparisons;
-            var filters = new List<FilterDefinition<LlmShadowComparison>>
-            {
-                Builders<LlmShadowComparison>.Filter.Eq(x => x.TenantId, GetVerifiedTenantId(http)),
-            };
-            var verifiedTeamId = GetVerifiedTeamId(http);
-            if (!string.IsNullOrWhiteSpace(verifiedTeamId))
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.TeamId, verifiedTeamId));
-            var verifiedAppCaller = GetVerifiedAuthorizationInputs(http).AppCallerCode;
-            var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
-            if (authorization is not { LegacySharedKey: true })
-            {
-                if (string.IsNullOrWhiteSpace(verifiedAppCaller))
-                    return Results.Json(new { error = new { code = "GATEWAY_APP_CALLER_REQUIRED", message = "读取影子比对必须指定 appCaller" } }, jsonOpts, statusCode: 400);
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, verifiedAppCaller));
-            }
-            else if (!string.IsNullOrWhiteSpace(appCallerCode))
-            {
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
-            }
-            if (!string.IsNullOrWhiteSpace(kind))
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim()));
-            var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
-            if (normalizedReleaseCommit is not null)
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.ReleaseCommit, normalizedReleaseCommit));
-            var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
-            if (since is not null)
-                filters.Add(Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value));
-            var filter = Builders<LlmShadowComparison>.Filter.And(filters);
-
-            var total = await col.CountDocumentsAsync(filter);
-            var allMatch = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.AllMatch, true));
-            var critical = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true));
-            var httpFail = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false));
-            var first = total > 0
-                ? (await col.Find(filter).SortBy(x => x.ComparedAt).Limit(1).FirstOrDefaultAsync())?.ComparedAt
-                : null;
-            var last = total > 0
-                ? (await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(1).FirstOrDefaultAsync())?.ComparedAt
-                : null;
-            var coverageHours = first is not null && last is not null
-                ? Math.Max(0, (last.Value - first.Value).TotalHours)
-                : 0;
-            var recent = await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(n).ToListAsync();
-            var failureN = Math.Clamp(failureLimit ?? 10, 0, 100);
-            var failureRecent = failureN == 0
-                ? new List<LlmShadowComparison>()
-                : await col.Find(filter & (Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false)
-                                           | Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true)))
-                    .SortByDescending(x => x.ComparedAt)
-                    .Limit(failureN)
-                    .ToListAsync();
-
-            return Results.Json(new
-            {
-                summary = new { total, allMatch, critical, httpFail, sinceHours, since, releaseCommit = normalizedReleaseCommit, firstComparedAt = first, lastComparedAt = last, coverageHours },
-                recent,
-                failureRecent,
-            }, jsonOpts);
-        });
-    }
-
-    static string? NormalizeCommitFilter(string? value)
-    {
-        var trimmed = (value ?? string.Empty).Trim();
-        if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
-            trimmed = trimmed[4..];
-        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
     }
 
     private static bool HasGatewayKey(HttpContext context, string gatewayApiKey)
@@ -2133,8 +2045,7 @@ public static class GatewayHttpEndpoints
     private static string ResolveRequiredScope(string path)
     {
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return GatewayLegacyProbeScopes.Readiness;
-        if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("/gw/v1/shadow-comparisons", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase))
             return GatewayLegacyProbeScopes.Route;
         if (path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)) return "profile:test";
         // requestId 是用户输入，可能恰好叫 resolve/raw/pools。请求控制路由必须先按
@@ -2195,21 +2106,6 @@ public static class GatewayHttpEndpoints
             && !string.IsNullOrWhiteSpace(queryCaller.FirstOrDefault()))
         {
             appCallerCode = queryCaller.First()!.Trim();
-        }
-
-        if (path.Equals("/gw/v1/shadow-comparisons", StringComparison.OrdinalIgnoreCase)
-            && context.Request.Query.TryGetValue("appCallerCode", out var shadowQueryCaller)
-            && !string.IsNullOrWhiteSpace(shadowQueryCaller.FirstOrDefault()))
-        {
-            var requestedAppCaller = shadowQueryCaller.First()!.Trim();
-            if (!string.IsNullOrWhiteSpace(headerAppCaller)
-                && !string.Equals(headerAppCaller, requestedAppCaller, StringComparison.OrdinalIgnoreCase))
-            {
-                return new(sourceSystem, requestedAppCaller, ingressProtocol, requiredScope,
-                    "GATEWAY_APP_CALLER_MISMATCH",
-                    "X-Gateway-App-Caller 与查询 appCallerCode 不一致");
-            }
-            appCallerCode = requestedAppCaller;
         }
 
         if (!ShouldInspectAuthorizationBody(path))

@@ -1,104 +1,43 @@
 # LLM 网关旧路径物理退场 · 计划
 
-> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：规划中
+> **版本**：v3.0 | **日期**：2026-10-04 | **状态**：已完成
 
-**一句话**：新的模型网关已经承担全部线上流量，这份计划管的是何时以及凭什么把主系统里的老路径彻底删掉。
-**谁该读**：负责网关退场的工程师；想知道「这件事还剩多少、卡在哪」的任何人。
-**读完能做什么**：判断当前是否满足删除老路径的全部门禁条件，不满足时知道差哪一条。
+**一句话**：主系统里调大模型的老路径已经删掉，MAP 只剩「经独立网关调用」这一条路，这份计划只留收尾结论与剩下的两件尾巴。
+**谁该读**：负责网关的工程师；想知道「老路径到底删干净没有」的任何人。
+**读完能做什么**：说清删了什么、为什么还留着两处、出问题时怎么回滚。
 
 ---
 
-## 目标
+## 最后更新
 
-在生产 `Mode=http`、配置权威和六类协议验收已经稳定的基础上，物理删除 MAP 进程内网关及传统解析兜底，使所有模型调用只经过独立 LLM Gateway。本文只保留尚未完成的退场动作和发布门禁；已落地架构以 [design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md) 为准，风险与证据缺口以 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 为准。
+2026-10-04 | 网关退场 | 距离收口：主路径已收口；剩两处尾巴，均不影响 MAP 只走网关这一事实。
 
-## 当前事实
+| 阶段 | 进度 | 状态 | 当前 blocker | 下一步 | 验收证据 |
+| --- | --- | --- | --- | --- | --- |
+| S6 删除 MAP 进程内旧路径 | 100% | 已验收 | 无 | 无 | 源码守卫 `Api_LlmGateway_IsHttpOnly`、`ExecDep_HasNoGatewayModeAndProbesGatewayAfterDeploy` 与 compose 守卫全绿 |
+| serving 内部 legacy 配置兜底 | 0% | 未开始 | 需要先看新版本上线后哪些调用方还落在这一档 | 按 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 的四步还债 | 无 |
+| S5.5 把网关引擎搬进网关侧项目 | 0% | 未开始 | 无（MAP 已不再构造引擎，前置条件已满足） | 单独开一轮，只搬不改行为 | 无 |
 
-- 生产执行迁移已经完成：`Mode=http`，active MAP fallback 已关闭，直连棘轮 baseline 为 0，配置权威为 ready。
-- MAP 业务日志仍归 MAP；Gateway 账号、审计、请求日志和 shadow 证据归 `llm_gateway` 数据域。
-- 旧 `LlmGateway.cs`、`ShadowLlmGateway.cs` 和 legacy resolver 仍在仓库中，只承担显式回滚保险，不承载正常生产流量。
-- GitHub 手动 workflow 只有进入 default branch 后才会出现在 `workflow_dispatch` 入口；生产演练不能引用尚未进入默认分支的工作流。
-- 网关契约（接口与请求响应类型）已归位到 Core，MAP 与 Gateway 两侧引用同一份；实现仍留在主系统的基础设施层，等待整体搬出。
+## 删了什么
 
-## 未完成阶段
+- **模式开关**：`LlmGateway:Mode`（inproc / shadow / http）连同生产缺省拒绝启动的那套判定，整体删除。MAP 的模型调用只经 `HttpLlmGatewayClient` 打到独立 serving，生产、CDS 预览与本地开发一致。
+- **进程内直连**：MAP 不再装配网关引擎；引擎类本身留在基础设施层，因为它是 serving 的执行引擎。
+- **影子比对**：MAP 侧的影子路由与写入器、强制采样请求头与贯穿各业务 Run 的采样标记、serving 与控制台的影子读端点、控制台影子页面、`llmshadow_comparisons` 集合的建索引与保留策略。
+- **灰度白名单**：按调用方逐个切到 HTTP 的白名单及代码里写死的补充项。
+- **分阶段发布机器**：影子、灰度、回滚到 inproc、全量切换这一串阶段脚本，配套的发布台账、影子证据门禁、定时巡检工作流，以及控制台里只服务于切换的三道 gate 与台账 gate。
 
-### S5.5：把实现搬出主系统（不改运行时行为，不受 S6 门禁约束）
+## 发布与回滚
 
-S6 是「删」，这一节是「搬」——两者的区别在于：搬不改变任何运行时行为，因此不需要线上证据，可以在门禁满足之前先做完。做完之后 S6 才只剩下拆装配这一件事。
+- 发布只有一种：`fast.sh --commit <40 位提交号> && exec_dep.sh --commit <同一提交号>`。不再需要配置模式，也不再需要经阶段脚本调用。
+- 发布脚本强制等待 serving 容器健康；配了网关探测地址与 key 时，额外跑构建 commit 一致性、无 key 拒绝与 D 层 smoke。
+- 回滚 = 用上一个提交号重新发布。MAP 没有可以退回的进程内旧路径，也不该有。
 
-| 步骤 | 状态 | 说明 |
-| --- | --- | --- |
-| 契约归位到 Core | 已完成（2026-08-05） | 13 个纯接口与数据类型迁到 Core，两侧引用同一份 |
-| 合并两份网关接口 | 已完成（2026-08-06） | 宽接口改为继承 Core 窄接口，装配处的强制类型转换变成隐式向上转型；签名漂移由编译期拦截，不再等到运行时 |
-| 命名空间改名 | 已完成（2026-08-06） | 契约命名空间与所在项目对齐；136 个引用文件按编译器报错补 using |
-| 实现整体迁进 Gateway 侧项目 | **依赖 S6，当前做不了** | 见下方说明 |
+## 还留着的两处
 
-「实现整体迁进 Gateway 侧项目」此前被判为可独立推进，这是**错的**：主系统的服务装配里
-直接构造进程内网关与影子网关两个实现类，只要这两条装配还在，主系统就必须能编译到实现，
-实现就搬不出去。也就是说这一步的真实前置是 S6 删除装配，而 S6 卡在需要生产证据的门禁上。
-纠正记录留在此处，避免下一个人重复得出「可以先搬」的错误结论。
+1. **serving 内部的 legacy 配置兜底**：网关里没配置的调用方会退回 MAP 旧配置选模。它决定的是网关怎么选模型，不是 MAP 走哪条路；删除当天正式机仍在 inproc，切到 HTTP 后其余调用方可能正靠它选模，直接删会让它们解析不到模型。还债步骤见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)。
+2. **网关引擎仍在主系统的基础设施项目里**：搬迁不改运行时行为，此前卡在「MAP 还在装配它」，现在这个前提已经消失，可以单独做。
 
-搬迁期间的固定约束：每一步都必须保持编译、全量单测与静态守卫通过；守卫按物理路径读源码，文件移动后要同步守卫里被钉死的路径，不允许为了让守卫变绿而放宽断言。
-
-### S6：删除进程内旧路径
-
-1. 删除 `LlmGateway.cs` 中的进程内网关实现及对应装配。
-2. 删除 `ShadowLlmGateway.cs`；shadow 比对继续由独立 Gateway 侧能力承担。
-3. 删除 `ModelResolver.FindLegacyModelAsync` 及传统模型配置兜底。
-4. 删除只服务于 inproc、shadow 或 legacy resolver 的配置键、测试和兼容分支。
-5. 更新架构文档、债务台账、发布脚本与棘轮测试，确保旧路径不能被重新引入。
-
-不满足下列门禁时不得开始删除：
-
-- 同一 release commit 的 HTTP transport、四协议、active caller 和配置权威证据完整。
-- 关键 shadow 单元达到约定样本数和覆盖时长，`critical=0`、`httpFail=0`。
-- serving 多实例或等价可用性已经验证，健康检查、鉴权和滚动发布证据有效。
-- `activeAppCallerMapFallbackReady=true`，`mapFallbackObjectsRemaining=0`，默认池和绑定池均可解析到可用成员。
-- 回滚脚本已在目标环境 dry-run，并确认可以通过发布版本回退；删除后不再以运行时开关恢复 inproc。
-
-## 发布与复测矩阵
-
-| 维度 | 必须覆盖 | 通过条件 |
-| --- | --- | --- |
-| Gateway 健康与安全 | healthz、Gateway key、限流、密钥完整性 | 健康提交匹配；未授权请求拒绝；专用密钥有效 |
-| 四协议 | gw-native、openai-compatible、claude-compatible、OpenRouter 原始协议 | send、stream、raw、client-stream 的语义和流式事件保真 |
-| 路由 | auto、pool、pinned | 解析到预期池、平台和模型，选择 A 不得执行 B |
-| MAP 文本入口 | Report、Desktop、开放平台、ModelLab、Arena | 真实业务入口产生 HTTP 或 shadow 证据 |
-| 多模态入口 | 生图、图生图、视觉理解、视频、ASR、字幕 | 真实 raw 入口成功，不以文本或 resolve-only 样本替代 |
-| 数据域 | MAP 日志、Gateway 日志、账号与审计 | 两侧各归其数据库，并可通过 requestId、sessionId、appCallerCode 关联 |
-| 发布回滚 | readiness、release gate、rollout ledger、回退演练 | 同 commit 证据齐全，失败阻断，回退版本可用 |
-
-## 真实入口覆盖契约
-
-下列标识被自动化守卫读取，修改前必须同步测试和取证脚本：
-
-- `prd-agent-desktop.chat.sendmessage::chat`
-- `open-platform-agent.proxy::chat`
-- `open-api.proxy::chat`
-- `open-api.proxy::generation`
-- `prd-agent-web.model-lab.run::chat`
-- `prd-agent.arena.battle::chat`
-- `report-agent.generate::chat`
-
-补样本必须经过 MAP 真实业务入口。`scripts/llmgw-map-shadow-seed.py` 的文本入口默认保持低成本；按缺口显式启用 `--include-desktop-chat-run`、`--include-open-platform`、`--include-open-api-chat`、`--include-open-api-image`、`--include-model-lab-run`、`--include-arena-run` 或 `--include-report-agent-generate`。图片、视频和 ASR 使用各自 include 参数，不能用文本样本冒充 raw gate。
-
-## 执行顺序
-
-1. 用 `scripts/llmgw-readiness-audit.py` 聚合静态守卫、关键 xUnit、serving probe、CDS runtime 和 shadow coverage。
-2. 用 `scripts/llmgw-protocol-router-audit.py` 固化协议、配置权威和发布脚本一致性。
-3. 用 `scripts/llmgw-release-gate.py` 校验当前 release commit 的线上证据；禁止降低 gate 代替补样本。
-4. 先备份配置权威，再运行 `scripts/llmgw-config-authority-apply.py`；默认 dry-run，执行必须显式传 `--execute`。
-5. 分小提交删除旧实现、旧装配和旧配置，每个提交保持编译、测试和静态棘轮通过。
-6. 发布后再次执行四协议真机、核心 active caller 和多模态抽样；将证据写入 rollout ledger。
-7. 稳定窗口通过后关闭本计划，并把最终架构事实更新到设计文档。
-
-## 完成标准
-
-- 仓库中不再存在可被 DI 或配置启用的 inproc、shadow 或 legacy resolver 路径。
-- MAP 没有直接构造上游模型客户端的新增或存量例外。
-- 所有 active appCaller 都由 Gateway 权威配置解析，MAP 不保存可执行的模型兜底。
-- 自动化测试覆盖四协议、三种路由、多模态 raw、数据域和回滚失败路径。
-- 生产验证与当前 commit 一致，失败时依赖版本回退，而不是静默切回进程内实现。
+存量数据：`llmshadow_comparisons` 里的历史文档不再被读写；开启过 TTL 索引的环境会自然过期，没开过的可手工删除该集合（只读历史，不影响任何功能）。
 
 ## 关联文档
 
@@ -106,4 +45,3 @@ S6 是「删」，这一节是「搬」——两者的区别在于：搬不改�
 - [doc/design.platform.llm-gateway.migration-retrospective.md](./design.platform.llm-gateway.migration-retrospective.md)
 - [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)
 - [doc/debt.platform.llm-gateway.isolation.md](./debt.platform.llm-gateway.isolation.md)
-- `llmgw/docs/README.md`

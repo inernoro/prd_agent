@@ -88,7 +88,6 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_service_key_rate_windows",
             "llmgw_prompt_policies",
             "llmrequestlogs",
-            "llmshadow_comparisons",
             "llmgw_operation_audits",
             "llmgw_login_audits",
             "llmgw_lifecycle_runs",
@@ -194,26 +193,6 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
                     .Ascending("Provider")
                     .Ascending("ProviderRequestId"),
                 new CreateIndexOptions { Name = "idx_llmgw_logs_tenant_provider_request" }),
-        }, cancellationToken: ct);
-
-        var shadows = _data.Database.GetCollection<BsonDocument>("llmshadow_comparisons");
-        await shadows.Indexes.CreateManyAsync(new[]
-        {
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys
-                    .Ascending("TenantId")
-                    .Ascending("ReleaseCommit")
-                    .Ascending("AppCallerCode")
-                    .Ascending("Kind")
-                    .Descending("ComparedAt"),
-                new CreateIndexOptions { Name = "idx_llmgw_shadow_tenant_release_caller_kind_time" }),
-            new CreateIndexModel<BsonDocument>(
-                Builders<BsonDocument>.IndexKeys
-                    .Ascending("TenantId")
-                    .Ascending("HasCritical")
-                    .Ascending("HttpOk")
-                    .Descending("ComparedAt"),
-                new CreateIndexOptions { Name = "idx_llmgw_shadow_tenant_failure_time" }),
         }, cancellationToken: ct);
 
         await CreateBsonIndexesAsync("llmgw_operation_audits", new[]
@@ -626,14 +605,12 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             return;
         }
         var logDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:RequestLogDays", 90));
-        var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
         var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:AuditDays", 180));
         await EnsureTtlIndexAsync("llmrequestlogs", "StartedAt", "ttl_llmgw_logs_started", TimeSpan.FromDays(logDays), ct);
-        await EnsureTtlIndexAsync("llmshadow_comparisons", "ComparedAt", "ttl_llmgw_shadow_compared", TimeSpan.FromDays(shadowDays), ct);
         await EnsureTtlIndexAsync("llmgw_operation_audits", "CreatedAt", "ttl_llmgw_operation_audits", TimeSpan.FromDays(auditDays), ct);
         await EnsureTtlIndexAsync("llmgw_login_audits", "CreatedAt", "ttl_llmgw_login_audits", TimeSpan.FromDays(auditDays), ct);
         await EnsureTtlIndexAsync("llmgw_lifecycle_runs", "StartedAt", "ttl_llmgw_lifecycle_runs", TimeSpan.FromDays(auditDays), ct);
-        _logger.LogWarning("[LlmGatewayData] TTL 删除索引已启用 logs={LogDays}d shadow={ShadowDays}d audit={AuditDays}d", logDays, shadowDays, auditDays);
+        _logger.LogWarning("[LlmGatewayData] TTL 删除索引已启用 logs={LogDays}d audit={AuditDays}d", logDays, auditDays);
     }
 
     private async Task EnsureTtlIndexAsync(
