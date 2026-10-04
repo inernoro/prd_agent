@@ -2320,7 +2320,15 @@ export function createServer(deps: ServerDeps): express.Express {
     };
     const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
-    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    // Observe bytes without subscribing to `data`: a data listener starts the
+    // request flowing before async authentication finishes, draining uploads
+    // before the route's parser/pipe is ready. Like the response wrappers below,
+    // this leaves stream consumption and backpressure with the actual reader.
+    const origRequestEmit = req.emit;
+    req.emit = function (event: string | symbol, ...args: any[]): boolean {
+      if (event === 'data') requestCapture.onChunk(args[0]);
+      return origRequestEmit.call(this, event, ...args);
+    };
     const responseCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined);
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);

@@ -69,6 +69,12 @@ describe('http log body redaction', () => {
     expect(JSON.stringify(selected)).not.toContain(canary);
   });
 
+  it('marks route-controlled omission when auth rejects before consuming the body', () => {
+    const selected = selectRequestBodyForHttpLog({ bodyBytes: 0 }, {}, true);
+    expect(selected.bodyPreview).toBe('[cds request body omitted]');
+    expect(selected.bodyBytes).toBeUndefined();
+  });
+
   it('omits image body previews while preserving byte counts', () => {
     const capture = createBodyCapture(undefined, 'image/png');
     const bytes = Buffer.alloc(2 * 1024 * 1024, 0xff);
