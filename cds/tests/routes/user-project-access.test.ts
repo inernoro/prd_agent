@@ -116,10 +116,18 @@ describe('human project grants through the production server', () => {
     }
     expect((await call('PATCH', '/api/branches/branch-project-a', member, { notes: 'guest edited' })).status).toBe(200);
     expect(state.getBranch('branch-project-a')?.notes).toBe('guest edited');
+    state.setBranchProfileOverride('branch-project-a', 'profile-project-a', {
+      command: 'redis-server --requirepass test-override-command-secret',
+    });
     const profiles = await call('GET', '/api/branches/branch-project-a/profile-overrides', member);
     expect(profiles.status).toBe(200);
     expect(JSON.stringify(profiles.body)).not.toContain('test-project-secret');
     expect(JSON.stringify(profiles.body)).not.toContain('test-mode-secret');
+    expect(JSON.stringify(profiles.body)).not.toContain('test-override-command-secret');
+    expect(state.getBranch('branch-project-a')?.profileOverrides?.['profile-project-a'].command)
+      .toContain('test-override-command-secret');
+    expect(JSON.stringify((await call('GET', '/api/branches/branch-project-a/profile-overrides')).body))
+      .toContain('test-override-command-secret');
     expect(profiles.body.profiles[0].effective.env.NODE_ENV).toBe('test');
     for (const url of ['/api/branches', '/api/branches/branch-project-a', '/api/branches/branch-project-a/extra-services']) {
       const view = await call('GET', url, member);

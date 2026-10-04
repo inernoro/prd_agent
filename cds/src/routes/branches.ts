@@ -15819,9 +15819,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 原始 env 会泄露分支本地密钥。与 extra-services / 分支序列化的 maskExtraProfilesEnv 口径一致，
     // 仅对额外服务脱敏（项目 profile 的既有行为不动）。
     const extraProfileIds = new Set((entry.extraProfiles || []).map((p) => p.id));
+    const visibleOverrides = branchForHumanView(req, entry).profileOverrides;
     const payload = profiles.map(profile => {
       const isExtra = extraProfileIds.has(profile.id) || isScopedHuman(req);
-      const override = entry.profileOverrides?.[profile.id];
+      const override = visibleOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
