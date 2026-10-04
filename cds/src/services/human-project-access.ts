@@ -2,7 +2,7 @@ import type { StateService } from './state.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from './human-auth.js';
 import { hasActiveGrant } from './identity.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
-import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv } from './secret-masker.js';
+import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, maskSecretsInObject } from './secret-masker.js';
 import type { UnifiedBranchResource } from './resources.js';
 
 /** Stable link to the existing principal/grant model; never use a mutable login. */
@@ -12,6 +12,26 @@ export function humanPrincipalId(userId: string): string {
 
 export function isScopedHuman(req: unknown): boolean {
   return isAuthenticatedHuman(req) && !isHumanSystemOwner(req);
+}
+
+/** Complete log/diagnostic payloads reuse the established secret masker. */
+export function logPayloadForHumanView<T>(req: unknown, payload: T): T {
+  if (!isScopedHuman(req)) return payload;
+  // Structured diagnostics can carry env maps, not just KEY=value strings.
+  // Compose the existing text, env and CLI maskers; add no new secret grammar.
+  return walk(maskSecretsInObject(payload)) as T;
+  function walk(value: unknown): unknown {
+    if (typeof value === 'string') return maskCommandSecrets(value);
+    if (Array.isArray(value)) return value.map(walk);
+    if (value && typeof value === 'object') {
+      const entries = Object.entries(value);
+      const strings = maskEnvRecord(Object.fromEntries(entries.filter(([, item]) => typeof item === 'string')));
+      return Object.fromEntries(entries.map(([key, item]) => [key,
+        typeof item === 'string' ? maskCommandSecrets(strings[key]) : walk(item),
+      ]));
+    }
+    return value;
+  }
 }
 
 export function supportsHumanProjectGrant(project: Project | undefined): project is Project {
@@ -33,33 +53,36 @@ export function canHumanAccessProject(req: unknown, state: StateService, project
 /** Read-only member views never carry profile or alternate-mode secrets. */
 export function profileForHumanView(req: unknown, profile: BuildProfile): BuildProfile {
   if (!isScopedHuman(req)) return profile;
+  const visible = logPayloadForHumanView(req, profile);
   return {
-    ...profile,
-    env: profile.env ? maskEnvRecord(profile.env) : profile.env,
-    command: maskCommandSecrets(profile.command),
-    deployModes: profile.deployModes ? Object.fromEntries(Object.entries(profile.deployModes).map(([id, mode]) => [id, {
+    ...visible,
+    env: visible.env ? maskEnvRecord(visible.env) : visible.env,
+    command: maskCommandSecrets(visible.command),
+    deployModes: visible.deployModes ? Object.fromEntries(Object.entries(visible.deployModes).map(([id, mode]) => [id, {
       ...mode, env: mode.env ? maskEnvRecord(mode.env) : mode.env,
       command: maskCommandSecrets(mode.command),
-    }])) : profile.deployModes,
+    }])) : visible.deployModes,
   };
 }
 
 /** Resource summaries are not permission to reveal database/cache credentials. */
 export function resourceForHumanView(req: unknown, resource: UnifiedBranchResource): UnifiedBranchResource {
   if (!isScopedHuman(req)) return resource;
+  const visible = logPayloadForHumanView(req, resource);
   return {
-    ...resource,
+    ...visible,
     connectionString: undefined,
-    externalAccess: { ...resource.externalAccess, connectionString: undefined },
-    raw: 'command' in resource.raw ? {
-      ...resource.raw, command: maskCommandSecrets(resource.raw.command),
-    } : resource.raw,
+    externalAccess: { ...visible.externalAccess, connectionString: undefined },
+    raw: 'command' in visible.raw ? {
+      ...visible.raw, command: maskCommandSecrets(visible.raw.command),
+    } : visible.raw,
   };
 }
 
 export function branchForHumanView<T extends BranchEntry>(req: unknown, branch: T): T {
-  const masked = maskBranchExtraProfilesEnv(branch);
-  if (!isScopedHuman(req)) return masked;
+  const profileMasked = maskBranchExtraProfilesEnv(branch);
+  if (!isScopedHuman(req)) return profileMasked;
+  const masked = logPayloadForHumanView(req, profileMasked);
   const resources = (masked as T & { resources?: UnifiedBranchResource[] }).resources;
   return {
     ...masked,

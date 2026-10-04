@@ -6,6 +6,8 @@ import { canHumanAccessProject, isScopedHuman } from '../services/human-project-
 export function createHumanProjectAccessMiddleware(state: StateService) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!isScopedHuman(req) || !/^\/api\//i.test(req.path)) { next(); return; }
+    res.locals.cdsScopedHuman = true;
+    res.locals.cdsHumanRequest = req;
     const path = req.path.replace(/\/+$/, '').toLowerCase();
     const method = req.method.toUpperCase();
     const deny = () => res.status(403).json({

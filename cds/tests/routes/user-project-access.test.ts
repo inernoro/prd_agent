@@ -11,6 +11,7 @@ import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { humanPrincipalId } from '../../src/services/human-project-access.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { branchEvents } from '../../src/services/branch-events.js';
+import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import type { CdsConfig } from '../../src/types.js';
 
 describe('human project grants through the production server', () => {
@@ -22,6 +23,7 @@ describe('human project grants through the production server', () => {
   let member: string;
   let memberId: string;
   let store: MemoryAuthStore;
+  let registry: ExecutorRegistry;
 
   async function call(method: string, url: string, cookie = owner, body?: unknown) {
     const res = await fetch(base + url, {
@@ -51,13 +53,15 @@ describe('human project grants through the production server', () => {
         deployModes: { alternate: { label: 'alternate', env: { API_TOKEN: 'test-mode-secret' } } } });
     }
     store = new MemoryAuthStore();
+    registry = new ExecutorRegistry(state);
     const shell = new MockShellExecutor();
     const config: CdsConfig = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'),
       masterPort: 9900, workerPort: 5500, dockerNetwork: 'cds', portStart: 10001,
       sharedEnv: {}, jwt: { secret: 'test', issuer: 'test' }, rootDomains: ['example.test'] };
     const app = createServer({ stateService: state, worktreeService: new WorktreeService(shell, dir),
-      shell, config, authStore: store, bridgeService: {} as any,
-      containerService: { getRunningContainerNames: async () => new Set(), getTotalMemoryGB: async () => 8 } as any,
+      shell, config, authStore: store, registry, bridgeService: {} as any,
+      containerService: { getRunningContainerNames: async () => new Set(), getTotalMemoryGB: async () => 8,
+        getLogs: async () => 'PASSWORD=fake-diagnostic-secret\nbooting\n' } as any,
       proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => server.once('listening', resolve));
@@ -73,6 +77,7 @@ describe('human project grants through the production server', () => {
     await new Promise<void>(resolve => server.close(() => resolve()));
     await flushAllJsonStateStores();
     fs.rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
 
@@ -92,6 +97,11 @@ describe('human project grants through the production server', () => {
 
   it('blocks cross-project reads, writes, query overrides, derivation and system/credential escalation', async () => {
     await grant(['project-a']);
+    state.getBuildProfilesForProject('project-a')[0].command = 'API_TOKEN=fake-command-env-secret redis-server --requirepass fake-command-flag-secret';
+    const memberProfiles = JSON.stringify((await call('GET', '/api/build-profiles', member)).body);
+    expect(memberProfiles).not.toContain('fake-command-env-secret');
+    expect(memberProfiles).not.toContain('fake-command-flag-secret');
+    expect(JSON.stringify((await call('GET', '/api/build-profiles')).body)).toContain('fake-command-env-secret');
     state.setBranchExtraProfiles('branch-project-a', [{ id: 'extra', name: 'extra', dockerImage: 'node:20',
       command: '', workDir: '.', containerPort: 3001,
       deployModes: { alternate: { label: 'alternate', env: { API_TOKEN: 'extra-mode-secret' } } } }]);
@@ -173,7 +183,7 @@ describe('human project grants through the production server', () => {
     state.addInfraService({ id: 'redis', projectId: 'project-a', name: 'Redis', dockerImage: 'redis:7',
       containerPort: 6379, hostPort: 16379, containerName: 'test-redis', status: 'stopped',
       volumes: [], env: { REDIS_PASSWORD: 'fake-resource-env-secret' },
-      command: ['redis-server', '--requirepass', 'fake-resource-command-secret'], createdAt: new Date().toISOString() });
+      command: ['env', 'API_TOKEN=fake-resource-command-env-secret', 'redis-server', '--requirepass', 'fake-resource-command-secret'], createdAt: new Date().toISOString() });
     state.upsertResourceExternalAccess({ projectId: 'project-a', branchId: 'branch-project-a',
       resourceId: 'infra:redis', enabled: true, kind: 'tcp', allowlist: [],
       connectionString: 'redis://:fake-resource-connection-secret@redis.example.test:16379/0' });
@@ -189,7 +199,7 @@ describe('human project grants through the production server', () => {
       expect(redis.serviceName).toBe('Redis');
       expect(redis.connectionString).toBeUndefined();
       expect(redis.externalAccess.connectionString).toBeUndefined();
-      for (const secret of ['fake-resource-connection-secret', 'fake-resource-env-secret', 'fake-resource-command-secret']) {
+      for (const secret of ['fake-resource-connection-secret', 'fake-resource-env-secret', 'fake-resource-command-secret', 'fake-resource-command-env-secret']) {
         expect(JSON.stringify(view.body), url).not.toContain(secret);
       }
       expect(JSON.stringify((await call('GET', url)).body)).toContain('fake-resource-connection-secret');
@@ -218,6 +228,112 @@ describe('human project grants through the production server', () => {
     expect(ownerView.status).toBe(200);
     expect(ownerView.body.archives[0].logs).toContain('fake-owner-archive-secret');
     expect(state.getContainerLogArchives('branch-project-a')[0].masked).toBe(false);
+  });
+
+  it('masks derived branch creation success and flush-failure responses without changing stored or owner credentials', async () => {
+    vi.spyOn(WorktreeService.prototype, 'create').mockResolvedValue();
+    state.setBranchExtraProfiles('branch-project-a', [{ id: 'extra', name: 'extra', dockerImage: 'node:20',
+      command: 'redis-server --requirepass fake-derived-command-secret', workDir: '.', containerPort: 3001,
+      env: { API_TOKEN: 'fake-derived-env-secret' },
+      deployModes: { alternate: { label: 'alternate', env: { PASSWORD: 'fake-derived-mode-secret' } } } }]);
+    state.setBranchProfileOverride('branch-project-a', 'profile-project-a', {
+      command: 'redis-server --requirepass fake-derived-override-secret', env: { TOKEN: 'fake-derived-override-env' },
+    });
+    await grant(['project-a']);
+    const secrets = ['fake-derived-command-secret', 'fake-derived-env-secret', 'fake-derived-mode-secret',
+      'fake-derived-override-secret', 'fake-derived-override-env'];
+    const created = await call('POST', '/api/branches', member, {
+      branch: 'member-derived', projectId: 'project-a', sourceBranchId: 'branch-project-a',
+    });
+    expect(created.status).toBe(201);
+    for (const secret of secrets) expect(JSON.stringify(created.body)).not.toContain(secret);
+    expect(state.getBranch(created.body.branch.id)?.extraProfiles?.[0].env?.API_TOKEN).toBe('fake-derived-env-secret');
+    const ownerCreated = await call('POST', '/api/branches', owner, {
+      branch: 'owner-derived', projectId: 'project-a', sourceBranchId: 'branch-project-a',
+    });
+    expect(ownerCreated.status).toBe(201);
+    for (const secret of secrets) expect(JSON.stringify(ownerCreated.body)).toContain(secret);
+    vi.spyOn(state, 'flush').mockRejectedValueOnce(new Error('fake state flush failure'));
+    const failed = await call('POST', '/api/branches', member, {
+      branch: 'member-derived-flush-error', projectId: 'project-a', sourceBranchId: 'branch-project-a',
+    });
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe('state_flush_failed');
+    for (const secret of secrets) expect(JSON.stringify(failed.body)).not.toContain(secret);
+    expect(state.getBranch(failed.body.branch.id)?.profileOverrides?.['profile-project-a'].command)
+      .toContain('fake-derived-override-secret');
+  });
+
+  it('masks member diagnostics, operation history and embedded service logs while retaining owner and stored output', async () => {
+    const branch = state.getBranch('branch-project-a')!;
+    branch.status = 'error';
+    branch.services['profile-project-a'] = { profileId: 'profile-project-a', containerName: 'fake-container',
+      hostPort: 13000, status: 'error', buildLog: 'TOKEN=fake-service-log-secret' };
+    state.appendLog(branch.id, { type: 'build', startedAt: new Date().toISOString(), status: 'error',
+      events: [{ step: 'build', status: 'error', log: 'API_TOKEN=fake-operation-secret',
+        detail: { env: { API_TOKEN: 'fake-structured-log-secret' }, command: 'redis-server --requirepass fake-log-command-secret' },
+        timestamp: new Date().toISOString() }] });
+    await grant(['project-a']);
+    for (const [url, secret] of [
+      ['/api/branches/branch-project-a/failure-diagnosis', 'fake-diagnostic-secret'],
+      ['/api/branches/branch-project-a/logs', 'fake-operation-secret'],
+      ['/api/branches/branch-project-a', 'fake-service-log-secret'],
+      ['/api/branches', 'fake-service-log-secret'],
+      ['/api/branches/branch-project-a/resources', 'fake-service-log-secret'],
+    ]) {
+      expect(JSON.stringify((await call('GET', url)).body), url).toContain(secret);
+      const view = await call('GET', url, member);
+      expect(view.status, url).toBe(200);
+      expect(JSON.stringify(view.body), url).not.toContain(secret);
+      expect(JSON.stringify((await call('GET', url)).body), url).toContain(secret);
+    }
+    expect(state.getLogs(branch.id)[0].events[0].log).toContain('fake-operation-secret');
+    const memberLogs = JSON.stringify((await call('GET', '/api/branches/branch-project-a/logs', member)).body);
+    expect(memberLogs).not.toContain('fake-structured-log-secret');
+    expect(memberLogs).not.toContain('fake-log-command-secret');
+    const ownerLogs = JSON.stringify((await call('GET', '/api/branches/branch-project-a/logs')).body);
+    expect(ownerLogs).toContain('fake-structured-log-secret');
+    expect(ownerLogs).toContain('fake-log-command-secret');
+    expect(branch.services['profile-project-a'].buildLog).toContain('fake-service-log-secret');
+  });
+
+  it('projects complete executor frames for members without forwarding split raw credentials; owner keeps raw output', async () => {
+    const remote = http.createServer((req, res) => {
+      req.on('data', () => {});
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write('event: step\ndata: {"step":"build","status":"running","title":"safe progress","detail":{"env":{"PASSWORD":"fake-remote-map-secret"}}}\n\n');
+        res.write('event: log\ndata: {"profileId":"profile-project-a","chunk":"API_TOKEN=fake-remote-');
+        setImmediate(() => res.end('chunk-secret"}\n\nevent: complete\ndata: {"ok":true,"services":{}}\n\n'));
+      });
+    });
+    remote.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => remote.once('listening', resolve));
+    registry.register({ id: 'test-remote', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
+      role: 'remote', capacity: { maxBranches: 10, memoryMB: 8192, cpuCores: 4 } });
+    await grant(['project-a']);
+    try {
+      for (const cookie of [member, owner]) {
+        const res = await fetch(base + '/api/branches/branch-project-a/deploy', {
+          method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetExecutorId: 'test-remote' }),
+        });
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        expect(text).toContain('safe progress');
+        if (cookie === member) {
+          expect(text).not.toContain('fake-remote-map-secret');
+          expect(text).not.toContain('fake-remote-chunk-secret');
+          expect(text).toContain('原始输出仅系统所有者可查看');
+        } else {
+          expect(text).toContain('fake-remote-map-secret');
+          expect(text).toContain('fake-remote-chunk-secret');
+        }
+      }
+    } finally {
+      remote.closeAllConnections();
+      await new Promise<void>(resolve => remote.close(() => resolve()));
+    }
   });
 
   it('does not offer or accept unsupported shared-service grants or expose old grants', async () => {
@@ -277,6 +393,12 @@ describe('human project grants through the production server', () => {
       const event = decoder.decode((await reader.read()).value);
       expect(event).toContain('allowed');
       expect(event).not.toContain('hidden');
+      branchEvents.emit('any', { type: 'branch.deploy-step', payload: {
+        branchId: 'branch-project-a', projectId: 'project-a', log: 'API_TOKEN=fake-live-log-secret', ts: 'live-step',
+      } });
+      const live = decoder.decode((await reader.read()).value);
+      expect(live).toContain('live-step');
+      expect(live).not.toContain('fake-live-log-secret');
       await grant([]);
       branchEvents.emit('any', { type: 'branch.status', payload: { branchId: 'branch-project-a', projectId: 'project-a', status: 'idle', ts: 'revoked' } });
       // An owner-independent marker establishes that no revoked event was queued.

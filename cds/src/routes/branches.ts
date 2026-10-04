@@ -70,7 +70,7 @@ import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildS
 import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
-import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView } from '../services/human-project-access.js';
+import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
@@ -3677,7 +3677,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const errEvent = {
           message: `执行器拒绝部署请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
         };
-        res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`);
+        sendSSE(res, 'error', errEvent);
         entry.status = 'error';
         entry.errorMessage = errEvent.message;
         proxyHasError = true;
@@ -3719,6 +3719,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
+        // Reuse complete frames already parsed for history; never forward raw
+        // executor network chunks to members, including split credentials.
+        if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
         if (eventName === 'error') {
           proxyHasError = true;
           if (typeof parsed.message === 'string' && parsed.message.trim() !== '') proxyErrorMessage = parsed.message;
@@ -3849,7 +3852,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // client sees updates promptly rather than waiting for the full
         // upstream response to arrive.
         try {
-          res.write(chunk);
+          if (!res.locals.cdsScopedHuman) res.write(chunk);
         } catch {
           // Client disconnected mid-stream — stop piping; the remote will
           // continue its build independently of this pipe going away.
@@ -3864,7 +3867,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 残留时,res.write(finalChunk) 等于 res.write('') 没意义 — 拆成两个独立 guard。
       const finalChunk = decoder.decode();
       if (finalChunk) {
-        try { res.write(finalChunk); } catch { /* client gone */ }
+        try { if (!res.locals.cdsScopedHuman) res.write(finalChunk); } catch { /* client gone */ }
         buffer += finalChunk;
       }
       // 警告 Bugbot 2026-05-06 6927c312:之前直接 ingestFrame(buffer) 把"多个完整
@@ -3925,7 +3928,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       const msg = (err as Error).message;
       const errEvent = { message: `派发到执行器失败: ${msg}` };
-      try { res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`); } catch { /* ignore */ }
+      sendSSE(res, 'error', errEvent);
       entry.status = 'error';
       entry.errorMessage = errEvent.message;
       proxyHasError = true;
@@ -4357,7 +4360,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function sendSSE(res: import('express').Response, event: string, data: unknown) {
     try {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      const visible = res.locals.cdsScopedHuman
+        ? (event === 'log' || event === 'smoke-line'
+          // Raw chunks can split a credential across writes; keep progress but
+          // do not attempt per-chunk credential parsing for project members.
+          ? { profileId: data && typeof data === 'object' ? (data as { profileId?: string }).profileId : undefined,
+            chunk: '[原始输出仅系统所有者可查看]\n', text: '[原始输出仅系统所有者可查看]' }
+          : logPayloadForHumanView(res.locals.cdsHumanRequest, data))
+        : data;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(visible)}\n\n`);
     } catch { /* client disconnected */ }
   }
 
@@ -4747,7 +4758,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const dataObject = data && typeof data === 'object' && !Array.isArray(data)
         ? data as Record<string, unknown>
         : { value: data };
-      const payload = { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` };
+      const payload = logPayloadForHumanView(req, { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` });
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`); }
       catch { /* client gone */ }
     };
@@ -6087,7 +6098,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(flushResult === 'timeout' ? 503 : 500).json({
           error: flushResult === 'timeout' ? 'state_flush_timeout' : 'state_flush_failed',
           message: branchStateFlushFailureMessage(flushResult, `分支 "${entry.id}" 已创建`),
-          branch: entry,
+          branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry,
         });
         return;
       }
@@ -6099,7 +6110,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         payload: { branch: entry, source: 'manual', ts: nowIso() },
       });
 
-      res.status(201).json({ branch: entry });
+      res.status(201).json({ branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -11679,7 +11690,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       branchId: branch.id,
       branchStatus: branch.status,
       diagnosisSource: branch.lastDeploymentRunId && deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
@@ -11689,7 +11700,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
         : undefined,
       failedServices,
-    });
+    }));
   });
 
   router.delete('/branches/:id', async (req, res) => {
@@ -17133,7 +17144,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }]
       : [];
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       logs: logs.length > 0 ? logs : fallbackLogs,
       logsAreSynthetic: (isErrorFallback || hasRecoveredRuntime) || undefined,
       branchStatus: branch?.status,
@@ -17150,7 +17161,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ],
         note: '在部署进行中时,本端点的 logs 数组可能仍为空。要看实时进度请订阅 liveStreamHint.url。',
       },
-    });
+    }));
   });
 
   router.post('/branches/:id/container-logs', async (req, res) => {
