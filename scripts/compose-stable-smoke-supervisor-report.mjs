@@ -776,6 +776,25 @@ export function synthesizeReviewerOverview(functionalModuleContent, gateModuleCo
   return lines.join('\n');
 }
 
+function ensureSupervisorNavigationTargets(markdown) {
+  let result = String(markdown);
+  const targets = [
+    ['关联测试方法', '本轮没有额外测试方法。'],
+    ['逐模块视觉取证任务', '本轮没有视觉取证任务。'],
+    ['视觉异常证据索引', '本轮没有可列出的视觉异常证据。'],
+  ];
+  for (const [target, emptyText] of targets) {
+    if (!result.includes(`](#${target})`) || result.includes(`<a id="${target}"></a>`)) continue;
+    const heading = `## ${target}`;
+    if (result.includes(heading)) {
+      result = result.replace(heading, `<a id="${target}"></a>\n${heading}`);
+    } else {
+      result = `${result.trim()}\n\n<a id="${target}"></a>\n${heading}\n\n${emptyText}\n`;
+    }
+  }
+  return result;
+}
+
 export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '', visualPlanMarkdown = '', technicalUrl = '', executionSummary = null) {
   const functional = parseReportSections(functionalMarkdown);
   const visual = parseReportSections(visualMarkdown);
@@ -909,7 +928,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
   if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
   if (!visualGateMarkdown) output.push(...visualSteps.flatMap((item) => [item.content, '']));
-  return output.join('\n')
+  return ensureSupervisorNavigationTargets(output.join('\n')
     .replace(/https:\/\/example\.invalid\/technical/g, technicalUrl || '#技术附录尚未归档')
     .replace(/\bcaseId\b/g, '验收项编号')
     .replace(/\bflaky\b/gi, '重试后通过')
@@ -930,7 +949,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     .replace(/验收项\s+的/g, '验收项的')
     .replace(/\x1b\[[0-9;]*m/g, '')
     .replace(/\n{3,}/g, '\n\n')
-    .trim() + '\n';
+    .trim() + '\n');
 }
 
 async function main() {
