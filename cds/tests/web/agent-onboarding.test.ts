@@ -409,7 +409,6 @@ describe('CDS Agent 接入口令', () => {
   it('列出三个 Agent 的项目级技能目录', () => {
     expect(PROJECT_SKILL_PATHS).toEqual([
       { agent: 'Codex / 通用 Agent Skills', path: '.agents/skills' },
-      { agent: 'Cursor', path: '.cursor/skills' },
       { agent: 'Claude Code', path: '.claude/skills' },
     ]);
   });

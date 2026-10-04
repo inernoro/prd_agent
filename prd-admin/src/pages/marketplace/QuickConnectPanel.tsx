@@ -185,7 +185,7 @@ export function QuickConnectPanel({ onClose, onOpenFullDialog }: Props) {
           /* ── No keys yet ── */
           <div className="mkt-qc-nocreate">
             <span className="mkt-qc-desc">
-              一键生成 API Key，让 Claude Code / Cursor 等 AI 直接搜索和下载技能包
+              一键生成 API Key，让 Claude Code / Codex 等 AI 直接搜索和下载技能包
             </span>
             <button
               type="button"

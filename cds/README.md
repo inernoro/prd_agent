@@ -25,7 +25,7 @@ CDS 把“准备部署环境”变成“选择项目、批准 Agent、确认方�
 
 进入 CDS 控制台任意页面，点击左侧常驻的“接入 Agent”。入口会自动识别当前页面；在“登录与认证”等设置页，也可以直接点击页面内的“交给 Agent 配置”。
 
-选择 Codex、Cursor 或 Claude Code，再选择“连接已有项目”或“创建一个新项目”。把页面生成的接入口令交给 Agent。口令不包含密钥，也不要求修改终端配置。
+选择 Codex 或 Claude Code，再选择“连接已有项目”或“创建一个新项目”。把页面生成的接入口令交给 Agent。口令不包含密钥，也不要求修改终端配置。
 
 生成的接入口令会同时带上当前页面任务、验收要求和安全边界。Agent 发起申请后，在 CDS 右下角点击批准。Agent 会自动验证连接并继续工作。
 
@@ -98,7 +98,7 @@ CDS 会检查应用目录、安装方式、构建方式、启动命令、端口�
 
 | 状态 | 操作 | 预期结果 |
 | --- | --- | --- |
-| `[ ]` | 打开“一键部署 > 接入 Agent” | 可以选择 Codex、Cursor 或 Claude Code |
+| `[ ]` | 打开“一键部署 > 接入 Agent” | 可以选择 Codex 或 Claude Code |
 | `[ ]` | 复制接入口令 | 内容不包含密钥，也不要求修改终端配置 |
 | `[ ]` | 在右下角批准申请 | Agent 自动完成连接验证 |
 | `[ ]` | 检查目标仓库状态 | `.cds/credentials.json` 不出现；项目级技能文件是否提交由团队决定 |
@@ -137,7 +137,7 @@ CDS 会检查应用目录、安装方式、构建方式、启动命令、端口�
 | 你想了解什么 | 文档 |
 | --- | --- |
 | 从零完成第一次使用 | [从零开始使用 CDS](../doc/guide.cds.tutorial.md) |
-| 接入 Codex、Cursor 或 Claude Code | [自动交付与 Agent 接入](../doc/guide.cds.managed-delivery.md) |
+| 接入 Codex 或 Claude Code | [自动交付与 Agent 接入](../doc/guide.cds.managed-delivery.md) |
 | 选择托管、Compose 或 Agent 操作 | [部署方式选择](../doc/guide.cds.deploy-three-paths.md) |
 | 只通过页面完成部署 | [一键可视化部署](../doc/guide.cds.one-click-deploy.md) |
 | 验证部署真的可用 | [部署验收](../doc/guide.cds.deploy-acceptance.md) |

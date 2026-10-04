@@ -201,7 +201,7 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("装到**项目级**技能目录，不是用户主目录 —— 技能跟着项目的版本库走，团队每个人 clone 下来都有。");
         sb.AppendLine();
-        sb.AppendLine("项目里存在几个 Agent 宿主目录（`.claude` / `.cursor` / `.agents`）就装几份：");
+        sb.AppendLine("项目里存在几个 Agent 宿主目录（`.claude` / `.agents`）就装几份：");
         sb.AppendLine("只装其中一个的话，从另一个 Agent 打开这个项目会一个技能都看不见。");
         sb.AppendLine();
         sb.AppendLine("```bash");
@@ -214,8 +214,8 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine("## 下一步");
         sb.AppendLine();
         sb.AppendLine(string.IsNullOrWhiteSpace(bundle.FirstStep)
-            // 安装支持 .claude / .cursor / .agents 三个宿主，这句兜底文案就不能钉死某一个 ——
-            // 只装了 Cursor 或 Codex 的用户会被指去一个他没有的工具。
+            // 安装支持 .claude / .agents 两个宿主，这句兜底文案就不能钉死某一个 ——
+            // 只装了 Codex 的用户会被指去一个他没有的工具。
             ? "在你的 AI 编码工具里输入 `/sdd-init`。"
             : bundle.FirstStep);
         sb.AppendLine();

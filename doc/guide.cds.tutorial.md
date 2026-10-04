@@ -14,7 +14,7 @@
 
 - 第一次使用 CDS；
 - 希望把普通网站、后台或前后端项目快速部署起来；
-- 使用 Codex、Cursor 或 Claude Code 协助部署；
+- 使用 Codex 或 Claude Code 协助部署；
 - 想从简单项目逐步理解数据库、缓存和多服务项目。
 
 如果你的项目已经有稳定且复杂的 Compose 配置，可以直接阅读 [CDS 部署方式选择](guide.cds.deploy-three-paths.md)。
