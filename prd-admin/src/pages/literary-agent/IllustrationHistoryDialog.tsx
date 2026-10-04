@@ -189,7 +189,9 @@ export function IllustrationHistoryDialog({
                       <figcaption className="px-2 py-1.5 flex items-start gap-1.5">
                         <div className="flex-1 min-w-0">
                           <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                            {item.markerIndex != null ? `配图 ${item.markerIndex + 1}` : '未挂位置'}
+                            {item.mountedAt && item.mountedAt.length > 1
+                              ? `配图 ${item.mountedAt.map((i) => i + 1).join('、')}`
+                              : item.markerIndex != null ? `配图 ${item.markerIndex + 1}` : '未挂位置'}
                           </div>
                           <div
                             className="text-[11px] line-clamp-2"

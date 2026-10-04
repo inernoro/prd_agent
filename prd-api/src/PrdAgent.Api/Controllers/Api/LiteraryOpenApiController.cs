@@ -499,7 +499,7 @@ public class LiteraryOpenApiController : ControllerBase
             {
                 assetId = i.Id, url = i.Url, markerIndex = i.MarkerIndex, description = i.MarkerText,
                 workflowVersion = i.WorkflowVersion, isCurrent = i.IsCurrent, createdAt = i.CreatedAt,
-                replacedAt = i.ReplacedAt, replacedReason = i.ReplacedReason, inLastSet = i.InLastSet,
+                replacedAt = i.ReplacedAt, replacedReason = i.ReplacedReason, inLastSet = i.InLastSet, mountedAt = i.MountedAt,
             }),
             // 每次换稿前真正挂在正文上的那组（新到旧）。用户说「恢复成上传前的」就取第一组
             previousSets = history.PreviousSets.Select(set => new

@@ -16,10 +16,11 @@ public static class LiteraryIllustrationHistory
     /// <param name="ReplacedAt">什么时候不再挂在正文上；仍在用或算不出来时为空</param>
     /// <param name="ReplacedReason">为什么被换下（人话）</param>
     /// <param name="InLastSet">是不是「上一次换稿前在用的那组」里的一张</param>
+    /// <param name="MountedAt">现在挂在哪些位置（同一张图可以被放回到多个位置）；没挂为空列表。MarkerIndex 取其中最靠前的一个</param>
     public sealed record Item(
         string Id, string Url, int Width, int Height, string? Prompt,
         int? MarkerIndex, string? MarkerText, int? WorkflowVersion, bool IsCurrent, DateTime CreatedAt,
-        DateTime? ReplacedAt, string? ReplacedReason, bool InLastSet);
+        DateTime? ReplacedAt, string? ReplacedReason, bool InLastSet, List<int> MountedAt);
 
     public sealed record Group(int? WorkflowVersion, bool IsCurrentVersion, List<Item> Items);
 
@@ -56,8 +57,9 @@ public static class LiteraryIllustrationHistory
         var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
         var currentIds = current.Values.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
         // 正在用的图报它现在挂在哪，不报它生成时的位置：放回到别的位置后，智能体按回来的序号操作必须落在对的标记上
-        var mountedAt = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var (index, asset) in current) mountedAt.TryAdd(asset.Id, index);
+        // 同一张图可以挂在多个位置：逐个位置都报，不按图去重成一个
+        var mountedAt = current.GroupBy(kv => kv.Value.Id, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Select(kv => kv.Key).OrderBy(i => i).ToList(), StringComparer.Ordinal);
         var currentVersion = ws.ArticleWorkflow?.Version ?? 0;
         // 资产自己记下的描述优先；没有（早期数据）才借当前版本同位置标记的描述
         var markerText = ws.ArticleWorkflow?.Markers?.GroupBy(m => m.Index)
@@ -120,7 +122,8 @@ public static class LiteraryIllustrationHistory
         var items = assets.Select(a =>
         {
             var (replacedAt, replacedReason) = ReplacedOf(a);
-            var markerIndex = mountedAt.TryGetValue(a.Id, out var at) ? at : a.ArticleInsertionIndex;
+            var mounts = mountedAt.TryGetValue(a.Id, out var at) ? at : new List<int>();
+            var markerIndex = mounts.Count > 0 ? mounts[0] : a.ArticleInsertionIndex;
             return new Item(
                 a.Id,
                 Url(a.Url),
@@ -133,7 +136,8 @@ public static class LiteraryIllustrationHistory
                 currentIds.Contains(a.Id),
                 a.CreatedAt,
                 replacedAt, replacedReason,
-                lastSetIds.Contains(a.Id));
+                lastSetIds.Contains(a.Id),
+                mounts);
         }).ToList();
 
         var groups = items

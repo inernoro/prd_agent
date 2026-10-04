@@ -175,9 +175,11 @@ public static class LiteraryMarkerWrites
         }
         if (result.MatchedCount == 0) return false;
 
+        // 并发上传（页面批量生图会同时回传多张）时各自读到的快照新旧不一：只在新值更大时写，
+        // 陈旧的较小计数后落地也压不低——与 ImageGenRunWorker 回填同一个单调门控。
         var latest = await db.ImageMasterWorkspaces.Find(filter).FirstOrDefaultAsync(CancellationToken.None);
         var done = latest?.ArticleWorkflow?.AssetIdByMarkerIndex?.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count() ?? 0;
-        await db.ImageMasterWorkspaces.UpdateOneAsync(filter,
+        await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(filter, F.Lt(x => x.ArticleWorkflow!.DoneImageCount, done)),
             U.Set(x => x.ArticleWorkflow!.DoneImageCount, done), cancellationToken: CancellationToken.None);
         return true;
     }

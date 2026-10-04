@@ -195,6 +195,10 @@ public class LiteraryMcpUsabilityTests
                 new ImageAsset { Id = "redrawn-1", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/r1.png", CreatedAt = t0.AddMinutes(2) },
             });
             await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "redrawn-1");
+            // 并发上传时别的调用已写下更大的完成数：这次按自己读到的快照重算出的较小值不能把它压低
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id, Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow!.DoneImageCount, 9));
+            Assert.True(await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "redrawn-1"));
+            Assert.Equal(9, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.DoneImageCount);
 
             var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
             var ids = Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray().Select(a => a.GetProperty("id").GetString()).ToList();
@@ -205,7 +209,9 @@ public class LiteraryMcpUsabilityTests
             var history = Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray().ToList();
             var moved = history.Single(i => i.GetProperty("assetId").GetString() == "legacy-0");
             Assert.True(moved.GetProperty("isCurrent").GetBoolean());
-            Assert.Equal(1, moved.GetProperty("markerIndex").GetInt32());
+            // 它原来就挂在第 1 个位置、又被放回第 2 个：两个位置都要报，不能只剩一个
+            Assert.Equal(new[] { 0, 1 }, moved.GetProperty("mountedAt").EnumerateArray().Select(x => x.GetInt32()).ToArray());
+            Assert.Equal(0, moved.GetProperty("markerIndex").GetInt32());
             // 作品详情同样按挂的位置报：两个位置各一张、序号 0 和 1，不再两张都报生成时的 0
             await db.Submissions.InsertOneAsync(new Submission { Id = "sub-detail", OwnerUserId = "writer", ContentType = "literary", WorkspaceId = id, IsPublic = true });
             var subs = WithAdminUser(new SubmissionsController(db, null!, NullLogger<SubmissionsController>.Instance), "writer");

@@ -450,7 +450,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_list_history",
-            Description = "列出这篇文章生成过的全部配图，含重画、改稿后被换下的旧图（与网页「历史配图」同一份）。每张给 assetId、url、当时所在的标记 markerIndex、当时的描述、是否正挂在正文上，以及什么时候、因为什么被换下（replacedAt / replacedReason）。previousSets 是每次换稿（网页换正文、整篇重写、重新生成标记）前真正挂在正文上的那组图，从新到旧，是存档时记下的，不用按生成时间推断：用户说「恢复成上传前用的那几张」就取 previousSets[0]。换稿后带标记写回时，描述与上一组一致的标记会自动沿用那张图（看写稿回执的 reusedImages）；其余用 map_literary_restore_image 一张张放回。",
+            Description = "列出这篇文章生成过的全部配图，含重画、改稿后被换下的旧图（与网页「历史配图」同一份）。每张给 assetId、url、当时所在的标记 markerIndex、当时的描述、是否正挂在正文上（mountedAt 列出它现在挂的全部位置，同一张图可以挂在多处），以及什么时候、因为什么被换下（replacedAt / replacedReason）。previousSets 是每次换稿（网页换正文、整篇重写、重新生成标记）前真正挂在正文上的那组图，从新到旧，是存档时记下的，不用按生成时间推断：用户说「恢复成上传前用的那几张」就取 previousSets[0]。换稿后带标记写回时，描述与上一组一致的标记会自动沿用那张图（看写稿回执的 reusedImages）；其余用 map_literary_restore_image 一张张放回。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "GET", PathTemplate = "/api/open/literary/workspaces/{workspaceId}/history",
             Params = new List<McpToolParam> { new() { Name = "workspaceId", In = "path", Required = true, Description = "文学工作区 id" } },

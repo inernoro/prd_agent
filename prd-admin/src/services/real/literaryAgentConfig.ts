@@ -549,6 +549,8 @@ export type LiteraryIllustrationHistoryItem = {
   replacedReason?: string | null;
   /** 是不是上一次换稿前在用的那组里的一张 */
   inLastSet?: boolean;
+  /** 现在挂在哪些位置（同一张图可以被放回到多个位置）；markerIndex 是其中最靠前的一个 */
+  mountedAt?: number[];
 };
 
 export type LiteraryIllustrationHistory = {
