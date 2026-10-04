@@ -49,6 +49,19 @@ public static class LiteraryIllustrationArchive
     public static bool IsContentChange(ImageMasterWorkspace ws, string? newContent)
         => newContent != null && !string.Equals(newContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
 
+    /// <summary>
+    /// 「库里的配图方案还是我读到的那一版」：所有按读到的快照重算方案 / 历史再整份写回的地方，写入都要带上它。
+    /// 只按 id 写，中间插进一次换稿或重写时，两边会从同一份旧快照推出同一个版本号，后写的把先写的整个盖掉。
+    /// </summary>
+    public static FilterDefinition<ImageMasterWorkspace> SameWorkflowAs(ImageMasterWorkspace ws)
+    {
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var sameWorkflow = ws.ArticleWorkflow == null
+            ? F.Eq(x => x.ArticleWorkflow, null)
+            : LiteraryMarkerWrites.VersionIs(ws.ArticleWorkflow.Version);
+        return F.And(F.Eq(x => x.Id, ws.Id), sameWorkflow);
+    }
+
     public enum ContentResetOutcome { Written, WorkspaceGone, KeptChanging }
 
     /// <summary>
@@ -70,10 +83,7 @@ public static class LiteraryIllustrationArchive
             var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(db, current.Id, ct);
             var update = Builders<ImageMasterWorkspace>.Update.Combine(otherFields,
                 ContentResetUpdate(current, assets, now, reason).Set(x => x.ArticleContent, newContent));
-            var sameWorkflow = current.ArticleWorkflow == null
-                ? F.Eq(x => x.ArticleWorkflow, null)
-                : LiteraryMarkerWrites.VersionIs(current.ArticleWorkflow.Version);
-            var result = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(F.Eq(x => x.Id, current.Id), sameWorkflow),
+            var result = await db.ImageMasterWorkspaces.UpdateOneAsync(SameWorkflowAs(current),
                 update, cancellationToken: CancellationToken.None);
             if (result.MatchedCount > 0)
             {

@@ -265,16 +265,20 @@ public class SubmissionsController : ControllerBase
         var dynamicCovers = new Dictionary<string, (string url, int w, int h)>();
         if (literaryWorkspaceIds.Count > 0)
         {
-            // 每个 workspace 取最新一张图片作为封面
+            // 每个 workspace 取「正文现在挂着的第一张」作为封面，与文章列表同一个判据：
+            // 换下的旧图会保留、旧图也能被放回，取最新一张会把刚被换下的图摆在作品广场上
             var coverAssets = await _db.ImageAssets
                 .Find(x => literaryWorkspaceIds.Contains(x.WorkspaceId!))
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync();
-            foreach (var wsId in literaryWorkspaceIds)
+            var coverWorkspaces = await _db.ImageMasterWorkspaces
+                .Find(x => literaryWorkspaceIds.Contains(x.Id))
+                .ToListAsync();
+            foreach (var cws in coverWorkspaces)
             {
-                var latest = coverAssets.FirstOrDefault(a => a.WorkspaceId == wsId);
-                if (latest != null && !string.IsNullOrWhiteSpace(latest.Url))
-                    dynamicCovers[wsId] = (latest.Url, latest.Width, latest.Height);
+                var cover = PrdAgent.Api.Services.LiteraryIllustrationHistory.CoverOf(cws, coverAssets.Where(a => a.WorkspaceId == cws.Id).ToList());
+                if (cover != null && !string.IsNullOrWhiteSpace(cover.Url))
+                    dynamicCovers[cws.Id] = (cover.Url, cover.Width, cover.Height);
             }
         }
 
@@ -283,7 +287,7 @@ public class SubmissionsController : ControllerBase
             var coverUrl = x.CoverUrl;
             var coverWidth = x.CoverWidth;
             var coverHeight = x.CoverHeight;
-            // 文学创作：优先使用 workspace 最新资产作为封面
+            // 文学创作：优先使用 workspace 当前挂着的第一张作为封面（没有就用投稿时记下的封面）
             if (x.ContentType == "literary" && x.WorkspaceId != null && dynamicCovers.TryGetValue(x.WorkspaceId, out var dc))
             {
                 coverUrl = dc.url;

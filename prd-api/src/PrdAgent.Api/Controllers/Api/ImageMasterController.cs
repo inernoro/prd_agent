@@ -2599,10 +2599,6 @@ public class ImageMasterController : ControllerBase
             var history = PrdAgent.Api.Services.LiteraryIllustrationArchive.ArchiveCurrent(
                 ws, replanAssets, now, PrdAgent.Api.Services.LiteraryArchiveReason.Replan);
 
-            // 重置 images 进度。旧配图不再删除：盖上旧版本号归入「历史配图」。
-            // 服务器权威性设计：数据库操作使用 CancellationToken.None，确保数据完整持久化
-            await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0);
-
             var newWorkflow = new ArticleIllustrationWorkflow
             {
                 Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
@@ -2615,14 +2611,34 @@ public class ImageMasterController : ControllerBase
             };
 
             // 服务器权威性设计：数据库更新使用 CancellationToken.None
-            await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                x => x.Id == wid,
+            // 以开始时读到的方案版本为条件：大模型生成这段时间里文章被重写 / 换稿过，新方案与历史就不是从这一版算出来的，
+            // 只按 id 写会撞成同一个版本号、把对方整个盖掉（对方排队中的生图任务还会按撞号的版本挂到无关的标记上）。
+            var replanResult = await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                PrdAgent.Api.Services.LiteraryIllustrationArchive.SameWorkflowAs(ws),
                 Builders<ImageMasterWorkspace>.Update
                     .Set(x => x.ArticleContentWithMarkers, generatedContent)
                     .Set(x => x.ArticleWorkflow, newWorkflow)
                     .Set(x => x.ArticleWorkflowHistory, history)
                     .Set(x => x.UpdatedAt, now),
                 cancellationToken: CancellationToken.None);
+            if (replanResult.MatchedCount == 0)
+            {
+                _logger.LogWarning("GenerateArticleMarkers discarded for workspace {WorkspaceId}: workflow changed from version {Version} during generation",
+                    wid, ws.ArticleWorkflow?.Version ?? 0);
+                if (!clientDisconnected)
+                {
+                    try
+                    {
+                        var staleData = JsonSerializer.Serialize(new { type = "error", message = "生成期间这篇文章被改过（可能是智能体重写了正文），这次生成的标记没有保存，请刷新后重新生成。" }, JsonOptions);
+                        await Response.WriteAsync($"data: {staleData}\n\n");
+                        await Response.Body.FlushAsync();
+                    }
+                    catch { /* 客户端已断开 */ }
+                }
+                return;
+            }
+            // 重置 images 进度。旧配图不再删除：落库成功后盖上旧版本号归入「历史配图」。
+            await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0);
 
             _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, mode: {Mode}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
                 wid, insertionMode, extractedMarkers.Count, clientDisconnected);

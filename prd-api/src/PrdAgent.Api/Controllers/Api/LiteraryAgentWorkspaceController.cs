@@ -122,9 +122,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             foreach (var w in items)
             {
                 if (!byWs.TryGetValue(w.Id, out var list)) continue;
-                var cover = LiteraryIllustrationHistory.ShowsCurrentOnly(w)
-                    ? PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(w, list).OrderBy(kv => kv.Key).Select(kv => kv.Value).FirstOrDefault()
-                    : list.FirstOrDefault();
+                var cover = LiteraryIllustrationHistory.CoverOf(w, list);
                 if (cover != null) latestIllustrationMap[w.Id] = cover;
             }
         }

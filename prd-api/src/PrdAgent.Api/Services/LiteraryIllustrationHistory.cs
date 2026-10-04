@@ -43,6 +43,16 @@ public static class LiteraryIllustrationHistory
     public static bool ShowsCurrentOnly(ImageMasterWorkspace ws)
         => ws.ScenarioType == "article-illustration" && ws.ArticleWorkflow != null;
 
+    /// <summary>
+    /// 卡片封面（文章列表、作品广场）：有配图方案的取正文现在挂着的第一张，一张没挂就没有；
+    /// 没有配图方案的早期工作区取最新一张。放回旧图后封面要跟着换，改稿后没出新图时不能摆出历史配图。
+    /// </summary>
+    /// <param name="assetsNewestFirst">这个工作区的图，按生成时间从新到旧</param>
+    public static ImageAsset? CoverOf(ImageMasterWorkspace ws, List<ImageAsset> assetsNewestFirst)
+        => ShowsCurrentOnly(ws)
+            ? LiteraryMcpWorkflow.SelectCurrent(ws, assetsNewestFirst).OrderBy(kv => kv.Key).Select(kv => kv.Value).FirstOrDefault()
+            : assetsNewestFirst.FirstOrDefault();
+
     public static async Task<List<ImageAsset>> LoadCurrentForDetailAsync(MongoDbContext db, ImageMasterWorkspace ws, CancellationToken ct)
         => LiteraryMcpWorkflow.SelectCurrent(ws, await LoadAssetsAsync(db, ws.Id, ct))
             .OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();

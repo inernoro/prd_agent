@@ -222,6 +222,10 @@ public class LiteraryMcpUsabilityTests
             var related = Data(await subs.GetSubmissionDetail("sub-detail")).GetProperty("relatedAssets").EnumerateArray().ToList();
             Assert.Equal(new[] { 0, 1 }, related.Select(a => a.GetProperty("articleInsertionIndex").GetInt32()).ToArray());
             Assert.All(related, a => Assert.Equal("legacy-0", a.GetProperty("id").GetString()));
+            // 作品广场卡片封面同样取正文现在挂着的第一张，不是最晚生成、已被换下的 redrawn-1
+            var gallery = Data(await subs.ListPublicSubmissions("literary")).GetProperty("items").EnumerateArray()
+                .Single(i => i.GetProperty("id").GetString() == "sub-detail");
+            Assert.Equal("https://example.test/l0.png", gallery.GetProperty("coverUrl").GetString());
 
             // 没记插入位置的早期图被放回第 2 个位置：指针指着它，详情、历史都得认它是当前挂着的图
             await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "no-index", OwnerUserId = "writer", WorkspaceId = id, Url = "https://example.test/ni.png", CreatedAt = t0.AddMinutes(-5) });
@@ -896,6 +900,10 @@ public class LiteraryMcpUsabilityTests
             // 挂图带版本条件，挂不上（期间换了稿）必须让调用方知道，丢掉返回值就会把失败报成成功
             if (System.Text.RegularExpressions.Regex.IsMatch(text, @"(?m)^\s*await\s+[\w.]*PointMarkerAsync\("))
                 offenders.Add($"{Path.GetFileName(file)}：调用 PointMarkerAsync 却没看返回值");
+            // 按读到的快照重算方案 / 历史再整份写回的地方，写入必须带「方案还是读到的那一版」这个条件
+            if (file.EndsWith("ImageMasterController.cs") && text.Contains(".Set(x => x.ArticleWorkflowHistory, history)")
+                && !text.Contains("LiteraryIllustrationArchive.SameWorkflowAs(ws)"))
+                offenders.Add("ImageMasterController.cs：重新生成标记整份写回方案与历史却没带 SameWorkflowAs 条件");
             // 「正文换没换」只许有一个判据：两个网页入口各写一份，上一轮就是修了一处、编辑页真正走的那处照旧
             if (text.Contains("articleContentChanged ="))
                 offenders.Add($"{Path.GetFileName(file)}：自行判断「正文换没换」，应改用 LiteraryIllustrationArchive.IsContentChange + WriteContentResetAsync");
