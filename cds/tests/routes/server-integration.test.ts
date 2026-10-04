@@ -658,7 +658,7 @@ describe('Server route ordering (regression)', () => {
       const memberSecretProject = JSON.parse(authorizedProjects.body).projects.find(
         (project: { id: string }) => project.id === 'auth-secret-project',
       );
-      expect(memberSecretProject.customEnv).toEqual({ OWNER_ONLY_SECRET: '***[masked]***' });
+      expect(memberSecretProject.customEnv).toBeUndefined();
       const memberEnv = await request(server, '/api/env?scope=_all', { Cookie: memberCookie });
       expect(memberEnv.status).toBe(403);
       const memberDelete = await requestJson(server, 'DELETE', '/api/projects/auth-secret-project', {}, { Cookie: memberCookie });

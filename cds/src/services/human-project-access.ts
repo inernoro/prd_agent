@@ -1,7 +1,7 @@
 import type { StateService } from './state.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from './human-auth.js';
 import { hasActiveGrant } from './identity.js';
-import type { BranchEntry, BuildProfile } from '../types.js';
+import type { BranchEntry, BuildProfile, Project } from '../types.js';
 import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv } from './secret-masker.js';
 
 /** Stable link to the existing principal/grant model; never use a mutable login. */
@@ -13,13 +13,19 @@ export function isScopedHuman(req: unknown): boolean {
   return isAuthenticatedHuman(req) && !isHumanSystemOwner(req);
 }
 
+export function supportsHumanProjectGrant(project: Project | undefined): project is Project {
+  return !!project && (project.kind === 'git' || project.kind === 'manual');
+}
+
 export function canHumanAccessProject(req: unknown, state: StateService, projectId: string): boolean {
   if (!isScopedHuman(req)) return true;
   const user = (req as { cdsUser?: { id: string; status?: string } }).cdsUser;
   if (!user || user.status === 'disabled') return false;
   const principalId = humanPrincipalId(user.id);
   if (state.getPrincipal(principalId)?.status === 'disabled') return false;
-  const canonical = state.getProject(projectId)?.id ?? projectId;
+  const project = state.getProject(projectId);
+  if (!supportsHumanProjectGrant(project)) return false;
+  const canonical = project.id;
   return hasActiveGrant(state.getProjectGrants(), principalId, canonical);
 }
 

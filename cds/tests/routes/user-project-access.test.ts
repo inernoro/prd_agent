@@ -110,6 +110,8 @@ describe('human project grants through the production server', () => {
       ['PUT', '/api/branches/branch-project-a/profile-overrides/profile-project-a', { command: 'arbitrary host command' }],
       ['PUT', '/api/branches/branch-project-a/custom-domains', { domains: ['other.example.test'] }],
       ['GET', '/api/projects/project-a/agent-keys'], ['POST', '/api/projects', {}],
+      ['GET', '/api/projects/project-a/compose'], ['GET', '/api/projects/project-a/status-page'],
+      ['GET', '/api/projects/project-a/storage'],
       ['DELETE', '/api/projects/project-a', {}],
     ] as const) {
       expect((await call(method, url, member, body)).status, `${method} ${url}`).toBe(403);
@@ -138,6 +140,47 @@ describe('human project grants through the production server', () => {
     state.setBranchExtraProfiles('branch-project-a', []);
     expect((await call('POST', '/api/branches/branch-project-a/stop', member, {})).status).toBe(200);
     expect(state.getBranch('branch-project-a')?.stopCount).toBe(1);
+  });
+
+  it('projects member summaries through safe metadata while preserving owner and stored credentials', async () => {
+    state.updateProject('project-a', {
+      gitRepoUrl: 'https://x-access-token:fake-repo-pat@github.com/example/repo.git',
+      serviceEnv: { API_TOKEN: 'fake-service-secret' }, statusPageToken: 'fake-status-secret',
+      composeYaml: 'PASSWORD: fake-compose-secret', cloneStatus: 'error', cloneError: 'fake-clone-secret',
+      customEnv: { TOKEN: 'fake-custom-secret' }, defaultEnv: { PASSWORD: 'fake-default-secret' },
+    });
+    await grant(['project-a']);
+    for (const url of ['/api/projects', '/api/projects/project-a']) {
+      const result = await call('GET', url, member);
+      expect(result.status).toBe(200);
+      const text = JSON.stringify(result.body);
+      for (const secret of ['fake-repo-pat', 'fake-service-secret', 'fake-status-secret', 'fake-compose-secret', 'fake-clone-secret', 'fake-custom-secret', 'fake-default-secret']) {
+        expect(text, url).not.toContain(secret);
+        expect(JSON.stringify((await call('GET', url)).body), url).toContain(secret);
+      }
+      const project = result.body.projects?.[0] || result.body;
+      expect(project.gitRepoUrl).toBe('https://github.com/example/repo.git');
+      expect(project.name).toBe('project-a');
+      expect(project.serviceEnv).toBeUndefined();
+      expect(project.statusPageToken).toBeUndefined();
+      expect(project.recovery).toBeUndefined();
+    }
+    expect(state.getProject('project-a')?.gitRepoUrl).toContain('fake-repo-pat');
+    expect(state.getProject('project-a')?.serviceEnv?.API_TOKEN).toBe('fake-service-secret');
+  });
+
+  it('does not offer or accept unsupported shared-service grants or expose old grants', async () => {
+    state.addProject({ id: 'shared', slug: 'shared', name: 'shared', kind: 'shared-service',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    await grant(['project-a']);
+    const available = await call('GET', `/api/auth/users/${memberId}/projects`);
+    expect(available.body.projects.map((p: any) => p.id)).toEqual(['project-a', 'project-b']);
+    expect((await grant(['project-b', 'shared'])).status).toBe(400);
+    expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+    state.addProjectGrant({ id: 'old-shared', principalId: humanPrincipalId(memberId), projectId: 'shared',
+      origin: 'approved', grantedAt: new Date().toISOString(), grantedBy: 'owner' });
+    expect((await call('GET', '/api/projects/shared', member)).status).toBe(403);
+    expect((await call('GET', '/api/projects')).body.projects.some((p: any) => p.id === 'shared')).toBe(true);
   });
 
   it('validates the full set before mutation, deduplicates, persists and audits revocation', async () => {

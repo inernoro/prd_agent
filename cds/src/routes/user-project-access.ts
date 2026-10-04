@@ -4,7 +4,7 @@ import type { StateService } from '../services/state.js';
 import type { AuthService } from '../services/auth-service.js';
 import type { CdsUser } from '../domain/auth.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
-import { humanPrincipalId } from '../services/human-project-access.js';
+import { humanPrincipalId, supportsHumanProjectGrant } from '../services/human-project-access.js';
 
 export function createUserProjectAccessRouter(deps: { stateService: StateService; authService: AuthService }): Router {
   const router = Router();
@@ -23,8 +23,8 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
           res.status(400).json({ error: '系统所有者始终可访问全部项目，无需逐项授权。' }); return;
         }
         const input = req.body?.projectIds;
-        if (!Array.isArray(input) || input.some(id => typeof id !== 'string' || !state.getProject(id))) {
-          res.status(400).json({ error: '请选择存在的项目后再保存授权。' }); return;
+        if (!Array.isArray(input) || input.some(id => typeof id !== 'string' || !supportsHumanProjectGrant(state.getProject(id)))) {
+          res.status(400).json({ error: '请选择可操作分支的项目；共享服务暂不支持账号项目授权。' }); return;
         }
         const ids = new Set<string>(input.map(id => state.getProject(id)!.id));
         const actor = (req as typeof req & { cdsUser: CdsUser }).cdsUser;
@@ -53,7 +53,7 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         }
       }
       const active = new Set(current().map(g => g.projectId));
-      res.json({ userId: user.id, allProjects: user.isSystemOwner, projects: state.getProjects().map(p => ({
+      res.json({ userId: user.id, allProjects: user.isSystemOwner, projects: state.getProjects().filter(supportsHumanProjectGrant).map(p => ({
         id: p.id, name: p.aliasName || p.name, authorized: user.isSystemOwner || active.has(p.id),
       })) });
     } catch (err) {
