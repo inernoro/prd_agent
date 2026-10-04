@@ -400,7 +400,7 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_write_content",
-            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。改稿后要重新配图时传 markedContent（带 [插图]: 标记的整篇，只能 replace；先用 map_literary_get_workspace format=marked 读回再改，标记里的描述是当前值）：画面描述没变的标记会沿用原来那张图（reusedImages），只需为 needsGeneration 里的标记调用生图；被换下的旧图保留在历史里、不删除。返回新的 workflowVersion 与 illustrations。改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
+            Description = "写工作区正文：mode=replace 整篇覆盖（默认），mode=append 接在末尾继续写。改稿后要重新配图时传 markedContent（带 [插图]: 标记的整篇，只能 replace；先用 map_literary_get_workspace format=marked 读回再改，并把读回的 updatedAt 作为 expectedUpdatedAt 一起传，标记里的描述是当前值）：画面描述没变的标记会沿用原来那张图（reusedImages），只需为 needsGeneration 里的标记调用生图；被换下的旧图保留在历史里、不删除。返回新的 workflowVersion 与 illustrations。改稿或续写前用 map_literary_get_workspace 读回原稿，并把它回的 updatedAt 传给 expectedUpdatedAt —— 期间被用户改过就会 409 而不是把对方的稿子盖掉。append 不可重试（重试会把同一段再接一遍）：没收到回应时请改用 replace 提交完整正文。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "POST",
             PathTemplate = "/api/open/literary/workspaces/{workspaceId}/content",
@@ -410,7 +410,7 @@ public static class McpBuiltinTools
                 new() { Name = "content", In = "body", Description = "正文内容（不带配图标记）；与 markedContent 二选一" },
                 new() { Name = "markedContent", In = "body", Description = "带 [插图]: 标记的整篇正文（1-20 个标记），用于改稿后重新配图；不想换图的小节，把原来的画面描述原样写回即可保留原图。与 content 二选一，只能整篇覆盖" },
                 new() { Name = "mode", In = "body", Description = "replace（默认）或 append", EnumValues = new[] { "replace", "append" } },
-                new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇正文时它的 updatedAt。mode=replace 传了才有「期间被改过就不覆盖」这层保护。" },
+                new() { Name = "expectedUpdatedAt", In = "body", Description = "上次读到这篇正文时它的 updatedAt。传 markedContent 整篇重写时必填；纯正文 mode=replace 传了才有「期间被改过就不覆盖」这层保护。" },
             },
         },
 

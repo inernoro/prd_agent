@@ -224,7 +224,7 @@ public class LiteraryMcpUsabilityTests
             Assert.All(related, a => Assert.Equal("legacy-0", a.GetProperty("id").GetString()));
 
             // 整篇换成全新的标记、新版本还没出图：指针表是空的，旧图都保留着，详情不能把它们当成当前图返回
-            Data(await drafts.WriteContent(id, new() { MarkedContent = "全新的一段。\n[插图]: 海边的灯塔\n" }, CancellationToken.None));
+            Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = "全新的一段。\n[插图]: 海边的灯塔\n" }, CancellationToken.None));
             Assert.Empty(Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray());
             Assert.Null(CoverOf(Data(await ui.ListWorkspaces(50, CancellationToken.None)))); // 也不把历史配图摆上封面
             Assert.Contains(Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray(),
@@ -435,14 +435,20 @@ public class LiteraryMcpUsabilityTests
                 new ImageAsset { Id = "legacy-0", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, Url = "https://example.test/legacy.png" },
             });
 
+            // 带标记整篇重写不带版本令牌：拒绝，什么都不写（它会按读到的快照重排整个配图方案与历史）
+            Assert.IsType<BadRequestObjectResult>(await drafts.WriteContent(id, new() { MarkedContent = "没带令牌。\n[插图]: 猫\n" }, CancellationToken.None));
+            Assert.Equal(1, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version);
+
             // 追加时不许带标记
             Assert.IsType<BadRequestObjectResult>(await drafts.WriteContent(id, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, id),
                 MarkedContent = "续写\n[插图]: 猫\n", Mode = "append",
             }, CancellationToken.None));
 
             var written = Data(await drafts.WriteContent(id, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, id),
                 MarkedContent = "改过的第一段。\n[插图]：雨中的书店\n新第二段。\n[插图]: 窗边的猫\n",
             }, CancellationToken.None));
             Assert.Equal(2, written.GetProperty("workflowVersion").GetInt32());
@@ -503,7 +509,7 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal(2, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version);
 
             // 清空正文（如上传了空文件）同样算换稿：带标记的旧方案不能挂在空文章上
-            var marked = Data(await drafts.WriteContent(id, new() { MarkedContent = "又一版。\n[插图]: 茶杯\n" }, CancellationToken.None));
+            var marked = Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = "又一版。\n[插图]: 茶杯\n" }, CancellationToken.None));
             var markedVersion = marked.GetProperty("workflowVersion").GetInt32();
             Assert.IsType<OkObjectResult>(await ui.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "" }, CancellationToken.None));
             var cleared = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
@@ -527,7 +533,7 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
             // 网页读到的是第 1 版；在它写库之前，智能体整篇重写成了第 2 版
             var stale = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
-            Data(await drafts.WriteContent(id, new() { MarkedContent = "二。\n[插图]: 茶杯\n" }, CancellationToken.None));
+            Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = "二。\n[插图]: 茶杯\n" }, CancellationToken.None));
 
             var outcome = await LiteraryIllustrationArchive.WriteContentResetAsync(db, stale, "网页上传的正文。",
                 Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow), LiteraryArchiveReason.WebContent, CancellationToken.None);
@@ -539,7 +545,7 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("网页上传的正文。", ws.ArticleContent);
 
             // 编辑页实际调用的是 ImageMaster 的更新接口：上传空文件同样算换稿
-            Data(await drafts.WriteContent(id, new() { MarkedContent = "三。\n[插图]: 窗\n" }, CancellationToken.None));
+            Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = "三。\n[插图]: 窗\n" }, CancellationToken.None));
             var before = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version;
             var master = WithAdminUser(new ImageMasterController(db, null!, null!, null!, NullLogger<ImageMasterController>.Instance,
                 null!, null!, null!, null!, null!), "writer");
@@ -575,6 +581,7 @@ public class LiteraryMcpUsabilityTests
 
             var written = Data(await drafts.WriteContent(id, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, id),
                 MarkedContent = "一。\n[插图]：书店门口\n二改短了。\n[插图]: 窗边打盹的橘猫\n三。\n[插图]:  茶杯 \n",
             }, CancellationToken.None));
             Assert.Equal(new[] { 0, 2 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
@@ -626,6 +633,7 @@ public class LiteraryMcpUsabilityTests
             // 照读到的描述原样写回：两张都沿用
             var kept = Data(await drafts.WriteContent(id, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, id),
                 MarkedContent = "一。\n[插图]: 书店门口\n二改短了。\n[插图]: 窗边打盹的橘猫\n",
             }, CancellationToken.None));
             Assert.Equal(new[] { 0, 1 }, kept.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
@@ -641,6 +649,7 @@ public class LiteraryMcpUsabilityTests
             var stale = await Seed("ep-2");
             var rewritten = Data(await drafts.WriteContent(stale, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, stale),
                 MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边的猫\n",
             }, CancellationToken.None));
             Assert.Equal(new[] { 0 }, rewritten.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
@@ -653,6 +662,7 @@ public class LiteraryMcpUsabilityTests
             await db.ImageAssets.UpdateOneAsync(x => x.Id == $"{pending}-a0", Builders<ImageAsset>.Update.Set(x => x.OriginalMarkerText, "书店门口"));
             var notRedrawn = Data(await drafts.WriteContent(pending, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, pending),
                 MarkedContent = "一。\n[插图]: 书店门口\n二。\n[插图]: 窗边打盹的橘猫\n",
             }, CancellationToken.None));
             Assert.Equal(new[] { 0 }, notRedrawn.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
@@ -702,7 +712,7 @@ public class LiteraryMcpUsabilityTests
             // 按新描述出了新图，原样写回读到的全文：两张都沿用，沿用的那张保留原 runId
             await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "a1b", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 1, ArticleWorkflowVersion = 1, Url = "https://example.test/a1b.png", OriginalMarkerText = "窗边打盹的橘猫", CreatedAt = DateTime.UtcNow.AddMinutes(1) });
             await LiteraryMarkerWrites.PointMarkerAsync(db, id, 1, 1, "a1b");
-            var rewritten = Data(await drafts.WriteContent(id, new() { MarkedContent = marked.GetProperty("content").GetString() }, CancellationToken.None));
+            var rewritten = Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = marked.GetProperty("content").GetString() }, CancellationToken.None));
             Assert.Equal(new[] { 0, 1 }, rewritten.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
             Assert.Equal("run-0", read.GetProperty("illustrations").EnumerateArray().First().GetProperty("runId").GetString());
@@ -772,7 +782,7 @@ public class LiteraryMcpUsabilityTests
             await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "old", OwnerUserId = "writer", WorkspaceId = id, ArticleInsertionIndex = 0, ArticleWorkflowVersion = 1, Url = "https://example.test/old.png", OriginalMarkerText = "书店门口" });
             var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
             // 读到的是第 1 版，放回前文章已被重写成第 2 版：不许报成功，也不许在新方案上留下半截
-            var rewritten = Data(await drafts.WriteContent(id, new() { MarkedContent = "二。\n[插图]: 窗边的猫\n" }, CancellationToken.None));
+            var rewritten = Data(await drafts.WriteContent(id, new() { ExpectedUpdatedAt = await TokenOf(drafts, id), MarkedContent = "二。\n[插图]: 窗边的猫\n" }, CancellationToken.None));
             Assert.Equal(2, rewritten.GetProperty("workflowVersion").GetInt32());
             var result = await LiteraryIllustrationHistory.RestoreAsync(db, ws, "old", 0, 1, CancellationToken.None);
             Assert.Equal(LiteraryIllustrationHistory.RestoreFailure.VersionChanged, result.Failure);
@@ -829,6 +839,7 @@ public class LiteraryMcpUsabilityTests
             var descriptions = lastSet.GetProperty("images").EnumerateArray().Select(i => i.GetProperty("description").GetString()).ToList();
             var written = Data(await drafts.WriteContent(id, new()
             {
+                ExpectedUpdatedAt = await TokenOf(drafts, id),
                 MarkedContent = $"一。本文为验收用稿。\n[插图]: {descriptions[0]}\n二。\n[插图]: {descriptions[1]}\n",
             }, CancellationToken.None));
             Assert.Equal(new[] { 0, 1 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
@@ -1058,6 +1069,10 @@ public class LiteraryMcpUsabilityTests
         Assert.Contains("WatermarkConfigId: run.WatermarkConfigId", worker);
         Assert.Contains("Current?.WatermarkConfigId", client);
     }
+
+    /// <summary>读稿拿版本令牌：带标记整篇重写必须带它。</summary>
+    private static async Task<string> TokenOf(LiteraryOpenApiController drafts, string id)
+        => Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None)).GetProperty("updatedAt").GetString()!;
 
     private static int CountOf(string text, string needle)
     {

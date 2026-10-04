@@ -370,6 +370,11 @@ public class LiteraryOpenApiController : ControllerBase
                 return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
                     "这篇正文在你读到它之后被改过，本次写入没有执行。请先用 map_literary_get_workspace 重新读一遍，再决定怎么写。"));
         }
+        // 带标记整篇重写会按读到的那份快照重排整个配图方案、改写配图历史，比改一段正文的破坏面大得多：
+        // 与 map_literary_update_illustration 一样必须带版本令牌，期间网页上改过就 409，而不是悄悄盖掉。
+        if (marked != null && !revisionChecked)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "传 markedContent 整篇重写时必须带 expectedUpdatedAt：把 map_literary_get_workspace 回的 updatedAt 原样传回来，期间被改过就不会盖掉对方。"));
 
         var merged = append
             ? (string.IsNullOrEmpty(ws.ArticleContent) ? incoming : ws.ArticleContent + "\n\n" + incoming)
