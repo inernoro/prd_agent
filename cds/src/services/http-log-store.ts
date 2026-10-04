@@ -403,7 +403,8 @@ export function selectRequestBodyForHttpLog(
   if (!suppress) return (captured.bodyBytes || 0) > 0 ? captured : parsed;
   const observedBytes = Math.max(captured.bodyBytes || 0, parsed.bodyBytes || 0);
   return {
-    bodyPreview: observedBytes > 0 ? '[cds request body omitted]' : undefined,
+    // Suppression is a route policy even if auth rejects before reading bytes.
+    bodyPreview: '[cds request body omitted]',
     bodyBytes: observedBytes || undefined,
   };
 }
