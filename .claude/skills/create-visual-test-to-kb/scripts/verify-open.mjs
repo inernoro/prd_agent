@@ -11,6 +11,7 @@
 //   例：node verify-open.mjs https://<cds-host>/r/<report-id> "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
 import { loadPlaywright } from './playwright-runtime.mjs';
+import { expandCompleteReport } from './report-view.mjs';
 const { chromium } = loadPlaywright();
 
 const url = process.argv[2];
@@ -81,6 +82,8 @@ async function waitForRenderedContent(text, minImages) {
   const deadline = Date.now() + settleTimeoutMs;
   let snapshot = { text: '', imgCount: 0 };
   while (Date.now() < deadline) {
+    const expanded = await expandCompleteReport(page);
+    if (expanded) console.log(`  已真实点击完整版：${expanded} 个报告`);
     snapshot = await inspectRenderedContent();
     const hasText = text ? snapshot.text.includes(text) : snapshot.text.trim().length > 200;
     const hasRequiredTexts = requiredTexts.every((required) => snapshot.text.includes(required));

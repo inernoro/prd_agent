@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { generateKeyPairSync } from 'node:crypto';
+import { expandCompleteReport } from '../../.claude/skills/create-visual-test-to-kb/scripts/report-view.mjs';
 import {
   acquireLock,
   applyCredentialRegistry,
@@ -41,6 +42,7 @@ import {
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
   runNotificationEvidenceRegression,
+  runReportViewRegression,
   runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -57,6 +59,46 @@ function gatewayToken(securityVersion = '7') {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;
 }
+
+test('REG-stsmk-report-view-001 简版必须真实点击完整版才读取隐藏版本', async () => {
+  let view = 'brief';
+  let clicks = 0;
+  const frame = { locator: (selector) => selector === 'body'
+    ? { getAttribute: async () => view }
+    : { count: async () => 1, isVisible: async () => true, click: async () => { clicks += 1; view = 'full'; } } };
+  assert.equal(view === 'full', false, '旧执行链的隐藏版本断言应变红');
+  assert.equal(await expandCompleteReport({ frames: () => [frame] }), 1);
+  assert.equal(view, 'full');
+  assert.equal(clicks, 1);
+  assert.equal(await expandCompleteReport({ frames: () => [frame] }), 0);
+  const source = readFileSync('.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs', 'utf8');
+  assert.match(source, /await expandCompleteReport\(page\);\s*if.*\n\s*snapshot = await inspectRenderedContent\(\)/);
+});
+
+test('REG-stsmk-report-view-001 无切换按钮的历史完整报告保持可校验', async () => {
+  const page = { frames: () => [{ locator: () => ({ count: async () => 0 }) }] };
+  assert.equal(await expandCompleteReport(page), 0);
+});
+
+test('报告视图永久回归必须接线并传播失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-report-view-'));
+  try {
+    for (const status of [0, 1]) {
+      const result = runReportViewRegression(directory, (name, args) => {
+        assert.equal(name, 'node');
+        assert.ok(args.includes('REG-stsmk-report-view-001'));
+        return { status, stdout: '守卫结果', stderr: '' };
+      });
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.ok(existsSync(result.execution.artifactPath));
+    }
+    const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+    assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-view-001'\)/);
+    assert.match(source, /supplementalRows.push\(\.\.\.reportViewRegression.rows\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
   const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--grep', '\\[REC-003\\]']);
