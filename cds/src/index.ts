@@ -1,3 +1,4 @@
+import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
 import { defaultLocalhostDeploy } from './routes/github-webhook.js';
@@ -5945,6 +5946,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     },
   });
   const sendLegacyAlarm = (alert: MapNotifierAlert, kind: 'alert' | 'drill') => {
+    alert = { ...alert, identity: identityForAlarm(stateService.getAlarmIdentity(), alert.targetId) };
     const notifier = resolveMapNotifier();
     if (!notifier) return undefined;
     const payload = buildNotificationPayload(alert);
@@ -6065,6 +6067,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
       // 上游已去抖，重试会把一次翻转变成多条通知）。
       const event = {
+        identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
         targetId: data.targetId,
         kind: classifyAlert(type, data.source),
         projectId: data.projectId,
@@ -6273,6 +6276,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     runDiscovery,
     lastDiscoveryRun: () => lastDiscoveryRun,
     alarmChannel: () => alarmChannel.snapshot(),
+    alarmIdentity: () => stateService.getAlarmIdentity(),
     alarmChannels: () => stateService.listAlarmChannels()
       .map((c) => alarmLedger.view(c, channelConfigured(c))),
     readAlarmNotify: () => {
@@ -6331,6 +6335,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   app.use('/api', (() => {
     const r = express.Router();
     registerAlarmChannelRoutes(r, {
+      getIdentity: () => stateService.getAlarmIdentity(),
+      setIdentity: (identity) => stateService.setAlarmIdentity(identity),
       list: () => stateService.listAlarmChannels(),
       upsert: (channel) => stateService.upsertAlarmChannel(channel),
       remove: (id: string) => stateService.removeAlarmChannel(id),

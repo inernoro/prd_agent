@@ -223,6 +223,10 @@ export function TargetDetail({
           <p className="text-muted-foreground">立即检查只重新读取状态，不会重试部署或清除故障记录。</p>
           {target.healthCheck?.componentId === 'webhook.dispatch-unresolved' ? <Button variant="outline" asChild><Link to="/project-list">查看项目与部署记录</Link></Button> : null}
         </section>
+        {target.alarmIdentity ? <section className="rounded-lg border p-4 text-base leading-relaxed" aria-label="监控身份">
+          <p>检查方：{[target.alarmIdentity.observer.name, target.alarmIdentity.observer.environment, target.alarmIdentity.observer.location].filter(Boolean).join(' · ')}</p>
+          <p>故障对象：{[target.alarmIdentity.subject.name, target.alarmIdentity.subject.environment, target.alarmIdentity.subject.location].filter(Boolean).join(' · ')}</p>
+        </section> : null}
         {target.lastSample?.noData ? <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-base leading-relaxed text-warn">
           本轮没有有效读数。当前状态待确认，历史故障与最后有效检查结果仍保留。
         </div> : null}

@@ -153,3 +153,7 @@ body: `{"branch": "claude/xxx"}`（可选，不传则当前分支 pull）。
 
 CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类型、项目作用域、风险等级、
 是否仅人类可操作以及验证与回滚方式；无法确认就停在只读状态。
+
+## 通知实例身份
+
+管理员使用 `cdscli monitor identity` 读取，或 `--file` 从私有 JSON 文件更新。对应 `GET/PUT /api/cds-system/alarm-identity`，使用与通知通道相同的系统管理员权限；项目 Key 不可读写。配置含当前 instance 与可选 targets，名称与环境必填，自身稳定 ID 由服务端生成且改名不变。真实配置不得作为文档示例提交。

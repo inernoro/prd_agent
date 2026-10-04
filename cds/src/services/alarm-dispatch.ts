@@ -66,7 +66,7 @@ export function buildBarkUrl(channel: AlarmChannelConfig, message: AlarmMessage)
     `${base}/${encodeURIComponent(bark.key.trim())}`
     + `/${encodeURIComponent(message.title)}/${encodeURIComponent(message.body)}`,
   );
-  url.searchParams.set('group', bark.group?.trim() || 'CDS 监控');
+  url.searchParams.set('group', message.group || bark.group?.trim() || 'CDS 监控');
   if (bark.sound?.trim()) url.searchParams.set('sound', bark.sound.trim());
   // 通道没钉死级别时用消息自己的级别：业务挂了该是 critical，恢复该是 passive。
   const level = bark.level?.trim() || message.level;
@@ -121,6 +121,7 @@ export async function sendAlarm(
   const boardUrl = independentIncidentUrl(channel, event) || opts.boardUrl;
   const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
+    identity: event.identity,
     type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
     targetId: event.targetName, targetName: event.targetName, projectId: event.projectId,
     message: event.message, consecutiveFailures: event.consecutiveFailures, detectedAt: event.detectedAt,
@@ -180,12 +181,14 @@ async function sendAlarmTransport(
       timeoutMs,
     });
     return await notifier.send({
-      type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
+      identity: event.identity,
+    type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
       targetId: event.targetName,
       targetName: event.targetName,
       projectId: event.projectId,
       ...(event.probeUrl ? { probeUrl: event.probeUrl } : {}),
       message: event.message,
+      boardUrl,
       consecutiveFailures: event.consecutiveFailures,
       detectedAt: event.detectedAt,
     });

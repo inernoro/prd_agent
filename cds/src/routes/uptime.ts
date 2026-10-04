@@ -1,3 +1,4 @@
+import { identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /**
  * uptime — 监控中心的 API（状态页 + 自定义监控管理）。
  *
@@ -198,6 +199,7 @@ export function createUptimeRouter(deps: {
    * 用户自己配的通知通道的状态。不接就是不知道——不接时摘要里不出这个字段，
    * 面板据此说「这个实例没接通道配置」，而不是替它说「一条都没有」。
    */
+  alarmIdentity?: () => AlarmIdentitySettings | undefined;
   alarmChannels?: () => AlarmChannelStatusView[];
   /**
    * 演练：走**真实投递路径**发一条测试通知，返回真实结果。
@@ -228,6 +230,7 @@ export function createUptimeRouter(deps: {
     const channels = deps.alarmChannels?.();
     return {
       ...summary,
+      ...('targets' in summary ? { targets: (summary as { targets: Array<{id:string}> }).targets.map(t => ({ ...t, alarmIdentity: identityForAlarm(deps.alarmIdentity?.(), t.id) })) } : {}),
       ...(alarm ? { alarm } : {}),
       ...(channels ? { alarmChannels: channels } : {}),
     };

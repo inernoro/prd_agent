@@ -1,3 +1,4 @@
+import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
 /*
  * alarm-route —— 「哪些出问题通知谁」的判定层，纯函数。
  *
@@ -137,6 +138,7 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
+  identity?: AlarmIdentity;
   targetId?: string;
   kind: AlarmEventKind;
   projectId: string;
@@ -183,6 +185,7 @@ export function routeAlarm(
 
 /** 一条渲染好的通知。协议层只管把它变成各自的请求，不再自己拼句子。 */
 export interface AlarmMessage {
+  group?: string;
   title: string;
   body: string;
   /** 给 Bark 这类支持分级的协议；webhook 模板也能用 */
@@ -199,6 +202,14 @@ export interface AlarmMessage {
  * 顺序写死在这里：**谁出了什么事 → 要不要紧 → 下一步**，分支只填值。
  */
 export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string } = {}): AlarmMessage {
+  const message = renderAlarmContent(event, opts);
+  if (!event.identity) return message;
+  const { observer, subject } = event.identity;
+  return { ...message, title: `[${identityLabel(subject)}] ${message.title}`,
+    body: `检查方：${identityLabel(observer)}\n故障对象：${identityLabel(subject)}\n${message.body}`,
+    group: `CDS / ${identityLabel(subject)} / ${subject.id}` };
+}
+function renderAlarmContent(event: AlarmEvent, opts: { boardUrl?: string }): AlarmMessage {
   const where = event.projectId ? `项目 ${event.projectId}` : '未归属项目';
   if (event.projectId === 'cds-self-monitor') {
     const recovered = event.kind.endsWith('-recovered');
@@ -240,6 +251,8 @@ export function alarmPlaceholders(event: AlarmEvent, message: AlarmMessage): Rec
     body: message.body,
     level: message.level,
     url: message.url ?? '',
+    observerName: event.identity ? identityLabel(event.identity.observer) : '未配置',
+    subjectName: event.identity ? identityLabel(event.identity.subject) : '未配置',
     projectId: event.projectId,
     targetName: event.targetName,
     message: event.message,

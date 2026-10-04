@@ -6,8 +6,8 @@ import json
 import os
 from pathlib import Path
 import time
-import subprocess
 import urllib.request
+import urllib.parse
 import uuid
 
 
@@ -91,11 +91,29 @@ def advance(state, observation, now):
 
 def public_snapshot(state, config, now):
     obs = state.get('observation', {})
-    return {'updatedAt': iso(now), 'staleAfterSeconds': 180, 'incident': state.get('incident'),
-            'history': state.get('history', []), 'reachable': obs.get('reachable'), 'dataOk': obs.get('dataOk'),
-            'metrics': obs.get('metrics', []), 'summaryAt': obs.get('summaryAt'),
+    def event_view(event):
+        return {k: event[k] for k in ['id', 'startedAt', 'updatedAt', 'endedAt', 'state', 'reason'] if k in event} if event else None
+    def display(value):
+        return {k: str(value[k])[:64] for k in ['name', 'environment'] if value.get(k)}
+    public = config.get('publicIdentity', {})
+    return {'updatedAt': iso(now), 'staleAfterSeconds': 180, 'incident': event_view(state.get('incident')),
+            'history': [event_view(e) for e in state.get('history', [])],
+            'reachable': obs.get('reachable'), 'dataOk': obs.get('dataOk'),
+            'metrics': [], 'summaryAt': obs.get('summaryAt'),
+            'identity': {'observer': display(public.get('observer', {})), 'subject': display(public.get('subject', {}))},
             'checking': bool(state.get('failures')) and not state.get('incident'),
-            'notificationReady': bool(config.get('bark')), 'consoleUrl': config['cdsBase'] + '/status'}
+            'notificationReady': bool(config.get('bark')), 'consoleUrl': config.get('publicConsoleUrl', '')}
+
+
+def identity_label(value):
+    return ' · '.join(str(value[k]) for k in ['name', 'environment', 'location'] if value.get(k)) or '身份尚未配置'
+
+
+def incident_url(config, event_id):
+    url = urllib.parse.urlsplit(config['publicUrl'])
+    query = urllib.parse.parse_qs(url.query)
+    query['incident'] = [event_id]
+    return urllib.parse.urlunsplit(url._replace(query=urllib.parse.urlencode(query, doseq=True)))
 
 
 def notify(config, state, transition, now):
@@ -106,10 +124,12 @@ def notify(config, state, transition, now):
     if transition == 'recovered' and not any(d.get('accepted') and d.get('incidentId') == event.get('id') and d.get('transition') != 'recovered' for d in state.get('deliveries', [])):
         return True
     title = 'CDS 已稳定恢复' if transition == 'recovered' else 'CDS 外部访问异常' if event.get('reason') == 'unreachable' else 'CDS 自检数据获取异常'
-    payload = {'device_key': bark['key'], 'title': title,
-               'body': '同一故障已合并。点击查看业务影响、最近检查时间和下一步处理。',
-               'url': config['publicUrl'] + '?incident=' + event.get('id', ''),
-               'group': 'CDS 监控', 'level': 'passive' if transition == 'recovered' else 'active'}
+    identity = config.get('identity', {})
+    observer = identity_label(identity.get('observer', {})); subject = identity_label(identity.get('subject', {}))
+    payload = {'device_key': bark['key'], 'title': '[' + subject + '] ' + title,
+               'body': '检查方：' + observer + '\n故障对象：' + subject + '\n同一故障已合并。点击查看业务影响、最近检查时间和下一步处理。',
+               'url': incident_url(config, event.get('id', '')),
+               'group': 'CDS / ' + subject + ' / ' + identity.get('subject', {}).get('id', 'unconfigured'), 'level': 'passive' if transition == 'recovered' else 'active'}
     ok = False
     try:
         request = urllib.request.Request(bark.get('serverUrl', 'https://api.day.app').rstrip('/') + '/push',
@@ -124,14 +144,14 @@ def notify(config, state, transition, now):
 
 
 def publish(config, snapshot):
-    repo = Path(config['publishRepo'])
-    def git(*args):
-        return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, timeout=30)
-    git('pull', '--rebase', 'origin', 'main')
-    (repo / 'status.json').write_text(json.dumps(snapshot, ensure_ascii=False), encoding='utf-8')
-    git('add', 'status.json')
-    git('commit', '-m', 'ops: 更新独立故障检查快照')
-    git('push', 'origin', 'HEAD:main')
+    # 运行快照只进对象存储，禁止退回 Git 提交。存储凭据只从私有配置读取。
+    from qcloud_cos import CosConfig, CosS3Client
+    storage = config['storage']
+    client = CosS3Client(CosConfig(Region=storage['region'], SecretId=storage['secretId'],
+                                 SecretKey=storage['secretKey'], Scheme='https', Timeout=8))
+    client.put_object(Bucket=storage['bucket'], Key=storage['objectKey'],
+                      Body=json.dumps(snapshot, ensure_ascii=False).encode(),
+                      ACL='public-read', ContentType='application/json; charset=utf-8', CacheControl='no-store')
 
 
 def tick(config, state, now):

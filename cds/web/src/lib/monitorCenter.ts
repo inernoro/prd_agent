@@ -53,6 +53,7 @@ export interface UptimeBucketFailure {
 }
 
 export interface UptimeTargetSummary {
+  alarmIdentity?: {observer: {id:string;name:string;environment:string;location?:string};subject:{id:string;name:string;environment:string;location?:string}};
   id: string;
   source: ProbeSource;
   name: string;

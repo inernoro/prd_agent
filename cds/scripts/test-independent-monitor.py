@@ -54,4 +54,15 @@ class IndependentMonitorTest(unittest.TestCase):
             m.tick({'cdsBase':'https://example.com'},state,1120)
         self.assertEqual(state['pending']['transition'],'down')
 
+    def test_public_projection_never_exports_private_identity_or_metrics(self):
+        state={'observation':{'metrics':[{'name':'private-metric'}]},'incident':{'id':'example','reason':'collection','secret':'private-event'}}
+        config={'identity':{'observer':{'name':'private-host','location':'private-address'}},'cdsBase':'https://private.invalid',
+                'publicIdentity':{'observer':{'name':'示例 B','environment':'测试','location':'private-location','key':'private-key'}}}
+        snapshot=m.public_snapshot(state,config,1000)
+        self.assertNotIn('private',str(snapshot))
+        self.assertEqual(snapshot['identity']['observer']['name'],'示例 B')
+    def test_notification_link_keeps_runtime_feed_out_of_repository(self):
+        url=m.incident_url({'publicUrl':'https://example.com/#feed=https%3A%2F%2Fstorage.example%2Fstatus.json'},'sample')
+        self.assertIn('incident=sample',url);self.assertIn('#feed=',url)
+
 if __name__=='__main__':unittest.main()
