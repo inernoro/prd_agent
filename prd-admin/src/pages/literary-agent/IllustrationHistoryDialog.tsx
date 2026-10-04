@@ -62,6 +62,8 @@ export function IllustrationHistoryDialog({
   useEffect(() => {
     if (!open || !workspaceId) return;
     let cancelled = false;
+    // 换了文章：上一篇的历史不能留在屏幕上（还能点「放回」），等这一篇读回来再显示
+    setData((prev) => (prev && prev.workspaceId === workspaceId ? prev : null));
     setLoading(true);
     setError(null);
     void getLiteraryIllustrationHistoryReal({ id: workspaceId }).then((res) => {

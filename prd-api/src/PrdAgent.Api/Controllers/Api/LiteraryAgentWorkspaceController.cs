@@ -115,10 +115,17 @@ public class LiteraryAgentWorkspaceController : ControllerBase
                 .Find(x => x.WorkspaceId != null && wsIds.Contains(x.WorkspaceId))
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync(ct);
-            foreach (var a in allAssets)
+            // 卡片封面取「正文现在挂着的第一张」，与详情、导出同一个判定源：放回旧图后封面要跟着换，
+            // 改稿后还没出新图时也不能把历史配图摆上封面。没有配图方案的早期工作区照旧取最新一张。
+            var byWs = allAssets.Where(a => a.WorkspaceId != null).GroupBy(a => a.WorkspaceId!)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+            foreach (var w in items)
             {
-                if (a.WorkspaceId != null && !latestIllustrationMap.ContainsKey(a.WorkspaceId))
-                    latestIllustrationMap[a.WorkspaceId] = a;
+                if (!byWs.TryGetValue(w.Id, out var list)) continue;
+                var cover = LiteraryIllustrationHistory.ShowsCurrentOnly(w)
+                    ? PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(w, list).OrderBy(kv => kv.Key).Select(kv => kv.Value).FirstOrDefault()
+                    : list.FirstOrDefault();
+                if (cover != null) latestIllustrationMap[w.Id] = cover;
             }
         }
 
@@ -144,7 +151,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             var coverHash = (ws.CoverHash ?? string.Empty).Trim();
             var coverStale = !string.IsNullOrWhiteSpace(contentHash) && !string.Equals(contentHash, coverHash, StringComparison.Ordinal);
 
-            // Latest illustration URL for card cover (newest generated image)
+            // 卡片封面：当前挂着的第一张（见上）
             var latestUrl = latestIllustrationMap.TryGetValue(ws.Id, out var latestAsset) ? latestAsset.Url : null;
 
             return new

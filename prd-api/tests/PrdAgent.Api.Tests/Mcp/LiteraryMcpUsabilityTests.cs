@@ -203,6 +203,10 @@ public class LiteraryMcpUsabilityTests
             var ui = WithAdminUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
             var ids = Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray().Select(a => a.GetProperty("id").GetString()).ToList();
             Assert.Equal(new[] { "legacy-0", "redrawn-1" }, ids); // 刷新后第 1 张不再变成没图，被换下的 legacy-1 不混进来
+            // 列表卡片封面取正文现在挂着的第一张，不是最晚生成的那张（redrawn-1 更新，但挂在第 2 位）
+            string? CoverOf(JsonElement list) => list.GetProperty("items").EnumerateArray()
+                .Single(w => w.GetProperty("id").GetString() == id).GetProperty("latestIllustrationUrl").GetString();
+            Assert.Equal("https://example.test/l0.png", CoverOf(Data(await ui.ListWorkspaces(50, CancellationToken.None))));
 
             // 把第 1 张的旧图放到第 2 个位置：历史里它报的是现在挂的位置，不是生成时的位置
             Data(await drafts.RestoreImage(id, 1, new() { AssetId = "legacy-0", WorkflowVersion = 1 }, CancellationToken.None));
@@ -222,6 +226,7 @@ public class LiteraryMcpUsabilityTests
             // 整篇换成全新的标记、新版本还没出图：指针表是空的，旧图都保留着，详情不能把它们当成当前图返回
             Data(await drafts.WriteContent(id, new() { MarkedContent = "全新的一段。\n[插图]: 海边的灯塔\n" }, CancellationToken.None));
             Assert.Empty(Data(await ui.GetWorkspaceDetail(id)).GetProperty("assets").EnumerateArray());
+            Assert.Null(CoverOf(Data(await ui.ListWorkspaces(50, CancellationToken.None)))); // 也不把历史配图摆上封面
             Assert.Contains(Data(await drafts.GetHistory(id, CancellationToken.None)).GetProperty("images").EnumerateArray(),
                 i => i.GetProperty("assetId").GetString() == "redrawn-1"); // 旧图仍能在历史里找到
         }
