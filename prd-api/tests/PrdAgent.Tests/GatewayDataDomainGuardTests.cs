@@ -244,9 +244,12 @@ public class GatewayDataDomainGuardTests
         var standalone = new PrdAgent.Infrastructure.Database.MongoDbContext("mongodb://localhost:27017", "llm_gateway");
         Assert.Equal("llm_gateway", standalone.LlmRequestLogs.Database.DatabaseNamespace.DatabaseName);
 
-        // 日志集合带网关建的 TTL 索引，MAP 的清理入口只许删文档，不许 drop 集合。
+        // 「清空日志」：网关库那份只删本租户文档（带网关建的 TTL 索引，不许 drop）；
+        // 业务库里切换前留下的旧集合只属于 MAP，一并整集合删掉，不能留下历史内容。
         var dataController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DataController.cs");
-        Assert.DoesNotContain("DropCollectionAsync(\"llmrequestlogs\")", dataController);
+        Assert.Contains("await _db.LlmRequestLogs.DeleteManyAsync(_ => true);", dataController);
+        Assert.Contains("await _db.Database.DropCollectionAsync(\"llmrequestlogs\");", dataController);
+        Assert.DoesNotContain("LlmRequestLogs.Database.DropCollectionAsync", dataController);
     }
 
     [Fact]

@@ -73,10 +73,25 @@ public sealed class HttpLlmGatewayClient
             : GatewayTenantDefaults.InternalTenantId;
     }
 
-    private HttpClient CreateHttp(bool infiniteTimeout)
+    /// <summary>传输超时下限；请求自带更长的预算（如生图最多 3600 秒）时按预算加余量放宽。</summary>
+    internal static readonly TimeSpan DefaultTransportTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// 请求自身预算 + 60 秒余量，且不低于默认 10 分钟：serving 那一侧要先跑完自己的超时并返回结构化错误，
+    /// MAP 这一跳不能比它先断开。
+    /// </summary>
+    internal static TimeSpan TransportTimeoutFor(int requestTimeoutSeconds)
+    {
+        var budget = TimeSpan.FromSeconds(Math.Max(0, requestTimeoutSeconds) + 60);
+        return budget > DefaultTransportTimeout ? budget : DefaultTransportTimeout;
+    }
+
+    private HttpClient CreateHttp(bool infiniteTimeout, int? requestTimeoutSeconds = null)
     {
         var http = _httpFactory.CreateClient();
-        http.Timeout = infiniteTimeout ? Timeout.InfiniteTimeSpan : TimeSpan.FromMinutes(10);
+        http.Timeout = infiniteTimeout
+            ? Timeout.InfiniteTimeSpan
+            : requestTimeoutSeconds is { } seconds ? TransportTimeoutFor(seconds) : DefaultTransportTimeout;
         http.DefaultRequestHeaders.Remove("X-Gateway-Key");
         http.DefaultRequestHeaders.Add("X-Gateway-Key", _gatewayKey);
         return http;
@@ -111,7 +126,7 @@ public sealed class HttpLlmGatewayClient
         request = TagHttpTransport(request);
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
+            using var http = CreateHttp(infiniteTimeout: false, request.TimeoutSeconds);
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/send") { Content = JsonBody(request) };
             ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
             using var resp = await http.SendAsync(req, ct);
@@ -337,7 +352,7 @@ public sealed class HttpLlmGatewayClient
 
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
+            using var http = CreateHttp(infiniteTimeout: false, outboundRequest.TimeoutSeconds);
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(outboundRequest) };
             ApplyRoutingHeaders(req, outboundRequest.AppCallerCode, outboundRequest.Context);
             using var resp = await http.SendAsync(req, ct);

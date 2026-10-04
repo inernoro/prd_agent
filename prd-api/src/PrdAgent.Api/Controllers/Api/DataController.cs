@@ -796,6 +796,8 @@ public class DataController : ControllerBase
             // 且 _db.LlmRequestLogs 已限定在内部租户，删不到外部租户的日志。
             var deletedLogs = await _db.LlmRequestLogs.DeleteManyAsync(_ => true);
             payload.LlmRequestLogs = deletedLogs.DeletedCount;
+            // 切到网关之前的历史日志还留在业务库的旧集合里，清空时一并删掉（它只属于 MAP，可整集合 drop）。
+            await _db.Database.DropCollectionAsync("llmrequestlogs");
         }
 
         // sessions/messages

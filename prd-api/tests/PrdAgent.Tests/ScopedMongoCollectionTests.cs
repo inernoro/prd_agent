@@ -100,6 +100,16 @@ public class ScopedMongoCollectionTests
         Assert.IsNotType<ScopedMongoCollection<LlmRequestLog>>(serving.LlmRequestLogs);
     }
 
+    [Theory]
+    [InlineData(120, 600)]   // 普通对话：保持 10 分钟下限
+    [InlineData(600, 660)]   // 生图默认预算：MAP 这一跳比 serving 晚 60 秒断开
+    [InlineData(3600, 3660)] // 生图最大预算
+    public void GatewayTransportTimeout_FollowsRequestBudget(int requestSeconds, int expectedSeconds)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expectedSeconds),
+            PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient.TransportTimeoutFor(requestSeconds));
+    }
+
     private static string RenderFilter(FilterDefinition<LlmRequestLog> filter) =>
         filter.Render(new RenderArgs<LlmRequestLog>(
             BsonSerializer.SerializerRegistry.GetSerializer<LlmRequestLog>(),
