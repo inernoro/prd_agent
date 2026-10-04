@@ -36,6 +36,7 @@ import {
   OUTPUT_FORM_ORDER,
   OUTPUT_FORM_REGISTRY,
   buildHtmlPptHandoff,
+  missingRuntimeBlocker,
   openHtmlPptHandoff,
   sendRoute,
   type WorkbenchOutputForm,
@@ -113,6 +114,7 @@ export default function NewSiteStage({
   const uploads = useDesignAttachmentUploads('document', MAX_GENERATE_ATTACHMENTS);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
+  const [runtimesLoaded, setRuntimesLoaded] = useState(false);
   const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
   const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
@@ -169,6 +171,7 @@ export default function NewSiteStage({
         });
       }
       setRecentKnowledge(items);
+      setRuntimesLoaded(true);
       if (runtimes.success) {
         setCapabilities(runtimes.data.runtimes);
         setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
@@ -331,7 +334,7 @@ export default function NewSiteStage({
   const sendBlocker = isPpt
     ? (pptHandoff.ok ? '' : pptHandoff.blocker)
     : !requestRuntime
-    ? '没有可用的设计执行器，请联系管理员检查部署状态'
+    ? missingRuntimeBlocker(runtimesLoaded)
     : uploads.busy
       ? '文件还在上传，传完就能生成'
       : !hasSources

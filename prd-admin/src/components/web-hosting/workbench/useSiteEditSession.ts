@@ -194,6 +194,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
+  const [runtimesLoaded, setRuntimesLoaded] = useState(false);
   const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [defaultRuntime, setDefaultRuntime] = useState<string | null>(null);
   // 「附上截图」：用户圈出问题的图片，随修改任务一起交给执行器（最多 3 张）。
@@ -282,6 +283,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     void Promise.all([listRecentDocumentEntries(12), getDesignRuntimeCapabilities()]).then(([result, runtimes]) => {
       if (!active) return;
       if (result.success) setRecentKnowledge(result.data.items);
+      setRuntimesLoaded(true);
       if (runtimes.success) {
         const supported = runtimes.data.runtimes.filter((item) => item.operations.includes('edit'));
         setCapabilities(supported);
@@ -938,6 +940,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     runtimeRecoveryGate,
     setRuntimeRecoveryGate,
     enabledRuntimes,
+    runtimesLoaded,
     activeRuntime,
     unavailableRuntimes,
     activeRuntimeFact,
