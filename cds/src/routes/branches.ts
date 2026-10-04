@@ -70,7 +70,7 @@ import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildS
 import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
-import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView } from '../services/human-project-access.js';
+import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
@@ -6189,7 +6189,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: branch.id,
       branchName: branch.branch,
       projectId,
-      resources,
+      resources: resources.map(resource => resourceForHumanView(req, resource)),
     });
   });
 

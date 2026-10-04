@@ -3,6 +3,7 @@ import { isAuthenticatedHuman, isHumanSystemOwner } from './human-auth.js';
 import { hasActiveGrant } from './identity.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
 import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv } from './secret-masker.js';
+import type { UnifiedBranchResource } from './resources.js';
 
 /** Stable link to the existing principal/grant model; never use a mutable login. */
 export function humanPrincipalId(userId: string): string {
@@ -43,11 +44,26 @@ export function profileForHumanView(req: unknown, profile: BuildProfile): BuildP
   };
 }
 
+/** Resource summaries are not permission to reveal database/cache credentials. */
+export function resourceForHumanView(req: unknown, resource: UnifiedBranchResource): UnifiedBranchResource {
+  if (!isScopedHuman(req)) return resource;
+  return {
+    ...resource,
+    connectionString: undefined,
+    externalAccess: { ...resource.externalAccess, connectionString: undefined },
+    raw: 'command' in resource.raw ? {
+      ...resource.raw, command: maskCommandSecrets(resource.raw.command),
+    } : resource.raw,
+  };
+}
+
 export function branchForHumanView<T extends BranchEntry>(req: unknown, branch: T): T {
   const masked = maskBranchExtraProfilesEnv(branch);
   if (!isScopedHuman(req)) return masked;
+  const resources = (masked as T & { resources?: UnifiedBranchResource[] }).resources;
   return {
     ...masked,
+    ...(resources ? { resources: resources.map(resource => resourceForHumanView(req, resource)) } : {}),
     extraProfiles: masked.extraProfiles?.map(profile => profileForHumanView(req, profile)),
     profileOverrides: masked.profileOverrides ? Object.fromEntries(Object.entries(masked.profileOverrides).map(([id, override]) => [id, {
       ...override,

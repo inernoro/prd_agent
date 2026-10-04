@@ -61,6 +61,9 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       }
       // Machine credentials cannot be minted by a member to outlive revoked human access.
       if (/agent-key|credential/i.test(action || '') || /^(container-env|container-exec)$/i.test(action || '')) { deny(); return; }
+      // Live Docker chunks and historical archives may contain owner-unmasked
+      // credentials. Keep these raw read paths owner-only; masked snapshots remain available.
+      if (/^(container-logs-stream|container-log-archives)$/i.test(action || '')) { deny(); return; }
       if (req.query.unmask === '1' || req.query.unmask === 'true') { deny(); return; }
       // Grants do not allow arbitrary container commands, global domain claims or secrets edits.
       const branchWrite = (!action && (method === 'PATCH' || method === 'DELETE'))

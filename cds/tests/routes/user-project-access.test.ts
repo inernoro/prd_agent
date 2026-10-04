@@ -169,6 +169,57 @@ describe('human project grants through the production server', () => {
     expect(state.getProject('project-a')?.serviceEnv?.API_TOKEN).toBe('fake-service-secret');
   });
 
+  it('hides resource connection credentials in cached lists and direct resource reads without mutating owner data', async () => {
+    state.addInfraService({ id: 'redis', projectId: 'project-a', name: 'Redis', dockerImage: 'redis:7',
+      containerPort: 6379, hostPort: 16379, containerName: 'test-redis', status: 'stopped',
+      volumes: [], env: { REDIS_PASSWORD: 'fake-resource-env-secret' },
+      command: ['redis-server', '--requirepass', 'fake-resource-command-secret'], createdAt: new Date().toISOString() });
+    state.upsertResourceExternalAccess({ projectId: 'project-a', branchId: 'branch-project-a',
+      resourceId: 'infra:redis', enabled: true, kind: 'tcp', allowlist: [],
+      connectionString: 'redis://:fake-resource-connection-secret@redis.example.test:16379/0' });
+    await grant(['project-a']);
+    for (const url of ['/api/branches', '/api/branches/branch-project-a/resources']) {
+      // Warm the owner cache first; member projections must never mutate it.
+      const ownerView = await call('GET', url);
+      expect(JSON.stringify(ownerView.body)).toContain('fake-resource-connection-secret');
+      const view = await call('GET', url, member);
+      expect(view.status).toBe(200);
+      const resources = view.body.resources || view.body.branches.find((b: any) => b.id === 'branch-project-a').resources;
+      const redis = resources.find((r: any) => r.id === 'infra:redis');
+      expect(redis.serviceName).toBe('Redis');
+      expect(redis.connectionString).toBeUndefined();
+      expect(redis.externalAccess.connectionString).toBeUndefined();
+      for (const secret of ['fake-resource-connection-secret', 'fake-resource-env-secret', 'fake-resource-command-secret']) {
+        expect(JSON.stringify(view.body), url).not.toContain(secret);
+      }
+      expect(JSON.stringify((await call('GET', url)).body)).toContain('fake-resource-connection-secret');
+    }
+    expect(state.getResourceExternalAccessForBranch('project-a', 'branch-project-a')[0].connectionString)
+      .toContain('fake-resource-connection-secret');
+    expect(state.getInfraServiceForProjectAndId('project-a', 'redis')?.command)
+      .toContain('fake-resource-command-secret');
+  });
+
+  it('denies raw container streams and owner-unmasked archives but preserves owner archive reads', async () => {
+    state.appendContainerLogArchive('branch-project-a', { projectId: 'project-a', profileId: 'profile-project-a',
+      source: 'container-logs-api', masked: false, logs: 'PASSWORD=fake-owner-archive-secret' });
+    await grant(['project-a']);
+    for (const url of [
+      '/api/branches/branch-project-a/container-logs-stream/profile-project-a',
+      '/api/branches/branch-project-a/container-logs-stream/profile-project-a?unmask=1',
+      '/api/branches/branch-project-a/container-log-archives',
+      '/api/branches/branch-project-a/container-log-archives?includeLogs=1',
+    ]) {
+      const view = await call('GET', url, member);
+      expect(view.status, url).toBe(403);
+      expect(JSON.stringify(view.body)).not.toContain('fake-owner-archive-secret');
+    }
+    const ownerView = await call('GET', '/api/branches/branch-project-a/container-log-archives?includeLogs=1');
+    expect(ownerView.status).toBe(200);
+    expect(ownerView.body.archives[0].logs).toContain('fake-owner-archive-secret');
+    expect(state.getContainerLogArchives('branch-project-a')[0].masked).toBe(false);
+  });
+
   it('does not offer or accept unsupported shared-service grants or expose old grants', async () => {
     state.addProject({ id: 'shared', slug: 'shared', name: 'shared', kind: 'shared-service',
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
