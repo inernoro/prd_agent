@@ -213,6 +213,30 @@ public class GatewayDataDomainGuardTests
     /// 进程内直连、影子比对与模式开关已于 2026-10 删除，失败靠发布版本回退，不靠运行时切换。
     /// 任何一处把网关引擎重新装进 MAP、或重新读模式开关，这条都会红。
     /// </summary>
+    /// <summary>
+    /// 模型请求日志只由网关 serving 写进网关库。MAP 的日志页、成本统计、生图日志等读者
+    /// 走 MongoDbContext.LlmRequestLogs，必须指向同一个库，否则切到网关后新调用全部从 MAP 页面消失。
+    /// </summary>
+    [Fact]
+    public void Api_LlmRequestLogReaders_ReadGatewayDatabase()
+    {
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        Assert.Contains(
+            "new MongoDbContext(mongoConnectionString, mongoDatabaseName, llmRequestLogDatabaseName: llmGatewayDatabaseName)",
+            program);
+
+        var context = new PrdAgent.Infrastructure.Database.MongoDbContext("mongodb://localhost:27017", "prdagent", "llm_gateway");
+        Assert.Equal("llm_gateway", context.LlmRequestLogs.Database.DatabaseNamespace.DatabaseName);
+        Assert.Equal("prdagent", context.Users.Database.DatabaseNamespace.DatabaseName);
+
+        var standalone = new PrdAgent.Infrastructure.Database.MongoDbContext("mongodb://localhost:27017", "llm_gateway");
+        Assert.Equal("llm_gateway", standalone.LlmRequestLogs.Database.DatabaseNamespace.DatabaseName);
+
+        // 日志集合带网关建的 TTL 索引，MAP 的清理入口只许删文档，不许 drop 集合。
+        var dataController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DataController.cs");
+        Assert.DoesNotContain("DropCollectionAsync(\"llmrequestlogs\")", dataController);
+    }
+
     [Fact]
     public void Api_LlmGateway_IsHttpOnly()
     {

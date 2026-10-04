@@ -792,8 +792,9 @@ public class DataController : ControllerBase
         if (requested.Contains("llmlogs") || requested.Contains("llmrequestlogs") || requested.Contains("logs"))
         {
             matchedAny = true;
-            await _db.Database.DropCollectionAsync("llmrequestlogs");
-            payload.LlmRequestLogs = 0; // drop 操作无法返回删除数量
+            // 日志集合在网关库里且带网关建的 TTL 索引：只删文档，不 drop 集合。
+            var deletedLogs = await _db.LlmRequestLogs.DeleteManyAsync(_ => true);
+            payload.LlmRequestLogs = deletedLogs.DeletedCount;
         }
 
         // sessions/messages

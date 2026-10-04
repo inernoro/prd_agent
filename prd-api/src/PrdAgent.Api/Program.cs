@@ -135,7 +135,8 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 var llmGatewayDatabaseName = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
-builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
+// 模型请求日志由网关 serving 写进网关库，MAP 侧日志页 / 成本统计读同一份，不再读业务库里的旧集合。
+builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName, llmRequestLogDatabaseName: llmGatewayDatabaseName));
 builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();

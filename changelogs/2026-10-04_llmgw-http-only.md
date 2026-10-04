@@ -5,3 +5,4 @@
 | chore | scripts | 删除分阶段发布脚本、发布台账、影子采样与回滚到 inproc 的脚本及对应工作流，验收种子脚本更名为 llmgw-map-acceptance-seed.py |
 | docs | doc | 网关切换计划标为已完成，设计文档与债务台账同步，新增 serving 内部 legacy 配置兜底的还债条目 |
 | chore | prd-api | quick.sh / quick.ps1 启动后端时一并在 localhost:5091 启动 LLM 网关 serving，并把本地 API 指过去 |
+| fix | prd-api | MAP 的模型请求日志读者改读网关库，切到只走网关后日志页与成本统计不再丢失新调用；清空日志改为删文档不 drop 集合 |

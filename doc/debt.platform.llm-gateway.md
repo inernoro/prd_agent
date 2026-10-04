@@ -28,6 +28,22 @@ MAP 库里的旧配置选模（`LLMConfigs` 活动配置、环境变量里的 Cl
 3. 部署侧把 `LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers` 置 true 观察一个稳定窗口；
 4. 删掉解析链第四档、MAP 配置回落查找与 serving 对 MAP 主库的兼容连接，连同 `InMemoryModelResolver` 的 legacy 分支。
 
+## MAP 日志页切到网关库后的两处边界（2026-10-04）
+
+**状态**：未还
+
+MAP 的模型调用全部经网关之后，请求日志只由 serving 写进网关库。MAP 进程里
+`MongoDbContext.LlmRequestLogs` 已改指网关库，日志页、成本统计、生图日志等读者读到的就是网关写的那份。
+随之留下两处边界：
+
+1. **切换前的历史日志看不到了**：正式机此前走进程内路径，那段时间的日志在业务库 `prdagent.llmrequestlogs`，
+   MAP 页面不再读它。它不影响任何功能，只是历史查询要直接查库；按保留期自然失效后可整集合删除。
+2. **网关的外部租户调用会出现在 MAP 日志与成本统计里**：网关库里的日志带 `TenantId`，
+   MAP 读者目前不按租户过滤。网关接入外部系统后，这部分调用会被算进 MAP 的统计。
+
+**还债的样子**：MAP 读者统一加「只看内部租户」的过滤（收敛成一个查询入口，不在各控制器各写一遍）；
+历史日志按需一次性迁进网关库或直接随保留期删除。
+
 ## InMemoryModelResolver 是已删子系统留下的化石（2026-09-15）
 
 **状态**：未还 | **体量**：约 470 行，150 条用例挂在它身上

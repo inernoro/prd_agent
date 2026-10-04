@@ -11,19 +11,27 @@ namespace PrdAgent.Infrastructure.Database;
 public class MongoDbContext
 {
     private readonly IMongoDatabase _database;
+    private readonly IMongoDatabase _llmRequestLogDatabase;
 
     /// <summary>
     /// 暴露底层 IMongoDatabase 实例（用于 DropCollectionAsync 等高级操作）
     /// </summary>
     public IMongoDatabase Database => _database;
 
-    public MongoDbContext(string connectionString, string databaseName)
+    /// <param name="llmRequestLogDatabaseName">
+    /// 模型请求日志所在库。MAP 的模型调用全部经独立网关，日志由 serving 写进网关库；
+    /// MAP 进程传网关库名，让日志页、成本统计等读者读到同一份。不传则与业务库相同（serving 自身即如此）。
+    /// </param>
+    public MongoDbContext(string connectionString, string databaseName, string? llmRequestLogDatabaseName = null)
     {
         // 注册 BSON 类映射（替代注解方式）
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
         _database = client.GetDatabase(databaseName);
+        _llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
+            ? _database
+            : client.GetDatabase(llmRequestLogDatabaseName);
         
         // 索引由 DBA 手动创建，禁止应用启动时自动创建
         // 索引定义文档：doc/guide.platform.mongodb-indexes.md
@@ -70,7 +78,7 @@ public class MongoDbContext
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
-    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
+    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _llmRequestLogDatabase.GetCollection<LlmRequestLog>("llmrequestlogs");
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
