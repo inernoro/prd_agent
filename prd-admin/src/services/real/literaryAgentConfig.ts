@@ -567,6 +567,8 @@ export type LiteraryIllustrationHistory = {
   }>;
   /** 当前正文里有哪些配图位置，旧图只能放回这些位置 */
   markerIndexes?: number[];
+  /** 当前每个配图位置的描述，放到别的位置时用来让人看清选的是哪一段 */
+  markers?: Array<{ index: number; description: string }>;
   groups: Array<{
     workflowVersion: number | null;
     isCurrentVersion: boolean;
