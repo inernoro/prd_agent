@@ -249,6 +249,7 @@ public class GatewayDataDomainGuardTests
         var dataController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DataController.cs");
         Assert.Contains("await _db.LlmRequestLogs.DeleteManyAsync(_ => true);", dataController);
         Assert.Contains("await _db.Database.DropCollectionAsync(\"llmrequestlogs\");", dataController);
+        Assert.Contains("if (_db.HasSeparateLegacyLlmRequestLogCollection)", dataController);
         Assert.DoesNotContain("LlmRequestLogs.Database.DropCollectionAsync", dataController);
     }
 

@@ -723,7 +723,7 @@ public sealed class HttpLlmGatewayClient
             return GatewayRawResponse.Fail("IMAGE_REQUEST_INVALID", "图片请求必须指定业务模型和标准参数。", 400);
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
+            using var http = CreateHttp(infiniteTimeout: false, request.TimeoutSeconds);
             using var message = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(request) };
             ApplyRoutingHeaders(message, request.AppCallerCode, request.Context);
             using var response = await http.SendAsync(message, ct);

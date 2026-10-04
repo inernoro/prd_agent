@@ -110,6 +110,16 @@ public class ScopedMongoCollectionTests
             PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient.TransportTimeoutFor(requestSeconds));
     }
 
+    [Fact]
+    public void LegacyLogCollection_IsSeparateOnlyWhenNamespaceOrServerDiffers()
+    {
+        Assert.True(new MongoDbContext("mongodb://localhost:27017", "prdagent", "llm_gateway").HasSeparateLegacyLlmRequestLogCollection);
+        Assert.True(new MongoDbContext("mongodb://map:27017", "prdagent", "prdagent", "mongodb://gw:27017").HasSeparateLegacyLlmRequestLogCollection);
+        // 同一连接、库名配成一样：两者是同一个集合，清理旧集合会删掉网关全部租户的日志。
+        Assert.False(new MongoDbContext("mongodb://localhost:27017", "prdagent", "prdagent").HasSeparateLegacyLlmRequestLogCollection);
+        Assert.False(new MongoDbContext("mongodb://localhost:27017", "prdagent").HasSeparateLegacyLlmRequestLogCollection);
+    }
+
     private static string RenderFilter(FilterDefinition<LlmRequestLog> filter) =>
         filter.Render(new RenderArgs<LlmRequestLog>(
             BsonSerializer.SerializerRegistry.GetSerializer<LlmRequestLog>(),

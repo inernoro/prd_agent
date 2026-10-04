@@ -28,6 +28,22 @@ MAP 库里的旧配置选模（`LLMConfigs` 活动配置、环境变量里的 Cl
 3. 部署侧把 `LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers` 置 true 观察一个稳定窗口；
 4. 删掉解析链第四档、MAP 配置回落查找与 serving 对 MAP 主库的兼容连接，连同 `InMemoryModelResolver` 的 legacy 分支。
 
+## 发布闸门不真调模型（2026-10-04）
+
+**状态**：未还
+
+发布后的网关探测是必过项，但它验的是「带 key 能进、路由与依赖就绪、构建 commit 一致、无 key 被拒」，
+**不会真的调一次上游模型**。真调模型的 D 层 smoke（`gw-smoke.py`）只在部署方显式给了业务 smoke key
+（`LLMGW_POST_DEPLOY_SERVICE_KEY`，或显式的探测 key）时默认运行；只有 compose 必填的 `LLMGW_SERVE_KEY` 时跳过并在日志写明。
+
+所以供应商密钥过期、上游地址失效这类问题，发布本身拦不住，要靠上线后的常设探针或第一次业务调用暴露。
+
+没在删老路径那次一起做的原因：强制它就要求正式机先签发并配置一把业务 smoke key，否则每次发布都会被挡住，
+属于新增的部署前置条件，不是「删老路径」本身的回归。
+
+**还债的样子**：在网关控制台为发布签一把只够跑 smoke 的 scoped key 写进正式机 `.env`，
+然后把 `LLMGW_POST_DEPLOY_RUN_SMOKE` 的缺省改为必跑、缺 key 即拒绝发布。
+
 ## 切换前的历史日志 MAP 页面看不到了（2026-10-04）
 
 **状态**：未还

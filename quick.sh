@@ -195,6 +195,43 @@ start_llmgw_serving() {
         dotnet run --no-launch-profile
 }
 
+# 本地探测 HTTP：优先 curl，没有就用 python3；两者都没有就判失败，不能把「没法检查」当成「已就绪」。
+# 用法：llmgw_http_probe <url> [超时秒] [x-gateway-key]；返回 0 表示 HTTP 2xx，加 --print 时打印响应体。
+llmgw_http_probe() {
+    local print_body=0
+    if [ "${1:-}" = "--print" ]; then print_body=1; shift; fi
+    local url="$1" timeout_s="${2:-5}" key="${3:-}"
+    if command -v curl >/dev/null 2>&1; then
+        local header_args=()
+        [ -n "$key" ] && header_args=(-H "X-Gateway-Key: $key")
+        if [ "$print_body" = 1 ]; then
+            curl -sS -m "$timeout_s" "${header_args[@]}" "$url" 2>&1 | head -c 1500
+            return 0
+        fi
+        curl -fsS -m "$timeout_s" "${header_args[@]}" "$url" >/dev/null 2>&1
+        return
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$url" "$timeout_s" "$key" "$print_body" <<'PY'
+import sys, urllib.request, urllib.error
+url, timeout, key, show = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4] == "1"
+req = urllib.request.Request(url, headers={"X-Gateway-Key": key} if key else {})
+try:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if show: print(resp.read(1500).decode("utf-8", "replace"))
+        sys.exit(0)
+except urllib.error.HTTPError as e:
+    if show: print(e.read(1500).decode("utf-8", "replace"))
+    sys.exit(0 if show else 1)
+except Exception as e:
+    if show: print(e)
+    sys.exit(1)
+PY
+        return
+    fi
+    return 2
+}
+
 # 等本地网关 healthz 通过才算起来了；进程提前退出（编译失败、端口被占）或超时都判失败，
 # 否则 API 照常起来、所有模型调用却都失败，而启动器还在说「已启动」。
 wait_for_llmgw_ready() {
@@ -202,9 +239,9 @@ wait_for_llmgw_ready() {
     local timeout_s="${LLMGW_LOCAL_READY_TIMEOUT:-300}"
     local start
     start=$(date +%s)
-    if ! command -v curl >/dev/null 2>&1; then
-        log_warn "未找到 curl，跳过本地网关就绪检查（$LLMGW_LOCAL_URL/gw/v1/healthz）"
-        return 0
+    if ! command -v curl >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+        log_error "需要 curl 或 python3 才能检查本地网关是否就绪（$LLMGW_LOCAL_URL/gw/v1/healthz），请先安装其一"
+        return 1
     fi
     log_info "Waiting for LLM gateway serving: $LLMGW_LOCAL_URL/gw/v1/healthz ..."
     while true; do
@@ -212,7 +249,7 @@ wait_for_llmgw_ready() {
             log_error "LLM gateway serving 启动失败：进程已退出（编译错误或端口被占用），见上方 [llmgw] 日志"
             return 1
         fi
-        if curl -fsS -m 3 "$LLMGW_LOCAL_URL/gw/v1/healthz" >/dev/null 2>&1; then
+        if llmgw_http_probe "$LLMGW_LOCAL_URL/gw/v1/healthz" 3; then
             wait_for_llmgw_dependencies
             return 0
         fi
@@ -233,7 +270,7 @@ wait_for_llmgw_dependencies() {
     local start
     start=$(date +%s)
     while true; do
-        if curl -fsS -m 5 "$LLMGW_LOCAL_URL/gw/v1/healthz/ready" >/dev/null 2>&1; then
+        if llmgw_http_probe "$LLMGW_LOCAL_URL/gw/v1/healthz/ready" 5; then
             LLMGW_LOCAL_READY_STATE="ready"
             log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
             return 0
@@ -245,7 +282,7 @@ wait_for_llmgw_dependencies() {
     done
     LLMGW_LOCAL_READY_STATE="not-ready"
     log_warn "LLM gateway serving 进程在线但依赖未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz/ready 非 200），模型调用会失败。未通过的组件："
-    curl -sS -m 10 -H "X-Gateway-Key: $LlmGwServe__ApiKey" "$LLMGW_LOCAL_URL/gw/v1/readyz" 2>&1 | head -c 1500
+    llmgw_http_probe --print "$LLMGW_LOCAL_URL/gw/v1/readyz" 10 "$LlmGwServe__ApiKey"
     echo
     log_warn "全新本地库通常是还没在网关控制台配置平台与模型；配好后无需重启，就绪探针会自动转绿。"
 }
@@ -254,33 +291,7 @@ LLMGW_BACKEND_PID=""
 cleanup_backend_llmgw() {
     if [ -n "$LLMGW_BACKEND_PID" ]; then
         kill_tree "$LLMGW_BACKEND_PID" TERM 2>/dev/null
-        # 进程活着之后再看依赖就绪（网关库、密钥解密、路由、场景能力）。全新的本地库还没配网关时
-# 这一步本来就过不了，而开发者正要先把应用跑起来去配置，所以不就绪不退出——但必须明说，
-# 并把 readyz 里没过的组件打出来，不能报成「已就绪」。
-LLMGW_LOCAL_READY_STATE="unknown"
-wait_for_llmgw_dependencies() {
-    local grace_s="${LLMGW_LOCAL_READY_GRACE:-60}"
-    local start
-    start=$(date +%s)
-    while true; do
-        if curl -fsS -m 5 "$LLMGW_LOCAL_URL/gw/v1/healthz/ready" >/dev/null 2>&1; then
-            LLMGW_LOCAL_READY_STATE="ready"
-            log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
-            return 0
-        fi
-        if [ $(( $(date +%s) - start )) -ge "$grace_s" ]; then
-            break
-        fi
-        sleep 2
-    done
-    LLMGW_LOCAL_READY_STATE="not-ready"
-    log_warn "LLM gateway serving 进程在线但依赖未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz/ready 非 200），模型调用会失败。未通过的组件："
-    curl -sS -m 10 -H "X-Gateway-Key: $LlmGwServe__ApiKey" "$LLMGW_LOCAL_URL/gw/v1/readyz" 2>&1 | head -c 1500
-    echo
-    log_warn "全新本地库通常是还没在网关控制台配置平台与模型；配好后无需重启，就绪探针会自动转绿。"
-}
-
-LLMGW_BACKEND_PID=""
+        LLMGW_BACKEND_PID=""
     fi
 }
 

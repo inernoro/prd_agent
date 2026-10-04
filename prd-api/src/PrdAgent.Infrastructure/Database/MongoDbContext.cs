@@ -48,6 +48,8 @@ public class MongoDbContext
         var llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
             ? _database
             : logClient.GetDatabase(llmRequestLogDatabaseName);
+        HasSeparateLegacyLlmRequestLogCollection = !ReferenceEquals(logClient, client)
+            || !string.Equals(llmRequestLogDatabase.DatabaseNamespace.DatabaseName, databaseName, StringComparison.Ordinal);
         var llmRequestLogs = llmRequestLogDatabase.GetCollection<LlmRequestLog>("llmrequestlogs");
         _llmRequestLogs = string.IsNullOrWhiteSpace(llmRequestLogTenantId)
             ? llmRequestLogs
@@ -101,6 +103,12 @@ public class MongoDbContext
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
     public IMongoCollection<LlmRequestLog> LlmRequestLogs => _llmRequestLogs;
+
+    /// <summary>
+    /// 业务库里切换前留下的旧 llmrequestlogs 是否与 <see cref="LlmRequestLogs"/> 不是同一个集合。
+    /// 网关库与业务库在同一连接上配成同名时为 false：那时清理旧集合就等于删掉网关全部租户的日志。
+    /// </summary>
+    public bool HasSeparateLegacyLlmRequestLogCollection { get; }
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");

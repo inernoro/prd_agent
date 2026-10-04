@@ -797,7 +797,11 @@ public class DataController : ControllerBase
             var deletedLogs = await _db.LlmRequestLogs.DeleteManyAsync(_ => true);
             payload.LlmRequestLogs = deletedLogs.DeletedCount;
             // 切到网关之前的历史日志还留在业务库的旧集合里，清空时一并删掉（它只属于 MAP，可整集合 drop）。
-            await _db.Database.DropCollectionAsync("llmrequestlogs");
+            // 网关库与业务库配成同名时两者是同一个集合，那时 drop 会删掉全部租户的日志与网关索引，必须跳过。
+            if (_db.HasSeparateLegacyLlmRequestLogCollection)
+            {
+                await _db.Database.DropCollectionAsync("llmrequestlogs");
+            }
         }
 
         // sessions/messages
