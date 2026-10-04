@@ -75,7 +75,6 @@ export const OPEN_AGENT_ACCESS_EVENT = 'cds:open-agent-access';
 
 export const PROJECT_SKILL_PATHS = [
   { agent: 'Codex / 通用 Agent Skills', path: '.agents/skills' },
-  { agent: 'Cursor', path: '.cursor/skills' },
   { agent: 'Claude Code', path: '.claude/skills' },
 ] as const;
 
@@ -313,7 +312,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     ...missionLines,
     '',
     '一、核对完整技能包与能力目录',
-    '先识别当前宿主的项目级技能目录。Codex/通用 Agent Skills 使用 .agents/skills，Cursor 使用 .cursor/skills，Claude Code 使用 .claude/skills。',
+    '先识别当前宿主的项目级技能目录。Codex/通用 Agent Skills 使用 .agents/skills，Claude Code 使用 .claude/skills。',
     `完整技能包包含 ${CDS_AGENT_SKILL_DEFINITIONS.map((skill) => skill.id).join('、')} 五个技能。`,
     '先运行 cdscli version。只有五个技能都存在、manifest 可读且本地版本不是 stale，才直接复用。',
     '技能缺失、manifest 不完整或版本落后时运行 cdscli update；它应原子更新完整技能包并把旧版备份到当前项目 .cds/skill-backups。',

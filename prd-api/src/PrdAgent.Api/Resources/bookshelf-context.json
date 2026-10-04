@@ -998,7 +998,7 @@
       "title": "LLM Gateway 统一调用规则",
       "oneLine": "所有大模型调用走网关；MAP 选择 AppCaller 获准的模型池，LLMGW 默认只在池内调度，跨池代选必须显式开启。",
       "whenHit": "写任何调用大模型的 Controller、Service 或 Worker。",
-      "history": "Cursor 写的 `pa-agent` Controller 调 `_gateway.StreamAsync` 前没有 `BeginScope`，导致：\n1. 日志出现 `[LlmLog] UserId 为空` warning，但 warning 不阻断\n2. Gateway 继续往下走，访问控制层查不到用户，抛 `User not found`\n3. Service 层看到 \"LLM stream error: User not found\" 以为是上游模型出错\n4. 重试 3 次都是同一个错，用户看到超时\n\n修复：Controller 在 `_gateway.StreamAsync` 之前 `using var _ = _llmRequestContext.BeginScope(...)`，UserId 走 `this.GetRequiredUserId()`。"
+      "history": "某次 `pa-agent` Controller 实现调用 `_gateway.StreamAsync` 前没有 `BeginScope`，导致：\n1. 日志出现 `[LlmLog] UserId 为空` warning，但 warning 不阻断\n2. Gateway 继续往下走，访问控制层查不到用户，抛 `User not found`\n3. Service 层看到 \"LLM stream error: User not found\" 以为是上游模型出错\n4. 重试 3 次都是同一个错，用户看到超时\n\n修复：Controller 在 `_gateway.StreamAsync` 之前 `using var _ = _llmRequestContext.BeginScope(...)`，UserId 走 `this.GetRequiredUserId()`。"
     },
     {
       "name": "minimal-user-input",
