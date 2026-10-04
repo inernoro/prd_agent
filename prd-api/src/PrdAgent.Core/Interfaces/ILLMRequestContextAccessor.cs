@@ -47,7 +47,12 @@ public record LlmRequestContext(
     /// <summary>一次用户动作或异步任务的稳定关联 ID。</summary>
     string? LogicalRequestId = null,
     /// <summary>供应商异步任务 ID。</summary>
-    string? ProviderTaskId = null);
+    string? ProviderTaskId = null,
+    /// <summary>
+    /// 本次生图显式指定的水印配置 id（来自已校验归属的业务 run）。null = 沿用账号给应用绑定的那套；
+    /// <see cref="WatermarkSelection.None"/> = 明确不打水印。
+    /// </summary>
+    string? WatermarkConfigId = null);
 
 public interface ILLMRequestContextAccessor
 {

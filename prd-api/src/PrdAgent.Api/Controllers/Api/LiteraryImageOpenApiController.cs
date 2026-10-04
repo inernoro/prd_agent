@@ -1,14 +1,19 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using static PrdAgent.Core.Models.AppCallerRegistry;
+using StyleChoice = PrdAgent.Api.Services.LiteraryIllustrationChoices.StyleChoice;
+using WatermarkChoice = PrdAgent.Api.Services.LiteraryIllustrationChoices.WatermarkChoice;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -26,95 +31,291 @@ public class LiteraryImageOpenApiController(
 
     public class GenerateRequest
     {
+        /// <summary>单张：要生成的标记序号。与 MarkerIndexes 二选一。</summary>
         public int? MarkerIndex { get; set; }
+        /// <summary>批量：一次为多个标记各入队一张（每个标记一个独立任务，互不影响）。</summary>
+        public List<int>? MarkerIndexes { get; set; }
         public int? WorkflowVersion { get; set; }
         public string? ClientRequestId { get; set; }
+        /// <summary>风格（参考图配置）：ID 或名称；none = 不用参考图；不传 = 账号当前启用的那套。</summary>
+        public string? Style { get; set; }
+        /// <summary>水印：ID 或名称；none = 不打水印；不传 = 账号给文学创作绑定的那套。</summary>
+        public string? Watermark { get; set; }
+        /// <summary>尺寸：比例（如 16:9）或 宽x高（如 1376x768）；不传 = 1024x1024。</summary>
+        public string? Size { get; set; }
+    }
+
+    /// <summary>这次请求要占几格生图额度：批量按去重后的标记数，单张为 1。网关与直连两条闸门共用这一处。</summary>
+    public static int RequestedImageCount(int? markerIndex, IEnumerable<int>? markerIndexes)
+    {
+        var batch = markerIndexes?.Distinct().Count() ?? 0;
+        if (batch > 0) return Math.Min(batch, LiteraryMcpWorkflow.MaxMarkers);
+        return 1;
+    }
+
+    private const string AppKey = LiteraryIllustrationChoices.AppKey;
+    private const string LegacyStyleId = LiteraryIllustrationChoices.LegacyStyleId;
+    private const string DefaultSize = LiteraryIllustrationChoices.DefaultSize;
+    internal static IReadOnlyDictionary<string, string> AspectSizes => LiteraryIllustrationChoices.AspectSizes;
+
+    internal Task<(StyleChoice? choice, string? error)> ResolveStyleAsync(string userId, string? style, CancellationToken ct)
+        => LiteraryIllustrationChoices.ResolveStyleAsync(db, userId, style, ct);
+
+    private Task<StyleChoice?> LegacyStyleAsync(CancellationToken ct) => LiteraryIllustrationChoices.LegacyStyleAsync(db, ct);
+
+    internal Task<(WatermarkChoice? choice, string? error)> ResolveWatermarkAsync(string userId, string? watermark, CancellationToken ct)
+        => LiteraryIllustrationChoices.ResolveWatermarkAsync(db, userId, watermark, ct);
+
+    internal static (string? size, string? error) ResolveSize(string? size) => LiteraryIllustrationChoices.ResolveSize(size);
+
+    /// <summary>这个账号在文学创作里能选的风格、水印、尺寸，以及不传时会用哪一套。</summary>
+    [HttpGet("presets")]
+    public async Task<IActionResult> Presets(CancellationToken ct)
+    {
+        var userId = UserId;
+        var styles = await db.ReferenceImageConfigs.Find(x => x.AppKey == AppKey && x.CreatedByAdminId == userId)
+            .SortByDescending(x => x.IsActive).ToListAsync(ct);
+        var legacy = await LegacyStyleAsync(ct);
+        var (defaultStyle, _) = await ResolveStyleAsync(userId, null, ct);
+        var watermarks = await db.WatermarkConfigs.Find(x => x.UserId == userId).ToListAsync(ct);
+        var (defaultWatermark, _) = await ResolveWatermarkAsync(userId, null, ct);
+        var styleItems = styles.Select(x => new
+        {
+            styleId = x.Id, name = x.Name,
+            prompt = string.IsNullOrWhiteSpace(x.Prompt) ? null : (x.Prompt.Length > 200 ? x.Prompt[..200] + "…" : x.Prompt),
+            hasReferenceImage = !string.IsNullOrWhiteSpace(x.ImageSha256),
+            referenceImageUrl = Request.ResolveAbsoluteUrl(x.ImageUrl),
+            isDefault = x.Id == defaultStyle?.StyleId,
+        }).ToList<object>();
+        if (legacy != null)
+            styleItems.Add(new { styleId = LegacyStyleId, name = legacy.Label, prompt = (string?)null, hasReferenceImage = true,
+                referenceImageUrl = (string?)null, isDefault = defaultStyle?.StyleId == LegacyStyleId });
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            styles = styleItems,
+            defaultStyle = new { styleId = defaultStyle?.StyleId, name = defaultStyle?.Label },
+            watermarks = watermarks.Select(x => new
+            {
+                watermarkId = x.Id, name = x.Name, text = x.Text,
+                boundToLiterary = x.AppKeys != null && x.AppKeys.Contains(AppKey),
+                isDefault = x.Id == defaultWatermark?.WatermarkId,
+            }),
+            defaultWatermark = new { watermarkId = defaultWatermark?.WatermarkId, name = defaultWatermark?.Label },
+            sizes = AspectSizes.Select(kv => new { aspect = kv.Key, size = kv.Value }),
+            defaultSize = DefaultSize,
+            maxMarkersPerArticle = LiteraryMcpWorkflow.MaxMarkers,
+            hint = "生图时 style / watermark 传这里的 ID 或名称，none 表示不用；不传就用 isDefault 那一套。",
+        }));
     }
 
     [HttpPost("workspaces/{workspaceId}/images")]
-    public async Task<IActionResult> Generate(string workspaceId, [FromBody] GenerateRequest req, CancellationToken ct)
+    public async Task<IActionResult> Generate(string workspaceId, [FromBody] GenerateRequest? req, CancellationToken ct)
     {
-        if (req.MarkerIndex is null or < 0 || req.WorkflowVersion is null or < 1
+        req ??= new GenerateRequest();
+        var batch = req.MarkerIndexes is { Count: > 0 };
+        if ((req.MarkerIndex.HasValue && batch) || (!req.MarkerIndex.HasValue && !batch))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "markerIndex（单张）与 markerIndexes（批量）必须且只能传一个；序号来自读取工作区返回的 illustrations[].index。"));
+        var indexes = batch ? req.MarkerIndexes!.Distinct().ToList() : new List<int> { req.MarkerIndex!.Value };
+        if (indexes.Any(i => i < 0) || indexes.Count > LiteraryMcpWorkflow.MaxMarkers || req.WorkflowVersion is null or < 1
             || string.IsNullOrWhiteSpace(req.ClientRequestId) || req.ClientRequestId.Length > 200)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                "请传 markerIndex、workflowVersion 和 1-200 字的 clientRequestId；前两项来自读取工作区，重试保持同一个 clientRequestId。"));
+                $"请传 markerIndex 或 markerIndexes（最多 {LiteraryMcpWorkflow.MaxMarkers} 个）、workflowVersion 和 1-200 字的 clientRequestId；前两项来自读取工作区，重试保持同一个 clientRequestId。"));
         var userId = UserId;
-        var fingerprint = McpIdempotency.Fingerprint("mcp-literary-image", McpIdempotency.ScopedByKey(User, req.ClientRequestId));
-        var idem = DeploymentScope.ScopeIdempotencyKey($"mcp:{fingerprint}");
-        var previous = await db.ImageGenRuns.Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == idem).FirstOrDefaultAsync(ct);
-        if (previous != null) return Replay(previous, workspaceId, req);
+        // 这次没传的项，先沿用这篇文章上次明确指定的那套，再退回账号默认。
+        // 用户说「重画一张」「按新稿重新配」时不会再报一遍风格水印，预期却一定是原来那套。
+        var remembered = await db.ImageMasterWorkspaces
+            .Find(x => x.Id == workspaceId && x.OwnerUserId == userId && x.ScenarioType == "article-illustration")
+            .Project(x => x.IllustrationPrefs).FirstOrDefaultAsync(ct);
+        var notes = new List<string>();
+        var explicitStyle = !string.IsNullOrWhiteSpace(req.Style);
+        var explicitWatermark = !string.IsNullOrWhiteSpace(req.Watermark);
+        var explicitSize = !string.IsNullOrWhiteSpace(req.Size);
 
-        var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId && x.OwnerUserId == userId
-            && x.ScenarioType == "article-illustration").FirstOrDefaultAsync(ct);
-        if (ws == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文学工作区不存在或不属于你。"));
-        if (ws.ArticleWorkflow?.Version != req.WorkflowVersion)
-            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "正文或配图方案已变化，请重新读取工作区后再生成。"));
-        var marker = ws.ArticleWorkflow.Markers.FirstOrDefault(m => m.Index == req.MarkerIndex);
-        if (marker == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-            "配图标记不存在。新建时可传 markedContent，或先在文学创作页面生成配图标记。"));
-        var prompt = string.IsNullOrWhiteSpace(marker.DraftText) ? marker.Text : marker.DraftText;
-        if (string.IsNullOrWhiteSpace(prompt) || prompt.Length > 4000)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "配图描述需为 1-4000 字，请先在页面调整标记。"));
+        var sizeSource = explicitSize ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.Size) ? "remembered" : "account-default";
+        var (size, sizeError) = ResolveSize(explicitSize ? req.Size : remembered?.Size);
+        if (sizeError != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
 
-        var reference = await db.ReferenceImageConfigs.Find(x => x.AppKey == "literary-agent"
-            && x.IsActive && x.CreatedByAdminId == userId).FirstOrDefaultAsync(ct);
-        var sha = string.IsNullOrWhiteSpace(reference?.ImageSha256) ? null : reference.ImageSha256.Trim().ToLowerInvariant();
-        // 与页面的历史配置兼容；先确定实际参考图，再选择场景，避免 text2img / img2img 分叉。
-        if (sha == null)
+        var styleSource = explicitStyle ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.StyleId) ? "remembered" : "account-default";
+        var (style, styleError) = await ResolveStyleAsync(userId, explicitStyle ? req.Style : remembered?.StyleId, ct);
+        if (styleError != null && styleSource == "remembered")
         {
-            var legacy = await db.LiteraryAgentConfigs.Find(x => x.Id == "literary-agent").FirstOrDefaultAsync(ct);
-            sha = string.IsNullOrWhiteSpace(legacy?.ReferenceImageSha256) ? null : legacy.ReferenceImageSha256.Trim().ToLowerInvariant();
+            // 记住的那套已经被删了：不静默换，回执里写明本次改用了账号默认。
+            (style, styleError) = await ResolveStyleAsync(userId, null, ct);
+            styleSource = "account-default";
+            notes.Add("这篇文章上次用的风格已不存在，本次改用账号默认风格。");
         }
-        var effectivePrompt = sha != null && !string.IsNullOrWhiteSpace(reference?.Prompt)
-            ? $"{reference.Prompt}\n\n{prompt}" : prompt;
-        var appCallerCode = sha == null
-            ? LiteraryAgent.Illustration.Text2Img
-            : LiteraryAgent.Illustration.Img2Img;
-        var keyId = McpIdempotency.KeyIdOf(User);
-        if (keyId == "unknown")
-            return Unauthorized(ApiResponse<object>.Fail("MODEL_KEY_NOT_FOUND", "当前请求没有可识别的 MCP 客户端配置，请重新连接客户端。"));
-        var selectedModel = await modelSelection.ResolveForRunAsync(userId, keyId, appCallerCode, ct);
-        if (!selectedModel.Success || string.IsNullOrWhiteSpace(selectedModel.LogicalModelPublicId))
-            return Conflict(ApiResponse<object>.Fail(selectedModel.ErrorCode ?? "MODEL_UNAVAILABLE",
-                selectedModel.ErrorMessage ?? "当前没有可用的文学配图模型。"));
-        var run = new ImageGenRun
+
+        var watermarkSource = explicitWatermark ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.WatermarkId) ? "remembered" : "account-default";
+        var (watermark, watermarkError) = await ResolveWatermarkAsync(userId, explicitWatermark ? req.Watermark : remembered?.WatermarkId, ct);
+        if (watermarkError != null && watermarkSource == "remembered")
         {
-            Id = McpIdempotency.Fingerprint("literary-run", idem)!,
-            OwnerAdminId = userId, WorkspaceId = ws.Id,
-            AppKey = "literary-agent",
-            AppCallerCode = appCallerCode,
-            PlatformId = "logical-model",
-            ModelId = selectedModel.LogicalModelPublicId,
-            LogicalModelPublicId = selectedModel.LogicalModelPublicId,
-            ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.LogicalModel,
-            InitImageAssetSha256 = sha,
-            ArticleMarkerIndex = marker.Index, ArticleWorkflowVersion = req.WorkflowVersion,
-            Status = ImageGenRunStatus.ScopedQueued, DeploymentSlug = DeploymentScope.Current,
-            IdempotencyKey = idem, Total = 1, MaxConcurrency = 1,
-            Size = "1024x1024", ResponseFormat = "b64_json",
-            Items = new() { new() { Prompt = effectivePrompt, DisplayPrompt = prompt, Count = 1, Size = "1024x1024" } },
-            CreatedAt = DateTime.UtcNow,
+            (watermark, watermarkError) = await ResolveWatermarkAsync(userId, null, ct);
+            watermarkSource = "account-default";
+            notes.Add("这篇文章上次用的水印已不存在，本次改用账号默认水印。");
+        }
+
+        // 单张沿用原幂等键（已发出去的重试仍能命中）；批量按「请求 + 标记」派生，每个标记一个独立任务。
+        string IdemFor(int index)
+        {
+            var raw = batch ? $"{req.ClientRequestId}#m{index}" : req.ClientRequestId;
+            var fingerprint = McpIdempotency.Fingerprint("mcp-literary-image", McpIdempotency.ScopedByKey(User, raw));
+            return DeploymentScope.ScopeIdempotencyKey($"mcp:{fingerprint}");
+        }
+
+        var results = new List<object>();
+        var pending = new List<int>();
+        var newlyQueued = 0;
+        // 重放只比「这次请求本身说了什么」：账号默认、文章记住的那套都是会变的状态，
+        // 重试前它们变了（甚至被删了），同一个 clientRequestId 也必须照样回放原任务。
+        var explicitSizeValue = explicitSize ? size : null;
+        var explicitStyleValue = explicitStyle ? style : null;
+        var explicitWatermarkValue = explicitWatermark ? watermark : null;
+        foreach (var index in indexes)
+        {
+            var key = IdemFor(index);
+            var previous = await db.ImageGenRuns.Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == key).FirstOrDefaultAsync(ct);
+            if (previous == null) { pending.Add(index); continue; }
+            if (IsReplayConflict(previous, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
+                return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求（工作区、标记、风格、水印或尺寸不同），请为新的请求使用新的值。"));
+            results.Add(new { markerIndex = index, runId = previous.Id, deduplicated = true });
+        }
+
+        if (pending.Count > 0)
+        {
+            if (styleError != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
+            if (watermarkError != null) return BadRequest(ApiResponse<object>.Fail("WATERMARK_NOT_FOUND", watermarkError));
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId && x.OwnerUserId == userId
+                && x.ScenarioType == "article-illustration").FirstOrDefaultAsync(ct);
+            if (ws == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文学工作区不存在或不属于你。"));
+            if (ws.ArticleWorkflow?.Version != req.WorkflowVersion)
+                return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "正文或配图方案已变化，请重新读取工作区后再生成。"));
+            var missing = pending.Where(i => ws.ArticleWorkflow.Markers.All(m => m.Index != i)).ToList();
+            if (missing.Count > 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"配图标记 {string.Join("、", missing)} 不存在（这篇共 {ws.ArticleWorkflow.Markers.Count} 个，从 0 开始）。改稿后要重新配图，请用 map_literary_write_content 传 markedContent。"));
+            var tooLong = pending.Where(i =>
+            {
+                var m = ws.ArticleWorkflow.Markers.First(x => x.Index == i);
+                var p = LiteraryMcpWorkflow.EffectivePrompt(m);
+                return string.IsNullOrWhiteSpace(p) || p.Length > 4000;
+            }).ToList();
+            if (tooLong.Count > 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"配图标记 {string.Join("、", tooLong)} 的描述需为 1-4000 字，请先调整标记。"));
+
+            var appCallerCode = style!.Sha == null
+                ? LiteraryAgent.Illustration.Text2Img
+                : LiteraryAgent.Illustration.Img2Img;
+            var keyId = McpIdempotency.KeyIdOf(User);
+            if (keyId == "unknown")
+                return Unauthorized(ApiResponse<object>.Fail("MODEL_KEY_NOT_FOUND", "当前请求没有可识别的 MCP 客户端配置，请重新连接客户端。"));
+            var selectedModel = await modelSelection.ResolveForRunAsync(userId, keyId, appCallerCode, ct);
+            if (!selectedModel.Success || string.IsNullOrWhiteSpace(selectedModel.LogicalModelPublicId))
+                return Conflict(ApiResponse<object>.Fail(selectedModel.ErrorCode ?? "MODEL_UNAVAILABLE",
+                    selectedModel.ErrorMessage ?? "当前没有可用的文学配图模型。"));
+
+            foreach (var index in pending)
+            {
+                var marker = ws.ArticleWorkflow.Markers.First(m => m.Index == index);
+                var prompt = LiteraryMcpWorkflow.EffectivePrompt(marker);
+                var effectivePrompt = style.PromptPrefix != null ? $"{style.PromptPrefix}\n\n{prompt}" : prompt;
+                var idem = IdemFor(index);
+                var run = new ImageGenRun
+                {
+                    Id = McpIdempotency.Fingerprint("literary-run", idem)!,
+                    OwnerAdminId = userId, WorkspaceId = ws.Id,
+                    AppKey = AppKey,
+                    AppCallerCode = appCallerCode,
+                    PlatformId = "logical-model",
+                    ModelId = selectedModel.LogicalModelPublicId,
+                    LogicalModelPublicId = selectedModel.LogicalModelPublicId,
+                    ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.LogicalModel,
+                    InitImageAssetSha256 = style.Sha,
+                    WatermarkConfigId = watermark!.WatermarkId,
+                    ArticleMarkerIndex = marker.Index, ArticleWorkflowVersion = req.WorkflowVersion,
+                    Status = ImageGenRunStatus.ScopedQueued, DeploymentSlug = DeploymentScope.Current,
+                    IdempotencyKey = idem, Total = 1, MaxConcurrency = 1,
+                    Size = size!, ResponseFormat = "b64_json",
+                    Items = new() { new() { Prompt = effectivePrompt, DisplayPrompt = prompt, Count = 1, Size = size } },
+                    CreatedAt = DateTime.UtcNow,
+                };
+                // 先在同一个原子写中认领当前版本，再让 Worker 看见任务。
+                // 页面在查读后改版时必须拒绝，不能先消费生图额度再发现已无法回填。
+                if (!await ClaimWorkflowAsync(ws, run))
+                {
+                    results.Add(new { markerIndex = index, runId = (string?)null, error = "WORKSPACE_CONTENT_CHANGED" });
+                    if (!batch)
+                        return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "正文或配图方案已变化，请重新读取工作区后再生成。"));
+                    continue;
+                }
+                try { await db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None); }
+                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    var existing = await db.ImageGenRuns.Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == idem).FirstOrDefaultAsync(CancellationToken.None);
+                    if (existing == null) throw;
+                    if (IsReplayConflict(existing, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
+                        return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求，请为新的请求使用新的值。"));
+                    results.Add(new { markerIndex = index, runId = existing.Id, deduplicated = true });
+                    continue;
+                }
+                catch
+                {
+                    // 写入报错可能只是确认丢失；已有任务或并发重试成功时不能误报失败。
+                    await CompensateMissingRunAsync(run);
+                    throw;
+                }
+                results.Add(new { markerIndex = index, runId = run.Id, status = "queued" });
+                newlyQueued++;
+            }
+        }
+
+        // 至少真入队了一张，才把这次明确指定的项记到文章上（只改指定了的那几项，没指定的保持原样）。
+        if (newlyQueued > 0 && (explicitStyle || explicitWatermark || explicitSize))
+        {
+            // 只写明确指定的那几项：整份写回读到的旧快照，会把入队期间网页顶栏刚改的另一项改回去。
+            // 不动 UpdatedAt：它是正文的版本令牌，记住偏好不该让智能体手里的令牌失效。
+            await LiteraryIllustrationChoices.RememberExplicitAsync(db, workspaceId, userId,
+                explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null);
+        }
+
+        const string hint = "图在服务端生成，关掉客户端也不会断。每 5-10 秒调用一次 map_literary_get_workspace 看 illustrations[].status（done 即有 url），全部 done 后用 format=illustrated 取图文稿；也可用 map_literary_get_image_run 查单张。";
+        // source：explicit = 本次指定；remembered = 沿用这篇文章上次指定的；account-default = 账号默认
+        // 全部是重放、且当前预设已解析不出时（重试前被删了），没有可回报的「这次套了哪套」：applied 为空，原任务照旧
+        object? applied = style == null || watermark == null ? null : new
+        {
+            style = new { styleId = style.StyleId, name = style.Label, source = styleSource },
+            watermark = new { watermarkId = watermark.WatermarkId, name = watermark.Label, source = watermarkSource },
+            size, sizeSource,
+            notes,
         };
-        // 先在同一个原子写中认领当前版本，再让 Worker 看见任务。
-        // 页面在查读后改版时必须拒绝，不能先消费生图额度再发现已无法回填。
-        if (!await ClaimWorkflowAsync(ws, run))
-            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "正文或配图方案已变化，请重新读取工作区后再生成。"));
-        try { await db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None); }
-        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        // queuedImages：这次真正新入队的张数。网关按请求张数预占日额度，按它把重放与没排上的退回去
+        if (!batch)
         {
-            previous = await db.ImageGenRuns.Find(x => x.OwnerAdminId == userId && x.IdempotencyKey == idem).FirstOrDefaultAsync(CancellationToken.None);
-            if (previous == null) throw;
-            return Replay(previous, workspaceId, req);
+            var only = JsonSerializer.SerializeToElement(results[0]);
+            var runId = only.TryGetProperty("runId", out var r) ? r.GetString() : null;
+            var dedup = only.TryGetProperty("deduplicated", out var d) && d.GetBoolean();
+            return Ok(ApiResponse<object>.Ok(dedup
+                ? new { runId, deduplicated = true, queuedImages = 0, applied, hint }
+                : new { runId, status = "queued", total = 1, queuedImages = newlyQueued, applied, hint }));
         }
-        catch
-        {
-            // 写入报错可能只是确认丢失；已有任务或并发重试成功时不能误报失败。
-            await CompensateMissingRunAsync(run);
-            throw;
-        }
-        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "queued", total = 1,
-            hint = "每 5 秒调用 map_literary_get_image_run 查询；完成后用 map_literary_get_workspace 的 format=illustrated 读取图文稿。" }));
+        var allReplayed = newlyQueued == 0 && results.Count > 0 && results.All(x =>
+            JsonSerializer.SerializeToElement(x).TryGetProperty("deduplicated", out var d) && d.GetBoolean());
+        return Ok(ApiResponse<object>.Ok(allReplayed
+            ? new { workspaceId, runs = results, total = results.Count, deduplicated = true, queuedImages = 0, applied, hint }
+            : (object)new { workspaceId, runs = results, total = results.Count, queuedImages = newlyQueued, applied, hint }));
     }
+
+    /// <summary>
+    /// 同一个幂等键再来时，只有「同一件事」才回放；换了工作区 / 标记 / 版本，或这次明确指定的风格 / 水印 / 尺寸
+    /// 与原任务不同，一律冲突。没有明确指定的项不比：它取自账号默认或文章记住的那套，是会变的状态，不是请求本身。
+    /// 明确指定的项此刻解析不出（重试前被删了）时同样不比，原任务就是那次请求的结果。
+    /// </summary>
+    private static bool IsReplayConflict(ImageGenRun previous, string workspaceId, int markerIndex, int version,
+        string? explicitSize, StyleChoice? explicitStyle, WatermarkChoice? explicitWatermark)
+        => previous.WorkspaceId != workspaceId || previous.ArticleMarkerIndex != markerIndex
+           || previous.ArticleWorkflowVersion != version
+           || (explicitSize != null && previous.Size != null && previous.Size != explicitSize)
+           || (explicitWatermark != null && previous.WatermarkConfigId != null && previous.WatermarkConfigId != explicitWatermark.WatermarkId)
+           || (explicitStyle != null && !string.Equals(previous.InitImageAssetSha256, explicitStyle.Sha, StringComparison.Ordinal));
 
     internal async Task<bool> ClaimWorkflowAsync(ImageMasterWorkspace ws, ImageGenRun run)
     {
@@ -162,12 +363,6 @@ public class LiteraryImageOpenApiController(
                 }),
             } }, CancellationToken.None);
     }
-
-    private IActionResult Replay(ImageGenRun previous, string workspaceId, GenerateRequest req)
-        => previous.WorkspaceId != workspaceId || previous.ArticleMarkerIndex != req.MarkerIndex
-            || previous.ArticleWorkflowVersion != req.WorkflowVersion
-            ? Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求，请为新的请求使用新的值。"))
-            : Ok(ApiResponse<object>.Ok(new { runId = previous.Id, deduplicated = true }));
 
     [HttpGet("image-runs/{runId}")]
     public async Task<IActionResult> GetRun(string runId, CancellationToken ct)

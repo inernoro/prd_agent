@@ -265,16 +265,20 @@ public class SubmissionsController : ControllerBase
         var dynamicCovers = new Dictionary<string, (string url, int w, int h)>();
         if (literaryWorkspaceIds.Count > 0)
         {
-            // 每个 workspace 取最新一张图片作为封面
+            // 每个 workspace 取「正文现在挂着的第一张」作为封面，与文章列表同一个判据：
+            // 换下的旧图会保留、旧图也能被放回，取最新一张会把刚被换下的图摆在作品广场上
             var coverAssets = await _db.ImageAssets
                 .Find(x => literaryWorkspaceIds.Contains(x.WorkspaceId!))
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync();
-            foreach (var wsId in literaryWorkspaceIds)
+            var coverWorkspaces = await _db.ImageMasterWorkspaces
+                .Find(x => literaryWorkspaceIds.Contains(x.Id))
+                .ToListAsync();
+            foreach (var cws in coverWorkspaces)
             {
-                var latest = coverAssets.FirstOrDefault(a => a.WorkspaceId == wsId);
-                if (latest != null && !string.IsNullOrWhiteSpace(latest.Url))
-                    dynamicCovers[wsId] = (latest.Url, latest.Width, latest.Height);
+                var cover = PrdAgent.Api.Services.LiteraryIllustrationHistory.CoverOf(cws, coverAssets.Where(a => a.WorkspaceId == cws.Id).ToList());
+                if (cover != null && !string.IsNullOrWhiteSpace(cover.Url))
+                    dynamicCovers[cws.Id] = (cover.Url, cover.Width, cover.Height);
             }
         }
 
@@ -283,7 +287,7 @@ public class SubmissionsController : ControllerBase
             var coverUrl = x.CoverUrl;
             var coverWidth = x.CoverWidth;
             var coverHeight = x.CoverHeight;
-            // 文学创作：优先使用 workspace 最新资产作为封面
+            // 文学创作：优先使用 workspace 当前挂着的第一张作为封面（没有就用投稿时记下的封面）
             if (x.ContentType == "literary" && x.WorkspaceId != null && dynamicCovers.TryGetValue(x.WorkspaceId, out var dc))
             {
                 coverUrl = dc.url;
@@ -628,42 +632,38 @@ public class SubmissionsController : ControllerBase
                 articleContent = workspace.ArticleContent;
             }
 
-            // 文学创作 = Space 整体投递，每个插入位取最新一张图
+            // 文学创作 = Space 整体投递，每个插入位取「当前挂着的那张」。
+            // 改稿 / 重新规划后旧版配图会保留在工作区（历史配图），按 index 取最新会让旧版图顶掉当前图。
             var allAssets = await _db.ImageAssets
                 .Find(x => x.WorkspaceId == submission.WorkspaceId)
                 .SortByDescending(x => x.CreatedAt)
                 .ToListAsync();
 
-            // 有 index 的按 index 分组取最新（同一位置重新生成时去重）
-            var withIndex = allAssets.Where(a => a.ArticleInsertionIndex.HasValue).ToList();
-            var deduped = withIndex.Count > 0
-                ? withIndex
-                    .GroupBy(a => a.ArticleInsertionIndex!.Value)
-                    .Select(g => g.First())
-                    .ToList()
-                : new List<ImageAsset>();
+            var current = workspace != null
+                ? PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(workspace, allAssets)
+                : new Dictionary<int, ImageAsset>();
+            // 位置取「现在挂在哪」（字典的 key），不取图生成时的位置：放回到别的标记上的图，
+            // 按生成位置排会重号、漏号，作品详情里配图顺序就乱了。
+            var mounted = current.OrderBy(kv => kv.Key)
+                .Select(kv => (asset: kv.Value, index: (int?)kv.Key)).ToList();
 
             // 无 index 的图（历史数据/部署过渡期）也保留，不遗漏
-            var dedupedIds = deduped.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
+            var mountedIds = mounted.Select(m => m.asset.Id).ToHashSet(StringComparer.Ordinal);
             var withoutIndex = allAssets
-                .Where(a => !a.ArticleInsertionIndex.HasValue && !dedupedIds.Contains(a.Id))
-                .ToList();
+                .Where(a => !a.ArticleInsertionIndex.HasValue && !mountedIds.Contains(a.Id))
+                .OrderBy(a => a.CreatedAt)
+                .Select(a => (asset: a, index: (int?)null));
 
-            var assets = deduped.Concat(withoutIndex)
-                .OrderBy(a => a.ArticleInsertionIndex ?? int.MaxValue)
-                .ThenBy(a => a.CreatedAt)
-                .ToList();
-
-            relatedAssets = assets.Select(a => (object)new
+            relatedAssets = mounted.Concat(withoutIndex).Select(m => (object)new
             {
-                a.Id,
-                a.Url,
-                a.Width,
-                a.Height,
-                a.Prompt,
-                a.OriginalMarkerText,
-                a.ArticleInsertionIndex,
-                a.CreatedAt,
+                m.asset.Id,
+                m.asset.Url,
+                m.asset.Width,
+                m.asset.Height,
+                m.asset.Prompt,
+                m.asset.OriginalMarkerText,
+                ArticleInsertionIndex = m.index,
+                m.asset.CreatedAt,
             }).ToList();
         }
 
@@ -1412,12 +1412,16 @@ public class SubmissionsController : ControllerBase
             var coverWidth = 0;
             var coverHeight = 0;
 
-            // 尝试获取 workspace 的配图
-            var firstAsset = await _db.ImageAssets
+            // 尝试获取 workspace 的配图：优先当前挂在正文上的第一张，历史版本的图不当封面
+            var wsAssets = await _db.ImageAssets
                 .Find(x => x.WorkspaceId == ws.Id)
                 .SortBy(x => x.ArticleInsertionIndex)
                 .ThenBy(x => x.CreatedAt)
-                .FirstOrDefaultAsync();
+                .ToListAsync();
+            var currentAssets = PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(ws, wsAssets);
+            var firstAsset = currentAssets.Count > 0
+                ? currentAssets.OrderBy(kv => kv.Key).First().Value
+                : wsAssets.FirstOrDefault(a => !a.ArticleInsertionIndex.HasValue) ?? wsAssets.FirstOrDefault();
             if (firstAsset != null)
             {
                 coverUrl = firstAsset.Url;

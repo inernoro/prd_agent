@@ -726,7 +726,8 @@ public class ImageGenRunWorker : BackgroundService
                             ModelResolutionType: run.ModelResolutionType,
                             ModelGroupId: run.ModelGroupId,
                             ModelGroupName: run.ModelGroupName,
-                            LogicalModelPublicId: run.LogicalModelPublicId));
+                            LogicalModelPublicId: run.LogicalModelPublicId,
+                            WatermarkConfigId: run.WatermarkConfigId));
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appCallerCode={AppCallerCode}", appCallerCode);
 
@@ -1522,6 +1523,8 @@ public class ImageGenRunWorker : BackgroundService
             ct);
     }
 
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private async Task<ImageAsset> PersistImageAssetRecordAsync(
         ImageGenRun run,
         string prompt,
@@ -1557,8 +1560,14 @@ public class ImageGenRunWorker : BackgroundService
             OriginalSha256 = assetSha256,
             ArticleInsertionIndex = run.ArticleMarkerIndex,
             ArticleWorkflowVersion = run.ArticleWorkflowVersion,
+            // 文章配图记下这一节自己的画面描述：Prompt 里拼着风格提示词，拿它当说明文字，
+            // 历史配图里每张卡片开头都是同一句「整体采用粉色系配色……」，认不出是哪一节的图。
+            OriginalMarkerText = run.ArticleMarkerIndex.HasValue && run.Items is { Count: 1 }
+                ? NullIfBlank(run.Items[0].DisplayPrompt ?? run.Items[0].Prompt)
+                : null,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
+        asset.OriginalMarkerText = PrdAgent.Core.Services.LiteraryMcpWorkflow.ClampOriginalMarkerText(asset.OriginalMarkerText);
 
         var sizeForMeta = string.IsNullOrWhiteSpace(effectiveSize) ? requestedSize : effectiveSize!;
         if (TryParseWxH(sizeForMeta, out var w, out var h))
