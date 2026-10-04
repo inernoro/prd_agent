@@ -14,6 +14,21 @@ export function isScopedHuman(req: unknown): boolean {
   return isAuthenticatedHuman(req) && !isHumanSystemOwner(req);
 }
 
+const pendingGrantUpdates = new WeakMap<StateService, Set<string>>();
+
+export function isHumanProjectGrantUpdatePending(state: StateService, principalId: string): boolean {
+  return pendingGrantUpdates.get(state)?.has(principalId) === true;
+}
+
+/** A grant replacement is not usable until its persistence outcome is known. */
+export function beginHumanProjectGrantUpdate(state: StateService, principalId: string): (() => void) | undefined {
+  let pending = pendingGrantUpdates.get(state);
+  if (!pending) { pending = new Set(); pendingGrantUpdates.set(state, pending); }
+  if (pending.has(principalId)) return undefined;
+  pending.add(principalId);
+  return () => { pending.delete(principalId); };
+}
+
 /** Complete log/diagnostic payloads reuse the established secret masker. */
 export function logPayloadForHumanView<T>(req: unknown, payload: T): T {
   if (!isScopedHuman(req)) return payload;
@@ -43,6 +58,7 @@ export function canHumanAccessProject(req: unknown, state: StateService, project
   const user = (req as { cdsUser?: { id: string; status?: string } }).cdsUser;
   if (!user || user.status === 'disabled') return false;
   const principalId = humanPrincipalId(user.id);
+  if (isHumanProjectGrantUpdatePending(state, principalId)) return false;
   if (state.getPrincipal(principalId)?.status === 'disabled') return false;
   const project = state.getProject(projectId);
   if (!supportsHumanProjectGrant(project)) return false;

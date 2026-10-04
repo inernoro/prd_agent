@@ -273,6 +273,9 @@ describe('human project grants through the production server', () => {
       events: [{ step: 'build', status: 'error', log: 'API_TOKEN=fake-operation-secret',
         detail: { env: { API_TOKEN: 'fake-structured-log-secret' }, command: 'redis-server --requirepass fake-log-command-secret' },
         timestamp: new Date().toISOString() }] });
+    state.appendActivityLog('project-a', { type: 'resource-data-query', branchId: branch.id,
+      branchName: branch.branch, actor: 'owner', resourceId: 'app:profile-project-a', resourceName: 'App',
+      result: 'success', note: 'API_TOKEN=fake-activity-secret' });
     await grant(['project-a']);
     for (const [url, secret] of [
       ['/api/branches/branch-project-a/failure-diagnosis', 'fake-diagnostic-secret'],
@@ -280,6 +283,8 @@ describe('human project grants through the production server', () => {
       ['/api/branches/branch-project-a', 'fake-service-log-secret'],
       ['/api/branches', 'fake-service-log-secret'],
       ['/api/branches/branch-project-a/resources', 'fake-service-log-secret'],
+      ['/api/branches/branch-project-a/activity-logs', 'fake-activity-secret'],
+      ['/api/branches/branch-project-a/resources/app%3Aprofile-project-a/audit', 'fake-activity-secret'],
     ]) {
       expect(JSON.stringify((await call('GET', url)).body), url).toContain(secret);
       const view = await call('GET', url, member);
@@ -366,6 +371,60 @@ describe('human project grants through the production server', () => {
     const actions = await store.listActivity({ limit: 50 });
     expect(actions.filter(a => a.targetId === memberId).map(a => a.action)).toEqual(expect.arrayContaining(['grant-project', 'revoke-project']));
     expect(state.getProjectGrants().find(g => g.principalId === humanPrincipalId(memberId))?.revokedBy).toBe('owner');
+  });
+
+  it('restores failed additions, revocations and new principals before later snapshots can persist them', async () => {
+    const principalId = humanPrincipalId(memberId);
+    const actionsBefore = await store.listActivity({ limit: 100 });
+    const flush = vi.spyOn(state, 'flush').mockRejectedValueOnce(new Error('fake grant persistence failure'));
+    expect((await grant(['project-a'])).status).toBe(500);
+    expect(state.getPrincipal(principalId)).toBeUndefined();
+    expect(state.getProjectGrants().filter(g => g.principalId === principalId)).toEqual([]);
+    expect((await call('GET', '/api/projects', member)).body.projects).toEqual([]);
+    expect((await store.listActivity({ limit: 100 })).length).toBe(actionsBefore.length);
+    await state.flush();
+    fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'failed-addition-restored.json'));
+    const reload = new StateService(path.join(dir, 'failed-addition-restored.json'));
+    reload.load();
+    expect(reload.getProjectGrants().filter(g => g.principalId === principalId)).toEqual([]);
+    expect((await grant(['project-a'])).status).toBe(200);
+    const before = JSON.stringify(state.getProjectGrants().filter(g => g.principalId === principalId));
+    flush.mockRejectedValueOnce(new Error('fake revocation persistence failure'));
+    expect((await grant([])).status).toBe(500);
+    expect(JSON.stringify(state.getProjectGrants().filter(g => g.principalId === principalId))).toBe(before);
+    expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+    expect((await store.listActivity({ limit: 100 })).filter(a => a.action === 'revoke-project')).toEqual([]);
+    await state.flush();
+    fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'failed-revocation-restored.json'));
+    const restored = new StateService(path.join(dir, 'failed-revocation-restored.json'));
+    restored.load();
+    expect(JSON.stringify(restored.getProjectGrants().filter(g => g.principalId === principalId))).toBe(before);
+    flush.mockRejectedValueOnce(new Error('fake sustained failure')).mockRejectedValueOnce(new Error('fake compensation failure'));
+    const uncertain = await grant(['project-b']);
+    expect(uncertain.status).toBe(500);
+    expect(uncertain.body.error).toContain('持久化状态无法确认');
+    expect(JSON.stringify(state.getProjectGrants().filter(g => g.principalId === principalId))).toBe(before);
+  });
+
+  it('blocks pending grants and conflicting replacements while failure compensation preserves independent writes', async () => {
+    let rejectFlush!: (error: Error) => void;
+    let started!: () => void;
+    const pending = new Promise<void>((_, reject) => { rejectFlush = reject; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    vi.spyOn(state, 'flush').mockImplementationOnce(() => { started(); return pending; });
+    const saving = grant(['project-a']);
+    await entered;
+    expect((await call('GET', '/api/branches/branch-project-a', member)).status).toBe(409);
+    expect((await call('GET', `/api/auth/users/${memberId}/projects`)).status).toBe(409);
+    expect((await grant(['project-b'])).status).toBe(409);
+    // Independent identity operations must not be overwritten by rollback.
+    state.addProjectGrant({ id: 'independent', principalId: humanPrincipalId(memberId), projectId: 'project-b',
+      origin: 'approved', grantedAt: new Date().toISOString(), grantedBy: 'other-owner' });
+    rejectFlush(new Error('fake pending persistence failure'));
+    expect((await saving).status).toBe(500);
+    expect(state.getProjectGrants().filter(g => g.principalId === humanPrincipalId(memberId)).map(g => g.id)).toEqual(['independent']);
+    expect(state.getPrincipal(humanPrincipalId(memberId))).toBeDefined();
+    expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-b']);
   });
 
   it('rejects member self-grants and preserves owner/disabled-user invariants', async () => {

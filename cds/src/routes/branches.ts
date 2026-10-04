@@ -9357,7 +9357,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const logs = stateService.getActivityLogs(projectId)
       .filter((entry) => entry.branchId === branch.id && entry.resourceId === resourceId)
       .slice(0, limit);
-    res.json({ branchId: branch.id, resourceId, logs, total: logs.length });
+    res.json(logPayloadForHumanView(req, { branchId: branch.id, resourceId, logs, total: logs.length }));
   });
 
   router.get('/branches/:id/resources/:resourceId/permissions', async (req, res) => {
@@ -15589,7 +15589,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const logs = matched.slice(0, limit);
     // total 必须是过滤后、截断前的命中总数，否则消费方无法判断"还有没有更多"
     // （截断后 total===logs.length 永远 ≤ limit，分页/加载更多失效）。Cursor Bugbot。
-    res.json({ branchId: id, logs, total: matched.length });
+    res.json(logPayloadForHumanView(req, { branchId: id, logs, total: matched.length }));
   });
 
   // ── Set default branch ──

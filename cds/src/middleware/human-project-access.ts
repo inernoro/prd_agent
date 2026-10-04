@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { StateService } from '../services/state.js';
-import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
+import { canHumanAccessProject, isScopedHuman, humanPrincipalId, isHumanProjectGrantUpdatePending } from '../services/human-project-access.js';
 
 /** Members enter only project-scoped product routes. Unknown/system routes fail closed. */
 export function createHumanProjectAccessMiddleware(state: StateService) {
@@ -17,6 +17,10 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
     if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity'].includes(path))
       || (method === 'POST' && ['/api/auth/logout', '/api/logout', '/api/auth/change-password', '/api/auth/sso/logout'].includes(path))) {
       next(); return;
+    }
+    const user = (req as Request & { cdsUser?: { id: string } }).cdsUser;
+    if (user && isHumanProjectGrantUpdatePending(state, humanPrincipalId(user.id))) {
+      res.status(409).json({ error: '项目授权正在保存，请稍后刷新再试。' }); return;
     }
     // Preserve case of identifiers and decode exactly once, as Express does.
     let segments: string[];
