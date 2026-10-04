@@ -134,10 +134,14 @@ async function auditInteractiveReports() {
         // 活动 frame 重新解析链接与目标，避免继续操作已经失效的旧 locator。
         let activeFrame = null;
         let activeLink = null;
+        let liveLinkFound = false;
         for (const candidate of page.frames()) {
           try {
             const candidateLink = candidate.locator(`a[href=${JSON.stringify(href)}]`).first();
-            if (await candidateLink.count() === 1 && await candidateLink.isVisible()) {
+            if (await candidateLink.count() === 1) {
+              liveLinkFound = true;
+            }
+            if (liveLinkFound && await candidateLink.isVisible()) {
               activeFrame = candidate;
               activeLink = candidateLink;
               break;
@@ -147,6 +151,10 @@ async function auditInteractiveReports() {
           }
         }
         if (!activeFrame || !activeLink) {
+          // 折叠目录中的链接会参与目标唯一性与断链静态审计，但用户当前看不见，
+          // 不属于“当前视口可见链接真实点击”的交互集合。只有链接从活动文档
+          // 完全消失才是 iframe 重建或正文丢失，需要判失败。
+          if (liveLinkFound) continue;
           clickErrors.push(`${linkSnapshot.text || href}: 链接在点击前已不可见`);
           continue;
         }
