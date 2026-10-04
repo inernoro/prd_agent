@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.16.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.8"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -9230,6 +9230,22 @@ def cmd_monitor_notifications(args: argparse.Namespace) -> None:
     ok(_call("GET", f"/api/cds-system/alarm-deliveries?hours={args.hours}"))
 
 
+def cmd_monitor_incident_page(args: argparse.Namespace) -> None:
+    config = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    channel_id = config["channelId"]
+    url = urllib.parse.urlsplit(config["incidentPageUrl"])
+    if url.scheme != "https" or not url.netloc or url.username or url.password:
+        raise ValueError("故障入口必须为不含登录凭据的 HTTPS 地址")
+    channels = _call("GET", "/api/cds-system/alarm-channels")["channels"]
+    channel = next((c for c in channels if c["id"] == channel_id), None)
+    if channel is None:
+        raise ValueError("通知通道不存在")
+    channel["incidentPageUrl"] = config["incidentPageUrl"]
+    # 读视图不含密钥；服务端更新保留原值，不迁移接收者或扩大事件订阅。
+    _call("PUT", "/api/cds-system/alarm-channels/" + urllib.parse.quote(channel_id, safe=""), body=channel)
+    ok({"updated": True}, note="故障入口已更新，接收者与订阅保持原配置")
+
+
 def cmd_monitor_observations(args: argparse.Namespace) -> None:
     data = _call("GET", f"/api/uptime/monitors/{urllib.parse.quote(args.id)}/observations")
     ok(data)
@@ -9494,6 +9510,9 @@ def _build_parser() -> argparse.ArgumentParser:
     moni = mon.add_parser("identity", help="查看通知身份；--file 从私有 JSON 文件更新（管理员）")
     moni.add_argument("--file", help="实例身份配置文件，真实配置不得提交 Git")
     moni.set_defaults(func=cmd_monitor_identity)
+    monp = mon.add_parser("incident-page", help="从私有文件更新现有通道的独立故障入口（管理员）")
+    monp.add_argument("--file", required=True, help="含 channelId 与 incidentPageUrl 的私有 JSON，不得提交 Git")
+    monp.set_defaults(func=cmd_monitor_incident_page)
     mono = mon.add_parser("observations", help="看一条功能监控的历史观测证据（判据逐条、产物地址）")
     mono.add_argument("id")
     mono.set_defaults(func=cmd_monitor_observations)
