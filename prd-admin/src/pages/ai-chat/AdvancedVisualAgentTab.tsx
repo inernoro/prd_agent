@@ -4967,9 +4967,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 手机端那条上一轮已经改成失败即停，桌面端这条是它的兄弟，当时没一起改——
       // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现过好几次。
       //
-      // 判据用「有没有参考图掉光了」而不是「是不是从首页交接过来的」：
+      // 判据用「参考图是否完整」而不是「是不是从首页交接过来的」：
       // 后者要知道来路，前者直接说的就是要防的那件事，编辑器内选图重绘同样成立。
-      if (unifiedImageRefs.length > 0 && imageRefsForBackend.length === 0) {
+      if (unifiedImageRefs.length !== imageRefsForBackend.length) {
         const msg = '参考图没能带上来，这次没有生成';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
         pushMsg('Assistant', `${msg}。提示词留着了，重试一次；或者去掉参考图，改成纯文字生成——那是另一件事，得你自己定。`);
@@ -4993,6 +4993,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           responseFormat: 'url',
           // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
+          expectedImageRefCount: unifiedImageRefs.length,
           userMessageContent: userMsgForBackend,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
@@ -5329,6 +5330,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 label: '原图',
               },
             ],
+            expectedImageRefCount: 1,
             maskBase64: maskBase64 || undefined,
             userMessageContent: qaMsgForBackend,
           },
@@ -5831,14 +5833,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const foundItems = shas
       .map((sha) => canvasSnapshot.find((c) => c.sha256 === sha || c.originalSha256 === sha))
       .filter((c): c is NonNullable<typeof c> => !!c && !!c.src);
-    if (foundItems.length > 0) {
+    if (foundItems.length === shas.length) {
       const chipRefs = foundItems.map((c, idx) => ({
         refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
         canvasKey: c.key,
       }));
       void sendText(prompt, { chipRefs });
     } else {
-      void sendText(prompt);
+      toast.error('参考图已失效，这次没有生成', '请重新选择原参考图后再试。');
     }
   };
 
@@ -10548,6 +10550,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     label: '手绘草图',
                   },
                 ],
+                expectedImageRefCount: 1,
                 userMessageContent: sketchMsgForBackend,
               },
               idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,

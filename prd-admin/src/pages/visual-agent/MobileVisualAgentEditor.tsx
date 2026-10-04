@@ -71,6 +71,7 @@ type GenCard = {
   assetId?: string;
   errorMessage?: string;
   refUrl?: string;
+  ref?: RefImage;
   startedAt: number;
   size: string;
 };
@@ -296,7 +297,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
 
       setCards((prev) => [
         ...prev,
-        { key, prompt, status: 'running', refUrl: ref?.url, startedAt: Date.now(), size: genSize },
+        { key, prompt, status: 'running', refUrl: ref?.url, ref: ref ?? undefined, startedAt: Date.now(), size: genSize },
       ]);
       setInput('');
       setRefImage(null);
@@ -415,6 +416,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
             imageRefs: ref
               ? [{ refId: 1, assetSha256: ref.sha256, url: ref.url, label: '第1张图' }]
               : undefined,
+            expectedImageRefCount: ref ? 1 : 0,
             userMessageContent: `${imageToken}(@size:${genSize}) ${prompt}`,
           },
           idempotencyKey: `imRun_${workspaceId}_${key}`,
@@ -763,7 +765,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                 <div className="text-[12px] leading-snug" style={{ color: 'rgba(255,255,255,0.6)' }}>{c.prompt}</div>
                 <div className="text-[13px]" style={{ color: 'var(--accent-fg-danger)' }}>{c.errorMessage || '生成失败'}</div>
                 <div>
-                  <button type="button" className={actionBtnCls} style={actionBtnStyle} onClick={() => void handleGenerate(c.prompt)}>
+                  <button type="button" className={actionBtnCls} style={actionBtnStyle} onClick={() => void handleGenerate(c.prompt, { ref: c.ref ?? null, sizeOverride: c.size })}>
                     <RefreshCw size={13} /> 重试
                   </button>
                 </div>

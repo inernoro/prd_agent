@@ -4380,6 +4380,13 @@ public class GatewayDataDomainGuardTests
     {
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
 
+        Assert.Contains("ImageReferenceContract.Validate", worker);
+        Assert.Contains("run.ExpectedImageRefCount", worker);
+        Assert.Contains("IMAGE_REF_INCOMPLETE", ReadRepoFile("prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs"));
+        Assert.True(
+            worker.IndexOf("ImageReferenceContract.Validate", StringComparison.Ordinal)
+            < worker.IndexOf("ResolveModelGroupAsync", StringComparison.Ordinal),
+            "参考图完整性必须在模型解析和上游调用前校验");
         Assert.Contains("expectedReferenceCount", worker);
         Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
         Assert.Contains("其他输入已保留", worker);
