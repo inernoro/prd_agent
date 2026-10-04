@@ -278,10 +278,13 @@ describe('Server route ordering (regression)', () => {
     logs: HttpLogRecord[],
     active: ActiveHttpRequestRecord[] = [],
     onFindActiveFilter?: (filter: HttpActiveRequestFilter) => void,
+    setupState?: (stateService: StateService) => void,
+    authStore?: MemoryAuthStore,
   ): express.Express {
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
     stateService.load();
+    setupState?.(stateService);
     const httpLogStore: HttpLogSink = {
       record() {},
       async findRecent(filter = {}) {
@@ -330,6 +333,7 @@ describe('Server route ordering (regression)', () => {
       shell: new MockShellExecutor(),
       config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
       httpLogStore,
+      authStore,
     });
   }
 
@@ -404,6 +408,76 @@ describe('Server route ordering (regression)', () => {
     expect(body.ok).toBe(true);
     expect(body.total).toBe(1);
     expect(body.events[0].requestId).toBe('req-alias');
+  });
+
+  it('preserves JSON bodies for routes that own their body parser when HTTP logging is enabled', async () => {
+    const previousMode = process.env.CDS_AUTH_MODE;
+    const previousClientId = process.env.CDS_GITHUB_CLIENT_ID;
+    const previousClientSecret = process.env.CDS_GITHUB_CLIENT_SECRET;
+    const projectKey = 'cdsp_stable-smoke_report-parser-regression';
+    class DelayedMissingSessionStore extends MemoryAuthStore {
+      override async findSessionByToken(): Promise<null> {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return null;
+      }
+    }
+
+    try {
+      process.env.CDS_AUTH_MODE = 'github';
+      process.env.CDS_GITHUB_CLIENT_ID = 'test-client';
+      process.env.CDS_GITHUB_CLIENT_SECRET = 'test-secret';
+      const app = buildRealServerWithHttpLogs(
+        [],
+        [],
+        undefined,
+        (stateService) => {
+          stateService.addProject({
+            id: 'stable-smoke-project',
+            slug: 'stable-smoke-project',
+            name: 'Stable Smoke Project',
+            kind: 'git',
+            dockerNetwork: 'cds-proj-stable-smoke',
+            legacyFlag: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+          stateService.addAgentKey('stable-smoke-project', {
+            id: 'report01',
+            label: 'report parser regression',
+            hash: crypto.createHash('sha256').update(projectKey).digest('hex'),
+            scope: 'rw',
+            createdAt: new Date().toISOString(),
+          });
+        },
+        new DelayedMissingSessionStore(),
+      );
+      server = await startServer(app);
+
+      const res = await requestJson(server, 'POST', '/api/reports', {
+        title: 'stable smoke report parser regression',
+        format: 'md',
+        content: '# Stable smoke\n\nThe report body must reach the route parser.',
+      }, {
+        Cookie: 'cds_gh_session=expired-session',
+        'X-AI-Access-Key': projectKey,
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.contentType).toContain('application/json');
+      const body = JSON.parse(res.body);
+      expect(body.report).toMatchObject({
+        title: 'stable smoke report parser regression',
+        format: 'md',
+        projectId: 'stable-smoke-project',
+      });
+    } finally {
+      if (previousMode === undefined) delete process.env.CDS_AUTH_MODE;
+      else process.env.CDS_AUTH_MODE = previousMode;
+      if (previousClientId === undefined) delete process.env.CDS_GITHUB_CLIENT_ID;
+      else process.env.CDS_GITHUB_CLIENT_ID = previousClientId;
+      if (previousClientSecret === undefined) delete process.env.CDS_GITHUB_CLIENT_SECRET;
+      else process.env.CDS_GITHUB_CLIENT_SECRET = previousClientSecret;
+    }
   });
 
   it('real createServer exposes public auth capability before basic auth gate', async () => {

@@ -1865,9 +1865,13 @@ export function createServer(deps: ServerDeps): express.Express {
       (req as { rawBody?: Buffer }).rawBody = buf;
     },
   });
+  const routeOwnsRequestBody = (req: express.Request): boolean =>
+    req.path === '/api/reports'
+    || req.path.startsWith('/api/reports/')
+    || req.path === '/api/bug-reports'
+    || req.path.startsWith('/api/bug-reports/');
   app.use((req, res, next) => {
-    if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
-    if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
+    if (routeOwnsRequestBody(req)) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -2171,7 +2175,13 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer.unref?.();
     };
     const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
-    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    // These routes intentionally parse larger or binary bodies inside their
+    // own router. Starting the stream here lets it drain while an async auth
+    // gate is still running, so the route parser later sees an unreadable
+    // stream. Their parsed req.body is captured on response finish instead.
+    if (!routeOwnsRequestBody(req)) {
+      req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    }
     const responseCapture = createBodyCapture();
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
