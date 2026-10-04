@@ -464,6 +464,11 @@ public class LiteraryOpenApiController : ControllerBase
 
         // 一律回读：正文没变时这次写入照样换了 UpdatedAt，拿进函数时那份 ws 回令牌，调用方下一次带令牌写就会被误判冲突。
         var written = await _db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(CancellationToken.None);
+        // 「还要生图的」按写入后真正挂着的图算，不按「这次沿用了几张」反推：原样写回同一份纯正文时方案没动、
+        // 图都还挂着，沿用列表却是空的，反推会把每个标记都报成要重画，照做就白白重生成一整篇、耗掉额度。
+        // 正在生成中的标记也不报，它的图马上会回来。
+        var mounted = written == null ? new Dictionary<int, ImageAsset>()
+            : LiteraryMcpWorkflow.SelectCurrent(written, await LiteraryIllustrationHistory.LoadAssetsAsync(_db, ws.Id, CancellationToken.None));
         return Ok(ApiResponse<object>.Ok(new
         {
             workspaceId = ws.Id,
@@ -473,9 +478,10 @@ public class LiteraryOpenApiController : ControllerBase
             workflowVersion = written?.ArticleWorkflow?.Version ?? 0,
             illustrations = written?.ArticleWorkflow?.Markers.Select(m => new { index = m.Index, prompt = LiteraryMcpWorkflow.EffectivePrompt(m), status = m.Status, url = m.Url })
                 ?? Enumerable.Empty<object>(),
-            // 描述没变、沿用原图的标记；其余（needsGeneration）才需要调用生图
+            // 描述没变、沿用原图的标记；needsGeneration 是写入后仍没挂图、也不在生成中的标记，只有它们需要调用生图
             reusedImages = carriedOver,
-            needsGeneration = written?.ArticleWorkflow?.Markers.Where(m => !carriedOver.Contains(m.Index)).Select(m => m.Index)
+            needsGeneration = written?.ArticleWorkflow?.Markers
+                .Where(m => !mounted.ContainsKey(m.Index) && m.Status != "running").Select(m => m.Index)
                 ?? Enumerable.Empty<int>(),
             updatedAt = written == null ? null : McpRevision.Token(written.UpdatedAt),
         }));

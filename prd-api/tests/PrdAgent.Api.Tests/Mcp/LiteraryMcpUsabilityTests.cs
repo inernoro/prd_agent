@@ -626,6 +626,12 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal(new[] { 0, 1 }, kept.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
             Assert.Equal("窗边打盹的橘猫", kept.GetProperty("illustrations").EnumerateArray().ElementAt(1).GetProperty("prompt").GetString());
 
+            // 原样写回同一份纯正文：方案没动、两张图都还挂着，回执不能把每个标记都报成要重画（照做就白白重生成一整篇）
+            var plain = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleContent!;
+            var noop = Data(await drafts.WriteContent(id, new() { Content = plain }, CancellationToken.None));
+            Assert.Empty(noop.GetProperty("needsGeneration").EnumerateArray());
+            Assert.Equal(kept.GetProperty("workflowVersion").GetInt32(), noop.GetProperty("workflowVersion").GetInt32());
+
             // 拿过期的原始描述写回：按新描述画的那张不许接回去，老实标成要重画
             var stale = await Seed("ep-2");
             var rewritten = Data(await drafts.WriteContent(stale, new()
