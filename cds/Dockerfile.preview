@@ -15,6 +15,7 @@ RUN chown node:node /app /app/cds
 COPY --from=dependencies --chown=node:node /app/cds/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node dist ./dist
+COPY --chown=node:node src/services/preview-demo-snapshot.json ./src/services/preview-demo-snapshot.json
 COPY --chown=node:node web/dist ./web/dist
 COPY --chown=node:node cds-prebuilt-manifest.json ./web/dist/preview-build.json
 ENV NODE_ENV=production CDS_PREVIEW_INSTANCE=1 CDS_STORAGE_MODE=json CDS_PORT=9900

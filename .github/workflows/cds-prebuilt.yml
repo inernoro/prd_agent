@@ -128,10 +128,21 @@ jobs:
           port="$(docker port "$container" 9900/tcp | awk -F: '{print $NF}')"
           ready=0
           for attempt in $(seq 1 60); do
-            if curl -fsS "http://127.0.0.1:${port}/api/instance-mode" >/dev/null; then ready=1; break; fi
+            if curl -fsS "http://127.0.0.1:${port}/api/instance-mode" >/dev/null 2>&1; then ready=1; break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' "$container")" != true ]; then break; fi
             sleep 1
           done
-          if [ "$ready" != 1 ]; then echo '独立预览运行镜像未能启动'; exit 1; fi
+          if [ "$ready" != 1 ]; then
+            echo '独立预览运行镜像未能启动'
+            docker logs --tail 80 "$container" 2>&1 | node -e '
+              let log=""; process.stdin.on("data", chunk => log += chunk);
+              process.stdin.on("end", () => {
+                const password=process.env.CDS_PREVIEW_PASSWORD;
+                if (password) log=log.split(password).join("[已脱敏]");
+                process.stdout.write(log.slice(-8192));
+              });'
+            exit 1
+          fi
           node cds/scripts/verify-preview-runtime.mjs "http://127.0.0.1:${port}" "$EXPECTED_SHA"
 
       - name: Publish verified CDS isolated preview runtime

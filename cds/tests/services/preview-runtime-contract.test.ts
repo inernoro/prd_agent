@@ -106,6 +106,7 @@ describe('REG-cds-self-runnable-prebuilt-001', () => {
     const dockerfile = fs.readFileSync(path.join(cdsRoot, 'Dockerfile.preview'), 'utf8');
     expect(dockerfile).toContain('USER node');
     expect(dockerfile).toContain('CMD ["node", "dist/index.js"]');
+    expect(dockerfile).toContain('COPY --chown=node:node src/services/preview-demo-snapshot.json ./src/services/preview-demo-snapshot.json');
     expect(dockerfile).not.toMatch(/docker\.sock|COPY\s+\.\s/);
   });
 });
