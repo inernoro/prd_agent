@@ -10,13 +10,15 @@ import {
   type LiteraryIllustrationHistory,
   type LiteraryIllustrationHistoryItem,
 } from '@/services/real/literaryAgentConfig';
+import { planRestore } from './illustrationRestoreTarget';
 
 /**
  * 这篇文章生成过的全部配图。
  *
  * 改稿、重新规划标记、同一位置重新生成都不再删除旧图——它们只是不再挂在正文上。
  * 这里按配图方案版本分组列出，当前挂在正文里的标「正在使用」；智能体（MCP）生成的图同样在内。
- * 没在用的旧图可以「放回」它当初的位置（智能体用 map_literary_restore_image 走的是同一处）。
+ * 没在用的旧图可以「放回」当前方案里的任意位置，原位置还在时默认放回原位
+ * （智能体用 map_literary_restore_image 走的是同一处）。
  */
 export function IllustrationHistoryDialog({
   open,
@@ -36,16 +38,19 @@ export function IllustrationHistoryDialog({
   const [reloadKey, setReloadKey] = useState(0);
   const [lightbox, setLightbox] = useState<{ images: string[]; captions: string[]; index: number } | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  /** 用户在下拉里为某张图选的目标位置；没选就用 planRestore 给的默认 */
+  const [pickedTarget, setPickedTarget] = useState<Record<string, number>>({});
 
-  const restorable = (item: LiteraryIllustrationHistoryItem) =>
-    !item.isCurrent && item.markerIndex != null && (data?.markerIndexes ?? []).includes(item.markerIndex);
+  const targetOf = (item: LiteraryIllustrationHistoryItem) =>
+    pickedTarget[item.id] ?? planRestore(data, item).defaultTarget;
 
   const restore = async (item: LiteraryIllustrationHistoryItem) => {
-    if (item.markerIndex == null || restoringId || !data) return;
+    const target = targetOf(item);
+    if (target == null || restoringId || !data) return;
     setRestoringId(item.id);
     // 带上打开时看到的方案版本：期间文章被改稿或重新规划过，服务端会拒绝，而不是挂到同序号的新标记上
     const res = await restoreLiteraryIllustrationReal({
-      id: workspaceId, assetId: item.id, markerIndex: item.markerIndex, workflowVersion: data.currentVersion,
+      id: workspaceId, assetId: item.id, markerIndex: target, workflowVersion: data.currentVersion,
     });
     setRestoringId(null);
     if (!res.success) {
@@ -54,7 +59,7 @@ export function IllustrationHistoryDialog({
       if (res.error?.code === 'WORKSPACE_CONTENT_CHANGED') setReloadKey((k) => k + 1);
       return;
     }
-    toast.success(res.data?.note || `已把这张放回配图 ${item.markerIndex + 1}，换下的那张也留在这里`);
+    toast.success(res.data?.note || `已把这张放回配图 ${target + 1}，换下的那张也留在这里`);
     setReloadKey((k) => k + 1);
     onRestored?.();
   };
@@ -69,7 +74,11 @@ export function IllustrationHistoryDialog({
     void getLiteraryIllustrationHistoryReal({ id: workspaceId }).then((res) => {
       if (cancelled) return;
       setLoading(false);
-      if (res.success && res.data) setData(res.data);
+      if (res.success && res.data) {
+        setData(res.data);
+        // 方案可能变了（位置增减、重排），上一次选的目标位置不再可信
+        setPickedTarget({});
+      }
       else setError(res.error?.message || '历史配图读取失败');
     });
     return () => {
@@ -211,19 +220,6 @@ export function IllustrationHistoryDialog({
                             </div>
                           )}
                         </div>
-                        {restorable(item) && (
-                          <button
-                            type="button"
-                            onClick={() => void restore(item)}
-                            disabled={restoringId != null}
-                            className="shrink-0 h-6 px-1.5 inline-flex items-center gap-1 rounded hover-bg-soft text-[11px]"
-                            style={{ color: 'var(--accent-fg-info)' }}
-                            title={`把这张放回配图 ${item.markerIndex! + 1}（正在用的那张会留在历史里）`}
-                          >
-                            {restoringId === item.id ? <MapSpinner size={11} /> : <RotateCcw size={11} />}
-                            放回
-                          </button>
-                        )}
                         <a
                           href={item.url}
                           target="_blank"
@@ -236,6 +232,15 @@ export function IllustrationHistoryDialog({
                           <Download size={13} />
                         </a>
                       </figcaption>
+                      <RestoreRow
+                        item={item}
+                        plan={planRestore(data, item)}
+                        target={targetOf(item)}
+                        onPick={(index) => setPickedTarget((prev) => ({ ...prev, [item.id]: index }))}
+                        onRestore={() => void restore(item)}
+                        busy={restoringId === item.id}
+                        disabled={restoringId != null}
+                      />
                     </figure>
                   ))}
                 </div>
@@ -253,6 +258,67 @@ export function IllustrationHistoryDialog({
         />
       )}
     </>
+  );
+}
+
+/**
+ * 「放回」一行：当前方案有多个位置时先选放到哪（原位置还在就默认选它），只有一个位置时直接放回。
+ */
+function RestoreRow({
+  item,
+  plan,
+  target,
+  onPick,
+  onRestore,
+  busy,
+  disabled,
+}: {
+  item: LiteraryIllustrationHistoryItem;
+  plan: ReturnType<typeof planRestore>;
+  target: number | undefined;
+  onPick: (index: number) => void;
+  onRestore: () => void;
+  busy: boolean;
+  disabled: boolean;
+}) {
+  if (!plan.restorable) return null;
+  const chosen = plan.options.find((o) => o.index === target);
+  return (
+    <div className="px-2 pb-2 flex items-center gap-1.5" data-restore-for={item.id}>
+      {plan.showPicker && (
+        <select
+          value={target ?? ''}
+          onChange={(e) => onPick(Number(e.target.value))}
+          disabled={disabled}
+          className="flex-1 min-w-0 h-6 rounded px-1 text-[11px]"
+          style={{ background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
+          title={chosen ? `放到配图 ${chosen.index + 1}：${chosen.description}` : '选择要放回的位置'}
+          aria-label="放回到哪个配图位置"
+        >
+          {target == null && (
+            <option value="" disabled>
+              放到哪个位置…
+            </option>
+          )}
+          {plan.options.map((o) => (
+            <option key={o.index} value={o.index}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        type="button"
+        onClick={onRestore}
+        disabled={disabled || target == null}
+        className="shrink-0 h-6 px-1.5 inline-flex items-center gap-1 rounded hover-bg-soft text-[11px] disabled:opacity-50"
+        style={{ color: 'var(--accent-fg-info)', marginLeft: plan.showPicker ? undefined : 'auto' }}
+        title={target != null ? `把这张放回配图 ${target + 1}（正在用的那张会留在历史里）` : '先选要放回的位置'}
+      >
+        {busy ? <MapSpinner size={11} /> : <RotateCcw size={11} />}
+        {plan.showPicker ? '放回' : `放回配图 ${(target ?? 0) + 1}`}
+      </button>
+    </div>
   );
 }
 

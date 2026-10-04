@@ -757,6 +757,17 @@ public class LiteraryMcpUsabilityTests
                 .Where(i => i.GetProperty("isCurrent").GetBoolean()).Select(i => i.GetProperty("id").GetString()).OrderBy(x => x);
             Assert.Equal(new[] { "a0", "a1b" }, current);
             Assert.Equal(new[] { 0, 1 }, web.GetProperty("markerIndexes").EnumerateArray().Select(x => x.GetInt32()));
+            // 每个位置现在讲的是什么：网页放到别的位置时，下拉里要让人看清选的是哪一段
+            var markerDescs = web.GetProperty("markers").EnumerateArray()
+                .ToDictionary(m => m.GetProperty("index").GetInt32(), m => m.GetProperty("description").GetString());
+            Assert.Equal(2, markerDescs.Count);
+            Assert.False(string.IsNullOrWhiteSpace(markerDescs[0]));
+
+            // 原位置已不在、或没记位置的早期图：网页可以指定放到当前方案的任意位置
+            await db.ImageAssets.InsertOneAsync(new ImageAsset { Id = "orphan", OwnerUserId = "writer", WorkspaceId = id, Url = "https://example.test/orphan.png" });
+            var moved = Data(await ui.RestoreIllustration(id, "orphan", new() { MarkerIndex = 0, WorkflowVersion = 2 }, CancellationToken.None));
+            Assert.Equal(0, moved.GetProperty("markerIndex").GetInt32());
+            Assert.Equal("orphan", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.AssetIdByMarkerIndex["0"]);
 
             // 长描述的图放回后，标记描述一字不少（图上记的原始描述与标记同一个上限）
             var longPrompt = string.Concat(Enumerable.Repeat("窗边打盹的橘猫，阳光斜照在书脊上。", 30));
