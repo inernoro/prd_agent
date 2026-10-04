@@ -254,7 +254,7 @@ public class GatewayDataDomainGuardTests
     {
         var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
 
-        Assert.Contains("new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName)", program);
+        Assert.Contains("new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName, llmGatewayInternalTenantId)", program);
         Assert.Contains(
             "builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>\n    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());",
             program);
@@ -1919,7 +1919,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
         Assert.Contains("LLMGW_SERVING_PROBE_REPORT_MD", script);
         Assert.Contains("LLMGW_GATE_RUN_SMOKE", script);
-        Assert.Contains("LLMGW_GATE_RUN_SERVING_PROBE", script);
+        // 带 key 的 serving 探测没有跳过开关。
+        Assert.DoesNotContain("LLMGW_GATE_RUN_SERVING_PROBE", script);
         Assert.Contains("LLMGW_GATE_SMOKE_TIMEOUT_SECONDS", script);
         Assert.Contains("GW_SMOKE_JSON_OUT", script);
         Assert.Contains("GW_SMOKE_REPORT_MD", script);

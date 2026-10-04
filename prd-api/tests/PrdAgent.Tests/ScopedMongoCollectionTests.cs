@@ -90,7 +90,12 @@ public class ScopedMongoCollectionTests
         Assert.Contains($"\"TenantId\" : \"{Tenant}\"", RenderFilter(scoped.Scope));
         Assert.Equal("llm_gateway", map.LlmRequestLogs.Database.DatabaseNamespace.DatabaseName);
 
+        // MAP 进程里的网关数据上下文（手机看板、设计审计、视觉生图健康探针在用）同样限定内部租户。
+        var mapGateway = new LlmGatewayDataContext("mongodb://localhost:27017", "llm_gateway", Tenant);
+        Assert.IsType<ScopedMongoCollection<LlmRequestLog>>(mapGateway.LlmRequestLogs);
+
         // serving 要写全部租户的日志，不传租户就必须是原始集合。
+        Assert.IsNotType<ScopedMongoCollection<LlmRequestLog>>(new LlmGatewayDataContext("mongodb://localhost:27017", "llm_gateway").LlmRequestLogs);
         var serving = new MongoDbContext("mongodb://localhost:27017", "llm_gateway");
         Assert.IsNotType<ScopedMongoCollection<LlmRequestLog>>(serving.LlmRequestLogs);
     }

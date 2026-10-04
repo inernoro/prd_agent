@@ -54,7 +54,6 @@ set -eu
 #   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
 #   - LLMGW_GATE_HEALTH_SAMPLES：发布后 healthz 连续采样次数，默认 3
 #   - LLMGW_GATE_HEALTH_INTERVAL_SECONDS：healthz 连续采样间隔秒数，默认 5
-#   - LLMGW_GATE_RUN_SERVING_PROBE：发布后是否运行 llmgw-serving-probe.py，默认 1
 #   - LLMGW_GATE_SERVING_PROBE_SAMPLES：serving probe healthz 连续采样次数，默认跟随 LLMGW_GATE_HEALTH_SAMPLES
 #   - LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS：serving probe 连续采样间隔秒数，默认跟随 LLMGW_GATE_HEALTH_INTERVAL_SECONDS
 #   - LLMGW_SERVING_PROBE_JSON_OUT / LLMGW_SERVING_PROBE_REPORT_MD：保存 post-deploy serving probe 证据
@@ -1221,25 +1220,22 @@ run_llmgw_post_deploy_verification_if_needed() {
     exit 1
   fi
 
-  if [ "${LLMGW_GATE_RUN_SERVING_PROBE:-1}" != "0" ]; then
-    probe_args="--base $gate_base"
-    probe_args="$probe_args --samples ${LLMGW_GATE_SERVING_PROBE_SAMPLES:-${LLMGW_GATE_HEALTH_SAMPLES:-3}}"
-    probe_args="$probe_args --interval ${LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS:-${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}}"
-    if [ -n "${LLMGW_SERVING_PROBE_JSON_OUT:-}" ]; then
-      probe_args="$probe_args --json-out $LLMGW_SERVING_PROBE_JSON_OUT"
-    fi
-    if [ -n "${LLMGW_SERVING_PROBE_REPORT_MD:-}" ]; then
-      probe_args="$probe_args --report-md $LLMGW_SERVING_PROBE_REPORT_MD"
-    fi
-    if [ -n "$expect_commit" ]; then
-      probe_args="$probe_args --expect-commit $expect_commit"
-    fi
-    echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
-    # shellcheck disable=SC2086
-    LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py $probe_args
-  else
-    echo "WARN: LLM Gateway post-deploy serving probe skipped because LLMGW_GATE_RUN_SERVING_PROBE=0" >&2
+  # 带 key 的 serving 探测是发布必过项，不提供跳过开关：MAP 的全部模型调用都经这一跳。
+  probe_args="--base $gate_base"
+  probe_args="$probe_args --samples ${LLMGW_GATE_SERVING_PROBE_SAMPLES:-${LLMGW_GATE_HEALTH_SAMPLES:-3}}"
+  probe_args="$probe_args --interval ${LLMGW_GATE_SERVING_PROBE_INTERVAL_SECONDS:-${LLMGW_GATE_HEALTH_INTERVAL_SECONDS:-5}}"
+  if [ -n "${LLMGW_SERVING_PROBE_JSON_OUT:-}" ]; then
+    probe_args="$probe_args --json-out $LLMGW_SERVING_PROBE_JSON_OUT"
   fi
+  if [ -n "${LLMGW_SERVING_PROBE_REPORT_MD:-}" ]; then
+    probe_args="$probe_args --report-md $LLMGW_SERVING_PROBE_REPORT_MD"
+  fi
+  if [ -n "$expect_commit" ]; then
+    probe_args="$probe_args --expect-commit $expect_commit"
+  fi
+  echo "LLM Gateway post-deploy serving probe: required (readyz with key + healthz commit stability + no-key auth)"
+  # shellcheck disable=SC2086
+  LLMGW_GATE_KEY="$gate_key" python3 scripts/llmgw-serving-probe.py $probe_args
 
   if [ "${LLMGW_POST_DEPLOY_RUN_SMOKE:-1}" != "0" ]; then
     echo "LLM Gateway post-deploy D-layer smoke: required (healthz/pools/send/stream/client-stream/canary)"

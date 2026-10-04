@@ -150,7 +150,7 @@ builder.Services.AddSingleton(new MongoDbContext(
     llmRequestLogDatabaseName: llmGatewayDatabaseName,
     llmRequestLogConnectionString: llmGatewayMongoConnectionString,
     llmRequestLogTenantId: llmGatewayInternalTenantId));
-builder.Services.AddSingleton(new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName));
+builder.Services.AddSingleton(new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName, llmGatewayInternalTenantId));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
@@ -218,7 +218,8 @@ builder.Services.Configure<HostOptions>(options =>
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
 });
 
-builder.Services.AddHostedService<LlmRequestLogWatchdog>();
+// 模型请求日志由网关 serving 写、归网关库所有，MAP 不再跑 running 超时纠错：
+// 它按 MAP 的超时口径会把网关仍在执行的长请求（ASR 等允许 600-900 秒）误改成失败。
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.AiScoreWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.TranscriptRunWatchdog>();
