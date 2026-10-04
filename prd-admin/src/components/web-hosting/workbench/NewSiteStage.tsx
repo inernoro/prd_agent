@@ -150,11 +150,21 @@ export default function NewSiteStage({
   useEffect(() => {
     resetRun();
     let active = true;
+    // 执行器能力单独结算：别的请求慢不该让「正在检测设计服务」一直挂着。
+    void getDesignRuntimeCapabilities().then((runtimes) => {
+      if (!active) return;
+      if (runtimes.success) {
+        setCapabilities(runtimes.data.runtimes);
+        setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
+        const runtimeId = chooseDesignRuntime(runtimes.data.runtimes, runtimes.data.defaultRuntime);
+        if (runtimeId) setSelectedRuntime(runtimeId);
+      }
+      setRuntimesLoaded(true);
+    });
     void Promise.all([
       listRecentDocumentEntries(16),
-      getDesignRuntimeCapabilities(),
       getDesignGenerationSettings(),
-    ]).then(([recent, runtimes, settings]) => {
+    ]).then(([recent, settings]) => {
       if (!active) return;
       const items = recent.success ? [...recent.data.items] : [];
       if (source && !items.some((item) => item.id === source.entryId)) {
@@ -171,13 +181,6 @@ export default function NewSiteStage({
         });
       }
       setRecentKnowledge(items);
-      setRuntimesLoaded(true);
-      if (runtimes.success) {
-        setCapabilities(runtimes.data.runtimes);
-        setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
-        const runtimeId = chooseDesignRuntime(runtimes.data.runtimes, runtimes.data.defaultRuntime);
-        if (runtimeId) setSelectedRuntime(runtimeId);
-      }
       if (settings.success) {
         const enabled = settings.data.styles.filter((style) => style.enabled);
         setStyles(enabled);
