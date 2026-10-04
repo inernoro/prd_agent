@@ -1,0 +1,39 @@
+# 仅导入新建的独立预览项目；禁止覆盖已有 CDS Self 项目配置。
+x-cds-project:
+  name: stsmk-acceptance-preview
+  description: "结构化验收独立预览，不更新共享 CDS，不发布 MAP"
+  repo: https://github.com/inernoro/prd_agent.git
+
+services:
+  cds:
+    image: "ghcr.io/inernoro/prd_agent/cds-preview:sha-${CDS_COMMIT_SHA}"
+    ports:
+      - "9900"
+    environment:
+      CDS_PREVIEW_INSTANCE: "1"
+      CDS_STORAGE_MODE: "json"
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1"
+    labels:
+      cds.prebuilt-image: "true"
+      cds.path-prefix: "/"
+      cds.web-entry-name: "结构化验收独立预览"
+      cds.web-entry-path: "/"
+      cds.build-scope: "cds/**,.github/workflows/cds-prebuilt.yml"
+      cds.readiness-path: "/api/instance-mode"
+      cds.readiness-timeout: "120"
+      cds.readiness-interval: "3"
+
+x-cds-deploy-modes:
+  cds:
+    express:
+      label: "极速版（独立预览运行镜像）"
+      image: "ghcr.io/inernoro/prd_agent/cds-preview:sha-${CDS_COMMIT_SHA}"
+      prebuilt: true
+      containerPort: 9900
+      buildScope:
+        - "cds/**"
+        - ".github/workflows/cds-prebuilt.yml"

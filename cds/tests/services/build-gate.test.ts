@@ -18,6 +18,9 @@ describe('build-gate 全局构建并发闸', () => {
 
   beforeEach(() => {
     __resetBuildGateForTest();
+    // 并发/FIFO 用例只测槽位合同，不把执行机器瞬时负载当作随机输入。
+    // 负载自适应用例在各自场景中显式覆盖，过载断言保持不变。
+    setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 4 }));
   });
   afterEach(() => {
     if (savedEnv === undefined) delete process.env.CDS_MAX_CONCURRENT_BUILDS;

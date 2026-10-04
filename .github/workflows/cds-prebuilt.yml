@@ -53,6 +53,9 @@ jobs:
           pnpm -C cds exec tsc --noEmit
           pnpm -C cds/web exec tsc --noEmit
 
+      - name: Isolated preview regression contract
+        run: pnpm -C cds exec vitest run tests/services/preview-runtime-contract.test.ts --reporter=dot
+
       - name: Build backend (esbuild → cds/dist)
         run: |
           cd cds
@@ -98,3 +101,40 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      # 产物搬运镜像保持原合同；另产出可直接启动、无宿主权限的独立预览镜像。
+      - name: Build CDS isolated preview runtime
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds
+          file: ./cds/Dockerfile.preview
+          load: true
+          push: false
+          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
+          build-args: CDS_BUILD_SHA=${{ github.sha }}
+
+      - name: Verify runnable isolated preview before publishing
+        env:
+          PREVIEW_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          container="stsmk-cds-preview-${GITHUB_RUN_ID}"
+          export CDS_PREVIEW_USERNAME=stsmk-ci
+          export CDS_PREVIEW_PASSWORD="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker run -d --name "$container" --memory 768m --cpus 1 \
+            -p 127.0.0.1::9900 -e CDS_PREVIEW_USERNAME -e CDS_PREVIEW_PASSWORD "$PREVIEW_IMAGE"
+          port="$(docker port "$container" 9900/tcp | awk -F: '{print $NF}')"
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:${port}/api/instance-mode" >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then echo '独立预览运行镜像未能启动'; exit 1; fi
+          node cds/scripts/verify-preview-runtime.mjs "http://127.0.0.1:${port}" "$EXPECTED_SHA"
+
+      - name: Publish verified CDS isolated preview runtime
+        env:
+          PREVIEW_IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
+        run: docker push "$PREVIEW_IMAGE"

@@ -1,0 +1,23 @@
+# CI 已完成类型检查与前后端构建；本镜像只装配独立 CDS 预览运行时。
+# 不挂源码或宿主套接字，不执行 self-update，也不复制任何 .cds.env。
+FROM node:20-bookworm-slim AS dependencies
+WORKDIR /app/cds
+COPY package.json pnpm-lock.yaml ./
+RUN corepack enable \
+ && corepack prepare pnpm@10.28.2 --activate \
+ && pnpm install --prod --frozen-lockfile
+
+FROM node:20-bookworm-slim
+ARG CDS_BUILD_SHA
+LABEL org.opencontainers.image.revision="${CDS_BUILD_SHA}"
+WORKDIR /app/cds
+RUN chown node:node /app /app/cds
+COPY --from=dependencies --chown=node:node /app/cds/node_modules ./node_modules
+COPY --chown=node:node package.json ./package.json
+COPY --chown=node:node dist ./dist
+COPY --chown=node:node web/dist ./web/dist
+COPY --chown=node:node cds-prebuilt-manifest.json ./web/dist/preview-build.json
+ENV NODE_ENV=production CDS_PREVIEW_INSTANCE=1 CDS_STORAGE_MODE=json CDS_PORT=9900
+USER node
+EXPOSE 9900
+CMD ["node", "dist/index.js"]
