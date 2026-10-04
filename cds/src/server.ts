@@ -1990,10 +1990,14 @@ export function createServer(deps: ServerDeps): express.Express {
       (req as { rawBody?: Buffer }).rawBody = buf;
     },
   });
+  const routeOwnsRequestBody = (req: express.Request): boolean =>
+    req.path === '/api/reports'
+    || req.path.startsWith('/api/reports/')
+    || req.path === '/api/bug-reports'
+    || req.path.startsWith('/api/bug-reports/');
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
-    if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
-    if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
+    if (routeOwnsRequestBody(req)) return next();
     //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
     //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
     if (isBranchGroupsSaveRequest(req.method, req.path)) return next();
@@ -2322,7 +2326,13 @@ export function createServer(deps: ServerDeps): express.Express {
     };
     const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
-    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    // These routes intentionally parse larger or binary bodies inside their
+    // own router. Starting the stream here lets it drain while an async auth
+    // gate is still running, so the route parser later sees an unreadable
+    // stream. Their parsed req.body is captured on response finish instead.
+    if (!routeOwnsRequestBody(req)) {
+      req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    }
     const responseCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined);
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
