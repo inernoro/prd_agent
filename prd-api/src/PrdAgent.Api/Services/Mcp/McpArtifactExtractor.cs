@@ -120,6 +120,21 @@ public static class McpArtifactExtractor
                && flag;
     }
 
+    /// <summary>
+    /// 下游报告这次真正新产生了几张图（data.queuedImages）。批量生图里一部分是重放、一部分没排上时，
+    /// 按请求张数预占的日额度要按它退回差额。下游没给这个字段时返回 null，按原样不退。
+    /// </summary>
+    public static int? QueuedImages(string? responseBody)
+    {
+        var data = ReadDataObject(responseBody);
+        return data != null
+               && data.TryGetPropertyValue("queuedImages", out var node)
+               && node is JsonValue v
+               && v.TryGetValue<int>(out var n)
+               && n >= 0
+            ? n : null;
+    }
+
     /// <summary>失败时给用户看的原因：优先接口自己的中文 message，退回一小段原文。</summary>
     public static string? ExtractErrorMessage(string? responseBody)
     {
