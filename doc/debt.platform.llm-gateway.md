@@ -28,6 +28,22 @@ MAP 库里的旧配置选模（`LLMConfigs` 活动配置、环境变量里的 Cl
 3. 部署侧把 `LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers` 置 true 观察一个稳定窗口；
 4. 删掉解析链第四档、MAP 配置回落查找与 serving 对 MAP 主库的兼容连接，连同 `InMemoryModelResolver` 的 legacy 分支。
 
+## claude-sdk 胶囊的调用在日志里记两次，且可能冒充发布证据（2026-10-04）
+
+**状态**：未还 | **严重度**：高（影响发布判断）
+
+claude-sdk 胶囊执行时，MAP 侧会先手写一条汇总日志（`GatewayTransport=http`，带胶囊的调用方编码）；
+它的 sidecar 走 `openai-compatible` 协议，每一轮经 serving 的 `/v1/chat/completions` 调模型，serving 各记一条。
+MAP 改读网关库之后，两份落在同一个集合里，造成两个后果：
+
+1. **统计重复**：日志列表、调用次数与 token 统计把这部分流量算两遍（多轮运行是「一条汇总 + 每一轮」）。
+2. **可能冒充发布证据**：控制台的运行时 gate（`current_commit_http_transport`、活跃调用方覆盖）按传输方式与调用方计数，
+   不区分状态和入口。sidecar 在发出任何请求前就失败时，MAP 那条汇总日志照样存在，能让这两道 gate 判绿，
+   而实际上没有一个请求到过 serving。
+
+**还债的样子**：经网关的 sidecar 不再由 MAP 写汇总日志，改为在胶囊运行记录上关联 serving 的请求 Id；
+在那之前，运行时 gate 的计数应只认 serving 写入的日志（按入口或写入方过滤），不认 MAP 手写的汇总行。
+
 ## 发布闸门不真调模型（2026-10-04）
 
 **状态**：未还
