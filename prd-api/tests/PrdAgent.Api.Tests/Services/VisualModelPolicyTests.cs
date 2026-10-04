@@ -51,6 +51,30 @@ public sealed class VisualModelPolicyTests
     }
 
     [Theory]
+    [InlineData("image2")]
+    [InlineData("gpt-image-2")]
+    [InlineData("gpt-image-2.5-sunburst")]
+    [InlineData("gemini-3-pro-image-preview")]
+    [InlineData("doubao-seedream-4-5-251128")]
+    public void RuntimeReconciliationUsesExactPublicIdForEveryImageModel(string publicId)
+    {
+        var stored = new VisualModelPolicy
+        {
+            DefaultModelId = publicId,
+            Models = [new() { ModelId = publicId, DisplayName = publicId }],
+        };
+
+        var present = VisualModelPolicyService.ReconcileForRuntime(stored, [Model(publicId)]);
+        Assert.Equal(publicId, present.DefaultModelId);
+        Assert.Equal(publicId, Assert.Single(present.Models).ModelId);
+
+        var deleted = VisualModelPolicyService.ReconcileForRuntime(stored, []);
+        Assert.Equal(string.Empty, deleted.DefaultModelId);
+        Assert.Empty(deleted.Models);
+        Assert.Null(deleted.Select(null));
+    }
+
+    [Theory]
     [InlineData(null, "image1")]
     [InlineData("image2", "image2")]
     [InlineData("gpt-image-2", null)]
