@@ -716,6 +716,20 @@ const folderRegressionCaseIds = [
   'REG-web-folder-create-rename-001',
 ];
 
+export function runNotificationEvidenceRegression(runDir, commandRunner = command) {
+  const result = commandRunner('node', [
+    '--test', '--test-name-pattern', 'REG-stsmk-notify-evidence-001',
+    'scripts/tests/stable-smoke-run.test.mjs',
+  ]);
+  const passed = result.status === 0;
+  const artifactPath = resolve(runDir, 'notification-evidence-regression.log');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}`, 'utf8');
+  return {
+    execution: { environment: 'cds-notification-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
+    rows: [{ caseId: 'REG-stsmk-notify-evidence-001', environment: 'cds', title: '未验证报告不得通知', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '通知证据安全回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['通知证据安全回归失败'] }],
+  };
+}
+
 export function runFolderRegressionTests(runDir, commandRunner = command) {
   const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
   const clientResult = commandRunner('pnpm', [
@@ -1245,53 +1259,10 @@ export async function deliverUnhandledFailure(argv, error) {
   if (argv.includes('--dry-run')) {
     summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
   } else {
-    try {
-      const envPath = resolve(readLooseArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
-      let local = { loaded: false, values: {} };
-      try {
-        local = loadLocalEnvironment(envPath);
-      } catch (credentialError) {
-        summaryDocument.credentialWarning = credentialError instanceof Error
-          ? credentialError.message
-          : '本地凭据文件读取失败';
-      }
-      const registry = readJson(credentialRegistryPath) || {};
-      const values = applyCredentialRegistry({ ...local.values, ...process.env }, registry, readKeychainSecret);
-      const notificationCenterUrl = values.STABLE_SMOKE_PROD_BASE_URL
-        ? `${values.STABLE_SMOKE_PROD_BASE_URL.replace(/\/+$/, '')}/?panel=notifications`
-        : '';
-      const notification = command('node', [
-        'scripts/stable-smoke-notify.mjs',
-        '--verdict', 'fail',
-        '--run-id', runId,
-        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
-        '--module', '稳定冒烟执行链',
-        '--recovery', '稳定冒烟异常终止。请先处理执行摘要中的失败阶段，再使用相同 runId 重新执行并核对验收报告。',
-        '--report-url', providedReportUrl || notificationCenterUrl,
-        '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
-      ], {
-        env: {
-          ...process.env,
-          ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
-        },
-      });
-      summaryDocument.notification = notification.status === 0
-        ? {
-            status: 'sent',
-            result: readJsonFromText(notification.stdout),
-            actionUrl: providedReportUrl || notificationCenterUrl,
-          }
-        : {
-            status: 'delivery-failed',
-            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
-          };
-    } catch (deliveryError) {
-      summaryDocument.notification = {
-        status: 'delivery-failed',
-        error: deliveryError instanceof Error ? deliveryError.message : 'MAP 通知发送失败',
-      };
-    }
+    summaryDocument.notification = {
+      status: 'withheld-unverified-report',
+      reason: '执行异常发生前没有完成 CDS 线上报告与 verify-open；禁止发送未验证链接或通知中心替代链接。',
+    };
   }
   writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: 'fail', notification: summaryDocument.notification })}\n`);
@@ -1330,59 +1301,14 @@ export async function deliverLockedRun(argv, dependencies = {}) {
       : ['cds', 'production'];
   const providedReportUrl = '';
   const summaryDocument = buildLockedRunSummary({ runId, selected, reportUrl: providedReportUrl });
-  const commandFn = dependencies.commandFn || command;
-
   mkdirSync(runDir, { recursive: true });
   if (argv.includes('--dry-run')) {
     summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
   } else {
-    try {
-      const envPath = resolve(readLooseArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
-      const local = dependencies.values
-        ? { loaded: true, values: dependencies.values }
-        : loadLocalEnvironment(envPath);
-      const registry = readJson(credentialRegistryPath) || {};
-      const values = applyCredentialRegistry(
-        { ...local.values, ...process.env },
-        registry,
-        dependencies.secretReader || readKeychainSecret,
-      );
-      const notificationCenterUrl = values.STABLE_SMOKE_PROD_BASE_URL
-        ? `${values.STABLE_SMOKE_PROD_BASE_URL.replace(/\/+$/, '')}/?panel=notifications`
-        : '';
-      const actionUrl = providedReportUrl || notificationCenterUrl;
-      const notification = commandFn('node', [
-        'scripts/stable-smoke-notify.mjs',
-        '--verdict', 'conditional',
-        '--run-id', runId,
-        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
-        '--module', '稳定冒烟调度',
-        '--recovery', summaryDocument.recovery,
-        '--report-url', actionUrl,
-        '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
-      ], {
-        env: {
-          ...process.env,
-          ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
-        },
-      });
-      summaryDocument.notification = notification.status === 0
-        ? { status: 'sent', result: readJsonFromText(notification.stdout), actionUrl }
-        : {
-            status: 'delivery-failed',
-            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
-          };
-    } catch (deliveryError) {
-      summaryDocument.notification = {
-        status: 'delivery-failed',
-        error: deliveryError instanceof Error ? deliveryError.message : 'MAP 通知发送失败',
-      };
-    }
-  }
-  if (summaryDocument.notification.status === 'delivery-failed') {
-    summaryDocument.verdict = 'fail';
-    summaryDocument.deliveryFailure = '重叠执行结果未能送达指定用户';
+    summaryDocument.notification = {
+      status: 'withheld-unverified-report',
+      reason: '本次重叠运行没有自己的已验证 CDS 报告；由持锁任务完成线上归档、verify-open 后再通知。',
+    };
   }
   const summaryPath = resolve(runDir, 'summary.json');
   const blockedPath = resolve(runDir, 'blocked.json');
@@ -1700,6 +1626,11 @@ async function main() {
       const folderRegressions = runFolderRegressionTests(runDir);
       executions.push(folderRegressions.execution);
       supplementalRows = folderRegressions.rows;
+    }
+    if (selectedCdsCases.includes('REG-stsmk-notify-evidence-001')) {
+      const notificationRegression = runNotificationEvidenceRegression(runDir);
+      executions.push(notificationRegression.execution);
+      supplementalRows.push(...notificationRegression.rows);
     }
 
     for (const environment of selected) {

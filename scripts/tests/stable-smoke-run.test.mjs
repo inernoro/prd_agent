@@ -40,6 +40,7 @@ import {
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
+  runNotificationEvidenceRegression,
   runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -755,6 +756,22 @@ test('未捕获异常会持久化失败摘要并进入失败交付路径', async
   }
 });
 
+test('[REG-stsmk-notify-evidence-001] 非 dry-run 异常也不得借通知中心或用户提供链接发送通知', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-fatal-proof-'));
+  try {
+    const result = await deliverUnhandledFailure([
+      '--run-id', 'fatal-proof-test', '--output-root', directory,
+      '--report-url', 'https://cds.example/reports?report=not-verified',
+    ], new Error('线上报告尚未验证'));
+    assert.equal(result.summary.verdict, 'fail');
+    assert.equal(result.summary.archive.status, 'unavailable');
+    assert.equal(result.summary.notification.status, 'withheld-unverified-report');
+    assert.equal(result.summary.notification.actionUrl, undefined);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('环境文件解析不执行 shell 内容', () => {
   const values = parseEnvFile(`
 # comment
@@ -987,7 +1004,7 @@ test('无效锁先保留 owner 发布宽限期，超时后才允许强制清理'
   }
 });
 
-test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通知', async () => {
+test('[REG-stsmk-notify-evidence-001] 互斥锁阻塞无已验证报告时持久化结论且不发送通知', async () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-locked-'));
   const calls = [];
   try {
@@ -1008,16 +1025,31 @@ test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通
       summary.archive,
     );
     assert.equal(summary.verdict, 'conditional');
-    assert.equal(summary.notification.status, 'sent');
+    assert.equal(summary.notification.status, 'withheld-unverified-report');
     assert.equal(existsSync(result.blockedPath), true);
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(0, 5), [
-      'scripts/stable-smoke-notify.mjs',
-      '--verdict',
-      'conditional',
-      '--run-id',
-      'locked-test',
-    ]);
+    assert.equal(calls.length, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('通知证据永久回归真实接线且不会把失败写为通过', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-notify-wiring-'));
+  try {
+    for (const status of [0, 1]) {
+      const calls = [];
+      const result = runNotificationEvidenceRegression(directory, (name, args) => {
+        calls.push({ name, args });
+        return { status, stdout: 'fixture result', stderr: '' };
+      });
+      assert.equal(calls[0].name, 'node');
+      assert.ok(calls[0].args.includes('REG-stsmk-notify-evidence-001'));
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.equal(result.rows[0].caseId, 'REG-stsmk-notify-evidence-001');
+      assert.equal(readFileSync(result.execution.artifactPath, 'utf8').trim(), 'fixture result');
+    }
+    const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
+    assert.match(source, /selectedCdsCases\.includes\('REG-stsmk-notify-evidence-001'\)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
