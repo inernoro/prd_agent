@@ -127,8 +127,8 @@ function AuthForm(): JSX.Element {
         goToTarget();
         return;
       }
-      // github-mode 本地登录端点优先;404 时回退 legacy basic-auth /api/login,
-      // 保证单用户 CDS_USERNAME 部署仍可用。
+      // 统一本地登录端点优先；404 时回退 legacy basic-auth /api/login，
+      // 保证旧版服务和单用户 CDS_USERNAME 部署仍可用。
       let res = await fetch(apiUrl('/api/auth/login'), {
         method: 'POST',
         credentials: 'include',

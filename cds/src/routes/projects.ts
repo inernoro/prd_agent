@@ -71,6 +71,8 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
+import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -591,9 +593,8 @@ async function resolveRemoteDefaultBranch(shell: IShellExecutor, repoPath: strin
 function hasOwnerAccess(req: unknown, projectId: string): boolean {
   const r = req as {
     cdsProjectKey?: { projectId: string };
-    _cdsCookieAuth?: boolean;
   };
-  if (r._cdsCookieAuth === true) return true;
+  if (isHumanSystemOwner(req)) return true;
   if (r.cdsProjectKey && r.cdsProjectKey.projectId === projectId) return true;
   return false;
 }
@@ -690,7 +691,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
-    if (isMachineCaller(req)) return null;
+    if (isMachineCaller(req) || isScopedHuman(req)) return null;
     const repoFullName = project.githubRepoFullName;
     if (!repoFullName) return null;
     const siblings = stateService.findProjectsByRepoFullName(repoFullName);
@@ -1629,6 +1630,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const grants = principalId ? stateService.getProjectGrants() : [];
       const projects = stateService
         .getProjects()
+        .filter((project) => canHumanAccessProject(req, stateService, project.id))
         .filter((project) => !projectScope || project.id === projectScope)
         .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id));
       const usageMap = resourceUsageLookup();
@@ -1654,7 +1656,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         if (at !== bt) return bt.localeCompare(at);
         return 0;
       });
-      res.json({ projects: summaries, total: summaries.length });
+      res.json({ projects: summaries, total: summaries.length, canManageProjects: !isScopedHuman(req) });
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
       // eslint-disable-next-line no-console
