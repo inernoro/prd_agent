@@ -510,6 +510,44 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 网页换正文按最新方案版本落库_编辑页入口清空正文同样作废旧方案()
+    {
+        var (db, name, connection) = NewDb("literary_web_reset_race");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var id = Data(await drafts.CreateWorkspace(new()
+            {
+                Title = "并发", MarkedContent = "一。\n[插图]: 书店\n", ClientRequestId = "race-1",
+            }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
+            // 网页读到的是第 1 版；在它写库之前，智能体整篇重写成了第 2 版
+            var stale = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            Data(await drafts.WriteContent(id, new() { MarkedContent = "二。\n[插图]: 茶杯\n" }, CancellationToken.None));
+
+            var outcome = await LiteraryIllustrationArchive.WriteContentResetAsync(db, stale, "网页上传的正文。",
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow), LiteraryArchiveReason.WebContent, CancellationToken.None);
+            Assert.Equal(LiteraryIllustrationArchive.ContentResetOutcome.Written, outcome);
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            // 按最新的第 2 版推算：升到第 3 版，第 2 版进了历史——不会和那次重写撞成同一个版本号、把它盖掉
+            Assert.Equal(3, ws.ArticleWorkflow!.Version);
+            Assert.Equal(2, ws.ArticleWorkflowHistory![0].Version);
+            Assert.Equal("网页上传的正文。", ws.ArticleContent);
+
+            // 编辑页实际调用的是 ImageMaster 的更新接口：上传空文件同样算换稿
+            Data(await drafts.WriteContent(id, new() { MarkedContent = "三。\n[插图]: 窗\n" }, CancellationToken.None));
+            var before = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Version;
+            var master = WithAdminUser(new ImageMasterController(db, null!, null!, null!, NullLogger<ImageMasterController>.Instance,
+                null!, null!, null!, null!, null!), "writer");
+            Assert.IsType<OkObjectResult>(await master.UpdateWorkspace(id, new UpdateWorkspaceRequest { ArticleContent = "" }, CancellationToken.None));
+            var cleared = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            Assert.Equal(before + 1, cleared.ArticleWorkflow!.Version);
+            Assert.Empty(cleared.ArticleWorkflow.Markers);
+            Assert.Null(cleared.ArticleContentWithMarkers);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
     public async Task 改一节正文只重画改动的那一节_其余沿用原图()
     {
         // 验收里撞出来的：只压缩第二节，整篇 6 张图全部作废重画，用户满意的图一起被换掉
@@ -827,6 +865,9 @@ public class LiteraryMcpUsabilityTests
             // 挂图带版本条件，挂不上（期间换了稿）必须让调用方知道，丢掉返回值就会把失败报成成功
             if (System.Text.RegularExpressions.Regex.IsMatch(text, @"(?m)^\s*await\s+[\w.]*PointMarkerAsync\("))
                 offenders.Add($"{Path.GetFileName(file)}：调用 PointMarkerAsync 却没看返回值");
+            // 「正文换没换」只许有一个判据：两个网页入口各写一份，上一轮就是修了一处、编辑页真正走的那处照旧
+            if (text.Contains("articleContentChanged ="))
+                offenders.Add($"{Path.GetFileName(file)}：自行判断「正文换没换」，应改用 LiteraryIllustrationArchive.IsContentChange + WriteContentResetAsync");
             // 详情接口按「指针表有没有值」决定只给当前图：改稿后指针清空、旧图保留，就会把旧版图当成当前图
             if (text.Contains("currentAssetIds.Count > 0"))
                 offenders.Add($"{Path.GetFileName(file)}：按指针表是否为空决定详情给不给全部图，应改用 LiteraryIllustrationHistory.ShowsCurrentOnly");
@@ -993,7 +1034,12 @@ public class LiteraryMcpUsabilityTests
         var literary = File.ReadAllText(Path.Combine(root, "prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentWorkspaceController.cs"));
         Assert.DoesNotContain("DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null", master);
         Assert.DoesNotContain("Filter.Eq(x => x.ArticleInsertionIndex, asset.ArticleInsertionIndex)", literary);
-        Assert.Equal(2, CountOf(master, "LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0)"));
+        // 重新生成标记那处直接盖版本号；换正文那处走共用的 WriteContentResetAsync，由它在落库后盖
+        Assert.Equal(1, CountOf(master, "LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0)"));
+        Assert.Contains("LiteraryIllustrationArchive.WriteContentResetAsync(", master);
+        Assert.Contains("LiteraryIllustrationArchive.WriteContentResetAsync(", literary);
+        var archive = File.ReadAllText(Path.Combine(root, "prd-api/src/PrdAgent.Api/Services/LiteraryIllustrationArchive.cs"));
+        Assert.Contains("await StampUnversionedAsync(db, current.Id, current.ArticleWorkflow?.Version ?? 0);", archive);
 
         // 水印选择要真的走到打水印那一层：Worker 透传、客户端读取
         var worker = File.ReadAllText(Path.Combine(root, "prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs"));

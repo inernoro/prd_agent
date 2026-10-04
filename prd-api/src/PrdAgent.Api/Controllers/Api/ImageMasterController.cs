@@ -382,23 +382,21 @@ public class ImageMasterController : ControllerBase
             update = update.Set(x => x.StylePrompt, string.IsNullOrEmpty(sp) ? null : sp);
         }
 
-        // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、清后续、清旧配图）
-        var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent) 
-            && !string.Equals(request.ArticleContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
-        if (articleContentChanged)
+        // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、旧流程进历史、清标记；旧图不删，进历史配图）。
+        // 判据与写入都与文学页 PUT 共用 LiteraryIllustrationArchive：清空也算换稿，写入以读到的方案版本为条件。
+        if (PrdAgent.Api.Services.LiteraryIllustrationArchive.IsContentChange(ws, request?.ArticleContent))
         {
-            update = update.Set(x => x.ArticleContent, request!.ArticleContent);
-            // 提交型复位（版本 +1、旧流程进历史、清标记）：与文学页 PUT 共用同一处判定
-            var resetAssets = await PrdAgent.Api.Services.LiteraryIllustrationHistory.LoadAssetsAsync(_db, wid, ct);
-            var reset = PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetUpdate(
-                ws, resetAssets, now, PrdAgent.Api.Services.LiteraryArchiveReason.WebContent);
-            update = Builders<ImageMasterWorkspace>.Update.Combine(update, reset);
-
-            // 旧配图不再删除：盖上旧版本号归入「历史配图」（用户要能回看；智能体生成的图也不能被这一下抹掉）。
-            await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0);
+            var outcome = await PrdAgent.Api.Services.LiteraryIllustrationArchive.WriteContentResetAsync(
+                _db, ws, request!.ArticleContent!, update, PrdAgent.Api.Services.LiteraryArchiveReason.WebContent, ct);
+            if (outcome == PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetOutcome.WorkspaceGone)
+                return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 在保存过程中被删除了"));
+            if (outcome == PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetOutcome.KeptChanging)
+                return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "这篇文章正被别处连续修改，正文没有保存，请刷新后再试。"));
         }
-
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+        else
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+        }
         var next = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
         var payload = new { workspace = next };
         if (!string.IsNullOrWhiteSpace(idemKey))

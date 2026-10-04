@@ -21,7 +21,7 @@ public static class LiteraryIllustrationArchive
     ///
     /// 这段判断曾只写在 ImageMaster 的更新接口里；文学页拆出自己的 PUT 之后没带过来，
     /// 于是网页上给一篇文章重新上传正文时，旧标记和旧配图方案原样挂在新正文上（刷新后又回来）。
-    /// 两个入口现在都调这一处。调用方负责在写库后调用 <see cref="StampUnversionedAsync"/>。
+    /// 两个入口现在都经 <see cref="WriteContentResetAsync"/> 调这一处（它负责带快照条件写库并盖版本号）。
     /// </summary>
     public static UpdateDefinition<ImageMasterWorkspace> ContentResetUpdate(
         ImageMasterWorkspace ws, IEnumerable<ImageAsset> assets, DateTime now, string reason)
@@ -40,6 +40,50 @@ public static class LiteraryIllustrationArchive
             })
             .Set(x => x.ArticleWorkflowHistory, history)
             .Set(x => x.ArticleContentWithMarkers, null);
+    }
+
+    /// <summary>
+    /// 网页这次提交算不算「换了正文」。清空也算（如上传了一个空文件）：旧标记、带标记正文与挂图指针
+    /// 不能挂在空文章上。两个网页更新入口共用这一个判据——此前各写一份，修了一处另一处照旧。
+    /// </summary>
+    public static bool IsContentChange(ImageMasterWorkspace ws, string? newContent)
+        => newContent != null && !string.Equals(newContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
+
+    public enum ContentResetOutcome { Written, WorkspaceGone, KeptChanging }
+
+    /// <summary>
+    /// 网页换正文的写入：以读到的配图方案版本为条件写，对不上（中间插进了一次整篇重写 / 重新规划）
+    /// 就按最新状态重算一次再写。只按 id 写的话，两次换稿会从同一份旧快照推出同一个版本号，
+    /// 后写的把先写的方案与历史整个盖掉，还在跑的旧任务也会按这个撞号的版本通过回填校验。
+    /// 用户在网页上明确换了正文，按最新状态重来正是他的意图，所以重试而不是直接拒绝；连续几次都被抢先才放弃。
+    /// </summary>
+    /// <param name="otherFields">同一次提交里的其它字段（标题、文件夹等），与换稿在同一次写入里落库</param>
+    public static async Task<ContentResetOutcome> WriteContentResetAsync(
+        MongoDbContext db, ImageMasterWorkspace ws, string newContent,
+        UpdateDefinition<ImageMasterWorkspace> otherFields, string reason, CancellationToken ct)
+    {
+        var F = Builders<ImageMasterWorkspace>.Filter;
+        var current = ws;
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var now = DateTime.UtcNow;
+            var assets = await LiteraryIllustrationHistory.LoadAssetsAsync(db, current.Id, ct);
+            var update = Builders<ImageMasterWorkspace>.Update.Combine(otherFields,
+                ContentResetUpdate(current, assets, now, reason).Set(x => x.ArticleContent, newContent));
+            var sameWorkflow = current.ArticleWorkflow == null
+                ? F.Eq(x => x.ArticleWorkflow, null)
+                : LiteraryMarkerWrites.VersionIs(current.ArticleWorkflow.Version);
+            var result = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(F.Eq(x => x.Id, current.Id), sameWorkflow),
+                update, cancellationToken: CancellationToken.None);
+            if (result.MatchedCount > 0)
+            {
+                await StampUnversionedAsync(db, current.Id, current.ArticleWorkflow?.Version ?? 0);
+                return ContentResetOutcome.Written;
+            }
+            current = await db.ImageMasterWorkspaces.Find(x => x.Id == ws.Id).FirstOrDefaultAsync(CancellationToken.None);
+            if (current == null) return ContentResetOutcome.WorkspaceGone;
+        }
+        return ContentResetOutcome.KeptChanging;
     }
 
     /// <summary>
@@ -218,16 +262,22 @@ public static class LiteraryMarkerWrites
             new UpdateOptions { ArrayFilters = new[] { MarkerFilter(markerIndex) } }, CancellationToken.None);
         if (result.MatchedCount == 0) return false;
 
-        // 完成张数是派生值，按写入后的指针重算（不参与「放没放回去」的判定）
+        // 完成张数是派生值，按写入后的指针重算（不参与「放没放回去」的判定）。
+        // 放回可能让计数变小（放回的是已挂在别处的图），所以不能用「只增不减」的门控；改为以读到的
+        // 方案时间戳为条件：读完之后又有人改了指针，就让后来者按更新的指针去写，陈旧快照不落地。
         var latest = await db.ImageMasterWorkspaces.Find(F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version))).FirstOrDefaultAsync(CancellationToken.None);
-        var done = latest?.ArticleWorkflow?.AssetIdByMarkerIndex?.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count() ?? 0;
-        await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version)),
-            U.Set(x => x.ArticleWorkflow!.DoneImageCount, done), cancellationToken: CancellationToken.None);
+        if (latest?.ArticleWorkflow is { } wf)
+        {
+            var done = wf.AssetIdByMarkerIndex?.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count() ?? 0;
+            await db.ImageMasterWorkspaces.UpdateOneAsync(
+                F.And(F.Eq(x => x.Id, workspaceId), VersionIs(version), F.Eq(x => x.ArticleWorkflow!.UpdatedAt, wf.UpdatedAt)),
+                U.Set(x => x.ArticleWorkflow!.DoneImageCount, done), cancellationToken: CancellationToken.None);
+        }
         return true;
     }
 
     /// <summary>版本判据。很早的工作区文档里没有 version 字段（读出来是默认值 0），0 版要把「字段缺失」一并认下。</summary>
-    private static FilterDefinition<ImageMasterWorkspace> VersionIs(int version)
+    internal static FilterDefinition<ImageMasterWorkspace> VersionIs(int version)
     {
         var F = Builders<ImageMasterWorkspace>.Filter;
         return version == 0
