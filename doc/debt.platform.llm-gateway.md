@@ -28,6 +28,19 @@ MAP 库里的旧配置选模（`LLMConfigs` 活动配置、环境变量里的 Cl
 3. 部署侧把 `LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers` 置 true 观察一个稳定窗口；
 4. 删掉解析链第四档、MAP 配置回落查找与 serving 对 MAP 主库的兼容连接，连同 `InMemoryModelResolver` 的 legacy 分支。
 
+## claude-sdk 胶囊的调用在日志里记两次（2026-10-04）
+
+**状态**：未还
+
+claude-sdk 胶囊执行时，MAP 侧会手写一条汇总日志；它的 sidecar 又经 serving 的 `/v1/messages` 调模型，
+serving 每一轮上游调用各记一条。MAP 改读网关库之后，这两份落在同一个集合里，
+日志列表、调用次数与 token 统计会把这部分流量算两遍（多轮运行还会是「一条汇总 + 每一轮」）。
+
+只影响统计口径，不损坏数据、不影响发布判断，所以没在删老路径那次一起改。
+
+**还债的样子**：经网关的 sidecar 不再由 MAP 写汇总日志，改为在胶囊运行记录上关联 serving 的请求 Id；
+统计口径只认 serving 写的那份。
+
 ## 发布闸门不真调模型（2026-10-04）
 
 **状态**：未还
