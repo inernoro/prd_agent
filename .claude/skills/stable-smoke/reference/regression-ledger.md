@@ -50,6 +50,8 @@
 
 ## 新增模板
 
+| REG-stsmk-report-risk-001 | 稳定冒烟报告决策呈现 | 2026-10-05 | 有227未执行仍被归档器标成原则性通过；原巡检捕获P0与已确认工具P2混淆；缺口按散落文字误计228 | conditional加明确227缺口，旧P0警告绑定已确认test/infrastructure/P2诊断、未审查警告对照 | 绑定原DEF-STSMK-SUPERVISOR-SCOPE-001；实际渲染旧判据1绿3红，修复后标题/页尾/图片风险分类一致，原警告保留；不完整不放行 | CDS-only真实Python呈现守卫，运行器独立接线并传播失败，不算正式业务已测 | CORE-006 | 0 | active |
+
 | REG-web-sandbox-001 | 网页托管巡检隔离框架与截图门禁 | 2026-10-05 | Playwright 原生 SW block 初始化脚本读 opaque srcDoc 的 navigator.serviceWorker 抛 SecurityError；旧取证接线虽收集异常却未令用例变红 | 真实浏览器主页面加 sandbox allow-scripts iframe；旧脚本异常1次与安全阻断异常0次；主页面注册仍被阻断，其他异常不得吞掉 | DEF-STSMK-WEB-SW-001 首轮页面业务2条通过但视觉异常10次，保留首次证据；真实浏览器旧红新绿；修复后须原WEB路径与无异常截图、清理共同通过 | 同轮 CDS 门禁通过后复测相同安全阻断；禁止放开隔离权限或忽略异常 | WEB-001、WEB-004、WEB-005、WEB-006 | 0 | active |
 
 | REG-web-ask-stream-001 | 网页托管提问与稳测判据 | 2026-10-05 | 临时脚本把 typing JSON 帧夹进业务答案导致误报；既有解析器还会吞掉损坏帧，问答 API 直连不能证明页面可操作 | 白/桃、浅/粉分片；损坏 typing、空答案、无 done、done 后继续输出与 error 对照；匿名页面真实点击提问 | 原 DEF-STSMK-WEB-SELECTION-001 保留两次失败；既有吞错实现机械判据 1绿3红；修复后统一解析器与 UI 接线复验，线上当前/存量正文结果按原 WEB-005 持续留证 | 同轮 CDS 完整通过后，专用站点仅一个最小访客问题；不切换正式存储 | WEB-005、WEB-006 | 0 | active |

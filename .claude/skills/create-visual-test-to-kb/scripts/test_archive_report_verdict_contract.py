@@ -979,5 +979,53 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         self.assertEqual([], archive_report._interactive_evidence_errors(rendered, self.manifest))
 
 
+class ReportRiskDecisionTests(unittest.TestCase):
+    """REG-stsmk-report-risk-001：不让首屏覆盖不足或工具异常冒充产品结论。"""
+
+    warning = "自动捕获(P0,pageerror): serviceWorker SecurityError"
+    review = {
+        "severity": "P2", "classification": "test/infrastructure",
+        "defectId": "DEF-STSMK-WEB-SW-001",
+        "reason": "真实浏览器旧脚本1次异常、新脚本0次，已确认巡检注入造成",
+    }
+
+    def test_incomplete_conditional_is_not_presented_as_pass(self):
+        rendered = archive_report.build_interactive_html(
+            "定向修复", "conditional", "## 覆盖说明\n\n覆盖缺口：227个；补充flaky 1不计入缺口", []
+        )
+        self.assertNotIn("原则性通过", rendered)
+        self.assertIn("未完成，不放行", rendered)
+        self.assertEqual(227, archive_report._coverage_gap_count("覆盖缺口：227个；补充flaky 1"))
+
+    def test_reviewed_tool_warning_keeps_raw_evidence_without_product_p0(self):
+        shot = {"name": "01-old", "warnings": [self.warning], "warningReview": self.review}
+        items = archive_report._collect_problem_items("", [shot])
+        self.assertEqual("P2", items[0]["severity"])
+        self.assertIn(self.warning, items[0]["detail"])
+        self.assertIn("非产品严重级", items[0]["detail"])
+
+    def test_unreviewed_real_failure_remains_p0(self):
+        items = archive_report._collect_problem_items("", [{"name": "01-fail", "warnings": [self.warning]}])
+        self.assertEqual("P0", items[0]["severity"])
+
+    def test_review_reaches_actual_figure_and_header(self):
+        shot = {"name": "01-old", "caption": "原失败旁证", "warnings": [self.warning], "warningReview": self.review}
+        rendered = archive_report.build_interactive_html(
+            "原失败旁证", "conditional",
+            '## 原失败\n\n覆盖缺口：227个\n\n<span id="fig-01-old" class="figure-anchor"></span>\n\n![原失败旁证](https://assets.example.test/old.png)',
+            [shot], figure_srcs={"fig-01-old": "https://assets.example.test/old.png"},
+        )
+        self.assertIn("有条件风险 · P2", rendered)
+        self.assertNotIn("验收失败 · P0", rendered)
+        self.assertIn(self.warning, rendered)
+        self.assertIn("未完成，不放行", rendered)
+
+    def test_review_requires_reason_and_defect_mapping(self):
+        for missing in ("reason", "defectId", "classification", "severity"):
+            review = {k: v for k, v in self.review.items() if k != missing}
+            with self.assertRaises(ValueError):
+                archive_report._collect_problem_items("", [{"name": "01-old", "warnings": [self.warning], "warningReview": review}])
+
+
 if __name__ == "__main__":
     unittest.main()

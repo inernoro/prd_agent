@@ -109,3 +109,6 @@ PR #1655 第 7 轮评审提出，当时已命中 §5.5 熔断，按 B 类记账�
 - `.github/workflows/ci.yml` —— `release_scripts` 过滤器，决定守卫何时跑
 - `prd-admin/src/pages/WebPagesPage.tsx` —— 目前唯一带 `data-acceptance-scope` 标记的页面，抄它
 - `.claude/rules/predicate-and-wiring-discipline.md` —— 形状 6（扫字面量还是求值结果）与形状 7（守卫没接上线）
+## 附：首屏结论与诊断分类不得误导放行（2026-10-05，guarded）
+
+原 `DEF-STSMK-SUPERVISOR-SCOPE-001` 在业务复读时复发：227项未执行被呈现为原则性通过，已确认巡检工具P2却被捕获器等级包装为产品P0。已建立 `REG-stsmk-report-risk-001` 的真实渲染红绿和自动执行接线。未完成项必须与补充不稳定项分开计数，缺口未补齐时必须明确未完成、不放行；风险分类变更必须绑定原缺陷号与确认依据，原始捕获等级不得删除。机械守卫通过不等于缺陷关闭，线上改版、真实点击与严格业务复读通过前保持 reopened，之后仍需完整回归。

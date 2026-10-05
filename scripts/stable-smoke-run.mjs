@@ -744,6 +744,20 @@ export function runReportViewRegression(runDir, commandRunner = command) {
   };
 }
 
+export function runReportRiskRegression(runDir, commandRunner = command) {
+  const result = commandRunner('python3', [
+    '.claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py',
+    'ReportRiskDecisionTests',
+  ]);
+  const passed = result.status === 0;
+  const artifactPath = resolve(runDir, 'report-risk-regression.log');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}`, 'utf8');
+  return {
+    execution: { environment: 'cds-report-risk-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
+    rows: [{ caseId: 'REG-stsmk-report-risk-001', environment: 'cds', title: '报告首屏结论与风险分类不得误导', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '报告风险呈现回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['报告风险呈现回归失败'] }],
+  };
+}
+
 export function runFolderRegressionTests(runDir, commandRunner = command) {
   const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
   const clientResult = commandRunner('pnpm', [
@@ -1650,6 +1664,11 @@ async function main() {
       const reportViewRegression = runReportViewRegression(runDir);
       executions.push(reportViewRegression.execution);
       supplementalRows.push(...reportViewRegression.rows);
+    }
+    if (selectedCdsCases.includes('REG-stsmk-report-risk-001')) {
+      const reportRiskRegression = runReportRiskRegression(runDir);
+      executions.push(reportRiskRegression.execution);
+      supplementalRows.push(...reportRiskRegression.rows);
     }
 
     for (const environment of selected) {

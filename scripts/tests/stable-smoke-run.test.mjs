@@ -43,6 +43,7 @@ import {
   runFolderRegressionTests,
   runNotificationEvidenceRegression,
   runReportViewRegression,
+  runReportRiskRegression,
   runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -95,6 +96,27 @@ test('报告视图永久回归必须接线并传播失败', () => {
     const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
     assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-view-001'\)/);
     assert.match(source, /supplementalRows.push\(\.\.\.reportViewRegression.rows\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('报告风险分类永久回归必须接线并传播失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-report-risk-'));
+  try {
+    for (const status of [0, 1]) {
+      const result = runReportRiskRegression(directory, (name, args) => {
+        assert.equal(name, 'python3');
+        assert.ok(args.includes('ReportRiskDecisionTests'));
+        return { status, stdout: '风险判据', stderr: '' };
+      });
+      assert.equal(result.rows[0].caseId, 'REG-stsmk-report-risk-001');
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.ok(existsSync(result.execution.artifactPath));
+    }
+    const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+    assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-risk-001'\)/);
+    assert.match(source, /supplementalRows.push\(\.\.\.reportRiskRegression.rows\)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
