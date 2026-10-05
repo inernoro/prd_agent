@@ -1026,6 +1026,16 @@ class ReportRiskDecisionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 archive_report._collect_problem_items("", [{"name": "01-old", "warnings": [self.warning], "warningReview": review}])
 
+    def test_business_decision_cannot_release_with_unexecuted_cases(self):
+        for not_run in (0, 227):
+            body = InteractiveReportLinkContractTests.business_decision_body(not_run, 0)
+            rendered = archive_report.build_interactive_html("业务放行", "conditional", body, [])
+            if not_run:
+                self.assertIn("当前不能放行", rendered)
+                self.assertNotIn("当前只能有条件放行", rendered)
+            else:
+                self.assertIn("当前只能有条件放行", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2628,6 +2628,7 @@ def build_interactive_html(
         release_failed = (
             verdict == "fail"
             or counts["失败"] > 0
+            or counts["未执行"] > 0
             or visual.get("明确不通过", 0) > 0
         )
         release_conditional = (
