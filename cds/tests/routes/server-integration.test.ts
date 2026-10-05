@@ -260,6 +260,46 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
+  it('REG-acceptance-auth-json-001: 登录后的真实服务可发布结构化清单，不被观测中间件消费正文', async () => {
+    const previous = { mode: process.env.CDS_AUTH_MODE, user: process.env.CDS_USERNAME, pass: process.env.CDS_PASSWORD };
+    process.env.CDS_AUTH_MODE = 'basic';
+    process.env.CDS_USERNAME = 'stsmk_operator';
+    process.env.CDS_PASSWORD = 'fixture-only-password';
+    try {
+      const app = buildRealServerWithEvents([], (state) => {
+        state.addProject({ id: 'stsmk-acceptance', slug: 'stsmk-acceptance', name: '验收回归', kind: 'git', createdAt: '', updatedAt: '' });
+      });
+      server = await startServer(app);
+      const login = await requestJson(server, 'POST', '/api/login', { username: 'stsmk_operator', password: 'fixture-only-password' });
+      expect(login.status).toBe(200);
+      const cookies = login.headers['set-cookie'];
+      const cookie = (Array.isArray(cookies) ? cookies[0] : String(cookies || '')).split(';')[0];
+      const headers = { Cookie: cookie };
+      const payload = {
+        projectId: 'stsmk-acceptance', title: 'stsmk-结构化清单', description: '真实登录及服务器中间件组合回归',
+        cases: [{ caseId: 'CORE-001', title: '读取页面', module: '验收中心', criticality: 'core', environments: ['production', 'cds'], breadcrumb: ['验收中心'], entryPath: '/reports', preconditions: [], inputs: [], steps: [{ id: 'step-1', action: '点击清单', expected: '内容可回读' }], assertions: [{ id: 'assert-1', description: '内容可回读' }], evidenceRequired: true, cleanup: 'none', cleanupInstructions: '', owner: '验收负责人' }],
+      };
+      const published = await requestJson(server, 'POST', '/api/acceptance/templates', payload, headers);
+      expect(published.status, published.body).toBe(201);
+      expect(JSON.parse(published.body).template.cases[0].caseId).toBe('CORE-001');
+      const listed = await request(server, '/api/acceptance/templates?projectId=stsmk-acceptance', headers);
+      expect(JSON.parse(listed.body).templates).toHaveLength(1);
+      const report = await requestJson(server, 'POST', '/api/reports', { projectId: 'stsmk-acceptance', title: 'stsmk-报告格式校验', format: 'invalid', content: '合法 JSON 正文必须抵达报告业务校验' }, headers);
+      expect(report.status).toBe(400);
+      expect(JSON.parse(report.body).error).toBe('unknown_format');
+      const large = await requestJson(server, 'POST', '/api/acceptance/templates', { ...payload, padding: 'x'.repeat(1_100_000) }, headers);
+      expect(large.status).toBe(413);
+      expect(JSON.parse(large.body).message).toContain('超过请求容量');
+      const invalid = await requestRaw(server, 'POST', '/api/acceptance/templates', '{invalid', headers);
+      expect(invalid.status).toBe(400);
+      expect(JSON.parse(invalid.body).message).toContain('请求正文无效');
+    } finally {
+      for (const [key, value] of Object.entries({ CDS_AUTH_MODE: previous.mode, CDS_USERNAME: previous.user, CDS_PASSWORD: previous.pass })) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+
   function buildRealServerWithEvents(
     events: ServerEventRecord[],
     setupState?: (stateService: StateService) => void,

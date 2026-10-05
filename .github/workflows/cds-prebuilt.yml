@@ -56,6 +56,9 @@ jobs:
       - name: Isolated preview regression contract
         run: pnpm -C cds exec vitest run tests/services/preview-runtime-contract.test.ts --reporter=dot
 
+      - name: Authenticated acceptance JSON regression
+        run: pnpm -C cds exec vitest run tests/routes/server-integration.test.ts -t REG-acceptance-auth-json-001 --reporter=dot
+
       - name: Build backend (esbuild → cds/dist)
         run: |
           cd cds

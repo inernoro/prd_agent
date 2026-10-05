@@ -2337,7 +2337,12 @@ export function createServer(deps: ServerDeps): express.Express {
     };
     const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
-    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
+    // 清单与报告路由使用自己的正文解析器，位于异步鉴权之后。提前添加 data 监听
+    // 会让尚未解析的请求进入 flowing 状态，鉴权返回时正文已被消费，合法清单也报 400。
+    // 这条路径在 finish 时使用下方 parsedReqBody 回读，日志不抢读请求流。
+    const acceptanceOwnsBody = req.path === '/api/acceptance' || req.path.startsWith('/api/acceptance/')
+      || req.path === '/api/reports' || req.path.startsWith('/api/reports/');
+    if (!acceptanceOwnsBody) req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     const responseCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined);
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
