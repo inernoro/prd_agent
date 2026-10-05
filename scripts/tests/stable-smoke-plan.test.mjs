@@ -198,6 +198,7 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     'REG-web-folder-fence-001',
     'REG-web-folder-create-rename-001',
     'REG-web-ask-stream-001',
+    'REG-web-sandbox-001',
   ]);
   const plan = buildPlan({
     catalog,

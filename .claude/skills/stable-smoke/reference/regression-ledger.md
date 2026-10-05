@@ -50,6 +50,8 @@
 
 ## 新增模板
 
+| REG-web-sandbox-001 | 网页托管巡检隔离框架与截图门禁 | 2026-10-05 | Playwright 原生 SW block 初始化脚本读 opaque srcDoc 的 navigator.serviceWorker 抛 SecurityError；旧取证接线虽收集异常却未令用例变红 | 真实浏览器主页面加 sandbox allow-scripts iframe；旧脚本异常1次与安全阻断异常0次；主页面注册仍被阻断，其他异常不得吞掉 | DEF-STSMK-WEB-SW-001 首轮页面业务2条通过但视觉异常10次，保留首次证据；真实浏览器旧红新绿；修复后须原WEB路径与无异常截图、清理共同通过 | 同轮 CDS 门禁通过后复测相同安全阻断；禁止放开隔离权限或忽略异常 | WEB-001、WEB-004、WEB-005、WEB-006 | 0 | active |
+
 | REG-web-ask-stream-001 | 网页托管提问与稳测判据 | 2026-10-05 | 临时脚本把 typing JSON 帧夹进业务答案导致误报；既有解析器还会吞掉损坏帧，问答 API 直连不能证明页面可操作 | 白/桃、浅/粉分片；损坏 typing、空答案、无 done、done 后继续输出与 error 对照；匿名页面真实点击提问 | 原 DEF-STSMK-WEB-SELECTION-001 保留两次失败；既有吞错实现机械判据 1绿3红；修复后统一解析器与 UI 接线复验，线上当前/存量正文结果按原 WEB-005 持续留证 | 同轮 CDS 完整通过后，专用站点仅一个最小访客问题；不切换正式存储 | WEB-005、WEB-006 | 0 | active |
 
 | REG-stsmk-report-view-001 | 报告打开验证 | 2026-10-05 | 主管报告默认简版隐藏版本字段；校验未真实展开完整版，误判正文缺失 | 隐藏版本的简版与无切换按钮的历史完整报告 | 旧线上校验两次失败；实际按钮点击守卫、本地浏览器与修复后线上校验绑定原 DEF-STSMK-VERIFY-RUNTIME-001 | 不写正式业务；本地判据由 CDS 集合执行 | verify-open、CORE-006 | 0 | active |

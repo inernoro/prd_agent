@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readSseTypingText } from '../../e2e/utils/stableSmokeSse.mjs';
+import { runInNewContext } from 'node:vm';
+import { blockStableSmokeServiceWorkerRegistration } from '../../e2e/utils/stableSmokeBrowser.mjs';
 
 const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const answer = (...parts) => frame('phase', { phase: 'preparing' })
@@ -10,6 +12,27 @@ const answer = (...parts) => frame('phase', { phase: 'preparing' })
 test('[REG-web-ask-stream-001] typing分片只拼业务text，不把JSON协议字段夹进答案', () => {
   assert.equal(readSseTypingText(answer('白', '桃，浅', '粉色')), '白桃，浅粉色');
   assert.equal(readSseTypingText(answer('白桃').replaceAll('\n', '\r\n')), '白桃');
+});
+
+test('[REG-web-sandbox-001] opaque srcDoc 权限拒绝不抛错，主页面注册仍被阻断', async () => {
+  const navigator = {};
+  Object.defineProperty(navigator, 'serviceWorker', { get() { const error = new Error('opaque origin'); error.name = 'SecurityError'; throw error; } });
+  assert.doesNotThrow(() => runInNewContext(`(${blockStableSmokeServiceWorkerRegistration.toString()})()`, { navigator }));
+  let registered = false;
+  const worker = { register() { registered = true; } };
+  runInNewContext(`(${blockStableSmokeServiceWorkerRegistration.toString()})()`, { navigator: { serviceWorker: worker }, console: { warn() {} } });
+  await worker.register('/sw.js');
+  assert.equal(registered, false);
+  const unexpected = {};
+  Object.defineProperty(unexpected, 'serviceWorker', { get() { throw Error('unexpected'); } });
+  assert.throws(() => runInNewContext(`(${blockStableSmokeServiceWorkerRegistration.toString()})()`, { navigator: unexpected }), /unexpected/);
+});
+
+test('[REG-web-sandbox-001] 主巡检和网页匿名context前置阻断且截图异常必须令用例失败', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  assert.match(source, /context\.addInitScript\(blockStableSmokeServiceWorkerRegistration\)/);
+  assert.match(source, /guestContext\.addInitScript\(blockStableSmokeServiceWorkerRegistration\)/);
+  assert.match(source, /expect\(evidence\.automatedStatus,[^\n]+\.toBe\('通过'\)/);
 });
 
 test('[REG-web-ask-stream-001] 损坏typing不能被静默丢弃后判成功', () => {

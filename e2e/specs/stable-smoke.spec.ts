@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
+import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 
 type BusinessCatalog = {
   featureLines: Array<{
@@ -26,12 +27,15 @@ async function captureWebEvidence(page: Page, info: TestInfo, name: string, capt
   try {
     const evidence = await harness.shot(page, out, name, caption, {
       skipReady: true, module: 'web-hosting-sharing', primaryState: name, testType: '回归',
-      breadcrumb: '首页 → 网页托管 → 本轮专用站点 → 分享与提问',
+      breadcrumb: info.title.includes('空文件夹')
+        ? '首页 → 网页托管 → 个人空间 → 本轮文件夹 → 拖拽归属'
+        : '首页 → 网页托管 → 本轮专用站点 → 分享与匿名提问',
       environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), runId: requiredEnv('STABLE_SMOKE_RUN_ID'),
       commit: requiredEnv('STABLE_SMOKE_COMMIT'), methodAnchor: 'method-web',
     });
     harness.writeManifest(out, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), commit: requiredEnv('STABLE_SMOKE_COMMIT') });
     await info.attach(name, { path: evidence.path, contentType: 'image/png' });
+    expect(evidence.automatedStatus, '截图捕获异常不能被业务成功掩盖').toBe('通过');
   } finally {
     await harness.clearBoxes(page);
   }
@@ -1307,6 +1311,9 @@ async function deleteStableHostedSite(page: Page, token: string, siteId: string)
 }
 
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
+  test.beforeEach(async ({ context }) => {
+    if (process.env.STABLE_SMOKE_RUN) await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
+  });
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
     const resourceFailures: string[] = [];
     page.on('response', (item) => {
@@ -1436,7 +1443,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-sandbox-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
     const token = await openWebHostingFromHome(page, request);
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-folder-r${testInfo.retry}`;
@@ -1660,7 +1667,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-004][WEB-005][WEB-006][REG-web-ask-stream-001] 分享页片段留在 srcDoc 且页面提问可读正文', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[WEB-004][WEB-005][WEB-006][REG-web-ask-stream-001][REG-web-sandbox-001] 分享页片段留在 srcDoc 且页面提问可读正文', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     const environment = requiredEnv('STABLE_SMOKE_ENVIRONMENT');
     test.setTimeout(environment === 'cds' ? 300_000 : 180_000);
     const token = await openWebHostingFromHome(page, request);
@@ -1700,6 +1707,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const shareUrl = await page.locator('input[readonly]').last().inputValue();
       expect(new URL(shareUrl).origin).toBe(new URL(page.url()).origin);
       guestContext = await page.context().browser()!.newContext();
+      await guestContext.addInitScript(blockStableSmokeServiceWorkerRegistration);
       const guest = await guestContext.newPage();
       const harness = await import(webEvidenceHarnessUrl);
       harness.attachAutoCapture(guest);
