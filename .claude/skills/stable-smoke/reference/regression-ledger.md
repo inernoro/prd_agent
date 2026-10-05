@@ -73,7 +73,7 @@
 
 | 模块 | 功能 | 操作锚点 | caseId | 环境策略 | 最近结果 | 证据 | 清理状态 | 负责人 |
 |---|---|---|---|---|---|---|---|---|
-| 网页托管 | 入口 | 首页点击网页托管、上传站点 | WEB-001 | CDS 专用身份；正式未执行 | 定向 pass | [本轮在线报告](https://cds.miduo.org/reports?project=prd-agent&folder=22064baf9cd64a5aa6f3c4a7dfef3006&report=e1a1ec778cb44d509febd9c4a59b409a) 图02 | 站点404、文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 入口 | 首页点击网页托管、上传站点 | WEB-001 | CDS 专用身份；正式未执行 | 定向 pass | [本轮在线报告](https://cds.miduo.org/reports?project=prd-agent&folder=22064baf9cd64a5aa6f3c4a7dfef3006&report=a4083eb5591540b08b6a9b0501666300) 图02 | 站点404、文件夹无ID | 当前修复Agent / web-hosting |
 | 网页托管 | 空文件夹 | 新建文件夹 | WEB-002 | CDS当前run前缀；正式未执行 | 定向 pass；移动补充 flaky 1 | 同报告图02、08、09 | 两次移动夹具均无ID | 当前修复Agent / web-hosting |
 | 网页托管 | 拖拽归属 | 指针真实拖拽、松开移入、刷新 | WEB-003 | CDS个人文件夹；正式未执行 | 定向 pass | 同报告图03、04 | 归属读回，文件夹无ID | 当前修复Agent / web-hosting |
 | 分享 | 同页锚点 | 分享页点击srcDoc内部链接 | WEB-004 | CDS无登录访客；正式未执行 | 定向 pass | 同报告图05 | 撤销分享404、站点404；物理对象欠证 | 当前修复Agent / web-hosting |
@@ -83,7 +83,7 @@
 | 网页托管巡检 | 严格流解析 | phase→typing.text→done；损坏/空/截断拒绝 | REG-web-ask-stream-001 | CDS真实访客；正式未执行 | 定向 pass；保持active | 同报告图06、07及坏流红绿记录 | 当前与存量站点404 | 当前修复Agent |
 | 网页托管巡检 | 安全取证 | opaque iframe不造异常、其他异常仍抛 | REG-web-sandbox-001 | CDS主context与访客context；正式未执行 | 定向 pass；旧脚本1异常、新0，原取证10异常修复后0；保持active | 同报告图01原失败旁证与图03修复后、真实浏览器重放 | 两轮站点/分享404，文件夹无ID | 当前修复Agent |
 
-报告官方 verify-open 首试通过：156 个内部链接、12 次当前可见真实点击、0断链/0点击失败；9张唯一在线图全部实际解码。报告链路通过不等于业务全量通过，历史记录及未关闭状态保留。
+第一版报告虽然 verify-open 通过，但业务复读74分，首屏呈现误导不能交付；绑定原主管统计缺陷，原版本不删除。已自修报告编排工具 `e6ab7f6bb76ba61dd39c7eacaa754115dc1e0715`，82项报告测试与148项冒烟工具测试通过。第二版官方 verify-open 首试通过：157个内部链接、12次当前可见真实点击、0断链/0点击失败；9张唯一在线图全部实际解码。当前冻结241不变，新增报告风险呈现REG属于补充机制，下一轮CDS133+正式109=242。报告链路通过不等于业务全量通过，历史记录及未关闭状态保留。
 
 ## 状态
 
