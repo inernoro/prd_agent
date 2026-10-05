@@ -65,6 +65,24 @@
 | REG-{module}-{number} | {模块} | {YYYY-MM-DD} | {问题与根因} | {夹具} | {失败到通过证据} | {正式安全变体} | {caseId 列表} | 0 | active |
 ```
 
+## 2026-10-05 自修复验覆盖记录
+
+固定实测工具 ref `48f5cae31bd401c94801d9cac61176105e566050`，runId `stsmk-20261005-2004-webfix`。下表是两条真实桌面旅程展开的操作结果，不是额外独立旅程；正式环境全部未执行。完整 WEB 门禁仍未通过：requestId、界面阶段时限与 HTML 物理对象删除回读欠证。仅定向通过，不关闭缺陷，不放行生产。
+
+| 模块 | 功能 | 操作锚点 | caseId | 环境策略 | 最近结果 | 证据 | 清理状态 | 负责人 |
+|---|---|---|---|---|---|---|---|---|
+| 网页托管 | 入口 | 首页点击网页托管、上传站点 | WEB-001 | CDS 专用身份；正式未执行 | 定向 pass | [本轮在线报告](https://cds.miduo.org/reports?project=prd-agent&folder=22064baf9cd64a5aa6f3c4a7dfef3006&report=e1a1ec778cb44d509febd9c4a59b409a) 图02 | 站点404、文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 空文件夹 | 新建文件夹 | WEB-002 | CDS当前run前缀；正式未执行 | 定向 pass；移动补充 flaky 1 | 同报告图02、08、09 | 两次移动夹具均无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 拖拽归属 | 指针真实拖拽、松开移入、刷新 | WEB-003 | CDS个人文件夹；正式未执行 | 定向 pass | 同报告图03、04 | 归属读回，文件夹无ID | 当前修复Agent / web-hosting |
+| 分享 | 同页锚点 | 分享页点击srcDoc内部链接 | WEB-004 | CDS无登录访客；正式未执行 | 定向 pass | 同报告图05 | 撤销分享404、站点404；物理对象欠证 | 当前修复Agent / web-hosting |
+| 分享 | 正文提问 | 向我提问、发送、助手答案 | WEB-005 | CDS当前正文/存量夹具各1次；正式未执行 | 定向 pass；requestId/阶段时限欠证 | 同报告图06、07 | 无错误事件；分享与站点404 | 当前修复Agent / web-hosting |
+| 网页托管 | 并发唯一身份 | 同名创建与重命名并发 | WEB-006 | CDS自然并发；正式未执行 | 定向 pass | 同报告执行明细；答案图不证明并发机制 | 站点404、文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 围栏 | 撞占用目标、过期租约不得覆盖新操作 | WEB-007、REG-web-folder-canonical-001、REG-web-folder-fence-001、REG-web-folder-create-rename-001 | CDS自然并发；精确窗口在独立本地MongoDB夹具；正式未执行 | 定向 pass；前端8/8、MongoDB12/12，非CDS部署版本证明 | 同报告机制执行明细 | 内部夹具自清理、页面文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管巡检 | 严格流解析 | phase→typing.text→done；损坏/空/截断拒绝 | REG-web-ask-stream-001 | CDS真实访客；正式未执行 | 定向 pass；保持active | 同报告图06、07及坏流红绿记录 | 当前与存量站点404 | 当前修复Agent |
+| 网页托管巡检 | 安全取证 | opaque iframe不造异常、其他异常仍抛 | REG-web-sandbox-001 | CDS主context与访客context；正式未执行 | 定向 pass；旧脚本1异常、新0，原取证10异常修复后0；保持active | 同报告图01原失败旁证与图03修复后、真实浏览器重放 | 两轮站点/分享404，文件夹无ID | 当前修复Agent |
+
+报告官方 verify-open 首试通过：156 个内部链接、12 次当前可见真实点击、0断链/0点击失败；9张唯一在线图全部实际解码。报告链路通过不等于业务全量通过，历史记录及未关闭状态保留。
+
 ## 状态
 
 - `candidate`：已发现，尚未满足永久用例准入。
