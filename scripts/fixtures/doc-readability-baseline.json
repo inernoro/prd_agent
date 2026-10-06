@@ -30,9 +30,9 @@
   "source_refs": {
     "spec": 15,
     "design": 178,
-    "plan": 24,
+    "plan": 21,
     "rule": 41,
-    "guide": 103,
+    "guide": 102,
     "report": 52,
     "debt": 213
   },
@@ -583,7 +583,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 8
+      "src": 7
     },
     "guide.platform.mcp-connector.md": {
       "missing": 0,
@@ -673,7 +673,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 5
+      "src": 2
     },
     "plan.visual-agent.optimization-backlog.md": {
       "missing": 0,
