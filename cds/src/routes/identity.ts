@@ -22,6 +22,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import { assertNotMachineAgentKey } from './projects.js';
+import { isHumanProjectGrantUpdatePending } from '../services/human-project-access.js';
 import type { AgentKey, Principal, ProjectGrant, UserCredential } from '../types.js';
 import {
   buildPrincipalOverview,
@@ -307,6 +308,10 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       res.status(400).json({ error: 'bad_request', message: 'principalId 与 projectId 均为必填' });
       return;
     }
+    if (isHumanProjectGrantUpdatePending(stateService, principalId)) {
+      res.status(409).json({ error: 'grant_update_pending', message: '此账号的项目授权正在保存，请稍后重试。' });
+      return;
+    }
     if (!stateService.getPrincipal(principalId)) {
       res.status(404).json({ error: 'principal_not_found', message: `主体 ${principalId} 不存在` });
       return;
@@ -330,6 +335,11 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
   router.post('/identity/grants/:id/revoke', (req, res) => {
     const admin = requireAdmin(req);
     if (!admin.ok) { res.status(403).json(admin.body); return; }
+    const grant = stateService.getProjectGrants().find(g => g.id === req.params.id);
+    if (grant && isHumanProjectGrantUpdatePending(stateService, grant.principalId)) {
+      res.status(409).json({ error: 'grant_update_pending', message: '此账号的项目授权正在保存，请稍后重试。' });
+      return;
+    }
     if (!stateService.revokeProjectGrant(req.params.id, actorOf(req))) {
       res.status(404).json({ error: 'not_found', message: `授权 ${req.params.id} 不存在` });
       return;

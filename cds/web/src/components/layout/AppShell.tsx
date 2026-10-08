@@ -112,7 +112,7 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
-type ShellAuthStatus = {
+export type ShellAuthStatus = {
   enabled?: boolean;
   mode?: string;
   activeProvider?: string | null;
@@ -128,6 +128,11 @@ type ShellUser = {
   avatarUrl?: string | null;
   isSystemOwner?: boolean;
 };
+
+/** Unknown auth never exposes owner-only controls; disabled local mode stays compatible. */
+export function canManageSystemSettings(status: ShellAuthStatus | null): boolean {
+  return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
+}
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
@@ -245,6 +250,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const canManageSettings = canManageSystemSettings(authStatus);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
   const agentContext = resolveAgentPageContext(
@@ -354,6 +360,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
+        canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
         user={authStatus?.user}
@@ -367,6 +374,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         open={navOpen}
         onClose={() => setNavOpen(false)}
         active={active}
+        canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
         user={authStatus?.user}
@@ -396,12 +404,12 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           </div>
         </div>
       )}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      <OperatorApprovalModal />
+      {canManageSettings ? <OperatorApprovalModal /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      <SiteNoticeInbox />
+      {canManageSettings ? <SiteNoticeInbox /> : null}
     </div>
     </MobileNavContext.Provider>
   );
@@ -434,6 +442,7 @@ export function PaletteHint(): JSX.Element {
 
 interface RailNavProps {
   active: AppNavKey;
+  canManageSettings: boolean;
   canLogout: boolean;
   authMode?: string;
   user?: ShellUser | null;
@@ -449,6 +458,7 @@ interface RailNavProps {
  */
 function RailNav({
   active,
+  canManageSettings,
   canLogout,
   authMode,
   user,
@@ -475,6 +485,7 @@ function RailNav({
           <span className="cds-rail-full">项目列表</span>
           <span className="cds-rail-short">项目</span>
         </Link>
+        {canManageSettings ? <>
         {/* 概览（plan.cds.service-relations 第四批）：全部项目的关系与体检，一眼看出配置错在哪、引用断在哪 */}
         <Link
           to="/overview"
@@ -548,6 +559,7 @@ function RailNav({
           <span className="cds-rail-full">监控中心</span>
           <span className="cds-rail-short">监控</span>
         </Link>
+        </> : null}
       </div>
       {/*
        * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。
@@ -556,6 +568,7 @@ function RailNav({
        */}
       <div className="flex-1" />
       <div className="cds-rail-tools">
+        {canManageSettings ? <>
         <button
           type="button"
           className="cds-rail-item cds-rail-action-entry cds-agent-access-entry"
@@ -600,10 +613,20 @@ function RailNav({
           <span className="cds-rail-full">系统设置</span>
           <span className="cds-rail-short">设置</span>
         </Link>
+        </> : (
+          <Link to="/cds-settings#activity" className="cds-rail-item"
+            data-active={active === 'cds-settings' ? 'true' : 'false'}
+            aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
+            <Activity />
+            <span className="cds-rail-full">个人操作痕迹</span>
+            <span className="cds-rail-short">痕迹</span>
+          </Link>
+        )}
       </div>
       <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu
+          canManageSettings={canManageSettings}
           authMode={authMode}
           canLogout={canLogout}
           logoutState={logoutState}
@@ -660,6 +683,7 @@ function userInitials(user?: ShellUser | null): string {
 
 function UserAccountMenu({
   authMode,
+  canManageSettings,
   canLogout,
   logoutState,
   onLogout,
@@ -733,7 +757,7 @@ function UserAccountMenu({
         </div>
       </div>
       <Link
-        to="/cds-settings#auth"
+        to={canManageSettings ? '/cds-settings#auth' : '/cds-settings#activity'}
         className="cds-account-menu-item"
         role="menuitem"
         onClick={() => {
@@ -742,7 +766,7 @@ function UserAccountMenu({
         }}
       >
         <Settings />
-        <span>用户与认证</span>
+        <span>{canManageSettings ? '用户与认证' : '个人操作痕迹'}</span>
       </Link>
       <div className="cds-account-theme" aria-label="主题">
         <div className="mb-2 text-xs font-medium text-muted-foreground">界面主题</div>
@@ -842,7 +866,7 @@ function UserAccountMenu({
   );
 }
 
-function AppRail(props: RailNavProps): JSX.Element {
+export function AppRail(props: RailNavProps): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       {/* 品牌宝石 2026-07-05 起移入横贯全宽的 topbar 左端(用户反馈"logo 放在

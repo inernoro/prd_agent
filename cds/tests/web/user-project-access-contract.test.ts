@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
+import { AppRail, canManageSystemSettings } from '../../web/src/components/layout/AppShell';
+import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
+
+const { MemoryRouter } = createRequire(path.resolve('web/package.json'))('react-router-dom');
 
 const read = (file: string) => fs.readFileSync(path.resolve('web/src', file), 'utf8');
 
@@ -24,5 +31,34 @@ describe('human project access UI wiring', () => {
     expect(dialog).toContain('method: \'PUT\', body: { projectIds: selected }');
     expect(dialog).toContain('setData(result)');
     expect(dialog).not.toMatch(/localStorage|sessionStorage/);
+  });
+  it('renders only project and personal activity navigation for members, preserving owner controls', () => {
+    const render = (canManageSettings: boolean) => renderToStaticMarkup(createElement(MemoryRouter, null,
+      createElement(AppRail, { active: 'projects', canManageSettings, canLogout: false, logoutState: 'idle',
+        onLogout() {}, onAgentAccess() {}, onBugReport() {} })));
+    const member = render(false);
+    expect(member).toContain('href="/project-list"');
+    expect(member).toContain('href="/cds-settings#activity"');
+    expect(member).toContain('个人操作痕迹');
+    for (const ownerRoute of ['/overview', '/release-console', '/task-schedule', '/reports', '/status']) {
+      expect(member).not.toContain(`href="${ownerRoute}"`);
+    }
+    expect(member).not.toContain('CDS 系统设置');
+    const owner = render(true);
+    expect(owner).toContain('CDS 系统设置');
+    expect(owner).toContain('href="/release-console"');
+  });
+  it('fails closed before auth resolves and keeps legacy owner/disabled mode compatibility', () => {
+    expect(canManageSystemSettings(null)).toBe(false);
+    expect(canManageSystemSettings({ enabled: true, user: { isSystemOwner: false } })).toBe(false);
+    expect(canManageSystemSettings({ enabled: true, user: { isSystemOwner: true } })).toBe(true);
+    expect(canManageSystemSettings({ enabled: false, mode: 'disabled', user: null })).toBe(true);
+    for (const requested of ['maintenance', 'users', 'auth', 'activity'] as const) {
+      expect(settingsTabForViewer(requested, false)).toBe('activity');
+      expect(settingsTabForViewer(requested, true)).toBe(requested);
+    }
+    const page = read('pages/CdsSettingsPage.tsx');
+    expect(page).toContain('settingsTabForViewer(requestedTab, canManageSettings)');
+    expect(page).toContain('canManageSystemSettings(viewerStatus)');
   });
 });

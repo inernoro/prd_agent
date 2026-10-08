@@ -427,6 +427,28 @@ describe('human project grants through the production server', () => {
     expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-b']);
   });
 
+  it('rejects competing identity grant mutations until replacement compensation finishes', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const original = state.getProjectGrants().find(g => g.principalId === principalId)!;
+    let rejectFlush!: (error: Error) => void;
+    let started!: () => void;
+    const pending = new Promise<void>((_, reject) => { rejectFlush = reject; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    vi.spyOn(state, 'flush').mockImplementationOnce(() => { started(); return pending; });
+    const saving = grant([]);
+    await entered;
+    const revocation = await call('POST', `/api/identity/grants/${original.id}/revoke`, owner, {});
+    const addition = await call('POST', '/api/identity/grants', owner, { principalId, projectId: 'project-b' });
+    rejectFlush(new Error('fake replacement persistence failure'));
+    expect((await saving).status).toBe(500);
+    expect(revocation.status).toBe(409);
+    expect(addition.status).toBe(409);
+    expect(original.revokedAt).toBeUndefined();
+    expect((await call('POST', `/api/identity/grants/${original.id}/revoke`, owner, {})).status).toBe(200);
+    expect((await call('GET', '/api/projects', member)).body.projects).toEqual([]);
+  });
+
   it('rejects member self-grants and preserves owner/disabled-user invariants', async () => {
     expect((await call('PUT', `/api/auth/users/${memberId}/projects`, member, { projectIds: ['project-a'] })).status).toBe(403);
     expect((await call('GET', '/api/auth/users/not-a-user/projects')).status).toBe(404);
