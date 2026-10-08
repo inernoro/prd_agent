@@ -93,7 +93,12 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       // Grants do not allow arbitrary container commands, global domain claims or secrets edits.
       const branchWrite = (!action && (method === 'PATCH' || method === 'DELETE'))
         || (method === 'POST' && /^(pull|deploy|stop|restart|smoke|container-logs|checkout|unpin|reset|force-rebuild|verify-runtime)$/i.test(action || ''));
-      if (method !== 'GET' && !branchWrite) { deny(); return; }
+      // These existing console reads use POST for their query body. Their route
+      // normalizers enforce read-only statements; all write/init routes stay denied.
+      const resourceRead = method === 'POST' && action === 'resources' && segments[4] === 'data'
+        && ((segments.length === 6 && segments[5] === 'query')
+          || (segments.length === 7 && segments[5] === 'mongo' && segments[6] === 'command'));
+      if (method !== 'GET' && !branchWrite && !resourceRead) { deny(); return; }
       // A stream may stay open through revocation. Recheck before every chunk,
       // so log/deploy streams cannot keep sending previously authorized data.
       guardStream(branch.projectId || 'default');

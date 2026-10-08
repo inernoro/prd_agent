@@ -5685,6 +5685,7 @@ function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
   const [selectedTableKey, setSelectedTableKey] = useState('');
@@ -5701,6 +5702,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
     : '';
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
+  const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);
 
   const loadTables = useCallback(async () => {
     if (!basePath) return;
@@ -5740,7 +5742,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }, [loadTablePreview, selectedTable]);
 
   async function runInitializationSql(): Promise<void> {
-    if (!basePath || !initSql.trim()) return;
+    if (!canManageConsole || !basePath || !initSql.trim()) return;
     setInitBusy('init-sql');
     setInitError('');
     try {
@@ -5758,7 +5760,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }
 
   async function runMigrationCommand(): Promise<void> {
-    if (!resource.branchId || !migrationCommand.trim()) return;
+    if (!canManageConsole || !resource.branchId || !migrationCommand.trim()) return;
     setInitBusy('migration');
     setInitError('');
     try {
@@ -5776,10 +5778,10 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }
 
   async function runSqlCommand(): Promise<void> {
-    if (!basePath || !sql.trim()) return;
+    if (!basePath || !sql.trim() || (!canManageConsole && !sqlReadOnly)) return;
     setResultState({ status: 'loading' });
     try {
-      const readOnly = sqlCommandIsReadOnly(sql, resource.runtime);
+      const readOnly = sqlReadOnly;
       const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
@@ -5866,7 +5868,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
                   <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
                 </div>
-                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
+                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading' || (!canManageConsole && !sqlReadOnly)} onClick={() => void runSqlCommand()}>
                   {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行
                 </Button>
@@ -5898,7 +5900,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
               onViewModeChange={setResultMode}
             />
           </main>
-          <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
+          {canManageConsole ? <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
             <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
               <summary className="cursor-pointer text-xs font-semibold">初始化 / 迁移 / 重试</summary>
               <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -5942,7 +5944,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                 </div>
               </div>
             </details>
-          </section>
+          </section> : <p className="border-t border-[hsl(var(--hairline))] p-3 text-xs text-muted-foreground lg:col-span-2">普通账号仅支持只读查询；写入、初始化和迁移请联系系统所有者。</p>}
         </div>
       </ResourceWorkbenchModal>
     </>

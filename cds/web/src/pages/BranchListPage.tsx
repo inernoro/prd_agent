@@ -1805,6 +1805,10 @@ export function BranchListPage(): JSX.Element {
   // 失败时这个批次号加一，旧批次里还没发出的改动不再发（Codex P2，PR #1647）。
   const groupSaveBatchRef = useRef(0);
   const saveBranchGroups = useCallback((update: (groups: BranchGroup[]) => BranchGroup[]): Promise<boolean> => {
+    if (!canManageConsole) {
+      setGroupsSaveError('分组仅供查看，修改请联系系统所有者');
+      return Promise.resolve(false);
+    }
     const requestProject = projectId;
     // 保存还没回来用户就切了项目（哪怕又切回来）：这次响应属于上一次进入，一律丢弃（Codex P2，PR #1647）。
     const requestEpoch = groupsEpochRef.current;
@@ -1885,11 +1889,12 @@ export function BranchListPage(): JSX.Element {
     const result = groupSaveChainRef.current.then(run, run);
     groupSaveChainRef.current = result;
     return result;
-  }, [projectId]);
+  }, [projectId, canManageConsole]);
   const openExistingGroupEditor = useCallback((group: BranchGroup) => {
+    if (!canManageConsole || branchGroupsRef.current?.readOnly) return;
     setGroupsSaveError('');
     setGroupEditor({ group, isNew: false, basedOn: [...pendingGroupUpdatesRef.current] });
-  }, []);
+  }, [canManageConsole]);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState('');
   const [bulkTagError, setBulkTagError] = useState('');
@@ -2670,8 +2675,8 @@ export function BranchListPage(): JSX.Element {
   /* 「按分组」视图的分区：归组判定只走 lib/branchGroups（钉入 > 规则按组序 > 未归组）。 */
   const groupList = useMemo(() => branchGroups?.groups ?? [], [branchGroups]);
   const groupedView = viewMode === 'groups' && groupList.length > 0;
-  // 父实例镜像来的项目：分组只能看，所有改动入口（移组菜单、拖拽、编辑、新建）都不给（Codex P2，PR #1647）。
-  const groupsReadOnly = Boolean(branchGroups?.readOnly);
+  // 普通账号和父实例镜像项目均只读：移组、拖拽、编辑、新建共用这一判据。
+  const groupsReadOnly = !canManageConsole || Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
   // 当前每个分支归哪组、怎么归进去的；拖放 / 菜单移组前用来判断这次操作会不会真的改变什么
@@ -2742,6 +2747,7 @@ export function BranchListPage(): JSX.Element {
     [branches],
   );
   const openNewGroupEditor = useCallback(() => {
+    if (groupsReadOnly) return;
     // 一个项目最多 30 个分组：到上限就不打开新建编辑器（入口也已置灰，这里兜底，Codex P2，PR #1647）。
     if ((branchGroupsRef.current?.groups.length ?? 0) >= BRANCH_GROUP_LIMITS.groups) {
       setGroupsSaveError(`一个项目最多 ${BRANCH_GROUP_LIMITS.groups} 个分组，已到上限；先删掉不用的分组再新建`);
@@ -2759,7 +2765,7 @@ export function BranchListPage(): JSX.Element {
       },
       isNew: true,
     });
-  }, []);
+  }, [groupsReadOnly]);
   /*
    * 拖拽：卡片拖进组 = 手动钉入（优先于规则）；拖进「未归组」= 取消钉入；
    * 组头把手拖到另一组上 = 调顺序（靠上的组优先认领规则命中的分支）。
@@ -4216,10 +4222,10 @@ export function BranchListPage(): JSX.Element {
                   {viewMode === 'groups' && groupsReadOnly ? (
                     <span
                       className="inline-flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-xs text-muted-foreground"
-                      title="这是从父实例镜像来的项目，分组跟着镜像走，要在父实例上改"
+                      title={canManageConsole ? '这是从父实例镜像来的项目，分组跟着镜像走，要在父实例上改' : '分组仅供查看，修改请联系系统所有者'}
                       data-branch-groups-readonly
                     >
-                      分组只读（镜像项目）
+                      {canManageConsole ? '分组只读（镜像项目）' : '分组只读（仅系统所有者可编辑）'}
                     </span>
                   ) : viewMode === 'groups' && groupList.length > 0 ? (
                     <DropdownMenu
@@ -4342,7 +4348,7 @@ export function BranchListPage(): JSX.Element {
                   ) : !branchGroups ? (
                     <div className="px-2 text-sm text-muted-foreground">正在读取分组…</div>
                   ) : groupList.length === 0 && groupsReadOnly ? (
-                    <div className="px-2 text-sm text-muted-foreground">这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。</div>
+                    <div className="px-2 text-sm text-muted-foreground">{canManageConsole ? '这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。' : '项目还没有分组，请联系系统所有者创建；你可以按状态查看分支。'}</div>
                   ) : groupList.length === 0 ? (
                     <BranchGroupSuggestions
                       /* 建出来的前缀规则作用于项目全部分支，建议也按全部分支数（Codex P2，PR #1647） */
@@ -4410,7 +4416,7 @@ export function BranchListPage(): JSX.Element {
             Avoids the page navigation the user explicitly asked us to skip
             ("能在一个页面完成的，切勿跳转页面"). */}
         <BranchGroupEditorDialog
-          open={Boolean(groupEditor)}
+          open={Boolean(groupEditor) && !groupsReadOnly}
           initial={groupEditor?.group ?? null}
           isNew={Boolean(groupEditor?.isNew)}
           groups={groupList}

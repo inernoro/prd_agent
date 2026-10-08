@@ -93,6 +93,26 @@ describe('human project access UI wiring', () => {
     expect(branches).toContain('if (!canOpenPreview) {');
     expect(read('components/BranchDetailDrawer.tsx')).toContain('previewUrl && canOpenPreview');
   });
+  it('keeps member groups readable while gating every editing surface and save on owner capability', () => {
+    const branches = read('pages/BranchListPage.tsx');
+    expect(branches).toContain('const groupsReadOnly = !canManageConsole || Boolean(branchGroups?.readOnly);');
+    expect(branches).toContain('const groupsEditable = groupedView && !groupsReadOnly;');
+    expect(branches).toContain('open={Boolean(groupEditor) && !groupsReadOnly}');
+    const save = branches.slice(branches.indexOf('const saveBranchGroups ='), branches.indexOf('const openExistingGroupEditor ='));
+    expect(save).toContain('if (!canManageConsole)');
+    expect(save.indexOf('if (!canManageConsole)')).toBeLessThan(save.indexOf('pendingGroupUpdatesRef.current = [...'));
+    expect(branches).toContain('分组只读（仅系统所有者可编辑）');
+  });
+  it('preserves member read-only SQL execution but guards write, initialization and migration affordances', () => {
+    const drawer = read('components/BranchDetailDrawer.tsx');
+    const sqlPanel = drawer.slice(drawer.indexOf('function SqlResourceDataPanel('), drawer.indexOf('function DbResultTable('));
+    expect(sqlPanel).toContain('const canManageConsole = useCanManageConsole();');
+    expect(sqlPanel).toContain('const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);');
+    expect(sqlPanel).toContain('!canManageConsole && !sqlReadOnly');
+    expect(sqlPanel).toContain('if (!canManageConsole || !basePath || !initSql.trim()) return;');
+    expect(sqlPanel).toContain('if (!canManageConsole || !resource.branchId || !migrationCommand.trim()) return;');
+    expect(sqlPanel).toContain('普通账号仅支持只读查询；写入、初始化和迁移请联系系统所有者。');
+  });
   it('does not mount owner route contents or advertise search for members and unresolved auth', () => {
     const render = (status: Parameters<typeof canManageSystemSettings>[0], pending = false) =>
       renderToStaticMarkup(createElement(MemoryRouter, null,

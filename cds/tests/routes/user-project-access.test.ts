@@ -28,6 +28,7 @@ describe('human project grants through the production server', () => {
   let memberId: string;
   let store: MemoryAuthStore;
   let registry: ExecutorRegistry;
+  let shell: MockShellExecutor;
   let container: { getRunningContainerNames: () => Promise<Set<string>>; getTotalMemoryGB: () => Promise<number>;
     getLogs: () => Promise<string>; isRunning?: (name: string) => Promise<boolean> };
 
@@ -68,7 +69,7 @@ describe('human project grants through the production server', () => {
     }
     store = new MemoryAuthStore();
     registry = new ExecutorRegistry(state);
-    const shell = new MockShellExecutor();
+    shell = new MockShellExecutor();
     const config: CdsConfig = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'),
       masterPort: 9900, workerPort: 5500, dockerNetwork: 'cds', portStart: 10001,
       sharedEnv: {}, jwt: { secret: 'test', issuer: 'test' }, rootDomains: ['example.test'] };
@@ -306,6 +307,39 @@ describe('human project grants through the production server', () => {
     }
     expect(state.getProject('project-a')?.gitRepoUrl).toContain('fake-repo-pat');
     expect(state.getProject('project-a')?.serviceEnv?.API_TOKEN).toBe('fake-service-secret');
+  });
+
+  it.each(['mysql', 'mongo'] as const)('allows only existing read-only %s commands in authorized resources', async runtime => {
+    const mongo = runtime === 'mongo';
+    state.addInfraService({ id: runtime, projectId: 'project-a', name: runtime, dockerImage: mongo ? 'mongo:7' : 'mysql:8',
+      containerPort: mongo ? 27017 : 3306, hostPort: mongo ? 27017 : 3306, containerName: `fixture-${runtime}`, status: 'running',
+      dbName: 'app', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'fake-db-password', MONGO_INITDB_DATABASE: 'app' }
+        : { MYSQL_DATABASE: 'app', MYSQL_USER: 'app', MYSQL_PASSWORD: 'fake-db-password', MYSQL_ROOT_PASSWORD: 'fake-root-password' },
+      volumes: [], createdAt: new Date().toISOString() });
+    shell.addResponsePattern(mongo ? /fixture-mongo.*mongosh/s : /docker exec.* mysql /s, () => ({
+      stdout: mongo ? '[{"_id":"u1","name":"Ann"}]\n' : 'answer\n1\n', stderr: '', exitCode: 0,
+    }));
+    await grant(['project-a']);
+    const suffix = `/resources/infra%3A${runtime}/data/${mongo ? 'mongo/command' : 'query'}`;
+    const body = mongo ? { database: 'app', command: 'db.getCollection("users").find({}).limit(50);' } : { sql: 'SELECT 1 AS answer' };
+    const url = '/api/branches/branch-project-a' + suffix;
+    const ownerView = await call('POST', url, owner, body);
+    expect(ownerView.status).toBe(200);
+    const view = await call('POST', url, member, body);
+    expect(view.status).toBe(200);
+    expect(view.body).toEqual(ownerView.body);
+    expect(JSON.stringify(view.body)).toContain(mongo ? 'Ann' : 'answer');
+    const callsBeforeWrite = shell.commands.length;
+    const writeBody = mongo ? { database: 'app', command: 'db.getCollection("users").deleteMany({});' } : { sql: 'DELETE FROM users' };
+    expect((await call('POST', url, member, writeBody)).status).toBe(400);
+    expect(shell.commands.length).toBe(callsBeforeWrite);
+    const writeUrl = '/api/branches/branch-project-a' + `/resources/infra%3A${runtime}/data/${mongo ? 'mongo/write' : 'query-write'}`;
+    expect((await call('POST', writeUrl, member, writeBody)).status).toBe(403);
+    expect((await call('POST', '/api/branches/branch-project-b' + suffix, member, body)).status).toBe(403);
+    expect((await call('POST', url + '/unexpected', member, body)).status).toBe(403);
+    await grant([]);
+    expect((await call('POST', url, member, body)).status).toBe(403);
+    expect((await call('POST', url, owner, body)).status).toBe(200);
   });
 
   it('hides resource connection credentials in cached lists and direct resource reads without mutating owner data', async () => {
