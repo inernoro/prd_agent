@@ -94,6 +94,7 @@ import {
   selectReleaseRunsToPrune,
 } from './release-retention.js';
 import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
+import { isHumanProjectGrantUpdatePending } from './human-project-access.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 import { migrateLegacyDataMigrationCredentials } from './secure-database-cli.js';
@@ -3170,6 +3171,8 @@ export class StateService {
         // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
         // 这段整个跳过，与启用前逐字节一致。
         if (entry.principalId) {
+          // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
+          if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
           const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
           if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
           if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;

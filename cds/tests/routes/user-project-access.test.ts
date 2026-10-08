@@ -3,12 +3,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import express from 'express';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
-import { humanPrincipalId, humanProjectGrantUpdateStatus } from '../../src/services/human-project-access.js';
+import { humanPrincipalId, humanProjectGrantUpdateStatus, beginHumanProjectGrantUpdate } from '../../src/services/human-project-access.js';
+import { createIdentityRouter, resolveUserCredential } from '../../src/routes/identity.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { multiPreviewUrl } from '../../web/src/lib/previewUrl.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -35,6 +37,13 @@ describe('human project grants through the production server', () => {
     return { status: res.status, body: await res.json(), cookie: res.headers.get('set-cookie')?.split(';')[0] || '' };
   }
   const grant = (ids: string[]) => call('PUT', `/api/auth/users/${memberId}/projects`, owner, { projectIds: ids });
+  async function credentialCall(method: string, url: string, key: string, body?: unknown) {
+    const res = await fetch(base + url, { method,
+      headers: { 'x-ai-access-key': key, 'Content-Type': 'application/json' },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+    return { status: res.status, body: await res.json() };
+  }
 
   beforeEach(async () => {
     vi.stubEnv('CDS_AUTH_MODE', 'basic');
@@ -567,6 +576,85 @@ describe('human project grants through the production server', () => {
     expect(original.revokedAt).toBeUndefined();
     expect((await call('POST', `/api/identity/grants/${original.id}/revoke`, owner, {})).status).toBe(200);
     expect((await call('GET', '/api/projects', member)).body.projects).toEqual([]);
+  });
+
+  it.each(['success', 'failure'] as const)('gates bound credentials during a slow grant replacement ending in %s', async (outcome) => {
+    await grant(['project-a']);
+    state.setCustomEnv({ API_TOKEN: 'test-transient-project-secret' }, 'project-b');
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const issue = (key: string, projectId: string) => credentialCall('POST', '/api/identity/project-credentials', key, { projectId });
+    const existing = await issue(userKey, 'project-a');
+    expect(existing.status).toBe(201);
+    const existingKey = existing.body.plaintext;
+    expect((await credentialCall('GET', '/api/build-profiles?project=project-a', existingKey)).status).toBe(200);
+    const other = await call('POST', '/api/identity/user-credentials', owner, { name: 'unrelated machine' });
+    await call('POST', '/api/identity/grants', owner, { principalId: other.body.principal.id, projectId: 'project-b' });
+    const unrelated = await issue(other.body.plaintext, 'project-b');
+    expect(unrelated.status).toBe(201);
+    let finish!: () => void;
+    let reject!: (error: Error) => void;
+    let entered!: () => void;
+    const pending = new Promise<void>((resolve, fail) => { finish = resolve; reject = fail; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    vi.spyOn(state, 'flush').mockImplementationOnce(() => { entered(); return pending; });
+    const saving = grant(['project-a', 'project-b']);
+    await started;
+    let result!: Awaited<ReturnType<typeof grant>>;
+    try {
+      const transient = await issue(userKey, 'project-b');
+      const secretRead = transient.status === 201
+        ? await credentialCall('GET', '/api/env?scope=project-b', transient.body.plaintext) : undefined;
+      expect({ issue: transient.status, secretRead: !!secretRead && JSON.stringify(secretRead.body).includes('test-transient-project-secret') })
+        .toEqual({ issue: 401, secretRead: false });
+      expect((await credentialCall('GET', '/api/projects', userKey)).status).toBe(401);
+      expect((await credentialCall('GET', '/api/build-profiles?project=project-a', existingKey)).status).toBe(401);
+      // A different principal and the owner must still work during recovery.
+      expect((await credentialCall('GET', '/api/projects', other.body.plaintext)).status).toBe(200);
+      expect((await credentialCall('GET', '/api/build-profiles?project=project-b', unrelated.body.plaintext)).status).toBe(200);
+      expect((await call('GET', '/api/config')).status).toBe(200);
+    } finally {
+      if (outcome === 'success') finish(); else reject(new Error('fake slow grant write failure'));
+      result = await saving;
+    }
+    expect(result.status).toBe(outcome === 'success' ? 200 : 500);
+    expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
+    expect((await credentialCall('GET', '/api/projects', userKey)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/build-profiles?project=project-a', existingKey)).status).toBe(200);
+    const settled = await issue(userKey, 'project-b');
+    expect(settled.status).toBe(outcome === 'success' ? 201 : 403);
+    if (outcome === 'success') {
+      expect((await credentialCall('GET', '/api/build-profiles?project=project-b', settled.body.plaintext)).status).toBe(200);
+    }
+  });
+
+  it('rechecks the grant gate before issuance even for a previously resolved credential context', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const context = resolveUserCredential(state, userKey);
+    expect(context).not.toBeNull();
+    const release = beginHumanProjectGrantUpdate(state, principalId)!;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { (req as unknown as { cdsPrincipal: typeof context }).cdsPrincipal = context; next(); });
+    app.use('/api', createIdentityRouter({ stateService: state }));
+    const captured = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => captured.once('listening', resolve));
+    const issue = () => fetch(`http://127.0.0.1:${(captured.address() as { port: number }).port}/api/identity/project-credentials`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'project-a' }),
+    });
+    try {
+      const pending = await issue();
+      expect(pending.status).toBe(409);
+      expect(await pending.json()).not.toHaveProperty('plaintext');
+      release();
+      expect((await issue()).status).toBe(201);
+    } finally {
+      release();
+      captured.closeAllConnections();
+      await new Promise<void>(resolve => captured.close(() => resolve()));
+    }
   });
 
   it('rejects member self-grants and preserves owner/disabled-user invariants', async () => {

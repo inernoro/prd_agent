@@ -202,6 +202,11 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       });
       return;
     }
+    // 已解析的请求上下文也可能跨过授权替换的开始时刻，签发前再次核对同一门控。
+    if (isHumanProjectGrantUpdatePending(stateService, principalId.principalId)) {
+      res.status(409).json({ error: 'grant_update_pending', message: '此主体的项目授权正在保存，请稍后重试。' });
+      return;
+    }
     const body = (req.body || {}) as { projectId?: string; label?: string };
     const projectId = (body.projectId || '').trim();
     if (!projectId) {
@@ -362,6 +367,7 @@ export function resolveUserCredential(
 ): { principalId: string; credentialId: string } | null {
   const cred = stateService.findUserCredentialByPlaintext(plaintextKey);
   if (!cred) return null;
+  if (isHumanProjectGrantUpdatePending(stateService, cred.principalId)) return null;
   const principal = stateService.getPrincipal(cred.principalId);
   const usability = credentialUsability(cred, principal, Date.now(), true);
   if (!usability.usable) return null;
