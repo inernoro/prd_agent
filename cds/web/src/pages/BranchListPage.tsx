@@ -43,7 +43,7 @@ import {
   Pencil,
 } from 'lucide-react';
 
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -1651,9 +1651,11 @@ function closePreviewTarget(target: PreviewTarget): void {
 }
 
 export function BranchListPage(): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
   const [manualBranchName, setManualBranchName] = useState('');
   // 用户从搜索下拉选中已有分支时,使用稳定选中态标记卡片。
@@ -1669,6 +1671,7 @@ export function BranchListPage(): JSX.Element {
   // 挂载轻量拉一次即可（弹窗内已有实时链路），旧版无端点/失败一律静默。
   const [perfCriticals, setPerfCriticals] = useState<PerfWarning[]>([]);
   useEffect(() => {
+    if (!canManageConsole) return;
     let cancelled = false;
     apiRequest<PerfHealth>('/api/cds-system/perf-health')
       .then((res) => {
@@ -1676,7 +1679,7 @@ export function BranchListPage(): JSX.Element {
       })
       .catch(() => { /* best-effort */ });
     return () => { cancelled = true; };
-  }, []);
+  }, [canManageConsole]);
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
@@ -1802,6 +1805,10 @@ export function BranchListPage(): JSX.Element {
   // 失败时这个批次号加一，旧批次里还没发出的改动不再发（Codex P2，PR #1647）。
   const groupSaveBatchRef = useRef(0);
   const saveBranchGroups = useCallback((update: (groups: BranchGroup[]) => BranchGroup[]): Promise<boolean> => {
+    if (!canManageConsole) {
+      setGroupsSaveError('分组仅供查看，修改请联系系统所有者');
+      return Promise.resolve(false);
+    }
     const requestProject = projectId;
     // 保存还没回来用户就切了项目（哪怕又切回来）：这次响应属于上一次进入，一律丢弃（Codex P2，PR #1647）。
     const requestEpoch = groupsEpochRef.current;
@@ -1882,11 +1889,12 @@ export function BranchListPage(): JSX.Element {
     const result = groupSaveChainRef.current.then(run, run);
     groupSaveChainRef.current = result;
     return result;
-  }, [projectId]);
+  }, [projectId, canManageConsole]);
   const openExistingGroupEditor = useCallback((group: BranchGroup) => {
+    if (!canManageConsole || branchGroupsRef.current?.readOnly) return;
     setGroupsSaveError('');
     setGroupEditor({ group, isNew: false, basedOn: [...pendingGroupUpdatesRef.current] });
-  }, []);
+  }, [canManageConsole]);
   const [bulkTagBranchId, setBulkTagBranchId] = useState<string | null>(null);
   const [bulkTagDraft, setBulkTagDraft] = useState('');
   const [bulkTagError, setBulkTagError] = useState('');
@@ -2051,7 +2059,7 @@ export function BranchListPage(): JSX.Element {
         apiRequest<BranchesResponse>(branchUrl),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`),
         apiRequest<CdsConfigResponse>('/api/config'),
-        apiRequest<{ services: InfraServiceSummary[] }>(infraUrl),
+        canManageConsole ? apiRequest<{ services: InfraServiceSummary[] }>(infraUrl) : Promise.resolve({ services: [] }),
         apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
       if (branchesResult.status === 'rejected') {
@@ -2136,7 +2144,7 @@ export function BranchListPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
-  }, [confirmEmptyBranchList, projectId, refreshLiveBranches]);
+  }, [confirmEmptyBranchList, projectId, refreshLiveBranches, canManageConsole]);
 
   const refreshRemoteBranches = useCallback(async (forceFetch = false) => {
     if (!projectId) return;
@@ -2221,7 +2229,7 @@ export function BranchListPage(): JSX.Element {
   // Phase 9.6 — 缺失必填 env 检测(独立于 TODO 占位符模式)
   const [missingRequiredKeys, setMissingRequiredKeys] = useState<string[]>([]);
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !canManageConsole) return;
     let cancelled = false;
     void apiRequest<{
       env: Record<string, string>;
@@ -2246,7 +2254,7 @@ export function BranchListPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [projectId, state.status]);
+  }, [projectId, state.status, canManageConsole]);
 
   useEffect(() => {
     if (!projectId || !noticeProject) return;
@@ -2500,6 +2508,7 @@ export function BranchListPage(): JSX.Element {
   }, [branchSearchOpen]);
 
   useEffect(() => {
+    if (!canManageConsole) return;
     const source = new EventSource(apiUrl('/api/activity-stream'));
     source.onmessage = (event) => {
       try {
@@ -2520,7 +2529,7 @@ export function BranchListPage(): JSX.Element {
       try { source.close(); } catch { /* tolerate */ }
     };
     return () => source.close();
-  }, []);
+  }, [canManageConsole]);
 
   const branches = state.status === 'ok' ? state.branches : [];
   const remoteBranches = state.status === 'ok' ? state.remoteBranches : [];
@@ -2667,8 +2676,8 @@ export function BranchListPage(): JSX.Element {
   /* 「按分组」视图的分区：归组判定只走 lib/branchGroups（钉入 > 规则按组序 > 未归组）。 */
   const groupList = useMemo(() => branchGroups?.groups ?? [], [branchGroups]);
   const groupedView = viewMode === 'groups' && groupList.length > 0;
-  // 父实例镜像来的项目：分组只能看，所有改动入口（移组菜单、拖拽、编辑、新建）都不给（Codex P2，PR #1647）。
-  const groupsReadOnly = Boolean(branchGroups?.readOnly);
+  // 普通账号和父实例镜像项目均只读：移组、拖拽、编辑、新建共用这一判据。
+  const groupsReadOnly = !canManageConsole || Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
   // 当前每个分支归哪组、怎么归进去的；拖放 / 菜单移组前用来判断这次操作会不会真的改变什么
@@ -2739,6 +2748,7 @@ export function BranchListPage(): JSX.Element {
     [branches],
   );
   const openNewGroupEditor = useCallback(() => {
+    if (groupsReadOnly) return;
     // 一个项目最多 30 个分组：到上限就不打开新建编辑器（入口也已置灰，这里兜底，Codex P2，PR #1647）。
     if ((branchGroupsRef.current?.groups.length ?? 0) >= BRANCH_GROUP_LIMITS.groups) {
       setGroupsSaveError(`一个项目最多 ${BRANCH_GROUP_LIMITS.groups} 个分组，已到上限；先删掉不用的分组再新建`);
@@ -2756,7 +2766,7 @@ export function BranchListPage(): JSX.Element {
       },
       isNew: true,
     });
-  }, []);
+  }, [groupsReadOnly]);
   /*
    * 拖拽：卡片拖进组 = 手动钉入（优先于规则）；拖进「未归组」= 取消钉入；
    * 组头把手拖到另一组上 = 调顺序（靠上的组优先认领规则命中的分支）。
@@ -2887,6 +2897,11 @@ export function BranchListPage(): JSX.Element {
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
+    if (!canOpenPreview) {
+      closePreviewTarget(target || null);
+      setToast(MEMBER_PREVIEW_MODE_NOTICE);
+      return;
+    }
     /*
      * 「打开正在跑的预览」是 `open`，不是 `preview`（Codex P2，核对属实）。
      *
@@ -2920,7 +2935,7 @@ export function BranchListPage(): JSX.Element {
       setAction(branch.id, finishAction(actionRef.current[branch.id], 'open', message, 'error'));
       setToast(message);
     }
-  }, [setAction, state]);
+  }, [canOpenPreview, setAction, state]);
 
   const openBranchDetail = useCallback((branchId: string) => {
     setDetailDrawerResourceFocus(null);
@@ -3007,6 +3022,10 @@ export function BranchListPage(): JSX.Element {
 
   const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
+    if (!canOpenPreview) {
+      setToast(MEMBER_PREVIEW_MODE_NOTICE);
+      return;
+    }
     if (branch.status !== 'running') {
       if (!deployWhenNeeded || isBusy(branch)) {
         setToast(`${branch.branch} 还未运行。预览不会自动部署，请手动点击部署。`);
@@ -3019,7 +3038,7 @@ export function BranchListPage(): JSX.Element {
 
     const target = openPreviewPlaceholder(branch.branch);
     await openRunningPreview(branch, target);
-  }, [deployBranch, openRunningPreview, state]);
+  }, [canOpenPreview, deployBranch, openRunningPreview, state]);
 
   // Phase 8.6 — 行云流水部署:从 ProjectListPage 跳转过来时,如果 sessionStorage 里
   // 有 autoDeployOnArrival 标记,自动触发主分支(优先 default branch / fallback 第一个)
@@ -3332,8 +3351,10 @@ export function BranchListPage(): JSX.Element {
     setReleaseBranchId,
   };
   const cardHandlers = useMemo(() => ({
+    canManageConsole,
+    canPreview: canOpenPreview,
     onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false),
-    onRelease: (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id),
+    onRelease: canManageConsole ? (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id) : undefined,
     onDeploy: (branch: BranchSummary) => void cardCallbacksRef.current.deployBranch(branch, false),
     onDetail: (branch: BranchSummary) => cardCallbacksRef.current.openBranchDetail(branch.id),
     onResourcePanel: (branch: BranchSummary, resource: BranchResource) => cardCallbacksRef.current.openBranchResourcePanel(branch, resource),
@@ -3348,7 +3369,7 @@ export function BranchListPage(): JSX.Element {
     onEditTags: (branch: BranchSummary) => void cardCallbacksRef.current.editTags(branch),
     onAddTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.addTagToBranch(branch, tag),
     onRemoveTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.removeTagFromBranch(branch, tag),
-  }), []);
+  }), [canManageConsole, canOpenPreview]);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;
@@ -3615,7 +3636,6 @@ export function BranchListPage(): JSX.Element {
       focusBranchCard(existing.id);
       return;
     }
-
     setAction(remote.name, createAction('create', '正在创建分支'));
     try {
       const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
@@ -3788,7 +3808,7 @@ export function BranchListPage(): JSX.Element {
     const rsGroups = rsMode === 'project'
       ? buildProjectGroups(rsPids, (pid) => (rsMap[pid]?.members ?? []).filter((m): m is RsCardMember & { id: string } => Boolean(m.id)))
       : [];
-    const rsPreviewBase = state.status === 'ok'
+    const rsPreviewBase = state.status === 'ok' && canOpenPreview
       ? (state.previewMode === 'simple' ? simplePreviewUrl(state.config) : multiPreviewUrl(branch, state.config))
       : '';
     return (
@@ -3957,14 +3977,14 @@ export function BranchListPage(): JSX.Element {
                       if (event.key === 'Escape') setBranchSearchOpen(false);
                     }}
                     className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-                    placeholder="搜索分支 · 粘贴 commit / tag · 回车预览"
+                    placeholder={canOpenPreview ? '搜索分支 · 粘贴 commit / tag · 回车预览' : '搜索或添加分支 · 粘贴 commit / tag'}
                     autoComplete="off"
                     spellCheck={false}
                   />
                 </div>
                 <Button type="submit" size="sm" disabled={!manualBranchName.trim()}>
                   <ExternalLink />
-                  预览
+                  {canOpenPreview ? '预览' : '添加分支'}
                 </Button>
               </form>
               {branchSearchOpen ? (
@@ -4030,6 +4050,7 @@ export function BranchListPage(): JSX.Element {
                   项目
                 </Link>
               </Button>
+              {canManageConsole ? <>
               <Button asChild variant="ghost" size="sm" title="项目设置">
                 <Link to={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
@@ -4077,6 +4098,7 @@ export function BranchListPage(): JSX.Element {
                   <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive" aria-hidden />
                 ) : null}
               </Button>
+              </> : null}
               {!sseConnected ? (
                 <Button
                   variant="ghost"
@@ -4113,6 +4135,7 @@ export function BranchListPage(): JSX.Element {
           </div>
         ) : null}
 
+        {state.status === 'ok' && !canOpenPreview ? <p role="status" className="mt-4 text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
         {state.status === 'ok' && state.projectWarning ? (
           <div className="mt-6 rounded-md border border-warn/35 bg-warn-soft px-4 py-3 text-sm text-warn">
             {state.projectWarning}
@@ -4201,10 +4224,10 @@ export function BranchListPage(): JSX.Element {
                   {viewMode === 'groups' && groupsReadOnly ? (
                     <span
                       className="inline-flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-xs text-muted-foreground"
-                      title="这是从父实例镜像来的项目，分组跟着镜像走，要在父实例上改"
+                      title={canManageConsole ? '这是从父实例镜像来的项目，分组跟着镜像走，要在父实例上改' : '分组仅供查看，修改请联系系统所有者'}
                       data-branch-groups-readonly
                     >
-                      分组只读（镜像项目）
+                      {canManageConsole ? '分组只读（镜像项目）' : '分组只读（仅系统所有者可编辑）'}
                     </span>
                   ) : viewMode === 'groups' && groupList.length > 0 ? (
                     <DropdownMenu
@@ -4269,7 +4292,7 @@ export function BranchListPage(): JSX.Element {
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">
                 <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                  {state.status === 'ok' && state.buildProfiles.length === 0 ? (
+                  {state.status === 'ok' && state.buildProfiles.length === 0 && canManageConsole ? (
                     // 波5:项目还没有构建配置(webhook 自动 clone / 建时没勾服务)→
                     // 先引导「检测技术栈」,否则即便建了分支也无从部署。
                     <>
@@ -4295,7 +4318,9 @@ export function BranchListPage(): JSX.Element {
                       </div>
                       <h2 className="mt-5 text-lg font-semibold">还没有分支</h2>
                       <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                        在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。
+                        {state.buildProfiles.length === 0 && !canManageConsole
+                          ? '请联系系统所有者完成项目构建配置，再创建分支预览。'
+                          : '在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。'}
                       </p>
                     </>
                   )}
@@ -4325,7 +4350,7 @@ export function BranchListPage(): JSX.Element {
                   ) : !branchGroups ? (
                     <div className="px-2 text-sm text-muted-foreground">正在读取分组…</div>
                   ) : groupList.length === 0 && groupsReadOnly ? (
-                    <div className="px-2 text-sm text-muted-foreground">这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。</div>
+                    <div className="px-2 text-sm text-muted-foreground">{canManageConsole ? '这是从父实例镜像来的项目，父实例上还没有建分组；分组要在父实例上建。' : '项目还没有分组，请联系系统所有者创建；你可以按状态查看分支。'}</div>
                   ) : groupList.length === 0 ? (
                     <BranchGroupSuggestions
                       /* 建出来的前缀规则作用于项目全部分支，建议也按全部分支数（Codex P2，PR #1647） */
@@ -4393,7 +4418,7 @@ export function BranchListPage(): JSX.Element {
             Avoids the page navigation the user explicitly asked us to skip
             ("能在一个页面完成的，切勿跳转页面"). */}
         <BranchGroupEditorDialog
-          open={Boolean(groupEditor)}
+          open={Boolean(groupEditor) && !groupsReadOnly}
           initial={groupEditor?.group ?? null}
           isNew={Boolean(groupEditor?.isNew)}
           groups={groupList}
@@ -5828,8 +5853,10 @@ interface BranchGroupMenu {
 }
 
 interface BranchCardHandlers {
+  canManageConsole: boolean;
+  canPreview: boolean;
   onPreview: (branch: BranchSummary) => void;
-  onRelease: (branch: BranchSummary) => void;
+  onRelease?: (branch: BranchSummary) => void;
   // 2026-05-04 重设计:常规部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // 2026-05-29 P0 复活:onDeploy 重新被卡片使用 —— 漂移徽标「一键收敛」点击时
   // 调它（= deployBranch → POST /deploy，读项目全部 build profile，补齐缺失服务）。
@@ -6062,7 +6089,7 @@ const BranchCard = memo(function BranchCard({
    */
   // 把 handlers 重绑定回旧的本地名（绑定当前 branch），卡片主体的调用点零改动。
   const onPreview = () => handlers.onPreview(branch);
-  const onRelease = () => handlers.onRelease(branch);
+  const onRelease = handlers.onRelease ? () => handlers.onRelease?.(branch) : undefined;
   const onDeploy = () => handlers.onDeploy(branch);
   const onDetail = () => handlers.onDetail(branch);
   const onResourcePanel = (resource: BranchResource) => handlers.onResourcePanel(branch, resource);
@@ -6812,6 +6839,8 @@ const BranchCard = memo(function BranchCard({
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={!handlers.canPreview}
+                title={!handlers.canPreview ? MEMBER_PREVIEW_MODE_NOTICE : undefined}
                 onClick={() => {
                   setAiPanelOpen(false);
                   onPreview();
@@ -6958,12 +6987,12 @@ const BranchCard = memo(function BranchCard({
             )}
             {/* 调度器降温条：悬浮显示「设置降温条件」（2026-07-26 用户拍板）——
                 就地改空闲阈值，保存即生效，不用去 CDS 系统设置绕一圈 */}
-            {!isError && branch.lastStopSource === 'scheduler' ? (
+            {handlers.canManageConsole && !isError && branch.lastStopSource === 'scheduler' ? (
               <button
                 type="button"
                 className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
                 title="设置降温条件：修改调度器空闲阈值（CDS 系统设置，全部分支生效，保存即刻生效）"
-                onClick={(e) => { e.stopPropagation(); setCoolEditOpen(true); }}
+                onClick={(e) => { e.stopPropagation(); if (handlers.canManageConsole) setCoolEditOpen(true); }}
               >
                 设置降温条件
               </button>
@@ -7405,7 +7434,7 @@ const BranchCard = memo(function BranchCard({
 
       {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 
-      {coolEditOpen ? <CoolPolicyEditorModal onClose={() => setCoolEditOpen(false)} /> : null}
+      {handlers.canManageConsole && coolEditOpen ? <CoolPolicyEditorModal onClose={() => setCoolEditOpen(false)} /> : null}
       <footer
         className={`relative mt-auto flex h-[3.5rem] shrink-0 items-center gap-2.5 border-t border-[hsl(var(--hairline))] px-5 ${buildPhase ? 'bg-[hsl(var(--surface-sunken))]' : 'bg-[hsl(var(--surface-sunken))]/42'}`}
         onClick={(event) => {
@@ -7603,6 +7632,7 @@ const BranchCard = memo(function BranchCard({
                 className="h-8 w-8 [&_svg]:size-[1.125rem]"
                 title="预览（新镜像出来之前，旧版本照常服务）"
                 aria-label={`预览 ${branch.branch}`}
+                disabled={!handlers.canPreview}
                 onClick={(event) => {
                   event.stopPropagation();
                   onPreview();
@@ -7649,7 +7679,7 @@ const BranchCard = memo(function BranchCard({
           ) : isRunning ? (
             <span className={finishAnimating ? 'cds-finish-pop' : undefined}>
               <PreviewActionSplitButton
-                disabled={busy}
+                disabled={busy || (!isAiOperated && !handlers.canPreview)}
                 loading={busy}
                 fill={!isAiOperated}
                 className={isAiOperated ? '' : 'w-32'}

@@ -298,7 +298,10 @@ describe('CDS Agent 接入口令', () => {
     //    + cds-system-sealed-storage（密封存储初始化，只允许全局人工管理员同源发起，2026-09-06）
     //    + infra-credential-rotation（基础设施凭据轮换，密封存储就绪 + 作业排空后才可执行，2026-09-06）
     //    + alarm-channels（通知通道：哪些出问题通知谁，2026-09-15）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(55);
+    //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(56);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'user-project-access'))
+      .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
@@ -385,6 +386,12 @@ interface ResourceCloneInput {
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+export function availableDrawerLogModes(canManageConsole: boolean): Array<[LogsMode, string]> {
+  const modes: Array<[LogsMode, string]> = [
+    ['container', '容器日志'], ['system', '系统日志'], ['webhook', 'Webhook'], ['http', 'HTTP'],
+  ];
+  return modes.filter(([mode]) => canManageConsole || mode !== 'webhook');
+}
 // 全屏详情抽屉的日志区由父级 flex 布局分配剩余高度，不写固定像素高度。
 // 这样高屏不会在日志卡下方制造大片空白，矮屏仍由最近内容层滚动。
 const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
@@ -907,6 +914,8 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  const canManageConsole = useCanManageConsole();
+  const canOpenPreview = canUseConsolePreview(previewMode, canManageConsole);
   // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
   // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
@@ -914,12 +923,12 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [entryAliases, setEntryAliases] = useState<WebEntryCollectionLike<WebEntryUrl>>({});
   const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(
-    () => resolveWebEntryPresentation(
+    () => canOpenPreview ? resolveWebEntryPresentation(
       previewMode,
       previewUrl || branch?.previewUrl || '',
       entryAliases,
-    ),
-    [branch?.previewUrl, entryAliases, previewMode, previewUrl],
+    ) : { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] },
+    [branch?.previewUrl, canOpenPreview, entryAliases, previewMode, previewUrl],
   );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
@@ -1099,15 +1108,15 @@ export function BranchDetailDrawer({
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
           .catch(() => ({ runs: [] })),
-        apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ versions: [] })),
+        canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
+          .catch(() => ({ versions: [] })) : Promise.resolve({ versions: [] }),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
           .catch((err) => {
             setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
             return { profiles: [] };
           }),
-        apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
-          .catch(() => ({ services: [] })),
+        canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
+          .catch(() => ({ services: [] })) : Promise.resolve({ services: [] }),
         apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
           .catch(() => ({ resources: [] })),
         apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
@@ -1132,10 +1141,10 @@ export function BranchDetailDrawer({
     } finally {
       setLoading(false);
     }
-  }, [branchId, projectId]);
+  }, [branchId, projectId, canManageConsole]);
 
   const loadTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setTriggerLogsState({ status: 'loading' });
     try {
       const params = new URLSearchParams();
@@ -1176,7 +1185,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   const loadSystemLogs = useCallback(async () => {
     if (!branchId) return;
@@ -1200,7 +1209,7 @@ export function BranchDetailDrawer({
    * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
    */
   const loadMoreTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
     // updater 的执行时机；这才是这次 offset bug 的根因修复。
     const currentOffset = triggerLogsCountRef.current;
@@ -1257,7 +1266,7 @@ export function BranchDetailDrawer({
     } finally {
       triggerLogsLoadMoreInFlightRef.current = false;
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
   // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
@@ -1422,13 +1431,17 @@ export function BranchDetailDrawer({
 
   useEffect(() => {
     if (activeTab !== 'logs' || !branch) return;
-    if (logsMode === 'webhook' && triggerLogsState.status === 'idle') {
+    if (canManageConsole && logsMode === 'webhook' && triggerLogsState.status === 'idle') {
       void loadTriggerLogs();
     }
     if (logsMode === 'system' && systemLogsState.status === 'idle') {
       void loadSystemLogs();
     }
-  }, [activeTab, logsMode, branch, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+  }, [activeTab, logsMode, branch, canManageConsole, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+
+  useEffect(() => {
+    if (!canManageConsole && logsMode === 'webhook') setLogsMode('system');
+  }, [canManageConsole, logsMode]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -1623,7 +1636,7 @@ export function BranchDetailDrawer({
   }, [branchId, load, onActionComplete, onToast]);
 
   const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1651,12 +1664,12 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onActionComplete, onToast]);
+  }, [branchId, canManageConsole, load, onActionComplete, onToast]);
 
   // 波1 W1c:按分支切换数据库隔离档位(dbScope)。与部署模式不同,**只保存不自动重部署**——
   // 切库是重操作(应用重启后连到另一个 database),用户应自己决定重部署时机(最小惊讶)。
   const setProfileDbScope = useCallback(async (profile: ProfileRow, scope: '' | 'shared' | 'per-branch'): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1685,7 +1698,7 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -1713,7 +1726,7 @@ export function BranchDetailDrawer({
       if (activeTab === 'logs') {
         if (logsMode === 'system') {
           await loadSystemLogs();
-        } else if (logsMode === 'webhook') {
+        } else if (canManageConsole && logsMode === 'webhook') {
           await loadTriggerLogs();
         } else if (logsMode === 'container' && selectedServiceId) {
           await loadServiceLogs(selectedServiceId);
@@ -1733,6 +1746,7 @@ export function BranchDetailDrawer({
   }, [
     activeTab,
     branchId,
+    canManageConsole,
     headerRefreshing,
     load,
     loadEnv,
@@ -1892,9 +1906,9 @@ export function BranchDetailDrawer({
       services: branch.services || {},
       profiles: resourceProfiles,
       infraServices,
-      previewUrl,
+      previewUrl: canOpenPreview ? previewUrl : '',
     });
-  }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
+  }, [branch, canOpenPreview, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
   // 复制集副本日志目标（2026-07-26 用户反馈「副本日志看不了 / 分不清」修复）：
   // 副本选择键形如 `pid::memberId`，在 services 里永远匹配不到——旧代码兜底到
@@ -1942,7 +1956,7 @@ export function BranchDetailDrawer({
   // 芯片快捷加副本也走执行计划（与复制集页签「草稿-保存」同一模型：有执行记录、
   // 失败可见、CDS 重启有启动收敛兜底——不许存在绕过计划的隐形执行通道）
   const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-plans`, {
         method: 'POST',
@@ -1958,12 +1972,12 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
   // 数据库保护罩（design.cds.replica-set 波4）：锁按钮一键克隆隔离副本，
   // 克隆期间芯片环绕动画，轮询进度直到 done/error（禁止空白等待）。
   const [dbGuardBusy, setDbGuardBusy] = useState<Record<string, boolean>>({});
   const startDbGuard = useCallback(async (infraId: string) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/db-guard`, {
         method: 'POST',
@@ -1995,7 +2009,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, onToast]);
+  }, [branchId, canManageConsole, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -2320,6 +2334,7 @@ export function BranchDetailDrawer({
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
+              {!canOpenPreview ? <p role="status" className="px-5 py-3 text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
               {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
                   set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
                   原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
@@ -2481,7 +2496,7 @@ export function BranchDetailDrawer({
 
               <div className={activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5' : 'p-5'}>
                 {activeTab === 'run' ? (
-                  <ReplicaSetPanel
+                  canManageConsole ? <ReplicaSetPanel
                     branchId={branch.id}
                     previewUrl={primaryEntryUrl}
                     services={branch.services || {}}
@@ -2495,7 +2510,9 @@ export function BranchDetailDrawer({
                         .map((entry) => ({ name: entry.name, url: entry.url })),
                     ]}
                     onToast={onToast}
-                  />
+                  /> : <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
+                    副本管理仅系统所有者可用，请联系所有者配置副本、分流实测或数据库保护。已授权分支的部署、启停和资源只读查看仍可使用。
+                  </section>
                 ) : null}
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
@@ -2569,12 +2586,12 @@ export function BranchDetailDrawer({
                     ) : null}
 
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    <DeploymentVersionLedger
+                    {canManageConsole ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
                       busyVersionId={versionBusyId}
                       onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    />
+                    /> : <p className="px-1 text-sm text-muted-foreground">不可变部署版本仅系统所有者可用；你仍可部署此分支并查看上方运行历史。</p>}
                   </div>
                 ) : null}
 
@@ -2584,12 +2601,7 @@ export function BranchDetailDrawer({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                           {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
-                          {([
-                            ['container', '容器日志'],
-                            ['system', '系统日志'],
-                            ['webhook', 'Webhook'],
-                            ['http', 'HTTP'],
-                          ] as Array<[LogsMode, string]>).map(([mode, label]) => (
+                          {availableDrawerLogModes(canManageConsole).map(([mode, label]) => (
                             <button
                               key={mode}
                               type="button"
@@ -2616,7 +2628,7 @@ export function BranchDetailDrawer({
                             variant="outline"
                             onClick={() => {
                               if (logsMode === 'system') return void loadSystemLogs();
-                              if (logsMode === 'webhook') return void loadTriggerLogs();
+                              if (canManageConsole && logsMode === 'webhook') return void loadTriggerLogs();
                               if (logsMode === 'http') return void load();
                               const target = selectedServiceId || selectedService?.profileId;
                               if (target) void loadServiceLogs(target);
@@ -2630,7 +2642,7 @@ export function BranchDetailDrawer({
                     </header>
                     {logsMode === 'system' ? (
                       <SystemLogsPanel state={systemLogsState} query={logQuery} />
-                    ) : logsMode === 'webhook' ? (
+                    ) : canManageConsole && logsMode === 'webhook' ? (
                       <TriggerLogsPanel
                         state={triggerLogsState}
                         query={logQuery}
@@ -2706,8 +2718,8 @@ export function BranchDetailDrawer({
                     resources={resources}
                     replicaProfileIds={replicaProfileIds}
                     replicaChipInfo={replicaChipInfo}
-                    onQuickReplica={quickAddReplicas}
-                    onDbGuard={startDbGuard}
+                    onQuickReplica={canManageConsole ? quickAddReplicas : undefined}
+                    onDbGuard={canManageConsole ? startDbGuard : undefined}
                     dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
@@ -2820,9 +2832,9 @@ export function BranchDetailDrawer({
                     rangeStart={seriesMeta?.after}
                     rangeEnd={seriesMeta?.before}
                     onRefreshMetrics={() => void loadMetrics()}
-                    onConfigureEntries={() => setWebEntryConfigOpen(true)}
+                    onConfigureEntries={canManageConsole ? () => setWebEntryConfigOpen(true) : undefined}
                     onOpenDeployments={() => setActiveTab('deployments')}
-                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} variant="row" /> : null}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={canManageConsole ? () => setActiveTab('config') : undefined} variant="row" /> : null}
                   />
                 ) : null}
 
@@ -2851,9 +2863,11 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'variables' ? (
                   <VariablesPanel
+                    canManageConsole={canManageConsole}
                     state={envState}
                     revealedValues={revealedValues}
                     onToggleReveal={async (k) => {
+                      if (!canManageConsole) return;
                       // 已 revealed → 折叠回 mask;未 revealed → 调端点拉明文
                       if (revealedValues.has(k)) {
                         setRevealedValues((cur) => {
@@ -2880,6 +2894,7 @@ export function BranchDetailDrawer({
                       }
                     }}
                     onCopySecret={async (k) => {
+                      if (!canManageConsole) return;
                       // 复制 secret:已 revealed 直接用 cache,否则现取 + 复制 +
                       // 不入 cache(用户想"一次性复制"不留显示痕迹)。
                       const cached = revealedValues.get(k);
@@ -2907,7 +2922,7 @@ export function BranchDetailDrawer({
                     branchId={branchId}
                     projectId={projectId}
                     editorOpen={branchEnvEditorOpen}
-                    onToggleEditor={() => setBranchEnvEditorOpen((current) => !current)}
+                    onToggleEditor={() => { if (canManageConsole) setBranchEnvEditorOpen((current) => !current); }}
                     onEnvChanged={() => void loadEnv()}
                     onToast={(message) => onToast?.(message)}
                   />
@@ -2923,6 +2938,7 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'settings' ? (
                   <SettingsPanel
+                    canManageConsole={canManageConsole}
                     branch={branch}
                     projectId={projectId}
                     busy={currentActionBusy}
@@ -2938,9 +2954,9 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
-                  需要修改构建配置 / 环境变量 / 路由？打开
-                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
-                  。需要查看完整日志、Bridge、提交历史？打开
+                  {canManageConsole ? <>需要修改构建配置 / 项目环境变量 / 路由？打开
+                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>。</> : null}
+                  需要查看分支日志与提交历史？打开
                   <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
@@ -2985,7 +3001,7 @@ export function BranchDetailDrawer({
               </>
             ) : (
               <>
-                {previewUrl ? (
+                {previewUrl && canOpenPreview ? (
                   <PreviewActionSplitButton
                     className="flex-[2_1_0]"
                     fill
@@ -2993,13 +3009,13 @@ export function BranchDetailDrawer({
                     previewLabel="打开预览"
                     previewTitle="打开预览页"
                     previewAriaLabel="打开预览页"
-                    onRelease={onRelease && branch ? () => onRelease(branch.id) : undefined}
-                    releaseDisabled={!onRelease}
+                    onRelease={canManageConsole && onRelease && branch ? () => onRelease(branch.id) : undefined}
+                    releaseDisabled={!canManageConsole || !onRelease}
                   />
                 ) : (
-                  <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
+                  <Button className="flex-[2_1_0]" disabled title={!canOpenPreview ? MEMBER_PREVIEW_MODE_NOTICE : '当前没有可用预览地址'}>
                     <Play />
-                    等待预览页
+                    {canOpenPreview ? '等待预览页' : '预览暂不可用'}
                   </Button>
                 )}
                 <Button
@@ -5681,6 +5697,7 @@ function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
   const [selectedTableKey, setSelectedTableKey] = useState('');
@@ -5697,6 +5714,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
     : '';
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
+  const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);
 
   const loadTables = useCallback(async () => {
     if (!basePath) return;
@@ -5736,7 +5754,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }, [loadTablePreview, selectedTable]);
 
   async function runInitializationSql(): Promise<void> {
-    if (!basePath || !initSql.trim()) return;
+    if (!canManageConsole || !basePath || !initSql.trim()) return;
     setInitBusy('init-sql');
     setInitError('');
     try {
@@ -5754,7 +5772,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }
 
   async function runMigrationCommand(): Promise<void> {
-    if (!resource.branchId || !migrationCommand.trim()) return;
+    if (!canManageConsole || !resource.branchId || !migrationCommand.trim()) return;
     setInitBusy('migration');
     setInitError('');
     try {
@@ -5772,10 +5790,10 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   }
 
   async function runSqlCommand(): Promise<void> {
-    if (!basePath || !sql.trim()) return;
+    if (!basePath || !sql.trim() || (!canManageConsole && !sqlReadOnly)) return;
     setResultState({ status: 'loading' });
     try {
-      const readOnly = sqlCommandIsReadOnly(sql, resource.runtime);
+      const readOnly = sqlReadOnly;
       const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
@@ -5862,7 +5880,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
                   <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
                 </div>
-                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
+                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading' || (!canManageConsole && !sqlReadOnly)} onClick={() => void runSqlCommand()}>
                   {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行
                 </Button>
@@ -5894,7 +5912,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
               onViewModeChange={setResultMode}
             />
           </main>
-          <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
+          {canManageConsole ? <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
             <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
               <summary className="cursor-pointer text-xs font-semibold">初始化 / 迁移 / 重试</summary>
               <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -5938,7 +5956,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                 </div>
               </div>
             </details>
-          </section>
+          </section> : <p className="border-t border-[hsl(var(--hairline))] p-3 text-xs text-muted-foreground lg:col-span-2">普通账号仅支持只读查询；写入、初始化和迁移请联系系统所有者。</p>}
         </div>
       </ResourceWorkbenchModal>
     </>
@@ -6780,7 +6798,8 @@ export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; o
 //   - 搜索框过滤 key
 // ──────────────────────────────────────────────────────────────────────────
 
-function VariablesPanel({
+export function VariablesPanel({
+  canManageConsole,
   state,
   revealedValues,
   onToggleReveal,
@@ -6795,6 +6814,7 @@ function VariablesPanel({
   onEnvChanged,
   onToast,
 }: {
+  canManageConsole: boolean;
   state: EffectiveEnvState;
   /** 已 reveal 的 secret key → 明文。未 reveal 的不在 map 里。 */
   revealedValues: Map<string, string>;
@@ -6850,16 +6870,16 @@ function VariablesPanel({
             <HelpCircle className="h-3.5 w-3.5" />
           </button>
           <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-md border border-[hsl(var(--hairline))] bg-popover p-3 text-xs leading-5 text-popover-foreground shadow-xl group-hover/help:block group-focus-within/help:block">
-            这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。
+            {canManageConsole ? '这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。' : '这里只读展示生效变量；修改或查看密钥请联系系统所有者。'}
           </span>
         </span>
         <span className="text-xs text-muted-foreground">
           共 {data.total ?? 0} 个 · 分支覆盖 {branchOverrideCount} · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
           镜像 {data.bySource?.mirror ?? 0} · CDS 内置 {(data.bySource?.['cds-builtin'] ?? 0) + (data.bySource?.['cds-derived'] ?? 0)}
         </span>
-        <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
+        {canManageConsole ? <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
           <ExternalLink />编辑本分支
-        </Button>
+        </Button> : null}
         <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
           <RefreshCw />刷新
         </Button>
@@ -6867,9 +6887,9 @@ function VariablesPanel({
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         当前编辑范围:<span className="mx-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 font-medium text-warn">仅本分支</span>
         。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
-        项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
+        {canManageConsole ? <>项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。</> : '变量仅供查看，修改或查看密钥请联系系统所有者。'}
       </div>
-      {editorOpen ? (
+      {canManageConsole && editorOpen ? (
         <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/18 px-4 py-3">
           <EnvEditor
             scope={branchId}
@@ -6909,6 +6929,7 @@ function VariablesPanel({
           {filtered.map((v) => (
             <EnvRow
               key={v.key}
+              canRevealSecrets={canManageConsole}
               entry={v}
               revealedPlain={revealedValues.get(v.key)}
               onToggleReveal={() => { void onToggleReveal(v.key); }}
@@ -6920,7 +6941,7 @@ function VariablesPanel({
 
       <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         优先级:project &gt; global &gt; mirror &gt; cds-derived &gt; cds-builtin。同名 key 后写覆盖前写。
-        敏感值默认隐藏,点眼睛图标按条解锁。
+        {canManageConsole ? '敏感值默认隐藏,点眼睛图标按条解锁。' : '敏感值保持隐藏，查看请联系系统所有者。'}
       </footer>
     </section>
   );
@@ -6941,11 +6962,13 @@ function maskedEnvValue(entry: EffectiveEnvVar, isSecretFromKey: boolean): strin
 }
 
 function EnvRow({
+  canRevealSecrets,
   entry,
   revealedPlain,
   onToggleReveal,
   onCopySecret,
 }: {
+  canRevealSecrets: boolean;
   entry: EffectiveEnvVar;
   /** 已 reveal 的明文。undefined 表示尚未 reveal(secret)或非 secret。 */
   revealedPlain: string | undefined;
@@ -6953,7 +6976,7 @@ function EnvRow({
   onCopySecret: () => void;
 }): JSX.Element {
   const effectiveIsSecret = entry.isSecret || isSensitiveEnvKey(entry.key);
-  const isRevealed = revealedPlain !== undefined;
+  const isRevealed = canRevealSecrets && revealedPlain !== undefined;
   // 后端 isSecret=false 但 key 看起来敏感时,列表里的 entry.value 可能是明文;
   // 未 reveal 前必须用前端 mask 兜底,避免 GITHUB_PAT 等直接暴露。
   const displayValue = effectiveIsSecret
@@ -6973,11 +6996,11 @@ function EnvRow({
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
-        title={effectiveIsSecret && !isRevealed ? '点击右侧眼睛查看真实值' : safeDisplayValue}
+        title={effectiveIsSecret && !isRevealed ? (canRevealSecrets ? '点击右侧眼睛查看真实值' : '敏感值仅系统所有者可查看') : safeDisplayValue}
       >
         {safeDisplayValue}
       </span>
-      {effectiveIsSecret ? (
+      {effectiveIsSecret && canRevealSecrets ? (
         <button
           type="button"
           onClick={onToggleReveal}
@@ -6988,7 +7011,7 @@ function EnvRow({
           {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       ) : null}
-      <button
+      {!effectiveIsSecret || canRevealSecrets ? <button
         type="button"
         onClick={() => {
           // secret 走 reveal 端点取明文再复制,non-secret 直接 entry.value
@@ -7000,7 +7023,7 @@ function EnvRow({
         aria-label="复制"
       >
         <Copy className="h-4 w-4" />
-      </button>
+      </button> : null}
     </li>
   );
 }
@@ -7065,7 +7088,8 @@ function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
 // 或停止 — 不再需要关抽屉回卡片找按钮。
 // ──────────────────────────────────────────────────────────────────────────
 
-function SettingsPanel({
+export function SettingsPanel({
+  canManageConsole,
   branch,
   projectId,
   busy,
@@ -7078,6 +7102,7 @@ function SettingsPanel({
   onSetProfileDbScope,
   onToast,
 }: {
+  canManageConsole: boolean;
   branch: BranchDetailData | null;
   projectId: string;
   busy: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null;
@@ -7116,7 +7141,8 @@ function SettingsPanel({
               本分支运行模式
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。
+              {canManageConsole ? '这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。'
+                : '配置仅供查看，修改运行模式或数据库隔离请联系系统所有者。'}
             </div>
           </div>
           <span
@@ -7174,8 +7200,8 @@ function SettingsPanel({
                   <select
                     className="h-9 min-w-[10.625rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={activeMode}
-                    onChange={(event) => onSetProfileDeployMode(profile, event.target.value)}
-                    disabled={entries.length === 0 || modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDeployMode(profile, event.target.value); }}
+                    disabled={!canManageConsole || entries.length === 0 || modeSavingProfileId === profile.profileId}
                     title="只切换当前分支的这个容器"
                   >
                     <option value="">热加载 / 源码</option>
@@ -7188,15 +7214,15 @@ function SettingsPanel({
                   <select
                     className="h-9 min-w-[11.875rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={dbScopeOverride ?? ''}
-                    onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
-                    disabled={modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch'); }}
+                    disabled={!canManageConsole || modeSavingProfileId === profile.profileId}
                     title="高级：只覆盖本分支的数据库隔离；项目默认在项目设置 → 数据库隔离 里改。切换后需重新部署生效"
                   >
                     <option value="">{`数据库:继承项目默认(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
                     <option value="shared">数据库:本分支覆盖为共享库</option>
                     <option value="per-branch">数据库:本分支覆盖为分支独立库</option>
                   </select>
-                  {dbScopeOverride !== undefined ? (
+                  {canManageConsole && dbScopeOverride !== undefined ? (
                     <button
                       type="button"
                       className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
@@ -7211,7 +7237,7 @@ function SettingsPanel({
                 </div>
               );
             })}
-            {profileState.profiles.length > 0 ? (
+            {canManageConsole && profileState.profiles.length > 0 ? (
               <div className="text-xs text-muted-foreground">
                 数据库隔离的项目默认在
                 <a
@@ -7303,7 +7329,7 @@ function SettingsPanel({
       </div>
 
       {/* 跳转 */}
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+      {canManageConsole ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           配置入口
         </div>
@@ -7330,7 +7356,7 @@ function SettingsPanel({
             </a>
           </Button>
         </div>
-      </div>
+      </div> : null}
 
       {/* 危险操作 */}
       <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
