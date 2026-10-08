@@ -1626,7 +1626,7 @@ export function BranchDetailDrawer({
   }, [branchId, load, onActionComplete, onToast]);
 
   const setProfileDeployMode = useCallback(async (profile: ProfileRow, mode: string): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1654,12 +1654,12 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onActionComplete, onToast]);
+  }, [branchId, canManageConsole, load, onActionComplete, onToast]);
 
   // 波1 W1c:按分支切换数据库隔离档位(dbScope)。与部署模式不同,**只保存不自动重部署**——
   // 切库是重操作(应用重启后连到另一个 database),用户应自己决定重部署时机(最小惊讶)。
   const setProfileDbScope = useCallback(async (profile: ProfileRow, scope: '' | 'shared' | 'per-branch'): Promise<void> => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setModeSavingProfileId(profile.profileId);
     try {
       const next: BuildProfileOverride = { ...(profile.override || {}) };
@@ -1688,7 +1688,7 @@ export function BranchDetailDrawer({
     } finally {
       setModeSavingProfileId(null);
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
 
   const loadServiceLogs = useCallback(async (profileId: string) => {
     if (!branchId) return;
@@ -1945,7 +1945,7 @@ export function BranchDetailDrawer({
   // 芯片快捷加副本也走执行计划（与复制集页签「草稿-保存」同一模型：有执行记录、
   // 失败可见、CDS 重启有启动收敛兜底——不许存在绕过计划的隐形执行通道）
   const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-plans`, {
         method: 'POST',
@@ -1961,12 +1961,12 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, load, onToast]);
+  }, [branchId, canManageConsole, load, onToast]);
   // 数据库保护罩（design.cds.replica-set 波4）：锁按钮一键克隆隔离副本，
   // 克隆期间芯片环绕动画，轮询进度直到 done/error（禁止空白等待）。
   const [dbGuardBusy, setDbGuardBusy] = useState<Record<string, boolean>>({});
   const startDbGuard = useCallback(async (infraId: string) => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     try {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/db-guard`, {
         method: 'POST',
@@ -1998,7 +1998,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
-  }, [branchId, onToast]);
+  }, [branchId, canManageConsole, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -2485,7 +2485,7 @@ export function BranchDetailDrawer({
 
               <div className={activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5' : 'p-5'}>
                 {activeTab === 'run' ? (
-                  <ReplicaSetPanel
+                  canManageConsole ? <ReplicaSetPanel
                     branchId={branch.id}
                     previewUrl={primaryEntryUrl}
                     services={branch.services || {}}
@@ -2499,7 +2499,9 @@ export function BranchDetailDrawer({
                         .map((entry) => ({ name: entry.name, url: entry.url })),
                     ]}
                     onToast={onToast}
-                  />
+                  /> : <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
+                    副本管理仅系统所有者可用，请联系所有者配置副本、分流实测或数据库保护。已授权分支的部署、启停和资源只读查看仍可使用。
+                  </section>
                 ) : null}
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
@@ -2710,8 +2712,8 @@ export function BranchDetailDrawer({
                     resources={resources}
                     replicaProfileIds={replicaProfileIds}
                     replicaChipInfo={replicaChipInfo}
-                    onQuickReplica={quickAddReplicas}
-                    onDbGuard={startDbGuard}
+                    onQuickReplica={canManageConsole ? quickAddReplicas : undefined}
+                    onDbGuard={canManageConsole ? startDbGuard : undefined}
                     dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
@@ -2930,6 +2932,7 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'settings' ? (
                   <SettingsPanel
+                    canManageConsole={canManageConsole}
                     branch={branch}
                     projectId={projectId}
                     busy={currentActionBusy}
@@ -7079,7 +7082,8 @@ function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
 // 或停止 — 不再需要关抽屉回卡片找按钮。
 // ──────────────────────────────────────────────────────────────────────────
 
-function SettingsPanel({
+export function SettingsPanel({
+  canManageConsole,
   branch,
   projectId,
   busy,
@@ -7092,6 +7096,7 @@ function SettingsPanel({
   onSetProfileDbScope,
   onToast,
 }: {
+  canManageConsole: boolean;
   branch: BranchDetailData | null;
   projectId: string;
   busy: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete' | null;
@@ -7130,7 +7135,8 @@ function SettingsPanel({
               本分支运行模式
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。
+              {canManageConsole ? '这里写入当前分支的容器覆盖，不会修改项目 BuildProfile 或其它分支。'
+                : '配置仅供查看，修改运行模式或数据库隔离请联系系统所有者。'}
             </div>
           </div>
           <span
@@ -7188,8 +7194,8 @@ function SettingsPanel({
                   <select
                     className="h-9 min-w-[10.625rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={activeMode}
-                    onChange={(event) => onSetProfileDeployMode(profile, event.target.value)}
-                    disabled={entries.length === 0 || modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDeployMode(profile, event.target.value); }}
+                    disabled={!canManageConsole || entries.length === 0 || modeSavingProfileId === profile.profileId}
                     title="只切换当前分支的这个容器"
                   >
                     <option value="">热加载 / 源码</option>
@@ -7202,15 +7208,15 @@ function SettingsPanel({
                   <select
                     className="h-9 min-w-[11.875rem] rounded-md border border-input bg-background px-3 text-sm"
                     value={dbScopeOverride ?? ''}
-                    onChange={(event) => onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch')}
-                    disabled={modeSavingProfileId === profile.profileId}
+                    onChange={(event) => { if (canManageConsole) onSetProfileDbScope(profile, event.target.value as '' | 'shared' | 'per-branch'); }}
+                    disabled={!canManageConsole || modeSavingProfileId === profile.profileId}
                     title="高级：只覆盖本分支的数据库隔离；项目默认在项目设置 → 数据库隔离 里改。切换后需重新部署生效"
                   >
                     <option value="">{`数据库:继承项目默认(${inheritedDbScope === 'per-branch' ? '分支独立库' : '共享库'})`}</option>
                     <option value="shared">数据库:本分支覆盖为共享库</option>
                     <option value="per-branch">数据库:本分支覆盖为分支独立库</option>
                   </select>
-                  {dbScopeOverride !== undefined ? (
+                  {canManageConsole && dbScopeOverride !== undefined ? (
                     <button
                       type="button"
                       className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-60"
@@ -7225,7 +7231,7 @@ function SettingsPanel({
                 </div>
               );
             })}
-            {profileState.profiles.length > 0 ? (
+            {canManageConsole && profileState.profiles.length > 0 ? (
               <div className="text-xs text-muted-foreground">
                 数据库隔离的项目默认在
                 <a
@@ -7317,7 +7323,7 @@ function SettingsPanel({
       </div>
 
       {/* 跳转 */}
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+      {canManageConsole ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-4 py-3">
         <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           配置入口
         </div>
@@ -7344,7 +7350,7 @@ function SettingsPanel({
             </a>
           </Button>
         </div>
-      </div>
+      </div> : null}
 
       {/* 危险操作 */}
       <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
