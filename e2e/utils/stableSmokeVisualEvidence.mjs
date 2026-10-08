@@ -324,6 +324,9 @@ export function createStableSmokeVisualEvidence(options = {}) {
           failureEvidence: Boolean(input.failureEvidence),
           failureReason: input.failureReason,
           allowBlockingOverlay: Boolean(input.allowBlockingOverlay),
+          duplicateOf: input.duplicateOf || null,
+          mobilePathId: input.mobilePathId || slot.mobilePathId || null,
+          mobileStage: input.mobileStage || slot.mobileStage || null,
         });
         validateRecord(record, plan, slot, runtime, actual);
         if (testInfo?.attach) {

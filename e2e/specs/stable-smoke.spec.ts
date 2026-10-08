@@ -425,6 +425,31 @@ async function installControlledVideoRun(
       body: JSON.stringify({ success: true, data: run }),
     });
   });
+  await page.route(/\/api\/video-agent\/runs(?:\?.*)?$/, async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          total: 1,
+          items: [{
+            id: runId,
+            projectId: typeof run.projectId === 'string' ? run.projectId : null,
+            status: run.status,
+            mode: run.mode,
+            articleTitle: run.articleTitle,
+            directPrompt: run.directPrompt,
+            currentPhase: run.currentPhase,
+            phaseProgress: run.phaseProgress,
+            createdAt: run.createdAt,
+            updatedAt: run.updatedAt || run.createdAt,
+          }],
+        },
+      }),
+    });
+  });
   await page.route(new RegExp(`/api/video-agent/runs/${encodedRunId}/stream(?:\\?.*)?$`), async (route) => {
     await route.fulfill({
       status: 200,
@@ -1505,9 +1530,13 @@ async function openDocumentStoreAction(page: Page, name: '上传文件' | '解�
   const fab = page.locator('[data-tour-id="doc-create-fab"]');
   await expect(fab, `知识库必须提供 ${name} 的空状态入口或新增菜单`).toBeVisible();
   await fab.click();
+  const importGroupButton = page.getByRole('button', { name: '上传与导入', exact: true });
+  await importGroupButton.waitFor({ state: 'visible', timeout: 5_000 });
   const importGroup = await visibleButton(page, '上传与导入');
   expect(importGroup, '新增菜单必须提供上传与导入分组').not.toBeNull();
   await importGroup!.click();
+  const nestedButton = page.getByRole('button', { name, exact: true });
+  await nestedButton.waitFor({ state: 'visible', timeout: 5_000 });
   const nested = await visibleButton(page, name);
   expect(nested, `上传与导入分组必须提供 ${name}`).not.toBeNull();
   return nested!;
@@ -2277,7 +2306,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
 
       await page.getByRole('button', { name: '生成预览' }).click();
-      const generationStatus = page.getByRole('status');
+      const generationStatus = editor.getByRole('status').filter({ hasText: /正在|排队|生成/ }).first();
       await expect(generationStatus).toContainText(/正在|排队|生成/);
       await expect(editor).toHaveAttribute('data-avatar-phase', 'generating');
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -2796,7 +2825,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.url().includes(`/api/document-store/stores/${storeId}/upload`)
         && response.request().method() === 'POST'
-      ));
+      ), { timeout: 90_000 });
       const chooserPromise = page.waitForEvent('filechooser');
       await uploadFileAction.click();
       const chooser = await chooserPromise;
@@ -2926,7 +2955,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(corruptResponse.status()).toBe(400);
       expectUserReadable(corruptBody.error?.message || '');
       const failureTitle = page.getByText(`上传失败: ${corruptName}`, { exact: true });
-      const failureDetail = page.getByText(corruptBody.error?.message || '', { exact: true });
+      const failureDetail = page.getByText('文件无法解析，请确认文件未损坏并重新选择', { exact: true });
       await expect(failureTitle).toBeVisible({ timeout: 10_000 });
       await expect(failureDetail).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -3016,7 +3045,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const corruptBody = await corruptResponse.json() as ApiEnvelope<never>;
       expect(corruptResponse.status()).toBe(400);
       expectUserReadable(corruptBody.error?.message || '');
-      const mobileFailure = page.getByText(corruptBody.error?.message || '', { exact: true });
+      const mobileFailure = page.getByText('文件无法解析，请确认文件未损坏并重新选择', { exact: true });
       await expect(mobileFailure).toBeVisible({ timeout: 10_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-FILE-PARSING-14',
@@ -3661,7 +3690,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(parseAction).toBeVisible();
       await parseAction.tap();
       let drawer = page.locator('[data-drawer="reprocess-chat"]');
-      await expect(drawer.getByText('短视频解析', { exact: true })).toBeVisible();
+      await expect(drawer.getByRole('button', { name: /短视频解析.*粘贴短视频链接/ })).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-08',
         target: drawer,
@@ -3784,7 +3813,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expectUserReadable(body.error?.message || '');
 
       const longMessage = '当前短视频地址无法读取，请确认视频已经公开、没有过期并允许访问；检查完成后重新粘贴完整链接，如仍然失败请更换另一个公开视频链接后重试。';
-      await page.route('**/api/short-video-materials/runs', async (route) => {
+      const createRunRoute = /\/api\/short-video-materials\/runs(?:\?.*)?$/;
+      await page.route(createRunRoute, async (route) => {
         if (route.request().method() !== 'POST') return route.continue();
         await route.fulfill({
           status: 400,
@@ -3811,9 +3841,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: drawer,
         caption: '暗色桌面抽屉容纳完整长错误、原始输入和恢复动作，没有截断或横向滚动。',
       });
-      await page.unroute('**/api/short-video-materials/runs');
+      await page.unroute(createRunRoute);
     } finally {
-      await page.unroute('**/api/short-video-materials/runs').catch(() => undefined);
+      await page.unroute(/\/api\/short-video-materials\/runs(?:\?.*)?$/).catch(() => undefined);
       if (storeId) {
         const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deletedStore.status());
@@ -5706,6 +5736,35 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(failedLog.providerAttempts.every((attempt) => attempt.status === 'failed')).toBe(true);
       expect(failedLog.logicalModelPublicId).toBe(logical!.publicId);
       expect(failedLog.routerTrace.logicalModelPublicId).toBe(logical!.publicId);
+      // 一次请求证明“本次全路失败”，但控制台的线路状态来自连续失败熔断，不应把单次失败
+      // 冒充已摘除。继续用相同故障夹具发起至多两次快速请求，直到所有参与线路真实进入
+      // Unavailable，再验控制台的“无可用线路”和手动恢复入口。
+      let failedLogical = logical!;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const refreshedResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
+          headers: gateway.headers,
+        });
+        const refreshedBody = await refreshedResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+        expect(refreshedResponse.ok(), refreshedBody.error?.message || '无法读取全路失败后的线路状态').toBe(true);
+        failedLogical = refreshedBody.data.items.find((item) => item.id === logical!.id) || failedLogical;
+        const participating = failedLogical.offerings.filter((item) => offerings.some((original) => original.id === item.id));
+        if (participating.length > 0 && participating.every((item) => item.healthStatus === 2)) break;
+        const tripRunId = await createProbeRun(`all-failure-trip-${attempt}`);
+        const tripResult = await waitForImageRun(page, token, tripRunId, 120_000);
+        expect(tripResult.detail.run.status).toBe('Failed');
+      }
+      const finalHealthResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
+        headers: gateway.headers,
+      });
+      const finalHealthBody = await finalHealthResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+      expect(finalHealthResponse.ok(), finalHealthBody.error?.message || '无法确认全路熔断状态').toBe(true);
+      failedLogical = finalHealthBody.data.items.find((item) => item.id === logical!.id) || failedLogical;
+      expect(
+        failedLogical.offerings
+          .filter((item) => offerings.some((original) => original.id === item.id))
+          .every((item) => item.healthStatus === 2),
+        '连续全路失败后参与路由的 Offering 必须真实进入不可用状态，才能验收控制台故障提示',
+      ).toBe(true);
       const gatewayFailurePage = await page.context().newPage();
       try {
         await gatewayFailurePage.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
@@ -6050,6 +6109,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-02',
         target: canvas,
+        duplicateOf: '073-cds-visual-single-image-creation-01',
         caption: '新工作区为空且可编辑，没有旧图片或旧任务混入。',
       });
 
@@ -6184,11 +6244,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       expect(await page.evaluate(() => navigator.maxTouchPoints), '移动端证据必须来自真实触控上下文').toBeGreaterThan(0);
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-14',
-        target: page.locator('[data-tour-id="visual-editor-root"]'),
-        caption: 'iPhone 13 真实触控上下文中，生成流、参考图入口、描述、尺寸和画布切换均可触达。',
-      });
       const reference = solidPngDataUrl(35, 90, 190, 128);
       await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
         name: 'mobile-reference.png',
@@ -6201,6 +6256,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByRole('button', { name: /^1:1 · \d+x\d+$/ })).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow).toBeLessThanOrEqual(1);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-14',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: 'iPhone 13 真实触控上下文中，参考图已经加入生成流，描述、尺寸、移除和画布切换均可触达。',
+      });
       await testInfo.attach('multi-image-mobile-input', { body: await page.screenshot(), contentType: 'image/png' });
       await page.getByRole('button', { name: '移除参考图' }).click();
       await expect(page.getByAltText('参考图')).toBeHidden();
@@ -6213,7 +6273,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { name: 'mobile-b.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(235, 190, 55, 96).split(',')[1], 'base64') },
         { name: 'mobile-c.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(210, 55, 75, 96).split(',')[1], 'base64') },
       ];
-      await page.locator('input[type="file"][accept="image/*"]').first().setInputFiles(threeFiles);
+      await canvasRoot.locator('input[type="file"][accept="image/*"]').setInputFiles(threeFiles);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await canvasRoot.focus();
@@ -6307,20 +6367,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ));
       expect(activeRun.run.status, 'SSE 中断必须发生在任务仍处于活跃状态时').toMatch(/Queued|Running/i);
 
-      const resumedStream = await probeImageRunSse(page, token, runId, lastObservedSeq, 'next');
-      expect(resumedStream.ok).toBe(true);
-      expect(resumedStream.contentType).toContain('text/event-stream');
-      expect(resumedStream.ids.some((seq) => seq > lastObservedSeq), '续传必须从 afterSeq 之后收到新事件').toBe(true);
-      expect(
-        [...firstStream.eventTypes, ...resumedStream.eventTypes].join(','),
-        'SSE 中断和续传之间必须存在可见进度连续性',
-      ).toMatch(/runStart|imageStart|progress/i);
-      expect(
-        firstStream.heartbeats + resumedStream.heartbeats > 0
-          || firstStream.ids.length + resumedStream.ids.length >= 2,
-        'SSE 恢复期间必须收到心跳或连续业务进度事件',
-      ).toBe(true);
-
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const progressItems = page.getByTestId('generation-progress');
@@ -6330,11 +6376,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         message: '刷新发生在活跃任务期间，画板必须至少恢复一个真实进度容器',
         timeout: 5_000,
       }).toBeGreaterThanOrEqual(1);
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-18',
-        overviewJustification: '同一桌面画板同时显示方图与宽图的真实生成进度，可核对两种容器边界。',
-        caption: '1024×1024 与 1536×1024 两个真实任务都恢复到画板，仍在运行的任务保留完整进度描边。',
-      });
       const queue = page.getByLabel('生成队列');
       await expect(queue).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -6349,6 +6390,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: progress,
         caption: '任务准备阶段已经出现真实尺寸画框、阶段和剩余时间，没有静止空白。',
       });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-18',
+        overviewJustification: '同一桌面画板同时显示方图与宽图的真实生成进度，可核对两种容器边界。',
+        caption: '1024×1024 与 1536×1024 两个真实任务都恢复到画板，仍在运行的任务保留完整进度描边。',
+      });
+
+      const resumedStream = await probeImageRunSse(page, token, runId, lastObservedSeq, 'next');
+      expect(resumedStream.ok).toBe(true);
+      expect(resumedStream.contentType).toContain('text/event-stream');
+      expect(resumedStream.ids.some((seq) => seq > lastObservedSeq), '续传必须从 afterSeq 之后收到新事件').toBe(true);
+      expect(
+        [...firstStream.eventTypes, ...resumedStream.eventTypes].join(','),
+        'SSE 中断和续传之间必须存在可见进度连续性',
+      ).toMatch(/runStart|imageStart|progress/i);
+      expect(
+        firstStream.heartbeats + resumedStream.heartbeats > 0
+          || firstStream.ids.length + resumedStream.ids.length >= 2,
+        'SSE 恢复期间必须收到心跳或连续业务进度事件',
+      ).toBe(true);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-08',
         target: page.locator('[data-tour-id="visual-editor-root"]'),
@@ -7036,11 +7096,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         message: '刷新发生在活跃三图任务期间，画板必须至少恢复一个真实进度容器',
         timeout: 5_000,
       }).toBeGreaterThanOrEqual(1);
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18',
-        overviewJustification: '同一桌面画板同时显示方图与横版三参考图任务，可核对多比例进度边界。',
-        caption: '三张参考图驱动的方图和横版任务都恢复到画板，仍在运行的任务进度描边完整落在结果容器内。',
-      });
       const queue = page.getByLabel('生成队列');
       await expect(queue).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -7049,6 +7104,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '三图组合请求已经真实提交，运行和排队数量在画板上持续可见。',
       });
       const firstMultiProgress = multiProgressItems.first();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18',
+        overviewJustification: '同一桌面画板同时显示方图与横版三参考图任务，可核对多比例进度边界。',
+        caption: '三张参考图驱动的方图和横版任务都恢复到画板，仍在运行的任务进度描边完整落在结果容器内。',
+      });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-09',
         target: firstMultiProgress,

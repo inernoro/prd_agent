@@ -80,7 +80,7 @@ function fakeHarness(delay = 0) {
         automatedStatus: '通过',
         ...serializableOptions,
         theme: options.theme,
-        viewportClass: options.viewportClass || 'desktop',
+        viewportClass: options.mobilePathId ? 'mobile' : 'desktop',
       };
     },
   };
@@ -192,6 +192,31 @@ test('manifest 元数据只能来自计划且同轮重试幂等复用同一证�
     assert.equal(retried.captured, false);
     assert.equal(retried.reason, 'slot-already-captured');
     assert.equal(JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8')).length, 1);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('移动端计划元数据与重复证据关系完整传入 manifest', async () => {
+  const current = fixture([slot('CDS-VISUAL-SINGLE-01', {
+    viewportClass: 'mobile',
+    mobilePathId: 'single-image-creation-mobile',
+    mobileStage: 'result',
+  })]);
+  try {
+    const capture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(),
+    });
+    await capture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+      duplicateOf: '073-cds-visual-single-image-creation-01',
+    });
+    const [record] = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+    assert.equal(record.mobilePathId, 'single-image-creation-mobile');
+    assert.equal(record.mobileStage, 'result');
+    assert.equal(record.duplicateOf, '073-cds-visual-single-image-creation-01');
   } finally {
     rmSync(current.root, { recursive: true, force: true });
   }
@@ -448,7 +473,7 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   );
   assert.match(
     source,
-    /CDS-VISUAL-SINGLE-IMAGE-CREATION-18[\s\S]*?CDS-VISUAL-SINGLE-IMAGE-CREATION-06[\s\S]*?CDS-VISUAL-SINGLE-IMAGE-CREATION-09[\s\S]*?waitForImageRun/,
+    /CDS-VISUAL-SINGLE-IMAGE-CREATION-06[\s\S]*?CDS-VISUAL-SINGLE-IMAGE-CREATION-18[\s\S]*?CDS-VISUAL-SINGLE-IMAGE-CREATION-09[\s\S]*?waitForImageRun/,
   );
   assert.match(
     source,
@@ -456,7 +481,7 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   );
   assert.match(
     source,
-    /CDS-VISUAL-MULTI-IMAGE-CREATION-18[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-08[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-09[\s\S]*?waitForTimeout\(1_100\)[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-10/,
+    /CDS-VISUAL-MULTI-IMAGE-CREATION-08[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-18[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-09[\s\S]*?waitForTimeout\(1_100\)[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-10/,
   );
   assert.match(
     source,

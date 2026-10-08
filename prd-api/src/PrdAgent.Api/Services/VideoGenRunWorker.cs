@@ -529,6 +529,31 @@ public class VideoGenRunWorker : BackgroundService
         _logger.LogInformation("VideoGen 已取消: runId={RunId}", run.Id);
     }
 
+    private async Task WatchRunCancellationAsync(
+        string runId,
+        CancellationTokenSource requestCancellation,
+        CancellationToken stopWatching)
+    {
+        try
+        {
+            while (!stopWatching.IsCancellationRequested && !requestCancellation.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500), stopWatching);
+                var cancelRequested = await _db.VideoGenRuns
+                    .Find(x => x.Id == runId)
+                    .Project(x => x.CancelRequested)
+                    .FirstOrDefaultAsync(stopWatching);
+                if (!cancelRequested) continue;
+                requestCancellation.Cancel();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (stopWatching.IsCancellationRequested)
+        {
+            // 外部调用已结束，停止观察即可。
+        }
+    }
+
     private async Task PublishEventAsync(string runId, string eventName, object payload)
     {
         try
@@ -627,13 +652,43 @@ public class VideoGenRunWorker : BackgroundService
             return;
         }
 
-        var resp = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        using var requestCancellation = new CancellationTokenSource();
+        using var stopWatchingCancellation = new CancellationTokenSource();
+        var cancellationWatcher = WatchRunCancellationAsync(
+            run.Id,
+            requestCancellation,
+            stopWatchingCancellation.Token);
+        GatewayRawResponse resp;
+        try
         {
-            AppCallerCode = AppCallerRegistry.VideoAgent.Script.Chat,
-            ModelType = ModelTypes.Chat,
-            RequestBody = requestBody,
-            TimeoutSeconds = 120,
-        }, resolution, CancellationToken.None);
+            resp = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+            {
+                AppCallerCode = AppCallerRegistry.VideoAgent.Script.Chat,
+                ModelType = ModelTypes.Chat,
+                RequestBody = requestBody,
+                TimeoutSeconds = 120,
+            }, resolution, requestCancellation.Token);
+        }
+        catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)
+        {
+            await CancelRunAsync(run);
+            return;
+        }
+        finally
+        {
+            await stopWatchingCancellation.CancelAsync();
+            await cancellationWatcher;
+        }
+
+        var freshAfterScripting = await _db.VideoGenRuns
+            .Find(x => x.Id == run.Id)
+            .Project(x => x.CancelRequested)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (freshAfterScripting)
+        {
+            await CancelRunAsync(run);
+            return;
+        }
 
         if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
         {

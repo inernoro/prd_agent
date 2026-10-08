@@ -13,6 +13,9 @@ export type StableSmokeVisualEvidenceInput = {
   allowBlockingOverlay?: boolean;
   skipReady?: boolean;
   timeout?: number;
+  duplicateOf?: string;
+  mobilePathId?: string;
+  mobileStage?: string;
 };
 
 export type StableSmokeVisualEvidenceResult =
