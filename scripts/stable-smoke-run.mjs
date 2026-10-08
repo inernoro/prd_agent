@@ -403,12 +403,40 @@ async function readGatewayLoginSnapshot(values, fetchFn = globalThis.fetch) {
     || payload?.success !== true
     || !payload?.data?.token
     || payload?.data?.mustChangePassword !== false) {
-    throw new Error('CDS 网关固定管理员账号登录失败');
+    const code = payload?.error?.code || `HTTP_${response.status}`;
+    throw new Error(`CDS 网关固定管理员账号登录失败:${code}`);
   }
   const claims = decodeJwtPayload(payload.data.token);
   const securityVersion = String(claims.user_security_version || '').trim();
   if (!securityVersion) throw new Error('CDS 网关管理员会话缺少安全版本声明');
   return { token: payload.data.token, securityVersion };
+}
+
+function isRetryableGatewayProbeError(error) {
+  if (error instanceof TypeError) return true;
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return true;
+  const causeCode = String(error?.cause?.code || '');
+  if (['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(causeCode)) {
+    return true;
+  }
+  return /(?:HTTP_|GW_TRANSIENT_HTTP_)(502|503|504)\b/.test(String(error?.message || ''));
+}
+
+async function retryGatewayProbeOperation(operation, {
+  attempts = 6,
+  sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableGatewayProbeError(error) || attempt === attempts) throw error;
+      await sleepFn(Math.min(10_000, 1_000 * (2 ** (attempt - 1))));
+    }
+  }
+  throw lastError;
 }
 
 export function canReuseGatewayPersistenceProbe(record, { runId, commit }) {
@@ -438,11 +466,16 @@ export async function runCdsGatewayPersistenceProbe({
   commandFn = command,
   waitFn = waitForCdsDeployment,
   fetchFn = globalThis.fetch,
+  sleepFn,
 }) {
   const existing = readJson(recordPath);
   if (canReuseGatewayPersistenceProbe(existing, { runId, commit })) return existing;
 
-  const initial = await readGatewayLoginSnapshot(values, fetchFn);
+  const retryOptions = { sleepFn };
+  const initial = await retryGatewayProbeOperation(
+    () => readGatewayLoginSnapshot(values, fetchFn),
+    retryOptions,
+  );
   const branchIdResult = commandFn('python3', [
     '.claude/skills/cds/cli/cdscli.py',
     'branch-id',
@@ -474,17 +507,29 @@ export async function runCdsGatewayPersistenceProbe({
     }
     deploymentRunIds.add(deploymentRunId);
     const readiness = await waitFn(commit);
-    const oldSession = await fetchFn(
-      `${withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL)}/gw/auth/context`,
-      {
-        signal: AbortSignal.timeout(10_000),
-        headers: { Authorization: `Bearer ${initial.token}` },
+    const oldSession = await retryGatewayProbeOperation(
+      async () => {
+        const response = await fetchFn(
+          `${withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL)}/gw/auth/context`,
+          {
+            signal: AbortSignal.timeout(10_000),
+            headers: { Authorization: `Bearer ${initial.token}` },
+          },
+        );
+        if ([502, 503, 504].includes(response.status)) {
+          throw new Error(`GW_TRANSIENT_HTTP_${response.status}`);
+        }
+        return response;
       },
+      retryOptions,
     );
     if (!oldSession.ok) {
       throw new Error(`CDS 第 ${sequence} 次重新部署后旧网关会话失效`);
     }
-    const fresh = await readGatewayLoginSnapshot(values, fetchFn);
+    const fresh = await retryGatewayProbeOperation(
+      () => readGatewayLoginSnapshot(values, fetchFn),
+      retryOptions,
+    );
     if (fresh.securityVersion !== initial.securityVersion) {
       throw new Error(`CDS 第 ${sequence} 次重新部署后管理员安全版本发生漂移`);
     }

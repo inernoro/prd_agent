@@ -182,6 +182,8 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   const recordPath = resolve(directory, 'probe.json');
   const token = gatewayToken();
   let deployments = 0;
+  let transientContextFailures = 0;
+  let transientLoginFailures = 0;
   const values = {
     STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example.test',
     STABLE_SMOKE_CDS_GW_USER: 'admin',
@@ -204,12 +206,20 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   };
   const fetchFn = async (url) => {
     if (String(url).endsWith('/gw/auth/login')) {
+      if (deployments === 1 && transientLoginFailures === 0) {
+        transientLoginFailures += 1;
+        return new Response('', { status: 503 });
+      }
       return new Response(JSON.stringify({
         success: true,
         data: { token, mustChangePassword: false },
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     if (String(url).endsWith('/gw/auth/context')) {
+      if (deployments === 1 && transientContextFailures === 0) {
+        transientContextFailures += 1;
+        throw new TypeError('fetch failed');
+      }
       return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
     }
     return new Response('', { status: 404 });
@@ -225,8 +235,11 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       commandFn,
       waitFn: async () => ({ ready: true, versionId: `version-${deployments}`, runtimeCommit: 'a'.repeat(40) }),
       fetchFn,
+      sleepFn: async () => {},
     });
     assert.equal(deployments, 2);
+    assert.equal(transientContextFailures, 1);
+    assert.equal(transientLoginFailures, 1);
     assert.equal(canReuseGatewayPersistenceProbe(record, {
       runId: 'stsmk-gateway',
       commit: 'a'.repeat(40),
@@ -243,6 +256,7 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       commandFn,
       waitFn: async () => ({ ready: true }),
       fetchFn,
+      sleepFn: async () => {},
     });
     assert.equal(deployments, 2);
   } finally {
