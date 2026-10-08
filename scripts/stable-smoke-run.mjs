@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import {
 } from './stable-smoke-results.mjs';
 import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
+import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -687,6 +688,8 @@ function runPlaywright(environment, values, runDir, grep = '') {
   const resultPath = resolve(runDir, `${environment}-results.json`);
   const htmlPath = resolve(runDir, `${environment}-playwright-report`);
   const testResultPath = resolve(runDir, `${environment}-test-results`);
+  // 同一 runId 恢复执行时不得保留旧版 HTML/trace，其中可能包含未脱敏网络头。
+  rmSync(htmlPath, { recursive: true, force: true });
   const env = {
     ...process.env,
     ...values,
@@ -711,7 +714,13 @@ function runPlaywright(environment, values, runDir, grep = '') {
   ];
   if (grep) args.push('--grep', grep);
   const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
-  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
+  const sanitization = [resultPath, testResultPath]
+    .map((path) => sanitizeStableSmokeArtifactTree(path))
+    .reduce((total, item) => ({
+      scanned: total.scanned + item.scanned,
+      changed: total.changed + item.changed,
+    }), { scanned: 0, changed: 0 });
+  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath, sanitization };
 }
 
 const folderRegressionCaseIds = [

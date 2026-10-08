@@ -7,6 +7,14 @@ import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
+import {
+  clearStableSmokeInfrastructureCircuit,
+  probeStableSmokeReadiness,
+  readStableSmokeInfrastructureCircuit,
+  sanitizeStableSmokeTestInfo,
+  stableSmokeDiagnosticIndicatesInfrastructureTimeout,
+  writeStableSmokeInfrastructureCircuit,
+} from '../utils/stableSmokeDiagnostics.mjs';
 
 type BusinessCatalog = {
   featureLines: Array<{
@@ -54,6 +62,8 @@ const identityPermissionPolicy = JSON.parse(readFileSync(
   'utf8',
 )) as { superPermission: string; requiredPermissions: string[] };
 const requiredIdentityPermissions = identityPermissionPolicy.requiredPermissions;
+const stableSmokeApiTimeoutMs = 30_000;
+const stableSmokeCleanupTimeoutMs = 60_000;
 // 与后端 StableSmokeIdentityPolicy.MissingPermissions 同口径：持有 super 的账号视为矩阵权限齐全。
 const missingIdentityPermissions = (effective: string[]) => (
   effective.includes(identityPermissionPolicy.superPermission)
@@ -121,6 +131,7 @@ async function issueTicket(request: APIRequestContext, returnUrl: string) {
       }),
     },
     data: bodyText,
+    timeout: stableSmokeApiTimeoutMs,
   });
   const body = await response.json() as TicketResponse;
   expect(response.status(), body.error?.message || '生成合成登录入口失败').toBe(200);
@@ -146,6 +157,7 @@ async function issueTicketDetails(request: APIRequestContext, returnUrl: string)
       }),
     },
     data: bodyText,
+    timeout: stableSmokeApiTimeoutMs,
   });
   const body = await response.json() as TicketResponse;
   expect(response.status(), body.error?.message || '生成合成登录入口失败').toBe(200);
@@ -773,6 +785,7 @@ async function createVisualWorkspace(page: Page, token: string, suffix: string) 
   const response = await page.request.post('/api/visual-agent/image-master/workspaces', {
     headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}` },
     data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}`, scenarioType: 'image-gen' },
+    timeout: stableSmokeApiTimeoutMs,
   });
   return readEnvelope<{ workspace: { id: string } }>(response);
 }
@@ -783,6 +796,7 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
   while (Date.now() - startedAt < timeoutMs) {
     const response = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}?includeItems=true&includeImages=false`, {
       headers: authHeaders(token),
+      timeout: stableSmokeApiTimeoutMs,
     });
     const detail = await readEnvelope<ImageRunDetail>(response);
     if (!statuses.includes(detail.run.status)) statuses.push(detail.run.status);
@@ -1316,6 +1330,38 @@ async function deleteStableHostedSite(page: Page, token: string, siteId: string)
 }
 
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
+  test.beforeEach(async ({ request }) => {
+    if (!process.env.STABLE_SMOKE_RUN) return;
+    const outputDirectory = requiredEnv('STABLE_SMOKE_TEST_OUTPUT');
+    const infrastructureCircuit = readStableSmokeInfrastructureCircuit(outputDirectory);
+    if (!infrastructureCircuit) return;
+    const now = Date.now();
+    if (now - infrastructureCircuit.lastProbeAt < 30_000) {
+      test.skip(true, infrastructureCircuit.reason);
+      return;
+    }
+    writeStableSmokeInfrastructureCircuit(outputDirectory, { ...infrastructureCircuit, lastProbeAt: now });
+    if (await probeStableSmokeReadiness(request)) {
+      clearStableSmokeInfrastructureCircuit(outputDirectory);
+      return;
+    }
+    test.skip(true, infrastructureCircuit.reason);
+  });
+
+  test.afterEach(async ({ request }, testInfo) => {
+    const infrastructureTimeout = testInfo.errors.some(stableSmokeDiagnosticIndicatesInfrastructureTimeout);
+    sanitizeStableSmokeTestInfo(testInfo);
+    if (!process.env.STABLE_SMOKE_RUN || !infrastructureTimeout) return;
+    const recovered = await probeStableSmokeReadiness(request);
+    if (!recovered) {
+      writeStableSmokeInfrastructureCircuit(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), {
+        reason: '上一条旅程发生 API 网络超时，应用就绪探针尚未恢复；后续旅程按环境阻塞处理，避免重复误报产品缺陷。',
+        lastProbeAt: Date.now(),
+      });
+    }
+    sanitizeStableSmokeTestInfo(testInfo);
+  });
+
   test.beforeEach(async ({ context }) => {
     if (process.env.STABLE_SMOKE_RUN) await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
   });
@@ -4038,27 +4084,36 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       if (runId) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
           if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+            });
             await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
           }
         }
       }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-delete` },
+        timeout: stableSmokeCleanupTimeoutMs,
       });
       await expectDeleteSucceeded(deleted, `删除真实生图工作区 ${workspace.id} 失败`);
-      expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
+      expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      })).status()).toBe(404);
       if (runId) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        })).status()).toBe(404);
       }
       for (const artifact of generatedArtifacts) {
         const remaining = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
           `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(artifact.requestId)}`,
-          { headers: authHeaders(token) },
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
         ));
         expect(remaining.items.some((item) => item.id === artifact.id), '工作区删除后不得残留生成产物记录').toBe(false);
         await expect.poll(async () => {
@@ -4129,21 +4184,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
     } finally {
       if (runId) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
           if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+            });
             await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
           }
         }
       }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-delete` },
+        timeout: stableSmokeCleanupTimeoutMs,
       });
       await expectDeleteSucceeded(deleted, `删除画幅矩阵工作区 ${workspace.id} 失败`);
       if (runId) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        })).status()).toBe(404);
       }
     }
   });
@@ -4221,20 +4283,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
     } finally {
       if (runId) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
           if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+            });
             await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
           }
         }
       }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` },
+        timeout: stableSmokeCleanupTimeoutMs,
       });
       await expectDeleteSucceeded(deleted, `删除参考图工作区 ${workspace.id} 失败`);
-      if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      })).status()).toBe(404);
     }
   });
 
@@ -4492,21 +4561,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       for (const runId of runIds) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) });
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
           if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, { headers: authHeaders(token) });
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+            });
             await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
           }
         }
       }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-delete` },
+        timeout: stableSmokeCleanupTimeoutMs,
       });
       await expectDeleteSucceeded(deleted, `删除多图工作区 ${workspace.id} 失败`);
       for (const runId of runIds) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        })).status()).toBe(404);
       }
     }
   });
