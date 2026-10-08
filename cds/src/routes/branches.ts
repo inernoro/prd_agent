@@ -3593,7 +3593,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       title: `派发到执行器 ${executor.id} (${executor.host}:${executor.port})`,
       timestamp: new Date().toISOString(),
     };
-    res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
+    sendSSE(res, 'step', preamble);
     appendDeploymentRunEvent(context.deploymentRunId, preamble);
 
     // 用户反馈 2026-05-06 (#3):远程执行器部署的 log 一直没回流到 master,

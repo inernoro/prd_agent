@@ -768,6 +768,7 @@ describe('human project grants through the production server', () => {
     });
     remote.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => remote.once('listening', resolve));
+    const executorAddress = `127.0.0.1:${(remote.address() as { port: number }).port}`;
     registry.register({ id: 'test-remote', host: '127.0.0.1', port: (remote.address() as { port: number }).port,
       role: 'remote', capacity: { maxBranches: 10, memoryMB: 8192, cpuCores: 4 } });
     await grant(['project-a']);
@@ -781,13 +782,31 @@ describe('human project grants through the production server', () => {
         const text = await res.text();
         expect(text).toContain('safe progress');
         if (cookie === member) {
+          expect(text).not.toContain(executorAddress);
+          expect(text).toContain('部署调度进度');
           expect(text).not.toContain('fake-remote-map-secret');
           expect(text).not.toContain('fake-remote-chunk-secret');
           expect(text).toContain('原始输出仅系统所有者可查看');
         } else {
+          expect(text).toContain(executorAddress);
           expect(text).toContain('fake-remote-map-secret');
           expect(text).toContain('fake-remote-chunk-secret');
         }
+      }
+      expect(JSON.stringify((await call('GET', '/api/branches/branch-project-a/logs', member)).body)).not.toContain(executorAddress);
+      expect(JSON.stringify((await call('GET', '/api/branches/branch-project-a/logs', owner)).body)).toContain(executorAddress);
+      expect(JSON.stringify(state.getState().logs['branch-project-a'])).toContain(executorAddress);
+      const runs = (await call('GET', '/api/deployment-runs?project=project-a&branch=branch-project-a', member)).body.runs;
+      expect(runs.length).toBeGreaterThan(0);
+      for (const run of runs) {
+        expect(JSON.stringify((await call('GET', `/api/deployment-runs/${run.id}`, member)).body)).not.toContain(executorAddress);
+        expect(JSON.stringify((await call('GET', `/api/deployment-runs/${run.id}`, owner)).body)).toContain(executorAddress);
+        const memberStream = await fetch(base + `/api/deployment-runs/${run.id}/stream`, { headers: { Cookie: member } });
+        expect(memberStream.status).toBe(200);
+        expect(await memberStream.text()).not.toContain(executorAddress);
+        const ownerStream = await fetch(base + `/api/deployment-runs/${run.id}/stream`, { headers: { Cookie: owner } });
+        expect(ownerStream.status).toBe(200);
+        expect(await ownerStream.text()).toContain(executorAddress);
       }
     } finally {
       remote.closeAllConnections();

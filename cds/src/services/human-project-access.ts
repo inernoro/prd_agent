@@ -144,6 +144,15 @@ export function logPayloadForHumanView<T>(req: unknown, payload: T): T {
     if (value && typeof value === 'object') {
       const entries = Object.entries(value);
       const strings = maskEnvRecord(Object.fromEntries(entries.filter(([, item]) => typeof item === 'string')));
+      // Dispatch is a finite existing event kind, not an address parser. Keep
+      // owner/cluster diagnostics in storage while member progress and history
+      // show a safe title, including records written by an owner previously.
+      if ((value as { step?: unknown }).step === 'dispatch' && typeof strings.title === 'string') {
+        strings.title = '部署调度进度';
+      }
+      if ((value as { phase?: unknown }).phase === 'dispatch' && typeof strings.message === 'string') {
+        strings.message = '部署调度进度';
+      }
       return Object.fromEntries(entries.map(([key, item]) => [key,
         typeof item === 'string' ? maskCommandSecrets(strings[key]) : walk(item),
       ]));
