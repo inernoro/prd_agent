@@ -2491,6 +2491,7 @@ export interface CdsState {
    * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
    * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
    */
+  alarmIdentity?: import('./services/alarm-identity.js').AlarmIdentitySettings;
   alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
@@ -4875,6 +4876,7 @@ export interface CdsConfig {
    * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
    * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
    */
+  alarmIdentity?: import('./services/alarm-identity.js').AlarmIdentitySettings;
   alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * Public base URL of this CDS install (e.g. "https://cds.example.com").

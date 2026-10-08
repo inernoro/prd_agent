@@ -26,8 +26,8 @@ describe('P1 通知通道接口只许非作用域管理员（读也拦）', () =
     expect(fromProjects).toBe(assertUnscopedAdmin);
     const routes = codeOf(read('../../src/routes/alarm-channels.ts'));
     expect(routes).toContain("from '../services/unscoped-admin-guard.js'");
-    // 通道读写、演练和通知历史全部过门；建和改共用 write。
-    expect(routes.split('denySystemAccess(req, res)').length - 1).toBe(5);
+    // 通道读写、演练、通知历史与实例身份读写全部过门；建和改共用 write。
+    expect(routes.split('denySystemAccess(req, res)').length - 1).toBe(7);
     expect(routes).toMatch(/router\.get\('\/cds-system\/alarm-deliveries', async \(req, res\) => \{\s*if \(denySystemAccess\(req, res\)\) return;/);
     expect(routes).toMatch(/router\.get\('\/cds-system\/alarm-channels', \(req, res\) => \{\s*if \(denySystemAccess\(req, res\)\) return;/);
     expect(routes).not.toContain('projectScopeOf(req)');

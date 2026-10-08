@@ -4573,6 +4573,13 @@ export class StateService {
    * 读接口返回的是**存着的原样**（含密钥），只给服务端用；路由层负责脱敏后才出网
    * ——私钥、Bark key、自定义请求头的值一律不回给前端，那些是写了就不再读的东西。
    */
+  getAlarmIdentity(): import('./alarm-identity.js').AlarmIdentitySettings | undefined {
+    return this.state.alarmIdentity ? structuredClone(this.state.alarmIdentity) : undefined;
+  }
+  setAlarmIdentity(identity: import('./alarm-identity.js').AlarmIdentitySettings): void {
+    this.state.alarmIdentity = structuredClone(identity);
+    this.save();
+  }
   listAlarmChannels(): import('./alarm-route.js').AlarmChannelConfig[] {
     return [...(this.state.alarmChannels ?? [])];
   }

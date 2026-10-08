@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { reconcileHostRebootBranch } from '../../src/services/startup-reconcile.js';
 
 /**
  * #1 重启中断分支按需自愈（demand-driven，不复活重试风暴）。
@@ -63,6 +64,24 @@ describe('ProxyService interrupted-branch recovery scoping', () => {
     await proxy.handleRequest(makeReq(), makeRes());
     expect(recover).toHaveBeenCalledTimes(1);
     expect(recover).toHaveBeenCalledWith(StateService.slugify('feat/interrupted'));
+  });
+
+  it('routes a proven host reboot to cheap wake, while HEAD probes remain read-only', async () => {
+    const branch = addBranch({ errorMessage: '容器异常退出，疑似崩溃，需重新部署',
+      services: { web: svc('web', 'error', '容器异常退出，疑似崩溃，需重新部署') } });
+    expect(reconcileHostRebootBranch(branch, new Map([[`${branch.id}/web`, {
+      containerName: 'c-web', profileId: 'web', branchId: branch.id, running: false,
+      exitCode: 255, oomKilled: false, finishedAt: '2026-10-01T00:45:59Z',
+    }]]), Date.parse('2026-10-01T00:46:00Z'), false)).toBe(true);
+    const wake = vi.fn(async () => {});
+    const redeploy = vi.fn(async () => {});
+    proxy.setOnReviveCooled(wake);
+    proxy.setOnRecoverInterrupted(redeploy);
+    await proxy.handleRequest(makeReq('HEAD'), makeRes());
+    expect(wake).not.toHaveBeenCalled();
+    await proxy.handleRequest(makeReq(), makeRes());
+    expect(wake).toHaveBeenCalledWith(branch.id);
+    expect(redeploy).not.toHaveBeenCalled();
   });
 
   it('does NOT fire for a genuinely crashed/failed error branch (no interrupted marker)', async () => {

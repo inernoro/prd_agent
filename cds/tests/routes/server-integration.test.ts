@@ -694,12 +694,33 @@ describe('Server route ordering (regression)', () => {
       expect(deniedOperator.status).toBe(403);
 
       const memberProjects = await request(server, '/api/projects', { Cookie: memberCookie });
-      const memberSecretProject = JSON.parse(memberProjects.body).projects.find(
+      expect(JSON.parse(memberProjects.body).projects).toEqual([]);
+      const memberId = JSON.parse(created.body).user.id;
+      const unauthorizedDetail = await request(server, '/api/projects/auth-secret-project', { Cookie: memberCookie });
+      expect(unauthorizedDetail.status).toBe(403);
+      const cannotSelfGrant = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: ['auth-secret-project'],
+      }, { Cookie: memberCookie });
+      expect(cannotSelfGrant.status).toBe(403);
+      const grant = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: ['auth-secret-project'],
+      }, { Cookie: compatibleCookie });
+      expect(grant.status).toBe(200);
+      const authorizedProjects = await request(server, '/api/projects', { Cookie: memberCookie });
+      const memberSecretProject = JSON.parse(authorizedProjects.body).projects.find(
         (project: { id: string }) => project.id === 'auth-secret-project',
       );
       expect(memberSecretProject.customEnv).toEqual({ OWNER_ONLY_SECRET: '***[masked]***' });
       const memberEnv = await request(server, '/api/env?scope=_all', { Cookie: memberCookie });
-      expect(JSON.parse(memberEnv.body).env._global).toEqual({ GLOBAL_OWNER_ONLY: '***[masked]***' });
+      expect(memberEnv.status).toBe(403);
+      const memberDelete = await requestJson(server, 'DELETE', '/api/projects/auth-secret-project', {}, { Cookie: memberCookie });
+      expect(memberDelete.status).toBe(403);
+      const revoked = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: [],
+      }, { Cookie: compatibleCookie });
+      expect(revoked.status).toBe(200);
+      expect(JSON.parse((await request(server, '/api/projects', { Cookie: memberCookie })).body).projects).toEqual([]);
+      expect((await request(server, '/api/projects/auth-secret-project', { Cookie: memberCookie })).status).toBe(403);
 
       const persistedOwnerCreated = await requestJson(server, 'POST', '/api/auth/users', {
         username: 'persisted-owner',

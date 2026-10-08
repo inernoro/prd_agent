@@ -1,3 +1,4 @@
+import { AlarmIdentityPanel } from '../AlarmIdentityPanel';
 /*
  * 通知通道（CDS 系统设置 → 接入）。
  *
@@ -100,6 +101,7 @@ export function AlarmNotifyTab(): JSX.Element {
     <div className="flex flex-col gap-6">
       {/* 多协议通道在前：它是现在该用的那条路。Bark 的 key 当场就能粘进来，
           不必先定「发给哪个 MAP 账号、用哪个 MAP 实例」那两件只有人能定的事。 */}
+      <AlarmIdentityPanel />
       <AlarmChannelsPanel projects={projects} />
 
       {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经

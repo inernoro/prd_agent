@@ -34,6 +34,8 @@ import { decideSelfMonitorAlarm, type SelfMonitorAlarmState } from './self-monit
  */
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import { isSelfCheckEndpoint, SELF_PROJECT_ID } from './self-monitoring-bootstrap.js';
 import http from 'node:http';
 import path from 'node:path';
 import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
@@ -49,6 +51,7 @@ import {
   describeMonitorProbe,
   matchPreviewHost,
   probeCustomMonitor,
+  probeHealthJsonBatch,
   type ProjectPreviewHost,
 } from './uptime-custom-monitor.js';
 // 故障归因到发布的时间窗判定只有这一处，发布中心将来要展示同款关联必须复用它。
@@ -115,6 +118,8 @@ export function probeSourceOfId(id: string): ProbeSource {
 export interface ProbeTarget {
   /** 分支目标为 `${branchId}::${profileId}`，发布目标为 `release@${targetId}`，自定义为 `monitor@${id}`；URL 里需 encodeURIComponent */
   id: string;
+  /** 同源自检的采集通道，子指标共享一次请求。 */
+  collection?: boolean;
   source: ProbeSource;
   branchId: string;
   projectId: string;
@@ -166,6 +171,10 @@ export interface ProbeTarget {
    * 经 forwarder / TLS / 路由整条链路，与真人打开预览是同一条路。
    */
   userViewUrl?: string;
+}
+
+function isSelfMetric(target: ProbeTarget): boolean {
+  return target.projectId === SELF_PROJECT_ID && target.monitor?.kind === 'health-json' && isSelfCheckEndpoint(target.url || '');
 }
 
 /**
@@ -954,6 +963,8 @@ export interface UptimeTargetSummary {
   timeoutMs: number;
   /** 自定义监控的定义 id（source=custom 时有），前端据此编辑 / 暂停 / 删除 */
   monitorId?: string;
+  /** 结构化检查语义；仅摘要展示，不包含地址凭据或请求头。 */
+  healthCheck?: { componentId: string; field: string; op: string; value: string };
   /** 自定义监控的标签 */
   tags?: string[];
   /** 这条业务是否出现在项目的公开面板上（第一屏那行「N 条业务对外」靠它数） */
@@ -1369,6 +1380,10 @@ export class UptimeMonitorService {
       // 下一轮照常探分支 / 生产，只是自定义目标跳过这一轮。
       const builtinTargets = activeTargets.filter((t) => t.source !== 'custom');
       const customTargets = activeTargets.filter((t) => t.source === 'custom');
+      const dueSelfUrls = new Set(customTargets.filter(t => t.collection || isSelfMetric(t)).map(t => t.url));
+      for (const t of targets) {
+        if (t.active && dueSelfUrls.has(t.url) && (t.collection || isSelfMetric(t)) && !customTargets.some(m => m.id === t.id)) customTargets.push(t);
+      }
       customLane = this.runCustomLane(customTargets);
 
       // 轮次预算（Codex PR #1514 第四轮 P1）：用户视角与直连探测都是按并发分批
@@ -1439,8 +1454,29 @@ export class UptimeMonitorService {
     this.customLaneRunning = true;
     let probed = 0;
     try {
-      for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
-        const chunk = targets.slice(i, i + PROBE_CONCURRENCY);
+      // 采集通道与子指标共享一次请求，一次接口故障只产生一个事件。
+      const handled = new Set<string>();
+      for (const collector of targets.filter(t => t.collection)) {
+        const members = targets.filter(t => isSelfMetric(t) && t.url === collector.url && t.active);
+        if (!members.length) continue;
+        const result = await probeHealthJsonBatch(members.map(t => t.monitor!), collector.timeoutMs || this.deps.config.timeoutMs);
+        const at = this.now();
+        this.applySample(collector, { ...result.collection, t: at });
+        handled.add(collector.id);
+        members.forEach((target, index) => {
+          const outcome = result.members[index];
+          if (outcome.observation) {
+            try { this.deps.state.recordMonitorObservation?.(target.monitor!.id, outcome.observation); }
+            catch { this.deps.logger?.warn?.('[uptime] 自检观测证据写入失败'); }
+          }
+          this.applySample(target, { ...outcome, t: at });
+          handled.add(target.id);
+        });
+        probed += members.length + 1;
+      }
+      const remaining = targets.filter(t => !handled.has(t.id) && !t.collection);
+      for (let i = 0; i < remaining.length; i += PROBE_CONCURRENCY) {
+        const chunk = remaining.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
           this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
@@ -1456,7 +1492,7 @@ export class UptimeMonitorService {
 
   /** 本轮探测清单（三类来源合并）。runCycle 与 probeNow 共用，避免两处各拼一份。 */
   private selectTargets(): ProbeTarget[] {
-    return selectAllProbeTargets(
+    const targets = selectAllProbeTargets(
       this.deps.state.getAllBranches(),
       this.deps.state.getReleaseTargets?.() || [],
       this.deps.config.excludePatterns || [],
@@ -1469,6 +1505,17 @@ export class UptimeMonitorService {
         getPreviewUrl: this.deps.state.getPreviewUrl?.bind(this.deps.state),
       },
     );
+    const groups = new Map<string, ProbeTarget[]>();
+    for (const t of targets) if (isSelfMetric(t)) groups.set(t.url!, [...(groups.get(t.url!) || []), t]);
+    for (const [url, members] of groups) {
+      const first = members[0];
+      const id = `self-collection-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`;
+      targets.push({ ...first, id: `monitor@${id}`, profileId: id, monitor: undefined, collection: true,
+        name: 'CDS · 自检数据获取', active: members.some(t => t.active), excluded: members.every(t => t.excluded),
+        intervalMs: Math.min(...members.map(t => t.intervalMs || this.deps.config.intervalMs)),
+        probeDescription: `统一读取 ${members.length} 项自检；读取失败不代表各项业务故障` });
+    }
+    return targets;
   }
 
   /**
@@ -1684,6 +1731,17 @@ export class UptimeMonitorService {
     const target = this.selectTargets().find((t) => t.id === targetId);
     if (!target) return null;
     const now = this.now();
+    if ((target.collection || isSelfMetric(target)) && target.active) {
+      if (this.customLaneRunning) return { ok: false, skipped: '自检正在读取，请稍后刷新' };
+      const related = this.selectTargets().filter(t => t.url === target.url && (t.collection || isSelfMetric(t)));
+      for (const t of related) {
+        const row = this.records.get(t.id) || emptyRecord(t, now);
+        this.syncRecordIdentity(row, t); this.records.set(t.id, row);
+      }
+      await this.runCustomLane(related.filter(t => t.active));
+      const row = this.records.get(target.id)!;
+      return row.lastSample ? { ok: true, sample: row.lastSample, status: row.status } : { ok: false, skipped: '自检正在读取，请稍后刷新' };
+    }
     const record = this.records.get(target.id) || emptyRecord(target, now);
     this.syncRecordIdentity(record, target);
     this.records.set(target.id, record);
@@ -1913,7 +1971,7 @@ export class UptimeMonitorService {
         profileId: record.profileId,
         probeKind: record.probeKind,
         probeUrl: record.probeUrl,
-        status: record.status,
+        status: record.lastSample?.noData && record.status !== 'down' && record.status !== 'paused' ? 'unknown' : record.status,
         pausedReason: record.pausedReason,
         excluded: Boolean(record.excluded),
         degraded: Boolean(record.degraded),
@@ -2028,7 +2086,7 @@ export class UptimeMonitorService {
   }
 
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation' | 'publicVisible'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation' | 'publicVisible' | 'healthCheck'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
     const latest = monitor?.observations?.[0];
     return {
@@ -2036,6 +2094,9 @@ export class UptimeMonitorService {
       tags: monitor?.tags || [],
       enabled: monitor ? monitor.enabled : true,
       publicVisible: Boolean(monitor?.publicVisible),
+      ...(monitor?.kind === 'health-json' && monitor.healthComponentId ? {
+        healthCheck: { componentId: monitor.healthComponentId, field: monitor.healthField || 'observedValue', op: monitor.healthOp || 'eq', value: monitor.healthValue || '' },
+      } : {}),
       // 归属跟着定义走，不另存一份：定义改了（比如管理员接管），面板下一轮就跟上。
       ...(monitor
         ? {

@@ -231,7 +231,7 @@ describe('renderNoticeFromEvent — 只读结构化字段，不认事件名', ()
       ts: new Date().toISOString(),
       data: { targetId: 'release@tgt-1', projectId: 'p', targetName: '生产 / 官网', message: 'HTTP 502' },
     });
-    expect(down?.href).toBe('/status');
+    expect(down?.href).toBe('/status?target=release%40tgt-1');
     expect(down?.source).toBe('uptime');
 
     expect(renderNoticeFromEvent({ type: 'heartbeat', ts: '', data: {} })).toBeNull();

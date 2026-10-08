@@ -941,6 +941,30 @@ describe('ContainerService', () => {
   });
 
   describe('discoverAppContainersWithStatus', () => {
+    it('collects exit evidence without reading Docker environment variables', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({
+        stdout: 'c-api|exited|cds.branch.id=b,cds.profile.id=api\nc-web|running|cds.branch.id=b,cds.profile.id=web',
+        stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format/, () => ({
+        stdout: '/c-api|255|false|2026-10-01T00:45:59Z', stderr: '', exitCode: 0,
+      }));
+      const result = await service.discoverAppContainersWithStatus();
+      expect(result.containers.get('b/api')).toMatchObject({ exitCode: 255, oomKilled: false, finishedAt: '2026-10-01T00:45:59Z' });
+      expect(result.containers.get('b/web')?.exitCode).toBeUndefined();
+      expect(mock.commands[1]).not.toContain('Config.Env');
+      expect(mock.commands[1]).not.toContain('c-web');
+    });
+
+    it('keeps exit evidence unknown when inspection fails', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({
+        stdout: 'c-api|exited|cds.branch.id=b,cds.profile.id=api', stderr: '', exitCode: 0,
+      }));
+      const result = await service.discoverAppContainersWithStatus();
+      expect(result.ok).toBe(true);
+      expect(result.containers.get('b/api')?.exitCode).toBeUndefined();
+    });
+
     it('reports ok=false when docker ps fails so startup prune can fail closed', async () => {
       mock.addResponsePattern(/docker ps/, () => ({
         stdout: '',
