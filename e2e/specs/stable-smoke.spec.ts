@@ -394,6 +394,39 @@ async function resumeLiteraryMarkerStream(page: Page) {
   });
 }
 
+async function installControlledVideoRun(
+  page: Page,
+  runId: string,
+  run: Record<string, unknown>,
+  project?: Record<string, unknown>,
+) {
+  await page.route(`**/api/video-agent/runs/${runId}`, async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: run }),
+    });
+  });
+  await page.route(`**/api/video-agent/runs/${runId}/stream*`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: heartbeat\ndata: {}\n\n',
+    });
+  });
+  if (project && typeof run.projectId === 'string') {
+    await page.route(`**/api/video-agent/projects/${run.projectId}`, async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: project }),
+      });
+    });
+  }
+}
+
 function downloadFileName(contentDisposition: string) {
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
   if (utf8?.[1]) return decodeURIComponent(utf8[1]);
@@ -3639,7 +3672,167 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[VIDEO-001][VIDEO-002][VIDEO-003][VIDEO-005][VIDEO-006] 文稿生成真实分镜并进入关键帧控制台', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动执行视频分镜生成与关键帧写入');
+    test.setTimeout(300_000);
+    const token = await loginAndReadToken(page, request, '/video-agent');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-storyboard-r${testInfo.retry}`;
+    const article = '# 雨夜来信\n\n雨夜的旧车站里，一名邮差把最后一封信交给等候的人。\n\n天光出现时，两人沿着湿润的站台走向出口。';
+    const models = await readEnvelope<Array<{
+      id: string;
+      healthStatus?: string;
+      supportsFirstFrame?: boolean;
+      supportsLastFrame?: boolean;
+    }>>(await page.request.get('/api/video-agent/models', { headers: authHeaders(token) }));
+    const frameModel = models.find((model) => (
+      !/unhealthy|disabled|unavailable/i.test(model.healthStatus || '')
+      && (model.supportsFirstFrame || model.supportsLastFrame)
+    ));
+    expect(frameModel, '视频创作必须至少有一个支持关键帧的可用模型').toBeTruthy();
+    let runId = '';
+    let projectId = '';
+    try {
+      await page.getByRole('button', { name: '新项目', exact: true }).click();
+      await page.getByLabel('项目名称').fill(title);
+      await page.getByLabel('文学稿内容').fill(article);
+      const studio = page.getByTestId('video-project-studio');
+      await studio.getByRole('button', { name: '设置', exact: true }).click();
+      await studio.getByRole('region', { name: '生成设置' }).getByLabel('视频模型').selectOption(frameModel!.id);
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/video-agent/runs'
+      ));
+      await page.getByRole('button', { name: '生成故事分镜', exact: true }).click();
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(createResponse.ok(), createBody.error?.message || '提交故事分镜失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '提交故事分镜失败').toBe(true);
+      runId = createBody.data.runId;
+      const progressView = page.getByTestId('video-storyboard-progress');
+      await expect(progressView).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-04',
+        target: progressView,
+        overviewJustification: '需要同时证明真实文稿已提交、拆镜阶段、整体进度、实时通道与停止操作均属于同一任务。',
+        caption: '真实文稿已进入故事拆镜，页面持续展示阶段、整体进度、服务信号和可停止操作。',
+      });
+
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 240_000) {
+        const status = await readEnvelope<{
+          status: string;
+          projectId?: string;
+          scenes: Array<{ index: number; status: string }>;
+          errorMessage?: string;
+        }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
+        projectId = status.projectId || projectId;
+        if (/Failed|Cancelled/i.test(status.status)) {
+          throw new Error(status.errorMessage || '故事分镜生成失败，请检查文稿后重试');
+        }
+        if (status.scenes.length > 0 && /Editing|Completed/i.test(status.status)) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+      }
+      await expect(page.getByTestId('video-console')).toBeVisible({ timeout: 30_000 });
+      const consoleRoot = page.getByTestId('video-console');
+      await expect(page.getByRole('complementary', { name: '分镜胶片带' })).toBeVisible();
+      await expect(page.getByRole('region', { name: '镜头生成' })).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-05',
+        target: consoleRoot,
+        overviewJustification: '需要同时证明真实拆镜结果、镜头顺序、预览、生成提示词和时间线属于同一项目。',
+        caption: '真实文稿已拆成可编辑分镜，镜头胶片带、预览、提示词与时间线完整呈现。',
+      });
+
+      await page.getByRole('button', { name: '镜头设置', exact: true }).click();
+      const inspector = page.locator('aside[aria-label="镜头属性"]');
+      await expect(inspector).toBeVisible();
+      if (frameModel!.supportsFirstFrame) {
+        await expect(inspector.getByText('首帧参考', { exact: true })).toBeVisible();
+      }
+      if (frameModel!.supportsLastFrame) {
+        await expect(inspector.getByText('尾帧参考', { exact: true })).toBeVisible();
+      }
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-06',
+        target: inspector,
+        caption: '所选模型支持的关键帧参考、时长、分辨率和画幅均可在当前镜头独立配置。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-13',
+        target: consoleRoot,
+        themeTarget: consoleRoot,
+        overviewJustification: '需要同时证明暗色桌面分镜顺序、当前镜头、关键帧设置和时间线没有局部变浅或裁切。',
+        caption: '暗色桌面分镜态下，镜头顺序、关键帧控制、提示词和时间线清晰且操作完整。',
+      });
+    } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          let state = await current.json() as ApiEnvelope<{ status: string; projectId?: string }>;
+          projectId = state.data?.projectId || projectId;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.status || '')) {
+            await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
+            const cancelStartedAt = Date.now();
+            while (Date.now() - cancelStartedAt < 30_000) {
+              await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+              const refreshed = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
+              if (!refreshed.ok()) break;
+              state = await refreshed.json() as ApiEnvelope<{ status: string; projectId?: string }>;
+              projectId = state.data?.projectId || projectId;
+              if (/Completed|Failed|Cancelled/i.test(state.data?.status || '')) break;
+            }
+          }
+          const cleanup = await page.request.delete(
+            `/api/video-agent/runs/${encodeURIComponent(runId)}?deleteEmptyProject=true`,
+            { headers: authHeaders(token) },
+          );
+          expect(cleanup.ok(), await cleanup.text()).toBe(true);
+          expect((await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+          if (projectId) {
+            expect((await page.request.get(`/api/video-agent/projects/${encodeURIComponent(projectId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+          }
+        }
+      }
+    }
+  });
+
+  test('[VIDEO-009] 视频生成失败说明影响并保留重新创作入口', async ({ page, request }, testInfo) => {
+    await loginAndReadToken(page, request, '/video-agent');
+    const runId = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-controlled-video-failure`;
+    const now = new Date().toISOString();
+    await installControlledVideoRun(page, runId, {
+      id: runId,
+      appKey: 'video-agent',
+      status: 'Failed',
+      mode: 'direct',
+      directPrompt: '一只蓝色陶瓷杯放在桌面上',
+      generateAudio: false,
+      scenes: [],
+      exportRequested: false,
+      currentPhase: 'videogen-failed',
+      phaseProgress: 38,
+      totalDurationSeconds: 5,
+      ownerAdminId: 'stable-smoke',
+      createdAt: now,
+      startedAt: now,
+      endedAt: now,
+      cancelRequested: false,
+      errorMessage: '当前视频模型暂时不可用，请切换模型或稍后重试，原始描述已保留。',
+    });
+    await page.goto(`/video-agent?run=${encodeURIComponent(runId)}`, { waitUntil: 'domcontentloaded' });
+    await dismissBlockingTutorial(page);
+    const failure = page.getByText('生成失败', { exact: true }).first();
+    await expect(failure).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/切换模型或稍后重试/)).toBeVisible();
+    await expect(page.getByRole('button', { name: '再来一条', exact: true })).toBeVisible();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-VIDEO-CREATION-10',
+      target: failure.locator('..'),
+      caption: '受控失败态明确说明视频没有生成、建议切换模型或稍后重试，并保留重新创作入口。',
+    });
+  });
+
+  test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
@@ -3662,11 +3855,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let projectId = '';
     let generatedVideoUrl = '';
     try {
+      const studio = page.getByTestId('video-project-studio');
+      await expect(studio).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-01',
+        target: studio,
+        overviewJustification: '需要同时证明视频创作标题、作品区、新项目入口、故事分镜与单镜直出两条真实路径可见。',
+        caption: '从真实导航进入视频创作，创作方式、文稿输入、新项目和已有作品均可达。',
+      });
       await page.getByRole('button', { name: '新项目', exact: true }).click();
+      await expect(page.getByLabel('项目名称')).toHaveValue('');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-02',
+        target: studio,
+        overviewJustification: '需要同时证明新项目已清空历史选择，故事分镜与单镜直出仍可选择且主操作没有遮挡。',
+        caption: '点击新项目后进入干净创作态，旧作品内容未串入，输入和模式选择可直接开始。',
+      });
       await page.getByRole('button', { name: /单镜直出/ }).click();
       await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-video`);
       await page.getByLabel('文学稿内容').fill(prompt);
-      const studio = page.getByTestId('video-project-studio');
       await studio.getByRole('button', { name: '设置', exact: true }).click();
       const settings = studio.getByRole('region', { name: '生成设置' });
       await settings.getByLabel('视频模型').selectOption(model.id);
@@ -3676,6 +3883,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const audioToggle = settings.getByRole('checkbox', { name: '同步音频' });
       if (await audioToggle.isChecked()) await audioToggle.uncheck();
       await expect(audioToggle, '稳定冒烟必须明确关闭视频音轨').not.toBeChecked();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-03',
+        target: studio,
+        overviewJustification: '需要同时证明脚本、项目名、视频模型、画幅、时长、分辨率与无音频设置属于同一任务。',
+        caption: '真实单镜脚本和最小成本参数已填写，模型与无音频设置清晰可见，生成动作保持可用。',
+      });
 
       const createResponse = page.waitForResponse((response) => (
         response.request().method() === 'POST'
@@ -3688,6 +3901,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(createRunBody.success, createRunBody.error?.message || '页面提交视频任务失败').toBe(true);
       runId = createRunBody.data.runId;
       expect(runId).toBeTruthy();
+
+      const generationStage = page.getByTestId('video-generation-stage');
+      await expect(generationStage).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-07',
+        target: generationStage,
+        caption: '视频任务提交后显示当前阶段、真实百分比和任务标识，长任务没有静止空白。',
+      });
+      const generationProgress = page.getByTestId('video-generation-progress');
+      await expect(generationProgress).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-08',
+        target: generationProgress.locator('..'),
+        caption: '同一视频任务持续展示阶段和进度反馈，用户可以判断任务仍在执行。',
+      });
 
       const visibleStages = new Set<string>();
       const visibleProgress = new Set<string>();
@@ -3728,6 +3956,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       visibleStages.add('已完成');
       const downloadButton = page.getByRole('button', { name: '下载 MP4' }).first();
       await expect(downloadButton, '完成后页面必须显示下载入口').toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-09',
+        target: page.locator('video').locator('..'),
+        caption: '真实任务到达受控完成态，页面显示可播放成片、完成状态和下载操作。',
+      });
       const browserMedia = await page.locator('video').evaluate(async (element) => {
         const video = element as HTMLVideoElement;
         if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
@@ -3790,6 +4023,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(container.audioTracks, 'generateAudio=false 时 MP4 不得包含音轨').toBe(0);
       expect(visibleStages.size, `页面只出现了这些视频阶段：${[...visibleStages].join('、')}`).toBeGreaterThanOrEqual(2);
       expect(visibleProgress.size, '生成过程中页面必须至少显示一个真实进度值').toBeGreaterThanOrEqual(1);
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(page.locator('video')).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('button', { name: '下载 MP4' }).first()).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-11',
+        target: page.locator('video').locator('..').locator('..'),
+        caption: '刷新后同一 run 仍恢复为可播放成片并保留下载入口，结果不是仅存在前端内存。',
+      });
     } finally {
       if (runId) {
         const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
@@ -3844,6 +4087,179 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
       }
     }
+  });
+
+  test('[VIDEO-002] 移动端可从新项目进入持续变化的拆镜阶段', async ({ browser, request }, testInfo) => {
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await mobileContext.newPage();
+    try {
+      await loginAndReadToken(page, request, '/video-agent');
+      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+      const studio = page.getByTestId('video-project-studio');
+      await expect(studio).toBeVisible({ timeout: 30_000 });
+      await page.getByRole('button', { name: '新项目', exact: true }).tap();
+      await page.getByLabel('项目名称').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-mobile-video`);
+      await page.getByLabel('文学稿内容').fill('移动端雨夜车站故事，镜头从远景推进到手中的信件。');
+      const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(horizontalOverflow, '移动端视频创作页不得横向裁切').toBeLessThanOrEqual(1);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-12',
+        target: studio,
+        overviewJustification: '真实 iPhone 触控视口需要同时证明项目名、文稿、模式选择和生成动作没有超出安全区。',
+        caption: '真实 iPhone 触控环境可新建视频项目、输入文稿并触达故事分镜操作，没有横向裁切。',
+      });
+
+      const runId = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-controlled-mobile-storyboard`;
+      const projectId = `${runId}-project`;
+      const now = new Date().toISOString();
+      await installControlledVideoRun(page, runId, {
+        id: runId,
+        appKey: 'video-agent',
+        projectId,
+        status: 'Scripting',
+        mode: 'storyboard',
+        articleTitle: '移动端雨夜车站',
+        directPrompt: '',
+        articleMarkdown: '移动端雨夜车站故事，镜头从远景推进到手中的信件。',
+        generateAudio: false,
+        scenes: [],
+        exportRequested: false,
+        currentPhase: 'scripting',
+        phaseProgress: 46,
+        totalDurationSeconds: 0,
+        ownerAdminId: 'stable-smoke',
+        createdAt: now,
+        startedAt: now,
+        cancelRequested: false,
+      }, {
+        id: projectId,
+        appKey: 'video-agent',
+        ownerAdminId: 'stable-smoke',
+        title: '移动端雨夜车站',
+        status: 'Analyzing',
+        sourceMarkdown: '移动端雨夜车站故事，镜头从远景推进到手中的信件。',
+        defaultAspectRatio: '16:9',
+        defaultResolution: '720p',
+        defaultDuration: 5,
+        generateAudio: false,
+        assets: [],
+        timelineTracks: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await page.goto(`/video-agent?run=${encodeURIComponent(runId)}`, { waitUntil: 'domcontentloaded' });
+      const progress = page.getByTestId('video-storyboard-progress');
+      await expect(progress).toBeVisible({ timeout: 30_000 });
+      await expect(progress.getByText('46%', { exact: true })).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-VIDEO-CREATION-14',
+        target: progress,
+        overviewJustification: '窄屏需要同时证明阶段名称、百分比、实时通道、步骤和停止操作持续可见且无遮挡。',
+        caption: '受控移动拆镜阶段持续显示 46% 进度、服务通道、当前步骤和停止操作，没有静止等待。',
+      });
+    } finally {
+      await mobileContext.close();
+    }
+  });
+
+  test('[VIDEO-001] 超长脚本滚动后仍可继续生成', async ({ page, request }, testInfo) => {
+    await loginAndReadToken(page, request, '/video-agent');
+    await page.getByRole('button', { name: '新项目', exact: true }).click();
+    const longScript = `稳定冒烟长视频脚本开篇。${'远景推进到车站，人物拿起信件并走向晨光。'.repeat(1_900)}稳定冒烟长视频脚本收尾。`;
+    const scriptInput = page.getByLabel('文学稿内容');
+    await scriptInput.fill(longScript);
+    await scriptInput.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expect(scriptInput).toHaveValue(longScript);
+    await expect(page.getByRole('button', { name: '生成故事分镜', exact: true })).toBeEnabled();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-VIDEO-CREATION-15',
+      target: page.getByTestId('video-project-studio'),
+      overviewJustification: '需要同时证明超长脚本字数、可滚动输入区、预计镜头与生成动作仍在同一可用页面。',
+      caption: `超长脚本 ${longScript.length} 字完整保留，滚动到末尾后预计镜头和生成操作仍可用。`,
+    });
+  });
+
+  test('[VIDEO-009] 单镜失败不阻断其他镜头继续处理', async ({ page, request }, testInfo) => {
+    await loginAndReadToken(page, request, '/video-agent');
+    const runId = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-controlled-partial-video-failure`;
+    const projectId = `${runId}-project`;
+    const now = new Date().toISOString();
+    await installControlledVideoRun(page, runId, {
+      id: runId,
+      appKey: 'video-agent',
+      projectId,
+      status: 'Editing',
+      mode: 'storyboard',
+      articleTitle: '局部失败继续处理',
+      directPrompt: '',
+      articleMarkdown: '两个镜头，其中第二镜需要重试。',
+      directVideoModel: 'alibaba/wan-2.6',
+      directAspectRatio: '16:9',
+      directResolution: '720p',
+      directDuration: 5,
+      generateAudio: false,
+      scenes: [
+        {
+          index: 0,
+          topic: '车站远景',
+          prompt: '雨夜车站远景，灯光倒映在地面。',
+          status: 'Done',
+          duration: 5,
+          aspectRatio: '16:9',
+          resolution: '720p',
+          versions: [],
+        },
+        {
+          index: 1,
+          topic: '手中的信件',
+          prompt: '人物拿起信件，镜头缓慢推近。',
+          status: 'Error',
+          errorMessage: '这个镜头暂时无法生成，请保留其他镜头并重试本镜。',
+          duration: 5,
+          aspectRatio: '16:9',
+          resolution: '720p',
+          versions: [],
+        },
+      ],
+      exportRequested: false,
+      currentPhase: 'editing',
+      phaseProgress: 62,
+      totalDurationSeconds: 10,
+      ownerAdminId: 'stable-smoke',
+      createdAt: now,
+      startedAt: now,
+      cancelRequested: false,
+    }, {
+      id: projectId,
+      appKey: 'video-agent',
+      ownerAdminId: 'stable-smoke',
+      title: '局部失败继续处理',
+      status: 'Editing',
+      sourceMarkdown: '两个镜头，其中第二镜需要重试。',
+      defaultVideoModel: 'alibaba/wan-2.6',
+      defaultAspectRatio: '16:9',
+      defaultResolution: '720p',
+      defaultDuration: 5,
+      generateAudio: false,
+      assets: [],
+      timelineTracks: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await page.goto(`/video-agent?run=${encodeURIComponent(runId)}`, { waitUntil: 'domcontentloaded' });
+    await dismissBlockingTutorial(page);
+    const shots = page.locator('.video-console__shot');
+    await expect(shots).toHaveCount(2, { timeout: 30_000 });
+    await shots.nth(1).click();
+    const partialFailure = page.getByText('上次生成失败，描述和参数均已保留', { exact: true });
+    await expect(partialFailure).toBeVisible();
+    await expect(page.getByRole('button', { name: '生成这个镜头', exact: true })).toBeVisible();
+    await expect(page.getByText('车站远景', { exact: true }).first()).toBeVisible();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-VIDEO-CREATION-16',
+      target: page.getByRole('region', { name: '镜头生成' }),
+      caption: '受控局部失败明确指出仅当前镜头需重试，提示词和参数均保留，其他镜头仍可继续处理。',
+    });
   });
 
   test('[REC-003][REC-007][REC-012] 页面选择音频、显示阶段、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
