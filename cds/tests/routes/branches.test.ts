@@ -764,14 +764,58 @@ describe('Branch Routes', () => {
       expect(removed.status).toBe(409);
       expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
 
-      // 只改别的覆盖字段（不带 activeDeployMode）：PUT 是整体替换，会把 express 覆盖抹掉、落回 static 基线，拒绝（Codex 第五轮 P1）
+      // 只改别的覆盖字段（不带 activeDeployMode）：2026-10-08 起请求体没提部署模式就保留已存的，
+      // 不再落回基线，所以仍是极速版、放行（此前这里断言 409，锁死的正是「改端口顺手抹掉极速版」）
+      const port = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
+      expect(port.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
+      expect(stateService.getBranchProfileOverride('b1', 'api')?.containerPort).toBe(8080);
+    });
+
+    it('机器凭据不带模式的部分写入：原来没有覆盖模式时仍按基线判，源码基线照样拒绝', async () => {
+      seedGateProject(true);
       const port = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
       expect(port.status).toBe(409);
-      expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('express');
-      // 基线本身是 express 时，不带模式的部分写入落回基线仍是极速版，放行
       stateService.updateBuildProfile('api', { activeDeployMode: 'express' });
       const portOk = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { containerPort: 8080 }, { 'X-Test-Key': 'A' });
       expect(portOk.status).toBe(200);
+    });
+
+    /*
+     * 2026-10-08 用户指出：分支卡左上角亮闪电 = 这条分支是极速版。deployRuntime.prebuilt 只表示
+     * 「任一服务」走预构建，9 个服务 1 个极速时也是 true，于是混合分支被画成了极速版。
+     * prebuiltCoverage 才是展示判据：全部服务都预构建才是 all。
+     */
+    it('极速版覆盖程度：一部分服务极速是 partial，全部极速才是 all', async () => {
+      seedGateProject(false);
+      stateService.addBuildProfile({
+        id: 'web', projectId: 'proj-a', name: 'Web', dockerImage: 'node:20', command: 'pnpm dev', workDir: '.', containerPort: 3000,
+        deployModes: {
+          dev: { label: '开发模式', command: 'pnpm dev' },
+          express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/web:sha-${CDS_COMMIT_SHA}' },
+        },
+      });
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      // 列表接口有 1s 载荷缓存，连读三次要走 live=true 才拿得到每一步的新值
+      mock.addResponsePattern(/docker ps --format/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const runtimeOf = async () => {
+        const res = await request(server, 'GET', '/api/branches?project=proj-a&live=true');
+        return (res.body as any).branches.find((b: any) => b.id === 'b1').deployRuntime;
+      };
+      const partial = await runtimeOf();
+      expect(partial.prebuilt).toBe(true);
+      expect(partial.prebuiltCoverage).toBe('partial');
+      expect(partial.prebuiltProfileIds).toEqual(['api']);
+
+      stateService.setBranchProfileOverride('b1', 'web', { activeDeployMode: 'express' });
+      const all = await runtimeOf();
+      expect(all.prebuiltCoverage).toBe('all');
+
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'dev' });
+      stateService.setBranchProfileOverride('b1', 'web', { activeDeployMode: 'dev' });
+      const none = await runtimeOf();
+      expect(none.prebuilt).toBe(false);
+      expect(none.prebuiltCoverage).toBe('none');
     });
 
     it('极速版分支：机器凭据部署通过门禁（不再是 409）', async () => {
@@ -1336,6 +1380,37 @@ describe('Branch Routes', () => {
      * 环境变量那套 UI）也不会带上——不保护就等于「改个部署模式顺手删掉命名入口」
      * （Codex review 第七轮 P1）。
      */
+    /*
+     * 2026-10-08 事故：mdimp 的数据库 Profile 同步脚本只想刷新 env / 路由 / 备注，把
+     * activeDeployMode 当「陈旧运行时快照」剔掉再整体 PUT；每跑一次，用户选的极速版就被
+     * 打回源码模式，宿主上一直在编译 Maven。请求体没提部署模式就必须保留。
+     */
+    it('只刷新 env / 路由的覆盖写入不会顺手把极速版打回源码模式', async () => {
+      seedProject('proj-a', 'a');
+      seedProfiles('proj-a');
+      seedRunningBranch('branch-a', 'proj-a', 'main', ['web', 'gateway']);
+      await request(server, 'PUT', '/api/branches/branch-a/profile-overrides/gateway', {
+        activeDeployMode: 'express',
+      }, { 'X-Test-Key': 'A' });
+
+      // 与 mdimp 同步脚本同形的请求体：没有 activeDeployMode
+      const sync = await request(server, 'PUT', '/api/branches/branch-a/profile-overrides/gateway', {
+        env: { SERVER_SERVLET_CONTEXT_PATH: '/health-api' },
+        pathPrefixes: ['/health-api/'],
+        notes: 'IMP CDS runtime isolation (run-1)',
+      }, { 'X-Test-Key': 'A' });
+      expect(sync.status).toBe(200);
+      const kept = stateService.getBranchProfileOverride('branch-a', 'gateway')!;
+      expect(kept.activeDeployMode).toBe('express');
+      expect(kept.env).toEqual({ SERVER_SERVLET_CONTEXT_PATH: '/health-api' });
+
+      // 显式传空串才是「回到基线」
+      await request(server, 'PUT', '/api/branches/branch-a/profile-overrides/gateway', {
+        activeDeployMode: '',
+      }, { 'X-Test-Key': 'A' });
+      expect(stateService.getBranchProfileOverride('branch-a', 'gateway')!.activeDeployMode).toBe('');
+    });
+
     it('改别的分支覆盖设置不会顺手抹掉入口配置', async () => {
       seedProject('proj-a', 'a');
       seedProfiles('proj-a');

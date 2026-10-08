@@ -207,6 +207,6 @@ export function buildPrebuiltGateRejection(
     violations: detailed,
     hint: noPrebuilt
       ? '有服务没有任何极速版模式：这是项目还没接 CI 预构建的缺口，请如实报告给用户，不要切到源码模式顶替。'
-      : '极速版生效判据：cdscli branch status <branchId> 的 deployRuntime.prebuilt 为 true。',
+      : '极速版生效判据：cdscli branch status <branchId> 的 deployRuntime.prebuiltCoverage 为 all 且 pendingPublish 为 false（deployRuntime.prebuilt 只表示「任一服务」走极速版）。',
   };
 }

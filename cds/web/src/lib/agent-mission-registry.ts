@@ -520,7 +520,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
       '只使用 CDS API 返回的预览入口',
       '只用极速版（CI 预构建）部署，不在 CDS 宿主跑源码编译，也不改项目级默认部署模式',
     ],
-    completion: ['目标提交已部署', 'branch status 的 deployRuntime.prebuilt 为 true', '服务健康', '真实预览入口可访问'],
+    completion: ['目标提交已部署', 'branch status 的 deployRuntime.prebuiltCoverage 为 all 且未待生效', '服务健康', '真实预览入口可访问'],
     pagePath: (projectId) => projectPath('/branches', projectId),
   },
   'build-diagnostics': {

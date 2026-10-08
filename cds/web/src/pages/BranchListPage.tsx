@@ -259,10 +259,12 @@ interface BranchSummary {
     sourceProfiles: number;
     modes: string[];
     pendingPublish?: boolean;
-    /** 2026-06-23 极速版：任一 profile 走预构建镜像部署模式 */
+    /** 2026-06-23 极速版：**任一** profile 走预构建镜像部署模式（机制判断用，不能拿来展示「极速版」） */
     prebuilt?: boolean;
     /** 走极速版的 profile id；阶段条按这次正在部署的服务选步骤 */
     prebuiltProfileIds?: string[];
+    /** 2026-10-08 极速版覆盖程度：只有 all 才显示「极速版」与闪电 */
+    prebuiltCoverage?: 'all' | 'partial' | 'none';
     // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
     drift?: {
       expectedCount: number;
@@ -1026,7 +1028,8 @@ function pickDeployEstimate(
 /** 构建中卡片的模式标签：发布版 / 热加载（源码即热加载/dev 运行）。 */
 function deployModeLabel(branch: BranchSummary): string {
   // 极速版（CI 预构建）优先：它分类上属 release，但要细化标签让用户知道是「拉镜像非本机编译」。
-  if (branch.deployRuntime?.prebuilt === true) return '极速版';
+  // 只有全部服务都走预构建才叫极速版；部分极速的落到下面的「混合」。
+  if (isFullyPrebuilt(branch.deployRuntime)) return '极速版';
   const kind = branch.deployRuntime?.kind;
   if (kind === 'release') return '发布版';
   if (kind === 'mixed') return '混合';
@@ -7826,11 +7829,37 @@ function BranchMoreMenu({
 
 // BranchFailureHint 已删除：错误提醒并入卡片端口槽位的统一状态行（只一个提醒，2026-06-22 用户要求）。
 
+/**
+ * 整条分支是不是极速版（2026-10-08）：所有服务都走预构建镜像才算。
+ * deployRuntime.prebuilt 只表示「任一服务」，9 个服务里 1 个极速、8 个在宿主编译时它也是 true，
+ * 拿它亮闪电就是把混合分支说成极速版。旧后端没有 prebuiltCoverage 时沿用 prebuilt。
+ */
+function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
+  if (!runtime) return false;
+  if (runtime.prebuiltCoverage) return runtime.prebuiltCoverage === 'all';
+  return runtime.prebuilt === true;
+}
+
 function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
   const runtime = branch.deployRuntime;
+  // 只有一部分服务走极速版：如实显示「混合 · 极速 x/y」，不亮闪电（2026-10-08 用户指出：
+  // 「左上角显示了闪电，意味着这必须是极速版，不然是既设置错了，又显示错了」）。
+  if (runtime?.prebuiltCoverage === 'partial') {
+    const fast = runtime.prebuiltProfileIds?.length ?? 0;
+    const total = runtime.activeProfiles;
+    const ratio = `极速 ${fast}/${total}`;
+    return {
+      kind: runtime.pendingPublish ? 'pending' : 'mixed',
+      label: runtime.pendingPublish ? `混合 · ${ratio} · 待生效` : `混合 · ${ratio}`,
+      title: `${total} 个服务里只有 ${fast} 个走极速版（CI 预构建），其余仍在 CDS 宿主上编译。${runtime.title ? ` ${runtime.title}` : ''}`,
+      className: runtime.pendingPublish
+        ? 'border-warn/40 bg-warn/10 text-warn'
+        : 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300',
+    };
+  }
   // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
   // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
-  if (runtime?.prebuilt === true) {
+  if (runtime && isFullyPrebuilt(runtime)) {
     // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
     // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
     if (runtime.pendingPublish) {

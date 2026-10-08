@@ -294,7 +294,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
       'CDS 宿主的编译算力是全部项目共享的稀缺资源。Agent 分支一律使用极速版（CI 预构建）部署：镜像由仓库 CI 按 commit 构建，CDS 只做 docker pull 与启动，不在宿主上跑 dotnet build、pnpm build 等源码编译。dev、static 等源码编译模式只留给人类在页面上手动选择，Agent 不得为了快、为了试错或为了绕过 CI 而使用。',
       '触发任何部署之前先运行 cdscli profile list --project <projectId>，只认返回里 prebuiltModes 列出的模式（本仓库命名为 express）；模式名不是判据，deployModes 里 prebuilt 为 true 才是。prebuiltImage 为 true 的 profile 本身就是镜像站点，无需切换。',
       '对每个要部署的 profile 运行 cdscli branch set-mode <branchId> <profileId> <prebuiltModes 中的模式名>，只写当前分支的覆盖。不要用 profile deploy-mode 改项目级默认：那会静默改掉同项目其它分支的部署方式。',
-      '部署后用 cdscli branch status <branchId> 核对 deployRuntime.prebuilt 为 true，才算极速版真正生效。镜像还没构建好时分支在等 CI，不是失败：用 branch status 与 deployment-run 持续等待并回报阶段，不得切回源码编译模式抢时间。',
+      '部署后用 cdscli branch status <branchId> 核对 deployRuntime.prebuiltCoverage 为 all 且 pendingPublish 为 false，才算极速版真正生效（deployRuntime.prebuilt 只表示任一服务走极速版，不能当成整条分支已是极速版）。镜像还没构建好时分支在等 CI，不是失败：用 branch status 与 deployment-run 持续等待并回报阶段，不得切回源码编译模式抢时间。',
       'profile list 没有任何 prebuilt 模式、也没有 prebuiltImage 站点时，说明项目还没接 CI 预构建：如实报告这个缺口并停在这一步等用户决定，不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名。',
       '项目开启「Agent 只允许极速版部署」门禁时，非极速版的部署与模式写入会被 CDS 以 409 agent_prebuilt_only 拒绝，响应里列出被拦的服务与可切的模式：按它说的切到极速版重试，不要绕过、不要改项目设置、也不要请求真人替你关闭门禁。',
       'push 之后不要停下来等我测试。按「push → 等 CI 镜像就绪 → 部署 → branch status、branch logs、smoke、preview-url 验证 → 修代码 → 再 push」循环，直到部署就绪、冒烟通过、真实预览入口能打开为止；只有需要页面批准的授权和高风险操作才回来找我。',
