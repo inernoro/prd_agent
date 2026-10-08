@@ -11,10 +11,19 @@ export function humanPrincipalId(userId: string): string {
 }
 
 export function isScopedHuman(req: unknown): boolean {
-  return isAuthenticatedHuman(req) && !isHumanSystemOwner(req);
+  return !!req && isAuthenticatedHuman(req) && !isHumanSystemOwner(req);
 }
 
-const pendingGrantUpdates = new WeakMap<StateService, Set<string>>();
+const pendingGrantUpdates = new WeakMap<StateService, Map<string, { startedAt: string; reconciling: boolean }>>();
+
+export function humanProjectGrantUpdateStatus(state: StateService, principalId: string) {
+  return pendingGrantUpdates.get(state)?.get(principalId);
+}
+
+export function markHumanProjectGrantRecovery(state: StateService, principalId: string): void {
+  const status = humanProjectGrantUpdateStatus(state, principalId);
+  if (status) status.reconciling = true;
+}
 
 export function isHumanProjectGrantUpdatePending(state: StateService, principalId: string): boolean {
   return pendingGrantUpdates.get(state)?.has(principalId) === true;
@@ -23,9 +32,9 @@ export function isHumanProjectGrantUpdatePending(state: StateService, principalI
 /** A grant replacement is not usable until its persistence outcome is known. */
 export function beginHumanProjectGrantUpdate(state: StateService, principalId: string): (() => void) | undefined {
   let pending = pendingGrantUpdates.get(state);
-  if (!pending) { pending = new Set(); pendingGrantUpdates.set(state, pending); }
+  if (!pending) { pending = new Map(); pendingGrantUpdates.set(state, pending); }
   if (pending.has(principalId)) return undefined;
-  pending.add(principalId);
+  pending.set(principalId, { startedAt: new Date().toISOString(), reconciling: false });
   return () => { pending.delete(principalId); };
 }
 

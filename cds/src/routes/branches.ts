@@ -19515,7 +19515,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Config (read-only) ──
 
-  router.get('/config', async (_req, res) => {
+  router.get('/config', async (req, res) => {
+    if (isScopedHuman(req)) {
+      res.json({ workerPort: config.workerPort, mainDomain: config.mainDomain,
+        previewDomain: config.previewDomain || config.rootDomains?.[0] });
+      return;
+    }
     const customEnv = stateService.getCustomEnv();
     const prdAgentBaseUrl = stateService.getActiveCdsConnections()
       .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)

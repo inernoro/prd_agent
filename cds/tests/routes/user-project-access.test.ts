@@ -8,7 +8,9 @@ import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
-import { humanPrincipalId } from '../../src/services/human-project-access.js';
+import { humanPrincipalId, humanProjectGrantUpdateStatus } from '../../src/services/human-project-access.js';
+import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { multiPreviewUrl } from '../../web/src/lib/previewUrl.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { branchEvents } from '../../src/services/branch-events.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
@@ -40,6 +42,7 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_PASSWORD', 'test-owner-password');
     vi.stubEnv('CDS_PUBLIC_BASE_URL', 'http://localhost');
     vi.stubEnv('CDS_SSO_ENABLED', 'false');
+    vi.stubEnv('CDS_GRANT_RECONCILE_MS', '20');
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-human-grants-'));
     state = new StateService(path.join(dir, 'state.json'), dir);
     state.load();
@@ -73,6 +76,10 @@ describe('human project grants through the production server', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     await flushAllJsonStateStores();
@@ -93,6 +100,77 @@ describe('human project grants through the production server', () => {
     expect((await call('GET', '/api/build-profiles', member)).body.profiles.map((p: any) => p.projectId)).toEqual(['project-a']);
     expect((await call('GET', '/api/projects')).body.projects).toHaveLength(2);
     expect((await call('GET', '/api/projects')).body.canManageProjects).toBe(true);
+  });
+
+  it('returns only public preview inputs to members, preserving the owner config', async () => {
+    const visible = await call('GET', '/api/config', member);
+    expect(visible.status).toBe(200);
+    expect(Object.keys(visible.body).sort()).toEqual(['previewDomain', 'workerPort']);
+    expect(multiPreviewUrl({ id: 'branch-project-a', previewSlug: 'fixture-preview' }, visible.body,
+      { protocol: 'https:', hostname: 'example.test' })).toBe('https://fixture-preview.example.test');
+    expect(visible.body).not.toHaveProperty('jwt');
+    expect(visible.body).not.toHaveProperty('sharedEnv');
+    expect((await call('GET', '/api/config')).body).toHaveProperty('repoRoot', dir);
+  });
+
+  it('scopes deployment lists, detail, diagnosis and streams without leaking credentials', async () => {
+    await grant(['project-a']);
+    const runs = new DeploymentRunService(state);
+    const a = await runs.begin({ projectId: 'project-a', branchId: 'branch-project-a', trigger: 'manual',
+      message: 'PASSWORD=fake-run-secret' });
+    const b = await runs.begin({ projectId: 'project-b', branchId: 'branch-project-b', trigger: 'manual' });
+    const list = await call('GET', '/api/deployment-runs?project=project-a&branch=branch-project-a', member);
+    expect(list.status).toBe(200);
+    expect(list.body.runs.map((run: any) => run.id)).toEqual([a.id]);
+    expect(JSON.stringify(list.body)).not.toContain('fake-run-secret');
+    for (const url of [`/api/deployment-runs/${a.id}`, `/api/deployment-runs/${a.id}/diagnosis`]) {
+      const result = await call('GET', url, member);
+      expect(result.status).toBe(200);
+      expect(JSON.stringify(result.body)).not.toContain('fake-run-secret');
+    }
+    for (const url of ['/api/deployment-runs', '/api/deployment-runs?project=project-b',
+      `/api/deployment-runs/${b.id}`, `/api/deployment-runs/${b.id}/diagnosis`, `/api/deployment-runs/${b.id}/stream`]) {
+      expect((await call('GET', url, member)).status).toBe(403);
+    }
+    const abort = new AbortController();
+    const stream = await fetch(base + `/api/deployment-runs/${a.id}/stream`, { headers: { Cookie: member }, signal: abort.signal });
+    const reader = stream.body!.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    expect(first).toContain('snapshot');
+    expect(first).not.toContain('fake-run-secret');
+    await grant([]);
+    runs.append(a.id, { phase: 'build', level: 'info', message: 'after-revocation' });
+    const next = await reader.read();
+    expect(next.done).toBe(true);
+    abort.abort();
+    expect(JSON.stringify((await call('GET', `/api/deployment-runs/${a.id}`)).body)).toContain('fake-run-secret');
+  });
+
+  it('bounds a stalled grant response and restores late writes before releasing the gate', async () => {
+    await grant(['project-a']);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
+    let finish!: () => void;
+    const stalled = new Promise<void>(resolve => { finish = resolve; });
+    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => stalled);
+    const response = await grant(['project-b']);
+    expect(response.status).toBe(500);
+    expect(response.body.error).toContain('持久化状态无法确认');
+    const status = await call('GET', `/api/auth/users/${memberId}/projects`);
+    expect(status.status).toBe(409);
+    expect(status.body.update.reconciling).toBe(true);
+    expect((await call('GET', '/api/projects', member)).status).toBe(409);
+    finish();
+    for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined();
+    expect(flush).toHaveBeenCalledTimes(2);
+    expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+    fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'late-write-restored.json'));
+    const restored = new StateService(path.join(dir, 'late-write-restored.json'));
+    restored.load();
+    expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    expect((await grant(['project-b'])).status).toBe(200);
   });
 
   it('blocks cross-project reads, writes, query overrides, derivation and system/credential escalation', async () => {
@@ -404,6 +482,9 @@ describe('human project grants through the production server', () => {
     expect(uncertain.status).toBe(500);
     expect(uncertain.body.error).toContain('持久化状态无法确认');
     expect(JSON.stringify(state.getProjectGrants().filter(g => g.principalId === principalId))).toBe(before);
+    expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
+    await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 500 });
+    expect((await grant(['project-b'])).status).toBe(200);
   });
 
   it('blocks pending grants and conflicting replacements while failure compensation preserves independent writes', async () => {

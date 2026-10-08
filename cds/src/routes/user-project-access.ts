@@ -4,7 +4,37 @@ import type { StateService } from '../services/state.js';
 import type { AuthService } from '../services/auth-service.js';
 import type { CdsUser } from '../domain/auth.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
-import { humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpdate, isHumanProjectGrantUpdatePending } from '../services/human-project-access.js';
+import { humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpdate, isHumanProjectGrantUpdatePending,
+  humanProjectGrantUpdateStatus, markHumanProjectGrantRecovery } from '../services/human-project-access.js';
+
+function flushWaitMs(): number {
+  const value = Number(process.env.CDS_GRANT_FLUSH_TIMEOUT_MS);
+  return Number.isFinite(value) && value >= 10 && value <= 120_000 ? value : 30_000;
+}
+
+async function boundedFlush(pending: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('grant persistence wait expired')), flushWaitMs());
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+/** Keep the gate until the serialized write chain confirms the restored snapshot. */
+function reconcileGrantRestore(state: StateService, pending: Promise<void>, release: () => void): void {
+  void pending.then(release, () => {
+    const reference = new WeakRef(state);
+    const timer = setTimeout(() => {
+      const live = reference.deref();
+      if (!live) return;
+      try { live.save(); reconcileGrantRestore(live, live.flush(), release); }
+      catch { reconcileGrantRestore(live, Promise.reject(new Error('restore save failed')), release); }
+    }, Number(process.env.CDS_GRANT_RECONCILE_MS) >= 20
+      ? Math.min(Number(process.env.CDS_GRANT_RECONCILE_MS), 30_000) : 5_000);
+    timer.unref();
+  });
+}
 
 export function createUserProjectAccessRouter(deps: { stateService: StateService; authService: AuthService }): Router {
   const router = Router();
@@ -21,7 +51,10 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
       if (!user) { res.status(404).json({ error: '用户不存在，请刷新用户列表。' }); return; }
       const principalId = humanPrincipalId(user.id);
       if (isHumanProjectGrantUpdatePending(state, principalId)) {
-        res.status(409).json({ error: '此账号的项目授权正在保存，请稍后刷新并重试。' }); return;
+        const update = humanProjectGrantUpdateStatus(state, principalId);
+        res.status(409).json({ error: update?.reconciling
+          ? '授权存储尚未恢复，正在核对并恢复原授权；请恢复存储后刷新。'
+          : '此账号的项目授权正在保存，请稍后刷新并重试。', update }); return;
       }
       const current = () => state.getProjectGrants().filter(g => g.principalId === principalId && !g.revokedAt);
       if (req.method === 'PUT') {
@@ -47,6 +80,7 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         const removedBefore = removed.map(grant => ({ grant, revokedAt: grant.revokedAt, revokedBy: grant.revokedBy }));
         const createdIds = new Set<string>();
         let createdPrincipal: typeof priorPrincipal;
+        let writing: Promise<void> | undefined;
         try {
           if (!priorPrincipal) {
             createdPrincipal = { id: principalId, name: user.username || user.githubLogin, kind: 'human', status: 'active',
@@ -59,8 +93,11 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
             createdIds.add(id);
             state.addProjectGrant({ id, principalId, projectId, origin: 'approved', grantedAt: now, grantedBy: actorLogin });
           }
-          await state.flush();
+          writing = state.flush();
+          await boundedFlush(writing);
           durable = true;
+          finishUpdate();
+          finishUpdate = undefined;
         } catch (error) {
           // Restore only this replacement, never rewind another principal or
           // overwrite independent grants added while the backing store awaited.
@@ -81,7 +118,18 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
           }
           // As with existing state-store compensation, memory is restored even
           // if the backing store stays down; enqueue the restored snapshot too.
-          try { state.save(); await state.flush(); } catch { recoveryUncertain = true; }
+          // A timed-out write may still finish. Do not unlock or let its late
+          // completion overwrite the restoration: enqueue after it settles.
+          const restored = (writing || Promise.resolve()).catch(() => {}).then(async () => {
+            state.save(); await state.flush();
+          });
+          try { await boundedFlush(restored); } catch {
+            recoveryUncertain = true;
+            markHumanProjectGrantRecovery(state, principalId);
+            const release = finishUpdate!;
+            finishUpdate = undefined;
+            reconcileGrantRestore(state, restored, release);
+          }
           throw error;
         }
         for (const [action, projectIds] of [['grant-project', added], ['revoke-project', removed.map(g => g.projectId)]] as const) {

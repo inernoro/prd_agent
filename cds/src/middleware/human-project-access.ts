@@ -33,6 +33,13 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (!project || !canHumanAccessProject(req, state, project.id)) return false;
       return true;
     };
+    const guardStream = (projectId: string): void => {
+      const write = res.write.bind(res);
+      res.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
+        if (!canHumanAccessProject(req, state, projectId)) { res.end(); return false; }
+        return write(chunk as string, encoding as BufferEncoding, callback as (error: Error | null | undefined) => void);
+      }) as Response['write'];
+    };
     // Every explicit source/destination must be authorized, including body/query overrides.
     for (const value of [req.query.project, req.query.projectId, req.body?.projectId, req.body?.sourceProjectId, req.body?.targetProjectId]) {
       if (value !== undefined && !checkProject(value)) { deny(); return; }
@@ -41,6 +48,18 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (value === undefined) continue;
       const source = typeof value === 'string' ? state.getBranch(value) : undefined;
       if (!source || !checkProject(source.projectId || 'default')) { deny(); return; }
+    }
+    if (kind?.toLowerCase() === 'config' && method === 'GET' && !id) { next(); return; }
+    if (kind?.toLowerCase() === 'deployment-runs' && method === 'GET') {
+      if (!id) {
+        if (!checkProject(req.query.project || req.query.projectId)) { deny(); return; }
+      } else {
+        const run = state.getDeploymentRun(id);
+        if (!run || !checkProject(run.projectId)
+          || (action && !/^(stream|diagnosis)$/i.test(action))) { deny(); return; }
+        guardStream(run.projectId);
+      }
+      next(); return;
     }
     if (kind?.toLowerCase() === 'projects') {
       if (!id && method === 'GET') { next(); return; }
@@ -77,13 +96,7 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (method !== 'GET' && !branchWrite) { deny(); return; }
       // A stream may stay open through revocation. Recheck before every chunk,
       // so log/deploy streams cannot keep sending previously authorized data.
-      const write = res.write.bind(res);
-      res.write = ((chunk: unknown, encoding?: unknown, callback?: unknown) => {
-        if (!canHumanAccessProject(req, state, branch.projectId || 'default')) {
-          res.end(); return false;
-        }
-        return write(chunk as string, encoding as BufferEncoding, callback as (error: Error | null | undefined) => void);
-      }) as Response['write'];
+      guardStream(branch.projectId || 'default');
       next(); return;
     }
     if (kind?.toLowerCase() === 'build-profiles' && method === 'GET' && !id) { next(); return; }
