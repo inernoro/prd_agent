@@ -92,6 +92,12 @@ describe('human project access UI wiring', () => {
     expect(effect).toMatch(/if \(!canManageConsole\) return;\s*const source = new EventSource/);
     expect(effect.slice(0, effect.indexOf('const branches ='))).toContain('}, [canManageConsole]);');
   });
+  it('passes the owner capability through stable card handlers to the cooling editor entry and mount', () => {
+    const branches = read('pages/BranchListPage.tsx');
+    expect(branches).toMatch(/const cardHandlers = useMemo\(\(\) => \(\{\s*canManageConsole,/);
+    expect(branches).toContain("handlers.canManageConsole && !isError && branch.lastStopSource === 'scheduler'");
+    expect(branches).toContain('{handlers.canManageConsole && coolEditOpen ? <CoolPolicyEditorModal');
+  });
   it('mounts the global report shortcut only inside the owner-capable persistent shell', () => {
     expect(read('App.tsx')).not.toContain('<BugReportDialog />');
     const shell = read('components/layout/AppShell.tsx');

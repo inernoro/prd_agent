@@ -3351,6 +3351,7 @@ export function BranchListPage(): JSX.Element {
     setReleaseBranchId,
   };
   const cardHandlers = useMemo(() => ({
+    canManageConsole,
     canPreview: canOpenPreview,
     onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false),
     onRelease: canManageConsole ? (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id) : undefined,
@@ -5852,6 +5853,7 @@ interface BranchGroupMenu {
 }
 
 interface BranchCardHandlers {
+  canManageConsole: boolean;
   canPreview: boolean;
   onPreview: (branch: BranchSummary) => void;
   onRelease?: (branch: BranchSummary) => void;
@@ -6985,12 +6987,12 @@ const BranchCard = memo(function BranchCard({
             )}
             {/* 调度器降温条：悬浮显示「设置降温条件」（2026-07-26 用户拍板）——
                 就地改空闲阈值，保存即生效，不用去 CDS 系统设置绕一圈 */}
-            {!isError && branch.lastStopSource === 'scheduler' ? (
+            {handlers.canManageConsole && !isError && branch.lastStopSource === 'scheduler' ? (
               <button
                 type="button"
                 className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[0.625rem] font-medium text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
                 title="设置降温条件：修改调度器空闲阈值（CDS 系统设置，全部分支生效，保存即刻生效）"
-                onClick={(e) => { e.stopPropagation(); setCoolEditOpen(true); }}
+                onClick={(e) => { e.stopPropagation(); if (handlers.canManageConsole) setCoolEditOpen(true); }}
               >
                 设置降温条件
               </button>
@@ -7432,7 +7434,7 @@ const BranchCard = memo(function BranchCard({
 
       {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 
-      {coolEditOpen ? <CoolPolicyEditorModal onClose={() => setCoolEditOpen(false)} /> : null}
+      {handlers.canManageConsole && coolEditOpen ? <CoolPolicyEditorModal onClose={() => setCoolEditOpen(false)} /> : null}
       <footer
         className={`relative mt-auto flex h-[3.5rem] shrink-0 items-center gap-2.5 border-t border-[hsl(var(--hairline))] px-5 ${buildPhase ? 'bg-[hsl(var(--surface-sunken))]' : 'bg-[hsl(var(--surface-sunken))]/42'}`}
         onClick={(event) => {
