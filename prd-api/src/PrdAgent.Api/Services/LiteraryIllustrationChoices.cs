@@ -1,6 +1,8 @@
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 
 namespace PrdAgent.Api.Services;
 
@@ -16,7 +18,10 @@ public static class LiteraryIllustrationChoices
     internal const string DefaultSize = "1024x1024";
     internal const string LegacyStyleId = "legacy-default";
 
-    /// <summary>比例 → 1K 档尺寸。与前端 imageAspectOptions 的 size1k 列同源（文学页的尺寸选项就是这张表）。</summary>
+    /// <summary>
+    /// 比例 → 1K 档尺寸。与前端 imageAspectOptions 的 size1k 列同源。只用来在模型同一比例有好几档时挑哪一档、
+    /// 以及给按范围收尺寸的模型换算像素；模型收不收，一律以 FitSize 里的模型能力为准。
+    /// </summary>
     public static readonly IReadOnlyDictionary<string, string> AspectSizes = new Dictionary<string, string>
     {
         ["1:1"] = "1024x1024", ["4:3"] = "1200x896", ["3:4"] = "896x1200", ["4:5"] = "928x1152",
@@ -107,16 +112,117 @@ public static class LiteraryIllustrationChoices
         return (new WatermarkChoice(hits[0].Id, hits[0].Name), null);
     }
 
-    public static (string? size, string? error) ResolveSize(string? size)
+    /// <summary>智能体说的尺寸意图：比例（16:9）或精确像素（1536x1024）。只管写法，不管模型收不收。</summary>
+    public sealed record SizeRequest(string Raw, int? Width, int? Height, double Ratio)
+    {
+        public bool IsExact => Width != null;
+    }
+
+    /// <summary>一个可用尺寸：按这个比例传进来时会落到的那个像素尺寸。</summary>
+    public sealed record SizeChoice(string Aspect, string Size);
+
+    private const double RatioTolerance = 0.02;
+
+    /// <summary>不传 = 1:1；比例或 宽x高 之外的写法直接拒，不猜。</summary>
+    public static (SizeRequest? request, string? error) ParseSize(string? size)
     {
         var wanted = size?.Trim();
-        if (string.IsNullOrEmpty(wanted)) return (DefaultSize, null);
-        if (AspectSizes.TryGetValue(wanted.Replace('：', ':'), out var mapped)) return (mapped, null);
+        if (string.IsNullOrEmpty(wanted)) wanted = "1:1";
+        var ratio = System.Text.RegularExpressions.Regex.Match(wanted.Replace('：', ':'), @"^(\d{1,2}):(\d{1,2})$");
+        if (ratio.Success && int.Parse(ratio.Groups[1].Value) is > 0 and var a && int.Parse(ratio.Groups[2].Value) is > 0 and var b)
+            return (new SizeRequest($"{a}:{b}", null, null, a / (double)b), null);
         var m = System.Text.RegularExpressions.Regex.Match(wanted.ToLowerInvariant().Replace('×', 'x').Replace('*', 'x'), @"^(\d{3,4})x(\d{3,4})$");
-        if (m.Success && int.Parse(m.Groups[1].Value) is >= 256 and <= 4096 && int.Parse(m.Groups[2].Value) is >= 256 and <= 4096)
-            return ($"{m.Groups[1].Value}x{m.Groups[2].Value}", null);
-        return (null, $"尺寸「{wanted}」认不出来。传比例（{string.Join(" / ", AspectSizes.Keys)}）或 宽x高（256-4096）。");
+        if (m.Success && int.Parse(m.Groups[1].Value) is >= 256 and <= 4096 and var w && int.Parse(m.Groups[2].Value) is >= 256 and <= 4096 and var h)
+            return (new SizeRequest($"{w}x{h}", w, h, w / (double)h), null);
+        return (null, $"尺寸「{wanted}」认不出来。传比例（如 1:1、16:9、3:2）或 宽x高（如 1024x1024）；当前模型能用哪些，见 map_literary_list_presets 返回的 sizes。");
     }
+
+    /// <summary>
+    /// 把尺寸意图落到所选模型真正收的尺寸上（MCP-LIT-18）。判据与网关执行前的校验是同一个函数，
+    /// 所以这里放行的，网关一定收；这里拒的，在入队之前就拒，不扣额度、不留一张失败的图。
+    /// 不支持就明说并列出可选项，不悄悄换比例、不换模型。
+    /// </summary>
+    public static (string? size, string? error) FitSize(SizeRequest request, ImageGenAdapterInfo model, string modelId)
+    {
+        if (model.SizesNotApplicable)
+            return (request.IsExact ? request.Raw : TableSizeFor(request.Ratio) ?? DefaultSize, null);
+        string? candidate;
+        if (request.IsExact) candidate = request.Raw;
+        else if (model.SizeConstraintType == SizeConstraintTypes.Whitelist) candidate = PickForRatio(WhitelistSizes(model), request.Ratio);
+        else candidate = TableSizeFor(request.Ratio);
+        if (candidate != null && GatewayImageModelCatalog.ValidateSize(candidate, model) == null) return (candidate, null);
+
+        var choices = SupportedSizes(model);
+        var options = choices.Count > 0
+            ? string.Join("、", choices.Select(c => $"{c.Aspect}（{c.Size}）"))
+            : string.IsNullOrWhiteSpace(model.SizeConstraintDescription) ? "（模型没有公布尺寸清单）" : model.SizeConstraintDescription;
+        return (null, $"当前模型「{modelId}」不支持尺寸「{request.Raw}」，没有入队，也没有扣生图额度。它能用的：{options}。"
+            + "请改传其中之一（比例或宽x高都行），或在智能体接入台给这台客户端换一个支持该比例的模型。");
+    }
+
+    /// <summary>这个模型每个比例实际会落到的尺寸。智能体看预设、被拒时看可选项，都是这一份。</summary>
+    public static List<SizeChoice> SupportedSizes(ImageGenAdapterInfo model)
+    {
+        if (model.SizesNotApplicable) return new();
+        if (model.SizeConstraintType == SizeConstraintTypes.Whitelist)
+        {
+            var all = WhitelistSizes(model);
+            return all.GroupBy(x => FriendlyRatio(x.w, x.h))
+                .Select(g => new SizeChoice(g.Key, PickForRatio(g.ToList(), g.First().w / (double)g.First().h)!))
+                .OrderBy(c => RatioOf(c.Size)).ToList();
+        }
+        return AspectSizes.Where(kv => GatewayImageModelCatalog.ValidateSize(kv.Value, model) == null)
+            .Select(kv => new SizeChoice(kv.Key, kv.Value)).OrderBy(c => RatioOf(c.Size)).ToList();
+    }
+
+    private static List<(string size, int w, int h)> WhitelistSizes(ImageGenAdapterInfo model)
+        => model.SizesByResolution.Values.SelectMany(x => x).Select(x => x.Size).Distinct()
+            .Select(s => (s, ok: TryParse(s, out var w, out var h), w, h)).Where(x => x.ok)
+            .Select(x => (x.s, x.w, x.h)).ToList();
+
+    /// <summary>
+    /// 同一比例常有好几档（512 / 1K / 2K）。网页尺寸表里那一档在就用它（与网页出图一致），
+    /// 不在就取面积最接近 1024x1024 的一档：不至于小到 688x384，也不至于大到 4K 拖慢出图。
+    /// </summary>
+    private static string? PickForRatio(List<(string size, int w, int h)> sizes, double ratio)
+    {
+        var matches = sizes.Where(x => SameRatio(x.w / (double)x.h, ratio)).ToList();
+        if (matches.Count == 0) return null;
+        var table = TableSizeFor(ratio);
+        if (table != null && matches.Any(x => x.size == table)) return table;
+        return matches.OrderBy(x => Math.Abs(Math.Log(x.w * (double)x.h / (1024d * 1024d)))).First().size;
+    }
+
+    private static string? TableSizeFor(double ratio)
+        => AspectSizes.Where(kv => SameRatio(RatioOf(kv.Value), ratio)).Select(kv => kv.Value).FirstOrDefault();
+
+    private static string FriendlyRatio(int w, int h)
+    {
+        var known = AspectSizes.Keys.FirstOrDefault(k => SameRatio(RatioOf(AspectSizes[k]), w / (double)h));
+        if (known != null) return known;
+        int a = w, b = h;
+        while (b != 0) (a, b) = (b, a % b);
+        return $"{w / a}:{h / a}";
+    }
+
+    private static bool SameRatio(double x, double y) => Math.Abs(x - y) / y <= RatioTolerance;
+
+    private static double RatioOf(string size) => TryParse(size, out var w, out var h) ? w / (double)h : 0;
+
+    private static bool TryParse(string size, out int w, out int h)
+    {
+        w = h = 0;
+        var parts = size.Split('x');
+        return parts.Length == 2 && int.TryParse(parts[0], out w) && int.TryParse(parts[1], out h) && w > 0 && h > 0;
+    }
+
+    /// <summary>只保留比例：文章记住的是上个模型的像素，换了模型时按同一比例重新落。</summary>
+    public static SizeRequest AsRatio(SizeRequest request)
+        => request.IsExact ? new SizeRequest(FriendlyRatio(request.Width!.Value, request.Height!.Value), null, null, request.Ratio) : request;
+
+    /// <summary>上一次落到的尺寸能不能算「同一个尺寸意图」：精确像素要逐字相同，比例只比比例。</summary>
+    public static bool SameIntent(string previousSize, SizeRequest request)
+        => request.IsExact ? previousSize == request.Raw : SameRatio(RatioOf(previousSize), request.Ratio);
 
     /// <summary>
     /// 一篇文章当前该用的风格与水印：这篇记住的优先（记住的那套已被删时退回账号默认并给出说明），否则账号默认。

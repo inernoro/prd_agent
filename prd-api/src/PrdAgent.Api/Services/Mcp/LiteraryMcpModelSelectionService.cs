@@ -1,7 +1,10 @@
+using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 
 namespace PrdAgent.Api.Services.Mcp;
@@ -30,6 +33,15 @@ public interface ILiteraryMcpModelSelectionService
     Task<LiteraryMcpModelSelection> ValidateFixedModelAsync(
         string logicalModelPublicId,
         CancellationToken ct);
+
+    /// <summary>
+    /// 选中模型的图片能力（尺寸清单与约束），取自网关目录随条目下发的能力快照——网页尺寸选择器读的是同一份。
+    /// 读不到返回 null，由调用方明说，不当成「什么尺寸都收」。
+    /// </summary>
+    Task<ImageGenAdapterInfo?> GetImageCapabilitiesAsync(
+        string appCallerCode,
+        string logicalModelPublicId,
+        CancellationToken ct);
 }
 
 /// <summary>
@@ -38,7 +50,8 @@ public interface ILiteraryMcpModelSelectionService
 /// </summary>
 public sealed class LiteraryMcpModelSelectionService(
     MongoDbContext db,
-    ILlmGateway gateway) : ILiteraryMcpModelSelectionService
+    ILlmGateway gateway,
+    ILogger<LiteraryMcpModelSelectionService> logger) : ILiteraryMcpModelSelectionService
 {
     private static readonly string[] LiteraryImageCallers =
     [
@@ -136,6 +149,25 @@ public sealed class LiteraryMcpModelSelectionService(
             if (!checkedResolution.Success) return checkedResolution;
         }
         return LiteraryMcpModelSelection.Selected(publicId);
+    }
+
+    public async Task<ImageGenAdapterInfo?> GetImageCapabilitiesAsync(
+        string appCallerCode,
+        string logicalModelPublicId,
+        CancellationToken ct)
+    {
+        try
+        {
+            return (await GatewayImageModelCatalog.ReadAsync(gateway, appCallerCode, ct))
+                .FirstOrDefault(x => string.Equals(x.Model.Code, logicalModelPublicId, StringComparison.Ordinal))
+                ?.ImageCapabilities;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 目录读不到不是「什么尺寸都收」：返回 null，由调用方明说并拒绝入队。
+            logger.LogWarning(ex, "[LiteraryMcp] 读取模型 {Model} 的图片能力失败 caller={Caller}", logicalModelPublicId, appCallerCode);
+            return null;
+        }
     }
 
     private static LiteraryMcpModelSelection ExactOrFailure(

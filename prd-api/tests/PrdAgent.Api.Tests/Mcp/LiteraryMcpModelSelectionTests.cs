@@ -136,7 +136,7 @@ public sealed class LiteraryMcpModelSelectionTests
                 ]);
             SetupResolution(gateway, AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
                 "gpt-image-2", success: true);
-            var service = new LiteraryMcpModelSelectionService(db, gateway.Object);
+            var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var selected = await service.ResolveForRunAsync(
                 "writer", "key-writer", AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, CancellationToken.None);
@@ -172,7 +172,7 @@ public sealed class LiteraryMcpModelSelectionTests
                     LogicalModelPublicId = "gpt-image-2",
                     ActualModel = "gpt-image-2-all",
                 });
-            var service = new LiteraryMcpModelSelectionService(db, gateway.Object);
+            var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var selected = await service.ResolveForRunAsync(
                 "writer", "key-writer", AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, CancellationToken.None);
@@ -204,7 +204,7 @@ public sealed class LiteraryMcpModelSelectionTests
             var gateway = Gateway();
             SetupResolution(gateway, AppCallerRegistry.LiteraryAgent.Illustration.Img2Img,
                 "gpt-image-2.5-sunburst", success: false);
-            var service = new LiteraryMcpModelSelectionService(db, gateway.Object);
+            var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var selected = await service.ResolveForRunAsync(
                 "writer", "key-writer", AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, CancellationToken.None);
@@ -231,7 +231,7 @@ public sealed class LiteraryMcpModelSelectionTests
                 "text-only-model", success: true);
             SetupResolution(gateway, AppCallerRegistry.LiteraryAgent.Illustration.Img2Img,
                 "text-only-model", success: false);
-            var service = new LiteraryMcpModelSelectionService(db, gateway.Object);
+            var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var result = await service.ValidateFixedModelAsync("text-only-model", CancellationToken.None);
 
