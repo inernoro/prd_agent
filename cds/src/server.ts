@@ -52,6 +52,8 @@ import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deplo
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostics.js';
+import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
 import { defaultEnvFilePath } from './services/env-file.js';
@@ -1075,6 +1077,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /self-check': 'CDS 自检',
     'GET /host-stats': '获取主机状态',
     'GET /cds-system/perf-health': '运维健康观测',
+    'GET /cds-system/diagnostics/main-thread': '主线程诊断',
+    'POST /cds-system/diagnostics/cpu-profile': '采样主线程CPU',
     'GET /state-stream': '订阅状态流',
     'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',
@@ -1960,6 +1964,10 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  // SSE 长连接计数（2026-10-08 卡顿复盘，药方第 1 步）：挂在所有路由之前，一处覆盖
+  // 全部 text/event-stream 端点；非 SSE 响应只多两个闭包。数据见
+  // GET /api/cds-system/diagnostics/main-thread 的 mainThread.sseOpen / sse。
+  app.use(sseConnectionTrackerMiddleware);
   // 密封存储初始化端点永远不接收客户端材料。必须在任何 body parser 和认证
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
@@ -3902,6 +3910,10 @@ export function createServer(deps: ServerDeps): express.Express {
 
   function doBroadcastState(): void {
     if (stateClients.size === 0) return;
+    timeMainThreadSection('sse.state.broadcast', broadcastStateNow);
+  }
+
+  function broadcastStateNow(): void {
     lastBroadcastAt = Date.now();
     const state = deps.stateService.getState();
 
@@ -4724,6 +4736,7 @@ export function createServer(deps: ServerDeps): express.Express {
     masterPort: deps.config.masterPort,
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  app.use('/api', createCdsSystemDiagnosticsRouter());
   // 离机备份（R2）配置入口，系统级。先实测再落盘、落盘后热生效，见 routes/cds-system-offsite-backup.ts。
   app.use('/api', createCdsSystemOffsiteBackupRouter());
   app.use('/api', createCdsSystemSealedStorageRouter({

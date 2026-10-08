@@ -65,7 +65,9 @@ import type {
   ServiceDeploymentLogEntry,
 } from '../../types.js';
 import type { StateBackingStore, StateDirtyKind, StateSaveHint } from './backing-store.js';
+import { performance } from 'node:perf_hooks';
 import { pruneWebhookDeliveries } from '../../services/webhook-delivery-retention.js';
+import { recordMainThreadSection, timeMainThreadSection } from '../../services/main-thread-diagnostics.js';
 
 /** Mongo 集合最小接口 — 与 mongo-backing-store 风格一致，便于单测。 */
 export interface ISplitMongoCollection<TDoc extends { _id: string }> {
@@ -800,11 +802,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     this.dirtyIds = new Map();
     if (useFull) {
       this.needFullResync = false;
-      const snapshot = structuredClone(live);
+      const snapshot = timeMainThreadSection('state.snapshot.full-clone', () => structuredClone(live));
       this.cache = snapshot;
       this.pendingWrite = { generation, full: snapshot };
     } else {
-      const partial = this.buildPartial(live, kinds, idMap, generation);
+      const partial = timeMainThreadSection('state.snapshot.partial-clone', () => this.buildPartial(live, kinds, idMap, generation));
       this.pendingWrite = this.pendingWrite
         ? mergePendingPartials(this.pendingWrite, partial)
         : partial;
@@ -865,6 +867,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
    * 字符串比较；删除检测 = 缓存 key 集 − 当前 id 集。bulkWrite 成功后才更新缓存。
    */
   private async syncCollection<T>(input: {
+    /** 主线程诊断里的分段名后缀，例如 branches。 */
+    label: string;
     collection: { bulkWrite(operations: Array<unknown>): Promise<unknown> };
     cache: Map<string, string>;
     currentIds: ReadonlySet<string>;
@@ -874,10 +878,15 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     const ops: unknown[] = [];
     const upserts: Array<[string, string]> = [];
     const removals: string[] = [];
+    // 下面这段到 await 之前全是同步的：每个候选实体都 stableJson 一遍再和缓存比。
+    // 全量快照时它会把所有分支 / 部署记录 / 活动日志依次序列化，是主线程卡顿的头号嫌疑。
+    const serializeStartedAt = performance.now();
+    let serializedBytes = 0;
     for (const [id, entity] of input.candidates) {
       // 合并期间可能残留「已被删除实体」的旧克隆——以最新 id 集为准跳过。
       if (!input.currentIds.has(id)) continue;
       const { json, replacement } = input.serialize(id, entity);
+      serializedBytes += json.length;
       if (input.cache.get(id) === json) continue;
       ops.push({ replaceOne: { filter: { _id: id }, replacement, upsert: true } });
       upserts.push([id, json]);
@@ -887,6 +896,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       ops.push({ deleteOne: { filter: { _id: id } } });
       removals.push(id);
     }
+    recordMainThreadSection(`state.persist.serialize.${input.label}`, performance.now() - serializeStartedAt, serializedBytes);
     if (ops.length === 0) return;
     await input.collection.bulkWrite(ops);
     for (const [id, json] of upserts) input.cache.set(id, json);
@@ -895,6 +905,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   private async persistProjects(currentIds: ReadonlySet<string>, candidates: Iterable<[string, Project]>, now: string): Promise<void> {
     await this.syncCollection({
+      label: 'projects',
       collection: this.handle.projectsCollection(),
       cache: this.persistedJson.projects,
       currentIds,
@@ -908,6 +919,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   private async persistBranches(currentIds: ReadonlySet<string>, candidates: Iterable<[string, BranchEntry]>, now: string): Promise<void> {
     await this.syncCollection({
+      label: 'branches',
       collection: this.handle.branchesCollection(),
       cache: this.persistedJson.branches,
       currentIds,
@@ -921,6 +933,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   private async persistDeploymentRuns(currentIds: ReadonlySet<string>, candidates: Iterable<[string, DeploymentRun]>, now: string): Promise<void> {
     await this.syncCollection({
+      label: 'deploymentRuns',
       collection: this.handle.deploymentRunsCollection(),
       cache: this.persistedJson.deploymentRuns,
       currentIds,
@@ -943,6 +956,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   private async persistDeploymentVersions(currentIds: ReadonlySet<string>, candidates: Iterable<[string, DeploymentVersion]>, now: string): Promise<void> {
     await this.syncCollection({
+      label: 'deploymentVersions',
       collection: this.handle.deploymentVersionsCollection(),
       cache: this.persistedJson.deploymentVersions,
       currentIds,
@@ -957,6 +971,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private async persistSelfUpdateHistory(list: SelfUpdateRecord[] | undefined, now: string): Promise<void> {
     const candidates = selfUpdateCandidates(list);
     await this.syncCollection({
+      label: 'selfUpdateHistory',
       collection: this.handle.selfUpdateHistoryCollection(),
       cache: this.persistedJson.selfUpdateHistory,
       currentIds: new Set(candidates.map(([id]) => id)),
@@ -971,6 +986,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private async persistWebhookDeliveries(list: GithubWebhookDelivery[] | undefined, now: string): Promise<void> {
     const candidates = webhookDeliveryCandidates(list);
     await this.syncCollection({
+      label: 'webhookDeliveries',
       collection: this.handle.webhookDeliveriesCollection(),
       cache: this.persistedJson.webhookDeliveries,
       currentIds: new Set(candidates.map(([id]) => id)),
@@ -985,6 +1001,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private async persistActivityLogs(logs: Record<string, ProjectActivityLog[]> | undefined, now: string): Promise<void> {
     const candidates = activityLogCandidates(logs);
     await this.syncCollection({
+      label: 'activityLogs',
       collection: this.handle.activityLogsCollection(),
       cache: this.persistedJson.activityLogs,
       currentIds: new Set(candidates.map(([id]) => id)),
@@ -998,7 +1015,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   /** global rest 单文档：字符串级 diff（缓存上次落库的 stableJson），命中即零写。 */
   private async persistGlobalRest(restOfState: GlobalRest, now: string): Promise<void> {
-    const json = stableJson(restOfState);
+    const json = timeMainThreadSection('state.persist.serialize.global', () => stableJson(restOfState), (out) => out.length);
     if (!this.forceGlobalRewrite && this.persistedGlobalJson === json) return;
     await this.handle.globalCollection().replaceOne(
       { _id: GLOBAL_DOC_ID },

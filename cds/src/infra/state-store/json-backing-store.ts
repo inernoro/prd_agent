@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CdsState } from '../../types.js';
 import type { StateBackingStore } from './backing-store.js';
+import { timeMainThreadSection } from '../../services/main-thread-diagnostics.js';
 
 /** Keep the last N rolling backups. Old ones are pruned after each backup write. */
 export const MAX_STATE_BACKUPS = 10;
@@ -141,7 +142,7 @@ export class JsonStateBackingStore implements StateBackingStore {
     const live = this.dirtyState;
     if (!live) return;
     this.dirtyState = null;
-    const serialized = JSON.stringify(live, null, 2);
+    const serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
     this.writeChain = this.writeChain
       .then(() => this.writeToDisk(serialized))
       .catch((err) => {

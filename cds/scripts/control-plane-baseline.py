@@ -34,6 +34,66 @@ def api(path: str, timeout: int = 90):
     return json.loads(r.stdout)
 
 
+def api_optional(path: str, timeout: int = 90):
+    """旧版本没有的端点：拿不到 JSON 就返回 None，而不是让整张表中断。"""
+    host = os.environ.get("CDS_HOST", "").strip()
+    if not host:
+        sys.exit("CDS_HOST 未设置")
+    if not host.startswith("http"):
+        host = "https://" + host
+    key = os.environ.get("AI_ACCESS_KEY", "").replace('"', "")
+    r = subprocess.run(
+        ["curl", "-sS", "--max-time", str(timeout), "-K", "-", host + path],
+        input=f'header = "X-AI-Access-Key: {key}"\n',
+        capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def main_thread_rows(diag) -> list[tuple[str, str]]:
+    """主线程诊断（2026-10-08 卡顿复盘第 1 步）的几行。读上一完整窗口，没有就读当前窗口。"""
+    if not diag or "mainThread" not in diag:
+        return [("主线程诊断", "旧版本无此端点（改前）")]
+    rows: list[tuple[str, str]] = []
+    el = diag.get("eventLoop") or {}
+    el_win = el.get("previous") or el.get("current") or {}
+    if "blockedRatio" in el_win:
+        rows.append(("主线程被卡时间（一分钟窗口）", f"{el_win.get('blockedMs')} ms，占 {round(el_win.get('blockedRatio', 0) * 100, 1)}%（p99 {el_win.get('p99Ms')} ms，含 20ms 采样基线）"))
+    mt = diag["mainThread"]
+    win = mt.get("previous") or mt.get("current") or {}
+    top = (win.get("sections") or [])[:5]
+    rows.append((
+        "主线程分段耗时 Top 5（一分钟窗口）",
+        "；".join(f"{x['name']} {x['totalMs']}ms ×{x['count']}（最长 {x['maxMs']}ms）" for x in top) or "无",
+    ))
+    gc = win.get("gc") or {}
+    rows.append(("GC（一分钟窗口）", f"{gc.get('count', 0)} 次，合计 {gc.get('totalMs', 0)} ms，最长 {gc.get('maxMs', 0)} ms"))
+    stalls = mt.get("stalls") or []
+    if stalls:
+        total = sum(x.get("ms", 0) for x in stalls)
+        unattributed = sum(x.get("unattributedMs", 0) for x in stalls)
+        rows.append((
+            f"最近 {len(stalls)} 次卡顿（≥200ms）",
+            f"合计 {round(total)} ms，最长 {round(max(x.get('ms', 0) for x in stalls))} ms，未标注占 {round(unattributed / max(1, total) * 100)}%"
+            + ("（未标注过半：热点在埋点之外，需要抓 CPU profile）" if unattributed > total / 2 else ""),
+        ))
+    else:
+        rows.append(("最近卡顿（≥200ms）", "无"))
+    open_ = mt.get("sseOpen") or {}
+    widget = sum(v for k, v in open_.items() if "|widget|" in k)
+    unscoped = sum(v for k, v in open_.items() if k.endswith("|all"))
+    rows.append(("SSE 长连接（当前）", f"{sum(open_.values())} 条，其中预览页挂件 {widget} 条、不限项目 {unscoped} 条"))
+    traffic = win.get("sse") or {}
+    rows.append(("SSE 写出（一分钟窗口）", f"{round(sum(v.get('bytes', 0) for v in traffic.values()) / 1024)} KB / {sum(v.get('writes', 0) for v in traffic.values())} 次"))
+    return rows
+
+
 def parse_ts(s: str) -> dt.datetime:
     return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
 
@@ -65,6 +125,22 @@ def _self_test() -> None:
         got = runs_window_truncated(dated, in_window, cap=200)
         assert got is expected, f"runs_window_truncated({dated}, {in_window}) = {got}, 期望 {expected}"
     print("self-test ok: runs_window_truncated 5 组判据通过")
+    assert main_thread_rows(None) == [("主线程诊断", "旧版本无此端点（改前）")]
+    sample = {
+        "eventLoop": {"previous": {"blockedMs": 9000, "blockedRatio": 0.15, "p99Ms": 2894.1}},
+        "mainThread": {
+            "previous": {"sections": [{"name": "state.snapshot.full-clone", "totalMs": 8000, "count": 4, "maxMs": 2400}],
+                         "gc": {"count": 3, "totalMs": 300, "maxMs": 200},
+                         "sse": {"/branches/stream|widget|all": {"bytes": 2048, "writes": 10}}},
+            "stalls": [{"ms": 2400, "unattributedMs": 2000}],
+            "sseOpen": {"/branches/stream|widget|all": 7, "/branches/stream|dashboard|project": 2},
+        },
+    }
+    rendered = dict(main_thread_rows(sample))
+    assert rendered["主线程被卡时间（一分钟窗口）"].startswith("9000 ms，占 15.0%"), rendered
+    assert "需要抓 CPU profile" in rendered["最近 1 次卡顿（≥200ms）"], rendered
+    assert rendered["SSE 长连接（当前）"] == "9 条，其中预览页挂件 7 条、不限项目 7 条", rendered
+    print("self-test ok: main_thread_rows 3 组判据通过")
 
 
 def pct(sorted_vals, p):
@@ -125,6 +201,8 @@ def main() -> None:
         rows.append(("控制面告警", "；".join(w["code"] for w in pressure.get("warnings", [])) or "无"))
     else:
         rows.append(("/healthz pressure", "旧版本无此字段（改前）"))
+
+    rows.extend(main_thread_rows(api_optional("/api/cds-system/diagnostics/main-thread")))
 
     up = api("/api/uptime/summary")
     last = up.get("lastCycleAt")

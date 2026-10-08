@@ -299,7 +299,8 @@ describe('CDS Agent 接入口令', () => {
     //    + infra-credential-rotation（基础设施凭据轮换，密封存储就绪 + 作业排空后才可执行，2026-09-06）
     //    + alarm-channels（通知通道：哪些出问题通知谁，2026-09-15）
     //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(56);
+    //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(57);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'user-project-access'))
       .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);

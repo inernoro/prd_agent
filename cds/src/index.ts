@@ -97,6 +97,7 @@ import { PreviewCanaryService, type PreviewCanaryTarget } from './services/previ
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { resolveWorkloadCgroup } from './services/workload-cgroup.js';
 import { startEventLoopLagMonitor } from './services/event-loop-lag.js';
+import { startMainThreadDiagnostics, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
@@ -1605,9 +1606,9 @@ function startStaleDeployDispatchReconciler(
             // 不加 `|| true`:worktree 暂缺 / sha 未 fetch 等 git 失败必须以非零退出
             // 抛进 catch 走「不缓存」路径。旧写法 `|| true` 会把失败洗成空输出成功,
             // 被下面缓存成 false 后告警永久压制到进程重启(Codex P2, PR #1213)。
-            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
+            const out = timeMainThreadSection('git.sync.stuck-deploy-diff', () => execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
               encoding: 'utf-8',
-            }).trim();
+            })).trim();
             const result = out
               ? (() => {
                   const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
@@ -5398,6 +5399,8 @@ function stateStorageLabel(): string {
 
 // 事件循环延迟采样（2026-09-08）：/healthz 的 pressure.eventLoop 数据源。
 startEventLoopLagMonitor();
+// 主线程诊断（2026-10-08）：卡顿归因、分段计时、GC。只读，见 routes/cds-system-diagnostics.ts。
+startMainThreadDiagnostics();
 
 // ── Master server (dashboard + API on masterPort) ──
 // serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。

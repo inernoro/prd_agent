@@ -38,6 +38,7 @@ import { createHash } from 'node:crypto';
 import { isSelfCheckEndpoint, SELF_PROJECT_ID } from './self-monitoring-bootstrap.js';
 import http from 'node:http';
 import path from 'node:path';
+import { timeMainThreadSection } from './main-thread-diagnostics.js';
 import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
 import { normalizeReleaseEnvironment, type ReleaseEnvironment } from './release-environment.js';
 import {
@@ -2240,8 +2241,13 @@ export class UptimeMonitorService {
     try {
       fs.mkdirSync(path.dirname(fp), { recursive: true });
       const tmp = `${fp}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(payload));
-      fs.renameSync(tmp, fp);
+      // 整份历史同步 stringify + 写盘，每轮探活都来一次；目标与样本越多越重。
+      timeMainThreadSection('uptime.persist', () => {
+        const json = JSON.stringify(payload);
+        fs.writeFileSync(tmp, json);
+        fs.renameSync(tmp, fp);
+        return json;
+      }, (json) => json.length);
     } catch (err) {
       this.deps.logger?.warn?.(`[uptime] 落盘失败（仅内存保留）: ${(err as Error).message}`);
     }

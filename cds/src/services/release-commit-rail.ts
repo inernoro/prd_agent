@@ -29,6 +29,7 @@
 import { execFileSync } from 'node:child_process';
 import { isCommitShaLike } from './release-commit-clock.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
+import { timeMainThreadSection } from './main-thread-diagnostics.js';
 
 /** 单元分隔符。commit subject 里什么字符都可能有，只有它足够安全。 */
 const UNIT_SEPARATOR = '\x1f';
@@ -48,11 +49,11 @@ const GIT_TIMEOUT_MS = 3_000;
 export type GitRunner = (args: readonly string[]) => string;
 
 export const execFileGitRunner: GitRunner = (args) =>
-  execFileSync('git', [...args], {
+  timeMainThreadSection('git.sync.release-rail', () => execFileSync('git', [...args], {
     encoding: 'utf8',
     timeout: GIT_TIMEOUT_MS,
     stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  }));
 
 export interface ReleaseCommitRailNode {
   sha: string;

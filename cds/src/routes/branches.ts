@@ -68,6 +68,7 @@ import {
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { getEventLoopLag } from '../services/event-loop-lag.js';
+import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView } from '../services/human-project-access.js';
@@ -4776,8 +4777,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const snapshot = projectFilter
       ? all.filter((b) => (b.projectId || 'default') === projectFilter)
       : all;
-    for (const branch of snapshot) reconcileBranchStatus(branch);
-    safeSend('snapshot', { branches: snapshot.map(branch => branchForHumanView(req, branch)), projectId: projectFilter || undefined, ts: nowIso() });
+    // 每条新连接都把（范围内的）全部分支脱敏并序列化一遍；预览页挂件不带 project，
+    // 拿到的是全平台所有分支。断线重连同样走这里。
+    timeMainThreadSection(projectFilter ? 'sse.branches.snapshot.project' : 'sse.branches.snapshot.all', () => {
+      for (const branch of snapshot) reconcileBranchStatus(branch);
+      safeSend('snapshot', { branches: snapshot.map(branch => branchForHumanView(req, branch)), projectId: projectFilter || undefined, ts: nowIso() });
+    });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
     // with {type, payload} and can route with a single listener.
@@ -4790,7 +4795,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 直接从 state 取原始 branch，订阅者会收到额外服务明文密钥。这里统一过 branchForView。
       return branchForHumanView(req, withSha);
     };
+    // 每个事件 × 每条连接各算一遍（脱敏 + 序列化完整分支），连接之间不共享。
     const anyHandler = (envelope: any) => {
+      timeMainThreadSection('sse.branches.event', () => dispatchEnvelope(envelope));
+    };
+    const dispatchEnvelope = (envelope: any) => {
       if (!envelope || !envelope.type) return;
       if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
       if (envelope.payload?.branch) {
@@ -5111,7 +5120,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     // 预序列化一次：缓存命中的并发请求直接复用这串，免去每请求 res.json 再全量序列化
     // （48 分支 + 资源，单次约 30-50ms，是 10 并发下单线程串行的主要成本）。
-    return { payload, serialized: JSON.stringify(payload), timings };
+    // 非 live 路径整段同步（无真实 I/O），总耗时就是它占主线程的时间；live 路径含
+    // docker/git 等待，不能算进主线程分段，否则卡顿归因会把等待误当成阻塞。
+    if (!live) recordMainThreadSection('api.branches.compute', timings.total);
+    const serialized = timeMainThreadSection('api.branches.serialize', () => JSON.stringify(payload), (out) => out.length);
+    return { payload, serialized, timings };
   }
 
   router.get('/branches', async (req, res) => {
@@ -5162,7 +5175,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || req.headers['x-cds-source-branch-id']
     );
     if (isWidgetRequest) {
-      res.json(result.payload);
+      timeMainThreadSection('api.branches.widget-serialize', () => res.json(result.payload));
     } else {
       res.type('application/json').send(result.serialized);
     }
