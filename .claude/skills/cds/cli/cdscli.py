@@ -7270,7 +7270,28 @@ def _verify_infra_image(svc_name: str, svc: dict) -> list[dict]:
     return []
 
 
-def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[dict]:
+def _verify_runtime_credential_vars(infra_services: dict) -> set[str]:
+    """Return credential aliases injected by CDS for declared infra services.
+
+    The server derives these names from the infra service id rather than the
+    image kind (for example ``redis-2`` becomes ``CDS_REDIS_2_PASSWORD``).
+    Keeping the same derivation here lets verify accept real runtime aliases
+    without turning every ``CDS_*_PASSWORD`` typo into a trusted variable.
+    """
+    aliases: set[str] = set()
+    for name in infra_services:
+        prefix = str(name).upper().replace("-", "_")
+        aliases.add(f"CDS_{prefix}_USER")
+        aliases.add(f"CDS_{prefix}_PASSWORD")
+    return aliases
+
+
+def _verify_env_resolves(
+    svc_name: str,
+    svc: dict,
+    env_keys: set[str],
+    runtime_credential_vars: set[str] | None = None,
+) -> list[dict]:
     """ERROR:env 里的 ${VAR} 在 x-cds-env 里没定义,也无 default。
 
     CDS 运行时变量白名单（由 CDS 服务端在容器启动时注入，verify 阶段无法预知）：
@@ -7284,6 +7305,7 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     # 仅包含 CDS 服务端自动分配的网络层变量（端口/主机名/连接串）。
     # _PASSWORD / _USER / _DB 等凭据变量不在此列——它们必须由项目在 x-cds-env 中显式定义。
     _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL")
+    runtime_credential_vars = runtime_credential_vars or set()
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
@@ -7301,13 +7323,19 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
             if var in env_self_keys:
                 continue
             # CDS 运行时变量白名单
-            if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
+            is_runtime_credential = var in runtime_credential_vars
+            if ((var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES))
+                    or is_runtime_credential):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
                     "rule": "env-var-cds-runtime",
                     "message": f"{svc_name}.{field_label} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
-                    "fix": "如需本地 verify 通过，可加 fallback: ${" + var + ":-localhost}",
+                    "fix": (
+                        "无需在 x-cds-env 重复定义；确保对应基础设施服务已启用认证且项目 env 已配置凭据"
+                        if is_runtime_credential
+                        else "该变量由 CDS 运行时注入，无需修复"
+                    ),
                 })
                 continue
             issues.append({
@@ -7594,16 +7622,17 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     env_decls = doc.get("x-cds-env") if isinstance(doc.get("x-cds-env"), dict) else {}
     app_services = {n: s for n, s in services.items() if isinstance(s, dict) and _verify_is_app_service(s)}
     infra_services = {n: s for n, s in services.items() if isinstance(s, dict) and not _verify_is_app_service(s)}
+    runtime_credential_vars = _verify_runtime_credential_vars(infra_services)
 
     issues: list[dict] = []
     # ERROR
     for name, svc in app_services.items():
         issues += _verify_app_workdir(name, svc, root)
         issues += _verify_app_ports(name, svc)
-        issues += _verify_env_resolves(name, svc, env_keys)
+        issues += _verify_env_resolves(name, svc, env_keys, runtime_credential_vars)
     for name, svc in infra_services.items():
         issues += _verify_infra_image(name, svc)
-        issues += _verify_env_resolves(name, svc, env_keys)
+        issues += _verify_env_resolves(name, svc, env_keys, runtime_credential_vars)
     # WARNING
     issues += _verify_schemaful_db_migration(infra_services, app_services)
     issues += _verify_scan_signals(doc)
