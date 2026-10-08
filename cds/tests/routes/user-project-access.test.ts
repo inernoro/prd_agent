@@ -28,6 +28,8 @@ describe('human project grants through the production server', () => {
   let memberId: string;
   let store: MemoryAuthStore;
   let registry: ExecutorRegistry;
+  let container: { getRunningContainerNames: () => Promise<Set<string>>; getTotalMemoryGB: () => Promise<number>;
+    getLogs: () => Promise<string>; isRunning?: (name: string) => Promise<boolean> };
 
   async function call(method: string, url: string, cookie = owner, body?: unknown) {
     const res = await fetch(base + url, {
@@ -70,10 +72,11 @@ describe('human project grants through the production server', () => {
     const config: CdsConfig = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'),
       masterPort: 9900, workerPort: 5500, dockerNetwork: 'cds', portStart: 10001,
       sharedEnv: {}, jwt: { secret: 'test', issuer: 'test' }, rootDomains: ['example.test'] };
+    container = { getRunningContainerNames: async () => new Set(), getTotalMemoryGB: async () => 8,
+      getLogs: async () => 'PASSWORD=fake-diagnostic-secret\nbooting\n' };
     const app = createServer({ stateService: state, worktreeService: new WorktreeService(shell, dir),
       shell, config, authStore: store, registry, bridgeService: {} as any,
-      containerService: { getRunningContainerNames: async () => new Set(), getTotalMemoryGB: async () => 8,
-        getLogs: async () => 'PASSWORD=fake-diagnostic-secret\nbooting\n' } as any,
+      containerService: container as any,
       proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => server.once('listening', resolve));
@@ -426,6 +429,29 @@ describe('human project grants through the production server', () => {
     expect(ownerLogs).toContain('fake-structured-log-secret');
     expect(ownerLogs).toContain('fake-log-command-secret');
     expect(branch.services['profile-project-a'].buildLog).toContain('fake-service-log-secret');
+  });
+
+  it('projects runtime verification logs for members while preserving owner diagnostics and the log source', async () => {
+    await grant(['project-a']);
+    const sourceLog = ['runtime healthy', 'PASSWORD=fake-runtime-env-secret', 'API_TOKEN=fake-runtime-token-secret',
+      'mongodb://runtime-user:fake-runtime-uri-secret@db.example.test/app', 'redis-server --requirepass fake-runtime-cli-secret'].join('\n');
+    const branch = state.getBranch('branch-project-a')!;
+    branch.services['profile-project-a'] = { profileId: 'profile-project-a', containerName: 'runtime-fixture', hostPort: 10001, status: 'running' };
+    container.isRunning = async () => true;
+    const readLogs = vi.spyOn(container, 'getLogs').mockResolvedValue(sourceLog);
+    const url = '/api/branches/branch-project-a/verify-runtime/profile-project-a';
+    expect((await call('POST', url, owner, {})).body.recentLogs).toBe(sourceLog);
+    const view = await call('POST', url, member, {});
+    expect(view.status).toBe(200);
+    expect(view.body.container).toBe('runtime-fixture');
+    expect(view.body.recentLogs).toContain('runtime healthy');
+    expect(view.body.warnings.length).toBeGreaterThan(0);
+    for (const secret of ['fake-runtime-env-secret', 'fake-runtime-token-secret', 'fake-runtime-uri-secret', 'fake-runtime-cli-secret']) {
+      expect(JSON.stringify(view.body)).not.toContain(secret);
+    }
+    expect((await call('POST', url, owner, {})).body.recentLogs).toBe(sourceLog);
+    expect(await readLogs()).toBe(sourceLog);
+    expect((await call('POST', '/api/branches/branch-project-b/verify-runtime/profile-project-b', member, {})).status).toBe(403);
   });
 
   it('projects complete executor frames for members without forwarding split raw credentials; owner keeps raw output', async () => {

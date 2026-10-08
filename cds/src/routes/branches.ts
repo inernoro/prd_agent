@@ -18815,7 +18815,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       warnings.push('OK 未检测到明显不一致。如仍看不到预期日志，排查：日志级别过滤、LogError 是否真走到那个代码路径、Infrastructure.dll 是不是被引用/注入。');
     }
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       branch: branchSlug,
       profile: profileId,
       container: containerName,
@@ -18824,7 +18824,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       latestSource: topSrc,
       recentLogs: logs.split('\n').slice(-30).join('\n'),
       warnings,
-    });
+    }));
   });
 
   // ── Docker images (for dropdown selection) ──
