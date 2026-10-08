@@ -382,6 +382,10 @@ public class LiteraryAgentWorkspaceController : ControllerBase
             currentCount = history.CurrentCount,
             // 当前有哪些标记位置可以把旧图放回去
             markerIndexes = ws.ArticleWorkflow?.Markers.Select(m => m.Index).OrderBy(i => i).ToList() ?? new List<int>(),
+            // 每个位置现在讲的是什么：放到别的位置时，页面要让人看清选的是哪一段，而不只是一个序号
+            markers = ws.ArticleWorkflow?.Markers.GroupBy(m => m.Index).OrderBy(g => g.Key)
+                .Select(g => new { index = g.Key, description = PrdAgent.Core.Services.LiteraryMcpWorkflow.EffectivePrompt(g.First()) })
+                .ToList<object>() ?? new List<object>(),
             groups = history.Groups,
             previousSets = history.PreviousSets,
         }));
