@@ -1903,6 +1903,34 @@ def _severity_class(severity):
     return ""
 
 
+def _reviewed_warning(shot, warning):
+    """保留原始捕获等级；仅凭已确认、可定位的诊断分类呈现风险。"""
+    review = shot.get("warningReview")
+    if review is None:
+        return _severity_from_text(warning), warning
+    if not isinstance(review, dict) or not all(
+        str(review.get(key) or "").strip()
+        for key in ("severity", "classification", "defectId", "reason")
+    ):
+        raise ValueError("warningReview 必须包含严重级、分类、defectId与确认依据")
+    severity = review["severity"]
+    if severity not in {"P0", "P1", "P2", "P3"} or review["classification"] not in {
+        "product", "test", "test/infrastructure", "configuration", "environment",
+    }:
+        raise ValueError("warningReview 严重级或分类非法")
+    detail = (
+        f'已确认 {severity} · {review["classification"]} · {review["defectId"]}：'
+        f'{review["reason"]}；原始捕获等级（非产品严重级）：{warning}'
+    )
+    return severity, detail
+
+
+def _verdict_label(verdict, markdown):
+    if verdict == "conditional" and _coverage_gap_count(markdown) > 0:
+        return "未完成，不放行"
+    return {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(verdict, verdict)
+
+
 def _plain_cell_text(value):
     """把表格单元格里的 markdown 标记压成纯文本。
 
@@ -2050,7 +2078,8 @@ def _collect_problem_items(markdown, manifest):
         label = f"图{num.upper()}" if num else (shot.get("name") or "截图")
         cap = _evidence_caption(shot, label)
         for warning in shot.get("warnings") or []:
-            add(_severity_from_text(warning), f"{label} · {cap}", warning, anchor)
+            severity, detail = _reviewed_warning(shot, warning)
+            add(severity, f"{label} · {cap}", detail, anchor)
 
     order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     return sorted(items, key=lambda it: order.get(it["severity"], 9))
@@ -2407,7 +2436,7 @@ def build_interactive_html(
     defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
-        "conditional": ("原则性通过", "conditional"),
+        "conditional": (_verdict_label(verdict, markdown_content), "conditional"),
         "fail": ("不通过", "fail"),
     }.get(verdict, (verdict, "unknown"))
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
@@ -2437,7 +2466,7 @@ def build_interactive_html(
         thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
         nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
         warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
-        severity = problem_anchors.get(anchor) or _severity_from_text(warnings)
+        severity = problem_anchors.get(anchor) or _reviewed_warning(shot, warnings)[0]
         status_class = _severity_class(severity)
         nav_class = f' class="is-{status_class}"' if status_class else ""
         card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"
@@ -2599,6 +2628,7 @@ def build_interactive_html(
         release_failed = (
             verdict == "fail"
             or counts["失败"] > 0
+            or counts["未执行"] > 0
             or visual.get("明确不通过", 0) > 0
         )
         release_conditional = (
@@ -2723,7 +2753,7 @@ def build_interactive_html(
                 f'{fallback_link}</div>'
             )
         if verdict == "conditional":
-            focus_kicker = "原则性通过重点"
+            focus_kicker = "未完成项与风险" if row_gap_count else "原则性通过重点"
             focus_title = "先看这里：风险证据和未覆盖项"
         else:
             focus_kicker = "不通过定位"
@@ -4646,8 +4676,8 @@ def main():
         raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
-    verdict_cn = {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(a.verdict, a.verdict)
     body = ensure_report_time(open(a.report_md, encoding="utf-8").read().lstrip(), dt)
+    verdict_cn = _verdict_label(a.verdict, body)
     title, a.report_kind, a.report_date = build_report_title(a, cfg, now, body)
     # 项目由 projectId、状态由 verdict、操作方式与档位由 metadata/tags 表达，不再挤占标题。
     tags = [t for t in [verdict_cn, a.report_kind, a.type, a.tier] if (t or "").strip()]

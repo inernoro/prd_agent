@@ -1,10 +1,12 @@
-import { devices, expect, test, type APIRequestContext, type APIResponse, type Page, type Response, type TestInfo } from '@playwright/test';
+import { devices, expect, test, type APIRequestContext, type APIResponse, type BrowserContext, type Locator, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
+import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
+import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 
 type BusinessCatalog = {
   featureLines: Array<{
@@ -16,6 +18,28 @@ type BusinessCatalog = {
 };
 
 const specDir = dirname(fileURLToPath(import.meta.url));
+const webEvidenceHarnessUrl = pathToFileURL(resolve(specDir,
+  '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs')).href;
+async function captureWebEvidence(page: Page, info: TestInfo, name: string, caption: string, target: Locator) {
+  const harness = await import(webEvidenceHarnessUrl);
+  const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `web-evidence-${info.testId}-r${info.retry}`);
+  await harness.box(page, target, '1');
+  try {
+    const evidence = await harness.shot(page, out, name, caption, {
+      skipReady: true, module: 'web-hosting-sharing', primaryState: name, testType: '回归',
+      breadcrumb: info.title.includes('空文件夹')
+        ? '首页 → 网页托管 → 个人空间 → 本轮文件夹 → 拖拽归属'
+        : '首页 → 网页托管 → 本轮专用站点 → 分享与匿名提问',
+      environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), runId: requiredEnv('STABLE_SMOKE_RUN_ID'),
+      commit: requiredEnv('STABLE_SMOKE_COMMIT'), methodAnchor: 'method-web',
+    });
+    harness.writeManifest(out, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+    await info.attach(name, { path: evidence.path, contentType: 'image/png' });
+    expect(evidence.automatedStatus, '截图捕获异常不能被业务成功掩盖').toBe('通过');
+  } finally {
+    await harness.clearBoxes(page);
+  }
+}
 const catalog = JSON.parse(readFileSync(
   resolve(specDir, '../../.claude/skills/stable-smoke/reference/business-function-catalog.json'),
   'utf8',
@@ -158,26 +182,41 @@ async function setLegacyStorageFixture(page: Page, siteId: string, prepare: bool
 }
 
 async function expectAnonymousShareAnswer(
-  request: APIRequestContext,
+  page: Page,
   shareToken: string,
   siteId: string,
   marker: string,
   storagePath: 'current' | 'legacy',
+  testInfo: TestInfo,
 ) {
-  const ask = await request.post(`/api/web-pages/shares/view/${shareToken}/ask/stream`, {
-    headers: { Accept: 'text/event-stream' },
-    data: { siteId, question: '页面中的正文标记是什么？' },
-    timeout: 120_000,
-  });
+  await page.getByRole('button', { name: '向我提问', exact: true }).first().click();
+  await page.getByRole('textbox', { name: '就这一页提个问题', exact: true })
+    .fill('页面中的正文标记是什么？介绍的水果和颜色是什么？');
+  const response = page.waitForResponse(item => item.request().method() === 'POST'
+    && new URL(item.url()).pathname === `/api/web-pages/shares/view/${shareToken}/ask/stream`, { timeout: 120_000 });
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  const ask = await response;
   const stream = await ask.text();
+  await testInfo.attach(`web-ask-${storagePath}-stream`, { body: Buffer.from(stream), contentType: 'text/plain' });
+  expect(ask.request().headers().authorization, '公开分享访客提问不得借用所有者身份').toBeUndefined();
+  expect(ask.request().postDataJSON().siteId).toBe(siteId);
   expect(ask.status(), `${storagePath} storage: ${stream}`).toBe(200);
   expect(ask.headers()['content-type']).toContain('text/event-stream');
   expect(stream).toContain('event: phase');
   expect(stream).toContain('event: typing');
   expect(stream).toContain('event: done');
   expect(readSseTypingText(stream), `${storagePath} storage answer`).toContain(marker);
+  const answer = readSseTypingText(stream);
+  expect(answer).toContain('白桃');
+  expect(answer).toContain('浅粉');
   expect(stream).not.toContain('ASK_NO_CONTENT');
   expect(stream).not.toContain('event: error');
+  // 只认助手产物，不认问题输入或 iframe 正文中的同一个标记。
+  const assistant = page.locator('[id^="ask-msg-"]').filter({ hasText: marker }).last();
+  await expect(assistant).toContainText('白桃');
+  await expect(assistant).toContainText('浅粉');
+  await captureWebEvidence(page, testInfo, `web-ask-${storagePath}-answer`,
+    `匿名访客真实发送后，助手答案包含独有正文标记、白桃与浅粉色；不证明其他模块通过。`, assistant);
 }
 
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
@@ -1230,19 +1269,36 @@ type StableWebFolder = {
   name: string;
 };
 
-async function uploadStableHostedSite(page: Page, token: string, title: string) {
+async function openWebHostingFromHome(page: Page, request: APIRequestContext) {
+  const harness = await import(webEvidenceHarnessUrl);
+  harness.attachAutoCapture(page);
+  // 本自动化不在范围内读取真实用户公开动态；拒绝该独立请求，不伪造成功响应。
+  await page.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
+  const token = await loginAndReadToken(page, request, '/');
+  await page.getByText('网页托管', { exact: true }).first().click();
+  await expect(page.locator('[data-tour-id="webpages-library-rail"]')).toBeVisible();
+  return token;
+}
+
+async function uploadStableHostedSite(page: Page, title: string) {
+  expect(title.startsWith(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-`), '只创建本runId资源').toBe(true);
   const marker = `${title}-正文标记`;
   // 用实体编码的 # 覆盖浏览器会解码、源码扫描器容易漏判的真实锚点形态。
-  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}</section></body></html>`;
-  const response = await page.request.post('/api/web-pages/upload', {
-    headers: authHeaders(token),
-    multipart: {
-      file: { name: `${title}.html`, mimeType: 'text/html', buffer: Buffer.from(html, 'utf8') },
-      title,
-    },
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}。本页介绍白桃，颜色为浅粉色。</section></body></html>`;
+  await page.getByRole('button', { name: '上传网页', exact: false }).click();
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: `${title}.html`, mimeType: 'text/html', buffer: Buffer.from(html, 'utf8'),
   });
+  const uploaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/web-pages/upload'
+    && response.request().method() === 'POST');
+  await page.getByRole('button', { name: '开始上传', exact: true }).click();
+  const response = await uploaded;
+  const body = await response.json() as ApiEnvelope<StableHostedSite>;
+  expect(response.ok(), body.error?.message || '网页上传失败').toBe(true);
+  expect(body.success).toBe(true);
+  await page.keyboard.press('Escape');
   return {
-    site: await readEnvelope<StableHostedSite>(response),
+    site: body.data,
     marker,
   };
 }
@@ -1254,29 +1310,10 @@ async function deleteStableHostedSite(page: Page, token: string, siteId: string)
   expect((await page.request.get(`/api/web-pages/${siteId}`, { headers: authHeaders(token) })).status()).toBe(404);
 }
 
-function readSseTypingText(stream: string) {
-  return stream
-    .replaceAll('\r\n', '\n')
-    .split('\n\n')
-    .flatMap((frame) => {
-      const lines = frame.split('\n');
-      const eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
-      if (eventType !== 'typing') return [];
-      const data = lines
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trim())
-        .join('\n');
-      try {
-        const payload = JSON.parse(data) as { text?: unknown };
-        return typeof payload.text === 'string' ? [payload.text] : [];
-      } catch {
-        return [];
-      }
-    })
-    .join('');
-}
-
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
+  test.beforeEach(async ({ context }) => {
+    if (process.env.STABLE_SMOKE_RUN) await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
+  });
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
     const resourceFailures: string[] = [];
     page.on('response', (item) => {
@@ -1406,18 +1443,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-sandbox-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
-    const token = await loginAndReadToken(page, request, '/web-pages');
-    const runKey = `stsmk-${Date.now().toString(36)}-folder`;
+    const token = await openWebHostingFromHome(page, request);
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-folder-r${testInfo.retry}`;
     let siteId = '';
     let folderId = '';
     let recreatedFolderId = '';
     try {
-      const uploaded = await uploadStableHostedSite(page, token, `${runKey}-site`);
+      const uploaded = await uploadStableHostedSite(page, `${runKey}-site`);
       siteId = uploaded.site.id;
 
-      await page.goto('/web-pages', { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       await expect(page.locator('[data-tour-id="webpages-library-rail"]')).toBeVisible();
       await page.locator('[data-tour-id="webpages-create-folder"]').click();
@@ -1576,6 +1612,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const folderTarget = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
       await expect(folderTarget).toBeVisible();
       await expect(folderTarget.locator('.web-folder-drop-target__count')).toHaveText('0');
+      await captureWebEvidence(page, testInfo, 'web-folder-empty', '本轮新建文件夹为空；同名、并发、重命名断言见执行明细。', folderTarget);
       await page.getByRole('button', { name: '全部', exact: true }).click();
 
       const card = page.locator('[data-tour-id="webpages-card"]').filter({ hasText: `${runKey}-site` }).first();
@@ -1598,7 +1635,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(targetStyle.boxShadow).not.toBe('none');
       expect(targetStyle.borderColor).not.toBe('rgba(0, 0, 0, 0)');
       expect(targetStyle.transform).not.toBe('none');
-      await testInfo.attach('web-folder-drop-highlight', { body: await page.screenshot(), contentType: 'image/png' });
+      await captureWebEvidence(page, testInfo, 'web-folder-drop-highlight', '真实拖拽悬停目标出现强高亮与松开移入；尚未证明持久化。', folderTarget);
       await page.mouse.up();
 
       await expect.poll(async () => {
@@ -1613,6 +1650,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const persisted = page.locator('[data-tour-id="webpages-folder-drop-target"]').filter({ hasText: runKey });
       await expect(persisted).toBeVisible();
       await expect(persisted.locator('.web-folder-drop-target__count')).toHaveText('1');
+      await captureWebEvidence(page, testInfo, 'web-folder-persisted', '刷新后本轮文件夹数量为1，接口回读确认站点归属。', persisted);
     } finally {
       if (siteId) await deleteStableHostedSite(page, token, siteId);
       if (recreatedFolderId) {
@@ -1629,51 +1667,62 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-004][WEB-005][WEB-006] 分享页片段留在 srcDoc 且页面提问可读正文', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[WEB-004][WEB-005][WEB-006][REG-web-ask-stream-001][REG-web-sandbox-001] 分享页片段留在 srcDoc 且页面提问可读正文', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     const environment = requiredEnv('STABLE_SMOKE_ENVIRONMENT');
     test.setTimeout(environment === 'cds' ? 300_000 : 180_000);
-    const token = await loginAndReadToken(page, request, '/web-pages');
-    const runKey = `stsmk-${Date.now().toString(36)}-share`;
+    const token = await openWebHostingFromHome(page, request);
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-share-r${testInfo.retry}`;
     let siteId = '';
     let shareId = '';
+    let shareToken = '';
+    let guestContext: BrowserContext | undefined;
     let legacyFixturePrepared = false;
     try {
-      const uploaded = await uploadStableHostedSite(page, token, runKey);
+      const uploaded = await uploadStableHostedSite(page, runKey);
       siteId = uploaded.site.id;
       await readEnvelope(await page.request.put(`/api/web-pages/${siteId}/ask/config`, {
         headers: authHeaders(token),
         data: {
           enabled: true,
           allowAnonymous: true,
-          dailyLimit: 0,
+          dailyLimit: 2,
+          suggestedQuestions: ['页面中的正文标记是什么？'],
         },
       }));
-      const share = await readEnvelope<{ id: string; token: string; shareUrl: string }>(
-        await page.request.post('/api/web-pages/share', {
-          headers: authHeaders(token),
-          data: {
-            siteId,
-            shareType: 'single',
-            title: runKey,
-            expiresInDays: 30,
-            visibility: 'public',
-            forceNew: true,
-          },
-        }),
-      );
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      const card = page.locator('[data-tour-id="webpages-card"]').filter({ hasText: runKey }).first();
+      await card.hover();
+      await card.getByRole('button', { name: '分享', exact: true }).click();
+      const shared = page.waitForResponse(item => item.request().method() === 'POST'
+        && new URL(item.url()).pathname === '/api/web-pages/share');
+      await page.getByRole('button', { name: '生成链接并复制', exact: true }).click();
+      const shareBody = await (await shared).json() as ApiEnvelope<{ id: string; token: string }>;
+      expect(shareBody.success).toBe(true);
+      const share = shareBody.data;
       shareId = share.id;
-
-      await page.goto(share.shareUrl, { waitUntil: 'domcontentloaded' });
-      await expect(page.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
-      await expect.poll(() => page.frames().some((frame) => frame.url().startsWith('about:srcdoc')), {
+      shareToken = share.token;
+      await page.getByRole('button', { name: /谁能打开/ }).click();
+      await page.getByRole('button', { name: /任何人.*不登录/ }).click();
+      await expect(page.getByText('任何人', { exact: true }).last()).toBeVisible();
+      const shareUrl = await page.locator('input[readonly]').last().inputValue();
+      expect(new URL(shareUrl).origin).toBe(new URL(page.url()).origin);
+      guestContext = await page.context().browser()!.newContext();
+      await guestContext.addInitScript(blockStableSmokeServiceWorkerRegistration);
+      const guest = await guestContext.newPage();
+      const harness = await import(webEvidenceHarnessUrl);
+      harness.attachAutoCapture(guest);
+      // 接收方打开页面实际给出的分享链接；不是所有者绕过导航直达隐藏路由。
+      await guest.goto(shareUrl, { waitUntil: 'domcontentloaded' });
+      await expect(guest.locator('#root').getByText(runKey, { exact: true }).first()).toBeVisible();
+      await expect.poll(() => guest.frames().some((frame) => frame.url().startsWith('about:srcdoc')), {
         message: '分享页未进入 srcDoc 预览路径',
         timeout: 20_000,
       }).toBe(true);
-      const frame = page.frames().find((item) => item.url().startsWith('about:srcdoc'))!;
+      const frame = guest.frames().find((item) => item.url().startsWith('about:srcdoc'))!;
       const anchor = frame.locator('#jump');
       await expect(anchor).toHaveAttribute('href', 'about:srcdoc#target');
       const unexpectedNavigations: string[] = [];
-      page.on('request', (item) => {
+      guest.on('request', (item) => {
         if (item.isNavigationRequest() && !item.url().startsWith('about:srcdoc')) {
           unexpectedNavigations.push(item.url());
         }
@@ -1682,16 +1731,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect.poll(() => frame.url()).toBe('about:srcdoc#target');
       await expect(frame.locator('#target')).toBeInViewport();
       expect(unexpectedNavigations, '片段点击不应向对象存储目录发起导航').toEqual([]);
-      await testInfo.attach('web-share-srcdoc-anchor', { body: await page.screenshot(), contentType: 'image/png' });
+      await captureWebEvidence(guest, testInfo, 'web-share-srcdoc-anchor', '点击页面锚点后正文进入视口；导航监听确认没有访问对象存储目录。', frame.locator('#target'));
 
-      await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current');
+      await expectAnonymousShareAnswer(guest, share.token, siteId, uploaded.marker, 'current', testInfo);
 
       if (environment === 'cds') {
         legacyFixturePrepared = true;
         await setLegacyStorageFixture(page, siteId, true);
-        await expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy');
+        await guest.reload({ waitUntil: 'domcontentloaded' });
+        await expectAnonymousShareAnswer(guest, share.token, siteId, uploaded.marker, 'legacy', testInfo);
       }
     } finally {
+      await guestContext?.close();
       if (siteId && legacyFixturePrepared) {
         await setLegacyStorageFixture(page, siteId, false);
       }
@@ -1700,6 +1751,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers: authHeaders(token),
         });
         expect(revoked.ok(), '稳定冒烟分享清理失败').toBe(true);
+        expect((await request.get(`/api/web-pages/shares/view/${shareToken}`)).status()).toBe(404);
       }
       if (siteId) await deleteStableHostedSite(page, token, siteId);
     }

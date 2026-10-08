@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { generateKeyPairSync } from 'node:crypto';
+import { expandCompleteReport } from '../../.claude/skills/create-visual-test-to-kb/scripts/report-view.mjs';
 import {
   acquireLock,
   applyCredentialRegistry,
@@ -40,6 +41,9 @@ import {
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
+  runNotificationEvidenceRegression,
+  runReportViewRegression,
+  runReportRiskRegression,
   runCdsGatewayPersistenceProbe,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -56,6 +60,67 @@ function gatewayToken(securityVersion = '7') {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;
 }
+
+test('REG-stsmk-report-view-001 简版必须真实点击完整版才读取隐藏版本', async () => {
+  let view = 'brief';
+  let clicks = 0;
+  const frame = { locator: (selector) => selector === 'body'
+    ? { getAttribute: async () => view }
+    : { count: async () => 1, isVisible: async () => true, click: async () => { clicks += 1; view = 'full'; } } };
+  assert.equal(view === 'full', false, '旧执行链的隐藏版本断言应变红');
+  assert.equal(await expandCompleteReport({ frames: () => [frame] }), 1);
+  assert.equal(view, 'full');
+  assert.equal(clicks, 1);
+  assert.equal(await expandCompleteReport({ frames: () => [frame] }), 0);
+  const source = readFileSync('.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs', 'utf8');
+  assert.match(source, /await expandCompleteReport\(page\);\s*if.*\n\s*snapshot = await inspectRenderedContent\(\)/);
+});
+
+test('REG-stsmk-report-view-001 无切换按钮的历史完整报告保持可校验', async () => {
+  const page = { frames: () => [{ locator: () => ({ count: async () => 0 }) }] };
+  assert.equal(await expandCompleteReport(page), 0);
+});
+
+test('报告视图永久回归必须接线并传播失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-report-view-'));
+  try {
+    for (const status of [0, 1]) {
+      const result = runReportViewRegression(directory, (name, args) => {
+        assert.equal(name, 'node');
+        assert.ok(args.includes('REG-stsmk-report-view-001'));
+        return { status, stdout: '守卫结果', stderr: '' };
+      });
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.ok(existsSync(result.execution.artifactPath));
+    }
+    const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+    assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-view-001'\)/);
+    assert.match(source, /supplementalRows.push\(\.\.\.reportViewRegression.rows\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('报告风险分类永久回归必须接线并传播失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-report-risk-'));
+  try {
+    for (const status of [0, 1]) {
+      const result = runReportRiskRegression(directory, (name, args) => {
+        assert.equal(name, 'python3');
+        assert.ok(args.includes('ReportRiskDecisionTests'));
+        return { status, stdout: '风险判据', stderr: '' };
+      });
+      assert.equal(result.rows[0].caseId, 'REG-stsmk-report-risk-001');
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.ok(existsSync(result.execution.artifactPath));
+    }
+    const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+    assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-risk-001'\)/);
+    assert.match(source, /supplementalRows.push\(\.\.\.reportRiskRegression.rows\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
   const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--grep', '\\[REC-003\\]']);
@@ -655,6 +720,10 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /buildReportVerificationArgs/);
   assert.match(verifyOpenSource, /requiredTexts\.every/);
   assert.match(verifyOpenSource, /const clickedTargets = new Set\(\)/);
+  assert.match(verifyOpenSource, /reportBodyCount === 0 && internalLinkCount === 0/);
+  assert.match(verifyOpenSource, /ok: broken\.length === 0 && clickErrors\.length === 0/);
+  assert.match(verifyOpenSource, /for \(const candidate of page\.frames\(\)\)/);
+  assert.match(verifyOpenSource, /if \(liveLinkFound\) continue/);
   assert.match(verifyOpenSource, /Array\.from\(document\.images\)\.every/);
   assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
@@ -746,6 +815,22 @@ test('未捕获异常会持久化失败摘要并进入失败交付路径', async
     assert.deepEqual({ ...summary, notification: expected.notification }, expected);
     assert.equal(summary.notification.status, 'skipped');
     assert.equal(summary.verdict, 'fail');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('[REG-stsmk-notify-evidence-001] 非 dry-run 异常也不得借通知中心或用户提供链接发送通知', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-fatal-proof-'));
+  try {
+    const result = await deliverUnhandledFailure([
+      '--run-id', 'fatal-proof-test', '--output-root', directory,
+      '--report-url', 'https://cds.example/reports?report=not-verified',
+    ], new Error('线上报告尚未验证'));
+    assert.equal(result.summary.verdict, 'fail');
+    assert.equal(result.summary.archive.status, 'unavailable');
+    assert.equal(result.summary.notification.status, 'withheld-unverified-report');
+    assert.equal(result.summary.notification.actionUrl, undefined);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -983,7 +1068,7 @@ test('无效锁先保留 owner 发布宽限期，超时后才允许强制清理'
   }
 });
 
-test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通知', async () => {
+test('[REG-stsmk-notify-evidence-001] 互斥锁阻塞无已验证报告时持久化结论且不发送通知', async () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-locked-'));
   const calls = [];
   try {
@@ -1004,16 +1089,31 @@ test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通
       summary.archive,
     );
     assert.equal(summary.verdict, 'conditional');
-    assert.equal(summary.notification.status, 'sent');
+    assert.equal(summary.notification.status, 'withheld-unverified-report');
     assert.equal(existsSync(result.blockedPath), true);
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(0, 5), [
-      'scripts/stable-smoke-notify.mjs',
-      '--verdict',
-      'conditional',
-      '--run-id',
-      'locked-test',
-    ]);
+    assert.equal(calls.length, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('通知证据永久回归真实接线且不会把失败写为通过', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-notify-wiring-'));
+  try {
+    for (const status of [0, 1]) {
+      const calls = [];
+      const result = runNotificationEvidenceRegression(directory, (name, args) => {
+        calls.push({ name, args });
+        return { status, stdout: 'fixture result', stderr: '' };
+      });
+      assert.equal(calls[0].name, 'node');
+      assert.ok(calls[0].args.includes('REG-stsmk-notify-evidence-001'));
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.equal(result.rows[0].caseId, 'REG-stsmk-notify-evidence-001');
+      assert.equal(readFileSync(result.execution.artifactPath, 'utf8').trim(), 'fixture result');
+    }
+    const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
+    assert.match(source, /selectedCdsCases\.includes\('REG-stsmk-notify-evidence-001'\)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

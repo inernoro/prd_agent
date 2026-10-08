@@ -54,7 +54,9 @@ export default defineConfig({
     // Network fixture tests use page.route() to replace API responses.
     // Service workers can satisfy fetches before Playwright sees them,
     // which makes visual fixture tests silently hit live data.
-    serviceWorkers: 'block',
+    // Playwright 原生 block 初始化脚本会读取 opaque srcDoc 的受限属性并抛 SecurityError。
+    // 巡检 context 在导航前安装同等的安全注册阻断；普通网络夹具继续用原生 block。
+    serviceWorkers: process.env.STABLE_SMOKE_RUN ? 'allow' : 'block',
     // 10s action timeout matches "if a button click takes >10s you
     // already have a worse problem" heuristic.
     actionTimeout: 10_000,

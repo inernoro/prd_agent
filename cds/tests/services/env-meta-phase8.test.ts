@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
 import { parseCdsCompose } from '../../src/services/compose-parser.js';
 
@@ -152,8 +153,18 @@ services: {}
 
   it('仓库部署清单里的 DESIGN_RUNTIME_API_KEY 由 CDS 生成，不是要人填的必填项', () => {
     const repoRoot = path.resolve(__dirname, '../../..');
-    const parsed = parseCdsCompose(fs.readFileSync(path.join(repoRoot, 'cds-compose.yml'), 'utf8'));
+    const source = fs.readFileSync(path.join(repoRoot, 'cds-compose.yml'), 'utf8');
+    const parsed = parseCdsCompose(source);
+    const compose = yaml.load(source) as {
+      services: Record<string, { environment?: Record<string, string> }>;
+    };
     expect(parsed!.envMeta.DESIGN_RUNTIME_API_KEY).toMatchObject({ kind: 'auto', generate: 'secret' });
+    expect(parsed!.envMeta.STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME).toMatchObject({
+      kind: 'required',
+    });
+    expect(compose.services.api.environment).toMatchObject({
+      StableSmokeAuthentication__NotificationTargetUsername: '${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME}',
+    });
   });
 
   it('hint 缺失时不报错', () => {

@@ -36,9 +36,9 @@
 | REG-web-share-anchor-001 | 网页托管分享页 | 2026-09-01 | srcDoc 为相对资源注入绝对 base 后，纯片段 href 被解析成对象存储目录请求，腾讯 COS 与 R2 都返回 NoSuchKey | 含 href="#target" 与同页 id="target" 的最小 HTML | 用户截图已在腾讯 COS 与 R2 稳定复现；CDS `stsmk-web-20260901-complete` 真实点击后 frame 保持 `about:srcdoc#target`、无对象存储导航并完成清理 | 专用合成站点创建公开分享，点击片段链接后只核对 frame URL 与网络请求并立即清理 | WEB-004、WEB-006 | 0 | candidate |
 | REG-web-ask-content-001 | 网页托管向我提问 | 2026-09-01 | 站点迁移存储 Provider 后仍保存旧 SiteUrl，但快照只按当前 Provider 读取 CosKey，正文实际存在却被判 ASK_NO_CONTENT | 当前 Provider 返回空、持久化旧入口 URL 返回 HTML；普通站点作为对照 | 存量入口回退与非入口文件不回退单测通过；CDS `stsmk-web-20260901-complete` 当前 Provider 流式回答命中正文标记并完成清理，存量 Provider 真实夹具仍待补 | 专用合成站点执行一个最小问题，确认流式阶段与非空答案后清理 | WEB-005、WEB-006 | 0 | candidate |
 | REG-web-folder-drop-001 | 网页托管文件夹 | 2026-09-01 | 个人空间没有显式创建文件夹入口，拖拽目标仅弱色变化，用户无法判断是否命中；空文件夹也不能持久显示 | 新建空文件夹并把一个 stsmk- HTML 卡片拖入 | CDS `stsmk-web-20260901-complete` 真实指针轨迹验证强高亮与“松开移入”，刷新回读归属后删除站点和文件夹 | 专用账号创建一个空文件夹、拖入一个站点、回读后立即删除 | WEB-002、WEB-003、WEB-006 | 0 | candidate |
-| REG-web-folder-canonical-001 | 网页托管文件夹 | 2026-09-04 | 持久文件夹与历史站点文件夹曾用精确字符串比较，随后浏览器自行复刻服务端归一化又会把 .NET 保留、JavaScript 展开的 Unicode 连字误合并 | 持久 `Reports`，站点保留 `reports` 与 `REPORTS`；另用服务端权威键区分 `ﬃ` 与 `FFI` | 前端单测证明等价键合并且不同权威键保留两项；服务端单测证明两种运行时分叉字符的权威结果不同 | 专用站点使用大小写变体核对单项计数；Unicode 边界由确定性单测持续守卫 | WEB-002、WEB-003 | 0 | candidate |
-| REG-web-folder-fence-001 | 网页托管文件夹 | 2026-09-04 | 重命名锁允许过期接管；旧请求、进程退出留下的目标 claim 或历史碰撞快照都可能覆盖并发映射或让名称永久不可创建 | 真实 MongoDB 中覆盖围栏接管、过期锁加悬空 claim、历史碰撞加并发 claim 三类时序 | 本地 MongoDB 七项集成测试通过：旧围栏写入匹配 0、过期占用被回收、并发映射未被历史快照覆盖 | 正式环境只执行最小并发创建与重命名；精确故障窗口由 MongoDB 夹具持续注入 | WEB-007 | 0 | candidate |
-| REG-web-folder-create-rename-001 | 网页托管文件夹 | 2026-09-04 | 创建请求撞上成功重命名已写目标 claim、尚未更新实体的窗口时，按 claim 的 ID-only upsert 返回旧名称实体并误报成功 | 真实 MongoDB 预置目标 claim 指向旧名称实体，创建保持并发等待，再让重命名写入目标名称 | 集成测试先证明旧实现会提前完成并返回旧名称，修复后等待实体与 claim 一致再返回且全库只有一条记录；CDS 新提交待部署复测 | 正式环境只执行自然并发，不注入长延迟；专用夹具在 CI 复现精确窗口 | WEB-007 | 0 | candidate |
+| REG-web-folder-canonical-001 | 网页托管文件夹 | 2026-09-04 | 持久文件夹与历史站点文件夹曾用精确字符串比较，随后浏览器自行复刻服务端归一化又会把 .NET 保留、JavaScript 展开的 Unicode 连字误合并 | 持久 `Reports`，站点保留 `reports` 与 `REPORTS`；另用服务端权威键区分 `ﬃ` 与 `FFI` | 前端单测证明等价键合并且不同权威键保留两项；服务端单测证明两种运行时分叉字符的权威结果不同 | 专用站点使用大小写变体核对单项计数；Unicode 边界由确定性单测持续守卫 | WEB-002、WEB-003 | 0 | active |
+| REG-web-folder-fence-001 | 网页托管文件夹 | 2026-09-04 | 重命名锁允许过期接管；旧请求、进程退出留下的目标 claim 或历史碰撞快照都可能覆盖并发映射或让名称永久不可创建 | 真实 MongoDB 中覆盖围栏接管、过期锁加悬空 claim、历史碰撞加并发 claim 三类时序 | 本地 MongoDB 七项集成测试通过：旧围栏写入匹配 0、过期占用被回收、并发映射未被历史快照覆盖 | 正式环境只执行最小并发创建与重命名；精确故障窗口由 MongoDB 夹具持续注入 | WEB-007 | 0 | active |
+| REG-web-folder-create-rename-001 | 网页托管文件夹 | 2026-09-04 | 创建请求撞上成功重命名已写目标 claim、尚未更新实体的窗口时，按 claim 的 ID-only upsert 返回旧名称实体并误报成功 | 真实 MongoDB 预置目标 claim 指向旧名称实体，创建保持并发等待，再让重命名写入目标名称 | 集成测试先证明旧实现会提前完成并返回旧名称，修复后等待实体与 claim 一致再返回且全库只有一条记录；CDS 新提交待部署复测 | 正式环境只执行自然并发，不注入长延迟；专用夹具在 CI 复现精确窗口 | WEB-007 | 0 | active |
 
 | REG-auth-identity-permissions-001 | 稳定冒烟身份 | 2026-09-14 | 签名认证自动开号只给「Agent 体验者」角色，账号没有文档空间、用户管理与授权权限；录音、文件、短视频、会话权限四个模块三十余项在业务动作之前被权限中间件挡成「无权限」，PARSE-003 表现为 403 而非 400 | 以 `agent_tester` 角色的权限集合调用 `StableSmokeIdentityPolicy.MissingPermissions`；e2e 登录后核对 `/api/authz/me` | 后端策略单测复现旧角色缺 document-store.write / users.write / authz.manage；分支预览 `jolly-bohr-ozjj2x` 以真实 RSA 签名首次认证即补齐（API 日志：「稳定冒烟账号 stsmk_cds 缺少巡检矩阵所需权限，已按 StableSmokeIdentityPolicy 补齐：users.read,users.write,authz.manage,document-store.read,document-store.write」），随后 CORE-002/003、REC-001~008/010/012、FILE-003、PARSE-003 在 `stsmk-20260915-0830-selftest` / `-0850-selftest2` 全部通过 | 正式环境的巡检账号若配置 `ManagePermissions=false` 则保持只读，预检用例会明确列出缺失权限而不是让旅程各自失败 | CORE-002、CORE-003、REC-*、FILE-*、PARSE-003 | 0 | active |
 | REG-visual-progress-002 | 单图视觉创作 | 2026-09-14 | 画布宿主把进度底边行的中心点偏移当成左缘直接除以缩放，1001 世界像素方图 0.5 倍下该行右缘落到 590.75 屏幕像素而画框右缘在 501 | `generationProgressMetaStyle` 单测按同一组数字复现 | 单测通过；`GenDevelopLoader` 源码守卫要求只从共享换算函数取 left / width；分支预览 `stsmk-20260915-0850-selftest2` 的 CORE-004 旅程通过底边行右缘不越界断言，真实生图、SSE 续传、网关日志、下载字节均通过 | 正式环境按 VIS-005 轮换尺寸只读取几何 | CORE-004、VIS-005 | 0 | active |
@@ -50,6 +50,16 @@
 
 ## 新增模板
 
+| REG-stsmk-report-risk-001 | 稳定冒烟报告决策呈现 | 2026-10-05 | 有227未执行仍被归档器标成原则性通过；原巡检捕获P0与已确认工具P2混淆；缺口按散落文字误计228 | conditional加明确227缺口，旧P0警告绑定已确认test/infrastructure/P2诊断、未审查警告对照 | 绑定原DEF-STSMK-SUPERVISOR-SCOPE-001；实际渲染旧判据1绿3红，修复后标题/页尾/图片风险分类一致，原警告保留；不完整不放行 | CDS-only真实Python呈现守卫，运行器独立接线并传播失败，不算正式业务已测 | CORE-006 | 0 | active |
+
+| REG-web-sandbox-001 | 网页托管巡检隔离框架与截图门禁 | 2026-10-05 | Playwright 原生 SW block 初始化脚本读 opaque srcDoc 的 navigator.serviceWorker 抛 SecurityError；旧取证接线虽收集异常却未令用例变红 | 真实浏览器主页面加 sandbox allow-scripts iframe；旧脚本异常1次与安全阻断异常0次；主页面注册仍被阻断，其他异常不得吞掉 | DEF-STSMK-WEB-SW-001 首轮页面业务2条通过但视觉异常10次，保留首次证据；真实浏览器旧红新绿；修复后须原WEB路径与无异常截图、清理共同通过 | 同轮 CDS 门禁通过后复测相同安全阻断；禁止放开隔离权限或忽略异常 | WEB-001、WEB-004、WEB-005、WEB-006 | 0 | active |
+
+| REG-web-ask-stream-001 | 网页托管提问与稳测判据 | 2026-10-05 | 临时脚本把 typing JSON 帧夹进业务答案导致误报；既有解析器还会吞掉损坏帧，问答 API 直连不能证明页面可操作 | 白/桃、浅/粉分片；损坏 typing、空答案、无 done、done 后继续输出与 error 对照；匿名页面真实点击提问 | 原 DEF-STSMK-WEB-SELECTION-001 保留两次失败；既有吞错实现机械判据 1绿3红；修复后统一解析器与 UI 接线复验，线上当前/存量正文结果按原 WEB-005 持续留证 | 同轮 CDS 完整通过后，专用站点仅一个最小访客问题；不切换正式存储 | WEB-005、WEB-006 | 0 | active |
+
+| REG-stsmk-report-view-001 | 报告打开验证 | 2026-10-05 | 主管报告默认简版隐藏版本字段；校验未真实展开完整版，误判正文缺失 | 隐藏版本的简版与无切换按钮的历史完整报告 | 旧线上校验两次失败；实际按钮点击守卫、本地浏览器与修复后线上校验绑定原 DEF-STSMK-VERIFY-RUNTIME-001 | 不写正式业务；本地判据由 CDS 集合执行 | verify-open、CORE-006 | 0 | active |
+
+| REG-stsmk-notify-evidence-001 | 稳定冒烟通知安全 | 2026-10-05 | 异常退出与互斥锁阻塞路径会用通知中心替代未验证报告；缺少证据门禁 | 无报告的锁阻塞、非 dry-run 异常、用户传入未验证报告地址 | 旧实现机械断言为 sent 而变红；修复后两条实际交付函数均持久化 withheld-unverified-report，通知调用为零；运行器独立接线 | 不调用正式服务；由 CDS 本地安全判据守卫两种运行模式 | CORE-006 | 0 | active |
+
 | REG-visual-policy-001 | 视觉创作与模型目录 | 2026-08-31 | 网关可用列表被直接当作业务开放列表，默认模型随排序变化；MAP 和 serving 重复转换请求参数 | MAP 仅开放两个模型并显式指定非首项为默认；默认白桃、显式模型、JPEG 参考图与空产物对照 | CDS 提交 bd93c6775 以 RSA 专用身份验证唯一业务默认、手机授权尺寸、真实默认模型产物、网关实际路由、刷新恢复与清理；方形、横版、竖版三种产物均成功解码并符合比例 | 专用身份按 MAP 显式默认真实生成，验证任务身份、可解码图片与刷新恢复；未执行不能判通过 | VIS-001、VIS-002、VIS-003、VIS-004、VIS-005、VIS-009、GW-005 | 0 | active |
 | REG-auth-synthetic-001 | 稳定冒烟身份 | 2026-09-01 | CDS 长期 AI Access Key 与网关固定密码漂移，48 小时巡检在预检阶段连续 401，且 CDS 反代把外部主机收敛为内网地址，导致真实业务用例未执行 | 删除 LLMGW 巡检账号与成员关系后用 MAP RSA 签名换单次票据；可信代理与公网伪造头对照；人工停用与角色漂移对照；同因三次失败聚合 | CDS 提交 bd93c6775 真实预检通过；MAP 签名票据与 LLMGW 首次兑换均为 200，同票据重放返回 STABLE_SMOKE_SSO_INVALID，健康端点为 200；43 条身份与熔断目标测试通过 | 正式环境只赋 viewer，签发 30 分钟内不可续会话，连续失败进入身份或平台事件，不自动恢复人工禁用 | CORE-002、CORE-007、GW-001、GW-009 | 1 | active |
 
@@ -57,7 +67,27 @@
 | REG-{module}-{number} | {模块} | {YYYY-MM-DD} | {问题与根因} | {夹具} | {失败到通过证据} | {正式安全变体} | {caseId 列表} | 0 | active |
 ```
 
+## 2026-10-05 自修复验覆盖记录
+
+固定实测工具 ref `48f5cae31bd401c94801d9cac61176105e566050`，runId `stsmk-20261005-2004-webfix`。下表是两条真实桌面旅程展开的操作结果，不是额外独立旅程；正式环境全部未执行。完整 WEB 门禁仍未通过：requestId、界面阶段时限与 HTML 物理对象删除回读欠证。仅定向通过，不关闭缺陷，不放行生产。
+
+| 模块 | 功能 | 操作锚点 | caseId | 环境策略 | 最近结果 | 证据 | 清理状态 | 负责人 |
+|---|---|---|---|---|---|---|---|---|
+| 网页托管 | 入口 | 首页点击网页托管、上传站点 | WEB-001 | CDS 专用身份；正式未执行 | 定向 pass | [本轮在线报告](https://cds.miduo.org/reports?project=prd-agent&folder=22064baf9cd64a5aa6f3c4a7dfef3006&report=b82cd389cee64ae7aeabb2b1378cfec8) 图02 | 站点404、文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 空文件夹 | 新建文件夹 | WEB-002 | CDS当前run前缀；正式未执行 | 定向 pass；移动补充 flaky 1 | 同报告图02、08、09 | 两次移动夹具均无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 拖拽归属 | 指针真实拖拽、松开移入、刷新 | WEB-003 | CDS个人文件夹；正式未执行 | 定向 pass | 同报告图03、04 | 归属读回，文件夹无ID | 当前修复Agent / web-hosting |
+| 分享 | 同页锚点 | 分享页点击srcDoc内部链接 | WEB-004 | CDS无登录访客；正式未执行 | 定向 pass | 同报告图05 | 撤销分享404、站点404；物理对象欠证 | 当前修复Agent / web-hosting |
+| 分享 | 正文提问 | 向我提问、发送、助手答案 | WEB-005 | CDS当前正文/存量夹具各1次；正式未执行 | 定向 pass；requestId/阶段时限欠证 | 同报告图06、07 | 无错误事件；分享与站点404 | 当前修复Agent / web-hosting |
+| 网页托管 | 并发唯一身份 | 同名创建与重命名并发 | WEB-006 | CDS自然并发；正式未执行 | 定向 pass | 同报告执行明细；答案图不证明并发机制 | 站点404、文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管 | 围栏 | 撞占用目标、过期租约不得覆盖新操作 | WEB-007、REG-web-folder-canonical-001、REG-web-folder-fence-001、REG-web-folder-create-rename-001 | CDS自然并发；精确窗口在独立本地MongoDB夹具；正式未执行 | 定向 pass；前端8/8、MongoDB12/12，非CDS部署版本证明 | 同报告机制执行明细 | 内部夹具自清理、页面文件夹无ID | 当前修复Agent / web-hosting |
+| 网页托管巡检 | 严格流解析 | phase→typing.text→done；损坏/空/截断拒绝 | REG-web-ask-stream-001 | CDS真实访客；正式未执行 | 定向 pass；保持active | 同报告图06、07及坏流红绿记录 | 当前与存量站点404 | 当前修复Agent |
+| 网页托管巡检 | 安全取证 | opaque iframe不造异常、其他异常仍抛 | REG-web-sandbox-001 | CDS主context与访客context；正式未执行 | 定向 pass；旧脚本1异常、新0，原取证10异常修复后0；保持active | 同报告图01原失败旁证与图03修复后、真实浏览器重放 | 两轮站点/分享404，文件夹无ID | 当前修复Agent |
+
+第一版报告虽然 verify-open 通过，但业务复读74分，首屏呈现误导不能交付；绑定原主管统计缺陷，原版本不删除。已自修报告编排工具 `e6ab7f6bb76ba61dd39c7eacaa754115dc1e0715`，82项报告测试与148项冒烟工具测试通过。第二版官方 verify-open 首试通过：157个内部链接、12次当前可见真实点击、0断链/0点击失败；9张唯一在线图全部实际解码。当前冻结241不变，新增报告风险呈现REG属于补充机制，下一轮CDS133+正式109=242。报告链路通过不等于业务全量通过，历史记录及未关闭状态保留。
+
 ## 状态
+
+最终v1.1工具修复ref `d36d24a017dfa6619dc89c3d5c9170d8eacd7a13`，83项报告测试通过，线上157内链/12实点/9唯一图解码通过，严格业务复读97分无必须改版项。首屏、步骤判定与页尾一致不放行。三条强制文件夹REG按本轮合同登记active；保持历史、正式未执行与全量关闭条件。13缺陷均未关闭，0项新verified。
 
 - `candidate`：已发现，尚未满足永久用例准入。
 - `active`：每轮稳定冒烟必跑。

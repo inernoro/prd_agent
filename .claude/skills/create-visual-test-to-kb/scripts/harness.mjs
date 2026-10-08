@@ -8,9 +8,9 @@
 // 运行：PWPATH=$(npm root -g)/playwright node driver.mjs
 
 import { createRequire } from 'module';
+import { loadPlaywright } from './playwright-runtime.mjs';
 const require = createRequire(import.meta.url);
-const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium, devices } = require(PW);
+const { chromium, devices } = loadPlaywright();
 const pageEnvironments = new WeakMap();
 
 export function loadConfig(path) {

@@ -10,10 +10,9 @@
 // 用法：PWPATH=$(npm root -g)/playwright node verify-open.mjs <url> "<标题或正文里必现的一段文字>" [最少图片数=1]
 //   例：node verify-open.mjs https://<cds-host>/r/<report-id> "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium } = require(PW);
+import { loadPlaywright } from './playwright-runtime.mjs';
+import { expandCompleteReport } from './report-view.mjs';
+const { chromium } = loadPlaywright();
 
 const url = process.argv[2];
 const mustText = process.argv[3] || '';
@@ -83,6 +82,8 @@ async function waitForRenderedContent(text, minImages) {
   const deadline = Date.now() + settleTimeoutMs;
   let snapshot = { text: '', imgCount: 0 };
   while (Date.now() < deadline) {
+    const expanded = await expandCompleteReport(page);
+    if (expanded) console.log(`  已真实点击完整版：${expanded} 个报告`);
     snapshot = await inspectRenderedContent();
     const hasText = text ? snapshot.text.includes(text) : snapshot.text.trim().length > 200;
     const hasRequiredTexts = requiredTexts.every((required) => snapshot.text.includes(required));
@@ -96,7 +97,12 @@ async function auditInteractiveReports() {
   const reports = [];
   for (const frame of page.frames()) {
     try {
-      if (await frame.locator('#reportBody').count() === 0) continue;
+      const reportBodyCount = await frame.locator('#reportBody').count();
+      const internalLinkCount = await frame.locator('a[href^="#"]').count();
+      // P0 只读稳定冒烟按合同归档为 Markdown，不会带交互 HTML
+      // 专属的 #reportBody。没有内部链接时是合法的零项审计；一旦页面存在
+      // 内部链接，仍必须逐个检查目标并真实点击。
+      if (reportBodyCount === 0 && internalLinkCount === 0) continue;
       const staticAudit = await frame.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a[href^="#"]'))
           .map((link) => ({
@@ -109,18 +115,15 @@ async function auditInteractiveReports() {
           try { id = decodeURIComponent(id); } catch { return true; }
           return document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length !== 1;
         });
-        return { linkCount: links.length, broken };
+        return { links, linkCount: links.length, broken };
       });
 
       const clickErrors = [];
-      const links = frame.locator('a[href^="#"]');
-      const count = await links.count();
       let clicked = 0;
       const clickedTargets = new Set();
-      for (let index = 0; index < count; index += 1) {
-        const link = links.nth(index);
-        const href = await link.getAttribute('href');
-        if (!href || href.length <= 1 || !(await link.isVisible())) continue;
+      for (const linkSnapshot of staticAudit.links) {
+        const href = linkSnapshot.href;
+        if (!href || href.length <= 1) continue;
         let targetId = href.slice(1);
         try { targetId = decodeURIComponent(targetId); } catch {
           clickErrors.push(`${href}: 锚点编码无效`);
@@ -128,28 +131,70 @@ async function auditInteractiveReports() {
         }
         if (clickedTargets.has(targetId)) continue;
         clickedTargets.add(targetId);
-        const targetCount = await frame.evaluate(
+        // srcDoc 报告在 hash 变化时可能被外层 React 重建。每次点击前都从当前
+        // 活动 frame 重新解析链接与目标，避免继续操作已经失效的旧 locator。
+        let activeFrame = null;
+        let activeLink = null;
+        let liveLinkFound = false;
+        for (const candidate of page.frames()) {
+          try {
+            const candidateLink = candidate.locator(`a[href=${JSON.stringify(href)}]`).first();
+            if (await candidateLink.count() === 1) {
+              liveLinkFound = true;
+            }
+            if (liveLinkFound && await candidateLink.isVisible()) {
+              activeFrame = candidate;
+              activeLink = candidateLink;
+              break;
+            }
+          } catch {
+            // frame 正在重建时忽略本次候选，继续寻找当前活动 frame。
+          }
+        }
+        if (!activeFrame || !activeLink) {
+          // 折叠目录中的链接会参与目标唯一性与断链静态审计，但用户当前看不见，
+          // 不属于“当前视口可见链接真实点击”的交互集合。只有链接从活动文档
+          // 完全消失才是 iframe 重建或正文丢失，需要判失败。
+          if (liveLinkFound) continue;
+          clickErrors.push(`${linkSnapshot.text || href}: 链接在点击前已不可见`);
+          continue;
+        }
+        const targetCount = await activeFrame.evaluate(
           (id) => document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length,
           targetId,
         );
         if (targetCount !== 1) continue;
-        const label = ((await link.innerText().catch(() => '')) || href).trim().replace(/\s+/g, ' ').slice(0, 80);
+        const label = linkSnapshot.text || href;
         try {
-          await link.click({ timeout: 5000 });
+          await activeLink.click({ timeout: 5000 });
           clicked += 1;
-          await sleep(50);
-          const targetVisible = await frame.evaluate((id) => {
-            const target = document.getElementById(id);
-            if (!target) return false;
-            const rect = target.getBoundingClientRect();
-            return rect.top >= -2 && rect.top < window.innerHeight;
-          }, targetId);
+          // 报告页启用了平滑滚动，50ms 只会看到动画刚起步，容易把真实可用的
+          // 锚点误报成失败。仍坚持“点击后目标进入当前视口”的强断言，但给浏览器
+          // 一个有限的动画完成窗口，不用固定 sleep 猜时序。
+          const visibilityDeadline = Date.now() + 2500;
+          let targetVisible = false;
+          while (!targetVisible && Date.now() < visibilityDeadline) {
+            for (const candidate of page.frames()) {
+              try {
+                targetVisible = await candidate.evaluate((id) => {
+                  const target = document.getElementById(id);
+                  if (!target) return false;
+                  const rect = target.getBoundingClientRect();
+                  return rect.top >= -2 && rect.top < window.innerHeight;
+                }, targetId);
+                if (targetVisible) break;
+              } catch {
+                // frame 正在重建时下一轮重新解析。
+              }
+            }
+            if (!targetVisible) await sleep(50);
+          }
           if (!targetVisible) clickErrors.push(`${label}: 点击后目标 #${targetId} 未进入可视区`);
         } catch (error) {
           clickErrors.push(`${label}: ${error && error.message ? error.message.split('\n')[0] : String(error)}`);
         }
       }
-      reports.push({ ...staticAudit, clicked, clickErrors });
+      reports.push({ ...staticAudit, links: undefined, clicked, clickErrors });
     } catch (error) {
       reports.push({ linkCount: 0, clicked: 0, broken: [], clickErrors: [String(error)] });
     }
@@ -162,7 +207,7 @@ async function auditInteractiveReports() {
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
     broken,
     clickErrors,
-    ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
+    ok: broken.length === 0 && clickErrors.length === 0,
   };
 }
 
