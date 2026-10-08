@@ -670,6 +670,8 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
     reportPath: '/tmp/report.md',
     manifestPath: '/tmp/empty-manifest.json',
     branch: 'codex/review',
+    projectId: 'prd-agent',
+    branchId: 'prd-agent-codex-review',
     commit: 'a'.repeat(40),
     folderPath: '稳定冒烟/2026-08',
     reportDate: '2026-08-13',
@@ -678,7 +680,36 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
   assert.equal(archive.args.includes('archive_report.py'), false);
   assert.equal(archive.args.includes('report'), true);
   assert.equal(archive.args.includes('P0 只读冒烟'), true);
+  assert.deepEqual(archive.args.slice(archive.args.indexOf('--project'), archive.args.indexOf('--project') + 2), [
+    '--project', 'prd-agent',
+  ]);
+  assert.deepEqual(archive.args.slice(archive.args.indexOf('--branch-id'), archive.args.indexOf('--branch-id') + 2), [
+    '--branch-id', 'prd-agent-codex-review',
+  ]);
   assert.equal(archive.args.includes('/tmp/empty-manifest.json'), false);
+
+  assert.throws(() => buildStableSmokeArchiveCommand({
+    productionReadOnly: true,
+    runId: 'read-only-test',
+    verdict: 'pass',
+    reportPath: '/tmp/report.md',
+    manifestPath: '/tmp/empty-manifest.json',
+    branch: 'codex/review',
+    commit: 'a'.repeat(40),
+    folderPath: '稳定冒烟/2026-08',
+  }), /缺少 CDS 项目或分支归属/);
+
+  assert.throws(() => buildStableSmokeArchiveCommand({
+    productionReadOnly: true,
+    runId: 'read-only-test',
+    verdict: 'pass',
+    reportPath: '/tmp/report.md',
+    manifestPath: '/tmp/empty-manifest.json',
+    branch: 'codex/review',
+    branchId: 'prd-agent-codex-review',
+    commit: 'a'.repeat(40),
+    folderPath: '稳定冒烟/2026-08',
+  }), /缺少 CDS 项目或分支归属/);
 
   const verifyArgs = buildReportVerificationArgs(
     'https://cds.example/reports?report=1',

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { loadPlaywright } from '../../.claude/skills/create-visual-test-to-kb/scripts/playwright-runtime.mjs';
+import { isConfiguredCdsTargetHost } from '../../.claude/skills/create-visual-test-to-kb/scripts/report-view.mjs';
 
 const runtime = { chromium: { launch() {} } };
 
@@ -29,4 +30,12 @@ test('取证、标注和线上打开校验共用同一运行时解析入口', ()
     assert.match(source, /loadPlaywright\(\)/);
     assert.doesNotMatch(source, /\/opt\/node22\/lib\/node_modules\/playwright/);
   }
+});
+
+test('报告凭据只注入当前 CDS_HOST 的精确主机', () => {
+  assert.equal(isConfiguredCdsTargetHost('miduo.org', 'https://miduo.org'), true);
+  assert.equal(isConfiguredCdsTargetHost('CDS.MIDUO.ORG', 'https://cds.miduo.org/'), true);
+  assert.equal(isConfiguredCdsTargetHost('miduo.org.evil.example', 'https://miduo.org'), false);
+  assert.equal(isConfiguredCdsTargetHost('reports.miduo.org', 'https://miduo.org'), false);
+  assert.equal(isConfiguredCdsTargetHost('miduo.org', ''), false);
 });

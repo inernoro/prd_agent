@@ -14,3 +14,14 @@ export async function expandCompleteReport(page) {
   }
   return expanded;
 }
+
+// 只有报告目标与当前 CDS_HOST 精确同主机时才允许注入访问凭据。
+// 不按域名后缀放宽，避免密钥被带到外站或伪造子域。
+export function isConfiguredCdsTargetHost(targetHost, configuredHost) {
+  try {
+    const expected = new URL(configuredHost).host.toLowerCase();
+    return Boolean(expected) && String(targetHost || '').toLowerCase() === expected;
+  } catch {
+    return false;
+  }
+}

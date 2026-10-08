@@ -1173,11 +1173,16 @@ export function buildStableSmokeArchiveCommand({
   reportPath,
   manifestPath,
   branch,
+  projectId = '',
+  branchId = '',
   commit,
   folderPath,
   reportDate = new Date().toISOString().slice(0, 10),
 }) {
   if (productionReadOnly) {
+    if (!projectId || !branchId) {
+      throw new Error('正式只读归档缺少 CDS 项目或分支归属，拒绝生成无项目报告');
+    }
     return {
       program: 'python3',
       contract: 'functional-read-only',
@@ -1191,6 +1196,8 @@ export function buildStableSmokeArchiveCommand({
         '--folder-path', folderPath,
         '--verdict', verdict,
         '--tier', 'P0 只读冒烟',
+        '--project', projectId,
+        '--branch-id', branchId,
         '--branch', branch,
         '--commit', commit,
       ],
@@ -1959,6 +1966,7 @@ async function main() {
     } else if (!options.has('--dry-run')) {
       const branchResult = command('git', ['branch', '--show-current']);
       const commitResult = command('git', ['rev-parse', 'HEAD']);
+      const archiveBranchStatus = productionReadOnlyArchive ? readCdsBranchStatus() : null;
       const archiveCommand = buildStableSmokeArchiveCommand({
         productionReadOnly: productionReadOnlyArchive,
         runId,
@@ -1966,6 +1974,8 @@ async function main() {
         reportPath: archiveReportPath,
         manifestPath: visualManifestPath,
         branch: String(branchResult.stdout || '').trim(),
+        projectId: String(archiveBranchStatus?.projectId || '').trim(),
+        branchId: String(archiveBranchStatus?.id || '').trim(),
         commit: String(commitResult.stdout || '').trim(),
         folderPath: `稳定冒烟/${new Date().toISOString().slice(0, 7)}`,
       });
