@@ -454,6 +454,28 @@ describe('human project grants through the production server', () => {
     expect((await call('POST', '/api/branches/branch-project-b/verify-runtime/profile-project-b', member, {})).status).toBe(403);
   });
 
+  it.each([
+    ['GET', '/resources/app%3Aprofile-project-a/logs', undefined],
+    ['POST', '/container-logs', { profileId: 'profile-project-a' }],
+  ] as const)('projects CLI credentials in member log snapshots through %s %s', async (method, suffix, body) => {
+    await grant(['project-a']);
+    const sourceLog = 'runtime healthy\nredis-server --requirepass fake-snapshot-cli-secret';
+    state.getBranch('branch-project-a')!.services['profile-project-a'] = {
+      profileId: 'profile-project-a', containerName: 'snapshot-fixture', hostPort: 10001, status: 'running',
+    };
+    container.isRunning = async () => true;
+    vi.spyOn(container, 'getLogs').mockResolvedValue(sourceLog);
+    const url = '/api/branches/branch-project-a' + suffix;
+    expect((await call(method, url + '?unmask=1', owner, body)).body.logs).toBe(sourceLog);
+    const view = await call(method, url, member, body);
+    expect(view.status).toBe(200);
+    expect(view.body.logs).toContain('runtime healthy');
+    expect(view.body.logs).not.toContain('fake-snapshot-cli-secret');
+    expect((await call(method, url + '?unmask=1', member, body)).status).toBe(403);
+    expect((await call(method, url + '?unmask=1', owner, body)).body.logs).toBe(sourceLog);
+    expect(await container.getLogs()).toBe(sourceLog);
+  });
+
   it('projects complete executor frames for members without forwarding split raw credentials; owner keeps raw output', async () => {
     const remote = http.createServer((req, res) => {
       req.on('data', () => {});

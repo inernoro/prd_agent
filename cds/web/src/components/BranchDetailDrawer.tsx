@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useCanManageConsole } from '@/components/layout/AppShell';
+import { useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
@@ -909,6 +909,7 @@ export function BranchDetailDrawer({
   branchStatus?: string;
 }): JSX.Element | null {
   const canManageConsole = useCanManageConsole();
+  const canOpenPreview = canUseConsolePreview(previewMode, canManageConsole);
   // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
   // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
@@ -916,12 +917,12 @@ export function BranchDetailDrawer({
   const [branch, setBranch] = useState<BranchDetailData | null>(null);
   const [entryAliases, setEntryAliases] = useState<WebEntryCollectionLike<WebEntryUrl>>({});
   const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(
-    () => resolveWebEntryPresentation(
+    () => canOpenPreview ? resolveWebEntryPresentation(
       previewMode,
       previewUrl || branch?.previewUrl || '',
       entryAliases,
-    ),
-    [branch?.previewUrl, entryAliases, previewMode, previewUrl],
+    ) : { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] },
+    [branch?.previewUrl, canOpenPreview, entryAliases, previewMode, previewUrl],
   );
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
@@ -1894,9 +1895,9 @@ export function BranchDetailDrawer({
       services: branch.services || {},
       profiles: resourceProfiles,
       infraServices,
-      previewUrl,
+      previewUrl: canOpenPreview ? previewUrl : '',
     });
-  }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
+  }, [branch, canOpenPreview, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
   // 复制集副本日志目标（2026-07-26 用户反馈「副本日志看不了 / 分不清」修复）：
   // 副本选择键形如 `pid::memberId`，在 services 里永远匹配不到——旧代码兜底到
@@ -2322,6 +2323,7 @@ export function BranchDetailDrawer({
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
+              {!canOpenPreview ? <p role="status" className="px-5 py-3 text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
               {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
                   set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
                   原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
@@ -2987,7 +2989,7 @@ export function BranchDetailDrawer({
               </>
             ) : (
               <>
-                {previewUrl ? (
+                {previewUrl && canOpenPreview ? (
                   <PreviewActionSplitButton
                     className="flex-[2_1_0]"
                     fill
@@ -2999,9 +3001,9 @@ export function BranchDetailDrawer({
                     releaseDisabled={!canManageConsole || !onRelease}
                   />
                 ) : (
-                  <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">
+                  <Button className="flex-[2_1_0]" disabled title={!canOpenPreview ? MEMBER_PREVIEW_MODE_NOTICE : '当前没有可用预览地址'}>
                     <Play />
-                    等待预览页
+                    {canOpenPreview ? '等待预览页' : '预览暂不可用'}
                   </Button>
                 )}
                 <Button

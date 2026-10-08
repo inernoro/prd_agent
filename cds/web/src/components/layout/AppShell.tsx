@@ -134,6 +134,13 @@ export function canManageSystemSettings(status: ShellAuthStatus | null): boolean
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
 }
 
+export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
+
+/** Simple/port previews require owner routing writes; members retain multi-domain previews. */
+export function canUseConsolePreview(mode: 'simple' | 'port' | 'multi' | undefined, canManageConsole: boolean): boolean {
+  return canManageConsole || mode === 'multi';
+}
+
 export const ConsoleAuthContext = createContext<{
   status: ShellAuthStatus | null;
   pending: boolean;

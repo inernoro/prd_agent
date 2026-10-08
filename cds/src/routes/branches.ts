@@ -9417,7 +9417,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const logs = await containerService.getLogs(ctx.containerName, tail);
       const mask = shouldMask(req);
       const maskedLogs = maskSecretsText(logs, { mask });
-      res.json({
+      res.json(logPayloadForHumanView(req, {
         branchId: ctx.branch.id,
         projectId: ctx.projectId,
         resourceId: ctx.resourceId,
@@ -9427,7 +9427,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         tail,
         masked: mask,
         logs: maskedLogs,
-      });
+      }));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -17275,7 +17275,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         details: { masked: mask, hostPort: svc.hostPort },
       });
       stateService.save();
-      res.json({ logs: masked });
+      res.json(logPayloadForHumanView(req, { logs: masked }));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

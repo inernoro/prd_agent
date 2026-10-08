@@ -23,7 +23,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
+import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownItem, DropdownLabel, DropdownDivider } from '@/components/ui/dropdown-menu';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -562,6 +562,7 @@ export function BranchDetailPage(): JSX.Element {
   const branchId = branchIdParam || queryValue('branch') || queryValue('id');
   const projectId = queryValue('project');
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
   const [action, setAction] = useState<ActionState | null>(null);
   const [toast, setToast] = useState('');
   const [detailTab, setDetailTab] = useState<'logs' | 'config' | 'history' | 'bridge'>('logs');
@@ -757,14 +758,14 @@ export function BranchDetailPage(): JSX.Element {
     return state.profiles.find((profile) => profile.profileId === selectedProfileId) || state.profiles[0];
   }, [selectedProfileId, state]);
   const { primaryEntry, primaryEntryUrl, webEntries } = useMemo(() => {
-    if (state.status !== 'ok') {
+    if (state.status !== 'ok' || !canOpenPreview) {
       return { primaryEntry: null, primaryEntryUrl: '', webEntries: [] as WebEntryUrl[] };
     }
     const baseUrl = state.previewMode === 'simple'
       ? simplePreviewUrl(state.config)
       : (state.aliases.defaultUrl || multiPreviewUrl(state.branch, state.config));
     return resolveWebEntryPresentation(state.previewMode, baseUrl, state.aliases);
-  }, [state]);
+  }, [canOpenPreview, state]);
 
   const saveAliases = useCallback(async () => {
     if (state.status !== 'ok') return;
@@ -1086,6 +1087,10 @@ export function BranchDetailPage(): JSX.Element {
 
   const openPreview = useCallback(async () => {
     if (state.status !== 'ok') return;
+    if (!canOpenPreview) {
+      setToast(MEMBER_PREVIEW_MODE_NOTICE);
+      return;
+    }
     if (state.branch.status !== 'running') {
       setToast('分支未运行，先部署后再打开预览');
       return;
@@ -1110,7 +1115,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [deploy, load, state]);
+  }, [canOpenPreview, deploy, load, state]);
 
   if (!branchId && !projectId) return <Navigate to="/project-list" replace />;
 
@@ -1172,7 +1177,7 @@ export function BranchDetailPage(): JSX.Element {
                   分支
                 </a>
               </Button>
-              {state.status === 'ok' && state.branch.status === 'running' ? (
+              {state.status === 'ok' && state.branch.status === 'running' && canOpenPreview ? (
                 webEntries.length > 0 ? (
                   <DropdownMenu
                     align="end"
@@ -1273,6 +1278,7 @@ export function BranchDetailPage(): JSX.Element {
         {state.status === 'ok' ? (
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
             <section className="min-w-0 space-y-5">
+              {!canOpenPreview ? <p role="status" className="text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
               <Card className="rounded-md">
                 <CardHeader className="p-5">
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1297,7 +1303,7 @@ export function BranchDetailPage(): JSX.Element {
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {state.branch.status === 'running' && webEntries.length > 0 ? (
+                      {canOpenPreview && state.branch.status === 'running' && webEntries.length > 0 ? (
                         <DropdownMenu
                           align="start"
                           width={280}
@@ -1329,7 +1335,7 @@ export function BranchDetailPage(): JSX.Element {
                           ))}
                         </DropdownMenu>
                       ) : (
-                        <Button onClick={openPreview} disabled={state.branch.status !== 'running'}>
+                        <Button onClick={openPreview} disabled={state.branch.status !== 'running' || !canOpenPreview} title={!canOpenPreview ? MEMBER_PREVIEW_MODE_NOTICE : undefined}>
                           <ExternalLink />
                           打开预览
                         </Button>

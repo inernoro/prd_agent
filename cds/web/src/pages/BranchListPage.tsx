@@ -43,7 +43,7 @@ import {
   Pencil,
 } from 'lucide-react';
 
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -1655,6 +1655,7 @@ export function BranchListPage(): JSX.Element {
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
   const [manualBranchName, setManualBranchName] = useState('');
   // 用户从搜索下拉选中已有分支时,使用稳定选中态标记卡片。
@@ -2889,6 +2890,11 @@ export function BranchListPage(): JSX.Element {
 
   const openRunningPreview = useCallback(async (branch: BranchSummary, target?: PreviewTarget): Promise<void> => {
     if (state.status !== 'ok') return;
+    if (!canOpenPreview) {
+      closePreviewTarget(target || null);
+      setToast(MEMBER_PREVIEW_MODE_NOTICE);
+      return;
+    }
     /*
      * 「打开正在跑的预览」是 `open`，不是 `preview`（Codex P2，核对属实）。
      *
@@ -2922,7 +2928,7 @@ export function BranchListPage(): JSX.Element {
       setAction(branch.id, finishAction(actionRef.current[branch.id], 'open', message, 'error'));
       setToast(message);
     }
-  }, [setAction, state]);
+  }, [canOpenPreview, setAction, state]);
 
   const openBranchDetail = useCallback((branchId: string) => {
     setDetailDrawerResourceFocus(null);
@@ -3009,6 +3015,10 @@ export function BranchListPage(): JSX.Element {
 
   const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
+    if (!canOpenPreview) {
+      setToast(MEMBER_PREVIEW_MODE_NOTICE);
+      return;
+    }
     if (branch.status !== 'running') {
       if (!deployWhenNeeded || isBusy(branch)) {
         setToast(`${branch.branch} 还未运行。预览不会自动部署，请手动点击部署。`);
@@ -3021,7 +3031,7 @@ export function BranchListPage(): JSX.Element {
 
     const target = openPreviewPlaceholder(branch.branch);
     await openRunningPreview(branch, target);
-  }, [deployBranch, openRunningPreview, state]);
+  }, [canOpenPreview, deployBranch, openRunningPreview, state]);
 
   // Phase 8.6 — 行云流水部署:从 ProjectListPage 跳转过来时,如果 sessionStorage 里
   // 有 autoDeployOnArrival 标记,自动触发主分支(优先 default branch / fallback 第一个)
@@ -3334,6 +3344,7 @@ export function BranchListPage(): JSX.Element {
     setReleaseBranchId,
   };
   const cardHandlers = useMemo(() => ({
+    canPreview: canOpenPreview,
     onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false),
     onRelease: canManageConsole ? (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id) : undefined,
     onDeploy: (branch: BranchSummary) => void cardCallbacksRef.current.deployBranch(branch, false),
@@ -3350,7 +3361,7 @@ export function BranchListPage(): JSX.Element {
     onEditTags: (branch: BranchSummary) => void cardCallbacksRef.current.editTags(branch),
     onAddTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.addTagToBranch(branch, tag),
     onRemoveTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.removeTagFromBranch(branch, tag),
-  }), [canManageConsole]);
+  }), [canManageConsole, canOpenPreview]);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;
@@ -3617,7 +3628,6 @@ export function BranchListPage(): JSX.Element {
       focusBranchCard(existing.id);
       return;
     }
-
     setAction(remote.name, createAction('create', '正在创建分支'));
     try {
       const result = await apiRequest<{ branch: BranchSummary }>('/api/branches', {
@@ -3790,7 +3800,7 @@ export function BranchListPage(): JSX.Element {
     const rsGroups = rsMode === 'project'
       ? buildProjectGroups(rsPids, (pid) => (rsMap[pid]?.members ?? []).filter((m): m is RsCardMember & { id: string } => Boolean(m.id)))
       : [];
-    const rsPreviewBase = state.status === 'ok'
+    const rsPreviewBase = state.status === 'ok' && canOpenPreview
       ? (state.previewMode === 'simple' ? simplePreviewUrl(state.config) : multiPreviewUrl(branch, state.config))
       : '';
     return (
@@ -3959,14 +3969,14 @@ export function BranchListPage(): JSX.Element {
                       if (event.key === 'Escape') setBranchSearchOpen(false);
                     }}
                     className="h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-                    placeholder="搜索分支 · 粘贴 commit / tag · 回车预览"
+                    placeholder={canOpenPreview ? '搜索分支 · 粘贴 commit / tag · 回车预览' : '搜索或添加分支 · 粘贴 commit / tag'}
                     autoComplete="off"
                     spellCheck={false}
                   />
                 </div>
                 <Button type="submit" size="sm" disabled={!manualBranchName.trim()}>
                   <ExternalLink />
-                  预览
+                  {canOpenPreview ? '预览' : '添加分支'}
                 </Button>
               </form>
               {branchSearchOpen ? (
@@ -4117,6 +4127,7 @@ export function BranchListPage(): JSX.Element {
           </div>
         ) : null}
 
+        {state.status === 'ok' && !canOpenPreview ? <p role="status" className="mt-4 text-sm text-muted-foreground">{MEMBER_PREVIEW_MODE_NOTICE}</p> : null}
         {state.status === 'ok' && state.projectWarning ? (
           <div className="mt-6 rounded-md border border-warn/35 bg-warn-soft px-4 py-3 text-sm text-warn">
             {state.projectWarning}
@@ -5834,6 +5845,7 @@ interface BranchGroupMenu {
 }
 
 interface BranchCardHandlers {
+  canPreview: boolean;
   onPreview: (branch: BranchSummary) => void;
   onRelease?: (branch: BranchSummary) => void;
   // 2026-05-04 重设计:常规部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
@@ -6818,6 +6830,8 @@ const BranchCard = memo(function BranchCard({
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={!handlers.canPreview}
+                title={!handlers.canPreview ? MEMBER_PREVIEW_MODE_NOTICE : undefined}
                 onClick={() => {
                   setAiPanelOpen(false);
                   onPreview();
@@ -7609,6 +7623,7 @@ const BranchCard = memo(function BranchCard({
                 className="h-8 w-8 [&_svg]:size-[1.125rem]"
                 title="预览（新镜像出来之前，旧版本照常服务）"
                 aria-label={`预览 ${branch.branch}`}
+                disabled={!handlers.canPreview}
                 onClick={(event) => {
                   event.stopPropagation();
                   onPreview();
@@ -7655,7 +7670,7 @@ const BranchCard = memo(function BranchCard({
           ) : isRunning ? (
             <span className={finishAnimating ? 'cds-finish-pop' : undefined}>
               <PreviewActionSplitButton
-                disabled={busy}
+                disabled={busy || (!isAiOperated && !handlers.canPreview)}
                 loading={busy}
                 fill={!isAiOperated}
                 className={isAiOperated ? '' : 'w-32'}

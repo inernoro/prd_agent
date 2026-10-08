@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
-import { AppRail, canManageSystemSettings, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
+import { AppRail, canManageSystemSettings, canUseConsolePreview, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
 import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
 import { ExtraServicesPanel } from '../../web/src/components/branch/ExtraServicesPanel';
 
@@ -76,6 +76,22 @@ describe('human project access UI wiring', () => {
     expect(branches).toContain('canManageConsole ? apiRequest');
     expect(drawer).toContain('canManageConsole ? apiRequest');
     expect(drawer).toContain('不可变部署版本仅系统所有者可用');
+  });
+  it.each(['multi', 'simple', 'port'] as const)('keeps owner previews and limits member controls to supported %s mode', mode => {
+    expect(canUseConsolePreview(mode, true)).toBe(true);
+    expect(canUseConsolePreview(mode, false)).toBe(mode === 'multi');
+    expect(canUseConsolePreview(undefined, false)).toBe(false);
+  });
+  it('wires the same preview-mode gate to list actions, detail and drawer entry links', () => {
+    for (const file of ['pages/BranchListPage.tsx', 'pages/BranchDetailPage.tsx', 'components/BranchDetailDrawer.tsx']) {
+      const source = read(file);
+      expect(source, file).toContain('canUseConsolePreview');
+      expect(source, file).toContain('MEMBER_PREVIEW_MODE_NOTICE');
+    }
+    const branches = read('pages/BranchListPage.tsx');
+    expect(branches).toContain('canPreview: canOpenPreview');
+    expect(branches).toContain('if (!canOpenPreview) {');
+    expect(read('components/BranchDetailDrawer.tsx')).toContain('previewUrl && canOpenPreview');
   });
   it('does not mount owner route contents or advertise search for members and unresolved auth', () => {
     const render = (status: Parameters<typeof canManageSystemSettings>[0], pending = false) =>
