@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
 import { AppRail, canManageSystemSettings, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
 import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
+import { ExtraServicesPanel } from '../../web/src/components/branch/ExtraServicesPanel';
 
 const { MemoryRouter, Routes, Route } = createRequire(path.resolve('web/package.json'))('react-router-dom');
 
@@ -99,6 +100,29 @@ describe('human project access UI wiring', () => {
       const html = render(owner);
       expect(html).toContain('owner-content-mounted');
       expect(html).toContain('打开命令面板');
+    }
+  });
+  it('wires branch detail and shared configuration editors to the same owner capability', () => {
+    const detail = read('pages/BranchDetailPage.tsx');
+    expect(detail).toContain('const canManageConsole = useCanManageConsole();');
+    expect(detail).toContain('配置仅供查看，修改请联系系统所有者。');
+    expect(detail).toContain('canManageConsole ? apiRequest<ProxyLogResponse>');
+    expect(detail).toContain("if (state.status !== 'ok' || !canManageConsole) return;");
+    for (const component of ['ExtraServicesPanel', 'EffectiveConfigPanel', 'ReferencesPanel']) {
+      expect(read(`components/branch/${component}.tsx`)).toContain('const canManageConsole = useCanManageConsole();');
+    }
+  });
+  it('keeps temporary services readable while exposing additions only to owners or disabled local auth', () => {
+    const render = (status: Parameters<typeof canManageSystemSettings>[0]) =>
+      renderToStaticMarkup(createElement(ConsoleAuthContext.Provider, { value: { status, pending: false, retry() {} } },
+        createElement(ExtraServicesPanel, { branchId: 'fixture' })));
+    for (const status of [null, { enabled: true, user: { isSystemOwner: false } }]) {
+      const html = render(status);
+      expect(html).toContain('临时额外服务');
+      expect(html).not.toContain('添加服务');
+    }
+    for (const status of [{ enabled: true, user: { isSystemOwner: true } }, { enabled: false }]) {
+      expect(render(status)).toContain('添加服务');
     }
   });
 });

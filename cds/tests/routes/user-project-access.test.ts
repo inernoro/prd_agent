@@ -113,6 +113,45 @@ describe('human project grants through the production server', () => {
     expect((await call('GET', '/api/config')).body).toHaveProperty('repoRoot', dir);
   });
 
+  it('filters secondary CDS references and URL matches by target grants without hiding the source branch', async () => {
+    await grant(['project-a']);
+    state.updateProject('project-b', { gitDefaultBranch: 'feature' });
+    Object.assign(state.getBranch('branch-project-b')!, {
+      status: 'running', previewSlug: 'private-target-preview',
+      services: { 'profile-project-b': { profileId: 'profile-project-b', containerName: 'target', hostPort: 10002, status: 'running' } },
+    });
+    state.setBranchProfileOverride('branch-project-a', 'profile-project-a', {
+      env: { TARGET_BASE: '${CDS_REF:project-b/profile-project-b}' },
+    });
+    const resolvedUrl = (await call('GET', '/api/branches/branch-project-a/references')).body.references
+      .find((ref: any) => ref.key === 'TARGET_BASE').resolved[0].url;
+    expect(resolvedUrl).toEqual(expect.any(String));
+    state.setBranchProfileOverride('branch-project-a', 'profile-project-a', {
+      env: { TARGET_BASE: '${CDS_REF:project-b/profile-project-b}', TARGET_LITERAL_URL: resolvedUrl },
+    });
+    for (const route of ['references', 'service-graph']) {
+      const url = `/api/branches/branch-project-a/${route}`;
+      const view = await call('GET', url, member);
+      expect(view.status).toBe(200);
+      const refs = Object.fromEntries(view.body.references.map((ref: any) => [ref.key, ref]));
+      expect(refs.TARGET_BASE.resolved[0]).toMatchObject({ url: null, status: 'restricted', target: { serviceId: 'profile-project-b' } });
+      expect(refs.TARGET_BASE.resolved[0].target).not.toHaveProperty('projectId');
+      expect(refs.TARGET_BASE.resolved[0].target).not.toHaveProperty('branchId');
+      expect(refs.TARGET_BASE.value).toBe('${CDS_REF:project-b/profile-project-b}');
+      expect(refs.TARGET_LITERAL_URL.matchedBranch).toBeNull();
+      expect(refs.TARGET_LITERAL_URL.suggestion).toBeUndefined();
+      expect(JSON.stringify(view.body)).not.toContain('branch-project-b');
+      const ownerRefs = Object.fromEntries((await call('GET', url)).body.references.map((ref: any) => [ref.key, ref]));
+      expect(ownerRefs.TARGET_BASE.resolved[0]).toMatchObject({ status: 'running', target: { projectId: 'project-b', branchId: 'branch-project-b' } });
+      expect(ownerRefs.TARGET_LITERAL_URL.matchedBranch).toMatchObject({ branchId: 'branch-project-b' });
+    }
+    await grant(['project-a', 'project-b']);
+    const grantedRefs = Object.fromEntries((await call('GET', '/api/branches/branch-project-a/references', member))
+      .body.references.map((ref: any) => [ref.key, ref]));
+    expect(grantedRefs.TARGET_BASE.resolved[0]).toMatchObject({ status: 'running', target: { branchId: 'branch-project-b' } });
+    expect(grantedRefs.TARGET_LITERAL_URL.matchedBranch).toMatchObject({ branchId: 'branch-project-b' });
+  });
+
   it('scopes deployment lists, detail, diagnosis and streams without leaking credentials', async () => {
     await grant(['project-a']);
     const runs = new DeploymentRunService(state);

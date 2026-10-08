@@ -23,7 +23,7 @@ import {
   Wrench,
 } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownItem, DropdownLabel, DropdownDivider } from '@/components/ui/dropdown-menu';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -557,6 +557,7 @@ function formatRuntimeVerifyResult(result: RuntimeVerifyResponse): string[] {
 }
 
 export function BranchDetailPage(): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const { branchId: branchIdParam } = useParams();
   const branchId = branchIdParam || queryValue('branch') || queryValue('id');
   const projectId = queryValue('project');
@@ -618,7 +619,7 @@ export function BranchDetailPage(): JSX.Element {
         apiRequest<GitLogResponse>(`/api/branches/${encodeURIComponent(branch.id)}/git-log?count=15`).catch(() => ({ commits: [] })),
         apiRequest<ProfileOverridesResponse>(`/api/branches/${encodeURIComponent(branch.id)}/profile-overrides`).catch(() => ({ profiles: [] })),
         apiRequest<AliasResponse>(`/api/branches/${encodeURIComponent(branch.id)}/subdomain-aliases`).catch(() => ({ aliases: [] })),
-        apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })),
+        canManageConsole ? apiRequest<ProxyLogResponse>('/api/proxy-log?order=desc').catch(() => ({ events: [] })) : Promise.resolve({ events: [] }),
         realProjectId
           ? apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const }))
           : Promise.resolve({ mode: 'multi' as const }),
@@ -644,7 +645,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message, projectId });
     }
-  }, [branchId, projectId]);
+  }, [branchId, projectId, canManageConsole]);
 
   useEffect(() => {
     void load(true);
@@ -681,7 +682,7 @@ export function BranchDetailPage(): JSX.Element {
     : '';
 
   useEffect(() => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || !canManageConsole) return;
     const labels = branchProxyLabels(state.branch, state.aliases);
     const source = new EventSource(apiUrl('/api/proxy-log/stream'));
     // 2026-05-28 阻断浏览器原生 3s 重试,避免 Cloudflare 边缘 400 风暴
@@ -700,7 +701,7 @@ export function BranchDetailPage(): JSX.Element {
       }
     };
     return () => source.close();
-  }, [proxyStreamKey]);
+  }, [proxyStreamKey, canManageConsole]);
 
   useEffect(() => {
     if (!toast) return;
@@ -846,7 +847,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [load, state, updateAction]);
 
   const saveProfileOverride = useCallback(async (profile: ProfileRow, override: BuildProfileOverride) => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || !canManageConsole) return;
     const next = compactOverride(override);
     try {
       if (!overrideHasFields(next)) {
@@ -865,7 +866,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [load, state]);
+  }, [load, state, canManageConsole]);
 
   const editProfileTextOverride = useCallback(async (profile: ProfileRow, field: 'command' | 'dockerImage') => {
     const label = field === 'command' ? '启动命令' : 'Docker 镜像';
@@ -928,7 +929,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [saveProfileOverride]);
 
   const clearProfileOverride = useCallback(async (profile: ProfileRow) => {
-    if (state.status !== 'ok') return;
+    if (state.status !== 'ok' || !canManageConsole) return;
     const ok = window.confirm(`恢复 ${profile.profileName || profile.profileId} 为公共 BuildProfile？重新部署后生效。`);
     if (!ok) return;
     try {
@@ -941,7 +942,7 @@ export function BranchDetailPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setToast(message);
     }
-  }, [load, state]);
+  }, [load, state, canManageConsole]);
 
   const startBridgeSession = useCallback(async () => {
     if (state.status !== 'ok') return;
@@ -1215,7 +1216,7 @@ export function BranchDetailPage(): JSX.Element {
                   </Button>
                 )
               ) : null}
-              {state.status === 'ok' ? (
+              {state.status === 'ok' && canManageConsole ? (
                 <Button asChild variant="ghost" size="sm" title="项目设置">
                   <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
                     <Settings />
@@ -1223,7 +1224,7 @@ export function BranchDetailPage(): JSX.Element {
                   </a>
                 </Button>
               ) : null}
-              {state.status === 'ok' ? (
+              {state.status === 'ok' && canManageConsole ? (
                 <Button asChild variant="ghost" size="sm" title="服务拓扑">
                   <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
                     <Network />
@@ -1432,6 +1433,7 @@ export function BranchDetailPage(): JSX.Element {
               {diagnosticIssues.length > 0 ? (
                 <FailureDiagnosticPanel
                   issues={diagnosticIssues}
+                  canManageConsole={canManageConsole}
                   onAction={(issue) => {
                     if (issue.profileId) setSelectedProfileId(issue.profileId);
                     const profile = issue.profileId
@@ -1595,10 +1597,10 @@ export function BranchDetailPage(): JSX.Element {
                 <CardHeader className="p-5">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-base">预览别名</CardTitle>
-                    <Button size="sm" variant="outline" onClick={() => void saveAliases()}>
+                    {canManageConsole ? <Button size="sm" variant="outline" onClick={() => void saveAliases()}>
                       <Settings />
                       编辑
-                    </Button>
+                    </Button> : null}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3 p-5 pt-0 text-sm">
@@ -1706,7 +1708,7 @@ export function BranchDetailPage(): JSX.Element {
                   ) : null}
               </DisclosurePanel>
 
-<DisclosurePanel
+{canManageConsole ? <DisclosurePanel
                 icon={<ExternalLink className="h-4 w-4" />}
                 title="HTTP 转发日志"
                 subtitle={`${state.proxyLogs.length} 条，实时订阅`}
@@ -1755,7 +1757,7 @@ export function BranchDetailPage(): JSX.Element {
                       ) : null}
                     </div>
                   ))}
-              </DisclosurePanel>
+              </DisclosurePanel> : <p className="text-sm text-muted-foreground">HTTP 转发日志仅系统所有者可用；分支构建和容器日志仍可查看。</p>}
 
                 </TabsContent>
 
@@ -1768,7 +1770,7 @@ export function BranchDetailPage(): JSX.Element {
               >
                   {selectedProfile ? (
                     <>
-                      <div className="flex flex-wrap gap-2">
+                      {canManageConsole ? <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" onClick={() => void editProfileTextOverride(selectedProfile, 'command')}>
                           <TerminalSquare />
                           覆写命令
@@ -1795,7 +1797,7 @@ export function BranchDetailPage(): JSX.Element {
                             恢复公共配置
                           </Button>
                         ) : null}
-                      </div>
+                      </div> : <p className="text-muted-foreground">配置仅供查看，修改请联系系统所有者。</p>}
                       <Field label="镜像" value={selectedProfile.effective?.dockerImage || '未设置'} />
                       <Field label="端口" value={selectedProfile.effective?.containerPort || '未设置'} />
                       <Field label="路径前缀" value={(selectedProfile.effective?.pathPrefixes || []).join(', ') || '默认'} />
@@ -1978,10 +1980,12 @@ function diagnosticActionLabel(issue: DiagnosticIssue): string {
 
 function FailureDiagnosticPanel({
   issues,
+  canManageConsole,
   onAction,
   onDeploy,
 }: {
   issues: DiagnosticIssue[];
+  canManageConsole: boolean;
   onAction: (issue: DiagnosticIssue) => void;
   onDeploy: (profileId?: string) => void;
 }): JSX.Element {
@@ -2019,10 +2023,10 @@ function FailureDiagnosticPanel({
                 </div>
                 <div className="mt-2 text-sm leading-6 text-muted-foreground">{issue.message}</div>
               </div>
-              <Button size="sm" variant={issue.action === 'command' || issue.action === 'image' || issue.action === 'port' ? 'default' : 'outline'} onClick={() => onAction(issue)}>
+              {canManageConsole || !['command', 'image', 'port'].includes(issue.action || '') ? <Button size="sm" variant={issue.action === 'command' || issue.action === 'image' || issue.action === 'port' ? 'default' : 'outline'} onClick={() => onAction(issue)}>
                 <Wrench />
                 {diagnosticActionLabel(issue)}
-              </Button>
+              </Button> : <span className="text-sm text-muted-foreground">配置修改请联系系统所有者。</span>}
             </div>
           </div>
         ))}

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { postSse, sseEventText } from '@/lib/sse';
 
 type RefKind = 'cds-ref' | 'url' | 'name-hint' | 'platform';
@@ -58,6 +59,7 @@ function StatusChip({ status }: { status: RefStatus | string }): JSX.Element {
 }
 
 export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: ReferencesResponse } | { status: 'error'; message: string }>({ status: 'loading' });
   const [picker, setPicker] = useState<{ item: ReferenceItem; ref: ResolvedRef; branches: BranchRow[] | null } | null>(null);
   const [pendingRedeploy, setPendingRedeploy] = useState<Set<string>>(new Set());
@@ -218,7 +220,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
                     </td>
                     <td className="px-3 py-2 align-top text-muted-foreground">{SOURCE_LABEL[item.source] ?? item.source}{item.detail === 'cds-ref' ? '' : item.detail ? ` · ${item.detail}` : ''}</td>
                     <td className="px-3 py-2 align-top">
-                      {r ? (
+                      {r && canManageConsole ? (
                         <div className="flex flex-col gap-1">
                           {resolvedList.map((x) => x.status !== 'missing-project' && x.status !== 'restricted' ? (
                             <Button key={x.ref.raw} size="sm" variant="outline" className="h-6 text-[0.6875rem]" disabled={busy} onClick={() => void openPicker(item, x)} title={resolvedList.length > 1 ? `切换 ${x.ref.raw}` : undefined}>
@@ -237,7 +239,7 @@ export function ReferencesPanel({ branchId, onToast }: { branchId: string; onToa
           </table>
         </div>
       )}
-      {picker ? (
+      {picker && canManageConsole ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3" data-testid="reference-branch-picker">
           <div className="mb-2 flex items-center gap-2 text-xs">
             <span className="font-semibold">切换分支</span>

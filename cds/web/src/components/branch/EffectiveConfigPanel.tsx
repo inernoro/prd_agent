@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Layers, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { DbProbePanel } from '@/components/branch/DbProbePanel';
 
 type EnvSource =
@@ -190,6 +191,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
 }
 
 export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; onToast?: (message: string) => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<PanelState>({ status: 'idle' });
   const [copying, setCopying] = useState(false);
 
@@ -266,7 +268,7 @@ export function EffectiveConfigPanel({ branchId, onToast }: { branchId: string; 
                 {!state.data.derivedFrom.sourceStillExists ? <span className="ml-1">;来源分支已删除</span> : null}
                 <span className="ml-1">配置为快照拷贝,两边各自独立。</span>
               </div>
-              {state.data.derivedFrom.sourceStillExists ? (
+              {state.data.derivedFrom.sourceStillExists && canManageConsole ? (
                 <Button
                   size="sm"
                   variant="outline"
