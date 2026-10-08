@@ -3226,7 +3226,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-006] CDS 静音录音在上传前给出明确恢复动作', async ({ page, request, context }) => {
+  test('[REC-006] CDS 静音录音在上传前给出明确恢复动作', async ({ page, request, context }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行静音录音');
     test.setTimeout(90_000);
     await context.grantPermissions(['microphone']);
@@ -3237,15 +3237,243 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target.fill(128);
       };
     });
-    await page.setViewportSize({ width: 390, height: 844 });
     await openQuickRecord(page, request);
 
-    await expect(page.getByTestId('recording-state')).toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
+    const recordingState = page.getByTestId('recording-state');
+    const recordingPalette = page.locator('.recording-design-palette');
+    await expect(recordingState).toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-RECORDING-AUDIO-02',
+      target: recordingState,
+      themeTarget: recordingPalette,
+      caption: '桌面浏览器已获得麦克风权限并进入录音面板，保存目标、权限后的操作区和设备状态完整可见。',
+    });
     await page.waitForTimeout(1_500);
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-RECORDING-AUDIO-04',
+      target: recordingState,
+      themeTarget: recordingPalette,
+      caption: '桌面录音已真实开始，计时、波形轨道、录音保护和结束操作同时可见。',
+    });
+    await page.getByRole('button', { name: '暂停录音' }).click();
+    await expect(recordingState).toHaveAttribute('data-state', 'paused');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-RECORDING-AUDIO-05',
+      target: recordingState,
+      themeTarget: recordingPalette,
+      caption: '桌面录音已暂停，计时停止并提供继续录音与结束录音两个明确动作。',
+    });
+    await page.getByRole('button', { name: '继续录音' }).click();
+    await expect(recordingState).toHaveAttribute('data-state', 'recording');
     await page.getByRole('button', { name: '结束录音并转成文字' }).click();
     await expect(page.getByText('整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。')).toBeVisible();
     await page.getByRole('button', { name: '放弃本次录音' }).click();
-    await expect(page.getByTestId('recording-state'), '放弃后录音面板必须关闭').toBeHidden();
+    await expect(recordingState, '放弃后录音面板必须关闭').toBeHidden();
+  });
+
+  test('[REC-008] 麦克风权限拒绝后桌面与移动端均保留上传出口', async ({ page, request, browser }, testInfo) => {
+    test.setTimeout(90_000);
+    const rejectMicrophone = () => {
+      const mediaDevices = navigator.mediaDevices;
+      if (!mediaDevices) return;
+      Object.defineProperty(mediaDevices, 'getUserMedia', {
+        configurable: true,
+        value: async () => { throw new DOMException('Permission denied', 'NotAllowedError'); },
+      });
+    };
+
+    await page.addInitScript(rejectMicrophone);
+    await openQuickRecord(page, request);
+    const desktopPermissionTitle = page.getByText('需要麦克风权限', { exact: true });
+    const desktopUploadFallback = page.getByTestId('recording-unavailable-upload');
+    await expect(desktopPermissionTitle).toBeVisible({ timeout: 20_000 });
+    await expect(desktopUploadFallback).toBeVisible();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-RECORDING-AUDIO-03',
+      target: desktopPermissionTitle,
+      themeTarget: page.locator('.recording-design-palette'),
+      caption: '桌面麦克风权限被确定性拒绝后，页面说明原因并同时提供系统设置指引与上传音频出口。',
+    });
+    await page.getByRole('button', { name: '取消录音' }).click();
+    await expect(desktopPermissionTitle).toBeHidden();
+
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const mobilePage = await mobileContext.newPage();
+    try {
+      await mobilePage.addInitScript(rejectMicrophone);
+      await openQuickRecord(mobilePage, request);
+      const mobilePermissionTitle = mobilePage.getByText('需要麦克风权限', { exact: true });
+      const mobileUploadFallback = mobilePage.getByTestId('recording-unavailable-upload');
+      await expect(mobilePermissionTitle).toBeVisible({ timeout: 20_000 });
+      await expect(mobileUploadFallback).toBeVisible();
+      await mobilePage.getByRole('button', { name: '前往系统设置' }).click();
+      await expect(mobilePage.getByText('网页无法替你打开系统设置，路径在这里：', { exact: true })).toBeVisible();
+      await captureStableSmokeVisualEvidence(mobilePage, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-14',
+        target: mobilePermissionTitle,
+        themeTarget: mobilePage.locator('.recording-design-palette'),
+        caption: '真实触控移动端拒绝麦克风后，上传音频仍可用，并展开浏览器与系统设置的具体恢复路径。',
+      });
+      await mobilePage.getByRole('button', { name: '取消录音' }).click();
+      await expect(mobilePermissionTitle).toBeHidden();
+    } finally {
+      await mobileContext.close();
+    }
+  });
+
+  test('[REC-009] 转录启动失败保留原音频并允许再次转录', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(120_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-transcribe-retry`;
+    let storeId = '';
+    let entryId = '';
+    let transcribeAttempt = 0;
+    const firstFailure = '录音转录暂时不可用，请稍后重试，原音频已安全保留';
+    const secondFailure = '再次转录仍未完成，请稍后重试；原音频仍可播放和下载';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: title, description: '稳定冒烟转录失败恢复，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(page.getByText(title, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+
+      await page.route('**/api/document-store/entries/*/transcribe', async (route) => {
+        transcribeAttempt += 1;
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: false,
+            data: null,
+            error: { code: 'TRANSCRIBE_TEMPORARILY_UNAVAILABLE', message: transcribeAttempt === 1 ? firstFailure : secondFailure },
+          }),
+        });
+      });
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+        name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-retry.m4a`,
+        mimeType: 'audio/mp4',
+        buffer: speechFixture,
+      });
+      const uploadResponse = await uploadResponsePromise;
+      const uploadBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(uploadResponse.ok(), uploadBody.error?.message || '录音上传失败').toBe(true);
+      expect(uploadBody.success, uploadBody.error?.message || '录音上传失败').toBe(true);
+      entryId = uploadBody.data.entry.id;
+
+      const retryButton = page.getByRole('button', { name: '重试转录' });
+      const firstFailureMessage = page.getByText(firstFailure, { exact: true });
+      await expect(firstFailureMessage).toBeVisible({ timeout: 20_000 });
+      await expect(retryButton).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-10',
+        target: firstFailureMessage,
+        caption: '首次转录启动失败时，页面使用可理解文案说明结果，保留原音频并提供重试转录动作。',
+      });
+
+      await retryButton.click();
+      const secondFailureMessage = page.getByText(secondFailure, { exact: true });
+      await expect(secondFailureMessage).toBeVisible({ timeout: 20_000 });
+      await expect(retryButton).toBeVisible();
+      expect(transcribeAttempt, '点击重试转录必须发起第二次独立请求').toBe(2);
+      expectUserReadable(secondFailure);
+      expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).ok(), '第二次转录失败后原音频仍须可回读').toBe(true);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-16',
+        target: secondFailureMessage,
+        caption: '点击再次转录后第二次请求已发生；失败说明仍保留原音频、播放下载能力和继续重试出口。',
+      });
+    } finally {
+      await page.unroute('**/api/document-store/entries/*/transcribe').catch(() => undefined);
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+    }
+  });
+
+  test('[REC-003][REC-012] 真实移动端上传音频并持续展示转录进度', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.setTimeout(240_000);
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await mobileContext.newPage();
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-mobile-transcribe`;
+    let storeId = '';
+    let entryId = '';
+    let runId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: title, description: '稳定冒烟移动端真实转录，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(page.getByText(title, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      const transcribeResponsePromise = page.waitForResponse((response) => (
+        /\/api\/document-store\/entries\/[^/]+\/transcribe(?:\?|$)/.test(response.url())
+        && response.request().method() === 'POST'
+      ));
+      await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+        name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-mobile-speech.m4a`,
+        mimeType: 'audio/mp4',
+        buffer: speechFixture,
+      });
+      const uploadResponse = await uploadResponsePromise;
+      const uploadBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(uploadResponse.ok(), uploadBody.error?.message || '移动端录音上传失败').toBe(true);
+      expect(uploadBody.success, uploadBody.error?.message || '移动端录音上传失败').toBe(true);
+      entryId = uploadBody.data.entry.id;
+
+      const transcribeResponse = await transcribeResponsePromise;
+      const transcribeBody = await transcribeResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(transcribeResponse.ok(), transcribeBody.error?.message || '移动端启动转录失败').toBe(true);
+      expect(transcribeBody.success, transcribeBody.error?.message || '移动端启动转录失败').toBe(true);
+      runId = transcribeBody.data.runId;
+      const transcribeStep = page.getByTestId('transcribe-step-transcribe');
+      await expect(transcribeStep).toHaveAttribute('data-state', 'active', { timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-15',
+        target: transcribeStep,
+        themeTarget: page.locator('.recording-design-palette'),
+        caption: '真实触控移动端已完成音频上传，窄屏持续展示当前转录步骤、活动状态和后续完成步骤且无遮挡。',
+      });
+
+      const completion = page.getByText(/录音和原文已保存|查看转录笔记/).first();
+      await expect(completion).toBeVisible({ timeout: 180_000 });
+      const run = await readEnvelope<{ status: string; transcriptText?: string; outputEntryId?: string }>(
+        await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }),
+      );
+      expect(run.status).toBe('done');
+      expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
+      expect(run.outputEntryId).toBe(entryId);
+    } finally {
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+        if (runId) {
+          expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+      await mobileContext.close();
+    }
   });
 
   test('[REC-008] 浏览器不支持录音时直接提供上传音频兜底', async ({ page, request }) => {

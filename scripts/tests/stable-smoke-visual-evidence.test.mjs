@@ -280,13 +280,21 @@ test('真实单图、多图与录音旅程接入计划槽位而不是普通附�
     'CDS-VISUAL-MULTI-IMAGE-CREATION-12',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-13',
     'CDS-VISUAL-RECORDING-AUDIO-01',
+    'CDS-VISUAL-RECORDING-AUDIO-02',
+    'CDS-VISUAL-RECORDING-AUDIO-03',
+    'CDS-VISUAL-RECORDING-AUDIO-04',
+    'CDS-VISUAL-RECORDING-AUDIO-05',
     'CDS-VISUAL-RECORDING-AUDIO-06',
     'CDS-VISUAL-RECORDING-AUDIO-07',
     'CDS-VISUAL-RECORDING-AUDIO-08',
     'CDS-VISUAL-RECORDING-AUDIO-09',
+    'CDS-VISUAL-RECORDING-AUDIO-10',
     'CDS-VISUAL-RECORDING-AUDIO-11',
     'CDS-VISUAL-RECORDING-AUDIO-12',
     'CDS-VISUAL-RECORDING-AUDIO-13',
+    'CDS-VISUAL-RECORDING-AUDIO-14',
+    'CDS-VISUAL-RECORDING-AUDIO-15',
+    'CDS-VISUAL-RECORDING-AUDIO-16',
   ]) {
     assert.match(source, new RegExp(`slotId: '${slotId}'`));
   }
@@ -298,5 +306,8 @@ test('真实单图、多图与录音旅程接入计划槽位而不是普通附�
     source,
     /CDS-VISUAL-RECORDING-AUDIO-06[\s\S]*?const transcribeResponsePromise = page\.waitForResponse[\s\S]*?releaseUpload\?\.\(\)/,
   );
+  assert.match(source, /CDS-VISUAL-RECORDING-AUDIO-03[\s\S]*?CDS-VISUAL-RECORDING-AUDIO-14/);
+  assert.match(source, /CDS-VISUAL-RECORDING-AUDIO-10[\s\S]*?retryButton\.click\(\)[\s\S]*?CDS-VISUAL-RECORDING-AUDIO-16/);
+  assert.match(source, /CDS-VISUAL-RECORDING-AUDIO-15[\s\S]*?run\.status\)\.toBe\('done'\)/);
   assert.match(source, /browser\.newContext\(\{ \.\.\.devices\['iPhone 13'\]/);
 });
