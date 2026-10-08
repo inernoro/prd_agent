@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
@@ -907,6 +908,7 @@ export function BranchDetailDrawer({
    */
   branchStatus?: string;
 }): JSX.Element | null {
+  const canManageConsole = useCanManageConsole();
   // 2026-07-09 性能重构：时钟从父页面 prop 改为抽屉内自持——原先由
   // BranchListPage 顶层 1s tick 供给（那个 tick 会整页重渲染，已删）。
   // 抽屉打开期间才滴答，驱动「进行中部署」的实时耗时显示。
@@ -1099,15 +1101,15 @@ export function BranchDetailDrawer({
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
           .catch(() => ({ runs: [] })),
-        apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ versions: [] })),
+        canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
+          .catch(() => ({ versions: [] })) : Promise.resolve({ versions: [] }),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
           .catch((err) => {
             setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
             return { profiles: [] };
           }),
-        apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
-          .catch(() => ({ services: [] })),
+        canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
+          .catch(() => ({ services: [] })) : Promise.resolve({ services: [] }),
         apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
           .catch(() => ({ resources: [] })),
         apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
@@ -1132,7 +1134,7 @@ export function BranchDetailDrawer({
     } finally {
       setLoading(false);
     }
-  }, [branchId, projectId]);
+  }, [branchId, projectId, canManageConsole]);
 
   const loadTriggerLogs = useCallback(async () => {
     if (!branchId) return;
@@ -2569,12 +2571,12 @@ export function BranchDetailDrawer({
                     ) : null}
 
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    <DeploymentVersionLedger
+                    {canManageConsole ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
                       busyVersionId={versionBusyId}
                       onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    />
+                    /> : <p className="px-1 text-sm text-muted-foreground">不可变部署版本仅系统所有者可用；你仍可部署此分支并查看上方运行历史。</p>}
                   </div>
                 ) : null}
 
@@ -2820,9 +2822,9 @@ export function BranchDetailDrawer({
                     rangeStart={seriesMeta?.after}
                     rangeEnd={seriesMeta?.before}
                     onRefreshMetrics={() => void loadMetrics()}
-                    onConfigureEntries={() => setWebEntryConfigOpen(true)}
+                    onConfigureEntries={canManageConsole ? () => setWebEntryConfigOpen(true) : undefined}
                     onOpenDeployments={() => setActiveTab('deployments')}
-                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} variant="row" /> : null}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={canManageConsole ? () => setActiveTab('config') : undefined} variant="row" /> : null}
                   />
                 ) : null}
 
@@ -2938,9 +2940,9 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
-                  需要修改构建配置 / 环境变量 / 路由？打开
-                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
-                  。需要查看完整日志、Bridge、提交历史？打开
+                  {canManageConsole ? <>需要修改构建配置 / 项目环境变量 / 路由？打开
+                  <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>。</> : null}
+                  需要查看分支日志与提交历史？打开
                   <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
@@ -2993,8 +2995,8 @@ export function BranchDetailDrawer({
                     previewLabel="打开预览"
                     previewTitle="打开预览页"
                     previewAriaLabel="打开预览页"
-                    onRelease={onRelease && branch ? () => onRelease(branch.id) : undefined}
-                    releaseDisabled={!onRelease}
+                    onRelease={canManageConsole && onRelease && branch ? () => onRelease(branch.id) : undefined}
+                    releaseDisabled={!canManageConsole || !onRelease}
                   />
                 ) : (
                   <Button className="flex-[2_1_0]" disabled title="当前没有可用预览地址">

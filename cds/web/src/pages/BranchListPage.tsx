@@ -43,7 +43,7 @@ import {
   Pencil,
 } from 'lucide-react';
 
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole } from '@/components/layout/AppShell';
 import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -1651,6 +1651,7 @@ function closePreviewTarget(target: PreviewTarget): void {
 }
 
 export function BranchListPage(): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -1669,6 +1670,7 @@ export function BranchListPage(): JSX.Element {
   // 挂载轻量拉一次即可（弹窗内已有实时链路），旧版无端点/失败一律静默。
   const [perfCriticals, setPerfCriticals] = useState<PerfWarning[]>([]);
   useEffect(() => {
+    if (!canManageConsole) return;
     let cancelled = false;
     apiRequest<PerfHealth>('/api/cds-system/perf-health')
       .then((res) => {
@@ -1676,7 +1678,7 @@ export function BranchListPage(): JSX.Element {
       })
       .catch(() => { /* best-effort */ });
     return () => { cancelled = true; };
-  }, []);
+  }, [canManageConsole]);
   const [slowHttpState, setSlowHttpState] = useState<SlowHttpState>({ status: 'idle' });
   const [redeployFailedRunning, setRedeployFailedRunning] = useState(false);
   const [cleanupDamagedRunning, setCleanupDamagedRunning] = useState(false);
@@ -2051,7 +2053,7 @@ export function BranchListPage(): JSX.Element {
         apiRequest<BranchesResponse>(branchUrl),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`),
         apiRequest<CdsConfigResponse>('/api/config'),
-        apiRequest<{ services: InfraServiceSummary[] }>(infraUrl),
+        canManageConsole ? apiRequest<{ services: InfraServiceSummary[] }>(infraUrl) : Promise.resolve({ services: [] }),
         apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
       if (branchesResult.status === 'rejected') {
@@ -2136,7 +2138,7 @@ export function BranchListPage(): JSX.Element {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
-  }, [confirmEmptyBranchList, projectId, refreshLiveBranches]);
+  }, [confirmEmptyBranchList, projectId, refreshLiveBranches, canManageConsole]);
 
   const refreshRemoteBranches = useCallback(async (forceFetch = false) => {
     if (!projectId) return;
@@ -2221,7 +2223,7 @@ export function BranchListPage(): JSX.Element {
   // Phase 9.6 — 缺失必填 env 检测(独立于 TODO 占位符模式)
   const [missingRequiredKeys, setMissingRequiredKeys] = useState<string[]>([]);
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !canManageConsole) return;
     let cancelled = false;
     void apiRequest<{
       env: Record<string, string>;
@@ -2246,7 +2248,7 @@ export function BranchListPage(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [projectId, state.status]);
+  }, [projectId, state.status, canManageConsole]);
 
   useEffect(() => {
     if (!projectId || !noticeProject) return;
@@ -3333,7 +3335,7 @@ export function BranchListPage(): JSX.Element {
   };
   const cardHandlers = useMemo(() => ({
     onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false),
-    onRelease: (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id),
+    onRelease: canManageConsole ? (branch: BranchSummary) => cardCallbacksRef.current.setReleaseBranchId(branch.id) : undefined,
     onDeploy: (branch: BranchSummary) => void cardCallbacksRef.current.deployBranch(branch, false),
     onDetail: (branch: BranchSummary) => cardCallbacksRef.current.openBranchDetail(branch.id),
     onResourcePanel: (branch: BranchSummary, resource: BranchResource) => cardCallbacksRef.current.openBranchResourcePanel(branch, resource),
@@ -3348,7 +3350,7 @@ export function BranchListPage(): JSX.Element {
     onEditTags: (branch: BranchSummary) => void cardCallbacksRef.current.editTags(branch),
     onAddTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.addTagToBranch(branch, tag),
     onRemoveTag: (branch: BranchSummary, tag: string) => void cardCallbacksRef.current.removeTagFromBranch(branch, tag),
-  }), []);
+  }), [canManageConsole]);
 
   const redeployFailedContainers = useCallback(async (): Promise<void> => {
     if (redeployFailedRunning) return;
@@ -4030,6 +4032,7 @@ export function BranchListPage(): JSX.Element {
                   项目
                 </Link>
               </Button>
+              {canManageConsole ? <>
               <Button asChild variant="ghost" size="sm" title="项目设置">
                 <Link to={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
@@ -4077,6 +4080,7 @@ export function BranchListPage(): JSX.Element {
                   <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-destructive" aria-hidden />
                 ) : null}
               </Button>
+              </> : null}
               {!sseConnected ? (
                 <Button
                   variant="ghost"
@@ -4269,7 +4273,7 @@ export function BranchListPage(): JSX.Element {
             {branches.length === 0 ? (
               <div className="cds-surface-raised cds-hairline px-8 py-16">
                 <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                  {state.status === 'ok' && state.buildProfiles.length === 0 ? (
+                  {state.status === 'ok' && state.buildProfiles.length === 0 && canManageConsole ? (
                     // 波5:项目还没有构建配置(webhook 自动 clone / 建时没勾服务)→
                     // 先引导「检测技术栈」,否则即便建了分支也无从部署。
                     <>
@@ -4295,7 +4299,9 @@ export function BranchListPage(): JSX.Element {
                       </div>
                       <h2 className="mt-5 text-lg font-semibold">还没有分支</h2>
                       <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-                        在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。
+                        {state.buildProfiles.length === 0 && !canManageConsole
+                          ? '请联系系统所有者完成项目构建配置，再创建分支预览。'
+                          : '在顶部搜索框粘贴远程分支名，或在下拉中选择已有远程分支，CDS 会自动创建工作树并打开预览。'}
                       </p>
                     </>
                   )}
@@ -5829,7 +5835,7 @@ interface BranchGroupMenu {
 
 interface BranchCardHandlers {
   onPreview: (branch: BranchSummary) => void;
-  onRelease: (branch: BranchSummary) => void;
+  onRelease?: (branch: BranchSummary) => void;
   // 2026-05-04 重设计:常规部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // 2026-05-29 P0 复活:onDeploy 重新被卡片使用 —— 漂移徽标「一键收敛」点击时
   // 调它（= deployBranch → POST /deploy，读项目全部 build profile，补齐缺失服务）。
@@ -6062,7 +6068,7 @@ const BranchCard = memo(function BranchCard({
    */
   // 把 handlers 重绑定回旧的本地名（绑定当前 branch），卡片主体的调用点零改动。
   const onPreview = () => handlers.onPreview(branch);
-  const onRelease = () => handlers.onRelease(branch);
+  const onRelease = handlers.onRelease ? () => handlers.onRelease?.(branch) : undefined;
   const onDeploy = () => handlers.onDeploy(branch);
   const onDetail = () => handlers.onDetail(branch);
   const onResourcePanel = (resource: BranchResource) => handlers.onResourcePanel(branch, resource);

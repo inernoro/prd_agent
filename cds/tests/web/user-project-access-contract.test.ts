@@ -4,10 +4,10 @@ import { createRequire } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, it, expect } from 'vitest';
-import { AppRail, canManageSystemSettings } from '../../web/src/components/layout/AppShell';
+import { AppRail, canManageSystemSettings, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
 import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
 
-const { MemoryRouter } = createRequire(path.resolve('web/package.json'))('react-router-dom');
+const { MemoryRouter, Routes, Route } = createRequire(path.resolve('web/package.json'))('react-router-dom');
 
 const read = (file: string) => fs.readFileSync(path.resolve('web/src', file), 'utf8');
 
@@ -60,5 +60,45 @@ describe('human project access UI wiring', () => {
     const page = read('pages/CdsSettingsPage.tsx');
     expect(page).toContain('settingsTabForViewer(requestedTab, canManageSettings)');
     expect(page).toContain('canManageSystemSettings(viewerStatus)');
+  });
+  it('uses one owner capability for route mounting, search hints, shortcuts and version reads', () => {
+    const shell = read('components/layout/AppShell.tsx');
+    const routes = read('App.tsx');
+    const branches = read('pages/BranchListPage.tsx');
+    const drawer = read('components/BranchDetailDrawer.tsx');
+    expect(shell).toContain('export function useCanManageConsole');
+    expect(shell).toContain('export function OwnerConsoleRoute');
+    expect(shell).toContain('if (!canManageSettings) return;');
+    expect(shell).toContain('if (!useCanManageConsole()) return null;');
+    expect(routes).toContain('<Route element={<OwnerConsoleRoute />}>');
+    expect(branches).toContain('const canManageConsole = useCanManageConsole();');
+    expect(branches).toContain('canManageConsole ? apiRequest');
+    expect(drawer).toContain('canManageConsole ? apiRequest');
+    expect(drawer).toContain('不可变部署版本仅系统所有者可用');
+  });
+  it('does not mount owner route contents or advertise search for members and unresolved auth', () => {
+    const render = (status: Parameters<typeof canManageSystemSettings>[0], pending = false) =>
+      renderToStaticMarkup(createElement(MemoryRouter, null,
+        createElement(ConsoleAuthContext.Provider, { value: { status, pending, retry() {} } },
+          createElement(PaletteHint),
+          createElement(Routes, null,
+            createElement(Route, { element: createElement(OwnerConsoleRoute) },
+              createElement(Route, { path: '/', element: createElement('div', null, 'owner-content-mounted') }))))));
+    const member = render({ enabled: true, user: { isSystemOwner: false } });
+    expect(member).toContain('此页面仅系统所有者可用');
+    expect(member).not.toContain('owner-content-mounted');
+    expect(member).not.toContain('打开命令面板');
+    const pending = render(null, true);
+    expect(pending).toContain('页面加载中');
+    expect(pending).not.toContain('owner-content-mounted');
+    const failed = render(null);
+    expect(failed).toContain('登录状态暂时无法确认');
+    expect(failed).toContain('重新检查登录状态');
+    expect(failed).not.toContain('owner-content-mounted');
+    for (const owner of [{ enabled: true, user: { isSystemOwner: true } }, { enabled: false }]) {
+      const html = render(owner);
+      expect(html).toContain('owner-content-mounted');
+      expect(html).toContain('打开命令面板');
+    }
   });
 });

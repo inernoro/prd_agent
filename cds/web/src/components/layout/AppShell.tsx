@@ -134,6 +134,40 @@ export function canManageSystemSettings(status: ShellAuthStatus | null): boolean
   return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
 }
 
+export const ConsoleAuthContext = createContext<{
+  status: ShellAuthStatus | null;
+  pending: boolean;
+  retry: () => void;
+}>({ status: null, pending: true, retry: () => {} });
+
+/** UI affordances use the same server-authenticated owner decision as route mounting. */
+export function useCanManageConsole(): boolean {
+  return canManageSystemSettings(useContext(ConsoleAuthContext).status);
+}
+
+/** Never mount owner pages (and their effects) for members or unresolved authentication. */
+export function OwnerConsoleRoute(): JSX.Element {
+  const { status, pending, retry } = useContext(ConsoleAuthContext);
+  if (canManageSystemSettings(status)) return <Outlet />;
+  if (pending) return <ConsoleRouteFallback />;
+  return (
+    <AppShell topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '访问范围' }]} />} />}>
+      <Workspace>
+        <section className="cds-surface-raised cds-hairline mt-6 space-y-4 rounded-lg p-6" role="alert">
+          <h1 className="text-lg font-semibold">{status ? '此页面仅系统所有者可用' : '登录状态暂时无法确认'}</h1>
+          <p className="text-sm text-muted-foreground">{status
+            ? '项目设置、服务拓扑和系统运维由系统所有者管理。你仍可在获授权项目中操作分支、查看预览和部署历史。'
+            : '未加载管理页面。请重新检查登录状态后再试。'}</p>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <Link to="/project-list" className="text-primary underline">返回项目列表</Link>
+            {!status ? <button type="button" onClick={retry} className="text-primary underline">重新检查登录状态</button> : null}
+          </div>
+        </section>
+      </Workspace>
+    </AppShell>
+  );
+}
+
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
 const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
@@ -250,6 +284,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const [authPending, setAuthPending] = useState(true);
+  const [authAttempt, setAuthAttempt] = useState(0);
   const canManageSettings = canManageSystemSettings(authStatus);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
@@ -290,6 +326,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
     return () => { mo.disconnect(); window.clearTimeout(stop); };
   }, [previewInstance]);
   useEffect(() => {
+    if (!canManageSettings) return;
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
       if (isAccel && (event.key === 'k' || event.key === 'K')) {
@@ -304,23 +341,28 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('cds:open-palette' as keyof WindowEventMap, onCustom);
     };
-  }, []);
+  }, [canManageSettings]);
 
   useEffect(() => {
     const ctrl = new AbortController();
+    let cancelled = false;
+    const timer = window.setTimeout(() => ctrl.abort(), 15_000);
+    setAuthPending(true);
     fetch(apiUrl('/api/auth/status'), {
       credentials: 'include',
       headers: { Accept: 'application/json' },
       signal: ctrl.signal,
     })
       .then((res) => res.ok ? res.json() as Promise<ShellAuthStatus> : null)
-      .then((data) => setAuthStatus(data))
-      .catch((err: unknown) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
+      .then((data) => { if (!cancelled) { setAuthStatus(data); setAuthPending(false); } })
+      .catch(() => {
+        if (cancelled) return;
         setAuthStatus(null);
-      });
-    return () => ctrl.abort();
-  }, []);
+        setAuthPending(false);
+      })
+      .finally(() => window.clearTimeout(timer));
+    return () => { cancelled = true; window.clearTimeout(timer); ctrl.abort(); };
+  }, [authAttempt]);
 
   // 抽屉打开时锁住页面滚动,否则触屏下背景工作区仍能滚动,与模态行为冲突
   // (Bugbot #741 Medium「Drawer open background scrolls」)。关闭时还原原值。
@@ -350,6 +392,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   };
 
   return (
+    <ConsoleAuthContext.Provider value={{ status: authStatus, pending: authPending, retry: () => setAuthAttempt(value => value + 1) }}>
     <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
     <div
       className="cds-app-shell"
@@ -412,6 +455,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {canManageSettings ? <SiteNoticeInbox /> : null}
     </div>
     </MobileNavContext.Provider>
+    </ConsoleAuthContext.Provider>
   );
 }
 
@@ -420,7 +464,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
  * keystroke chip and dispatches the open event when clicked. Pages should
  * render this as the leftmost item in their TopBar `right` slot.
  */
-export function PaletteHint(): JSX.Element {
+export function PaletteHint(): JSX.Element | null {
+  if (!useCanManageConsole()) return null;
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform);
   const open = () => window.dispatchEvent(new Event('cds:open-palette'));
   return (
