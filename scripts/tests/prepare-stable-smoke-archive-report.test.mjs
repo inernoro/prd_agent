@@ -46,3 +46,40 @@ test('归档版把历史截图别名统一到唯一图号', () => {
   assert.match(archived, /\[图024\]\(#fig-024\)/);
   assert.doesNotMatch(archived, /fig-024-recording-real-transcription-failure/);
 });
+
+test('正式环境只读报告声明零视觉任务时允许空清单', () => {
+  const report = `# 正式环境只读报告
+
+## 逐模块视觉取证任务
+
+本轮无视觉取证任务。原因：正式环境单独运行仅执行只读健康检查，不进入需要截图取证的业务创作页面。需要完整视觉结论时，执行 CDS 或双环境全量稳定冒烟。
+
+## 视觉异常证据索引
+
+本轮没有可列出的视觉异常证据。`;
+  assert.equal(prepareArchiveReport(report, []), report);
+});
+
+test('空清单没有正式只读零视觉声明时仍拒绝归档', () => {
+  const report = `# 不完整报告
+
+## 逐模块视觉取证任务
+
+本轮没有截图。`;
+  assert.throws(
+    () => prepareArchiveReport(report, []),
+    /缺少“视觉证据图片”或“视觉测试方法”章节/,
+  );
+});
+
+test('非空清单缺少标准视觉章节时仍拒绝归档', () => {
+  const report = `# 错误报告
+
+## 逐模块视觉取证任务
+
+本轮无视觉取证任务。原因：正式环境单独运行仅执行只读健康检查。`;
+  assert.throws(
+    () => prepareArchiveReport(report, [{ name: '001-entry', module: '登录' }]),
+    /缺少“视觉证据图片”或“视觉测试方法”章节/,
+  );
+});

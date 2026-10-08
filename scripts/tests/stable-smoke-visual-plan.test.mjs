@@ -72,13 +72,13 @@ test('正式环境只读健康检查不生成无关的完整视觉矩阵', () =>
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     scope: 'production-read-only',
     environmentOrigins: { production: 'https://map.example.test' },
-    gatewayEnvironmentOrigins: { production: 'https://gateway.example.test' },
   });
   assert.equal(plan.schemaVersion, '3.0');
   assert.equal(plan.scope, 'production-read-only');
   assert.equal(plan.plannedScreenshotTarget, 0);
   assert.deepEqual(plan.modules, []);
   assert.deepEqual(plan.slots, []);
+  assert.deepEqual(plan.gatewayEnvironmentOrigins, {});
   const report = renderVisualPlan(plan);
   assert.match(report, /完整视觉门禁不适用/);
   assert.match(report, /不代表完整视觉验收通过/);

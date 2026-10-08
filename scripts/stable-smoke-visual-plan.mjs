@@ -80,17 +80,9 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     normalizeOrigin(runIdentity.gatewayEnvironmentOrigins?.[environment]),
   ]).filter(([, origin]) => origin));
   const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
-  if (hasRunIdentity) {
-    for (const environment of environments) {
-      if (!environmentOrigins[environment]) {
-        throw new Error(`${environmentLabel(environment)}主应用视觉取证地址未配置`);
-      }
-      if ((catalog.modules || []).some((module) => module.originKind === 'gateway')
-          && !gatewayEnvironmentOrigins[environment]) {
-        throw new Error(`${environmentLabel(environment)}模型网关视觉取证地址未配置`);
-      }
-    }
-  }
+  // 正式环境单独运行时只做 CORE-001 只读健康检查，视觉计划固定为零项。
+  // 这条路径不会打开模型网关页面，因此不能反向要求配置一个不会被使用的网关地址；
+  // 否则 production-only 会在业务检查前被视觉计划生成器误拦截，零视觉归档链永远无法复测。
   if (scope === 'production-read-only') {
     return {
       schemaVersion: hasRunIdentity ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
@@ -107,6 +99,17 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
       modules: [],
       slots: [],
     };
+  }
+  if (hasRunIdentity) {
+    for (const environment of environments) {
+      if (!environmentOrigins[environment]) {
+        throw new Error(`${environmentLabel(environment)}主应用视觉取证地址未配置`);
+      }
+      if ((catalog.modules || []).some((module) => module.originKind === 'gateway')
+          && !gatewayEnvironmentOrigins[environment]) {
+        throw new Error(`${environmentLabel(environment)}模型网关视觉取证地址未配置`);
+      }
+    }
   }
   if (scope !== 'full') throw new Error(`不支持的视觉取证范围：${scope}`);
   const planEnvironments = environments.length > 0 ? environments : [''];
