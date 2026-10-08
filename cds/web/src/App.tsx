@@ -8,7 +8,6 @@ import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { ConsoleLayout, OwnerConsoleRoute } from '@/components/layout/AppShell';
 import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
-import { BugReportDialog } from '@/components/BugReportDialog';
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
@@ -259,7 +258,6 @@ export function App(): JSX.Element {
           就绪前保留上一页(不闪骨架),就绪后一次性切换,消除切页卡顿感。 */}
       <BrowserRouter future={{ v7_startTransition: true }}>
         <GlobalAgentAccess />
-        <BugReportDialog />
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}

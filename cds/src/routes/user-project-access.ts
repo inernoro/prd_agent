@@ -5,36 +5,8 @@ import type { AuthService } from '../services/auth-service.js';
 import type { CdsUser } from '../domain/auth.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpdate, isHumanProjectGrantUpdatePending,
-  humanProjectGrantUpdateStatus, markHumanProjectGrantRecovery } from '../services/human-project-access.js';
-
-function flushWaitMs(): number {
-  const value = Number(process.env.CDS_GRANT_FLUSH_TIMEOUT_MS);
-  return Number.isFinite(value) && value >= 10 && value <= 120_000 ? value : 30_000;
-}
-
-async function boundedFlush(pending: Promise<void>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([pending, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('grant persistence wait expired')), flushWaitMs());
-    })]);
-  } finally { if (timer) clearTimeout(timer); }
-}
-
-/** Keep the gate until the serialized write chain confirms the restored snapshot. */
-function reconcileGrantRestore(state: StateService, pending: Promise<void>, release: () => void): void {
-  void pending.then(release, () => {
-    const reference = new WeakRef(state);
-    const timer = setTimeout(() => {
-      const live = reference.deref();
-      if (!live) return;
-      try { live.save(); reconcileGrantRestore(live, live.flush(), release); }
-      catch { reconcileGrantRestore(live, Promise.reject(new Error('restore save failed')), release); }
-    }, Number(process.env.CDS_GRANT_RECONCILE_MS) >= 20
-      ? Math.min(Number(process.env.CDS_GRANT_RECONCILE_MS), 30_000) : 5_000);
-    timer.unref();
-  });
-}
+  humanProjectGrantUpdateStatus, markHumanProjectGrantRecovery,
+  boundedHumanAccessFlush as boundedFlush, reconcileHumanAccessRestore as reconcileGrantRestore } from '../services/human-project-access.js';
 
 export function createUserProjectAccessRouter(deps: { stateService: StateService; authService: AuthService }): Router {
   const router = Router();
@@ -71,6 +43,10 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         const now = new Date().toISOString();
         finishUpdate = beginHumanProjectGrantUpdate(state, principalId);
         if (!finishUpdate) { res.status(409).json({ error: '此账号的项目授权正在保存，请稍后刷新并重试。' }); return; }
+        // The first lookup may have awaited across an account disable. Read its
+        // status again under the same gate used by account/credential changes.
+        const lockedUser = await auth.findUserById(user.id);
+        if (!lockedUser) { res.status(404).json({ error: '用户不存在，请刷新用户列表。' }); return; }
         const priorPrincipal = state.getPrincipal(principalId);
         const priorGrantIds = new Set(state.getProjectGrants().filter(g => g.principalId === principalId).map(g => g.id));
         const priorCredentialIds = new Set(state.getUserCredentials().filter(c => c.principalId === principalId).map(c => c.id));
@@ -83,7 +59,7 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         let writing: Promise<void> | undefined;
         try {
           if (!priorPrincipal) {
-            createdPrincipal = { id: principalId, name: user.username || user.githubLogin, kind: 'human', status: 'active',
+            createdPrincipal = { id: principalId, name: user.username || user.githubLogin, kind: 'human', status: lockedUser.status,
               createdAt: now, createdBy: actorLogin };
             state.addPrincipal(createdPrincipal);
           }
@@ -111,7 +87,7 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
           }
           const independentlyUsed = grants.some(g => g.principalId === principalId && !priorGrantIds.has(g.id))
             || state.getUserCredentials().some(c => c.principalId === principalId && !priorCredentialIds.has(c.id));
-          if (createdPrincipal && !independentlyUsed && createdPrincipal.status === 'active') {
+          if (createdPrincipal && !independentlyUsed && createdPrincipal.status === lockedUser.status) {
             const principals = state.getPrincipals();
             const index = principals.indexOf(createdPrincipal);
             if (index >= 0) principals.splice(index, 1);

@@ -1,13 +1,13 @@
 /**
  * 全局快捷提 bug（Ctrl+B / Command+B）。
  *
- * 挂载在 App 根，跨路由常驻，提供两个入口：
+ * 挂载在控制台持久化外壳，仅系统所有者可用，提供两个入口：
  *   1. 快捷键 Ctrl+B（Mac 上 Command+B），输入框聚焦时不抢占（见 BugReportCore）；
  *   2. window 事件 OPEN_BUG_REPORT_EVENT，由控制台左侧栏固定入口触发，也允许其它组件携预填打开。
  *
  * 模态三硬约束：createPortal 到 document.body、尺寸走 inline style、
  * 滚动区 minHeight:0 + overflowY:auto + overscrollBehavior:contain。
- * z-index：遮罩 300（portal 顶层）——本弹窗由 App 根 portal 出来，必须盖住
+ * z-index：遮罩 300（portal 顶层）——本弹窗由外壳 portal 出来，必须盖住
  * 信息中心与其它全局 chrome。见 .claude/rules/cds-theme-tokens.md §4。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';

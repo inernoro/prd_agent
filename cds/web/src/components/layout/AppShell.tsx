@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
-import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
+import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
@@ -455,6 +455,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         </div>
       )}
       {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
+      {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
       {canManageSettings ? <OperatorApprovalModal /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到

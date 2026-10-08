@@ -21,8 +21,9 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
+import type { AuthService } from '../services/auth-service.js';
 import { assertNotMachineAgentKey } from './projects.js';
-import { isHumanProjectGrantUpdatePending } from '../services/human-project-access.js';
+import { isHumanProjectGrantUpdatePending, beginHumanProjectGrantUpdate } from '../services/human-project-access.js';
 import type { AgentKey, Principal, ProjectGrant, UserCredential } from '../types.js';
 import {
   buildPrincipalOverview,
@@ -37,6 +38,7 @@ import {
 
 export interface IdentityRouterDeps {
   stateService: StateService;
+  authService?: AuthService;
   /** disabled 模式（本地 dev 全站无鉴权）下 dashboard 用户即管理员。 */
   authMode?: 'disabled' | 'basic' | 'github';
 }
@@ -290,16 +292,33 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
   });
 
   // ── 停用 / 恢复主体 ─────────────────────────────────────────────
-  router.post('/identity/principals/:id/status', (req, res) => {
+  router.post('/identity/principals/:id/status', async (req, res, next) => {
     const admin = requireAdmin(req);
     if (!admin.ok) { res.status(403).json(admin.body); return; }
     const body = (req.body || {}) as { status?: Principal['status'] };
     const status = body.status === 'disabled' ? 'disabled' : 'active';
-    if (!stateService.setPrincipalStatus(req.params.id, status, actorOf(req))) {
-      res.status(404).json({ error: 'not_found', message: `主体 ${req.params.id} 不存在` });
-      return;
+    const principalId = req.params.id;
+    if (isHumanProjectGrantUpdatePending(stateService, principalId)) {
+      res.status(409).json({ error: 'access_update_pending', message: '此账号的访问状态正在保存，请稍后重试。' }); return;
     }
-    res.json({ ok: true, principalId: req.params.id, status });
+    let finishUpdate: (() => void) | undefined;
+    try {
+      if (status === 'active' && principalId.startsWith('human:') && deps.authService) {
+        finishUpdate = beginHumanProjectGrantUpdate(stateService, principalId);
+        if (!finishUpdate) {
+          res.status(409).json({ error: 'access_update_pending', message: '此账号的访问状态正在保存，请稍后重试。' }); return;
+        }
+        const user = await deps.authService.findUserById(principalId.slice('human:'.length));
+        if (!user || user.status !== 'active') {
+          res.status(409).json({ error: 'account_not_active', message: '关联账号已停用或正在保存，请先在用户管理中恢复账号。' }); return;
+        }
+      }
+      if (!stateService.setPrincipalStatus(principalId, status, actorOf(req))) {
+        res.status(404).json({ error: 'not_found', message: `主体 ${principalId} 不存在` }); return;
+      }
+      res.json({ ok: true, principalId, status });
+    } catch (error) { next(error); }
+    finally { finishUpdate?.(); }
   });
 
   // ── 授予 / 撤销项目授权 ─────────────────────────────────────────

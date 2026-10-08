@@ -42,6 +42,32 @@ export function beginHumanProjectGrantUpdate(state: StateService, principalId: s
   return () => { pending.delete(principalId); };
 }
 
+export async function boundedHumanAccessFlush(pending: Promise<void>): Promise<void> {
+  const value = Number(process.env.CDS_GRANT_FLUSH_TIMEOUT_MS);
+  const waitMs = Number.isFinite(value) && value >= 10 && value <= 120_000 ? value : 30_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('human access persistence wait expired')), waitMs);
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+/** Keep the gate until the serialized write chain confirms a safe snapshot. */
+export function reconcileHumanAccessRestore(state: StateService, pending: Promise<void>, release: () => void): void {
+  void pending.then(release, () => {
+    const reference = new WeakRef(state);
+    const timer = setTimeout(() => {
+      const live = reference.deref();
+      if (!live) return;
+      try { live.save(); reconcileHumanAccessRestore(live, live.flush(), release); }
+      catch { reconcileHumanAccessRestore(live, Promise.reject(new Error('restore save failed')), release); }
+    }, Number(process.env.CDS_GRANT_RECONCILE_MS) >= 20
+      ? Math.min(Number(process.env.CDS_GRANT_RECONCILE_MS), 30_000) : 5_000);
+    timer.unref();
+  });
+}
+
 /** Complete log/diagnostic payloads reuse the established secret masker. */
 export function logPayloadForHumanView<T>(req: unknown, payload: T): T {
   if (!isScopedHuman(req)) return payload;

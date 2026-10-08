@@ -2713,7 +2713,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, cookieSecure, bootstrapAllowed }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -3357,6 +3357,7 @@ export function createServer(deps: ServerDeps): express.Express {
   if (authMode === 'basic' && authService) {
     app.use('/api', createAuthLocalRouter({
       authService,
+      stateService: deps.stateService,
       cookieSecure,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
@@ -4515,7 +4516,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCredentialSelfCheckRouter({ stateService: deps.stateService }));
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
-  app.use('/api', createIdentityRouter({ stateService: deps.stateService }));
+  app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({

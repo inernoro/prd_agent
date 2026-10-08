@@ -86,6 +86,12 @@ describe('human project access UI wiring', () => {
     expect(drawer).toContain('canManageConsole ? apiRequest');
     expect(drawer).toContain('不可变部署版本仅系统所有者可用');
   });
+  it('mounts the global report shortcut only inside the owner-capable persistent shell', () => {
+    expect(read('App.tsx')).not.toContain('<BugReportDialog />');
+    const shell = read('components/layout/AppShell.tsx');
+    expect(shell).toContain('{canManageSettings ? <BugReportDialog /> : null}');
+    expect(shell.indexOf('<ConsoleAuthContext.Provider')).toBeLessThan(shell.indexOf('<BugReportDialog />'));
+  });
   it.each(['multi', 'simple', 'port'] as const)('keeps owner previews and limits member controls to supported %s mode', mode => {
     expect(canUseConsolePreview(mode, true)).toBe(true);
     expect(canUseConsolePreview(mode, false)).toBe(mode === 'multi');
