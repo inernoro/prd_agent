@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { loadPlaywright } from '../../.claude/skills/create-visual-test-to-kb/scripts/playwright-runtime.mjs';
 import { isConfiguredCdsTargetHost } from '../../.claude/skills/create-visual-test-to-kb/scripts/report-view.mjs';
+import { isMeasuredMobileEnvironment } from '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
 
 const runtime = { chromium: { launch() {} } };
 
@@ -38,4 +39,28 @@ test('报告凭据只注入当前 CDS_HOST 的精确主机', () => {
   assert.equal(isConfiguredCdsTargetHost('miduo.org.evil.example', 'https://miduo.org'), false);
   assert.equal(isConfiguredCdsTargetHost('reports.miduo.org', 'https://miduo.org'), false);
   assert.equal(isConfiguredCdsTargetHost('miduo.org', ''), false);
+});
+
+test('移动视觉证据必须同时具备窄屏、真实触控和移动设备语义', () => {
+  assert.equal(isMeasuredMobileEnvironment({
+    viewportWidth: 390,
+    touchPoints: 5,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148',
+  }), true);
+  assert.equal(isMeasuredMobileEnvironment({
+    viewportWidth: 390,
+    touchPoints: 0,
+    userAgent: 'Mozilla/5.0 (iPhone) Mobile/15E148',
+  }), false);
+  assert.equal(isMeasuredMobileEnvironment({
+    viewportWidth: 390,
+    touchPoints: 5,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)',
+  }), false);
+  assert.equal(isMeasuredMobileEnvironment({
+    configuredMobile: true,
+    viewportWidth: 390,
+    touchPoints: 1,
+    userAgent: 'custom-device',
+  }), true);
 });

@@ -3,6 +3,7 @@ import type { Locator, Page, TestInfo } from '@playwright/test';
 export type StableSmokeVisualEvidenceInput = {
   slotId: string;
   target?: Locator;
+  themeTarget?: Locator;
   caption?: string;
   expectText?: string | RegExp;
   overviewJustification?: string;

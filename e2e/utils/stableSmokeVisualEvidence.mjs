@@ -256,6 +256,12 @@ export function createStableSmokeVisualEvidence(options = {}) {
           throw new Error(`视觉位 ${slotId} 的可见目标必须唯一。`);
         }
       }
+      if (input.themeTarget) {
+        await input.themeTarget.waitFor({ state: 'visible', timeout: input.timeout || 15_000 });
+        if (await input.themeTarget.count() !== 1) {
+          throw new Error(`视觉位 ${slotId} 的主题测量区域必须唯一。`);
+        }
+      }
 
       const harness = await harnessLoader();
       if (input.target) await harness.box(page, input.target, '1');
@@ -278,6 +284,7 @@ export function createStableSmokeVisualEvidence(options = {}) {
           status,
           manualStatus: status,
           theme: slot.theme,
+          themeTarget: input.themeTarget,
           methodAnchor: slot.methodAnchor,
           breadcrumb: slot.breadcrumb,
           environment: slot.environment,

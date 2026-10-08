@@ -67,6 +67,7 @@ function fakeHarness(delay = 0) {
     shot: async (currentPage, outputPath, name, caption, options) => {
       if (delay) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
       const location = new URL(currentPage.url());
+      const { themeTarget: _themeTarget, ...serializableOptions } = options;
       return {
         name,
         caption,
@@ -75,7 +76,7 @@ function fakeHarness(delay = 0) {
         pageOrigin: location.origin,
         pagePath: location.pathname,
         automatedStatus: '通过',
-        ...options,
+        ...serializableOptions,
         theme: options.theme,
         viewportClass: options.viewportClass || 'desktop',
       };
@@ -238,7 +239,34 @@ test('目标必须唯一，整体截图必须说明证明范围', async () => {
   }
 });
 
-test('真实单图与多图旅程接入计划槽位而不是普通附件截图', () => {
+test('局部作用域皮肤可指定唯一主题测量区域并传给取证器', async () => {
+  const current = fixture();
+  const measuredThemeTarget = target();
+  let receivedThemeTarget;
+  try {
+    const harness = fakeHarness();
+    const capture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => ({
+        ...harness,
+        shot: async (...args) => {
+          receivedThemeTarget = args[4].themeTarget;
+          return harness.shot(...args);
+        },
+      }),
+    });
+    await capture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+      themeTarget: measuredThemeTarget,
+    });
+    assert.equal(receivedThemeTarget, measuredThemeTarget);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('真实单图、多图与录音旅程接入计划槽位而不是普通附件截图', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
   for (const slotId of [
     'CDS-VISUAL-SINGLE-IMAGE-CREATION-08',
@@ -251,6 +279,14 @@ test('真实单图与多图旅程接入计划槽位而不是普通附件截图',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-11',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-12',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-13',
+    'CDS-VISUAL-RECORDING-AUDIO-01',
+    'CDS-VISUAL-RECORDING-AUDIO-06',
+    'CDS-VISUAL-RECORDING-AUDIO-07',
+    'CDS-VISUAL-RECORDING-AUDIO-08',
+    'CDS-VISUAL-RECORDING-AUDIO-09',
+    'CDS-VISUAL-RECORDING-AUDIO-11',
+    'CDS-VISUAL-RECORDING-AUDIO-12',
+    'CDS-VISUAL-RECORDING-AUDIO-13',
   ]) {
     assert.match(source, new RegExp(`slotId: '${slotId}'`));
   }
@@ -258,4 +294,9 @@ test('真实单图与多图旅程接入计划槽位而不是普通附件截图',
     source,
     /captureStableSmokeVisualEvidence[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-12[\s\S]*?const canvasSaveResponsePromise = page\.waitForResponse/,
   );
+  assert.match(
+    source,
+    /CDS-VISUAL-RECORDING-AUDIO-06[\s\S]*?const transcribeResponsePromise = page\.waitForResponse[\s\S]*?releaseUpload\?\.\(\)/,
+  );
+  assert.match(source, /browser\.newContext\(\{ \.\.\.devices\['iPhone 13'\]/);
 });

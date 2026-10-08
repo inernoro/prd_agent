@@ -2673,7 +2673,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }));
       storeId = store.id;
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText(title, { exact: true })).toBeVisible({ timeout: 30_000 });
+      const storeTitle = page.getByText(title, { exact: true }).first();
+      await expect(storeTitle).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-01',
+        target: storeTitle,
+        caption: '从知识库真实入口进入独立录音转写空间，空间标题和音频入口均已加载。',
+      });
 
       const uploadPath = `/api/document-store/stores/${storeId}/upload`;
       let releaseUpload: (() => void) | undefined;
@@ -2689,10 +2695,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.url().includes(uploadPath) && response.request().method() === 'POST'
       ));
-      const transcribeResponsePromise = page.waitForResponse((response) => (
-        /\/api\/document-store\/entries\/[^/]+\/transcribe(?:\?|$)/.test(response.url())
-        && response.request().method() === 'POST'
-      ));
       const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-speech.m4a`;
       const setFile = page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
         name: fileName,
@@ -2705,8 +2707,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(uploadStep).toHaveAttribute('data-state', 'active');
       await expect(page.getByText('正在上传录音', { exact: true })).toBeVisible();
       await expect(page.getByText(/^\d+%$/).first()).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-06',
+        target: uploadStep,
+        caption: '真实音频文件正在上传，文件名、当前步骤和百分比同时可见。',
+      });
       await testInfo.attach('recording-upload-stage', { body: await page.screenshot(), contentType: 'image/png' });
 
+      // 视觉取证会等待页面稳定并重试截图。转录请求只在上传响应回来后才触发，
+      // 因此监听必须紧贴 releaseUpload；提前创建会先耗尽 10 秒 actionTimeout，误报未发生的请求超时。
+      const transcribeResponsePromise = page.waitForResponse((response) => (
+        /\/api\/document-store\/entries\/[^/]+\/transcribe(?:\?|$)/.test(response.url())
+        && response.request().method() === 'POST'
+      ));
       releaseUpload?.();
       await setFile;
       const uploadResponse = await uploadResponsePromise;
@@ -2726,13 +2739,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(transcribeBody.success, transcribeBody.error?.message || '启动录音转录失败').toBe(true);
       runId = transcribeBody.data.runId;
       const transcribeStep = page.getByTestId('transcribe-step-transcribe');
+      await expect(uploadStep).toHaveAttribute('data-state', 'done');
       await expect(transcribeStep).toHaveAttribute('data-state', 'active', { timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-07',
+        target: uploadStep,
+        caption: '音频上传已完成，上传里程碑明确进入完成态并开始下一阶段。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-08',
+        target: transcribeStep,
+        caption: '服务端真实转录任务已启动，转录步骤持续显示活动状态。',
+      });
       await testInfo.attach('recording-transcribe-stage', { body: await page.screenshot(), contentType: 'image/png' });
 
-      await expect(page.getByText(/录音和原文已保存|查看转录笔记/).first()).toBeVisible({ timeout: 180_000 });
+      const completion = page.getByText(/录音和原文已保存|查看转录笔记/).first();
+      await expect(completion).toBeVisible({ timeout: 180_000 });
       await expect(uploadStep).toHaveAttribute('data-state', 'done');
       await expect(transcribeStep).toHaveAttribute('data-state', 'done');
       await expect(page.getByTestId('transcribe-step-finish')).toHaveAttribute('data-state', 'done');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-09',
+        target: completion,
+        caption: '真实转录完成，三步里程碑均已完成并提供结果入口。',
+      });
       await testInfo.attach('recording-saved-stage', { body: await page.screenshot(), contentType: 'image/png' });
 
       const run = await readEnvelope<{
@@ -2743,10 +2773,32 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(run.status).toBe('done');
       expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
       expect(run.outputEntryId).toBe(entryId);
+      const transcriptText = (run.transcriptText || '').trim();
       const persisted = await readEnvelope<{ items: Array<{ id: string }> }>(
         await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }),
       );
       expect(persisted.items.map((item) => item.id)).toContain(entryId);
+
+      const transcriptResult = page.getByText(transcriptText, { exact: false }).first();
+      await expect(transcriptResult).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-13',
+        target: transcriptResult,
+        caption: '暗色桌面完成抽屉展示真实转录原文、编辑入口和后续整理操作。',
+      });
+
+      const openOriginal = page.getByRole('button', { name: '查看录音原文' });
+      await expect(openOriginal).toBeVisible();
+      await openOriginal.click();
+      await expect(page.getByText(transcriptText, { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      const persistedResult = page.getByText(transcriptText, { exact: false }).first();
+      await expect(persistedResult).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-11',
+        target: persistedResult,
+        caption: '刷新后同一音频条目和真实转录原文仍可回读，持久化状态未丢失。',
+      });
     } finally {
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
@@ -2978,10 +3030,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-001][REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ page, request, context }) => {
+  test('[REC-001][REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
     test.setTimeout(120_000);
-    await context.grantPermissions(['microphone']);
-    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    await mobileContext.grantPermissions(['microphone']);
+    const page = await mobileContext.newPage();
     await page.addInitScript(() => {
       class DeterministicMediaRecorder extends EventTarget {
         static isTypeSupported() { return false; }
@@ -3106,6 +3159,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(timer).toBeVisible();
       await expect(timer).toHaveText(/^\d{2}:\d{2}$/);
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-RECORDING-AUDIO-12',
+        target: recordingState,
+        themeTarget: page.locator('.recording-design-palette'),
+        caption: '真实移动端窄屏已开始录音，计时、麦克风状态、保护状态和操作按钮均可见。',
+      });
+      // CDS 分支小部件可能在视觉取证等待期间才注入；点击产品按钮前再次隔离外部平台浮层。
+      await dismissCdsPreviewWidget(page);
 
       await page.getByRole('button', { name: '暂停录音' }).click();
       await expect(recordingState).toHaveAttribute('data-state', 'paused');
@@ -3161,6 +3222,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
         }
       }
+      await mobileContext.close();
     }
   });
 
