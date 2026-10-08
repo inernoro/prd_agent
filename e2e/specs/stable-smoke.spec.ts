@@ -2155,11 +2155,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', { tag: '@cleanup' }, async ({ page, request }) => {
-    test.setTimeout(90_000);
+  test('[FILE-003] 文件上传后明确切换解析阶段并回读结果', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
+    let entryId = '';
+    let releaseRequest: (() => void) | undefined;
+    let releaseResponse: (() => void) | undefined;
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -2168,29 +2171,318 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       storeId = store.id;
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
-      await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
-
-      let releaseUpload!: () => void;
-      const release = new Promise<void>((resolveRelease) => { releaseUpload = resolveRelease; });
-      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
-        await release;
-        await route.continue();
+      await dismissCdsPreviewWidget(page);
+      const storeTitle = page.getByText(runKey, { exact: true }).first();
+      await expect(storeTitle).toBeVisible({ timeout: 15_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-01',
+        target: storeTitle,
+        caption: '从知识库真实入口进入文件上传空间，空间标题、文档区域和新增入口完整可见。',
       });
-      const name = `${runKey}.txt`;
-      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+
+      await page.locator('[data-tour-id="doc-create-fab"]').click();
+      const importGroup = page.getByRole('button', { name: '上传与导入', exact: true });
+      await expect(importGroup).toBeVisible({ timeout: 5_000 });
+      await importGroup.click();
+      const uploadFileAction = page.getByRole('button', { name: '上传文件', exact: true });
+      await expect(uploadFileAction).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-02',
+        target: uploadFileAction,
+        caption: '桌面新增菜单已展开到上传与导入分组，上传文件入口可直接选择且没有被其他浮层遮挡。',
+      });
+
+      let markRequestIntercepted!: () => void;
+      let markResponseReady!: () => void;
+      const requestGate = new Promise<void>((resolveRelease) => { releaseRequest = resolveRelease; });
+      const responseGate = new Promise<void>((resolveRelease) => { releaseResponse = resolveRelease; });
+      const requestIntercepted = new Promise<void>((resolveIntercepted) => { markRequestIntercepted = resolveIntercepted; });
+      const responseReady = new Promise<void>((resolveReady) => { markResponseReady = resolveReady; });
+      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
+        markRequestIntercepted();
+        await requestGate;
+        const response = await route.fetch();
+        markResponseReady();
+        await responseGate;
+        await route.fulfill({ response });
+      });
+      const marker = `${runKey}-可读正文`;
+      const name = `${runKey}-这是一份用于确认超长中文文件名不会挤压解析状态和操作按钮的稳定冒烟样本.txt`;
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      const chooserPromise = page.waitForEvent('filechooser');
+      await uploadFileAction.click();
+      const chooser = await chooserPromise;
+      await chooser.setFiles({
         name,
         mimeType: 'text/plain',
-        buffer: Buffer.alloc(2 * 1024 * 1024, 65),
+        buffer: Buffer.from(`${marker}\n${'文件解析阶段必须持续反馈。\n'.repeat(4_096)}`, 'utf8'),
       });
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/^\d+%$/)).toBeVisible();
-      releaseUpload();
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      await requestIntercepted;
+      const progressCard = page.getByTestId('document-upload-progress');
+      const uploadTitle = page.getByText(`正在上传 ${name}`, { exact: true });
+      await expect(progressCard).toHaveAttribute('data-phase', 'uploading');
+      await expect(uploadTitle).toBeVisible({ timeout: 10_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-03',
+        target: progressCard,
+        caption: '所选 TXT 类型和超长中文文件名在上传卡中被正确识别，状态区仍保留完整空间。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-04',
+        target: page.getByTestId('document-upload-status'),
+        caption: '文件字节正在真实上传，文件名、当前阶段和实时百分比同时可见。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-15',
+        target: uploadTitle,
+        caption: '超长中文文件名在桌面上传卡内安全截断，没有挤压右侧百分比与阶段状态。',
+      });
+
+      releaseRequest?.();
+      await responseReady;
+      const parsingTitle = page.getByText(`正在解析 ${name}`, { exact: true });
+      await expect(progressCard).toHaveAttribute('data-phase', 'parsing', { timeout: 15_000 });
+      await expect(parsingTitle).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-05',
+        target: parsingTitle,
+        caption: '文件字节上传完成后明确切换到解析准备态，不再把服务端等待伪装成上传 99%。',
+      });
+      await expect(page.getByTestId('document-upload-status')).toContainText('已等待 1 秒', { timeout: 5_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-06',
+        target: progressCard,
+        caption: '服务端解析等待期间持续显示旋转反馈和递增秒数，超过两秒也不会成为静止加载。',
+      });
+
+      releaseResponse?.();
+      const uploadResponse = await uploadResponsePromise;
+      const uploadBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(uploadResponse.ok(), uploadBody.error?.message || '文件上传解析失败').toBe(true);
+      expect(uploadBody.success, uploadBody.error?.message || '文件上传解析失败').toBe(true);
+      entryId = uploadBody.data.entry.id;
+      await page.unroute(`**/api/document-store/stores/${storeId}/upload`);
+
+      const readableResult = page.getByText(marker, { exact: false }).first();
+      await expect(readableResult).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-07',
+        target: readableResult,
+        caption: '真实 TXT 文件解析完成并自动打开，正文标记可读且与上传内容一致。',
+      });
+
+      await page.getByTitle('更多操作').click();
+      await page.getByRole('button', { name: '下载文档…', exact: true }).click();
+      const downloadDialog = page.getByText('下载文档', { exact: true });
+      await expect(downloadDialog).toBeVisible();
+      await expect(page.getByRole('button', { name: '当前文章', exact: true })).toBeEnabled();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-13',
+        target: downloadDialog,
+        caption: '暗色桌面解析结果已提供当前文章下载入口，正文、范围和文件格式选择完整可见。',
+      });
+      await page.getByRole('button', { name: '取消', exact: true }).click();
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      const persistedResult = page.getByText(marker, { exact: false }).first();
+      await expect(persistedResult).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-11',
+        target: persistedResult,
+        caption: '刷新页面后同一文件解析正文仍可回读，条目与内容持久化均未丢失。',
+      });
+    } finally {
+      releaseRequest?.();
+      releaseResponse?.();
+      await page.unroute(`**/api/document-store/stores/${storeId}/upload`).catch(() => undefined);
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+    }
+  });
+
+  test('[FILE-004][REG-file-002] 损坏文件提示可恢复并允许重试成功', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动上传损坏文档');
+    test.setTimeout(120_000);
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-file-retry`;
+    const corruptName = `${runKey}-损坏样本.docx`;
+    const recoveredMarker = `${runKey}-重试成功正文`;
+    let storeId = '';
+    let entryId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '文件损坏恢复稳定冒烟，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(page.getByText(runKey, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+
+      const corruptResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+        name: corruptName,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        buffer: Buffer.from('not-a-docx'),
+      });
+      const corruptResponse = await corruptResponsePromise;
+      const corruptBody = await corruptResponse.json() as ApiEnvelope<never>;
+      expect(corruptResponse.status()).toBe(400);
+      expectUserReadable(corruptBody.error?.message || '');
+      const failureTitle = page.getByText(`上传失败: ${corruptName}`, { exact: true });
+      const failureDetail = page.getByText(corruptBody.error?.message || '', { exact: true });
+      await expect(failureTitle).toBeVisible({ timeout: 10_000 });
+      await expect(failureDetail).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-08',
+        target: failureTitle,
+        caption: '真实损坏 DOCX 被解析器拒绝且没有生成伪条目，页面明确标识失败文件。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-09',
+        target: failureDetail,
+        caption: '损坏文件错误使用用户可理解文案说明结果和恢复动作，没有暴露协议或堆栈细节。',
+      });
+
+      const retryResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+        name: `${runKey}-重试.txt`,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(recoveredMarker, 'utf8'),
+      });
+      const retryResponse = await retryResponsePromise;
+      const retryBody = await retryResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(retryResponse.ok(), retryBody.error?.message || '文件重试上传失败').toBe(true);
+      expect(retryBody.success, retryBody.error?.message || '文件重试上传失败').toBe(true);
+      entryId = retryBody.data.entry.id;
+      const recoveredResult = page.getByText(recoveredMarker, { exact: false }).first();
+      await expect(recoveredResult).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-10',
+        target: recoveredResult,
+        caption: '同一知识库在损坏文件失败后重新选择有效文件，第二次独立请求成功并展示可读正文。',
+      });
     } finally {
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
       }
+    }
+  });
+
+  test('[FILE-003][FILE-004] 移动端触控上传、损坏恢复与刷新回读', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动上传损坏文档');
+    test.setTimeout(150_000);
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await mobileContext.newPage();
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-mobile-file`;
+    const marker = `${runKey}-移动端重试成功正文`;
+    let storeId = '';
+    let entryId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '移动端文件恢复稳定冒烟，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(page.getByText(runKey, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      const importGroup = page.getByRole('button', { name: '上传与导入', exact: true });
+      await expect(importGroup).toBeVisible({ timeout: 5_000 });
+      await importGroup.tap();
+      const mobileUploadAction = page.getByRole('button', { name: '上传文件', exact: true });
+      await expect(mobileUploadAction).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-12',
+        target: mobileUploadAction,
+        caption: '真实 iPhone 触控视口展开上传与导入分组，上传文件入口位于底部导航上方且无遮挡。',
+      });
+
+      const corruptResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      const corruptChooserPromise = page.waitForEvent('filechooser');
+      await mobileUploadAction.tap();
+      const corruptChooser = await corruptChooserPromise;
+      const corruptName = `${runKey}-损坏.docx`;
+      await corruptChooser.setFiles({
+        name: corruptName,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        buffer: Buffer.from('not-a-docx'),
+      });
+      const corruptResponse = await corruptResponsePromise;
+      const corruptBody = await corruptResponse.json() as ApiEnvelope<never>;
+      expect(corruptResponse.status()).toBe(400);
+      expectUserReadable(corruptBody.error?.message || '');
+      const mobileFailure = page.getByText(corruptBody.error?.message || '', { exact: true });
+      await expect(mobileFailure).toBeVisible({ timeout: 10_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-14',
+        target: mobileFailure,
+        caption: '真实 iPhone 触控视口上传损坏 DOCX 后显示用户可读提示，正文区域和重试入口仍可操作。',
+      });
+
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
+      const retryAction = page.getByRole('button', { name: '上传文件', exact: true });
+      const retryResponsePromise = page.waitForResponse((response) => (
+        response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+        && response.request().method() === 'POST'
+      ));
+      const retryChooserPromise = page.waitForEvent('filechooser');
+      await retryAction.tap();
+      const retryChooser = await retryChooserPromise;
+      await retryChooser.setFiles({
+        name: `${runKey}-重试.txt`,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(marker, 'utf8'),
+      });
+      const retryResponse = await retryResponsePromise;
+      const retryBody = await retryResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(retryResponse.ok(), retryBody.error?.message || '移动端重试上传失败').toBe(true);
+      expect(retryBody.success, retryBody.error?.message || '移动端重试上传失败').toBe(true);
+      entryId = retryBody.data.entry.id;
+      await expect(page.getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      const persistedMobileResult = page.getByText(marker, { exact: false }).first();
+      await expect(persistedMobileResult).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-FILE-PARSING-16',
+        target: persistedMobileResult,
+        caption: '移动端损坏文件失败后重试有效文件成功，刷新页面仍能读取同一解析正文。',
+      });
+    } finally {
+      if (storeId) {
+        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deleted.status());
+        if (entryId) {
+          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+      await mobileContext.close();
     }
   });
 

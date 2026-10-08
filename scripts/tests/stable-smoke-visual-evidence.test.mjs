@@ -266,7 +266,7 @@ test('局部作用域皮肤可指定唯一主题测量区域并传给取证器',
   }
 });
 
-test('真实单图、多图与录音旅程接入计划槽位而不是普通附件截图', () => {
+test('真实单图、多图、录音与文件解析旅程接入计划槽位而不是普通附件截图', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
   for (const slotId of [
     'CDS-VISUAL-SINGLE-IMAGE-CREATION-08',
@@ -295,6 +295,22 @@ test('真实单图、多图与录音旅程接入计划槽位而不是普通附�
     'CDS-VISUAL-RECORDING-AUDIO-14',
     'CDS-VISUAL-RECORDING-AUDIO-15',
     'CDS-VISUAL-RECORDING-AUDIO-16',
+    'CDS-VISUAL-FILE-PARSING-01',
+    'CDS-VISUAL-FILE-PARSING-02',
+    'CDS-VISUAL-FILE-PARSING-03',
+    'CDS-VISUAL-FILE-PARSING-04',
+    'CDS-VISUAL-FILE-PARSING-05',
+    'CDS-VISUAL-FILE-PARSING-06',
+    'CDS-VISUAL-FILE-PARSING-07',
+    'CDS-VISUAL-FILE-PARSING-08',
+    'CDS-VISUAL-FILE-PARSING-09',
+    'CDS-VISUAL-FILE-PARSING-10',
+    'CDS-VISUAL-FILE-PARSING-11',
+    'CDS-VISUAL-FILE-PARSING-12',
+    'CDS-VISUAL-FILE-PARSING-13',
+    'CDS-VISUAL-FILE-PARSING-14',
+    'CDS-VISUAL-FILE-PARSING-15',
+    'CDS-VISUAL-FILE-PARSING-16',
   ]) {
     assert.match(source, new RegExp(`slotId: '${slotId}'`));
   }
@@ -310,4 +326,16 @@ test('真实单图、多图与录音旅程接入计划槽位而不是普通附�
   assert.match(source, /CDS-VISUAL-RECORDING-AUDIO-10[\s\S]*?retryButton\.click\(\)[\s\S]*?CDS-VISUAL-RECORDING-AUDIO-16/);
   assert.match(source, /CDS-VISUAL-RECORDING-AUDIO-15[\s\S]*?run\.status\)\.toBe\('done'\)/);
   assert.match(source, /browser\.newContext\(\{ \.\.\.devices\['iPhone 13'\]/);
+  assert.match(
+    source,
+    /CDS-VISUAL-FILE-PARSING-04[\s\S]*?releaseRequest\?\.\(\)[\s\S]*?data-phase', 'parsing'[\s\S]*?CDS-VISUAL-FILE-PARSING-06/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-FILE-PARSING-08[\s\S]*?CDS-VISUAL-FILE-PARSING-09[\s\S]*?retryResponsePromise[\s\S]*?CDS-VISUAL-FILE-PARSING-10/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-FILE-PARSING-14[\s\S]*?retryChooserPromise[\s\S]*?page\.reload[\s\S]*?CDS-VISUAL-FILE-PARSING-16/,
+  );
 });

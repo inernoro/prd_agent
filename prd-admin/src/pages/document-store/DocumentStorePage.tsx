@@ -102,6 +102,12 @@ import {
   type DetailInitialActionRequest,
   type DocumentStoreDetailAction,
 } from './detailInitialAction';
+import {
+  advanceDocumentUploadProgress,
+  beginDocumentUploadProgress,
+  describeDocumentUploadProgress,
+  type DocumentUploadProgressState,
+} from './documentUploadProgress';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence, motion } from 'motion/react';
@@ -1221,8 +1227,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   } | null>(null);
   // 「录音转笔记」现场录音面板（完成产出 File 后进入 transcribeFlow）
   const [showRecorder, setShowRecorder] = useState(false);
-  // 上传进度（浮动进度卡：文件名 + 百分比 + 第 n / 共 m）
-  const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; index: number; total: number } | null>(null);
+  // 上传与解析进度（浮动进度卡：文件名 + 字节百分比 / 解析等待时间 + 第 n / 共 m）
+  const [uploadProgress, setUploadProgress] = useState<DocumentUploadProgressState | null>(null);
+  const [uploadProgressNow, setUploadProgressNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (uploadProgress?.phase !== 'parsing') return;
+    setUploadProgressNow(Date.now());
+    const timer = window.setInterval(() => setUploadProgressNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [uploadProgress?.phase, uploadProgress?.parsingStartedAt]);
   // 「后台运行」看护的 SSOT。保险箱恢复与当前录音上传必须接入同一观察器，
   // 否则归档中的延迟转写会在抽屉外静默完成或失败。
   const transcribeRunRef = useRef<string | null>(null);
@@ -1882,9 +1895,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     let firstUploadedId: string | null = null;
     for (let i = 0; i < accepted.length; i++) {
       const file = accepted[i];
-      setUploadProgress({ name: file.name, percent: 0, index: i + 1, total: accepted.length });
+      setUploadProgress(beginDocumentUploadProgress(file.name, i + 1, accepted.length));
       const res = await uploadDocumentFileWithProgress(storeId, file, (percent) => {
-        setUploadProgress({ name: file.name, percent, index: i + 1, total: accepted.length });
+        setUploadProgress(current => advanceDocumentUploadProgress(current, {
+          name: file.name,
+          percent,
+          index: i + 1,
+          total: accepted.length,
+        }));
       });
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
@@ -3134,9 +3152,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         )}
       </AnimatePresence>
 
-      {/* 上传进度卡：大文件不再"卡住没反馈"——文件名 + 实时百分比 + 第 n/共 m */}
-      {uploadProgress && (
+      {/* 上传与解析进度卡：字节传完后仍需服务端解析，不能一直停在“上传 99%”让用户误判卡死。 */}
+      {uploadProgress && (() => {
+        const view = describeDocumentUploadProgress(uploadProgress, uploadProgressNow);
+        return (
         <div
+          data-testid="document-upload-progress"
+          data-phase={uploadProgress.phase}
+          aria-live="polite"
           className="fixed left-1/2 z-[70] w-[min(360px,88vw)] -translate-x-1/2 rounded-[14px] px-4 py-3"
           style={{
             bottom: 'calc(env(safe-area-inset-bottom, 0px) + var(--mobile-tab-height, 0px) + 20px)',
@@ -3145,19 +3168,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
           }}>
           <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
-            <span className="truncate font-semibold text-token-primary">正在上传 {uploadProgress.name}</span>
-            <span className="shrink-0 tabular-nums text-token-muted">
-              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}{uploadProgress.percent}%
+            <span className="truncate font-semibold text-token-primary">{view.title}</span>
+            <span data-testid="document-upload-status" className="flex shrink-0 items-center gap-1.5 tabular-nums text-token-muted">
+              {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}
+              {uploadProgress.phase === 'parsing' ? <MapSpinner size={12} /> : null}
+              {view.status}
             </span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
             <div
-              className="h-full rounded-full transition-all duration-200"
-              style={{ width: `${uploadProgress.percent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
+              className={`h-full rounded-full transition-all duration-200 ${uploadProgress.phase === 'parsing' ? 'animate-pulse' : ''}`}
+              style={{ width: `${view.barPercent}%`, background: 'linear-gradient(90deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))' }}
             />
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开。
           bottom 抬高避让右下角调色盘 FAB（CreatePaletteFab，56px + 边距） */}

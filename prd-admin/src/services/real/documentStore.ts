@@ -268,6 +268,9 @@ export async function uploadDocumentFileWithProgress(
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
     };
+    // 某些浏览器/代理不会补发 loaded === total 的最后一帧 progress，但 upload load
+    // 仍会可靠触发。99 表示请求体已发送、正在等待服务端解析；100 只在完整响应回来后报告。
+    xhr.upload.onload = () => onProgress(99);
     xhr.onload = () => {
       onProgress(100);
       if (xhr.status >= 200 && xhr.status < 300) {
