@@ -49,6 +49,28 @@ describe('部署 run / version 记录实际落地的 SHA', () => {
     }
   });
 
+  /*
+   * 方案甲（2026-10-08 mdimp）：两条部署路径都要把刚 pull 到的提交传给 runService，
+   * 让极速版先试它的 CI 镜像；用上了就把记录改成那个提交。删掉任一处接线，容器层的
+   * 单测照样全绿，只是线上又回到「按旧提交找镜像 → 回退宿主编译」——所以在这里钉住。
+   */
+  it('两条部署路径都把 pull 到的提交传给极速版，用上了就改记录（方案甲）', () => {
+    const passes = src.split('latestCommitSha: ').slice(1).filter((body) => !body.startsWith('options.'));
+    expect(passes.length, '整分支部署与单服务部署各传一次').toBe(2);
+    // 显式点名提交时不改目标：整分支看 requestCommitSha，单服务看 profileRequestCommitSha
+    expect(passes[0].slice(0, 200)).toContain('!requestCommitSha');
+    expect(passes[1].slice(0, 200)).toContain('profileRequestCommitSha ? undefined');
+    const hooks = src.split('onLatestCommitImage: (sha) => {').slice(1);
+    expect(hooks.length).toBe(2);
+    for (const body of hooks) {
+      const block = body.slice(0, 300);
+      expect(block).toContain('deployedCommitSha = sha;');
+      expect(block).toContain('deriveCommitMeta(entry, sha)');
+    }
+    expect(src).toContain('latestCommitSha: options.latestCommitSha,');
+    expect(src).toContain('onLatestCommitImage: options.onLatestCommitImage,');
+  });
+
   const runAnchors = [
     "advanceDeploymentRun(deploymentRun?.id, 'building', {\n        phase: 'build',\n        message: selectedDeploymentVersion",
     "advanceDeploymentRun(deploymentRun?.id, 'building', {\n        phase: 'build',\n        message: `源码准备完成，开始构建 ${profile.name}`",

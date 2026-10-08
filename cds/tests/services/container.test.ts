@@ -217,6 +217,86 @@ describe('ContainerService', () => {
       expect(runtime.deployedImage).toBe('node:20-alpine');
     });
 
+    /*
+     * 方案甲（2026-10-08 mdimp）：项目关了 push 事件，CDS 记下的提交停在旧值，部署却 pull 到
+     * 最新代码。按旧提交找镜像扑空就回退宿主编译——而最新提交的镜像 CI 早就建好了。
+     */
+    describe('极速版先试刚 pull 到的提交的镜像', () => {
+      const recorded = 'a'.repeat(40);
+      const latest = 'b'.repeat(40);
+      const repo = 'ghcr.io/md-imp/mdimp/mdimp-admin-api';
+      const sourceProfile = () => makeProfile({ dockerImage: 'maven:3.9', command: 'mvn package && java -jar app.jar', activeDeployMode: 'dev' });
+      const expressProfile = () => makeProfile({
+        dockerImage: `${repo}:sha-${recorded}`,
+        command: '',
+        prebuiltImage: true,
+        sourceFallbackProfile: sourceProfile(),
+      });
+      const stubDocker = (available: (image: string) => boolean) => {
+        mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+        mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+        mock.addResponsePattern(/docker pull '?([^' ]+)'?/, (match) => (available(match[1])
+          ? { stdout: 'pulled', stderr: '', exitCode: 0 }
+          : { stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+        mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+        mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+      };
+
+      it('最新提交有 CI 镜像：直接用它，不回退编译，容器里的提交号也是最新的', async () => {
+        stubDocker((image) => image.endsWith(`sha-${latest}`));
+        const writeSpy = vi.spyOn(fs, 'writeFileSync');
+        const runtime = makeService();
+        const advanced: string[] = [];
+        let fellBack = false;
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, undefined, undefined, {
+          latestCommitSha: latest,
+          onLatestCommitImage: (sha) => advanced.push(sha),
+          onSourceCompileFallback: async () => { fellBack = true; },
+        });
+        expect(runtime.deployedImage).toBe(`${repo}:sha-${latest}`);
+        expect(advanced).toEqual([latest]);
+        expect(fellBack).toBe(false);
+        expect(mock.commands.some((c) => c.startsWith('docker pull') && c.includes(`sha-${recorded}`))).toBe(false);
+        const envFile = writeSpy.mock.calls.map((call) => String(call[1])).find((text) => text.includes('CDS_COMMIT_SHA=')) || '';
+        expect(envFile).toContain(`CDS_COMMIT_SHA=${latest}`);
+        writeSpy.mockRestore();
+      });
+
+      it('最新提交的镜像还没建好：退回 CDS 记录的提交，行为与改动前一致', async () => {
+        stubDocker((image) => image.endsWith(`sha-${recorded}`));
+        const runtime = makeService();
+        const advanced: string[] = [];
+        const outputs: string[] = [];
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, (c) => outputs.push(c), undefined, {
+          latestCommitSha: latest,
+          onLatestCommitImage: (sha) => advanced.push(sha),
+        });
+        expect(runtime.deployedImage).toBe(`${repo}:sha-${recorded}`);
+        expect(advanced).toEqual([]);
+        expect(outputs.join('')).toContain('CI 镜像还没就绪，改用 CDS 记录的提交');
+      });
+
+      it('两个提交都没有镜像：照旧回退源码编译', async () => {
+        stubDocker(() => false);
+        const runtime = makeService();
+        let fellBack = false;
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, undefined, undefined, {
+          latestCommitSha: latest,
+          onSourceCompileFallback: async () => { fellBack = true; },
+        });
+        expect(fellBack).toBe(true);
+        expect(runtime.deployedImage).toBe('maven:3.9');
+      });
+
+      it('调用方没传最新提交（显式点名提交 / 不可变版本）：只拉记录的提交', async () => {
+        stubDocker(() => true);
+        const runtime = makeService();
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime);
+        expect(runtime.deployedImage).toBe(`${repo}:sha-${recorded}`);
+        expect(mock.commands.some((c) => c.startsWith('docker pull') && c.includes(`sha-${latest}`))).toBe(false);
+      });
+    });
+
     it('uses platform commit metadata instead of project env overrides', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

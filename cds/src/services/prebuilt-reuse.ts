@@ -28,6 +28,25 @@ export function shaFromImageTag(image: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * 部署刚 pull 到的最新提交对应的极速版镜像（2026-10-08，方案甲）。
+ *
+ * 极速版镜像标签锁在 CDS 记下的提交上（CI 就绪的 ciTargetSha，退而 githubCommitSha），
+ * 这个值靠 webhook 推进。项目关掉 push 事件后它就停在旧提交，而部署照样 pull 到最新代码：
+ * 按旧提交找镜像——多半已被清理或从没建过——拉不到就回退宿主源码编译。mdimp 10-08
+ * 实测存的是 09-30 的提交，CI 其实每次推送约 4 分钟就产出全部镜像。
+ *
+ * `sha-<40 位提交>` 标签只有 CI 用那个提交构建完才会被推上去，所以「拉得到」本身就是
+ * 「CI 已就绪」的证明，不需要另做 provenance 校验。返回 null 表示不需要额外尝试：
+ * 目标镜像不是 per-SHA 标签、最新提交不是完整 40 位、或与已锁定的提交相同。
+ */
+export function latestCommitImage(intendedImage: string, latestCommitSha: string | null | undefined): string | null {
+  const locked = shaFromImageTag(intendedImage);
+  const latest = (latestCommitSha || '').trim().toLowerCase();
+  if (!locked || !/^[0-9a-f]{40}$/.test(latest) || latest === locked) return null;
+  return `${imageRepositoryOf(intendedImage)}:sha-${latest}`;
+}
+
 /** 取镜像引用的仓库部分（去掉 `:tag`；仓库名里的 `/` 与端口号不受影响）。 */
 export function imageRepositoryOf(image: string): string {
   const s = (image || '').trim();

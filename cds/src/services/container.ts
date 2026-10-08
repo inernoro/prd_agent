@@ -9,6 +9,7 @@ import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import {
   collectReuseCandidates,
+  latestCommitImage,
   targetShaOf,
   normalizeBuildScope,
   proveFallbackImage,
@@ -1192,6 +1193,14 @@ export class ContainerService {
        * 任何改动。由调用方在 worktree 里 git diff 判定；查不出来必须返回 false。
        */
       isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+      /**
+       * 本次部署刚 pull 到的完整提交（2026-10-08，方案甲）。比镜像标签锁定的提交新时，
+       * 先试这个提交的 CI 镜像，拉不到再走原来的候选链。只在调用方确实 pull 过、且没有
+       * 显式点名提交时传入。
+       */
+      latestCommitSha?: string;
+      /** 用上了最新提交的镜像：调用方据此把部署记录改成实际落地的提交。 */
+      onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
@@ -1248,6 +1257,9 @@ export class ContainerService {
     // 显式 pull 而非依赖 docker run 隐式拉取,是为了把「镜像缺失/拉取失败」第一时间
     // 暴露给用户（对应「等待+提示,手动切回源码编译」兜底），并在 SSE 日志给反馈
     // 而非空白等待。
+    // 方案甲：用上了「刚 pull 到的提交」的镜像时，容器里注入的提交号元数据（GIT_COMMIT /
+    // CDS_COMMIT_SHA / VITE_BUILD_ID）也要跟着写这个提交，否则应用自报的版本还是旧提交。
+    let runCommitSha: string | undefined;
     if (profile.prebuiltImage === true && !managedArtifactReady) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
@@ -1265,9 +1277,13 @@ export class ContainerService {
       const targetSha = targetShaOf(primary);
       const buildScope = normalizeBuildScope(profile.buildScope);
       const fallbackList = normalizeFallbackImages(profile.fallbackImage);
-      const candidates: Array<{ image: string; kind: 'primary' | 'fallback' }> = [];
+      const candidates: Array<{ image: string; kind: 'latest' | 'primary' | 'fallback' }> = [];
       const seen = new Set<string>();
-      if (!isUnresolved(primary)) { candidates.push({ image: primary, kind: 'primary' }); seen.add(primary); }
+      // 方案甲：代码已经 pull 到比镜像标签更新的提交时，先试那个提交的 CI 镜像。
+      // per-SHA 标签只有 CI 构建完才存在，拉得到即就绪；拉不到原样走下面的链。
+      const latestImage = isUnresolved(primary) ? null : latestCommitImage(primary, context.latestCommitSha);
+      if (latestImage) { candidates.push({ image: latestImage, kind: 'latest' }); seen.add(latestImage); }
+      if (!isUnresolved(primary) && !seen.has(primary)) { candidates.push({ image: primary, kind: 'primary' }); seen.add(primary); }
       for (const fb of fallbackList) {
         if (isUnresolved(fb) || seen.has(fb)) continue;
         candidates.push({ image: fb, kind: 'fallback' });
@@ -1299,7 +1315,9 @@ export class ContainerService {
           const cand = candidates[i];
           onOutput?.(cand.kind === 'fallback'
             ? `── 本 commit 无该组件 CI 镜像,按回退链尝试 ${cand.image} ──\n`
-            : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
+            : cand.kind === 'latest'
+              ? `── 极速版: 代码已更新到 ${(context.latestCommitSha || '').slice(0, 7)}（CDS 记录的是 ${(targetSha || '').slice(0, 7)}），先拉这个提交的 CI 镜像 ${cand.image} ──\n`
+              : `── 极速版: 拉取 CI 预构建镜像 ${cand.image}（CDS 不再本机编译）──\n`);
           context.assertCurrent?.(`runService before docker-pull ${profile.id}`);
           // shellQuote 兜底（Codex P1「Validate extra-profile override images before deploy」）：cand.image
           // 来自 resolved profile 的 dockerImage,而 profile-overrides PUT 可对分支额外服务覆盖 dockerImage,
@@ -1307,9 +1325,39 @@ export class ContainerService {
           // 会在 CDS 宿主机执行。这里单引号兜底关掉注入面(入口另有镜像引用白名单作边界防御)。
           const pull = await this.shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
           if (pull.stdout) onOutput?.(pull.stdout + '\n');
+          if (pull.exitCode === 0 && cand.kind === 'latest') {
+            pulledImage = cand.image;
+            const latestSha = (context.latestCommitSha || '').trim().toLowerCase();
+            this.recordContainerEvent({
+              severity: 'info',
+              source: 'cds-container-service',
+              action: 'app.pull.latest-commit-image',
+              message: `used CI image of the freshly pulled commit instead of the recorded one: ${cand.image}`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: profile.id,
+              requestId: context.requestId ?? undefined,
+              operationId: context.operationId ?? undefined,
+              details: {
+                image: cand.image,
+                latestCommitSha: latestSha,
+                recordedCommitSha: targetSha,
+                reason: 'CDS 记录的提交落后于本次 pull 到的代码（常见于关闭了 push 事件的项目），按最新提交取 CI 镜像',
+              },
+            });
+            runCommitSha = latestSha;
+            context.onLatestCommitImage?.(latestSha);
+            break;
+          }
           if (pull.exitCode === 0 && cand.kind === 'primary') {
             pulledImage = cand.image;
             break;
+          }
+          if (cand.kind === 'latest') {
+            // 最新提交还没有 CI 镜像（CI 多半还在跑，约几分钟）：不是错误，退回已记录的提交。
+            lastDetail = (pull.stderr || pull.stdout || '').trim();
+            onOutput?.(`── 提交 ${(context.latestCommitSha || '').slice(0, 7)} 的 CI 镜像还没就绪，改用 CDS 记录的提交 ──\n`);
+            continue;
           }
           if (pull.exitCode === 0) {
             // 浮动 tag 只证明“拉到了一个镜像”，不证明它属于本次提交。读取 CI 写入的
@@ -1558,7 +1606,11 @@ export class ContainerService {
       },
     });
 
-    const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
+    const resolvedEnv = this.resolveProfileRuntimeEnv(
+      runCommitSha ? { ...entry, pinnedCommit: undefined, githubCommitSha: runCommitSha } : entry,
+      profile,
+      customEnv,
+    );
 
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const envFlag = `--env-file "${envFilePath}"`;

@@ -1718,6 +1718,10 @@ interface RunServiceWithPortRetryOptions {
   ledgerImages?: readonly string[];
   /** CI 构建输入路径在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
   isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+  /** 本次部署 pull 到的完整提交：极速版先试它的 CI 镜像（见 container.ts runService 同名字段）。 */
+  latestCommitSha?: string;
+  /** 用上了最新提交的镜像时回调，调用方改正部署记录里的提交。 */
+  onLatestCommitImage?: (commitSha: string) => void;
 }
 
 /**
@@ -1800,6 +1804,8 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           onSourceCompileFallback: options.onSourceCompileFallback,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
+          latestCommitSha: options.latestCommitSha,
+          onLatestCommitImage: options.onLatestCommitImage,
         },
       );
       return;
@@ -13148,9 +13154,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
       // （Codex P2: refresh prebuilt SHA after pulling latest code）。
       // **极速版例外**：极速版镜像由 CI 按 commit 预构建,只有 ciTargetSha(=CI ready 的 SHA)
-      // 才有可拉取的镜像。绝不能跟随 pull 后的新 HEAD（那个 SHA 多半还没 CI 镜像）——上面的
-      // CI 闸门已保证 ciImageStatus=ready 且 ciTargetSha===githubCommitSha,这里保持不动,
-      // 让镜像 tag 锁定在 CI 就绪的 SHA（Codex P2: require CI readiness for the deployed SHA）。
+      // 才确定有可拉取的镜像,所以 githubCommitSha 不跟随 pull 后的新 HEAD,镜像标签仍锁在
+      // 记录的提交上（Codex P2: require CI readiness for the deployed SHA）。
+      // 2026-10-08 方案甲：记录的提交可能早已过期（项目关了 push 事件就不再推进）,所以
+      // runService 会**先试** pull 到的 HEAD 的镜像——per-SHA 标签拉得到即 CI 已就绪——
+      // 拉不到才回到这里锁定的提交（见下方 latestCommitSha）。
       // pull() 的 head 是 `git log --oneline -1`（带标题），不是裸 SHA；必须用 parsePulledSha
       // 取裸 SHA（优先 after = rev-parse --short HEAD），否则旧的 bare-SHA 正则永不匹配、整段跳过，
       // 历史「版本」列停在 pull 前旧 SHA（Codex P2）。
@@ -13696,6 +13704,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
               },
               // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
               ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
+              // 方案甲：记下的提交落后于刚 pull 到的代码时，先试最新提交的 CI 镜像。
+              // 显式点名提交（webhook 锚定 / 用户指定）与不可变版本不走这条，按点名的来。
+              latestCommitSha: !requestCommitSha && !(pullResult as { skipped?: boolean }).skipped
+                ? pulledSha || undefined
+                : undefined,
+              // 只改正本次部署的记录；不改 entry.githubCommitSha——同层服务并行在跑，
+              // 中途改它会让后面的服务按新值解析镜像标签，同一次部署里口径不一。
+              onLatestCommitImage: (sha) => {
+                deployedCommitSha = sha;
+                Object.assign(opLog, deriveCommitMeta(entry, sha));
+              },
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -14713,6 +14732,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           },
           // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
           ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
+          // 方案甲（同整分支部署）：没点名提交时，先试刚 pull 到的提交的 CI 镜像。
+          latestCommitSha: profileRequestCommitSha ? undefined : fallbackPulledSha,
+          onLatestCommitImage: (sha) => {
+            deployedCommitSha = sha;
+            Object.assign(opLog, deriveCommitMeta(entry, sha));
+          },
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
