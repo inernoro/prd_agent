@@ -386,6 +386,12 @@ interface ResourceCloneInput {
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
+export function availableDrawerLogModes(canManageConsole: boolean): Array<[LogsMode, string]> {
+  const modes: Array<[LogsMode, string]> = [
+    ['container', '容器日志'], ['system', '系统日志'], ['webhook', 'Webhook'], ['http', 'HTTP'],
+  ];
+  return modes.filter(([mode]) => canManageConsole || mode !== 'webhook');
+}
 // 全屏详情抽屉的日志区由父级 flex 布局分配剩余高度，不写固定像素高度。
 // 这样高屏不会在日志卡下方制造大片空白，矮屏仍由最近内容层滚动。
 const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
@@ -1138,7 +1144,7 @@ export function BranchDetailDrawer({
   }, [branchId, projectId, canManageConsole]);
 
   const loadTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     setTriggerLogsState({ status: 'loading' });
     try {
       const params = new URLSearchParams();
@@ -1179,7 +1185,7 @@ export function BranchDetailDrawer({
     } catch (err) {
       setTriggerLogsState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   const loadSystemLogs = useCallback(async () => {
     if (!branchId) return;
@@ -1203,7 +1209,7 @@ export function BranchDetailDrawer({
    * 追加到当前 deliveries 数组（保留时间顺序，最新在前）。
    */
   const loadMoreTriggerLogs = useCallback(async () => {
-    if (!branchId) return;
+    if (!canManageConsole || !branchId) return;
     // 同步读 ref（由下方 useEffect 镜像 deliveries.length），不依赖 setState
     // updater 的执行时机；这才是这次 offset bug 的根因修复。
     const currentOffset = triggerLogsCountRef.current;
@@ -1260,7 +1266,7 @@ export function BranchDetailDrawer({
     } finally {
       triggerLogsLoadMoreInFlightRef.current = false;
     }
-  }, [branch?.branch, branch?.githubRepoFullName, branchId]);
+  }, [branch?.branch, branch?.githubRepoFullName, branchId, canManageConsole]);
 
   // 2026-05-14 Codex review P2 修复配套：把 deliveries.length 镜像到 ref，
   // loadMore 时同步读取真实 offset，杜绝 React batch 导致的"重复拉第一页"。
@@ -1425,13 +1431,17 @@ export function BranchDetailDrawer({
 
   useEffect(() => {
     if (activeTab !== 'logs' || !branch) return;
-    if (logsMode === 'webhook' && triggerLogsState.status === 'idle') {
+    if (canManageConsole && logsMode === 'webhook' && triggerLogsState.status === 'idle') {
       void loadTriggerLogs();
     }
     if (logsMode === 'system' && systemLogsState.status === 'idle') {
       void loadSystemLogs();
     }
-  }, [activeTab, logsMode, branch, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+  }, [activeTab, logsMode, branch, canManageConsole, loadTriggerLogs, triggerLogsState.status, loadSystemLogs, systemLogsState.status]);
+
+  useEffect(() => {
+    if (!canManageConsole && logsMode === 'webhook') setLogsMode('system');
+  }, [canManageConsole, logsMode]);
 
   // Phase B — Metrics: 5s polling while metrics tab is active.
   // 关闭 tab 或抽屉就停止(useEffect 清理函数)。ring buffer 每点存:
@@ -1716,7 +1726,7 @@ export function BranchDetailDrawer({
       if (activeTab === 'logs') {
         if (logsMode === 'system') {
           await loadSystemLogs();
-        } else if (logsMode === 'webhook') {
+        } else if (canManageConsole && logsMode === 'webhook') {
           await loadTriggerLogs();
         } else if (logsMode === 'container' && selectedServiceId) {
           await loadServiceLogs(selectedServiceId);
@@ -1736,6 +1746,7 @@ export function BranchDetailDrawer({
   }, [
     activeTab,
     branchId,
+    canManageConsole,
     headerRefreshing,
     load,
     loadEnv,
@@ -2590,12 +2601,7 @@ export function BranchDetailDrawer({
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                           {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
-                          {([
-                            ['container', '容器日志'],
-                            ['system', '系统日志'],
-                            ['webhook', 'Webhook'],
-                            ['http', 'HTTP'],
-                          ] as Array<[LogsMode, string]>).map(([mode, label]) => (
+                          {availableDrawerLogModes(canManageConsole).map(([mode, label]) => (
                             <button
                               key={mode}
                               type="button"
@@ -2622,7 +2628,7 @@ export function BranchDetailDrawer({
                             variant="outline"
                             onClick={() => {
                               if (logsMode === 'system') return void loadSystemLogs();
-                              if (logsMode === 'webhook') return void loadTriggerLogs();
+                              if (canManageConsole && logsMode === 'webhook') return void loadTriggerLogs();
                               if (logsMode === 'http') return void load();
                               const target = selectedServiceId || selectedService?.profileId;
                               if (target) void loadServiceLogs(target);
@@ -2636,7 +2642,7 @@ export function BranchDetailDrawer({
                     </header>
                     {logsMode === 'system' ? (
                       <SystemLogsPanel state={systemLogsState} query={logQuery} />
-                    ) : logsMode === 'webhook' ? (
+                    ) : canManageConsole && logsMode === 'webhook' ? (
                       <TriggerLogsPanel
                         state={triggerLogsState}
                         query={logQuery}

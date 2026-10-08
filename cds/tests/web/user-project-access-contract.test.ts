@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { AppRail, canManageSystemSettings, canUseConsolePreview, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
 import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
 import { ExtraServicesPanel } from '../../web/src/components/branch/ExtraServicesPanel';
-import { VariablesPanel, SettingsPanel } from '../../web/src/components/BranchDetailDrawer';
+import { VariablesPanel, SettingsPanel, availableDrawerLogModes } from '../../web/src/components/BranchDetailDrawer';
 
 const { MemoryRouter, Routes, Route } = createRequire(path.resolve('web/package.json'))('react-router-dom');
 
@@ -104,6 +104,20 @@ describe('human project access UI wiring', () => {
     expect(settings).toContain('disabled={!canManageConsole || modeSavingProfileId');
     expect(settings).toContain('{canManageConsole && profileState.profiles.length > 0 ?');
     expect(settings).toContain('{canManageConsole ? <div');
+  });
+  it('gates the system Webhook log tab, lazy reads, pagination and refresh with the owner capability', () => {
+    const drawer = read('components/BranchDetailDrawer.tsx');
+    expect(drawer).toContain('availableDrawerLogModes(canManageConsole).map');
+    expect(drawer).toContain("canManageConsole && logsMode === 'webhook'");
+    for (const name of ['loadTriggerLogs', 'loadMoreTriggerLogs']) {
+      const handler = drawer.slice(drawer.indexOf(`const ${name} =`));
+      expect(handler.indexOf('if (!canManageConsole || !branchId) return;')).toBeLessThan(handler.indexOf('await apiRequest'));
+      expect(handler.indexOf('if (!canManageConsole || !branchId) return;')).toBeGreaterThanOrEqual(0);
+    }
+  });
+  it('keeps project-scoped log options for members while advertising Webhook only to the owner', () => {
+    expect(availableDrawerLogModes(false).map(([mode]) => mode)).toEqual(['container', 'system', 'http']);
+    expect(availableDrawerLogModes(true).map(([mode]) => mode)).toEqual(['container', 'system', 'webhook', 'http']);
   });
   it('renders member settings read-only without dropping authorized branch actions, while owner selectors stay enabled', () => {
     const props: Omit<Parameters<typeof SettingsPanel>[0], 'canManageConsole'> = {
