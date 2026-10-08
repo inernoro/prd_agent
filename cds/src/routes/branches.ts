@@ -4662,7 +4662,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           { cwd: repoRoot, timeout: 30_000, env: auth.env },
         );
         if (fetchResult.exitCode !== 0) {
-          const output = combinedOutput(fetchResult).slice(0, 500);
+          const output = logPayloadForHumanView(req, combinedOutput(fetchResult)).slice(0, 500);
           res.status(502).json({
             error: 'git_fetch_failed',
             message: output || 'git fetch origin --prune 失败',
@@ -4715,7 +4715,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
       });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json(logPayloadForHumanView(req, { error: (err as Error).message }));
     }
   });
 

@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { AppRail, canManageSystemSettings, canUseConsolePreview, ConsoleAuthContext, OwnerConsoleRoute, PaletteHint } from '../../web/src/components/layout/AppShell';
 import { settingsTabForViewer } from '../../web/src/pages/CdsSettingsPage';
 import { ExtraServicesPanel } from '../../web/src/components/branch/ExtraServicesPanel';
+import { VariablesPanel } from '../../web/src/components/BranchDetailDrawer';
 
 const { MemoryRouter, Routes, Route } = createRequire(path.resolve('web/package.json'))('react-router-dom');
 
@@ -112,6 +113,35 @@ describe('human project access UI wiring', () => {
     expect(sqlPanel).toContain('if (!canManageConsole || !basePath || !initSql.trim()) return;');
     expect(sqlPanel).toContain('if (!canManageConsole || !resource.branchId || !migrationCommand.trim()) return;');
     expect(sqlPanel).toContain('普通账号仅支持只读查询；写入、初始化和迁移请联系系统所有者。');
+  });
+  it('keeps masked variables readable without member editing, reveal, secret copy or cached plaintext', () => {
+    const props = {
+      state: { status: 'ok' as const, data: { branchId: 'fixture', projectId: 'project', projectSlug: 'project', total: 2,
+        bySource: { branch: 0, project: 2, global: 0, mirror: 0, 'cds-derived': 0, 'cds-builtin': 0 },
+        variables: [{ key: 'PUBLIC_LABEL', value: 'safe-label', source: 'project' as const, isSecret: false },
+          { key: 'API_TOKEN', value: '••••', source: 'project' as const, isSecret: true, valueLength: 30 }] } },
+      revealedValues: new Map([['API_TOKEN', 'fake-cached-secret']]), query: '', branchId: 'fixture', projectId: 'project', editorOpen: true,
+      onToggleReveal() {}, onCopySecret() {}, onQuery() {}, onRefresh() {}, onToggleEditor() {}, onEnvChanged() {}, onToast() {},
+    };
+    const render = (owner: boolean) => renderToStaticMarkup(createElement(VariablesPanel, { ...props, canManageConsole: owner }));
+    const member = render(false);
+    expect(member).toContain('PUBLIC_LABEL');
+    expect(member).toContain('safe-label');
+    expect(member).toContain('API_TOKEN');
+    expect(member).not.toContain('编辑本分支');
+    expect(member).not.toContain('fake-cached-secret');
+    expect(member).not.toContain('aria-label="显示值"');
+    expect(member).not.toContain('aria-label="隐藏值"');
+    expect(member.match(/aria-label="复制"/g)).toHaveLength(1);
+    expect(member).not.toContain('href="/settings/');
+    const owner = render(true);
+    expect(owner).toContain('编辑本分支');
+    expect(owner).toContain('fake-cached-secret');
+    expect(owner.match(/aria-label="复制"/g)).toHaveLength(2);
+    expect(owner).toContain('aria-label="隐藏值"');
+    const drawer = read('components/BranchDetailDrawer.tsx');
+    expect(drawer).toContain('canManageConsole={canManageConsole}');
+    expect(drawer).toContain('if (!canManageConsole) return;');
   });
   it('does not mount owner route contents or advertise search for members and unresolved auth', () => {
     const render = (status: Parameters<typeof canManageSystemSettings>[0], pending = false) =>

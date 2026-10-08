@@ -355,6 +355,28 @@ describe('human project grants through the production server', () => {
     }
   });
 
+  it.each(['exit', 'throw', 'long'] as const)('masks authorized remote fetch failures before truncation (%s)', async kind => {
+    await grant(['project-a']);
+    const password = kind === 'long' ? 'fake-origin-password-'.repeat(40) : 'fake-origin-password';
+    const raw = `fatal: unable to access https://fixture-user:${password}@github.com/example/repo.git: repository unavailable`;
+    shell.addResponsePattern(/git fetch origin --prune/, () => {
+      if (kind === 'throw') throw new Error(raw);
+      return { stdout: '', stderr: raw, exitCode: 128 };
+    });
+    const memberView = await call('GET', '/api/remote-branches?project=project-a', member);
+    expect(memberView.status).toBe(kind === 'throw' ? 500 : 502);
+    expect(JSON.stringify(memberView.body)).not.toContain('fake-origin-password');
+    expect(JSON.stringify(memberView.body)).toContain('repository unavailable');
+    const ownerView = await call('GET', '/api/remote-branches?project=project-a', owner);
+    expect(ownerView.status).toBe(memberView.status);
+    expect(JSON.stringify(ownerView.body)).toContain('fake-origin-password');
+    const before = shell.commands.length;
+    expect((await call('GET', '/api/remote-branches?project=project-b', member)).status).toBe(403);
+    await grant([]);
+    expect((await call('GET', '/api/remote-branches?project=project-a', member)).status).toBe(403);
+    expect(shell.commands.length).toBe(before);
+  });
+
   it.each(['abc1234', 'DEADBEEF', 'a'.repeat(40)])('keeps authorized commit checkout and pin state for %s', async hash => {
     await grant(['project-a']);
     shell.addResponsePattern(/git cat-file -t /, () => ({ stdout: 'commit\n', stderr: '', exitCode: 0 }));

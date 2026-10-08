@@ -2855,9 +2855,11 @@ export function BranchDetailDrawer({
 
                 {activeTab === 'config' && configSection === 'variables' ? (
                   <VariablesPanel
+                    canManageConsole={canManageConsole}
                     state={envState}
                     revealedValues={revealedValues}
                     onToggleReveal={async (k) => {
+                      if (!canManageConsole) return;
                       // 已 revealed → 折叠回 mask;未 revealed → 调端点拉明文
                       if (revealedValues.has(k)) {
                         setRevealedValues((cur) => {
@@ -2884,6 +2886,7 @@ export function BranchDetailDrawer({
                       }
                     }}
                     onCopySecret={async (k) => {
+                      if (!canManageConsole) return;
                       // 复制 secret:已 revealed 直接用 cache,否则现取 + 复制 +
                       // 不入 cache(用户想"一次性复制"不留显示痕迹)。
                       const cached = revealedValues.get(k);
@@ -2911,7 +2914,7 @@ export function BranchDetailDrawer({
                     branchId={branchId}
                     projectId={projectId}
                     editorOpen={branchEnvEditorOpen}
-                    onToggleEditor={() => setBranchEnvEditorOpen((current) => !current)}
+                    onToggleEditor={() => { if (canManageConsole) setBranchEnvEditorOpen((current) => !current); }}
                     onEnvChanged={() => void loadEnv()}
                     onToast={(message) => onToast?.(message)}
                   />
@@ -6786,7 +6789,8 @@ export function LegacyDeploymentCard({ log, onOpenLogs }: { log: OperationLog; o
 //   - 搜索框过滤 key
 // ──────────────────────────────────────────────────────────────────────────
 
-function VariablesPanel({
+export function VariablesPanel({
+  canManageConsole,
   state,
   revealedValues,
   onToggleReveal,
@@ -6801,6 +6805,7 @@ function VariablesPanel({
   onEnvChanged,
   onToast,
 }: {
+  canManageConsole: boolean;
   state: EffectiveEnvState;
   /** 已 reveal 的 secret key → 明文。未 reveal 的不在 map 里。 */
   revealedValues: Map<string, string>;
@@ -6856,16 +6861,16 @@ function VariablesPanel({
             <HelpCircle className="h-3.5 w-3.5" />
           </button>
           <span className="pointer-events-none absolute left-0 top-7 z-20 hidden w-72 rounded-md border border-[hsl(var(--hairline))] bg-popover p-3 text-xs leading-5 text-popover-foreground shadow-xl group-hover/help:block group-focus-within/help:block">
-            这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。
+            {canManageConsole ? '这里显示本分支部署时最终进入容器的变量。点击“编辑本分支”只会写入当前分支覆盖，不会修改项目变量；重新部署本分支后生效。' : '这里只读展示生效变量；修改或查看密钥请联系系统所有者。'}
           </span>
         </span>
         <span className="text-xs text-muted-foreground">
           共 {data.total ?? 0} 个 · 分支覆盖 {branchOverrideCount} · 项目 {data.bySource?.project ?? 0} · 全局 {data.bySource?.global ?? 0} ·
           镜像 {data.bySource?.mirror ?? 0} · CDS 内置 {(data.bySource?.['cds-builtin'] ?? 0) + (data.bySource?.['cds-derived'] ?? 0)}
         </span>
-        <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
+        {canManageConsole ? <Button type="button" size="sm" variant={editorOpen ? 'secondary' : 'ghost'} className="ml-auto" onClick={onToggleEditor}>
           <ExternalLink />编辑本分支
-        </Button>
+        </Button> : null}
         <Button type="button" size="sm" variant="outline" onClick={onRefresh}>
           <RefreshCw />刷新
         </Button>
@@ -6873,9 +6878,9 @@ function VariablesPanel({
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         当前编辑范围:<span className="mx-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 font-medium text-warn">仅本分支</span>
         。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
-        项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
+        {canManageConsole ? <>项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。</> : '变量仅供查看，修改或查看密钥请联系系统所有者。'}
       </div>
-      {editorOpen ? (
+      {canManageConsole && editorOpen ? (
         <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/18 px-4 py-3">
           <EnvEditor
             scope={branchId}
@@ -6915,6 +6920,7 @@ function VariablesPanel({
           {filtered.map((v) => (
             <EnvRow
               key={v.key}
+              canRevealSecrets={canManageConsole}
               entry={v}
               revealedPlain={revealedValues.get(v.key)}
               onToggleReveal={() => { void onToggleReveal(v.key); }}
@@ -6926,7 +6932,7 @@ function VariablesPanel({
 
       <footer className="border-t border-[hsl(var(--hairline))] px-4 py-2 text-[0.6875rem] leading-5 text-muted-foreground">
         优先级:project &gt; global &gt; mirror &gt; cds-derived &gt; cds-builtin。同名 key 后写覆盖前写。
-        敏感值默认隐藏,点眼睛图标按条解锁。
+        {canManageConsole ? '敏感值默认隐藏,点眼睛图标按条解锁。' : '敏感值保持隐藏，查看请联系系统所有者。'}
       </footer>
     </section>
   );
@@ -6947,11 +6953,13 @@ function maskedEnvValue(entry: EffectiveEnvVar, isSecretFromKey: boolean): strin
 }
 
 function EnvRow({
+  canRevealSecrets,
   entry,
   revealedPlain,
   onToggleReveal,
   onCopySecret,
 }: {
+  canRevealSecrets: boolean;
   entry: EffectiveEnvVar;
   /** 已 reveal 的明文。undefined 表示尚未 reveal(secret)或非 secret。 */
   revealedPlain: string | undefined;
@@ -6959,7 +6967,7 @@ function EnvRow({
   onCopySecret: () => void;
 }): JSX.Element {
   const effectiveIsSecret = entry.isSecret || isSensitiveEnvKey(entry.key);
-  const isRevealed = revealedPlain !== undefined;
+  const isRevealed = canRevealSecrets && revealedPlain !== undefined;
   // 后端 isSecret=false 但 key 看起来敏感时,列表里的 entry.value 可能是明文;
   // 未 reveal 前必须用前端 mask 兜底,避免 GITHUB_PAT 等直接暴露。
   const displayValue = effectiveIsSecret
@@ -6979,11 +6987,11 @@ function EnvRow({
       </span>
       <span
         className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
-        title={effectiveIsSecret && !isRevealed ? '点击右侧眼睛查看真实值' : safeDisplayValue}
+        title={effectiveIsSecret && !isRevealed ? (canRevealSecrets ? '点击右侧眼睛查看真实值' : '敏感值仅系统所有者可查看') : safeDisplayValue}
       >
         {safeDisplayValue}
       </span>
-      {effectiveIsSecret ? (
+      {effectiveIsSecret && canRevealSecrets ? (
         <button
           type="button"
           onClick={onToggleReveal}
@@ -6994,7 +7002,7 @@ function EnvRow({
           {isRevealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       ) : null}
-      <button
+      {!effectiveIsSecret || canRevealSecrets ? <button
         type="button"
         onClick={() => {
           // secret 走 reveal 端点取明文再复制,non-secret 直接 entry.value
@@ -7006,7 +7014,7 @@ function EnvRow({
         aria-label="复制"
       >
         <Copy className="h-4 w-4" />
-      </button>
+      </button> : null}
     </li>
   );
 }
