@@ -19,6 +19,7 @@ import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeplo
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
+import { isCommitShaLike } from '../services/release-commit-clock.js';
 import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
@@ -17882,6 +17883,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    if (!isCommitShaLike(hash)) {
+      res.status(400).json({ error: '提交标识无效，请从提交历史选择要切换的提交。' });
+      return;
+    }
     if (entry.status === 'building' || entry.status === 'starting') {
       res.status(409).json({ error: '分支正在构建/启动中，无法切换提交' });
       return;
@@ -17890,7 +17895,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       // Validate the commit hash exists
       const verify = await shell.exec(
-        `git cat-file -t ${hash}`,
+        `git cat-file -t ${shellQuote(hash)}`,
         { cwd: entry.worktreePath, timeout: 5_000 },
       );
       if (verify.exitCode !== 0 || verify.stdout.trim() !== 'commit') {
@@ -17900,7 +17905,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Checkout the specific commit (detached HEAD)
       const result = await shell.exec(
-        `git checkout ${hash}`,
+        `git checkout --detach ${shellQuote(hash)}`,
         { cwd: entry.worktreePath, timeout: 10_000 },
       );
       if (result.exitCode !== 0) {

@@ -342,6 +342,40 @@ describe('human project grants through the production server', () => {
     expect((await call('POST', url, owner, body)).status).toBe(200);
   });
 
+  it('rejects non-commit checkout input before any shell command for both members and owners', async () => {
+    await grant(['project-a']);
+    for (const cookie of [member, owner]) {
+      for (const hash of ['HEAD; touch /tmp/cds-checkout-injection', 'abc1234\ntrue', 'abc1234`true`', '--detach', 'HEAD', 'abc123', 'g'.repeat(7), 'a'.repeat(41)]) {
+        const before = shell.commands.length;
+        const result = await call('POST', '/api/branches/branch-project-a/checkout/' + encodeURIComponent(hash), cookie);
+        expect(result.status).toBe(400);
+        expect(shell.commands.length).toBe(before);
+        expect(state.getBranch('branch-project-a')?.pinnedCommit).toBeUndefined();
+      }
+    }
+  });
+
+  it.each(['abc1234', 'DEADBEEF', 'a'.repeat(40)])('keeps authorized commit checkout and pin state for %s', async hash => {
+    await grant(['project-a']);
+    shell.addResponsePattern(/git cat-file -t /, () => ({ stdout: 'commit\n', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/git checkout /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/git log --oneline -1/, () => ({ stdout: 'abc1234 历史提交\n', stderr: '', exitCode: 0 }));
+    for (const cookie of [member, owner]) {
+      const result = await call('POST', '/api/branches/branch-project-a/checkout/' + hash, cookie);
+      expect(result.status).toBe(200);
+      expect(result.body.pinnedCommit).toBe('abc1234');
+      expect(state.getBranch('branch-project-a')?.pinnedCommit).toBe('abc1234');
+      expect(shell.commands).toContain(`git cat-file -t '${hash}'`);
+      expect(shell.commands).toContain(`git checkout --detach '${hash}'`);
+    }
+    expect((await call('POST', '/api/branches/branch-project-b/checkout/' + hash, member)).status).toBe(403);
+    await grant([]);
+    const before = shell.commands.length;
+    expect((await call('POST', '/api/branches/branch-project-a/checkout/' + hash, member)).status).toBe(403);
+    expect(shell.commands.length).toBe(before);
+    expect((await call('POST', '/api/branches/branch-project-a/checkout/' + hash, owner)).status).toBe(200);
+  });
+
   it('hides resource connection credentials in cached lists and direct resource reads without mutating owner data', async () => {
     state.addInfraService({ id: 'redis', projectId: 'project-a', name: 'Redis', dockerImage: 'redis:7',
       containerPort: 6379, hostPort: 16379, containerName: 'test-redis', status: 'stopped',
