@@ -620,13 +620,21 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   const runtimeCommit = runtimeExpectation.runtimeCommit || expectedCommit;
   const runtimeEquivalent = runtimeExpectation.runtimeEquivalent === true;
   const serviceRuntimeCommits = runtimeExpectation.serviceRuntimeCommits || {};
+  const latestDeploymentRun = branch?.latestDeploymentRun || {};
+  const completedDeploymentRunMatches = (
+    [expectedCommit, runtimeCommit].includes(latestDeploymentRun.commitSha)
+    && latestDeploymentRun.status === 'running'
+    && latestDeploymentRun.phase === 'complete'
+  );
   const reasons = [];
   const services = Object.values(branch?.services || {});
   if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
   if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到目标提交');
   if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
   if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
-  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
+  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit && !completedDeploymentRunMatches) {
+    reasons.push('CDS 尚未对运行时目标提交完成部署调度');
+  }
   if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
   if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
   for (const [serviceKey, service] of Object.entries(branch?.services || {})) {
@@ -683,7 +691,16 @@ function readCdsBranchStatus() {
   const statusResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
   const statusPayload = statusResult.status === 0 ? JSON.parse(String(statusResult.stdout || '{}')) : null;
   if (!statusPayload?.data) throw new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
-  return statusPayload.data;
+  const branch = statusPayload.data;
+  if (branch.lastDeploymentRunId) {
+    const runResult = command('python3', [
+      '.claude/skills/cds/cli/cdscli.py',
+      'deployment-run', 'show', branch.lastDeploymentRunId,
+    ]);
+    const runPayload = runResult.status === 0 ? readJsonFromText(runResult.stdout) : null;
+    branch.latestDeploymentRun = runPayload?.data?.run || null;
+  }
+  return branch;
 }
 
 async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) {

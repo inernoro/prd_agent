@@ -1310,6 +1310,35 @@ test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移'
   assert.ok(blocked.reasons.some((reason) => reason.includes('admin 未运行')));
 });
 
+test('CDS 手动部署成功时不受陈旧 webhook 调度记录阻塞', () => {
+  const commit = 'abc123';
+  const branch = {
+    status: 'running',
+    commitSha: commit,
+    ciTargetSha: commit,
+    ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: 'old123',
+    currentVersionId: 'dv-manual',
+    lastDeploymentRunId: 'dr-manual',
+    latestDeploymentRun: {
+      id: 'dr-manual',
+      commitSha: commit,
+      status: 'running',
+      phase: 'complete',
+    },
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api', status: 'running', deployedImage: `registry/api:sha-${commit}` },
+    },
+  };
+
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  branch.latestDeploymentRun.status = 'building';
+  const blocked = evaluateCdsReadiness(branch, commit);
+  assert.equal(blocked.ready, false);
+  assert.ok(blocked.reasons.includes('CDS 尚未对运行时目标提交完成部署调度'));
+});
+
 test('纯验收工具变化可复用已部署业务版本且留下等价记录', () => {
   const deployedCommit = '1111111';
   const expectedCommit = '2222222';
@@ -1320,6 +1349,11 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
     ciImageStatus: 'waiting',
     lastDeployDispatchCommitSha: deployedCommit,
     currentVersionId: 'dv-runtime',
+    latestDeploymentRun: {
+      commitSha: expectedCommit,
+      status: 'running',
+      phase: 'complete',
+    },
     deployRuntime: { drift: { hasDrift: false } },
     services: {
       api: { profileId: 'api', status: 'running', deployedImage: `registry/api:sha-${deployedCommit}` },
@@ -1346,6 +1380,7 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   assert.equal(isValidationOnlyPath('cds-compose.yml'), false);
   assert.match(readFileSync('scripts/stable-smoke-run.mjs', 'utf8'), /'core\.quotePath=false'/);
   const expectation = resolveRuntimeExpectation(branch, expectedCommit, files);
+  branch.lastDeployDispatchCommitSha = 'stale-dispatch';
   assert.deepEqual(evaluateCdsReadiness(branch, expectedCommit, expectation), {
     ready: true,
     reasons: [],
