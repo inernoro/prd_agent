@@ -4721,11 +4721,84 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[VIS-001][VIS-003] 单图入口、空态、描述与参考图按真实桌面路径取证', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'single-image-input-visuals');
+    try {
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const root = page.locator('[data-tour-id="visual-editor-root"]');
+      const canvas = page.locator('[data-tour-id="visual-editor-canvas"]');
+      const composer = page.locator('[contenteditable="true"]').first();
+      await expect(root).toBeVisible();
+      await expect(canvas).toBeVisible();
+      await expect(composer).toBeVisible();
+
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-01',
+        target: root,
+        caption: '视觉创作工作区通过真实导航打开，画板、输入区和主要操作均可见。',
+      });
+      await expect(page.getByTestId('canvas-image')).toHaveCount(0);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-02',
+        target: canvas,
+        caption: '新工作区为空且可编辑，没有旧图片或旧任务混入。',
+      });
+
+      const shortPrompt = '一枚放在白色背景上的蓝色陶瓷杯';
+      await composer.fill(shortPrompt);
+      await expect(composer).toContainText(shortPrompt);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-03',
+        target: composer,
+        caption: '真实描述已进入可编辑输入区，发送操作仍可触达。',
+      });
+      const longPrompt = Array.from({ length: 12 }, (_, index) => `第${index + 1}段描述蓝色陶瓷杯的材质、光线、留白与构图`).join('，');
+      await composer.fill(longPrompt);
+      await expect(composer).toContainText('第12段描述');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-17',
+        target: composer,
+        caption: '超长描述在输入区内换行和滚动，不挤压尺寸、模型与发送操作。',
+      });
+
+      const reference = Buffer.from(solidPngDataUrl(35, 90, 190, 128).split(',')[1], 'base64');
+      await page.locator('input[type="file"][accept="image/*"]').first().setInputFiles({
+        name: 'single-reference.png',
+        mimeType: 'image/png',
+        buffer: reference,
+      });
+      const uploaded = page.locator('[data-testid="canvas-image"][alt="single-reference.png"]');
+      await expect(uploaded).toBeVisible({ timeout: 30_000 });
+      const uploadStatus = page.getByText('上传成功：1 张', { exact: true });
+      await expect(uploadStatus).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-04',
+        target: uploadStatus,
+        caption: '单张参考图完成真实上传，页面给出明确成功状态。',
+      });
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-05',
+        target: uploaded,
+        caption: '上传后的参考图在画板中完成解码并可继续作为生成输入。',
+      });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-input-delete` },
+      });
+      await expectDeleteSucceeded(deleted, `删除单图输入取证工作区 ${workspace.id} 失败`);
+    }
+  });
+
   test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.setTimeout(720_000);
     const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'mobile-business-policy');
+    let runId = '';
     try {
       const models = await readEnvelope<ImageModelPool[]>(await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }));
       const defaults = models.filter(model => model.isDefault);
@@ -4741,10 +4814,51 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const sizes = [...new Map(Object.values(capability.sizesByResolution ?? {}).flat().map(option => [option.size, option])).values()];
       expect(sizes.length).toBeGreaterThan(0);
       for (const size of sizes) await expect(page.getByRole('button', { name: `${size.aspectRatio} · ${size.size}`, exact: true })).toBeAttached();
-      await expect(page.getByPlaceholder('描述你想生成的画面…')).toBeVisible();
+      const promptInput = page.getByPlaceholder('描述你想生成的画面…');
+      await expect(promptInput).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-14',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: 'iPhone 13 真实触控上下文中，模型、尺寸、描述和生成操作均可触达且无横向裁切。',
+      });
+
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`
+      ));
+      await promptInput.fill('移动端蓝色陶瓷杯，纯白背景，产品摄影，不要文字');
+      await page.getByRole('button', { name: '生成', exact: true }).click();
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(createResponse.ok(), createBody.error?.message || '移动端创建生图任务失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '移动端创建生图任务失败').toBe(true);
+      runId = createBody.data.runId;
+      const mobileProgress = page.getByText(/正在生成 · 已等待 \d+s/).first();
+      await expect(mobileProgress).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-16',
+        target: mobileProgress.locator('..'),
+        caption: '移动端真实生图任务持续展示骨架、等待秒数和原始描述，屏幕没有静止空白。',
+      });
+      const completed = await waitForImageRun(page, token, runId, 600_000);
+      await assertImageArtifact(page, completed.detail);
       await testInfo.attach('mobile-business-model-policy', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
+      if (runId) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        });
+        if (current.ok()) {
+          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+            });
+            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
+          }
+        }
+      }
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
       });
@@ -4760,6 +4874,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-14',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: 'iPhone 13 真实触控上下文中，生成流、参考图入口、描述、尺寸和画布切换均可触达。',
+      });
       const reference = solidPngDataUrl(35, 90, 190, 128);
       await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
         name: 'mobile-reference.png',
@@ -4775,6 +4894,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await testInfo.attach('multi-image-mobile-input', { body: await page.screenshot(), contentType: 'image/png' });
       await page.getByRole('button', { name: '移除参考图' }).click();
       await expect(page.getByAltText('参考图')).toBeHidden();
+
+      await page.getByRole('button', { name: '画布', exact: true }).click();
+      const canvasRoot = page.locator('[data-tour-id="visual-editor-canvas"]');
+      await expect(canvasRoot).toBeVisible({ timeout: 30_000 });
+      const threeFiles = [
+        { name: 'mobile-a.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(35, 90, 190, 96).split(',')[1], 'base64') },
+        { name: 'mobile-b.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(235, 190, 55, 96).split(',')[1], 'base64') },
+        { name: 'mobile-c.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(210, 55, 75, 96).split(',')[1], 'base64') },
+      ];
+      await page.locator('input[type="file"][accept="image/*"]').first().setInputFiles(threeFiles);
+      await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await canvasRoot.focus();
+      await page.keyboard.press('Shift+1');
+      const composer = page.locator('[contenteditable="true"]').first();
+      const mobileCombination = '参考 @img1、@img2 和 @img3 的颜色与构图，生成一张三分区包装设计，保留清晰引用顺序';
+      await composer.fill(mobileCombination);
+      await expect(composer).toContainText('@img3');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-16',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: '真实触控手机切到完整画布后，三张参考图与组合描述同时保留且无横向裁切。',
+      });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
     } finally {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
@@ -4791,6 +4934,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
     const generationPrompt = '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字';
     let runId = '';
+    let boundaryRunId = '';
     let generatedArtifacts: UploadArtifactItem[] = [];
     try {
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
@@ -4818,6 +4962,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       const created = await readEnvelope<{ runId: string }>(create);
       runId = created.runId;
+
+      const boundaryCreate = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-wide-boundary-run` },
+        data: {
+          prompt: '横版产品摄影，一枚蓝色陶瓷杯放在纯白背景中央，柔和自然光，不要文字',
+          userMessageContent: '生成一张横版蓝色陶瓷杯产品照',
+          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-wide-boundary-target`,
+          platformId: 'logical-model',
+          modelId: pool!.code,
+          size: '1536x1024',
+          responseFormat: 'url',
+          x: 1100,
+          y: 0,
+          w: 1501,
+          h: 1001,
+        },
+      });
+      boundaryRunId = (await readEnvelope<{ runId: string }>(boundaryCreate)).runId;
 
       const firstStream = await probeImageRunSse(page, token, runId, 0, 'active');
       expect(firstStream.ok).toBe(true);
@@ -4847,8 +5009,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
-      const progress = page.getByTestId('generation-progress').first();
+      const progressItems = page.getByTestId('generation-progress');
+      await expect(progressItems, '方图与宽图任务必须同时恢复到画板').toHaveCount(2, { timeout: 15_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-18',
+        overviewJustification: '同一桌面画板同时显示方图与宽图的真实生成进度，可核对两种容器边界。',
+        caption: '1024×1024 与 1536×1024 两个真实任务同时运行，进度描边都完整留在各自画框内。',
+      });
+      const queue = page.getByLabel('生成队列');
+      await expect(queue).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-06',
+        target: queue,
+        caption: '两个真实任务已经提交，队列明确显示运行与排队数量。',
+      });
+      const progress = progressItems.first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-07',
+        target: progress,
+        caption: '任务准备阶段已经出现真实尺寸画框、阶段和剩余时间，没有静止空白。',
+      });
       const progressBox = await progress.boundingBox();
       // 等待态的信息现在是底边一行（尺寸 · 阶段 · 剩余时间），不再是浮在画面上的黑胶囊。
       const metaBox = await progress.getByTestId('generation-progress-meta').boundingBox();
@@ -4863,9 +5044,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: progress,
         caption: '真实任务仍在运行，进度描边、尺寸、阶段和剩余时间均位于画框容器内。',
       });
+      const originalViewport = page.viewportSize();
+      await page.setViewportSize({ width: 980, height: 720 });
+      const responsiveProgress = page.getByTestId('generation-progress').first();
+      await expect(responsiveProgress).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-09',
+        target: responsiveProgress,
+        caption: '桌面窄宽度下进度元信息自动收敛，描边和时间仍完整留在容器中。',
+      });
+      if (originalViewport) await page.setViewportSize(originalViewport);
       await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
       const completed = await waitForImageRun(page, token, runId, 600_000);
+      const boundaryCompleted = await waitForImageRun(page, token, boundaryRunId, 600_000);
+      await assertImageArtifact(page, boundaryCompleted.detail);
       await testInfo.attach('single-image-latency', {
         body: JSON.stringify({ runId, elapsedMs: Date.now() - generationStartedAt }),
         contentType: 'application/json',
@@ -4905,8 +5098,26 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: generatedImage,
         caption: '真实生成图已完成浏览器解码，并在刷新后的同一工作区恢复。',
       });
+      const quickEdit = page.locator('textarea[placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"]:visible');
+      await expect(quickEdit).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-11',
+        target: quickEdit,
+        caption: '选中真实结果后出现就地继续编辑输入，可在同一画板继续生成。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-15',
+        target: generatedImage,
+        themeTarget: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: '暗色桌面中真实结果、选中反馈、继续编辑与下载操作完整可见。',
+      });
       const downloadButton = page.getByTitle('下载图片').first();
       await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-12',
+        target: downloadButton,
+        caption: '刷新恢复后的真实结果仍可选中并下载，证明自动保存和持久化链路可继续操作。',
+      });
       const canvasSource = await generatedImage.getAttribute('src');
       // 浏览器给用户存盘用的名字来自产品写在 <a download> 上的属性；Chromium 在 downloadWillBegin
       // 阶段对 blob 链接只回报占位名 "download"（2026-09-15 用 141 版实测，blob / data 链接皆如此），
@@ -4970,17 +5181,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
-      if (runId) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+      for (const candidateRunId of [runId, boundaryRunId].filter(Boolean)) {
+        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${candidateRunId}`, {
           headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
         });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
           if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
+            await page.request.post(`/api/visual-agent/image-gen/runs/${candidateRunId}/cancel`, {
               headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
             });
-            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
+            await waitForImageRun(page, token, candidateRunId, 30_000).catch(() => undefined);
           }
         }
       }
@@ -4992,8 +5203,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
       })).status()).toBe(404);
-      if (runId) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+      for (const candidateRunId of [runId, boundaryRunId].filter(Boolean)) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${candidateRunId}`, {
           headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
         })).status()).toBe(404);
       }
@@ -5016,6 +5227,79 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           timeout: 20_000,
           intervals: [500, 1_000, 2_000],
         }).not.toBe(200);
+      }
+    }
+  });
+
+  test('[VIS-008] 单图引用失败保留描述并允许恢复编辑', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行损坏图片引用');
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'single-image-readable-error');
+    let runId = '';
+    try {
+      const pools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) }),
+      );
+      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
+      expect(pool, '没有可用的单图参考逻辑模型').toBeTruthy();
+      const prompt = '参考 @img1 生成一张蓝色陶瓷杯产品照';
+      const created = await readEnvelope<{ runId: string }>(
+        await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-readable-error-run`,
+          },
+          data: {
+            prompt,
+            userMessageContent: prompt,
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-readable-error-target`,
+            platformId: 'logical-model',
+            modelId: pool!.code,
+            size: '1024x1024',
+            responseFormat: 'url',
+            imageRefs: [
+              { refId: 1, assetSha256: 'd'.repeat(64), url: '', label: '不可用参考图', role: 'target' },
+            ],
+            x: 0,
+            y: 0,
+            w: 1001,
+            h: 1001,
+          },
+        }),
+      );
+      runId = created.runId;
+      const terminal = await waitForImageRun(page, token, runId);
+      expect(terminal.detail.run.status).toBe('Failed');
+      const errorMessage = terminal.detail.items[0]?.errorMessage || '';
+      expect(errorMessage).toContain('@img1');
+      expectUserReadable(errorMessage);
+
+      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const visibleError = page.getByText(/参考图 @img1 无法使用/);
+      await expect(visibleError).toBeVisible({ timeout: 30_000 });
+      const composer = page.locator('[contenteditable="true"]').first();
+      const recoveryPrompt = '移除失效参考图后重新生成蓝色陶瓷杯';
+      await composer.fill(recoveryPrompt);
+      await expect(composer).toContainText(recoveryPrompt);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-13',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: '页面明确指出失效的 @img1，同时保留可编辑输入区，用户可移除引用后继续生成。',
+      });
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-readable-error-delete`,
+        },
+      });
+      await expectDeleteSucceeded(deleted, `删除单图可读错误工作区 ${workspace.id} 失败`);
+      if (runId) {
+        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+          headers: authHeaders(token),
+        })).status()).toBe(404);
       }
     }
   });
@@ -5258,7 +5542,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         prompt: string,
         userMessageContent: string,
         imageRefs: Array<{ refId: number; assetSha256: string; url: string; label: string; role: string }>,
+        size = '1024x1024',
       ) => {
+        const [requestedWidth, requestedHeight] = size.split('x').map(Number);
+        const frameHeight = 1001;
+        const frameWidth = Math.max(1, Math.round(frameHeight * requestedWidth / requestedHeight));
         const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
           headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}` },
           data: {
@@ -5267,13 +5555,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-target`,
             platformId: 'logical-model',
             modelId: pool!.code,
-            size: '1024x1024',
+            size,
             responseFormat: 'url',
             imageRefs,
             x: 0,
             y: runIds.length * 1040,
-            w: 1001,
-            h: 1001,
+            w: frameWidth,
+            h: frameHeight,
           },
         });
         const createdRunId = (await readEnvelope<{ runId: string }>(create)).runId;
@@ -5362,6 +5650,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
         ],
       );
+      const wideThreeRunId = await createMultiRun(
+        'three-reference-wide-run',
+        '只从 @img1、@img2 和 @img3 读取各自主色；生成横版三分区包装设计，纯白背景，不要文字',
+        '按顺序参考 @img1、@img2 和 @img3 生成横版三分区包装设计',
+        [
+          { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
+          { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
+          { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
+        ],
+        '1536x1024',
+      );
 
       const activeBeforeRefresh = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
@@ -5383,6 +5682,32 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       page.on('request', recordCreateRequest);
       await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      const multiProgressItems = page.getByTestId('generation-progress');
+      await expect(multiProgressItems, '方图与宽图的三图任务必须同时恢复到画板').toHaveCount(2, { timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18',
+        overviewJustification: '同一桌面画板同时显示方图与横版三参考图任务，可核对多比例进度边界。',
+        caption: '三张参考图驱动的方图和横版任务同时运行，进度描边完整落在各自结果容器内。',
+      });
+      const queue = page.getByLabel('生成队列');
+      await expect(queue).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-08',
+        target: queue,
+        caption: '三图组合请求已经真实提交，运行和排队数量在画板上持续可见。',
+      });
+      const firstMultiProgress = multiProgressItems.first();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-09',
+        target: firstMultiProgress,
+        caption: '三图任务准备阶段显示尺寸、阶段和剩余时间，没有空白等待。',
+      });
+      await page.waitForTimeout(1_100);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-10',
+        target: firstMultiProgress,
+        caption: '真实三图生成继续推进，时间与进度描边相较准备态发生变化。',
+      });
       await expect.poll(async () => {
         if (await page.getByTestId('generation-progress').first().isVisible().catch(() => false)) return 'progress';
         return (await readEnvelope<ImageRunDetail>(
@@ -5413,6 +5738,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const completed = await waitForImageRun(page, token, threeRunId);
       await assertImageArtifact(page, completed.detail);
+      const wideCompleted = await waitForImageRun(page, token, wideThreeRunId);
+      await assertImageArtifact(page, wideCompleted.detail);
+      await assertWireReferences(wideThreeRunId, [blueReferenceData, yellowReferenceData, redReferenceData]);
       const threeColorCoverage = await measureReferenceColorCoverage(page, completed.detail);
       expect(threeColorCoverage.blue, '@img1 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
       expect(threeColorCoverage.yellow, '@img2 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
@@ -5538,6 +5866,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }, { timeout: 30_000 }).toEqual([aSha256, bSha256, cSha256].sort());
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"], [data-testid="canvas-image"][alt="c.png"]')).toHaveCount(3);
+      await page.locator('[data-tour-id="visual-editor-canvas"]').focus();
+      await page.keyboard.press('Shift+1');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-15',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        themeTarget: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: '暗色桌面画板同时展示三张已同步参考图，文件名、颜色和空间关系可辨认。',
+      });
       const uploadedDetail = await readEnvelope<{
         assets: Array<{ id: string; sha256: string; url: string }>;
       }>(await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
@@ -5555,11 +5891,35 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(chipLabels[0]).toContain('b.png');
       expect(chipLabels[1]).toContain('a.png');
       await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-05',
+        target: chips.first(),
+        caption: '选中的画板图片被识别为真实引用芯片，并显示对应文件名。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-06',
         target: chips.first().locator('..'),
         caption: '先选 b.png、再按 Shift 选择 a.png，引用芯片按真实选择顺序排列。',
       });
-
+      const composer = page.locator('[contenteditable="true"]').first();
+      const combinationPrompt = '参考 @img1 和 @img2 的颜色与构图，生成左右分区包装设计';
+      await composer.pressSequentially(combinationPrompt);
+      await expect(composer).toContainText('@img2');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-07',
+        target: composer,
+        caption: '组合描述与两张引用芯片同时保留，引用编号没有被纯文本编辑破坏。',
+      });
+      const longCombinationPrompt = Array.from(
+        { length: 10 },
+        (_, index) => `第${index + 1}段要求 @img1 保留蓝色、@img2 保留黄色并调整留白`,
+      ).join('；');
+      await composer.pressSequentially(`；${longCombinationPrompt}`);
+      await expect(composer).toContainText('第10段要求');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-17',
+        target: composer,
+        caption: '超长组合描述换行和滚动后，@img1、@img2 引用与发送操作仍完整。',
+      });
       // 真实生图和线路顺序由 MVIS-001/002/008/009/011 旅程单独验收；本用例只验证编辑器
       // 自身的引用顺序与删除持久化，防止上游额度故障把本地状态回归伪装成超时。
       expect(chipLabels).toEqual(['b.png', 'a.png']);

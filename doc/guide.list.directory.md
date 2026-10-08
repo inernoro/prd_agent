@@ -357,6 +357,7 @@
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
 - [prd-agent 平台杂项 · 债务台账](./debt.prd-agent.md) `debt.prd-agent`
 - [prd-agent 头像闭环 · 验收债务台账](./debt.prd-agent.avatar-acceptance.md) `debt.prd-agent.avatar-acceptance`
+- [prd-agent 稳定冒烟视觉覆盖 · 验收债务台账](./debt.prd-agent.stable-smoke-visual.md) `debt.prd-agent.stable-smoke-visual`
 - [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
