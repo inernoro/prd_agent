@@ -165,7 +165,8 @@
         },
         "前台选择": {
           "originKind": "app",
-          "entryPath": "/visual-agent"
+          "entryPath": "/visual-agent",
+          "theme": "dark"
         },
         "真实调用": {
           "originKind": "app",
@@ -191,6 +192,13 @@
       "name": "用户可读错误、生成进度与响应式布局",
       "breadcrumb": "各业务功能 → 触发等待或失败 → 查看提示 → 执行恢复；各功能 → 切换窄屏 → 完成关键操作",
       "entryPath": "/",
+      "stateBindings": {
+        "超长文案": {"entryPath": "/document-store"},
+        "弹窗": {"entryPath": "/document-store"},
+        "滚动": {"entryPath": "/document-store"},
+        "暗色桌面超长错误": {"entryPath": "/document-store"},
+        "移动端弹窗与滚动": {"entryPath": "/"}
+      },
       "uniqueScreenshotFloor": 12,
       "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],

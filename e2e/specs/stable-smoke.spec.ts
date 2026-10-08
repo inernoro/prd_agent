@@ -699,7 +699,9 @@ async function provisionTaggedFailoverBackup(
 type GatewayLogicalModel = {
   id: string;
   publicId: string;
+  name?: string;
   modelType: string;
+  capabilities?: string[];
   routingStrategy: string;
   enabled: boolean;
   offerings: GatewayOffering[];
@@ -1031,6 +1033,50 @@ async function loginGateway(request: APIRequestContext) {
     baseUrl,
     headers: { Authorization: `Bearer ${body.data.token}` },
   };
+}
+
+async function seedGatewayConsoleSession(
+  page: Page,
+  request: APIRequestContext,
+  gateway: Awaited<ReturnType<typeof loginGateway>>,
+) {
+  const contextResponse = await request.get(`${gateway.baseUrl}/gw/auth/context`, {
+    headers: gateway.headers,
+  });
+  const contextBody = await contextResponse.json() as ApiEnvelope<{
+    id: string;
+    name: string;
+    isInternal: boolean;
+    role: string;
+    teamIds: string[];
+  }>;
+  expect(contextResponse.ok(), contextBody.error?.message || '无法读取模型网关租户会话').toBe(true);
+  expect(contextBody.success, contextBody.error?.message || '无法读取模型网关租户会话').toBe(true);
+  const token = gateway.headers.Authorization.replace(/^Bearer\s+/i, '');
+  expect(token, '模型网关浏览器会话缺少 token').toBeTruthy();
+  await page.evaluate(({ sessionToken, tenant }) => {
+    localStorage.setItem('llmgw.token', sessionToken);
+    localStorage.setItem('llmgw.user', JSON.stringify({
+      username: 'stable-smoke',
+      displayName: '稳定冒烟',
+      identityProvider: 'map',
+    }));
+    localStorage.setItem('llmgw.tenant', JSON.stringify(tenant));
+    localStorage.removeItem('llmgw.mustChangePwd');
+    localStorage.removeItem('llmgw.expiresAt');
+  }, { sessionToken: token, tenant: contextBody.data });
+}
+
+async function setGatewayConsoleTheme(page: Page, theme: 'light' | 'dark') {
+  await page.evaluate((mode) => {
+    localStorage.setItem('llmgw.theme', mode);
+    document.documentElement.dataset.theme = mode;
+    document.documentElement.style.colorScheme = mode;
+    window.dispatchEvent(new CustomEvent('llmgw-theme-change', {
+      detail: { preference: mode, resolved: mode },
+    }));
+  }, theme);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
 }
 
 async function waitForGatewayLog(
@@ -2085,6 +2131,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto('/', { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+      const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(desktopOverflow, '根页面暗色桌面不应出现横向溢出').toBeLessThanOrEqual(1);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-10',
+        target: page.locator('#root'),
+        caption: '暗色桌面根页面实测横向溢出不超过 1 像素，导航、内容和用户操作均在视口内。',
+      });
 
       const accountButton = page.getByRole('button', { name: '打开用户菜单' }).first();
       await expect(accountButton).toBeVisible();
@@ -2152,6 +2205,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: promptError,
         caption: '空描述提交会给出可理解原因，输入框仍保持可编辑以便立即恢复。',
       });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-01',
+        target: editor,
+        caption: '空描述提交后的错误结果、原输入和下一步操作在同一弹窗内完整可见。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-02',
+        target: promptError.locator('..'),
+        caption: '错误明确归因为缺少头像修改描述，没有暴露接口、模型或协议细节。',
+      });
       const prompt = '保留人物主体，改成细腻的蓝色手绘头像，背景简洁';
       await promptInput.fill(prompt);
       await expect(promptError).toHaveCount(0);
@@ -2159,6 +2222,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         slotId: 'CDS-VISUAL-IDENTITY-PROFILE-06',
         target: promptInput,
         caption: '有效头像描述已经输入，错误提示清除，生成动作可继续执行。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-03',
+        target: editor,
+        caption: '补全必填描述后错误立即消失，生成预览恢复动作保持可点击。',
       });
 
       await page.getByRole('button', { name: '生成预览' }).click();
@@ -2170,6 +2238,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: generationStatus,
         caption: '真实头像生成期间持续显示阶段与已等待秒数，页面没有静止等待。',
       });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-04',
+        target: editor,
+        caption: '真实头像任务从提交进入生成阶段，状态文案与已等待时间持续变化。',
+      });
       const generatedPreview = page.getByAltText('生成的头像预览');
       await expect(generatedPreview).toBeVisible({ timeout: 180_000 });
       await expect(editor).toHaveAttribute('data-avatar-phase', 'preview');
@@ -2177,6 +2250,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         slotId: 'CDS-VISUAL-IDENTITY-PROFILE-08',
         target: generatedPreview,
         caption: '真实生成的头像像素已在预览区完整显示，不以进度态冒充结果。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-05',
+        target: editor,
+        caption: '阶段进度结束后真实预览、确认使用和重新生成操作完整出现。',
       });
 
       await page.route('**/api/profile/avatar/apply-generated', async (route) => {
@@ -2216,7 +2294,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
 
       const persistedAuthState = await readStableAuthSnapshot(page);
-      mobileContext = await browser.newContext({ ...devices['iPhone 13'] });
+      mobileContext = await browser.newContext({
+        ...devices['iPhone 13'],
+        baseURL: testInfo.project.use.baseURL,
+      });
       await mobileContext.addInitScript((value) => {
         window.localStorage.setItem('prd-admin-auth', value);
         window.localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: 'dark' }, version: 0 }));
@@ -2233,6 +2314,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: mobileDrawer,
         caption: 'iPhone 13 真实触控视口打开导航抽屉，当前身份与头像入口无遮挡可见。',
       });
+      const mobileOverflow = await mobilePage.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(mobileOverflow, 'iPhone 13 根页面和导航抽屉不应横向溢出').toBeLessThanOrEqual(1);
+      await captureStableSmokeVisualEvidence(mobilePage, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-06',
+        overviewJustification: '需要同时证明 iPhone 13 根页面、导航抽屉、当前身份与底部操作都收敛在同一窄屏视口内。',
+        caption: 'iPhone 13 窄屏中导航抽屉、当前身份和关键动作均在视口内，实测无横向溢出。',
+      });
       await mobileDrawer.getByRole('button', { name: '修改我的头像' }).click();
       const mobileEditor = mobilePage.getByTestId('avatar-editor');
       await expect(mobileEditor).toBeVisible();
@@ -2240,6 +2328,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         slotId: 'CDS-VISUAL-IDENTITY-PROFILE-13',
         target: mobileEditor,
         caption: 'iPhone 13 真实触控视口完整打开头像编辑器，上传、描述和生成操作均可达。',
+      });
+      await mobilePage.getByLabel('描述你想要的头像').fill(
+        '保留当前人物主体和面部特征，改成细腻的蓝色手绘头像；背景保持简洁，边缘留出安全距离，并确保移动端预览、上传和生成操作始终可见。',
+      );
+      await mobileEditor.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await captureStableSmokeVisualEvidence(mobilePage, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-12',
+        target: mobileEditor,
+        caption: 'iPhone 13 窄屏弹窗可滚到操作区，内容未裁切且关闭、上传和生成动作仍可触达。',
       });
     } finally {
       releaseAvatarUpload?.();
@@ -3624,6 +3721,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.getByRole('button', { name: '解析短视频', exact: true }).click();
       const drawer = page.locator('[data-drawer="reprocess-chat"]');
       const input = drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接');
+      await expect(drawer).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-08',
+        target: drawer,
+        caption: '暗色桌面从真实文档库入口打开短视频解析抽屉，输入、说明与关闭操作完整可见。',
+      });
+      await input.fill('用于验证抽屉内部滚动的长输入内容，滚动后输入区、解析操作和关闭入口仍需可达。'.repeat(4));
+      await drawer.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-09',
+        target: drawer,
+        caption: '短视频解析抽屉滚到内容底部后仍保留输入与操作区，内部滚动没有带走页面主导航。',
+      });
       await input.fill('这不是链接');
       await drawer.getByRole('button', { name: '解析', exact: true }).click();
       const invalidToast = page.getByText('没有识别到短视频链接', { exact: true });
@@ -3661,6 +3771,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-11',
         target: longError,
         caption: '失效链接的长错误说明在桌面抽屉内完整换行、不溢出，并明确给出检查和更换链接的恢复动作。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-07',
+        target: longError.locator('..'),
+        caption: '超长错误在暗色桌面中自然换行，末尾的重新粘贴、更换链接和重试动作完整可见。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-11',
+        target: drawer,
+        caption: '暗色桌面抽屉容纳完整长错误、原始输入和恢复动作，没有截断或横向滚动。',
       });
       await page.unroute('**/api/short-video-materials/runs');
     } finally {
@@ -5205,6 +5325,86 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[GW-001][GW-003][GW-004][VIS-GW-001] 模型路由控制台展示真实逻辑模型与 Offering', async ({ page, request }, testInfo) => {
+    const gateway = await loginGateway(request);
+    await page.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
+    await setGatewayConsoleTheme(page, 'light');
+    const loginShell = page.locator('.lg-login-shell');
+    await expect(loginShell).toBeVisible();
+    await expect(page.getByRole('heading', { name: '登录 Gateway 控制台' })).toBeVisible();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-01',
+      target: loginShell,
+      caption: 'LLMGW 独立登录页完整展示租户账号入口、服务状态与安全说明。',
+    });
+
+    await seedGatewayConsoleSession(page, request, gateway);
+    const logicalResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
+      headers: gateway.headers,
+    });
+    const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+    expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取图片逻辑模型').toBe(true);
+    const logical = logicalBody.data.items.find((item) => (
+      item.enabled
+      && item.offerings.some((offering) => offering.enabled)
+      && (/image|generation/i.test(item.modelType)
+        || (item.capabilities || []).some((capability) => /image|text2img|img2img/i.test(capability)))
+    ));
+    expect(logical, '模型网关必须至少存在一条已启用的图片逻辑模型与 Offering').toBeTruthy();
+
+    await page.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
+    const list = page.locator('.lg-logical-model-list');
+    await expect(list).toBeVisible({ timeout: 30_000 });
+    const modelRow = list.locator('.lg-logical-model-grid').filter({ hasText: logical!.publicId }).first();
+    await expect(modelRow).toBeVisible();
+    await setGatewayConsoleTheme(page, 'dark');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-02',
+      target: list,
+      caption: `真实逻辑模型 ${logical!.publicId} 与其上游线路、近 30 天用量和状态同时可见。`,
+    });
+
+    await modelRow.getByRole('button', { name: '展开', exact: true }).click();
+    const modelBlock = modelRow.locator('..');
+    const routeDetail = modelBlock.locator('.lg-logical-model-route-detail').first();
+    await expect(routeDetail).toBeVisible();
+    await setGatewayConsoleTheme(page, 'light');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-03',
+      target: modelBlock,
+      caption: `展开 ${logical!.publicId} 后，模型能力、默认策略和真实路由明细完整可见。`,
+    });
+
+    const editButton = routeDetail.getByRole('button', { name: '编辑', exact: true });
+    await expect(editButton).toBeVisible();
+    await editButton.click();
+    const editForm = modelBlock.locator('form').filter({ hasText: '保存修改' });
+    await expect(editForm).toBeVisible();
+    await setGatewayConsoleTheme(page, 'dark');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-04',
+      target: editForm,
+      caption: '仅打开真实 Offering 编辑态，不提交变更；目标、协议、Endpoint、优先级和权重均可核对。',
+    });
+    await setGatewayConsoleTheme(page, 'light');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-05',
+      target: routeDetail,
+      caption: 'Offering 的 Provider、协议、价格来源、优先级、权重和治理信息来自真实配置。',
+    });
+    await setGatewayConsoleTheme(page, 'dark');
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-06',
+      target: routeDetail,
+      caption: '已启用逻辑模型和 Offering 的主备角色、状态及启停操作都在同一配置块中。',
+    });
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-11',
+      target: modelBlock,
+      caption: '暗色桌面下路由优先级、权重、编辑和启停操作均完整，无裁切或不可读状态。',
+    });
+  });
+
   test('[GW-006] 路由配置变化后健康状态清零且原配置可恢复', async ({ request }) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动修改网关路由配置');
     const { baseUrl, headers } = await loginGateway(request);
@@ -5476,6 +5676,39 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(failedLog.providerAttempts.every((attempt) => attempt.status === 'failed')).toBe(true);
       expect(failedLog.logicalModelPublicId).toBe(logical!.publicId);
       expect(failedLog.routerTrace.logicalModelPublicId).toBe(logical!.publicId);
+      const gatewayFailurePage = await page.context().newPage();
+      try {
+        await gatewayFailurePage.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
+        await seedGatewayConsoleSession(gatewayFailurePage, request, gateway);
+        await gatewayFailurePage.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
+        const failedModelRow = gatewayFailurePage
+          .locator('.lg-logical-model-grid')
+          .filter({ hasText: logical!.publicId })
+          .first();
+        await expect(failedModelRow).toBeVisible({ timeout: 30_000 });
+        await failedModelRow.getByRole('button', { name: '展开', exact: true }).click();
+        const failedModelBlock = failedModelRow.locator('..');
+        await expect(
+          failedModelBlock.getByText(/无可用线路|已自动切走|有线路等人处理/).first(),
+          '真实全路失败后逻辑模型页必须说明当前线路状态',
+        ).toBeVisible();
+        await setGatewayConsoleTheme(gatewayFailurePage, 'dark');
+        await captureStableSmokeVisualEvidence(gatewayFailurePage, testInfo, {
+          slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-10',
+          target: failedModelBlock,
+          caption: `真实 requestId ${failedRequestId} 的全部 Offering 均调用失败，控制台明确显示线路不可用状态和处理方向。`,
+        });
+        const recoverAction = failedModelBlock.getByRole('button', { name: '手动恢复', exact: true }).first();
+        await expect(recoverAction, '被连续失败摘除的 Offering 必须提供手动恢复操作').toBeVisible();
+        await setGatewayConsoleTheme(gatewayFailurePage, 'light');
+        await captureStableSmokeVisualEvidence(gatewayFailurePage, testInfo, {
+          slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-12',
+          target: failedModelBlock,
+          caption: '不可用 Offering 的原因和手动恢复动作同时可见；本用例随后由 finally 恢复原 Endpoint 并停用临时备用。',
+        });
+      } finally {
+        await gatewayFailurePage.close();
+      }
     } finally {
       const restoreResults = await Promise.allSettled(offerings.map((offering) => (
         updateOffering(
@@ -5750,6 +5983,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(root).toBeVisible();
       await expect(canvas).toBeVisible();
       await expect(composer).toBeVisible();
+
+      const routePools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) }),
+      );
+      const selectedPool = routePools.find((pool) => pool.isDefault);
+      expect(selectedPool, '前台必须展示 MAP 明确配置的图片默认逻辑模型').toBeTruthy();
+      const selectedModel = page.getByText(selectedPool!.name, { exact: true }).first();
+      await expect(selectedModel).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-07',
+        target: selectedModel,
+        caption: `MAP 前台真实选中默认逻辑模型 ${selectedPool!.code}，没有用列表首项替代业务配置。`,
+      });
 
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-01',
@@ -6047,6 +6293,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: progress,
         caption: '任务准备阶段已经出现真实尺寸画框、阶段和剩余时间，没有静止空白。',
       });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-08',
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        caption: `前台已通过逻辑模型 ${pool!.code} 发起真实图片调用，任务进度持续更新。`,
+      });
       const progressBox = await progress.boundingBox();
       // 等待态的信息现在是底边一行（尺寸 · 阶段 · 剩余时间），不再是浮在画面上的黑胶囊。
       const metaBox = await progress.getByTestId('generation-progress-meta').boundingBox();
@@ -6101,6 +6352,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(gatewayLog.routerTrace.logicalModelPublicId).toBe(pool!.code);
       expect(gatewayLog.routerTrace.offeringId).toBeTruthy();
       expect(gatewayLog.routerTrace.steps.length).toBeGreaterThan(0);
+      const gatewaySession = await loginGateway(request);
+      const gatewayAuditPage = await page.context().newPage();
+      try {
+        await gatewayAuditPage.goto(`${gatewaySession.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
+        await seedGatewayConsoleSession(gatewayAuditPage, request, gatewaySession);
+        const requestId = `${runId}-0-0`;
+        await gatewayAuditPage.goto(
+          `${gatewaySession.baseUrl}/logs?requestId=${encodeURIComponent(requestId)}`,
+          { waitUntil: 'domcontentloaded' },
+        );
+        await setGatewayConsoleTheme(gatewayAuditPage, 'light');
+        const matchingLog = gatewayAuditPage.getByText(requestId, { exact: true }).first();
+        await expect(matchingLog, '网关日志页必须能按真实 requestId 找到本次图片调用').toBeVisible({ timeout: 30_000 });
+        await captureStableSmokeVisualEvidence(gatewayAuditPage, testInfo, {
+          slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-09',
+          target: matchingLog,
+          caption: `requestId ${requestId} 对应逻辑模型 ${pool!.code}、实际 Offering 和成功上游，可从前台任务追到网关日志。`,
+        });
+      } finally {
+        await gatewayAuditPage.close();
+      }
       await page.reload({ waitUntil: 'domcontentloaded' });
       const generatedImage = page.getByTestId('canvas-image').first();
       await expect(generatedImage, '任务完成并刷新后画布必须恢复真实图片').toBeVisible({ timeout: 30_000 });

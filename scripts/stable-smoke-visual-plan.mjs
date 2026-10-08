@@ -62,6 +62,7 @@ function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmen
       ? gatewayEnvironmentOrigins[environment]
       : environmentOrigins[environment],
     entryPath: binding.entryPath || module.entryPath,
+    theme: binding.theme || undefined,
   };
 }
 
@@ -139,7 +140,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           primaryState: state,
           coverageStates: [state],
           testType: index === 0 ? '冒烟' : '视觉',
-          theme: stateTheme(module, index),
+          theme: binding.theme || stateTheme(module, index),
           viewportClass,
           ...mobileMetadata(module, state, state, viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${state}`),
@@ -168,7 +169,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           primaryState: extra.primaryState,
           coverageStates: [extra.primaryState],
           testType: '视觉',
-          theme: extra.theme,
+          theme: binding.theme || extra.theme,
           viewportClass: extra.viewportClass,
           ...mobileMetadata(module, extra.label, extra.primaryState, extra.viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${extra.label}`),

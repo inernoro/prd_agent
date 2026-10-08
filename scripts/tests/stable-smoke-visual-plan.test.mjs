@@ -16,6 +16,9 @@ test('视觉取证计划逐模块展开为148条有路径的任务', () => {
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'identity-profile' && slot.scenario === '登录')?.entryPath, '/login');
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'identity-profile' && slot.scenario === '会话')?.entryPath, '/');
   assert.ok(plan.slots.filter((slot) => slot.moduleId === 'single-image-creation').every((slot) => slot.entryPath === '/visual-agent'));
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'errors-progress-responsive' && slot.scenario === '超长文案')?.entryPath, '/document-store');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'errors-progress-responsive' && slot.scenario === '滚动')?.entryPath, '/document-store');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'errors-progress-responsive' && slot.scenario === '移动端弹窗与滚动')?.entryPath, '/');
 });
 
 test('双环境视觉计划展开为296个互不复用的环境验收位', () => {
@@ -51,6 +54,7 @@ test('本轮视觉计划固化运行标识、提交和取证开始时间', () =>
     .every((slot) => slot.pageOrigin === 'https://gateway-preview.example.test'));
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '登录')?.entryPath, '/login');
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '调用日志对应')?.entryPath, '/logs');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '前台选择')?.theme, 'dark');
   const report = renderVisualPlan(plan);
   assert.match(report, /运行标识：stsmk-20260811/);
   assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);
