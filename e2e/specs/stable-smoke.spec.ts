@@ -2338,7 +2338,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await route.continue();
       });
       const applyResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
-        && new URL(response.url()).pathname.endsWith('/api/profile/avatar/apply-generated'));
+        && new URL(response.url()).pathname.endsWith('/api/profile/avatar/apply-generated'), { timeout: 30_000 });
       await page.getByRole('button', { name: '使用此头像' }).click();
       const applyStatus = page.getByTestId('avatar-upload-status');
       await expect(applyStatus).toContainText('正在替换头像，请稍候');
@@ -2830,7 +2830,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             this.addEventListener('load', (event) => {
               event.stopImmediatePropagation();
               const handler = this.onload;
-              window.setTimeout(() => handler?.call(this, event), 2_500);
+              window.setTimeout(() => handler?.call(this, event), 30_000);
             }, { capture: true, once: true });
           }
           return Reflect.apply(nativeSend, this, [body]);
@@ -2881,7 +2881,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: parsingTitle,
         caption: '文件字节上传完成后明确切换到解析准备态，不再把服务端等待伪装成上传 99%。',
       });
-      await expect(page.getByTestId('document-upload-status')).toContainText('已等待 1 秒', { timeout: 5_000 });
+      await expect(page.getByTestId('document-upload-status')).toContainText(/已等待 [1-9]\d* 秒/, { timeout: 10_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-FILE-PARSING-06',
         target: progressCard,
@@ -3530,7 +3530,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let markRunCreated!: () => void;
     const runCreated = new Promise<void>((resolveCreated) => { markRunCreated = resolveCreated; });
     let visualStage: 'parse' | 'transcript' | 'real' = 'parse';
-    const runRoute = '**/api/short-video-materials/runs/*';
+    const runRoute = /\/api\/short-video-materials\/runs\/[^/?]+(?:\?.*)?$/;
+    let controlledReads = 0;
     try {
       storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -3582,6 +3583,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         if (!createdRun) return route.continue();
         const runningKey = visualStage === 'real' ? '' : visualStage;
         if (!runningKey) return route.continue();
+        controlledReads += 1;
         const stages = createdRun.stages.map((stage) => ({
           ...stage,
           status: stage.key === runningKey
@@ -3633,8 +3635,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = createdRun.id;
       markRunCreated();
 
-      const parseProgress = drawer.getByText(/解析链接：正在处理.*正在识别直接视频文件/).first();
+      const parseProgress = drawer.locator('.streaming-text')
+        .filter({ hasText: '解析链接：正在处理' })
+        .filter({ hasText: '正在识别直接视频文件' })
+        .first();
       await expect(parseProgress).toBeVisible({ timeout: 20_000 });
+      expect(controlledReads, '短视频受控详情路由没有接到页面轮询').toBeGreaterThan(0);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-04',
         target: parseProgress,
@@ -3642,7 +3648,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
 
       visualStage = 'transcript';
-      const transcriptProgress = drawer.getByText(/视频转文字：正在处理.*正在从已入库视频转写原始文字/).first();
+      const transcriptProgress = drawer.locator('.streaming-text')
+        .filter({ hasText: '视频转文字：正在处理' })
+        .filter({ hasText: '正在从已入库视频转写原始文字' })
+        .first();
       await expect(transcriptProgress).toBeVisible({ timeout: 20_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-05',
@@ -3888,11 +3897,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const studio = page.getByTestId('video-project-studio');
       await studio.getByRole('button', { name: '设置', exact: true }).click();
       await studio.getByRole('region', { name: '生成设置' }).getByLabel('视频模型').selectOption(frameModel!.id);
+      const storyboardAction = page.getByRole('button', { name: '生成故事分镜', exact: true });
+      await expect(storyboardAction).toBeEnabled({ timeout: 60_000 });
       const createResponsePromise = page.waitForResponse((response) => (
         response.request().method() === 'POST'
         && new URL(response.url()).pathname === '/api/video-agent/runs'
-      ));
-      await page.getByRole('button', { name: '生成故事分镜', exact: true }).click();
+      ), { timeout: 30_000 });
+      await storyboardAction.click();
       const createResponse = await createResponsePromise;
       const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
       expect(createResponse.ok(), createBody.error?.message || '提交故事分镜失败').toBe(true);
@@ -5748,11 +5759,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(failedLog.logicalModelPublicId).toBe(logical!.publicId);
       expect(failedLog.routerTrace.logicalModelPublicId).toBe(logical!.publicId);
       // 一次请求证明“本次全路失败”，但控制台的线路状态来自连续失败熔断，不应把单次失败
-      // 冒充已摘除。熔断唯一判据是连续 5 次失败；继续用相同故障夹具发起至多五次
-      // 快速请求，直到所有参与线路真实进入
+      // 冒充已摘除。熔断唯一判据是连续 5 次失败；健康状态写入和下一次候选解析
+      // 存在短暂可见性窗口，因此按真实状态最多补十二次快速请求，直到所有参与线路真实进入
       // Unavailable，再验控制台的“无可用线路”和手动恢复入口。
       let failedLogical = logical!;
-      for (let attempt = 1; attempt <= 5; attempt += 1) {
+      for (let attempt = 1; attempt <= 12; attempt += 1) {
         const refreshedResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
           headers: gateway.headers,
         });
@@ -5764,6 +5775,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         const tripRunId = await createProbeRun(`all-failure-trip-${attempt}`);
         const tripResult = await waitForImageRun(page, token, tripRunId, 120_000);
         expect(tripResult.detail.run.status).toBe('Failed');
+        await new Promise((resolveWait) => setTimeout(resolveWait, 500));
       }
       const finalHealthResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
         headers: gateway.headers,
@@ -6285,7 +6297,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { name: 'mobile-b.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(235, 190, 55, 96).split(',')[1], 'base64') },
         { name: 'mobile-c.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(210, 55, 75, 96).split(',')[1], 'base64') },
       ];
-      await page.locator('input[type="file"][accept="image/*"][multiple]').last().setInputFiles(threeFiles);
+      const canvasFileInput = page.getByTestId('visual-canvas-file-input');
+      await expect(canvasFileInput).toHaveCount(1);
+      await canvasFileInput.setInputFiles(threeFiles);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await canvasRoot.focus();

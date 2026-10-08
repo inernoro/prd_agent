@@ -8972,6 +8972,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           <input
             ref={fileRef}
+            data-testid="visual-canvas-file-input"
             type="file"
             className="hidden"
             accept="image/*"
