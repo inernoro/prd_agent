@@ -266,7 +266,7 @@ test('局部作用域皮肤可指定唯一主题测量区域并传给取证器',
   }
 });
 
-test('真实登录头像、单图、多图、录音、文件与短视频解析旅程接入计划槽位而不是普通附件截图', () => {
+test('真实登录头像、单图、多图、录音、文件、短视频与文学旅程接入计划槽位而不是普通附件截图', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
   for (const slotId of [
     'CDS-VISUAL-IDENTITY-PROFILE-01',
@@ -363,6 +363,20 @@ test('真实登录头像、单图、多图、录音、文件与短视频解析�
     'CDS-VISUAL-SHORT-VIDEO-PARSING-10',
     'CDS-VISUAL-SHORT-VIDEO-PARSING-11',
     'CDS-VISUAL-SHORT-VIDEO-PARSING-12',
+    'CDS-VISUAL-LITERARY-CREATION-01',
+    'CDS-VISUAL-LITERARY-CREATION-02',
+    'CDS-VISUAL-LITERARY-CREATION-03',
+    'CDS-VISUAL-LITERARY-CREATION-04',
+    'CDS-VISUAL-LITERARY-CREATION-05',
+    'CDS-VISUAL-LITERARY-CREATION-06',
+    'CDS-VISUAL-LITERARY-CREATION-07',
+    'CDS-VISUAL-LITERARY-CREATION-08',
+    'CDS-VISUAL-LITERARY-CREATION-09',
+    'CDS-VISUAL-LITERARY-CREATION-10',
+    'CDS-VISUAL-LITERARY-CREATION-11',
+    'CDS-VISUAL-LITERARY-CREATION-12',
+    'CDS-VISUAL-LITERARY-CREATION-13',
+    'CDS-VISUAL-LITERARY-CREATION-14',
   ]) {
     assert.match(source, new RegExp(`slotId: '${slotId}'`));
   }
@@ -442,5 +456,25 @@ test('真实登录头像、单图、多图、录音、文件与短视频解析�
   assert.match(
     source,
     /devices\['iPhone 13'\][\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-08[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-10[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-12/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-LITERARY-CREATION-01[\s\S]*?literary-create[\s\S]*?CDS-VISUAL-LITERARY-CREATION-03/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-LITERARY-CREATION-04[\s\S]*?生成配图标记[\s\S]*?CDS-VISUAL-LITERARY-CREATION-05[\s\S]*?CDS-VISUAL-LITERARY-CREATION-06[\s\S]*?CDS-VISUAL-LITERARY-CREATION-07/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-LITERARY-CREATION-08[\s\S]*?page\.reload[\s\S]*?CDS-VISUAL-LITERARY-CREATION-09/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-LITERARY-CREATION-10[\s\S]*?devices\['iPhone 13'\][\s\S]*?CDS-VISUAL-LITERARY-CREATION-11[\s\S]*?CDS-VISUAL-LITERARY-CREATION-13/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-LITERARY-CREATION-12[\s\S]*?CDS-VISUAL-LITERARY-CREATION-14/,
   );
 });

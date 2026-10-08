@@ -289,6 +289,111 @@ function expectUserReadable(message: string) {
   expect(message).toMatch(/请|重试|检查|选择|重新|稍后/);
 }
 
+async function installLiteraryMarkerStream(
+  page: Page,
+  workspaceId: string,
+  mode: 'proxy' | 'mock-success' | 'mock-error',
+  articleContent: string,
+) {
+  await page.evaluate(({ expectedPath, behavior, article }) => {
+    type StableSmokeWindow = Window & { __stableSmokeResumeLiterary?: () => void };
+    const stableWindow = window as StableSmokeWindow;
+    const nativeFetch = window.fetch.bind(window);
+    let resume!: () => void;
+    const hold = new Promise<void>((resolveHold) => { resume = resolveHold; });
+    stableWindow.__stableSmokeResumeLiterary = resume;
+
+    const mockEvents = behavior === 'mock-success'
+      ? [
+          { type: 'progress', message: '正在分析文章结构与配图位置' },
+          { type: 'thinking', text: '正在识别移动端文章中的关键场景。' },
+          { type: 'delta', text: '准备插入一处配图标记。' },
+          { type: 'marker', index: 0, text: '一束晨光照在书页上，暖色写实风格', anchor: '稳定冒烟移动文章正文。' },
+          { type: 'finalizing' },
+          { type: 'done', fullText: `${article}\n\n[插图]: 一束晨光照在书页上，暖色写实风格` },
+        ]
+      : behavior === 'mock-error'
+        ? [
+            { type: 'progress', message: '正在分析文章结构与配图位置' },
+            { type: 'error', message: '文学创作暂时不可用，请检查文章内容后重试' },
+          ]
+        : null;
+
+    const delay = (ms: number) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+    const delayedSse = (source: ReadableStream<Uint8Array>, responseInit: ResponseInit) => {
+      const reader = source.getReader();
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          let buffer = '';
+          let emitted = 0;
+          const emit = async (eventText: string) => {
+            if (!eventText.trim()) return;
+            await delay(emitted < 8 ? 450 : 30);
+            controller.enqueue(encoder.encode(`${eventText}\n\n`));
+            emitted += 1;
+            if (emitted === 2 && behavior !== 'mock-error') await hold;
+          };
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+            const events = buffer.split('\n\n');
+            buffer = events.pop() || '';
+            for (const eventText of events) await emit(eventText);
+          }
+          buffer += decoder.decode().replace(/\r\n/g, '\n');
+          if (buffer.trim()) await emit(buffer);
+          controller.close();
+        },
+      });
+      return new Response(stream, responseInit);
+    };
+
+    window.fetch = async (input, init) => {
+      const rawUrl = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      const url = new URL(rawUrl, window.location.href);
+      const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (url.pathname !== expectedPath || method !== 'POST') return nativeFetch(input, init);
+
+      if (mockEvents) {
+        const encoder = new TextEncoder();
+        const body = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            for (let index = 0; index < mockEvents.length; index += 1) {
+              await delay(450);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(mockEvents[index])}\n\n`));
+              if (index === 1 && behavior === 'mock-success') await hold;
+            }
+            controller.close();
+          },
+        });
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+
+      const response = await nativeFetch(input, init);
+      if (!response.body || !response.ok) return response;
+      return delayedSse(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    };
+  }, {
+    expectedPath: `/api/visual-agent/image-master/workspaces/${workspaceId}/article/generate-markers`,
+    behavior: mode,
+    article: articleContent,
+  });
+}
+
+async function resumeLiteraryMarkerStream(page: Page) {
+  await page.evaluate(() => {
+    const stableWindow = window as Window & { __stableSmokeResumeLiterary?: () => void };
+    stableWindow.__stableSmokeResumeLiterary?.();
+  });
+}
+
 function downloadFileName(contentDisposition: string) {
   const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
   if (utf8?.[1]) return decodeURIComponent(utf8[1]);
@@ -2874,82 +2979,190 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
   });
 
-  test('[LIT-002][LIT-005][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
-    test.setTimeout(240_000);
+  test('[LIT-001][LIT-002][LIT-005][LIT-010] 文学作品从真实入口新建、流式生成、保存回读并清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(360_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
-    const title = `stsmk-${Date.now()}-文学流式创作`;
-    const article = '清晨，城市公园里的蓝色长椅刚被阳光照亮。\n\n一位读者翻开书本，远处的树叶在微风中轻轻摇动。';
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学流式创作-r${testInfo.retry}`;
+    const article = '# 城市晨光\n\n清晨，城市公园里的蓝色长椅刚被阳光照亮。\n\n## 阅读时刻\n\n一位读者翻开书本，远处的树叶在微风中轻轻摇动。';
+    const listRoute = '**/api/literary-agent/workspaces?limit=100';
     let workspaceId = '';
     try {
-      const chatPools = await readEnvelope<BusinessModelPool[]>(await page.request.get(
-        '/api/literary-agent/config/models/chat',
-        { headers: authHeaders(token) },
+      const root = page.locator('[data-tour-id="literary-root"]');
+      await expect(root).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-01',
+        target: root,
+        overviewJustification: '需要同时证明文学创作标题、视图切换、新建入口与文章区域均可见。',
+        caption: '从真实导航进入文学创作，标题、文章区域和新建操作完整可达。',
+      });
+
+      await page.route(listRoute, async (route) => {
+        if (route.request().method() !== 'GET') return route.continue();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { items: [] } }),
+        });
+      });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      const empty = page.locator('[data-tour-id="literary-empty"]');
+      await expect(empty).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-02',
+        target: empty,
+        caption: '受控零作品响应下，页面明确说明暂无文章，并保留创建文件夹和文章的恢复入口。',
+      });
+      await page.unroute(listRoute);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(root).toBeVisible();
+
+      await page.locator('[data-tour-id="literary-create"]').click();
+      const createDialog = page.getByRole('dialog').filter({ hasText: '新建文章' });
+      const titleInput = createDialog.getByPlaceholder('未命名');
+      await expect(titleInput).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-03',
+        target: createDialog,
+        allowBlockingOverlay: true,
+        caption: '新建文章对话框说明标题用途，输入、取消和创建动作完整可见。',
+      });
+      await titleInput.fill(title);
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/literary-agent/workspaces'
       ));
-      const defaultChatPool = chatPools.find((pool) => pool.isDefault);
-      expect(defaultChatPool?.code, '文学创作对话目录必须有唯一默认 PublicId').toBeTruthy();
+      await createDialog.getByRole('button', { name: '创建', exact: true }).click();
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ workspace: { id: string } }>;
+      expect(createResponse.ok(), createBody.error?.message || '创建文学作品失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '创建文学作品失败').toBe(true);
+      workspaceId = createBody.data.workspace.id;
+      await page.waitForURL(new RegExp(`/literary-agent/${workspaceId}(?:[/?#]|$)`), { timeout: 30_000 });
+
+      const editorRoot = page.locator('[data-tour-id="literary-editor-root"]');
+      const editorContent = page.locator('[data-tour-id="literary-editor-content"]');
+      await expect(editorRoot).toBeVisible();
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/literary-agent/workspaces/${workspaceId}`
+      ));
+      await editorRoot.locator('input[type="file"][accept*=".md"]').setInputFiles({
+        name: `${title}.md`,
+        mimeType: 'text/markdown',
+        buffer: Buffer.from(article, 'utf8'),
+      });
+      const uploadResponse = await uploadResponsePromise;
+      expect(uploadResponse.ok(), await uploadResponse.text()).toBe(true);
+      await expect(editorContent).toContainText('城市晨光');
+      await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-04',
+        target: editorRoot,
+        overviewJustification: '需要同时证明上传后的正文、工作流步骤、模型与生成动作属于同一篇作品。',
+        caption: '真实 Markdown 文件已上传并保存，正文预览、模型和生成配图标记操作均可用。',
+      });
+
+      await installLiteraryMarkerStream(page, workspaceId, 'proxy', article);
+      const startedAt = Date.now();
+      await page.getByRole('button', { name: '生成配图标记', exact: true }).click();
+      const busyButton = page.getByTestId('literary-busy-button');
+      await expect(busyButton).toBeVisible({ timeout: 2_000 });
+      expect(Date.now() - startedAt, '文学创作必须在两秒内出现用户可见进度').toBeLessThan(2_000);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-05',
+        target: busyButton,
+        caption: '点击生成后两秒内出现持续变化的流式进度按钮，没有静止等待。',
+      });
+      const streamOutput = page.getByTestId('literary-ai-output');
+      await expect(streamOutput).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-06',
+        target: streamOutput,
+        caption: '真实服务端 SSE 被节流展示后，AI 输出持续增长并显示已识别位置，属于同一生成任务。',
+      });
+      await resumeLiteraryMarkerStream(page);
+      await expect(busyButton).toHaveCount(0, { timeout: 240_000 });
+      await expect(page.getByRole('button', { name: '一键生图', exact: true })).toBeVisible();
+      await expect(editorContent).toContainText('[插图]');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-07',
+        target: editorContent,
+        caption: '流式任务完成后，正文与新增配图标记完整呈现，工作流进入可继续生图的完成态。',
+      });
+
+      const detail = await readEnvelope<{
+        workspace: { articleContent?: string; articleContentWithMarkers?: string };
+      }>(await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      expect(detail.workspace.articleContent).toBe(article);
+      expect(detail.workspace.articleContentWithMarkers).toContain('[插图]');
+      const parsedStatus = page.getByText('已解析', { exact: true }).first();
+      await expect(parsedStatus).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-08',
+        target: parsedStatus.locator('..'),
+        caption: '配图标记已保存为可继续生成的解析结果，服务端详情回读与页面状态一致。',
+      });
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(editorContent).toContainText('城市晨光', { timeout: 30_000 });
+      await expect(editorContent).toContainText('[插图]');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-09',
+        target: editorContent,
+        caption: '刷新后同一作品仍能回读原文和配图标记，生成结果没有只停留在内存。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-12',
+        target: editorRoot,
+        themeTarget: editorRoot,
+        overviewJustification: '需要同时证明暗色桌面完成态的正文、标记结果、模型与操作区没有局部变浅或裁切。',
+        caption: '暗色桌面完成态下，正文、配图标记、工作流和继续操作完整可见。',
+      });
+    } finally {
+      await page.unroute(listRoute).catch(() => undefined);
+      if (workspaceId) {
+        const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) });
+        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+        expect((await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[LIT-007] 文学流式失败保留正文并给出可恢复说明', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学失败恢复-r${testInfo.retry}`;
+    const article = '# 可恢复文章\n\n这段正文必须在流式失败后继续保留。';
+    let workspaceId = '';
+    try {
       const created = await readEnvelope<{ workspace: { id: string } }>(
         await page.request.post('/api/literary-agent/workspaces', {
           headers: authHeaders(token),
-          data: { title, scenarioType: 'article-illustration', articleContent: article },
+          data: { title, scenarioType: 'article-illustration' },
         }),
       );
       workspaceId = created.workspace.id;
-      await readEnvelope<{ workspace: { id: string } }>(await page.request.put(`/api/literary-agent/workspaces/${workspaceId}`, {
-        headers: authHeaders(token),
-        data: { title, articleContent: article },
-      }));
-      const streamed = await page.evaluate(async ({ id, accessToken, content, modelId }) => {
-        const startedAt = performance.now();
-        const response = await fetch(`/api/visual-agent/image-master/workspaces/${id}/article/generate-markers`, {
-          method: 'POST',
-          headers: {
-            Accept: 'text/event-stream',
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
-            'Idempotency-Key': `stable-literary-${id}`,
-          },
-          body: JSON.stringify({
-            articleContent: content,
-            userInstruction: '只插入一处配图标记，保持原文不变',
-            insertionMode: 'anchor',
-            modelId,
-          }),
-        });
-        if (!response.ok || !response.body) {
-          return { ok: false, firstChunkMs: -1, firstVisibleProgressMs: -1, chunkCount: 0, text: await response.text() };
-        }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let firstChunkMs = -1;
-        let firstVisibleProgressMs = -1;
-        let chunkCount = 0;
-        let text = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (firstChunkMs < 0) firstChunkMs = performance.now() - startedAt;
-          chunkCount += 1;
-          text += decoder.decode(value, { stream: true });
-          if (firstVisibleProgressMs < 0
-            && /"type"\s*:\s*"(?:progress|thinking|delta|status)"/i.test(text)) {
-            firstVisibleProgressMs = performance.now() - startedAt;
-          }
-        }
-        return { ok: true, firstChunkMs, firstVisibleProgressMs, chunkCount, text };
-      }, { id: workspaceId, accessToken: token, content: article, modelId: defaultChatPool!.code });
-      expect(streamed.ok, streamed.text).toBe(true);
-      expect(streamed.firstChunkMs).toBeGreaterThanOrEqual(0);
-      expect(streamed.firstVisibleProgressMs, '文学创作必须在两秒内出现用户可见进度，心跳不计入').toBeGreaterThanOrEqual(0);
-      expect(streamed.firstVisibleProgressMs).toBeLessThan(2_000);
-      expect(streamed.chunkCount).toBeGreaterThan(1);
-      expect(streamed.text).toContain('"type":"done"');
-      expect(streamed.text).not.toContain('"type":"error"');
-
-      const detail = await readEnvelope<{ workspace: { articleContent?: string; articleContentWithMarkers?: string } }>(
-        await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }),
+      await readEnvelope<{ workspace: { id: string } }>(
+        await page.request.put(`/api/literary-agent/workspaces/${workspaceId}`, {
+          headers: authHeaders(token),
+          data: { title, articleContent: article },
+        }),
       );
-      expect(detail.workspace.articleContent).toContain('蓝色长椅');
-      expect((detail.workspace.articleContentWithMarkers || '').length).toBeGreaterThan(article.length);
+      await page.goto(`/literary-agent/${workspaceId}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const editorContent = page.locator('[data-tour-id="literary-editor-content"]');
+      await expect(editorContent).toContainText('可恢复文章');
+      await installLiteraryMarkerStream(page, workspaceId, 'mock-error', article);
+      await page.getByRole('button', { name: '生成配图标记', exact: true }).click();
+      const readableError = page.getByText('文学创作暂时不可用，请检查文章内容后重试', { exact: true });
+      await expect(readableError).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeVisible();
+      await expect(editorContent).toContainText('这段正文必须在流式失败后继续保留');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-10',
+        target: readableError,
+        caption: '流式失败只显示结果和恢复动作，原始正文仍保留，用户可直接重试而无需重新输入。',
+      });
     } finally {
       if (workspaceId) {
         const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) });
@@ -2958,7 +3171,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-008] 长文达到验收基线后保存和回读均不静默截断', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[LIT-008] 长文达到验收基线后保存和回读均不静默截断', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
     const expectedLength = production ? 4_096 : 64_000;
@@ -3000,6 +3213,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(detail.workspace.articleContent.startsWith(prefix)).toBe(true);
       expect(detail.workspace.articleContent.endsWith(suffix)).toBe(true);
       expect(detail.workspace.articleContent).toBe(article);
+
+      await page.goto(`/literary-agent/${workspaceId}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const editorRoot = page.locator('[data-tour-id="literary-editor-root"]');
+      const editorContent = page.locator('[data-tour-id="literary-editor-content"]');
+      await expect(editorContent).toContainText('稳定冒烟长文边界开篇', { timeout: 30_000 });
+      await editorContent.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect(editorContent).toContainText('稳定冒烟长文边界收尾');
+      await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-14',
+        target: editorRoot,
+        overviewJustification: '需要同时证明长文滚动到底部后正文、工作流和生成操作仍处于同一可用页面。',
+        caption: `长文 ${expectedLength} 字完整保存并回读，滚动到收尾后工具区仍可用且没有静默截断。`,
+      });
     } finally {
       if (workspaceId) {
         const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, {
@@ -3010,24 +3238,66 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-009] 移动端可输入标题、创建作品并进入编辑页', { tag: '@cleanup' }, async ({ page, request }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
+  test('[LIT-009] 移动端可输入、创建、流式生成并保存作品', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await mobileContext.newPage();
     const token = await loginAndReadToken(page, request, '/literary-agent');
-    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-移动文学`;
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-移动文学-r${testInfo.retry}`;
+    const article = '# 移动文章\n\n稳定冒烟移动文章正文。';
     let workspaceId = '';
     try {
-      await page.locator('[data-tour-id="literary-create"]').click();
-      const input = page.getByPlaceholder('未命名');
+      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+      await page.locator('[data-tour-id="literary-create"]').tap();
+      const createDialog = page.getByRole('dialog').filter({ hasText: '新建文章' });
+      const input = createDialog.getByPlaceholder('未命名');
       await expect(input).toBeVisible();
       await input.fill(title);
-      await page.getByRole('button', { name: '创建', exact: true }).click();
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/literary-agent/workspaces'
+      ));
+      await createDialog.getByRole('button', { name: '创建', exact: true }).tap();
+      const createBody = await (await createResponsePromise).json() as ApiEnvelope<{ workspace: { id: string } }>;
+      expect(createBody.success, createBody.error?.message || '移动端创建文学作品失败').toBe(true);
+      workspaceId = createBody.data.workspace.id;
       await page.waitForURL(/\/literary-agent\/[^/?#]+/, { timeout: 20_000 });
-      workspaceId = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1) || '';
       expect(workspaceId).toBeTruthy();
-      await expect(page.locator('body')).toContainText(title);
+      const editorRoot = page.locator('[data-tour-id="literary-editor-root"]');
+      await expect(editorRoot).toContainText('文章预览');
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, '移动端文学创作页面不得横向裁切').toBeLessThanOrEqual(1);
-      expect(await page.locator('button:visible, textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-11',
+        target: editorRoot,
+        overviewJustification: '真实 iPhone 触控视口需要同时证明文章预览、配图工作台、上传入口和底部安全区没有遮挡。',
+        caption: '真实 iPhone 触控环境完成标题输入和作品创建，文章与配图标签、上传入口均可触达。',
+      });
+
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'PUT'
+        && new URL(response.url()).pathname === `/api/literary-agent/workspaces/${workspaceId}`
+      ));
+      await editorRoot.locator('input[type="file"][accept*=".md"]').setInputFiles({
+        name: `${title}.md`,
+        mimeType: 'text/markdown',
+        buffer: Buffer.from(article, 'utf8'),
+      });
+      expect((await uploadResponsePromise).ok()).toBe(true);
+      await expect(page.locator('[data-tour-id="literary-editor-content"]')).toContainText('移动文章');
+      await page.getByRole('button', { name: '配图工作台', exact: true }).tap();
+      await installLiteraryMarkerStream(page, workspaceId, 'mock-success', article);
+      await page.getByRole('button', { name: '生成配图标记', exact: true }).tap();
+      const mobileStream = page.getByTestId('literary-ai-output');
+      await expect(mobileStream).toBeVisible({ timeout: 15_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-LITERARY-CREATION-13',
+        target: editorRoot,
+        overviewJustification: '真实 iPhone 触控视口需要同时证明流式正文、持续进度、移动标签与安全区没有裁切。',
+        caption: '移动端流式中间态持续显示新增内容和识别进度，页面没有静止空白或横向溢出。',
+      });
+      await resumeLiteraryMarkerStream(page);
+      await expect(page.getByTestId('literary-busy-button')).toHaveCount(0, { timeout: 30_000 });
+      await expect(page.getByRole('button', { name: '一键生图', exact: true })).toBeVisible();
     } finally {
       if (workspaceId) {
         const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, {
@@ -3035,6 +3305,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
         expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       }
+      await mobileContext.close();
     }
   });
 
