@@ -23,12 +23,21 @@ public static class GatewayImageModelCatalog
         if (request.Images.Count > 0 && !info.SupportsImageToImage) return "该模型不支持参考图，请选择支持参考图的模型。";
         if (request.MaskBase64 is not null && (!info.SupportsInpainting || request.Images.Count == 0))
             return "该请求不支持局部重绘，请检查参考图和所选模型。";
-        if (info.SizesNotApplicable || string.IsNullOrWhiteSpace(request.Size)) return null;
-        var parts = request.Size.Split('x');
+        return ValidateSize(request.Size, info);
+    }
+
+    /// <summary>
+    /// 尺寸是否被这个模型接受。网关执行前的校验与调用方入队前的预检共用这一处，
+    /// 免得调用方按另一套口径放行、任务入队后才在这里被拒（MCP-LIT-18）。
+    /// </summary>
+    public static string? ValidateSize(string? size, ImageGenAdapterInfo info)
+    {
+        if (info.SizesNotApplicable || string.IsNullOrWhiteSpace(size)) return null;
+        var parts = size.Split('x');
         if (parts.Length != 2 || !int.TryParse(parts[0], out var width) || !int.TryParse(parts[1], out var height)
             || width <= 0 || height <= 0) return "图片尺寸格式不正确，请重新选择尺寸。";
         if (info.SizeConstraintType == SizeConstraintTypes.Whitelist
-            && !info.SizesByResolution.Values.SelectMany(x => x).Any(x => x.Size == request.Size))
+            && !info.SizesByResolution.Values.SelectMany(x => x).Any(x => x.Size == size))
             return "该模型不支持此尺寸，请从模型提供的尺寸列表中选择。";
         if (width < info.MinWidth || height < info.MinHeight || width > info.MaxWidth || height > info.MaxHeight
             || (long)width * height > info.MaxPixels

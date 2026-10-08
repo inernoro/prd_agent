@@ -13,6 +13,7 @@ using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
@@ -274,6 +275,10 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("wm-2", presets.GetProperty("defaultWatermark").GetProperty("watermarkId").GetString());
             Assert.Equal(2, presets.GetProperty("styles").GetArrayLength()); // 别人的风格不出现
             Assert.Equal(20, presets.GetProperty("maxMarkersPerArticle").GetInt32());
+            // 尺寸按所选模型列：Gemini 的 16:9 落到 1376x768（不是同比例里最小的 688x384）
+            Assert.Equal("gemini-3.1-flash-image", presets.GetProperty("sizeModel").GetString());
+            Assert.Contains(presets.GetProperty("sizes").EnumerateArray(),
+                x => x.GetProperty("aspect").GetString() == "16:9" && x.GetProperty("size").GetString() == "1376x768");
 
             var created = Data(await drafts.CreateWorkspace(new()
             {
@@ -426,6 +431,140 @@ public class LiteraryMcpUsabilityTests
         Assert.Equal(3, McpGatewayController.ReadLiteraryImageCount(JsonNode.Parse("""{"markerIndexes":[0,1,2,2]}""")!.AsObject()));
         Assert.Equal(1, McpGatewayController.ReadLiteraryImageCount(JsonNode.Parse("""{"markerIndex":0}""")!.AsObject()));
         Assert.Equal(3, LiteraryImageOpenApiController.RequestedImageCount(null, new[] { 0, 1, 2 }));
+    }
+
+    // ───────────── 尺寸契约：按所选模型的真实尺寸能力，入队前判（MCP-LIT-18） ─────────────
+
+    [Fact]
+    public async Task 默认模型不支持的尺寸入队前就拒_列出可选项_不留失败任务()
+    {
+        var (db, name, connection) = NewDb("literary_mcp_sizes");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            // 2026-10-08 真实验收的默认模型：只收 1024x1024 / 1024x1536 / 1536x1024
+            var selection = new FixedModelSelection("chatgpt-image-latest");
+            var images = WithUser(new LiteraryImageOpenApiController(db, selection), "writer");
+
+            var presets = Data(await images.Presets(CancellationToken.None));
+            Assert.Equal("chatgpt-image-latest", presets.GetProperty("sizeModel").GetString());
+            var listed = presets.GetProperty("sizes").EnumerateArray()
+                .Select(x => (x.GetProperty("aspect").GetString(), x.GetProperty("size").GetString())).ToList();
+            Assert.Equal(new (string?, string?)[] { ("2:3", "1024x1536"), ("1:1", "1024x1024"), ("3:2", "1536x1024") }, listed);
+            Assert.Equal("1024x1024", presets.GetProperty("defaultSize").GetString());
+
+            var created = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "第一段。\n[插图]: 书店门口\n第二段。\n[插图]: 窗边的猫\n第三段。\n[插图]: 茶杯\n",
+                ClientRequestId = "article-sizes",
+            }, CancellationToken.None));
+            var id = created.GetProperty("workspaceId").GetString()!;
+            var version = created.GetProperty("workflowVersion").GetInt32();
+
+            // 验收里那一批：六张 16:9。现在入队前就拒，说清这个模型能用什么，一张任务都不留、标记不被占
+            foreach (var bad in new[] { "16:9", "1376x768" })
+            {
+                var rejected = Assert.IsType<BadRequestObjectResult>(await images.Generate(id, new()
+                {
+                    MarkerIndexes = new() { 0, 1, 2 }, WorkflowVersion = version, ClientRequestId = $"g-{bad}", Size = bad,
+                }, CancellationToken.None));
+                var error = Assert.IsType<ApiResponse<object>>(rejected.Value).Error!;
+                Assert.Equal("SIZE_NOT_SUPPORTED", error.Code);
+                Assert.Contains("chatgpt-image-latest", error.Message);
+                Assert.Contains("3:2（1536x1024）", error.Message);
+                Assert.Contains("没有扣生图额度", error.Message);
+            }
+            Assert.Equal(0, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
+            var untouched = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!;
+            Assert.All(untouched.Markers, m => Assert.Null(m.RunId));
+            Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs);
+
+            // 支持的比例落到这个模型的真实像素；这里放行的，网关执行前的同一个判据一定放行
+            var landscape = Data(await images.Generate(id, new()
+            {
+                MarkerIndexes = new() { 0, 1 }, WorkflowVersion = version, ClientRequestId = "g-3x2", Size = "3:2",
+            }, CancellationToken.None));
+            Assert.Equal(2, landscape.GetProperty("queuedImages").GetInt32());
+            Assert.Equal("1536x1024", landscape.GetProperty("applied").GetProperty("size").GetString());
+            Assert.Equal("chatgpt-image-latest", landscape.GetProperty("applied").GetProperty("model").GetString());
+            var caps = ImageGenModelAdapterRegistry.GetAdapterInfo("chatgpt-image-latest")!;
+            Assert.All(await db.ImageGenRuns.Find(x => x.WorkspaceId == id).ToListAsync(), r =>
+            {
+                Assert.Equal("1536x1024", r.Size);
+                Assert.Null(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize(r.Size, caps));
+            });
+
+            // 同一个 clientRequestId 再来：比的是尺寸意图（3:2），回放原任务
+            var replay = Data(await images.Generate(id, new()
+            {
+                MarkerIndexes = new() { 0, 1 }, WorkflowVersion = version, ClientRequestId = "g-3x2", Size = "3:2",
+            }, CancellationToken.None));
+            Assert.True(replay.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(0, replay.GetProperty("queuedImages").GetInt32());
+
+            // 不传尺寸：沿用这篇记住的 3:2
+            var redraw = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 2, WorkflowVersion = version, ClientRequestId = "g-redraw",
+            }, CancellationToken.None));
+            Assert.Equal("1536x1024", redraw.GetProperty("applied").GetProperty("size").GetString());
+            Assert.Equal("remembered", redraw.GetProperty("applied").GetProperty("sizeSource").GetString());
+
+            // 文章记住的是上一个模型的 16:9，换到不收它的模型：退回 1:1 并在回执里写明，不静默改、也不报错卡住
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.Size, "1376x768"));
+            var switched = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 2, WorkflowVersion = version, ClientRequestId = "g-switched",
+            }, CancellationToken.None));
+            var applied = switched.GetProperty("applied");
+            Assert.Equal("1024x1024", applied.GetProperty("size").GetString());
+            Assert.Equal("account-default", applied.GetProperty("sizeSource").GetString());
+            Assert.Contains(applied.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("1376x768"));
+
+            // 网关目录读不到能力：明说，不入队，不当成「什么尺寸都收」
+            selection.CapabilitiesMissing = true;
+            var unknown = Assert.IsType<ConflictObjectResult>(await images.Generate(id, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "g-unknown", Size = "1:1",
+            }, CancellationToken.None));
+            Assert.Equal("MODEL_CAPABILITIES_UNAVAILABLE", Assert.IsType<ApiResponse<object>>(unknown.Value).Error!.Code);
+
+            // 换到支持 16:9 的模型，同一个比例就能用
+            selection.CapabilitiesMissing = false;
+            selection.ModelId = "gemini-3.1-flash-image";
+            // 文章记住的是上个模型的 3:2 像素（1536x1024），Gemini 不收这个像素但收 3:2：按同一比例落，并写明
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.Size, "1536x1024"));
+            var sameRatio = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 1, WorkflowVersion = version, ClientRequestId = "g-same-ratio",
+            }, CancellationToken.None)).GetProperty("applied");
+            Assert.Equal("1264x848", sameRatio.GetProperty("size").GetString());
+            Assert.Equal("remembered", sameRatio.GetProperty("sizeSource").GetString());
+            Assert.Contains(sameRatio.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("同一比例 3:2"));
+            var wide = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "g-wide", Size = "16:9",
+            }, CancellationToken.None));
+            Assert.Equal("1376x768", wide.GetProperty("applied").GetProperty("size").GetString());
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
+    public void 尺寸写法只解析不猜_网关校验与入队预检同一判据()
+    {
+        Assert.Equal("16:9", LiteraryIllustrationChoices.ParseSize("16：9").request!.Raw); // 全角冒号
+        Assert.Equal("1:1", LiteraryIllustrationChoices.ParseSize(null).request!.Raw);
+        Assert.Equal("1536x1024", LiteraryIllustrationChoices.ParseSize("1536×1024").request!.Raw);
+        Assert.NotNull(LiteraryIllustrationChoices.ParseSize("宽屏").error);
+
+        var gpt = ImageGenModelAdapterRegistry.GetAdapterInfo("chatgpt-image-latest")!;
+        // 网关执行前的校验：拒 1376x768（就是验收里那条 IMAGE_REQUEST_INVALID）
+        Assert.NotNull(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize("1376x768", gpt));
+        Assert.NotNull(LiteraryIllustrationChoices.FitSize(LiteraryIllustrationChoices.ParseSize("16:9").request!, gpt, "m").error);
+        Assert.Equal("1024x1536", LiteraryIllustrationChoices.FitSize(LiteraryIllustrationChoices.ParseSize("2:3").request!, gpt, "m").size);
     }
 
     // ───────────── 端到端：改稿后重新配图、历史配图不丢 ─────────────
@@ -1151,13 +1290,24 @@ public class LiteraryMcpUsabilityTests
         Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data,
         new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-    private sealed class FixedModelSelection : ILiteraryMcpModelSelectionService
+    /// <summary>
+    /// 选中的模型与它的尺寸能力都取真实的能力注册表：默认用 Gemini（收 16:9 的 1376x768），
+    /// 尺寸契约用例换成默认模型 chatgpt-image-latest（只收 1024x1024 / 1024x1536 / 1536x1024）。
+    /// 能力为 null 表示网关目录读不到。
+    /// </summary>
+    private sealed class FixedModelSelection(string modelId = "gemini-3.1-flash-image") : ILiteraryMcpModelSelectionService
     {
+        public string ModelId { get; set; } = modelId;
+        public bool CapabilitiesMissing { get; set; }
+
         public Task<LiteraryMcpModelSelection> ResolveForRunAsync(
             string ownerUserId, string agentApiKeyId, string appCallerCode, CancellationToken ct)
-            => Task.FromResult(LiteraryMcpModelSelection.Selected("gpt-image-2"));
+            => Task.FromResult(LiteraryMcpModelSelection.Selected(ModelId));
 
         public Task<LiteraryMcpModelSelection> ValidateFixedModelAsync(string logicalModelPublicId, CancellationToken ct)
             => Task.FromResult(LiteraryMcpModelSelection.Selected(logicalModelPublicId));
+
+        public Task<ImageGenAdapterInfo?> GetImageCapabilitiesAsync(string appCallerCode, string logicalModelPublicId, CancellationToken ct)
+            => Task.FromResult(CapabilitiesMissing ? null : ImageGenModelAdapterRegistry.GetAdapterInfo(logicalModelPublicId));
     }
 }
