@@ -449,6 +449,78 @@ describe('human project grants through the production server', () => {
     expect(state.getContainerLogArchives('branch-project-a')[0].masked).toBe(false);
   });
 
+  it.each(['create', 'pull', 'clone-failure', 'uncloned-origin'] as const)('masks member Git failure through %s without changing owner diagnostics', async action => {
+    await grant(['project-a']);
+    const raw = 'repository unavailable https://fixture-user:fake-mutation-pat@github.com/fixture/repository.git';
+    shell.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: raw, exitCode: 128 }));
+    const method = 'POST';
+    const url = action === 'pull' ? '/api/branches/branch-project-a/pull' : '/api/branches';
+    const body = action === 'pull' ? {} : { projectId: 'project-a', branch: 'fixture-fetch-failure' };
+    if (action === 'clone-failure') state.updateProject('project-a', { cloneStatus: 'error', cloneError: raw });
+    if (action === 'uncloned-origin') state.updateProject('project-a', {
+      gitRepoUrl: 'https://fixture-user:fake-mutation-pat@github.com/fixture/repository.git', repoPath: undefined,
+    });
+    const expectedStatus = action === 'clone-failure' || action === 'uncloned-origin' ? 409 : 500;
+    const view = await call(method, url, member, body);
+    expect(view.status).toBe(expectedStatus);
+    expect(JSON.stringify(view.body)).not.toContain('fake-mutation-pat');
+    expect(JSON.stringify(view.body)).toContain(action === 'uncloned-origin' ? 'github.com/fixture/repository.git' : 'repository unavailable');
+    expect((await call(method, url, owner, body)).status).toBe(expectedStatus);
+    expect(JSON.stringify((await call(method, url, owner, body)).body)).toContain('fake-mutation-pat');
+    const calls = shell.commands.length;
+    expect((await call(method, action === 'pull' ? '/api/branches/branch-project-b/pull' : url, member,
+      action === 'pull' ? {} : { ...body, projectId: 'project-b' })).status).toBe(403);
+    expect(shell.commands).toHaveLength(calls);
+    await grant([]);
+    expect((await call(method, url, member, body)).status).toBe(403);
+    expect(shell.commands).toHaveLength(calls);
+  });
+
+  it.each(['1', 'true'] as const)('denies member force=%s before a paused project deploy, retaining owner escape hatch', async force => {
+    await grant(['project-a']);
+    state.updateProject('project-a', { paused: true });
+    const ownerGate = await call('POST', '/api/branches/branch-project-a/deploy', owner, {});
+    expect(ownerGate.status).toBe(423);
+    expect(ownerGate.body.error).toBe('project_paused');
+    const memberGate = await fetch(base + `/api/branches/branch-project-a/deploy?force=${force}`, {
+      method: 'POST', headers: { Cookie: member, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    expect(memberGate.status).toBe(403);
+    expect((await memberGate.json()).error).toBe('human_project_forbidden');
+    const calls = shell.commands.length;
+    for (const suffix of ['/deploy', '/deploy/profile-project-a', '/force-rebuild/profile-project-a']) {
+      const res = await fetch(base + `/api/branches/branch-project-a${suffix}?force=${force}`, {
+        method: 'POST', headers: { Cookie: member, 'Content-Type': 'application/json' }, body: '{}',
+      });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toBe('human_project_forbidden');
+    }
+    expect(shell.commands).toHaveLength(calls);
+    // An owner still passes the pause gate. Stream outcome is handled by the
+    // isolated dependencies; no real containers or remote executors are used.
+    const allowed = await fetch(base + `/api/branches/branch-project-a/deploy?force=${force}`, {
+      method: 'POST', headers: { Cookie: owner, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    expect(allowed.status).toBe(200);
+    await allowed.text();
+  });
+
+  it.each(['/deploy', '/deploy/profile-project-a', '/force-rebuild/profile-project-a'])('applies owner project pause to member %s without suppressing reads', async suffix => {
+    await grant(['project-a']);
+    state.updateProject('project-a', { paused: true });
+    const calls = shell.commands.length;
+    const res = await fetch(base + '/api/branches/branch-project-a' + suffix, {
+      method: 'POST', headers: { Cookie: member, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    expect(res.status).toBe(423);
+    const body = await res.json();
+    expect(body.error).toBe('project_paused');
+    expect(body).not.toHaveProperty('escapeHatch');
+    expect(JSON.stringify(body)).not.toContain('?force=');
+    expect(shell.commands).toHaveLength(calls);
+    expect((await call('GET', '/api/projects/project-a', member)).status).toBe(200);
+  });
+
   it('masks derived branch creation success and flush-failure responses without changing stored or owner credentials', async () => {
     vi.spyOn(WorktreeService.prototype, 'create').mockResolvedValue();
     state.setBranchExtraProfiles('branch-project-a', [{ id: 'extra', name: 'extra', dockerImage: 'node:20',

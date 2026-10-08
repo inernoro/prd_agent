@@ -1,11 +1,17 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { StateService } from '../services/state.js';
-import { canHumanAccessProject, isScopedHuman, humanPrincipalId, isHumanProjectGrantUpdatePending } from '../services/human-project-access.js';
+import { canHumanAccessProject, isScopedHuman, humanPrincipalId, isHumanProjectGrantUpdatePending, logPayloadForHumanView } from '../services/human-project-access.js';
 
 /** Members enter only project-scoped product routes. Unknown/system routes fail closed. */
 export function createHumanProjectAccessMiddleware(state: StateService) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!isScopedHuman(req) || !/^\/api\//i.test(req.path)) { next(); return; }
+    // Every admitted member path can fail before its success projection runs.
+    // Reuse the same masker at the error boundary; owner/machine requests and
+    // successful JSON remain unchanged, and no new secret syntax is introduced.
+    const sendJson = res.json.bind(res);
+    res.json = ((body: unknown) => sendJson(res.statusCode >= 400
+      ? logPayloadForHumanView(req, body) : body)) as Response['json'];
     res.locals.cdsScopedHuman = true;
     res.locals.cdsHumanRequest = req;
     const path = req.path.replace(/\/+$/, '').toLowerCase();
@@ -80,6 +86,12 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (!id && method === 'POST' && typeof req.body?.projectId === 'string') { next(); return; }
       const branch = id ? state.getBranch(id) : undefined;
       if (!branch || !checkProject(branch.projectId || 'default')) { deny(); return; }
+      const isBuildRequest = method === 'POST' && /^(deploy|force-rebuild)$/i.test(action || '');
+      if (isBuildRequest && (req.query.force === '1' || req.query.force === 'true')) { deny(); return; }
+      if (isBuildRequest && state.getProject(branch.projectId || 'default')?.paused === true) {
+        res.status(423).json({ error: 'project_paused', message: '项目已被系统所有者暂停，不能部署。请联系所有者恢复项目后重试。' });
+        return;
+      }
       if (action === 'copy-config-from') {
         const source = state.getBranch(segments[3]);
         if (!source || !checkProject(source.projectId || 'default')) { deny(); return; }

@@ -40,6 +40,7 @@ describe('human project access UI wiring', () => {
     expect(refresh).toMatch(/const legacyRes = canManageProjects\s*\?/);
     expect(refresh).toMatch(/if \(canManageProjects\) void loadPendingImports\(\);/);
     expect(list).toContain('open={canManageProjects && pendingImportOpen}');
+    expect(list).toContain('{canManageProjects ? <CreateProjectDialog');
   });
   it('renders only project and personal activity navigation for members, preserving owner controls', () => {
     const render = (canManageSettings: boolean) => renderToStaticMarkup(createElement(MemoryRouter, null,

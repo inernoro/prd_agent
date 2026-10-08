@@ -855,7 +855,7 @@ export function ProjectListPage(): JSX.Element {
           ) : null}
         </section>
 
-        <CreateProjectDialog
+        {canManageProjects ? <CreateProjectDialog
           open={createOpen}
           onOpenChange={(next) => {
             setCreateOpen(next);
@@ -875,7 +875,7 @@ export function ProjectListPage(): JSX.Element {
             info,
             pendingClone: project.cloneStatus === 'pending' ? project : null,
           })}
-        />
+        /> : null}
 
         {/*
          * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
