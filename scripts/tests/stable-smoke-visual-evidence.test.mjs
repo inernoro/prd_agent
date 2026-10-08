@@ -477,7 +477,7 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   );
   assert.match(
     source,
-    /CDS-VISUAL-MULTI-IMAGE-CREATION-14[\s\S]*?name: '画布'[\s\S]*?setInputFiles\(threeFiles\)[\s\S]*?toHaveCount\(3[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-16/,
+    /CDS-VISUAL-MULTI-IMAGE-CREATION-14[\s\S]*?name: '画布'[\s\S]*?for \(const \[index, file\] of threeFiles\.entries\(\)\)[\s\S]*?setInputFiles\(file\)[\s\S]*?toHaveCount\(index \+ 1[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-16/,
   );
   assert.match(
     source,
@@ -497,7 +497,7 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   assert.match(source, /browser\.newContext\(\{ \.\.\.devices\['iPhone 13'\]/);
   assert.match(
     source,
-    /CDS-VISUAL-FILE-PARSING-04[\s\S]*?releaseRequest\?\.\(\)[\s\S]*?data-phase', 'parsing'[\s\S]*?CDS-VISUAL-FILE-PARSING-06/,
+    /CDS-VISUAL-FILE-PARSING-04[\s\S]*?data-phase', 'parsing'[\s\S]*?CDS-VISUAL-FILE-PARSING-06[\s\S]*?__stableSmokeResumeDocumentUpload\?\.\(\)/,
   );
   assert.match(
     source,
