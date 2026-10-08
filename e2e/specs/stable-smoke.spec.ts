@@ -1827,6 +1827,300 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     ).toEqual([]);
   });
 
+  test('[CORE-002][CORE-003] 登录与本人头像完成上传、生成、保存、刷新和移动端闭环', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止创建一次性头像用户和执行头像生成');
+    test.setTimeout(420_000);
+
+    await page.goto('/login', { waitUntil: 'domcontentloaded' });
+    const loginCard = page.getByTestId('login-card');
+    await expect(loginCard).toBeVisible();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IDENTITY-PROFILE-01',
+      target: loginCard,
+      caption: '未认证状态真实打开登录页，品牌、账号输入、认证入口和恢复提示区域完整可见。',
+    });
+
+    const adminToken = await loginAndReadToken(page, request, '/');
+    const beforeReload = await readStableAuthSnapshot(page);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const afterReload = await readStableAuthSnapshot(page);
+    expect(afterReload).toBe(beforeReload);
+    const shell = page.locator('aside').first();
+    await expect(shell).toBeVisible();
+    await captureStableSmokeVisualEvidence(page, testInfo, {
+      slotId: 'CDS-VISUAL-IDENTITY-PROFILE-02',
+      target: shell,
+      caption: '合成登录后刷新仍保留同一认证快照，真实应用侧栏和当前身份入口可见。',
+    });
+
+    const username = `stsmk_avatar_${Date.now().toString(36)}`;
+    const password = `StsmkAvatar_${Date.now()}_A9`;
+    let avatarUserId = '';
+    let avatarToken = '';
+    let releaseAvatarUpload: (() => void) | undefined;
+    let releaseAvatarApply: (() => void) | undefined;
+    let mobileContext: BrowserContext | undefined;
+    try {
+      const created = await readEnvelope<{ userId: string; username: string }>(await request.post('/api/users', {
+        headers: {
+          ...authHeaders(adminToken),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-avatar-user-${username}`,
+        },
+        data: {
+          username,
+          password,
+          displayName: '稳定冒烟头像用户',
+          role: 'DEV',
+        },
+      }));
+      avatarUserId = created.userId;
+
+      const authz = await readEnvelope<{
+        effectiveSystemRoleKey: string;
+        permAllow: string[];
+      }>(await request.put(`/api/authz/users/${avatarUserId}/authz`, {
+        headers: authHeaders(adminToken),
+        data: {
+          systemRoleKey: 'none',
+          permAllow: ['access', 'visual-agent.use'],
+          permDeny: ['users.read', 'users.write'],
+        },
+      }));
+      expect(authz.effectiveSystemRoleKey).toBe('none');
+      expect(authz.permAllow).toEqual(expect.arrayContaining(['access', 'visual-agent.use']));
+
+      const login = await readEnvelope<{
+        accessToken: string;
+        refreshToken: string;
+        sessionKey: string;
+        user: {
+          userId: string;
+          username: string;
+          displayName: string;
+          role: string;
+          avatarFileName?: string | null;
+          avatarUrl?: string | null;
+        };
+      }>(await request.post('/api/v1/auth/login', {
+        data: { username, password, clientType: 'desktop' },
+      }));
+      avatarToken = login.accessToken;
+      const me = await readEnvelope<{
+        effectivePermissions: string[];
+        isRoot: boolean;
+        permissionFingerprint: string;
+        cdnBaseUrl?: string;
+      }>(await request.get('/api/authz/me', { headers: authHeaders(avatarToken) }));
+      expect(me.effectivePermissions).toEqual(expect.arrayContaining(['access', 'visual-agent.use']));
+
+      const authState = JSON.stringify({
+        state: {
+          isAuthenticated: true,
+          user: login.user,
+          token: login.accessToken,
+          refreshToken: login.refreshToken,
+          sessionKey: login.sessionKey,
+          permissions: me.effectivePermissions,
+          permissionsLoaded: true,
+          isRoot: me.isRoot,
+          menuCatalog: [],
+          menuCatalogLoaded: false,
+          cdnBaseUrl: me.cdnBaseUrl || '',
+          permFingerprint: me.permissionFingerprint || '',
+        },
+        version: 0,
+      });
+      await page.evaluate((value) => window.localStorage.setItem('prd-admin-auth', value), authState);
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+
+      const accountButton = page.getByRole('button', { name: '打开用户菜单' }).first();
+      await expect(accountButton).toBeVisible();
+      await accountButton.click();
+      const avatarEntry = page.locator('button[aria-label="修改我的头像"]:visible').first();
+      await expect(avatarEntry).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-03',
+        target: avatarEntry,
+        caption: '真实用户菜单已展开，修改本人头像的可点击入口清晰可见。',
+      });
+      await avatarEntry.click();
+
+      let editor = page.getByTestId('avatar-editor');
+      await expect(editor).toBeVisible();
+      await expect(editor).toHaveAttribute('data-avatar-phase', 'editing');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-04',
+        target: editor,
+        caption: '本人头像编辑器从真实用户菜单打开，当前头像、上传入口和描述输入完整可见。',
+      });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-12',
+        target: page.getByRole('dialog').first(),
+        caption: '暗色桌面头像编辑器完整显示弹窗、预览、输入和操作区，无局部浅色退化。',
+      });
+
+      await page.route('**/api/profile/avatar/upload', async (route) => {
+        await new Promise<void>((resolveUpload) => { releaseAvatarUpload = resolveUpload; });
+        await route.continue();
+      });
+      const uploadResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith('/api/profile/avatar/upload'));
+      const avatarPng = Buffer.from(solidPngDataUrl(58, 116, 210, 96).split(',')[1]!, 'base64');
+      await editor.locator('input[type="file"]').setInputFiles({
+        name: `${username}.png`,
+        mimeType: 'image/png',
+        buffer: avatarPng,
+      });
+      const uploadStatus = page.getByTestId('avatar-upload-status');
+      await expect(uploadStatus).toContainText('正在上传头像，请稍候');
+      await expect(editor).toHaveAttribute('data-avatar-phase', 'uploading');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-05',
+        target: uploadStatus,
+        caption: '真实头像文件上传尚未完成时，编辑器持续显示明确上传状态而不是静止或仅悬停可见。',
+      });
+      expect(releaseAvatarUpload, '头像上传请求未进入可控等待点').toBeTruthy();
+      releaseAvatarUpload?.();
+      const uploadResponse = await uploadResponsePromise;
+      expect(uploadResponse.ok(), await uploadResponse.text()).toBe(true);
+      await page.unroute('**/api/profile/avatar/upload');
+      await expect(page.getByTestId('avatar-editor')).toHaveCount(0);
+
+      await page.getByRole('button', { name: '打开用户菜单' }).first().click();
+      await page.locator('button[aria-label="修改我的头像"]:visible').first().click();
+      editor = page.getByTestId('avatar-editor');
+      await expect(editor).toBeVisible();
+      const promptInput = page.getByLabel('描述你想要的头像');
+      await page.getByRole('button', { name: '生成预览' }).click();
+      const promptError = page.getByRole('alert');
+      await expect(promptError).toContainText('请描述想怎么修改头像');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-14',
+        target: promptError,
+        caption: '空描述提交会给出可理解原因，输入框仍保持可编辑以便立即恢复。',
+      });
+      const prompt = '保留人物主体，改成细腻的蓝色手绘头像，背景简洁';
+      await promptInput.fill(prompt);
+      await expect(promptError).toHaveCount(0);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-06',
+        target: promptInput,
+        caption: '有效头像描述已经输入，错误提示清除，生成动作可继续执行。',
+      });
+
+      await page.getByRole('button', { name: '生成预览' }).click();
+      const generationStatus = page.getByRole('status');
+      await expect(generationStatus).toContainText(/正在|排队|生成/);
+      await expect(editor).toHaveAttribute('data-avatar-phase', 'generating');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-07',
+        target: generationStatus,
+        caption: '真实头像生成期间持续显示阶段与已等待秒数，页面没有静止等待。',
+      });
+      const generatedPreview = page.getByAltText('生成的头像预览');
+      await expect(generatedPreview).toBeVisible({ timeout: 180_000 });
+      await expect(editor).toHaveAttribute('data-avatar-phase', 'preview');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-08',
+        target: generatedPreview,
+        caption: '真实生成的头像像素已在预览区完整显示，不以进度态冒充结果。',
+      });
+
+      await page.route('**/api/profile/avatar/apply-generated', async (route) => {
+        await new Promise<void>((resolveApply) => { releaseAvatarApply = resolveApply; });
+        await route.continue();
+      });
+      const applyResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith('/api/profile/avatar/apply-generated'));
+      await page.getByRole('button', { name: '使用此头像' }).click();
+      const applyStatus = page.getByTestId('avatar-upload-status');
+      await expect(applyStatus).toContainText('正在替换头像，请稍候');
+      await expect(editor).toHaveAttribute('data-avatar-phase', 'applying');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-09',
+        target: applyStatus,
+        caption: '确认使用生成头像后，保存请求未完成期间明确显示正在替换状态。',
+      });
+      expect(releaseAvatarApply, '头像应用请求未进入可控等待点').toBeTruthy();
+      releaseAvatarApply?.();
+      const applyResponse = await applyResponsePromise;
+      expect(applyResponse.ok(), await applyResponse.text()).toBe(true);
+      await page.unroute('**/api/profile/avatar/apply-generated');
+      await expect(page.getByTestId('avatar-editor')).toHaveCount(0);
+
+      const persistedAvatar = page.locator('button[aria-label="打开用户菜单"] img[alt="avatar"]').first();
+      await expect(persistedAvatar).toBeVisible();
+      const beforeAvatarRefresh = await persistedAvatar.getAttribute('src');
+      expect(beforeAvatarRefresh).toBeTruthy();
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const refreshedAvatar = page.locator('button[aria-label="打开用户菜单"] img[alt="avatar"]').first();
+      await expect(refreshedAvatar).toHaveAttribute('src', beforeAvatarRefresh!);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-10',
+        target: refreshedAvatar,
+        caption: '页面刷新后头像地址与保存完成时一致，证明服务端持久化而非仅本地预览。',
+      });
+
+      const persistedAuthState = await readStableAuthSnapshot(page);
+      mobileContext = await browser.newContext({ ...devices['iPhone 13'] });
+      await mobileContext.addInitScript((value) => {
+        window.localStorage.setItem('prd-admin-auth', value);
+        window.localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: 'dark' }, version: 0 }));
+      }, persistedAuthState);
+      const mobilePage = await mobileContext.newPage();
+      await mobilePage.goto('/', { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(mobilePage);
+      await expect(mobilePage.locator('html')).not.toHaveAttribute('data-theme', 'light');
+      await mobilePage.getByRole('button', { name: '打开导航菜单' }).click();
+      const mobileDrawer = mobilePage.getByRole('dialog', { name: '导航菜单' });
+      await expect(mobileDrawer).toBeVisible();
+      await captureStableSmokeVisualEvidence(mobilePage, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-11',
+        target: mobileDrawer,
+        caption: 'iPhone 13 真实触控视口打开导航抽屉，当前身份与头像入口无遮挡可见。',
+      });
+      await mobileDrawer.getByRole('button', { name: '修改我的头像' }).click();
+      const mobileEditor = mobilePage.getByTestId('avatar-editor');
+      await expect(mobileEditor).toBeVisible();
+      await captureStableSmokeVisualEvidence(mobilePage, testInfo, {
+        slotId: 'CDS-VISUAL-IDENTITY-PROFILE-13',
+        target: mobileEditor,
+        caption: 'iPhone 13 真实触控视口完整打开头像编辑器，上传、描述和生成操作均可达。',
+      });
+    } finally {
+      releaseAvatarUpload?.();
+      releaseAvatarApply?.();
+      await page.unroute('**/api/profile/avatar/upload').catch(() => undefined);
+      await page.unroute('**/api/profile/avatar/apply-generated').catch(() => undefined);
+      await mobileContext?.close();
+      if (avatarToken) {
+        const cleared = await request.put('/api/profile/avatar', {
+          headers: authHeaders(avatarToken),
+          data: { avatarFileName: null },
+        });
+        expect(cleared.ok(), '头像对象清理失败').toBe(true);
+      }
+      if (avatarUserId) {
+        const expired = await request.post(`/api/users/${avatarUserId}/force-expire`, {
+          headers: authHeaders(adminToken),
+          data: { targets: ['admin', 'desktop'] },
+        });
+        expect(expired.ok(), '头像测试用户会话回收失败').toBe(true);
+        const deleted = await request.post('/api/users/bulk-delete', {
+          headers: authHeaders(adminToken),
+          data: { userIds: [avatarUserId] },
+        });
+        expect((await readEnvelope<{ deletedCount: number }>(deleted)).deletedCount).toBe(1);
+        expect((await request.get(`/api/users/${avatarUserId}`, {
+          headers: authHeaders(adminToken),
+        })).status()).toBe(404);
+      }
+    }
+  });
+
   test('[CORE-002][CORE-003] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
     const adminToken = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });

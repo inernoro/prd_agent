@@ -266,9 +266,23 @@ test('局部作用域皮肤可指定唯一主题测量区域并传给取证器',
   }
 });
 
-test('真实单图、多图、录音与文件解析旅程接入计划槽位而不是普通附件截图', () => {
+test('真实登录头像、单图、多图、录音与文件解析旅程接入计划槽位而不是普通附件截图', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
   for (const slotId of [
+    'CDS-VISUAL-IDENTITY-PROFILE-01',
+    'CDS-VISUAL-IDENTITY-PROFILE-02',
+    'CDS-VISUAL-IDENTITY-PROFILE-03',
+    'CDS-VISUAL-IDENTITY-PROFILE-04',
+    'CDS-VISUAL-IDENTITY-PROFILE-05',
+    'CDS-VISUAL-IDENTITY-PROFILE-06',
+    'CDS-VISUAL-IDENTITY-PROFILE-07',
+    'CDS-VISUAL-IDENTITY-PROFILE-08',
+    'CDS-VISUAL-IDENTITY-PROFILE-09',
+    'CDS-VISUAL-IDENTITY-PROFILE-10',
+    'CDS-VISUAL-IDENTITY-PROFILE-11',
+    'CDS-VISUAL-IDENTITY-PROFILE-12',
+    'CDS-VISUAL-IDENTITY-PROFILE-13',
+    'CDS-VISUAL-IDENTITY-PROFILE-14',
     'CDS-VISUAL-SINGLE-IMAGE-CREATION-08',
     'CDS-VISUAL-SINGLE-IMAGE-CREATION-10',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-01',
@@ -314,6 +328,14 @@ test('真实单图、多图、录音与文件解析旅程接入计划槽位而�
   ]) {
     assert.match(source, new RegExp(`slotId: '${slotId}'`));
   }
+  assert.match(
+    source,
+    /CDS-VISUAL-IDENTITY-PROFILE-05[\s\S]*?releaseAvatarUpload\?\.\(\)[\s\S]*?CDS-VISUAL-IDENTITY-PROFILE-10/,
+  );
+  assert.match(
+    source,
+    /请描述想怎么修改头像[\s\S]*?CDS-VISUAL-IDENTITY-PROFILE-14[\s\S]*?promptInput\.fill\(/,
+  );
   assert.match(
     source,
     /captureStableSmokeVisualEvidence[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-12[\s\S]*?const canvasSaveResponsePromise = page\.waitForResponse/,
