@@ -122,6 +122,18 @@ const HEADER_SECRET = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|
 // 把 body 预览返回给任何已鉴权调用方。按字段名列举必然漏，所以下面再加一道按
 // **值的形状**兜底：凡是长得像 CDS 凭据的串，不管挂在哪个字段名下一律抹掉。
 const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential|plaintext)/i;
+/**
+ * 截断的 JSON 里的敏感键值对（2026-10-08 事故）：响应只截前 8KB，截断后的 JSON 解析不了，
+ * 结构化脱敏用不上，退到纯文本兜底。键名判据与 BODY_SECRET_KEY 同一组词；值允许转义引号，
+ * 且允许在截断处没有闭合引号。键名两侧限长，恶意长串不会让回溯退化成平方级。
+ */
+const JSON_SECRET_PAIR = /("[^"\\]{0,80}(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential|plaintext)[^"\\]{0,80}"\s*:\s*)"(?:[^"\\]|\\.)*"?/gi;
+/** 连接串里的口令段：scheme://user:password@host —— 键名往往是 *_URI / *_URL，判不出敏感。 */
+const URL_USERINFO_PASSWORD = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"]*:)[^\s@/"]+@/gi;
+
+function redactUrlUserinfo(value: string): string {
+  return value.replace(URL_USERINFO_PASSWORD, '$1[redacted]@');
+}
 /** CDS 自己签发的凭据明文形状：cdsu_ / cdsp_ / cdsg_ / ct_ 加足够长的随机段。 */
 const CDS_CREDENTIAL_VALUE = /\b(cds[upg]_[A-Za-z0-9_.~+/=-]{12,}|ct_[A-Za-z0-9_.~+/=-]{12,})/g;
 const MAX_HEADER_VALUE = 300;
@@ -271,7 +283,7 @@ function redactStructuredValue(value: unknown, key = '', depth = 0, seen = new W
   if (typeof value === 'string' && looksLikeCdsCredential(value)) {
     return redactHostedSitePreviewLog(value.replace(CDS_CREDENTIAL_VALUE, '[redacted]'));
   }
-  if (typeof value === 'string') return redactHostedSitePreviewLog(value);
+  if (typeof value === 'string') return redactUrlUserinfo(redactHostedSitePreviewLog(value));
   if (value == null || typeof value !== 'object') return value;
   if (depth >= MAX_REDACT_DEPTH) return '[cds http log redaction depth limit]';
   if (seen.has(value)) return '[cds http log circular]';
@@ -314,6 +326,8 @@ export function redactBodyText(value: string): string {
     (_match, prefix: string, key: string) => `${prefix}${key}[redacted]`,
   );
   out = out.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi, 'Bearer [redacted]');
+  out = out.replace(JSON_SECRET_PAIR, (_match, prefix: string) => `${prefix}"[redacted]"`);
+  out = redactUrlUserinfo(out);
   // 非 JSON 正文（表单、纯文本、错误页）同样按值形状兜一道。
   out = out.replace(CDS_CREDENTIAL_VALUE, '[redacted]');
   return out;

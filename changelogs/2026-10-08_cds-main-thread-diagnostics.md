@@ -3,3 +3,4 @@
 | feat | cds | 新增按需 CPU 采样接口，默认返回函数自身耗时排行，也可下载原始 profile 用 Chrome DevTools 打开 |
 | feat | cds | 控制面度量脚本新增主线程与 SSE 几行，改前改后同一把尺子对比 |
 | docs | doc | 新增 CDS 控制面卡顿治理计划与状态看板 |
+| security | cds | 修复 HTTP 访问日志在响应体超过预览上限时漏存明文密钥：截断后的 JSON 改由兜底规则识别敏感键值对与连接串口令 |

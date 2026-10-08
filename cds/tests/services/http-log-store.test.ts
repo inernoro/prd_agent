@@ -277,6 +277,40 @@ describe('redactBodyText：CDS 自己签发的凭据明文不许进日志', () =
     expect(out).toContain('feature/x');
     expect(out).not.toContain('[redacted]');
   });
+
+  // 2026-10-08 事故：PUT /api/projects/:id 的响应 94KB，日志只截前 8KB，截断后的 JSON
+  // 解析不了，退到纯文本兜底；而兜底只认 key=value 写法，项目环境变量里的 JWT 密钥、数据库口令
+  // 原样落进了 HTTP 日志。下面三条都是「截断的 JSON」形态。
+  it('截断的 JSON 里，敏感键名对应的字符串值照样抹掉', () => {
+    const body = JSON.stringify({ project: { customEnv: {
+      JWT_SECRET: 'jwt-canary-value-1234567890',
+      DB_PASSWORD: 'db-canary-pass',
+      AI_ACCESS_KEY: 'ai-canary-key',
+      DB_HOST: 'cds-infra-mysql',
+    } } }) + '"padding": "' + 'x'.repeat(200);
+    const truncated = body.slice(0, body.length - 50);
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('jwt-canary-value-1234567890');
+    expect(out).not.toContain('db-canary-pass');
+    expect(out).not.toContain('ai-canary-key');
+    expect(out).toContain('cds-infra-mysql');
+    expect(out).toContain('"JWT_SECRET":"[redacted]"');
+  });
+
+  it('截断的 JSON 里，连接串的口令段照样抹掉（键名不含 password 也要抹）', () => {
+    const truncated = '{"customEnv":{"MONGODB_URI":"mongodb://imp_user:uri-canary-pass@cds-infra-mongo:27017/imp","REDIS_URL":"redis://:redis-canary@cds-infra-redis:6379"},"tail":"';
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('uri-canary-pass');
+    expect(out).not.toContain('redis-canary');
+    expect(out).toContain('mongodb://imp_user:[redacted]@cds-infra-mongo:27017/imp');
+  });
+
+  it('截断的 JSON 里，转义引号不会让抹除提前停下', () => {
+    const truncated = '{"IMP_INDEX_SECRET":"abc\\"def-canary","next":"ok","cut';
+    const out = redactBodyText(truncated);
+    expect(out).not.toContain('def-canary');
+    expect(out).toContain('"next":"ok"');
+  });
 });
 
 
