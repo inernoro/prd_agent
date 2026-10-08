@@ -34,6 +34,13 @@ describe('human project access UI wiring', () => {
     expect(dialog).toContain('setData(result)');
     expect(dialog).not.toMatch(/localStorage|sessionStorage/);
   });
+  it('loads project capability before polling owner-only maintenance and import APIs', () => {
+    const refresh = list.slice(list.indexOf('const refresh = useCallback'), list.indexOf('// 暂停 / 恢复一个项目。'));
+    expect(refresh).toContain('const projectsRes = await apiRequest<ProjectsResponse>');
+    expect(refresh).toMatch(/const legacyRes = canManageProjects\s*\?/);
+    expect(refresh).toMatch(/if \(canManageProjects\) void loadPendingImports\(\);/);
+    expect(list).toContain('open={canManageProjects && pendingImportOpen}');
+  });
   it('renders only project and personal activity navigation for members, preserving owner controls', () => {
     const render = (canManageSettings: boolean) => renderToStaticMarkup(createElement(MemoryRouter, null,
       createElement(AppRail, { active: 'projects', canManageSettings, canLogout: false, logoutState: 'idle',

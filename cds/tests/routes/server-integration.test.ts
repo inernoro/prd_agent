@@ -952,6 +952,60 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
+  it.each(['basic', 'sso-only'] as const)('keeps %s Ticket SSO project access without granting system ownership', async (mode) => {
+    const previousUser = process.env.CDS_USERNAME;
+    const previousPassword = process.env.CDS_PASSWORD;
+    try {
+      if (mode === 'basic') {
+        process.env.CDS_USERNAME = 'operator';
+        process.env.CDS_PASSWORD = 'secret';
+      } else {
+        delete process.env.CDS_USERNAME;
+        delete process.env.CDS_PASSWORD;
+      }
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true,
+        data: { subject: 'provider:compat-user', username: 'sso-user', displayName: 'SSO User' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+      const app = buildRealServerWithEvents([], state => {
+        state.addProject({ id: 'sso-compat-project', slug: 'sso-compat-project', name: 'SSO兼容项目', kind: 'git',
+          dockerNetwork: 'sso-compat', legacyFlag: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        state.addBranch({ id: 'sso-compat-branch', projectId: 'sso-compat-project', branch: 'main', status: 'idle',
+          worktreePath: tmpDir, services: {}, createdAt: new Date().toISOString() });
+        state.setSsoConfig({ enabled: true, providerId: 'ticket-sso', label: '使用 SSO 登录',
+          authorizationUrl: 'https://provider.example/authorize', tokenUrl: 'https://provider.example/token',
+          clientId: 'cds-console', clientSecret: 'fake-sso-secret', defaultRedirect: '/project-list' });
+      });
+      server = await startServer(app);
+      const start = await request(server, '/api/auth/sso/start');
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      expect(state).toBeTruthy();
+      const exchange = await requestJson(server, 'POST', '/api/auth/sso/exchange', { code: 'a'.repeat(43), state });
+      expect(exchange.status).toBe(200);
+      const rawCookie = Array.isArray(exchange.headers['set-cookie']) ? exchange.headers['set-cookie'][0] : String(exchange.headers['set-cookie'] || '');
+      const headers = { Cookie: rawCookie.split(';')[0] };
+      const status = await request(server, '/api/auth/status', headers);
+      expect(JSON.parse(status.body).user).toMatchObject({ authProvider: 'ticket-sso', isSystemOwner: false });
+      const projects = await request(server, '/api/projects', headers);
+      expect(projects.status).toBe(200);
+      expect(JSON.parse(projects.body).projects.map((project: { id: string }) => project.id)).toContain('sso-compat-project');
+      const branches = await request(server, '/api/branches?project=sso-compat-project', headers);
+      expect(branches.status).toBe(200);
+      expect(JSON.parse(branches.body).branches.map((branch: { id: string }) => branch.id)).toEqual(['sso-compat-branch']);
+      expect((await request(server, '/api/projects/sso-compat-project', headers)).status).toBe(200);
+      expect((await request(server, '/api/auth/sso/config', headers)).status).toBe(403);
+      expect((await requestJson(server, 'PUT', '/api/auth/sso/config', { enabled: false }, headers)).status).toBe(403);
+      const logout = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, headers);
+      expect(logout.status).toBe(200);
+      expect((await request(server, '/api/projects', headers)).status).toBe(401);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = previousUser;
+      if (previousPassword === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = previousPassword;
+    }
+  });
+
   it('does not expose SSO config to SSO sessions or project-scoped Agent keys', async () => {
     const prevUser = process.env.CDS_USERNAME;
     const prevPass = process.env.CDS_PASSWORD;

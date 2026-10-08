@@ -1,5 +1,5 @@
 import type { StateService } from './state.js';
-import { isAuthenticatedHuman, isHumanSystemOwner } from './human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from './human-auth.js';
 import { hasActiveGrant } from './identity.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
 import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, maskSecretsInObject } from './secret-masker.js';
@@ -11,7 +11,11 @@ export function humanPrincipalId(userId: string): string {
 }
 
 export function isScopedHuman(req: unknown): boolean {
-  return !!req && isAuthenticatedHuman(req) && !isHumanSystemOwner(req);
+  // Ticket SSO is synthesized by verified authentication middleware, not a
+  // persisted account that the owner can grant. Preserve its existing project
+  // access without treating it as a system owner or creating a new role map.
+  return !!req && isAuthenticatedHuman(req) && !isHumanSystemOwner(req)
+    && (req as HumanAuthContext).cdsUser?.authProvider !== 'sso';
 }
 
 const pendingGrantUpdates = new WeakMap<StateService, Map<string, { startedAt: string; reconciling: boolean }>>();
