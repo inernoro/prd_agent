@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  access,
   mkdir,
   open,
   readFile,
@@ -151,6 +152,12 @@ function findSlot(plan, slotId, environment) {
   return slot;
 }
 
+function figureName(plan, slotId) {
+  const index = plan.slots.findIndex((slot) => slot?.slotId === slotId);
+  if (index < 0) throw new Error(`视觉计划中不存在 slotId ${slotId}`);
+  return `${String(index + 1).padStart(3, '0')}-${slotId.toLowerCase()}`;
+}
+
 function validatePageForSlot(page, slot) {
   const actual = currentPageLocation(page);
   const plannedOrigin = normalizeOrigin(slot.pageOrigin, `${slot.slotId}.pageOrigin`);
@@ -243,12 +250,36 @@ export function createStableSmokeVisualEvidence(options = {}) {
     const slotLock = join(outputPath, `.${slotId}.lock`);
 
     return withFileLock(slotLock, async () => {
-      await withFileLock(manifestLock, async () => {
+      const existingRecord = await withFileLock(manifestLock, async () => {
         const existing = await readManifest(manifestPath);
-        if (existing.some((record) => record?.slotId === slotId)) {
-          throw new Error(`视觉位 ${slotId} 已有证据，禁止重复截图占位。`);
-        }
+        return existing.find((record) => record?.slotId === slotId);
       });
+      if (existingRecord) {
+        const recordedActual = {
+          origin: normalizeOrigin(existingRecord.pageOrigin, `${slotId}.existing.pageOrigin`),
+          pathname: required(existingRecord.pagePath, `${slotId}.existing.pagePath`),
+        };
+        if (!pageMatchesEntry(recordedActual.pathname, slot.entryPath)) {
+          throw new Error(`视觉位 ${slotId} 的既有证据路径不属于计划入口：${recordedActual.pathname}`);
+        }
+        validateRecord(existingRecord, plan, slot, runtime, recordedActual);
+        await access(existingRecord.path).catch((error) => {
+          throw new Error(`视觉位 ${slotId} 已有 manifest 记录，但证据文件不可读：${error.message}`);
+        });
+        if (status === '通过'
+          && (existingRecord.manualStatus !== '通过' || existingRecord.automatedStatus !== '通过')) {
+          throw new Error(`视觉位 ${slotId} 的既有证据未通过，不能在重试时按通过复用。`);
+        }
+        if (testInfo?.attach) {
+          await testInfo.attach(slotId, { path: existingRecord.path, contentType: 'image/png' });
+        }
+        return {
+          captured: false,
+          reason: 'slot-already-captured',
+          record: existingRecord,
+          manifestPath,
+        };
+      }
 
       if (input.target) {
         await input.target.waitFor({ state: 'visible', timeout: input.timeout || 15_000 });
@@ -271,7 +302,7 @@ export function createStableSmokeVisualEvidence(options = {}) {
         const caption = captionSuffix
           ? `${slot.expectedProof}；${captionSuffix}`
           : slot.expectedProof;
-        record = await harness.shot(page, outputPath, slotId.toLowerCase(), caption, {
+        record = await harness.shot(page, outputPath, figureName(plan, slotId), caption, {
           expectText: input.expectText,
           skipReady: Boolean(input.skipReady),
           overview: Boolean(input.overviewJustification),
@@ -325,6 +356,7 @@ export async function captureStableSmokeVisualEvidence(page, testInfo, input) {
 }
 
 export const _stableSmokeVisualEvidenceInternals = {
+  figureName,
   pageMatchesEntry,
   validatePlan,
   validateRecord,

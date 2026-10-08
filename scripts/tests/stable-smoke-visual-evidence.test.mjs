@@ -68,10 +68,12 @@ function fakeHarness(delay = 0) {
       if (delay) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
       const location = new URL(currentPage.url());
       const { themeTarget: _themeTarget, ...serializableOptions } = options;
+      const path = join(outputPath, `${name}.png`);
+      writeFileSync(path, 'png');
       return {
         name,
         caption,
-        path: join(outputPath, `${name}.png`),
+        path,
         capturedAt: new Date('2026-10-08T01:00:00.000Z').toISOString(),
         pageOrigin: location.origin,
         pagePath: location.pathname,
@@ -152,7 +154,7 @@ test('允许视觉工作区子路由但拒绝无关页面', async () => {
   }
 });
 
-test('manifest 元数据只能来自计划且重复 slotId 被拒绝', async () => {
+test('manifest 元数据只能来自计划且同轮重试幂等复用同一证据', async () => {
   const current = fixture();
   try {
     const capture = createStableSmokeVisualEvidence({
@@ -182,10 +184,14 @@ test('manifest 元数据只能来自计划且重复 slotId 被拒绝', async () 
       primaryState: '结果',
       breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 工作区 → 结果',
     });
-    await assert.rejects(
-      () => capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() }),
-      /已有证据|禁止重复/,
-    );
+    assert.equal(manifest[0].name, '001-cds-visual-single-01');
+    const retried = await capture(page('https://preview.example.test/visual-agent/workspace-2'), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+    });
+    assert.equal(retried.captured, false);
+    assert.equal(retried.reason, 'slot-already-captured');
+    assert.equal(JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8')).length, 1);
   } finally {
     rmSync(current.root, { recursive: true, force: true });
   }
@@ -478,7 +484,7 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   );
   assert.match(
     source,
-    /CDS-VISUAL-SHORT-VIDEO-PARSING-01[\s\S]*?getByRole\('button', \{ name: '解析短视频'[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-03/,
+    /CDS-VISUAL-SHORT-VIDEO-PARSING-01[\s\S]*?openDocumentStoreAction\(page, '解析短视频'\)[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-03/,
   );
   assert.match(
     source,

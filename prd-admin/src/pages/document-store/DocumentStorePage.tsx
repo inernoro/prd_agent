@@ -1909,7 +1909,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         firstUploadedId ??= res.data.entry.id;
         successCount++;
       } else {
-        toast.error(`上传失败: ${file.name}`, res.error?.message);
+        toast.error(`上传失败: ${file.name}`, res.error?.message, 8000);
       }
     }
     setUploadProgress(null);
@@ -2851,6 +2851,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               <DocEmptyState
                 onCreateDocument={handleCreateDocument}
                 onUploadFile={() => fileInputRef.current?.click()}
+                onOpenVideoParser={handleOpenVideoParser}
                 onAddSubscription={() => setShowSubscribe(true)}
               />
             </div>

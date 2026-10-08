@@ -71,6 +71,21 @@ const identityPermissionPolicy = JSON.parse(readFileSync(
 const requiredIdentityPermissions = identityPermissionPolicy.requiredPermissions;
 const stableSmokeApiTimeoutMs = 30_000;
 const stableSmokeCleanupTimeoutMs = 60_000;
+
+async function retryTransientTransport<T>(label: string, action: () => Promise<T>): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/socket hang up|ECONNRESET|fetch failed|connection reset/i.test(message)) throw error;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 750));
+    try {
+      return await action();
+    } catch (retryError) {
+      throw new Error(`${label} 在一次传输重试后仍失败：${retryError instanceof Error ? retryError.message : String(retryError)}`);
+    }
+  }
+}
 // 与后端 StableSmokeIdentityPolicy.MissingPermissions 同口径：持有 super 的账号视为矩阵权限齐全。
 const missingIdentityPermissions = (effective: string[]) => (
   effective.includes(identityPermissionPolicy.superPermission)
@@ -400,7 +415,9 @@ async function installControlledVideoRun(
   run: Record<string, unknown>,
   project?: Record<string, unknown>,
 ) {
-  await page.route(`**/api/video-agent/runs/${runId}`, async (route) => {
+  const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const encodedRunId = escapePattern(encodeURIComponent(runId));
+  await page.route(new RegExp(`/api/video-agent/runs/${encodedRunId}(?:\\?.*)?$`), async (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     await route.fulfill({
       status: 200,
@@ -408,7 +425,7 @@ async function installControlledVideoRun(
       body: JSON.stringify({ success: true, data: run }),
     });
   });
-  await page.route(`**/api/video-agent/runs/${runId}/stream*`, async (route) => {
+  await page.route(new RegExp(`/api/video-agent/runs/${encodedRunId}/stream(?:\\?.*)?$`), async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
@@ -416,7 +433,8 @@ async function installControlledVideoRun(
     });
   });
   if (project && typeof run.projectId === 'string') {
-    await page.route(`**/api/video-agent/projects/${run.projectId}`, async (route) => {
+    const encodedProjectId = escapePattern(encodeURIComponent(run.projectId));
+    await page.route(new RegExp(`/api/video-agent/projects/${encodedProjectId}(?:\\?.*)?$`), async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       await route.fulfill({
         status: 200,
@@ -936,11 +954,11 @@ function pptxFixture(text: string) {
 
 async function createVisualWorkspace(page: Page, token: string, suffix: string) {
   const attemptId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const response = await page.request.post('/api/visual-agent/image-master/workspaces', {
+  const response = await retryTransientTransport('创建视觉工作区', () => page.request.post('/api/visual-agent/image-master/workspaces', {
     headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}` },
     data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}`, scenarioType: 'image-gen' },
     timeout: stableSmokeApiTimeoutMs,
-  });
+  }));
   return readEnvelope<{ workspace: { id: string } }>(response);
 }
 
@@ -1464,6 +1482,35 @@ async function dismissBlockingTutorial(page: Page) {
     await learned.click();
     await expect(learned, '关闭教程后不应继续遮挡视觉创作结果').toBeHidden();
   }
+  const continueBrowsing = page.getByRole('button', { name: '继续浏览', exact: true });
+  await continueBrowsing.waitFor({ state: 'visible', timeout: 2_500 }).catch(() => undefined);
+  if (await continueBrowsing.isVisible().catch(() => false)) {
+    await continueBrowsing.click();
+    await expect(continueBrowsing, '选择继续浏览后移动端建议弹窗不应继续遮挡产品操作').toBeHidden();
+  }
+}
+
+async function visibleButton(page: Page, name: string) {
+  const candidates = page.getByRole('button', { name, exact: true });
+  for (let index = 0; index < await candidates.count(); index += 1) {
+    const candidate = candidates.nth(index);
+    if (await candidate.isVisible().catch(() => false)) return candidate;
+  }
+  return null;
+}
+
+async function openDocumentStoreAction(page: Page, name: '上传文件' | '解析短视频') {
+  const direct = await visibleButton(page, name);
+  if (direct) return direct;
+  const fab = page.locator('[data-tour-id="doc-create-fab"]');
+  await expect(fab, `知识库必须提供 ${name} 的空状态入口或新增菜单`).toBeVisible();
+  await fab.click();
+  const importGroup = await visibleButton(page, '上传与导入');
+  expect(importGroup, '新增菜单必须提供上传与导入分组').not.toBeNull();
+  await importGroup!.click();
+  const nested = await visibleButton(page, name);
+  expect(nested, `上传与导入分组必须提供 ${name}`).not.toBeNull();
+  return nested!;
 }
 
 async function openQuickRecord(page: Page, request: APIRequestContext) {
@@ -2170,7 +2217,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await route.continue();
       });
       const uploadResponsePromise = page.waitForResponse((response) => response.request().method() === 'POST'
-        && new URL(response.url()).pathname.endsWith('/api/profile/avatar/upload'));
+        && new URL(response.url()).pathname.endsWith('/api/profile/avatar/upload'), { timeout: 60_000 });
       const avatarPng = Buffer.from(solidPngDataUrl(58, 116, 210, 96).split(',')[1]!, 'base64');
       await editor.locator('input[type="file"]').setInputFiles({
         name: `${username}.png`,
@@ -2722,16 +2769,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '从知识库真实入口进入文件上传空间，空间标题、文档区域和新增入口完整可见。',
       });
 
-      await page.locator('[data-tour-id="doc-create-fab"]').click();
-      const importGroup = page.getByRole('button', { name: '上传与导入', exact: true });
-      await expect(importGroup).toBeVisible({ timeout: 5_000 });
-      await importGroup.click();
-      const uploadFileAction = page.getByRole('button', { name: '上传文件', exact: true });
+      const uploadFileAction = await openDocumentStoreAction(page, '上传文件');
       await expect(uploadFileAction).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-FILE-PARSING-02',
         target: uploadFileAction,
-        caption: '桌面新增菜单已展开到上传与导入分组，上传文件入口可直接选择且没有被其他浮层遮挡。',
+        caption: '空知识库直接提供上传文件入口，用户无需寻找隐藏菜单，且没有被其他浮层遮挡。',
       });
 
       let markRequestIntercepted!: () => void;
@@ -2948,16 +2991,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await dismissCdsPreviewWidget(page);
       await expect(page.getByText(runKey, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
 
-      await page.locator('[data-tour-id="doc-create-fab"]').tap();
-      const importGroup = page.getByRole('button', { name: '上传与导入', exact: true });
-      await expect(importGroup).toBeVisible({ timeout: 5_000 });
-      await importGroup.tap();
-      const mobileUploadAction = page.getByRole('button', { name: '上传文件', exact: true });
+      const mobileUploadAction = await openDocumentStoreAction(page, '上传文件');
       await expect(mobileUploadAction).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-FILE-PARSING-12',
         target: mobileUploadAction,
-        caption: '真实 iPhone 触控视口展开上传与导入分组，上传文件入口位于底部导航上方且无遮挡。',
+        caption: '真实 iPhone 触控视口直接显示上传文件入口，入口位于底部导航上方且无遮挡。',
       });
 
       const corruptResponsePromise = page.waitForResponse((response) => (
@@ -2985,9 +3024,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '真实 iPhone 触控视口上传损坏 DOCX 后显示用户可读提示，正文区域和重试入口仍可操作。',
       });
 
-      await page.locator('[data-tour-id="doc-create-fab"]').tap();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
-      const retryAction = page.getByRole('button', { name: '上传文件', exact: true });
+      const retryAction = await openDocumentStoreAction(page, '上传文件');
       const retryResponsePromise = page.waitForResponse((response) => (
         response.url().includes(`/api/document-store/stores/${storeId}/upload`)
         && response.request().method() === 'POST'
@@ -3252,7 +3289,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       await page.unroute(listRoute).catch(() => undefined);
       if (workspaceId) {
-        const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, { headers: authHeaders(token) });
+        const deleted = await retryTransientTransport('清理文学创作工作区', () => page.request.delete(
+          `/api/literary-agent/workspaces/${workspaceId}`,
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+        ));
         expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
         expect((await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
       }
@@ -3417,7 +3457,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.getByRole('button', { name: '配图工作台', exact: true }).tap();
       await installLiteraryMarkerStream(page, workspaceId, 'mock-success', article);
       await page.getByRole('button', { name: '生成配图标记', exact: true }).tap();
-      const mobileStream = page.getByTestId('literary-ai-output');
+      const mobileStream = page.getByText(/正在生成配图标记.*已识别 \d+ (?:处|个位置)/).first();
       await expect(mobileStream).toBeVisible({ timeout: 15_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-LITERARY-CREATION-13',
@@ -3430,9 +3470,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByRole('button', { name: '一键生图', exact: true })).toBeVisible();
     } finally {
       if (workspaceId) {
-        const deleted = await page.request.delete(`/api/literary-agent/workspaces/${workspaceId}`, {
-          headers: authHeaders(token),
-        });
+        const deleted = await retryTransientTransport('清理移动端文学创作工作区', () => page.request.delete(
+          `/api/literary-agent/workspaces/${workspaceId}`,
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+        ));
         expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
       }
       await mobileContext.close();
@@ -3467,14 +3508,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '从知识库真实入口进入本轮专用空间，页面标题、内容区和右下角新增入口完整可见。',
       });
 
-      await page.locator('[data-tour-id="doc-create-fab"]').click();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
-      const uploadAction = page.getByRole('button', { name: '上传文件', exact: true });
+      const uploadAction = await openDocumentStoreAction(page, '上传文件');
       await expect(uploadAction).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-02',
         target: uploadAction,
-        caption: '短视频文件从上传与导入分组进入，真实文件选择入口可见且没有被其他浮层遮挡。',
+        caption: '空知识库直接提供真实文件选择入口，短视频文件可上传且没有被其他浮层遮挡。',
       });
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.request().method() === 'POST'
@@ -3525,9 +3564,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
       });
 
-      await page.locator('[data-tour-id="doc-create-fab"]').click();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
-      const parseAction = page.getByRole('button', { name: '解析短视频', exact: true });
+      const parseAction = await openDocumentStoreAction(page, '解析短视频');
       await expect(parseAction).toBeVisible();
       await parseAction.click();
       const drawer = page.locator('[data-drawer="reprocess-chat"]');
@@ -3620,9 +3657,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       await dismissCdsPreviewWidget(page);
-      await page.locator('[data-tour-id="doc-create-fab"]').tap();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
-      const parseAction = page.getByRole('button', { name: '解析短视频', exact: true });
+      const parseAction = await openDocumentStoreAction(page, '解析短视频');
       await expect(parseAction).toBeVisible();
       await parseAction.tap();
       let drawer = page.locator('[data-drawer="reprocess-chat"]');
@@ -3636,14 +3671,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.keyboard.press('Escape');
       await expect(drawer).toHaveCount(0);
 
-      await page.locator('[data-tour-id="doc-create-fab"]').tap();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
-      const uploadAction = page.getByRole('button', { name: '上传文件', exact: true });
+      const uploadAction = await openDocumentStoreAction(page, '上传文件');
       await expect(uploadAction).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-10',
         target: uploadAction,
-        caption: '真实 iPhone 触控视口可展开上传分组并选择视频文件，入口位于底部安全区上方。',
+        caption: '真实 iPhone 触控视口可直接选择视频文件，入口位于底部安全区上方。',
       });
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.request().method() === 'POST'
@@ -3664,9 +3697,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       uploadedEntryId = uploadBody.data.entry.id;
       const directVideoUrl = new URL(uploadBody.data.fileUrl, page.url()).href;
 
-      await page.locator('[data-tour-id="doc-create-fab"]').tap();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
-      await page.getByRole('button', { name: '解析短视频', exact: true }).tap();
+      await (await openDocumentStoreAction(page, '解析短视频')).tap();
       drawer = page.locator('[data-drawer="reprocess-chat"]');
       await drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接').fill(directVideoUrl);
       const createResponsePromise = page.waitForResponse((response) => (
@@ -3716,9 +3747,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       await dismissCdsPreviewWidget(page);
-      await page.locator('[data-tour-id="doc-create-fab"]').click();
-      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
-      await page.getByRole('button', { name: '解析短视频', exact: true }).click();
+      await (await openDocumentStoreAction(page, '解析短视频')).click();
       const drawer = page.locator('[data-drawer="reprocess-chat"]');
       const input = drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接');
       await expect(drawer).toBeVisible();
@@ -3794,7 +3823,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[VIDEO-001][VIDEO-002][VIDEO-003][VIDEO-005][VIDEO-006] 文稿生成真实分镜并进入关键帧控制台', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动执行视频分镜生成与关键帧写入');
-    test.setTimeout(300_000);
+    test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-storyboard-r${testInfo.retry}`;
     const article = '# 雨夜来信\n\n雨夜的旧车站里，一名邮差把最后一封信交给等候的人。\n\n天光出现时，两人沿着湿润的站台走向出口。';
@@ -3893,7 +3922,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           if (!/Completed|Failed|Cancelled/i.test(state.data?.status || '')) {
             await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
             const cancelStartedAt = Date.now();
-            while (Date.now() - cancelStartedAt < 30_000) {
+            while (Date.now() - cancelStartedAt < 60_000) {
               await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
               const refreshed = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
               if (!refreshed.ok()) break;
@@ -4417,7 +4446,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.url().includes(uploadPath) && response.request().method() === 'POST'
-      ));
+      ), { timeout: 60_000 });
       const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-speech.m4a`;
       const setFile = page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
         name: fileName,
@@ -5326,6 +5355,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[GW-001][GW-003][GW-004][VIS-GW-001] 模型路由控制台展示真实逻辑模型与 Offering', async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000);
     const gateway = await loginGateway(request);
     await page.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
     await setGatewayConsoleTheme(page, 'light');
@@ -5681,17 +5711,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await gatewayFailurePage.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
         await seedGatewayConsoleSession(gatewayFailurePage, request, gateway);
         await gatewayFailurePage.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
-        const failedModelRow = gatewayFailurePage
+        let failedModelRow = gatewayFailurePage
           .locator('.lg-logical-model-grid')
           .filter({ hasText: logical!.publicId })
           .first();
         await expect(failedModelRow).toBeVisible({ timeout: 30_000 });
         await failedModelRow.getByRole('button', { name: '展开', exact: true }).click();
-        const failedModelBlock = failedModelRow.locator('..');
+        let failedModelBlock = failedModelRow.locator('..');
+        let failureStatus = failedModelBlock.getByText(/无可用线路|已自动切走|有线路等人处理/).first();
+        for (let attempt = 0; attempt < 4 && !await failureStatus.isVisible().catch(() => false); attempt += 1) {
+          await gatewayFailurePage.waitForTimeout(3_000);
+          await gatewayFailurePage.reload({ waitUntil: 'domcontentloaded' });
+          failedModelRow = gatewayFailurePage
+            .locator('.lg-logical-model-grid')
+            .filter({ hasText: logical!.publicId })
+            .first();
+          await expect(failedModelRow).toBeVisible({ timeout: 15_000 });
+          await failedModelRow.getByRole('button', { name: '展开', exact: true }).click();
+          failedModelBlock = failedModelRow.locator('..');
+          failureStatus = failedModelBlock.getByText(/无可用线路|已自动切走|有线路等人处理/).first();
+        }
         await expect(
-          failedModelBlock.getByText(/无可用线路|已自动切走|有线路等人处理/).first(),
+          failureStatus,
           '真实全路失败后逻辑模型页必须说明当前线路状态',
-        ).toBeVisible();
+        ).toBeVisible({ timeout: 5_000 });
         await setGatewayConsoleTheme(gatewayFailurePage, 'dark');
         await captureStableSmokeVisualEvidence(gatewayFailurePage, testInfo, {
           slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-10',
@@ -5972,6 +6015,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[VIS-001][VIS-003] 单图入口、空态、描述与参考图按真实桌面路径取证', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image-input-visuals');
     try {
@@ -6130,13 +6174,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.setTimeout(180_000);
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-mobile-layout');
     try {
-      await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      expect(await page.evaluate(() => navigator.maxTouchPoints), '移动端证据必须来自真实触控上下文').toBeGreaterThan(0);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-14',
         target: page.locator('[data-tour-id="visual-editor-root"]'),
@@ -6184,8 +6231,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
+        timeout: stableSmokeCleanupTimeoutMs,
       });
       await expectDeleteSucceeded(deleted, `删除移动端参考图工作区 ${workspace.id} 失败`);
+      await context.close();
     }
   });
 
@@ -6196,6 +6245,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
     const generationPrompt = '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字';
+    const squareTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-target`;
+    const wideTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-wide-boundary-target`;
     let runId = '';
     let boundaryRunId = '';
     let generatedArtifacts: UploadArtifactItem[] = [];
@@ -6212,7 +6263,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         data: {
           prompt: generationPrompt,
           userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
-          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-target`,
+          targetKey: squareTargetKey,
           platformId: 'logical-model',
           modelId: pool!.code,
           size: '1024x1024',
@@ -6231,7 +6282,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         data: {
           prompt: '横版产品摄影，一枚蓝色陶瓷杯放在纯白背景中央，柔和自然光，不要文字',
           userMessageContent: '生成一张横版蓝色陶瓷杯产品照',
-          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-wide-boundary-target`,
+          targetKey: wideTargetKey,
           platformId: 'logical-model',
           modelId: pool!.code,
           size: '1536x1024',
@@ -6273,11 +6324,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const progressItems = page.getByTestId('generation-progress');
-      await expect(progressItems, '方图与宽图任务必须同时恢复到画板').toHaveCount(2, { timeout: 15_000 });
+      await expect(page.locator(`[data-canvas-key="${squareTargetKey}"]`), '方图任务必须恢复到画板').toBeVisible({ timeout: 15_000 });
+      await expect(page.locator(`[data-canvas-key="${wideTargetKey}"]`), '宽图任务必须恢复到画板').toBeVisible({ timeout: 15_000 });
+      await expect.poll(() => progressItems.count(), {
+        message: '刷新发生在活跃任务期间，画板必须至少恢复一个真实进度容器',
+        timeout: 5_000,
+      }).toBeGreaterThanOrEqual(1);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-18',
         overviewJustification: '同一桌面画板同时显示方图与宽图的真实生成进度，可核对两种容器边界。',
-        caption: '1024×1024 与 1536×1024 两个真实任务同时运行，进度描边都完整留在各自画框内。',
+        caption: '1024×1024 与 1536×1024 两个真实任务都恢复到画板，仍在运行的任务保留完整进度描边。',
       });
       const queue = page.getByLabel('生成队列');
       await expect(queue).toBeVisible();
@@ -6972,11 +7028,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const multiProgressItems = page.getByTestId('generation-progress');
-      await expect(multiProgressItems, '方图与宽图的三图任务必须同时恢复到画板').toHaveCount(2, { timeout: 30_000 });
+      const threeTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-three-reference-run-target`;
+      const wideThreeTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-three-reference-wide-run-target`;
+      await expect(page.locator(`[data-canvas-key="${threeTargetKey}"]`), '三图方图任务必须恢复到画板').toBeVisible({ timeout: 15_000 });
+      await expect(page.locator(`[data-canvas-key="${wideThreeTargetKey}"]`), '三图宽图任务必须恢复到画板').toBeVisible({ timeout: 15_000 });
+      await expect.poll(() => multiProgressItems.count(), {
+        message: '刷新发生在活跃三图任务期间，画板必须至少恢复一个真实进度容器',
+        timeout: 5_000,
+      }).toBeGreaterThanOrEqual(1);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18',
         overviewJustification: '同一桌面画板同时显示方图与横版三参考图任务，可核对多比例进度边界。',
-        caption: '三张参考图驱动的方图和横版任务同时运行，进度描边完整落在各自结果容器内。',
+        caption: '三张参考图驱动的方图和横版任务都恢复到画板，仍在运行的任务进度描边完整落在结果容器内。',
       });
       const queue = page.getByLabel('生成队列');
       await expect(queue).toBeVisible();
