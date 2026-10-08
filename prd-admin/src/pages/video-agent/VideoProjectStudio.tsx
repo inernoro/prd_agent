@@ -163,21 +163,27 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     setTitle(project?.title === '未命名视频' ? '' : project?.title ?? '');
     setSourceMarkdown(project?.sourceMarkdown ?? '');
     setStyleDescription(project?.styleDescription ?? '智能匹配');
-    const savedModel = project?.defaultVideoModel;
-    const nextModel = savedModel && models.some((item) => item.id === savedModel)
-      ? savedModel
-      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
-    setModel(nextModel);
+    setModel(project?.defaultVideoModel ?? '');
     setAspectRatio(project?.defaultAspectRatio ?? '16:9');
     setResolution(project?.defaultResolution ?? '1080p');
     setDuration(project?.defaultDuration ?? 5);
-    setGenerateAudio(resolveVideoAudioSetting(
-      project?.generateAudio ?? true,
-      models.find((item) => item.id === nextModel),
-    ));
+    setGenerateAudio(project?.generateAudio ?? true);
     setAssets(project?.assets ?? []);
     setTimelineTracks(project?.timelineTracks?.length ? project.timelineTracks : createTimelineTracks());
-  }, [project, models]);
+  }, [project]);
+
+  useEffect(() => {
+    const nextModel = model && models.some((item) => item.id === model)
+      ? model
+      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
+    if (nextModel !== model) setModel(nextModel);
+    const option = models.find((item) => item.id === nextModel);
+    if (!option) return;
+    setAspectRatio((currentRatio) => option.aspectRatios.includes(currentRatio) ? currentRatio : option.aspectRatios[0] ?? '16:9');
+    setResolution((currentResolution) => option.resolutions.includes(currentResolution) ? currentResolution : option.resolutions[0] ?? '720p');
+    setDuration((currentDuration) => option.durations.includes(currentDuration) ? currentDuration : option.durations[0] ?? 5);
+    if (!option.supportsAudio) setGenerateAudio(false);
+  }, [model, models]);
 
   const input = useMemo<VideoProjectInput>(() => ({
     title: title.trim() || undefined,

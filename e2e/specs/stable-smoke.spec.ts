@@ -415,9 +415,8 @@ async function installControlledVideoRun(
   run: Record<string, unknown>,
   project?: Record<string, unknown>,
 ) {
-  const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const encodedRunId = escapePattern(encodeURIComponent(runId));
-  await page.route(new RegExp(`/api/video-agent/runs/${encodedRunId}(?:\\?.*)?$`), async (route) => {
+  const normalizedRunPath = `/api/video-agent/runs/${encodeURIComponent(runId)}`;
+  await page.route((url) => url.pathname.replace(/\/+$/, '') === normalizedRunPath, async (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     await route.fulfill({
       status: 200,
@@ -425,7 +424,7 @@ async function installControlledVideoRun(
       body: JSON.stringify({ success: true, data: run }),
     });
   });
-  await page.route(/\/api\/video-agent\/runs(?:\?.*)?$/, async (route) => {
+  await page.route((url) => url.pathname.replace(/\/+$/, '') === '/api/video-agent/runs', async (route) => {
     if (route.request().method() !== 'GET') return route.continue();
     await route.fulfill({
       status: 200,
@@ -450,7 +449,7 @@ async function installControlledVideoRun(
       }),
     });
   });
-  await page.route(new RegExp(`/api/video-agent/runs/${encodedRunId}/stream(?:\\?.*)?$`), async (route) => {
+  await page.route((url) => url.pathname.replace(/\/+$/, '') === `${normalizedRunPath}/stream`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
@@ -458,8 +457,8 @@ async function installControlledVideoRun(
     });
   });
   if (project && typeof run.projectId === 'string') {
-    const encodedProjectId = escapePattern(encodeURIComponent(run.projectId));
-    await page.route(new RegExp(`/api/video-agent/projects/${encodedProjectId}(?:\\?.*)?$`), async (route) => {
+    const normalizedProjectPath = `/api/video-agent/projects/${encodeURIComponent(run.projectId)}`;
+    await page.route((url) => url.pathname.replace(/\/+$/, '') === normalizedProjectPath, async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       await route.fulfill({
         status: 200,
@@ -541,6 +540,7 @@ type GatewayOffering = {
   enabled: boolean;
   priority: number;
   healthStatus?: number;
+  consecutiveFailures?: number;
   notes?: string | null;
 };
 
@@ -2827,11 +2827,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         };
         NativeXhr.prototype.send = function send(body) {
           if (delayed.has(this)) {
+            const handler = this.onload;
+            this.onload = null;
             this.addEventListener('load', (event) => {
-              event.stopImmediatePropagation();
-              const handler = this.onload;
-              window.setTimeout(() => handler?.call(this, event), 30_000);
-            }, { capture: true, once: true });
+              window.setTimeout(() => handler?.call(this, event), 60_000);
+            }, { once: true });
           }
           return Reflect.apply(nativeSend, this, [body]);
         };
@@ -3530,7 +3530,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let markRunCreated!: () => void;
     const runCreated = new Promise<void>((resolveCreated) => { markRunCreated = resolveCreated; });
     let visualStage: 'parse' | 'transcript' | 'real' = 'parse';
-    const runRoute = /\/api\/short-video-materials\/runs\/[^/?]+(?:\?.*)?$/;
+    const runRoute = (url: URL) => url.pathname.replace(/\/+$/, '').startsWith('/api/short-video-materials/runs/');
     let controlledReads = 0;
     try {
       storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
@@ -3897,6 +3897,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const studio = page.getByTestId('video-project-studio');
       await studio.getByRole('button', { name: '设置', exact: true }).click();
       await studio.getByRole('region', { name: '生成设置' }).getByLabel('视频模型').selectOption(frameModel!.id);
+      await expect(page.getByLabel('文学稿内容')).toHaveValue(article);
       const storyboardAction = page.getByRole('button', { name: '生成故事分镜', exact: true });
       await expect(storyboardAction).toBeEnabled({ timeout: 60_000 });
       const createResponsePromise = page.waitForResponse((response) => (
@@ -5763,6 +5764,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       // 存在短暂可见性窗口，因此按真实状态最多补十二次快速请求，直到所有参与线路真实进入
       // Unavailable，再验控制台的“无可用线路”和手动恢复入口。
       let failedLogical = logical!;
+      let finalParticipating: GatewayOffering[] = [];
       for (let attempt = 1; attempt <= 12; attempt += 1) {
         const refreshedResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
           headers: gateway.headers,
@@ -5771,6 +5773,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(refreshedResponse.ok(), refreshedBody.error?.message || '无法读取全路失败后的线路状态').toBe(true);
         failedLogical = refreshedBody.data.items.find((item) => item.id === logical!.id) || failedLogical;
         const participating = failedLogical.offerings.filter((item) => offerings.some((original) => original.id === item.id));
+        finalParticipating = participating;
         if (participating.length > 0 && participating.every((item) => item.healthStatus === 2)) break;
         const tripRunId = await createProbeRun(`all-failure-trip-${attempt}`);
         const tripResult = await waitForImageRun(page, token, tripRunId, 120_000);
@@ -5783,11 +5786,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const finalHealthBody = await finalHealthResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
       expect(finalHealthResponse.ok(), finalHealthBody.error?.message || '无法确认全路熔断状态').toBe(true);
       failedLogical = finalHealthBody.data.items.find((item) => item.id === logical!.id) || failedLogical;
+      finalParticipating = failedLogical.offerings.filter((item) => offerings.some((original) => original.id === item.id));
+      for (let attempt = 0; attempt < 15 && !finalParticipating.every((item) => item.healthStatus === 2); attempt += 1) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+        const convergedResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
+          headers: gateway.headers,
+        });
+        const convergedBody = await convergedResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+        expect(convergedResponse.ok(), convergedBody.error?.message || '无法等待线路健康状态收敛').toBe(true);
+        failedLogical = convergedBody.data.items.find((item) => item.id === logical!.id) || failedLogical;
+        finalParticipating = failedLogical.offerings.filter((item) => offerings.some((original) => original.id === item.id));
+      }
+      expect(finalParticipating.length, '全路失败后没有读到参与路由的 Offering，无法验收熔断状态').toBeGreaterThan(0);
       expect(
-        failedLogical.offerings
-          .filter((item) => offerings.some((original) => original.id === item.id))
-          .every((item) => item.healthStatus === 2),
-        '连续全路失败后参与路由的 Offering 必须真实进入不可用状态，才能验收控制台故障提示',
+        finalParticipating.every((item) => item.healthStatus === 2),
+        `连续全路失败后参与路由的 Offering 必须真实进入不可用状态，当前状态：${finalParticipating.map((item) => `${item.id}=health:${item.healthStatus ?? 'unknown'},failures:${item.consecutiveFailures ?? 'unknown'}`).join('；')}`,
       ).toBe(true);
       const gatewayFailurePage = await page.context().newPage();
       try {
@@ -6299,8 +6312,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ];
       const canvasFileInput = page.getByTestId('visual-canvas-file-input');
       await expect(canvasFileInput).toHaveCount(1);
-      await canvasFileInput.setInputFiles(threeFiles);
-      await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+      for (const [index, file] of threeFiles.entries()) {
+        await canvasFileInput.setInputFiles(file);
+        await expect(page.getByTestId('canvas-image')).toHaveCount(index + 1, { timeout: 30_000 });
+      }
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await canvasRoot.focus();
       await page.keyboard.press('Shift+1');
