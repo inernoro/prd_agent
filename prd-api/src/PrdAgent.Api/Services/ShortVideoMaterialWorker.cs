@@ -322,7 +322,7 @@ public sealed class ShortVideoMaterialProcessor
                     ["videoUrl"] = run.VideoUrl,
                     ["assetUrl"] = videoMaterial.Url,
                     ["platform"] = run.Platform,
-                    ["sourceMode"] = "asr",
+                    ["sourceMode"] = parsed.SourceMode == "manual" ? "manual" : "asr",
                 },
                 now);
             run.TranscriptEntryId = transcriptEntry.Id;
@@ -675,6 +675,17 @@ public sealed class ShortVideoMaterialProcessor
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
            && !string.IsNullOrWhiteSpace(uri.Host);
 
+    public static bool IsDirectVideoUrl(string? value)
+    {
+        if (!Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrWhiteSpace(uri.Host))
+            return false;
+
+        return Path.GetExtension(uri.AbsolutePath).ToLowerInvariant() is
+            ".mp4" or ".m4v" or ".mov" or ".webm" or ".mkv" or ".avi" or ".ogv";
+    }
+
     public static string DetectPlatform(string url)
     {
         var lower = url.ToLowerInvariant();
@@ -691,6 +702,19 @@ public sealed class ShortVideoMaterialProcessor
     {
         var trimmedManual = manualText?.Trim();
         var hasManualText = !string.IsNullOrWhiteSpace(trimmedManual);
+        if (IsDirectVideoUrl(videoUrl))
+        {
+            return new ParsedShortVideoSource(
+                CleanTitle(requestedTitle),
+                trimmedManual,
+                hasManualText ? "manual" : "direct-video",
+                hasManualText
+                    ? "已识别到直接视频文件，并使用用户提供的文字作为后续加工来源"
+                    : "已识别到直接视频文件；默认先保存原始视频，再从视频执行真实转写",
+                null,
+                videoUrl,
+                null);
+        }
         var apiKey = ResolveTikHubApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
         {

@@ -266,7 +266,7 @@ test('局部作用域皮肤可指定唯一主题测量区域并传给取证器',
   }
 });
 
-test('真实登录头像、单图、多图、录音与文件解析旅程接入计划槽位而不是普通附件截图', () => {
+test('真实登录头像、单图、多图、录音、文件与短视频解析旅程接入计划槽位而不是普通附件截图', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
   for (const slotId of [
     'CDS-VISUAL-IDENTITY-PROFILE-01',
@@ -351,6 +351,18 @@ test('真实登录头像、单图、多图、录音与文件解析旅程接入�
     'CDS-VISUAL-FILE-PARSING-14',
     'CDS-VISUAL-FILE-PARSING-15',
     'CDS-VISUAL-FILE-PARSING-16',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-01',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-02',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-03',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-04',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-05',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-06',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-07',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-08',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-09',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-10',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-11',
+    'CDS-VISUAL-SHORT-VIDEO-PARSING-12',
   ]) {
     assert.match(source, new RegExp(`slotId: '${slotId}'`));
   }
@@ -409,5 +421,26 @@ test('真实登录头像、单图、多图、录音与文件解析旅程接入�
   assert.match(
     source,
     /CDS-VISUAL-FILE-PARSING-14[\s\S]*?retryChooserPromise[\s\S]*?page\.reload[\s\S]*?CDS-VISUAL-FILE-PARSING-16/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-SHORT-VIDEO-PARSING-01[\s\S]*?getByRole\('button', \{ name: '解析短视频'[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-03/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-SHORT-VIDEO-PARSING-02[\s\S]*?setFiles[\s\S]*?video\/mp4/,
+  );
+  assert.match(source, /stable-smoke-video\.mp4\.b64/);
+  assert.match(
+    source,
+    /CDS-VISUAL-SHORT-VIDEO-PARSING-04[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-05[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-06/,
+  );
+  assert.match(
+    source,
+    /CDS-VISUAL-SHORT-VIDEO-PARSING-07[\s\S]*?完整的公开视频链接[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-11/,
+  );
+  assert.match(
+    source,
+    /devices\['iPhone 13'\][\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-08[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-10[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-12/,
   );
 });

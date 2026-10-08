@@ -99,6 +99,19 @@ public class ShortVideoMaterialController : ControllerBase
         return Ok(ApiResponse<ShortVideoMaterialRun>.Ok(run));
     }
 
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(string runId)
+    {
+        var userId = GetUserId();
+        var deleted = await _db.ShortVideoMaterialRuns.DeleteOneAsync(
+            run => run.Id == runId && run.UserId == userId,
+            CancellationToken.None);
+        if (deleted.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)
     {
         if (!string.IsNullOrWhiteSpace(storeId))

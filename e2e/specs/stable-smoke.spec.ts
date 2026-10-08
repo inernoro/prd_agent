@@ -57,6 +57,12 @@ const speechFixture = Buffer.from(readFileSync(
   resolve(specDir, '../fixtures/stable-smoke-speech.m4a.b64'),
   'utf8',
 ).trim(), 'base64');
+// 自包含的单帧 H.264 MP4，用于验证“本地视频文件 → 稳定资产 URL → 短视频后台解析”链路，
+// 避免稳定冒烟依赖会下架、改权限或变化内容的第三方公开视频。
+const shortVideoFixture = Buffer.from(readFileSync(
+  resolve(specDir, '../fixtures/stable-smoke-video.mp4.b64'),
+  'utf8',
+).trim(), 'base64');
 // 巡检身份必须持有的管理权限；SSOT 是后端 StableSmokeIdentityPolicy，由跨语言契约测试钉死两边一致。
 const identityPermissionPolicy = JSON.parse(readFileSync(
   resolve(specDir, '../fixtures/stable-smoke-required-permissions.json'),
@@ -323,6 +329,13 @@ type ImageRunDetail = {
     url?: string;
     errorMessage?: string;
   }>;
+};
+
+type ShortVideoVisualRun = {
+  id: string;
+  status: string;
+  stages: Array<{ key: string; label: string; status: string; message: string; at: string }>;
+  [key: string]: unknown;
 };
 
 type UploadArtifactItem = {
@@ -3025,8 +3038,298 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[PARSE-003][REG-short-video-input-001] 非法短视频链接在入口被拒绝并说明恢复动作', async ({ page, request }) => {
+  test('[PARSE-001][PARSE-002][PARSE-005][PARSE-007][PARSE-008] 视频上传、链接解析、阶段进度、入库结果与清理闭环', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/document-store');
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video-desktop-r${testInfo.retry}`;
+    let storeId = '';
+    let uploadedEntryId = '';
+    let runId = '';
+    let createdRun: ShortVideoVisualRun | null = null;
+    let markRunCreated!: () => void;
+    const runCreated = new Promise<void>((resolveCreated) => { markRunCreated = resolveCreated; });
+    let visualPoll = 0;
+    const runRoute = '**/api/short-video-materials/runs/*';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '短视频双输入路径稳定冒烟，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
+      const storeTitle = page.getByText(runKey, { exact: true }).first();
+      await expect(storeTitle).toBeVisible({ timeout: 30_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-01',
+        target: storeTitle,
+        caption: '从知识库真实入口进入本轮专用空间，页面标题、内容区和右下角新增入口完整可见。',
+      });
+
+      await page.locator('[data-tour-id="doc-create-fab"]').click();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
+      const uploadAction = page.getByRole('button', { name: '上传文件', exact: true });
+      await expect(uploadAction).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-02',
+        target: uploadAction,
+        caption: '短视频文件从上传与导入分组进入，真实文件选择入口可见且没有被其他浮层遮挡。',
+      });
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+      ));
+      const chooserPromise = page.waitForEvent('filechooser');
+      await uploadAction.click();
+      const chooser = await chooserPromise;
+      await chooser.setFiles({
+        name: `${runKey}.mp4`,
+        mimeType: 'video/mp4',
+        buffer: shortVideoFixture,
+      });
+      const uploadResponse = await uploadResponsePromise;
+      const uploadBody = await uploadResponse.json() as ApiEnvelope<{
+        entry: { id: string };
+        fileUrl: string;
+      }>;
+      expect(uploadResponse.ok(), uploadBody.error?.message || '短视频文件上传失败').toBe(true);
+      expect(uploadBody.success, uploadBody.error?.message || '短视频文件上传失败').toBe(true);
+      uploadedEntryId = uploadBody.data.entry.id;
+      const directVideoUrl = new URL(uploadBody.data.fileUrl, page.url()).href;
+      expect(directVideoUrl).toMatch(/^https?:\/\/.+\.mp4(?:\?|$)/i);
+
+      await page.route(runRoute, async (route) => {
+        await runCreated;
+        if (!createdRun) return route.continue();
+        visualPoll += 1;
+        const runningKey = visualPoll <= 2 ? 'parse' : visualPoll <= 4 ? 'transcript' : '';
+        if (!runningKey) return route.continue();
+        const stages = createdRun.stages.map((stage) => ({
+          ...stage,
+          status: stage.key === runningKey
+            ? 'running'
+            : runningKey === 'transcript' && ['parse', 'source'].includes(stage.key)
+              ? 'done'
+              : 'pending',
+          message: stage.key === runningKey
+            ? runningKey === 'parse'
+              ? '正在识别直接视频文件并准备保存原始素材'
+              : '正在从已入库视频转写原始文字'
+            : stage.message,
+        }));
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, data: { ...createdRun, status: 'running', card: null, stages } }),
+        });
+      });
+
+      await page.locator('[data-tour-id="doc-create-fab"]').click();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
+      const parseAction = page.getByRole('button', { name: '解析短视频', exact: true });
+      await expect(parseAction).toBeVisible();
+      await parseAction.click();
+      const drawer = page.locator('[data-drawer="reprocess-chat"]');
+      const input = drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接');
+      await expect(input).toBeVisible({ timeout: 10_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-03',
+        target: input,
+        caption: '短视频链接输入框、解析按钮和使用说明完整可见，用户无需猜测下一步。',
+      });
+      await input.fill(directVideoUrl);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-09',
+        target: drawer,
+        overviewJustification: '需要同时证明暗色桌面抽屉内链接、解析按钮、输入说明和内容区域没有遮挡。',
+        caption: '暗色桌面抽屉已填入本轮真实视频资产 URL，输入、提交与校验说明均完整可见。',
+      });
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/short-video-materials/runs'
+      ));
+      await drawer.getByRole('button', { name: '解析', exact: true }).click();
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ run: ShortVideoVisualRun }>;
+      expect(createResponse.ok(), createBody.error?.message || '创建短视频解析任务失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '创建短视频解析任务失败').toBe(true);
+      createdRun = createBody.data.run;
+      runId = createdRun.id;
+      markRunCreated();
+
+      const parseProgress = drawer.getByText(/解析链接：正在处理.*正在识别直接视频文件/).first();
+      await expect(parseProgress).toBeVisible({ timeout: 20_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-04',
+        target: parseProgress,
+        caption: '短视频任务进入抽取准备阶段，阶段名和正在执行的动作持续显示而不是静止等待。',
+      });
+
+      const transcriptProgress = drawer.getByText(/视频转文字：正在处理.*正在从已入库视频转写原始文字/).first();
+      await expect(transcriptProgress).toBeVisible({ timeout: 20_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-05',
+        target: transcriptProgress,
+        caption: '真实视频进入转写阶段，阶段说明持续变化并明确文字来自已入库视频。',
+      });
+
+      const originalVideo = drawer.getByRole('button', { name: '原始视频', exact: true });
+      await expect(originalVideo).toBeVisible({ timeout: 360_000 });
+      await expect(drawer.getByText(/已入库，可继续加工|视频已入库/).first()).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-06',
+        target: drawer,
+        overviewJustification: '需要同时证明原始视频、原始文字或降级说明、服务端终态和继续加工入口属于同一运行结果。',
+        caption: '短视频真实入库终态可回读，原始视频和后续加工入口完整；转写失败时页面也明确说明恢复方式。',
+      });
+    } finally {
+      markRunCreated?.();
+      await page.unroute(runRoute).catch(() => undefined);
+      if (runId) {
+        const deletedRun = await page.request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) });
+        expect([200, 404]).toContain(deletedRun.status());
+      }
+      if (storeId) {
+        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deletedStore.status());
+        if (uploadedEntryId) {
+          expect((await page.request.get(`/api/document-store/entries/${uploadedEntryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+      if (runId) {
+        expect((await page.request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('[PARSE-001][PARSE-006][PARSE-007] 移动端可上传视频、进入解析并回读入库终态', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.setTimeout(420_000);
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    const page = await mobileContext.newPage();
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video-mobile-r${testInfo.retry}`;
+    let storeId = '';
+    let uploadedEntryId = '';
+    let runId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '移动端短视频稳定冒烟，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
+      const parseAction = page.getByRole('button', { name: '解析短视频', exact: true });
+      await expect(parseAction).toBeVisible();
+      await parseAction.tap();
+      let drawer = page.locator('[data-drawer="reprocess-chat"]');
+      await expect(drawer.getByText('短视频解析', { exact: true })).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-08',
+        target: drawer,
+        overviewJustification: '真实 iPhone 触控视口需要同时证明抽屉、链接输入、解析按钮与底部安全区没有相互遮挡。',
+        caption: '真实 iPhone 触控视口打开短视频解析抽屉，说明、输入和解析动作完整可达。',
+      });
+      await page.keyboard.press('Escape');
+      await expect(drawer).toHaveCount(0);
+
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
+      const uploadAction = page.getByRole('button', { name: '上传文件', exact: true });
+      await expect(uploadAction).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-10',
+        target: uploadAction,
+        caption: '真实 iPhone 触控视口可展开上传分组并选择视频文件，入口位于底部安全区上方。',
+      });
+      const uploadResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && response.url().includes(`/api/document-store/stores/${storeId}/upload`)
+      ));
+      const chooserPromise = page.waitForEvent('filechooser');
+      await uploadAction.tap();
+      const chooser = await chooserPromise;
+      await chooser.setFiles({
+        name: `${runKey}.mp4`,
+        mimeType: 'video/mp4',
+        buffer: shortVideoFixture,
+      });
+      const uploadResponse = await uploadResponsePromise;
+      const uploadBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string }; fileUrl: string }>;
+      expect(uploadResponse.ok(), uploadBody.error?.message || '移动端视频上传失败').toBe(true);
+      expect(uploadBody.success, uploadBody.error?.message || '移动端视频上传失败').toBe(true);
+      uploadedEntryId = uploadBody.data.entry.id;
+      const directVideoUrl = new URL(uploadBody.data.fileUrl, page.url()).href;
+
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).tap();
+      await page.getByRole('button', { name: '解析短视频', exact: true }).tap();
+      drawer = page.locator('[data-drawer="reprocess-chat"]');
+      await drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接').fill(directVideoUrl);
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/short-video-materials/runs'
+      ));
+      await drawer.getByRole('button', { name: '解析', exact: true }).tap();
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ run: { id: string } }>;
+      expect(createResponse.ok(), createBody.error?.message || '移动端创建短视频任务失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '移动端创建短视频任务失败').toBe(true);
+      runId = createBody.data.run.id;
+
+      const originalVideo = drawer.getByRole('button', { name: '原始视频', exact: true });
+      await expect(originalVideo).toBeVisible({ timeout: 360_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-12',
+        target: drawer,
+        overviewJustification: '真实 iPhone 窄屏需要同时证明终态卡片、原始视频入口、继续加工动作和底部输入区均未裁切。',
+        caption: '移动端刷新可恢复的短视频终态完整显示，原始视频与继续加工入口在窄屏内可触达。',
+      });
+    } finally {
+      if (runId) {
+        const deletedRun = await page.request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) });
+        expect([200, 404]).toContain(deletedRun.status());
+      }
+      if (storeId) {
+        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deletedStore.status());
+        if (uploadedEntryId) {
+          expect((await page.request.get(`/api/document-store/entries/${uploadedEntryId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+      }
+      await mobileContext.close();
+    }
+  });
+
+  test('[PARSE-003][PARSE-004][REG-short-video-input-001] 非法与失效链接说明恢复动作且长文案不溢出', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    const token = await loginAndReadToken(page, request, '/document-store');
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video-error-r${testInfo.retry}`;
+    let storeId = '';
+    try {
+      storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+        headers: authHeaders(token),
+        data: { name: runKey, description: '短视频失败恢复稳定冒烟，执行后自动清理', isPublic: false },
+      }))).id;
+      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
+      await page.locator('[data-tour-id="doc-create-fab"]').click();
+      await page.getByRole('button', { name: '上传与导入', exact: true }).click();
+      await page.getByRole('button', { name: '解析短视频', exact: true }).click();
+      const drawer = page.locator('[data-drawer="reprocess-chat"]');
+      const input = drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接');
+      await input.fill('这不是链接');
+      await drawer.getByRole('button', { name: '解析', exact: true }).click();
+      const invalidToast = page.getByText('没有识别到短视频链接', { exact: true });
+      await expect(invalidToast).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-07',
+        target: invalidToast,
+        caption: '普通文字在前端立即被拒绝，提示支持的链接范围和重新粘贴动作，输入仍保留可继续修改。',
+      });
+
     const response = await page.request.post('/api/short-video-materials/runs', {
       headers: authHeaders(token),
       data: { videoUrl: '这不是链接', title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-invalid-video` },
@@ -3036,6 +3339,33 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(body.success).toBe(false);
     expect(body.error?.message || '').toContain('完整的公开视频链接');
     expectUserReadable(body.error?.message || '');
+
+      const longMessage = '当前短视频地址无法读取，请确认视频已经公开、没有过期并允许访问；检查完成后重新粘贴完整链接，如仍然失败请更换另一个公开视频链接后重试。';
+      await page.route('**/api/short-video-materials/runs', async (route) => {
+        if (route.request().method() !== 'POST') return route.continue();
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, data: null, error: { code: 'INVALID_FORMAT', message: longMessage } }),
+        });
+      });
+      await input.fill('https://example.test/private-video');
+      await drawer.getByRole('button', { name: '解析', exact: true }).click();
+      const longError = drawer.getByText(longMessage, { exact: true });
+      await expect(longError).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-11',
+        target: longError,
+        caption: '失效链接的长错误说明在桌面抽屉内完整换行、不溢出，并明确给出检查和更换链接的恢复动作。',
+      });
+      await page.unroute('**/api/short-video-materials/runs');
+    } finally {
+      await page.unroute('**/api/short-video-materials/runs').catch(() => undefined);
+      if (storeId) {
+        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        expect([200, 204]).toContain(deletedStore.status());
+      }
+    }
   });
 
   test('[VIDEO-004][VIDEO-007][VIDEO-008][VIDEO-010][REG-video-001] 从页面生成最短无音频视频并解码成片', { tag: '@cleanup' }, async ({ page, request }) => {
