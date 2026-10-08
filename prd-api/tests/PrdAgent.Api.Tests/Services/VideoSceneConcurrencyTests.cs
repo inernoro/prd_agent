@@ -141,6 +141,42 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task Worker_ShouldOnlyClaimRunsFromItsDeploymentScope()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var foreignQueued = NewRun("foreign-queued", test.OwnerId, SceneItemStatus.Draft);
+        foreignQueued.Status = VideoGenRunStatus.Queued;
+        foreignQueued.Mode = VideoGenMode.Direct;
+        foreignQueued.DeploymentSlug = "another-project::another-branch::revision::old";
+        var localQueued = NewRun("local-queued", test.OwnerId, SceneItemStatus.Draft);
+        localQueued.Status = VideoGenRunStatus.Queued;
+        localQueued.Mode = VideoGenMode.Direct;
+        localQueued.DeploymentSlug = DeploymentScope.Current;
+        var foreignScene = NewRun("foreign-scene", test.OwnerId, SceneItemStatus.Submitting);
+        foreignScene.DeploymentSlug = foreignQueued.DeploymentSlug;
+        var localScene = NewRun("local-scene", test.OwnerId, SceneItemStatus.Submitting);
+        localScene.DeploymentSlug = DeploymentScope.Current;
+        await Task.WhenAll(
+            test.SaveRunAsync(foreignQueued),
+            test.SaveRunAsync(localQueued),
+            test.SaveRunAsync(foreignScene),
+            test.SaveRunAsync(localScene));
+
+        var worker = test.CreateWorker();
+        var claimedQueued = await worker.ClaimQueuedRunAsync(CancellationToken.None);
+        var claimedScene = await worker.ClaimEditingSceneRenderAsync(CancellationToken.None);
+
+        claimedQueued.ShouldNotBeNull();
+        claimedQueued.Id.ShouldBe(localQueued.Id);
+        claimedScene.ShouldNotBeNull();
+        claimedScene.Run.Id.ShouldBe(localScene.Id);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == foreignQueued.Id).SingleAsync())
+            .Status.ShouldBe(VideoGenRunStatus.Queued);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == foreignScene.Id).SingleAsync())
+            .Scenes[0].Status.ShouldBe(SceneItemStatus.Submitting);
+    }
+
+    [Fact]
     public async Task ConcurrentBatchRequests_ShouldQueueEachEligibleSceneExactlyOnce()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

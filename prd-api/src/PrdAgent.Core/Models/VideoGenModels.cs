@@ -279,6 +279,11 @@ public class VideoGenSceneVersion
 public class VideoGenRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>
+    /// 创建任务的部署作用域。CDS 各分支与 revision 共用 MongoDB 时，后台 Worker 只能领取
+    /// 与自身 <see cref="DeploymentScope.Current"/> 相同的任务，防止旧分支抢走新分支任务。
+    /// </summary>
+    public string? DeploymentSlug { get; set; }
     public string AppKey { get; set; } = "video-agent";
     public string? ProjectId { get; set; }
     public string Status { get; set; } = VideoGenRunStatus.Queued;
@@ -389,6 +394,8 @@ public sealed record DeleteVideoGenRunResult(
 public class VideoExportTask
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    /// <summary>创建导出任务的部署作用域；领取规则与 <see cref="VideoGenRun.DeploymentSlug"/> 一致。</summary>
+    public string? DeploymentSlug { get; set; }
     public string AppKey { get; set; } = "video-agent";
     public string OwnerAdminId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;

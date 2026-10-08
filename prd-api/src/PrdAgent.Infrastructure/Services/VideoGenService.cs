@@ -153,6 +153,7 @@ public class VideoGenService : IVideoGenService
 
             var run = new VideoGenRun
             {
+                DeploymentSlug = DeploymentScope.Current,
                 AppKey = appKey,
                 ProjectId = project?.Id,
                 OwnerAdminId = ownerAdminId,
@@ -207,6 +208,7 @@ public class VideoGenService : IVideoGenService
 
         var directRun = new VideoGenRun
         {
+            DeploymentSlug = DeploymentScope.Current,
             AppKey = appKey,
             ProjectId = project?.Id,
             OwnerAdminId = ownerAdminId,
@@ -491,12 +493,14 @@ public class VideoGenService : IVideoGenService
 
         var existing = await _db.VideoExportTasks.Find(task =>
                 task.RunId == runId && task.OwnerAdminId == ownerAdminId &&
+                task.DeploymentSlug == DeploymentScope.Current &&
                 (task.Status == VideoExportTaskStatus.Queued || task.Status == VideoExportTaskStatus.Processing))
             .FirstOrDefaultAsync(ct);
         if (existing != null) return existing;
 
         var task = new VideoExportTask
         {
+            DeploymentSlug = DeploymentScope.Current,
             AppKey = run.AppKey,
             OwnerAdminId = ownerAdminId,
             ProjectId = run.ProjectId ?? string.Empty,
@@ -536,7 +540,9 @@ public class VideoGenService : IVideoGenService
         CancellationToken ct = default)
     {
         var fb = Builders<VideoExportTask>.Filter;
-        var filter = fb.Eq(x => x.ProjectId, projectId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        var filter = fb.Eq(x => x.ProjectId, projectId)
+                     & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
         return await _db.VideoExportTasks.Find(filter)
             .SortByDescending(x => x.CreatedAt)
@@ -549,6 +555,7 @@ public class VideoGenService : IVideoGenService
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Id, runId)
                      & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                      & fb.Eq(x => x.DeletionRequestedAt, null);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
         return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
@@ -561,6 +568,7 @@ public class VideoGenService : IVideoGenService
 
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                      & fb.Eq(x => x.DeletionRequestedAt, null);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
 
@@ -596,7 +604,9 @@ public class VideoGenService : IVideoGenService
             $"run-delete:{runId}",
             ct);
         var fb = Builders<VideoGenRun>.Filter;
-        var ownedFilter = fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId);
+        var ownedFilter = fb.Eq(x => x.Id, runId)
+                          & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                          & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         if (appKey != null) ownedFilter &= fb.Eq(x => x.AppKey, appKey);
 
         var run = await _db.VideoGenRuns.Find(ownedFilter).FirstOrDefaultAsync(ct);
@@ -749,6 +759,7 @@ public class VideoGenService : IVideoGenService
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId)
                     & fb.Eq(x => x.AppKey, appKey)
+                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                     & fb.Gte(x => x.CreatedAt, startOfDay);
         return await _db.VideoGenRuns.CountDocumentsAsync(filter, cancellationToken: ct);
     }
@@ -758,7 +769,11 @@ public class VideoGenService : IVideoGenService
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            var run = await _db.VideoGenRuns.Find(x => x.Id == runId).FirstOrDefaultAsync(ct);
+            var fb = Builders<VideoGenRun>.Filter;
+            var run = await _db.VideoGenRuns.Find(
+                    fb.Eq(x => x.Id, runId)
+                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current))
+                .FirstOrDefaultAsync(ct);
             if (run == null) return null;
             if (run.Status == VideoGenRunStatus.Completed
                 || run.Status == VideoGenRunStatus.Failed

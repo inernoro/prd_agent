@@ -1749,6 +1749,27 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void VideoGenerationQueues_AreFencedByDeploymentScope()
+    {
+        var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoGenModels.cs");
+        var service = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs");
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+
+        Assert.True(
+            Regex.Matches(model, "public string\\? DeploymentSlug \\{ get; set; \\}").Count >= 2,
+            "视频 Run 与导出任务都必须持久化部署作用域");
+        Assert.True(
+            Regex.Matches(service, "DeploymentSlug = DeploymentScope.Current").Count >= 3,
+            "直出、分镜与导出入队都必须写入当前部署作用域");
+        Assert.Contains("fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)", service);
+        Assert.Contains("var queueScope = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)", worker);
+        Assert.Contains("queueScope & fb.Eq(x => x.Id, pending.Id)", worker);
+        Assert.Contains("& fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);", worker);
+        Assert.Contains("Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)", worker);
+        Assert.Contains("x.DeploymentSlug == DeploymentScope.Current", worker);
+    }
+
+    [Fact]
     public void VisualImageRun_PreservesLogicalModelIdentityAcrossWorkerAndRawGatewayBoundary()
     {
         var runModel = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ImageGenRun.cs");

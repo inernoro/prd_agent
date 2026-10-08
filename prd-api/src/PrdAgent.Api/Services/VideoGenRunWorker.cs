@@ -107,7 +107,9 @@ public class VideoGenRunWorker : BackgroundService
                 var exportTask = await ClaimExportTaskAsync(stoppingToken);
                 if (exportTask != null)
                 {
-                    var taskRun = await _db.VideoGenRuns.Find(x => x.Id == exportTask.RunId)
+                    var taskRun = await _db.VideoGenRuns.Find(
+                            x => x.Id == exportTask.RunId
+                                 && x.DeploymentSlug == DeploymentScope.Current)
                         .FirstOrDefaultAsync(stoppingToken);
                     if (taskRun == null)
                     {
@@ -181,7 +183,8 @@ public class VideoGenRunWorker : BackgroundService
         var retryBefore = DateTime.UtcNow - TimeSpan.FromMinutes(2);
         var fb = Builders<VideoGenRun>.Filter;
         var pending = await _db.VideoGenRuns.FindOneAndUpdateAsync(
-            fb.Ne(x => x.DeletionRequestedAt, null)
+            fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+            & fb.Ne(x => x.DeletionRequestedAt, null)
             & fb.Or(
                 fb.Eq(x => x.DeletionCleanupAttemptedAt, null),
                 fb.Lte(x => x.DeletionCleanupAttemptedAt, retryBefore)),
@@ -214,11 +217,14 @@ public class VideoGenRunWorker : BackgroundService
     /// <summary>
     /// 拾取 Queued 任务，置为 Rendering 或 Scripting（根据 Mode）
     /// </summary>
-    private async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
+    internal async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
+        var queueScope = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)
+                         & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         // 先 peek 看下 Mode（避免错误置 status）
-        var pending = await _db.VideoGenRuns.Find(fb.Eq(x => x.Status, VideoGenRunStatus.Queued))
+        var pending = await _db.VideoGenRuns.Find(queueScope)
+            .SortBy(x => x.CreatedAt)
             .FirstOrDefaultAsync(ct);
         if (pending == null) return null;
 
@@ -236,9 +242,12 @@ public class VideoGenRunWorker : BackgroundService
             .Set(x => x.PhaseProgress, 1);
 
         var run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
-            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
+            queueScope & fb.Eq(x => x.Id, pending.Id),
             update,
-            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            new FindOneAndUpdateOptions<VideoGenRun>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
             ct);
         return run;
     }
@@ -773,6 +782,7 @@ public class VideoGenRunWorker : BackgroundService
         var expiredLease = sceneFilter.Eq(s => s.RenderLeaseExpiresAt, null)
                            | sceneFilter.Lte(s => s.RenderLeaseExpiresAt, now);
         var resumableFilter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                              & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                               & fb.ElemMatch(x => x.Scenes,
                                   sceneFilter.In(s => s.Status, [SceneItemStatus.Submitting, SceneItemStatus.Polling])
                                   & sceneFilter.Regex(s => s.JobId, new BsonRegularExpression("^(?!claim:).+"))
@@ -791,6 +801,7 @@ public class VideoGenRunWorker : BackgroundService
                 var resumableStatus = resumable.Scenes[resumeIdx].Status;
                 var leaseId = $"lease:{Guid.NewGuid():N}";
                 var exactResumeFilter = fb.Eq(x => x.Id, resumable.Id)
+                                      & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                                       & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
                                       & fb.Eq($"Scenes.{resumeIdx}.Status", resumableStatus)
                                       & fb.Eq($"Scenes.{resumeIdx}.JobId", jobId)
@@ -810,6 +821,7 @@ public class VideoGenRunWorker : BackgroundService
         }
 
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                     & fb.ElemMatch(x => x.Scenes,
                         sceneFilter.Eq(s => s.Status, SceneItemStatus.Submitting)
                         & sceneFilter.Eq(s => s.JobId, null));
@@ -822,6 +834,7 @@ public class VideoGenRunWorker : BackgroundService
 
         var claimId = $"claim:{Guid.NewGuid():N}";
         var exactClaimFilter = fb.Eq(x => x.Id, candidate.Id)
+                               & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                                & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
                                & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.Submitting)
                                & fb.Eq<string?>($"Scenes.{sceneIdx}.JobId", null);
@@ -843,6 +856,7 @@ public class VideoGenRunWorker : BackgroundService
         var now = DateTime.UtcNow;
         var candidate = await _db.VideoGenRuns.Find(
                 fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                 & fb.ElemMatch(x => x.Scenes,
                     Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.PollingClaimed)
                     & Builders<VideoGenScene>.Filter.Regex(s => s.JobId, new BsonRegularExpression(".+"))
@@ -859,6 +873,7 @@ public class VideoGenRunWorker : BackgroundService
         var jobId = candidate.Scenes[sceneIdx].JobId!;
         var leaseId = candidate.Scenes[sceneIdx].RenderLeaseId;
         var filter = fb.Eq(x => x.Id, candidate.Id)
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                      & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
                      & fb.Eq($"Scenes.{sceneIdx}.JobId", jobId)
                      & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", now);
@@ -881,6 +896,7 @@ public class VideoGenRunWorker : BackgroundService
         var threshold = DateTime.UtcNow - SceneClaimTimeout;
         var candidate = await _db.VideoGenRuns.Find(
                 fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                 & fb.ElemMatch(x => x.Scenes,
                     Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.SubmittingClaimed)
                     & Builders<VideoGenScene>.Filter.Regex(s => s.JobId, new BsonRegularExpression("^claim:"))
@@ -898,6 +914,7 @@ public class VideoGenRunWorker : BackgroundService
         var message = "生成提交进程已中断。为避免重复扣费，系统没有自动重新提交；请确认后手动重试。";
         var updated = await _db.VideoGenRuns.UpdateOneAsync(
             fb.Eq(x => x.Id, candidate.Id)
+            & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
             & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
             & fb.Eq($"Scenes.{sceneIdx}.JobId", claimId)
             & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.SubmissionStartedAt", threshold),
@@ -920,6 +937,7 @@ public class VideoGenRunWorker : BackgroundService
     {
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                     & fb.ElemMatch(x => x.Scenes,
                         Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.Generating));
         return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
@@ -1302,6 +1320,7 @@ public class VideoGenRunWorker : BackgroundService
     {
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                      & fb.Eq(x => x.ExportRequested, true);
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.ExportRequested, false)
@@ -1317,7 +1336,8 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
     {
-        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued);
+        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
+                     & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         return await _db.VideoExportTasks.FindOneAndUpdateAsync(
             filter,
             Builders<VideoExportTask>.Update
