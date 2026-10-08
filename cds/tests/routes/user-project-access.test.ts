@@ -216,13 +216,131 @@ describe('human project grants through the production server', () => {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined();
-    expect(flush).toHaveBeenCalledTimes(2);
+    expect(flush).toHaveBeenCalledTimes(3);
     expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
     fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'late-write-restored.json'));
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
     expect((await grant(['project-b'])).status).toBe(200);
+  });
+  it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const projectKey = (await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).body.plaintext;
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    vi.spyOn(state, 'flush').mockImplementationOnce(() => pending);
+    try {
+      expect((await grant(['project-b'])).status).toBe(500);
+      await flushAllJsonStateStores();
+      fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'interrupted-grant.json'));
+      for (const failedStep of ['save', 'flush'] as const) {
+        const retryPath = path.join(dir, `startup-retry-${failedStep}.json`);
+        fs.copyFileSync(path.join(dir, 'interrupted-grant.json'), retryPath);
+        const retry = new StateService(retryPath, dir);
+        if (failedStep === 'save') {
+          const save = retry.save.bind(retry);
+          let failRecoverySave = true;
+          vi.spyOn(retry, 'save').mockImplementation(hints => {
+            if (failRecoverySave && humanProjectGrantUpdateStatus(retry, principalId)?.reconciling) {
+              failRecoverySave = false;
+              throw new Error('fake startup recovery save failure');
+            }
+            save(hints);
+          });
+        }
+        else vi.spyOn(retry, 'flush').mockRejectedValueOnce(new Error('fake startup flush failure'));
+        retry.load();
+        expect(humanProjectGrantUpdateStatus(retry, principalId)?.reconciling).toBe(true);
+        expect(resolveUserCredential(retry, userKey)).toBeNull();
+        await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(retry, principalId)).toBeUndefined());
+        expect(retry.getProjectGrants().filter(g => g.principalId === principalId && !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+        const reloaded = new StateService(retryPath, dir);
+        reloaded.load();
+        expect(reloaded.getHumanAccessRecoveries()).toEqual({});
+        expect(reloaded.getProjectGrants().filter(g => g.principalId === principalId && !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+      }
+      const restarted = new StateService(path.join(dir, 'interrupted-grant.json'), dir);
+      let allowStartup!: () => void;
+      const startup = new Promise<void>(resolve => { allowStartup = resolve; });
+      vi.spyOn(restarted, 'flush').mockImplementationOnce(() => startup);
+      restarted.load();
+      expect(restarted.getProjectGrants().filter(g => g.principalId === humanPrincipalId(memberId) && !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+      expect(humanProjectGrantUpdateStatus(restarted, principalId)?.reconciling).toBe(true);
+      const config: CdsConfig = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'), masterPort: 9900,
+        workerPort: 5500, dockerNetwork: 'cds', portStart: 10001, sharedEnv: {},
+        jwt: { secret: 'test', issuer: 'test' }, rootDomains: ['example.test'] };
+      const restartedApp = createServer({ stateService: restarted, worktreeService: new WorktreeService(shell, dir),
+        shell, config, authStore: store, registry: new ExecutorRegistry(restarted), bridgeService: {} as any,
+        containerService: container as any,
+        proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
+      const restartedServer = restartedApp.listen(0, '127.0.0.1');
+      await new Promise<void>(resolve => restartedServer.once('listening', resolve));
+      const restartedBase = `http://127.0.0.1:${(restartedServer.address() as { port: number }).port}`;
+      const read = (url: string, key?: string) => fetch(restartedBase + url,
+        { headers: key ? { 'x-ai-access-key': key } : { Cookie: member } });
+      try {
+        expect((await read('/api/projects')).status).toBe(409);
+        expect((await read('/api/projects', userKey)).status).toBe(401);
+        expect((await read('/api/build-profiles?project=project-a', projectKey)).status).toBe(401);
+        allowStartup();
+        await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(restarted, principalId)).toBeUndefined());
+        expect((await (await read('/api/projects')).json()).projects.map((p: any) => p.id)).toEqual(['project-a']);
+        expect((await read('/api/branches/branch-project-b')).status).toBe(403);
+        expect((await read('/api/projects', userKey)).status).toBe(200);
+        expect((await read('/api/build-profiles?project=project-a', projectKey)).status).toBe(200);
+      } finally {
+        allowStartup();
+        restartedServer.closeAllConnections();
+        await new Promise<void>(resolve => restartedServer.close(() => resolve()));
+      }
+      await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(restarted, humanPrincipalId(memberId))).toBeUndefined());
+      await restarted.flush();
+      const confirmed = new StateService(path.join(dir, 'interrupted-grant.json'), dir);
+      confirmed.load();
+      expect(confirmed.getProjectGrants().filter(g => g.principalId === humanPrincipalId(memberId) && !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    } finally { finish(); }
+  });
+
+  it.each(['disabled', 'active'] as const)('keeps interrupted linked %s changes disabled across a restart', async status => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    if (status === 'active') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
+    let finish!: () => void;
+    vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    try {
+      expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(500);
+      await flushAllJsonStateStores();
+      const restartPath = path.join(dir, `interrupted-${status}.json`);
+      fs.copyFileSync(path.join(dir, 'state.json'), restartPath);
+      const restarted = new StateService(restartPath, dir);
+      restarted.load();
+      expect(restarted.getPrincipal(principalId)?.status).toBe('disabled');
+      expect(resolveUserCredential(restarted, key)).toBeNull();
+      await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(restarted, principalId)).toBeUndefined());
+      expect(resolveUserCredential(restarted, key)).toBeNull();
+      await restarted.flush();
+      const confirmed = new StateService(restartPath, dir);
+      confirmed.load();
+      expect(confirmed.getPrincipal(principalId)?.status).toBe('disabled');
+    } finally { finish(); }
+  });
+
+  it('reports a confirmed grant separately when journal cleanup fails, retaining the gate until cleanup recovers', async () => {
+    const flush = state.flush.bind(state);
+    vi.spyOn(state, 'flush').mockImplementationOnce(flush).mockRejectedValueOnce(new Error('fake journal cleanup failure'));
+    const result = await grant(['project-a']);
+    expect(result.status).toBe(500);
+    expect(result.body.error).toContain('项目授权已保存');
+    expect(result.body.error).not.toContain('本次修改未生效');
+    await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined());
+    expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+    expect(state.getHumanAccessRecoveries()).toEqual({});
   });
 
   it('blocks cross-project reads, writes, query overrides, derivation and system/credential escalation', async () => {

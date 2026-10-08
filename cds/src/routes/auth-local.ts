@@ -30,7 +30,7 @@ import {
 import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
 import type { StateService } from '../services/state.js';
 import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
-  markHumanProjectGrantRecovery, reconcileHumanAccessRestore } from '../services/human-project-access.js';
+  markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
 export interface LegacyLocalLoginResult {
   user: PublicCdsUser;
@@ -328,7 +328,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     if (!me) return;
     const targetId = req.params.id;
     const { status, newPassword } = req.body || {};
-    let finishUpdate: (() => void) | undefined;
+    let finishUpdate: FinishHumanAccessUpdate | undefined;
     let linkedStatusFailed = false;
     try {
       let result: CdsUser | null = await authService.findUserById(targetId);
@@ -360,7 +360,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         const state = deps.stateService;
         const principalId = humanPrincipalId(targetId);
         if (state) {
-          finishUpdate = beginHumanProjectGrantUpdate(state, principalId);
+          finishUpdate = beginHumanProjectGrantUpdate(state, principalId, 'disabled');
           if (!finishUpdate) {
             res.status(409).json({ error: '此账号的访问状态正在保存或恢复，请稍后刷新并重试。' }); return;
           }
@@ -400,8 +400,12 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
           }
           throw error;
         }
-        finishUpdate?.();
+        const cleared = await finishUpdate?.();
         finishUpdate = undefined;
+        if (cleared === false) {
+          linkedStatusFailed = true;
+          throw new Error('account access journal cleanup pending');
+        }
         await authService.recordActivity({
           userId: me.id,
           userLogin: me.username || me.githubLogin,
@@ -415,6 +419,10 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       const fresh = (await authService.findUserById(targetId)) ?? result;
       res.json({ user: fresh ? toPublicUser(fresh) : null });
     } catch (err) {
+      if (finishUpdate) {
+        if (!await finishUpdate()) linkedStatusFailed = true;
+        finishUpdate = undefined;
+      }
       if (err instanceof LocalAuthError) {
         res.status(localErrStatus(err)).json({ error: err.message, code: err.code });
         return;
@@ -425,7 +433,7 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         ? '账号更新未能完整保存；关联机器凭据已暂停，请恢复存储后刷新账号状态并重试。'
         : '更新用户失败' });
     } finally {
-      finishUpdate?.();
+      await finishUpdate?.();
     }
   });
 

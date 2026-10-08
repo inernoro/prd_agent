@@ -94,7 +94,7 @@ import {
   selectReleaseRunsToPrune,
 } from './release-retention.js';
 import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
-import { isHumanProjectGrantUpdatePending } from './human-project-access.js';
+import { isHumanProjectGrantUpdatePending, recoverInterruptedHumanAccessUpdates } from './human-project-access.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 import { migrateLegacyDataMigrationCredentials } from './secure-database-cli.js';
@@ -559,6 +559,7 @@ export class StateService {
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+    recoverInterruptedHumanAccessUpdates(this);
   }
 
   /**
@@ -2962,6 +2963,17 @@ export class StateService {
 
   getPrincipals(): Principal[] {
     return this.state.principals || [];
+  }
+
+  getHumanAccessRecoveries(): NonNullable<CdsState['humanAccessRecovery']> {
+    return this.state.humanAccessRecovery || {};
+  }
+
+  /** Journal changes travel in the same snapshot as the next access mutation. */
+  setHumanAccessRecovery(id: string, record: NonNullable<CdsState['humanAccessRecovery']>[string] | undefined): void {
+    if (!this.state.humanAccessRecovery) this.state.humanAccessRecovery = {};
+    if (record) this.state.humanAccessRecovery[id] = record;
+    else delete this.state.humanAccessRecovery[id];
   }
 
   getPrincipal(id: string): Principal | undefined {

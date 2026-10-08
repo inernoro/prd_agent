@@ -23,7 +23,7 @@ import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { AuthService } from '../services/auth-service.js';
 import { assertNotMachineAgentKey } from './projects.js';
-import { isHumanProjectGrantUpdatePending, beginHumanProjectGrantUpdate } from '../services/human-project-access.js';
+import { isHumanProjectGrantUpdatePending, beginHumanProjectGrantUpdate, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 import type { AgentKey, Principal, ProjectGrant, UserCredential } from '../types.js';
 import {
   buildPrincipalOverview,
@@ -301,7 +301,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
     if (isHumanProjectGrantUpdatePending(stateService, principalId)) {
       res.status(409).json({ error: 'access_update_pending', message: '此账号的访问状态正在保存，请稍后重试。' }); return;
     }
-    let finishUpdate: (() => void) | undefined;
+    let finishUpdate: FinishHumanAccessUpdate | undefined;
     try {
       if (status === 'active' && principalId.startsWith('human:') && deps.authService) {
         finishUpdate = beginHumanProjectGrantUpdate(stateService, principalId);
@@ -318,7 +318,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       }
       res.json({ ok: true, principalId, status });
     } catch (error) { next(error); }
-    finally { finishUpdate?.(); }
+    finally { await finishUpdate?.(); }
   });
 
   // ── 授予 / 撤销项目授权 ─────────────────────────────────────────

@@ -2508,6 +2508,7 @@ export function BranchListPage(): JSX.Element {
   }, [branchSearchOpen]);
 
   useEffect(() => {
+    if (!canManageConsole) return;
     const source = new EventSource(apiUrl('/api/activity-stream'));
     source.onmessage = (event) => {
       try {
@@ -2528,7 +2529,7 @@ export function BranchListPage(): JSX.Element {
       try { source.close(); } catch { /* tolerate */ }
     };
     return () => source.close();
-  }, []);
+  }, [canManageConsole]);
 
   const branches = state.status === 'ok' ? state.branches : [];
   const remoteBranches = state.status === 'ok' ? state.remoteBranches : [];

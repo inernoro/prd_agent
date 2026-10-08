@@ -1,7 +1,7 @@
 import type { StateService } from './state.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from './human-auth.js';
 import { hasActiveGrant } from './identity.js';
-import type { BranchEntry, BuildProfile, Project } from '../types.js';
+import type { BranchEntry, BuildProfile, Project, CdsState } from '../types.js';
 import { maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, maskSecretsInObject } from './secret-masker.js';
 import type { UnifiedBranchResource } from './resources.js';
 
@@ -19,6 +19,8 @@ export function isScopedHuman(req: unknown): boolean {
 }
 
 const pendingGrantUpdates = new WeakMap<StateService, Map<string, { startedAt: string; reconciling: boolean }>>();
+type AccessRecovery = NonNullable<CdsState['humanAccessRecovery']>[string];
+export type FinishHumanAccessUpdate = () => Promise<boolean>;
 
 export function humanProjectGrantUpdateStatus(state: StateService, principalId: string) {
   return pendingGrantUpdates.get(state)?.get(principalId);
@@ -30,16 +32,78 @@ export function markHumanProjectGrantRecovery(state: StateService, principalId: 
 }
 
 export function isHumanProjectGrantUpdatePending(state: StateService, principalId: string): boolean {
-  return pendingGrantUpdates.get(state)?.has(principalId) === true;
+  return pendingGrantUpdates.get(state)?.has(principalId) === true || !!state.getHumanAccessRecoveries()[principalId];
 }
 
 /** A grant replacement is not usable until its persistence outcome is known. */
-export function beginHumanProjectGrantUpdate(state: StateService, principalId: string): (() => void) | undefined {
+export function beginHumanProjectGrantUpdate(state: StateService, principalId: string,
+  mode?: AccessRecovery['mode']): FinishHumanAccessUpdate | undefined {
+  if (isHumanProjectGrantUpdatePending(state, principalId)) return undefined;
+  const record = mode ? { startedAt: new Date().toISOString(), mode,
+    grants: structuredClone(state.getProjectGrants().filter(g => g.principalId === principalId)),
+    principal: state.getPrincipal(principalId) ? structuredClone(state.getPrincipal(principalId)!) : undefined,
+  } : undefined;
+  if (record) state.setHumanAccessRecovery(principalId, record);
+  return registerHumanAccessUpdate(state, principalId, record);
+}
+
+function registerHumanAccessUpdate(state: StateService, principalId: string, record?: AccessRecovery): FinishHumanAccessUpdate {
   let pending = pendingGrantUpdates.get(state);
   if (!pending) { pending = new Map(); pendingGrantUpdates.set(state, pending); }
-  if (pending.has(principalId)) return undefined;
-  pending.set(principalId, { startedAt: new Date().toISOString(), reconciling: false });
-  return () => { pending.delete(principalId); };
+  const status = { startedAt: record?.startedAt || new Date().toISOString(), reconciling: false };
+  pending.set(principalId, status);
+  const release: FinishHumanAccessUpdate = async () => {
+    if (pending.get(principalId) !== status) return true;
+    if (!record) { pending.delete(principalId); return true; }
+    let writing: Promise<void> | undefined;
+    try {
+      state.setHumanAccessRecovery(principalId, undefined);
+      state.save();
+      writing = state.flush();
+      await boundedHumanAccessFlush(writing);
+      pending.delete(principalId);
+      return true;
+    } catch {
+      // Access snapshot is already confirmed safe. Keep the journal/gate until
+      // its cleanup is confirmed too; a late cleanup cannot grant unsafe data.
+      state.setHumanAccessRecovery(principalId, record);
+      status.reconciling = true;
+      const restored = (writing || Promise.resolve()).catch(() => {}).then(async () => {
+        state.save(); await state.flush();
+      });
+      reconcileHumanAccessRestore(state, restored, release);
+      return false;
+    }
+  };
+  return release;
+}
+
+/** Startup restores only the interrupted principal, before any authorization. */
+export function recoverInterruptedHumanAccessUpdates(state: StateService): void {
+  for (const [principalId, record] of Object.entries(state.getHumanAccessRecoveries())) {
+    const release = registerHumanAccessUpdate(state, principalId, record);
+    markHumanProjectGrantRecovery(state, principalId);
+    if (record.mode === 'grants') {
+      const grants = state.getProjectGrants();
+      for (let i = grants.length - 1; i >= 0; i--) {
+        if (grants[i].principalId === principalId) grants.splice(i, 1);
+      }
+      grants.push(...structuredClone(record.grants));
+      const principals = state.getPrincipals();
+      const index = principals.findIndex(p => p.id === principalId);
+      if (record.principal) {
+        if (index < 0) state.addPrincipal(structuredClone(record.principal));
+        else principals[index] = structuredClone(record.principal);
+      } else if (index >= 0) principals.splice(index, 1);
+    } else {
+      const principal = state.getPrincipal(principalId);
+      if (principal) { principal.status = 'disabled'; principal.disabledAt = record.startedAt; }
+    }
+    let restored: Promise<void>;
+    try { state.save(); restored = state.flush(); }
+    catch { restored = Promise.reject(new Error('interrupted access restore failed')); }
+    reconcileHumanAccessRestore(state, restored, release);
+  }
 }
 
 export async function boundedHumanAccessFlush(pending: Promise<void>): Promise<void> {
@@ -54,7 +118,7 @@ export async function boundedHumanAccessFlush(pending: Promise<void>): Promise<v
 }
 
 /** Keep the gate until the serialized write chain confirms a safe snapshot. */
-export function reconcileHumanAccessRestore(state: StateService, pending: Promise<void>, release: () => void): void {
+export function reconcileHumanAccessRestore(state: StateService, pending: Promise<void>, release: () => void | Promise<unknown>): void {
   void pending.then(release, () => {
     const reference = new WeakRef(state);
     const timer = setTimeout(() => {

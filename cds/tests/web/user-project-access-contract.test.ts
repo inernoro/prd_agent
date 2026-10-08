@@ -86,6 +86,12 @@ describe('human project access UI wiring', () => {
     expect(drawer).toContain('canManageConsole ? apiRequest');
     expect(drawer).toContain('不可变部署版本仅系统所有者可用');
   });
+  it('opens the global activity stream only after the owner capability is confirmed', () => {
+    const branches = read('pages/BranchListPage.tsx');
+    const effect = branches.slice(branches.lastIndexOf('useEffect(() => {', branches.indexOf("new EventSource(apiUrl('/api/activity-stream'))")));
+    expect(effect).toMatch(/if \(!canManageConsole\) return;\s*const source = new EventSource/);
+    expect(effect.slice(0, effect.indexOf('const branches ='))).toContain('}, [canManageConsole]);');
+  });
   it('mounts the global report shortcut only inside the owner-capable persistent shell', () => {
     expect(read('App.tsx')).not.toContain('<BugReportDialog />');
     const shell = read('components/layout/AppShell.tsx');

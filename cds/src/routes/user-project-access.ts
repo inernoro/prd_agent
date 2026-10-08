@@ -6,7 +6,8 @@ import type { CdsUser } from '../domain/auth.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpdate, isHumanProjectGrantUpdatePending,
   humanProjectGrantUpdateStatus, markHumanProjectGrantRecovery,
-  boundedHumanAccessFlush as boundedFlush, reconcileHumanAccessRestore as reconcileGrantRestore } from '../services/human-project-access.js';
+  boundedHumanAccessFlush as boundedFlush, reconcileHumanAccessRestore as reconcileGrantRestore,
+  type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
 export function createUserProjectAccessRouter(deps: { stateService: StateService; authService: AuthService }): Router {
   const router = Router();
@@ -15,8 +16,9 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
     if (!isHumanSystemOwner(req)) {
       res.status(403).json({ error: '仅系统所有者可管理用户项目授权。' }); return;
     }
-    let finishUpdate: (() => void) | undefined;
+    let finishUpdate: FinishHumanAccessUpdate | undefined;
     let durable = false;
+    let cleanupPending = false;
     let recoveryUncertain = false;
     try {
       const user = await auth.findUserById(req.params.id);
@@ -41,7 +43,7 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         const actor = (req as typeof req & { cdsUser: CdsUser }).cdsUser;
         const actorLogin = actor.username || actor.githubLogin;
         const now = new Date().toISOString();
-        finishUpdate = beginHumanProjectGrantUpdate(state, principalId);
+        finishUpdate = beginHumanProjectGrantUpdate(state, principalId, 'grants');
         if (!finishUpdate) { res.status(409).json({ error: '此账号的项目授权正在保存，请稍后刷新并重试。' }); return; }
         // The first lookup may have awaited across an account disable. Read its
         // status again under the same gate used by account/credential changes.
@@ -72,9 +74,16 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
           writing = state.flush();
           await boundedFlush(writing);
           durable = true;
-          finishUpdate();
+          const cleared = await finishUpdate();
           finishUpdate = undefined;
+          if (!cleared) {
+            cleanupPending = true;
+            throw new Error('access journal cleanup pending');
+          }
         } catch (error) {
+          // A confirmed grant write is not rolled back by journal cleanup.
+          // Report the known saved outcome and retain its recovery gate.
+          if (durable) throw error;
           // Restore only this replacement, never rewind another principal or
           // overwrite independent grants added while the backing store awaited.
           const grants = state.getProjectGrants();
@@ -121,16 +130,22 @@ export function createUserProjectAccessRouter(deps: { stateService: StateService
         id: p.id, name: p.aliasName || p.name, authorized: user.isSystemOwner || active.has(p.id),
       })) });
     } catch (err) {
+      if (finishUpdate) {
+        if (!await finishUpdate()) recoveryUncertain = true;
+        finishUpdate = undefined;
+      }
       console.error('[user-project-access] update failed:', err instanceof Error ? err.message : 'unknown');
       res.status(500).json({ error: durable
-        ? '项目授权已保存，但后续处理失败，请刷新确认当前授权。'
+        ? cleanupPending
+          ? '项目授权已保存，但恢复记录尚未清理，访问暂时关闭；重启可能恢复原授权。请恢复存储后刷新核对。'
+          : '项目授权已保存，但后续处理失败，请刷新确认当前授权。'
         : recoveryUncertain
           ? '授权存储发生故障，内存修改已回退，但持久化状态无法确认。请恢复存储后核对授权再重试。'
           : req.method === 'PUT'
             ? '项目授权保存失败，本次修改未生效，请刷新后重试。'
             : '项目授权读取失败，请刷新后重试。' });
     } finally {
-      finishUpdate?.();
+      await finishUpdate?.();
     }
   };
   router.get('/auth/users/:id/projects', handle);
