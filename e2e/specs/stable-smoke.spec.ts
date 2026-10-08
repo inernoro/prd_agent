@@ -7,6 +7,7 @@ import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
+import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -3981,6 +3982,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(metaBox!.x + metaBox!.width).toBeLessThanOrEqual(progressBox!.x + progressBox!.width + 1);
       // 进度画在画框上：描边任何缩放下都不许退场，它退场进度就没有载体了。
       await expect(progress.locator('.gen-dev__arc'), '等待态必须有画框进度描边').toHaveCount(1);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-08',
+        target: progress,
+        caption: '真实任务仍在运行，进度描边、尺寸、阶段和剩余时间均位于画框容器内。',
+      });
       await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
       const completed = await waitForImageRun(page, token, runId, 600_000);
@@ -4018,6 +4024,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ).toBeGreaterThan(0);
       await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
       await generatedImage.click();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-10',
+        target: generatedImage,
+        caption: '真实生成图已完成浏览器解码，并在刷新后的同一工作区恢复。',
+      });
       const downloadButton = page.getByTitle('下载图片').first();
       await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
       const canvasSource = await generatedImage.getAttribute('src');
@@ -4558,6 +4569,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(overflow, '桌面端多图引用、结果和输入区不得造成页面横向裁切').toBeLessThanOrEqual(1);
       expect(await page.locator('textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-11',
+        target: generatedImage,
+        caption: '三张参考图生成的真实结果已完成解码，引用提示和继续输入区域仍可见。',
+      });
       await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       for (const runId of runIds) {
@@ -4599,6 +4615,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-01',
+        target: page.locator('[data-tour-id="visual-editor-canvas"]'),
+        caption: '从视觉创作入口进入本轮独立工作区，画布与上传入口均已就绪。',
+      });
       const picker = page.locator('input[type="file"][accept="image/*"]');
       await expect(picker, '工作区回放完成后才允许上传，避免服务器空快照覆盖新图片').toBeEnabled({ timeout: 30_000 });
       const aFile = file('a.png', 220, 45, 60);
@@ -4607,8 +4628,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const aSha256 = createHash('sha256').update(aFile.buffer).digest('hex');
       const bSha256 = createHash('sha256').update(bFile.buffer).digest('hex');
       const cSha256 = createHash('sha256').update(cFile.buffer).digest('hex');
-      await picker.setInputFiles([aFile, bFile, cFile]);
+      await picker.setInputFiles(aFile);
+      await expect(page.getByTestId('canvas-image')).toHaveCount(1, { timeout: 30_000 });
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-02',
+        target: page.locator('[data-testid="canvas-image"][alt="a.png"]'),
+        caption: '第一张参考图已进入画布并完成同步。',
+      });
+      await picker.setInputFiles(bFile);
+      await expect(page.getByTestId('canvas-image')).toHaveCount(2, { timeout: 30_000 });
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-03',
+        target: page.locator('[data-testid="canvas-image"][alt="b.png"]'),
+        caption: '第二张参考图已追加到同一画布，第一张仍保留。',
+      });
+      await picker.setInputFiles(cFile);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-04',
+        target: page.locator('[data-testid="canvas-image"][alt="c.png"]'),
+        caption: '第三张参考图已追加，三张参考图同时存在且各自可辨认。',
+      });
       await expect.poll(async () => {
         const detail = await readEnvelope<{ assets: Array<{ sha256: string }> }>(
           await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
@@ -4635,6 +4678,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const chipLabels = await chips.allTextContents();
       expect(chipLabels[0]).toContain('b.png');
       expect(chipLabels[1]).toContain('a.png');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-06',
+        target: chips.first().locator('..'),
+        caption: '先选 b.png、再按 Shift 选择 a.png，引用芯片按真实选择顺序排列。',
+      });
 
       // 真实生图和线路顺序由 MVIS-001/002/008/009/011 旅程单独验收；本用例只验证编辑器
       // 自身的引用顺序与删除持久化，防止上游额度故障把本地状态回归伪装成超时。
@@ -4654,13 +4702,22 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
       };
       page.on('response', captureDeleteResponse);
+      await page.getByRole('button', { name: '删除选中' }).click();
+      const deleteConfirmation = page.getByText('确认删除选中的 2 项？');
+      await expect(deleteConfirmation).toBeVisible();
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-12',
+        target: deleteConfirmation,
+        caption: '删除两张已选参考图前显示明确确认，未选中的第三张保持在画布中。',
+        allowBlockingOverlay: true,
+      });
+      // 视觉取证可能主动等待页面稳定并重试截图。响应监听必须紧贴真正的删除点击，
+      // 否则 Playwright 的 actionTimeout 会在截图阶段先耗尽，把尚未发出的请求误报为超时。
       const canvasSaveResponsePromise = page.waitForResponse((response) => (
         new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/canvas`
         && response.request().method() === 'PUT'
         && String(response.request().headers()['idempotency-key'] || '').startsWith('delete_')
       ));
-      await page.getByRole('button', { name: '删除选中' }).click();
-      await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();
       await page.getByRole('button', { name: '删除', exact: true }).click();
       await expect(chips).toHaveCount(0);
       await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"]')).toHaveCount(0);
@@ -4813,6 +4870,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const visibleError = page.getByText(/参考图 @img2 无法使用/);
       await expect(visibleError).toBeVisible({ timeout: 30_000 });
       await expect(visibleError).toContainText('其他输入已保留');
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-13',
+        target: visibleError,
+        caption: '损坏的 @img2 被精确指出，页面保留其他输入并给出可继续操作的恢复说明。',
+      });
       await testInfo.attach('multi-image-readable-error', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {

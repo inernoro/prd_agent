@@ -29,7 +29,15 @@ const valueOptions = new Set([
   '--production-visual-manifest',
   '--report-url',
 ]);
-const flagOptions = new Set(['--force-unlock', '--cds-only', '--production-only', '--dry-run', '--preflight', '--help']);
+const flagOptions = new Set([
+  '--force-unlock',
+  '--cds-only',
+  '--production-only',
+  '--dry-run',
+  '--preflight',
+  '--capture-visual',
+  '--help',
+]);
 export const productionReadOnlyGrep = '\\[CORE-001\\]';
 
 export const runnerHelpText = `稳定冒烟本地运行器
@@ -47,6 +55,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --env-file <路径>    指定本地凭据兼容文件
   --grep <表达式>      只运行匹配的 Playwright 用例
   --visual-manifest <路径> 指定本轮真人浏览器视觉取证 manifest；完整运行必填
+  --capture-visual     在 CDS 真实业务旅程中按 visual-plan.json 自动逐槽取证并生成 manifest
   --production-visual-manifest <路径> 指定 CDS 门禁通过后采集的正式环境视觉 manifest
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
@@ -73,6 +82,12 @@ export function parseRunnerArgs(argv) {
   }
   if (flags.has('--cds-only') && flags.has('--production-only')) {
     throw new Error('--cds-only 与 --production-only 不能同时使用');
+  }
+  if (flags.has('--capture-visual') && flags.has('--production-only')) {
+    throw new Error('--capture-visual 只允许先在 CDS 环境使用；正式环境视觉必须通过 CDS 门禁后单独取证');
+  }
+  if (flags.has('--capture-visual') && values['--visual-manifest']) {
+    throw new Error('--capture-visual 与 --visual-manifest 不能同时使用');
   }
   return {
     has: (name) => flags.has(name),
@@ -683,7 +698,7 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
-function runPlaywright(environment, values, runDir, grep = '') {
+function runPlaywright(environment, values, runDir, grep = '', visualCapture = null) {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const resultPath = resolve(runDir, `${environment}-results.json`);
   const htmlPath = resolve(runDir, `${environment}-playwright-report`);
@@ -708,6 +723,10 @@ function runPlaywright(environment, values, runDir, grep = '') {
     STABLE_SMOKE_JSON_OUTPUT: resultPath,
     STABLE_SMOKE_HTML_OUTPUT: htmlPath,
     STABLE_SMOKE_TEST_OUTPUT: testResultPath,
+    ...(visualCapture ? {
+      STABLE_SMOKE_VISUAL_PLAN: visualCapture.planPath,
+      STABLE_SMOKE_VISUAL_OUTPUT: visualCapture.outputPath,
+    } : {}),
   };
   const args = [
     '--dir', 'e2e', 'exec', 'playwright', 'test', 'specs/stable-smoke.spec.ts',
@@ -1584,7 +1603,8 @@ async function main() {
     const visualScope = selected.length === 1 && selected[0] === 'production' && productionSafetyGate.restricted
       ? 'production-read-only'
       : 'full';
-    const requestedVisualManifest = options.read('--visual-manifest');
+    const captureVisual = options.has('--capture-visual');
+    let requestedVisualManifest = options.read('--visual-manifest');
     const requestedProductionVisualManifest = options.read('--production-visual-manifest');
     const productionReadOnlyVisual = visualScope === 'production-read-only';
     const initialVisualEnvironments = selected.includes('cds') ? ['cds'] : selected;
@@ -1639,13 +1659,20 @@ async function main() {
       return;
     }
 
+    const automaticCdsVisualOutput = resolve(runDir, 'cds-visual-evidence');
+    if (captureVisual) {
+      mkdirSync(automaticCdsVisualOutput, { recursive: true });
+      requestedVisualManifest = resolve(automaticCdsVisualOutput, 'manifest.json');
+      if (!existsSync(requestedVisualManifest)) writeFileSync(requestedVisualManifest, '[]\n', 'utf8');
+    }
     if (!productionReadOnlyVisual && !requestedVisualManifest) {
       throw new Error(
         `完整稳定冒烟缺少本轮视觉取证清单。请先使用 runId ${runId} 执行 --dry-run 生成视觉计划，`
-        + '再按 visual-plan.json 运行 /验收 浏览器取证，并通过 --visual-manifest 显式传入 CDS manifest.json。',
+        + '再按 visual-plan.json 运行 /验收 浏览器取证并通过 --visual-manifest 显式传入，'
+        + '或使用 --capture-visual 让真实业务旅程逐槽生成 manifest。',
       );
     }
-    if (requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
+    if (!captureVisual && requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
       throw new Error(`指定的视觉取证清单不存在：${resolve(requestedVisualManifest)}`);
     }
     if (requestedProductionVisualManifest && !existsSync(resolve(requestedProductionVisualManifest))) {
@@ -1820,7 +1847,15 @@ async function main() {
       const effectiveGrep = environment === 'production' && productionSafetyGate.restricted
         ? productionSafetyGate.grep
         : policyGrep;
-      const execution = runPlaywright(environment, values, runDir, effectiveGrep);
+      const execution = runPlaywright(
+        environment,
+        values,
+        runDir,
+        effectiveGrep,
+        captureVisual && environment === 'cds'
+          ? { planPath: visualPlanPath, outputPath: automaticCdsVisualOutput }
+          : null,
+      );
       executions.push({
         ...buildExecutionRecord(environment, execution),
         grep: effectiveGrep,

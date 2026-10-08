@@ -1,0 +1,261 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
+
+const runId = 'stsmk-visual-evidence-test';
+const commit = 'a'.repeat(40);
+
+function slot(slotId, overrides = {}) {
+  return {
+    slotId,
+    environment: 'cds',
+    module: '视觉创作',
+    moduleId: 'single-image-creation',
+    primaryState: '结果',
+    coverageStates: ['结果'],
+    testType: '视觉',
+    theme: 'dark',
+    viewportClass: 'desktop',
+    breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 工作区 → 结果',
+    expectedProof: '真实生成结果完整可见',
+    methodAnchor: '#visual-method-single-image-creation',
+    pageOrigin: 'https://preview.example.test',
+    entryPath: '/visual-agent',
+    ...overrides,
+  };
+}
+
+function fixture(slots = [slot('CDS-VISUAL-SINGLE-01')]) {
+  const root = mkdtempSync(join(tmpdir(), 'stsmk-visual-evidence-'));
+  const planPath = join(root, 'visual-plan.json');
+  const outputPath = join(root, 'evidence');
+  writeFileSync(planPath, JSON.stringify({
+    runId,
+    commit,
+    captureStartedAt: '2026-10-08T00:00:00.000Z',
+    slots,
+  }));
+  return {
+    root,
+    planPath,
+    outputPath,
+    environment: {
+      STABLE_SMOKE_VISUAL_PLAN: planPath,
+      STABLE_SMOKE_VISUAL_OUTPUT: outputPath,
+      STABLE_SMOKE_RUN_ID: runId,
+      STABLE_SMOKE_COMMIT: commit,
+      STABLE_SMOKE_ENVIRONMENT: 'cds',
+    },
+  };
+}
+
+function page(url = 'https://preview.example.test/visual-agent/workspace-1') {
+  return { url: () => url };
+}
+
+function target(count = 1) {
+  return { waitFor: async () => undefined, count: async () => count };
+}
+
+function fakeHarness(delay = 0) {
+  return {
+    box: async () => undefined,
+    clearBoxes: async () => undefined,
+    shot: async (currentPage, outputPath, name, caption, options) => {
+      if (delay) await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
+      const location = new URL(currentPage.url());
+      return {
+        name,
+        caption,
+        path: join(outputPath, `${name}.png`),
+        capturedAt: new Date('2026-10-08T01:00:00.000Z').toISOString(),
+        pageOrigin: location.origin,
+        pagePath: location.pathname,
+        automatedStatus: '通过',
+        ...options,
+        theme: options.theme,
+        viewportClass: options.viewportClass || 'desktop',
+      };
+    },
+  };
+}
+
+test('视觉取证未配置时是显式 no-op', async () => {
+  const capture = createStableSmokeVisualEvidence({ environment: {}, harnessLoader: async () => fakeHarness() });
+  assert.deepEqual(await capture(page(), undefined, { slotId: 'unused' }), {
+    captured: false,
+    reason: 'visual-evidence-disabled',
+  });
+});
+
+test('只配置视觉计划或输出目录时拒绝静默降级', async () => {
+  const capture = createStableSmokeVisualEvidence({
+    environment: { STABLE_SMOKE_VISUAL_PLAN: '/tmp/plan.json' },
+    harnessLoader: async () => fakeHarness(),
+  });
+  await assert.rejects(() => capture(page(), undefined, { slotId: 'unused' }), /必须同时配置/);
+});
+
+test('runId、commit 与环境任一不一致都拒绝取证', async () => {
+  for (const [field, value, pattern] of [
+    ['STABLE_SMOKE_RUN_ID', 'wrong-run', /runId 不一致/],
+    ['STABLE_SMOKE_COMMIT', 'b'.repeat(40), /commit 不一致/],
+    ['STABLE_SMOKE_ENVIRONMENT', 'production', /环境不一致/],
+  ]) {
+    const current = fixture();
+    try {
+      const capture = createStableSmokeVisualEvidence({
+        environment: { ...current.environment, [field]: value },
+        harnessLoader: async () => fakeHarness(),
+      });
+      await assert.rejects(
+        () => capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() }),
+        pattern,
+      );
+    } finally {
+      rmSync(current.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('允许视觉工作区子路由但拒绝无关页面', async () => {
+  const current = fixture();
+  try {
+    const capture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(),
+    });
+    await capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() });
+    const second = fixture([slot('CDS-VISUAL-SINGLE-02')]);
+    try {
+      const rejectCapture = createStableSmokeVisualEvidence({
+        environment: second.environment,
+        harnessLoader: async () => fakeHarness(),
+      });
+      await assert.rejects(
+        () => rejectCapture(
+          page('https://preview.example.test/logs'),
+          undefined,
+          { slotId: 'CDS-VISUAL-SINGLE-02', target: target() },
+        ),
+        /页面路径不一致/,
+      );
+    } finally {
+      rmSync(second.root, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('manifest 元数据只能来自计划且重复 slotId 被拒绝', async () => {
+  const current = fixture();
+  try {
+    const capture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(),
+    });
+    const result = await capture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+      caption: '工作区真实生成结果已完成并回读',
+    });
+    assert.equal(result.captured, true);
+    const manifest = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.length, 1);
+    assert.deepEqual({
+      slotId: manifest[0].slotId,
+      runId: manifest[0].runId,
+      commit: manifest[0].commit,
+      module: manifest[0].module,
+      primaryState: manifest[0].primaryState,
+      breadcrumb: manifest[0].breadcrumb,
+    }, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      runId,
+      commit,
+      module: '视觉创作',
+      primaryState: '结果',
+      breadcrumb: 'CDS 环境 → 首页 → 视觉创作 → 工作区 → 结果',
+    });
+    await assert.rejects(
+      () => capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() }),
+      /已有证据|禁止重复/,
+    );
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('两个新 helper 并发写入时原子合并且不丢槽位', async () => {
+  const current = fixture([
+    slot('CDS-VISUAL-SINGLE-01'),
+    slot('CDS-VISUAL-SINGLE-02', { primaryState: '恢复', coverageStates: ['恢复'] }),
+  ]);
+  try {
+    const first = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(30),
+    });
+    const second = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(5),
+    });
+    await Promise.all([
+      first(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() }),
+      second(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-02', target: target() }),
+    ]);
+    const manifest = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.map((record) => record.slotId).sort(), [
+      'CDS-VISUAL-SINGLE-01',
+      'CDS-VISUAL-SINGLE-02',
+    ]);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('目标必须唯一，整体截图必须说明证明范围', async () => {
+  const current = fixture();
+  try {
+    const capture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(),
+    });
+    await assert.rejects(
+      () => capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target(2) }),
+      /可见目标必须唯一/,
+    );
+    await assert.rejects(
+      () => capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', overviewJustification: '太短' }),
+      /理由过短/,
+    );
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('真实单图与多图旅程接入计划槽位而不是普通附件截图', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  for (const slotId of [
+    'CDS-VISUAL-SINGLE-IMAGE-CREATION-08',
+    'CDS-VISUAL-SINGLE-IMAGE-CREATION-10',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-01',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-02',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-03',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-04',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-06',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-11',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-12',
+    'CDS-VISUAL-MULTI-IMAGE-CREATION-13',
+  ]) {
+    assert.match(source, new RegExp(`slotId: '${slotId}'`));
+  }
+  assert.match(
+    source,
+    /captureStableSmokeVisualEvidence[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-12[\s\S]*?const canvasSaveResponsePromise = page\.waitForResponse/,
+  );
+});

@@ -123,17 +123,32 @@ test('报告风险分类永久回归必须接线并传播失败', () => {
 });
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
-  const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--grep', '\\[REC-003\\]']);
+  const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--capture-visual', '--grep', '\\[REC-003\\]']);
   assert.equal(parsed.has('--preflight'), true);
   assert.equal(parsed.has('--cds-only'), true);
+  assert.equal(parsed.has('--capture-visual'), true);
   assert.equal(parsed.read('--grep'), '\\[REC-003\\]');
   assert.match(runnerHelpText, /只检查双环境地址、身份和 CDS 部署状态，不启动测试/);
+  assert.match(runnerHelpText, /按 visual-plan\.json 自动逐槽取证并生成 manifest/);
 });
 
 test('运行器拒绝未知参数、缺值和冲突环境', () => {
   assert.throws(() => parseRunnerArgs(['--unknown']), /不支持的参数/);
   assert.throws(() => parseRunnerArgs(['--grep']), /必须提供值/);
   assert.throws(() => parseRunnerArgs(['--cds-only', '--production-only']), /不能同时使用/);
+  assert.throws(() => parseRunnerArgs(['--production-only', '--capture-visual']), /只允许先在 CDS 环境使用/);
+  assert.throws(
+    () => parseRunnerArgs(['--capture-visual', '--visual-manifest', '/tmp/manifest.json']),
+    /不能同时使用/,
+  );
+});
+
+test('自动视觉取证把本轮计划和统一输出目录注入真实 Playwright 旅程', () => {
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(source, /STABLE_SMOKE_VISUAL_PLAN:\s*visualCapture\.planPath/);
+  assert.match(source, /STABLE_SMOKE_VISUAL_OUTPUT:\s*visualCapture\.outputPath/);
+  assert.match(source, /requestedVisualManifest\s*=\s*resolve\(automaticCdsVisualOutput, 'manifest\.json'\)/);
+  assert.match(source, /captureVisual\s*&&\s*environment\s*===\s*'cds'/);
 });
 
 test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () => {
