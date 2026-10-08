@@ -3658,16 +3658,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(mismatch.status).json(mismatch.body);
       return;
     }
-    const defaults = project.defaultDeployModes || {};
-    if (Object.keys(defaults).length === 0) {
+    // 从没保存过默认（undefined）才拒绝；保存成空表是合法的「全部跟随构建配置基线」。
+    if (!project.defaultDeployModes) {
       res.status(400).json({ error: 'no_defaults', message: '项目未设置默认运行模式,请先在项目设置选好默认模式再对齐' });
       return;
     }
+    const defaults = project.defaultDeployModes;
     const profiles = stateService.getBuildProfilesForProject(project.id);
     // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
-    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。
+    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。表里没有的 profile 对齐后
+    // 回到基线，基线是源码同样算（coverAllProfiles）。
     if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
-      const violations = findNonPrebuiltDefaultModes(profiles, defaults);
+      const violations = findNonPrebuiltDefaultModes(profiles, defaults, { coverAllProfiles: true });
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(project, profiles, violations, { operation: 'project-default' }));
         return;
@@ -3686,8 +3688,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const modes: Record<string, string> = {};
       let modeChanged = false;
       for (const profile of profiles) {
-        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
         const ov = branch.profileOverrides?.[profile.id];
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
+          // 2026-10-08：表里没有 = 「跟随构建配置」。新分支不会拷这一项，所以对齐也要把分支覆盖里
+          // 残留的模式清掉、回到基线；只跳过会让页面写着「跟随（极速版）」而存量分支仍停在 dev。
+          if (!ov || ov.activeDeployMode === undefined) continue;
+          const { activeDeployMode: _dropped, ...rest } = ov;
+          stateService.setBranchProfileOverride(branch.id, profile.id, rest);
+          modes[profile.id] = profile.activeDeployMode || '';
+          modeChanged = true;
+          continue;
+        }
         if (!ov) continue;
         stateService.setBranchProfileOverride(branch.id, profile.id, ov);
         modes[profile.id] = ov.activeDeployMode || '';

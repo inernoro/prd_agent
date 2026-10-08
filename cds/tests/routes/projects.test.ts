@@ -821,6 +821,48 @@ describe('Projects router (P4 Part 2)', () => {
       expect(humanAlign.status).toBe(200);
     });
 
+    /*
+     * 2026-10-08 mdimp 事故：项目设置页保存时给每个服务都写一个空串，空串被拷进分支覆盖 = 强制源码，
+     * 于是基线是极速版的服务在每条新分支里都改走宿主编译。页面现在只写显式选过的服务；表里没有的
+     * 就是「跟随构建配置」，对齐时要把分支覆盖里残留的模式清掉、真正回到基线。
+     */
+    it('对齐：表里没有的服务跟随构建配置基线，分支覆盖里残留的源码模式被清掉', async () => {
+      stateService.addBuildProfile({
+        id: 'fast-api', projectId: 'default', name: 'API', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        activeDeployMode: 'express',
+        deployModes: { dev: { label: '开发' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' } },
+      });
+      stateService.addBuildProfile({
+        id: 'plain-web', projectId: 'default', name: 'Web', dockerImage: 'node:20', command: 'pnpm dev', workDir: '.', containerPort: 3000,
+        deployModes: { dev: { label: '开发' }, static: { label: '静态' } },
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({ id: 'align-b1', projectId: 'default', branch: 'feat/a', worktreePath: '/tmp/wt-a', services: {}, status: 'idle', createdAt: now });
+      // 旧页面写出来的那种分支：两个服务都被拷了模式，fast-api 被压成 dev
+      stateService.setBranchProfileOverride('align-b1', 'fast-api', { activeDeployMode: 'dev', env: { KEEP: '1' } });
+      stateService.setBranchProfileOverride('align-b1', 'plain-web', { activeDeployMode: 'static' });
+
+      // 只显式选了 plain-web；fast-api 跟随构建配置
+      const saved = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'plain-web': 'static' } });
+      expect(saved.status).toBe(200);
+      const align = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(align.status).toBe(200);
+
+      const api = stateService.getBranchProfileOverride('align-b1', 'fast-api')!;
+      expect(api.activeDeployMode).toBeUndefined();
+      expect(api.env).toEqual({ KEEP: '1' });
+      const effective = stateService.getEffectiveProfilesForBranch(stateService.getBranch('align-b1')!)
+        .find((p) => p.id === 'fast-api')!;
+      expect(effective.activeDeployMode).toBe('express');
+      expect(stateService.getBranchProfileOverride('align-b1', 'plain-web')!.activeDeployMode).toBe('static');
+
+      // 全部跟随（保存成空表）是合法配置，对齐照样执行，不再报「未设置默认」
+      await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: {} });
+      const alignAll = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(alignAll.status).toBe(200);
+      expect(stateService.getBranchProfileOverride('align-b1', 'plain-web')!.activeDeployMode).toBeUndefined();
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);

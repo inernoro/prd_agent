@@ -15889,18 +15889,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 都按「替换后的生效模式」判，不只在带 activeDeployMode 时判——只改 containerPort 的请求同样会把
     // 原有的 express 覆盖抹掉、落回源码基线（Codex 第五轮 P1）。
     //   - 带 activeDeployMode：显式空串会被原样持久化、解析时 `?? ` 让它胜出 = 不选模式 = 源码基线；
-    //   - 不带：保留已存覆盖里的模式（见下方 preserved，2026-10-08）；原来没有才回到 profile 基线。
+    //   - 不带：替换后覆盖里没有模式，回到 profile 基线 activeDeployMode。
     {
       const overrideBody = (req.body ?? {}) as Record<string, unknown>;
       const overrideProject = stateService.getProject(entry.projectId || 'default');
       if (overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)) {
         const hasModeField = Object.prototype.hasOwnProperty.call(overrideBody, 'activeDeployMode');
-        const keptMode = stateService.getBranchProfileOverride(id, profileId)?.activeDeployMode;
         // 判的必须是**将要落盘的原值**，不能先 trim：路由按原值持久化、运行时按原值精确查模式，
         // `" express "` 这种值判成 express 放行后存下来查不到、落回源码基线（Codex 第十轮 P1）。
         const pendingMode = hasModeField
           ? (typeof overrideBody.activeDeployMode === 'string' && overrideBody.activeDeployMode !== '' ? overrideBody.activeDeployMode : undefined)
-          : ((keptMode !== undefined ? keptMode : profile.activeDeployMode) || undefined);
+          : (profile.activeDeployMode || undefined);
         const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {
@@ -16005,19 +16004,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 抹掉，下一次 forwarder 刷新时路由消失（Codex review 第七轮 P1）。
       // 这两个字段没有任何客户端用「省略」表达清空（要清由 web-entry-config 显式写），
       // 所以请求体没提就从已存的覆盖里原样带过来，不管它的人不许毁它。
-      //
-      // 部署模式同理（2026-10-08）：mdimp 的数据库 Profile 同步脚本只想刷新 env / 路由，却把
-      // activeDeployMode 当「陈旧运行时快照」剔掉再整体 PUT，每跑一次就把用户选的极速版打回
-      // 源码模式，宿主上于是一直在编译 Maven。部署模式是用户意图，不是快照：要改请显式传
-      // （空串 = 回到基线），要整体清掉走 DELETE；请求体没提就保留。CDS 界面切模式时总是显式带它。
       const prevOverride = stateService.getBranchProfileOverride(id, profileId);
-      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry' | 'activeDeployMode'> = {
+      const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry'> = {
         ...(body.subdomain === undefined && prevOverride?.subdomain !== undefined
           ? { subdomain: prevOverride.subdomain } : {}),
         ...(body.webEntry === undefined && prevOverride?.webEntry !== undefined
           ? { webEntry: prevOverride.webEntry } : {}),
-        ...(body.activeDeployMode === undefined && prevOverride?.activeDeployMode !== undefined
-          ? { activeDeployMode: prevOverride.activeDeployMode } : {}),
       };
       stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
       stateService.save();

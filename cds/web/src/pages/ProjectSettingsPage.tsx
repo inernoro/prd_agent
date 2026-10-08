@@ -128,7 +128,32 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
 interface BuildProfileSummary {
   id: string;
   name: string;
-  deployModes?: Record<string, { label?: string }>;
+  /** 构建配置自己的基线模式：新分支默认里「跟随构建配置」用的就是它 */
+  activeDeployMode?: string;
+  deployModes?: Record<string, { label?: string; prebuilt?: boolean }>;
+}
+
+/**
+ * 新分支默认运行模式下拉里的「跟随构建配置」（2026-10-08）。
+ *
+ * defaultDeployModes 里「键不存在」与「键为空串」是两回事：缺键 = 新分支沿用构建配置的基线模式；
+ * 空串会被原样拷进分支覆盖 = 强制源码，哪怕基线是极速版。这一页以前保存时给**每个**服务都写，
+ * 没选过的写成空串、下拉里还叫「源码默认」——mdimp 六个基线是极速版的服务就这样在每条新分支里
+ * 被悄悄改成了源码编译。现在没选过的服务一律不写，下拉里明示基线是什么。
+ */
+const FOLLOW_PROFILE_BASELINE = '__follow_profile_baseline__';
+
+function defaultModeSelection(saved: Record<string, string>, profileId: string): string {
+  return Object.prototype.hasOwnProperty.call(saved, profileId) ? saved[profileId] : FOLLOW_PROFILE_BASELINE;
+}
+
+function profileModeLabel(profile: BuildProfileSummary, modeId: string | undefined): string {
+  if (!modeId) return '热加载 / 源码';
+  return profile.deployModes?.[modeId]?.label || modeId;
+}
+
+function isPrebuiltModeOf(profile: BuildProfileSummary, modeId: string | undefined): boolean {
+  return Boolean(modeId && profile.deployModes?.[modeId]?.prebuilt);
 }
 
 interface BuildProfilesResponse {
@@ -893,7 +918,7 @@ function RuntimeDefaultsTab({
       ...Object.keys(savedModes),
       ...Object.keys(modes),
     ]);
-    for (const k of keys) if ((modes[k] || '') !== (savedModes[k] || '')) return true;
+    for (const k of keys) if (defaultModeSelection(modes, k) !== defaultModeSelection(savedModes, k)) return true;
     return false;
   })();
 
@@ -937,9 +962,10 @@ function RuntimeDefaultsTab({
     setSaving(true);
     setError('');
     try {
+      // 只写用户显式选过的服务；「跟随构建配置」的不写键，新分支直接用构建配置基线。
       const cleaned: Record<string, string> = {};
       for (const profile of profiles) {
-        cleaned[profile.id] = modes[profile.id] || '';
+        if (Object.prototype.hasOwnProperty.call(modes, profile.id)) cleaned[profile.id] = modes[profile.id];
       }
       const result = await apiRequest<ProjectSaveResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
         method: 'PUT',
@@ -958,7 +984,7 @@ function RuntimeDefaultsTab({
     <div className="space-y-6">
       <Section
         title="新分支默认运行模式"
-        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。"
+        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。「跟随构建配置」的服务不复制，新分支直接用构建配置里的模式。"
       >
         {loading ? <LoadingBlock label="加载构建配置" /> : null}
         {error ? <ErrorBlock message={error} /> : null}
@@ -970,20 +996,40 @@ function RuntimeDefaultsTab({
         <div className="space-y-3">
           {profiles.map((profile) => {
             const entries = Object.entries(profile.deployModes || {});
+            const selection = defaultModeSelection(modes, profile.id);
+            const baselineLabel = profileModeLabel(profile, profile.activeDeployMode);
+            // 构建配置基线是极速版，这里却显式选了非极速版：新分支会改走宿主编译，必须让人看见
+            const overridesPrebuiltBaseline = selection !== FOLLOW_PROFILE_BASELINE
+              && isPrebuiltModeOf(profile, profile.activeDeployMode)
+              && !isPrebuiltModeOf(profile, selection || undefined);
             return (
               <div key={profile.id} className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{profile.name || profile.id}</div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">{profile.id}</div>
+                  {overridesPrebuiltBaseline ? (
+                    <div className="mt-1 text-xs text-warn">
+                      构建配置基线是{baselineLabel}，这里选了{profileModeLabel(profile, selection || undefined)}：新分支会改在 CDS 宿主上编译
+                    </div>
+                  ) : null}
                 </div>
                 <select
                   className="h-9 min-w-[11.25rem] rounded-md border border-input bg-background px-3 text-sm"
-                  value={modes[profile.id] || ''}
-                  onChange={(event) => setModes((current) => ({ ...current, [profile.id]: event.target.value }))}
+                  value={selection}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setModes((current) => {
+                      const next = { ...current };
+                      if (value === FOLLOW_PROFILE_BASELINE) delete next[profile.id];
+                      else next[profile.id] = value;
+                      return next;
+                    });
+                  }}
                   disabled={entries.length === 0}
                   title="只作为新分支模板，不影响已有分支"
                 >
-                  <option value="">热加载 / 源码默认</option>
+                  <option value={FOLLOW_PROFILE_BASELINE}>跟随构建配置（{baselineLabel}）</option>
+                  <option value="">热加载 / 源码</option>
                   {entries.map(([modeId, mode]) => (
                     <option key={modeId} value={modeId}>
                       {mode.label || modeId}
