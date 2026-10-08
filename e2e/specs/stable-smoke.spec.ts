@@ -1213,14 +1213,19 @@ async function expectNoBrokenImages(page: Page, label: string, failedImages: str
 /**
  * CDS 反代注入的分支小部件不是产品的一部分。手机视口下旧版小部件是一整条徽章，正好压在录音面板的
  * 「暂停录音」「结束录音并转成文字」上（2026-09-15 复测：点击被 #cds-widget 拦截）。录音旅程验的是产品，
- * 先把它关掉；新版小部件会自己收成圆钮，移动端入口用例单独验它。
+ * 先把它隐藏；新版小部件会自己收成圆钮，移动端入口用例单独验它。直接隐藏外部平台根节点，避免
+ * 小部件恰好在点击关闭前切到紧凑态、替换按钮 DOM，导致产品行为已经成功却被平台浮层竞态打红。
  */
 async function dismissCdsPreviewWidget(page: Page) {
-  const dismiss = page.locator('#cds-widget button[data-action="dismiss"]');
-  if (await dismiss.count()) {
-    await dismiss.first().click({ force: true }).catch(() => undefined);
-    await expect(page.locator('#cds-widget')).toHaveCount(0);
-  }
+  const widget = page.locator('#cds-widget');
+  if (!await widget.count()) return;
+  await widget.evaluate((element) => {
+    const htmlElement = element as HTMLElement;
+    htmlElement.style.display = 'none';
+    htmlElement.style.pointerEvents = 'none';
+    htmlElement.setAttribute('aria-hidden', 'true');
+  });
+  await expect(widget).toBeHidden();
 }
 
 /**
@@ -1271,7 +1276,7 @@ type StableWebFolder = {
 
 async function openWebHostingFromHome(page: Page, request: APIRequestContext) {
   const harness = await import(webEvidenceHarnessUrl);
-  harness.attachAutoCapture(page);
+  harness.attachAutoCapture(page, { ignore: [/\/api\/submissions\/public(?:[/?]|$)/] });
   // 本自动化不在范围内读取真实用户公开动态；拒绝该独立请求，不伪造成功响应。
   await page.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
   const token = await loginAndReadToken(page, request, '/');

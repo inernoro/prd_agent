@@ -762,9 +762,22 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
   };
 }
 
-export function runFolderRegressionTests(runDir, commandRunner = command) {
+export function runFolderRegressionTests(runDir, commandRunner = command, dependencyExists = existsSync) {
+  const vitestPath = resolve(repoRoot, 'prd-admin/node_modules/.bin/vitest');
+  let dependencyReady = dependencyExists(vitestPath);
+  let installResult = { status: 0 };
+  if (!dependencyReady) {
+    installResult = commandRunner('pnpm', [
+      '--dir', 'prd-admin', 'install', '--frozen-lockfile',
+    ], {
+      env: { ...process.env },
+      stdio: 'inherit',
+      encoding: undefined,
+    });
+    dependencyReady = installResult.status === 0;
+  }
   const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
-  const clientResult = commandRunner('pnpm', [
+  const clientResult = dependencyReady ? commandRunner('pnpm', [
     '--dir', 'prd-admin', 'exec', 'vitest', 'run',
     'src/components/web-hosting/folderDrop.test.ts',
     '--reporter=junit', `--outputFile=${clientArtifactPath}`,
@@ -772,7 +785,7 @@ export function runFolderRegressionTests(runDir, commandRunner = command) {
     env: { ...process.env },
     stdio: 'inherit',
     encoding: undefined,
-  });
+  }) : installResult;
   const serverArtifactPath = resolve(runDir, 'web-folder-regressions.trx');
   const serverResult = commandRunner('dotnet', [
     'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',

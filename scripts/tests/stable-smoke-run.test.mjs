@@ -649,6 +649,15 @@ test('所有持久化清理用例都必须声明清理元数据', () => {
   assert.match(source, /\[REC-010\][\s\S]*?tag: '@cleanup'/);
 });
 
+test('录音旅程隔离 CDS 浮层竞态且主动屏蔽请求不制造取证告警', () => {
+  const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
+  assert.match(source, /htmlElement\.style\.display = 'none'/);
+  assert.match(source, /htmlElement\.style\.pointerEvents = 'none'/);
+  assert.match(source, /await expect\(widget\)\.toBeHidden\(\)/);
+  assert.match(source, /attachAutoCapture\(page, \{ ignore: \[\/\\\/api\\\/submissions\\\/public/);
+  assert.doesNotMatch(source, /expect\(page\.locator\('#cds-widget'\)\)\.toHaveCount\(0\)/);
+});
+
 test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
   const output = '正在归档\n{"mode":"cds","deeplink":"https://cds.example/reports?report=1"}\n归档完成\n';
   assert.equal(extractArchivedReportUrl(output), 'https://cds.example/reports?report=1');
@@ -785,7 +794,7 @@ test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集�
   const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-test', (name, args, options) => {
     calls.push({ name, args, options });
     return { status: 0 };
-  });
+  }, () => true);
 
   assert.match(source, /FullyQualifiedName~WebFolderRenameFenceTests/);
   assert.match(source, /runFolderRegressionTests\(runDir\)/);
@@ -815,7 +824,7 @@ test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集�
 test('前端权威键回归失败时不会冒领另外两条服务端回归', () => {
   const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-split-test', (name) => ({
     status: name === 'pnpm' ? 1 : 0,
-  }));
+  }), () => true);
   assert.deepEqual(
     result.rows.map((row) => [row.caseId, row.status]),
     [
@@ -825,6 +834,19 @@ test('前端权威键回归失败时不会冒领另外两条服务端回归', ()
     ],
   );
   assert.equal(result.execution.status, 'failed');
+});
+
+test('隔离 worktree 缺少前端依赖时先按锁文件恢复再执行回归', () => {
+  const calls = [];
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-bootstrap-test', (name, args) => {
+    calls.push([name, args]);
+    return { status: 0 };
+  }, () => false);
+  assert.deepEqual(calls[0], ['pnpm', ['--dir', 'prd-admin', 'install', '--frozen-lockfile']]);
+  assert.deepEqual(calls[1][1].slice(0, 6), [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run', 'src/components/web-hosting/folderDrop.test.ts',
+  ]);
+  assert.equal(result.execution.status, 'passed');
 });
 
 test('未捕获异常会持久化失败摘要并进入失败交付路径', async () => {
