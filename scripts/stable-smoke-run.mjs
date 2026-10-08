@@ -501,9 +501,11 @@ export async function runCdsGatewayPersistenceProbe({
 
 const validationOnlyPrefixes = [
   '.agents/skills/',
+  '.claude/skills/cds/',
   '.claude/skills/create-visual-test-to-kb/',
   '.claude/skills/stable-smoke/',
   '.Codex/',
+  'cds/',
   'changelogs/',
   'doc/',
   'e2e/',
@@ -638,7 +640,9 @@ function runtimeExpectationForBranch(branch, expectedCommit) {
     .filter((commit) => commit && commit !== expectedCommit))];
   const changedFilesByCommit = {};
   for (const deployedCommit of deployedCommits) {
-    const diffResult = command('git', ['diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
+    // Git 默认会把中文等非 ASCII 路径转义并包进引号，导致 `changelogs/` 等
+    // 前缀分类失真。只关闭路径显示转义，不改变 diff 范围或内容判定。
+    const diffResult = command('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
     if (diffResult.status === 0) {
       changedFilesByCommit[deployedCommit] = String(diffResult.stdout || '')
         .split(/\r?\n/)

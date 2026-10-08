@@ -1291,15 +1291,23 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   };
   const files = [
     '.claude/skills/stable-smoke/reference/regression-ledger.md',
+    '.claude/skills/cds/cli/cdscli.py',
+    '.claude/skills/cds/tests/test_verify_runtime_credentials.py',
     '.Codex/rules/user-readable-errors.md',
+    'cds/src/commands/compose/verify.ts',
+    'cds/web/src/lib/report-document.ts',
+    'cds/tests/commands/compose-verify.test.ts',
     'e2e/specs/stable-smoke.spec.ts',
     'scripts/stable-smoke-visual-gate.mjs',
     'scripts/tests/stable-smoke-visual-gate.test.mjs',
     'changelogs/2026-08-05_stable-smoke.md',
+    'changelogs/2026-10-04_修复稳定冒烟归档.md',
   ];
   assert.equal(deployedRuntimeCommit(branch), deployedCommit);
   assert.equal(files.every(isValidationOnlyPath), true);
   assert.equal(isValidationOnlyPath('.codex/rules/user-readable-errors.md'), false);
+  assert.equal(isValidationOnlyPath('cds-compose.yml'), false);
+  assert.match(readFileSync('scripts/stable-smoke-run.mjs', 'utf8'), /'core\.quotePath=false'/);
   const expectation = resolveRuntimeExpectation(branch, expectedCommit, files);
   assert.deepEqual(evaluateCdsReadiness(branch, expectedCommit, expectation), {
     ready: true,
