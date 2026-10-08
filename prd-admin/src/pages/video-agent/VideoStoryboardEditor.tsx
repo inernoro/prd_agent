@@ -293,12 +293,12 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     () => run?.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0) ?? 0,
     [run],
   );
-  const previewSceneUrl = selectedScene?.versions.find((version) => version.id === previewVersionId)?.videoUrl
+  const previewSceneUrl = selectedScene?.versions?.find((version) => version.id === previewVersionId)?.videoUrl
     ?? selectedScene?.videoUrl;
   const previewUrl = previewMode === 'export'
     ? run?.videoAssetUrl
     : previewSceneUrl;
-  const compareVersions = selectedScene?.versions.filter((version) => compareVersionIds.includes(version.id)) ?? [];
+  const compareVersions = selectedScene?.versions?.filter((version) => compareVersionIds.includes(version.id)) ?? [];
 
   useEffect(() => {
     setCompareVersionIds([]);

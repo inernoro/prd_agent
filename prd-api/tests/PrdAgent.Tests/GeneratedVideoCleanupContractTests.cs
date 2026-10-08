@@ -59,6 +59,9 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("Project(x => x.CancelRequested)", worker);
         Assert.Contains("catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)", worker);
         Assert.Contains("await CancelRunAsync(run);", worker);
+        Assert.Contains("VideoGenRunStatus.Queued or VideoGenRunStatus.Editing", service);
+        Assert.Contains(".Set(x => x.Status, VideoGenRunStatus.Cancelled)", service);
+        Assert.Contains("await PublishEventAsync(runId, \"run.cancelled\"", service);
         Assert.Contains("var cleanupToken = CancellationToken.None", service);
         Assert.True(
             service.IndexOf("DeletionRequestedAt", StringComparison.Ordinal)

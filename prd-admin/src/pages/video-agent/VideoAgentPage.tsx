@@ -32,7 +32,7 @@ export const buildDirectVideoRunInput = (project: VideoProject, input: VideoProj
   const directPrompt = input.styleDescription && input.styleDescription !== '智能匹配'
     ? `${prompt}\n视觉风格：${input.styleDescription}`
     : prompt;
-  const directFirstFrameUrl = project.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const directFirstFrameUrl = project.assets?.find((asset) => asset.type !== 'audio' && asset.url)?.url;
 
   return {
     projectId: project.id,

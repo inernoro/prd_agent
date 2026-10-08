@@ -583,6 +583,39 @@ public class VideoGenService : IVideoGenService
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct);
         if (run == null) return false;
 
+        if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled)
+            return true;
+
+        // Queued 尚未进入 worker，Editing 已经没有 worker 持有；这两个状态只写
+        // CancelRequested 永远不会再有人把它们推进到终态，随后删除会一直返回 409。
+        // 先用状态条件原子落终态；若并发间状态已被 worker 领取，再回退到请求取消，
+        // 由运行中的 worker 观察标记并完成终态收敛。
+        if (run.Status is VideoGenRunStatus.Queued or VideoGenRunStatus.Editing)
+        {
+            var direct = await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == runId
+                     && (x.Status == VideoGenRunStatus.Queued || x.Status == VideoGenRunStatus.Editing),
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.CancelRequested, true)
+                    .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                    .Set(x => x.EndedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+            if (direct.ModifiedCount == 1)
+            {
+                if (!string.IsNullOrWhiteSpace(run.ProjectId))
+                {
+                    await _db.VideoProjects.UpdateOneAsync(
+                        x => x.Id == run.ProjectId && x.OwnerAdminId == ownerAdminId,
+                        Builders<VideoProject>.Update
+                            .Set(x => x.Status, VideoProjectStatus.Draft)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: ct);
+                }
+                await PublishEventAsync(runId, "run.cancelled", new { });
+                return true;
+            }
+        }
+
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == runId,
             Builders<VideoGenRun>.Update.Set(x => x.CancelRequested, true),

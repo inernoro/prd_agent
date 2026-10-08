@@ -236,7 +236,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     setAssetDescription('');
   };
 
-  const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const coverForProject = (item: VideoProject) => item.assets?.find((asset) => asset.type !== 'audio' && asset.url)?.url;
   const submitCreation = () => creationMode === 'storyboard' ? onAnalyze(input) : onCreateDirect(input);
   const actionLabel = creationMode === 'storyboard' ? '生成故事分镜' : '生成这段视频';
 

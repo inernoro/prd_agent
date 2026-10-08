@@ -47,6 +47,19 @@ describe('buildDirectVideoRunInput', () => {
       directFirstFrameUrl: 'https://example.com/rain.jpg',
     });
   });
+
+  it('accepts project summaries that omit assets while restoring a deep link', () => {
+    const summary = { ...project, assets: undefined } as unknown as VideoProject;
+    const input: VideoProjectInput = {
+      sourceMarkdown: '两个人在雨夜重逢。',
+      defaultAspectRatio: '16:9',
+      defaultResolution: '720p',
+      defaultDuration: 5,
+      generateAudio: false,
+    };
+
+    expect(buildDirectVideoRunInput(summary, input).directFirstFrameUrl).toBeUndefined();
+  });
 });
 
 describe('normalizeVideoRunId', () => {

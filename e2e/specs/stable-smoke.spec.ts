@@ -2774,13 +2774,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[FILE-003] 文件上传后明确切换解析阶段并回读结果', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
-    test.setTimeout(120_000);
+    test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
     let entryId = '';
-    let releaseRequest: (() => void) | undefined;
-    let releaseResponse: (() => void) | undefined;
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -2806,20 +2804,41 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '空知识库直接提供上传文件入口，用户无需寻找隐藏菜单，且没有被其他浮层遮挡。',
       });
 
-      let markRequestIntercepted!: () => void;
-      let markResponseReady!: () => void;
-      const requestGate = new Promise<void>((resolveRelease) => { releaseRequest = resolveRelease; });
-      const responseGate = new Promise<void>((resolveRelease) => { releaseResponse = resolveRelease; });
-      const requestIntercepted = new Promise<void>((resolveIntercepted) => { markRequestIntercepted = resolveIntercepted; });
-      const responseReady = new Promise<void>((resolveReady) => { markResponseReady = resolveReady; });
-      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
-        markRequestIntercepted();
-        await requestGate;
-        const response = await route.fetch();
-        markResponseReady();
-        await responseGate;
-        await route.fulfill({ response });
+      // page.route + route.fetch 不会把代理请求的 upload.onload 反馈给原始 XHR，
+      // 会把真正要验的 parsing 阶段误卡在 uploading。保留真实网络请求，只延迟
+      // XHR load 回调，让浏览器先自然收到 upload.onload(99%) 并展示解析阶段。
+      await page.addInitScript(() => {
+        const NativeXhr = window.XMLHttpRequest;
+        const nativeOpen = NativeXhr.prototype.open;
+        const nativeSend = NativeXhr.prototype.send;
+        const delayed = new WeakSet<XMLHttpRequest>();
+        NativeXhr.prototype.open = function open(
+          method: string,
+          url: string | URL,
+          async: boolean = true,
+          username: string | null = null,
+          password: string | null = null,
+        ): void {
+          const target = String(url);
+          if (String(method).toUpperCase() === 'POST'
+            && target.includes('/api/document-store/stores/')
+            && target.endsWith('/upload')) delayed.add(this);
+          nativeOpen.call(this, method, url, async, username, password);
+        };
+        NativeXhr.prototype.send = function send(body) {
+          if (delayed.has(this)) {
+            this.addEventListener('load', (event) => {
+              event.stopImmediatePropagation();
+              const handler = this.onload;
+              window.setTimeout(() => handler?.call(this, event), 2_500);
+            }, { capture: true, once: true });
+          }
+          return Reflect.apply(nativeSend, this, [body]);
+        };
       });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
+      await expect(page.getByText(runKey, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
       const marker = `${runKey}-可读正文`;
       const name = `${runKey}-这是一份用于确认超长中文文件名不会挤压解析状态和操作按钮的稳定冒烟样本.txt`;
       const uploadResponsePromise = page.waitForResponse((response) => (
@@ -2834,7 +2853,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         mimeType: 'text/plain',
         buffer: Buffer.from(`${marker}\n${'文件解析阶段必须持续反馈。\n'.repeat(4_096)}`, 'utf8'),
       });
-      await requestIntercepted;
       const progressCard = page.getByTestId('document-upload-progress');
       const uploadTitle = page.getByText(`正在上传 ${name}`, { exact: true });
       await expect(progressCard).toHaveAttribute('data-phase', 'uploading');
@@ -2855,8 +2873,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '超长中文文件名在桌面上传卡内安全截断，没有挤压右侧百分比与阶段状态。',
       });
 
-      releaseRequest?.();
-      await responseReady;
       const parsingTitle = page.getByText(`正在解析 ${name}`, { exact: true });
       await expect(progressCard).toHaveAttribute('data-phase', 'parsing', { timeout: 15_000 });
       await expect(parsingTitle).toBeVisible();
@@ -2872,14 +2888,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '服务端解析等待期间持续显示旋转反馈和递增秒数，超过两秒也不会成为静止加载。',
       });
 
-      releaseResponse?.();
       const uploadResponse = await uploadResponsePromise;
       const uploadBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
       expect(uploadResponse.ok(), uploadBody.error?.message || '文件上传解析失败').toBe(true);
       expect(uploadBody.success, uploadBody.error?.message || '文件上传解析失败').toBe(true);
       entryId = uploadBody.data.entry.id;
-      await page.unroute(`**/api/document-store/stores/${storeId}/upload`);
-
       const readableResult = page.getByText(marker, { exact: false }).first();
       await expect(readableResult).toBeVisible({ timeout: 30_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -2910,9 +2923,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '刷新页面后同一文件解析正文仍可回读，条目与内容持久化均未丢失。',
       });
     } finally {
-      releaseRequest?.();
-      releaseResponse?.();
-      await page.unroute(`**/api/document-store/stores/${storeId}/upload`).catch(() => undefined);
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
@@ -3071,11 +3081,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(retryResponse.ok(), retryBody.error?.message || '移动端重试上传失败').toBe(true);
       expect(retryBody.success, retryBody.error?.message || '移动端重试上传失败').toBe(true);
       entryId = retryBody.data.entry.id;
-      await expect(page.getByText(marker, { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText(marker, { exact: false }).last()).toBeVisible({ timeout: 30_000 });
 
       await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissCdsPreviewWidget(page);
-      const persistedMobileResult = page.getByText(marker, { exact: false }).first();
+      const persistedMobileResult = page.getByText(marker, { exact: false }).last();
       await expect(persistedMobileResult).toBeVisible({ timeout: 30_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-FILE-PARSING-16',
@@ -3519,7 +3529,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let createdRun: ShortVideoVisualRun | null = null;
     let markRunCreated!: () => void;
     const runCreated = new Promise<void>((resolveCreated) => { markRunCreated = resolveCreated; });
-    let visualPoll = 0;
+    let visualStage: 'parse' | 'transcript' | 'real' = 'parse';
     const runRoute = '**/api/short-video-materials/runs/*';
     try {
       storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
@@ -3570,8 +3580,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.route(runRoute, async (route) => {
         await runCreated;
         if (!createdRun) return route.continue();
-        visualPoll += 1;
-        const runningKey = visualPoll <= 2 ? 'parse' : visualPoll <= 4 ? 'transcript' : '';
+        const runningKey = visualStage === 'real' ? '' : visualStage;
         if (!runningKey) return route.continue();
         const stages = createdRun.stages.map((stage) => ({
           ...stage,
@@ -3632,6 +3641,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '短视频任务进入抽取准备阶段，阶段名和正在执行的动作持续显示而不是静止等待。',
       });
 
+      visualStage = 'transcript';
       const transcriptProgress = drawer.getByText(/视频转文字：正在处理.*正在从已入库视频转写原始文字/).first();
       await expect(transcriptProgress).toBeVisible({ timeout: 20_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -3640,6 +3650,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '真实视频进入转写阶段，阶段说明持续变化并明确文字来自已入库视频。',
       });
 
+      visualStage = 'real';
       const originalVideo = drawer.getByRole('button', { name: '原始视频', exact: true });
       await expect(originalVideo).toBeVisible({ timeout: 360_000 });
       await expect(drawer.getByText(/已入库，可继续加工|视频已入库/).first()).toBeVisible();
@@ -5737,10 +5748,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(failedLog.logicalModelPublicId).toBe(logical!.publicId);
       expect(failedLog.routerTrace.logicalModelPublicId).toBe(logical!.publicId);
       // 一次请求证明“本次全路失败”，但控制台的线路状态来自连续失败熔断，不应把单次失败
-      // 冒充已摘除。继续用相同故障夹具发起至多两次快速请求，直到所有参与线路真实进入
+      // 冒充已摘除。熔断唯一判据是连续 5 次失败；继续用相同故障夹具发起至多五次
+      // 快速请求，直到所有参与线路真实进入
       // Unavailable，再验控制台的“无可用线路”和手动恢复入口。
       let failedLogical = logical!;
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
         const refreshedResponse = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, {
           headers: gateway.headers,
         });
@@ -6273,7 +6285,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { name: 'mobile-b.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(235, 190, 55, 96).split(',')[1], 'base64') },
         { name: 'mobile-c.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(210, 55, 75, 96).split(',')[1], 'base64') },
       ];
-      await canvasRoot.locator('input[type="file"][accept="image/*"]').setInputFiles(threeFiles);
+      await page.locator('input[type="file"][accept="image/*"][multiple]').last().setInputFiles(threeFiles);
       await expect(page.getByTestId('canvas-image')).toHaveCount(3, { timeout: 30_000 });
       await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
       await canvasRoot.focus();

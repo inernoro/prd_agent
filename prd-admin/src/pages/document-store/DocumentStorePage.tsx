@@ -1909,7 +1909,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         firstUploadedId ??= res.data.entry.id;
         successCount++;
       } else {
-        toast.error(`上传失败: ${file.name}`, res.error?.message, 8000);
+        toast.error(`上传失败: ${file.name}`, res.error?.message, 20_000);
       }
     }
     setUploadProgress(null);
