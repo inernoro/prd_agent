@@ -942,6 +942,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           fs.writeFileSync(path.join(shell.workspaceDir, 'assets', 'app.css'), 'body{color:blue}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'manifest.json'), '{"untrusted":true}');
           fs.writeFileSync(path.join(shell.workspaceDir, 'index.html.artifact.json'), '{"runtime":"metadata"}');
+          fs.writeFileSync(path.join(shell.workspaceDir, 'current/index.html.artifact.json'), '{"runtime":"metadata"}');
         const runCount = requests.filter((request) => request.path === '/api/runs').length;
         return Response.json({ runId: runCount === 1 ? 'od-run-build' : 'od-run-review' }, { status: 202 });
       }
@@ -1139,7 +1140,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         expect.objectContaining({ path: 'brief.txt', size: expect.any(Number), sha256: expect.any(String) }),
         expect.objectContaining({ path: 'current/index.html', size: expect.any(Number), sha256: expect.any(String) }),
       ]),
-      ignoredRuntimePaths: ['index.html.artifact.json'],
+      ignoredRuntimePaths: ['index.html.artifact.json', 'current/index.html.artifact.json'],
       maxFileCount: 100,
       maxWorkspaceFileCount: 1024,
       maxNodeCount: 2048,
