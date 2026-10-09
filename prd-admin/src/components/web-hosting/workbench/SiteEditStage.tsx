@@ -30,6 +30,7 @@ import {
   useSiteEditSession,
 } from './useSiteEditSession';
 import type { GenerationIntro } from './NewSiteStage';
+import { missingRuntimeBlocker } from './outputForm';
 import {
   AssistantBubble,
   PageSkeleton,
@@ -82,7 +83,7 @@ export default function SiteEditStage({
     previewHtml, previewUrl, previewedRevision, previewFromEvent, revisions, loadingHistory,
     generating, mutatingId, mutatingAction, recentKnowledge, selectedKnowledge, setSelectedKnowledge,
     loadingKnowledge, selectedRuntime, setSelectedRuntime, screenshots, runInfo, activeRunId,
-    stopRequested, recoveryNotice, runtimeRecoveryGate, enabledRuntimes, activeRuntime, runtimeFallback,
+    stopRequested, recoveryNotice, runtimeRecoveryGate, enabledRuntimes, runtimesLoaded, activeRuntime, runtimeFallback,
     screenshotsSupported, addScreenshots, generationStageIndex, openRevision, generate, stopGeneration,
     publish, rollback, reject, retryRecovery, progress,
   } = session;
@@ -211,7 +212,7 @@ export default function SiteEditStage({
   const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
   const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
   const sendBlocker = !requestRuntime
-    ? '没有可用的设计执行器，请联系管理员检查部署状态'
+    ? missingRuntimeBlocker(runtimesLoaded)
     : screenshots.busy ? '截图还在上传，传完就能生成' : '';
 
   const steps = GENERATION_STAGES.map((stage, index) => {

@@ -403,6 +403,7 @@
 - [周报 2026-W37 (2026-09-07 ~ 2026-09-13)](./report.2026-W37.md) `report.2026-W37`
 - [周报 2026-W38 (2026-09-14 ~ 2026-09-20)](./report.2026-W38.md) `report.2026-W38`
 - [周报 2026-W39 (2026-09-21 ~ 2026-09-27)](./report.2026-W39.md) `report.2026-W39`
+- [周报 2026-W40 (2026-09-28 ~ 2026-10-04)](./report.2026-W40.md) `report.2026-W40`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

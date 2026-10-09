@@ -1797,6 +1797,15 @@ public class ImageGenController : ControllerBase
 
         // 文学创作场景：关联的配图标记索引
         var articleMarkerIndex = request?.ArticleMarkerIndex;
+        // 盖上发起时的配图方案版本：改稿 / 重新规划后，这个还在跑的旧任务不能再回填到新一版的标记上
+        // （Worker 按版本过滤回填；MCP 发起的任务一直带版本，网页这条路此前漏了）。
+        int? articleWorkflowVersion = null;
+        if (articleMarkerIndex.HasValue && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            var markerWs = await _db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).FirstOrDefaultAsync(ct);
+            if (markerWs?.ScenarioType == "article-illustration" && markerWs.ArticleWorkflow != null)
+                articleWorkflowVersion = markerWs.ArticleWorkflow.Version;
+        }
 
         // 参考图风格提示词（用于追加到生图 prompt）
         string? referenceImagePrompt = null;
@@ -1867,9 +1876,9 @@ public class ImageGenController : ControllerBase
             AppCallerCode = resolvedAppCallerCode,
             AppKey = appKey,
             ArticleMarkerIndex = articleMarkerIndex,
+            ArticleWorkflowVersion = articleWorkflowVersion,
             InitImageAssetSha256 = initImageAssetSha256,
             MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

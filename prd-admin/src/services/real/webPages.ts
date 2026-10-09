@@ -1548,11 +1548,14 @@ export async function regenerateSiteAskQuestions(
 
 // ─── 帮我修改 / 版本 ───
 
+/** 服务端探测执行器最多 8 秒；前端留出余量后封顶，卡住时以失败收场，界面才不会一直停在「正在检测」。 */
+const RUNTIME_CAPABILITIES_TIMEOUT_MS = 15_000;
+
 export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   defaultRuntime: string;
   runtimes: DesignRuntimeCapability[];
 }>> {
-  return apiRequest(api.designArtifacts.runtimeCapabilities());
+  return apiRequest(api.designArtifacts.runtimeCapabilities(), { timeoutMs: RUNTIME_CAPABILITIES_TIMEOUT_MS });
 }
 
 /** 一项耗时指标（秒）。样本为 0 时百分位为 null；estimateReady 由后端按最少样本数判定。 */

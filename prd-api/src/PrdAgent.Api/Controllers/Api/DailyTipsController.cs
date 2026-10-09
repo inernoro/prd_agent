@@ -1181,7 +1181,8 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧这块是文章正文区，右侧是配图标记列表。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 2 步：正文区", Body = "上传或粘贴文章后在这里预览；把 .md / .txt 文件拖进来也能上传。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 3 步：生成配图", Body = "AI 会按正文自动标出配图点并逐张生成，右侧可逐个查看或重生成。" },
-                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」" },
+                        new() { Selector = "[data-tour-id=literary-editor-history]", Title = "第 4 步：历史配图", Body = "改稿、重新规划或重画之前的旧图都不会删，点这里按版本找回，满意的那张可以一键放回原位。" },
+                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 5 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」" },
                     },
                 }),
 

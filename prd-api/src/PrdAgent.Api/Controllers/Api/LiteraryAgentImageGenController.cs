@@ -28,7 +28,6 @@ public class LiteraryAgentImageGenController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
     private readonly ILlmGateway _gateway;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<LiteraryAgentImageGenController> _logger;
 
     private const string AppKey = "literary-agent";
@@ -38,13 +37,11 @@ public class LiteraryAgentImageGenController : ControllerBase
         MongoDbContext db,
         IRunEventStore runStore,
         ILlmGateway gateway,
-        ILLMRequestContextAccessor llmRequestContext,
         ILogger<LiteraryAgentImageGenController> logger)
     {
         _db = db;
         _runStore = runStore;
         _gateway = gateway;
-        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -275,9 +272,50 @@ public class LiteraryAgentImageGenController : ControllerBase
         var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
 
+        // 这篇文章记住了风格 / 水印（智能体或网页上为这篇指定过）：网页生图同样按它来。
+        // 以前这里只认账号当前启用的那套，同一篇文章在网页上重画一张，水印就换成了账号默认，
+        // 一篇文章里出现两种水印。判据与开放接口共用 LiteraryIllustrationChoices，一处说了算。
+        var articlePrefsApplied = false;
+        string? articleReferencePrompt = null;
+        string? articleWatermarkId = null;
+        if (initImageAssetSha256 == null && workspaceId != null)
+        {
+            var prefsWs = await _db.ImageMasterWorkspaces
+                .Find(x => x.Id == workspaceId && x.ScenarioType == "article-illustration")
+                .FirstOrDefaultAsync(ct);
+            // 只有作者本人生图才套文章设定：记住的风格 / 水印 ID 属于作者账号，协作者账号里查不到，
+            // 套上去只会静默退回协作者自己的默认（水印在出图时还会因归属不符被丢掉）。协作者照旧按自己账号的设定。
+            var canUse = prefsWs != null && prefsWs.OwnerUserId == adminId;
+            if (canUse && prefsWs!.IllustrationPrefs != null)
+            {
+                var chosen = await PrdAgent.Api.Services.LiteraryIllustrationChoices.ResolveForArticleAsync(_db, adminId, prefsWs.IllustrationPrefs, ct);
+                articlePrefsApplied = true;
+                initImageAssetSha256 = chosen.style.Sha;
+                articleReferencePrompt = chosen.style.PromptPrefix;
+                articleWatermarkId = chosen.watermark.WatermarkId;
+                foreach (var note in chosen.notes)
+                    _logger.LogWarning("LiteraryAgent 网页生图沿用文章设定时降级：{Note} workspace={WorkspaceId}", note, workspaceId);
+
+                // 页面按「账号当前启用的风格」挑的模型池（文生图 / 图生图）。文章自己的风格让场景翻转时，
+                // 页面钉住的模型属于另一个池，不能带过去——交给 Worker 按正确场景从模型池解析。
+                var accountActive = await _db.ReferenceImageConfigs
+                    .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
+                    .FirstOrDefaultAsync(ct);
+                var accountIsImg2Img = accountActive != null && !string.IsNullOrWhiteSpace(accountActive.ImageSha256);
+                if ((initImageAssetSha256 != null) != accountIsImg2Img && (platformId != null || modelId != null || cfgModelId != null))
+                {
+                    _logger.LogInformation("LiteraryAgent 文章设定改变了生图场景，放弃页面钉住的模型 {PlatformId}/{ModelId}，改由模型池解析。workspace={WorkspaceId}",
+                        platformId, modelId, workspaceId);
+                    platformId = null;
+                    modelId = null;
+                    cfgModelId = null;
+                }
+            }
+        }
+
         // 检查是否有激活的参考图配置（必须按用户隔离）
         bool hasActiveReferenceImage = false;
-        if (initImageAssetSha256 == null)
+        if (initImageAssetSha256 == null && !articlePrefsApplied)
         {
             var activeRefConfig = await _db.ReferenceImageConfigs
                 .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId)
@@ -300,12 +338,21 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         // 文学创作场景：关联的配图标记索引
         var articleMarkerIndex = request?.ArticleMarkerIndex;
+        // 盖上发起时的配图方案版本：改稿 / 重新规划后，这个还在跑的旧任务不能再回填到新一版的标记上
+        // （Worker 按版本过滤回填；MCP 发起的任务一直带版本，网页这条路此前漏了）。
+        int? articleWorkflowVersion = null;
+        if (articleMarkerIndex.HasValue && !string.IsNullOrWhiteSpace(workspaceId))
+        {
+            var markerWs = await _db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).FirstOrDefaultAsync(ct);
+            if (markerWs?.ScenarioType == "article-illustration" && markerWs.ArticleWorkflow != null)
+                articleWorkflowVersion = markerWs.ArticleWorkflow.Version;
+        }
 
         // 参考图风格提示词（用于追加到生图 prompt）
-        string? referenceImagePrompt = null;
+        string? referenceImagePrompt = articleReferencePrompt;
 
-        // 若未指定参考图，自动从当前用户的配置中获取底图
-        if (initImageAssetSha256 == null)
+        // 若未指定参考图（且这篇文章没有自己的设定），自动从当前用户的配置中获取底图
+        if (initImageAssetSha256 == null && !articlePrefsApplied)
         {
             // 优先从新的 ReferenceImageConfigs 获取当前用户激活的配置
             var activeRefConfig = await _db.ReferenceImageConfigs
@@ -330,7 +377,8 @@ public class LiteraryAgentImageGenController : ControllerBase
 
         // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
         // DisplayPrompt 在追加前保存原始用户 prompt，避免系统提示词泄漏到消息记录
-        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
+        // 文章自己的风格可以只有文字提示词、没有参考图（与智能体那条路同一口径：有前缀就拼），不能因为没图就丢掉
+        if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && (initImageAssetSha256 != null || articlePrefsApplied))
         {
             for (var i = 0; i < plan.Count; i++)
             {
@@ -361,8 +409,9 @@ public class LiteraryAgentImageGenController : ControllerBase
             AppCallerCode = resolvedAppCallerCode,
             AppKey = AppKey, // 硬编码 literary-agent
             ArticleMarkerIndex = articleMarkerIndex,
+            ArticleWorkflowVersion = articleWorkflowVersion,
+            WatermarkConfigId = articleWatermarkId,
             InitImageAssetSha256 = initImageAssetSha256,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             CreatedAt = DateTime.UtcNow
         };
 

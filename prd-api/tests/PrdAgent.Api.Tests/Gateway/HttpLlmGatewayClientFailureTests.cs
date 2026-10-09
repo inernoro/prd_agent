@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>
 /// HTTP 模式故障面守卫：serving 不可达或鉴权失败时，MAP 侧 HttpLlmGatewayClient
-/// 必须显式失败，不得伪装成成功、空池或回退到 inproc。
+/// 必须显式失败，不得伪装成成功或空池；MAP 没有其它路径可退。
 /// </summary>
 public class HttpLlmGatewayClientFailureTests
 {

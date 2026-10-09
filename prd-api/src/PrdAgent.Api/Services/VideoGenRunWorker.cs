@@ -314,7 +314,6 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: "[VIDEO_GEN_DIRECT]",
             RequestType: ModelTypes.VideoGen,
             AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample,
             RunId: run.Id,
             LogicalRequestId: run.Id));
 
@@ -591,7 +590,6 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: null,
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
-            ForceFullShadowSample: run.ForceFullShadowSample,
             RunId: run.Id,
             LogicalRequestId: run.Id
         ));
@@ -961,7 +959,6 @@ public class VideoGenRunWorker : BackgroundService
             SystemPromptRedacted: "[VIDEO_GEN_SCENE]",
             RequestType: ModelTypes.VideoGen,
             AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample,
             RunId: run.Id,
             LogicalRequestId: sceneLogicalRequestId));
 
@@ -1198,7 +1195,6 @@ public class VideoGenRunWorker : BackgroundService
             ViewRole: null, DocumentChars: null, DocumentHash: null, SystemPromptRedacted: null,
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.VideoAgent.Script.Chat,
-            ForceFullShadowSample: run.ForceFullShadowSample,
             RunId: run.Id,
             LogicalRequestId: $"{run.Id}_scene_{sceneIdx}"));
 

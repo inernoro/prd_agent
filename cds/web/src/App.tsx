@@ -5,10 +5,9 @@ import { reportDashboardRenderError } from '@/lib/client-diagnostics';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 // ConsoleLayout 故意走静态 import:外壳(侧栏/命令面板/全局徽章)进入口 chunk,
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
-import { ConsoleLayout } from '@/components/layout/AppShell';
+import { ConsoleLayout, OwnerConsoleRoute } from '@/components/layout/AppShell';
 import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
-import { BugReportDialog } from '@/components/BugReportDialog';
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
@@ -259,7 +258,6 @@ export function App(): JSX.Element {
           就绪前保留上一页(不闪骨架),就绪后一次性切换,消除切页卡顿感。 */}
       <BrowserRouter future={{ v7_startTransition: true }}>
         <GlobalAgentAccess />
-        <BugReportDialog />
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}
@@ -280,8 +278,9 @@ export function App(): JSX.Element {
               <Route path="/branch-list" element={<BranchListPage />} />
               <Route path="/branch-panel" element={<BranchDetailPage />} />
               <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
-              <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/branch-relations/:branchId" element={<BranchRelationsPage />} />
+              <Route element={<OwnerConsoleRoute />}>
+              <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/overview" element={<OverviewPage />} />
               <Route path="/release-center" element={<ReleaseCenterPage />} />
               <Route path="/release-console" element={<ReleaseConsolePage />} />
@@ -290,6 +289,7 @@ export function App(): JSX.Element {
               <Route path="/task-schedule" element={<TaskSchedulePage />} />
               <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
               <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />
+              </Route>
             </Route>
             <Route path="*" element={<Navigate to="/project-list" replace />} />
           </Routes>

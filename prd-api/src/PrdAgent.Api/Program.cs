@@ -135,8 +135,22 @@ var mongoConnectionString = builder.Configuration["MongoDB:ConnectionString"]
     ?? "mongodb://localhost:27017";
 var mongoDatabaseName = builder.Configuration["MongoDB:DatabaseName"] ?? "prdagent";
 var llmGatewayDatabaseName = builder.Configuration["LlmGateway:DatabaseName"] ?? "llm_gateway";
-builder.Services.AddSingleton(new MongoDbContext(mongoConnectionString, mongoDatabaseName));
-builder.Services.AddSingleton(new LlmGatewayDataContext(mongoConnectionString, llmGatewayDatabaseName));
+// 网关库可以单独部署在另一台 Mongo：取值口径与 llmgw serving 的 Program.cs 一致，未配置时回落业务库连接。
+var llmGatewayMongoConnectionString = builder.Configuration["LlmGateway:MongoConnectionString"]
+    ?? builder.Configuration["LLMGW_MONGO_CONNECTION_STRING"];
+if (string.IsNullOrWhiteSpace(llmGatewayMongoConnectionString)) llmGatewayMongoConnectionString = mongoConnectionString;
+// 模型请求日志由网关 serving 写进网关库，MAP 侧日志页 / 成本统计读同一份，不再读业务库里的旧集合。
+// 网关库里还有外部租户的日志：MAP 只看、只改、只删内部租户那一份。
+var llmGatewayInternalTenantId = builder.Configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configuredTenantId
+    ? configuredTenantId
+    : PrdAgent.Core.LlmGateway.GatewayTenantDefaults.InternalTenantId;
+builder.Services.AddSingleton(new MongoDbContext(
+    mongoConnectionString,
+    mongoDatabaseName,
+    llmRequestLogDatabaseName: llmGatewayDatabaseName,
+    llmRequestLogConnectionString: llmGatewayMongoConnectionString,
+    llmRequestLogTenantId: llmGatewayInternalTenantId));
+builder.Services.AddSingleton(new LlmGatewayDataContext(llmGatewayMongoConnectionString, llmGatewayDatabaseName, llmGatewayInternalTenantId));
 builder.Services.AddSingleton<IWatermarkFontAssetSource, MongoWatermarkFontAssetSource>();
 builder.Services.AddSingleton<ISystemRoleCacheService, PrdAgent.Infrastructure.Services.SystemRoleCacheService>();
 builder.Services.AddSingleton<IAdminPermissionService, PrdAgent.Infrastructure.Services.AdminPermissionService>();
@@ -204,7 +218,8 @@ builder.Services.Configure<HostOptions>(options =>
     options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
 });
 
-builder.Services.AddHostedService<LlmRequestLogWatchdog>();
+// 模型请求日志由网关 serving 写、归网关库所有，MAP 不再跑 running 超时纠错：
+// 它按 MAP 的超时口径会把网关仍在执行的长请求（ASR 等允许 600-900 秒）误改成失败。
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.AiScoreWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.TranscriptRunWatchdog>();
@@ -227,7 +242,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.I
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
-// 业务模型目录适配器：必须跟随下方活动 ILlmGateway 的 inproc/http/shadow 路由。
+// 业务模型目录适配器：跟随下方唯一的 HTTP ILlmGateway。
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
 // 模型池故障通知与自动探活
@@ -238,94 +253,17 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ModelCatalogContractProbe>();
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
-// 特性开关：LlmGateway:Mode（环境变量 LlmGateway__Mode）。生产必须显式配置；
-// 非生产缺省 inproc，便于本地开发。生产回滚必须由 rollback 脚本显式设置 inproc，禁止漏配静默回退。
-// http = 切到 HttpLlmGatewayClient，跨进程调用独立部署的 serving 服务（/gw/v1/*）。
-// HttpLlmGatewayClient 同时实现 Infrastructure + Core 两个 ILlmGateway，下方 Core 桥接强转在两种模式下都成立。
-// 影子比对落库（灰度翻 http 前积累一致性证据；shadow 模式下注入 ShadowLlmGateway）
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>(sp =>
-    new PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter(
-        sp.GetRequiredService<LlmGatewayDataContext>().Context,
-        sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmShadowComparisonWriter>>()));
-
-var configuredGatewayMode = builder.Configuration["LlmGateway:Mode"]?.Trim();
-var gatewayMode = PrdAgent.Core.LlmGateway.LlmGatewayModePolicy.Resolve(
-    configuredGatewayMode,
-    builder.Environment.IsProduction());
-// 灰度翻 http 白名单（按 appCallerCode 逐个切；`,`/`;`/换行分隔）。命中的入口走 http 权威，其余按 Mode。
-var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] ?? string.Empty)
-    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-    .Where(x => !string.IsNullOrWhiteSpace(x))
-    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-// 视频模型与 Provider 已迁到独立 LLMGW 配置域；继续走旧 MDS inproc 解析会在空池时
-// 提交前失败，也会绕过控制台中已配置的 video-gen 默认池。
-httpAllowlist.Add(AppCallerRegistry.VideoAgent.VideoGen.Generate);
-httpAllowlist.Add(AppCallerRegistry.VisualAgent.VideoGen.Generate);
-// HTML PPT 是 MAP 内置的模型型能力，不依赖 Agent 文件工具；其模型选择、成本和 runId
-// 必须统一进入独立 LLMGW。这里像视频调用方一样设为代码级不变量，避免部署器
-// 对 compose 环境的覆盖或遗漏让请求静默退回 MAP 进程内直连。
-httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline);
-httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate);
-// 网页生成与微调同样必须进入独立 LLMGW；不能因部署白名单遗漏而写回 MAP 旧日志域，
-// 否则产物已经发布，按 Run 关联的网关证据却为空。
-httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
-httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.EditHtml);
-var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
-    .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-    .Where(x => !string.IsNullOrWhiteSpace(x))
-    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-var isShadow = string.Equals(gatewayMode, "shadow", StringComparison.OrdinalIgnoreCase);
-// 逻辑模型属于独立 Gateway 配置域。默认即使 MAP 仍处于 inproc 迁移期，也装配统一路由器，
-// 让显式逻辑模型请求由 ShadowLlmGateway 强制转交 llmgw-serve；普通旧模型仍保持 inproc。
-// 紧急回滚可显式设置 false，但不得用旧模型池静默解释逻辑模型同名 key。
-var logicalModelsRequireHttp = builder.Configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true;
-
-// 显式逻辑模型不跟随 MAP 的全局 inproc/shadow 迁移开关：它始终使用独立 serving HTTP 边界。
+// MAP 只有一条模型调用路径：HttpLlmGatewayClient 跨进程调用独立部署的 serving（/gw/v1/*）。
+// 进程内直连与影子比对已删除；出问题靠发布版本回退，不再有运行时开关切回旧路径。
 // 注册同一个 Scoped 实例，保证一次请求的预解析与发送共享同一传输实现。
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IVisualModelPolicyService, PrdAgent.Api.Services.VisualModelPolicyService>();
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILogicalModelGateway>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
-
-if (string.Equals(gatewayMode, "http", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
-        sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
-}
-else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)
-{
-    // 统一路由器：白名单命中 → http 权威（灰度翻）；否则 inproc 权威。
-    // shadow 模式下，对非白名单请求后台比对落 llmshadow_comparisons（默认只比解析=免费；
-    // LlmGateway:ShadowFullSamplePercent>0 时对采样 send 做完整内容比对）。inproc+仅白名单时不比对（writer=null）。
-    var shadowSamplePercent = int.TryParse(builder.Configuration["LlmGateway:ShadowFullSamplePercent"], out var sp0) ? sp0 : 0;
-    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
-        new PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway(
-            inproc: new PrdAgent.Infrastructure.LlmGateway.LlmGateway(
-                sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(),
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILlmRequestLogWriter>(),
-                sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-                sp.GetService<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier>(),
-                concurrencyCoordinator: sp.GetService<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>(),
-                configuration: sp.GetRequiredService<IConfiguration>()),
-            http: sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>(),
-            logger: sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.LlmGateway.ShadowLlmGateway>>(),
-            writer: isShadow ? sp.GetService<PrdAgent.Core.Interfaces.ILlmShadowComparisonWriter>() : null,
-            fullSamplePercent: shadowSamplePercent,
-            ctx: sp.GetService<PrdAgent.Core.Interfaces.ILLMRequestContextAccessor>(),
-            httpAllowlist: httpAllowlist,
-            fullSampleAllowlist: shadowFullSampleAllowlist,
-            releaseCommit: FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA"),
-            configuration: sp.GetRequiredService<IConfiguration>()));
-}
-else
-{
-    builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
-}
+builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.HttpLlmGatewayClient>());
 
 // 把同一个实例也暴露成 Core 层那个窄接口。宽接口已继承窄接口，这里是隐式向上转型；
 // 此前写的是强制类型转换，接口一旦漂移只会在运行时炸，现在由编译期兜住。
@@ -1662,35 +1600,6 @@ app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
 app.UseCors();
-app.Use(async (context, next) =>
-{
-    var provided = context.Request.Headers["X-Llmgw-Shadow-Sample-Key"].ToString().Trim();
-    if (string.IsNullOrWhiteSpace(provided))
-    {
-        await next();
-        return;
-    }
-
-    var expected = (builder.Configuration["LlmGwServe:ApiKey"] ?? string.Empty).Trim();
-    if (!FixedTimeEqualsNonEmpty(expected, provided))
-    {
-        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        return;
-    }
-
-    var accessor = context.RequestServices.GetRequiredService<ILLMRequestContextAccessor>();
-    using var _ = accessor.BeginScope(new LlmRequestContext(
-        RequestId: context.TraceIdentifier,
-        GroupId: null,
-        SessionId: null,
-        UserId: null,
-        ViewRole: null,
-        DocumentChars: null,
-        DocumentHash: null,
-        SystemPromptRedacted: null,
-        ForceFullShadowSample: true));
-    await next();
-});
 app.UseWebSockets(new WebSocketOptions
 {
     KeepAliveInterval = TimeSpan.FromSeconds(20),
@@ -2531,19 +2440,6 @@ static string? ShortCommit(string? commit)
 {
     if (string.IsNullOrWhiteSpace(commit)) return null;
     return commit.Length <= 8 ? commit : commit[..8];
-}
-
-static bool FixedTimeEqualsNonEmpty(string expected, string provided)
-{
-    if (string.IsNullOrWhiteSpace(expected) || string.IsNullOrWhiteSpace(provided))
-    {
-        return false;
-    }
-
-    var expectedBytes = Encoding.UTF8.GetBytes(expected);
-    var providedBytes = Encoding.UTF8.GetBytes(provided);
-    return expectedBytes.Length == providedBytes.Length
-           && CryptographicOperations.FixedTimeEquals(expectedBytes, providedBytes);
 }
 
 // 使 Program 类可被测试项目访问（用于 WebApplicationFactory<Program>）

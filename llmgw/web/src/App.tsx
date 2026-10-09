@@ -21,7 +21,6 @@ import { ModelsPage } from '@/pages/ModelsPage';
 import { LogicalModelsPage } from '@/pages/LogicalModelsPage';
 
 import { AuditsPage } from '@/pages/AuditsPage';
-import { ShadowPage } from '@/pages/ShadowPage';
 import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
 import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
@@ -135,7 +134,6 @@ export function App() {
             <Route path="/quickstart" element={<RequirePageAccess page="quickstart"><QuickstartPage /></RequirePageAccess>} />
             <Route path="/learn" element={<RequirePageAccess page="learn"><LearningCenterPage /></RequirePageAccess>} />
             <Route path="/organization" element={<RequirePageAccess page="organization"><OrganizationPage /></RequirePageAccess>} />
-            <Route path="/shadow" element={<RequirePageAccess page="shadow"><ShadowPage /></RequirePageAccess>} />
             <Route path="/governance" element={<RequirePageAccess page="governance"><GovernancePage /></RequirePageAccess>} />
             <Route path="/gateway-settings" element={<RequirePageAccess page="gatewaySettings"><GatewaySettingsPage /></RequirePageAccess>} />
             <Route path="/settings" element={<RequirePageAccess page="settings"><SettingsPage /></RequirePageAccess>} />

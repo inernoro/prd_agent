@@ -1381,7 +1381,6 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
         var apply = _configuration.GetValue("LlmGateway:Retention:ApplyChanges", false);
         var sensitiveDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:SensitiveBodyDays", 7));
         var requestLogDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:RequestLogDays", 90));
-        var shadowDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:ShadowDays", 30));
         var auditDays = Math.Max(1, _configuration.GetValue("LlmGateway:Retention:AuditDays", 180));
         var logs = _data.Database.GetCollection<MongoDB.Bson.BsonDocument>("llmrequestlogs");
         var multipart = _data.Database.GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects");
@@ -1420,13 +1419,11 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
                 DryRunCompletedAt = DateTime.UtcNow,
                 SensitiveLogs = sensitiveCount,
                 ExpiredRequestLogs = await CountExpiredAsync(tenantId, "llmrequestlogs", "StartedAt", now.AddDays(-requestLogDays), ct),
-                ExpiredShadowComparisons = await CountExpiredAsync(tenantId, "llmshadow_comparisons", "ComparedAt", now.AddDays(-shadowDays), ct),
                 ExpiredOperationAudits = await CountExpiredAsync(tenantId, "llmgw_operation_audits", "CreatedAt", now.AddDays(-auditDays), ct),
                 ExpiredLoginAudits = await CountExpiredAsync(tenantId, "llmgw_login_audits", "CreatedAt", now.AddDays(-auditDays), ct),
                 ExpiredMultipartObjects = expiredMultipartCount,
                 OldestExpiredRequestLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("StartedAt", now.AddDays(-requestLogDays)), ct),
                 OldestSensitiveLogAt = await OldestAsync(tenantId, "llmrequestlogs", "StartedAt", sensitiveFilter, ct),
-                OldestExpiredShadowAt = await OldestAsync(tenantId, "llmshadow_comparisons", "ComparedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("ComparedAt", now.AddDays(-shadowDays)), ct),
                 OldestExpiredOperationAuditAt = await OldestAsync(tenantId, "llmgw_operation_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
                 OldestExpiredLoginAuditAt = await OldestAsync(tenantId, "llmgw_login_audits", "CreatedAt", Builders<MongoDB.Bson.BsonDocument>.Filter.Lt("CreatedAt", now.AddDays(-auditDays)), ct),
                 OldestExpiredMultipartAt = expired.FirstOrDefault()?.ExpiresAt,
@@ -1527,7 +1524,6 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
             ("llmgw_service_key_rate_windows", "TenantId"),
             ("llmgw_prompt_policies", "TenantId"),
             ("llmrequestlogs", "TenantId"),
-            ("llmshadow_comparisons", "TenantId"),
             ("llmgw_operation_audits", "TenantId"),
             ("llmgw_login_audits", "TenantId"),
             ("llmgw_lifecycle_runs", "TenantId"),
@@ -1587,7 +1583,6 @@ public sealed class GatewayDataLifecycleWorker : BackgroundService
         var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["llmrequestlogs"] = ["ttl_llmgw_logs_started"],
-            ["llmshadow_comparisons"] = ["ttl_llmgw_shadow_compared"],
             ["llmgw_operation_audits"] = ["ttl_llmgw_operation_audits"],
             ["llmgw_login_audits"] = ["ttl_llmgw_login_audits"],
             ["llmgw_lifecycle_runs"] = ["ttl_llmgw_lifecycle_runs"],

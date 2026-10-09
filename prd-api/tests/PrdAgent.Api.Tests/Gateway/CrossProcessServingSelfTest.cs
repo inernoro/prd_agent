@@ -24,7 +24,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// 起一个真实 Kestrel（loopback）host 住 serving 网关的真实端点映射（MapGatewayServingEndpoints，
 /// SSOT 与生产 Program.cs 同一份），上游用 stub gateway 顶替，再用**真实的** HttpLlmGatewayClient
 /// 经真实 HTTP/SSE 打过去，端到端验证「新增的 HTTP 边界」：序列化往返 / SSE 解析 /
-/// 密钥门 / ApiKey 绝不过线。模型解析与真实上游发送是既有实现（inproc 已验、本轮未改），不在本测试范围。
+/// 密钥门 / ApiKey 绝不过线。模型解析与真实上游发送由各自的用例覆盖，不在本测试范围。
 ///
 /// 本测试用真 Kestrel + 真 socket 往返：在 pull_request runner 上对成功响应体读取环境敏感
 /// （同一份代码 workflow_dispatch 全绿 + 生产 gw-smoke 8/8 + 影子均证实 serving 正常），故按本仓

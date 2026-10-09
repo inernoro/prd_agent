@@ -125,10 +125,9 @@ jobs:
               - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
               # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
               # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
-              # 它们守的是 gw-smoke / 发布双密钥 / rollout 账本 / ASR WebSocket 转发，
+              # 它们守的是 gw-smoke / 发布双密钥 / ASR WebSocket 转发，
               # 所以连同各自的被测脚本一起登记进这道闸。
               - 'scripts/gw-smoke.py'
-              - 'scripts/llmgw-rollout-ledger.py'
               # changelog 碎片合并的被测文件：不登记的话，只改合并逻辑的 PR
               # 完全跳过这道闸，而它要防的重复日期段恰恰是在那里长出来的（形状 7）。
               - 'scripts/assemble-changelog.sh'

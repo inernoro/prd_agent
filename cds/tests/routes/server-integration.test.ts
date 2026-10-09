@@ -165,7 +165,7 @@ async function requestRaw(
   server: http.Server,
   method: string,
   urlPath: string,
-  payload: string,
+  payload: string | Buffer,
   headers: http.OutgoingHttpHeaders = {},
 ): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
@@ -381,6 +381,58 @@ describe('Server route ordering (regression)', () => {
       },
     });
   }
+
+  it.each([68, 512 * 1024])('preserves %i-byte screenshots across asynchronous basic authentication and HTTP logging', async (size) => {
+    const logs: HttpLogRecord[] = [];
+    vi.stubEnv('CDS_AUTH_MODE', 'basic');
+    vi.stubEnv('CDS_USERNAME', 'fixture-admin');
+    vi.stubEnv('CDS_PASSWORD', 'fixture-password');
+    vi.stubEnv('CDS_AI_ACCESS_KEY', 'fixture-upload-key');
+    vi.stubEnv('CDS_CACHE_BASE', path.join(tmpDir, 'cache'));
+    try {
+      const app = buildRealServerWithHttpLogs(logs, [], undefined, true);
+      // A persisted-session lookup can yield while the request body arrives.
+      vi.spyOn(app.locals.cdsAuthService, 'validateSession').mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return null;
+      });
+      server = await startServer(app);
+      const pngSource = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+      const png = Buffer.alloc(size);
+      pngSource.copy(png);
+      const upload = await requestRaw(server, 'POST', '/api/reports/assets', png, {
+        'Content-Type': 'image/png', 'X-AI-Access-Key': 'fixture-upload-key',
+      });
+      expect(upload.status).toBe(201);
+      const { asset } = JSON.parse(upload.body);
+      expect(asset.sizeBytes).toBe(png.length);
+      const download = await request(server, new URL(asset.url, 'http://localhost').pathname);
+      expect(download.status).toBe(200);
+      expect(download.contentType).toContain('image/png');
+      expect(fs.readFileSync(path.join(tmpDir, 'report-assets', asset.name))).toEqual(png);
+      const log = logs.find((row) => row.path === '/api/reports/assets');
+      expect(log?.status).toBe(201);
+      expect(log?.request?.bodyBytes).toBe(png.length);
+      expect(log?.request?.bodyPreview).toContain('omitted binary body');
+      // Reports bypass the global JSON parser as well; the same async gap
+      // must preserve large text bodies, while normal JSON logging still works.
+      const content = '# Uploaded report\n' + 'evidence '.repeat(15_000);
+      const report = await requestJson(server, 'POST', '/api/reports', {
+        title: 'Upload regression', format: 'md', content,
+      }, { 'X-AI-Access-Key': 'fixture-upload-key' });
+      expect(report.status).toBe(201);
+      const meta = JSON.parse(report.body).report;
+      expect(fs.readFileSync(path.join(tmpDir, 'reports', `${meta.id}.md`), 'utf8')).toBe(content);
+      expect(logs.find((row) => row.path === '/api/reports')?.request?.bodyBytes).toBeGreaterThan(100 * 1024);
+      const denied = await requestRaw(server, 'POST', '/api/reports/assets', png, {
+        'Content-Type': 'image/png', 'X-AI-Access-Key': 'invalid-key',
+      });
+      expect(denied.status).toBe(401);
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    }
+  });
 
   it('real createServer exposes queryable /api/server-events before branch router fallback', async () => {
     const app = buildRealServerWithEvents([
@@ -642,12 +694,33 @@ describe('Server route ordering (regression)', () => {
       expect(deniedOperator.status).toBe(403);
 
       const memberProjects = await request(server, '/api/projects', { Cookie: memberCookie });
-      const memberSecretProject = JSON.parse(memberProjects.body).projects.find(
+      expect(JSON.parse(memberProjects.body).projects).toEqual([]);
+      const memberId = JSON.parse(created.body).user.id;
+      const unauthorizedDetail = await request(server, '/api/projects/auth-secret-project', { Cookie: memberCookie });
+      expect(unauthorizedDetail.status).toBe(403);
+      const cannotSelfGrant = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: ['auth-secret-project'],
+      }, { Cookie: memberCookie });
+      expect(cannotSelfGrant.status).toBe(403);
+      const grant = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: ['auth-secret-project'],
+      }, { Cookie: compatibleCookie });
+      expect(grant.status).toBe(200);
+      const authorizedProjects = await request(server, '/api/projects', { Cookie: memberCookie });
+      const memberSecretProject = JSON.parse(authorizedProjects.body).projects.find(
         (project: { id: string }) => project.id === 'auth-secret-project',
       );
-      expect(memberSecretProject.customEnv).toEqual({ OWNER_ONLY_SECRET: '***[masked]***' });
+      expect(memberSecretProject.customEnv).toBeUndefined();
       const memberEnv = await request(server, '/api/env?scope=_all', { Cookie: memberCookie });
-      expect(JSON.parse(memberEnv.body).env._global).toEqual({ GLOBAL_OWNER_ONLY: '***[masked]***' });
+      expect(memberEnv.status).toBe(403);
+      const memberDelete = await requestJson(server, 'DELETE', '/api/projects/auth-secret-project', {}, { Cookie: memberCookie });
+      expect(memberDelete.status).toBe(403);
+      const revoked = await requestJson(server, 'PUT', `/api/auth/users/${memberId}/projects`, {
+        projectIds: [],
+      }, { Cookie: compatibleCookie });
+      expect(revoked.status).toBe(200);
+      expect(JSON.parse((await request(server, '/api/projects', { Cookie: memberCookie })).body).projects).toEqual([]);
+      expect((await request(server, '/api/projects/auth-secret-project', { Cookie: memberCookie })).status).toBe(403);
 
       const persistedOwnerCreated = await requestJson(server, 'POST', '/api/auth/users', {
         username: 'persisted-owner',
@@ -876,6 +949,60 @@ describe('Server route ordering (regression)', () => {
       delete process.env.CDS_SSO_TOKEN_URL;
       delete process.env.CDS_SSO_CLIENT_ID;
       delete process.env.CDS_SSO_CLIENT_SECRET;
+    }
+  });
+
+  it.each(['basic', 'sso-only'] as const)('keeps %s Ticket SSO project access without granting system ownership', async (mode) => {
+    const previousUser = process.env.CDS_USERNAME;
+    const previousPassword = process.env.CDS_PASSWORD;
+    try {
+      if (mode === 'basic') {
+        process.env.CDS_USERNAME = 'operator';
+        process.env.CDS_PASSWORD = 'secret';
+      } else {
+        delete process.env.CDS_USERNAME;
+        delete process.env.CDS_PASSWORD;
+      }
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ success: true,
+        data: { subject: 'provider:compat-user', username: 'sso-user', displayName: 'SSO User' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })));
+      const app = buildRealServerWithEvents([], state => {
+        state.addProject({ id: 'sso-compat-project', slug: 'sso-compat-project', name: 'SSO兼容项目', kind: 'git',
+          dockerNetwork: 'sso-compat', legacyFlag: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        state.addBranch({ id: 'sso-compat-branch', projectId: 'sso-compat-project', branch: 'main', status: 'idle',
+          worktreePath: tmpDir, services: {}, createdAt: new Date().toISOString() });
+        state.setSsoConfig({ enabled: true, providerId: 'ticket-sso', label: '使用 SSO 登录',
+          authorizationUrl: 'https://provider.example/authorize', tokenUrl: 'https://provider.example/token',
+          clientId: 'cds-console', clientSecret: 'fake-sso-secret', defaultRedirect: '/project-list' });
+      });
+      server = await startServer(app);
+      const start = await request(server, '/api/auth/sso/start');
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      expect(state).toBeTruthy();
+      const exchange = await requestJson(server, 'POST', '/api/auth/sso/exchange', { code: 'a'.repeat(43), state });
+      expect(exchange.status).toBe(200);
+      const rawCookie = Array.isArray(exchange.headers['set-cookie']) ? exchange.headers['set-cookie'][0] : String(exchange.headers['set-cookie'] || '');
+      const headers = { Cookie: rawCookie.split(';')[0] };
+      const status = await request(server, '/api/auth/status', headers);
+      expect(JSON.parse(status.body).user).toMatchObject({ authProvider: 'ticket-sso', isSystemOwner: false });
+      const projects = await request(server, '/api/projects', headers);
+      expect(projects.status).toBe(200);
+      expect(JSON.parse(projects.body).projects.map((project: { id: string }) => project.id)).toContain('sso-compat-project');
+      const branches = await request(server, '/api/branches?project=sso-compat-project', headers);
+      expect(branches.status).toBe(200);
+      expect(JSON.parse(branches.body).branches.map((branch: { id: string }) => branch.id)).toEqual(['sso-compat-branch']);
+      expect((await request(server, '/api/projects/sso-compat-project', headers)).status).toBe(200);
+      expect((await request(server, '/api/auth/sso/config', headers)).status).toBe(403);
+      expect((await requestJson(server, 'PUT', '/api/auth/sso/config', { enabled: false }, headers)).status).toBe(403);
+      const logout = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, headers);
+      expect(logout.status).toBe(200);
+      expect((await request(server, '/api/projects', headers)).status).toBe(401);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = previousUser;
+      if (previousPassword === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = previousPassword;
     }
   });
 
