@@ -129,6 +129,15 @@ public class VideoGenRunWorker : BackgroundService
                         .FirstOrDefaultAsync(stoppingToken);
                     if (taskRun == null)
                     {
+                        // 上一轮接管可能在“任务已迁移、run 尚未迁移”的两次写入之间退出。
+                        // 先幂等补齐同分支 run，再把本次已领取的任务退回队列；下一轮只会重新执行导出，
+                        // 不会把可恢复的半状态误判成永久失败。
+                        if (await RecoverExportTaskRunAsync(
+                                exportTask,
+                                DeploymentScope.Current,
+                                DeploymentScope.CurrentDurable,
+                                stoppingToken))
+                            continue;
                         await _db.VideoExportTasks.UpdateOneAsync(
                             x => x.Id == exportTask.Id,
                             Builders<VideoExportTask>.Update
@@ -509,8 +518,13 @@ public class VideoGenRunWorker : BackgroundService
         var activeScene = sceneFb.Eq(x => x.Status, SceneItemStatus.Generating)
                           | sceneFb.Eq(x => x.Status, SceneItemStatus.Rendering)
                           | (sceneFb.Eq(x => x.Status, SceneItemStatus.SubmittingClaimed)
-                             & (sceneFb.Eq(x => x.SubmissionStartedAt, null)
-                                | sceneFb.Gt(x => x.SubmissionStartedAt, staleClaimBefore)))
+                             & ((sceneFb.Ne(x => x.RenderLeaseId, null)
+                                 & sceneFb.Gt(x => x.RenderLeaseExpiresAt, now))
+                                | (sceneFb.Eq(x => x.RenderLeaseId, null)
+                                   & (!allowLegacyTakeover
+                                      ? sceneFb.Empty
+                                      : sceneFb.Eq(x => x.SubmissionStartedAt, null)
+                                        | sceneFb.Gt(x => x.SubmissionStartedAt, staleClaimBefore)))))
                           | (sceneFb.Eq(x => x.Status, SceneItemStatus.PollingClaimed)
                              & (sceneFb.Eq(x => x.RenderLeaseExpiresAt, null)
                                 | sceneFb.Gt(x => x.RenderLeaseExpiresAt, now)));
@@ -1471,7 +1485,9 @@ public class VideoGenRunWorker : BackgroundService
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
                 .Set($"Scenes.{sceneIdx}.JobId", claimId)
-                .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", now),
+                .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", now)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseId", claimId)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", now + SceneRenderLease),
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
 
@@ -1521,31 +1537,51 @@ public class VideoGenRunWorker : BackgroundService
     internal async Task<bool> RecoverStaleSceneClaimAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
+        var sceneFb = Builders<VideoGenScene>.Filter;
+        var now = DateTime.UtcNow;
         var threshold = DateTime.UtcNow - SceneClaimTimeout;
+        var expiredLease = sceneFb.Ne(s => s.RenderLeaseId, null)
+                           & sceneFb.Lte(s => s.RenderLeaseExpiresAt, now);
+        var legacyClaim = DateTime.UtcNow >= LegacyTakeoverEnabledAt
+            ? sceneFb.Eq(s => s.RenderLeaseId, null)
+              & sceneFb.Lte(s => s.SubmissionStartedAt, threshold)
+            : sceneFb.Empty & sceneFb.Exists(s => s.Index, false);
         var candidate = await _db.VideoGenRuns.Find(
                 fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
                 & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                 & fb.ElemMatch(x => x.Scenes,
-                    Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.SubmittingClaimed)
-                    & Builders<VideoGenScene>.Filter.Regex(s => s.JobId, new BsonRegularExpression("^claim:"))
-                    & Builders<VideoGenScene>.Filter.Lte(s => s.SubmissionStartedAt, threshold)))
+                    sceneFb.Eq(s => s.Status, SceneItemStatus.SubmittingClaimed)
+                    & sceneFb.Regex(s => s.JobId, new BsonRegularExpression("^claim:"))
+                    & (expiredLease | legacyClaim)))
             .FirstOrDefaultAsync(ct);
         if (candidate == null) return false;
 
         var sceneIdx = candidate.Scenes.FindIndex(scene =>
             scene.Status == SceneItemStatus.SubmittingClaimed
             && scene.JobId?.StartsWith("claim:", StringComparison.Ordinal) == true
-            && scene.SubmissionStartedAt <= threshold);
+            && ((!string.IsNullOrWhiteSpace(scene.RenderLeaseId)
+                 && scene.RenderLeaseExpiresAt <= now)
+                || (string.IsNullOrWhiteSpace(scene.RenderLeaseId)
+                    && DateTime.UtcNow >= LegacyTakeoverEnabledAt
+                    && scene.SubmissionStartedAt <= threshold)));
         if (sceneIdx < 0) return false;
 
         var claimId = candidate.Scenes[sceneIdx].JobId!;
+        var renderLeaseId = candidate.Scenes[sceneIdx].RenderLeaseId;
         var message = "生成提交进程已中断。为避免重复扣费，系统没有自动重新提交；请确认后手动重试。";
-        var updated = await _db.VideoGenRuns.UpdateOneAsync(
-            fb.Eq(x => x.Id, candidate.Id)
+        var recoveryFilter = fb.Eq(x => x.Id, candidate.Id)
             & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
             & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
-            & fb.Eq($"Scenes.{sceneIdx}.JobId", claimId)
-            & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.SubmissionStartedAt", threshold),
+            & fb.Eq($"Scenes.{sceneIdx}.JobId", claimId);
+        recoveryFilter = !string.IsNullOrWhiteSpace(renderLeaseId)
+            ? recoveryFilter
+              & fb.Eq($"Scenes.{sceneIdx}.RenderLeaseId", renderLeaseId)
+              & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", now)
+            : recoveryFilter
+              & fb.Eq<string?>($"Scenes.{sceneIdx}.RenderLeaseId", null)
+              & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.SubmissionStartedAt", threshold);
+        var updated = await _db.VideoGenRuns.UpdateOneAsync(
+            recoveryFilter,
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
                 .Set($"Scenes.{sceneIdx}.ErrorMessage", message)
@@ -1659,13 +1695,23 @@ public class VideoGenRunWorker : BackgroundService
                     RequestId = sceneLogicalRequestId,
                 };
 
-                var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
+                OpenRouterVideoSubmitResult? submitResult = null;
+                var retainedSubmissionLease = await ProcessWithSceneSubmissionLeaseHeartbeatAsync(
+                    run.Id,
+                    sceneIdx,
+                    claimId,
+                    async authorityToken =>
+                    {
+                        submitResult = await client.SubmitAsync(submitReq, authorityToken);
+                    });
+                if (!retainedSubmissionLease || submitResult == null) return;
                 if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
                 {
                     await MarkSceneErrorAsync(
                         run.Id,
                         sceneIdx,
                         submitResult.ErrorMessage ?? "OpenRouter 提交失败",
+                        claimId,
                         claimId);
                     return;
                 }
@@ -1678,8 +1724,10 @@ public class VideoGenRunWorker : BackgroundService
 
                 var submitted = await _db.VideoGenRuns.UpdateOneAsync(
                     Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+                    & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                     & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
-                    & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", claimId),
+                    & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", claimId)
+                    & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", claimId),
                     Builders<VideoGenRun>.Update
                         .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
                         .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
@@ -1894,6 +1942,7 @@ public class VideoGenRunWorker : BackgroundService
     {
         var renewed = await _db.VideoGenRuns.UpdateOneAsync(
             Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
             & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
             & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", jobId)
             & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", leaseId),
@@ -1902,6 +1951,101 @@ public class VideoGenRunWorker : BackgroundService
                 DateTime.UtcNow + SceneRenderLease),
             cancellationToken: CancellationToken.None);
         // 同一毫秒内两次续租可能写入相同截止时间；匹配到所有权即有效，不能把无值变化当成失租。
+        return renewed.MatchedCount == 1;
+    }
+
+    internal async Task<bool> ProcessWithSceneSubmissionLeaseHeartbeatAsync(
+        string runId,
+        int sceneIdx,
+        string claimId,
+        Func<CancellationToken, Task> action)
+    {
+        if (!await RenewSceneSubmissionLeaseAsync(runId, sceneIdx, claimId)) return false;
+
+        using var stopHeartbeat = new CancellationTokenSource();
+        using var authorityLost = new CancellationTokenSource();
+        var heartbeat = RenewSceneSubmissionLeaseUntilStoppedAsync(
+            runId,
+            sceneIdx,
+            claimId,
+            authorityLost,
+            stopHeartbeat.Token);
+        try
+        {
+            await action(authorityLost.Token);
+            return !authorityLost.IsCancellationRequested;
+        }
+        catch (OperationCanceledException) when (authorityLost.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                "VideoGen 分镜提交 lease 已失效，旧持有者停止执行: runId={RunId}, scene={SceneIndex}",
+                runId,
+                sceneIdx);
+            return false;
+        }
+        finally
+        {
+            stopHeartbeat.Cancel();
+            await heartbeat;
+        }
+    }
+
+    private async Task RenewSceneSubmissionLeaseUntilStoppedAsync(
+        string runId,
+        int sceneIdx,
+        string claimId,
+        CancellationTokenSource authorityLost,
+        CancellationToken stopToken)
+    {
+        var authorityDeadline = DateTime.UtcNow + SceneRenderLease;
+        while (!stopToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(WorkerLeaseHeartbeatInterval, stopToken);
+                if (!await RenewSceneSubmissionLeaseAsync(runId, sceneIdx, claimId))
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
+                authorityDeadline = DateTime.UtcNow + SceneRenderLease;
+            }
+            catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "VideoGen 分镜提交 lease 续租失败，等待下一轮重试: runId={RunId}, scene={SceneIndex}",
+                    runId,
+                    sceneIdx);
+                if (DateTime.UtcNow >= authorityDeadline)
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
+            }
+        }
+    }
+
+    private async Task<bool> RenewSceneSubmissionLeaseAsync(
+        string runId,
+        int sceneIdx,
+        string claimId)
+    {
+        var renewed = await _db.VideoGenRuns.UpdateOneAsync(
+            Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", claimId)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", claimId),
+            Builders<VideoGenRun>.Update.Set(
+                $"Scenes.{sceneIdx}.RenderLeaseExpiresAt",
+                DateTime.UtcNow + SceneRenderLease),
+            cancellationToken: CancellationToken.None);
         return renewed.MatchedCount == 1;
     }
 
@@ -2033,7 +2177,8 @@ public class VideoGenRunWorker : BackgroundService
         }
         if (!string.IsNullOrWhiteSpace(expectedLeaseId))
         {
-            filter &= Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", expectedLeaseId);
+            filter &= Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                      & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", expectedLeaseId);
         }
         if (!string.IsNullOrWhiteSpace(expectedWorkerLeaseId))
         {
@@ -2118,6 +2263,50 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow + WorkerLeaseDuration),
             new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After },
             ct);
+    }
+
+    internal async Task<bool> RecoverExportTaskRunAsync(
+        VideoExportTask task,
+        string? currentScope,
+        string? durableScope,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(currentScope)
+            || string.IsNullOrWhiteSpace(durableScope)
+            || string.IsNullOrWhiteSpace(task.WorkerLeaseId))
+            return false;
+
+        var runFilter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, task.RunId)
+                        & VideoGenService.BuildBranchDeploymentFilter<VideoGenRun>(
+                            nameof(VideoGenRun.DeploymentSlug),
+                            currentScope,
+                            durableScope);
+        var recoveredRun = await _db.VideoGenRuns.UpdateOneAsync(
+            runFilter,
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            cancellationToken: ct);
+        if (recoveredRun.MatchedCount != 1) return false;
+
+        // 只有仍由本次领取持有的任务才能退回队列。若 lease 已转移，run 已完成幂等对齐，
+        // 新持有者可直接继续，旧持有者不再改写任务。
+        await _db.VideoExportTasks.UpdateOneAsync(
+            Builders<VideoExportTask>.Filter.Eq(x => x.Id, task.Id)
+            & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, currentScope)
+            & Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Processing)
+            & Builders<VideoExportTask>.Filter.Eq(x => x.WorkerLeaseId, task.WorkerLeaseId),
+            Builders<VideoExportTask>.Update
+                .Set(x => x.Status, VideoExportTaskStatus.Queued)
+                .Set(x => x.CurrentPhase, "queued")
+                .Set(x => x.Progress, 0)
+                .Set(x => x.StartedAt, (DateTime?)null)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
+            cancellationToken: ct);
+        _logger.LogInformation(
+            "[VideoGenWorker] 已补齐导出任务的关联 run 接管: taskId={TaskId}, runId={RunId}",
+            task.Id,
+            task.RunId);
+        return true;
     }
 
     private async Task ProcessExportAsync(
