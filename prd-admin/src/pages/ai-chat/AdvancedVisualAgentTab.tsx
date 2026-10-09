@@ -2938,6 +2938,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return bucket[at] ?? item;
     });
   }, [canvas]);
+  const activeGenerationCount = useMemo(
+    () => canvas.filter((item) => item.status === 'running').length,
+    [canvas],
+  );
 
   /**
    * 叠放时只让最底下那块铺透明棋盘格。
@@ -6880,6 +6884,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               }
             }}
           >
+            {activeGenerationCount > 0 ? (
+              <div
+                role="status"
+                aria-live="polite"
+                aria-label="生成队列"
+                className="surface-popover pointer-events-none absolute right-4 top-4 z-[70] inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs text-token-primary shadow-lg"
+              >
+                <span className="font-semibold">生成队列</span>
+                <span>{activeGenerationCount} 项进行中</span>
+              </div>
+            ) : null}
             <div
               ref={worldRef}
               className="absolute inset-0"

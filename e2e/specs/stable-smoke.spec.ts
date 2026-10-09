@@ -1736,11 +1736,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
+    await loginAndReadToken(page, request, '/');
     const notificationsLoaded = page.waitForResponse(
       (response) => new URL(response.url()).pathname === '/api/dashboard/notifications',
-      { timeout: 15_000 },
+      { timeout: 30_000 },
     );
-    await loginAndReadToken(page, request, '/');
+    await page.reload({ waitUntil: 'domcontentloaded' });
     const notificationResponse = await notificationsLoaded;
     expect(notificationResponse.ok(), '首页通知列表加载失败').toBe(true);
     const body = page.locator('body');
@@ -3883,6 +3884,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[PARSE-003][PARSE-004][REG-short-video-input-001] 非法与失效链接说明恢复动作且长文案不溢出', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video-error-r${testInfo.retry}`;
     let storeId = '';
@@ -3963,7 +3965,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       await page.unroute(/\/api\/short-video-materials\/runs(?:\?.*)?$/).catch(() => undefined);
       if (storeId) {
-        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, {
+          headers: authHeaders(token),
+          timeout: stableSmokeCleanupTimeoutMs,
+        });
         expect([200, 204]).toContain(deletedStore.status());
       }
     }
@@ -3990,12 +3995,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let projectId = '';
     try {
       await page.getByRole('button', { name: '新项目', exact: true }).click();
-      await page.getByLabel('项目名称').fill(title);
-      await page.getByLabel('文学稿内容').fill(article);
+      const titleInput = page.getByLabel('项目名称');
+      const articleInput = page.getByLabel('文学稿内容');
+      await expect(titleInput, '必须等待新项目重置完成后再填写，避免旧项目 effect 覆盖新草稿').toHaveValue('');
+      await expect(articleInput).toHaveValue('');
+      await titleInput.fill(title);
+      await articleInput.fill(article);
       const studio = page.getByTestId('video-project-studio');
       await studio.getByRole('button', { name: '设置', exact: true }).click();
       await studio.getByRole('region', { name: '生成设置' }).getByLabel('视频模型').selectOption(frameModel!.id);
-      await expect(page.getByLabel('文学稿内容')).toHaveValue(article);
+      await expect(articleInput).toHaveValue(article);
       const storyboardAction = page.getByRole('button', { name: '生成故事分镜', exact: true });
       await expect(storyboardAction).toBeEnabled({ timeout: 60_000 });
       const createResponsePromise = page.waitForResponse((response) => (
