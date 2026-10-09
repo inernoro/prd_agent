@@ -6218,8 +6218,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await canvas.focus();
       await page.keyboard.press('h');
       await expect(page.getByRole('button', { name: '工具', exact: true })).toHaveAttribute('title', 'Hand tool');
-      await page.getByRole('button', { name: '缩小' }).click();
-      await page.getByRole('button', { name: '缩小' }).click();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-02',
         target: canvas,
