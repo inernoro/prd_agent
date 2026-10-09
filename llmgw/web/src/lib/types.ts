@@ -1315,11 +1315,11 @@ export type RuntimeGateLink = {
 export type RuntimeGatesData = {
   status: string;
   releaseCommit?: string | null;
-  readyForHttpFull: boolean;
+  // 字段名沿用后端（发布脚本按名读取）；含义是「全部 blocking gate 均为 pass」。
+  readyForRelease: boolean;
   passed: number;
   blocked: number;
   waiting: number;
-  retained: number;
   generatedAt: string;
   items: RuntimeGateItem[];
 };
@@ -1643,32 +1643,6 @@ export type UpdateMemberRequest = {
   status?: 'active' | 'disabled';
   teamIds?: string[];
 };
-
-// ── 影子比对（只读）──
-export type ShadowSnapshot = {
-  success: boolean; actualModel?: string | null; protocol?: string | null; platformType?: string | null;
-  resolutionType?: string | null; modelGroupId?: string | null; isFallback: boolean;
-};
-export type ShadowMismatch = { field: string; inproc?: string | null; http?: string | null; severity: string };
-export type ShadowItem = {
-  id: string; kind: string; requestId?: string | null; releaseCommit?: string | null; appCallerCode: string; modelType: string;
-  comparedAt?: string | null; shadowDurationMs: number; httpOk: boolean; httpError?: string | null;
-  allMatch: boolean; hasCritical: boolean; inproc: ShadowSnapshot; http: ShadowSnapshot;
-  mismatches: ShadowMismatch[]; textMatches?: boolean | null;
-};
-export type ShadowSummary = {
-  total: number;
-  allMatch: number;
-  critical: number;
-  httpFail: number;
-  sinceHours?: number | null;
-  since?: string | null;
-  releaseCommit?: string | null;
-  firstComparedAt?: string | null;
-  lastComparedAt?: string | null;
-  coverageHours?: number;
-};
-export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };
 
 // ── 服务网关设置（系统级模型）──
 // 系统自己知道的值（serving 地址、appCaller、密钥前缀）只读回展示，不做输入。

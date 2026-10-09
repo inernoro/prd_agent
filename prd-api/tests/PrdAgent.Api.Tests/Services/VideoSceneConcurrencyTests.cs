@@ -413,7 +413,6 @@ public class VideoSceneConcurrencyTests
             Context,
             _runStore.Object,
             _assetStorage.Object,
-            new LLMRequestContextAccessor(),
             NullLogger<VideoGenService>.Instance);
 
         public VideoGenRunWorker CreateWorker() => new(

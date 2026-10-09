@@ -382,56 +382,21 @@ public class ImageMasterController : ControllerBase
             update = update.Set(x => x.StylePrompt, string.IsNullOrEmpty(sp) ? null : sp);
         }
 
-        // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、清后续、清旧配图）
-        var articleContentChanged = !string.IsNullOrWhiteSpace(request?.ArticleContent) 
-            && !string.Equals(request.ArticleContent, ws.ArticleContent ?? string.Empty, StringComparison.Ordinal);
-        if (articleContentChanged)
+        // 文章配图场景：若更新了 articleContent，触发"提交型修改"逻辑（version++、旧流程进历史、清标记；旧图不删，进历史配图）。
+        // 判据与写入都与文学页 PUT 共用 LiteraryIllustrationArchive：清空也算换稿，写入以读到的方案版本为条件。
+        if (PrdAgent.Api.Services.LiteraryIllustrationArchive.IsContentChange(ws, request?.ArticleContent))
         {
-            update = update.Set(x => x.ArticleContent, request!.ArticleContent);
-            // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
-            if (ws.ArticleWorkflow != null)
-            {
-                history.Insert(0, ws.ArticleWorkflow);
-                if (history.Count > 10) history = history.Take(10).ToList();
-            }
-            // 清空后续阶段：清 markers/images/articleContentWithMarkers
-            var newWorkflow = new ArticleIllustrationWorkflow
-            {
-                Version = (ws.ArticleWorkflow?.Version ?? 0) + 1,
-                Phase = 1, // Editing
-                Markers = new List<ArticleIllustrationMarker>(),
-                ExpectedImageCount = null,
-                DoneImageCount = 0,
-                AssetIdByMarkerIndex = new Dictionary<string, string>(),
-                UpdatedAt = now
-            };
-            update = update
-                .Set(x => x.ArticleWorkflow, newWorkflow)
-                .Set(x => x.ArticleWorkflowHistory, history)
-                .Set(x => x.ArticleContentWithMarkers, null);
-
-            // 删除旧的文章配图资产（ArticleInsertionIndex != null）
-            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(ct);
-            if (oldAssets.Count > 0)
-            {
-                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, ct);
-                // best-effort 删除底层文件（按 sha 引用计数）
-                foreach (var a in oldAssets)
-                {
-                    try
-                    {
-                        await TryDeleteUnreferencedGeneratedImageAsync(a.Sha256, ct);
-                    }
-                    catch
-                    {
-                        // ignore
-                    }
-                }
-            }
+            var outcome = await PrdAgent.Api.Services.LiteraryIllustrationArchive.WriteContentResetAsync(
+                _db, ws, request!.ArticleContent!, update, PrdAgent.Api.Services.LiteraryArchiveReason.WebContent, ct);
+            if (outcome == PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetOutcome.WorkspaceGone)
+                return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 在保存过程中被删除了"));
+            if (outcome == PrdAgent.Api.Services.LiteraryIllustrationArchive.ContentResetOutcome.KeptChanging)
+                return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "这篇文章正被别处连续修改，正文没有保存，请刷新后再试。"));
         }
-
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+        else
+        {
+            await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+        }
         var next = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
         var payload = new { workspace = next };
         if (!string.IsNullOrWhiteSpace(idemKey))
@@ -791,18 +756,9 @@ public class ImageMasterController : ControllerBase
 
         // 文章配图场景：只返回当前版本的图片，隐藏重新生成的旧版本
         List<ImageAsset> assets;
-        var currentAssetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Distinct()
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (ws.ScenarioType == "article-illustration" && currentAssetIds != null && currentAssetIds.Count > 0)
+        if (PrdAgent.Api.Services.LiteraryIllustrationHistory.ShowsCurrentOnly(ws))
         {
-            assets = await _db.ImageAssets
-                .Find(x => x.WorkspaceId == wid && currentAssetIds.Contains(x.Id))
-                .SortBy(x => x.ArticleInsertionIndex)
-                .ThenBy(x => x.CreatedAt)
-                .ToListAsync(ct);
+            assets = await PrdAgent.Api.Services.LiteraryIllustrationHistory.LoadCurrentForDetailAsync(_db, ws, ct);
         }
         else
         {
@@ -1359,32 +1315,20 @@ public class ImageMasterController : ControllerBase
             OriginalMarkerText = string.IsNullOrWhiteSpace(request?.OriginalMarkerText) ? null : request!.OriginalMarkerText!.Trim(),
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
-        if (asset.OriginalMarkerText != null && asset.OriginalMarkerText.Length > 200) asset.OriginalMarkerText = asset.OriginalMarkerText[..200].Trim();
+        asset.OriginalMarkerText = PrdAgent.Core.Services.LiteraryMcpWorkflow.ClampOriginalMarkerText(asset.OriginalMarkerText);
         if (request?.Width is > 0 and < 20000) asset.Width = request.Width!.Value;
         if (request?.Height is > 0 and < 20000) asset.Height = request.Height!.Value;
 
-        // 文章配图：同一 workspace + insertionIndex 只保留最新 1 张（避免导出替换顺序错乱）
-        // - 只删除元数据；底层文件按 sha 全库引用计数决定是否删除（同 DeleteWorkspace 逻辑）
+        // 文章配图：同一位置重新上传不再删除旧图（用户要能在「历史配图」里找回）。
+        // 新图盖上当前版本号，「当前挂哪张」由指针 + 版本判定，导出/投稿不会再被旧图打乱顺序。
         if (asset.ArticleInsertionIndex.HasValue)
         {
             var idx = asset.ArticleInsertionIndex.Value;
             if (idx < 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "articleInsertionIndex 无效"));
-            var old = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex == idx).FirstOrDefaultAsync(ct);
-            if (old != null)
+            if (ws.ArticleWorkflow != null)
             {
-                await _db.ImageAssets.DeleteOneAsync(x => x.Id == old.Id, ct);
-                try
-                {
-                    // 若新旧 sha 相同，底层文件仍会被新记录引用，禁止删除物理文件
-                    if (!string.Equals(old.Sha256, stored.Sha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        await TryDeleteUnreferencedGeneratedImageAsync(old.Sha256, ct);
-                    }
-                }
-                catch
-                {
-                    // ignore: best-effort
-                }
+                await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow.Version);
+                asset.ArticleWorkflowVersion = ws.ArticleWorkflow.Version;
             }
         }
 
@@ -1413,33 +1357,32 @@ public class ImageMasterController : ControllerBase
                 .Set(x => x.ContentHash, newContentHash),
             cancellationToken: ct);
 
-        // 文章配图：写入/推进 workflow（doneCount/phase），用于前端恢复进度与禁止跳未来
+        // 文章配图：写入/推进 workflow（doneCount/phase），用于前端恢复进度与禁止跳未来。
+        // 定向写入这一个标记，不再整份覆盖 ArticleWorkflow（会抹掉并发中其它标记的任务状态与指针）。
         if (asset.ArticleInsertionIndex.HasValue)
         {
             var idx = asset.ArticleInsertionIndex.Value;
-            var wf = ws.ArticleWorkflow ?? new ArticleIllustrationWorkflow();
-            wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            wf.AssetIdByMarkerIndex[idx.ToString()] = asset.Id;
-            wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
-            wf.ExpectedImageCount ??= (wf.Markers?.Count ?? 0);
-            // 3 个状态模式：生图完成后仍保持在 MarkersGenerated (2) 状态
-            wf.UpdatedAt = DateTime.UtcNow;
-            
-            // 新增：更新对应 marker 的状态
-            if (wf.Markers != null && idx < wf.Markers.Count)
+            if (ws.ArticleWorkflow != null)
             {
-                var marker = wf.Markers[idx];
-                marker.Status = "done";
-                marker.AssetId = asset.Id;
-                marker.ErrorMessage = null;
-                marker.UpdatedAt = DateTime.UtcNow;
+                // 挂不上 = 存图期间配图方案换了版本：图留在历史里，但不能报成「已挂到正文」
+                if (!await PrdAgent.Api.Services.LiteraryMarkerWrites.PointMarkerAsync(_db, wid, ws.ArticleWorkflow.Version, idx, asset.Id))
+                    return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED",
+                        "保存图片期间这篇文章的配图方案已更新，这张图没有挂到正文上（已留在历史配图里）。请刷新后重试。"));
             }
-
-            // history/debug 不在此写入；仅在"提交型修改"时快照
-            await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                x => x.Id == wid,
-                Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
-                cancellationToken: ct);
+            else
+            {
+                var wf = new ArticleIllustrationWorkflow
+                {
+                    AssetIdByMarkerIndex = new Dictionary<string, string>(StringComparer.Ordinal) { [idx.ToString()] = asset.Id },
+                    DoneImageCount = 1,
+                    ExpectedImageCount = 0,
+                    UpdatedAt = DateTime.UtcNow,
+                };
+                await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                    x => x.Id == wid && x.ArticleWorkflow == null,
+                    Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow, wf),
+                    cancellationToken: ct);
+            }
         }
 
         // 初始封面：仅在完全没有封面时，设置第一张（避免空白；不会覆盖后续 refresh/手动选择）
@@ -1684,7 +1627,6 @@ public class ImageMasterController : ControllerBase
                 InitImageAssetSha256 = initSha,
                 ImageRefs = imageRefs, // 多图引用（新架构）
                 MaskBase64 = string.IsNullOrWhiteSpace(request?.MaskBase64) ? null : request!.MaskBase64!.Trim(),
-                ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
                 TargetX = request?.X,
                 TargetY = request?.Y,
                 TargetW = request?.W,
@@ -2651,33 +2593,10 @@ public class ImageMasterController : ControllerBase
             // 保存生成的内容到 workspace，并触发"提交型修改"逻辑（version++、清后续、清旧配图）
             var now = DateTime.UtcNow;
 
-            // 快照当前 workflow 到历史（debug-only，最多保留 10 条）
-            var history = ws.ArticleWorkflowHistory ?? new List<ArticleIllustrationWorkflow>();
-            if (ws.ArticleWorkflow != null)
-            {
-                history.Insert(0, ws.ArticleWorkflow);
-                if (history.Count > 10) history = history.Take(10).ToList();
-            }
-
-            // 清空后续阶段：清旧图片资产，重置 images 进度
-            // 服务器权威性设计：数据库操作使用 CancellationToken.None，确保数据完整持久化
-            var oldAssets = await _db.ImageAssets.Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null).ToListAsync(CancellationToken.None);
-            if (oldAssets.Count > 0)
-            {
-                await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null, CancellationToken.None);
-                // best-effort 删除底层文件（按 sha 引用计数）
-                foreach (var a in oldAssets)
-                {
-                    try
-                    {
-                        await TryDeleteUnreferencedGeneratedImageAsync(a.Sha256, CancellationToken.None);
-                    }
-                    catch
-                    {
-                        // ignore
-                    }
-                }
-            }
+            // 当前配图方案存进历史：记下那一刻真正挂在正文上的图与换下原因（与另外两处换稿共用）
+            var replanAssets = await PrdAgent.Api.Services.LiteraryIllustrationHistory.LoadAssetsAsync(_db, wid, CancellationToken.None);
+            var history = PrdAgent.Api.Services.LiteraryIllustrationArchive.ArchiveCurrent(
+                ws, replanAssets, now, PrdAgent.Api.Services.LiteraryArchiveReason.Replan);
 
             var newWorkflow = new ArticleIllustrationWorkflow
             {
@@ -2691,14 +2610,34 @@ public class ImageMasterController : ControllerBase
             };
 
             // 服务器权威性设计：数据库更新使用 CancellationToken.None
-            await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                x => x.Id == wid,
+            // 以开始时读到的方案版本为条件：大模型生成这段时间里文章被重写 / 换稿过，新方案与历史就不是从这一版算出来的，
+            // 只按 id 写会撞成同一个版本号、把对方整个盖掉（对方排队中的生图任务还会按撞号的版本挂到无关的标记上）。
+            var replanResult = await _db.ImageMasterWorkspaces.UpdateOneAsync(
+                PrdAgent.Api.Services.LiteraryIllustrationArchive.SameWorkflowAs(ws),
                 Builders<ImageMasterWorkspace>.Update
                     .Set(x => x.ArticleContentWithMarkers, generatedContent)
                     .Set(x => x.ArticleWorkflow, newWorkflow)
                     .Set(x => x.ArticleWorkflowHistory, history)
                     .Set(x => x.UpdatedAt, now),
                 cancellationToken: CancellationToken.None);
+            if (replanResult.MatchedCount == 0)
+            {
+                _logger.LogWarning("GenerateArticleMarkers discarded for workspace {WorkspaceId}: workflow changed from version {Version} during generation",
+                    wid, ws.ArticleWorkflow?.Version ?? 0);
+                if (!clientDisconnected)
+                {
+                    try
+                    {
+                        var staleData = JsonSerializer.Serialize(new { type = "error", message = "生成期间这篇文章被改过（可能是智能体重写了正文），这次生成的标记没有保存，请刷新后重新生成。" }, JsonOptions);
+                        await Response.WriteAsync($"data: {staleData}\n\n");
+                        await Response.Body.FlushAsync();
+                    }
+                    catch { /* 客户端已断开 */ }
+                }
+                return;
+            }
+            // 重置 images 进度。旧配图不再删除：落库成功后盖上旧版本号归入「历史配图」。
+            await PrdAgent.Api.Services.LiteraryIllustrationArchive.StampUnversionedAsync(_db, wid, ws.ArticleWorkflow?.Version ?? 0);
 
             _logger.LogInformation("GenerateArticleMarkers completed for workspace {WorkspaceId}, mode: {Mode}, markers: {MarkerCount}, clientDisconnected: {ClientDisconnected}",
                 wid, insertionMode, extractedMarkers.Count, clientDisconnected);
@@ -2791,17 +2730,21 @@ public class ImageMasterController : ControllerBase
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
 
-        // 获取 workspace 的所有 assets（按 articleInsertionIndex 排序）
-        var assets = await _db.ImageAssets
-            .Find(x => x.WorkspaceId == wid && x.ArticleInsertionIndex != null)
-            .SortBy(x => x.ArticleInsertionIndex)
+        // 只取「当前每个标记挂的那张」：历史配图现在会保留在工作区里，按 index 顺序逐个替换
+        // 会让同一位置的旧图、重新生成的图各占一个标记，整篇错位。
+        var allAssets = await _db.ImageAssets
+            .Find(x => x.WorkspaceId == wid)
             .ToListAsync(ct);
+        // 不在查询里按插入位置筛：放回到某个标记上的早期图可能没记位置，指针仍指着它
+        var current = PrdAgent.Core.Services.LiteraryMcpWorkflow.SelectCurrent(ws, allAssets);
+        var assets = current.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
 
         var content = ws.ArticleContentWithMarkers ?? ws.ArticleContent ?? string.Empty;
         if (string.IsNullOrWhiteSpace(content)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "文章内容为空"));
 
-        // 替换标记为图片链接
-        var exportedContent = PrdAgent.Core.Services.ArticleMarkerExtractor.ReplaceMarkersWithImages(content, assets);
+        // 按标记序号替换为图片链接（第二张先完成也不会占第一张的位置）
+        var exportedContent = PrdAgent.Core.Services.LiteraryMcpWorkflow.Render(content,
+            current.ToDictionary(kv => kv.Key, kv => kv.Value.Url), allowRelative: true);
 
         var exportFormat = (request?.ExportFormat ?? "markdown").Trim().ToLowerInvariant();
         return Ok(ApiResponse<object>.Ok(new
@@ -2841,31 +2784,33 @@ public class ImageMasterController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "markerIndex 无效"));
 
         var marker = wf.Markers[markerIndex];
-        
-        // 更新字段（只更新非 null 的字段）
-        if (request.DraftText != null) marker.DraftText = request.DraftText;
-        if (request.Status != null) marker.Status = request.Status;
-        if (request.RunId != null) marker.RunId = request.RunId;
-        if (request.ErrorMessage != null) marker.ErrorMessage = request.ErrorMessage;
-        if (request.Url != null) marker.Url = request.Url;  // 保存图片 URL
+
+        // 定向写这一个标记，且要求配图流程还是读到的那一版。以前整份 ArticleWorkflow 写回：
+        // 页面上几秒前的快照会抹掉智能体（MCP）任务刚认领的 runId、Worker 刚写入的图片指针。
+        var fields = new Dictionary<string, object?>();
+        if (request.DraftText != null) { marker.DraftText = request.DraftText; fields["draftText"] = request.DraftText; }
+        if (request.Status != null) { marker.Status = request.Status; fields["status"] = request.Status; }
+        if (request.RunId != null) { marker.RunId = request.RunId; fields["runId"] = request.RunId; }
+        if (request.ErrorMessage != null) { marker.ErrorMessage = request.ErrorMessage; fields["errorMessage"] = request.ErrorMessage; }
+        if (request.Url != null) { marker.Url = request.Url; fields["url"] = request.Url; }  // 保存图片 URL
+        ArticleIllustrationPlanItem? planItem = null;
         if (request.PlanItem != null)
         {
             // 保存意图解析结果
-            marker.PlanItem = new ArticleIllustrationPlanItem
+            planItem = new ArticleIllustrationPlanItem
             {
                 Prompt = request.PlanItem.Prompt,
                 Count = request.PlanItem.Count,
                 Size = request.PlanItem.Size
             };
+            marker.PlanItem = planItem;
         }
         marker.UpdatedAt = DateTime.UtcNow;
 
-        await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            x => x.Id == wid,
-            Builders<ImageMasterWorkspace>.Update
-                .Set(x => x.ArticleWorkflow, wf)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        var written = await PrdAgent.Api.Services.LiteraryMarkerWrites.PatchMarkerAsync(
+            _db, wid, wf.Version, marker.Index, fields, planItem);
+        if (!written)
+            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "配图方案已经更新（可能是正文被改过或重新规划了标记），请刷新后再操作。"));
 
         return Ok(ApiResponse<object>.Ok(new { marker }));
     }

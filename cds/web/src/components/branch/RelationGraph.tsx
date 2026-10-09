@@ -7,6 +7,7 @@
  * compact 模式给总览缩略卡用：同一套布局按比例缩小，不另画一份。
  */
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { edgePath, edgeTooltip, frameLabels, layoutRelations, type EdgeKind, type Pos } from './relationLayout';
 
 export type RoleView = 'web' | 'api' | 'worker';
 export interface GraphNodeView { id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; dockerImage?: string; role?: RoleView; roleSource?: string; roleReason?: string }
@@ -17,180 +18,18 @@ export interface LintFindingView { rule: string; severity: 'error' | 'warn' | 'i
 export interface ReferenceView { profileId: string; key: string; kind: 'cds-ref' | 'url' | 'name-hint' | 'platform'; resolved?: Array<{ url: string | null; status: string; target: { projectId?: string; projectSlug?: string; branchId?: string; branchName?: string; serviceId: string }; ref: { projectRef: string; serviceId: string; branchRef?: string } }>; matchedBranch?: { branchId: string; projectId: string; branchName: string; status: string } | null }
 export interface RelationPayload { branchId: string; projectId: string; branch: string; status?: string; graph: ServiceGraphView; lint: { findings: LintFindingView[]; summary: { errors: number; warnings: number; infos: number } }; references: ReferenceView[] }
 
-const CARD_W = 200, CARD_H = 52, GAP_X = 28, GAP_Y = 64, SITE_PAD = 14, SITE_LABEL = 22, SITE_GAP = 36;
+export { layoutRelations, edgePath, edgeTooltip, frameLabels } from './relationLayout';
+export type { RelationLayout, LayoutEdge } from './relationLayout';
+
 const ROLE_LABEL: Record<RoleView, string> = { web: 'WEB', api: 'API', worker: 'JOB' };
 // 颜色只许走主题 token（cds-theme-tokens）：这里存 token 名，用到时包 hsl(var(...))，双主题各自成立
-const ROLE_TOKEN: Record<RoleView, string> = { web: '--role-web', api: '--role-api', worker: '--role-worker' };
+const ROLE_TOKEN: Record<RoleView, string> = { web: '--badge-web', api: '--badge-api', worker: '--badge-job' };
 const tone = (token: string, alpha?: number): string => (alpha === undefined ? `hsl(var(${token}))` : `hsl(var(${token}) / ${alpha})`);
-
-interface Pos { x: number; y: number; w: number; h: number }
-interface Frame { key: string; label: string; sub: string; x: number; y: number; w: number; h: number; tone: 'site' | 'external' | 'infra' }
-
-export interface RelationLayout {
-  width: number; height: number;
-  pos: Map<string, Pos>;
-  frames: Frame[];
-  entry: Pos;
-  /** inferred：这条关系是按名约定推断出来的（compose 里没声明），画虚线；其余一律实线 */
-  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string; inferred?: boolean }>;
-  externals: Array<{ id: string; label: string; sub: string; status: string; pos: Pos; broken: boolean }>;
-  /** 同一个服务同时是主域名壳和子域壳（double-public-surface）时，后一个站点里用别名节点，这里映射回真实 id */
-  aliasOf: Map<string, string>;
-}
-
 const svc = (id: string): string => id.replace(/^service:/, '');
-
-export function layoutRelations(payload: RelationPayload, minWidth = 900): RelationLayout {
-  const { graph, references } = payload;
-  const nodeById = new Map(graph.nodes.filter((n) => n.kind === 'service').map((n) => [n.rawId ?? svc(n.id), n]));
-  const ids = Array.from(nodeById.keys());
-  const placed = new Set<string>();
-  const aliasOf = new Map<string, string>();
-  const real = (id: string): string => aliasOf.get(id) ?? id;
-  // 一个服务既有主域名路由又有子域（后端会报 double-public-surface）时，两个站点都要画它：
-  // 第一次出现用真实 id，之后的站点用 `id@站点` 别名，别名映射回真实节点（Codex 八轮 P2）
-  const claim = (id: string, siteId: string): string => {
-    if (!placed.has(id)) { placed.add(id); return id; }
-    const alias = `${id}@${siteId}`;
-    aliasOf.set(alias, id);
-    return alias;
-  };
-  const callers = (id: string): string[] => graph.edges.filter((e) => e.from.startsWith('service:') && svc(e.to) === id).map((e) => svc(e.from));
-
-  // 站点块：壳 / 前缀成员 / 内网服务（只被本站服务调用的）
-  const blocks = graph.sites.map((site) => {
-    const shell = site.shellId && nodeById.has(site.shellId) ? claim(site.shellId, site.id) : undefined;
-    const members = site.members.filter((m) => nodeById.has(m.id)).map((m) => claim(m.id, site.id));
-    return { site, shell, members, attached: [] as string[] };
-  }).filter((b) => b.shell || b.members.length > 0);
-  for (const id of graph.internal) {
-    if (!nodeById.has(id) || placed.has(id)) continue;
-    const cs = callers(id);
-    if (cs.length === 0) continue;
-    const owner = blocks.find((b) => cs.every((c) => (b.shell && c === real(b.shell)) || b.members.some((m) => real(m) === c)));
-    if (!owner) continue;
-    owner.attached.push(id); placed.add(id);
-  }
-  const rest = ids.filter((id) => !placed.has(id));
-
-  const rowW = (n: number): number => (n <= 0 ? 0 : n * CARD_W + (n - 1) * GAP_X);
-  const blockW = (b: (typeof blocks)[number]): number => Math.max(b.shell ? CARD_W : 0, rowW(b.members.length), rowW(b.attached.length));
-  const sitesW = blocks.reduce((s, b) => s + blockW(b) + SITE_PAD * 2, 0) + Math.max(0, blocks.length - 1) * SITE_GAP;
-
-  // 外部项目框：跨项目引用（引用变量或手写网址指向别的项目分支）
-  const externals: RelationLayout['externals'] = [];
-  const extEdges: Array<{ from: string; ext: string; broken: boolean; label: string }> = [];
-  for (const r of references) {
-    if (r.kind === 'cds-ref') {
-      for (const x of r.resolved ?? []) {
-        if (!x.target.projectId || x.target.projectId === payload.projectId) continue;
-        const id = `ext:${x.target.projectId}:${x.target.branchId ?? x.target.branchName ?? ''}:${x.ref.serviceId}`;
-        const broken = x.status !== 'running';
-        if (!externals.some((e) => e.id === id)) externals.push({ id, label: `${x.ref.serviceId} · ${x.target.branchName ?? '?'}`, sub: `${x.target.projectSlug ?? x.ref.projectRef} · 引用自 ${r.profileId} ${r.key}`, status: x.status, pos: { x: 0, y: 0, w: CARD_W + 60, h: CARD_H }, broken });
-        extEdges.push({ from: r.profileId, ext: id, broken, label: r.key });
-      }
-    } else if (r.kind === 'url' && r.matchedBranch && r.matchedBranch.projectId !== payload.projectId) {
-      const id = `ext:${r.matchedBranch.projectId}:${r.matchedBranch.branchId}:url`;
-      const broken = r.matchedBranch.status !== 'running';
-      if (!externals.some((e) => e.id === id)) externals.push({ id, label: `分支 ${r.matchedBranch.branchName}`, sub: `手写网址 · ${r.profileId} ${r.key}`, status: r.matchedBranch.status, pos: { x: 0, y: 0, w: CARD_W + 60, h: CARD_H }, broken });
-      extEdges.push({ from: r.profileId, ext: id, broken, label: r.key });
-    }
-  }
-  const extW = externals.length > 0 ? CARD_W + 60 + SITE_PAD * 2 : 0;
-  const width = Math.max(minWidth, sitesW + (extW ? extW + SITE_GAP : 0) + 40);
-
-  const pos = new Map<string, Pos>();
-  const frames: Frame[] = [];
-  const entry: Pos = { x: (width - 180) / 2, y: 16, w: 180, h: 64 };
-  let y = entry.y + entry.h + 56;
-  const shellY = y + SITE_LABEL;
-  const memberY = shellY + CARD_H + GAP_Y;
-  let x = Math.max(12, (width - sitesW - (extW ? extW + SITE_GAP : 0)) / 2);
-  let bottom = shellY + CARD_H;
-  for (const b of blocks) {
-    const bw = blockW(b);
-    const inner = x + SITE_PAD;
-    if (b.shell) pos.set(b.shell, { x: inner + (bw - CARD_W) / 2, y: shellY, w: CARD_W, h: CARD_H });
-    const place = (list: string[], ry: number): void => {
-      const start = inner + (bw - rowW(list.length)) / 2;
-      list.forEach((id, i) => pos.set(id, { x: start + i * (CARD_W + GAP_X), y: ry, w: CARD_W, h: CARD_H }));
-    };
-    place(b.members, memberY);
-    const attachedY = b.members.length > 0 ? memberY + CARD_H + GAP_Y : shellY + CARD_H + GAP_Y;
-    if (b.attached.length === 1 && b.members.length <= 1) {
-      const cp = pos.get(callers(b.attached[0])[0] ?? '') ?? pos.get(b.shell ?? '');
-      pos.set(b.attached[0], { x: cp ? cp.x : inner, y: attachedY, w: CARD_W, h: CARD_H });
-    } else place(b.attached, attachedY);
-    const last = b.attached.length > 0 ? attachedY + CARD_H : b.members.length > 0 ? memberY + CARD_H : shellY + CARD_H;
-    // 框角写用户语言，不写实现术语（「壳在上 · 前缀成员在下」「forwarder」这类字读的人接不上）
-    frames.push({ key: b.site.id, label: b.site.kind === 'main' ? '同一个域名' : `子域 ${b.site.subdomain}`, sub: b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '壳是按名兜底出来的，其余按前缀分流' : '壳承接根路径，其余按前缀分流') : '整站归这一个服务', x, y, w: bw + SITE_PAD * 2, h: last + SITE_PAD - y, tone: 'site' });
-    bottom = Math.max(bottom, last + SITE_PAD);
-    x += bw + SITE_PAD * 2 + SITE_GAP;
-  }
-  // 入口对齐到第一个站点（通常是主域名）正上方，而不是整图居中：宽图在半屏里居中会把入口推到看不见的右侧
-  if (frames.length > 0) entry.x = Math.max(12, frames[0].x + frames[0].w / 2 - entry.w / 2);
-  if (externals.length > 0) {
-    const ex = x, ey = y;
-    externals.forEach((e, i) => { e.pos = { x: ex + SITE_PAD, y: ey + SITE_LABEL + i * (CARD_H + 16), w: CARD_W + 60, h: CARD_H }; });
-    const eh = SITE_LABEL + externals.length * (CARD_H + 16) - 16 + SITE_PAD;
-    frames.push({ key: 'external', label: '外部项目', sub: '跨项目引用，走公网入口', x: ex, y: ey, w: extW, h: eh, tone: 'external' });
-    bottom = Math.max(bottom, ey + eh);
-  }
-  y = bottom + GAP_Y;
-  // 剩余（游离或多方调用的内网）服务：一排居中
-  if (rest.length > 0) {
-    const start = Math.max(12, (width - rowW(rest.length)) / 2);
-    rest.forEach((id, i) => pos.set(id, { x: start + i * (CARD_W + GAP_X), y, w: CARD_W, h: CARD_H }));
-    y += CARD_H + GAP_Y;
-  }
-  // 共享基础设施
-  const infra = graph.nodes.filter((n) => n.kind === 'infra');
-  if (infra.length > 0) {
-    const iw = rowW(infra.length) + SITE_PAD * 2;
-    const ix = Math.max(12, (width - iw) / 2);
-    infra.forEach((n, i) => pos.set(n.id, { x: ix + SITE_PAD + i * (CARD_W + GAP_X), y: y + SITE_LABEL, w: CARD_W, h: CARD_H }));
-    frames.push({ key: 'infra', label: '共享基础设施 · 同项目所有分支共用同一实例', sub: '', x: ix, y, w: iw, h: SITE_LABEL + CARD_H + SITE_PAD, tone: 'infra' });
-    y += SITE_LABEL + CARD_H + SITE_PAD + 24;
-  }
-
-  const edges: RelationLayout['edges'] = [];
-  for (const b of blocks) {
-    const head = b.shell ?? b.members[0];
-    const hp = head ? pos.get(head) : undefined;
-    if (hp) edges.push({ from: entry, to: hp, kind: 'entry', key: `entry-${b.site.id}`, inferred: b.site.kind === 'main' && b.site.shellSource === 'convention' });
-    if (b.shell) {
-      const sp = pos.get(b.shell)!;
-      for (const m of b.members) {
-        const mp = pos.get(m); if (!mp) continue;
-        const info = b.site.members.find((x) => x.id === real(m));
-        edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名推断' : ''), key: `prefix-${m}`, inferred: Boolean(info?.viaConvention) });
-      }
-    }
-  }
-  for (const e of graph.edges) {
-    const a = pos.get(svc(e.from)); const to = e.to.startsWith('infra:') ? pos.get(e.to) : pos.get(svc(e.to));
-    if (!a || !to) continue;
-    edges.push({ from: a, to, kind: e.to.startsWith('infra:') ? 'infra' : 'call', label: e.to.startsWith('infra:') ? undefined : (e.declared ? '声明' : e.envKeys[0] ?? 'depends_on'), key: `call-${e.from}-${e.to}` });
-  }
-  for (const x of extEdges) {
-    const a = pos.get(x.from); const e = externals.find((z) => z.id === x.ext);
-    if (!a || !e) continue;
-    edges.push({ from: a, to: e.pos, kind: x.broken ? 'broken' : 'ref', label: x.label, key: `ref-${x.from}-${x.ext}-${x.label}` });
-  }
-  return { width, height: Math.max(y, 320), pos, frames, entry, edges, externals, aliasOf };
-}
-
-function edgePath(a: Pos, b: Pos): string {
-  const ax = a.x + a.w / 2, ay = a.y + a.h, bx = b.x + b.w / 2, by = b.y;
-  if (by >= ay) { const my = (ay + by) / 2; return `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`; }
-  // 目标在旁边或上方：从右侧出、左侧进
-  const sx = a.x + a.w, sy = a.y + a.h / 2, tx = b.x, ty = b.y + b.h / 2, mx = (sx + tx) / 2;
-  return `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`;
-}
 
 // 线型有语义：声明的关系一律实线，只有「按名推断」才画虚线（`inferred`）。
 // 此前六种线全是虚线，整张图读起来像草稿——那正是「第一眼不专业」的来源之一。
-const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: string; width: number; marker?: boolean }> = {
+const EDGE_STYLE: Record<EdgeKind, { stroke: string; width: number; marker?: boolean }> = {
   entry: { stroke: 'hsl(var(--hairline-strong))', width: 1.5, marker: true },
   prefix: { stroke: 'hsl(var(--hairline-strong))', width: 1.5, marker: true },
   call: { stroke: 'hsl(var(--graph-call))', width: 1.6, marker: true },
@@ -200,11 +39,34 @@ const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: stri
 };
 const INFERRED_DASH = '3 4';
 
-export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost }: { payload: RelationPayload; compact?: boolean; highlight?: string | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
-  const layout = layoutRelations(payload, compact ? 720 : 960);
+const CHIP_SHADOW = '0 1px 2px hsl(0 0% 0% / .18)';
+/** 卡片外框：与设计稿同一副——圆角 12、1.5px 发丝边，出问题时描成语义色 */
+const chipBox = (p: Pos, ring?: string): CSSProperties => ({ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, boxSizing: 'border-box', borderRadius: 12, border: `1.5px solid ${ring ?? 'hsl(var(--hairline))'}`, boxShadow: CHIP_SHADOW, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px 0 10px', transition: 'opacity 150ms, box-shadow 150ms' });
+
+/** 卡片内容：徽标 / 名称（+ 旁注）/ 第二行（前缀用等宽）/ 问题数。入口、服务、外部引用共用这一份。 */
+function NodeBody({ compact, badge, badgeBg, badgeInferred, badgeTitle, name, nameTitle, note, sub, mono, pill }: { compact: boolean; badge: string; badgeBg: string; badgeInferred?: boolean; badgeTitle?: string; name: string; nameTitle?: string; note?: string; sub: string; mono?: boolean; pill?: { text: string; tone: 'warn' | 'bad' | 'ok'; title?: string } }): JSX.Element {
+  const size = compact ? 22 : 26;
+  const pillCls = pill?.tone === 'bad' ? 'border-destructive/60 text-bad' : pill?.tone === 'ok' ? 'border-ok/50 bg-ok-soft text-[hsl(var(--ok-ink))]' : 'border-warn/60 bg-warn-soft text-[hsl(var(--warn-ink))]';
+  return (
+    <>
+      <span className={`inline-flex shrink-0 items-center justify-center font-extrabold tracking-wide ${badgeInferred ? 'border border-dashed' : ''}`} style={{ width: size, height: size, borderRadius: compact ? 6 : 7, fontSize: compact ? 8 : 9, background: badgeBg, color: 'hsl(var(--badge-ink))', borderColor: badgeInferred ? 'hsl(var(--badge-ink) / .6)' : undefined }} title={badgeTitle}>{badge}</span>
+      <span className="flex min-w-0 flex-1 flex-col" style={{ gap: compact ? 2 : 3 }}>
+        {/* 名字独占第一行：旁注（「同一服务」）与问题数都放到第二行，宽屏下名字不被截（relation-visual-audit S5） */}
+        <span className="truncate font-semibold leading-tight text-foreground" style={{ fontSize: compact ? 13 : 14 }} title={nameTitle ?? name} data-node-name>{name}</span>
+        {/* 问题数放在第二行右侧：和名字挤在第一行时，宽屏下名字也会被截（2026-10-03 relation-visual-audit S5） */}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className={`min-w-0 flex-1 truncate leading-tight text-muted-foreground ${mono ? 'font-mono' : ''}`} style={{ fontSize: mono ? (compact ? 10.5 : 11) : (compact ? 11 : 11.5) }} title={note ? `${note} · ${sub}` : sub}>{note ? <span className="font-sans">{note} · </span> : null}{sub}</span>
+          {pill ? <span className={`inline-flex shrink-0 items-center rounded-full border font-semibold ${pillCls}`} style={{ height: 16, padding: '0 5px', fontSize: 10 }} title={pill.title}>{pill.text}</span> : null}
+        </span>
+      </span>
+    </>
+  );
+}
+
+export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost, hideLegend = false }: { payload: RelationPayload; compact?: boolean; /** 图例由外层底栏承担时关掉浮层图例 */ hideLegend?: boolean; /** 悬停问题卡时点亮的服务（一条问题可能涉及多个服务） */ highlight?: string | string[] | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
   const nodeById = new Map(payload.graph.nodes.map((n) => [n.kind === 'service' ? (n.rawId ?? svc(n.id)) : n.id, n]));
   const findingsOf = (id: string) => payload.lint.findings.filter((f) => f.services.includes(id) && f.severity !== 'info');
-  // 按容器宽度整体缩放（半屏抽屉、缩略卡、窄屏全屏都能整图入镜，不靠横向滚动找入口）
+  // 按容器宽度排版：宽度量到之后重新排，卡片按列折行、字号 1:1；只有窄于最小画布宽时才整体缩小
   const hostRef = useRef<HTMLDivElement>(null);
   const [hostW, setHostW] = useState(0);
   useEffect(() => {
@@ -215,10 +77,14 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
     setHostW(el.clientWidth);
     return () => ro.disconnect();
   }, []);
+  const avail = hostW > 0 ? hostW - (compact ? 8 : 16) : (compact ? 720 : 960);
+  const layout = layoutRelations(payload, avail);
   // 非缩略模式最小缩到 0.6：再小就看不清字，改为横向滚动
-  const fit = hostW > 0 ? (hostW - (compact ? 8 : 16)) / layout.width : (compact ? 640 / layout.width : 1);
+  const fit = avail / layout.width;
   const scale = compact ? Math.min(1, fit) : Math.min(1, Math.max(0.6, fit));
-  const dim = (touch: boolean): number => (!highlight ? 1 : touch ? 1 : 0.28);
+  const lit = new Set(highlight == null ? [] : Array.isArray(highlight) ? highlight : [highlight]);
+  const dim = (touch: boolean): number => (lit.size === 0 ? 1 : touch ? 1 : 0.28);
+  const edgeTouches = (key: string): boolean => Array.from(lit).some((id) => key.includes(id));
   // 一个 service 都没有：一枚入口节点漂在整张空画布上，比什么都不画更难看（2026-09-16 用户截图）。
   // 这里直接给空态，画布、图例都不出。
   if (payload.graph.nodes.every((n) => n.kind !== 'service')) {
@@ -238,36 +104,35 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             <marker id="rgArrRef" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--info))" /></marker>
             <marker id="rgArrBad" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--bad))" /></marker>
           </defs>
-          {layout.frames.map((f) => (
-            <g key={f.key}>
-              <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.35}
-                stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1.2" />
-              <text x={f.x + 12} y={f.y + 15} fontSize="10" fontWeight="700" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--muted-foreground))'}>{f.key === 'main' && entryHost ? `${f.label} · ${entryHost}` : f.label}</text>
-              <text x={f.x + f.w - 12} y={f.y + 15} fontSize="9" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{f.sub}</text>
-            </g>
-          ))}
-          {layout.edges.map((e, idx) => {
-            const st = EDGE_STYLE[e.kind];
-            const t = 0.42 + (idx % 3) * 0.16;
-            const lx = e.from.x + e.from.w / 2 + (e.to.x + e.to.w / 2 - e.from.x - e.from.w / 2) * t;
-            const ly = e.from.y + e.from.h + (e.to.y - e.from.y - e.from.h) * t + 3;
-            const label = e.label && e.label.length > 26 ? `${e.label.slice(0, 25)}…` : e.label;
+          {layout.frames.map((f) => {
+            // 标题与说明的文案、截断与占位和判据 G7 用的是同一个函数，量的就是画出来的这一份
+            const lb = frameLabels(f, entryHost, layout.compact);
             return (
-              <g key={e.key} opacity={dim(!highlight || e.key.includes(highlight))}>
-                <path d={edgePath(e.from, e.to)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
-                {label ? (
-                  <>
-                    <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
-                    <text x={lx} y={ly} textAnchor="middle" fontSize="9" fill={e.kind === 'broken' ? 'hsl(var(--bad))' : e.inferred ? 'hsl(var(--warn))' : 'hsl(var(--muted-foreground))'} className="font-mono">{label}</text>
-                  </>
-                ) : null}
+              <g key={f.key} data-frame={f.key}>
+                <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.4}
+                  stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1" />
+                <text x={lb.titleRect.x} y={lb.ty} fontSize={layout.compact ? 11.5 : 12} fontWeight="650" fill="hsl(var(--foreground-muted))" data-frame-title={f.key}>{lb.title}</text>
+                {lb.sub && lb.subRect ? <text x={lb.subRect.x + lb.subRect.w} y={lb.ty} fontSize={layout.compact ? 11 : 11.5} textAnchor="end" fill="hsl(var(--muted-foreground))" data-frame-sub={f.key}>{lb.sub}</text> : null}
+              </g>
+            );
+          })}
+          {layout.edges.map((e) => {
+            const st = EDGE_STYLE[e.kind];
+            // 线上不挂字：字会压住卡片和别的线（判据 G6 / G7 管不到字），环境变量名放到悬停提示里
+            const tip = edgeTooltip(e);
+            return (
+              <g key={e.key} opacity={dim(lit.size === 0 || edgeTouches(e.key))} data-edge={e.key} data-edge-kind={e.kind}>
+                {tip ? <title>{tip}</title> : null}
+                {/* 外层 svg 是 pointerEvents:none（不挡卡片），提示要靠这条透明的宽命中线才悬停得到；
+                    线本身只有 1.5px，直接拿它当命中区几乎点不中（Codex P2，PR #1654） */}
+                {tip ? <path d={edgePath(e)} fill="none" stroke="transparent" strokeWidth={10} style={{ pointerEvents: 'stroke', cursor: 'help' }} data-edge-hit="" /> : null}
+                <path d={edgePath(e)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} strokeLinejoin="round" opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
               </g>
             );
           })}
         </svg>
-        <div className="cds-surface-raised cds-hairline" style={{ position: 'absolute', left: layout.entry.x, top: layout.entry.y, width: layout.entry.w, height: layout.entry.h, borderRadius: 12, padding: '8px 10px', fontSize: 12 }}>
-          <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-call') }}>GW</span>入口</div>
-          <div className={`mt-1 truncate text-[10px] text-muted-foreground ${entryHost ? 'font-mono' : ''}`} title={entryHost ?? payload.branch}>{entryHost ?? `分支 ${payload.branch}`}</div>
+        <div className="bg-background" data-node="entry" style={{ ...chipBox(layout.entry), opacity: dim(lit.size === 0) }}>
+          <NodeBody compact={layout.compact} badge="GW" badgeBg={tone('--badge-gw')} name="入口" sub={entryHost ?? `分支 ${payload.branch}`} mono={Boolean(entryHost)} />
         </div>
         {Array.from(layout.pos.entries()).map(([id, p]) => {
           const realId = layout.aliasOf.get(id) ?? id;
@@ -276,47 +141,44 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           const isInfra = n.kind === 'infra';
           const role = n.role ?? 'api';
           const bad = findingsOf(realId);
+          const isErr = bad.some((f) => f.severity === 'error');
+          const glow = lit.has(realId);
           // 基础设施徽标不占语义色：redis 不用 --bad（红色只在「坏了」时出现）、mongo 不用 --ok
-          const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--series-5' : '--series-2') : ROLE_TOKEN[role];
-          const color = tone(token);
+          const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--badge-r' : '--badge-db') : ROLE_TOKEN[role];
+          const override = layout.subOf.get(id);
+          const prefixes = (n.pathPrefixes ?? []).join(' · ');
+          const sub = isInfra ? '共享实例 · 所有分支共用' : override ?? (prefixes || (n.subdomain ? `子域 ${n.subdomain}` : '内网 · 不对外'));
           return (
             <div key={id} className="bg-background" data-node={id} data-role={isInfra ? 'infra' : role}
-              style={{ position: 'absolute', left: p.x, top: p.y, width: p.w, height: p.h, borderRadius: 12, border: `1.5px solid ${bad.some((f) => f.severity === 'error') ? 'hsl(var(--bad) / .7)' : bad.length ? 'hsl(var(--warn) / .7)' : tone(token, 0.35)}`, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)', fontSize: 12, opacity: dim(!highlight || realId === highlight) }}>
-              <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                <span className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground ${!isInfra && n.roleSource && n.roleSource !== 'declared' ? 'border border-dashed border-primary-foreground/70' : ''}`} style={{ background: color }} title={n.roleReason}>
-                  {isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]}
-                </span>
-                <span className="min-w-0 flex-1 truncate" title={realId}>{n.name || realId}{id !== realId ? <span className="ml-1 text-[9px] font-normal text-muted-foreground">同一服务</span> : null}</span>
-                {bad.length > 0 ? <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
-              </div>
-              <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground">
-                {isInfra ? '共享实例 · 所有分支共用' : n.subdomain ? `子域 ${n.subdomain}` : (n.pathPrefixes ?? []).join(' ') || '内网 · 不对外'}
-              </div>
+              style={{ ...chipBox(p, bad.length ? (isErr ? 'hsl(var(--bad) / .75)' : 'hsl(var(--warn) / .78)') : undefined), boxShadow: glow ? `0 0 0 4px ${isErr ? 'hsl(var(--bad) / .28)' : 'hsl(var(--warn) / .28)'}` : CHIP_SHADOW, opacity: dim(lit.size === 0 || glow) }}>
+              <NodeBody compact={layout.compact} badge={isInfra ? (/redis/i.test(n.dockerImage || n.id) ? 'R' : 'DB') : ROLE_LABEL[role]} badgeBg={tone(token)} badgeInferred={!isInfra && Boolean(n.roleSource) && n.roleSource !== 'declared'} badgeTitle={n.roleReason}
+                name={n.name || realId} nameTitle={realId} note={id !== realId ? '同一服务' : undefined} sub={sub} mono={!isInfra && !override && Boolean(prefixes)}
+                pill={bad.length > 0 ? { text: layout.compact ? String(bad.length) : `${bad.length} 问题`, tone: isErr ? 'bad' : 'warn', title: bad.map((f) => f.message).join('\n') } : undefined} />
             </div>
           );
         })}
         {layout.externals.map((e) => (
-          <div key={e.id} className="bg-background" data-node={e.id} style={{ position: 'absolute', left: e.pos.x, top: e.pos.y, width: e.pos.w, height: e.pos.h, borderRadius: 12, border: `1.5px solid ${e.broken ? 'hsl(var(--bad) / .7)' : 'hsl(var(--info) / .5)'}`, fontSize: 12, boxShadow: '0 4px 12px hsl(0 0% 0% / .25)' }}>
-            <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-              <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-external') }}>EXT</span>
-              <span className="min-w-0 flex-1 truncate">{e.label}</span>
-              <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${e.broken ? 'border-destructive/60 text-destructive' : 'border-ok/50 bg-ok-soft text-ok'}`}>{e.broken ? (e.status === 'running' ? '可达' : e.status === 'stopped' ? '已停止' : '断裂') : '可达'}</span>
-            </div>
-            <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground" title={e.sub}>{e.sub}</div>
+          <div key={e.id} className="bg-background" data-node={e.id} style={{ ...chipBox(e.pos, e.broken ? 'hsl(var(--bad) / .75)' : 'hsl(var(--info) / .55)'), opacity: dim(lit.size === 0) }}>
+            <NodeBody compact={layout.compact} badge="EXT" badgeBg={tone('--badge-ext')} name={e.label} sub={e.sub}
+              pill={{ text: e.broken ? (e.status === 'stopped' ? '已停止' : '断裂') : '可达', tone: e.broken ? 'bad' : 'ok' }} />
           </div>
         ))}
       </div>
-      {!compact ? (
-        /* 图例：每一项自己不换行（窄抽屉里「声明的关系」曾被折成两行三个字一坨），整行按项折行 */
-        <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-4 gap-y-1 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground" data-testid="relation-legend">
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
-          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
-        </div>
-      ) : null}
+      {!compact && !hideLegend ? <RelationLegend className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex max-w-[calc(100%-1rem)] rounded-md px-3 py-1.5" /> : null}
+    </div>
+  );
+}
+
+/** 图例：展开视图与全屏页放在底栏（设计稿 02），独立使用 RelationGraph 时浮在图左下。每一项自己不换行，整行按项折行 */
+export function RelationLegend({ className }: { className?: string }): JSX.Element {
+  return (
+    <div className={`flex-wrap items-center gap-x-5 gap-y-1 text-[0.75rem] text-muted-foreground ${className ?? 'flex'}`} data-testid="relation-legend">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
     </div>
   );
 }

@@ -145,7 +145,7 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
-  '/api/auth/status': { authenticated: true, user: { name: '布局冒烟' } },
+  '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
   '/api/projects': { projects: [project] },
@@ -188,7 +188,8 @@ const EXACT = {
   },
   '/api/mirror': { configured: false },
   '/api/tab-title': { title: 'CDS' },
-  '/api/auth/public-status': { authenticated: true, mode: 'password' },
+  '/api/auth/public-status': { enabled: true, mode: 'basic',
+    capabilities: { userManagement: true, userActivity: true, durableUsers: false } },
   /*
    * 发布中心那一页的内容锚点来源。
    *
@@ -275,6 +276,9 @@ const PREFIX = [
   })],
   [/^\/api\/projects\/[^/]+\/preview-mode$/, () => ({ mode: 'auto' })],
   [/^\/api\/projects\/[^/]+\/agent-keys$/, () => ({ keys: [] })],
+  // 分支自定义分组（PR #1647）。形状对齐 GET /projects/:id/branch-groups：未分组时就是这个空壳。
+  // 2026-10-03 由 relation-visual-audit 的「未登记路径」判据报出来——此前分支列表拿 {} 走了空态。
+  [/^\/api\/projects\/[^/]+\/branch-groups$/, () => ({ ok: true, groups: [], updatedAt: null, updatedBy: null, readOnly: false })],
   [/^\/api\/projects\/[^/]+\/env$/, () => ({ env: {}, entries: [] })],
   [/^\/api\/projects\/[^/]+\/profiles$/, () => ({ profiles: [] })],
   [/^\/api\/profiles$/, () => ({ profiles: [] })],

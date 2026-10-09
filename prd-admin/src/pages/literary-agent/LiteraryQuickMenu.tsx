@@ -26,6 +26,7 @@ const CSS = `
 .lqm-trigger[data-state="open"] { border-color: var(--accent-primary); background: var(--bg-input-hover); }
 .lqm-trigger:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
 .lqm-trigger[data-set="true"] { color: var(--text-primary); }
+.lqm-trigger[data-warning="true"] { border-color: var(--accent-fg-amber); color: var(--accent-fg-amber); }
 .lqm-trigger-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .lqm-trigger--pill { height: 24px; padding: 0 6px 0 8px; border-radius: 999px; font-size: 11px; border-color: transparent; }
 
@@ -66,11 +67,13 @@ type PopupButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   isSet?: boolean;
   /** 头部模型选择那种更小的胶囊形态 */
   pill?: boolean;
+  /** 当前值不是用户以为的那套（如记住的设定已失效、正按回退值出图）：描边与文字转为警示色 */
+  warning?: boolean;
 };
 
 /** 弹出按钮：图标 + 当前值 + 上下箭头。作为 DropdownMenu.Trigger 的 asChild 目标，必须转发 ref。 */
 export const PopupButton = React.forwardRef<HTMLButtonElement, PopupButtonProps>(function PopupButton(
-  { icon, value, isSet, pill, className, ...rest },
+  { icon, value, isSet, pill, warning, className, ...rest },
   ref,
 ) {
   React.useLayoutEffect(ensureStyles, []);
@@ -79,6 +82,7 @@ export const PopupButton = React.forwardRef<HTMLButtonElement, PopupButtonProps>
       ref={ref}
       type="button"
       data-set={isSet ? 'true' : 'false'}
+      data-warning={warning ? 'true' : undefined}
       className={`lqm-trigger${pill ? ' lqm-trigger--pill' : ''}${className ? ` ${className}` : ''}`}
       {...rest}
     >

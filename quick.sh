@@ -2,7 +2,7 @@
 
 # PRD Agent 快速启动器
 # 用法:
-#   ./quick.sh          - 启动后端服务
+#   ./quick.sh          - 启动后端服务（MAP API + 本地 LLM 网关 serving）
 #   ./quick.sh admin    - 启动Web管理后台
 #   ./quick.sh desktop  - 启动桌面客户端
 #   ./quick.sh all      - 同时启动后端 + Web管理后台 + 桌面端（统一输出到同一控制台）
@@ -42,9 +42,11 @@ log_error() {
 
 # all 模式运行时 PID（wrapper pid；停止时会递归停止其子进程）
 ALL_API_PID=""
+ALL_LLMGW_PID=""
 ALL_ADMIN_PID=""
 ALL_DESKTOP_PID=""
 ALL_STOPPING=0
+ALL_EXIT_CODE=0
 
 prefix_lines() {
     local prefix="$1"
@@ -123,7 +125,7 @@ stop_all_services() {
     # 1) 尽量优雅：SIGINT（并行发送）
     local stop_jobs=""
     local pid
-    for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+    for pid in "$ALL_API_PID" "$ALL_LLMGW_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill_tree "$pid" INT &
             stop_jobs="$stop_jobs $!"
@@ -133,11 +135,11 @@ stop_all_services() {
         wait "$pid" 2>/dev/null
     done
 
-    if ! wait_pids_exit 8 "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; then
+    if ! wait_pids_exit 8 "$ALL_API_PID" "$ALL_LLMGW_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; then
         # 2) 超时升级：SIGTERM（并行发送）
         log_warn "Graceful stop timed out, sending SIGTERM..."
         stop_jobs=""
-        for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+        for pid in "$ALL_API_PID" "$ALL_LLMGW_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
             if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
                 kill_tree "$pid" TERM &
                 stop_jobs="$stop_jobs $!"
@@ -148,11 +150,11 @@ stop_all_services() {
         done
     fi
 
-    if ! wait_pids_exit 5 "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; then
+    if ! wait_pids_exit 5 "$ALL_API_PID" "$ALL_LLMGW_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; then
         # 3) 继续超时：SIGKILL（并行发送）
         log_warn "Force stop timed out, sending SIGKILL..."
         stop_jobs=""
-        for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+        for pid in "$ALL_API_PID" "$ALL_LLMGW_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
             if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
                 kill_tree "$pid" KILL &
                 stop_jobs="$stop_jobs $!"
@@ -164,18 +166,145 @@ stop_all_services() {
     fi
 
     # 回收 wrapper
-    for pid in "$ALL_API_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
+    for pid in "$ALL_API_PID" "$ALL_LLMGW_PID" "$ALL_ADMIN_PID" "$ALL_DESKTOP_PID"; do
         if [ -n "$pid" ]; then
             wait "$pid" 2>/dev/null
         fi
     done
 
     log_success "All services stopped!"
-    exit 0
+    exit "${ALL_EXIT_CODE:-0}"
+}
+
+# MAP 的模型调用只走独立网关 serving，本地起后端必须连同 serving 一起起。
+# 已显式导出的值优先；否则 serving 监听 localhost:5091（与 docker-compose.dev.yml 的宿主端口一致），
+# 两边共用仓库 dev key，serving 沿用 API 的 dev Jwt:Secret 以解开本地库里的平台密钥密文。
+LLMGW_LOCAL_URL="${LLMGW_LOCAL_URL:-http://localhost:5091}"
+export LlmGateway__ServeBaseUrl="${LlmGateway__ServeBaseUrl:-$LLMGW_LOCAL_URL}"
+export LlmGwServe__ApiKey="${LlmGwServe__ApiKey:-dev-llmgw-serve-key}"
+
+start_llmgw_serving() {
+    cd "$SCRIPT_DIR/llmgw/serving" || { echo "cd failed: $SCRIPT_DIR/llmgw/serving"; exit 1; }
+    if [ -z "${Jwt__Secret:-}" ] && command -v python3 >/dev/null 2>&1; then
+        Jwt__Secret="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Jwt"]["Secret"])' \
+            "$SCRIPT_DIR/prd-api/src/PrdAgent.Api/appsettings.Development.json" 2>/dev/null || true)"
+        [ -n "$Jwt__Secret" ] && export Jwt__Secret
+    fi
+    ASPNETCORE_ENVIRONMENT="${ASPNETCORE_ENVIRONMENT:-Development}" \
+    ASPNETCORE_URLS="$LLMGW_LOCAL_URL" \
+        dotnet run --no-launch-profile
+}
+
+# 本地探测 HTTP：优先 curl，没有就用 python3；两者都没有就判失败，不能把「没法检查」当成「已就绪」。
+# 用法：llmgw_http_probe <url> [超时秒] [x-gateway-key]；返回 0 表示 HTTP 2xx，加 --print 时打印响应体。
+llmgw_http_probe() {
+    local print_body=0
+    if [ "${1:-}" = "--print" ]; then print_body=1; shift; fi
+    local url="$1" timeout_s="${2:-5}" key="${3:-}"
+    if command -v curl >/dev/null 2>&1; then
+        local header_args=()
+        [ -n "$key" ] && header_args=(-H "X-Gateway-Key: $key")
+        if [ "$print_body" = 1 ]; then
+            curl -sS -m "$timeout_s" "${header_args[@]}" "$url" 2>&1 | head -c 1500
+            return 0
+        fi
+        curl -fsS -m "$timeout_s" "${header_args[@]}" "$url" >/dev/null 2>&1
+        return
+    fi
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$url" "$timeout_s" "$key" "$print_body" <<'PY'
+import sys, urllib.request, urllib.error
+url, timeout, key, show = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4] == "1"
+req = urllib.request.Request(url, headers={"X-Gateway-Key": key} if key else {})
+try:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if show: print(resp.read(1500).decode("utf-8", "replace"))
+        sys.exit(0)
+except urllib.error.HTTPError as e:
+    if show: print(e.read(1500).decode("utf-8", "replace"))
+    sys.exit(0 if show else 1)
+except Exception as e:
+    if show: print(e)
+    sys.exit(1)
+PY
+        return
+    fi
+    return 2
+}
+
+# 等本地网关 healthz 通过才算起来了；进程提前退出（编译失败、端口被占）或超时都判失败，
+# 否则 API 照常起来、所有模型调用却都失败，而启动器还在说「已启动」。
+wait_for_llmgw_ready() {
+    local pid="$1"
+    local timeout_s="${LLMGW_LOCAL_READY_TIMEOUT:-300}"
+    local start
+    start=$(date +%s)
+    if ! command -v curl >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+        log_error "需要 curl 或 python3 才能检查本地网关是否就绪（$LLMGW_LOCAL_URL/gw/v1/healthz），请先安装其一"
+        return 1
+    fi
+    log_info "Waiting for LLM gateway serving: $LLMGW_LOCAL_URL/gw/v1/healthz ..."
+    while true; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log_error "LLM gateway serving 启动失败：进程已退出（编译错误或端口被占用），见上方 [llmgw] 日志"
+            return 1
+        fi
+        if llmgw_http_probe "$LLMGW_LOCAL_URL/gw/v1/healthz" 3; then
+            wait_for_llmgw_dependencies
+            return 0
+        fi
+        if [ $(( $(date +%s) - start )) -ge "$timeout_s" ]; then
+            log_error "LLM gateway serving ${timeout_s}s 内未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz），见上方 [llmgw] 日志"
+            return 1
+        fi
+        sleep 2
+    done
+}
+
+# 进程活着之后再看依赖就绪（网关库、密钥解密、路由、场景能力）。全新的本地库还没配网关时
+# 这一步本来就过不了，而开发者正要先把应用跑起来去配置，所以不就绪不退出——但必须明说，
+# 并把 readyz 里没过的组件打出来，不能报成「已就绪」。
+LLMGW_LOCAL_READY_STATE="unknown"
+wait_for_llmgw_dependencies() {
+    local grace_s="${LLMGW_LOCAL_READY_GRACE:-60}"
+    local start
+    start=$(date +%s)
+    while true; do
+        if llmgw_http_probe "$LLMGW_LOCAL_URL/gw/v1/healthz/ready" 5; then
+            LLMGW_LOCAL_READY_STATE="ready"
+            log_success "LLM gateway serving ready at $LLMGW_LOCAL_URL"
+            return 0
+        fi
+        if [ $(( $(date +%s) - start )) -ge "$grace_s" ]; then
+            break
+        fi
+        sleep 2
+    done
+    LLMGW_LOCAL_READY_STATE="not-ready"
+    log_warn "LLM gateway serving 进程在线但依赖未就绪（$LLMGW_LOCAL_URL/gw/v1/healthz/ready 非 200），模型调用会失败。未通过的组件："
+    llmgw_http_probe --print "$LLMGW_LOCAL_URL/gw/v1/readyz" 10 "$LlmGwServe__ApiKey"
+    echo
+    log_warn "全新本地库通常是还没在网关控制台配置平台与模型；配好后无需重启，就绪探针会自动转绿。"
+}
+
+LLMGW_BACKEND_PID=""
+cleanup_backend_llmgw() {
+    if [ -n "$LLMGW_BACKEND_PID" ]; then
+        kill_tree "$LLMGW_BACKEND_PID" TERM 2>/dev/null
+        LLMGW_BACKEND_PID=""
+    fi
 }
 
 # 启动后端服务
 start_backend() {
+    log_info "Starting LLM gateway serving at $LLMGW_LOCAL_URL in background..."
+    ( start_llmgw_serving 2>&1 | prefix_lines "[llmgw] " ) &
+    LLMGW_BACKEND_PID=$!
+    # 退出时停掉网关，并保留 API 的真实退出码（不能用 exit 0 把失败吞掉）。
+    trap 'rc=$?; cleanup_backend_llmgw; exit $rc' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    wait_for_llmgw_ready "$LLMGW_BACKEND_PID" || exit 1
     log_info "Starting backend server..."
     cd "$SCRIPT_DIR/prd-api/src/PrdAgent.Api"
     dotnet run
@@ -431,10 +560,11 @@ start_all() {
 
     ALL_STOPPING=0
     ALL_API_PID=""
+    ALL_LLMGW_PID=""
     ALL_ADMIN_PID=""
     ALL_DESKTOP_PID=""
 
-    # 捕获退出信号：同时停止三个进程（并递归清理子进程）
+    # 捕获退出信号：同时停止全部进程（并递归清理子进程）
     trap stop_all_services INT TERM
 
     # 1) 并行启动后端（不等待启动完成）
@@ -444,6 +574,11 @@ start_all() {
         dotnet run
     ) 2>&1 | prefix_lines "[api] " ) &
     ALL_API_PID=$!
+
+    # 1.5) 并行启动本地 LLM 网关 serving（MAP 的模型调用只走它）
+    log_info "Starting LLM gateway serving at $LLMGW_LOCAL_URL in background..."
+    ( start_llmgw_serving 2>&1 | prefix_lines "[llmgw] " ) &
+    ALL_LLMGW_PID=$!
 
     # 2) 并行启动管理后台（不等待启动完成）
     log_info "Starting admin panel in background..."
@@ -476,14 +611,25 @@ start_all() {
     ) 2>&1 | prefix_lines "[desktop] " ) &
     ALL_DESKTOP_PID=$!
 
-    log_success "All services started!"
+    if ! wait_for_llmgw_ready "$ALL_LLMGW_PID"; then
+        ALL_EXIT_CODE=1
+        stop_all_services
+    fi
+
+    if [ "$LLMGW_LOCAL_READY_STATE" = "ready" ]; then
+        log_success "All services started!"
+    else
+        log_warn "All services started, but LLM gateway serving is NOT ready (model calls will fail until it is)."
+    fi
     log_info "API PID: $ALL_API_PID"
+    log_info "LLM gateway serving PID: $ALL_LLMGW_PID"
     log_info "Admin PID: $ALL_ADMIN_PID"
     log_info "Desktop PID: $ALL_DESKTOP_PID"
     log_info "Press Ctrl+C to stop all services"
 
     # 等待三个 wrapper 退出（任一退出不影响其它继续运行）
     wait "$ALL_API_PID" 2>/dev/null || true
+    wait "$ALL_LLMGW_PID" 2>/dev/null || true
     wait "$ALL_ADMIN_PID" 2>/dev/null || true
     wait "$ALL_DESKTOP_PID" 2>/dev/null || true
 }
@@ -495,10 +641,10 @@ show_help() {
     echo "Usage: ./quick.sh [command]"
     echo ""
     echo "Commands:"
-    echo "  (default)  Start backend server"
+    echo "  (default)  Start backend server (MAP API + local LLM gateway serving)"
     echo "  admin      Start admin panel (prd-admin)"
     echo "  desktop    Start desktop client (prd-desktop)"
-    echo "  all        Start backend + admin + desktop together (single console output)"
+    echo "  all        Start backend (API + LLM gateway serving) + admin + desktop together (single console output)"
     echo "  check      Run desktop CI-equivalent checks (same as ci.yml desktop-check; excludes desktop-release packaging/signing)"
     echo "  ci         Run local CI checks (server + admin + desktop)"
     echo "  version           Show recent 10 versions; pass a version to sync+tag+push"

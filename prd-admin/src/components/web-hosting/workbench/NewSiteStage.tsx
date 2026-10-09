@@ -36,6 +36,7 @@ import {
   OUTPUT_FORM_ORDER,
   OUTPUT_FORM_REGISTRY,
   buildHtmlPptHandoff,
+  missingRuntimeBlocker,
   openHtmlPptHandoff,
   sendRoute,
   type WorkbenchOutputForm,
@@ -113,6 +114,7 @@ export default function NewSiteStage({
   const uploads = useDesignAttachmentUploads('document', MAX_GENERATE_ATTACHMENTS);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
+  const [runtimesLoaded, setRuntimesLoaded] = useState(false);
   const [settingsDefaultRuntime, setSettingsDefaultRuntime] = useState<string | null>(null);
   const [selectedRuntime, setSelectedRuntime] = useState('open-design');
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
@@ -148,11 +150,21 @@ export default function NewSiteStage({
   useEffect(() => {
     resetRun();
     let active = true;
+    // 执行器能力单独结算：别的请求慢不该让「正在检测设计服务」一直挂着。
+    void getDesignRuntimeCapabilities().then((runtimes) => {
+      if (!active) return;
+      if (runtimes.success) {
+        setCapabilities(runtimes.data.runtimes);
+        setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
+        const runtimeId = chooseDesignRuntime(runtimes.data.runtimes, runtimes.data.defaultRuntime);
+        if (runtimeId) setSelectedRuntime(runtimeId);
+      }
+      setRuntimesLoaded(true);
+    });
     void Promise.all([
       listRecentDocumentEntries(16),
-      getDesignRuntimeCapabilities(),
       getDesignGenerationSettings(),
-    ]).then(([recent, runtimes, settings]) => {
+    ]).then(([recent, settings]) => {
       if (!active) return;
       const items = recent.success ? [...recent.data.items] : [];
       if (source && !items.some((item) => item.id === source.entryId)) {
@@ -169,12 +181,6 @@ export default function NewSiteStage({
         });
       }
       setRecentKnowledge(items);
-      if (runtimes.success) {
-        setCapabilities(runtimes.data.runtimes);
-        setSettingsDefaultRuntime(runtimes.data.defaultRuntime);
-        const runtimeId = chooseDesignRuntime(runtimes.data.runtimes, runtimes.data.defaultRuntime);
-        if (runtimeId) setSelectedRuntime(runtimeId);
-      }
       if (settings.success) {
         const enabled = settings.data.styles.filter((style) => style.enabled);
         setStyles(enabled);
@@ -331,7 +337,7 @@ export default function NewSiteStage({
   const sendBlocker = isPpt
     ? (pptHandoff.ok ? '' : pptHandoff.blocker)
     : !requestRuntime
-    ? '没有可用的设计执行器，请联系管理员检查部署状态'
+    ? missingRuntimeBlocker(runtimesLoaded)
     : uploads.busy
       ? '文件还在上传，传完就能生成'
       : !hasSources

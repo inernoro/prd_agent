@@ -726,8 +726,8 @@ public class ImageGenRunWorker : BackgroundService
                             ModelResolutionType: run.ModelResolutionType,
                             ModelGroupId: run.ModelGroupId,
                             ModelGroupName: run.ModelGroupName,
-                            ForceFullShadowSample: run.ForceFullShadowSample,
-                            LogicalModelPublicId: run.LogicalModelPublicId));
+                            LogicalModelPublicId: run.LogicalModelPublicId,
+                            WatermarkConfigId: run.WatermarkConfigId));
 
                         _logger.LogInformation("[ImageGenRunWorker Debug] Calling GenerateAsync with appCallerCode={AppCallerCode}", appCallerCode);
 
@@ -1523,6 +1523,8 @@ public class ImageGenRunWorker : BackgroundService
             ct);
     }
 
+    private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private async Task<ImageAsset> PersistImageAssetRecordAsync(
         ImageGenRun run,
         string prompt,
@@ -1558,8 +1560,14 @@ public class ImageGenRunWorker : BackgroundService
             OriginalSha256 = assetSha256,
             ArticleInsertionIndex = run.ArticleMarkerIndex,
             ArticleWorkflowVersion = run.ArticleWorkflowVersion,
+            // 文章配图记下这一节自己的画面描述：Prompt 里拼着风格提示词，拿它当说明文字，
+            // 历史配图里每张卡片开头都是同一句「整体采用粉色系配色……」，认不出是哪一节的图。
+            OriginalMarkerText = run.ArticleMarkerIndex.HasValue && run.Items is { Count: 1 }
+                ? NullIfBlank(run.Items[0].DisplayPrompt ?? run.Items[0].Prompt)
+                : null,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
+        asset.OriginalMarkerText = PrdAgent.Core.Services.LiteraryMcpWorkflow.ClampOriginalMarkerText(asset.OriginalMarkerText);
 
         var sizeForMeta = string.IsNullOrWhiteSpace(effectiveSize) ? requestedSize : effectiveSize!;
         if (TryParseWxH(sizeForMeta, out var w, out var h))
@@ -1962,7 +1970,7 @@ public class ImageGenRunWorker : BackgroundService
         // 显式逻辑模型是应用选择的稳定身份，不属于 MAP 模型池调度域。
         // Worker 只固化该身份，Provider、Endpoint、Offering 与实际模型由独立 Gateway
         // 在 GenerateUnifiedAsync 的单次 resolve 中决定。这里若继续走通用池解析，会把
-        // platformId/modelId 改写为旧池结果，导致随后无法识别逻辑模型并静默退回 inproc。
+        // platformId/modelId 改写为旧池结果，导致随后无法识别逻辑模型。
         var explicitLogicalModelPublicId = ResolveExplicitLogicalModelPublicId(run);
         if (!string.IsNullOrWhiteSpace(explicitLogicalModelPublicId))
         {

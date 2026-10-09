@@ -507,9 +507,88 @@ export async function getLiteraryAgentWorkspaceDetailReal(input: { id: string; m
     assets: any[];
     canvas: any;
     viewport?: any;
+    illustrationChoice?: LiteraryIllustrationChoice | null;
   }>(
     `${api.literaryAgent.workspaces.detail(encodeURIComponent(input.id))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
+  );
+}
+
+/**
+ * 一篇文章自己的配图风格与水印（智能体或网页为它指定过时才有）。source：remembered = 这篇记住的；account-default = 账号默认。
+ * missing = 这篇记住过、但那套已被删除，本次按账号默认出图（页面要提示，不能再说成「本文自己的设定」）。
+ */
+export type LiteraryIllustrationChoice = {
+  style: { styleId?: string | null; name: string; source: 'remembered' | 'account-default' | string; missing?: boolean };
+  watermark: { watermarkId: string; name: string; source: 'remembered' | 'account-default' | string; missing?: boolean };
+  notes: string[];
+};
+
+/** 设置 / 清除这篇文章的配图风格与水印。style / watermark 传配置 ID 或 none；clear = 回到跟随账号默认。 */
+export async function setLiteraryIllustrationPrefsReal(input: { id: string; style?: string; watermark?: string; clear?: boolean }) {
+  return await apiRequest<{ illustrationPrefs: unknown; effective: LiteraryIllustrationChoice }>(
+    api.literaryAgent.workspaces.illustrationPrefs(encodeURIComponent(input.id)),
+    { method: 'PUT', body: { style: input.style, watermark: input.watermark, clear: input.clear ?? false } }
+  );
+}
+
+export type LiteraryIllustrationHistoryItem = {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  prompt?: string | null;
+  markerIndex?: number | null;
+  markerText?: string | null;
+  workflowVersion?: number | null;
+  isCurrent: boolean;
+  createdAt: string;
+  /** 什么时候不再挂在正文上；仍在用或算不出来时为空 */
+  replacedAt?: string | null;
+  /** 为什么被换下（后端给的人话） */
+  replacedReason?: string | null;
+  /** 是不是上一次换稿前在用的那组里的一张 */
+  inLastSet?: boolean;
+  /** 现在挂在哪些位置（同一张图可以被放回到多个位置）；markerIndex 是其中最靠前的一个 */
+  mountedAt?: number[];
+};
+
+export type LiteraryIllustrationHistory = {
+  workspaceId: string;
+  currentVersion: number;
+  total: number;
+  currentCount: number;
+  /** 每次换稿前真正挂在正文上的那组（新到旧，存档时记下的） */
+  previousSets?: Array<{
+    workflowVersion: number;
+    archivedAt?: string | null;
+    reason: string;
+    images: Array<{ markerIndex: number; assetId: string; url: string; description?: string | null }>;
+  }>;
+  /** 当前正文里有哪些配图位置，旧图只能放回这些位置 */
+  markerIndexes?: number[];
+  /** 当前每个配图位置的描述，放到别的位置时用来让人看清选的是哪一段 */
+  markers?: Array<{ index: number; description: string }>;
+  groups: Array<{
+    workflowVersion: number | null;
+    isCurrentVersion: boolean;
+    items: LiteraryIllustrationHistoryItem[];
+  }>;
+};
+
+/** 这篇文章生成过的全部配图（含改稿 / 重新规划 / 重新生成之前的旧版本），按版本分组。 */
+export async function getLiteraryIllustrationHistoryReal(input: { id: string }) {
+  return await apiRequest<LiteraryIllustrationHistory>(
+    api.literaryAgent.workspaces.illustrationHistory(encodeURIComponent(input.id)),
+    { method: 'GET' }
+  );
+}
+
+/** 把历史里的一张旧图放回正文的配图位置（默认它当初的位置）；图若记着当初的描述，标记描述一并换回。 */
+export async function restoreLiteraryIllustrationReal(input: { id: string; assetId: string; markerIndex?: number; workflowVersion: number }) {
+  return await apiRequest<{ markerIndex: number; url: string; description?: string | null; note?: string | null }>(
+    api.literaryAgent.workspaces.restoreIllustration(encodeURIComponent(input.id), encodeURIComponent(input.assetId)),
+    { method: 'POST', body: { markerIndex: input.markerIndex, workflowVersion: input.workflowVersion } }
   );
 }
 

@@ -74,6 +74,7 @@ import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey,
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -612,6 +613,29 @@ function maskEnvMap(env: Record<string, string> | undefined): Record<string, str
 
 function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T): T {
   if (hasOwnerAccess(req, summary.id)) return summary;
+  if (isScopedHuman(req)) {
+    // Members need card/workbench metadata, not the persisted Project object.
+    // A finite projection also keeps future credential fields private by default.
+    const keys = [
+      'id', 'slug', 'name', 'aliasName', 'aliasSlug', 'description', 'kind', 'legacyFlag',
+      'createdAt', 'updatedAt', 'deliveryMode', 'gitRepoUrl', 'githubRepoFullName',
+      'gitDefaultBranch', 'defaultBranch', 'cloneStatus', 'resourceChipDisplay',
+      'paused', 'pausedAt', 'pauseReason', 'branchCount', 'runningBranchCount',
+      'appServiceCount', 'runningServiceCount', 'infraServiceCount', 'runningInfraServiceCount',
+      'lastDeployedAt', 'resourceUsage',
+    ] satisfies Array<keyof ProjectSummary>;
+    return {
+      ...Object.fromEntries(keys.map(key => [key, summary[key]])),
+      gitRepoUrl: summary.gitRepoUrl ? _redactUrlUserInfo(summary.gitRepoUrl) : undefined,
+      appServices: summary.appServices.map(service => ({
+        id: service.id, name: service.name, branch: service.branch, status: service.status,
+        runningCount: service.runningCount, dockerImage: service.dockerImage, containerPort: service.containerPort,
+      })),
+      infraServices: summary.infraServices.map(service => ({
+        id: service.id, name: service.name, status: service.status, dockerImage: service.dockerImage,
+      })),
+    } as T;
+  }
   return {
     ...summary,
     customEnv: maskEnvMap(summary.customEnv),
@@ -717,7 +741,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function repoSharingFor(req: unknown, project: Project): ProjectSummary['repoSharing'] {
-    if (isMachineCaller(req)) return null;
+    if (isMachineCaller(req) || isScopedHuman(req)) return null;
     const repoFullName = project.githubRepoFullName;
     if (!repoFullName) return null;
     const siblings = stateService.findProjectsByRepoFullName(repoFullName);
@@ -1656,6 +1680,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const grants = principalId ? stateService.getProjectGrants() : [];
       const projects = stateService
         .getProjects()
+        .filter((project) => canHumanAccessProject(req, stateService, project.id))
         .filter((project) => !projectScope || project.id === projectScope)
         .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id));
       const usageMap = resourceUsageLookup();
@@ -1681,7 +1706,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         if (at !== bt) return bt.localeCompare(at);
         return 0;
       });
-      res.json({ projects: summaries, total: summaries.length });
+      res.json({ projects: summaries, total: summaries.length, canManageProjects: !isScopedHuman(req) });
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
       // eslint-disable-next-line no-console
@@ -1710,7 +1735,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // 项目缺 repoPath）并在响应里附 recovery 指引，避免 Agent 反复尝试
       // clone 却拿不到具体下一步。这里只读不写，不会引入额外副作用。
       let recovery: { state: string; nextActions: string[]; hint: string } | undefined;
-      if (project.gitRepoUrl && project.cloneStatus === 'error') {
+      if (!isScopedHuman(req) && project.gitRepoUrl && project.cloneStatus === 'error') {
         recovery = {
           state: 'clone_failed',
           nextActions: [
@@ -1721,7 +1746,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             ? `上次 clone 失败原因：${project.cloneError}`
             : '上次 clone 失败但未记录详细原因；重试一次会暴露完整 stderr。',
         };
-      } else if (project.gitRepoUrl && !project.repoPath) {
+      } else if (!isScopedHuman(req) && project.gitRepoUrl && !project.repoPath) {
         // #551 (a) 旧项目场景：git 项目但 repoPath 为空。clone 端点会自动 backfill。
         const reposBase = config?.reposBase;
         recovery = {

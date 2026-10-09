@@ -11,8 +11,8 @@ namespace PrdAgent.Tests;
 ///   1. MAP 侧 HttpLlmGatewayClient —— 把请求打包发给 llmgw serving 的 /gw/v1/raw；
 ///   2. serving 侧 ApplyIngressRouting —— 收到后按已验证的租户/路由信息重建一份。
 /// 两处都是手写的对象初始化器。给 GatewayRawRequest 加了新字段却忘了同步这两处，
-/// 结果不是编译错误，而是**该字段在 http 模式下静默丢失**——本地 inproc 一切正常，
-/// 生产走 http 就行为不一致，极难查。EndpointPathIsAbsolute 落地时就踩了这个坑。
+/// 结果不是编译错误，而是**该字段在跨进程时静默丢失**——单看任一侧的代码都没问题，
+/// 组合起来行为不一致，极难查。EndpointPathIsAbsolute 落地时就踩了这个坑。
 ///
 /// 本守卫扫这两处源码里赋值的属性名，与 GatewayRawRequest 的公开属性集合逐一对账。
 /// </summary>

@@ -3,7 +3,7 @@ set -eu
 
 # Backup data touched by the LLM Gateway config-authority migration.
 # Dry-run is the default. Execute mode writes Mongo archives on the production
-# host and emits small JSON/Markdown evidence files for rollout ledger checks.
+# host and emits small JSON/Markdown evidence files for the operator audit trail.
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)

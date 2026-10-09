@@ -89,7 +89,7 @@ public sealed class LiteraryMcpModelSelectionTests
                     },
                 ]);
             var controller = new LiteraryAgentImageGenController(
-                db, null!, gateway.Object, null!, NullLogger<LiteraryAgentImageGenController>.Instance)
+                db, null!, gateway.Object, NullLogger<LiteraryAgentImageGenController>.Instance)
             {
                 ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
             };

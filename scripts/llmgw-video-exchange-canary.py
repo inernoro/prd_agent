@@ -4,7 +4,7 @@
 The canary submits one video task through /gw/v1/raw and writes the raw gateway
 response to evidence. By default it stops at submit for the lowest practical
 blast radius. With --poll-status and --download-result it also verifies the
-status and signed-result download paths required by the full cutover gate.
+status and signed-result download paths that production video acceptance relies on.
 """
 
 from __future__ import annotations

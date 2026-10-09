@@ -152,6 +152,9 @@ services:
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       - OpenRouter__Referer=${OPENROUTER_REFERER:-}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜）
+      # MAP 的模型调用全部经独立网关 serving；key 必须与下方 llmgw-serve 的同一把。
+      - LlmGateway__ServeBaseUrl=http://llmgw-serve:8091
+      - LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:-dev-llmgw-serve-key}
     read_only: true
     tmpfs:
       - /tmp
@@ -169,6 +172,7 @@ services:
     depends_on:
       - mongodb
       - redis
+      - llmgw-serve
     networks:
       - prdagent-network
 

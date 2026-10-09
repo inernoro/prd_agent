@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { layoutFlow, RelationFlowStrip, RelationFlowSkeleton } from '../../web/src/components/branch/RelationFlowStrip.js';
+import { FlowFacts, layoutFlow, RelationFlowStrip, RelationFlowSkeleton } from '../../web/src/components/branch/RelationFlowStrip.js';
 import { formatDeployedAgo, formatUptime } from '../../web/src/components/branch/OverviewPanel.js';
 import { relationHeadline, type RelationPayload } from '../../web/src/components/branch/RelationGraph.js';
 
@@ -69,7 +69,7 @@ describe('layoutFlow', () => {
   });
   it('事实行的六个数字与图同源', () => {
     const m = layoutFlow(payload());
-    expect(m.facts).toEqual({ sites: 1, services: 4, prefixes: 3, infra: 2, refs: 0, errors: 0, warnings: 1 });
+    expect(m.facts).toEqual({ sites: 1, services: 4, prefixes: 3, subdomains: 0, infra: 2, refs: 0, errors: 0, warnings: 1 });
   });
   it('主域名没有壳时不静默：壳列放一枚说明 chip，其余服务仍全部出现', () => {
     const p = payload();
@@ -77,6 +77,39 @@ describe('layoutFlow', () => {
     const m = layoutFlow(p);
     expect(m.shells[0].id).toBe('no-shell');
     expect(m.members.map((c) => c.id).sort()).toEqual(['admin-web', 'api', 'cron', 'files']);
+  });
+});
+
+describe('子域泳道（2026-09-30：8 个子域壳曾和主域名壳挤在同一列）', () => {
+  function withSubs(): RelationPayload {
+    const p = payload();
+    p.graph.nodes.push(
+      { id: 'service:portal', rawId: 'portal', name: 'portal', kind: 'service', subdomain: 'portal', role: 'web' },
+      { id: 'service:worker', rawId: 'worker', name: 'worker', kind: 'service', subdomain: 'worker', role: 'worker' },
+    );
+    p.graph.sites.push(
+      { id: 'sub:portal', kind: 'subdomain', subdomain: 'portal', shellId: 'portal', shellSource: 'declared', members: [], conflicts: [] },
+      { id: 'sub:worker', kind: 'subdomain', subdomain: 'worker', shellId: 'worker', shellSource: 'declared', members: [], conflicts: [] },
+      // 同一服务既是主域名前缀成员又是子域壳：两处都要出现
+      { id: 'sub:api', kind: 'subdomain', subdomain: 'api', shellId: 'api', shellSource: 'declared', members: [], conflicts: [] },
+    );
+    return p;
+  }
+  it('只有壳的子域进 subsites，不进壳列；壳列只剩主域名壳', () => {
+    const m = layoutFlow(withSubs());
+    expect(m.shells.map((c) => c.id)).toEqual(['admin-web']);
+    expect(m.subsites.map((c) => c.id)).toEqual(['portal', 'worker', 'api']);
+    expect(m.subsites[0].sub).toBe('子域 portal');
+    expect(m.members.map((c) => c.id)).toContain('api');
+    const all = new Set([...m.shells, ...m.members, ...m.subsites, ...m.tail].map((c) => c.id));
+    for (const n of withSubs().graph.nodes) expect(all.has(n.rawId ?? n.id), n.id).toBe(true);
+  });
+  it('渲染成独立的子域泳道（网格），主域名泳道不再被拉高', () => {
+    const html = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(withSubs()) }));
+    expect(html).toContain('data-testid="relation-strip-subsites"');
+    expect(html).toContain('子域 · 3 个');
+    expect(html).toContain('repeat(auto-fill');
+    for (const id of ['portal', 'worker']) expect(html).toContain(`data-node="${id}"`);
   });
 });
 
@@ -92,12 +125,13 @@ describe('RelationFlowStrip 渲染', () => {
   it('骨架与真实流向条同一副外形（同一 testid 前缀、同一圆角与底色），卡片高度不跳', () => {
     const real = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(payload()) }));
     const ghost = renderToStaticMarkup(createElement(RelationFlowSkeleton, { note: '正在算' }));
-    for (const cls of ['rounded-[0.75rem]', 'bg-[hsl(var(--surface-sunken))]', 'py-4']) { expect(real).toContain(cls); expect(ghost).toContain(cls); }
+    for (const cls of ['rounded-[0.75rem]', 'bg-[hsl(var(--surface-sunken))]', 'pb-4', 'pt-3.5']) { expect(real).toContain(cls); expect(ghost).toContain(cls); }
   });
   it('徽标不占语义色：redis 不用 --bad，mongo 不用 --ok（红色只在「坏了」时出现）', () => {
     const src = fs.readFileSync(path.join(SRC, 'components/branch/RelationFlowStrip.tsx'), 'utf8');
     const kindLine = src.split('\n').find((l) => l.startsWith('const KIND_TOKEN'))!;
-    expect(kindLine).not.toMatch(/--bad|--ok|--warn/);
+    // 词边界：徽标用的是 --badge-* 对，它的前缀恰好是 --bad，不加边界会误报
+    expect(kindLine).not.toMatch(/--(bad|ok|warn)\b/);
     const graph = fs.readFileSync(path.join(SRC, 'components/branch/RelationGraph.tsx'), 'utf8');
     expect(graph).not.toContain("'--bad' : '--ok'");
   });
@@ -200,5 +234,106 @@ describe('尺寸校准（2026-09-17「很矮小，大小不一」）', () => {
     const line = relationHeadline(p);
     expect(line).toContain('admin-web（演示）');
     expect(line).not.toMatch(/主域名下 admin-web 是壳/);
+  });
+});
+
+describe('问题卡与展开视图（2026-09-30「一边是遮挡，一边是折叠压缩」）', () => {
+  it('问题卡上下堆叠：规则名、说明、修法各占一行，多服务列成标签', async () => {
+    const { FindingsList } = await import('../../web/src/components/branch/RelationCard.js');
+    const html = renderToStaticMarkup(createElement(FindingsList, {
+      layout: 'grid',
+      onConfigure: () => undefined,
+      findings: [{ rule: 'role-by-name', severity: 'info', services: ['imp-api', 'imp-vendor-api'], message: '角色靠服务名推断', fix: '写上 cds.role' }],
+    }));
+    expect(html).toContain('flex min-w-0 flex-col');
+    expect(html).toContain('auto-fill');
+    expect(html).toContain('data-severity="info"');
+    expect(html).toContain('修法：写上 cds.role');
+    expect(html).toContain('aria-label="涉及的服务"');
+  });
+  it('展开视图是居中大浮层，不再是右侧半屏抽屉；问题带在图上方而不是 17.5rem 侧栏', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    expect(card).toContain('data-testid="relation-sheet"');
+    expect(card).not.toContain('w-[min(100vw,47.5rem)]');
+    expect(card).not.toContain('w-[17.5rem]');
+    const ws = card.slice(card.indexOf('export function RelationWorkspace'));
+    expect(ws.indexOf('<FindingsList')).toBeLessThan(ws.indexOf('<RelationGraph'));
+    const page = stripComments(fs.readFileSync(path.join(SRC, 'pages/BranchRelationsPage.tsx'), 'utf8'));
+    expect(page).toContain('<RelationWorkspace');
+    expect(page).not.toContain('w-[20rem]');
+  });
+});
+
+describe('设计稿对齐（2026-09-30 用户：「按设计稿改代码」）', () => {
+  it('问题卡的严重度落在整张卡上，不再用左侧色条', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    expect(card).not.toMatch(/borderLeft/);
+    expect(card).toContain('SEV_CARD[f.severity]');
+  });
+  it('展开视图：图例放底栏，手机上建议收成一行', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    const ws = card.slice(card.indexOf('export function RelationWorkspace'));
+    expect(ws).toContain('hideLegend');
+    expect(ws).toContain('<RelationLegend');
+    expect(ws).toContain('data-testid="relation-findings-more"');
+  });
+  it('总览行式卡：结论句完整显示，不再单行截断', () => {
+    const card = stripComments(fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8'));
+    const row = card.slice(card.indexOf("variant === 'row' ? ("), card.indexOf(') : shell(tone'));
+    expect(row).toContain('{relationHeadline(data)}</p>');
+    expect(row).not.toMatch(/truncate[^"]*" title=\{relationHeadline/);
+  });
+  it('事实行：为零的子域 / 基础设施 / 跨项目引用不占位', () => {
+    const html = renderToStaticMarkup(createElement(FlowFacts, { facts: { sites: 9, services: 11, prefixes: 7, subdomains: 8, infra: 0, refs: 0, errors: 0, warnings: 1 } }));
+    expect(html).toContain('子域');
+    expect(html).not.toContain('共享基础设施');
+    expect(html).not.toContain('跨项目引用');
+  });
+});
+
+describe('Codex 评审（PR #1654）', () => {
+  it('P1 竖排按真实连线分组：内网服务不挂在壳下，子域壳的成员挂在它自己的壳下', async () => {
+    const { stackedGroups } = await import('../../web/src/components/branch/RelationFlowStrip.js');
+    const p = payload();
+    p.graph.nodes.push(
+      { id: 'service:portal', rawId: 'portal', name: 'portal', kind: 'service', subdomain: 'portal', role: 'web' },
+      { id: 'service:docs', rawId: 'docs', name: 'docs', kind: 'service', role: 'web' },
+    );
+    p.graph.sites.push({ id: 'sub:portal', kind: 'subdomain', subdomain: 'portal', shellId: 'portal', shellSource: 'declared', members: [{ id: 'docs', prefixes: ['/docs/'] }], conflicts: [] });
+    const { groups, loose } = stackedGroups(layoutFlow(p));
+    expect(groups.map((g) => [g.shell.id, g.members.map((c) => c.id)])).toEqual([['admin-web', ['api', 'files']], ['portal', ['docs']]]);
+    expect(loose.map((c) => c.id)).toEqual(['cron']);
+  });
+  it('P2 竖排的尾列带上「谁在用它」：数据库与跨项目引用不再是一排孤立的 chip', async () => {
+    const { stackedTail, StackedFlow } = await import('../../web/src/components/branch/RelationFlowStrip.js');
+    const model = layoutFlow(payload());
+    expect(stackedTail(model).map((t) => [t.chip.id, t.sources])).toEqual([['infra:mongo', ['api', 'cron']], ['infra:redis', ['api', 'files']]]);
+    const html = renderToStaticMarkup(createElement(StackedFlow, { model }));
+    expect(html).toContain('data-tail-from="api,cron"');
+    expect(html).toContain('被 api、cron 使用');
+    expect(html).toContain('被 api、files 使用');
+  });
+  it('P2 壳经环境变量调用前缀成员时并成一条线，悬停提示里仍留着环境变量名', async () => {
+    const { layoutRelations, edgeTooltip } = await import('../../web/src/components/branch/RelationGraph.js');
+    const p = payload();
+    p.graph.edges.push({ from: 'service:admin-web', to: 'service:api', envKeys: ['API_BASE_URL'], dependsOn: false });
+    for (const width of [390, 1280]) {
+      const edges = layoutRelations(p, width).edges.filter((e) => e.key.includes('api') && !e.key.includes('infra'));
+      expect(edges.filter((e) => e.kind === 'call' && e.key.includes('admin-web'))).toEqual([]);
+      const merged = edges.find((e) => e.kind === 'prefix' && e.alsoDepends);
+      expect(merged, `宽 ${width}`).toBeTruthy();
+      expect(edgeTooltip(merged!)).toBe('前缀 /api/ /hubs/ · 同时声明了依赖（API_BASE_URL）');
+    }
+  });
+  it('P2 全屏页「只看问题」时，标题计数按显示出来的这批算，不再挂着被滤掉的建议', async () => {
+    const { RelationWorkspace } = await import('../../web/src/components/branch/RelationCard.js');
+    const p = payload();
+    p.lint.findings.push({ rule: 'role-by-name', severity: 'info', services: ['api'], message: '角色靠名字推断', fix: '写 cds.role' });
+    const all = renderToStaticMarkup(createElement(RelationWorkspace, { data: p }));
+    const only = renderToStaticMarkup(createElement(RelationWorkspace, { data: p, onlyProblems: true }));
+    expect(all).toContain('需要处理 · 2 条');
+    expect(all).toContain('>1 建议</span>');
+    expect(only).toContain('需要处理 · 1 条');
+    expect(only).not.toContain(' 建议</span>');
   });
 });

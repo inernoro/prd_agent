@@ -69,7 +69,7 @@ public partial class LlmGateway
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
         var started = DateTime.UtcNow;
-        var transport = request.Context?.GatewayTransport ?? GatewayTransports.Inproc;
+        var transport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
         var attempts = BuildProviderAttempts(resolution, transport);
         var logId = await StartRawLogAsync(request, resolution, endpoint, body.ToJsonString(), started, CancellationToken.None);
         GatewayProviderConcurrencyLease? lease = null;

@@ -3,7 +3,7 @@
 // 设计意图（见 doc/design.platform.llm-gateway.physical-isolation.md）：
 //   - 本服务与 prd-api 完全解耦，不引用任何 PrdAgent.* 项目，仅依赖 NuGet 包。
 //   - MAP 继续负责 MAP 自己的业务日志；GW 控制台账号、登录审计等自有状态落独立数据库 llm_gateway。
-//   - 控制台读取 GW 自有 llmrequestlogs / shadow / 审计作为权威观测；MAP 业务日志只作为跨系统关联来源。
+//   - 控制台读取 GW 自有 llmrequestlogs / 审计作为权威观测；MAP 业务日志只作为跨系统关联来源。
 //   - 共享集合 llmrequestlogs 由 .NET 驱动以 PascalCase 字段名序列化；为规避历史文档里
 //     数值/日期类型混存导致的反序列化异常，日志查询统一以 BsonDocument 读取并手动安全映射。
 
@@ -286,7 +286,6 @@ var videoGenRuns = mapDatabase.GetCollection<BsonDocument>(OfferingReferencePoli
 // 删线路的在途闸两张表都要查，只查一张等于对其中一类任务完全不设防（第 74 轮 review）。
 var directVideoJobOwnerships = mapDatabase.GetCollection<BsonDocument>(
     OfferingReferencePolicy.DirectVideoOwnershipCollectionName);
-var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
 var gwModelPools = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_pools");
@@ -951,7 +950,6 @@ app.MapGet("/gw/lifecycle/status", async (HttpContext http) =>
     var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
     {
         ["llmrequestlogs"] = ["ttl_llmgw_logs_started"],
-        ["llmshadow_comparisons"] = ["ttl_llmgw_shadow_compared"],
         ["llmgw_operation_audits"] = ["ttl_llmgw_operation_audits"],
         ["llmgw_login_audits"] = ["ttl_llmgw_login_audits"],
         ["llmgw_lifecycle_runs"] = ["ttl_llmgw_lifecycle_runs"],
@@ -980,7 +978,6 @@ app.MapGet("/gw/lifecycle/status", async (HttpContext http) =>
         completedAt = latest.AsNullableUtcDateTime("CompletedAt").ToIso(),
         expiredRequestLogs = latest.AsNullableLong("ExpiredRequestLogs") ?? 0,
         sensitiveLogs = latest.AsNullableLong("SensitiveLogs") ?? 0,
-        expiredShadowComparisons = latest.AsNullableLong("ExpiredShadowComparisons") ?? 0,
         expiredOperationAudits = latest.AsNullableLong("ExpiredOperationAudits") ?? 0,
         expiredLoginAudits = latest.AsNullableLong("ExpiredLoginAudits") ?? 0,
         expiredMultipartObjects = latest.AsNullableLong("ExpiredMultipartObjects") ?? 0,
@@ -3387,7 +3384,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
 }).RequireAuthorization("RequestBodyRead");
 
 // ─────────────── 网关配置面（只读，腿 B 第一刀）───────────────
-// 让网关控制台不只有日志，还能看模型池 / 平台 / 模型 / 影子比对。密钥字段一律不返回（只回 hasKey）。
+// 让网关控制台不只有日志，还能看模型池 / 平台 / 模型。密钥字段一律不返回（只回 hasKey）。
 
 // 模型池列表
 app.MapGet("/gw/pool-types", async (HttpContext http) =>
@@ -7914,15 +7911,13 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
 
       池路由退场之后，配对的调用方根本没有池绑定，而 AllReferencedModelPoolsExist 对
       「一条池引用都没有」返回 false：于是一份完全正确的配置会被这份报告判成
-      activeMissingGatewayPool > 0、status=blocked，而 scripts/llmgw-release-gate.py 读的
+      activeMissingGatewayPool > 0、status=blocked，而发布 gate 读的
       正是这两个字段——这一刀砍完池，发布反而被自己的报告挡住了。反向也一样坏：
       一个还留着健康池字段、却没有任何对外模型接得住的调用方会被判成就绪。
 
       所以这里与发布闸那份用同一个 FindUnnamedCatcherAsync（它又与运行时
       TryResolveDefaultLogicalModelAsync 逐层对齐）。两处各写一套正是形状 3。
 
-      DTO 的字段名保持不变：scripts/llmgw-release-gate.py 与 llmgw-rollout-ledger.py
-      按名读它们，改名等于同一轮里再断一条线。含义已随判据改写，注释与文案同步说明。
     */
     var reportTenantId = TenantAccess.GetRequired(http).TenantId;
     var activeWithCatcher = 0;
@@ -8043,8 +8038,9 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// 运行态发布 gate：聚合只读证据，直接回答“现在是否可以切 full-http”。
+// 运行态发布 gate：聚合只读证据，回答“当前 commit 能不能放行发布”。
 // 这里不写配置、不读外部 provider，只把控制台已有证据压成可复核状态。
+// MAP 已固定经 HTTP 调用 serving，切流期的双跑比对与切流台账已退场，这里只看当前 commit 的真实运行证据。
 app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
 {
     if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
@@ -8178,47 +8174,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .ToList();
 
     var runtimeCommit = NormalizeCommitFilter(gitCommit);
-    var shadowFilter = runtimeCommit is null
-        ? TenantAccess.Filter(http)
-        : TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("ReleaseCommit", runtimeCommit));
-    var shadowTotal = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(shadowFilter);
-    var shadowCritical = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HasCritical", true)));
-    var shadowHttpFail = runtimeCommit is null ? 0 : await shadows.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(shadowFilter, Builders<BsonDocument>.Filter.Eq("HttpOk", false)));
-    var retainedShadowCandidates = new List<BsonDocument>();
-    if (runtimeCommit is not null && shadowTotal == 0)
-    {
-        retainedShadowCandidates = await shadows.Aggregate()
-            .Match(Builders<BsonDocument>.Filter.And(
-                TenantAccess.Filter(http),
-                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", runtimeCommit),
-                Builders<BsonDocument>.Filter.Exists("ReleaseCommit", true),
-                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", BsonNull.Value),
-                Builders<BsonDocument>.Filter.Ne("ReleaseCommit", string.Empty)))
-            .Group(new BsonDocument
-            {
-                { "_id", "$ReleaseCommit" },
-                { "Total", new BsonDocument("$sum", 1) },
-                { "Critical", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
-                    {
-                        new BsonDocument("$eq", new BsonArray { "$HasCritical", true }),
-                        1,
-                        0,
-                    })) },
-                { "HttpFail", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
-                    {
-                        new BsonDocument("$eq", new BsonArray { "$HttpOk", false }),
-                        1,
-                        0,
-                    })) },
-                { "LastComparedAt", new BsonDocument("$max", "$ComparedAt") },
-            })
-            .Match(Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Gt("Total", 0),
-                Builders<BsonDocument>.Filter.Eq("Critical", 0),
-                Builders<BsonDocument>.Filter.Eq("HttpFail", 0)))
-            .Sort(new BsonDocument("LastComparedAt", -1))
-            .ToListAsync();
-    }
     var logReleaseFilter = runtimeCommit is null
         ? TenantAccess.Filter(http)
         : TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
@@ -8266,11 +8221,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
     var protocolDroppedParameterLogs = releaseProtocolLogDocs.LongCount(d =>
         targetProtocolKeys.Contains(NormalizeIngressProtocol(d.AsNullableString("IngressProtocol")))
         && HasDroppedParameters(d));
-    var releaseShadowAppCallers = runtimeCommit is null
-        ? new List<string>()
-        : await shadows.Distinct<string>("AppCallerCode", shadowFilter).ToListAsync();
     var coveredAppCallerCodes = releaseLogAppCallers
-        .Concat(releaseShadowAppCallers)
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .ToHashSet(StringComparer.Ordinal);
     var missingRuntimeCoverageAppCallers = activeAppCallerCodes
@@ -8289,40 +8240,17 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
     var keyGateReady = keyPrimaryConfigured && keyUnreadable == 0 && keyLegacyReadable == 0 && keyStubUnreadable == 0 && keyMissingBlocking == 0;
     var disableMapFallbackForActiveAppCallers = IsTruthy(config["LlmGateway:DisableMapConfigFallbackForRegisteredAppCallers"])
         || IsTruthy(Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS"))
-        // 兼容现有生产变量和历史 rollout ledger 字段。
+        // 兼容现有生产变量的旧名。
         || IsTruthy(config["LlmGateway:DisableMapConfigFallbackForActiveAppCallers"])
         || IsTruthy(Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS"));
-    var ledgerPath = config["LlmGateway:RolloutLedgerPath"]
-        ?? Environment.GetEnvironmentVariable("LLMGW_ROLLOUT_LEDGER")
-        ?? ".llmgw-release-evidence/rollout-ledger.jsonl";
-    var configAuthorityLedgerEvidence = ReadLatestConfigAuthorityRolloutLedgerEvidence(ledgerPath, gitCommit);
-    var httpFullLedgerEvidence = ReadLatestHttpFullRolloutLedgerEvidence(ledgerPath, gitCommit);
-    var successfulHttpFullCommits = ReadSuccessfulHttpFullRolloutCommits(ledgerPath);
-    var retainedShadowEvidence = successfulHttpFullCommits
-        .Select(commit => retainedShadowCandidates.FirstOrDefault(candidate =>
-            string.Equals(candidate.AsNullableString("_id"), commit, StringComparison.OrdinalIgnoreCase)))
-        .FirstOrDefault(candidate => candidate is not null);
-    var retainedShadowCommit = retainedShadowEvidence?.AsNullableString("_id") ?? string.Empty;
-    var retainedShadowTotal = retainedShadowEvidence?.AsNullableLong("Total") ?? 0;
-    var retainedShadowMatchesPreviousFullHttp = retainedShadowCommit.Length > 0
-        && successfulHttpFullCommits.Contains(retainedShadowCommit, StringComparer.OrdinalIgnoreCase);
-    var canRetainPreviousShadowEvidence = shadowTotal == 0
-        && retainedShadowMatchesPreviousFullHttp
-        && configAuthorityLedgerEvidence.Ready
-        && releaseLogTotal > 0
-        && httpTransportLogs == releaseLogTotal
-        && droppedParameterLogs == 0
-        && missingIngressProtocols.Count == 0
-        && protocolFailedLogs == 0
-        && missingRuntimeCoverageAppCallers.Count == 0;
     var activeAppCallerMapFallbackCutoverPrerequisitesReady =
         mapFallbackObjectsRemaining == 0
         && activeMissingGatewayPool == 0
         && discoveredAppCallers == 0
         && activeBoundPoolWithoutUsableMember == 0;
-    var activeAppCallerMapFallbackExitReady =
-        activeAppCallerMapFallbackCutoverPrerequisitesReady
-        && (!httpFullLedgerEvidence.Ready || disableMapFallbackForActiveAppCallers);
+    // 运行态 fail-closed 开关（DisableMapConfigFallbackForActiveAppCallers）只作为事实上报，
+    // 不参与判定：发布放行时看的是「前置条件是否齐」，开关状态由发布流程自己保证。
+    var activeAppCallerMapFallbackExitReady = activeAppCallerMapFallbackCutoverPrerequisitesReady;
 
     var items = new List<RuntimeGateItem>();
     static RuntimeGateLink Link(string label, string to) => new() { Label = label, To = to };
@@ -8346,11 +8274,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 Link("模型", "/models"),
                 Link("Exchange", "/exchanges"),
             },
-            "config_authority_rollout_ledger" => new()
-            {
-                Link("审计", "/audits?targetType=llmgw_config_authority"),
-                Link("概览", "/"),
-            },
             "active_appcaller_pool_binding" => new()
             {
                 Link("active 调用方", "/app-callers?status=active"),
@@ -8369,6 +8292,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 Link("active 调用方", "/app-callers?status=active"),
                 Link("对外模型", "/logical-models"),
                 Link("平台密钥", "/platforms"),
+                Link("配置权威审计", "/audits?targetType=llmgw_config_authority"),
             },
             "gateway_key_integrity" => new()
             {
@@ -8384,7 +8308,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                     ? "/app-callers?status=active"
                     : $"/app-callers?status=active&search={Uri.EscapeDataString(missingCode)}"),
                 Link("当前 commit 日志", $"/logs{releaseQuery}"),
-                Link("当前 commit shadow", $"/shadow{releaseQuery}"),
             },
             "protocol_runtime_coverage" => new()
             {
@@ -8392,25 +8315,8 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 Link("协议日志", $"/logs{releaseQuery}"),
                 Link("调用方", "/app-callers"),
             },
-            "shadow_runtime_evidence" => new()
-            {
-                Link("shadow 样本", $"/shadow{releaseQuery}{(releaseQuery.Length > 0 ? "&" : "?")}{ShadowQuickQuery(facts)}"),
-            },
-            "full_http_rollout_ledger" => new()
-            {
-                Link("当前 commit 日志", $"/logs{releaseQuery}"),
-                Link("当前 commit shadow", $"/shadow{releaseQuery}"),
-            },
             _ => new(),
         };
-    }
-    static string ShadowQuickQuery(Dictionary<string, string> facts)
-    {
-        var critical = facts.TryGetValue("critical", out var c) && int.TryParse(c, out var criticalCount) ? criticalCount : 0;
-        var httpFail = facts.TryGetValue("httpFail", out var h) && int.TryParse(h, out var httpFailCount) ? httpFailCount : 0;
-        if (critical > 0) return "quick=critical";
-        if (httpFail > 0) return "quick=httpFail";
-        return "quick=all";
     }
     void AddGate(string id, string label, string status, bool blocking, string detail, string evidence, string nextAction, Dictionary<string, string>? facts = null)
     {
@@ -8447,16 +8353,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ["mapOnlyModels"] = MapOnlyCount(mapModelDocs, IdSet(gwModelDocs)).ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["mapOnlyExchanges"] = MapOnlyCount(mapExchangeDocs, IdSet(gwExchangeDocs)).ToString(System.Globalization.CultureInfo.InvariantCulture),
         });
-
-    AddGate(
-        "config_authority_rollout_ledger",
-        "配置权威执行台账",
-        configAuthorityLedgerEvidence.Ready ? "pass" : "waiting",
-        !configAuthorityLedgerEvidence.Ready,
-        configAuthorityLedgerEvidence.Detail,
-        configAuthorityLedgerEvidence.Evidence,
-        configAuthorityLedgerEvidence.Ready ? "保留备份和执行证据。" : "通过 llmgw-prod-stage 的 config-authority 阶段生成同 commit 的备份和执行台账。",
-        configAuthorityLedgerEvidence.Facts);
 
     AddGate(
         "active_appcaller_pool_binding",
@@ -8540,28 +8436,24 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
     AddGate(
         "active_appcaller_map_fallback_exit",
         "active appCaller MAP fallback 退场开关",
-        activeAppCallerMapFallbackExitReady ? "pass" : activeAppCallerMapFallbackCutoverPrerequisitesReady ? "waiting" : "blocked",
-        !activeAppCallerMapFallbackExitReady && !activeAppCallerMapFallbackCutoverPrerequisitesReady,
+        activeAppCallerMapFallbackExitReady ? "pass" : "blocked",
+        !activeAppCallerMapFallbackExitReady,
         activeAppCallerMapFallbackExitReady
-            ? httpFullLedgerEvidence.Ready
+            ? disableMapFallbackForActiveAppCallers
                 ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且每个 active 调用方都有接得住的对外模型。"
-                : "active appCaller MAP fallback 退场前置条件已满足；http-full 阶段会开启运行态 fail-closed 开关。"
-            : activeAppCallerMapFallbackCutoverPrerequisitesReady
-            ? "active appCaller MAP fallback 退场前置条件已满足；等待 http-full 阶段开启运行态 fail-closed 开关。"
+                : "active appCaller MAP fallback 退场前置条件已满足；运行态 fail-closed 开关当前未开启。"
             : $"DisableMapConfigFallbackForActiveAppCallers={disableMapFallbackForActiveAppCallers}，mapFallbackObjectsRemaining={mapFallbackObjectsRemaining}，activeMissingGatewayPool={activeMissingGatewayPool}，discoveredAppCallers={discoveredAppCallers}，withoutUsableMember={activeBoundPoolWithoutUsableMember}。",
         $"runtime config LlmGateway:DisableMapConfigFallbackForActiveAppCallers={disableMapFallbackForActiveAppCallers}; LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS={Environment.GetEnvironmentVariable("LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS") ?? "empty"}",
         activeAppCallerMapFallbackExitReady
-            ? httpFullLedgerEvidence.Ready
+            ? disableMapFallbackForActiveAppCallers
                 ? "保留运行态配置和 runtime gate 证据。"
-                : "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
-            : activeAppCallerMapFallbackCutoverPrerequisitesReady
-            ? "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
+                : "需要 fail-closed 时，在发布进程中启用 DisableMapConfigFallbackForActiveAppCallers。"
             // 前置条件早就改判「有没有对外模型接得住」（FindUnnamedCatcherAsync），
             // 而这句处置还停在池的世界里——池路由与它的写入界面都已退场，照着做满足不了这道闸
             // （第 64 轮 review：又一句走不通的下一步）。
             : "先完成 MAP-only 配置认领，再给这几个 active 调用方找到接得住的对外模型："
               + "要么在白名单页把某条模型的「认领」加上这个调用方，要么给这个用途设一个可用的默认模型"
-              + "（那条模型得启用、且至少有一条现在能接流量的线路）。都齐了再在 full-http 发布进程中"
+              + "（那条模型得启用、且至少有一条现在能接流量的线路）。都齐了再在发布进程中"
               + "启用 DisableMapConfigFallbackForActiveAppCallers。",
         new Dictionary<string, string>
         {
@@ -8570,7 +8462,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ["activeMissingGatewayPool"] = activeMissingGatewayPool.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["discoveredAppCallers"] = discoveredAppCallers.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["withoutUsableMember"] = activeBoundPoolWithoutUsableMember.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["httpFullLedgerReady"] = httpFullLedgerEvidence.Ready ? "true" : "false",
         });
 
     AddGate(
@@ -8593,8 +8484,9 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ["blockingMissing"] = keyMissingBlocking.ToString(System.Globalization.CultureInfo.InvariantCulture),
         });
 
-    var currentCommitHttpTransportReady = httpTransportLogs > 0
-        && (!httpFullLedgerEvidence.Ready || nonHttpTransportLogs == 0);
+    // serving 自己写的日志恒为 transport=http；非 http 或缺失的只可能来自种子或历史写入方，
+    // 只上报不阻断——这条 gate 证明的是「当前 commit 确实有经 serving HTTP 的真实请求」。
+    var currentCommitHttpTransportReady = httpTransportLogs > 0;
 
     AddGate(
         "current_commit_http_transport",
@@ -8608,21 +8500,20 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             : currentCommitHttpTransportReady && nonHttpTransportLogs == 0
             ? $"当前 commit 的 LLM 请求日志 {releaseLogTotal} 条，transport 均为 http。"
             : currentCommitHttpTransportReady
-            ? $"当前 commit 已有 http transport 证据 {httpTransportLogs} 条；另有 {nonHttpTransportLogs} 条 pre-http shadow/seed 日志不阻断进入 http-full。"
+            ? $"当前 commit 已有 http transport 证据 {httpTransportLogs} 条；另有 {nonHttpTransportLogs} 条非 http 或缺失 transport 的日志（种子或历史写入方），不阻断发布。"
             : $"当前 commit 的 LLM 请求日志 {releaseLogTotal} 条，其中 http={httpTransportLogs}，非 http 或缺失={nonHttpTransportLogs}。",
         $"/gw/logs?releaseCommit={runtimeCommit ?? "empty"} total={releaseLogTotal}; transport=http={httpTransportLogs}; nonHttpTransportLogs={nonHttpTransportLogs}",
         runtimeCommit is null || releaseLogTotal == 0
             ? "先用当前 commit 跑真实 send/stream/raw appCaller 样本，确保日志写入 ReleaseCommit 和 GatewayTransport；resolve-only route matrix 不计入该 gate。"
             : currentCommitHttpTransportReady
             ? "保留同 commit transport=http 证据。"
-            : "打开 /logs 按 releaseCommit 过滤非 http transport；先移除 direct/inproc 路径或修复日志写入，再进入 full-http。",
+            : "打开 /logs 按 releaseCommit 过滤非 http transport，修复日志写入后再放行发布。",
         new Dictionary<string, string>
         {
             ["releaseCommit"] = runtimeCommit ?? "",
             ["releaseLogTotal"] = releaseLogTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["httpTransportLogs"] = httpTransportLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["nonHttpTransportLogs"] = nonHttpTransportLogs.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["httpFullLedgerReady"] = httpFullLedgerEvidence.Ready ? "true" : "false",
         });
 
     AddGate(
@@ -8690,13 +8581,13 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ? "没有 active appCaller，无法证明生产调用方已进入 GW 治理面。"
             : missingRuntimeCoverageAppCallers.Count == 0
             ? $"当前 commit 已覆盖全部 {activeAppCallerCodes.Count} 个 active appCaller。"
-            : $"{missingRuntimeCoverageAppCallers.Count}/{activeAppCallerCodes.Count} 个 active appCaller 当前 commit 尚无日志或 shadow 样本：{string.Join(", ", missingRuntimeCoverageAppCallers.Take(12))}{(missingRuntimeCoverageAppCallers.Count > 12 ? " ..." : string.Empty)}",
-        $"/gw/logs?releaseCommit={runtimeCommit ?? "empty"}; /gw/shadow-comparisons releaseCommit={runtimeCommit ?? "empty"}; active={activeAppCallerCodes.Count}; covered={coveredAppCallerCodes.Count}; missing={missingRuntimeCoverageAppCallers.Count}",
+            : $"{missingRuntimeCoverageAppCallers.Count}/{activeAppCallerCodes.Count} 个 active appCaller 当前 commit 尚无请求日志：{string.Join(", ", missingRuntimeCoverageAppCallers.Take(12))}{(missingRuntimeCoverageAppCallers.Count > 12 ? " ..." : string.Empty)}",
+        $"/gw/logs?releaseCommit={runtimeCommit ?? "empty"}; active={activeAppCallerCodes.Count}; covered={coveredAppCallerCodes.Count}; missing={missingRuntimeCoverageAppCallers.Count}",
         runtimeCommit is null || activeAppCallerCodes.Count == 0
             ? "先设置 GIT_COMMIT，并治理至少一批 active appCaller。"
             : missingRuntimeCoverageAppCallers.Count == 0
             ? "保留同 commit 覆盖证据。"
-            : "逐个触发缺失 appCaller 的真实 send/stream/raw 业务样本，或产生对应 shadow comparison；resolve-only route matrix 不计入该覆盖 gate。",
+            : "逐个触发缺失 appCaller 的真实 send/stream/raw 业务样本；resolve-only route matrix 不计入该覆盖 gate。",
         new Dictionary<string, string>
         {
             ["releaseCommit"] = runtimeCommit ?? "",
@@ -8706,77 +8597,21 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ["missingAppCallerCodes"] = string.Join(",", missingRuntimeCoverageAppCallers),
         });
 
-    AddGate(
-        "shadow_runtime_evidence",
-        "shadow/http 运行证据",
-        shadowTotal > 0
-            ? shadowCritical == 0 && shadowHttpFail == 0 ? "pass" : "blocked"
-            : canRetainPreviousShadowEvidence ? "retained" : "waiting",
-        shadowTotal > 0
-            ? shadowCritical > 0 || shadowHttpFail > 0
-            : !canRetainPreviousShadowEvidence,
-        runtimeCommit is null
-            ? "当前进程缺少 GIT_COMMIT，不能证明 shadow 样本属于本次发布版本。"
-            : shadowTotal > 0
-            ? $"当前 commit 的 shadow 样本 {shadowTotal} 条，critical={shadowCritical}，httpFail={shadowHttpFail}。"
-            : canRetainPreviousShadowEvidence
-            ? $"当前 commit 已完成 HTTP-only transport、四协议、active appCaller 和配置权威证据；保留最近 full-http 提交 {retainedShadowCommit} 的 {retainedShadowTotal} 条零 critical/零 httpFail shadow 迁移证据。"
-            : "尚未看到当前 commit 的 shadow comparison，且不满足 full-http 维护发布的历史证据保留条件。",
-        $"/gw/shadow-comparisons releaseCommit={runtimeCommit ?? "empty"}; total={shadowTotal}; critical={shadowCritical}; httpFail={shadowHttpFail}; retainedCommit={retainedShadowCommit}; retainedTotal={retainedShadowTotal}; retainedEligible={canRetainPreviousShadowEvidence}",
-        shadowTotal > 0
-            ? shadowCritical == 0 && shadowHttpFail == 0 ? "保留同 commit 证据并进入灰度 gate。" : "先归因当前 commit 的 critical/httpFail，再补测试。"
-            : canRetainPreviousShadowEvidence
-            ? "保留历史迁移证据；当前提交继续依赖 HTTP-only transport、四协议和 active appCaller 运行证据。"
-            : "首次切流必须跑当前 commit 的真实 appCaller shadow 样本；维护发布则先补齐当前 commit 的 HTTP-only transport、四协议、active appCaller 和配置权威证据。",
-        new Dictionary<string, string>
-        {
-            ["releaseCommit"] = runtimeCommit ?? "",
-            ["total"] = shadowTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["critical"] = shadowCritical.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["httpFail"] = shadowHttpFail.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["retainedCommit"] = retainedShadowCommit,
-            ["retainedTotal"] = retainedShadowTotal.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["retainedEligible"] = canRetainPreviousShadowEvidence ? "true" : "false",
-        });
-
-    var ledgerEvidence = httpFullLedgerEvidence;
-    var ledgerReady = ledgerEvidence.Ready;
-
-    AddGate(
-        "full_http_rollout_ledger",
-        "full-http 发布台账",
-        ledgerReady ? "pass" : "waiting",
-        !ledgerReady,
-        ledgerEvidence.Detail,
-        ledgerEvidence.Evidence,
-        ledgerReady ? "保留台账证据并进入生产复核。" : "走 fast.sh/exec_dep.sh 对应生产流程前，先让 llmgw-prod-stage 写入同 commit 的 http-full 成功记录。",
-        ledgerEvidence.Facts);
-
-    AddGate(
-        "legacy_cleanup_after_stability",
-        "legacy/inproc 清理窗口",
-        "retained",
-        false,
-        "inproc/legacy 代码保留到 full-http 稳定窗口后再删；这不是当前切换阻塞项。",
-        "doc/plan.platform.llm-gateway.full-cutover.md stability window",
-        "full-http 稳定至少 7 天后再开启删除计划。");
-
     var passed = items.Count(x => x.Status == "pass");
     var blocked = items.Count(x => x.Status == "blocked");
     var waiting = items.Count(x => x.Status == "waiting");
-    var retained = items.Count(x => x.Status == "retained");
-    var readyForHttpFull = items.Where(x => x.Blocking).All(x => x.Status == "pass");
-    var status = blocked > 0 ? "blocked" : readyForHttpFull ? "ready" : "waiting";
+    // 全部 blocking gate 均为 pass 才算当前 commit 可以放行发布。
+    var readyForRelease = items.Where(x => x.Blocking).All(x => x.Status == "pass");
+    var status = blocked > 0 ? "blocked" : readyForRelease ? "ready" : "waiting";
 
     return Json(ApiEnvelope<RuntimeGatesData>.Ok(new RuntimeGatesData
     {
         Status = status,
         ReleaseCommit = runtimeCommit,
-        ReadyForHttpFull = readyForHttpFull,
+        ReadyForRelease = readyForRelease,
         Passed = passed,
         Blocked = blocked,
         Waiting = waiting,
-        Retained = retained,
         GeneratedAt = DateTime.UtcNow.ToString("O"),
         Items = items,
     }), jsonOptions);
@@ -12789,55 +12624,6 @@ app.MapPut("/gw/legacy-key-cutover", async (HttpContext http, LegacyKeyCutoverUp
     return Json(ApiEnvelope<object>.Ok(new { id, status, deadlineAt = body.DeadlineAt.Value.ToUniversalTime(), observed = minimumObserved, required }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 影子比对：汇总 + 最近 N 条
-app.MapGet("/gw/shadow-comparisons", async (HttpContext http, int? limit, string? appCallerCode, string? kind, string? releaseCommit, double? sinceHours) =>
-{
-    var n = Math.Clamp(limit ?? 50, 1, 500);
-    var fb = Builders<BsonDocument>.Filter;
-    var filters = new List<FilterDefinition<BsonDocument>>();
-    if (!string.IsNullOrWhiteSpace(appCallerCode)) filters.Add(fb.Eq("AppCallerCode", appCallerCode.Trim()));
-    if (!string.IsNullOrWhiteSpace(kind)) filters.Add(fb.Eq("Kind", kind.Trim()));
-    var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
-    if (normalizedReleaseCommit is not null) filters.Add(fb.Eq("ReleaseCommit", normalizedReleaseCommit));
-    var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
-    if (since is not null) filters.Add(fb.Gte("ComparedAt", since.Value));
-    var filter = TenantAccess.FilterTeamScope(http, filters.Count == 0 ? fb.Empty : fb.And(filters));
-    var total = await shadows.CountDocumentsAsync(filter);
-    var allMatch = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("AllMatch", true)));
-    var critical = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HasCritical", true)));
-    var httpFail = await shadows.CountDocumentsAsync(fb.And(filter, fb.Eq("HttpOk", false)));
-    var firstDoc = total > 0
-        ? await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Ascending("ComparedAt")).Limit(1).FirstOrDefaultAsync()
-        : null;
-    var lastDoc = total > 0
-        ? await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(1).FirstOrDefaultAsync()
-        : null;
-    var first = firstDoc?.AsNullableUtcDateTime("ComparedAt");
-    var last = lastDoc?.AsNullableUtcDateTime("ComparedAt");
-    var coverageHours = first is not null && last is not null
-        ? Math.Max(0, (last.Value - first.Value).TotalHours)
-        : 0;
-    var recent = await shadows.Find(filter).Sort(Builders<BsonDocument>.Sort.Descending("ComparedAt")).Limit(n).ToListAsync();
-    var data = new ShadowData
-    {
-        Summary = new ShadowSummary
-        {
-            Total = total,
-            AllMatch = allMatch,
-            Critical = critical,
-            HttpFail = httpFail,
-            SinceHours = sinceHours,
-            Since = since?.ToString("O"),
-            ReleaseCommit = normalizedReleaseCommit,
-            FirstComparedAt = first.ToIso(),
-            LastComparedAt = last.ToIso(),
-            CoverageHours = coverageHours,
-        },
-        Recent = recent.Select(MapShadow).ToList(),
-    };
-    return Json(ApiEnvelope<ShadowData>.Ok(data), jsonOptions);
-}).RequireAuthorization("LogsRead");
-
 // ─────────────── 网关配置面（可写）───────────────
 // 外部租户只写 llm_gateway 自有集合；TenantId 永远来自服务端会话，不接受请求体自报。
 // 内部租户继续保留 MAP 来源对象的认领兼容路径，不重做既有迁移和运行时发布流程。
@@ -15970,7 +15756,6 @@ static async Task BackfillInternalTenantAsync(
         "llmgw_service_key_rate_windows",
         "llmgw_prompt_policies",
         "llmrequestlogs",
-        "llmshadow_comparisons",
         "llmgw_operation_audits",
         "llmgw_login_audits",
         "llmgw_lifecycle_runs",
@@ -19882,296 +19667,6 @@ static bool IsDevStubName(string? name)
     => !string.IsNullOrWhiteSpace(name)
        && (name.Contains("开发桩")
            || System.Text.RegularExpressions.Regex.IsMatch(name, @"(^|[^a-z])stub([^a-z]|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
-
-static ShadowSnapshotItem MapSnapshot(BsonDocument s) => new()
-{
-    Success = s.AsNullableBool("Success") ?? false,
-    ActualModel = s.AsNullableString("ActualModel"),
-    Protocol = s.AsNullableString("Protocol"),
-    PlatformType = s.AsNullableString("PlatformType"),
-    ResolutionType = s.AsNullableString("ResolutionType"),
-    ModelGroupId = s.AsNullableString("ModelGroupId"),
-    IsFallback = s.AsNullableBool("IsFallback") ?? false,
-};
-
-static ShadowItem MapShadow(BsonDocument d)
-{
-    var inp = d.TryGetValue("Inproc", out var iv) && iv.IsBsonDocument ? iv.AsBsonDocument : new BsonDocument();
-    var htp = d.TryGetValue("Http", out var hv) && hv.IsBsonDocument ? hv.AsBsonDocument : new BsonDocument();
-    var misArr = d.TryGetValue("Mismatches", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    return new ShadowItem
-    {
-        Id = d.GetStringOrEmpty("_id"),
-        Kind = d.GetStringOrEmpty("Kind"),
-        RequestId = d.AsNullableString("RequestId"),
-        ReleaseCommit = d.AsNullableString("ReleaseCommit"),
-        AppCallerCode = d.GetStringOrEmpty("AppCallerCode"),
-        ModelType = d.GetStringOrEmpty("ModelType"),
-        ComparedAt = d.AsNullableUtcDateTime("ComparedAt").ToIso(),
-        ShadowDurationMs = d.AsNullableLong("ShadowDurationMs") ?? 0,
-        HttpOk = d.AsNullableBool("HttpOk") ?? false,
-        HttpError = d.AsNullableString("HttpError"),
-        AllMatch = d.AsNullableBool("AllMatch") ?? false,
-        HasCritical = d.AsNullableBool("HasCritical") ?? false,
-        Inproc = MapSnapshot(inp),
-        Http = MapSnapshot(htp),
-        Mismatches = misArr.Where(m => m.IsBsonDocument).Select(m => m.AsBsonDocument).Select(m => new ShadowMismatchItem
-        {
-            Field = m.GetStringOrEmpty("Field"),
-            Inproc = m.AsNullableString("Inproc"),
-            Http = m.AsNullableString("Http"),
-            Severity = m.GetStringOrEmpty("Severity"),
-        }).ToList(),
-        TextMatches = d.AsNullableBool("TextMatches"),
-    };
-}
-
-static (bool Ready, string Detail, string Evidence, Dictionary<string, string> Facts) ReadLatestHttpFullRolloutLedgerEvidence(string path, string currentCommit)
-{
-    var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
-    var expectedCommit = NormalizeCommitFilter(currentCommit);
-    var facts = new Dictionary<string, string>
-    {
-        ["rolloutLedger"] = normalizedPath,
-        ["stage"] = "http-full",
-        ["currentCommit"] = expectedCommit ?? string.Empty,
-    };
-    if (!File.Exists(normalizedPath))
-    {
-        return (
-            false,
-            $"未找到 rollout ledger：{normalizedPath}。",
-            $"rolloutLedger={normalizedPath}; currentCommit={expectedCommit ?? "empty"}",
-            facts);
-    }
-
-    var latestRecordedAt = string.Empty;
-    var latestCommit = string.Empty;
-    var latestReleaseGateRequired = false;
-    var latestDisableMapFallback = false;
-    var latestHasEvidenceJson = false;
-    var latestHasReleaseGateJson = false;
-    var latestProtocolCanaryRequired = false;
-    var latestHasProtocolCanaryJson = false;
-    var parseErrors = 0;
-
-    foreach (var line in File.ReadLines(normalizedPath))
-    {
-        var raw = line.Trim();
-        if (raw.Length == 0) continue;
-        try
-        {
-            using var doc = JsonDocument.Parse(raw);
-            var root = doc.RootElement;
-            var stage = ReadJsonString(root, "stage");
-            var status = ReadJsonString(root, "status");
-            if (!string.Equals(stage, "http-full", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(status, "success", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            latestRecordedAt = ReadJsonString(root, "recordedAt");
-            latestCommit = NormalizeCommitFilter(ReadJsonString(root, "commit")) ?? string.Empty;
-            latestReleaseGateRequired = ReadJsonBool(root, "releaseGateRequired");
-            latestDisableMapFallback = ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers");
-            latestHasEvidenceJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"));
-            latestHasReleaseGateJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"));
-            latestProtocolCanaryRequired = ReadJsonBool(root, "protocolCanaryRequired");
-            latestHasProtocolCanaryJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson"));
-        }
-        catch (JsonException)
-        {
-            parseErrors++;
-        }
-    }
-
-    if (latestCommit.Length == 0)
-    {
-        facts["parseErrors"] = parseErrors.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        return (
-            false,
-            parseErrors > 0
-                ? $"rollout ledger 可读但没有有效 http-full success 记录，且有 {parseErrors} 行 JSON 解析失败。"
-                : "rollout ledger 可读但没有 http-full success 记录。",
-            $"rolloutLedger={normalizedPath}; currentCommit={expectedCommit ?? "empty"}; parseErrors={parseErrors}",
-            facts);
-    }
-
-    var sameCommit = expectedCommit is not null && string.Equals(latestCommit, expectedCommit, StringComparison.OrdinalIgnoreCase);
-    var ready = sameCommit
-                && latestReleaseGateRequired
-                && latestDisableMapFallback
-                && latestHasEvidenceJson
-                && latestHasReleaseGateJson
-                && latestProtocolCanaryRequired
-                && latestHasProtocolCanaryJson;
-    var missing = new List<string>();
-    if (!sameCommit) missing.Add("same-commit");
-    if (!latestReleaseGateRequired) missing.Add("releaseGateRequired");
-    if (!latestDisableMapFallback) missing.Add("disableMapConfigFallbackForActiveAppCallers");
-    if (!latestHasEvidenceJson) missing.Add("evidenceJson");
-    if (!latestHasReleaseGateJson) missing.Add("releaseGateJson");
-    if (!latestProtocolCanaryRequired) missing.Add("protocolCanaryRequired");
-    if (!latestHasProtocolCanaryJson) missing.Add("protocolCanaryJson");
-    var detail = ready
-        ? $"找到同 commit 的 http-full success 台账：{latestCommit}，recordedAt={latestRecordedAt}。"
-        : $"找到 http-full success 台账，但仍缺 {string.Join(", ", missing)}；latestCommit={latestCommit}，currentCommit={expectedCommit ?? "empty"}。";
-    var evidence = $"rolloutLedger={normalizedPath}; stage=http-full; status=success; commit={latestCommit}; releaseGateRequired={latestReleaseGateRequired}; disableMapFallback={latestDisableMapFallback}; protocolCanaryRequired={latestProtocolCanaryRequired}; protocolCanaryJson={latestHasProtocolCanaryJson}";
-    facts["latestCommit"] = latestCommit;
-    facts["recordedAt"] = latestRecordedAt;
-    facts["sameCommit"] = sameCommit ? "true" : "false";
-    facts["releaseGateRequired"] = latestReleaseGateRequired ? "true" : "false";
-    facts["disableMapConfigFallbackForActiveAppCallers"] = latestDisableMapFallback ? "true" : "false";
-    facts["evidenceJson"] = latestHasEvidenceJson ? "true" : "false";
-    facts["releaseGateJson"] = latestHasReleaseGateJson ? "true" : "false";
-    facts["protocolCanaryRequired"] = latestProtocolCanaryRequired ? "true" : "false";
-    facts["protocolCanaryJson"] = latestHasProtocolCanaryJson ? "true" : "false";
-    facts["missing"] = string.Join(",", missing);
-    return (ready, detail, evidence, facts);
-}
-
-static List<string> ReadSuccessfulHttpFullRolloutCommits(string path)
-{
-    var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
-    if (!File.Exists(normalizedPath)) return new List<string>();
-
-    var commits = new List<string>();
-    foreach (var line in File.ReadLines(normalizedPath))
-    {
-        var raw = line.Trim();
-        if (raw.Length == 0) continue;
-        try
-        {
-            using var doc = JsonDocument.Parse(raw);
-            var root = doc.RootElement;
-            if (!string.Equals(ReadJsonString(root, "stage"), "http-full", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(ReadJsonString(root, "status"), "success", StringComparison.OrdinalIgnoreCase)
-                || !ReadJsonBool(root, "releaseGateRequired")
-                || !ReadJsonBool(root, "disableMapConfigFallbackForActiveAppCallers")
-                || string.IsNullOrWhiteSpace(ReadJsonString(root, "evidenceJson"))
-                || string.IsNullOrWhiteSpace(ReadJsonString(root, "releaseGateJson"))
-                || !ReadJsonBool(root, "protocolCanaryRequired")
-                || string.IsNullOrWhiteSpace(ReadJsonString(root, "protocolCanaryJson")))
-            {
-                continue;
-            }
-
-            var commit = NormalizeCommitFilter(ReadJsonString(root, "commit"));
-            if (commit is null) continue;
-            commits.RemoveAll(existing => string.Equals(existing, commit, StringComparison.OrdinalIgnoreCase));
-            commits.Add(commit);
-        }
-        catch (JsonException)
-        {
-            // A malformed historical line cannot become release evidence.
-        }
-    }
-
-    commits.Reverse();
-    return commits;
-}
-
-static (bool Ready, string Detail, string Evidence, Dictionary<string, string> Facts) ReadLatestConfigAuthorityRolloutLedgerEvidence(string path, string currentCommit)
-{
-    var normalizedPath = string.IsNullOrWhiteSpace(path) ? ".llmgw-release-evidence/rollout-ledger.jsonl" : path.Trim();
-    var expectedCommit = NormalizeCommitFilter(currentCommit);
-    var facts = new Dictionary<string, string>
-    {
-        ["rolloutLedger"] = normalizedPath,
-        ["stage"] = "config-authority",
-        ["currentCommit"] = expectedCommit ?? string.Empty,
-    };
-    if (!File.Exists(normalizedPath))
-    {
-        return (
-            false,
-            $"未找到 rollout ledger：{normalizedPath}。",
-            $"rolloutLedger={normalizedPath}; stage=config-authority; currentCommit={expectedCommit ?? "empty"}",
-            facts);
-    }
-
-    var latestRecordedAt = string.Empty;
-    var latestCommit = string.Empty;
-    var latestConfigAuthorityJson = false;
-    var latestExternalBackupJson = false;
-    var parseErrors = 0;
-
-    foreach (var line in File.ReadLines(normalizedPath))
-    {
-        var raw = line.Trim();
-        if (raw.Length == 0) continue;
-        try
-        {
-            using var doc = JsonDocument.Parse(raw);
-            var root = doc.RootElement;
-            var stage = ReadJsonString(root, "stage");
-            var status = ReadJsonString(root, "status");
-            if (!string.Equals(stage, "config-authority", StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(status, "success", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            latestRecordedAt = ReadJsonString(root, "recordedAt");
-            latestCommit = NormalizeCommitFilter(ReadJsonString(root, "commit")) ?? string.Empty;
-            latestConfigAuthorityJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "configAuthorityJson"));
-            latestExternalBackupJson = !string.IsNullOrWhiteSpace(ReadJsonString(root, "externalBackupJson"));
-        }
-        catch (JsonException)
-        {
-            parseErrors++;
-        }
-    }
-
-    if (latestCommit.Length == 0)
-    {
-        facts["parseErrors"] = parseErrors.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        return (
-            false,
-            parseErrors > 0
-                ? $"rollout ledger 可读但没有有效 config-authority success 记录，且有 {parseErrors} 行 JSON 解析失败。"
-                : "rollout ledger 可读但没有 config-authority success 记录。",
-            $"rolloutLedger={normalizedPath}; stage=config-authority; currentCommit={expectedCommit ?? "empty"}; parseErrors={parseErrors}",
-            facts);
-    }
-
-    var sameCommit = expectedCommit is not null && string.Equals(latestCommit, expectedCommit, StringComparison.OrdinalIgnoreCase);
-    var ready = sameCommit && latestConfigAuthorityJson && latestExternalBackupJson;
-    var missing = new List<string>();
-    if (!sameCommit) missing.Add("same-commit");
-    if (!latestConfigAuthorityJson) missing.Add("configAuthorityJson");
-    if (!latestExternalBackupJson) missing.Add("externalBackupJson");
-    var detail = ready
-        ? $"找到同 commit 的 config-authority success 台账：{latestCommit}，recordedAt={latestRecordedAt}。"
-        : $"找到 config-authority success 台账，但仍缺 {string.Join(", ", missing)}；latestCommit={latestCommit}，currentCommit={expectedCommit ?? "empty"}。";
-    var evidence = $"rolloutLedger={normalizedPath}; stage=config-authority; status=success; commit={latestCommit}; configAuthorityJson={latestConfigAuthorityJson}; externalBackupJson={latestExternalBackupJson}";
-    facts["latestCommit"] = latestCommit;
-    facts["recordedAt"] = latestRecordedAt;
-    facts["sameCommit"] = sameCommit ? "true" : "false";
-    facts["configAuthorityJson"] = latestConfigAuthorityJson ? "true" : "false";
-    facts["externalBackupJson"] = latestExternalBackupJson ? "true" : "false";
-    facts["missing"] = string.Join(",", missing);
-    return (ready, detail, evidence, facts);
-}
-
-static string ReadJsonString(JsonElement root, string name)
-{
-    if (!root.TryGetProperty(name, out var value)) return string.Empty;
-    return value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : value.ToString();
-}
-
-static bool ReadJsonBool(JsonElement root, string name)
-{
-    if (!root.TryGetProperty(name, out var value)) return false;
-    return value.ValueKind switch
-    {
-        JsonValueKind.True => true,
-        JsonValueKind.False => false,
-        JsonValueKind.String => bool.TryParse(value.GetString(), out var parsed) && parsed,
-        _ => false,
-    };
-}
 
 static bool IsTruthy(string? value)
 {

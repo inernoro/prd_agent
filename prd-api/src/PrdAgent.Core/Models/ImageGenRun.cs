@@ -116,12 +116,6 @@ public class ImageGenRun
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
 
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
-
     // ---------------------------
     // 扩展：与业务场景绑定（可选）
     // ---------------------------
@@ -183,6 +177,13 @@ public class ImageGenRun
     public int? ArticleMarkerIndex { get; set; }
     /// <summary>指定时仅向同一版配图流程回填，防止旧任务污染已经改稿的新流程。</summary>
     public int? ArticleWorkflowVersion { get; set; }
+
+    /// <summary>
+    /// 本次生图指定的水印配置 id。null = 沿用账号给该应用绑定的那套（原行为）；
+    /// <see cref="WatermarkSelection.None"/> = 这次明确不打水印。
+    /// 由入队方校验归属，Worker 经 LlmRequestContext 透传给打水印的那一层。
+    /// </summary>
+    public string? WatermarkConfigId { get; set; }
 
     /// <summary>
     /// 可选：周报海报场景下，关联的海报 ID。Worker 完成时会回填对应页面 ImageUrl。

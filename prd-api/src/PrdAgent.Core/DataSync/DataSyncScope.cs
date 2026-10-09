@@ -426,7 +426,6 @@ public static class DataSyncScope
         ["infra_connections"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["invitecodes"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["llmrequestlogs"] = "日志与埋点：量大且只对源站有意义",
-        ["llmshadow_comparisons"] = "日志与埋点：量大且只对源站有意义",
         ["marketplace_fork_logs"] = "日志与埋点：量大且只对源站有意义",
         ["marketplace_skill_share_links"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["md_to_ppt_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",

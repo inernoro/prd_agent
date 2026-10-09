@@ -218,12 +218,8 @@ public sealed class AuthorizationHealthController : ControllerBase
 
     private AuthorizationHealthItem BuildLlmGatewayHealth()
     {
-        var mode = (_configuration["LlmGateway:Mode"] ?? "inproc").Trim().ToLowerInvariant();
-        var requiresHttp = mode is "http" or "shadow"
-            || (_configuration.GetValue<bool?>("LlmGateway:LogicalModelsRequireHttp") ?? true);
+        // MAP 的模型调用全部经过独立 LLMGW，服务身份是必需项。
         var keyConfigured = !string.IsNullOrWhiteSpace(_configuration["LlmGwServe:ApiKey"]);
-        if (!requiresHttp)
-            return Healthy("llmgw-service", "LLMGW 服务身份", "服务", "当前仅使用进程内网关，不依赖独立服务身份。", "LlmGateway 模式", "/logs");
         return keyConfigured
             ? Attention(
                 "llmgw-service",
@@ -237,7 +233,7 @@ public sealed class AuthorizationHealthController : ControllerBase
                 "llmgw-service",
                 "LLMGW 服务身份",
                 "服务",
-                "当前模式需要独立 LLMGW，但 MAP 未配置服务身份。",
+                "MAP 的模型调用全部经过独立 LLMGW，但 MAP 未配置服务身份。",
                 "MAP 网关配置存在性",
                 "/logs",
                 "统一 MAP 与 LLMGW 的服务 Key 后执行真实模型调用。" );
