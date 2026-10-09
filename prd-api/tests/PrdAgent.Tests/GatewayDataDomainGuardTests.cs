@@ -1761,7 +1761,10 @@ public class GatewayDataDomainGuardTests
         Assert.True(
             Regex.Matches(service, "DeploymentSlug = DeploymentScope.Current").Count >= 3,
             "直出、分镜与导出入队都必须写入当前部署作用域");
-        Assert.Contains("fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)", service);
+        Assert.Contains("CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug))", service);
+        Assert.Contains("CurrentBranchDeploymentFilter<VideoExportTask>(nameof(VideoExportTask.DeploymentSlug))", service);
+        Assert.Contains("fb.Eq(fieldName, currentScope)", service);
+        Assert.Contains("fb.Regex(fieldName, revisionPrefix)", service);
         Assert.Contains("var queueScope = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)", worker);
         Assert.Contains("queueScope & fb.Eq(x => x.Id, pending.Id)", worker);
         Assert.Contains("& fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);", worker);
