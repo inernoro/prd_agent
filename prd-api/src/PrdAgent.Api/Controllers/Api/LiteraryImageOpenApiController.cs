@@ -393,6 +393,13 @@ public class LiteraryImageOpenApiController(
                 filter.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == run.ArticleMarkerIndex)),
             Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].runId", run.Id)
                 .Set("articleWorkflow.markers.$[target].status", "running")
+                // 网页按标记的方案显示尺寸和重画，必须与本次实际入队的尺寸一致。
+                .Set("articleWorkflow.markers.$[target].planItem", new ArticleIllustrationPlanItem
+                {
+                    Prompt = run.Items[0].DisplayPrompt ?? run.Items[0].Prompt,
+                    Count = 1,
+                    Size = run.Size,
+                })
                 .Set("articleWorkflow.markers.$[target].errorMessage", (string?)null)
                 .Set("articleWorkflow.updatedAt", DateTime.UtcNow),
             new UpdateOptions { ArrayFilters = new[]
