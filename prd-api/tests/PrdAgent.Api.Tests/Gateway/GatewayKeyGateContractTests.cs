@@ -84,7 +84,11 @@ public class GatewayKeyGateContractTests
             CreatedAt = DateTime.UtcNow,
         };
         var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
-        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            gateway,
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
         await app.StartAsync();
         try
         {
@@ -138,6 +142,60 @@ public class GatewayKeyGateContractTests
             forwarded.ContainsKey("run_id").ShouldBeFalse();
             forwarded.ContainsKey("provider").ShouldBeFalse();
             dones.ShouldHaveSingleItem().Status.ShouldBe("succeeded");
+            callCounter.CallCount.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_RejectedRuntimeGrantRequestDoesNotConsumeCallAllowance()
+    {
+        var resolver = NativeResponsesResolver(functionCalling: null);
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-rejected",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            RequireDeclaredParameters = true,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(resolver, handler),
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"default-chat-curated",
+              "store":false,
+              "input":"hello",
+              "tools":[{"type":"function","name":"run"}],
+              "provider":{"require_parameters":true}
+            }
+            """)!.AsObject();
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(body, "runtime-grant-rejected"));
+
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await response.Content.ReadAsStringAsync()).ShouldContain("FUNCTION_CALLING_UNVERIFIED");
+            resolver.Verify(x => x.ResolveAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(0);
+            callCounter.CallCount.ShouldBe(0);
         }
         finally { await app.StopAsync(); }
     }
@@ -3798,6 +3856,7 @@ public class GatewayKeyGateContractTests
         PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         IGatewayServingReadinessProbe? readinessProbe = null,
         IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
+        IGatewayRuntimeGrantCallCounter? runtimeGrantCallCounter = null,
         ILLMRequestContextAccessor? contextAccessor = null,
         LlmGatewayDataContext? gatewayData = null,
         IHttpContextAccessor? httpContextAccessor = null)
@@ -3815,6 +3874,8 @@ public class GatewayKeyGateContractTests
             builder.Services.AddSingleton(readinessProbe);
         if (keyAuthorizer != null)
             builder.Services.AddSingleton(keyAuthorizer);
+        if (runtimeGrantCallCounter != null)
+            builder.Services.AddSingleton(runtimeGrantCallCounter);
         if (gatewayData != null)
             builder.Services.AddSingleton(gatewayData);
 
@@ -3894,6 +3955,23 @@ public class GatewayKeyGateContractTests
                 KeyPrefixSnapshot: "gwk_test",
                 ResolvedAppCallerCode: _resolvedAppCallerCode,
                 RuntimeGrant: _runtimeGrant));
+        }
+    }
+
+    private sealed class CapturingRuntimeGrantCallCounter : IGatewayRuntimeGrantCallCounter
+    {
+        public int CallCount { get; private set; }
+
+        public Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+            GatewayRuntimeGrantRecord grant,
+            CancellationToken ct)
+        {
+            CallCount++;
+            return Task.FromResult(new GatewayRuntimeGrantCallAdmission(
+                true,
+                StatusCodes.Status200OK,
+                string.Empty,
+                "runtime grant call reserved"));
         }
     }
 

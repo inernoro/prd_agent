@@ -56,6 +56,56 @@ public interface IGatewayScopedKeyAuthorizer
         string? requestPath = null);
 }
 
+public sealed record GatewayRuntimeGrantCallAdmission(
+    bool Allowed,
+    int StatusCode,
+    string ErrorCode,
+    string Detail);
+
+public interface IGatewayRuntimeGrantCallCounter
+{
+    Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+        GatewayRuntimeGrantRecord grant,
+        CancellationToken ct);
+}
+
+public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) : IGatewayRuntimeGrantCallCounter
+{
+    public async Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+        GatewayRuntimeGrantRecord grant,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var grants = data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.Id, grant.Id),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, grant.KeyHash),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, grant.TenantId),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.RunId, grant.RunId),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, grant.AppCallerCode),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
+            new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
+                new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))));
+        var reserved = await grants.FindOneAndUpdateAsync(
+            filter,
+            Builders<GatewayRuntimeGrantRecord>.Update
+                .Inc(x => x.CallCount, 1)
+                .Set(x => x.LastUsedAt, now),
+            new FindOneAndUpdateOptions<GatewayRuntimeGrantRecord>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (reserved is not null)
+            return new(true, 200, string.Empty, "runtime grant call reserved");
+
+        var known = await grants.Find(x => x.Id == grant.Id && x.KeyHash == grant.KeyHash).FirstOrDefaultAsync(ct);
+        return known is not null && known.ExpiresAt > now && known.CallCount >= known.MaxCalls
+            ? new(false, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded")
+            : new(false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+    }
+}
+
 public static class GatewayLegacyProbeScopes
 {
     public const string Route = "legacy-preflight:route";
@@ -398,16 +448,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             filter &= Builders<GatewayRuntimeGrantRecord>.Filter.Where(_ => false);
         }
 
-        var grant = await grants.FindOneAndUpdateAsync(
-            filter,
-            Builders<GatewayRuntimeGrantRecord>.Update
-                .Inc(x => x.CallCount, 1)
-                .Set(x => x.LastUsedAt, now),
-            new FindOneAndUpdateOptions<GatewayRuntimeGrantRecord>
-            {
-                ReturnDocument = ReturnDocument.After,
-            },
-            ct);
+        var grant = await grants.Find(filter).FirstOrDefaultAsync(ct);
         if (grant is not null)
         {
             return new(

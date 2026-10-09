@@ -7,3 +7,5 @@
 | security | llmgw | 将 OpenDesign 短期授权限制到 Responses 端点并保留请求的 reasoning summary |
 | fix | prd-api | 确保用量回写失败时仍独立撤销 OpenDesign 任务短期授权 |
 | ops | prd-api | 让运行时授权 TTL 索引清单自动收敛错误的索引选项 |
+| fix | llmgw | 将短期授权调用次数延后到请求完成本地准入后原子扣减，拒绝请求不再消耗额度 |
+| test | llmgw | 补充短期授权拒绝路径不扣次数与成功准入扣次数测试 |

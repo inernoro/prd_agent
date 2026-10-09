@@ -17,6 +17,7 @@ public partial class LlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var callerError))
@@ -57,6 +58,10 @@ public partial class LlmGateway
             else if (TryReadInt(body["max_output_tokens"]!, out var requested) && requested > resolution.MaxTokens.Value)
                 body["max_output_tokens"] = resolution.MaxTokens.Value;
         }
+        // 运行时授权的调用次数只在全部本地准入检查通过后扣减。这样无效 body、调用方治理、
+        // 模型解析和能力拒绝都不会耗掉任务额度，同时原子扣减仍发生在任何上游发送之前。
+        if (admit is not null && await admit(ct) is { } admissionError)
+            return admissionError;
 
         var endpoint = BuildEndpointFromPath(resolution.ApiUrl!, "/v1/responses");
         using var message = new HttpRequestMessage(HttpMethod.Post, endpoint)

@@ -66,6 +66,7 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
         => Task.FromResult(GatewayRawResponse.Fail(
             "NATIVE_RESPONSES_UNSUPPORTED", "当前网关未提供原生 Responses 通道", 501));

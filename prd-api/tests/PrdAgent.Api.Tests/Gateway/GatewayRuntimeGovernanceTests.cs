@@ -1865,6 +1865,9 @@ public sealed class GatewayRuntimeGovernanceTests
         var allowed = await authorizer.AuthorizeAsync(
             key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
             requestPath: "/gw/v1/responses");
+        (await grants.Find(x => x.Id == "grant-1").SingleAsync()).CallCount.ShouldBe(0);
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+        var reserved = await counter.TryReserveAsync(allowed.RuntimeGrant!, CancellationToken.None);
         var exhausted = await authorizer.AuthorizeAsync(
             key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
             requestPath: "/gw/v1/responses");
@@ -1877,6 +1880,7 @@ public sealed class GatewayRuntimeGovernanceTests
         allowed.RuntimeGrant.ShouldNotBeNull();
         allowed.RuntimeGrant!.RunId.ShouldBe("run-1");
         allowed.RuntimeGrant.UserId.ShouldBe("user-1");
+        reserved.Allowed.ShouldBeTrue();
         exhausted.StatusCode.ShouldBe(429);
         exhausted.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_EXHAUSTED");
         (await grants.Find(x => x.Id == "grant-1").SingleAsync()).CallCount.ShouldBe(1);

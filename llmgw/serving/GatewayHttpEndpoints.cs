@@ -500,6 +500,26 @@ public static class GatewayHttpEndpoints
             {
                 var resolution = await gateway.ResolveModelAsync(request.AppCallerCode, request.ModelType,
                     request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, token);
+                Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null;
+                if (runtimeGrant is not null)
+                {
+                    admit = async admissionToken =>
+                    {
+                        var counter = services.GetService<IGatewayRuntimeGrantCallCounter>();
+                        if (counter is null)
+                            return GatewayRawResponse.Fail(
+                                "GATEWAY_RUNTIME_GRANT_ADMISSION_UNAVAILABLE",
+                                "运行时授权计数服务不可用",
+                                StatusCodes.Status503ServiceUnavailable);
+                        var admission = await counter.TryReserveAsync(runtimeGrant, admissionToken);
+                        return admission.Allowed
+                            ? null
+                            : GatewayRawResponse.Fail(
+                                admission.ErrorCode,
+                                admission.Detail,
+                                admission.StatusCode);
+                    };
+                }
                 var disconnected = false;
                 var outcome = await gateway.SendNativeResponsesWithResolutionAsync(request, resolution, async (chunk, _) =>
                 {
@@ -522,7 +542,7 @@ public static class GatewayHttpEndpoints
                     catch (IOException) { disconnected = true; }
                     catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { disconnected = true; }
                     catch (ObjectDisposedException) { disconnected = true; }
-                }, token);
+                }, admit, token);
                 http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
                 if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
                     http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
