@@ -1275,16 +1275,6 @@ emit_server_blocks() {
   echo "        allow all;"
   echo "    }"
   echo ""
-  if [ "${CDS_PUBLIC_HEALTH_DETAILS:-0}" != "1" ]; then
-    echo "    # Keep the public probe useful without exposing host load, memory,"
-    echo "    # Docker version, branch counts, or control-plane diagnostics."
-    echo "    location ~* ^/healthz/?$ {"
-    echo "        rewrite ^ /healthz?lightweight=1? break;"
-    echo "        proxy_pass http://cds_master;"
-    proxy_directives
-    echo "    }"
-    echo ""
-  fi
   echo "    # Content-hashed Vite assets are immutable — cache for a year and do"
   echo "    # NOT inherit the dashboard's blanket no-cache (which forced a"
   echo "    # revalidation round-trip on every load, defeating the hash)."

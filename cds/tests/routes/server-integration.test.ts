@@ -17,6 +17,7 @@ const AUTH_ENV_KEYS = [
   'CDS_SSO_TOKEN_URL',
   'CDS_SSO_CLIENT_ID',
   'CDS_SSO_CLIENT_SECRET',
+  'CDS_PUBLIC_HEALTH_DETAILS',
 ] as const;
 const savedAuthEnv = new Map<string, string | undefined>();
 beforeAll(() => {
@@ -216,6 +217,28 @@ async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Pr
 }
 
 describe('Server route ordering (regression)', () => {
+  it('直连健康路径变体脱敏但保留真实故障状态，并兼容显式诊断与深探', async () => {
+    const app = buildRealServerWithEvents([]);
+    server = await startServer(app);
+    for (const url of ['/healthz', '/healthz/', '/HEALTHZ', '/HeAlThZ/?lightweight=0']) {
+      const result = await request(server, url);
+      expect(result.status).toBe(503); // 本夹具未提供可用 Docker，不能伪装为健康。
+      expect(JSON.parse(result.body)).toEqual({ ok: false, port: 9900 });
+    }
+    const original = process.env.CDS_PUBLIC_HEALTH_DETAILS;
+    process.env.CDS_PUBLIC_HEALTH_DETAILS = '1';
+    try {
+      const detailed = await request(server, '/healthz?probe=routes');
+      expect(detailed.status).toBe(503);
+      expect(JSON.parse(detailed.body).checks).toHaveProperty('routesHttp');
+      const live = await request(server, '/healthz?lightweight=1');
+      expect(live.status).toBe(200);
+      expect(JSON.parse(live.body)).toEqual({ ok: true, port: 9900 });
+    } finally {
+      if (original === undefined) delete process.env.CDS_PUBLIC_HEALTH_DETAILS;
+      else process.env.CDS_PUBLIC_HEALTH_DETAILS = original;
+    }
+  });
   let tmpDir: string;
   let webDir: string;
   let server: http.Server | null = null;

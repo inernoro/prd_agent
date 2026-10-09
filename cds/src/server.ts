@@ -2166,6 +2166,11 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
     }
 
+    // 在后端统一收敛，直连端口与 nginx 入口一致；不改变健康判定或深探参数。
+    if (process.env.CDS_PUBLIC_HEALTH_DETAILS !== '1') {
+      res.status(overallOk ? 200 : 503).json({ ok: overallOk, port: deps.config.masterPort });
+      return;
+    }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       degraded: pressure?.degraded ?? false,
