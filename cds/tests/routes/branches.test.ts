@@ -1848,12 +1848,16 @@ describe('Branch Routes', () => {
       const readinessProbe = { path: '/health-api/health', intervalSeconds: 5, timeoutSeconds: 1200, noHttp: false };
       const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', {
         env: { SERVER_SERVLET_CONTEXT_PATH: '/health-api' }, readinessProbe,
+        // 实际 Mongo 读取的存量覆盖包含 null 的可选隔离字段。
+        dbScope: null, dbInit: null,
       });
       expect(put.status).toBe(200);
       expect((put.body as any).effective.readinessProbe).toEqual(readinessProbe);
       const get = await request(server, 'GET', '/api/branches/b1/profile-overrides');
       const saved = (get.body as any).profiles.find((p: any) => p.profileId === 'api');
       expect(saved.override.readinessProbe).toEqual(readinessProbe);
+      expect(saved.override.dbScope).toBeUndefined();
+      expect(saved.override.dbInit).toBeUndefined();
       expect(saved.effective.readinessProbe).toEqual(readinessProbe);
       expect(saved.effective.env.SERVER_SERVLET_CONTEXT_PATH).toBe('/health-api');
     });
