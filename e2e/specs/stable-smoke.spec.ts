@@ -1743,6 +1743,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(resourceFailures).toEqual([]);
   });
 
+  test('[REG-stsmk-production-read-only-001] 正式环境只读复测链真实执行', async ({ page }) => {
+    test.skip(
+      process.env.STABLE_SMOKE_ENVIRONMENT !== 'production',
+      '该永久回归只在正式环境执行',
+    );
+    expect(process.env.STABLE_SMOKE_RUN, '必须由稳定冒烟运行器执行').toBe('1');
+    const response = await page.goto('/', { waitUntil: 'domcontentloaded' });
+    expect(response?.status(), '正式环境只读入口必须成功返回').toBe(200);
+    expect(response?.headers()['content-type'], '正式环境只读入口必须返回 HTML').toContain('text/html');
+    await expect(page.locator('#root'), '正式环境只读入口必须渲染应用根节点').not.toBeEmpty();
+  });
+
   test('[REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
     await loginAndReadToken(page, request, '/');
     const notificationsLoaded = page.waitForResponse(

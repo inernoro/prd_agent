@@ -23,6 +23,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public static class CapsuleExecutor
 {
+    internal const long DefaultMaxVideoDownloadBytes = 200L * 1024 * 1024;
     private const int CdsAgentEventPageSize = 500;
     private const int CdsAgentMaxEventPages = 20;
     private const int SafeOutboundMaxRedirects = 5;
@@ -6194,6 +6195,10 @@ function safeChart(canvasId, config) {
             throw new InvalidOperationException("视频 URL 为空，无法下载");
 
         var timeoutSeconds = int.TryParse(GetConfigString(node, "timeoutSeconds"), out var ts) ? ts : 120;
+        var maxBytes = long.TryParse(GetConfigString(node, "maxFileSizeBytes"), out var configuredMaxBytes)
+            && configuredMaxBytes > 0
+            ? Math.Min(configuredMaxBytes, DefaultMaxVideoDownloadBytes)
+            : DefaultMaxVideoDownloadBytes;
 
         sb.AppendLine($"[VideoDownloader] 下载: {videoUrl}");
 
@@ -6212,10 +6217,13 @@ function safeChart(canvasId, config) {
                 urlValidator,
                 videoUrl,
                 "视频下载地址",
-                System.Net.Http.HttpCompletionOption.ResponseContentRead,
+                System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
                 CancellationToken.None);
             response.EnsureSuccessStatusCode();
-            videoBytes = await response.Content.ReadAsByteArrayAsync(CancellationToken.None);
+            videoBytes = await ReadContentWithLimitAsync(
+                response.Content,
+                maxBytes,
+                CancellationToken.None);
             var rawType = response.Content.Headers.ContentType?.MediaType;
             contentType = ResolveDownloadedVideoContentType(videoBytes, rawType);
             sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
@@ -6243,6 +6251,34 @@ function safeChart(canvasId, config) {
 
         var artifact = MakeTextArtifact(node, "vd-out", "下载结果", output, "application/json");
         return new CapsuleResult(new List<ExecutionArtifact> { artifact }, sb.ToString());
+    }
+
+    internal static async Task<byte[]> ReadContentWithLimitAsync(
+        HttpContent content,
+        long maxBytes,
+        CancellationToken cancellationToken)
+    {
+        if (maxBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        var contentLength = content.Headers.ContentLength;
+        if (contentLength.HasValue && contentLength.Value > maxBytes)
+            throw new InvalidOperationException($"视频文件超过大小限制（最大 {maxBytes / 1024 / 1024}MB）");
+
+        await using var source = await content.ReadAsStreamAsync(cancellationToken);
+        using var target = contentLength is > 0 and <= int.MaxValue
+            ? new MemoryStream((int)Math.Min(contentLength.Value, maxBytes))
+            : new MemoryStream();
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0) break;
+            total += read;
+            if (total > maxBytes)
+                throw new InvalidOperationException($"视频文件超过大小限制（最大 {maxBytes / 1024 / 1024}MB）");
+            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+        return target.ToArray();
     }
 
     internal static string ResolveDownloadedVideoContentType(byte[] videoBytes, string? rawType)

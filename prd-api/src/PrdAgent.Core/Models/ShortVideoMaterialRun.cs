@@ -25,6 +25,12 @@ public class ShortVideoMaterialRun
     /// </summary>
     public string? OwnerInstanceId { get; set; }
 
+    /// <summary>
+    /// 当前处理租约。Worker 领取时生成，终态提交或失败时清空；恢复与删除后，旧 Worker
+    /// 的延迟写入必须因 token 不匹配而被拒绝。
+    /// </summary>
+    public string? ProcessingToken { get; set; }
+
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;
 

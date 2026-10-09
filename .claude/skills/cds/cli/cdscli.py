@@ -7288,30 +7288,6 @@ def _verify_runtime_credential_vars(
         if v is not None
     }
 
-    def _env(svc: dict) -> dict[str, str]:
-        raw = svc.get("environment") or svc.get("env") or {}
-        parsed = dict(declared_env)
-        if isinstance(raw, dict):
-            parsed.update({str(k): str(v) for k, v in raw.items() if v is not None})
-            return parsed
-        if isinstance(raw, list):
-            for item in raw:
-                key, sep, value = str(item).partition("=")
-                if sep and key:
-                    parsed[key] = value
-            return parsed
-        return {}
-
-    def _args(svc: dict) -> str:
-        parts: list[str] = []
-        for field in ("command", "entrypoint"):
-            value = svc.get(field)
-            if isinstance(value, list):
-                parts.extend(str(item) for item in value)
-            elif value:
-                parts.append(str(value))
-        return " ".join(parts)
-
     template_re = re.compile(r"\$\{(\w+)(?::([-=?+])([^}]*))?\}")
     max_resolve_iterations = 8
 
@@ -7350,6 +7326,40 @@ def _verify_runtime_credential_vars(
                 break
             value = resolved
         return "" if "${" in value else value
+
+    def _resolve_text(raw_value: object, lookup: dict[str, str]) -> str:
+        probe_key = "__CDS_VERIFY_VALUE__"
+        scope = dict(lookup)
+        scope[probe_key] = str(raw_value)
+        return _value(scope, probe_key)
+
+    def _env(svc: dict) -> dict[str, str]:
+        raw = svc.get("environment") or svc.get("env") or {}
+        service_env: dict[str, str] = {}
+        if isinstance(raw, dict):
+            service_env.update({str(k): str(v) for k, v in raw.items() if v is not None})
+        elif isinstance(raw, list):
+            for item in raw:
+                key, sep, value = str(item).partition("=")
+                if sep and key:
+                    service_env[key] = value
+        # 运行时 resolveEnvTemplates(service.env, projectEnv) 使用两个独立作用域。
+        # 服务级同名占位不能覆盖 project env 后再解析，否则
+        # POSTGRES_PASSWORD=${POSTGRES_PASSWORD} 会被误判为自引用。
+        return {
+            key: _resolve_text(value, declared_env)
+            for key, value in service_env.items()
+        }
+
+    def _args(svc: dict) -> str:
+        parts: list[str] = []
+        for field in ("command", "entrypoint"):
+            value = svc.get(field)
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif value:
+                parts.append(str(value))
+        return " ".join(parts)
 
     def _flag_value(args: str, env: dict[str, str], *flags: str) -> str:
         try:

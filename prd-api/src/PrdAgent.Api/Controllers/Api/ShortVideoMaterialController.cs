@@ -111,7 +111,8 @@ public class ShortVideoMaterialController : ControllerBase
                    && run.UserId == userId
                    && (run.Status == ShortVideoMaterialRunStatus.Queued
                        || run.Status == ShortVideoMaterialRunStatus.Done
-                       || run.Status == ShortVideoMaterialRunStatus.Failed),
+                       || (run.Status == ShortVideoMaterialRunStatus.Failed
+                           && run.ProcessingToken == null)),
             CancellationToken.None);
         if (deleted.DeletedCount == 1)
             return Ok(ApiResponse<object>.Ok(new { deleted = true }));

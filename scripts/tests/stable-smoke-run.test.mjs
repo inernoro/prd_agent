@@ -36,6 +36,7 @@ import {
   parseEnvFile,
   parseRunnerArgs,
   probeCdsPublicEntry,
+  productionReadOnlyGrep,
   removeStaleLockIfSafe,
   runnerHelpText,
   resolveRuntimeExpectation,
@@ -147,6 +148,14 @@ test('运行器拒绝未知参数、缺值和冲突环境', () => {
     () => parseRunnerArgs(['--capture-visual', '--visual-manifest', '/tmp/manifest.json']),
     /不能同时使用/,
   );
+});
+
+test('正式环境只读范围同时执行基础入口和永久回归', () => {
+  const gate = initializeProductionSafetyGate(['production']);
+  assert.match(gate.grep, /CORE-001/);
+  assert.match(gate.grep, /REG-stsmk-production-read-only-001/);
+  const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
+  assert.match(source, /\[REG-stsmk-production-read-only-001\] 正式环境只读复测链真实执行/);
 });
 
 test('自动视觉取证把本轮计划和统一输出目录注入真实 Playwright 旅程', () => {
@@ -611,7 +620,7 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   const processGate = evaluateProductionSafetyGate({ status: 'failed' }, []);
   assert.equal(processGate.restricted, true);
   assert.equal(processGate.mode, 'read-only');
-  assert.equal(processGate.grep, '\\[CORE-001\\]');
+  assert.equal(processGate.grep, productionReadOnlyGrep);
 
   const cleanupGate = evaluateProductionSafetyGate({ status: 'executed' }, [{
     caseId: 'FILE-001',
@@ -688,7 +697,7 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   );
   assert.equal(filteredGate.restricted, true);
   assert.equal(filteredGate.mode, 'read-only');
-  assert.equal(filteredGate.grep, '\\[CORE-001\\]');
+  assert.equal(filteredGate.grep, productionReadOnlyGrep);
   assert.match(filteredGate.reasons.join('；'), /仅执行了筛选用例/);
   assert.equal(evaluateProductionSafetyGate({ status: 'blocked' }, []).restricted, true);
   assert.deepEqual(validateProductionReadOnlyConfig({
@@ -705,7 +714,7 @@ test('正式环境单独运行时默认禁止业务写入', () => {
   assert.deepEqual(initializeProductionSafetyGate(['production']), {
     restricted: true,
     mode: 'read-only',
-    grep: '\\[CORE-001\\]',
+    grep: productionReadOnlyGrep,
     reasons: ['本轮未执行 CDS 全量测试，正式环境仅允许只读健康检查'],
   });
   assert.deepEqual(initializeProductionSafetyGate(['cds', 'production']), {
@@ -734,16 +743,16 @@ test('正式环境单独 dry-run 只校验只读健康检查地址', () => {
 });
 
 test('正式环境只读模式只对账安全门实际执行的健康检查', () => {
-  const required = ['CORE-001', 'REC-003', 'VIS-001'];
+  const required = ['CORE-001', 'REC-003', 'VIS-001', 'REG-stsmk-production-read-only-001'];
   const gate = initializeProductionSafetyGate(['production']);
 
   assert.deepEqual(
     selectCoverageCaseIds(required, '', ['production'], gate),
-    ['CORE-001'],
+    ['CORE-001', 'REG-stsmk-production-read-only-001'],
   );
   assert.deepEqual(
     selectCoverageCaseIds(required, '\\[VIS-001\\]', ['production'], gate),
-    ['CORE-001'],
+    ['CORE-001', 'REG-stsmk-production-read-only-001'],
   );
   assert.deepEqual(
     selectCoverageCaseIds(required, '', ['cds', 'production'], { ...gate, restricted: false }),

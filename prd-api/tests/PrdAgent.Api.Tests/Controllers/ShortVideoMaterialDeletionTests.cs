@@ -46,6 +46,20 @@ public sealed class ShortVideoMaterialDeletionTests
         Assert.Equal(0, await test.Context.ShortVideoMaterialRuns.CountDocumentsAsync(x => x.Id == run.Id));
     }
 
+    [Fact]
+    public async Task DeleteRun_WhenRecoveredStatusStillHasWorkerToken_ShouldReturnConflict()
+    {
+        await using var test = await ShortVideoDeletionDatabase.CreateAsync();
+        var run = test.NewRun(ShortVideoMaterialRunStatus.Failed);
+        run.ProcessingToken = "worker-still-active";
+        await test.Context.ShortVideoMaterialRuns.InsertOneAsync(run);
+
+        var result = await test.CreateController().DeleteRun(run.Id);
+
+        Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal(1, await test.Context.ShortVideoMaterialRuns.CountDocumentsAsync(x => x.Id == run.Id));
+    }
+
     private sealed class ShortVideoDeletionDatabase : IAsyncDisposable
     {
         private readonly MongoClient _client;

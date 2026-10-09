@@ -85,6 +85,29 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         ex.Message.ShouldContain("内网或保留地址");
     }
 
+    [Fact]
+    public async Task ReadContentWithLimitAsync_ShouldRejectDeclaredOversizeBeforeReading()
+    {
+        using var content = new ByteArrayContent(new byte[16]);
+        content.Headers.ContentLength = 16;
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            CapsuleExecutor.ReadContentWithLimitAsync(content, 8, CancellationToken.None));
+
+        ex.Message.ShouldContain("超过大小限制");
+    }
+
+    [Fact]
+    public async Task ReadContentWithLimitAsync_ShouldStopChunkedResponseAtHardLimit()
+    {
+        using var content = new StreamContent(new MemoryStream(new byte[17]));
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            CapsuleExecutor.ReadContentWithLimitAsync(content, 16, CancellationToken.None));
+
+        ex.Message.ShouldContain("超过大小限制");
+    }
+
     private static ServiceProvider BuildServices()
     {
         var services = new ServiceCollection();
