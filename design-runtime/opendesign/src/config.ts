@@ -18,6 +18,7 @@ export interface ServiceConfig {
   engineGid?: number;
   egressPort: number;
   codexBin: string;
+  llmgwBaseUrl: string;
 }
 
 function integer(value: string | undefined, fallback: number, name: string): number {
@@ -52,5 +53,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     engineGid: optionalInteger(env.DESIGN_RUNTIME_ENGINE_GID ?? '1001', 'DESIGN_RUNTIME_ENGINE_GID'),
     egressPort: integer(env.DESIGN_RUNTIME_EGRESS_PORT, 8787, 'DESIGN_RUNTIME_EGRESS_PORT'),
     codexBin: env.DESIGN_RUNTIME_CODEX_BIN || 'codex',
+    llmgwBaseUrl: (env.DESIGN_RUNTIME_LLMGW_BASE_URL || 'http://gateway/gw/v1').replace(/\/$/, ''),
   };
 }

@@ -111,6 +111,38 @@ public sealed class GatewayServiceKeyDirectoryRecord
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>
+/// MAP 为单次远程设计任务签发的短期 LLMGW 凭据。数据库只保存密钥哈希；调用身份、
+/// 运行标识和冻结模型策略都由网关从本记录恢复，不能由设计执行器自行扩大权限。
+/// </summary>
+[BsonIgnoreExtraElements]
+public sealed class GatewayRuntimeGrantRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = string.Empty;
+    public string KeyHash { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public string AppCallerCode { get; set; } = string.Empty;
+    public string Environment { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string? ModelPoolId { get; set; }
+    public string? PinnedPlatformId { get; set; }
+    public string? PinnedModelId { get; set; }
+    public double? Temperature { get; set; }
+    public double? TopP { get; set; }
+    public string? ReasoningMode { get; set; }
+    public string? ReasoningEffort { get; set; }
+    public string? OutputTokenMode { get; set; }
+    public bool RequireDeclaredParameters { get; set; }
+    public int MaxCalls { get; set; } = 256;
+    public int CallCount { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastUsedAt { get; set; }
+}
+
 [BsonIgnoreExtraElements]
 public sealed class GatewayBudgetMonthRecord
 {

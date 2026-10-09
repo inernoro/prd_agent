@@ -40,6 +40,7 @@ builder.Services.AddSingleton<LlmGatewayDatabaseInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabaseInitializer>());
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
+builder.Services.AddSingleton<IGatewayRuntimeGrantCallCounter, GatewayRuntimeGrantCallCounter>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();

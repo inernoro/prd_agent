@@ -400,6 +400,7 @@ export async function startHarness(options: { apiKey?: string; overrides?: Desig
     engineHome: root,
     egressPort: 0,
     codexBin: 'codex',
+    llmgwBaseUrl: 'http://gateway/gw/v1',
   };
   const daemon = new FakeOpenDesign(config.workspaceDir);
   const runtime = await createDesignRuntime(config, {
