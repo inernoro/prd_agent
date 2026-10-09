@@ -63,8 +63,6 @@ interface ProjectSummary {
   slug: string;
   name: string;
   aliasName?: string;
-  aliasSlug?: string;
-  previewIdentifier?: string;
   identityVersion?: string;
   /** 项目声明的 Agent 角色（GET /api/projects 带出）；未声明时缺省。 */
   agentProfile?: { role: string; experience: string; cardTitle?: string };
@@ -651,7 +649,7 @@ export function ProjectSettingsPage(): JSX.Element {
               <TabsList aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
                 <div className="cds-settings-rail-head">
                   <div className="text-sm font-semibold">项目设置</div>
-                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.previewIdentifier || project.aliasSlug || project.slug || project.id}</div>
+                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.slug || project.id}</div>
                 </div>
                 {tabGroups.map((group, groupIdx) => (
                   <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
@@ -1242,8 +1240,8 @@ export function GeneralTab({
 }): JSX.Element {
   const [name, setName] = useState(project.name || '');
   const [aliasName, setAliasName] = useState(project.aliasName || '');
-  const savedIdentifier = project.previewIdentifier || project.aliasSlug || project.slug;
-  const [previewIdentifier, setPreviewIdentifier] = useState(savedIdentifier);
+  const savedSlug = project.slug;
+  const [slug, setSlug] = useState(savedSlug);
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
@@ -1281,7 +1279,7 @@ export function GeneralTab({
   useEffect(() => {
     setName(project.name || '');
     setAliasName(project.aliasName || '');
-    setPreviewIdentifier(project.previewIdentifier || project.aliasSlug || project.slug);
+    setSlug(project.slug);
     setDescription(project.description || '');
     setGitRepoUrl(project.gitRepoUrl || '');
     setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
@@ -1308,7 +1306,7 @@ export function GeneralTab({
         body: {
           name: trimmedName,
           aliasName: aliasName.trim(),
-          previewIdentifier: previewIdentifier.trim(),
+          slug: slug.trim(),
           expectedIdentityVersion: project.identityVersion,
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
@@ -1339,7 +1337,7 @@ export function GeneralTab({
     <div className="space-y-8">
       <Section
         title="项目基础信息"
-        description="修改展示名称、预览地址标识和仓库来源；保存前可核对变化，保存后可查看记录。"
+        description="修改展示名称、项目 slug 和仓库来源；保存前可核对变化，保存后可查看记录。"
       >
         {/*
          * 方向 A：表单列锁可读宽度（620px），右列放这一组设置的「当前生效 /
@@ -1354,32 +1352,29 @@ export function GeneralTab({
           </label>
           <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
             <label className="block space-y-1.5">
-              <span className="text-sm font-medium">预览地址标识</span>
-              <input className={monoInputClass} value={previewIdentifier}
-                onChange={(event) => setPreviewIdentifier(event.target.value.toLowerCase())}
-                maxLength={Math.max(50, project.slug.length)} required aria-describedby="preview-identifier-help" />
+              <span className="text-sm font-medium">项目 slug</span>
+              <input className={monoInputClass} value={slug}
+                onChange={(event) => setSlug(event.target.value.toLowerCase())}
+                maxLength={Math.max(50, project.slug.length)} required aria-describedby="project-slug-help" />
             </label>
-            <p id="preview-identifier-help" className="text-xs text-muted-foreground break-all">
-              当前使用：<span className="font-mono text-foreground">{savedIdentifier}</span>。
+            <p id="project-slug-help" className="text-xs text-muted-foreground break-all">
+              当前使用：<span className="font-mono text-foreground">{savedSlug}</span>。
               用于各分支预览地址的项目部分，修改项目名称或仓库不会自动改变它。
             </p>
-            {previewIdentifier.trim() !== savedIdentifier ? (
+            {slug.trim() !== savedSlug ? (
               <p className="text-xs text-warn break-all" role="status">
-                保存后使用：{previewIdentifier.trim() || '请填写标识'}。将影响该项目已有和未来分支的预览地址；已分享的链接可能受影响。
+                保存后使用：{slug.trim() || '请填写标识'}。将影响该项目已有和未来分支的预览地址；已分享的链接可能受影响。
               </p>
             ) : null}
-            <Button type="button" variant="outline" size="sm" disabled={previewIdentifier === project.slug}
-              onClick={() => setPreviewIdentifier(project.slug)}>恢复默认标识</Button>
           </div>
           <details className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
-            <summary className="cursor-pointer">高级展示设置与内部标识</summary>
+            <summary className="cursor-pointer">高级显示设置</summary>
             <div className="mt-3 space-y-3">
               <label className="block space-y-1.5">
                 <span>显示名称覆盖（可选）</span>
                 <input className={inputClass} value={aliasName} onChange={(event) => setAliasName(event.target.value)}
                   maxLength={60} placeholder={name || '使用项目名称'} />
               </label>
-              <p className="break-all">创建时的内部标识：<span className="font-mono">{project.slug}</span>。用于内部关联，保持稳定。</p>
             </div>
           </details>
           <label className="block space-y-1.5">
@@ -1480,8 +1475,8 @@ export function GeneralTab({
                   <dd className="truncate font-mono">{project.id}</dd>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">预览地址标识</dt>
-                  <dd className="break-all font-mono">{savedIdentifier}</dd>
+                  <dt className="text-muted-foreground">项目 slug</dt>
+                  <dd className="break-all font-mono">{savedSlug}</dd>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-muted-foreground">Docker 网络</dt>
@@ -1502,7 +1497,7 @@ export function GeneralTab({
                 改动影响
               </div>
               <p className="text-xs leading-relaxed">
-                修改项目名称只影响展示；修改预览地址标识会改变预览入口。项目 ID 与 Docker 网络保持稳定。
+                修改项目名称只影响展示；修改项目 slug 会改变预览入口。项目 ID 与 Docker 网络保持稳定。
               </p>
             </div>
           </aside>
@@ -1516,7 +1511,6 @@ export function GeneralTab({
       <Section title="内部项目标识">
         <div className="grid max-w-4xl gap-3 md:grid-cols-2">
           <InfoRow label="项目 ID" value={project.id} action={<CopyButton onClick={() => void copyProjectId()} />} />
-          <InfoRow label="创建时的内部标识" value={project.slug} />
           <InfoRow label="Docker 网络" value={project.dockerNetwork || '暂无'} />
           <InfoRow label="项目类型" value={project.kind || 'git'} />
           <InfoRow label="创建时间" value={formatDate(project.createdAt)} />

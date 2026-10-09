@@ -663,26 +663,27 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.description).toBe('Second Desc');
     });
 
-    // ── Alias fields (follow-up PR for doc/plan.cds-github-integration-followups P0) ──
-    it('uses one effective identifier, supports restoring the default, and records changes', async () => {
+    // ── 唯一项目 slug 与变更记录 ──
+    it('keeps one slug, supports changing it back, and records changes', async () => {
       delete stateService.getProject('default')!.identityHistory;
       const initial = await request(server, 'GET', '/api/projects/default');
-      expect(initial.body.previewIdentifier).toBe(initial.body.slug);
+      expect(initial.body).not.toHaveProperty('aliasSlug');
+      expect(initial.body).not.toHaveProperty('previewIdentifier');
       const changed = await request(server, 'PUT', '/api/projects/default', {
-        previewIdentifier: 'short-preview', expectedIdentityVersion: initial.body.identityVersion,
+        slug: 'short-preview', expectedIdentityVersion: initial.body.identityVersion,
       });
       expect(changed.status).toBe(200);
-      expect(changed.body.project.previewIdentifier).toBe('short-preview');
+      expect(changed.body.project.slug).toBe('short-preview');
       const restored = await request(server, 'PUT', '/api/projects/default', {
-        previewIdentifier: initial.body.slug, expectedIdentityVersion: changed.body.project.identityVersion,
+        slug: initial.body.slug, expectedIdentityVersion: changed.body.project.identityVersion,
       });
       expect(restored.status).toBe(200);
       expect(restored.body.project.aliasSlug).toBeUndefined();
-      expect(restored.body.project.previewIdentifier).toBe(initial.body.slug);
+      expect(restored.body.project.slug).toBe(initial.body.slug);
       const history = await request(server, 'GET', '/api/projects/default/identity-history');
       expect(history.body.coverage).toBe('since-baseline');
-      expect(history.body.records[0].before.previewIdentifier).toBe('short-preview');
-      expect(history.body.records[0].after.previewIdentifier).toBe(initial.body.slug);
+      expect(history.body.records[0].before.slug).toBe('short-preview');
+      expect(history.body.records[0].after.slug).toBe(initial.body.slug);
       expect(history.body.records.at(-1).kind).toBe('baseline');
       // The migration observation is not presented as historical creation evidence.
       expect(history.body.records.at(-1).before).toBeUndefined();
@@ -695,10 +696,10 @@ describe('Projects router (P4 Part 2)', () => {
       const count = stateService.getProject('default')!.identityHistory!.length;
       for (const body of [
         { name: 'Stale write', expectedIdentityVersion: initial.body.identityVersion },
-        { previewIdentifier: 'taken-identity' },
-        { previewIdentifier: '' },
-        { previewIdentifier: 'bad identifier' },
-        { previewIdentifier: 'x'.repeat(51) },
+        { slug: 'taken-identity' },
+        { slug: '' },
+        { slug: 'bad identifier' },
+        { slug: 'x'.repeat(51) },
         { previewIdentifier: 'one', aliasSlug: 'two' },
       ]) {
         const res = await request(server, 'PUT', '/api/projects/default', body);
@@ -706,6 +707,26 @@ describe('Projects router (P4 Part 2)', () => {
       }
       expect(stateService.getProject('default')!.identityHistory).toHaveLength(count);
       expect(stateService.getProject('default')!.name).toBe('Changed elsewhere');
+    });
+
+    it('保留旧 slug 的入口归属，其他项目不能通过创建或改名占用', async () => {
+      const first = await request(server, 'POST', '/api/projects', { name: '旧入口归属', slug: 'reserved-old' });
+      const id = first.body.project.id;
+      expect((await request(server, 'PUT', `/api/projects/${id}`, { slug: 'reserved-new' })).status).toBe(200);
+      const occupied = await request(server, 'PUT', '/api/projects/default', { slug: 'reserved-old' });
+      expect(occupied.status).toBe(409);
+      const created = await request(server, 'POST', '/api/projects', { name: '另一个项目', slug: 'reserved-old' });
+      expect(created.status).toBe(409);
+      expect(created.body.field).toBe('slug');
+      expect(stateService.getProject(id)?.slug).toBe('reserved-new');
+    });
+
+    it.each(['aliasSlug', 'previewIdentifier'])('创建项目也拒绝废弃的 %s 字段', async (field) => {
+      const count = stateService.getProjects().length;
+      const res = await request(server, 'POST', '/api/projects', { name: '创建', slug: 'single-slug', [field]: 'second-slug' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('obsolete_project_slug_field');
+      expect(stateService.getProjects()).toHaveLength(count);
     });
 
     it('persists before/after history across restart and beyond activity-log retention', async () => {
@@ -772,24 +793,25 @@ describe('Projects router (P4 Part 2)', () => {
       expect(history.at(-1)?.actor).not.toContain('spoofed');
     });
 
-    it('accepts aliasName + aliasSlug and returns them on the project', async () => {
+    it('accepts aliasName and the single project slug', async () => {
       const res = await request(server, 'PUT', '/api/projects/default', {
         aliasName: 'PRD Agent',
-        aliasSlug: 'prd',
+        slug: 'prd',
       });
       expect(res.status).toBe(200);
       expect(res.body.project.aliasName).toBe('PRD Agent');
-      expect(res.body.project.aliasSlug).toBe('prd');
+      expect(res.body.project.slug).toBe('prd');
+      expect(res.body.project).not.toHaveProperty('aliasSlug');
+      expect(res.body.project).not.toHaveProperty('previewIdentifier');
     });
 
     it('clears alias when an empty string is sent', async () => {
       await request(server, 'PUT', '/api/projects/default', {
         aliasName: 'PRD Agent',
-        aliasSlug: 'prd',
+        slug: 'prd',
       });
       const res = await request(server, 'PUT', '/api/projects/default', {
         aliasName: '',
-        aliasSlug: '',
       });
       expect(res.status).toBe(200);
       // Cleared fields should not be truthy — either undefined or missing.
@@ -797,27 +819,27 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.aliasSlug || null).toBeNull();
     });
 
-    it('rejects aliasSlug that fails the slug regex with 400', async () => {
+    it('rejects a project slug that fails the slug regex with 400', async () => {
       const res = await request(server, 'PUT', '/api/projects/default', {
-        aliasSlug: 'Bad Slug!',
+        slug: 'Bad Slug!',
       });
       expect(res.status).toBe(400);
-      expect(res.body.field).toBe('aliasSlug');
+      expect(res.body.field).toBe('slug');
     });
 
-    it('rejects aliasSlug that equals the project own slug with 400', async () => {
+    it('accepts an unchanged project slug without another alias', async () => {
       // Legacy default's slug is derived from projectSlug, not the id. Fetch
       // it so the assertion doesn't depend on the test repo name.
       const get = await request(server, 'GET', '/api/projects/default');
       const ownSlug = get.body.slug as string;
       const res = await request(server, 'PUT', '/api/projects/default', {
-        aliasSlug: ownSlug,
+        slug: ownSlug,
       });
-      expect(res.status).toBe(400);
-      expect(res.body.field).toBe('aliasSlug');
+      expect(res.status).toBe(200);
+      expect(res.body.project.slug).toBe(ownSlug);
     });
 
-    it('rejects aliasSlug that collides with another project slug with 409', async () => {
+    it('rejects a project slug that collides with another project slug with 409', async () => {
       const other = await request(server, 'POST', '/api/projects', {
         name: 'Taken',
         slug: 'taken-slug',
@@ -825,10 +847,10 @@ describe('Projects router (P4 Part 2)', () => {
       expect(other.status).toBe(201);
 
       const res = await request(server, 'PUT', '/api/projects/default', {
-        aliasSlug: 'taken-slug',
+        slug: 'taken-slug',
       });
       expect(res.status).toBe(409);
-      expect(res.body.field).toBe('aliasSlug');
+      expect(res.body.field).toBe('slug');
     });
 
     it('rejects aliasName longer than 60 chars with 400', async () => {

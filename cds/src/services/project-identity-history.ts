@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type { Project, ProjectIdentityRecord, ProjectIdentitySnapshot } from '../types.js';
-import { buildPreviewUrlForProject } from './comment-template.js';
 import { establishAgentOperationContext } from './agent-operation-context.js';
 
 export interface ProjectIdentityActor {
@@ -38,8 +37,7 @@ export function projectIdentitySnapshot(project: Project): ProjectIdentitySnapsh
   return {
     name: project.name,
     displayName: project.aliasName || project.name,
-    previewIdentifier: buildPreviewUrlForProject('', '', project).projectIdentity.slug,
-    originalIdentifier: project.slug,
+    slug: project.slug,
     repository: safeRepository(project.gitRepoUrl),
   };
 }
@@ -58,4 +56,26 @@ export function identityRecord(
 
 export function identityChanged(before: Project, after: Project): boolean {
   return JSON.stringify(projectIdentitySnapshot(before)) !== JSON.stringify(projectIdentitySnapshot(after));
+}
+
+/** 对外只显示一个 slug，旧快照中的原始字段仍留在存储中用于兼容取证。 */
+export function publicIdentityRecord(record: ProjectIdentityRecord): ProjectIdentityRecord {
+  const snapshot = (value: ProjectIdentitySnapshot): ProjectIdentitySnapshot => ({
+    name: value.name, displayName: value.displayName,
+    slug: value.slug || value.previewIdentifier || value.originalIdentifier || '', repository: value.repository,
+  });
+  return { ...record, before: record.before ? snapshot(record.before) : undefined, after: snapshot(record.after) };
+}
+
+/** 旧父实例镜像的导入边界；正常配置不保留 aliasSlug。 */
+export function importLegacyProjectSlug(project: Project): Project {
+  const legacy = project as Project & { aliasSlug?: string };
+  if (!Object.hasOwn(legacy, 'aliasSlug')) return project;
+  const next = { ...project, identityHistory: [...(project.identityHistory || [
+    identityRecord(project, 'baseline', { actor: 'system:history-baseline' }),
+  ])] };
+  next.slug = legacy.aliasSlug?.trim().toLowerCase() || project.slug;
+  delete (next as Project & { aliasSlug?: string }).aliasSlug;
+  next.identityHistory.push(identityRecord(next, 'migrated', { actor: 'system:single-project-slug' }, projectIdentitySnapshot(project)));
+  return next;
 }

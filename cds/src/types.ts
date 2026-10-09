@@ -3669,15 +3669,17 @@ export interface ManagedProjectSpec {
 export interface ProjectIdentitySnapshot {
   name: string;
   displayName: string;
-  previewIdentifier: string;
-  originalIdentifier: string;
+  slug: string;
+  /** 只读取上一版审计快照，不能作为项目配置写入。 */
+  previewIdentifier?: string;
+  originalIdentifier?: string;
   repository: string;
 }
 
 export interface ProjectIdentityRecord {
   id: string;
   at: string;
-  kind: 'created' | 'baseline' | 'changed';
+  kind: 'created' | 'baseline' | 'changed' | 'migrated';
   actor: string;
   requestId?: string;
   slugSource?: 'explicit' | 'repository' | 'name';
@@ -3710,7 +3712,7 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
-  /** URL-friendly slug (may equal id, usually kebab-case). */
+  /** 唯一可编辑的项目 slug，用于预览地址；关联使用稳定的 id。 */
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
@@ -3732,14 +3734,6 @@ export interface Project {
    * the legacy default project) is not the label the user wants to see.
    */
   aliasName?: string;
-  /**
-   * 自定义预览地址标识。预览域名优先使用它；缺省使用原 slug。
-   * 不参与内部 branch id 的生成，项目内部身份保持稳定。
-   *
-   * Must pass the same SLUG_REGEX as `slug` and must not collide with
-   * any other project's `slug` or `aliasSlug`.
-   */
-  aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
   /** 旧项目缺省为 compose，保持现有 BuildProfile/compose 行为。 */

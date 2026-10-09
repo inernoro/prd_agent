@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { identityChanged, identityRecord, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
+import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
 import type {
   DbLedgerEntry,
@@ -69,7 +69,7 @@ import { createReportObjectStore, type ReportObjectStore } from './report-object
 import { buildCacheMounts } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
-import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
+import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs } from './preview-slug.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -522,11 +522,6 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
-      // Legacy CDS instances sometimes ran from a generic checkout dir
-      // (`workspace`, `cursor-workspace`). Keep the immutable project slug
-      // intact, but set a preview alias from the Git repo so new URLs do
-      // not keep exposing the container/workspace folder name.
-      this.migrateLegacyPreviewAlias();
       let identityBaselineAdded = false;
       for (const project of this.state.projects) {
         if (!project.identityHistory?.length) {
@@ -535,6 +530,7 @@ export class StateService {
         }
       }
       if (identityBaselineAdded) this.save();
+      this.migrateProjectSlugs();
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
@@ -837,25 +833,41 @@ export class StateService {
     }
   }
 
-  private migrateLegacyPreviewAlias(): void {
+  private migrateProjectSlugs(): void {
     const projects = this.state.projects || [];
-    const legacy = projects.find((p) => p.legacyFlag === true);
-    if (!legacy || legacy.aliasSlug || !isGenericPreviewProjectSlug(legacy.slug)) return;
-
-    const candidate =
-      repoNameFromGitRef(legacy.gitRepoUrl) ||
-      repoNameFromGitRef(legacy.githubRepoFullName) ||
-      repoNameFromGitRef(readGitOriginUrl(this.repoRoot));
-    if (!candidate || candidate === legacy.slug) return;
-
-    const collides = projects.some(
-      (p) => p.id !== legacy.id && (p.slug === candidate || p.aliasSlug === candidate),
-    );
-    if (collides) return;
-
-    legacy.aliasSlug = candidate;
-    legacy.updatedAt = new Date().toISOString();
-    this.save();
+    const changes = projects.map((project) => {
+      // aliasSlug 仅在旧状态导入边界读取，迁移后从对象中物理删除。
+      const oldAlias = (project as Project & { aliasSlug?: string }).aliasSlug;
+      const candidate = oldAlias?.trim().toLowerCase() ||
+        (project.legacyFlag && isGenericPreviewProjectSlug(project.slug)
+          ? repoNameFromGitRef(project.gitRepoUrl) || repoNameFromGitRef(project.githubRepoFullName) || repoNameFromGitRef(readGitOriginUrl(this.repoRoot))
+          : '') || project.slug;
+      const resolved = !oldAlias && projects.some((other) => other.id !== project.id && projectHistoricalSlugs(other).includes(candidate)) ? project.slug : candidate;
+      return { project, candidate: resolved, hadAlias: Object.hasOwn(project, 'aliasSlug') };
+    });
+    // 先校验整批，冲突时不覆盖任何项目，保留原状态供原版本恢复。
+    for (const { project, candidate } of changes) {
+      if (candidate === project.slug) continue;
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(candidate)) {
+        throw new Error(`项目「${project.name}」的旧标识格式无效，迁移未执行。请先在原版本修正。`);
+      }
+      if (changes.some((other) => other.project.id !== project.id &&
+          (other.candidate === candidate || projectHistoricalSlugs(other.project).includes(candidate)))) {
+        throw new Error(`项目「${project.name}」的 slug「${candidate}」冲突，迁移未执行。请先在原版本修改冲突标识。`);
+      }
+    }
+    let changed = false;
+    for (const { project, candidate, hadAlias } of changes) {
+      if (candidate !== project.slug || hadAlias) {
+        const before = projectIdentitySnapshot(project);
+        project.slug = candidate;
+        delete (project as Project & { aliasSlug?: string }).aliasSlug;
+        project.identityHistory!.push(identityRecord(project, 'migrated', { actor: 'system:single-project-slug' }, before));
+        project.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   /**
@@ -1875,7 +1887,7 @@ export class StateService {
     const byId = projects.find((p) => p.id === idOrSlug);
     if (byId) return byId;
     const lc = idOrSlug.toLowerCase();
-    return projects.find((p) => (p.slug || '').toLowerCase() === lc);
+    return projects.find((p) => projectHistoricalSlugs(p).includes(lc));
   }
 
   /**
@@ -1964,14 +1976,20 @@ export class StateService {
    * without waiting for Part 2's route work.
    */
   addProject(project: Project, context: ProjectIdentityActor = { actor: 'unknown' }): void {
+    if (Object.hasOwn(project, 'aliasSlug')) {
+      if (!project.mirror) throw new Error('项目只保留一个 slug，不接受 aliasSlug 字段');
+      project = importLegacyProjectSlug(project);
+    }
     if (!this.state.projects) this.state.projects = [];
     if (this.state.projects.some((p) => p.id === project.id)) {
       throw new Error(`Project with id '${project.id}' already exists`);
     }
-    if (this.state.projects.some((p) => p.slug === project.slug)) {
+    if (this.state.projects.some((p) => projectHistoricalSlugs(p).includes(project.slug))) {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }
-    project.identityHistory = [identityRecord(project, 'created', context)];
+    if (!project.mirror || !project.identityHistory?.length) {
+      project.identityHistory = [identityRecord(project, 'created', context)];
+    }
     this.state.projects.push(project);
     this.save();
   }
@@ -2225,7 +2243,7 @@ export class StateService {
         Project,
         | 'name'
         | 'aliasName'
-        | 'aliasSlug'
+        | 'slug'
         | 'description'
         | 'deliveryMode'
         | 'managedSpec'
@@ -3128,8 +3146,8 @@ export class StateService {
   // ── Project-scoped Agent Keys ──
   //
   // Each AgentKey stores only the sha256 of the plaintext key; the key
-  // prefix (`cdsp_<slugHead12>_...`) encodes the owning project so the
-  // auth middleware can look up the project from the header alone.
+  // prefix (`cdsp_<slugHead12>_...`) is a readable signing-time hint;
+  // the saved hash binding identifies the owning project after a rename.
   // Plaintext is shown once at signing time and never persisted.
 
   /** Append an AgentKey entry under a project. Creates the array on demand. */
@@ -3174,7 +3192,7 @@ export class StateService {
    * timingSafeEqual for hash comparison so the endpoint doesn't leak
    * hash bytes via timing.
    *
-   * Returns null on any failure (malformed prefix, unknown slug, no
+   * Returns null on any failure (malformed prefix, no
    * matching hash, key revoked).
    */
   findAgentKeyForAuth(plaintextKey: string): { projectId: string; keyId: string } | null {
@@ -3187,8 +3205,7 @@ export class StateService {
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const project of this.state.projects || []) {
-      const projectSlugHead = project.slug.slice(0, 12).toLowerCase();
-      if (projectSlugHead !== slugHead) continue;
+      // 哈希归属才是权限依据；slug 前缀只是签发时的可读提示，改名不会撤销凭据。
       for (const entry of project.agentKeys || []) {
         if (entry.revokedAt) continue;
         // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥

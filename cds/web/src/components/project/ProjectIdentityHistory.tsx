@@ -4,16 +4,15 @@ import { apiRequest } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Section, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
-type Snapshot = Record<'name' | 'displayName' | 'previewIdentifier' | 'originalIdentifier' | 'repository', string>;
+type Snapshot = Record<'name' | 'displayName' | 'slug' | 'repository', string>;
 interface RecordEntry {
-  id: string; at: string; kind: 'created' | 'baseline' | 'changed'; actor: string;
+  id: string; at: string; kind: 'created' | 'baseline' | 'changed' | 'migrated'; actor: string;
   slugSource?: 'explicit' | 'repository' | 'name';
   before?: Snapshot; after: Snapshot;
 }
 interface HistoryResponse { records: RecordEntry[]; nextCursor: string | null; coverage: string }
 const FIELD_LABELS: Record<keyof Snapshot, string> = {
-  name: '项目名称', displayName: '显示名称', previewIdentifier: '预览地址标识',
-  originalIdentifier: '内部标识', repository: 'Git 仓库',
+  name: '项目名称', displayName: '显示名称', slug: '项目 slug', repository: 'Git 仓库',
 };
 const SOURCE_LABELS = { explicit: '创建请求指定', repository: '仓库名称', name: '项目名称' };
 
@@ -40,7 +39,7 @@ export function ProjectIdentityHistory({ projectId, version }: { projectId: stri
     return () => { sequence.current++; };
   }, [load, version]);
   return (
-    <Section title="设置变更记录" description="记录名称、预览地址标识和仓库的变化；与部署活动分开保存。">
+    <Section title="设置变更记录" description="记录名称、项目 slug 和仓库的变化；与部署活动分开保存。">
       {coverage === 'since-baseline' ? <p className="mb-3 text-xs text-muted-foreground">历史未知：记录启用前的修改无法还原。首次基线仅表示当时观察到的值。</p> : null}
       {error ? <ErrorBlock message={error} /> : null}
       <div className="space-y-3">
@@ -48,7 +47,7 @@ export function ProjectIdentityHistory({ projectId, version }: { projectId: stri
           <div key={record.id} className="cds-surface-raised cds-hairline p-3 text-xs space-y-2">
             <div className="flex flex-wrap gap-2 text-muted-foreground">
               <span>{new Date(record.at).toLocaleString('zh-CN')}</span><span>{record.actor === 'unknown' ? '操作者未知' : record.actor}</span>
-              <span>{record.kind === 'created' ? '创建项目' : record.kind === 'baseline' ? '首次观察基线（历史未知）' : '修改设置'}</span>
+              <span>{record.kind === 'created' ? '创建项目' : record.kind === 'baseline' ? '首次观察基线（历史未知）' : record.kind === 'migrated' ? '合并旧标识' : '修改设置'}</span>
             </div>
             {record.slugSource ? <p>初始标识来源：{SOURCE_LABELS[record.slugSource]}</p> : null}
             <dl className="space-y-1">

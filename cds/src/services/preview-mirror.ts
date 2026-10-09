@@ -23,6 +23,7 @@
  * 相同）重复启动不重写，新镜像整体替换旧镜像播下的条目，镜像里消失的条目一并删掉。
  */
 import fs from 'node:fs';
+import { importLegacyProjectSlug } from './project-identity-history.js';
 import { profileHostsPreviewInstance } from './preview-instance.js';
 import path from 'node:path';
 import type {
@@ -158,7 +159,7 @@ function redactProfile(profile: BuildProfile): BuildProfile {
 }
 
 const PROJECT_KEYS: ReadonlyArray<keyof Project> = [
-  'id', 'slug', 'name', 'aliasName', 'aliasSlug', 'description', 'kind', 'deliveryMode',
+  'id', 'slug', 'name', 'aliasName', 'identityHistory', 'description', 'kind', 'deliveryMode',
   'inheritGlobalEnv', 'infraIsolation', 'resourceChipDisplay', 'branchGroups', 'gitRepoUrl', 'gitDefaultBranch',
   'cloneStatus', 'dockerNetwork', 'createdAt', 'updatedAt',
 ];
@@ -350,6 +351,7 @@ export function readPreviewMirror(repoRoot: string): PreviewMirrorFile | null {
   if (parsed?.version !== PREVIEW_MIRROR_VERSION || !Array.isArray(parsed.projects)) {
     throw new Error(`preview-mirror.json 版本不认识（version=${String(parsed?.version)}）`);
   }
+  parsed.projects = parsed.projects.map(importLegacyProjectSlug);
   return parsed;
 }
 

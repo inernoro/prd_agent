@@ -102,6 +102,27 @@ function addMultiProfileBranch(opts: {
 }
 
 describe('ForwarderRoutePublisher', () => {
+  it.each(['main', 'codex/combo-gift-admin', 'feature/orders/v2', 'release/2026.10'])(
+    '项目改 slug 后 %s 分支的新旧入口、API 和命名服务仍指向同一资源', (branch) => {
+      ensureProject('p1', 'old-project');
+      addMultiProfileBranch({ projectId: 'p1', branch, services: { admin: 41200, api: 41201, 'llmgw-web': 41202 } });
+      state.addBuildProfile({ id: 'admin', name: 'admin', projectId: 'p1', pathPrefixes: ['/'] } as Parameters<typeof state.addBuildProfile>[0]);
+      state.addBuildProfile({ id: 'api', name: 'api', projectId: 'p1', pathPrefixes: ['/api/'] } as Parameters<typeof state.addBuildProfile>[0]);
+      state.addBuildProfile({ id: 'llmgw-web', name: 'gateway', projectId: 'p1', subdomain: 'llmgw' } as Parameters<typeof state.addBuildProfile>[0]);
+      state.updateProject('p1', { slug: 'short-project' });
+      publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+      publisher.publishNow();
+      const routes: RouteRecord[] = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+      for (const slug of ['old-project', 'short-project']) {
+        const host = `${computePreviewSlug(branch, slug)}.miduo.org`;
+        expect(resolveRoute(routes, host, '/')?.upstreamPort).toBe(41200);
+        expect(resolveRoute(routes, host, '/api/orders')?.upstreamPort).toBe(41201);
+        expect(resolveRoute(routes, `${computePreviewSlug(branch, slug)}-llmgw.miduo.org`, '/')?.upstreamPort).toBe(41202);
+        expect(resolveRoute(routes, host, '/')?.branchId).toBe(`p1-${branch}`);
+      }
+      expect(publisher.publishNow()).toBe(false);
+    },
+  );
   it('单 profile 分支生成 1 条默认路由(无 pathPrefix → 接所有路径)', () => {
     ensureProject('demo', 'demo');
     addRunningBranch({ projectId: 'demo', branch: 'main', hostPort: 41000, profileId: 'web' });

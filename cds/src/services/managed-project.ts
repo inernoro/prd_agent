@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -171,7 +172,7 @@ export class ManagedProjectService {
         installCommand,
         buildCommand,
         startCommand,
-        artifactImage: `cds-managed/${managedId(project.slug || project.id, 0)}-${id}:sha-${identity}`,
+        artifactImage: `cds-managed/${managedId(projectResourceNamespace(project), 0)}-${id}:sha-${identity}`,
       },
     };
   }
