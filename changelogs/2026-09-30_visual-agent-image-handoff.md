@@ -8,7 +8,9 @@
 | refactor | platform | 删除已停用的 Cursor 规则镜像、同步脚本与宿主安装分支，收敛到 Claude 和通用 Agent 两套目录 |
 | test | cds | 更新技能安装跨端契约，防止重新生成或分发 Cursor 目录 |
 | docs | visual-agent | 记录 image2.5 正式上游单线路超时的验收证据与恢复条件 |
+| docs | visual-agent | 记录 image2.5 正式上游恢复并连续两次通过带参考图验收 |
 | fix | visual-agent | 将模型选择 ID 归一与参考图预期数量升级为桌面端、手机端和后端入口的强契约 |
 | rule | platform | 禁止通用模型策略按产品型号写分支，并要求用未配置的未来模型做回归验收 |
 | test | visual-agent | 将参考图数量强契约同步到稳定冒烟，并永久覆盖缺失声明、不一致声明与单图多图真实调用 |
 | fix | prd-api | 生图任务详情回传参考图期望数量，支持前端与验收直接核对图生图契约 |
+| test | e2e | 图生图验收按 Offering、物理模型、Provider 三层继承解析实际协议，并支持点名任意业务模型 |

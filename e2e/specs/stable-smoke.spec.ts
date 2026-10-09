@@ -307,6 +307,12 @@ type GatewayUpstreamModel = {
   enabled?: boolean;
 };
 
+type GatewayPlatform = {
+  id: string;
+  platformType?: string | null;
+  enabled?: boolean;
+};
+
 /** 多图引用只能走这些保留参考图语义的图片协议；聊天协议会把图片当文本丢掉（REG-multi-image-001）。 */
 const referencePreservingImageProtocols = ['openrouter-image', 'openai', 'openai-compatible'];
 const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
@@ -425,20 +431,39 @@ async function disableStrayGatewayBackups(
   return handled;
 }
 
-type GatewayUpstreamIndex = { upstreamIds: Set<string>; upstreamById: Map<string, GatewayUpstreamModel> };
+type GatewayUpstreamIndex = {
+  upstreamIds: Set<string>;
+  upstreamById: Map<string, GatewayUpstreamModel>;
+  platformById: Map<string, GatewayPlatform>;
+};
 
 async function readGatewayUpstreamIndex(
   request: APIRequestContext,
   gateway: { baseUrl: string; headers: Record<string, string> },
 ): Promise<GatewayUpstreamIndex> {
-  const response = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers });
-  const body = await response.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
-  expect(response.ok(), body.error?.message || '无法读取网关模型目录').toBe(true);
+  const [modelResponse, platformResponse] = await Promise.all([
+    request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
+    request.get(`${gateway.baseUrl}/gw/platforms`, { headers: gateway.headers }),
+  ]);
+  const modelBody = await modelResponse.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
+  const platformBody = await platformResponse.json() as ApiEnvelope<{ items: GatewayPlatform[] }>;
+  expect(modelResponse.ok(), modelBody.error?.message || '无法读取网关模型目录').toBe(true);
+  expect(platformResponse.ok(), platformBody.error?.message || '无法读取网关平台目录').toBe(true);
   return {
-    upstreamIds: new Set(body.data.items.map((item) => item.id)),
-    upstreamById: new Map(body.data.items.map((item) => [item.id, item])),
+    upstreamIds: new Set(modelBody.data.items.map((item) => item.id)),
+    upstreamById: new Map(modelBody.data.items.map((item) => [item.id, item])),
+    platformById: new Map(platformBody.data.items.map((item) => [item.id, item])),
   };
 }
+
+/** 与网关运行时一致：Offering 显式值优先，其次物理模型，最后继承 Provider 的 PlatformType。 */
+const resolveGatewayOfferingProtocol = (offering: GatewayOffering, index: GatewayUpstreamIndex) => {
+  const upstream = index.upstreamById.get(offering.targetId);
+  return (offering.protocol
+    || upstream?.protocol
+    || index.platformById.get(upstream?.platformId || '')?.platformType
+    || '').toLowerCase();
+};
 
 const isLiveGatewayUpstream = (offering: GatewayOffering, index: GatewayUpstreamIndex) => (
   offering.enabled
@@ -4184,17 +4209,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         '/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) },
       ));
       const gateway = await loginGateway(request);
+      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       const { items } = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(
         `${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers },
       ));
+      const requestedLogicalModel = process.env.STABLE_SMOKE_IMAGE_MODEL_ID?.trim();
       const logical = items.find((item) => {
         const primary = item.offerings.filter((offering) => offering.enabled)
           .sort((left, right) => left.priority - right.priority)[0];
-        return item.enabled && ['openai', 'openai-compatible'].includes(primary?.protocol || '')
+        return item.enabled
+          && (!requestedLogicalModel || item.publicId === requestedLogicalModel)
+          && primary !== undefined
+          && ['openai', 'openai-compatible'].includes(resolveGatewayOfferingProtocol(primary, upstreamIndex))
           && pools.some((pool) => pool.code === item.publicId
             && pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
       });
-      expect(logical, 'JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替').toBeTruthy();
+      expect(
+        logical,
+        `JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替${requestedLogicalModel ? `：${requestedLogicalModel}` : ''}`,
+      ).toBeTruthy();
       const created = await readEnvelope<{ runId: string }>(await page.request.post(
         `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
           headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-run` },
@@ -4276,20 +4309,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
         await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
       );
-      const upstreamModels = await readEnvelope<{ items: GatewayUpstreamModel[] }>(
-        await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
-      );
-      const upstreamById = new Map(upstreamModels.items.map((item) => [item.id, item]));
+      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       // 主路协议：Offering 没显式声明时继承上游模型的协议。
       const primaryProtocol = (item: GatewayLogicalModel) => {
         const primary = item.offerings
           .filter((offering) => offering.enabled)
           .sort((left, right) => left.priority - right.priority)[0];
         if (!primary) return '';
-        return (primary.protocol || upstreamById.get(primary.targetId)?.protocol || '').toLowerCase();
+        return resolveGatewayOfferingProtocol(primary, upstreamIndex);
       };
-      // 业务默认池排最前：2026-08-31 起 MAP 只开放 image1 / image2 两个 OpenAI 图片模型，
-      // 多图旅程要验的是「业务默认模型带着参考图真实生成」，不再限定必须是 OpenRouter 主路；
+      // 业务默认池排最前；多图旅程验的是「当前业务默认模型带着参考图真实生成」，
+      // 不按具体产品型号或单一 Provider 写死；
       // 协议只要能把 input_references 或 image[] 原样送到上游即可，具体线上契约在 assertWireReferences 里逐条核。
       const businessCandidates = logicalModels.items
         .filter((item) => item.enabled && healthyPoolCodes.has(item.publicId))
