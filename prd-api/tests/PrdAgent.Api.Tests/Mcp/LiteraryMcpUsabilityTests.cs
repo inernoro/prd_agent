@@ -125,6 +125,77 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public void 八张当前配图混合新指针和旧地址_历史与图文稿都识别完整()
+    {
+        var ws = new ImageMasterWorkspace
+        {
+            Id = "w", ScenarioType = "article-illustration",
+            ArticleWorkflow = new() { Version = 2 },
+        };
+        var assets = new List<ImageAsset>();
+        for (var index = 0; index < 8; index++)
+        {
+            var asset = new ImageAsset
+            {
+                Id = $"current-{index}", WorkspaceId = ws.Id, Url = $"https://example.test/current-{index}.png",
+                ArticleInsertionIndex = index == 0 ? index : null,
+                ArticleWorkflowVersion = index == 0 ? 2 : null,
+            };
+            assets.Add(asset);
+            ws.ArticleWorkflow.Markers.Add(new() { Index = index, Status = "done", Url = asset.Url });
+            if (index is 0 or 4) ws.ArticleWorkflow.AssetIdByMarkerIndex[index.ToString()] = asset.Id;
+        }
+        // 同工作区中更晚生成的历史图不能按数量或时间被误认成当前图。
+        assets.Add(new() { Id = "unmounted", WorkspaceId = ws.Id, Url = "https://example.test/old.png", CreatedAt = DateTime.UtcNow.AddDays(1) });
+
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        Assert.Equal(8, current.Count);
+        Assert.All(Enumerable.Range(0, 8), index => Assert.Equal($"current-{index}", current[index].Id));
+        var history = LiteraryIllustrationHistory.Build(ws, assets);
+        Assert.Equal(8, history.CurrentCount);
+        Assert.Equal(9, history.Total);
+        Assert.All(history.Groups.SelectMany(g => g.Items).Where(i => i.IsCurrent), item =>
+            Assert.Equal(new[] { int.Parse(item.Id["current-".Length..]) }, item.MountedAt));
+        Assert.False(history.Groups.SelectMany(g => g.Items).Single(i => i.Id == "unmounted").IsCurrent);
+        var marked = string.Concat(Enumerable.Range(0, 8).Select(i => $"段落{i}\n[插图]: 画面{i}\n"));
+        var rendered = LiteraryMcpWorkflow.Render(marked, current.ToDictionary(kv => kv.Key, kv => kv.Value.Url));
+        Assert.DoesNotContain("[插图]", rendered);
+        Assert.All(assets.Take(8), asset => Assert.Contains(asset.Url, rendered));
+    }
+
+    [Fact]
+    public void 标记旧关联只认本工作区且不覆盖权威指针_清空标记后不复活无位置历史图()
+    {
+        var ws = new ImageMasterWorkspace
+        {
+            Id = "w", ArticleWorkflow = new()
+            {
+                Version = 2,
+                Markers = new()
+                {
+                    new() { Index = 0, AssetId = "stale", Url = "https://example.test/stale.png" },
+                    new() { Index = 1, AssetId = "by-id" },
+                    new() { Index = 2, Url = "https://example.test/foreign.png" },
+                },
+                AssetIdByMarkerIndex = new() { ["0"] = "authoritative" },
+            },
+        };
+        var assets = new List<ImageAsset>
+        {
+            new() { Id = "authoritative", WorkspaceId = "w" },
+            new() { Id = "stale", WorkspaceId = "w", Url = "https://example.test/stale.png" },
+            new() { Id = "by-id", WorkspaceId = "w" },
+            new() { Id = "foreign", WorkspaceId = "other", Url = "https://example.test/foreign.png" },
+        };
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        Assert.Equal(2, current.Count);
+        Assert.Equal("authoritative", current[0].Id);
+        Assert.Equal("by-id", current[1].Id);
+        ws.ArticleWorkflow = new() { Version = 3 };
+        Assert.Empty(LiteraryMcpWorkflow.SelectCurrent(ws, assets));
+    }
+
+    [Fact]
     public void 连着两次换纯正文后_带标记写回仍能接上最近一组在用的图()
     {
         // 最近那份存档来自第二次换纯正文，那一版没有标记、是空的；要往前找最近一份真能接上的
