@@ -390,6 +390,13 @@ public class LiteraryMcpUsabilityTests
                 Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, r.AppCallerCode);
             });
             Assert.Equal(new[] { 0, 1, 2 }, runs.Select(r => r.ArticleMarkerIndex!.Value).OrderBy(i => i));
+            var styledMarkers = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers;
+            Assert.All(styledMarkers, marker =>
+            {
+                Assert.Equal("1376x768", marker.PlanItem!.Size);
+                Assert.Equal(marker.Text, marker.PlanItem.Prompt);
+                Assert.DoesNotContain("粉销风格提示", marker.PlanItem.Prompt);
+            });
 
             // 原样重试：不多入队
             var retry = Data(await images.Generate(id, request, CancellationToken.None));
@@ -565,6 +572,15 @@ public class LiteraryMcpUsabilityTests
                 Assert.Null(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize(r.Size, caps));
             });
 
+            // 同一篇在网页打开时，也必须读到实际生成尺寸，不能仍沿用建稿的默认方图方案。
+            var web = WithUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            web.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "writer") }, "Bearer"));
+            var webMarkers = Data(await web.GetWorkspaceDetail(id)).GetProperty("workspace")
+                .GetProperty("articleWorkflow").GetProperty("markers");
+            Assert.All(webMarkers.EnumerateArray().Take(2), marker =>
+                Assert.Equal("1536x1024", marker.GetProperty("planItem").GetProperty("size").GetString()));
+            Assert.Equal("1024x1024", webMarkers[2].GetProperty("planItem").GetProperty("size").GetString());
+
             // 同一个 clientRequestId 再来：比的是尺寸意图（3:2），回放原任务
             var replay = Data(await images.Generate(id, new()
             {
@@ -580,6 +596,9 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None));
             Assert.Equal("1536x1024", redraw.GetProperty("applied").GetProperty("size").GetString());
             Assert.Equal("remembered", redraw.GetProperty("applied").GetProperty("sizeSource").GetString());
+            var rememberedMarker = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[2];
+            Assert.Equal("1536x1024", rememberedMarker.PlanItem!.Size);
+            Assert.Equal("茶杯", rememberedMarker.PlanItem.Prompt);
 
             // 文章记住的是上一个模型的 16:9，换到不收它的模型：退回 1:1 并在回执里写明，不静默改、也不报错卡住
             await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
