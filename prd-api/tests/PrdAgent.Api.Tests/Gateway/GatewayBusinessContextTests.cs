@@ -33,7 +33,7 @@ public class GatewayBusinessContextTests
         if (path == "raw") await client.SendRawWithResolutionAsync(new GatewayRawRequest
         {
             AppCallerCode = request.AppCallerCode, ModelType = request.ModelType, Context = context
-        }, new GatewayModelResolution { Success = true, ActualModel = "gpt-5.6-sol" });
+        }, new GatewayModelResolution { Success = true, ActualModel = "test-chat-model" });
         else if (path == "stream") { await foreach (var _ in client.StreamAsync(request)) { } }
         else await client.SendAsync(request);
         var sent = JsonDocument.Parse(handler.Body!).RootElement.GetProperty("Context");
