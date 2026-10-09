@@ -127,6 +127,78 @@ def test_project_env_template_is_resolved_before_whitelisting_runtime_alias():
     assert aliases == {"CDS_REDIS_PASSWORD"}
 
 
+def test_project_env_default_template_matches_server_runtime_resolution():
+    aliases = cdscli._verify_runtime_credential_vars(
+        {
+            "postgres": {
+                "image": "postgres:17-alpine",
+                "environment": {
+                    "POSTGRES_PASSWORD": "${CDS_POSTGRES_PASSWORD}",
+                },
+            },
+        },
+        {"CDS_POSTGRES_PASSWORD": "${MISSING_PASSWORD:-project-secret}"},
+    )
+
+    assert aliases == {"CDS_POSTGRES_USER", "CDS_POSTGRES_PASSWORD"}
+
+
+def test_nested_project_env_alias_with_empty_default_is_resolved():
+    aliases = cdscli._verify_runtime_credential_vars(
+        {
+            "postgres": {
+                "image": "postgres:17-alpine",
+                "environment": {
+                    "POSTGRES_PASSWORD": "${CDS_POSTGRES_PASSWORD}",
+                },
+            },
+        },
+        {
+            "EMPTY_PASSWORD": "",
+            "FALLBACK_PASSWORD": "${EMPTY_PASSWORD:-nested-secret}",
+            "CDS_POSTGRES_PASSWORD": "${FALLBACK_PASSWORD}",
+        },
+    )
+
+    assert aliases == {"CDS_POSTGRES_USER", "CDS_POSTGRES_PASSWORD"}
+
+
+def test_required_template_without_value_does_not_whitelist_runtime_alias():
+    aliases = cdscli._verify_runtime_credential_vars(
+        {
+            "postgres": {
+                "image": "postgres:17-alpine",
+                "environment": {
+                    "POSTGRES_PASSWORD": "${CDS_POSTGRES_PASSWORD}",
+                },
+            },
+        },
+        {"CDS_POSTGRES_PASSWORD": "${MISSING_PASSWORD:?required}"},
+    )
+
+    assert aliases == set()
+
+
+def test_assignment_and_alternate_templates_match_server_runtime_resolution():
+    for password_template, project_env in (
+        ("${MISSING_PASSWORD:=assigned-secret}", {}),
+        ("${SET_PASSWORD:+alternate-secret}", {"SET_PASSWORD": "present"}),
+    ):
+        aliases = cdscli._verify_runtime_credential_vars(
+            {
+                "postgres": {
+                    "image": "postgres:17-alpine",
+                    "environment": {
+                        "POSTGRES_PASSWORD": password_template,
+                    },
+                },
+            },
+            project_env,
+        )
+
+        assert aliases == {"CDS_POSTGRES_USER", "CDS_POSTGRES_PASSWORD"}
+
+
 def test_unrecognized_infra_without_complete_credentials_does_not_whitelist_aliases():
     aliases = cdscli._verify_runtime_credential_vars({
         "cache": {"image": "example/custom-cache:latest"},

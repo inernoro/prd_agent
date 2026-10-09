@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -7312,15 +7312,43 @@ def _verify_runtime_credential_vars(
                 parts.append(str(value))
         return " ".join(parts)
 
+    template_re = re.compile(r"\$\{(\w+)(?::([-=?+])([^}]*))?\}")
+    max_resolve_iterations = 8
+
     def _value(env: dict[str, str], key: str, seen: set[str] | None = None) -> str:
+        """Resolve a value with the server's `resolveEnvTemplates` semantics."""
         seen = set(seen or ())
         if key in seen:
             return ""
         seen.add(key)
-        value = env.get(key, "").strip()
-        reference = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
-        if reference:
-            return _value(env, reference.group(1), seen)
+        raw_value = env.get(key)
+        if raw_value is None:
+            raw_value = os.environ.get(key, "")
+        value = str(raw_value).strip()
+
+        for _ in range(max_resolve_iterations):
+            def _replace(match: re.Match[str]) -> str:
+                name, operator, operand = match.groups()
+                current = _value(env, name, seen)
+                has_non_empty_value = current != ""
+                if operator == "-":
+                    return current if has_non_empty_value else (operand or "")
+                if operator == "=":
+                    if has_non_empty_value:
+                        return current
+                    assigned = operand or ""
+                    env[name] = assigned
+                    return assigned
+                if operator == "+":
+                    return (operand or "") if has_non_empty_value else ""
+                if operator == "?":
+                    return current if has_non_empty_value else ""
+                return current
+
+            resolved = template_re.sub(_replace, value)
+            if resolved == value:
+                break
+            value = resolved
         return "" if "${" in value else value
 
     def _flag_value(args: str, env: dict[str, str], *flags: str) -> str:
