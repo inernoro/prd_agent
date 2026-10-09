@@ -87,7 +87,7 @@ public class LiteraryImageOpenApiController(
 
     /// <summary>这个账号在文学创作里能选的风格、水印、尺寸，以及不传时会用哪一套。</summary>
     [HttpGet("presets")]
-    public async Task<IActionResult> Presets(CancellationToken ct)
+    public async Task<IActionResult> Presets(CancellationToken ct, [FromQuery] string? style = null)
     {
         var userId = UserId;
         var styles = await db.ReferenceImageConfigs.Find(x => x.AppKey == AppKey && x.CreatedByAdminId == userId)
@@ -96,8 +96,11 @@ public class LiteraryImageOpenApiController(
         var (defaultStyle, _) = await ResolveStyleAsync(userId, null, ct);
         var watermarks = await db.WatermarkConfigs.Find(x => x.UserId == userId).ToListAsync(ct);
         var (defaultWatermark, _) = await ResolveWatermarkAsync(userId, null, ct);
+        var (selectedStyle, styleError) = await ResolveStyleAsync(userId, style, ct);
+        if (styleError != null)
+            return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
         // 尺寸按这台客户端实际会用的模型列：以前列的是一张固定表，16:9 在默认模型上必然失败（MCP-LIT-18）。
-        var presetCaller = defaultStyle?.Sha == null ? LiteraryAgent.Illustration.Text2Img : LiteraryAgent.Illustration.Img2Img;
+        var presetCaller = selectedStyle?.Sha == null ? LiteraryAgent.Illustration.Text2Img : LiteraryAgent.Illustration.Img2Img;
         var (sizeModel, sizeCaps, _, sizeError) = await ResolveModelSizesAsync(userId, presetCaller, ct);
         var sizeChoices = sizeCaps == null ? new List<LiteraryIllustrationChoices.SizeChoice>() : LiteraryIllustrationChoices.SupportedSizes(sizeCaps);
         var defaultSize = sizeCaps == null ? null
@@ -127,12 +130,13 @@ public class LiteraryImageOpenApiController(
             sizes = sizeChoices.Select(c => new { aspect = c.Aspect, size = c.Size }),
             defaultSize,
             sizeModel,
+            sizeStyle = new { styleId = selectedStyle?.StyleId, name = selectedStyle?.Label },
             sizeNote = sizeError ?? (sizeCaps!.SizesNotApplicable
                 ? $"模型「{sizeModel}」不按尺寸参数出图，画面比例由描述决定，size 传了也不起作用。"
                 : $"以上是这台客户端所用模型「{sizeModel}」支持的尺寸：传比例会落到右边那个像素尺寸，也可以直接传宽x高；"
                   + "传它不支持的会在入队前被拒绝并列出可选项，不扣额度。换了模型，这张表会跟着变。"),
             maxMarkersPerArticle = LiteraryMcpWorkflow.MaxMarkers,
-            hint = "生图时 style / watermark 传这里的 ID 或名称，none 表示不用；不传就用 isDefault 那一套。",
+            hint = "生图时 style / watermark 传这里的 ID 或名称，none 表示不用；查询预设时传与生图相同的 style，sizes 才对应该风格所用模型。不传 style 时按账号默认风格列尺寸。",
         }));
     }
 

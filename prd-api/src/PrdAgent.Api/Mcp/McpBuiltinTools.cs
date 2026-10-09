@@ -376,10 +376,14 @@ public static class McpBuiltinTools
         new McpToolDef
         {
             Name = "map_literary_list_presets",
-            Description = "列出这个账号在文学创作里能选的风格（参考图配置）、水印配置和尺寸，并标出不传参数时默认用哪一套。sizes 是这台客户端当前所用模型（sizeModel）真正支持的尺寸，不同模型不一样。用户点名「用 XX 风格 / XX 水印 / XX 比例」时先调它，再把名称、ID 或比例传给 map_literary_generate_image。",
+            Description = "列出这个账号在文学创作里能选的风格（参考图配置）、水印配置和尺寸，并标出账号默认配置。用户点名风格时，style 传同一名称或 ID（none 表示不用参考图）；已有文章沿用风格时，传读取工作区返回的 illustrationPrefs.styleId。sizes 对应该风格下这台客户端所用模型（sizeModel）的真实能力，不传 style 则按账号默认风格查询。先查预设，再把同一风格、水印和支持的尺寸传给 map_literary_generate_image。查询不会占用模型恢复探测或生图额度。",
             RequiredScope = McpCapabilityCatalog.ScopeLiteraryUse,
             Method = "GET",
             PathTemplate = "/api/open/literary/presets",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "style", In = "query", Description = "准备生图的风格名称或 ID；none = 不用参考图；不传按账号默认风格列尺寸。已有文章沿用风格时传 illustrationPrefs.styleId。" },
+            },
         },
         new McpToolDef
         {

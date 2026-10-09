@@ -61,6 +61,38 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 预设尺寸按点名风格的文生图或图生图模型查询()
+    {
+        var (db, name, connection) = NewDb("literary_preset_style");
+        try
+        {
+            await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig
+            {
+                Id = "referenced-style", AppKey = "literary-agent", CreatedByAdminId = "writer",
+                Name = "全域粉销风格", ImageSha256 = "REF", IsActive = false,
+            });
+            var selection = new FixedModelSelection
+            {
+                ModelForCaller = caller => caller == AppCallerRegistry.LiteraryAgent.Illustration.Img2Img
+                    ? "gemini-3.1-flash-image" : "chatgpt-image-latest",
+            };
+            var images = WithUser(new LiteraryImageOpenApiController(db, selection), "writer");
+            var plain = Data(await images.Presets(CancellationToken.None, "none"));
+            Assert.Equal("chatgpt-image-latest", plain.GetProperty("sizeModel").GetString());
+            Assert.Equal(3, plain.GetProperty("sizes").GetArrayLength());
+            var referenced = Data(await images.Presets(CancellationToken.None, "全域粉销风格"));
+            Assert.Equal("gemini-3.1-flash-image", referenced.GetProperty("sizeModel").GetString());
+            Assert.Equal("referenced-style", referenced.GetProperty("sizeStyle").GetProperty("styleId").GetString());
+            Assert.Contains(referenced.GetProperty("sizes").EnumerateArray(),
+                s => s.GetProperty("aspect").GetString() == "16:9" && s.GetProperty("size").GetString() == "1376x768");
+            Assert.IsType<BadRequestObjectResult>(await images.Presets(CancellationToken.None, "不存在的风格"));
+            Assert.Contains(McpBuiltinTools.All.Single(x => x.Name == "map_literary_list_presets").Params,
+                p => p.Name == "style" && p.In == "query");
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
     public void 标记写进普通正文会被拦下而不是当文字存()
     {
         Assert.Contains("markedContent", LiteraryMcpWorkflow.Validate("正文\n[插图]：书店", null, null));
@@ -1395,10 +1427,11 @@ public class LiteraryMcpUsabilityTests
     {
         public string ModelId { get; set; } = modelId;
         public bool CapabilitiesMissing { get; set; }
+        public Func<string, string>? ModelForCaller { get; set; }
 
         public Task<LiteraryMcpModelSelection> ResolveForRunAsync(
             string ownerUserId, string agentApiKeyId, string appCallerCode, CancellationToken ct)
-            => Task.FromResult(LiteraryMcpModelSelection.Selected(ModelId));
+            => Task.FromResult(LiteraryMcpModelSelection.Selected(ModelForCaller?.Invoke(appCallerCode) ?? ModelId));
 
         public Task<LiteraryMcpModelSelection> ValidateFixedModelAsync(string logicalModelPublicId, CancellationToken ct)
             => Task.FromResult(LiteraryMcpModelSelection.Selected(logicalModelPublicId));

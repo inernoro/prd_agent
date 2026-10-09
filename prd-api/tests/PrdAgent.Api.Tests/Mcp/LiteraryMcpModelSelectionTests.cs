@@ -134,8 +134,6 @@ public sealed class LiteraryMcpModelSelectionTests
                     new AvailableModelPool { Id = "preferred-id", Code = "gpt-image-2" },
                     new AvailableModelPool { Id = "default-id", Code = "gpt-image-2.5-sunburst", IsDefault = true },
                 ]);
-            SetupResolution(gateway, AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
-                "gpt-image-2", success: true);
             var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var selected = await service.ResolveForRunAsync(
@@ -146,7 +144,7 @@ public sealed class LiteraryMcpModelSelectionTests
             gateway.Verify(x => x.ResolveRequiredLogicalModelAsync(
                 AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
                 ModelTypes.ImageGen,
-                "gpt-image-2", It.IsAny<CancellationToken>()), Times.Once);
+                "gpt-image-2", It.IsAny<CancellationToken>()), Times.Never);
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
@@ -162,16 +160,11 @@ public sealed class LiteraryMcpModelSelectionTests
                 Id = "key-writer", OwnerUserId = "writer",
             });
             var gateway = Gateway();
-            gateway.Setup(x => x.ResolveModelAsync(
+            gateway.Setup(x => x.GetAvailablePoolsAsync(
                     AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
                     ModelTypes.ImageGen,
-                    null, null, null, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new GatewayModelResolution
-                {
-                    Success = true,
-                    LogicalModelPublicId = "gpt-image-2",
-                    ActualModel = "gpt-image-2-all",
-                });
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new AvailableModelPool { Code = "gpt-image-2", IsDefault = true }]);
             var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var selected = await service.ResolveForRunAsync(
@@ -202,8 +195,10 @@ public sealed class LiteraryMcpModelSelectionTests
                 LiteraryAgentPreferences = new LiteraryAgentPreferences { ImageModelId = "pool-gpt-image-2" },
             });
             var gateway = Gateway();
-            SetupResolution(gateway, AppCallerRegistry.LiteraryAgent.Illustration.Img2Img,
-                "gpt-image-2.5-sunburst", success: false);
+            gateway.Setup(x => x.GetAvailablePoolsAsync(
+                    AppCallerRegistry.LiteraryAgent.Illustration.Img2Img,
+                    ModelTypes.ImageGen, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([new AvailableModelPool { Code = "gpt-image-2", IsDefault = true }]);
             var service = new LiteraryMcpModelSelectionService(db, gateway.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<LiteraryMcpModelSelectionService>.Instance);
 
             var selected = await service.ResolveForRunAsync(
@@ -213,7 +208,7 @@ public sealed class LiteraryMcpModelSelectionTests
             Assert.Equal("MODEL_UNAVAILABLE", selected.ErrorCode);
             Assert.Contains("没有自动切换", selected.ErrorMessage);
             gateway.Verify(x => x.GetAvailablePoolsAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
             gateway.Verify(x => x.ResolveModelAsync(
                 It.IsAny<string>(), It.IsAny<string>(), null, null, null, It.IsAny<CancellationToken>()), Times.Never);
         }
@@ -243,6 +238,51 @@ public sealed class LiteraryMcpModelSelectionTests
     }
 
     private static Mock<ILlmGateway> Gateway() => new(MockBehavior.Strict);
+
+    [Theory]
+    [InlineData("fixed", "selected")]
+    [InlineData("preferred", "selected")]
+    [InlineData("default", "default")]
+    public async Task PresetAndEnqueueModelSelectionNeverClaimsRecoveryProbe(string mode, string expected)
+    {
+        var (db, connection, name) = CreateDatabase("readonly");
+        try
+        {
+            await db.AgentApiKeys.InsertOneAsync(new AgentApiKey
+            {
+                Id = "key-writer", OwnerUserId = "writer",
+                McpLiteraryImageModelMode = mode == "fixed" ? McpLiteraryImageModelMode.Fixed : McpLiteraryImageModelMode.FollowUserPanel,
+                McpLiteraryImageModelPublicId = mode == "fixed" ? "selected" : null,
+            });
+            if (mode == "preferred")
+                await db.UserPreferences.InsertOneAsync(new UserPreferences
+                {
+                    UserId = "writer",
+                    LiteraryAgentPreferences = new() { ImageModelId = "pool_selected-id" },
+                });
+            // 严格 Mock 只允许无副作用的目录查询；旧实现会进入真实线路解析并抢半开租约。
+            var gateway = Gateway();
+            gateway.Setup(x => x.GetAvailablePoolsAsync(
+                    AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
+                    ModelTypes.ImageGen, It.IsAny<CancellationToken>()))
+                .ReturnsAsync([
+                    new AvailableModelPool { Id = "selected-id", Code = "selected" },
+                    new AvailableModelPool { Code = "default", IsDefault = true },
+                ]);
+            var service = new LiteraryMcpModelSelectionService(db, gateway.Object, NullLogger<LiteraryMcpModelSelectionService>.Instance);
+            for (var i = 0; i < 2; i++)
+            {
+                var selected = await service.ResolveForRunAsync("writer", "key-writer",
+                    AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, CancellationToken.None);
+                Assert.True(selected.Success);
+                Assert.Equal(expected, selected.LogicalModelPublicId);
+            }
+            gateway.Verify(x => x.GetAvailablePoolsAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()), Times.Exactly(2));
+            gateway.VerifyNoOtherCalls();
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
 
     private static void SetupResolution(Mock<ILlmGateway> gateway, string appCaller, string publicId, bool success)
         => gateway.Setup(x => x.ResolveRequiredLogicalModelAsync(
