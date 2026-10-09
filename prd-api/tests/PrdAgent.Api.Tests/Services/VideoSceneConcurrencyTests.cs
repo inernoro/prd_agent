@@ -168,6 +168,9 @@ public class VideoSceneConcurrencyTests
 
         claimedQueued.ShouldNotBeNull();
         claimedQueued.Id.ShouldBe(localQueued.Id);
+        claimedQueued.WorkerLeaseId.ShouldNotBeNullOrWhiteSpace();
+        claimedQueued.WorkerLeaseExpiresAt.ShouldNotBeNull();
+        claimedQueued.WorkerLeaseExpiresAt.Value.ShouldBeGreaterThan(DateTime.UtcNow);
         claimedScene.ShouldNotBeNull();
         claimedScene.Run.Id.ShouldBe(localScene.Id);
         (await test.Context.VideoGenRuns.Find(x => x.Id == foreignQueued.Id).SingleAsync())
@@ -229,17 +232,25 @@ public class VideoSceneConcurrencyTests
         var scripting = NewRun("adopt-scripting", test.OwnerId, SceneItemStatus.Draft);
         scripting.Status = VideoGenRunStatus.Scripting;
         scripting.DeploymentSlug = previousScope;
+        scripting.WorkerLeaseId = "worker:expired-scripting";
+        scripting.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1);
         var directRendering = NewRun("adopt-direct-rendering", test.OwnerId);
         directRendering.Status = VideoGenRunStatus.Rendering;
         directRendering.Mode = VideoGenMode.Direct;
         directRendering.DirectVideoJobId = "upstream-direct-job";
         directRendering.DeploymentSlug = previousScope;
+        directRendering.WorkerLeaseId = "worker:expired-direct";
+        directRendering.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1);
         var uncertainDirect = NewRun("close-uncertain-direct", test.OwnerId);
         uncertainDirect.Status = VideoGenRunStatus.Rendering;
         uncertainDirect.Mode = VideoGenMode.Direct;
         uncertainDirect.DeploymentSlug = previousScope;
+        uncertainDirect.WorkerLeaseId = "worker:expired-uncertain";
+        uncertainDirect.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1);
         var generatingPrompt = NewRun("adopt-generating-prompt", test.OwnerId, SceneItemStatus.Generating);
         generatingPrompt.DeploymentSlug = previousScope;
+        generatingPrompt.WorkerLeaseId = "prompt:expired";
+        generatingPrompt.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1);
         var foreign = NewRun("keep-foreign", test.OwnerId, SceneItemStatus.Submitting);
         foreign.DeploymentSlug = "project-a::another-branch::revision::old";
         await Task.WhenAll(
@@ -311,6 +322,120 @@ public class VideoSceneConcurrencyTests
             .DeploymentSlug.ShouldBe(currentScope);
         (await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync())
             .DeploymentSlug.ShouldBe(currentScope);
+    }
+
+    [Fact]
+    public async Task Worker_ShouldAdoptExpiredProcessingExportTaskTogetherWithItsRun()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string durableScope = "project-a::feature-video";
+        const string currentScope = $"{durableScope}::revision::new";
+        var previousScope = $"{durableScope}::revision::old";
+        var run = NewRun("adopt-processing-export-run", test.OwnerId, SceneItemStatus.Done);
+        run.Status = VideoGenRunStatus.Rendering;
+        run.DeploymentSlug = previousScope;
+        await test.SaveRunAsync(run);
+        var exportTask = new VideoExportTask
+        {
+            Id = "adopt-processing-export-task",
+            RunId = run.Id,
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = previousScope,
+            Status = VideoExportTaskStatus.Processing,
+            CurrentPhase = "export-composing",
+            Progress = 50,
+            WorkerLeaseId = "export:expired",
+            WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(exportTask);
+
+        var worker = test.CreateWorker();
+        (await worker.AdoptPreviousRevisionWorkAsync(currentScope, durableScope, CancellationToken.None))
+            .ShouldBeTrue();
+
+        var recoveredTask = await test.Context.VideoExportTasks.Find(x => x.Id == exportTask.Id).SingleAsync();
+        recoveredTask.DeploymentSlug.ShouldBe(currentScope);
+        recoveredTask.Status.ShouldBe(VideoExportTaskStatus.Queued);
+        recoveredTask.WorkerLeaseId.ShouldBeNull();
+        (await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(currentScope);
+    }
+
+    [Fact]
+    public async Task Worker_ShouldNotAdoptLiveRunOrProcessingExportLeases()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string durableScope = "project-a::feature-video";
+        const string currentScope = $"{durableScope}::revision::new";
+        var previousScope = $"{durableScope}::revision::old";
+        var liveRun = NewRun("live-scripting", test.OwnerId, SceneItemStatus.Draft);
+        liveRun.Status = VideoGenRunStatus.Scripting;
+        liveRun.DeploymentSlug = previousScope;
+        liveRun.WorkerLeaseId = "worker:live";
+        liveRun.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1);
+        var exportRun = NewRun("live-export-run", test.OwnerId, SceneItemStatus.Done);
+        exportRun.Status = VideoGenRunStatus.Rendering;
+        exportRun.DeploymentSlug = previousScope;
+        await Task.WhenAll(test.SaveRunAsync(liveRun), test.SaveRunAsync(exportRun));
+        var exportTask = new VideoExportTask
+        {
+            Id = "live-export-task",
+            RunId = exportRun.Id,
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = previousScope,
+            Status = VideoExportTaskStatus.Processing,
+            WorkerLeaseId = "export:live",
+            WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1),
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(exportTask);
+
+        var worker = test.CreateWorker();
+        (await worker.AdoptPreviousRevisionWorkAsync(currentScope, durableScope, CancellationToken.None))
+            .ShouldBeFalse();
+
+        (await test.Context.VideoGenRuns.Find(x => x.Id == liveRun.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(previousScope);
+        (await test.Context.VideoExportTasks.Find(x => x.Id == exportTask.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(previousScope);
+    }
+
+    [Fact]
+    public async Task Worker_ShouldRecoverExpiredCurrentRunAndProcessingExportLeases()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var exportRun = NewRun("expired-current-export-run", test.OwnerId, SceneItemStatus.Done);
+        exportRun.Status = VideoGenRunStatus.Rendering;
+        exportRun.DeploymentSlug = DeploymentScope.Current;
+        var scripting = NewRun("expired-current-scripting", test.OwnerId, SceneItemStatus.Draft);
+        scripting.Status = VideoGenRunStatus.Scripting;
+        scripting.DeploymentSlug = DeploymentScope.Current;
+        scripting.WorkerLeaseId = "worker:expired";
+        scripting.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+        await Task.WhenAll(test.SaveRunAsync(exportRun), test.SaveRunAsync(scripting));
+        var exportTask = new VideoExportTask
+        {
+            Id = "expired-current-export-task",
+            RunId = exportRun.Id,
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = DeploymentScope.Current,
+            Status = VideoExportTaskStatus.Processing,
+            CurrentPhase = "export-composing",
+            Progress = 50,
+            WorkerLeaseId = "export:expired",
+            WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(exportTask);
+
+        var worker = test.CreateWorker();
+        (await worker.RecoverExpiredWorkerLeaseAsync(CancellationToken.None)).ShouldBeTrue();
+        var recoveredExport = await test.Context.VideoExportTasks.Find(x => x.Id == exportTask.Id).SingleAsync();
+        recoveredExport.Status.ShouldBe(VideoExportTaskStatus.Queued);
+        recoveredExport.WorkerLeaseId.ShouldBeNull();
+
+        (await worker.RecoverExpiredWorkerLeaseAsync(CancellationToken.None)).ShouldBeTrue();
+        var recoveredScripting = await test.Context.VideoGenRuns.Find(x => x.Id == scripting.Id).SingleAsync();
+        recoveredScripting.Status.ShouldBe(VideoGenRunStatus.Queued);
+        recoveredScripting.WorkerLeaseId.ShouldBeNull();
     }
 
     [Fact]

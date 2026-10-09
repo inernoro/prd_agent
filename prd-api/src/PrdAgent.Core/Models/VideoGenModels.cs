@@ -354,6 +354,15 @@ public class VideoGenRun
     public string CurrentPhase { get; set; } = "queued";
     public int PhaseProgress { get; set; }
 
+    /// <summary>无独立 scene lease 的长任务持有者标识，用于拆镜、直出与提示词改写 fencing。</summary>
+    public string? WorkerLeaseId { get; set; }
+
+    /// <summary>持有者租约到期时间；活跃 worker 周期续租，其他 revision 只接管已过期租约。</summary>
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
+
+    /// <summary>当前租约所保护的阶段，便于排障识别持有者。</summary>
+    public string? WorkerLeasePhase { get; set; }
+
     /// <summary>总时长（秒）</summary>
     public double TotalDurationSeconds { get; set; }
 
@@ -408,6 +417,8 @@ public class VideoExportTask
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+    public string? WorkerLeaseId { get; set; }
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
 }
 
 [BsonIgnoreExtraElements]

@@ -30,11 +30,14 @@ public class VideoGenRunWorker : BackgroundService
 {
     private static readonly TimeSpan SceneClaimTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan SceneRenderLease = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan WorkerLeaseDuration = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan WorkerLeaseHeartbeat = TimeSpan.FromSeconds(20);
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunEventStore _runStore;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
+    internal DateTime LegacyTakeoverEnabledAt { get; set; } = DateTime.UtcNow.AddMinutes(20);
 
     public VideoGenRunWorker(
         MongoDbContext db,
@@ -60,6 +63,7 @@ public class VideoGenRunWorker : BackgroundService
                         DeploymentScope.Current,
                         DeploymentScope.CurrentDurable,
                         stoppingToken)) continue;
+                if (await RecoverExpiredWorkerLeaseAsync(stoppingToken)) continue;
                 if (await ResumePendingDeletionAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
@@ -72,10 +76,13 @@ public class VideoGenRunWorker : BackgroundService
                         queued.Id, queued.Mode);
                     try
                     {
-                        if (queued.Mode == VideoGenMode.Storyboard)
-                            await ProcessStoryboardScriptingAsync(queued);
-                        else
-                            await ProcessDirectVideoGenAsync(queued);
+                        await ProcessWithRunLeaseHeartbeatAsync(queued, async () =>
+                        {
+                            if (queued.Mode == VideoGenMode.Storyboard)
+                                await ProcessStoryboardScriptingAsync(queued);
+                            else
+                                await ProcessDirectVideoGenAsync(queued);
+                        });
                     }
                     catch (Exception ex)
                     {
@@ -128,12 +135,14 @@ public class VideoGenRunWorker : BackgroundService
                     }
                     try
                     {
-                        await ProcessExportAsync(taskRun, exportTask);
+                        await ProcessWithExportLeaseHeartbeatAsync(
+                            exportTask,
+                            () => ProcessExportAsync(taskRun, exportTask));
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "VideoGen 独立导出异常: runId={RunId}, taskId={TaskId}", taskRun.Id, exportTask.Id);
-                        await FailExportAsync(taskRun, ex.Message, exportTask.Id);
+                        await FailExportAsync(taskRun, ex.Message, exportTask.Id, exportTask.WorkerLeaseId);
                     }
                     continue;
                 }
@@ -144,7 +153,9 @@ public class VideoGenRunWorker : BackgroundService
                 {
                     try
                     {
-                        await ProcessExportAsync(exportRun);
+                        await ProcessWithRunLeaseHeartbeatAsync(
+                            exportRun,
+                            () => ProcessExportAsync(exportRun));
                     }
                     catch (Exception ex)
                     {
@@ -155,12 +166,14 @@ public class VideoGenRunWorker : BackgroundService
                 }
 
                 // 路径 3: Editing 状态有 scene.Status==Generating → LLM 重生成单镜 prompt
-                var regenRun = await FindEditingRunWithSceneGeneratingAsync(stoppingToken);
+                var regenRun = await ClaimEditingRunWithSceneGeneratingAsync(stoppingToken);
                 if (regenRun != null)
                 {
                     try
                     {
-                        await ProcessSceneRegenerateAsync(regenRun);
+                        await ProcessWithRunLeaseHeartbeatAsync(
+                            regenRun,
+                            () => ProcessSceneRegenerateAsync(regenRun));
                     }
                     catch (Exception ex)
                     {
@@ -235,6 +248,8 @@ public class VideoGenRunWorker : BackgroundService
 
         var fb = Builders<VideoGenRun>.Filter;
         var sceneFb = Builders<VideoGenScene>.Filter;
+        var now = DateTime.UtcNow;
+        var allowLegacyTakeover = now >= LegacyTakeoverEnabledAt;
         var previousRevision = VideoGenService.BuildBranchDeploymentFilter<VideoGenRun>(
                                    nameof(VideoGenRun.DeploymentSlug),
                                    currentScope,
@@ -249,9 +264,26 @@ public class VideoGenRunWorker : BackgroundService
                                          currentScope,
                                          durableScope)
                                      & exportFb.Ne(x => x.DeploymentSlug, currentScope);
+        var expiredExportLease = exportFb.Ne(x => x.WorkerLeaseId, null)
+                                 & exportFb.Lte(x => x.WorkerLeaseExpiresAt, now);
+        var legacyExport = allowLegacyTakeover
+            ? exportFb.Or(
+                exportFb.Eq(x => x.WorkerLeaseId, null),
+                exportFb.Eq(x => x.WorkerLeaseExpiresAt, null))
+            : exportFb.Empty & exportFb.Exists(x => x.Id, false);
+        var recoverableExport = exportFb.Eq(x => x.Status, VideoExportTaskStatus.Queued)
+                                | (exportFb.Eq(x => x.Status, VideoExportTaskStatus.Processing)
+                                   & (expiredExportLease | legacyExport));
         var adoptedExport = await _db.VideoExportTasks.FindOneAndUpdateAsync(
-            previousExportRevision & exportFb.Eq(x => x.Status, VideoExportTaskStatus.Queued),
-            Builders<VideoExportTask>.Update.Set(x => x.DeploymentSlug, currentScope),
+            previousExportRevision & recoverableExport,
+            Builders<VideoExportTask>.Update
+                .Set(x => x.DeploymentSlug, currentScope)
+                .Set(x => x.Status, VideoExportTaskStatus.Queued)
+                .Set(x => x.CurrentPhase, "queued")
+                .Set(x => x.Progress, 0)
+                .Set(x => x.StartedAt, (DateTime?)null)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
             new FindOneAndUpdateOptions<VideoExportTask>
             {
                 Sort = Builders<VideoExportTask>.Sort.Ascending(x => x.CreatedAt),
@@ -275,6 +307,15 @@ public class VideoGenRunWorker : BackgroundService
             return true;
         }
 
+        var expiredRunLease = fb.Ne(x => x.WorkerLeaseId, null)
+                              & fb.Lte(x => x.WorkerLeaseExpiresAt, now);
+        var legacyRun = allowLegacyTakeover
+            ? fb.Or(
+                fb.Eq(x => x.WorkerLeaseId, null),
+                fb.Eq(x => x.WorkerLeaseExpiresAt, null))
+            : fb.Empty & fb.Exists(x => x.Id, false);
+        var recoverableRunLease = expiredRunLease | legacyRun;
+
         // 删除已经持久化删除意图且受 run 级互斥锁保护，迁移后可由当前 worker 续作。
         var deletion = await _db.VideoGenRuns.FindOneAndUpdateAsync(
             previousRevision & fb.Ne(x => x.DeletionRequestedAt, null),
@@ -287,12 +328,16 @@ public class VideoGenRunWorker : BackgroundService
         var scripting = await _db.VideoGenRuns.FindOneAndUpdateAsync(
             previousRevision
             & fb.Eq(x => x.DeletionRequestedAt, null)
-            & fb.Eq(x => x.Status, VideoGenRunStatus.Scripting),
+            & fb.Eq(x => x.Status, VideoGenRunStatus.Scripting)
+            & recoverableRunLease,
             Builders<VideoGenRun>.Update
                 .Set(x => x.DeploymentSlug, currentScope)
                 .Set(x => x.Status, VideoGenRunStatus.Queued)
                 .Set(x => x.CurrentPhase, "queued")
-                .Set(x => x.PhaseProgress, 0),
+                .Set(x => x.PhaseProgress, 0)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
         if (scripting != null) return true;
@@ -303,12 +348,17 @@ public class VideoGenRunWorker : BackgroundService
             & fb.Eq(x => x.DeletionRequestedAt, null)
             & fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
             & fb.Eq(x => x.Mode, VideoGenMode.Direct)
+            & fb.Ne(x => x.WorkerLeasePhase, "export")
             & fb.Ne(x => x.DirectVideoJobId, null)
-            & fb.Ne(x => x.DirectVideoJobId, string.Empty),
+            & fb.Ne(x => x.DirectVideoJobId, string.Empty)
+            & recoverableRunLease,
             Builders<VideoGenRun>.Update
                 .Set(x => x.DeploymentSlug, currentScope)
                 .Set(x => x.Status, VideoGenRunStatus.Queued)
-                .Set(x => x.CurrentPhase, "videogen-resuming"),
+                .Set(x => x.CurrentPhase, "videogen-resuming")
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
         if (directRendering != null) return true;
@@ -319,14 +369,19 @@ public class VideoGenRunWorker : BackgroundService
             & fb.Eq(x => x.DeletionRequestedAt, null)
             & fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
             & fb.Eq(x => x.Mode, VideoGenMode.Direct)
-            & (fb.Eq(x => x.DirectVideoJobId, null) | fb.Eq(x => x.DirectVideoJobId, string.Empty)),
+            & fb.Ne(x => x.WorkerLeasePhase, "export")
+            & (fb.Eq(x => x.DirectVideoJobId, null) | fb.Eq(x => x.DirectVideoJobId, string.Empty))
+            & recoverableRunLease,
             Builders<VideoGenRun>.Update
                 .Set(x => x.DeploymentSlug, currentScope)
                 .Set(x => x.Status, VideoGenRunStatus.Failed)
                 .Set(x => x.CurrentPhase, "failed")
                 .Set(x => x.ErrorCode, "DEPLOYMENT_INTERRUPTED_SUBMIT")
                 .Set(x => x.ErrorMessage, "部署切换时视频提交结果未能确认。为避免重复扣费，系统未自动重试；请确认后手动重新生成。")
-                .Set(x => x.EndedAt, DateTime.UtcNow),
+                .Set(x => x.EndedAt, DateTime.UtcNow)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
         if (uncertainDirect != null) return true;
@@ -336,8 +391,13 @@ public class VideoGenRunWorker : BackgroundService
             previousRevision
             & fb.Eq(x => x.DeletionRequestedAt, null)
             & fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
-            & fb.Eq(x => x.Mode, VideoGenMode.Storyboard),
-            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            & fb.Eq(x => x.Mode, VideoGenMode.Storyboard)
+            & recoverableRunLease,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.DeploymentSlug, currentScope)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
         if (storyboardRendering != null) return true;
@@ -347,13 +407,17 @@ public class VideoGenRunWorker : BackgroundService
             previousRevision
             & fb.Eq(x => x.DeletionRequestedAt, null)
             & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
-            & fb.ElemMatch(x => x.Scenes, sceneFb.Eq(x => x.Status, SceneItemStatus.Generating)),
-            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            & fb.ElemMatch(x => x.Scenes, sceneFb.Eq(x => x.Status, SceneItemStatus.Generating))
+            & recoverableRunLease,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.DeploymentSlug, currentScope)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
             ct);
         if (generatingPrompt != null) return true;
 
-        var now = DateTime.UtcNow;
         var staleClaimBefore = now - SceneClaimTimeout;
         var activeScene = sceneFb.Eq(x => x.Status, SceneItemStatus.Generating)
                           | sceneFb.Eq(x => x.Status, SceneItemStatus.Rendering)
@@ -387,6 +451,123 @@ public class VideoGenRunWorker : BackgroundService
     }
 
     /// <summary>
+    /// 当前 revision 的 worker 异常退出时，租约到期后恢复其未完成任务。
+    /// 新版任务按 lease 到期判断；升级前无 lease 的处理中任务仅在保守等待窗口后恢复。
+    /// </summary>
+    internal async Task<bool> RecoverExpiredWorkerLeaseAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var allowLegacyTakeover = now >= LegacyTakeoverEnabledAt;
+        var exportFb = Builders<VideoExportTask>.Filter;
+        var expiredExportLease = exportFb.Ne(x => x.WorkerLeaseId, null)
+                                 & exportFb.Lte(x => x.WorkerLeaseExpiresAt, now);
+        var legacyExport = allowLegacyTakeover
+            ? exportFb.Or(
+                exportFb.Eq(x => x.WorkerLeaseId, null),
+                exportFb.Eq(x => x.WorkerLeaseExpiresAt, null))
+            : exportFb.Empty & exportFb.Exists(x => x.Id, false);
+        var recoveredExport = await _db.VideoExportTasks.FindOneAndUpdateAsync(
+            exportFb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+            & exportFb.Eq(x => x.Status, VideoExportTaskStatus.Processing)
+            & (expiredExportLease | legacyExport),
+            Builders<VideoExportTask>.Update
+                .Set(x => x.Status, VideoExportTaskStatus.Queued)
+                .Set(x => x.CurrentPhase, "queued")
+                .Set(x => x.Progress, 0)
+                .Set(x => x.StartedAt, (DateTime?)null)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
+            new FindOneAndUpdateOptions<VideoExportTask>
+            {
+                Sort = Builders<VideoExportTask>.Sort.Ascending(x => x.CreatedAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (recoveredExport != null) return true;
+
+        var fb = Builders<VideoGenRun>.Filter;
+        var expiredRunLease = fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                              & fb.Ne(x => x.WorkerLeaseId, null)
+                              & fb.Lte(x => x.WorkerLeaseExpiresAt, now);
+        var recoveredScripting = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            expiredRunLease & fb.Eq(x => x.Status, VideoGenRunStatus.Scripting),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Queued)
+                .Set(x => x.CurrentPhase, "queued")
+                .Set(x => x.PhaseProgress, 0)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (recoveredScripting != null) return true;
+
+        var recoveredDirect = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            expiredRunLease
+            & fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+            & fb.Eq(x => x.Mode, VideoGenMode.Direct)
+            & fb.Ne(x => x.WorkerLeasePhase, "export")
+            & fb.Ne(x => x.DirectVideoJobId, null)
+            & fb.Ne(x => x.DirectVideoJobId, string.Empty),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Queued)
+                .Set(x => x.CurrentPhase, "videogen-resuming")
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (recoveredDirect != null) return true;
+
+        var uncertainDirect = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            expiredRunLease
+            & fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+            & fb.Eq(x => x.Mode, VideoGenMode.Direct)
+            & fb.Ne(x => x.WorkerLeasePhase, "export")
+            & (fb.Eq(x => x.DirectVideoJobId, null) | fb.Eq(x => x.DirectVideoJobId, string.Empty)),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Failed)
+                .Set(x => x.CurrentPhase, "failed")
+                .Set(x => x.ErrorCode, "WORKER_INTERRUPTED_SUBMIT")
+                .Set(x => x.ErrorMessage, "视频提交结果未能确认。为避免重复扣费，系统未自动重试；请确认后手动重新生成。")
+                .Set(x => x.EndedAt, now)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (uncertainDirect != null) return true;
+
+        var recoveredLegacyExport = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            expiredRunLease
+            & fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+            & fb.Eq(x => x.WorkerLeasePhase, "export"),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.ExportRequested, true)
+                .Set(x => x.CurrentPhase, "export-queued")
+                .Set(x => x.PhaseProgress, 1)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (recoveredLegacyExport != null) return true;
+
+        var sceneFb = Builders<VideoGenScene>.Filter;
+        var recoveredPrompt = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            expiredRunLease
+            & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+            & fb.ElemMatch(x => x.Scenes, sceneFb.Eq(x => x.Status, SceneItemStatus.Generating)),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        return recoveredPrompt != null;
+    }
+
+    /// <summary>
     /// 拾取 Queued 任务，置为 Rendering 或 Scripting（根据 Mode）
     /// </summary>
     internal async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
@@ -406,12 +587,16 @@ public class VideoGenRunWorker : BackgroundService
         var nextPhase = pending.Mode == VideoGenMode.Storyboard
             ? "scripting"
             : "videogen-submitting";
+        var leaseId = $"worker:{Guid.NewGuid():N}";
 
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.Status, nextStatus)
             .Set(x => x.StartedAt, DateTime.UtcNow)
             .Set(x => x.CurrentPhase, nextPhase)
-            .Set(x => x.PhaseProgress, 1);
+            .Set(x => x.PhaseProgress, 1)
+            .Set(x => x.WorkerLeaseId, leaseId)
+            .Set(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow + WorkerLeaseDuration)
+            .Set(x => x.WorkerLeasePhase, nextPhase);
 
         var run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
             queueScope & fb.Eq(x => x.Id, pending.Id),
@@ -502,8 +687,9 @@ public class VideoGenRunWorker : BackgroundService
             };
 
             // 提交前最后一道闸：领取后、提交到 OpenRouter 之前若收到取消请求，置终态不提交。
-            var freshBeforeSubmit = await _db.VideoGenRuns.Find(x => x.Id == run.Id)
+            var freshBeforeSubmit = await _db.VideoGenRuns.Find(OwnedRunFilter(run))
                 .FirstOrDefaultAsync(CancellationToken.None);
+            if (freshBeforeSubmit == null) return;
             if (freshBeforeSubmit?.CancelRequested == true) { await CancelRunAsync(run); return; }
 
             var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
@@ -517,8 +703,8 @@ public class VideoGenRunWorker : BackgroundService
             actualModel = submitResult.ActualModel ?? run.DirectVideoModel;
             offeringId = submitResult.OfferingId;
 
-            await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
+            var persistedJob = await _db.VideoGenRuns.UpdateOneAsync(
+                OwnedRunFilter(run),
                 Builders<VideoGenRun>.Update
                     .Set(x => x.DirectVideoModel, actualModel)
                     .Set(x => x.DirectVideoOfferingId, offeringId)
@@ -528,15 +714,17 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.CurrentPhase, "videogen-polling")
                     .Set(x => x.PhaseProgress, 10),
                 cancellationToken: CancellationToken.None);
+            if (persistedJob.MatchedCount != 1) return;
         }
         else
         {
-            await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
+            var resumed = await _db.VideoGenRuns.UpdateOneAsync(
+                OwnedRunFilter(run),
                 Builders<VideoGenRun>.Update
                     .Set(x => x.CurrentPhase, "videogen-polling")
                     .Set(x => x.PhaseProgress, Math.Max(run.PhaseProgress, 10)),
                 cancellationToken: CancellationToken.None);
+            if (resumed.MatchedCount != 1) return;
         }
 
         await PublishEventAsync(run.Id, "phase.changed",
@@ -590,7 +778,7 @@ public class VideoGenRunWorker : BackgroundService
                     run.Id, status.VideoUrl);
 
                 await _db.VideoGenRuns.UpdateOneAsync(
-                    x => x.Id == run.Id,
+                    OwnedRunFilter(run),
                     Builders<VideoGenRun>.Update
                         .Set(x => x.CurrentPhase, "downloading")
                         .Set(x => x.PhaseProgress, 95),
@@ -641,7 +829,8 @@ public class VideoGenRunWorker : BackgroundService
                         & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
                         & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
                         & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, false)
-                        & Builders<VideoGenRun>.Filter.Eq(x => x.DirectVideoJobId, jobId),
+                        & Builders<VideoGenRun>.Filter.Eq(x => x.DirectVideoJobId, jobId)
+                        & Builders<VideoGenRun>.Filter.Eq(x => x.WorkerLeaseId, run.WorkerLeaseId),
                         Builders<VideoGenRun>.Update
                             .Set(x => x.Status, VideoGenRunStatus.Completed)
                             .Set(x => x.VideoAssetUrl, finalUrl)
@@ -649,7 +838,10 @@ public class VideoGenRunWorker : BackgroundService
                             .Set(x => x.DirectVideoCost, status.Cost)
                             .Set(x => x.CurrentPhase, "completed")
                             .Set(x => x.PhaseProgress, 100)
-                            .Set(x => x.EndedAt, DateTime.UtcNow),
+                            .Set(x => x.EndedAt, DateTime.UtcNow)
+                            .Set(x => x.WorkerLeaseId, (string?)null)
+                            .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                            .Set(x => x.WorkerLeasePhase, (string?)null),
                         cancellationToken: CancellationToken.None);
                     if (completed.ModifiedCount != 1)
                     {
@@ -691,7 +883,7 @@ public class VideoGenRunWorker : BackgroundService
             // 递增进度（保持用户感知到"在动"）
             progress = Math.Min(90, progress + 3);
             await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
+                OwnedRunFilter(run),
                 Builders<VideoGenRun>.Update.Set(x => x.PhaseProgress, progress),
                 cancellationToken: CancellationToken.None);
             await PublishEventAsync(run.Id, "phase.progress",
@@ -704,14 +896,18 @@ public class VideoGenRunWorker : BackgroundService
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)
     {
         var userMessage = VideoGenerationUserError.ForPersistence(errorCode, errorMessage);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var failed = await _db.VideoGenRuns.UpdateOneAsync(
+            OwnedRunFilter(run),
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Failed)
                 .Set(x => x.ErrorCode, errorCode)
                 .Set(x => x.ErrorMessage, userMessage)
-                .Set(x => x.EndedAt, DateTime.UtcNow),
+                .Set(x => x.EndedAt, DateTime.UtcNow)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             cancellationToken: CancellationToken.None);
+        if (failed.ModifiedCount != 1) return;
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
         await PublishEventAsync(run.Id, "run.error", new { code = errorCode, message = userMessage });
@@ -719,12 +915,16 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task CancelRunAsync(VideoGenRun run)
     {
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var cancelled = await _db.VideoGenRuns.UpdateOneAsync(
+            OwnedRunFilter(run),
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Cancelled)
-                .Set(x => x.EndedAt, DateTime.UtcNow),
+                .Set(x => x.EndedAt, DateTime.UtcNow)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             cancellationToken: CancellationToken.None);
+        if (cancelled.ModifiedCount != 1) return;
 
         await UpdateProjectAsync(run, VideoProjectStatus.Draft);
 
@@ -916,7 +1116,10 @@ public class VideoGenRunWorker : BackgroundService
             .Set(x => x.TotalDurationSeconds, totalDuration)
             .Set(x => x.Status, VideoGenRunStatus.Editing)
             .Set(x => x.CurrentPhase, "editing")
-            .Set(x => x.PhaseProgress, 100);
+            .Set(x => x.PhaseProgress, 100)
+            .Set(x => x.WorkerLeaseId, (string?)null)
+            .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+            .Set(x => x.WorkerLeasePhase, (string?)null);
 
         if (!string.IsNullOrWhiteSpace(aiTitle))
         {
@@ -925,10 +1128,13 @@ public class VideoGenRunWorker : BackgroundService
             update = update.Set(x => x.ArticleTitle, cleanTitle);
         }
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var persisted = await _db.VideoGenRuns.UpdateOneAsync(
+            OwnedRunFilter(run)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Scripting)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, false),
             update,
             cancellationToken: CancellationToken.None);
+        if (persisted.ModifiedCount != 1) return;
 
         await SyncProjectStoryboardAsync(run, scenes, aiTitle);
 
@@ -1190,15 +1396,33 @@ public class VideoGenRunWorker : BackgroundService
         return true;
     }
 
-    /// <summary>找 Editing 状态有 scene.Status==Generating（LLM 重生成 prompt）的 run</summary>
-    private async Task<VideoGenRun?> FindEditingRunWithSceneGeneratingAsync(CancellationToken ct)
+    /// <summary>原子领取 Editing 状态下的提示词重生成任务，并记录可续租的持有者身份。</summary>
+    internal async Task<VideoGenRun?> ClaimEditingRunWithSceneGeneratingAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
+        var now = DateTime.UtcNow;
+        var availableLease = fb.Eq(x => x.WorkerLeaseId, null)
+                             | fb.Lte(x => x.WorkerLeaseExpiresAt, now);
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
-                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
-                    & fb.ElemMatch(x => x.Scenes,
-                        Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.Generating));
-        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                     & availableLease
+                     & fb.ElemMatch(x => x.Scenes,
+                         Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.Generating));
+        var candidate = await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        if (candidate == null) return null;
+        var sceneIdx = candidate.Scenes.FindIndex(scene => scene.Status == SceneItemStatus.Generating);
+        if (sceneIdx < 0) return null;
+        var leaseId = $"prompt:{Guid.NewGuid():N}";
+        return await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            filter
+            & fb.Eq(x => x.Id, candidate.Id)
+            & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.Generating),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.WorkerLeaseId, leaseId)
+                .Set(x => x.WorkerLeaseExpiresAt, now + WorkerLeaseDuration)
+                .Set(x => x.WorkerLeasePhase, $"scene-prompt:{sceneIdx}"),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
     }
 
     /// <summary>处理单镜渲染：调 OpenRouter，下载 mp4 到 COS，写回 Scene.VideoUrl</summary>
@@ -1540,7 +1764,11 @@ public class VideoGenRunWorker : BackgroundService
             AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
         if (!resolution.Success)
         {
-            await MarkSceneErrorAsync(run.Id, sceneIdx, "模型调度失败: " + resolution.ErrorMessage);
+            await MarkSceneErrorAsync(
+                run.Id,
+                sceneIdx,
+                "模型调度失败: " + resolution.ErrorMessage,
+                expectedWorkerLeaseId: run.WorkerLeaseId);
             return;
         }
 
@@ -1562,7 +1790,11 @@ public class VideoGenRunWorker : BackgroundService
 
         if (!resp.Success)
         {
-            await MarkSceneErrorAsync(run.Id, sceneIdx, "重生成 LLM 调用失败");
+            await MarkSceneErrorAsync(
+                run.Id,
+                sceneIdx,
+                "重生成 LLM 调用失败",
+                expectedWorkerLeaseId: run.WorkerLeaseId);
             return;
         }
 
@@ -1575,17 +1807,28 @@ public class VideoGenRunWorker : BackgroundService
         var newPrompt = ExtractAssistantText(resp.Content ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(newPrompt))
         {
-            await MarkSceneErrorAsync(run.Id, sceneIdx, "LLM 返回为空");
+            await MarkSceneErrorAsync(
+                run.Id,
+                sceneIdx,
+                "LLM 返回为空",
+                expectedWorkerLeaseId: run.WorkerLeaseId);
             return;
         }
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+        var completed = await _db.VideoGenRuns.UpdateOneAsync(
+            OwnedRunFilter(run)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Editing)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, false)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.Generating),
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Draft)
                 .Set($"Scenes.{sceneIdx}.Prompt", newPrompt)
-                .Set($"Scenes.{sceneIdx}.ErrorMessage", (string?)null),
+                .Set($"Scenes.{sceneIdx}.ErrorMessage", (string?)null)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
             cancellationToken: CancellationToken.None);
+        if (completed.ModifiedCount != 1) return;
 
         await PublishEventAsync(run.Id, "scene.prompt.regenerated", new { sceneIndex = sceneIdx, prompt = newPrompt });
     }
@@ -1602,7 +1845,8 @@ public class VideoGenRunWorker : BackgroundService
         int sceneIdx,
         string errorMessage,
         string? expectedJobId = null,
-        string? expectedLeaseId = null)
+        string? expectedLeaseId = null,
+        string? expectedWorkerLeaseId = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence("SCENE_RENDER_FAILED", errorMessage);
         var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId);
@@ -1614,14 +1858,27 @@ public class VideoGenRunWorker : BackgroundService
         {
             filter &= Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", expectedLeaseId);
         }
-        var updated = await _db.VideoGenRuns.UpdateOneAsync(
-            filter,
-            Builders<VideoGenRun>.Update
+        if (!string.IsNullOrWhiteSpace(expectedWorkerLeaseId))
+        {
+            filter &= Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                      & Builders<VideoGenRun>.Filter.Eq(x => x.WorkerLeaseId, expectedWorkerLeaseId);
+        }
+        UpdateDefinition<VideoGenRun> update = Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
                 .Set($"Scenes.{sceneIdx}.ErrorMessage", userMessage)
                 .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
                 .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
-                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null),
+                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null);
+        if (!string.IsNullOrWhiteSpace(expectedWorkerLeaseId))
+        {
+            update = update
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null);
+        }
+        var updated = await _db.VideoGenRuns.UpdateOneAsync(
+            filter,
+            update,
             cancellationToken: CancellationToken.None);
         if (updated.ModifiedCount != 1) return;
         await SyncProjectSceneActivityAsync(runId);
@@ -1647,14 +1904,20 @@ public class VideoGenRunWorker : BackgroundService
     private async Task<VideoGenRun?> ClaimExportRunAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
+        var leaseId = $"export-run:{Guid.NewGuid():N}";
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Rendering)
                      & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
-                     & fb.Eq(x => x.ExportRequested, true);
+                     & fb.Eq(x => x.ExportRequested, true)
+                     & (fb.Eq(x => x.WorkerLeaseId, null)
+                        | fb.Lte(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow));
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.ExportRequested, false)
             .Set(x => x.ExportStartedAt, DateTime.UtcNow)
             .Set(x => x.CurrentPhase, "export-preparing")
-            .Set(x => x.PhaseProgress, 5);
+            .Set(x => x.PhaseProgress, 5)
+            .Set(x => x.WorkerLeaseId, leaseId)
+            .Set(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow + WorkerLeaseDuration)
+            .Set(x => x.WorkerLeasePhase, "export");
         return await _db.VideoGenRuns.FindOneAndUpdateAsync(
             filter,
             update,
@@ -1664,6 +1927,7 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
     {
+        var leaseId = $"export:{Guid.NewGuid():N}";
         var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
                      & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         return await _db.VideoExportTasks.FindOneAndUpdateAsync(
@@ -1672,7 +1936,9 @@ public class VideoGenRunWorker : BackgroundService
                 .Set(x => x.Status, VideoExportTaskStatus.Processing)
                 .Set(x => x.CurrentPhase, "export-preparing")
                 .Set(x => x.Progress, 5)
-                .Set(x => x.StartedAt, DateTime.UtcNow),
+                .Set(x => x.StartedAt, DateTime.UtcNow)
+                .Set(x => x.WorkerLeaseId, leaseId)
+                .Set(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow + WorkerLeaseDuration),
             new FindOneAndUpdateOptions<VideoExportTask> { ReturnDocument = ReturnDocument.After },
             ct);
     }
@@ -1681,17 +1947,20 @@ public class VideoGenRunWorker : BackgroundService
     {
         if (run.CancelRequested)
         {
-            await CancelRunAsync(run);
             if (exportTask != null)
             {
-                await _db.VideoExportTasks.UpdateOneAsync(
-                    x => x.Id == exportTask.Id,
+                var cancelledTask = await _db.VideoExportTasks.UpdateOneAsync(
+                    OwnedExportTaskFilter(exportTask),
                     Builders<VideoExportTask>.Update
                         .Set(x => x.Status, VideoExportTaskStatus.Cancelled)
                         .Set(x => x.CurrentPhase, "cancelled")
-                        .Set(x => x.EndedAt, DateTime.UtcNow),
+                        .Set(x => x.EndedAt, DateTime.UtcNow)
+                        .Set(x => x.WorkerLeaseId, (string?)null)
+                        .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
                     cancellationToken: CancellationToken.None);
+                if (cancelledTask.ModifiedCount != 1) return;
             }
+            await CancelRunAsync(run);
             return;
         }
         var project = string.IsNullOrWhiteSpace(run.ProjectId)
@@ -1700,7 +1969,11 @@ public class VideoGenRunWorker : BackgroundService
         var videoTrack = project?.TimelineTracks.FirstOrDefault(track => track.Type == VideoTrackType.Video);
         if (videoTrack?.Muted == true)
         {
-            await FailExportAsync(run, "视频轨已静音，无法导出可播放视频", exportTask?.Id);
+            await FailExportAsync(
+                run,
+                "视频轨已静音，无法导出可播放视频",
+                exportTask?.Id,
+                exportTask?.WorkerLeaseId);
             return;
         }
         var timelineClips = videoTrack?.Clips
@@ -1718,7 +1991,11 @@ public class VideoGenRunWorker : BackgroundService
         var selectedScenes = timelineClips.Select(clip => (Clip: clip, Scene: run.Scenes[clip.SceneIndex!.Value])).ToList();
         if (selectedScenes.Count == 0 || selectedScenes.Any(item => string.IsNullOrWhiteSpace(item.Scene.VideoUrl)))
         {
-            await FailExportAsync(run, "存在尚未生成的视频分镜", exportTask?.Id);
+            await FailExportAsync(
+                run,
+                "存在尚未生成的视频分镜",
+                exportTask?.Id,
+                exportTask?.WorkerLeaseId);
             return;
         }
 
@@ -1750,7 +2027,7 @@ public class VideoGenRunWorker : BackgroundService
                     timelineClip.Transition));
 
                 var progress = 10 + (int)Math.Round((index + 1d) / selectedScenes.Count * 25d);
-                await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-downloading", progress);
+                if (!await UpdateExportProgressAsync(run, exportTask, "export-downloading", progress)) return;
             }
 
             var audioInputs = new List<VideoExportAudioSource>();
@@ -1794,7 +2071,7 @@ public class VideoGenRunWorker : BackgroundService
             };
             foreach (var arg in args) startInfo.ArgumentList.Add(arg);
 
-            await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-composing", 50);
+            if (!await UpdateExportProgressAsync(run, exportTask, "export-composing", 50)) return;
             using var process = Process.Start(startInfo)
                                 ?? throw new InvalidOperationException("ffmpeg 进程启动失败");
             var stderrTask = process.StandardError.ReadToEndAsync();
@@ -1815,7 +2092,7 @@ public class VideoGenRunWorker : BackgroundService
                 throw new InvalidOperationException($"ffmpeg 合成失败 (exit={process.ExitCode}): {detail}");
             }
 
-            await UpdateExportProgressAsync(run.Id, exportTask?.Id, "export-uploading", 90);
+            if (!await UpdateExportProgressAsync(run, exportTask, "export-uploading", 90)) return;
             var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
             var expectedSha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
@@ -1833,8 +2110,30 @@ public class VideoGenRunWorker : BackgroundService
                 throw new InvalidOperationException("视频资产摘要校验失败");
 
             var totalCost = run.Scenes.Where(scene => scene.Cost.HasValue).Sum(scene => scene.Cost!.Value);
-            await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
+            if (exportTask != null)
+            {
+                var completedTask = await _db.VideoExportTasks.UpdateOneAsync(
+                    OwnedExportTaskFilter(exportTask),
+                    Builders<VideoExportTask>.Update
+                        .Set(x => x.Status, VideoExportTaskStatus.Completed)
+                        .Set(x => x.CurrentPhase, "completed")
+                        .Set(x => x.Progress, 100)
+                        .Set(x => x.OutputUrl, stored.Url)
+                        .Set(x => x.ErrorMessage, (string?)null)
+                        .Set(x => x.EndedAt, DateTime.UtcNow)
+                        .Set(x => x.WorkerLeaseId, (string?)null)
+                        .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
+                    cancellationToken: CancellationToken.None);
+                if (completedTask.ModifiedCount != 1) return;
+            }
+            var runFilter = exportTask == null
+                ? OwnedRunFilter(run)
+                : Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+                  & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                  & Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering)
+                  & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, exportTask.Id);
+            var completedRun = await _db.VideoGenRuns.UpdateOneAsync(
+                runFilter,
                 Builders<VideoGenRun>.Update
                     .Set(x => x.Status, VideoGenRunStatus.Completed)
                     .Set(x => x.VideoAssetUrl, stored.Url)
@@ -1844,21 +2143,12 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.ExportedAt, DateTime.UtcNow)
                     .Set(x => x.EndedAt, DateTime.UtcNow)
                     .Set(x => x.CurrentPhase, "completed")
-                    .Set(x => x.PhaseProgress, 100),
+                    .Set(x => x.PhaseProgress, 100)
+                    .Set(x => x.WorkerLeaseId, (string?)null)
+                    .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                    .Set(x => x.WorkerLeasePhase, (string?)null),
                 cancellationToken: CancellationToken.None);
-            if (exportTask != null)
-            {
-                await _db.VideoExportTasks.UpdateOneAsync(
-                    x => x.Id == exportTask.Id,
-                    Builders<VideoExportTask>.Update
-                        .Set(x => x.Status, VideoExportTaskStatus.Completed)
-                        .Set(x => x.CurrentPhase, "completed")
-                        .Set(x => x.Progress, 100)
-                        .Set(x => x.OutputUrl, stored.Url)
-                        .Set(x => x.ErrorMessage, (string?)null)
-                        .Set(x => x.EndedAt, DateTime.UtcNow),
-                    cancellationToken: CancellationToken.None);
-            }
+            if (completedRun.ModifiedCount != 1) return;
             await UpdateProjectAsync(run, VideoProjectStatus.Completed);
             await PublishEventAsync(run.Id, "export.completed", new { videoUrl = stored.Url, cost = totalCost });
         }
@@ -1985,58 +2275,205 @@ public class VideoGenRunWorker : BackgroundService
 
     private sealed record MediaProbeResult(double DurationSeconds, bool HasAudio);
 
-    private async Task UpdateExportProgressAsync(string runId, string? exportTaskId, string phase, int progress)
+    private async Task<bool> UpdateExportProgressAsync(
+        VideoGenRun run,
+        VideoExportTask? exportTask,
+        string phase,
+        int progress)
     {
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.CurrentPhase, phase)
-                .Set(x => x.PhaseProgress, progress),
-            cancellationToken: CancellationToken.None);
-        if (!string.IsNullOrWhiteSpace(exportTaskId))
+        if (exportTask != null)
         {
-            await _db.VideoExportTasks.UpdateOneAsync(
-                x => x.Id == exportTaskId,
+            var taskProgress = await _db.VideoExportTasks.UpdateOneAsync(
+                OwnedExportTaskFilter(exportTask),
                 Builders<VideoExportTask>.Update
                     .Set(x => x.CurrentPhase, phase)
                     .Set(x => x.Progress, progress),
                 cancellationToken: CancellationToken.None);
+            if (taskProgress.MatchedCount != 1) return false;
         }
-        await PublishEventAsync(runId, "export.progress", new { taskId = exportTaskId, phase, progress });
+        var runFilter = exportTask == null
+            ? OwnedRunFilter(run)
+            : Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+              & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+              & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, exportTask.Id);
+        var runProgress = await _db.VideoGenRuns.UpdateOneAsync(
+            runFilter,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.CurrentPhase, phase)
+                .Set(x => x.PhaseProgress, progress),
+            cancellationToken: CancellationToken.None);
+        if (runProgress.MatchedCount != 1) return false;
+        await PublishEventAsync(run.Id, "export.progress", new { taskId = exportTask?.Id, phase, progress });
+        return true;
     }
 
-    private async Task FailExportAsync(VideoGenRun run, string errorMessage, string? exportTaskId = null)
+    private async Task FailExportAsync(
+        VideoGenRun run,
+        string errorMessage,
+        string? exportTaskId = null,
+        string? expectedWorkerLeaseId = null)
     {
         var userMessage = VideoGenerationUserError.ForPersistence("EXPORT_FAILED", errorMessage);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
-            Builders<VideoGenRun>.Update
-                .Set(x => x.Status, VideoGenRunStatus.Editing)
-                .Set(x => x.ExportRequested, false)
-                .Set(x => x.ExportErrorMessage, userMessage)
-                .Set(x => x.CurrentPhase, "export-failed")
-                .Set(x => x.PhaseProgress, 0),
-            cancellationToken: CancellationToken.None);
         if (!string.IsNullOrWhiteSpace(exportTaskId))
         {
-            await _db.VideoExportTasks.UpdateOneAsync(
-                x => x.Id == exportTaskId,
+            if (string.IsNullOrWhiteSpace(expectedWorkerLeaseId)) return;
+            var failedTask = await _db.VideoExportTasks.UpdateOneAsync(
+                Builders<VideoExportTask>.Filter.Eq(x => x.Id, exportTaskId)
+                & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                & Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Processing)
+                & Builders<VideoExportTask>.Filter.Eq(x => x.WorkerLeaseId, expectedWorkerLeaseId),
                 Builders<VideoExportTask>.Update
                     .Set(x => x.Status, VideoExportTaskStatus.Failed)
                     .Set(x => x.CurrentPhase, "export-failed")
                     .Set(x => x.Progress, 0)
                     .Set(x => x.ErrorMessage, userMessage)
-                    .Set(x => x.EndedAt, DateTime.UtcNow),
+                    .Set(x => x.EndedAt, DateTime.UtcNow)
+                    .Set(x => x.WorkerLeaseId, (string?)null)
+                    .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null),
                 cancellationToken: CancellationToken.None);
+            if (failedTask.ModifiedCount != 1) return;
         }
+        var runFilter = string.IsNullOrWhiteSpace(exportTaskId)
+            ? OwnedRunFilter(run)
+            : Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+              & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+              & Builders<VideoGenRun>.Filter.Eq(x => x.LatestExportTaskId, exportTaskId);
+        var failedRun = await _db.VideoGenRuns.UpdateOneAsync(
+            runFilter,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Editing)
+                .Set(x => x.ExportRequested, false)
+                .Set(x => x.ExportErrorMessage, userMessage)
+                .Set(x => x.CurrentPhase, "export-failed")
+                .Set(x => x.PhaseProgress, 0)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            cancellationToken: CancellationToken.None);
+        if (failedRun.ModifiedCount != 1) return;
         await UpdateProjectAsync(run, VideoProjectStatus.Editing);
         await PublishEventAsync(run.Id, "export.error", new { message = userMessage });
+    }
+
+    private static FilterDefinition<VideoGenRun> OwnedRunFilter(VideoGenRun run)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.Eq(x => x.Id, run.Id)
+                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
+        if (!string.IsNullOrWhiteSpace(run.WorkerLeaseId))
+            filter &= fb.Eq(x => x.WorkerLeaseId, run.WorkerLeaseId);
+        return filter;
+    }
+
+    private static FilterDefinition<VideoExportTask> OwnedExportTaskFilter(VideoExportTask task)
+    {
+        var fb = Builders<VideoExportTask>.Filter;
+        return fb.Eq(x => x.Id, task.Id)
+               & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+               & fb.Eq(x => x.Status, VideoExportTaskStatus.Processing)
+               & fb.Eq(x => x.WorkerLeaseId, task.WorkerLeaseId);
+    }
+
+    private async Task ProcessWithRunLeaseHeartbeatAsync(VideoGenRun run, Func<Task> action)
+    {
+        if (string.IsNullOrWhiteSpace(run.WorkerLeaseId))
+            throw new InvalidOperationException("长任务缺少 worker lease，拒绝执行");
+        if (!await RenewRunLeaseAsync(run)) return;
+
+        using var stopHeartbeat = new CancellationTokenSource();
+        var heartbeat = RenewRunLeaseUntilStoppedAsync(run, stopHeartbeat.Token);
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            stopHeartbeat.Cancel();
+            await heartbeat;
+        }
+    }
+
+    private async Task ProcessWithExportLeaseHeartbeatAsync(VideoExportTask task, Func<Task> action)
+    {
+        if (string.IsNullOrWhiteSpace(task.WorkerLeaseId))
+            throw new InvalidOperationException("导出任务缺少 worker lease，拒绝执行");
+        if (!await RenewExportLeaseAsync(task)) return;
+
+        using var stopHeartbeat = new CancellationTokenSource();
+        var heartbeat = RenewExportLeaseUntilStoppedAsync(task, stopHeartbeat.Token);
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            stopHeartbeat.Cancel();
+            await heartbeat;
+        }
+    }
+
+    private async Task RenewRunLeaseUntilStoppedAsync(VideoGenRun run, CancellationToken stopToken)
+    {
+        while (!stopToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(WorkerLeaseHeartbeat, stopToken);
+                if (!await RenewRunLeaseAsync(run)) return;
+            }
+            catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "VideoGen worker lease 续租失败，等待下一轮重试: runId={RunId}", run.Id);
+            }
+        }
+    }
+
+    private async Task RenewExportLeaseUntilStoppedAsync(VideoExportTask task, CancellationToken stopToken)
+    {
+        while (!stopToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(WorkerLeaseHeartbeat, stopToken);
+                if (!await RenewExportLeaseAsync(task)) return;
+            }
+            catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "VideoGen 导出 worker lease 续租失败，等待下一轮重试: taskId={TaskId}", task.Id);
+            }
+        }
+    }
+
+    private async Task<bool> RenewRunLeaseAsync(VideoGenRun run)
+    {
+        var renewed = await _db.VideoGenRuns.UpdateOneAsync(
+            OwnedRunFilter(run),
+            Builders<VideoGenRun>.Update.Set(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow + WorkerLeaseDuration),
+            cancellationToken: CancellationToken.None);
+        return renewed.MatchedCount == 1;
+    }
+
+    private async Task<bool> RenewExportLeaseAsync(VideoExportTask task)
+    {
+        var renewed = await _db.VideoExportTasks.UpdateOneAsync(
+            OwnedExportTaskFilter(task),
+            Builders<VideoExportTask>.Update.Set(x => x.WorkerLeaseExpiresAt, DateTime.UtcNow + WorkerLeaseDuration),
+            cancellationToken: CancellationToken.None);
+        return renewed.MatchedCount == 1;
     }
 
     private async Task UpdatePhaseAsync(VideoGenRun run, string phase, int progress)
     {
         await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
+            OwnedRunFilter(run),
             Builders<VideoGenRun>.Update
                 .Set(x => x.CurrentPhase, phase)
                 .Set(x => x.PhaseProgress, progress),
