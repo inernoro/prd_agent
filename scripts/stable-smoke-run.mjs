@@ -812,31 +812,51 @@ function runtimeExpectationForBranch(branch, expectedCommit) {
   );
 }
 
-function readCdsBranchStatus() {
-  const branchIdResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
-  const branchIdPayload = branchIdResult.status === 0 ? JSON.parse(String(branchIdResult.stdout || '{}')) : null;
+function readCdsBranchStatusOnce(commandFn = command) {
+  const branchIdResult = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
+  const branchIdPayload = branchIdResult.status === 0 ? readJsonFromText(branchIdResult.stdout) : null;
   const branchId = branchIdPayload?.data?.branchId;
   if (!branchId) throw new Error('CDS 权威分支标识读取失败，拒绝在未知部署版本上开测');
-  const statusResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
-  const statusPayload = statusResult.status === 0 ? JSON.parse(String(statusResult.stdout || '{}')) : null;
+  const statusResult = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
+  const statusPayload = statusResult.status === 0 ? readJsonFromText(statusResult.stdout) : null;
   if (!statusPayload?.data) throw new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
   const branch = statusPayload.data;
   if (branch.lastDeploymentRunId) {
-    const runResult = command('python3', [
+    const runResult = commandFn('python3', [
       '.claude/skills/cds/cli/cdscli.py',
       'deployment-run', 'show', branch.lastDeploymentRunId,
     ]);
     const runPayload = runResult.status === 0 ? readJsonFromText(runResult.stdout) : null;
+    if (!runPayload?.data?.run) {
+      throw new Error('CDS 部署运行状态读取失败，拒绝在未知部署版本上开测');
+    }
     branch.latestDeploymentRun = runPayload?.data?.run || null;
   }
   return branch;
+}
+
+export async function readCdsBranchStatusWithRetries(commandFn = command, {
+  attempts = 3,
+  delayMs = 2_000,
+  delayFn = delay,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return readCdsBranchStatusOnce(commandFn);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await delayFn(delayMs * attempt);
+    }
+  }
+  throw lastError || new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
 }
 
 async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) {
   const startedAt = Date.now();
   let readiness = { ready: false, reasons: ['尚未检查'], versionId: '', commit: '' };
   while (Date.now() - startedAt < timeoutMs) {
-    const branch = readCdsBranchStatus();
+    const branch = await readCdsBranchStatusWithRetries();
     readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
     if (readiness.ready) return { ...readiness, waitedMs: Date.now() - startedAt };
     await delay(10_000);
@@ -1675,7 +1695,7 @@ async function main() {
         preflightBlockers.push('无法读取待验收提交');
       } else {
         try {
-          const branch = readCdsBranchStatus();
+          const branch = await readCdsBranchStatusWithRetries();
           const readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
           preflightBlockers.push(...readiness.reasons);
         } catch (error) {
@@ -2173,7 +2193,7 @@ async function main() {
     } else if (!options.has('--dry-run')) {
       const branchResult = command('git', ['branch', '--show-current']);
       const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const archiveBranchStatus = productionReadOnlyArchive ? readCdsBranchStatus() : null;
+      const archiveBranchStatus = productionReadOnlyArchive ? await readCdsBranchStatusWithRetries() : null;
       const archiveCommand = buildStableSmokeArchiveCommand({
         productionReadOnly: productionReadOnlyArchive,
         runId,

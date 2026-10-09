@@ -40,6 +40,7 @@ import {
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
   resolveNotificationBaseUrl,
+  readCdsBranchStatusWithRetries,
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
@@ -316,6 +317,30 @@ test('CDS-only 通知缺少独立地址时使用已验证的正式允许地址',
     STABLE_SMOKE_NOTIFY_BASE_URL: 'https://notify.example.test',
     STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://map.example.test',
   }), 'https://notify.example.test');
+});
+
+test('CDS 权威分支状态在控制面瞬断后有限重试', async () => {
+  let branchIdAttempts = 0;
+  const delays = [];
+  const branch = await readCdsBranchStatusWithRetries((program, args) => {
+    assert.equal(program, 'python3');
+    if (args.at(-1) === 'branch-id') {
+      branchIdAttempts += 1;
+      if (branchIdAttempts === 1) return { status: 1, stdout: '' };
+      return { status: 0, stdout: JSON.stringify({ data: { branchId: 'branch-1' } }) };
+    }
+    if (args.includes('status')) {
+      return { status: 0, stdout: JSON.stringify({ data: { id: 'branch-1', status: 'running' } }) };
+    }
+    throw new Error(`未预期命令: ${args.join(' ')}`);
+  }, {
+    attempts: 3,
+    delayMs: 5,
+    delayFn: async (ms) => { delays.push(ms); },
+  });
+  assert.equal(branch.id, 'branch-1');
+  assert.equal(branchIdAttempts, 2);
+  assert.deepEqual(delays, [5]);
 });
 
 test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {
