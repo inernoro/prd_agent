@@ -4,7 +4,7 @@
 // relay 容器里，别名 map-egress:8787）。现在引擎与本服务同处一个容器，转发口改成本服务进程里的一个
 // 只监听 127.0.0.1 的 HTTP 服务。规则逐条不变：
 // - 只认 `Bearer <占位 token>`，常量时间比较；
-// - 每分钟最多 240 个请求；只放行 GET / POST，路径必须落在受控模型出口的前缀之下；
+// - 每分钟最多 240 个请求；只放行 POST 到受控模型出口的 Responses 端点；
 // - 自己解析 DNS，任何一个解析结果落在私网 / 回环 / 链路本地 / 元数据等保留段即拒绝（502）；
 // - 删掉调用方带来的一切凭据头与转发头，换成真实票据；
 // - 拒绝 3xx（不跟随、不透传 Location），拒绝 CONNECT 与 upgrade。
@@ -118,7 +118,8 @@ export async function startEgressRelay(options: EgressRelayOptions): Promise<Egr
   const pathAllowed = (raw: string): boolean => {
     try {
       const pathname = new URL(raw, 'http://relay.invalid').pathname;
-      return prefix === '/' || pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`);
+      const basePath = prefix === '/' ? '' : prefix.replace(/\/$/, '');
+      return pathname === `${basePath}/responses`;
     } catch {
       return false;
     }
@@ -132,7 +133,7 @@ export async function startEgressRelay(options: EgressRelayOptions): Promise<Egr
     }
     if (!authorized(req.headers.authorization)) { res.writeHead(401); res.end(); return; }
     if (!admitted()) { res.writeHead(429, { 'retry-after': '60' }); res.end(); return; }
-    if ((req.method !== 'GET' && req.method !== 'POST') || !pathAllowed(req.url || '/')) {
+    if (req.method !== 'POST' || !pathAllowed(req.url || '/')) {
       res.writeHead(403); res.end(); return;
     }
     dns.lookup(target.hostname, { all: true, verbatim: true }, (lookupError, addresses) => {

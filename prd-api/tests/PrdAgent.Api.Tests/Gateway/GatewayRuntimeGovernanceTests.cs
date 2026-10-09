@@ -1846,7 +1846,8 @@ public sealed class GatewayRuntimeGovernanceTests
         var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
 
         var inactiveTenant = await authorizer.AuthorizeAsync(
-            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None);
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
+            requestPath: "/gw/v1/responses");
         inactiveTenant.StatusCode.ShouldBe(403);
         inactiveTenant.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_TENANT_INACTIVE");
         await scope.Context.Database.GetCollection<BsonDocument>("llmgw_tenants").InsertOneAsync(new BsonDocument
@@ -1856,14 +1857,22 @@ public sealed class GatewayRuntimeGovernanceTests
         });
 
         var wrongCaller = await authorizer.AuthorizeAsync(
-            key, "different-legacy-key", "map", "other::chat", "gw-native", "invoke", null, CancellationToken.None);
+            key, "different-legacy-key", "map", "other::chat", "gw-native", "invoke", null, CancellationToken.None,
+            requestPath: "/gw/v1/responses");
+        var wrongRoute = await authorizer.AuthorizeAsync(
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
+            requestPath: "/gw/v1/chat/completions");
         var allowed = await authorizer.AuthorizeAsync(
-            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None);
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
+            requestPath: "/gw/v1/responses");
         var exhausted = await authorizer.AuthorizeAsync(
-            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None);
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
+            requestPath: "/gw/v1/responses");
 
         wrongCaller.StatusCode.ShouldBe(403);
         wrongCaller.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_SCOPE_DENIED");
+        wrongRoute.StatusCode.ShouldBe(403);
+        wrongRoute.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_ROUTE_DENIED");
         allowed.Allowed.ShouldBeTrue();
         allowed.RuntimeGrant.ShouldNotBeNull();
         allowed.RuntimeGrant!.RunId.ShouldBe("run-1");

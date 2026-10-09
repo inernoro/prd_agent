@@ -121,7 +121,8 @@ public static class GatewayHttpEndpoints
                         authorizationInputs.RequiredScope,
                         context.Connection.RemoteIpAddress,
                         context.RequestAborted,
-                        authorizationInputs.AllowSingleAppCallerInference);
+                        authorizationInputs.AllowSingleAppCallerInference,
+                        path);
                 if (!authorization.Allowed)
                 {
                     await WriteRejectedGatewayRequestLogAsync(
@@ -1987,6 +1988,9 @@ public static class GatewayHttpEndpoints
 
     private static void ApplyRuntimeGrantPolicy(JsonObject body, GatewayRuntimeGrantRecord grant)
     {
+        var requestedReasoning = body["reasoning"] is JsonObject reasoning
+            ? reasoning.DeepClone().AsObject()
+            : new JsonObject();
         body.Remove("model");
         StripGatewayRoutingFields(body);
         if (body["provider"] is JsonObject provider)
@@ -2009,7 +2013,8 @@ public static class GatewayHttpEndpoints
         if (grant.TopP is { } topP) { body.Remove("topP"); body["top_p"] = topP; }
         if (grant.ReasoningMode == "effort")
         {
-            body["reasoning"] = new JsonObject { ["effort"] = grant.ReasoningEffort };
+            requestedReasoning["effort"] = grant.ReasoningEffort;
+            body["reasoning"] = requestedReasoning;
         }
 
         if (!string.IsNullOrWhiteSpace(grant.ModelPoolId))

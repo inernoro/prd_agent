@@ -738,7 +738,8 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             "gw-native",
             "invoke",
             null,
-            default);
+            default,
+            requestPath: "/gw/v1/responses");
         Assert.True(authorization.Allowed);
         Assert.Equal(run.Id, authorization.RuntimeGrant?.RunId);
         Assert.Equal(run.UserId, authorization.RuntimeGrant?.UserId);

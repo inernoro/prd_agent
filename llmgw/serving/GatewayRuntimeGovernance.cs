@@ -52,7 +52,8 @@ public interface IGatewayScopedKeyAuthorizer
         string requiredScope,
         IPAddress? remoteIp,
         CancellationToken ct,
-        bool allowSingleAppCallerInference = false);
+        bool allowSingleAppCallerInference = false,
+        string? requestPath = null);
 }
 
 public static class GatewayLegacyProbeScopes
@@ -127,7 +128,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string requiredScope,
         IPAddress? remoteIp,
         CancellationToken ct,
-        bool allowSingleAppCallerInference = false)
+        bool allowSingleAppCallerInference = false,
+        string? requestPath = null)
     {
         if (string.IsNullOrWhiteSpace(providedKey))
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
@@ -149,6 +151,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 appCallerCode,
                 ingressProtocol,
                 requiredScope,
+                requestPath,
                 ct);
         var effectiveAppCallerCode = allowSingleAppCallerInference
             ? ResolveSingleAppCallerCode(record) ?? appCallerCode
@@ -360,6 +363,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string appCallerCode,
         string ingressProtocol,
         string requiredScope,
+        string? requestPath,
         CancellationToken ct)
     {
         var grants = _data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
@@ -378,6 +382,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 "GATEWAY_RUNTIME_GRANT_TENANT_INACTIVE",
                 "runtime grant tenant is not active");
         var allowedScope = requiredScope is "invoke" or "stream:invoke";
+        var allowedPath = string.Equals(requestPath, "/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
         var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, keyHash),
             Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
@@ -387,7 +392,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode));
         if (!string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase)
-            || !allowedScope)
+            || !allowedScope
+            || !allowedPath)
         {
             filter &= Builders<GatewayRuntimeGrantRecord>.Filter.Where(_ => false);
         }
@@ -426,6 +432,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
         if (known.CallCount >= known.MaxCalls)
             return new(false, true, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded");
+        if (!allowedPath)
+            return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_ROUTE_DENIED", "runtime grant only allows the Responses endpoint");
         return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_SCOPE_DENIED", "runtime grant does not allow this request");
     }
 

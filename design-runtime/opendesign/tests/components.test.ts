@@ -200,7 +200,7 @@ describe('model egress relay', () => {
     const seen: Array<{ url: string; headers: http.IncomingHttpHeaders }> = [];
     upstream = http.createServer((req, res) => {
       seen.push({ url: req.url || '', headers: req.headers });
-      if (req.url?.endsWith('/redirect')) {
+      if (req.headers['x-test-redirect'] === '1') {
         res.writeHead(302, { Location: 'http://169.254.169.254/' });
         res.end();
         return;
@@ -244,9 +244,13 @@ describe('model egress relay', () => {
     expect(seen[0].headers['x-gateway-user-id']).toBe('user-1');
     expect(seen[0].headers['x-gateway-run-id']).toBe('run-1');
     expect((await fetch(`${relay.proxiedBaseUrl}/responses`, { method: 'POST', headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
+    expect((await fetch(`${relay.proxiedBaseUrl}/chat/completions`, { method: 'POST', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
+    expect((await fetch(`${relay.proxiedBaseUrl}/responses`, { method: 'GET', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
     expect((await fetch(`http://127.0.0.1:${relay.port}/other/path`, { headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
     expect((await fetch(`${relay.proxiedBaseUrl}/x`, { method: 'DELETE', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
-    expect((await fetch(`${relay.proxiedBaseUrl}/redirect`, { headers: { Authorization: 'Bearer placeholder' }, redirect: 'manual' })).status).toBe(502);
+    expect((await fetch(`${relay.proxiedBaseUrl}/responses`, {
+      method: 'POST', headers: { Authorization: 'Bearer placeholder', 'X-Test-Redirect': '1' }, redirect: 'manual',
+    })).status).toBe(502);
     expect((await fetch(`http://127.0.0.1:${relay.port}/__health`)).status).toBe(204);
   });
 

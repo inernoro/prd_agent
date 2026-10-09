@@ -96,7 +96,7 @@ public class GatewayKeyGateContractTests
               "temperature":1.9,
               "top_p":0.1,
               "max_output_tokens":99999,
-              "reasoning":{"effort":"minimal"},
+              "reasoning":{"effort":"minimal","summary":"auto"},
               "model_pool_id":"attacker-pool",
               "pinned_platform_id":"attacker-platform",
               "pinned_model_id":"attacker-model-id",
@@ -113,6 +113,7 @@ public class GatewayKeyGateContractTests
             using var response = await app.GetTestClient().SendAsync(request);
 
             response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            authorizer.RequestPath.ShouldBe("/gw/v1/responses");
             resolver.Verify(x => x.ResolveAsync(
                 AppCallerRegistry.Admin.WebHosting.GenerateHtml,
                 ModelTypes.Chat,
@@ -130,6 +131,7 @@ public class GatewayKeyGateContractTests
             forwarded["temperature"]!.GetValue<double>().ShouldBe(0.25);
             forwarded["top_p"]!.GetValue<double>().ShouldBe(0.8);
             forwarded["reasoning"]!["effort"]!.GetValue<string>().ShouldBe("high");
+            forwarded["reasoning"]!["summary"]!.GetValue<string>().ShouldBe("auto");
             forwarded.ContainsKey("max_output_tokens").ShouldBeFalse();
             forwarded.ContainsKey("model_pool_id").ShouldBeFalse();
             forwarded.ContainsKey("pinned_platform_id").ShouldBeFalse();
@@ -3856,6 +3858,7 @@ public class GatewayKeyGateContractTests
         public string? SourceSystem { get; private set; }
         public string? AppCallerCode { get; private set; }
         public string? RequiredScope { get; private set; }
+        public string? RequestPath { get; private set; }
         public bool AllowSingleAppCallerInference { get; private set; }
 
         public Task<GatewayKeyAuthorization> AuthorizeAsync(
@@ -3867,12 +3870,14 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             CallCount++;
             SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
             RequiredScope = requiredScope;
+            RequestPath = requestPath;
             AllowSingleAppCallerInference = allowSingleAppCallerInference;
             var allowed = _scopeAllowed(requiredScope);
             return Task.FromResult(new GatewayKeyAuthorization(
@@ -3903,7 +3908,8 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             var teamId = providedKey switch
             {
@@ -3934,7 +3940,8 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             var tenantId = providedKey switch
             {
