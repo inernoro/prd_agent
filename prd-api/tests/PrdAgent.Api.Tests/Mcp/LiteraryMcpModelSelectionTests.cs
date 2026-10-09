@@ -240,6 +240,40 @@ public sealed class LiteraryMcpModelSelectionTests
     private static Mock<ILlmGateway> Gateway() => new(MockBehavior.Strict);
 
     [Theory]
+    [InlineData("chatgpt-image-latest", "image_size.none", true, false, "none")]
+    [InlineData("chatgpt-image-latest", "image_size.prompt", false, true, "none")]
+    [InlineData("chatgpt-image-latest", "image_size.field.width_height", false, false, "{width,height}")]
+    [InlineData("custom-image", "image_size.none", true, false, "none")]
+    public async Task PublishedOfferingSizeControlMatchesExecution(string modelId, string capability, bool ignored, bool adaptive, string format)
+    {
+        var builder = typeof(PrdAgent.Infrastructure.LlmGateway.ModelResolver).GetMethod(
+            "BuildImageCapabilitiesSnapshot", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var parameters = new Dictionary<string, bool> { [capability] = true };
+        var gateway = Gateway();
+        gateway.Setup(x => x.GetAvailablePoolsAsync(It.IsAny<string>(), ModelTypes.ImageGen, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new AvailableModelPool
+            {
+                Code = modelId, ResolutionType = "LogicalModel", Models = [new PoolModelInfo
+                {
+                    ImageCapabilities = (GatewayImageCapabilitiesSnapshot?)builder.Invoke(null, [modelId]),
+                    ParameterCapabilities = parameters,
+                }],
+            }]);
+        var service = new LiteraryMcpModelSelectionService(null!, gateway.Object, NullLogger<LiteraryMcpModelSelectionService>.Instance);
+        var info = await service.GetImageCapabilitiesAsync(AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, modelId, CancellationToken.None);
+        Assert.NotNull(info);
+        Assert.Equal(ignored, info.SizesNotApplicable); Assert.Equal(adaptive, info.IsAdaptive); Assert.Equal(format, info.SizeParamFormat);
+        var executing = PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.Describe(new GatewayModelResolution
+        {
+            ActualModel = modelId, ParameterCapabilities = parameters,
+        })!;
+        Assert.Equal(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize("1376x768", executing),
+            PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize("1376x768", info));
+        if (ignored) Assert.Null(PrdAgent.Api.Services.LiteraryIllustrationChoices.FitSize(
+            PrdAgent.Api.Services.LiteraryIllustrationChoices.ParseSize("16:9").request!, info, modelId).error);
+    }
+
+    [Theory]
     [InlineData("nano-banana-2", 7)]
     [InlineData("nano-banana", 10)]
     [InlineData("stable-diffusion", 9)]

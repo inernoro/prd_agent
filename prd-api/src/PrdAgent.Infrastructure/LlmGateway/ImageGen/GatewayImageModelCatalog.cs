@@ -78,9 +78,14 @@ public static class GatewayImageModelCatalog
     public static ImageGenAdapterInfo? Describe(AvailableModelPool model)
     {
         var member = model.Models.FirstOrDefault(item =>
-            item.ImageCapabilities is not null);
+            item.ImageCapabilities is not null || ImageSizeControlCapabilities.Parse(item.ParameterCapabilities).IsConfigured);
         var snapshot = member?.ImageCapabilities;
-        if (snapshot is null) return null;
+        if (snapshot is null)
+            return member is null ? null : ApplySizeControl(new ImageGenAdapterInfo
+            {
+                Matched = true, AdapterName = model.Code, DisplayName = model.Name,
+                SizeConstraintType = "upstream", SizeConstraintDescription = "由网关模型能力控制",
+            }, member.ParameterCapabilities);
 
         var sizes = new Dictionary<string, List<SizeOption>>(StringComparer.OrdinalIgnoreCase);
         foreach (var (bucket, rawSizes) in snapshot.SizesByResolution)
@@ -93,7 +98,7 @@ public static class GatewayImageModelCatalog
                 .ToList();
         }
 
-        return new ImageGenAdapterInfo
+        var info = new ImageGenAdapterInfo
         {
             Matched = true,
             AdapterName = model.Code,
@@ -114,6 +119,7 @@ public static class GatewayImageModelCatalog
             SupportsInpainting = snapshot.SupportsInpainting,
             IsAdaptive = snapshot.IsAdaptive,
         };
+        return ApplySizeControl(info, member!.ParameterCapabilities);
     }
 
     private static SizeOption? ParseSizeOption(string? raw, IReadOnlyDictionary<string, string>? declaredAspects)
@@ -166,6 +172,12 @@ public static class GatewayImageModelCatalog
                 SizeConstraintDescription = "由网关模型能力控制",
             };
         }
+        return ApplySizeControl(info, resolution.ParameterCapabilities);
+    }
+
+    private static ImageGenAdapterInfo ApplySizeControl(ImageGenAdapterInfo info, IReadOnlyDictionary<string, bool>? capabilities)
+    {
+        var sizeControl = ImageSizeControlCapabilities.Parse(capabilities);
         if (sizeControl.IsConfigured)
         {
             info.SizeParamFormat = sizeControl.FieldFormat switch

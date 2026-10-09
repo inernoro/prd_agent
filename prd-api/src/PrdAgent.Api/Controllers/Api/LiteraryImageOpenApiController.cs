@@ -217,6 +217,7 @@ public class LiteraryImageOpenApiController(
             if (previous == null) { pending.Add(index); continue; }
             if (IsReplayConflict(previous, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
                 return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求（工作区、标记、风格、水印或尺寸不同），请为新的请求使用新的值。"));
+            await SyncPlanFromRunAsync(previous);
             results.Add(new { markerIndex = index, runId = previous.Id, deduplicated = true });
             size ??= previous.Size;
         }
@@ -325,6 +326,7 @@ public class LiteraryImageOpenApiController(
                     if (existing == null) throw;
                     if (IsReplayConflict(existing, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
                         return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求，请为新的请求使用新的值。"));
+                    await SyncPlanFromRunAsync(existing);
                     results.Add(new { markerIndex = index, runId = existing.Id, deduplicated = true });
                     continue;
                 }
@@ -334,6 +336,7 @@ public class LiteraryImageOpenApiController(
                     await CompensateMissingRunAsync(run);
                     throw;
                 }
+                await SyncPlanFromRunAsync(run);
                 results.Add(new { markerIndex = index, runId = run.Id, status = "queued" });
                 newlyQueued++;
             }
@@ -401,13 +404,6 @@ public class LiteraryImageOpenApiController(
                 filter.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == run.ArticleMarkerIndex)),
             Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].runId", run.Id)
                 .Set("articleWorkflow.markers.$[target].status", "running")
-                // 网页按标记的方案显示尺寸和重画，必须与本次实际入队的尺寸一致。
-                .Set("articleWorkflow.markers.$[target].planItem", new ArticleIllustrationPlanItem
-                {
-                    Prompt = run.Items[0].DisplayPrompt ?? run.Items[0].Prompt,
-                    Count = 1,
-                    Size = run.Size,
-                })
                 .Set("articleWorkflow.markers.$[target].errorMessage", (string?)null)
                 .Set("articleWorkflow.updatedAt", DateTime.UtcNow),
             new UpdateOptions { ArrayFilters = new[]
@@ -425,6 +421,22 @@ public class LiteraryImageOpenApiController(
             } }, CancellationToken.None);
         return result.MatchedCount != 0;
     }
+
+    internal Task SyncPlanFromRunAsync(ImageGenRun run)
+        => db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == run.WorkspaceId && x.OwnerUserId == run.OwnerAdminId
+                && x.ArticleWorkflow!.Version == run.ArticleWorkflowVersion,
+            Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].planItem", new ArticleIllustrationPlanItem
+            {
+                Prompt = run.Items[0].DisplayPrompt ?? run.Items[0].Prompt, Count = 1, Size = run.Size,
+            }),
+            new UpdateOptions { ArrayFilters = new[]
+            {
+                new BsonDocumentArrayFilterDefinition<BsonDocument>(new BsonDocument
+                {
+                    { "target.index", run.ArticleMarkerIndex!.Value }, { "target.runId", run.Id },
+                }),
+            } }, CancellationToken.None);
 
     internal async Task CompensateMissingRunAsync(ImageGenRun run)
     {

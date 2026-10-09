@@ -767,6 +767,39 @@ public class LiteraryMcpUsabilityTests
     }
 
     [Fact]
+    public async Task 并发同键占位不提前写方案_实际入库任务决定网页尺寸()
+    {
+        var (db, name, connection) = NewDb("literary_plan_race");
+        try
+        {
+            var draft = Data(await WithUser(new LiteraryOpenApiController(db), "writer").CreateWorkspace(new()
+            {
+                MarkedContent = "正文。\n[插图]: 书店\n", ClientRequestId = "race-article",
+            }, CancellationToken.None));
+            var id = draft.GetProperty("workspaceId").GetString()!;
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            var originalSize = ws.ArticleWorkflow!.Markers[0].PlanItem!.Size;
+            var images = WithUser(new LiteraryImageOpenApiController(db, new FixedModelSelection()), "writer");
+            ImageGenRun Candidate(string size) => new()
+            {
+                Id = "same-race-id", OwnerAdminId = "writer", WorkspaceId = id, ArticleMarkerIndex = 0,
+                ArticleWorkflowVersion = ws.ArticleWorkflow.Version, Size = size,
+                Items = [new() { Prompt = "书店", DisplayPrompt = "书店" }],
+            };
+            var claimedFirst = Candidate("1536x1024");
+            var insertedFirst = Candidate("1024x1536");
+            Assert.True(await images.ClaimWorkflowAsync(ws, claimedFirst));
+            Assert.True(await images.ClaimWorkflowAsync(ws, insertedFirst));
+            Assert.Equal(originalSize, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Size);
+            // 精确控制两个并发请求的交错：先占位的请求没有先入库，另一请求赢得唯一任务。
+            await db.ImageGenRuns.InsertOneAsync(insertedFirst);
+            await images.SyncPlanFromRunAsync(await db.ImageGenRuns.Find(x => x.Id == insertedFirst.Id).SingleAsync());
+            Assert.Equal("1024x1536", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Size);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
     public async Task 改稿可带标记重新配图_旧图保留进历史()
     {
         var (db, name, connection) = NewDb("literary_mcp_rewrite");
