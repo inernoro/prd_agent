@@ -9,7 +9,6 @@ import {
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { marked } from 'marked';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -2301,8 +2300,7 @@ function ReportViewer({
     fetchReportRaw(report.id)
       .then((raw) => {
         if (reqRef.current !== token) return;
-        const parsed = marked.parse(raw, { async: false }) as string;
-        setMdHtml(buildMarkdownReportDocument(parsed, theme));
+        setMdHtml(buildMarkdownReportDocument(raw, theme));
       })
       .catch((err) => {
         if (reqRef.current !== token) return;

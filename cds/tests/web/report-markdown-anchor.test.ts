@@ -4,7 +4,7 @@ import { buildMarkdownReportDocument } from '../../web/src/lib/report-document.j
 describe('Markdown 报告同页锚点', () => {
   it('在 srcDoc 内接管有效锚点并保留外部链接默认行为', () => {
     const document = buildMarkdownReportDocument(
-      '<a href="#target">查看</a><h2 id="target">目标</h2><a href="https://example.com">外部</a>',
+      '[查看](#目标)\n\n## 目标\n\n[外部](https://example.com)',
       'dark',
     );
 
@@ -13,7 +13,18 @@ describe('Markdown 报告同页锚点', () => {
     expect(document).toContain("event.preventDefault()");
     expect(document).toContain("target.scrollIntoView({ behavior: 'smooth', block: 'start' })");
     expect(document).not.toContain("location.hash =");
+    expect(document).toContain('<h2 id="目标">目标</h2>');
     expect(document).toContain('<a href="https://example.com">外部</a>');
+  });
+
+  it('用真实 Markdown 渲染链路为英文标题与重复标题生成稳定 ID', () => {
+    const document = buildMarkdownReportDocument(
+      '[首个](#hello-world)\n\n## Hello World\n\n## Hello World',
+      'light',
+    );
+
+    expect(document).toContain('<h2 id="hello-world">Hello World</h2>');
+    expect(document).toContain('<h2 id="hello-world-1">Hello World</h2>');
   });
 
   it('按当前主题生成可读链接颜色', () => {

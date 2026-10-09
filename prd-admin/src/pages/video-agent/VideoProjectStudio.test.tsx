@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { VideoGenRunListItem, VideoProject } from '@/services/contracts/videoAgent';
-import { resolveVideoAudioSetting, VideoProjectStudio } from './VideoProjectStudio';
+import type { VideoGenRunListItem, VideoModelOption, VideoProject } from '@/services/contracts/videoAgent';
+import { resolveAvailableVideoModel, resolveVideoAudioSetting, VideoProjectStudio } from './VideoProjectStudio';
 
 const renderStudio = (runs: VideoGenRunListItem[] = [], projects: VideoProject[] = []) => renderToStaticMarkup(
   <VideoProjectStudio
@@ -65,6 +65,38 @@ const createProject = (overrides: Partial<VideoProject> = {}): VideoProject => (
 });
 
 describe('VideoProjectStudio', () => {
+  it('preserves the project model when the catalog arrives in the same hydration cycle', () => {
+    const models = [
+      {
+        id: 'catalog-first',
+        name: '目录首项',
+        healthStatus: 'Healthy',
+        supportsAudio: false,
+        supportsFirstFrame: false,
+        supportsLastFrame: false,
+        supportsReferenceAssets: false,
+        aspectRatios: ['16:9'],
+        resolutions: ['720p'],
+        durations: [5],
+      },
+      {
+        id: 'project-saved',
+        name: '项目保存模型',
+        healthStatus: 'Healthy',
+        supportsAudio: true,
+        supportsFirstFrame: true,
+        supportsLastFrame: true,
+        supportsReferenceAssets: false,
+        aspectRatios: ['9:16'],
+        resolutions: ['1080p'],
+        durations: [10],
+      },
+    ] satisfies VideoModelOption[];
+
+    expect(resolveAvailableVideoModel('project-saved', models)).toBe('project-saved');
+    expect(resolveAvailableVideoModel('removed-model', models)).toBe('catalog-first');
+  });
+
   it('disables requested audio when the selected model does not support it', () => {
     expect(resolveVideoAudioSetting(true, { supportsAudio: false })).toBe(false);
     expect(resolveVideoAudioSetting(true, { supportsAudio: true })).toBe(true);

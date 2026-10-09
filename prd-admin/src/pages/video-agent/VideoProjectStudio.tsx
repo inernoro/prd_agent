@@ -121,6 +121,13 @@ export const resolveVideoAudioSetting = (
   selectedModel?: Pick<VideoModelOption, 'supportsAudio'>,
 ) => requested && selectedModel?.supportsAudio === true;
 
+export const resolveAvailableVideoModel = (
+  currentModel: string,
+  models: VideoModelOption[],
+) => currentModel && models.some((item) => item.id === currentModel)
+  ? currentModel
+  : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
+
 export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   projects,
   project,
@@ -173,11 +180,13 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   }, [project]);
 
   useEffect(() => {
-    const nextModel = model && models.some((item) => item.id === model)
-      ? model
-      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
-    if (nextModel !== model) setModel(nextModel);
-    const option = models.find((item) => item.id === nextModel);
+    // 函数式更新会承接同一轮 project hydration 已排队的 setModel。
+    // 若读取 render 闭包中的旧 model，会把项目保存值再次覆盖为目录第一项。
+    setModel((currentModel) => resolveAvailableVideoModel(currentModel, models));
+  }, [model, models]);
+
+  useEffect(() => {
+    const option = models.find((item) => item.id === model);
     if (!option) return;
     setAspectRatio((currentRatio) => option.aspectRatios.includes(currentRatio) ? currentRatio : option.aspectRatios[0] ?? '16:9');
     setResolution((currentResolution) => option.resolutions.includes(currentResolution) ? currentResolution : option.resolutions[0] ?? '720p');
