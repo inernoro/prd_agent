@@ -250,10 +250,11 @@ public class ImageGenController : ControllerBase
 
         const string appCallerCode = AppCallerRegistry.VisualAgent.Storyboard.Script;
 
+        var requestId = Guid.NewGuid().ToString("N");
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
+            RequestId: requestId,
             GroupId: null,
-            SessionId: null,
+            SessionId: requestId,
             UserId: adminId,
             ViewRole: "ADMIN",
             DocumentChars: brief.Length,

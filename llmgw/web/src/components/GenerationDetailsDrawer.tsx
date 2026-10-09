@@ -622,6 +622,9 @@ export function GenerationDetailsDrawer({
                     <Row k="期望模型" v={detail.expectedModel} mono />
                     <Row k="Provider" v={detail.platformName || detail.provider} />
                     <Row k="应用" v={generationAppName(detail)} />
+                    <Row k="发起用户 ID" v={detail.userId} mono copy />
+                    <Row k="会话 ID" v={detail.sessionId} mono copy />
+                    <Row k="业务任务 ID" v={detail.runId} mono copy />
                     <Row k="操作类型" v={operationLabel(detail.operation)} />
                     <Row k="协议" v={detail.protocol || detail.ingressProtocol} />
                     <Row k="状态" v={detail.statusCode == null ? detail.status : `${detail.status} · HTTP ${detail.statusCode}`} />

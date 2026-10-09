@@ -32,6 +32,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
     private readonly string _internalTenantId;
     private readonly string? _openRouterReferer;
+    private readonly GatewayModelVersionPolicy _modelVersionPolicy;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -70,6 +71,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         ISafeOutboundWebSocketConnector? safeWebSocketConnector = null)
     {
         _modelResolver = modelResolver;
+        _modelVersionPolicy = new GatewayModelVersionPolicy(configuration);
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _logWriter = logWriter;
@@ -177,7 +179,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return body.DeepClone() as JsonObject ?? new JsonObject();
     }
 
-    private static List<ModelResolutionResult> GetProviderRetryResolutions(
+    private List<ModelResolutionResult> GetProviderRetryResolutions(
         ModelResolutionResult resolution,
         GatewayRequest request)
     {
@@ -194,6 +196,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
+                && _modelVersionPolicy.Allows(c.ActualModel)
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
                 && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
@@ -202,7 +205,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return LimitProviderRetryResolutions(resolution, candidates.Skip(1));
     }
 
-    private static List<ModelResolutionResult> GetProviderRetryResolutions(
+    private List<ModelResolutionResult> GetProviderRetryResolutions(
         ModelResolutionResult resolution,
         GatewayRawRequest request)
     {
@@ -220,6 +223,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         {
             candidates.AddRange(resolution.RetryCandidates.Where(c =>
                 c.Success
+                && _modelVersionPolicy.Allows(c.ActualModel)
                 && !string.IsNullOrWhiteSpace(c.ActualModel)
                 && (!string.Equals(c.ActualPlatformId, resolution.ActualPlatformId, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(c.ActualModel, resolution.ActualModel, StringComparison.OrdinalIgnoreCase))));
@@ -509,6 +513,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 return GatewayResponse.Fail("MODEL_NOT_FOUND",
                     resolution.ErrorMessage ?? "未找到可用模型", 404);
             }
+
+            if (!_modelVersionPolicy.Allows(resolution.ActualModel))
+                return GatewayResponse.Fail(GatewayModelVersionPolicy.ErrorCode, _modelVersionPolicy.Message, 422);
 
             // 2. 选择首个适配器；若首个候选不支持，发送循环会记录失败并尝试后续候选。
             var adapter = GetAdapterForResolution(resolution);
@@ -828,6 +835,12 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
             {
                 resolution = retryResolutions[attemptIndex];
+                if (!_modelVersionPolicy.Allows(resolution.ActualModel))
+                {
+                    yield return GatewayStreamChunk.Fail(_modelVersionPolicy.Message, GatewayModelVersionPolicy.ErrorCode);
+                    yield break;
+                }
+
                 gatewayResolution = resolution.ToGatewayResolution();
                 adapter = GetAdapterForResolution(resolution);
                 if (adapter == null)
@@ -2341,6 +2354,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         CancellationToken ct,
         bool rebuildCanonicalImageRequest = false)
     {
+        if (!_modelVersionPolicy.Allows(resolution.ActualModel))
+            return GatewayRawResponse.Fail(GatewayModelVersionPolicy.ErrorCode, _modelVersionPolicy.Message, 422);
+
         // 同一上游沿用调用方通过 ImageGenRequestBuilder 算好的 wire 请求，再叠加显式 image_size 能力；
         // 这样 inherit 不会丢失旧适配器的字段重命名/response_format 约束，端点与尺寸重试也会重新
         // 应用显式能力。只有切换 Provider candidate 或调用方未提供 wire 请求时才完整重建。

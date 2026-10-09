@@ -87,6 +87,8 @@ public class ModelResolver : IModelResolver
           薄壳只有一个出口，新增分支自动被罩住。
         */
         var resolved = await ResolveCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        resolved = new GatewayModelVersionPolicy(_config).Filter(resolved,
+            allowPromotion: string.IsNullOrWhiteSpace(pinnedModelId) && string.IsNullOrWhiteSpace(pinnedPlatformId), appCallerCode);
         // 钉了具体成员的请求不许在门内换人：用户点名要 A，给他 B 就是「选 A 给 B」，
         // 那是本仓库专门立过规矩要防的事（llm-gateway 规则 1/2）。宁可如实报这条钉住的用不了。
         return await ApplyCatalogGateAsync(

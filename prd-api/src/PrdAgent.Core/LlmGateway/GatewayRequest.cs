@@ -309,7 +309,12 @@ public class GatewayRequestContext
     public static GatewayRequestContext WithRequestId(GatewayRequestContext? source, string requestId)
         => Copy(source, requestId, source?.GatewayTransport);
 
-    private static GatewayRequestContext Copy(GatewayRequestContext? source, string? requestId, string? transport)
+    /// <summary>跨进程发送前补齐调用方已验证的业务身份；不把身份留在进程内作用域中。</summary>
+    public static GatewayRequestContext WithBusinessContext(GatewayRequestContext? source, Interfaces.LlmRequestContext? business)
+        => Copy(source, source?.RequestId ?? business?.RequestId, source?.GatewayTransport, business);
+
+    private static GatewayRequestContext Copy(GatewayRequestContext? source, string? requestId, string? transport,
+        Interfaces.LlmRequestContext? business = null)
         => new()
         {
             TenantId = source?.TenantId,
@@ -319,13 +324,13 @@ public class GatewayRequestContext
             Environment = source?.Environment,
             ServiceKeyPrefix = source?.ServiceKeyPrefix,
             RequestId = requestId,
-            SessionId = source?.SessionId,
-            RunId = source?.RunId,
-            LogicalRequestId = source?.LogicalRequestId,
-            ProviderTaskId = source?.ProviderTaskId,
-            GroupId = source?.GroupId,
-            UserId = source?.UserId,
-            ViewRole = source?.ViewRole,
+            SessionId = source?.SessionId ?? business?.SessionId ?? business?.RunId,
+            RunId = source?.RunId ?? business?.RunId,
+            LogicalRequestId = source?.LogicalRequestId ?? business?.LogicalRequestId,
+            ProviderTaskId = source?.ProviderTaskId ?? business?.ProviderTaskId,
+            GroupId = source?.GroupId ?? business?.GroupId,
+            UserId = business?.UserId ?? source?.UserId,
+            ViewRole = business?.ViewRole ?? source?.ViewRole,
             DocumentChars = source?.DocumentChars,
             DocumentHash = source?.DocumentHash,
             QuestionText = source?.QuestionText,

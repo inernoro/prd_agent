@@ -104,7 +104,7 @@ public sealed class HttpLlmGatewayClient
     /// S2 观测：返回一份把 Context.GatewayTransport 打成 "http" 的请求副本（其余字段原样拷贝）。
     /// serving 端据此把该条日志标为 http 传输（跨进程）。
     /// </summary>
-    private static GatewayRequest TagHttpTransport(GatewayRequest request)
+    private GatewayRequest TagHttpTransport(GatewayRequest request)
         => new()
         {
             AppCallerCode = request.AppCallerCode,
@@ -118,7 +118,8 @@ public sealed class HttpLlmGatewayClient
             EnablePromptCache = request.EnablePromptCache,
             TimeoutSeconds = request.TimeoutSeconds,
             IncludeThinking = request.IncludeThinking,
-            Context = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http),
+            Context = GatewayRequestContext.WithTransport(
+                GatewayRequestContext.WithBusinessContext(request.Context, _ctxAccessor?.Current), GatewayTransports.Http),
         };
 
     public async Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
@@ -321,7 +322,8 @@ public sealed class HttpLlmGatewayClient
             && string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
             && !string.IsNullOrWhiteSpace(resolution.ActualPlatformId)
             && !string.IsNullOrWhiteSpace(resolution.ActualModel);
-        var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
+        var httpTaggedContext = GatewayRequestContext.WithTransport(
+                GatewayRequestContext.WithBusinessContext(request.Context, _ctxAccessor?.Current), GatewayTransports.Http);
         // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
         var outboundRequest = new GatewayRawRequest
         {
