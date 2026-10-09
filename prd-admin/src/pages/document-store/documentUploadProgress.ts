@@ -17,11 +17,17 @@ export function beginDocumentUploadProgress(
 
 export function advanceDocumentUploadProgress(
   current: DocumentUploadProgressState | null,
-  input: { name: string; percent: number; index: number; total: number },
+  input: {
+    name: string;
+    percent: number;
+    index: number;
+    total: number;
+    phase?: DocumentUploadProgressState['phase'];
+  },
   now = Date.now(),
 ): DocumentUploadProgressState {
   const percent = Math.max(0, Math.min(100, Math.round(input.percent)));
-  const parsing = percent >= 99;
+  const parsing = input.phase === 'parsing';
   return {
     ...input,
     percent,

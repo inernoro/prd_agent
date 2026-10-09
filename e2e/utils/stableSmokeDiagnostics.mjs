@@ -83,8 +83,13 @@ export function stableSmokeDiagnosticIndicatesInfrastructureTimeout(value) {
 
 export async function probeStableSmokeReadiness(request, timeoutMs = 20_000) {
   try {
-    const response = await request.get('/health/ready', { timeout: timeoutMs, failOnStatusCode: false });
-    return response.ok();
+    const response = await request.get('/api/health/ready', { timeout: timeoutMs, failOnStatusCode: false });
+    if (!response.ok()) return false;
+    const body = await response.json();
+    return body?.status === 'healthy'
+      && Array.isArray(body.components)
+      && body.components.length > 0
+      && body.components.every((component) => component?.ready === true);
   } catch {
     return false;
   }

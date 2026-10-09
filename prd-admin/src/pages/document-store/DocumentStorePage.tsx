@@ -1896,12 +1896,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     for (let i = 0; i < accepted.length; i++) {
       const file = accepted[i];
       setUploadProgress(beginDocumentUploadProgress(file.name, i + 1, accepted.length));
-      const res = await uploadDocumentFileWithProgress(storeId, file, (percent) => {
+      const res = await uploadDocumentFileWithProgress(storeId, file, (percent, phase) => {
         setUploadProgress(current => advanceDocumentUploadProgress(current, {
           name: file.name,
           percent,
           index: i + 1,
           total: accepted.length,
+          phase,
         }));
       });
       if (res.success) {

@@ -439,6 +439,85 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task Worker_ShouldCancelExternalWorkAfterLosingRunLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("lost-run-lease", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = VideoGenRunStatus.Scripting;
+        run.DeploymentSlug = DeploymentScope.Current;
+        run.WorkerLeaseId = "worker:original";
+        run.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1);
+        await test.SaveRunAsync(run);
+
+        var worker = test.CreateWorker();
+        worker.WorkerLeaseHeartbeatInterval = TimeSpan.FromMilliseconds(10);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var authorityCancellationObserved = false;
+        var processing = worker.ProcessWithRunLeaseHeartbeatAsync(run, async authorityToken =>
+        {
+            started.SetResult(true);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, authorityToken);
+            }
+            finally
+            {
+                authorityCancellationObserved = authorityToken.IsCancellationRequested;
+            }
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update.Set(x => x.WorkerLeaseId, "worker:new-owner"));
+
+        await processing.WaitAsync(TimeSpan.FromSeconds(2));
+        authorityCancellationObserved.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Worker_ShouldCancelExternalWorkAfterLosingExportLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var task = new VideoExportTask
+        {
+            Id = "lost-export-lease",
+            RunId = "lost-export-run",
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = DeploymentScope.Current,
+            Status = VideoExportTaskStatus.Processing,
+            WorkerLeaseId = "export:original",
+            WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1),
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(task);
+
+        var worker = test.CreateWorker();
+        worker.WorkerLeaseHeartbeatInterval = TimeSpan.FromMilliseconds(10);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var authorityCancellationObserved = false;
+        var processing = worker.ProcessWithExportLeaseHeartbeatAsync(task, async authorityToken =>
+        {
+            started.SetResult(true);
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, authorityToken);
+            }
+            finally
+            {
+                authorityCancellationObserved = authorityToken.IsCancellationRequested;
+            }
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await test.Context.VideoExportTasks.UpdateOneAsync(
+            x => x.Id == task.Id,
+            Builders<VideoExportTask>.Update.Set(x => x.WorkerLeaseId, "export:new-owner"));
+
+        await processing.WaitAsync(TimeSpan.FromSeconds(2));
+        authorityCancellationObserved.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task SceneCompletion_ShouldLoseAtomicRaceToCancellation()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

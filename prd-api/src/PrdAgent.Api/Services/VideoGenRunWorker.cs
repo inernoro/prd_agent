@@ -38,6 +38,7 @@ public class VideoGenRunWorker : BackgroundService
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<VideoGenRunWorker> _logger;
     internal DateTime LegacyTakeoverEnabledAt { get; set; } = DateTime.UtcNow.AddMinutes(20);
+    internal TimeSpan WorkerLeaseHeartbeatInterval { get; set; } = WorkerLeaseHeartbeat;
 
     public VideoGenRunWorker(
         MongoDbContext db,
@@ -76,12 +77,12 @@ public class VideoGenRunWorker : BackgroundService
                         queued.Id, queued.Mode);
                     try
                     {
-                        await ProcessWithRunLeaseHeartbeatAsync(queued, async () =>
+                        await ProcessWithRunLeaseHeartbeatAsync(queued, async authorityToken =>
                         {
                             if (queued.Mode == VideoGenMode.Storyboard)
-                                await ProcessStoryboardScriptingAsync(queued);
+                                await ProcessStoryboardScriptingAsync(queued, authorityToken);
                             else
-                                await ProcessDirectVideoGenAsync(queued);
+                                await ProcessDirectVideoGenAsync(queued, authorityToken);
                         });
                     }
                     catch (Exception ex)
@@ -137,7 +138,7 @@ public class VideoGenRunWorker : BackgroundService
                     {
                         await ProcessWithExportLeaseHeartbeatAsync(
                             exportTask,
-                            () => ProcessExportAsync(taskRun, exportTask));
+                            authorityToken => ProcessExportAsync(taskRun, exportTask, authorityToken));
                     }
                     catch (Exception ex)
                     {
@@ -155,7 +156,7 @@ public class VideoGenRunWorker : BackgroundService
                     {
                         await ProcessWithRunLeaseHeartbeatAsync(
                             exportRun,
-                            () => ProcessExportAsync(exportRun));
+                            authorityToken => ProcessExportAsync(exportRun, authorityToken: authorityToken));
                     }
                     catch (Exception ex)
                     {
@@ -173,7 +174,7 @@ public class VideoGenRunWorker : BackgroundService
                     {
                         await ProcessWithRunLeaseHeartbeatAsync(
                             regenRun,
-                            () => ProcessSceneRegenerateAsync(regenRun));
+                            authorityToken => ProcessSceneRegenerateAsync(regenRun, authorityToken));
                     }
                     catch (Exception ex)
                     {
@@ -616,8 +617,9 @@ public class VideoGenRunWorker : BackgroundService
     /// AppCallerCode = "video-agent.videogen::video-gen" 决定模型池，
     /// 平台 ApiKey 从平台管理中配置的凭据自动取用，不依赖环境变量。
     /// </summary>
-    private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
+    private async Task ProcessDirectVideoGenAsync(VideoGenRun run, CancellationToken authorityToken)
     {
+        authorityToken.ThrowIfCancellationRequested();
         // 领取前已请求取消（claim 仅过滤 Status==Queued、不看 CancelRequested）：直接置终态，不进入提交流程（Codex review）
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
@@ -692,7 +694,8 @@ public class VideoGenRunWorker : BackgroundService
             if (freshBeforeSubmit == null) return;
             if (freshBeforeSubmit?.CancelRequested == true) { await CancelRunAsync(run); return; }
 
-            var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
+            authorityToken.ThrowIfCancellationRequested();
+            var submitResult = await client.SubmitAsync(submitReq, authorityToken);
             if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
             {
                 await FailRunAsync(run, "OPENROUTER_SUBMIT_FAILED",
@@ -746,7 +749,7 @@ public class VideoGenRunWorker : BackgroundService
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
+            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), authorityToken);
 
             OpenRouterVideoStatus status;
             try
@@ -756,13 +759,17 @@ public class VideoGenRunWorker : BackgroundService
                         appCallerCode,
                         jobId!,
                         actualModel,
-                        CancellationToken.None)
+                        authorityToken)
                     : await client.GetStatusForOfferingAsync(
                         appCallerCode,
                         jobId!,
                         actualModel,
                         offeringId,
-                        CancellationToken.None);
+                        authorityToken);
+            }
+            catch (OperationCanceledException) when (authorityToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -795,14 +802,14 @@ public class VideoGenRunWorker : BackgroundService
                             jobId!,
                             0,
                             actualModel,
-                            CancellationToken.None)
+                            authorityToken)
                         : await client.DownloadVideoBytesForOfferingAsync(
                             appCallerCode,
                             jobId!,
                             0,
                             actualModel,
                             offeringId,
-                            CancellationToken.None);
+                            authorityToken);
                     if (!dl.Success || dl.Bytes == null || dl.Bytes.Length == 0)
                     {
                         await FailRunAsync(run, "DOWNLOAD_FAILED",
@@ -815,10 +822,10 @@ public class VideoGenRunWorker : BackgroundService
                     await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
                         _db,
                         $"generated-video:{expectedSha256}",
-                        CancellationToken.None);
+                        authorityToken);
                     RegistryAssetStorage.OverrideNextScope("generated");
                     var stored = await _assetStorage.SaveAsync(
-                        playbackBytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
+                        playbackBytes, dl.ContentType ?? "video/mp4", authorityToken,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
                     if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("视频资产摘要校验失败");
@@ -852,6 +859,10 @@ public class VideoGenRunWorker : BackgroundService
 
                     _logger.LogInformation("VideoGen 视频已上传 COS: runId={RunId}, url={Url}, size={Size}",
                         run.Id, finalUrl, stored.SizeBytes);
+                }
+                catch (OperationCanceledException) when (authorityToken.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -999,8 +1010,9 @@ public class VideoGenRunWorker : BackgroundService
 
 只输出 JSON。";
 
-    private async Task ProcessStoryboardScriptingAsync(VideoGenRun run)
+    private async Task ProcessStoryboardScriptingAsync(VideoGenRun run, CancellationToken authorityToken)
     {
+        authorityToken.ThrowIfCancellationRequested();
         if (run.CancelRequested) { await CancelRunAsync(run); return; }
 
         if (string.IsNullOrWhiteSpace(run.ArticleMarkdown))
@@ -1048,14 +1060,14 @@ public class VideoGenRunWorker : BackgroundService
         };
 
         var resolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
+            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: authorityToken);
         if (!resolution.Success)
         {
             await FailRunAsync(run, "MODEL_RESOLVE_FAILED", $"模型调度失败: {resolution.ErrorMessage}");
             return;
         }
 
-        using var requestCancellation = new CancellationTokenSource();
+        using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(authorityToken);
         using var stopWatchingCancellation = new CancellationTokenSource();
         var cancellationWatcher = WatchRunCancellationAsync(
             run.Id,
@@ -1071,6 +1083,10 @@ public class VideoGenRunWorker : BackgroundService
                 RequestBody = requestBody,
                 TimeoutSeconds = 120,
             }, resolution, requestCancellation.Token);
+        }
+        catch (OperationCanceledException) when (authorityToken.IsCancellationRequested)
+        {
+            return;
         }
         catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)
         {
@@ -1730,8 +1746,9 @@ public class VideoGenRunWorker : BackgroundService
     }
 
     /// <summary>处理单镜重生成 prompt（用户点"重新设计这个分镜"）</summary>
-    private async Task ProcessSceneRegenerateAsync(VideoGenRun run)
+    private async Task ProcessSceneRegenerateAsync(VideoGenRun run, CancellationToken authorityToken)
     {
+        authorityToken.ThrowIfCancellationRequested();
         if (await IsRunCancellationRequestedAsync(run.Id))
         {
             await CancelRunAsync(run);
@@ -1761,7 +1778,7 @@ public class VideoGenRunWorker : BackgroundService
             userMsg = $"统一风格：{run.StyleDescription}\n\n" + userMsg;
 
         var resolution = await gateway.ResolveModelAsync(
-            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: CancellationToken.None);
+            AppCallerRegistry.VideoAgent.Script.Chat, ModelTypes.Chat, null, ct: authorityToken);
         if (!resolution.Success)
         {
             await MarkSceneErrorAsync(
@@ -1786,7 +1803,7 @@ public class VideoGenRunWorker : BackgroundService
                 ["temperature"] = 0.9,
             },
             TimeoutSeconds = 60,
-        }, resolution, CancellationToken.None);
+        }, resolution, authorityToken);
 
         if (!resp.Success)
         {
@@ -1943,8 +1960,12 @@ public class VideoGenRunWorker : BackgroundService
             ct);
     }
 
-    private async Task ProcessExportAsync(VideoGenRun run, VideoExportTask? exportTask = null)
+    private async Task ProcessExportAsync(
+        VideoGenRun run,
+        VideoExportTask? exportTask = null,
+        CancellationToken authorityToken = default)
     {
+        authorityToken.ThrowIfCancellationRequested();
         if (run.CancelRequested)
         {
             if (exportTask != null)
@@ -2015,8 +2036,13 @@ public class VideoGenRunWorker : BackgroundService
             for (var index = 0; index < selectedScenes.Count; index++)
             {
                 var inputFile = Path.Combine(tempDir, $"scene-{index:D3}.mp4");
-                await DownloadToFileAsync(httpClient, selectedScenes[index].Scene.VideoUrl!, inputFile, 1024L * 1024 * 1024);
-                var probe = await ProbeMediaAsync(inputFile);
+                await DownloadToFileAsync(
+                    httpClient,
+                    selectedScenes[index].Scene.VideoUrl!,
+                    inputFile,
+                    1024L * 1024 * 1024,
+                    authorityToken);
+                var probe = await ProbeMediaAsync(inputFile, authorityToken);
                 var timelineClip = selectedScenes[index].Clip;
                 videoInputs.Add(new VideoExportClipSource(
                     inputFile,
@@ -2039,10 +2065,15 @@ public class VideoGenRunWorker : BackgroundService
             for (var index = 0; index < audioTimelineClips.Count; index++)
             {
                 var item = audioTimelineClips[index];
-                await EnsurePublicHttpsUrlAsync(item.Clip.AssetUrl!);
+                await EnsurePublicHttpsUrlAsync(item.Clip.AssetUrl!, authorityToken);
                 var inputFile = Path.Combine(tempDir, $"audio-{index:D3}.bin");
-                await DownloadToFileAsync(externalHttpClient, item.Clip.AssetUrl!, inputFile, 100L * 1024 * 1024);
-                var probe = await ProbeMediaAsync(inputFile);
+                await DownloadToFileAsync(
+                    externalHttpClient,
+                    item.Clip.AssetUrl!,
+                    inputFile,
+                    100L * 1024 * 1024,
+                    authorityToken);
+                var probe = await ProbeMediaAsync(inputFile, authorityToken);
                 if (!probe.HasAudio) throw new InvalidOperationException($"音频轨素材 {index + 1} 不包含可识别音轨");
                 audioInputs.Add(new VideoExportAudioSource(
                     inputFile,
@@ -2053,7 +2084,7 @@ public class VideoGenRunWorker : BackgroundService
                     item.TrackType == VideoTrackType.Music ? 0.35 : 1));
             }
 
-            var subtitleFile = await WriteSubtitleFileAsync(project, tempDir);
+            var subtitleFile = await WriteSubtitleFileAsync(project, tempDir, authorityToken);
             var outputFile = Path.Combine(tempDir, "export.mp4");
             var args = VideoExportCommandBuilder.Build(
                 videoInputs,
@@ -2074,10 +2105,22 @@ public class VideoGenRunWorker : BackgroundService
             if (!await UpdateExportProgressAsync(run, exportTask, "export-composing", 50)) return;
             using var process = Process.Start(startInfo)
                                 ?? throw new InvalidOperationException("ffmpeg 进程启动失败");
+            using var killOnLeaseLoss = authorityToken.Register(() =>
+            {
+                try
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // 进程可能恰好已退出；租约失效路径只负责尽快停止外部副作用。
+                }
+            });
             var stderrTask = process.StandardError.ReadToEndAsync();
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            var exitTask = process.WaitForExitAsync(CancellationToken.None);
-            var completed = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromMinutes(15), CancellationToken.None));
+            var exitTask = process.WaitForExitAsync(authorityToken);
+            var completed = await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromMinutes(15), authorityToken));
+            authorityToken.ThrowIfCancellationRequested();
             if (completed != exitTask)
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
@@ -2093,17 +2136,17 @@ public class VideoGenRunWorker : BackgroundService
             }
 
             if (!await UpdateExportProgressAsync(run, exportTask, "export-uploading", 90)) return;
-            var bytes = await File.ReadAllBytesAsync(outputFile, CancellationToken.None);
+            var bytes = await File.ReadAllBytesAsync(outputFile, authorityToken);
             var expectedSha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
             await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
                 _db,
                 $"generated-video:{expectedSha256}",
-                CancellationToken.None);
+                authorityToken);
             RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await _assetStorage.SaveAsync(
                 bytes,
                 "video/mp4",
-                CancellationToken.None,
+                authorityToken,
                 domain: AppDomainPaths.DomainVideoAgent,
                 type: AppDomainPaths.TypeVideo);
             if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
@@ -2159,28 +2202,33 @@ public class VideoGenRunWorker : BackgroundService
         }
     }
 
-    private static async Task DownloadToFileAsync(HttpClient client, string url, string targetPath, long maxBytes)
+    private static async Task DownloadToFileAsync(
+        HttpClient client,
+        string url,
+        string targetPath,
+        long maxBytes,
+        CancellationToken authorityToken)
     {
-        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None);
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, authorityToken);
         response.EnsureSuccessStatusCode();
         var contentLength = response.Content.Headers.ContentLength;
         if (contentLength.HasValue && contentLength.Value > maxBytes)
             throw new InvalidOperationException($"媒体文件超过大小限制：{contentLength.Value} bytes");
-        await using var source = await response.Content.ReadAsStreamAsync(CancellationToken.None);
+        await using var source = await response.Content.ReadAsStreamAsync(authorityToken);
         await using var target = File.Create(targetPath);
         var buffer = new byte[81920];
         long total = 0;
         while (true)
         {
-            var read = await source.ReadAsync(buffer, CancellationToken.None);
+            var read = await source.ReadAsync(buffer, authorityToken);
             if (read == 0) break;
             total += read;
             if (total > maxBytes) throw new InvalidOperationException("媒体文件超过大小限制");
-            await target.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
+            await target.WriteAsync(buffer.AsMemory(0, read), authorityToken);
         }
     }
 
-    private static async Task<MediaProbeResult> ProbeMediaAsync(string filePath)
+    private static async Task<MediaProbeResult> ProbeMediaAsync(string filePath, CancellationToken authorityToken)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -2198,9 +2246,20 @@ public class VideoGenRunWorker : BackgroundService
             startInfo.ArgumentList.Add(arg);
         using var process = Process.Start(startInfo)
                             ?? throw new InvalidOperationException("ffprobe 进程启动失败");
+        using var killOnLeaseLoss = authorityToken.Register(() =>
+        {
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // 进程可能恰好已退出。
+            }
+        });
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync(CancellationToken.None);
+        await process.WaitForExitAsync(authorityToken);
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
         if (process.ExitCode != 0)
@@ -2215,7 +2274,10 @@ public class VideoGenRunWorker : BackgroundService
         return new MediaProbeResult(duration, hasAudio);
     }
 
-    private static async Task<string?> WriteSubtitleFileAsync(VideoProject? project, string tempDir)
+    private static async Task<string?> WriteSubtitleFileAsync(
+        VideoProject? project,
+        string tempDir,
+        CancellationToken authorityToken)
     {
         var track = project?.TimelineTracks.FirstOrDefault(item =>
             item.Type == VideoTrackType.Subtitle && !item.Muted);
@@ -2236,7 +2298,7 @@ public class VideoGenRunWorker : BackgroundService
             content.AppendLine();
         }
         var path = Path.Combine(tempDir, "subtitles.srt");
-        await File.WriteAllTextAsync(path, content.ToString(), new UTF8Encoding(false), CancellationToken.None);
+        await File.WriteAllTextAsync(path, content.ToString(), new UTF8Encoding(false), authorityToken);
         return path;
     }
 
@@ -2246,12 +2308,13 @@ public class VideoGenRunWorker : BackgroundService
         return $"{(int)value.TotalHours:00}:{value.Minutes:00}:{value.Seconds:00},{value.Milliseconds:000}";
     }
 
-    private static async Task EnsurePublicHttpsUrlAsync(string rawUrl)
+    private static async Task EnsurePublicHttpsUrlAsync(string rawUrl, CancellationToken authorityToken)
     {
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("音频素材必须使用公开 HTTPS URL");
         IPAddress[] addresses;
-        try { addresses = await Dns.GetHostAddressesAsync(uri.DnsSafeHost); }
+        try { addresses = await Dns.GetHostAddressesAsync(uri.DnsSafeHost, authorityToken); }
+        catch (OperationCanceledException) when (authorityToken.IsCancellationRequested) { throw; }
         catch (Exception ex) { throw new InvalidOperationException("音频素材域名无法解析", ex); }
         if (addresses.Length == 0 || addresses.Any(IsPrivateAddress))
             throw new InvalidOperationException("音频素材 URL 不允许指向本机或内网地址");
@@ -2374,17 +2437,24 @@ public class VideoGenRunWorker : BackgroundService
                & fb.Eq(x => x.WorkerLeaseId, task.WorkerLeaseId);
     }
 
-    private async Task ProcessWithRunLeaseHeartbeatAsync(VideoGenRun run, Func<Task> action)
+    internal async Task ProcessWithRunLeaseHeartbeatAsync(
+        VideoGenRun run,
+        Func<CancellationToken, Task> action)
     {
         if (string.IsNullOrWhiteSpace(run.WorkerLeaseId))
             throw new InvalidOperationException("长任务缺少 worker lease，拒绝执行");
         if (!await RenewRunLeaseAsync(run)) return;
 
         using var stopHeartbeat = new CancellationTokenSource();
-        var heartbeat = RenewRunLeaseUntilStoppedAsync(run, stopHeartbeat.Token);
+        using var authorityLost = new CancellationTokenSource();
+        var heartbeat = RenewRunLeaseUntilStoppedAsync(run, authorityLost, stopHeartbeat.Token);
         try
         {
-            await action();
+            await action(authorityLost.Token);
+        }
+        catch (OperationCanceledException) when (authorityLost.IsCancellationRequested)
+        {
+            _logger.LogInformation("VideoGen worker lease 已失效，旧持有者停止执行: runId={RunId}", run.Id);
         }
         finally
         {
@@ -2393,17 +2463,24 @@ public class VideoGenRunWorker : BackgroundService
         }
     }
 
-    private async Task ProcessWithExportLeaseHeartbeatAsync(VideoExportTask task, Func<Task> action)
+    internal async Task ProcessWithExportLeaseHeartbeatAsync(
+        VideoExportTask task,
+        Func<CancellationToken, Task> action)
     {
         if (string.IsNullOrWhiteSpace(task.WorkerLeaseId))
             throw new InvalidOperationException("导出任务缺少 worker lease，拒绝执行");
         if (!await RenewExportLeaseAsync(task)) return;
 
         using var stopHeartbeat = new CancellationTokenSource();
-        var heartbeat = RenewExportLeaseUntilStoppedAsync(task, stopHeartbeat.Token);
+        using var authorityLost = new CancellationTokenSource();
+        var heartbeat = RenewExportLeaseUntilStoppedAsync(task, authorityLost, stopHeartbeat.Token);
         try
         {
-            await action();
+            await action(authorityLost.Token);
+        }
+        catch (OperationCanceledException) when (authorityLost.IsCancellationRequested)
+        {
+            _logger.LogInformation("VideoGen 导出 worker lease 已失效，旧持有者停止执行: taskId={TaskId}", task.Id);
         }
         finally
         {
@@ -2412,14 +2489,23 @@ public class VideoGenRunWorker : BackgroundService
         }
     }
 
-    private async Task RenewRunLeaseUntilStoppedAsync(VideoGenRun run, CancellationToken stopToken)
+    private async Task RenewRunLeaseUntilStoppedAsync(
+        VideoGenRun run,
+        CancellationTokenSource authorityLost,
+        CancellationToken stopToken)
     {
+        var authorityDeadline = DateTime.UtcNow + WorkerLeaseDuration;
         while (!stopToken.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(WorkerLeaseHeartbeat, stopToken);
-                if (!await RenewRunLeaseAsync(run)) return;
+                await Task.Delay(WorkerLeaseHeartbeatInterval, stopToken);
+                if (!await RenewRunLeaseAsync(run))
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
+                authorityDeadline = DateTime.UtcNow + WorkerLeaseDuration;
             }
             catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
             {
@@ -2428,18 +2514,32 @@ public class VideoGenRunWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "VideoGen worker lease 续租失败，等待下一轮重试: runId={RunId}", run.Id);
+                if (DateTime.UtcNow >= authorityDeadline)
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
             }
         }
     }
 
-    private async Task RenewExportLeaseUntilStoppedAsync(VideoExportTask task, CancellationToken stopToken)
+    private async Task RenewExportLeaseUntilStoppedAsync(
+        VideoExportTask task,
+        CancellationTokenSource authorityLost,
+        CancellationToken stopToken)
     {
+        var authorityDeadline = DateTime.UtcNow + WorkerLeaseDuration;
         while (!stopToken.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(WorkerLeaseHeartbeat, stopToken);
-                if (!await RenewExportLeaseAsync(task)) return;
+                await Task.Delay(WorkerLeaseHeartbeatInterval, stopToken);
+                if (!await RenewExportLeaseAsync(task))
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
+                authorityDeadline = DateTime.UtcNow + WorkerLeaseDuration;
             }
             catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
             {
@@ -2448,6 +2548,11 @@ public class VideoGenRunWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "VideoGen 导出 worker lease 续租失败，等待下一轮重试: taskId={TaskId}", task.Id);
+                if (DateTime.UtcNow >= authorityDeadline)
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
             }
         }
     }

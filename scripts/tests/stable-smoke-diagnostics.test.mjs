@@ -77,7 +77,26 @@ test('产物树脱敏覆盖 JSON、Markdown 与日志且不改二进制文件', 
 test('仅 API 网络故障打开环境熔断，普通页面等待超时不误判', async () => {
   assert.equal(stableSmokeDiagnosticIndicatesInfrastructureTimeout('apiRequestContext.get: Timeout 10000ms exceeded'), true);
   assert.equal(stableSmokeDiagnosticIndicatesInfrastructureTimeout('locator.click: Timeout 10000ms exceeded'), false);
-  assert.equal(await probeStableSmokeReadiness({ get: async () => ({ ok: () => true }) }, 5), true);
+  let requestedPath;
+  assert.equal(await probeStableSmokeReadiness({
+    get: async (path) => {
+      requestedPath = path;
+      return {
+        ok: () => true,
+        json: async () => ({
+          status: 'healthy',
+          components: [{ name: 'mongo', ready: true }, { name: 'redis', ready: true }],
+        }),
+      };
+    },
+  }, 5), true);
+  assert.equal(requestedPath, '/api/health/ready');
+  assert.equal(await probeStableSmokeReadiness({
+    get: async () => ({ ok: () => true, json: async () => ({ status: 'unhealthy', components: [] }) }),
+  }, 5), false);
+  assert.equal(await probeStableSmokeReadiness({
+    get: async () => ({ ok: () => true, json: async () => { throw new Error('SPA fallback'); } }),
+  }, 5), false);
   assert.equal(await probeStableSmokeReadiness({ get: async () => { throw new Error('socket hang up'); } }, 5), false);
 });
 
