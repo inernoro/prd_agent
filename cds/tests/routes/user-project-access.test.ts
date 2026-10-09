@@ -211,6 +211,10 @@ describe('human project grants through the production server', () => {
     expect(status.status).toBe(409);
     expect(status.body.update.reconciling).toBe(true);
     expect((await call('GET', '/api/projects', member)).status).toBe(409);
+    // The short budget only selects the timeout branch. Recovery writes use
+    // the production budget so a loaded test worker cannot create extra
+    // retries unrelated to the behavior under test.
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     finish();
     for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 10));
