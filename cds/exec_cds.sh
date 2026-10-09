@@ -1278,8 +1278,9 @@ emit_server_blocks() {
   if [ "${CDS_PUBLIC_HEALTH_DETAILS:-0}" != "1" ]; then
     echo "    # Keep the public probe useful without exposing host load, memory,"
     echo "    # Docker version, branch counts, or control-plane diagnostics."
-    echo "    location = /healthz {"
-    echo "        proxy_pass http://cds_master/healthz?lightweight=1;"
+    echo "    location ~* ^/healthz/?$ {"
+    echo "        rewrite ^ /healthz?lightweight=1? break;"
+    echo "        proxy_pass http://cds_master;"
     proxy_directives
     echo "    }"
     echo ""
