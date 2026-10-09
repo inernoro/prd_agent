@@ -16008,6 +16008,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // 分支隔离配置会连同 context path 更新 HTTP 就绪路径。运行时早已支持
+      // readinessProbe 覆盖；在这里丢弃它会让已就绪的服务持续被旧路径误判。
+      const readinessProbe = ((): ReadinessProbe | undefined => {
+        const rp = body.readinessProbe;
+        if (!rp || typeof rp !== 'object' || Array.isArray(rp)) return undefined;
+        const o = rp as Record<string, unknown>;
+        const out: ReadinessProbe = {};
+        if (typeof o.path === 'string' && o.path.trim() !== '') out.path = o.path.trim();
+        if (typeof o.intervalSeconds === 'number' && o.intervalSeconds > 0) out.intervalSeconds = o.intervalSeconds;
+        if (typeof o.timeoutSeconds === 'number' && o.timeoutSeconds > 0) out.timeoutSeconds = o.timeoutSeconds;
+        if (typeof o.noHttp === 'boolean') out.noHttp = o.noHttp;
+        return Object.keys(out).length > 0 ? out : undefined;
+      })();
+
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
         command: typeof body.command === 'string' ? body.command : undefined,
@@ -16018,6 +16032,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
+        readinessProbe,
         dbScope: body.dbScope as 'shared' | 'per-branch' | undefined,
         dbInit: body.dbInit as 'empty' | 'clone' | undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,

@@ -1842,6 +1842,22 @@ describe('Branch Routes', () => {
       expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.env?.FOO).toBe('bar');
     });
 
+    it('round-trips a branch HTTP readiness path through the override API and effective profile', async () => {
+      stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', readinessProbe: { path: '/health', noHttp: true } });
+      seedBranch('b1');
+      const readinessProbe = { path: '/health-api/health', intervalSeconds: 5, timeoutSeconds: 1200, noHttp: false };
+      const put = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', {
+        env: { SERVER_SERVLET_CONTEXT_PATH: '/health-api' }, readinessProbe,
+      });
+      expect(put.status).toBe(200);
+      expect((put.body as any).effective.readinessProbe).toEqual(readinessProbe);
+      const get = await request(server, 'GET', '/api/branches/b1/profile-overrides');
+      const saved = (get.body as any).profiles.find((p: any) => p.profileId === 'api');
+      expect(saved.override.readinessProbe).toEqual(readinessProbe);
+      expect(saved.effective.readinessProbe).toEqual(readinessProbe);
+      expect(saved.effective.env.SERVER_SERVLET_CONTEXT_PATH).toBe('/health-api');
+    });
+
     it('PUT /profile-overrides passes dbScope through and enforces the enum (波1 W1c)', async () => {
       // dbScope 在 BuildProfileOverride/applyProfileOverride 早已支持,但 PUT 白名单一直漏透传,
       // per-branch DB 开关因此永远无法按分支生效——本测试钉死透传 + 枚举校验。
