@@ -48,6 +48,11 @@ test('缺少目标用户时拒绝全局通知', () => {
   assert.ok(validateNotificationOptions({ ...base, targetUserId: '' }).some((item) => item.includes('拒绝发送全局通知')));
 });
 
+test('缺少或损坏的通知地址会在发请求前给出明确配置错误', () => {
+  assert.ok(validateNotificationOptions({ ...base, baseUrl: '' }).includes('缺少通知地址'));
+  assert.ok(validateNotificationOptions({ ...base, baseUrl: 'not-a-url' }).includes('通知地址不是有效 URL'));
+});
+
 test('通过结果只归档，不发送通知', async () => {
   const result = await sendNotification({ ...base, verdict: 'pass' }, () => {
     throw new Error('不应发出请求');

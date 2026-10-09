@@ -39,6 +39,7 @@ import {
   runnerHelpText,
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
+  resolveNotificationBaseUrl,
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
@@ -305,6 +306,16 @@ test('CDS 公网稳定门要求连续两轮通过并在瞬时 502 后重新计�
   });
   assert.equal(result.entries, 3);
   assert.equal(sleeps, 2);
+});
+
+test('CDS-only 通知缺少独立地址时使用已验证的正式允许地址', () => {
+  assert.equal(resolveNotificationBaseUrl({
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://map.example.test',
+  }), 'https://map.example.test');
+  assert.equal(resolveNotificationBaseUrl({
+    STABLE_SMOKE_NOTIFY_BASE_URL: 'https://notify.example.test',
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://map.example.test',
+  }), 'https://notify.example.test');
 });
 
 test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {

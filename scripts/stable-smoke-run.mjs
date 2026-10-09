@@ -533,6 +533,13 @@ export function canReuseGatewayPersistenceProbe(record, { runId, commit }) {
     ));
 }
 
+export function resolveNotificationBaseUrl(values) {
+  return values.STABLE_SMOKE_NOTIFY_BASE_URL
+    || values.STABLE_SMOKE_PROD_BASE_URL
+    || values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL
+    || '';
+}
+
 export async function runCdsGatewayPersistenceProbe({
   recordPath,
   runId,
@@ -2253,7 +2260,7 @@ async function main() {
           env: {
             ...process.env,
             ...values,
-            STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
+            STABLE_SMOKE_NOTIFY_BASE_URL: resolveNotificationBaseUrl(values),
           },
         });
         return {
