@@ -15,6 +15,17 @@ function sameIndexDefinition(index, keys, partialFilterExpression) {
   )
 }
 
+const catalogIndexOptionNames = [
+  "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
+]
+
+function sameCatalogIndexDefinition(index, keys, options) {
+  if (JSON.stringify(index.key) !== JSON.stringify(keys)) return false
+  return catalogIndexOptionNames.every(option =>
+    JSON.stringify(index[option]) === JSON.stringify(options[option])
+  )
+}
+
 function findDuplicateGroups(collection, keys, partialFilterExpression) {
   const duplicateId = {}
   Object.keys(keys).forEach(field => {
@@ -34,10 +45,7 @@ function findDuplicateGroups(collection, keys, partialFilterExpression) {
 
 function restorableIndexOptions(index) {
   const options = { name: index.name }
-  const supportedOptions = [
-    "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
-  ]
-  supportedOptions.forEach(option => {
+  catalogIndexOptionNames.forEach(option => {
     if (index[option] !== undefined) {
       options[option] = index[option]
     }
@@ -139,11 +147,12 @@ function ensureCatalogIndex(collectionName, keys, options, legacyDefinitions = [
     collection.createIndex(keys, options)
     return
   }
-  if (sameIndexDefinition(existing, keys, options.partialFilterExpression)) {
+  if (sameCatalogIndexDefinition(existing, keys, options)) {
     collection.createIndex(keys, options)
     return
   }
-  const knownLegacy = legacyDefinitions.some(definition =>
+  const sameKeysAndPartialFilter = sameIndexDefinition(existing, keys, options.partialFilterExpression)
+  const knownLegacy = sameKeysAndPartialFilter || legacyDefinitions.some(definition =>
     sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
   )
   if (!knownLegacy) {

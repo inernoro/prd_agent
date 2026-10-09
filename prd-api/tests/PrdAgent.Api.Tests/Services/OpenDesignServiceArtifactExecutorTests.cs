@@ -96,6 +96,26 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Fact]
+    public async Task UsageObservationFailure_StillRevokesTheRunScopedGrant()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(Event(1, "done", new JsonObject { ["artifactRef"] = "ref-1" })));
+        var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+        grants.SetupSequence(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(0, null, null))
+            .ThrowsAsync(new InvalidOperationException("synthetic observation failure"));
+        grants.Setup(x => x.RevokeAsync("grant-id", CancellationToken.None)).Returns(Task.CompletedTask);
+        var executor = BuildExecutor(service, BuildBroker().Object, gatewayGrants: grants.Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        grants.Verify(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None), Times.Exactly(2));
+        grants.Verify(x => x.RevokeAsync("grant-id", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecutorBusy_ShowsAQueueLineWaitsTheAdvisedSecondsAndResubmitsTheSameAttempt()
     {
         var service = new FakeDesignService();
@@ -653,6 +673,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         var run = BuildRun();
         run.Status = RunStatuses.Queued;
         run.Progress = 2;
+        run.DeploymentSlug = DeploymentScope.Current;
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
 
         var service = new FakeDesignService();
@@ -732,7 +753,8 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         FakeDesignService service,
         IDesignArtifactWorkspaceBroker broker,
         List<TimeSpan>? delays = null,
-        Dictionary<string, string?>? configuration = null)
+        Dictionary<string, string?>? configuration = null,
+        IDesignArtifactGatewayGrantService? gatewayGrants = null)
     {
         // 假时钟：每次「等待」立即返回并把时钟往前推，排队 / 不可用的截止时间按它算，
         // 用例既不真等、也不会在真实时间里空转到上限。
@@ -745,7 +767,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         return new(
             new SingleClientFactory(service),
             broker,
-            grants.Object,
+            gatewayGrants ?? grants.Object,
             Config(configuration ?? new Dictionary<string, string?>
             {
                 [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,

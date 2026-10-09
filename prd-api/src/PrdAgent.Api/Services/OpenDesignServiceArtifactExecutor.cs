@@ -416,15 +416,29 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             try
             {
                 await _gatewayGrants.ObserveAsync(workspace.ModelGrantId, run, CancellationToken.None);
-                await _gatewayGrants.RevokeAsync(workspace.ModelGrantId, CancellationToken.None);
             }
-            catch (Exception cleanupError)
+            catch (Exception observationError)
             {
                 _logger.LogWarning(
-                    cleanupError,
-                    "OpenDesign 任务短期网关凭据收尾失败，凭据仍会按到期时间失效 run={RunId} grant={GrantId}",
+                    observationError,
+                    "OpenDesign 任务短期网关凭据用量回写失败 run={RunId} grant={GrantId}",
                     run.Id,
                     workspace.ModelGrantId);
+            }
+            finally
+            {
+                try
+                {
+                    await _gatewayGrants.RevokeAsync(workspace.ModelGrantId, CancellationToken.None);
+                }
+                catch (Exception revocationError)
+                {
+                    _logger.LogWarning(
+                        revocationError,
+                        "OpenDesign 任务短期网关凭据撤销失败，凭据仍会按到期时间失效 run={RunId} grant={GrantId}",
+                        run.Id,
+                        workspace.ModelGrantId);
+                }
             }
         }
     }

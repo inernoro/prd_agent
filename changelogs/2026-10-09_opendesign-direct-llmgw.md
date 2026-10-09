@@ -5,3 +5,5 @@
 | test | prd-api | 覆盖 OpenDesign 短期网关凭据的签发、授权、计数回写与撤销闭环 |
 | fix | prd-api | 保留 OpenDesign 直连任务冻结的模型池与固定线路策略，并将短期授权索引迁入 DBA 清单 |
 | security | llmgw | 将 OpenDesign 短期授权限制到 Responses 端点并保留请求的 reasoning summary |
+| fix | prd-api | 确保用量回写失败时仍独立撤销 OpenDesign 任务短期授权 |
+| ops | prd-api | 让运行时授权 TTL 索引清单自动收敛错误的索引选项 |

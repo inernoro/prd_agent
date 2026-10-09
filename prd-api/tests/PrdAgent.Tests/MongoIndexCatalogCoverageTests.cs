@@ -37,6 +37,19 @@ public sealed class MongoIndexCatalogCoverageTests
     }
 
     [Fact]
+    public void RuntimeGrantTtlIndexCatalogRepairsOptionDrift()
+    {
+        var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+
+        Assert.Contains("function sameCatalogIndexDefinition(index, keys, options)", catalog, StringComparison.Ordinal);
+        Assert.Contains("\"expireAfterSeconds\"", catalog, StringComparison.Ordinal);
+        Assert.Contains(
+            "const knownLegacy = sameKeysAndPartialFilter || legacyDefinitions.some",
+            catalog,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EveryIndexDefinedInCodeExistsInTheDbaCatalog()
     {
         var context = File.ReadAllText(LocateRepoFile(
