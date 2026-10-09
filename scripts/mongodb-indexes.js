@@ -2026,6 +2026,24 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     }
   }
   // end collection: llmgw_model_offerings
+
+  // collection: llmgw_runtime_grants
+  // OpenDesign 每个任务只拿一把短期授权：明文只在当前调用栈里出现，库里按哈希鉴权。
+  // 唯一索引防止哈希身份重复；TTL 清理过期授权；租户 + run 索引服务审计与撤销。
+  // 这三条只能由 DBA 清单在维护窗口创建，应用启动时不得建索引。
+  ensureTightenedUniqueIndex("llmgw_runtime_grants",
+    { "KeyHash": 1 },
+    { name: "uniq_llmgw_runtime_grant_hash", unique: true }
+  )
+  ensureCatalogIndex("llmgw_runtime_grants",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_runtime_grants", expireAfterSeconds: 0 }
+  )
+  ensureCatalogIndex("llmgw_runtime_grants",
+    { "TenantId": 1, "RunId": 1 },
+    { name: "idx_llmgw_runtime_grant_tenant_run" }
+  )
+  // end collection: llmgw_runtime_grants
 }
 
 

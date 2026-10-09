@@ -62,7 +62,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             throw new InvalidOperationException("设计模型网关地址未配置，无法启动 OpenDesign 任务");
 
         var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
-        var model = selection.ForMapClient();
+        var model = selection.ForDirectGatewayClient();
         if (string.IsNullOrWhiteSpace(model))
             throw new InvalidOperationException("当前设计任务没有冻结可用的逻辑模型，无法启动 OpenDesign 任务");
 

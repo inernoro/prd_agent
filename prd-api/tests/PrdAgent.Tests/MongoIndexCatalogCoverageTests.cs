@@ -17,6 +17,26 @@ namespace PrdAgent.Tests;
 public sealed class MongoIndexCatalogCoverageTests
 {
     [Fact]
+    public void RuntimeGrantIndexesExistOnlyInTheDbaCatalog()
+    {
+        var initializer = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs"));
+        var catalog = File.ReadAllText(LocateRepoFile("scripts/mongodb-indexes.js"));
+        foreach (var name in new[]
+                 {
+                     "uniq_llmgw_runtime_grant_hash",
+                     "ttl_llmgw_runtime_grants",
+                     "idx_llmgw_runtime_grant_tenant_run",
+                 })
+        {
+            Assert.DoesNotContain(name, initializer, StringComparison.Ordinal);
+            Assert.Contains(name, catalog, StringComparison.Ordinal);
+        }
+        Assert.Contains("ensureTightenedUniqueIndex(\"llmgw_runtime_grants\"", catalog, StringComparison.Ordinal);
+        Assert.Contains("ensureCatalogIndex(\"llmgw_runtime_grants\"", catalog, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EveryIndexDefinedInCodeExistsInTheDbaCatalog()
     {
         var context = File.ReadAllText(LocateRepoFile(

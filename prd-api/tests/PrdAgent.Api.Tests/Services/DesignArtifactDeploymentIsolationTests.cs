@@ -695,7 +695,11 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     {
         var run = Run("grant-lifecycle", RunStatuses.Running);
         run.Operation = DesignArtifactOperations.Generate;
-        run.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
+        run.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+        {
+            Model = "default-chat-curated",
+            ModelPoolId = "pool-chat-premium",
+        };
         await InsertAsync(run, CurrentScope);
         await _gateway.Database.GetCollection<BsonDocument>("llmgw_tenants").InsertOneAsync(new BsonDocument
         {
@@ -720,6 +724,7 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
 
         Assert.Equal("http://gateway/gw/v1", issued.BaseUrl);
         Assert.Equal("default-chat-curated", issued.Model);
+        Assert.Equal("pool-chat-premium", stored.ModelPoolId);
         Assert.Equal(AppCallerRegistry.Admin.WebHosting.GenerateHtml, issued.AppCallerCode);
         Assert.Equal(expectedHash, stored.KeyHash);
         Assert.Equal(expectedHash[..12], stored.KeyPrefix);
