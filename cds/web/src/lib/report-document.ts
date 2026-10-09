@@ -25,14 +25,31 @@ const headingSlug = (value: string) => decodeHeadingText(value)
   .replace(/[^\p{Letter}\p{Number}\s_-]/gu, '')
   .replace(/\s+/g, '-');
 
+const headingId = (attributes: string): string | null => {
+  const match = attributes.match(/(?:^|\s)id\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+  return match ? (match[1] ?? match[2] ?? match[3] ?? '') : null;
+};
+
 export function addHeadingIdsToReportHtml(parsed: string): string {
+  const headingPattern = /<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/gi;
+  const reservedIds = new Set<string>();
+  for (const match of parsed.matchAll(headingPattern)) {
+    const id = headingId(match[2]);
+    if (id !== null) reservedIds.add(id);
+  }
+
   const occurrences = new Map<string, number>();
-  return parsed.replace(/<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/gi, (heading, level, attributes, content) => {
-    if (/\sid\s*=\s*["']/i.test(attributes)) return heading;
+  return parsed.replace(headingPattern, (heading, level, attributes, content) => {
+    if (headingId(attributes) !== null) return heading;
     const base = headingSlug(content) || 'section';
-    const occurrence = occurrences.get(base) ?? 0;
+    let occurrence = occurrences.get(base) ?? 0;
+    let id = occurrence === 0 ? base : `${base}-${occurrence}`;
+    while (reservedIds.has(id)) {
+      occurrence += 1;
+      id = `${base}-${occurrence}`;
+    }
     occurrences.set(base, occurrence + 1);
-    const id = occurrence === 0 ? base : `${base}-${occurrence}`;
+    reservedIds.add(id);
     return `<h${level}${attributes} id="${id}">${content}</h${level}>`;
   });
 }

@@ -27,6 +27,18 @@ describe('Markdown 报告同页锚点', () => {
     expect(document).toContain('<h2 id="hello-world-1">Hello World</h2>');
   });
 
+  it('先保留显式标题 ID，再为 Markdown 标题分配未占用的后缀', () => {
+    const document = buildMarkdownReportDocument(
+      '## Foo\n\n<h2 id="foo">显式标题</h2>\n\n<h2 id=foo-1>显式后缀</h2>\n\n## Foo',
+      'light',
+    );
+
+    expect(document).toContain('<h2 id="foo-2">Foo</h2>');
+    expect(document).toContain('<h2 id="foo">显式标题</h2>');
+    expect(document).toContain('<h2 id=foo-1>显式后缀</h2>');
+    expect(document).toContain('<h2 id="foo-3">Foo</h2>');
+  });
+
   it('按当前主题生成可读链接颜色', () => {
     expect(buildMarkdownReportDocument('', 'light')).toContain('#2563eb');
     expect(buildMarkdownReportDocument('', 'dark')).toContain('#60a5fa');
