@@ -207,7 +207,7 @@ public static class LiteraryMcpWorkflow
         var current = SelectCurrent(previous, assetList);
         var pool = (previous.ArticleWorkflow?.Markers ?? new List<ArticleIllustrationMarker>())
             .Where(m => current.ContainsKey(m.Index))
-            .Select(m => (key: Normalize(MountedImagePrompt(current[m.Index], m)), asset: current[m.Index], runId: m.RunId))
+            .Select(m => (key: Normalize(MountedImagePrompt(current[m.Index], m)), asset: current[m.Index], runId: m.RunId, plan: m.PlanItem))
             .Where(p => p.key.Length > 0)
             .ToList();
         if (pool.Count == 0)
@@ -221,7 +221,7 @@ public static class LiteraryMcpWorkflow
                 pool = archived.Markers
                     .Select(m => (m, id: archived.AssetIdByMarkerIndex.TryGetValue(m.Index.ToString(), out var v) ? v : null))
                     .Where(x => x.id != null && byId.ContainsKey(x.id))
-                    .Select(x => (key: Normalize(MountedImagePrompt(byId[x.id!], x.m)), asset: byId[x.id!], runId: x.m.RunId))
+                    .Select(x => (key: Normalize(MountedImagePrompt(byId[x.id!], x.m)), asset: byId[x.id!], runId: x.m.RunId, plan: x.m.PlanItem))
                     .Where(p => p.key.Length > 0)
                     .ToList();
                 if (pool.Count > 0) break;
@@ -235,7 +235,7 @@ public static class LiteraryMcpWorkflow
             var key = Normalize(marker.Text);
             var hit = pool.FindIndex(p => p.key == key);
             if (hit < 0) continue;
-            var (_, asset, runId) = pool[hit];
+            var (_, asset, runId, plan) = pool[hit];
             pool.RemoveAt(hit);
             var k = marker.Index.ToString();
             next.AssetIdByMarkerIndex[k] = asset.Id;
@@ -243,6 +243,13 @@ public static class LiteraryMcpWorkflow
             marker.AssetId = asset.Id;
             marker.Url = asset.Url;
             marker.RunId = runId; // 沿用的图保留它当初那次生成的记录，否则读稿看不出这张图从哪来
+            if (plan != null)
+                marker.PlanItem = new ArticleIllustrationPlanItem
+                {
+                    Prompt = marker.Text,
+                    Count = plan.Count,
+                    Size = plan.Size,
+                };
             if (!next.AdoptedAssetIds.Contains(asset.Id)) next.AdoptedAssetIds.Add(asset.Id);
             marker.Status = "done";
             marker.ErrorMessage = null;
