@@ -422,14 +422,14 @@ public static class GatewayHttpEndpoints
             var nativeBody = body!;
             var requestId = TrackGatewayRequestId(http);
             var stream = ReadBool(nativeBody, "stream");
-            var model = runtimeGrant?.Model ?? ReadString(nativeBody, "model");
-            var pool = runtimeGrant?.ModelPoolId ?? ResolveCompatModelPoolId(http, nativeBody);
+            var model = runtimeGrant is null ? ReadString(nativeBody, "model") : runtimeGrant.Model;
+            var pool = runtimeGrant is null ? ResolveCompatModelPoolId(http, nativeBody) : runtimeGrant.ModelPoolId;
             // gw-native 是内部路：MAP 侧代理先剥掉运行时自带的 pin，再按自己冻结的快照盖上去。
             // 兼容入口（/v1/*）一律拒绝客户端自带 pin（见 RejectClientSuppliedPinnedTarget），
             // 那条禁令按 gw-native / 兼容两分面划界，不覆盖这一条。
             var (declaredPlatform, declaredPinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
-            var platform = runtimeGrant?.PinnedPlatformId ?? declaredPlatform;
-            var pinnedModel = runtimeGrant?.PinnedModelId ?? declaredPinnedModel;
+            var platform = runtimeGrant is null ? declaredPlatform : runtimeGrant.PinnedPlatformId;
+            var pinnedModel = runtimeGrant is null ? declaredPinnedModel : runtimeGrant.PinnedModelId;
             var policy = runtimeGrant is null
                 ? ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel)
                 : !string.IsNullOrWhiteSpace(pool) ? "pool"

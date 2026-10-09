@@ -148,6 +148,64 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task NativeResponses_RuntimeGrantWithoutFrozenRouteIgnoresClientRoutingHeaders()
+    {
+        var resolver = NativeResponsesResolver(logicalModelPublicId: "default-chat-curated");
+        var handler = new NativeResponsesHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"id\":\"resp_unpinned\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        }));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-unpinned",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(resolver, handler),
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            using var request = NativeResponsesRequest(
+                JsonNode.Parse("{\"model\":\"attacker-model\",\"store\":false,\"input\":\"hello\"}")!.AsObject(),
+                "runtime-grant-unpinned");
+            request.Headers.Add("X-Gateway-Model-Pool-Id", "attacker-pool");
+            request.Headers.Add("X-Gateway-Pinned-Platform-Id", "attacker-platform");
+            request.Headers.Add("X-Gateway-Pinned-Model-Id", "attacker-model-id");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            resolver.Verify(x => x.ResolveAsync(
+                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ModelTypes.Chat,
+                "default-chat-curated",
+                null,
+                null,
+                It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(1);
+            callCounter.CallCount.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task NativeResponses_RejectedRuntimeGrantRequestDoesNotConsumeCallAllowance()
     {
         var resolver = NativeResponsesResolver(functionCalling: null);
