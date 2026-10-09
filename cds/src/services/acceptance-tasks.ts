@@ -314,8 +314,15 @@ export class AcceptanceTaskService {
       `观察到的部署版本：${escape(task.observedVersion ?? '未记录；正式环境按当前线上执行，不要求特定分支或发布')}。`,
       `计划 ${s.planned}，执行 ${s.executed}，通过 ${s.pass}，失败 ${s.fail}，阻塞 ${s.blocked}，未执行 ${s.notRun}，不稳定 ${s.flaky}。`,
       `业务结论：${s.gate}。报告交付：pending，尚未完成线上归档与 verify-open；不得据此宣称允许发布。`, '',
-      '## 验收结果矩阵', '', '| caseId | 重要功能 | 结果 | 不稳定 | 清理 |', '|---|---|---|---|---|',
-      ...task.cases.map((c) => { const r = task.results[c.caseId]; return `| ${c.caseId} | ${escape(c.title)} | ${r?.status ?? 'not-run'} | ${r?.flaky ? '是' : '否'} | ${r?.cleanup.status ?? '未回填'} |`; }),
+      '## 验收结果矩阵', '', '以下评分表与执行明细使用同一编号、同一功能和同一标准。明细只展开本行，不是另一份清单。', '',
+      '| 编号 | 重要功能 | 怎么验 | 通过标准 | 结果 | 证据 | 不稳定 | 清理 |', '|---|---|---|---|---|---|---|---|',
+      ...task.cases.map((c) => {
+        const r = task.results[c.caseId];
+        const proof = r?.evidence.map((e) => `[${escape(e.caption)}](<${e.url}>)`).join('；') || '未提供';
+        const method = `${escape(c.steps[0]?.action ?? '')}${c.steps.length > 1 ? `（另 ${c.steps.length - 1} 步，见同编号明细）` : ''}`;
+        const standard = `${escape(c.assertions[0]?.description ?? '')}${c.assertions.length > 1 ? `（另 ${c.assertions.length - 1} 项标准，见同编号明细）` : ''}`;
+        return `| ${c.caseId} | ${escape(c.title)} | ${method} | ${standard} | ${r?.status ?? 'not-run'} | ${proof} | ${r?.flaky ? '是' : '否'} | ${r?.cleanup.status ?? '未回填'} |`;
+      }),
       '', '## 逐项执行与证据', '',
     ];
     for (const c of task.cases) {

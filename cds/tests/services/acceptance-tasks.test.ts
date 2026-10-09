@@ -143,6 +143,13 @@ describe('结构化验收任务', () => {
     await service.submit(t.id, 'VIS-001', claim.leaseToken, result()); await service.complete(t.id, claim.leaseToken);
     const source = service.reportSource(t.id);
     expect(source.verdict).toBe('pass'); expect(source.verification).toBe('pending'); expect(source.content).toContain('计划 1，执行 1，通过 1');
+    expect(source.content).toContain('| 编号 | 重要功能 | 怎么验 | 通过标准 | 结果 | 证据 |');
+    const currentCase = service.getTask(t.id).cases[0];
+    const scoreRow = source.content.split('\n').find((line) => line.startsWith(`| ${currentCase.caseId} |`))!;
+    expect(scoreRow).toContain(currentCase.title);
+    expect(scoreRow).toContain(currentCase.steps[0].action);
+    expect(scoreRow).toContain(currentCase.assertions[0].description);
+    expect(scoreRow).toContain(service.getTask(t.id).results[currentCase.caseId].evidence[0].url);
     expect(state.listAcceptanceReports('p1')).toHaveLength(0);
     const local = await state.createAcceptanceReportAsync({ ...source, projectId: 'p1' });
     await expect(service.bindReport(t.id, local.id)).rejects.toMatchObject({ code: 'report_not_durable' });

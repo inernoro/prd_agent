@@ -1,5 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { StaticRouter } from 'react-router-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,6 +13,7 @@ import type { AcceptanceReportDraft, AcceptanceTask, AcceptanceTemplate } from '
 import { AcceptanceTemplateEditor, newAcceptanceCase } from '../../web/src/pages/reports/AcceptanceTemplateEditor';
 import { AcceptanceResultEditor, acceptanceSubmissionProblem, initialAcceptanceSubmission, preparedAcceptanceSubmission } from '../../web/src/pages/reports/AcceptanceResultEditor';
 import { AcceptanceNavigation, AcceptanceSummaryCard } from '../../web/src/pages/reports/AcceptanceWorkspace';
+import { AcceptanceChecklist } from '../../web/src/pages/reports/AcceptanceChecklist';
 
 const testCase = {
   ...newAcceptanceCase(0), title: '默认模型文字生图', module: '视觉创作', owner: '视觉负责人',
@@ -19,13 +21,38 @@ const testCase = {
   steps: [{ id: 'step-1', action: '保持默认模型，输入白桃生成', expected: '可下载的1024×1024图片' }],
   assertions: [{ id: 'assert-1', description: '图片可下载、可解码且尺寸正确' }], cleanupInstructions: '删除本轮资源并回读无残留',
 };
-const render = (element: Parameters<typeof renderToStaticMarkup>[0]): string => renderToStaticMarkup(element);
+const render = (element: Parameters<typeof renderToStaticMarkup>[0]): string => renderToStaticMarkup(createElement(StaticRouter, { location: '/reports' }, element));
 const pageSource = readFileSync(resolve(__dirname, '../../web/src/pages/ReportsPage.tsx'), 'utf8');
 const workspaceSource = readFileSync(resolve(__dirname, '../../web/src/pages/reports/AcceptanceWorkspace.tsx'), 'utf8');
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('结构化清单和逐项回填，非 JSON 粘贴框', () => {
+  it('人和 Agent 使用同一张评分表，执行细节折叠且不派生第二套用例', () => {
+    const detailedCase = { ...testCase, steps: [...testCase.steps, { id: 'step-2', action: '下载图片并解码', expected: '宽高均为1024' }], assertions: [...testCase.assertions, { id: 'assert-2', description: '删除资源后回读无残留' }] };
+    const html = render(createElement(AcceptanceChecklist, { cases: [detailedCase] }));
+    for (const label of ['编号', '重要功能', '怎么验／通过标准', '本轮结果', '证据', detailedCase.caseId, detailedCase.title, '下载图片并解码', '宽高均为1024', detailedCase.assertions[0].description]) expect(html).toContain(label);
+    expect(html).toContain('模板，尚未执行');
+    expect(html).toMatch(/<details[^>]*><summary/);
+    expect(html).not.toMatch(/<details[^>]*\bopen/);
+    expect(html).toContain('另 1 步，展开查看');
+    expect(html).toContain('另 1 项标准，展开查看');
+    expect(html.split('下载图片并解码')).toHaveLength(2);
+    expect(html.split('删除资源后回读无残留')).toHaveLength(2);
+    expect(workspaceSource.includes('<AcceptanceChecklist cases={template.cases}')).toBe(true);
+    expect(workspaceSource.includes('<AcceptanceChecklist cases={task.cases}')).toBe(true);
+  });
+
+  it('评分表直接回读服务端结果、保留 flaky，并链接到原任务的原编号', () => {
+    const draft = initialAcceptanceSubmission(testCase);
+    const saved = { ...draft, caseId: testCase.caseId, status: 'pass' as const, actual: '可下载解码，1024×1024', evidence: [{ kind: 'image' as const, url: 'https://cdn.example.test/peach.png', caption: '本轮白桃产物' }], flaky: true, submittedAt: '2026-10-09T00:00:00Z', attempts: [] };
+    const html = render(createElement(AcceptanceChecklist, { cases: [testCase], results: { [testCase.caseId]: saved }, projectId: 'p', taskId: 'original-task' }));
+    expect(html).toContain('通过'); expect(html).toContain('不稳定'); expect(html).toContain(saved.actual);
+    expect(html).toContain('href="https://cdn.example.test/peach.png"');
+    expect(html).toContain(`href="${acceptanceTaskLink('p', 'original-task', testCase.caseId).replaceAll('&', '&amp;')}"`);
+    const missing = render(createElement(AcceptanceChecklist, { cases: [testCase], results: {} }));
+    expect(missing).toContain('未执行'); expect(missing).toContain('未提供证据'); expect(missing).not.toContain('模板，尚未执行');
+  });
   it('v1/v2 历史按身份去重且始终选择 v2，不依赖服务端返回顺序', () => {
     const v1: AcceptanceTemplate = { id: 'tpl1', projectId: 'p', title: '旧标准', description: '', version: 1, cases: [testCase], createdAt: '2026-10-01T00:00:00Z' };
     const v2 = { ...v1, version: 2, title: '新标准' };

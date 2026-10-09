@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ACCEPTANCE_STATUS_LABELS, onlineEvidenceUrl } from '@/lib/acceptance-api';
 import type { AcceptanceCase, AcceptanceResult, AcceptanceSubmission } from '@/lib/acceptance-api';
 import { AcceptanceField, acceptanceInputClass } from './AcceptanceTemplateEditor';
+import { AcceptanceCaseDetails } from './AcceptanceChecklist';
 
 export function initialAcceptanceSubmission(testCase: AcceptanceCase, result?: AcceptanceResult): AcceptanceSubmission {
   return {
@@ -50,11 +51,9 @@ export function AcceptanceResultEditor({ testCase, result, writable, busy, onSav
     await onSave(preparedAcceptanceSubmission(draft));
   };
   return (
-    <section className="min-w-0 space-y-4 rounded-lg border border-border bg-card p-4" aria-label={`回填 ${testCase.caseId}`}>
+    <section id="acceptance-case-detail" className="min-w-0 space-y-4 rounded-lg border border-border bg-card p-4" aria-label={`回填 ${testCase.caseId}`}>
       <header><div className="flex flex-wrap items-center gap-2"><h3 className="text-base font-semibold">{testCase.title}</h3><span className="rounded border border-border px-2 py-0.5 font-mono text-xs">{testCase.caseId}</span><span className="text-xs text-muted-foreground">{testCase.criticality === 'core' ? '核心必测' : '一般功能'}</span></div><p className="mt-2 break-words text-sm text-muted-foreground">{testCase.breadcrumb.join(' → ')} · {testCase.entryPath}</p><p className="mt-1 text-xs text-muted-foreground">负责人：{testCase.owner} · {testCase.module}</p></header>
-      {testCase.preconditions.length ? <div className="text-sm"><h4 className="mb-1 font-medium">前置条件</h4><ul className="list-inside list-disc space-y-1">{testCase.preconditions.map((value, i) => <li key={i}>{value}</li>)}</ul></div> : null}
-      {testCase.inputs.length ? <div className="text-sm"><h4 className="mb-1 font-medium">固定输入</h4>{testCase.inputs.map((value, i) => <p key={i} className="break-words">{value.name}：{value.value}</p>)}</div> : null}
-      <div><h4 className="mb-2 text-sm font-medium">验收步骤</h4><ol className="list-inside list-decimal space-y-2 text-sm">{testCase.steps.map((step) => <li key={step.id}><span>{step.action}</span><p className="mt-1 pl-4 text-muted-foreground">预期：{step.expected}</p></li>)}</ol></div>
+      <details className="rounded-md border border-border p-3"><summary className="cursor-pointer text-sm font-medium">展开这一项的执行细节 · {testCase.caseId}</summary><div className="mt-3"><AcceptanceCaseDetails testCase={testCase} /></div></details>
       {!writable ? <p className="rounded-md border border-border bg-muted/50 p-3 text-sm">只读查看。领取此任务后可回填；已完成任务保留不可覆盖的执行记录。</p> : null}
       {validation ? <div role="alert" className="rounded-md border border-destructive/40 p-3 text-sm text-destructive">{validation}</div> : null}
       <fieldset disabled={!writable || busy} className="min-w-0 space-y-4 disabled:opacity-70">

@@ -22,6 +22,7 @@ function tryResolve(specifier: string): string | undefined {
 const react = tryResolve('react');
 const reactDomServer = tryResolve('react-dom/server');
 const reactJsxRuntime = tryResolve('react/jsx-runtime');
+const reactRouterServer = tryResolve('react-router-dom/server');
 
 // 解析不到时别只是「少一条 alias」——渲染冒烟会以 `Failed to load url react` 收场，
 // 而那句报错完全没指向真正的原因（cds/web 没装依赖）。这里把原因直接说出来。
@@ -43,6 +44,7 @@ export default defineConfig({
       ...(react ? [{ find: /^react$/, replacement: react }] : []),
       ...(reactJsxRuntime ? [{ find: /^react\/jsx-runtime$/, replacement: reactJsxRuntime }] : []),
       ...(reactDomServer ? [{ find: /^react-dom\/server$/, replacement: reactDomServer }] : []),
+      ...(reactRouterServer ? [{ find: /^react-router-dom\/server$/, replacement: reactRouterServer }] : []),
     ],
   },
   test: {
