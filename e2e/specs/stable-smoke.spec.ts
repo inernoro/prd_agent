@@ -6615,7 +6615,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         target: generatedImage,
         caption: '真实生成图已完成浏览器解码，并在刷新后的同一工作区恢复。',
       });
-      const quickEdit = page.locator('textarea[placeholder="请输入你的设计需求（Enter 发送，Shift+Enter 换行）"]:visible');
+      const quickEdit = page.getByRole('textbox', { name: '快捷编辑描述', exact: true });
       await expect(quickEdit).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-11',
