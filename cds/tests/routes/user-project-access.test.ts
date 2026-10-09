@@ -222,6 +222,10 @@ describe('human project grants through the production server', () => {
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    // The short budget above only drives the timeout branch. A recovered normal
+    // write must use the production budget or a busy CI runner can create a
+    // second timeout unrelated to the behavior under test.
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await grant(['project-b'])).status).toBe(200);
   });
   it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
