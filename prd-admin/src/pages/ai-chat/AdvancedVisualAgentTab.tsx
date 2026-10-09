@@ -6418,6 +6418,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
       const isG = e.key === 'g' || e.key === 'G' || e.code === 'KeyG';
       const isA = e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+      const isH = e.key === 'h' || e.key === 'H' || e.code === 'KeyH';
+      const isV = e.key === 'v' || e.key === 'V' || e.code === 'KeyV';
+
+      // 工具菜单已经把 H / V 展示给用户，因此这里必须实现同一份快捷键合同。
+      // 只在画板获得焦点或鼠标位于画板内时响应，避免抢占页面其它区域。
+      if (!isMod && !e.altKey && isH) {
+        e.preventDefault();
+        setActiveTool('hand');
+        return;
+      }
+
+      if (!isMod && !e.altKey && isV) {
+        e.preventDefault();
+        setActiveTool('select');
+        return;
+      }
 
       // Cmd/Ctrl+A: 全选画布元素（Figma 同款；没有它就没法「选几个一起编组/导出」）
       if (isMod && !e.shiftKey && !e.altKey && isA) {
