@@ -413,6 +413,9 @@ public class VideoExportTask
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }
+    public string? OutputSha256 { get; set; }
+    public double? TotalCost { get; set; }
+    public DateTime? RunReconciledAt { get; set; }
     public string? ErrorMessage { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }

@@ -362,6 +362,53 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task Worker_ShouldRecoverCompletedExportTaskIntoRenderingRun()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string durableScope = "project-a::feature-video";
+        const string currentScope = $"{durableScope}::revision::new";
+        var previousScope = $"{durableScope}::revision::old";
+        var run = NewRun("recover-completed-export", test.OwnerId, SceneItemStatus.Done);
+        run.Status = VideoGenRunStatus.Rendering;
+        run.DeploymentSlug = previousScope;
+        run.LatestExportTaskId = "completed-export-task";
+        run.WorkerLeaseId = "worker:previous";
+        run.WorkerLeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+        await test.SaveRunAsync(run);
+        var endedAt = DateTime.UtcNow.AddSeconds(-5);
+        var exportTask = new VideoExportTask
+        {
+            Id = run.LatestExportTaskId,
+            RunId = run.Id,
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = previousScope,
+            Status = VideoExportTaskStatus.Completed,
+            CurrentPhase = "completed",
+            Progress = 100,
+            OutputUrl = "https://assets.example/video-agent/video/exported.mp4",
+            OutputSha256 = new string('e', 64),
+            TotalCost = 1.25,
+            EndedAt = endedAt,
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(exportTask);
+
+        var worker = test.CreateWorker();
+        (await worker.RecoverCompletedExportTaskAsync(currentScope, durableScope, CancellationToken.None))
+            .ShouldBeTrue();
+
+        var recoveredRun = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        recoveredRun.DeploymentSlug.ShouldBe(currentScope);
+        recoveredRun.Status.ShouldBe(VideoGenRunStatus.Completed);
+        recoveredRun.VideoAssetUrl.ShouldBe(exportTask.OutputUrl);
+        recoveredRun.VideoAssetSha256.ShouldBe(exportTask.OutputSha256);
+        recoveredRun.DirectVideoCost.ShouldBe(exportTask.TotalCost);
+        recoveredRun.WorkerLeaseId.ShouldBeNull();
+        var reconciledTask = await test.Context.VideoExportTasks.Find(x => x.Id == exportTask.Id).SingleAsync();
+        reconciledTask.DeploymentSlug.ShouldBe(currentScope);
+        reconciledTask.RunReconciledAt.ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task Worker_ShouldNotAdoptLiveRunOrProcessingExportLeases()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
@@ -518,6 +565,73 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task DirectCompletion_ShouldDeleteUnreferencedAssetAfterLosingRunLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("direct-lost-lease", test.OwnerId);
+        run.Status = VideoGenRunStatus.Rendering;
+        run.Mode = VideoGenMode.Direct;
+        run.DeploymentSlug = DeploymentScope.Current;
+        run.DirectVideoJobId = "direct-upstream-job";
+        run.WorkerLeaseId = "worker:original";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update.Set(x => x.WorkerLeaseId, "worker:new-owner"));
+        var sha = new string('d', 64);
+        const string url = "https://assets.example/video-agent/video/unreferenced.mp4";
+
+        var worker = test.CreateWorker();
+        (await worker.TryCompleteDirectRunAsync(run, run.DirectVideoJobId, url, sha, 0.5))
+            .ShouldBeFalse();
+
+        test.AssetStorage.Verify(storage => storage.DeleteByShaAsync(
+            sha,
+            It.IsAny<CancellationToken>(),
+            AppDomainPaths.DomainVideoAgent,
+            AppDomainPaths.TypeVideo), Times.Once);
+        var persisted = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        persisted.VideoAssetUrl.ShouldBeNull();
+        persisted.VideoAssetSha256.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task DirectCompletion_ShouldPreserveAssetReferencedByAnotherRun()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var sha = new string('c', 64);
+        const string url = "https://assets.example/video-agent/video/shared-completion.mp4";
+        var sharedRun = NewRun("shared-asset-owner", test.OwnerId);
+        sharedRun.Status = VideoGenRunStatus.Completed;
+        sharedRun.VideoAssetUrl = url;
+        sharedRun.VideoAssetSha256 = sha;
+        var losingRun = NewRun("shared-asset-loser", test.OwnerId);
+        losingRun.Status = VideoGenRunStatus.Rendering;
+        losingRun.Mode = VideoGenMode.Direct;
+        losingRun.DeploymentSlug = DeploymentScope.Current;
+        losingRun.DirectVideoJobId = "shared-upstream-job";
+        losingRun.WorkerLeaseId = "worker:original";
+        await Task.WhenAll(test.SaveRunAsync(sharedRun), test.SaveRunAsync(losingRun));
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == losingRun.Id,
+            Builders<VideoGenRun>.Update.Set(x => x.WorkerLeaseId, "worker:new-owner"));
+
+        var worker = test.CreateWorker();
+        (await worker.TryCompleteDirectRunAsync(
+            losingRun,
+            losingRun.DirectVideoJobId,
+            url,
+            sha,
+            0.5)).ShouldBeFalse();
+
+        test.AssetStorage.Verify(storage => storage.DeleteByShaAsync(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SceneCompletion_ShouldLoseAtomicRaceToCancellation()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
@@ -527,6 +641,7 @@ public class VideoSceneConcurrencyTests
         run.Scenes[0].JobId = "upstream-job";
         run.Scenes[0].RenderLeaseId = "lease:active";
         await test.SaveRunAsync(run);
+        var sha = new string('f', 64);
 
         var worker = test.CreateWorker();
         (await worker.TryCompleteSceneRenderAsync(
@@ -538,6 +653,7 @@ public class VideoSceneConcurrencyTests
             new VideoGenSceneVersion
             {
                 VideoUrl = "https://assets.example/video.mp4",
+                AssetSha256 = sha,
                 JobId = "upstream-job",
                 Prompt = run.Scenes[0].Prompt,
             },
@@ -547,6 +663,11 @@ public class VideoSceneConcurrencyTests
         persisted.Status.ShouldBe(VideoGenRunStatus.Cancelled);
         persisted.Scenes[0].Status.ShouldNotBe(SceneItemStatus.Done);
         persisted.Scenes[0].Versions.ShouldBeEmpty();
+        test.AssetStorage.Verify(storage => storage.DeleteByShaAsync(
+            sha,
+            It.IsAny<CancellationToken>(),
+            AppDomainPaths.DomainVideoAgent,
+            AppDomainPaths.TypeVideo), Times.Once);
     }
 
     [Fact]
