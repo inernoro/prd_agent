@@ -1811,6 +1811,7 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -2166,6 +2167,14 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
     }
 
+    // 仅无代理转发标识的真实 loopback 启动深探保留故障诊断，公网不能用转发头冒充。
+    const localStartupProbe = req.query.probe === 'routes'
+      && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')
+      && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
+    if (process.env.CDS_PUBLIC_HEALTH_DETAILS !== '1' && !localStartupProbe) {
+      res.status(overallOk ? 200 : 503).json({ ok: overallOk, port: deps.config.masterPort });
+      return;
+    }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       degraded: pressure?.degraded ?? false,
