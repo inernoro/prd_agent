@@ -145,7 +145,7 @@ function scheduledRuns() {
  * 顺序无关，精确匹配优先于前缀匹配。
  */
 const EXACT = {
-  '/api/auth/status': { authenticated: true, user: { name: '布局冒烟' } },
+  '/api/auth/status': { authenticated: true, enabled: true, user: { name: '布局冒烟', isSystemOwner: true } },
   '/api/instance-mode': { mode: 'master' },
   '/api/notices': { notices: [] },
   '/api/projects': { projects: [project] },
@@ -188,7 +188,8 @@ const EXACT = {
   },
   '/api/mirror': { configured: false },
   '/api/tab-title': { title: 'CDS' },
-  '/api/auth/public-status': { authenticated: true, mode: 'password' },
+  '/api/auth/public-status': { enabled: true, mode: 'basic',
+    capabilities: { userManagement: true, userActivity: true, durableUsers: false } },
   /*
    * 发布中心那一页的内容锚点来源。
    *

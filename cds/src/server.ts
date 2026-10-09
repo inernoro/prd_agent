@@ -107,6 +107,8 @@ import {
 } from './services/ticket-sso.js';
 import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
+import { createHumanProjectAccessMiddleware } from './middleware/human-project-access.js';
+import { createUserProjectAccessRouter } from './routes/user-project-access.js';
 import { resolveActorFromRequest } from './services/actor-resolver.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
@@ -1240,6 +1242,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
     [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
     [/^PATCH \/auth\/users\/(.+)$/, '更新用户'],
+    [/^(GET|PUT) \/auth\/users\/[^/]+\/projects$/, '管理用户项目授权'],
     [/^GET \/cds-system\/operator\/requests\/(.+)$/, '查询运维审批请求'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/approve$/, '批准运维操作'],
     [/^POST \/cds-system\/operator\/requests\/(.+)\/reject$/, '拒绝运维操作'],
@@ -1808,6 +1811,7 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -2167,6 +2171,14 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
     }
 
+    // 仅无代理转发标识的真实 loopback 启动深探保留故障诊断，公网不能用转发头冒充。
+    const localStartupProbe = req.query.probe === 'routes'
+      && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')
+      && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
+    if (process.env.CDS_PUBLIC_HEALTH_DETAILS !== '1' && !localStartupProbe) {
+      res.status(overallOk ? 200 : 503).json({ ok: overallOk, port: deps.config.masterPort });
+      return;
+    }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       degraded: pressure?.degraded ?? false,
@@ -2714,7 +2726,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, cookieSecure, bootstrapAllowed }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -3358,6 +3370,7 @@ export function createServer(deps: ServerDeps): express.Express {
   if (authMode === 'basic' && authService) {
     app.use('/api', createAuthLocalRouter({
       authService,
+      stateService: deps.stateService,
       cookieSecure,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
@@ -3415,6 +3428,9 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
+
+  app.use(createHumanProjectAccessMiddleware(deps.stateService));
+  if (authService) app.use('/api', createUserProjectAccessRouter({ stateService: deps.stateService, authService }));
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
@@ -4513,7 +4529,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCredentialSelfCheckRouter({ stateService: deps.stateService }));
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
-  app.use('/api', createIdentityRouter({ stateService: deps.stateService }));
+  app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({

@@ -11,6 +11,7 @@ using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 using StyleChoice = PrdAgent.Api.Services.LiteraryIllustrationChoices.StyleChoice;
 using WatermarkChoice = PrdAgent.Api.Services.LiteraryIllustrationChoices.WatermarkChoice;
@@ -41,7 +42,7 @@ public class LiteraryImageOpenApiController(
         public string? Style { get; set; }
         /// <summary>水印：ID 或名称；none = 不打水印；不传 = 账号给文学创作绑定的那套。</summary>
         public string? Watermark { get; set; }
-        /// <summary>尺寸：比例（如 16:9）或 宽x高（如 1376x768）；不传 = 1024x1024。</summary>
+        /// <summary>尺寸：比例（如 3:2）或 宽x高（如 1536x1024）；不传 = 1:1。能用哪些取决于所用模型，见 presets 的 sizes。</summary>
         public string? Size { get; set; }
     }
 
@@ -55,8 +56,6 @@ public class LiteraryImageOpenApiController(
 
     private const string AppKey = LiteraryIllustrationChoices.AppKey;
     private const string LegacyStyleId = LiteraryIllustrationChoices.LegacyStyleId;
-    private const string DefaultSize = LiteraryIllustrationChoices.DefaultSize;
-    internal static IReadOnlyDictionary<string, string> AspectSizes => LiteraryIllustrationChoices.AspectSizes;
 
     internal Task<(StyleChoice? choice, string? error)> ResolveStyleAsync(string userId, string? style, CancellationToken ct)
         => LiteraryIllustrationChoices.ResolveStyleAsync(db, userId, style, ct);
@@ -66,11 +65,29 @@ public class LiteraryImageOpenApiController(
     internal Task<(WatermarkChoice? choice, string? error)> ResolveWatermarkAsync(string userId, string? watermark, CancellationToken ct)
         => LiteraryIllustrationChoices.ResolveWatermarkAsync(db, userId, watermark, ct);
 
-    internal static (string? size, string? error) ResolveSize(string? size) => LiteraryIllustrationChoices.ResolveSize(size);
+    /// <summary>
+    /// 这台客户端生图时会用哪个模型、它收哪些尺寸。appCallerCode 跟着风格走（有参考图走图生图），
+    /// 与入队时同一个判据。读不到时把原因交给调用方去说，不当作「什么尺寸都收」。
+    /// </summary>
+    private async Task<(string? modelId, ImageGenAdapterInfo? caps, string? errorCode, string? error)> ResolveModelSizesAsync(
+        string userId, string appCallerCode, CancellationToken ct)
+    {
+        var keyId = McpIdempotency.KeyIdOf(User);
+        if (keyId == "unknown")
+            return (null, null, "MODEL_KEY_NOT_FOUND", "当前请求没有可识别的 MCP 客户端配置，请重新连接客户端。");
+        var selected = await modelSelection.ResolveForRunAsync(userId, keyId, appCallerCode, ct);
+        if (!selected.Success || string.IsNullOrWhiteSpace(selected.LogicalModelPublicId))
+            return (null, null, selected.ErrorCode ?? "MODEL_UNAVAILABLE", selected.ErrorMessage ?? "当前没有可用的文学配图模型。");
+        var caps = await modelSelection.GetImageCapabilitiesAsync(appCallerCode, selected.LogicalModelPublicId, ct);
+        return caps == null
+            ? (selected.LogicalModelPublicId, null, "MODEL_CAPABILITIES_UNAVAILABLE",
+                $"读不到模型「{selected.LogicalModelPublicId}」支持哪些尺寸，没有入队，也没有扣生图额度。请稍后重试，或在智能体接入台给这台客户端换一个模型。")
+            : (selected.LogicalModelPublicId, caps, null, null);
+    }
 
     /// <summary>这个账号在文学创作里能选的风格、水印、尺寸，以及不传时会用哪一套。</summary>
     [HttpGet("presets")]
-    public async Task<IActionResult> Presets(CancellationToken ct)
+    public async Task<IActionResult> Presets(CancellationToken ct, [FromQuery] string? style = null)
     {
         var userId = UserId;
         var styles = await db.ReferenceImageConfigs.Find(x => x.AppKey == AppKey && x.CreatedByAdminId == userId)
@@ -79,6 +96,15 @@ public class LiteraryImageOpenApiController(
         var (defaultStyle, _) = await ResolveStyleAsync(userId, null, ct);
         var watermarks = await db.WatermarkConfigs.Find(x => x.UserId == userId).ToListAsync(ct);
         var (defaultWatermark, _) = await ResolveWatermarkAsync(userId, null, ct);
+        var (selectedStyle, styleError) = await ResolveStyleAsync(userId, style, ct);
+        if (styleError != null)
+            return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
+        // 尺寸按这台客户端实际会用的模型列：以前列的是一张固定表，16:9 在默认模型上必然失败（MCP-LIT-18）。
+        var presetCaller = selectedStyle?.Sha == null ? LiteraryAgent.Illustration.Text2Img : LiteraryAgent.Illustration.Img2Img;
+        var (sizeModel, sizeCaps, _, sizeError) = await ResolveModelSizesAsync(userId, presetCaller, ct);
+        var sizeChoices = sizeCaps == null ? new List<LiteraryIllustrationChoices.SizeChoice>() : LiteraryIllustrationChoices.SupportedSizes(sizeCaps);
+        var defaultSize = sizeCaps == null ? null
+            : LiteraryIllustrationChoices.FitSize(LiteraryIllustrationChoices.ParseSize(null).request!, sizeCaps, sizeModel!).size;
         var styleItems = styles.Select(x => new
         {
             styleId = x.Id, name = x.Name,
@@ -101,10 +127,16 @@ public class LiteraryImageOpenApiController(
                 isDefault = x.Id == defaultWatermark?.WatermarkId,
             }),
             defaultWatermark = new { watermarkId = defaultWatermark?.WatermarkId, name = defaultWatermark?.Label },
-            sizes = AspectSizes.Select(kv => new { aspect = kv.Key, size = kv.Value }),
-            defaultSize = DefaultSize,
+            sizes = sizeChoices.Select(c => new { aspect = c.Aspect, size = c.Size }),
+            defaultSize,
+            sizeModel,
+            sizeStyle = new { styleId = selectedStyle?.StyleId, name = selectedStyle?.Label },
+            sizeNote = sizeError ?? (sizeCaps!.SizesNotApplicable
+                ? $"模型「{sizeModel}」不按尺寸参数出图，画面比例由描述决定，size 传了也不起作用。"
+                : $"以上是这台客户端所用模型「{sizeModel}」支持的尺寸：传比例会落到右边那个像素尺寸，也可以直接传宽x高；"
+                  + "传它不支持的会在入队前被拒绝并列出可选项，不扣额度。换了模型，这张表会跟着变。"),
             maxMarkersPerArticle = LiteraryMcpWorkflow.MaxMarkers,
-            hint = "生图时 style / watermark 传这里的 ID 或名称，none 表示不用；不传就用 isDefault 那一套。",
+            hint = "生图时 style / watermark 传这里的 ID 或名称，none 表示不用；查询预设时传与生图相同的 style，sizes 才对应该风格所用模型。不传 style 时按账号默认风格列尺寸。",
         }));
     }
 
@@ -132,9 +164,16 @@ public class LiteraryImageOpenApiController(
         var explicitWatermark = !string.IsNullOrWhiteSpace(req.Watermark);
         var explicitSize = !string.IsNullOrWhiteSpace(req.Size);
 
+        // 这里只解析写法；模型收不收，要等选出模型后再判（同一比例在不同模型上落到的像素可能不同）。
         var sizeSource = explicitSize ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.Size) ? "remembered" : "account-default";
-        var (size, sizeError) = ResolveSize(explicitSize ? req.Size : remembered?.Size);
-        if (sizeError != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
+        var (sizeRequest, sizeError) = LiteraryIllustrationChoices.ParseSize(explicitSize ? req.Size : remembered?.Size);
+        if (sizeError != null && explicitSize) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
+        if (sizeError != null)
+        {
+            (sizeRequest, _) = LiteraryIllustrationChoices.ParseSize(null);
+            sizeSource = "account-default";
+        }
+        string? size = null;
 
         var styleSource = explicitStyle ? "explicit" : !string.IsNullOrWhiteSpace(remembered?.StyleId) ? "remembered" : "account-default";
         var (style, styleError) = await ResolveStyleAsync(userId, explicitStyle ? req.Style : remembered?.StyleId, ct);
@@ -168,7 +207,7 @@ public class LiteraryImageOpenApiController(
         var newlyQueued = 0;
         // 重放只比「这次请求本身说了什么」：账号默认、文章记住的那套都是会变的状态，
         // 重试前它们变了（甚至被删了），同一个 clientRequestId 也必须照样回放原任务。
-        var explicitSizeValue = explicitSize ? size : null;
+        var explicitSizeValue = explicitSize ? sizeRequest : null;
         var explicitStyleValue = explicitStyle ? style : null;
         var explicitWatermarkValue = explicitWatermark ? watermark : null;
         foreach (var index in indexes)
@@ -179,8 +218,11 @@ public class LiteraryImageOpenApiController(
             if (IsReplayConflict(previous, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
                 return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求（工作区、标记、风格、水印或尺寸不同），请为新的请求使用新的值。"));
             results.Add(new { markerIndex = index, runId = previous.Id, deduplicated = true });
+            size ??= previous.Size;
         }
 
+        string? usedModel = null;
+        string? appliedSizeAspect = null;
         if (pending.Count > 0)
         {
             if (styleError != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
@@ -205,13 +247,41 @@ public class LiteraryImageOpenApiController(
             var appCallerCode = style!.Sha == null
                 ? LiteraryAgent.Illustration.Text2Img
                 : LiteraryAgent.Illustration.Img2Img;
-            var keyId = McpIdempotency.KeyIdOf(User);
-            if (keyId == "unknown")
-                return Unauthorized(ApiResponse<object>.Fail("MODEL_KEY_NOT_FOUND", "当前请求没有可识别的 MCP 客户端配置，请重新连接客户端。"));
-            var selectedModel = await modelSelection.ResolveForRunAsync(userId, keyId, appCallerCode, ct);
-            if (!selectedModel.Success || string.IsNullOrWhiteSpace(selectedModel.LogicalModelPublicId))
-                return Conflict(ApiResponse<object>.Fail(selectedModel.ErrorCode ?? "MODEL_UNAVAILABLE",
-                    selectedModel.ErrorMessage ?? "当前没有可用的文学配图模型。"));
+            var (modelId, caps, modelErrorCode, modelError) = await ResolveModelSizesAsync(userId, appCallerCode, ct);
+            if (modelErrorCode == "MODEL_KEY_NOT_FOUND")
+                return Unauthorized(ApiResponse<object>.Fail(modelErrorCode, modelError!));
+            if (caps == null)
+                return Conflict(ApiResponse<object>.Fail(modelErrorCode!, modelError!));
+            usedModel = modelId;
+
+            // 入队前按所选模型的真实尺寸能力落尺寸（MCP-LIT-18）：网关执行前用的是同一个判据，
+            // 预检对应目录候选的有效能力；异构线路切换的共同契约另见 MCP-LIT-19。
+            var (fitted, fitError) = LiteraryIllustrationChoices.FitSize(sizeRequest!, caps, modelId!);
+            if (fitError != null && sizeSource == "remembered")
+            {
+                // 文章记住的尺寸是上次那个模型的像素。换了模型不收时，先按同一比例重新落；
+                // 这个比例也不收，才退回 1:1。两种都在回执里说清楚，不静默改。
+                var sameRatio = LiteraryIllustrationChoices.AsRatio(sizeRequest!, remembered?.SizeAspectRatio);
+                var (byRatio, ratioError) = LiteraryIllustrationChoices.FitSize(sameRatio, caps, modelId!);
+                if (ratioError == null)
+                {
+                    notes.Add($"这篇文章上次用的尺寸 {remembered!.Size} 当前模型「{modelId}」不支持，本次按同一比例 {sameRatio.Raw} 改用 {byRatio}。");
+                    (fitted, fitError) = (byRatio, null);
+                }
+                else
+                {
+                    var (fallback, fallbackError) = LiteraryIllustrationChoices.FitSize(LiteraryIllustrationChoices.ParseSize(null).request!, caps, modelId!);
+                    if (fallbackError == null)
+                    {
+                        notes.Add($"这篇文章上次用的尺寸 {remembered!.Size}（{sameRatio.Raw}）当前模型「{modelId}」不支持，本次改用 1:1 的 {fallback}。");
+                        (fitted, fitError, sizeSource) = (fallback, null, "account-default");
+                    }
+                }
+            }
+            if (fitError != null)
+                return BadRequest(ApiResponse<object>.Fail("SIZE_NOT_SUPPORTED", fitError));
+            size = fitted;
+            appliedSizeAspect = LiteraryIllustrationChoices.AspectForSize(caps, size!);
 
             foreach (var index in pending)
             {
@@ -226,8 +296,8 @@ public class LiteraryImageOpenApiController(
                     AppKey = AppKey,
                     AppCallerCode = appCallerCode,
                     PlatformId = "logical-model",
-                    ModelId = selectedModel.LogicalModelPublicId,
-                    LogicalModelPublicId = selectedModel.LogicalModelPublicId,
+                    ModelId = modelId,
+                    LogicalModelPublicId = modelId,
                     ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.LogicalModel,
                     InitImageAssetSha256 = style.Sha,
                     WatermarkConfigId = watermark!.WatermarkId,
@@ -235,6 +305,7 @@ public class LiteraryImageOpenApiController(
                     Status = ImageGenRunStatus.ScopedQueued, DeploymentSlug = DeploymentScope.Current,
                     IdempotencyKey = idem, Total = 1, MaxConcurrency = 1,
                     Size = size!, ResponseFormat = "b64_json",
+                    LiterarySizeAspectRatio = appliedSizeAspect,
                     Items = new() { new() { Prompt = effectivePrompt, DisplayPrompt = prompt, Count = 1, Size = size } },
                     CreatedAt = DateTime.UtcNow,
                 };
@@ -254,6 +325,7 @@ public class LiteraryImageOpenApiController(
                     if (existing == null) throw;
                     if (IsReplayConflict(existing, workspaceId, index, req.WorkflowVersion.Value, explicitSizeValue, explicitStyleValue, explicitWatermarkValue))
                         return Conflict(ApiResponse<object>.Fail("IDEMPOTENCY_CONFLICT", "这个 clientRequestId 已用于另一项配图请求，请为新的请求使用新的值。"));
+                    await SyncPlanFromRunAsync(existing);
                     results.Add(new { markerIndex = index, runId = existing.Id, deduplicated = true });
                     continue;
                 }
@@ -263,6 +335,7 @@ public class LiteraryImageOpenApiController(
                     await CompensateMissingRunAsync(run);
                     throw;
                 }
+                await SyncPlanFromRunAsync(run);
                 results.Add(new { markerIndex = index, runId = run.Id, status = "queued" });
                 newlyQueued++;
             }
@@ -274,7 +347,8 @@ public class LiteraryImageOpenApiController(
             // 只写明确指定的那几项：整份写回读到的旧快照，会把入队期间网页顶栏刚改的另一项改回去。
             // 不动 UpdatedAt：它是正文的版本令牌，记住偏好不该让智能体手里的令牌失效。
             await LiteraryIllustrationChoices.RememberExplicitAsync(db, workspaceId, userId,
-                explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null);
+                explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null,
+                explicitSize ? appliedSizeAspect : null);
         }
 
         const string hint = "图在服务端生成，关掉客户端也不会断。每 5-10 秒调用一次 map_literary_get_workspace 看 illustrations[].status（done 即有 url），全部 done 后用 format=illustrated 取图文稿；也可用 map_literary_get_image_run 查单张。";
@@ -285,6 +359,8 @@ public class LiteraryImageOpenApiController(
             style = new { styleId = style.StyleId, name = style.Label, source = styleSource },
             watermark = new { watermarkId = watermark.WatermarkId, name = watermark.Label, source = watermarkSource },
             size, sizeSource,
+            // 这次新入队的任务用的模型；全是重放时为空（原任务各自钉着当时的模型）
+            model = usedModel,
             notes,
         };
         // queuedImages：这次真正新入队的张数。网关按请求张数预占日额度，按它把重放与没排上的退回去
@@ -310,10 +386,11 @@ public class LiteraryImageOpenApiController(
     /// 明确指定的项此刻解析不出（重试前被删了）时同样不比，原任务就是那次请求的结果。
     /// </summary>
     private static bool IsReplayConflict(ImageGenRun previous, string workspaceId, int markerIndex, int version,
-        string? explicitSize, StyleChoice? explicitStyle, WatermarkChoice? explicitWatermark)
+        LiteraryIllustrationChoices.SizeRequest? explicitSize, StyleChoice? explicitStyle, WatermarkChoice? explicitWatermark)
         => previous.WorkspaceId != workspaceId || previous.ArticleMarkerIndex != markerIndex
            || previous.ArticleWorkflowVersion != version
-           || (explicitSize != null && previous.Size != null && previous.Size != explicitSize)
+           // 比尺寸意图而不是落到的像素：同一个「16:9」在不同模型上像素不同，但仍是同一件事
+           || (explicitSize != null && previous.Size != null && !LiteraryIllustrationChoices.SameIntent(previous.Size, explicitSize, previous.LiterarySizeAspectRatio))
            || (explicitWatermark != null && previous.WatermarkConfigId != null && previous.WatermarkConfigId != explicitWatermark.WatermarkId)
            || (explicitStyle != null && !string.Equals(previous.InitImageAssetSha256, explicitStyle.Sha, StringComparison.Ordinal));
 
@@ -326,6 +403,13 @@ public class LiteraryImageOpenApiController(
                 filter.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == run.ArticleMarkerIndex)),
             Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].runId", run.Id)
                 .Set("articleWorkflow.markers.$[target].status", "running")
+                // 占位阶段保留原尺寸，实际入库的任务随后只同步尺寸，不覆盖后来改过的描述。
+                .Set("articleWorkflow.markers.$[target].planItem", new ArticleIllustrationPlanItem
+                {
+                    Prompt = run.Items[0].DisplayPrompt ?? run.Items[0].Prompt, Count = 1,
+                    Size = ws.ArticleWorkflow!.Markers.First(m => m.Index == run.ArticleMarkerIndex).PlanItem?.Size
+                        ?? LiteraryIllustrationChoices.DefaultSize,
+                })
                 .Set("articleWorkflow.markers.$[target].errorMessage", (string?)null)
                 .Set("articleWorkflow.updatedAt", DateTime.UtcNow),
             new UpdateOptions { ArrayFilters = new[]
@@ -343,6 +427,19 @@ public class LiteraryImageOpenApiController(
             } }, CancellationToken.None);
         return result.MatchedCount != 0;
     }
+
+    internal Task SyncPlanFromRunAsync(ImageGenRun run)
+        => db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == run.WorkspaceId && x.OwnerUserId == run.OwnerAdminId
+                && x.ArticleWorkflow!.Version == run.ArticleWorkflowVersion,
+            Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].planItem.size", run.Size),
+            new UpdateOptions { ArrayFilters = new[]
+            {
+                new BsonDocumentArrayFilterDefinition<BsonDocument>(new BsonDocument
+                {
+                    { "target.index", run.ArticleMarkerIndex!.Value }, { "target.runId", run.Id },
+                }),
+            } }, CancellationToken.None);
 
     internal async Task CompensateMissingRunAsync(ImageGenRun run)
     {

@@ -369,6 +369,40 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(old, native.ToJsonString());
     }
 
+    [Fact]
+    public void DirectGatewayClient_PreservesFrozenModelPoolAndPinnedSelections()
+    {
+        var pooled = new DesignArtifactRun
+        {
+            LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+            {
+                ModelPoolId = "pool-chat-premium",
+                Model = "default-chat-curated",
+            },
+        };
+        var poolOnly = new DesignArtifactRun
+        {
+            LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+            {
+                ModelPoolId = "pool-chat-premium",
+            },
+        };
+        var pinned = new DesignArtifactRun
+        {
+            LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+            {
+                PinnedPlatformId = "platform-apiyi",
+                PinnedModelId = "gpt-5.6-sol",
+            },
+        };
+        var configuration = new ConfigurationBuilder().Build();
+
+        Assert.Equal("default-chat-curated", DesignArtifactModelSelection.ForRun(pooled, configuration).ForDirectGatewayClient());
+        Assert.Equal("pool-chat-premium", DesignArtifactModelSelection.ForRun(poolOnly, configuration).ForDirectGatewayClient());
+        Assert.Equal("gpt-5.6-sol", DesignArtifactModelSelection.ForRun(pinned, configuration).ForDirectGatewayClient());
+        Assert.Throws<InvalidOperationException>(() => DesignArtifactModelSelection.ForRun(pooled, configuration).ForMapClient());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

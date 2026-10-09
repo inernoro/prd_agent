@@ -72,6 +72,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     fetchImpl: overrides.fetchImpl,
     pollIntervalMs: overrides.pollIntervalMs,
     relayPort: config.egressPort,
+    llmgwBaseUrl: config.llmgwBaseUrl,
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     startRelay: overrides.startRelay,
@@ -89,6 +90,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
   });
   const server = createServer({
     apiKey: config.apiKey,
+    llmgwBaseUrl: config.llmgwBaseUrl,
     apiKeyConfigured: config.apiKey.length > 0,
     selfCheck,
     lifecycle,

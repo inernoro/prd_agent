@@ -28,6 +28,9 @@ import {
   GH_SESSION_COOKIE,
 } from './auth.js';
 import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import type { StateService } from '../services/state.js';
+import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
+  markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 
 export interface LegacyLocalLoginResult {
   user: PublicCdsUser;
@@ -36,6 +39,8 @@ export interface LegacyLocalLoginResult {
 
 export interface AuthLocalRouterDeps {
   authService: AuthService;
+  /** Production servers synchronize linked machine credentials with account status. */
+  stateService?: StateService;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
   /**
@@ -323,6 +328,8 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     if (!me) return;
     const targetId = req.params.id;
     const { status, newPassword } = req.body || {};
+    let finishUpdate: FinishHumanAccessUpdate | undefined;
+    let linkedStatusFailed = false;
     try {
       let result: CdsUser | null = await authService.findUserById(targetId);
       if (!result) {
@@ -350,7 +357,55 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
           res.status(400).json({ error: '不能禁用自己的账号' });
           return;
         }
-        result = await authService.setUserStatus(targetId, status);
+        const state = deps.stateService;
+        const principalId = humanPrincipalId(targetId);
+        if (state) {
+          finishUpdate = beginHumanProjectGrantUpdate(state, principalId, 'disabled');
+          if (!finishUpdate) {
+            res.status(409).json({ error: '此账号的访问状态正在保存或恢复，请稍后刷新并重试。' }); return;
+          }
+        }
+        let writing: Promise<void> | undefined;
+        try {
+          // Disable the credential side durably before disabling the account.
+          // Enable the account first; the shared gate blocks credentials until
+          // their active state is durable. No cross-store atomicity is assumed.
+          if (state?.getPrincipal(principalId) && status === 'disabled') {
+            state.setPrincipalStatus(principalId, 'disabled', me.username || me.githubLogin);
+            writing = state.flush();
+            await boundedHumanAccessFlush(writing);
+          }
+          result = await authService.setUserStatus(targetId, status);
+          if (state?.getPrincipal(principalId) && status === 'active') {
+            state.setPrincipalStatus(principalId, 'active', me.username || me.githubLogin);
+            writing = state.flush();
+            await boundedHumanAccessFlush(writing);
+          }
+        } catch (error) {
+          if (state?.getPrincipal(principalId)) {
+            linkedStatusFailed = true;
+            // On either store failure, retain a disabled credential side, not
+            // an optimistic enable. Serialize compensation after a late write.
+            try { state.setPrincipalStatus(principalId, 'disabled', me.username || me.githubLogin); }
+            catch { /* Mutation precedes save; retry durable compensation below. */ }
+            const restored = (writing || Promise.resolve()).catch(() => {}).then(async () => {
+              state.save(); await state.flush();
+            });
+            try { await boundedHumanAccessFlush(restored); } catch {
+              markHumanProjectGrantRecovery(state, principalId);
+              const release = finishUpdate!;
+              finishUpdate = undefined;
+              reconcileHumanAccessRestore(state, restored, release);
+            }
+          }
+          throw error;
+        }
+        const cleared = await finishUpdate?.();
+        finishUpdate = undefined;
+        if (cleared === false) {
+          linkedStatusFailed = true;
+          throw new Error('account access journal cleanup pending');
+        }
         await authService.recordActivity({
           userId: me.id,
           userLogin: me.username || me.githubLogin,
@@ -364,13 +419,21 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       const fresh = (await authService.findUserById(targetId)) ?? result;
       res.json({ user: fresh ? toPublicUser(fresh) : null });
     } catch (err) {
+      if (finishUpdate) {
+        if (!await finishUpdate()) linkedStatusFailed = true;
+        finishUpdate = undefined;
+      }
       if (err instanceof LocalAuthError) {
         res.status(localErrStatus(err)).json({ error: err.message, code: err.code });
         return;
       }
       // eslint-disable-next-line no-console
       console.error('[auth-local] patch-user failed:', err);
-      res.status(500).json({ error: '更新用户失败' });
+      res.status(500).json({ error: linkedStatusFailed
+        ? '账号更新未能完整保存；关联机器凭据已暂停，请恢复存储后刷新账号状态并重试。'
+        : '更新用户失败' });
+    } finally {
+      await finishUpdate?.();
     }
   });
 

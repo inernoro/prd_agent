@@ -152,6 +152,7 @@ type CapabilitySeed = readonly [
 const CDS_AGENT_CAPABILITY_SEEDS = [
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
+  ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
   ['bootstrap', '项目初始化与技能分发', 'bootstrap.ts', 'system', 'public', 'read-only', 'direct', 'cds', '', '匿名只读：发引导脚本与代理 MAP 技能包，不签发凭据也不碰项目数据'],
@@ -248,7 +249,7 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
 
 export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, readonly string[]> = {
   'agent-access': ['access-requests', 'projects', 'operator-console'],
-  auth: ['auth-local', 'auth-session', 'ticket-sso'],
+  auth: ['auth-local', 'auth-session', 'ticket-sso', 'user-project-access'],
   github: ['github-oauth', 'github-webhook'],
   projects: ['projects', 'managed-projects', 'workspaces'],
   'system-health': ['server-control-plane', 'cds-system-topology', 'docker-network-health', 'cluster', 'executor-scheduler'],
