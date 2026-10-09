@@ -1128,6 +1128,10 @@ describe('human project grants through the production server', () => {
     expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+    // The 20ms timeout above exists only to force the compensation path. Restore a
+    // production-like budget before asserting recovery so full-suite CPU pressure
+    // cannot turn the final durability write into a second synthetic timeout.
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);
   });
 
