@@ -864,11 +864,11 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
-function runPlaywright(environment, values, runDir, grep = '', visualCapture = null) {
+function runPlaywright(environment, values, runDir, grep = '', visualCapture = null, artifactStem = environment) {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
-  const resultPath = resolve(runDir, `${environment}-results.json`);
-  const htmlPath = resolve(runDir, `${environment}-playwright-report`);
-  const testResultPath = resolve(runDir, `${environment}-test-results`);
+  const resultPath = resolve(runDir, `${artifactStem}-results.json`);
+  const htmlPath = resolve(runDir, `${artifactStem}-playwright-report`);
+  const testResultPath = resolve(runDir, `${artifactStem}-test-results`);
   // 同一 runId 恢复执行时不得保留旧版 HTML/trace，其中可能包含未脱敏网络头。
   rmSync(htmlPath, { recursive: true, force: true });
   const env = {
@@ -1517,7 +1517,7 @@ function readLooseArg(argv, name, fallback = '') {
   return value && !value.startsWith('--') ? value : fallback;
 }
 
-export function buildUnhandledFailureSummary({ runId, selected, reason, reportUrl = '' }) {
+export function buildUnhandledFailureSummary({ runId, selected, reason, reportUrl = '', productionBaseline = null }) {
   return {
     runId,
     verdict: 'fail',
@@ -1531,6 +1531,40 @@ export function buildUnhandledFailureSummary({ runId, selected, reason, reportUr
       ? { status: 'provided', reportUrl }
       : { status: 'unavailable', reportUrl: '', reason: '执行链异常发生在在线报告归档完成之前' },
     notification: { status: 'pending' },
+    ...(productionBaseline ? { productionBaseline } : {}),
+  };
+}
+
+export function buildProductionBaselineCheckpoint({ runId, commit, execution, missing = [] }) {
+  if (missing.length > 0) {
+    return {
+      runId,
+      commit,
+      checkedAt: new Date().toISOString(),
+      status: 'blocked',
+      caseId: 'CORE-001',
+      missing,
+      conclusion: '正式环境基础可用性未执行，缺少只读基线配置。',
+    };
+  }
+  const rows = execution?.resultPath
+    ? collectPlaywrightCases(readJson(execution.resultPath), 'production')
+    : [];
+  const coreRows = rows.filter((row) => row.caseId === 'CORE-001');
+  const passed = execution?.status === 0
+    && coreRows.length > 0
+    && coreRows.every((row) => row.status === 'pass');
+  return {
+    runId,
+    commit,
+    checkedAt: new Date().toISOString(),
+    status: passed ? 'pass' : 'fail',
+    caseId: 'CORE-001',
+    execution: execution ? buildExecutionRecord('production', execution) : null,
+    rows: coreRows,
+    conclusion: passed
+      ? '正式环境首页、入口资源与根页面渲染可用。'
+      : '正式环境基础可用性未通过；该结论独立于 CDS 状态。',
   };
 }
 
@@ -1546,13 +1580,6 @@ export async function deliverUnhandledFailure(argv, error) {
       : ['cds', 'production'];
   const reason = error instanceof Error ? error.message : '未知执行异常';
   const providedReportUrl = '';
-  const summaryDocument = buildUnhandledFailureSummary({
-    runId,
-    selected,
-    reason,
-    reportUrl: providedReportUrl,
-  });
-
   try {
     mkdirSync(runDir, { recursive: true });
   } catch {
@@ -1560,6 +1587,14 @@ export async function deliverUnhandledFailure(argv, error) {
     runDir = resolve(outputRoot, runId);
     mkdirSync(runDir, { recursive: true });
   }
+  const productionBaseline = readJson(resolve(runDir, 'production-baseline.json'));
+  const summaryDocument = buildUnhandledFailureSummary({
+    runId,
+    selected,
+    reason,
+    reportUrl: providedReportUrl,
+    productionBaseline,
+  });
   const summaryPath = resolve(runDir, 'summary.json');
   if (argv.includes('--dry-run')) {
     summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
@@ -1718,7 +1753,10 @@ async function main() {
   );
   const preflightBlockers = [];
   const cdsAddressBlockers = [];
-  if (selected.includes('cds')) {
+  let cdsAddressResolved = false;
+  const resolveAuthoritativeCdsAddresses = () => {
+    if (cdsAddressResolved || !selected.includes('cds')) return;
+    cdsAddressResolved = true;
     try {
       const cdsUrls = resolveCdsPreviewUrls(
         values.STABLE_SMOKE_CDS_BASE_URL || '',
@@ -1730,6 +1768,13 @@ async function main() {
       cdsAddressBlockers.push(error instanceof Error ? error.message : 'CDS 预览地址读取失败');
       preflightBlockers.push(...cdsAddressBlockers);
     }
+  };
+  const productionBaselineFirst = selected.includes('cds')
+    && selected.includes('production')
+    && !options.has('--preflight')
+    && !options.has('--dry-run');
+  if (!productionBaselineFirst) {
+    resolveAuthoritativeCdsAddresses();
   }
   for (const environment of selected) {
     const missing = validateSelectedEnvironmentConfig(environment, selected, values);
@@ -1783,14 +1828,51 @@ async function main() {
   }
 
   try {
+    const commitResult = command('git', ['rev-parse', 'HEAD']);
+    values.STABLE_SMOKE_COMMIT = String(commitResult.stdout || '').trim();
+    if (commitResult.status !== 0 || !values.STABLE_SMOKE_COMMIT) {
+      throw new Error('无法读取待验收提交，拒绝生成无版本绑定的正式环境基线');
+    }
+
+    let productionBaseline = readJson(resolve(runDir, 'production-baseline.json'));
+    if (selected.includes('cds') && selected.includes('production') && !options.has('--dry-run')) {
+      const missing = validateProductionReadOnlyConfig(values);
+      if (missing.length > 0) {
+        productionBaseline = buildProductionBaselineCheckpoint({
+          runId,
+          commit: values.STABLE_SMOKE_COMMIT,
+          execution: null,
+          missing,
+        });
+      } else {
+        const execution = runPlaywright(
+          'production',
+          values,
+          runDir,
+          productionReadOnlyGrep,
+          null,
+          'production-baseline',
+        );
+        productionBaseline = buildProductionBaselineCheckpoint({
+          runId,
+          commit: values.STABLE_SMOKE_COMMIT,
+          execution,
+        });
+      }
+      writeFileSync(
+        resolve(runDir, 'production-baseline.json'),
+        `${JSON.stringify(productionBaseline, null, 2)}\n`,
+        'utf8',
+      );
+    }
+
+    resolveAuthoritativeCdsAddresses();
     if (selected.includes('cds')) requireAuthoritativeCdsAddress(cdsAddressBlockers);
     if (selected.includes('cds')
       && !options.has('--dry-run')
       && cdsAddressBlockers.length === 0
       && validateEnvironmentConfig('cds', values).length === 0) {
-      const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const expectedCommit = String(commitResult.stdout || '').trim();
-      if (commitResult.status !== 0 || !expectedCommit) throw new Error('无法读取待验收提交，拒绝开测');
+      const expectedCommit = values.STABLE_SMOKE_COMMIT;
       const readiness = await waitForCdsDeployment(expectedCommit);
       writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
         checkedAt: new Date().toISOString(),
@@ -1807,8 +1889,10 @@ async function main() {
     ]);
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
     const plan = readJson(planPath);
-    values.STABLE_SMOKE_COMMIT = String(plan?.commit || '').trim();
-    if (!values.STABLE_SMOKE_COMMIT) throw new Error('稳定冒烟计划缺少待验收提交，拒绝生成无版本绑定的视觉证据');
+    const plannedCommit = String(plan?.commit || '').trim();
+    if (!plannedCommit || plannedCommit !== values.STABLE_SMOKE_COMMIT) {
+      throw new Error('稳定冒烟计划与正式环境基线提交不一致，拒绝混用不同版本证据');
+    }
 
     const executions = [];
     const grep = options.read('--grep');
@@ -2039,6 +2123,7 @@ async function main() {
               runId,
               verdict: 'awaiting-production-visual',
               commit: values.STABLE_SMOKE_COMMIT,
+              productionBaseline,
               executions,
               productionSafetyGate,
               cdsVisual: { verdict: cdsVisualGate.result.verdict, manifestPath: resolve(requestedVisualManifest) },
@@ -2179,6 +2264,7 @@ async function main() {
       catalogVersion: plan?.catalogVersion,
       commit: plan?.commit,
       envFileLoaded: local.loaded,
+      productionBaseline,
       executions,
       productionSafetyGate,
       supplementalEvidenceRows: gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),

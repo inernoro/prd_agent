@@ -743,7 +743,7 @@ function strictFunctionalStatus(row, headers) {
   return '未执行';
 }
 
-export function synthesizeReviewerOverview(functionalModuleContent, gateModuleContent) {
+export function synthesizeReviewerOverview(functionalModuleContent, gateModuleContent, executionSummary = null) {
   const functionalTable = parseMarkdownTable(functionalModuleContent);
   const gateTable = parseMarkdownTable(gateModuleContent);
   if (!gateTable) return '';
@@ -759,16 +759,30 @@ export function synthesizeReviewerOverview(functionalModuleContent, gateModuleCo
     ...gateRows.map((gateRow) => {
       const module = gateRow['模块'];
       const functionalRow = functionalRows.get(module);
-      const functionalStatus = functionalRow && functionalTable
+      const productionCoverage = executionSummary?.environmentCoverage?.find?.((item) => item.environment === 'production');
+      const productionReadOnly = module === '正式环境只读健康检查'
+        && gateRow['视觉结论'] === '不适用'
+        && executionSummary?.productionSafetyGate?.restricted === true
+        && productionCoverage;
+      const functionalStatus = productionReadOnly
+        ? productionCoverage.failed > 0
+          ? '不通过'
+          : productionCoverage.notRun > 0
+            ? '部分通过'
+            : productionCoverage.passed > 0 ? '通过' : '未执行'
+        : functionalRow && functionalTable
         ? strictFunctionalStatus(functionalRow, functionalTable.headers)
         : '未执行';
       const rawVisualStatus = gateRow['视觉结论'] || '未执行';
       const visualStatus = rawVisualStatus === '需干预' ? '部分通过' : rawVisualStatus;
-      const statuses = [functionalStatus, visualStatus];
+      const statuses = productionReadOnly ? [functionalStatus] : [functionalStatus, visualStatus];
       const severity = statuses.includes('不通过') ? 'P1' : statuses.some((status) => status !== '通过') ? 'P2' : '无';
       const intervention = severity === '无' ? '否' : '是';
       const screenshots = gateRow['查看全部截图'] || '[查看](#逐张视觉证据账本)';
       const method = gateRow['测试方法'] || '[查看](#视觉测试方法)';
+      if (productionReadOnly) {
+        return `| ${module} | ${gateRow['真实面包屑']} | ${functionalStatus} | ${functionalStatus} | ${visualStatus} | ${severity} | ${intervention} | 不适用 | 不适用 | 不适用 | [查看](#method-core-001) |`;
+      }
       return `| ${module} | ${gateRow['真实面包屑']} | ${functionalStatus} | ${functionalStatus} | ${visualStatus} | ${severity} | ${intervention} | [查看](#逐模块视觉取证任务) | ${screenshots} | [查看](#视觉异常证据索引) | ${method} |`;
     }),
     '',
@@ -821,7 +835,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     : executionSummary;
   const reviewerOverview = visualOverview
     ? synchronizeVisualOverview(visualOverview.content, visualGateModules?.content)
-    : synthesizeReviewerOverview(functionalModules?.content || '', visualGateModules?.content || '');
+    : synthesizeReviewerOverview(functionalModules?.content || '', visualGateModules?.content || '', effectiveExecutionSummary);
   const authoritativeCounts = parseFunctionalExecutionCounts(functional.lead, effectiveExecutionSummary);
   if (effectiveExecutionSummary && authoritativeCounts && !authoritativeCounts.balanced) {
     throw new Error('执行汇总统计不守恒：通过 + 失败 + 未执行必须等于计划测试');
@@ -860,7 +874,10 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     .replace(/验收主管报告/g, '验收报告')
     .replace(/主管报告/g, '验收报告')
     .replace(/主管结论/g, '验收结论');
-  const output = [synchronizedLead, '', `Verdict: ${inferredVerdict}`, ''];
+  const runIdentity = effectiveExecutionSummary?.runId
+    ? `运行标识：${effectiveExecutionSummary.runId}；固定提交：${effectiveExecutionSummary.commit || '未记录'}。`
+    : '';
+  const output = [synchronizedLead, '', ...(runIdentity ? [runIdentity, ''] : []), `Verdict: ${inferredVerdict}`, ''];
   const businessDecisionPage = renderBusinessDecisionPage(
     synchronizedLead,
     functionalFailures?.content || '',
@@ -928,7 +945,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
   if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
   if (!visualGateMarkdown) output.push(...visualSteps.flatMap((item) => [item.content, '']));
-  return ensureSupervisorNavigationTargets(output.join('\n')
+  let rendered = output.join('\n')
     .replace(/https:\/\/example\.invalid\/technical/g, technicalUrl || '#技术附录尚未归档')
     .replace(/\bcaseId\b/g, '验收项编号')
     .replace(/\bflaky\b/gi, '重试后通过')
@@ -949,7 +966,15 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     .replace(/验收项\s+的/g, '验收项的')
     .replace(/\x1b\[[0-9;]*m/g, '')
     .replace(/\n{3,}/g, '\n\n')
-    .trim() + '\n');
+    .trim() + '\n';
+  const productionReadOnly = effectiveExecutionSummary?.productionSafetyGate?.restricted === true
+    && effectiveExecutionSummary?.environmentCoverage?.length === 1
+    && effectiveExecutionSummary.environmentCoverage[0]?.environment === 'production'
+    && effectiveExecutionSummary?.coverage?.visual?.verdict === '不适用';
+  if (productionReadOnly) {
+    rendered = rendered.replace(/\[([^\]]+)\]\(#[^)]+\)/g, '$1');
+  }
+  return ensureSupervisorNavigationTargets(rendered);
 }
 
 async function main() {

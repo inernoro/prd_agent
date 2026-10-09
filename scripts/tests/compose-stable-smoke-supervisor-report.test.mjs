@@ -6,6 +6,7 @@ import {
   parseFunctionalExecutionCounts,
   renderBusinessDecisionPage,
   renderHumanReadableAcceptanceDesign,
+  synthesizeReviewerOverview,
 } from '../compose-stable-smoke-supervisor-report.mjs';
 
 test('失败详情包含表格分隔符时仍保持单元格边界', () => {
@@ -482,6 +483,62 @@ test('主管报告为只读 Markdown 中的内部导航补齐真实锚点', () =
     assert.match(report, new RegExp(`<a id="${target}"></a>`));
   }
   assert.match(report, /本轮没有可列出的视觉异常证据/);
+});
+
+test('正式环境只读报告在正文固化运行身份并移除无必要的内部跳转', () => {
+  const functional = `# 核心业务稳定验收主管报告 · baseline-run
+
+> 主管结论：通过。共 1 项，1 项通过、0 项不通过、0 项未执行。
+
+## 业务功能线与面包屑
+
+| 模块 | 真实业务路径 | CDS | 正式环境 | 是否需干预 |
+|---|---|---|---|---|
+| 身份与访问 | 首页与静态资源 | 未选择 | 通过（1 通过，0 失败，0 未执行） | 否 |
+
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 结果 |
+|---|---|---|---|
+| 正式环境 | 全部模块 | 无 | 通过 |
+
+## 逐项验收账本
+
+| 环境 | 模块 | 验收项 | 结果 | 查看方法 |
+|---|---|---|---|---|
+| 正式环境 | 身份与访问 | 首页与静态资源 | 通过 | [查看](#method-core-001) |
+
+## 关联测试方法
+
+<a id="method-core-001"></a>
+### 首页与静态资源
+`;
+  const gate = `# 视觉门禁
+
+结论：不适用
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 状态结果 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---|---|---|---|---|
+| 正式环境只读健康检查 | 不适用 | 登录页 → 系统健康检查 | 0 | 0/0 | 无视觉验收位 | 0/0 | 无 | 不适用 | 不适用 |
+`;
+  const summary = {
+    runId: 'baseline-run',
+    commit: 'abc123',
+    productionSafetyGate: { restricted: true, reasons: ['正式环境只读基线'] },
+    environmentCoverage: [{ environment: 'production', planned: 1, completed: 1, passed: 1, failed: 0, notRun: 0 }],
+    coverage: { total: 1, passed: 1, failed: 0, notRun: 0, visual: { verdict: '不适用' } },
+  };
+  const report = composeSupervisorReport(functional, gate, gate, '', '', summary);
+  assert.match(report, /运行标识：baseline-run；固定提交：abc123/);
+  assert.doesNotMatch(report, /\]\(#[^)]+\)/);
+  const overview = synthesizeReviewerOverview(
+    functional.split('## 未通过与未执行逐项清单')[0],
+    gate.split('## 模块覆盖')[1],
+    summary,
+  );
+  assert.match(overview, /正式环境只读健康检查[^\n]*\| 通过 \| 通过 \| 不适用 \| 无 \| 否 \|/);
 });
 
 test('视觉门禁报告会合成满足归档准入字段的模块总览', () => {

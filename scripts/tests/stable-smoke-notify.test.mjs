@@ -83,7 +83,7 @@ test('签名通知使用固定用户名且接受服务端解析后的真实用�
     ...base,
     accessKey: '',
     targetUserId: '',
-    targetUsername: 'admin',
+    targetUsername: 'inernoro',
     signingKeyId: 'prod-rsa-2026-08',
     signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }),
   }, async (url, init) => {
@@ -98,7 +98,7 @@ test('签名通知使用固定用户名且接受服务端解析后的真实用�
   });
 
   assert.equal(result.targetUserId, 'admin-user-id');
-  assert.equal(captured.body.targetUsername, 'admin');
+  assert.equal(captured.body.targetUsername, 'inernoro');
   assert.equal(captured.body.targetUserId, undefined);
   assert.equal(captured.init.headers['X-Stable-Smoke-Key-Id'], 'prod-rsa-2026-08');
   assert.equal(captured.init.headers['X-AI-Access-Key'], undefined);

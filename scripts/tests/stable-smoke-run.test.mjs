@@ -14,6 +14,7 @@ import {
   buildAffectedNotificationTargets,
   buildStableSmokeArchiveCommand,
   buildLockedRunSummary,
+  buildProductionBaselineCheckpoint,
   buildUnhandledFailureSummary,
   canReuseGatewayPersistenceProbe,
   canReuseVisualPlan,
@@ -1076,6 +1077,54 @@ test('环境模板账号与凭据注册表保持一致', () => {
   assert.match(template, new RegExp(`STABLE_SMOKE_PROD_USER=${values.STABLE_SMOKE_PROD_USER}\\b`));
   assert.match(template, /SYNTHETIC_LOGIN_ALLOWED_USERS=stsmk_cds,stsmk_prod\b/);
   assert.doesNotMatch(template, /stsmk_(?:cds|prod)_admin/);
+  assert.equal(values.STABLE_SMOKE_NOTIFY_TARGET_USERNAME, 'inernoro');
+});
+
+test('48 小时合同先保留正式只读基线再用 CDS 解锁正式写入', () => {
+  const contract = readFileSync('.claude/skills/stable-smoke/SKILL.md', 'utf8');
+  assert.match(contract, /正式环境 `CORE-001` 只读基线先行并独立记账/);
+  assert.match(contract, /CDS 门禁通过后，再运行正式环境限额写入安全矩阵/);
+  assert.match(contract, /不得因 CDS 控制面阻塞而把正式环境标成未测/);
+
+  const runner = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  const main = runner.slice(runner.indexOf('async function main()'));
+  const baselineIndex = main.indexOf("'production-baseline'");
+  const cdsAddressIndex = main.indexOf('resolveAuthoritativeCdsAddresses();', baselineIndex);
+  const cdsWaitIndex = main.indexOf('await waitForCdsDeployment(expectedCommit)');
+  const planIndex = main.indexOf("'scripts/stable-smoke-plan.mjs'", baselineIndex);
+  assert.ok(baselineIndex > 0);
+  assert.ok(cdsWaitIndex > baselineIndex, '正式环境只读基线必须在 CDS 部署等待之前执行');
+  assert.ok(cdsAddressIndex > baselineIndex, '正式环境只读基线必须在 CDS 权威地址读取之前执行');
+  assert.ok(planIndex > baselineIndex, '正式环境只读基线不得被完整矩阵计划生成阻断');
+});
+
+test('正式环境基线检查点可被异常摘要保留', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-production-baseline-'));
+  try {
+    const resultPath = resolve(directory, 'production-baseline-results.json');
+    writeFileSync(resultPath, JSON.stringify({
+      suites: [{ specs: [{ title: '[CORE-001] 首页可用', tests: [{ results: [{ status: 'passed', duration: 12 }] }] }] }],
+    }));
+    const checkpoint = buildProductionBaselineCheckpoint({
+      runId: 'stsmk-baseline-test',
+      commit: 'abc123',
+      execution: { status: 0, resultPath, htmlPath: '', testResultPath: '' },
+    });
+    assert.equal(checkpoint.status, 'pass');
+    assert.equal(checkpoint.rows[0].caseId, 'CORE-001');
+
+    const summary = buildUnhandledFailureSummary({
+      runId: 'stsmk-baseline-test',
+      selected: ['cds', 'production'],
+      reason: 'CDS 控制面超时',
+      productionBaseline: checkpoint,
+    });
+    assert.equal(summary.verdict, 'fail');
+    assert.equal(summary.productionBaseline.status, 'pass');
+    assert.match(summary.productionBaseline.conclusion, /正式环境/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('双环境凭据缺失时前置检查明确阻断', () => {
