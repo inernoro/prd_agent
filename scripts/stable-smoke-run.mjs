@@ -444,40 +444,51 @@ function publicAssetUrls(source, baseUrl) {
   return [...new Set([...matches].map((match) => new URL(match[1], baseUrl).href))];
 }
 
+async function mapWithConcurrency(values, limit, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }));
+  return results;
+}
+
+async function fetchPublicAsset(url, fetchFn, { readBody = false } = {}) {
+  let response;
+  try {
+    response = await fetchFn(url, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+  } catch (error) {
+    throw new Error(`CDS 公网资源请求失败 ${url}：${error?.cause?.code || error?.message || '未知传输错误'}`);
+  }
+  if (!response.ok) throw new Error(`CDS 公网资源 ${url} 返回 HTTP ${response.status}`);
+  if (readBody) return { response, body: await response.text() };
+  await response.body?.cancel().catch(() => undefined);
+  return { response, body: '' };
+}
+
 export async function probeCdsPublicEntry(baseUrl, fetchFn = globalThis.fetch) {
   const origin = withoutTrailingSlash(baseUrl);
   const cacheBust = `stable_smoke_readiness=${Date.now()}`;
   const entryUrls = ['/', '/document-store', '/web-pages'].map((path) => `${origin}${path}?${cacheBust}`);
-  const entryResponses = await Promise.all(entryUrls.map((url) => fetchFn(url, {
-    signal: AbortSignal.timeout(15_000),
-    headers: { 'Cache-Control': 'no-cache' },
-  })));
-  for (const response of entryResponses) {
-    if (!response.ok) throw new Error(`CDS_PUBLIC_HTTP_${response.status}`);
-  }
-  const entryBodies = await Promise.all(entryResponses.map((response) => response.text()));
+  const entryResults = await mapWithConcurrency(entryUrls, 3, (url) => fetchPublicAsset(url, fetchFn, { readBody: true }));
+  const entryBodies = entryResults.map((result) => result.body);
   const entryAssets = [...new Set(entryBodies.flatMap((body) => publicAssetUrls(body, origin)))];
   if (entryAssets.length === 0) throw new Error('CDS 公网入口没有可验证的静态资源');
 
-  const assetResponses = await Promise.all(entryAssets.map((url) => fetchFn(url, {
-    signal: AbortSignal.timeout(15_000),
-    headers: { 'Cache-Control': 'no-cache' },
-  })));
-  for (const response of assetResponses) {
-    if (!response.ok) throw new Error(`CDS_PUBLIC_ASSET_HTTP_${response.status}`);
-  }
-  const scriptBodies = await Promise.all(assetResponses.map(async (response, index) => (
-    entryAssets[index].endsWith('.js') ? response.text() : ''
-  )));
+  const assetResults = await mapWithConcurrency(entryAssets, 4, (url) => (
+    fetchPublicAsset(url, fetchFn, { readBody: url.endsWith('.js') })
+  ));
+  const scriptBodies = assetResults.map((result, index) => (entryAssets[index].endsWith('.js') ? result.body : ''));
   const lazyAssets = [...new Set(scriptBodies.flatMap((body) => publicAssetUrls(body, origin)))]
     .filter((url) => !entryAssets.includes(url));
-  const lazyResponses = await Promise.all(lazyAssets.map((url) => fetchFn(url, {
-    signal: AbortSignal.timeout(15_000),
-    headers: { 'Cache-Control': 'no-cache' },
-  })));
-  for (const response of lazyResponses) {
-    if (!response.ok) throw new Error(`CDS_PUBLIC_LAZY_ASSET_HTTP_${response.status}`);
-  }
+  await mapWithConcurrency(lazyAssets, 8, (url) => fetchPublicAsset(url, fetchFn));
   return { entries: entryUrls.length, assets: entryAssets.length + lazyAssets.length };
 }
 
