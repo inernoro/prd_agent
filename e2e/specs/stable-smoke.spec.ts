@@ -254,6 +254,7 @@ type ImageRunDetail = {
     total: number;
     done: number;
     failed: number;
+    expectedImageRefCount?: number | null;
     imageRefs?: Array<{
       refId: number;
       assetSha256: string;
@@ -513,6 +514,7 @@ type GatewayLogItem = {
   statusCode?: number | null;
   isFallback?: boolean | null;
   protocol?: string | null;
+  appCallerCode?: string | null;
 };
 
 type GatewayLogDetail = GatewayLogItem & {
@@ -3115,6 +3117,66 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[VIS-011][REG-image-reference-count-001] 参考图数量缺失或不一致时在调用上游前拒绝', { tag: '@cleanup' }, async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'reference-count-contract');
+    try {
+      const pools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }),
+      );
+      const pool = pools.find((item) => item.isDefault);
+      expect(pool, 'MAP 必须配置显式默认模型，不能用目录首项替代').toBeTruthy();
+
+      const requestRun = (suffix: string, expectedImageRefCount?: number) => page.request.post(
+        `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`,
+        {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}`,
+          },
+          data: {
+            prompt: '参考图契约前置校验，不应调用生成模型',
+            userMessageContent: '验证参考图数量契约',
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-target`,
+            platformId: 'logical-model',
+            modelId: pool!.code,
+            size: '1024x1024',
+            responseFormat: 'url',
+            ...(expectedImageRefCount === undefined ? {} : { expectedImageRefCount }),
+            imageRefs: [],
+            x: 0,
+            y: 0,
+            w: 1001,
+            h: 1001,
+          },
+        },
+      );
+
+      const missing = await requestRun('missing-count');
+      const missingBody = await missing.json() as ApiEnvelope<never>;
+      expect(missing.status()).toBe(400);
+      expect(missingBody.success).toBe(false);
+      expect(missingBody.error?.code).toBe('IMAGE_REF_COUNT_REQUIRED');
+      expectUserReadable(missingBody.error?.message || '');
+
+      const incomplete = await requestRun('incomplete-count', 1);
+      const incompleteBody = await incomplete.json() as ApiEnvelope<never>;
+      expect(incomplete.status()).toBe(400);
+      expect(incompleteBody.success).toBe(false);
+      expect(incompleteBody.error?.code).toBe('IMAGE_REF_INCOMPLETE');
+      expect(incompleteBody.error?.message || '').toContain('应有 1 张，实际收到 0 张');
+      expectUserReadable(incompleteBody.error?.message || '');
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reference-count-delete`,
+        },
+      });
+      await expectDeleteSucceeded(deleted, `删除参考图数量契约工作区 ${workspace.id} 失败`);
+    }
+  });
+
   test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
     const { baseUrl, headers } = await loginGateway(request);
 
@@ -3830,6 +3892,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1024x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 0,
           x: 0,
           y: 0,
           w: 1001,
@@ -4141,6 +4204,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-jpeg-target`,
             platformId: 'logical-model', modelId: logical!.publicId,
             size: '1024x1024', responseFormat: 'url',
+            expectedImageRefCount: 1,
             imageRefs: [{ refId: 1, assetSha256: asset.sha256, url: asset.url, label: 'JPEG 参考', role: 'target' }],
             x: 0, y: 0, w: 1001, h: 1001,
           },
@@ -4149,8 +4213,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = created.runId;
       const completed = await waitForImageRun(page, token, runId);
       await assertImageArtifact(page, completed.detail);
+      expect(completed.detail.run.expectedImageRefCount).toBe(1);
       const log = await waitForGatewayLog(request, `${runId}-0-0`);
       expect(log.logicalModelPublicId).toBe(logical!.publicId);
+      expect(log.appCallerCode).toBe('visual-agent.image.img2img::generation');
       expect(['openai', 'openai-compatible']).toContain(log.protocol);
       expect(log.isFallback, '格式错误不能靠切换供应商掩盖').not.toBe(true);
       const wire = JSON.parse(log.requestBodyRedacted || '{}') as {
@@ -4256,6 +4322,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size: '1024x1024',
             responseFormat: 'url',
+            expectedImageRefCount: imageRefs.length,
             imageRefs,
             x: 0,
             y: runIds.length * 1040,
@@ -4271,6 +4338,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
+        expect(log.appCallerCode).toBe('visual-agent.image.vision::generation');
         expect(
           ['openrouter-image', 'openai', 'openai-compatible'],
           '多图逻辑模型只能走保留参考图语义的图片协议',
@@ -4331,6 +4399,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const restoredTwo = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
       )).run;
+      expect(restoredTwo.expectedImageRefCount).toBe(2);
       expect(restoredTwo.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
@@ -4408,6 +4477,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
       const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
       expect(restoredRun.status).toBe('Completed');
+      expect(restoredRun.expectedImageRefCount).toBe(3);
       expect(restoredRun.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
@@ -4655,6 +4725,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size: '1024x1024',
             responseFormat: 'url',
+            expectedImageRefCount: 2,
             imageRefs: [
               { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
               { refId: 2, assetSha256: 'e'.repeat(64), url: '', label: '不可用参考图', role: 'style' },
@@ -4725,6 +4796,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1024x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 2,
           imageRefs: [
             { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
             { refId: 2, assetSha256: 'f'.repeat(64), url: '', label: '已损坏参考图', role: 'style' },

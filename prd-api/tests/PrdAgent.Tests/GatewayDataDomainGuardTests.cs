@@ -3023,6 +3023,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("IMAGE_REF_INCOMPLETE", referenceContract);
         Assert.Contains("IMAGE_REF_COUNT_REQUIRED", referenceContract);
         Assert.Contains("ImageReferenceContract.ValidateDeclared", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+        Assert.Contains("run.ExpectedImageRefCount", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs"));
         Assert.True(
             worker.IndexOf("ImageReferenceContract.Validate", StringComparison.Ordinal)
             < worker.IndexOf("ResolveModelGroupAsync", StringComparison.Ordinal),
