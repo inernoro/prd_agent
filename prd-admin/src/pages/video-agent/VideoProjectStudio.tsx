@@ -128,6 +128,31 @@ export const resolveAvailableVideoModel = (
   ? currentModel
   : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
 
+export const resolveVideoProjectSettings = (
+  project: VideoProject | null,
+  models: VideoModelOption[],
+) => {
+  const model = resolveAvailableVideoModel(project?.defaultVideoModel ?? '', models);
+  const option = models.find((item) => item.id === model);
+  const requestedAspectRatio = project?.defaultAspectRatio ?? '16:9';
+  const requestedResolution = project?.defaultResolution ?? '1080p';
+  const requestedDuration = project?.defaultDuration ?? 5;
+  const requestedAudio = project?.generateAudio ?? true;
+  return {
+    model,
+    aspectRatio: option?.aspectRatios.includes(requestedAspectRatio)
+      ? requestedAspectRatio
+      : option?.aspectRatios[0] ?? requestedAspectRatio,
+    resolution: option?.resolutions.includes(requestedResolution)
+      ? requestedResolution
+      : option?.resolutions[0] ?? requestedResolution,
+    duration: option?.durations.includes(requestedDuration)
+      ? requestedDuration
+      : option?.durations[0] ?? requestedDuration,
+    generateAudio: option ? resolveVideoAudioSetting(requestedAudio, option) : requestedAudio,
+  };
+};
+
 export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   projects,
   project,
@@ -167,32 +192,18 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const effectiveGenerateAudio = resolveVideoAudioSetting(generateAudio, selectedModel);
 
   useEffect(() => {
+    const settings = resolveVideoProjectSettings(project, models);
     setTitle(project?.title === '未命名视频' ? '' : project?.title ?? '');
     setSourceMarkdown(project?.sourceMarkdown ?? '');
     setStyleDescription(project?.styleDescription ?? '智能匹配');
-    setModel(project?.defaultVideoModel ?? '');
-    setAspectRatio(project?.defaultAspectRatio ?? '16:9');
-    setResolution(project?.defaultResolution ?? '1080p');
-    setDuration(project?.defaultDuration ?? 5);
-    setGenerateAudio(project?.generateAudio ?? true);
+    setModel(settings.model);
+    setAspectRatio(settings.aspectRatio);
+    setResolution(settings.resolution);
+    setDuration(settings.duration);
+    setGenerateAudio(settings.generateAudio);
     setAssets(project?.assets ?? []);
     setTimelineTracks(project?.timelineTracks?.length ? project.timelineTracks : createTimelineTracks());
-  }, [project]);
-
-  useEffect(() => {
-    // 函数式更新会承接同一轮 project hydration 已排队的 setModel。
-    // 若读取 render 闭包中的旧 model，会把项目保存值再次覆盖为目录第一项。
-    setModel((currentModel) => resolveAvailableVideoModel(currentModel, models));
-  }, [model, models]);
-
-  useEffect(() => {
-    const option = models.find((item) => item.id === model);
-    if (!option) return;
-    setAspectRatio((currentRatio) => option.aspectRatios.includes(currentRatio) ? currentRatio : option.aspectRatios[0] ?? '16:9');
-    setResolution((currentResolution) => option.resolutions.includes(currentResolution) ? currentResolution : option.resolutions[0] ?? '720p');
-    setDuration((currentDuration) => option.durations.includes(currentDuration) ? currentDuration : option.durations[0] ?? 5);
-    if (!option.supportsAudio) setGenerateAudio(false);
-  }, [model, models]);
+  }, [project, models]);
 
   const input = useMemo<VideoProjectInput>(() => ({
     title: title.trim() || undefined,

@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRunListItem, VideoModelOption, VideoProject } from '@/services/contracts/videoAgent';
-import { resolveAvailableVideoModel, resolveVideoAudioSetting, VideoProjectStudio } from './VideoProjectStudio';
+import {
+  resolveAvailableVideoModel,
+  resolveVideoAudioSetting,
+  resolveVideoProjectSettings,
+  VideoProjectStudio,
+} from './VideoProjectStudio';
 
 const renderStudio = (runs: VideoGenRunListItem[] = [], projects: VideoProject[] = []) => renderToStaticMarkup(
   <VideoProjectStudio
@@ -95,6 +100,66 @@ describe('VideoProjectStudio', () => {
 
     expect(resolveAvailableVideoModel('project-saved', models)).toBe('project-saved');
     expect(resolveAvailableVideoModel('removed-model', models)).toBe('catalog-first');
+  });
+
+  it('hydrates a switched project against its saved model instead of the previous model', () => {
+    const models = [
+      {
+        id: 'landscape-no-audio',
+        name: '横屏无音频模型',
+        healthStatus: 'Healthy',
+        supportsAudio: false,
+        supportsFirstFrame: false,
+        supportsLastFrame: false,
+        supportsReferenceAssets: false,
+        aspectRatios: ['16:9'],
+        resolutions: ['720p'],
+        durations: [5],
+      },
+      {
+        id: 'portrait-audio',
+        name: '竖屏音频模型',
+        healthStatus: 'Healthy',
+        supportsAudio: true,
+        supportsFirstFrame: true,
+        supportsLastFrame: true,
+        supportsReferenceAssets: false,
+        aspectRatios: ['9:16'],
+        resolutions: ['1080p'],
+        durations: [10],
+      },
+    ] satisfies VideoModelOption[];
+    const previousProject = createProject({
+      id: 'previous-project',
+      defaultVideoModel: 'landscape-no-audio',
+      defaultAspectRatio: '16:9',
+      defaultResolution: '720p',
+      defaultDuration: 5,
+      generateAudio: false,
+    });
+    const nextProject = createProject({
+      id: 'next-project',
+      defaultVideoModel: 'portrait-audio',
+      defaultAspectRatio: '9:16',
+      defaultResolution: '1080p',
+      defaultDuration: 10,
+      generateAudio: true,
+    });
+
+    expect(resolveVideoProjectSettings(previousProject, models)).toEqual({
+      model: 'landscape-no-audio',
+      aspectRatio: '16:9',
+      resolution: '720p',
+      duration: 5,
+      generateAudio: false,
+    });
+    expect(resolveVideoProjectSettings(nextProject, models)).toEqual({
+      model: 'portrait-audio',
+      aspectRatio: '9:16',
+      resolution: '1080p',
+      duration: 10,
+      generateAudio: true,
+    });
   });
 
   it('disables requested audio when the selected model does not support it', () => {
