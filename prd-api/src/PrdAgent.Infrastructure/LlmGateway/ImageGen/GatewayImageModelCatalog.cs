@@ -23,12 +23,21 @@ public static class GatewayImageModelCatalog
         if (request.Images.Count > 0 && !info.SupportsImageToImage) return "该模型不支持参考图，请选择支持参考图的模型。";
         if (request.MaskBase64 is not null && (!info.SupportsInpainting || request.Images.Count == 0))
             return "该请求不支持局部重绘，请检查参考图和所选模型。";
-        if (info.SizesNotApplicable || string.IsNullOrWhiteSpace(request.Size)) return null;
-        var parts = request.Size.Split('x');
+        return ValidateSize(request.Size, info);
+    }
+
+    /// <summary>
+    /// 尺寸是否被这个模型接受。网关执行前的校验与调用方入队前的预检共用这一处，
+    /// 免得调用方按另一套口径放行、任务入队后才在这里被拒（MCP-LIT-18）。
+    /// </summary>
+    public static string? ValidateSize(string? size, ImageGenAdapterInfo info)
+    {
+        if (info.SizesNotApplicable || string.IsNullOrWhiteSpace(size)) return null;
+        var parts = size.Split('x');
         if (parts.Length != 2 || !int.TryParse(parts[0], out var width) || !int.TryParse(parts[1], out var height)
             || width <= 0 || height <= 0) return "图片尺寸格式不正确，请重新选择尺寸。";
         if (info.SizeConstraintType == SizeConstraintTypes.Whitelist
-            && !info.SizesByResolution.Values.SelectMany(x => x).Any(x => x.Size == request.Size))
+            && !info.SizesByResolution.Values.SelectMany(x => x).Any(x => x.Size == size))
             return "该模型不支持此尺寸，请从模型提供的尺寸列表中选择。";
         if (width < info.MinWidth || height < info.MinHeight || width > info.MaxWidth || height > info.MaxHeight
             || (long)width * height > info.MaxPixels
@@ -69,22 +78,27 @@ public static class GatewayImageModelCatalog
     public static ImageGenAdapterInfo? Describe(AvailableModelPool model)
     {
         var member = model.Models.FirstOrDefault(item =>
-            item.ImageCapabilities is not null);
+            item.ImageCapabilities is not null || ImageSizeControlCapabilities.Parse(item.ParameterCapabilities).IsConfigured);
         var snapshot = member?.ImageCapabilities;
-        if (snapshot is null) return null;
+        if (snapshot is null)
+            return member is null ? null : ApplySizeControl(new ImageGenAdapterInfo
+            {
+                Matched = true, AdapterName = model.Code, DisplayName = model.Name,
+                SizeConstraintType = "upstream", SizeConstraintDescription = "由网关模型能力控制",
+            }, member.ParameterCapabilities);
 
         var sizes = new Dictionary<string, List<SizeOption>>(StringComparer.OrdinalIgnoreCase);
         foreach (var (bucket, rawSizes) in snapshot.SizesByResolution)
         {
             sizes[bucket] = rawSizes
-                .Select(ParseSizeOption)
+                .Select(raw => ParseSizeOption(raw, snapshot.AspectRatiosBySize))
                 .Where(option => option is not null)
                 .Cast<SizeOption>()
                 .DistinctBy(option => option.Size, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
-        return new ImageGenAdapterInfo
+        var info = new ImageGenAdapterInfo
         {
             Matched = true,
             AdapterName = model.Code,
@@ -105,18 +119,37 @@ public static class GatewayImageModelCatalog
             SupportsInpainting = snapshot.SupportsInpainting,
             IsAdaptive = snapshot.IsAdaptive,
         };
+        return ApplySizeControl(info, member!.ParameterCapabilities);
     }
 
-    private static SizeOption? ParseSizeOption(string? raw)
+    private static SizeOption? ParseSizeOption(string? raw, IReadOnlyDictionary<string, string>? declaredAspects)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        var parts = raw.Trim().Split(['x', 'X', '×', '*'], StringSplitOptions.RemoveEmptyEntries);
+        var parts = raw.Trim().Split(new[] { 'x', 'X', '×', '*' }, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2
             || !int.TryParse(parts[0].Trim(), out var width)
             || !int.TryParse(parts[1].Trim(), out var height)
             || width <= 0 || height <= 0) return null;
+        var size = $"{width}x{height}";
+        var aspect = declaredAspects?.GetValueOrDefault(size);
+        return new SizeOption(size, string.IsNullOrWhiteSpace(aspect) ? DescribeAspectRatio(width, height) : aspect);
+    }
+
+    /// <summary>旧快照没有比例字段时的通用显示标签，不改变像素或模型支持清单。</summary>
+    public static string DescribeAspectRatio(int width, int height)
+    {
         var divisor = GreatestCommonDivisor(width, height);
-        return new SizeOption($"{width}x{height}", $"{width / divisor}:{height / divisor}");
+        // 仅兼容没有声明比例的旧记录；新快照、任务与文章直接保留模型声明值。
+        var standard = new (int Width, int Height)[]
+        {
+            (1, 1), (2, 3), (3, 2), (3, 4), (4, 3),
+            (4, 5), (5, 4), (9, 16), (16, 9), (21, 9),
+        };
+        var ratio = width / (double)height;
+        var closest = standard.Select(x => (x.Width, x.Height,
+                Difference: Math.Abs(ratio / (x.Width / (double)x.Height) - 1)))
+            .OrderBy(x => x.Difference).First();
+        return closest.Difference <= 0.02 ? $"{closest.Width}:{closest.Height}" : $"{width / divisor}:{height / divisor}";
     }
 
     private static int GreatestCommonDivisor(int left, int right)
@@ -139,6 +172,12 @@ public static class GatewayImageModelCatalog
                 SizeConstraintDescription = "由网关模型能力控制",
             };
         }
+        return ApplySizeControl(info, resolution.ParameterCapabilities);
+    }
+
+    private static ImageGenAdapterInfo ApplySizeControl(ImageGenAdapterInfo info, IReadOnlyDictionary<string, bool>? capabilities)
+    {
+        var sizeControl = ImageSizeControlCapabilities.Parse(capabilities);
         if (sizeControl.IsConfigured)
         {
             info.SizeParamFormat = sizeControl.FieldFormat switch

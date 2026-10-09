@@ -13,6 +13,7 @@ using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
@@ -57,6 +58,38 @@ public class LiteraryMcpUsabilityTests
         string Article(int n) => "正文。\n" + string.Concat(Enumerable.Range(0, n).Select(i => $"[插图]: 画面{i}\n段落{i}\n"));
         Assert.Null(LiteraryMcpWorkflow.Validate(null, Article(20), null));
         Assert.Contains("1-20", LiteraryMcpWorkflow.Validate(null, Article(21), null));
+    }
+
+    [Fact]
+    public async Task 预设尺寸按点名风格的文生图或图生图模型查询()
+    {
+        var (db, name, connection) = NewDb("literary_preset_style");
+        try
+        {
+            await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig
+            {
+                Id = "referenced-style", AppKey = "literary-agent", CreatedByAdminId = "writer",
+                Name = "全域粉销风格", ImageSha256 = "REF", IsActive = false,
+            });
+            var selection = new FixedModelSelection
+            {
+                ModelForCaller = caller => caller == AppCallerRegistry.LiteraryAgent.Illustration.Img2Img
+                    ? "gemini-3.1-flash-image" : "chatgpt-image-latest",
+            };
+            var images = WithUser(new LiteraryImageOpenApiController(db, selection), "writer");
+            var plain = Data(await images.Presets(CancellationToken.None, "none"));
+            Assert.Equal("chatgpt-image-latest", plain.GetProperty("sizeModel").GetString());
+            Assert.Equal(3, plain.GetProperty("sizes").GetArrayLength());
+            var referenced = Data(await images.Presets(CancellationToken.None, "全域粉销风格"));
+            Assert.Equal("gemini-3.1-flash-image", referenced.GetProperty("sizeModel").GetString());
+            Assert.Equal("referenced-style", referenced.GetProperty("sizeStyle").GetProperty("styleId").GetString());
+            Assert.Contains(referenced.GetProperty("sizes").EnumerateArray(),
+                s => s.GetProperty("aspect").GetString() == "16:9" && s.GetProperty("size").GetString() == "1376x768");
+            Assert.IsType<BadRequestObjectResult>(await images.Presets(CancellationToken.None, "不存在的风格"));
+            Assert.Contains(McpBuiltinTools.All.Single(x => x.Name == "map_literary_list_presets").Params,
+                p => p.Name == "style" && p.In == "query");
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
 
     [Fact]
@@ -121,6 +154,77 @@ public class LiteraryMcpUsabilityTests
         var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
         Assert.Equal("legacy-0", current[0].Id);
         Assert.Equal("redrawn-1", current[1].Id);
+    }
+
+    [Fact]
+    public void 八张当前配图混合新指针和旧地址_历史与图文稿都识别完整()
+    {
+        var ws = new ImageMasterWorkspace
+        {
+            Id = "w", ScenarioType = "article-illustration",
+            ArticleWorkflow = new() { Version = 2 },
+        };
+        var assets = new List<ImageAsset>();
+        for (var index = 0; index < 8; index++)
+        {
+            var asset = new ImageAsset
+            {
+                Id = $"current-{index}", WorkspaceId = ws.Id, Url = $"https://example.test/current-{index}.png",
+                ArticleInsertionIndex = index == 0 ? index : null,
+                ArticleWorkflowVersion = index == 0 ? 2 : null,
+            };
+            assets.Add(asset);
+            ws.ArticleWorkflow.Markers.Add(new() { Index = index, Status = "done", Url = asset.Url });
+            if (index is 0 or 4) ws.ArticleWorkflow.AssetIdByMarkerIndex[index.ToString()] = asset.Id;
+        }
+        // 同工作区中更晚生成的历史图不能按数量或时间被误认成当前图。
+        assets.Add(new() { Id = "unmounted", WorkspaceId = ws.Id, Url = "https://example.test/old.png", CreatedAt = DateTime.UtcNow.AddDays(1) });
+
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        Assert.Equal(8, current.Count);
+        Assert.All(Enumerable.Range(0, 8), index => Assert.Equal($"current-{index}", current[index].Id));
+        var history = LiteraryIllustrationHistory.Build(ws, assets);
+        Assert.Equal(8, history.CurrentCount);
+        Assert.Equal(9, history.Total);
+        Assert.All(history.Groups.SelectMany(g => g.Items).Where(i => i.IsCurrent), item =>
+            Assert.Equal(new[] { int.Parse(item.Id["current-".Length..]) }, item.MountedAt));
+        Assert.False(history.Groups.SelectMany(g => g.Items).Single(i => i.Id == "unmounted").IsCurrent);
+        var marked = string.Concat(Enumerable.Range(0, 8).Select(i => $"段落{i}\n[插图]: 画面{i}\n"));
+        var rendered = LiteraryMcpWorkflow.Render(marked, current.ToDictionary(kv => kv.Key, kv => kv.Value.Url));
+        Assert.DoesNotContain("[插图]", rendered);
+        Assert.All(assets.Take(8), asset => Assert.Contains(asset.Url, rendered));
+    }
+
+    [Fact]
+    public void 标记旧关联只认本工作区且不覆盖权威指针_清空标记后不复活无位置历史图()
+    {
+        var ws = new ImageMasterWorkspace
+        {
+            Id = "w", ArticleWorkflow = new()
+            {
+                Version = 2,
+                Markers = new()
+                {
+                    new() { Index = 0, AssetId = "stale", Url = "https://example.test/stale.png" },
+                    new() { Index = 1, AssetId = "by-id" },
+                    new() { Index = 2, Url = "https://example.test/foreign.png" },
+                },
+                AssetIdByMarkerIndex = new() { ["0"] = "authoritative" },
+            },
+        };
+        var assets = new List<ImageAsset>
+        {
+            new() { Id = "authoritative", WorkspaceId = "w" },
+            new() { Id = "stale", WorkspaceId = "w", Url = "https://example.test/stale.png" },
+            new() { Id = "by-id", WorkspaceId = "w" },
+            new() { Id = "foreign", WorkspaceId = "other", Url = "https://example.test/foreign.png" },
+        };
+        var current = LiteraryMcpWorkflow.SelectCurrent(ws, assets);
+        Assert.Equal(2, current.Count);
+        Assert.Equal("authoritative", current[0].Id);
+        Assert.Equal("by-id", current[1].Id);
+        ws.ArticleWorkflow = new() { Version = 3 };
+        Assert.Empty(LiteraryMcpWorkflow.SelectCurrent(ws, assets));
     }
 
     [Fact]
@@ -274,6 +378,10 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal("wm-2", presets.GetProperty("defaultWatermark").GetProperty("watermarkId").GetString());
             Assert.Equal(2, presets.GetProperty("styles").GetArrayLength()); // 别人的风格不出现
             Assert.Equal(20, presets.GetProperty("maxMarkersPerArticle").GetInt32());
+            // 尺寸按所选模型列：Gemini 的 16:9 落到 1376x768（不是同比例里最小的 688x384）
+            Assert.Equal("gemini-3.1-flash-image", presets.GetProperty("sizeModel").GetString());
+            Assert.Contains(presets.GetProperty("sizes").EnumerateArray(),
+                x => x.GetProperty("aspect").GetString() == "16:9" && x.GetProperty("size").GetString() == "1376x768");
 
             var created = Data(await drafts.CreateWorkspace(new()
             {
@@ -314,6 +422,13 @@ public class LiteraryMcpUsabilityTests
                 Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, r.AppCallerCode);
             });
             Assert.Equal(new[] { 0, 1, 2 }, runs.Select(r => r.ArticleMarkerIndex!.Value).OrderBy(i => i));
+            var styledMarkers = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers;
+            Assert.All(styledMarkers, marker =>
+            {
+                Assert.Equal("1376x768", marker.PlanItem!.Size);
+                Assert.Equal(marker.Text, marker.PlanItem.Prompt);
+                Assert.DoesNotContain("粉销风格提示", marker.PlanItem.Prompt);
+            });
 
             // 原样重试：不多入队
             var retry = Data(await images.Generate(id, request, CancellationToken.None));
@@ -428,7 +543,264 @@ public class LiteraryMcpUsabilityTests
         Assert.Equal(3, LiteraryImageOpenApiController.RequestedImageCount(null, new[] { 0, 1, 2 }));
     }
 
+    // ───────────── 尺寸契约：按所选模型的真实尺寸能力，入队前判（MCP-LIT-18） ─────────────
+
+    [Fact]
+    public async Task 默认模型不支持的尺寸入队前就拒_列出可选项_不留失败任务()
+    {
+        var (db, name, connection) = NewDb("literary_mcp_sizes");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            // 2026-10-08 真实验收的默认模型：只收 1024x1024 / 1024x1536 / 1536x1024
+            var selection = new FixedModelSelection("chatgpt-image-latest");
+            var images = WithUser(new LiteraryImageOpenApiController(db, selection), "writer");
+
+            var presets = Data(await images.Presets(CancellationToken.None));
+            Assert.Equal("chatgpt-image-latest", presets.GetProperty("sizeModel").GetString());
+            var listed = presets.GetProperty("sizes").EnumerateArray()
+                .Select(x => (x.GetProperty("aspect").GetString(), x.GetProperty("size").GetString())).ToList();
+            Assert.Equal(new (string?, string?)[] { ("2:3", "1024x1536"), ("1:1", "1024x1024"), ("3:2", "1536x1024") }, listed);
+            Assert.Equal("1024x1024", presets.GetProperty("defaultSize").GetString());
+
+            var created = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "第一段。\n[插图]: 书店门口\n第二段。\n[插图]: 窗边的猫\n第三段。\n[插图]: 茶杯\n",
+                ClientRequestId = "article-sizes",
+            }, CancellationToken.None));
+            var id = created.GetProperty("workspaceId").GetString()!;
+            var version = created.GetProperty("workflowVersion").GetInt32();
+
+            // 验收里那一批：六张 16:9。现在入队前就拒，说清这个模型能用什么，一张任务都不留、标记不被占
+            foreach (var bad in new[] { "16:9", "1376x768" })
+            {
+                var rejected = Assert.IsType<BadRequestObjectResult>(await images.Generate(id, new()
+                {
+                    MarkerIndexes = new() { 0, 1, 2 }, WorkflowVersion = version, ClientRequestId = $"g-{bad}", Size = bad,
+                }, CancellationToken.None));
+                var error = Assert.IsType<ApiResponse<object>>(rejected.Value).Error!;
+                Assert.Equal("SIZE_NOT_SUPPORTED", error.Code);
+                Assert.Contains("chatgpt-image-latest", error.Message);
+                Assert.Contains("3:2（1536x1024）", error.Message);
+                Assert.Contains("没有扣生图额度", error.Message);
+            }
+            Assert.Equal(0, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
+            var untouched = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!;
+            Assert.All(untouched.Markers, m => Assert.Null(m.RunId));
+            Assert.Null((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs);
+
+            // 支持的比例落到这个模型的真实像素；这里放行的，网关执行前的同一个判据一定放行
+            var landscape = Data(await images.Generate(id, new()
+            {
+                MarkerIndexes = new() { 0, 1 }, WorkflowVersion = version, ClientRequestId = "g-3x2", Size = "3:2",
+            }, CancellationToken.None));
+            Assert.Equal(2, landscape.GetProperty("queuedImages").GetInt32());
+            Assert.Equal("1536x1024", landscape.GetProperty("applied").GetProperty("size").GetString());
+            Assert.Equal("chatgpt-image-latest", landscape.GetProperty("applied").GetProperty("model").GetString());
+            var caps = ImageGenModelAdapterRegistry.GetAdapterInfo("chatgpt-image-latest")!;
+            Assert.All(await db.ImageGenRuns.Find(x => x.WorkspaceId == id).ToListAsync(), r =>
+            {
+                Assert.Equal("1536x1024", r.Size);
+                Assert.Null(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize(r.Size, caps));
+            });
+
+            // 同一篇在网页打开时，也必须读到实际生成尺寸，不能仍沿用建稿的默认方图方案。
+            var web = WithUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            web.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "writer") }, "Bearer"));
+            var webMarkers = Data(await web.GetWorkspaceDetail(id)).GetProperty("workspace")
+                .GetProperty("articleWorkflow").GetProperty("markers");
+            Assert.All(webMarkers.EnumerateArray().Take(2), marker =>
+                Assert.Equal("1536x1024", marker.GetProperty("planItem").GetProperty("size").GetString()));
+            Assert.Equal("1024x1024", webMarkers[2].GetProperty("planItem").GetProperty("size").GetString());
+
+            // 同一个 clientRequestId 再来：比的是尺寸意图（3:2），回放原任务
+            var replay = Data(await images.Generate(id, new()
+            {
+                MarkerIndexes = new() { 0, 1 }, WorkflowVersion = version, ClientRequestId = "g-3x2", Size = "3:2",
+            }, CancellationToken.None));
+            Assert.True(replay.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(0, replay.GetProperty("queuedImages").GetInt32());
+
+            // 不传尺寸：沿用这篇记住的 3:2
+            var redraw = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 2, WorkflowVersion = version, ClientRequestId = "g-redraw",
+            }, CancellationToken.None));
+            Assert.Equal("1536x1024", redraw.GetProperty("applied").GetProperty("size").GetString());
+            Assert.Equal("remembered", redraw.GetProperty("applied").GetProperty("sizeSource").GetString());
+            var rememberedMarker = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[2];
+            Assert.Equal("1536x1024", rememberedMarker.PlanItem!.Size);
+            Assert.Equal("茶杯", rememberedMarker.PlanItem.Prompt);
+
+            // 文章记住的是上一个模型的 16:9，换到不收它的模型：退回 1:1 并在回执里写明，不静默改、也不报错卡住
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.Size, "1376x768")
+                    .Set(x => x.IllustrationPrefs!.SizeAspectRatio, (string?)null)); // 模拟没有比例元数据的旧文章
+            var switched = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 2, WorkflowVersion = version, ClientRequestId = "g-switched",
+            }, CancellationToken.None));
+            var applied = switched.GetProperty("applied");
+            Assert.Equal("1024x1024", applied.GetProperty("size").GetString());
+            Assert.Equal("account-default", applied.GetProperty("sizeSource").GetString());
+            Assert.Contains(applied.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("1376x768"));
+
+            // 网关目录读不到能力：明说，不入队，不当成「什么尺寸都收」
+            selection.CapabilitiesMissing = true;
+            var unknown = Assert.IsType<ConflictObjectResult>(await images.Generate(id, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "g-unknown", Size = "1:1",
+            }, CancellationToken.None));
+            Assert.Equal("MODEL_CAPABILITIES_UNAVAILABLE", Assert.IsType<ApiResponse<object>>(unknown.Value).Error!.Code);
+
+            // 换到支持 16:9 的模型，同一个比例就能用
+            selection.CapabilitiesMissing = false;
+            selection.ModelId = "gemini-3.1-flash-image";
+            // 文章记住的是上个模型的 3:2 像素（1536x1024），Gemini 不收这个像素但收 3:2：按同一比例落，并写明
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.Size, "1536x1024"));
+            var sameRatio = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 1, WorkflowVersion = version, ClientRequestId = "g-same-ratio",
+            }, CancellationToken.None)).GetProperty("applied");
+            Assert.Equal("1264x848", sameRatio.GetProperty("size").GetString());
+            Assert.Equal("remembered", sameRatio.GetProperty("sizeSource").GetString());
+            Assert.Contains(sameRatio.GetProperty("notes").EnumerateArray(), n => n.GetString()!.Contains("同一比例 3:2"));
+            var wide = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "g-wide", Size = "16:9",
+            }, CancellationToken.None));
+            Assert.Equal("1376x768", wide.GetProperty("applied").GetProperty("size").GetString());
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
+    public void 尺寸写法只解析不猜_网关校验与入队预检同一判据()
+    {
+        Assert.Equal("16:9", LiteraryIllustrationChoices.ParseSize("16：9").request!.Raw); // 全角冒号
+        Assert.Equal("1:1", LiteraryIllustrationChoices.ParseSize(null).request!.Raw);
+        Assert.Equal("1536x1024", LiteraryIllustrationChoices.ParseSize("1536×1024").request!.Raw);
+        Assert.NotNull(LiteraryIllustrationChoices.ParseSize("宽屏").error);
+
+        var gpt = ImageGenModelAdapterRegistry.GetAdapterInfo("chatgpt-image-latest")!;
+        // 网关执行前的校验：拒 1376x768（就是验收里那条 IMAGE_REQUEST_INVALID）
+        Assert.NotNull(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize("1376x768", gpt));
+        Assert.NotNull(LiteraryIllustrationChoices.FitSize(LiteraryIllustrationChoices.ParseSize("16:9").request!, gpt, "m").error);
+        Assert.Equal("1024x1536", LiteraryIllustrationChoices.FitSize(LiteraryIllustrationChoices.ParseSize("2:3").request!, gpt, "m").size);
+    }
+
     // ───────────── 端到端：改稿后重新配图、历史配图不丢 ─────────────
+
+    [Fact]
+    public void 比例型模型只列声明比例_精确像素也不静默换比例()
+    {
+        var model = ImageGenModelAdapterRegistry.GetAdapterInfo("nano-banana-2")!;
+        var sizes = LiteraryIllustrationChoices.SupportedSizes(model);
+        Assert.Equal(7, sizes.Count);
+        Assert.Contains(sizes, s => s.Aspect == "16:9" && s.Size == "1344x768");
+        Assert.Equal("1184x864", LiteraryIllustrationChoices.FitSize(
+            LiteraryIllustrationChoices.ParseSize("4:3").request!, model, "nano-banana-2").size);
+        foreach (var invalid in new[] { "4:5", "5:4", "21:9", "1200x1500" })
+            Assert.NotNull(LiteraryIllustrationChoices.FitSize(
+                LiteraryIllustrationChoices.ParseSize(invalid).request!, model, "nano-banana-2").error);
+        Assert.All(sizes, s => Assert.Contains(model.SizesByResolution.Values.SelectMany(x => x),
+            declared => declared.Size == s.Size && declared.AspectRatio == s.Aspect));
+    }
+
+    [Fact]
+    public void 范围型模型的比例使用声明的合法像素_不是通用换算表()
+    {
+        var model = ImageGenModelAdapterRegistry.GetAdapterInfo("flux-pro")!;
+        var sizes = LiteraryIllustrationChoices.SupportedSizes(model);
+        Assert.Contains(sizes, s => s.Aspect == "4:3" && s.Size == "1024x768");
+        Assert.Equal("1024x768", LiteraryIllustrationChoices.FitSize(
+            LiteraryIllustrationChoices.ParseSize("4:3").request!, model, "flux-pro").size);
+        Assert.All(sizes, s => Assert.Null(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize(s.Size, model)));
+        // 范围型模型仍能显式传符合范围与步长的自定义像素。
+        Assert.Equal("960x640", LiteraryIllustrationChoices.FitSize(
+            LiteraryIllustrationChoices.ParseSize("960x640").request!, model, "flux-pro").size);
+    }
+
+    [Fact]
+    public async Task 原生取整尺寸重放不冲突_换模型仍沿用同一比例()
+    {
+        var (db, name, connection) = NewDb("literary_rounded_retry");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var created = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "第一段。\n[插图]: 书店\n第二段。\n[插图]: 窗边\n",
+                ClientRequestId = "rounded-article",
+            }, CancellationToken.None));
+            var id = created.GetProperty("workspaceId").GetString()!;
+            var version = created.GetProperty("workflowVersion").GetInt32();
+            var selection = new FixedModelSelection("nano-banana-2");
+            var images = WithUser(new LiteraryImageOpenApiController(db, selection), "writer");
+            var request = new LiteraryImageOpenApiController.GenerateRequest
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "rounded-image", Size = "4:3",
+            };
+            var first = Data(await images.Generate(id, request, CancellationToken.None));
+            Assert.Equal("1184x864", first.GetProperty("applied").GetProperty("size").GetString());
+            Assert.Equal("4:3", (await db.ImageGenRuns.Find(x => x.WorkspaceId == id).SingleAsync()).LiterarySizeAspectRatio);
+            Assert.Equal("4:3", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!.SizeAspectRatio);
+            var replay = Data(await images.Generate(id, request, CancellationToken.None));
+            Assert.True(replay.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(0, replay.GetProperty("queuedImages").GetInt32());
+            Assert.Equal(1, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
+            request.Size = "3:4";
+            var conflict = Assert.IsType<ConflictObjectResult>(await images.Generate(id, request, CancellationToken.None));
+            Assert.Equal("IDEMPOTENCY_CONFLICT", Assert.IsType<ApiResponse<object>>(conflict.Value).Error!.Code);
+
+            selection.ModelId = "gemini-3.1-flash-image";
+            var remembered = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 1, WorkflowVersion = version, ClientRequestId = "rounded-remembered",
+            }, CancellationToken.None)).GetProperty("applied");
+            Assert.Equal("1200x896", remembered.GetProperty("size").GetString());
+            Assert.Equal("remembered", remembered.GetProperty("sizeSource").GetString());
+            Assert.Contains(remembered.GetProperty("notes").EnumerateArray(), x => x.GetString()!.Contains("同一比例 4:3"));
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
+    [Fact]
+    public async Task 并发同键占位不提前写方案_实际入库任务决定网页尺寸()
+    {
+        var (db, name, connection) = NewDb("literary_plan_race");
+        try
+        {
+            var draft = Data(await WithUser(new LiteraryOpenApiController(db), "writer").CreateWorkspace(new()
+            {
+                MarkedContent = "正文。\n[插图]: 书店\n", ClientRequestId = "race-article",
+            }, CancellationToken.None));
+            var id = draft.GetProperty("workspaceId").GetString()!;
+            var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            var originalSize = ws.ArticleWorkflow!.Markers[0].PlanItem!.Size;
+            var images = WithUser(new LiteraryImageOpenApiController(db, new FixedModelSelection()), "writer");
+            ImageGenRun Candidate(string size) => new()
+            {
+                Id = "same-race-id", OwnerAdminId = "writer", WorkspaceId = id, ArticleMarkerIndex = 0,
+                ArticleWorkflowVersion = ws.ArticleWorkflow.Version, Size = size,
+                Items = [new() { Prompt = "书店", DisplayPrompt = "书店" }],
+            };
+            var claimedFirst = Candidate("1536x1024");
+            var insertedFirst = Candidate("1024x1536");
+            Assert.True(await images.ClaimWorkflowAsync(ws, claimedFirst));
+            Assert.True(await images.ClaimWorkflowAsync(ws, insertedFirst));
+            Assert.Equal(originalSize, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Size);
+            // 精确控制两个并发请求的交错：先占位的请求没有先入库，另一请求赢得唯一任务。
+            await db.ImageGenRuns.InsertOneAsync(insertedFirst);
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.0.planItem.prompt", "后来改过的描述"));
+            await images.SyncPlanFromRunAsync(await db.ImageGenRuns.Find(x => x.Id == insertedFirst.Id).SingleAsync());
+            Assert.Equal("1024x1536", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Size);
+            Assert.Equal("后来改过的描述", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Prompt);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
 
     [Fact]
     public async Task 改稿可带标记重新配图_旧图保留进历史()
@@ -585,6 +957,8 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
             var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
             ws.ArticleWorkflow!.AssetIdByMarkerIndex = new() { ["0"] = "a0", ["1"] = "a1", ["2"] = "a2" };
+            ws.ArticleWorkflow.Markers[0].PlanItem!.Size = "1536x1024";
+            ws.ArticleWorkflow.Markers[2].PlanItem!.Size = "1024x1536";
             await db.ImageMasterWorkspaces.ReplaceOneAsync(x => x.Id == id, ws);
             await db.ImageAssets.InsertManyAsync(new[] { 0, 1, 2 }.Select(i => new ImageAsset
             {
@@ -599,6 +973,10 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None));
             Assert.Equal(new[] { 0, 2 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
             Assert.Equal(new[] { 1 }, written.GetProperty("needsGeneration").EnumerateArray().Select(x => x.GetInt32()));
+            var keptPlans = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers;
+            Assert.Equal("1536x1024", keptPlans[0].PlanItem!.Size);
+            Assert.Equal("1024x1024", keptPlans[1].PlanItem!.Size);
+            Assert.Equal("1024x1536", keptPlans[2].PlanItem!.Size);
 
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None, "illustrated"));
             var ill = read.GetProperty("illustrations").EnumerateArray().ToList();
@@ -1151,13 +1529,25 @@ public class LiteraryMcpUsabilityTests
         Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data,
         new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-    private sealed class FixedModelSelection : ILiteraryMcpModelSelectionService
+    /// <summary>
+    /// 选中的模型与它的尺寸能力都取真实的能力注册表：默认用 Gemini（收 16:9 的 1376x768），
+    /// 尺寸契约用例换成默认模型 chatgpt-image-latest（只收 1024x1024 / 1024x1536 / 1536x1024）。
+    /// 能力为 null 表示网关目录读不到。
+    /// </summary>
+    private sealed class FixedModelSelection(string modelId = "gemini-3.1-flash-image") : ILiteraryMcpModelSelectionService
     {
+        public string ModelId { get; set; } = modelId;
+        public bool CapabilitiesMissing { get; set; }
+        public Func<string, string>? ModelForCaller { get; set; }
+
         public Task<LiteraryMcpModelSelection> ResolveForRunAsync(
             string ownerUserId, string agentApiKeyId, string appCallerCode, CancellationToken ct)
-            => Task.FromResult(LiteraryMcpModelSelection.Selected("gpt-image-2"));
+            => Task.FromResult(LiteraryMcpModelSelection.Selected(ModelForCaller?.Invoke(appCallerCode) ?? ModelId));
 
         public Task<LiteraryMcpModelSelection> ValidateFixedModelAsync(string logicalModelPublicId, CancellationToken ct)
             => Task.FromResult(LiteraryMcpModelSelection.Selected(logicalModelPublicId));
+
+        public Task<ImageGenAdapterInfo?> GetImageCapabilitiesAsync(string appCallerCode, string logicalModelPublicId, CancellationToken ct)
+            => Task.FromResult(CapabilitiesMissing ? null : ImageGenModelAdapterRegistry.GetAdapterInfo(logicalModelPublicId));
     }
 }
