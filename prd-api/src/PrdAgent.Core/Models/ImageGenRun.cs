@@ -66,6 +66,8 @@ public class ImageGenRun
     public string? ModelGroupName { get; set; }
 
     public string Size { get; set; } = "1024x1024";
+    /// <summary>文学任务认领时的模型声明比例，用于幂等重放；旧任务可为空。</summary>
+    public string? LiterarySizeAspectRatio { get; set; }
 
     /// <summary>
     /// b64_json | url

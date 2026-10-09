@@ -1159,6 +1159,10 @@ public class ModelResolver : IModelResolver
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList(),
                 StringComparer.OrdinalIgnoreCase),
+            AspectRatiosBySize = info.SizesByResolution.Values.SelectMany(x => x)
+                .Where(x => !string.IsNullOrWhiteSpace(x.Size) && !string.IsNullOrWhiteSpace(x.AspectRatio))
+                .GroupBy(x => x.Size.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First().AspectRatio.Trim(), StringComparer.OrdinalIgnoreCase),
             SizeParamFormat = info.SizeParamFormat,
             SizesNotApplicable = info.SizesNotApplicable,
             MustBeDivisibleBy = info.MustBeDivisibleBy,

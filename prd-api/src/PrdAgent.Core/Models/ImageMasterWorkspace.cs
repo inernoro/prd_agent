@@ -124,5 +124,6 @@ public class LiteraryIllustrationPrefs
     public string? StyleId { get; set; }
     public string? WatermarkId { get; set; }
     public string? Size { get; set; }
+    public string? SizeAspectRatio { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

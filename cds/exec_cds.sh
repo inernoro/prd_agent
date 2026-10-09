@@ -1233,6 +1233,7 @@ proxy_core() {
         proxy_cache     off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_hide_header X-Powered-By;
         add_header X-Accel-Buffering "no"      always;
 EOP
 }
@@ -1626,6 +1627,8 @@ http {
     gzip_comp_level   6;
     gzip_min_length   1024;
     gzip_types        text/plain text/css application/javascript text/javascript application/json application/xml image/svg+xml application/wasm;
+
+    server_tokens off;
 
     access_log  /var/log/nginx/access.log;
     error_log   /var/log/nginx/error.log warn;

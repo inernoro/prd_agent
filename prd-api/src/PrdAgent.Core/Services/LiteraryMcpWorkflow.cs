@@ -138,7 +138,7 @@ public static class LiteraryMcpWorkflow
     /// 当前版本与历史版本的图。投稿、导出、详情此前各自「按 index 取最新一张」，
     /// 旧版本的图会顶掉当前版本——判据必须收敛到这里，按版本认。
     ///
-    /// 顺序：权威指针（AssetIdByMarkerIndex）→ 同版本且带 index 的最新一张 →
+    /// 顺序：权威指针（AssetIdByMarkerIndex）→ 当前标记明确保存的资产 ID / 地址 → 同版本且带 index 的最新一张 →
     /// 未盖版本号的存量图（改造前的历史数据），按位置逐个兜底。
     /// 换稿时会先给未盖版本的图盖上旧版本号，所以还没盖的只可能属于当前这一版；
     /// 以前是「工作区里出现任何一张带版本的图就整体不再兜底」，改造后重画一张，其余旧图就从正文、导出、投稿里一起消失。
@@ -159,6 +159,19 @@ public static class LiteraryMcpWorkflow
             if (!int.TryParse(key, out var index) || !InScope(index)) continue;
             var asset = all.FirstOrDefault(a => a.Id == id);
             if (asset != null) result[index] = asset;
+        }
+
+        // 早期标记只保存图片地址，资产既没有插入位置也没有版本号。
+        // 网页仍按这个地址展示；历史、导出和 MCP 也应认同一张，不能凭生成时间猜旧图的位置。
+        foreach (var marker in workflow?.Markers ?? new List<ArticleIllustrationMarker>())
+        {
+            if (result.ContainsKey(marker.Index)) continue;
+            var asset = !string.IsNullOrWhiteSpace(marker.AssetId)
+                ? all.FirstOrDefault(a => a.Id == marker.AssetId)
+                : null;
+            if (asset == null && !string.IsNullOrWhiteSpace(marker.Url))
+                asset = all.FirstOrDefault(a => string.Equals(a.Url, marker.Url, StringComparison.Ordinal));
+            if (asset != null) result[marker.Index] = asset;
         }
 
         var version = workflow?.Version;
@@ -194,7 +207,7 @@ public static class LiteraryMcpWorkflow
         var current = SelectCurrent(previous, assetList);
         var pool = (previous.ArticleWorkflow?.Markers ?? new List<ArticleIllustrationMarker>())
             .Where(m => current.ContainsKey(m.Index))
-            .Select(m => (key: Normalize(MountedImagePrompt(current[m.Index], m)), asset: current[m.Index], runId: m.RunId))
+            .Select(m => (key: Normalize(MountedImagePrompt(current[m.Index], m)), asset: current[m.Index], runId: m.RunId, plan: m.PlanItem))
             .Where(p => p.key.Length > 0)
             .ToList();
         if (pool.Count == 0)
@@ -208,7 +221,7 @@ public static class LiteraryMcpWorkflow
                 pool = archived.Markers
                     .Select(m => (m, id: archived.AssetIdByMarkerIndex.TryGetValue(m.Index.ToString(), out var v) ? v : null))
                     .Where(x => x.id != null && byId.ContainsKey(x.id))
-                    .Select(x => (key: Normalize(MountedImagePrompt(byId[x.id!], x.m)), asset: byId[x.id!], runId: x.m.RunId))
+                    .Select(x => (key: Normalize(MountedImagePrompt(byId[x.id!], x.m)), asset: byId[x.id!], runId: x.m.RunId, plan: x.m.PlanItem))
                     .Where(p => p.key.Length > 0)
                     .ToList();
                 if (pool.Count > 0) break;
@@ -222,7 +235,7 @@ public static class LiteraryMcpWorkflow
             var key = Normalize(marker.Text);
             var hit = pool.FindIndex(p => p.key == key);
             if (hit < 0) continue;
-            var (_, asset, runId) = pool[hit];
+            var (_, asset, runId, plan) = pool[hit];
             pool.RemoveAt(hit);
             var k = marker.Index.ToString();
             next.AssetIdByMarkerIndex[k] = asset.Id;
@@ -230,6 +243,13 @@ public static class LiteraryMcpWorkflow
             marker.AssetId = asset.Id;
             marker.Url = asset.Url;
             marker.RunId = runId; // 沿用的图保留它当初那次生成的记录，否则读稿看不出这张图从哪来
+            if (plan != null)
+                marker.PlanItem = new ArticleIllustrationPlanItem
+                {
+                    Prompt = marker.Text,
+                    Count = plan.Count,
+                    Size = plan.Size,
+                };
             if (!next.AdoptedAssetIds.Contains(asset.Id)) next.AdoptedAssetIds.Add(asset.Id);
             marker.Status = "done";
             marker.ErrorMessage = null;
