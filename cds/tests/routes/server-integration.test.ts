@@ -224,6 +224,13 @@ describe('Server route ordering (regression)', () => {
       const result = await request(server, url);
       expect(result.status).toBe(503); // 本夹具未提供可用 Docker，不能伪装为健康。
       expect(JSON.parse(result.body)).toEqual({ ok: false, port: 9900 });
+      expect(result.headers['x-powered-by']).toBeUndefined();
+    }
+    expect(JSON.parse((await request(server, '/healthz?probe=routes')).body).checks).toHaveProperty('routesHttp');
+    for (const headers of [{ 'X-Forwarded-For': '127.0.0.1' }, { Forwarded: 'for=127.0.0.1' }]) {
+      const publicProbe = await request(server, '/healthz?probe=routes', headers);
+      expect(publicProbe.status).toBe(503);
+      expect(JSON.parse(publicProbe.body)).toEqual({ ok: false, port: 9900 });
     }
     const original = process.env.CDS_PUBLIC_HEALTH_DETAILS;
     process.env.CDS_PUBLIC_HEALTH_DETAILS = '1';
