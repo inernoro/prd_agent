@@ -1,7 +1,10 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -10,10 +13,12 @@ using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.MdToPpt;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.LlmGatewayHost;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -670,7 +675,8 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             _db,
             new Mock<IAssetStorage>(MockBehavior.Strict).Object,
             new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
-            new ConfigurationBuilder().Build());
+            new ConfigurationBuilder().Build(),
+            Mock.Of<IDesignArtifactGatewayGrantService>());
 
         Assert.True(await broker.RecordServedModelAsync(running.Id, "gpt-served", null, default));
         // 同一个模型的后续调用一条都不写：这就是「每次调用最多一次、不是每个分片一次」。
@@ -682,6 +688,69 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal("gpt-served-2", (await Read(running.Id)).ResolvedModel);
         Assert.Null((await Read(foreign.Id)).ResolvedModel);
         Assert.Null((await Read(done.Id)).ResolvedModel);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RuntimeGrant_IssueAuthorizeObserveAndRevoke_UsesOneRunScopedCredential()
+    {
+        var run = Run("grant-lifecycle", RunStatuses.Running);
+        run.Operation = DesignArtifactOperations.Generate;
+        run.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+        {
+            Model = "default-chat-curated",
+            ModelPoolId = "pool-chat-premium",
+        };
+        await InsertAsync(run, CurrentScope);
+        await _gateway.Database.GetCollection<BsonDocument>("llmgw_tenants").InsertOneAsync(new BsonDocument
+        {
+            { "_id", GatewayTenantDefaults.InternalTenantId },
+            { "Status", "active" },
+        });
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+        }).Build();
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+
+        var issued = await service.IssueAsync(run, Now.AddMinutes(15), default);
+        var stored = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .Find(item => item.Id == issued.Id)
+            .SingleAsync();
+        var expectedHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(issued.ApiKey)))
+            .ToLowerInvariant();
+
+        Assert.Equal("http://gateway/gw/v1", issued.BaseUrl);
+        Assert.Equal("default-chat-curated", issued.Model);
+        Assert.Equal("pool-chat-premium", stored.ModelPoolId);
+        Assert.Equal(AppCallerRegistry.Admin.WebHosting.GenerateHtml, issued.AppCallerCode);
+        Assert.Equal(expectedHash, stored.KeyHash);
+        Assert.Equal(expectedHash[..12], stored.KeyPrefix);
+        Assert.DoesNotContain(issued.ApiKey, stored.ToBsonDocument().ToJson(), StringComparison.Ordinal);
+
+        var authorization = await new GatewayScopedKeyAuthorizer(_gateway).AuthorizeAsync(
+            issued.ApiKey,
+            "unrelated-legacy-key",
+            "map",
+            issued.AppCallerCode,
+            "gw-native",
+            "invoke",
+            null,
+            default,
+            requestPath: "/gw/v1/responses");
+        Assert.True(authorization.Allowed);
+        Assert.Equal(run.Id, authorization.RuntimeGrant?.RunId);
+        Assert.Equal(run.UserId, authorization.RuntimeGrant?.UserId);
+
+        var usage = await service.ObserveAsync(issued.Id, run, default);
+        Assert.Equal(1, usage.CallCount);
+        Assert.Equal(1, (await Read(run.Id)).RuntimeModelCallCount);
+
+        await service.RevokeAsync(issued.Id, default);
+        Assert.Equal(0, await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(item => item.Id == issued.Id));
     }
 
     private static DesignArtifactRun Run(string id, string status) => new()

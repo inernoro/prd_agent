@@ -15,6 +15,17 @@ function sameIndexDefinition(index, keys, partialFilterExpression) {
   )
 }
 
+const catalogIndexOptionNames = [
+  "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
+]
+
+function sameCatalogIndexDefinition(index, keys, options) {
+  if (JSON.stringify(index.key) !== JSON.stringify(keys)) return false
+  return catalogIndexOptionNames.every(option =>
+    JSON.stringify(index[option]) === JSON.stringify(options[option])
+  )
+}
+
 function findDuplicateGroups(collection, keys, partialFilterExpression) {
   const duplicateId = {}
   Object.keys(keys).forEach(field => {
@@ -34,10 +45,7 @@ function findDuplicateGroups(collection, keys, partialFilterExpression) {
 
 function restorableIndexOptions(index) {
   const options = { name: index.name }
-  const supportedOptions = [
-    "unique", "sparse", "partialFilterExpression", "expireAfterSeconds", "collation", "hidden"
-  ]
-  supportedOptions.forEach(option => {
+  catalogIndexOptionNames.forEach(option => {
     if (index[option] !== undefined) {
       options[option] = index[option]
     }
@@ -139,11 +147,12 @@ function ensureCatalogIndex(collectionName, keys, options, legacyDefinitions = [
     collection.createIndex(keys, options)
     return
   }
-  if (sameIndexDefinition(existing, keys, options.partialFilterExpression)) {
+  if (sameCatalogIndexDefinition(existing, keys, options)) {
     collection.createIndex(keys, options)
     return
   }
-  const knownLegacy = legacyDefinitions.some(definition =>
+  const sameKeysAndPartialFilter = sameIndexDefinition(existing, keys, options.partialFilterExpression)
+  const knownLegacy = sameKeysAndPartialFilter || legacyDefinitions.some(definition =>
     sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
   )
   if (!knownLegacy) {
@@ -2026,6 +2035,24 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
     }
   }
   // end collection: llmgw_model_offerings
+
+  // collection: llmgw_runtime_grants
+  // OpenDesign 每个任务只拿一把短期授权：明文只在当前调用栈里出现，库里按哈希鉴权。
+  // 唯一索引防止哈希身份重复；TTL 清理过期授权；租户 + run 索引服务审计与撤销。
+  // 这三条只能由 DBA 清单在维护窗口创建，应用启动时不得建索引。
+  ensureTightenedUniqueIndex("llmgw_runtime_grants",
+    { "KeyHash": 1 },
+    { name: "uniq_llmgw_runtime_grant_hash", unique: true }
+  )
+  ensureCatalogIndex("llmgw_runtime_grants",
+    { "ExpiresAt": 1 },
+    { name: "ttl_llmgw_runtime_grants", expireAfterSeconds: 0 }
+  )
+  ensureCatalogIndex("llmgw_runtime_grants",
+    { "TenantId": 1, "RunId": 1 },
+    { name: "idx_llmgw_runtime_grant_tenant_run" }
+  )
+  // end collection: llmgw_runtime_grants
 }
 
 

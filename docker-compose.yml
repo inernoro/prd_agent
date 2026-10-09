@@ -145,8 +145,8 @@ services:
       - DesignRuntime__OpenDesign__Transport=service
       - DesignRuntime__OpenDesign__BaseUrl=http://design-opendesign:8093
       - DesignRuntime__OpenDesign__ApiKey=${DESIGN_RUNTIME_API_KEY:-}
-      # 设计服务回调 api（取工作区、交结果、模型出口）的公网基址；它的出口会拒绝内网地址，
-      # 所以只能是正式域名。exec_dep.sh 默认取 PRD_AGENT_PUBLIC_BASE_URL。
+      # 设计服务回调 api（取工作区、推预览、交结果）的公网基址；它的产物出口会拒绝内网地址，
+      # 所以只能是正式域名。模型数据面不再回调 MAP，由短期授权直达下面的 LLMGW 内网地址。
       - DesignArtifactRuntime__PublicBaseUrl=${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-}
     # 重要：此 API 容器建议只读，避免任何本地落盘
     read_only: true
@@ -343,6 +343,9 @@ services:
     container_name: prdagent-design-opendesign
     environment:
       - DESIGN_RUNTIME_API_KEY=${DESIGN_RUNTIME_API_KEY:-}
+      # 只允许 MAP 任务信封把模型流量送到这一条钉死的 LLMGW 原生 Responses 入口。
+      # 凭据是 API 按任务签发的短期 grant，不把 LLMGW_SERVE_KEY 下发到设计容器。
+      - DESIGN_RUNTIME_LLMGW_BASE_URL=${LLMGW_SERVE_BASE_URL:-http://gateway}/gw/v1
     healthcheck:
       # 匿名就绪探针：引擎健康才 200。镜像基于 node，不假定容器里有 curl。
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8093/healthz/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

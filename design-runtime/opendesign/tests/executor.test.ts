@@ -415,6 +415,7 @@ describe('live preview delivery', () => {
       daemon: { current: () => undefined } as any,
       fetchImpl,
       relayPort: 0,
+      llmgwBaseUrl: 'http://gateway/gw/v1',
     });
     const stages: string[] = [];
     let now = 1_000_000;

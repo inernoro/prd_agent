@@ -15,9 +15,8 @@ namespace PrdAgent.Api.Services;
 /// 协议见 doc/spec.platform.design-runtime.protocol.md；服务端契约的唯一判据是
 /// design-runtime/opendesign/src/protocol.ts 与 http/server.ts。
 ///
-/// 传给服务的传输地址、模型出口、票据与经 CDS 时完全相同（都来自
-/// <see cref="IDesignArtifactWorkspaceBroker.PrepareAsync"/>，落在 MAP 的公网 https 源上），
-/// 事件翻译与 CDS 路径共用 <see cref="OpenDesignEventTranslator"/>。
+/// 工作区下载、预览与结果提交仍回到 MAP；模型出口则使用按任务签发的短期凭据直接进入 LLMGW，
+/// MAP 不再代理模型请求正文。事件翻译与 CDS 路径共用 <see cref="OpenDesignEventTranslator"/>。
 /// 任何失败都如实失败，绝不静默改走 CDS 会话（判据与接线纪律 形状 10）；回退只能由运维改开关。
 /// </summary>
 public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor, IDesignArtifactProviderProbe
@@ -58,17 +57,20 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IDesignArtifactWorkspaceBroker _workspaceBroker;
+    private readonly IDesignArtifactGatewayGrantService _gatewayGrants;
     private readonly IConfiguration _configuration;
     private readonly ILogger<OpenDesignServiceArtifactExecutor> _logger;
 
     public OpenDesignServiceArtifactExecutor(
         IHttpClientFactory httpClientFactory,
         IDesignArtifactWorkspaceBroker workspaceBroker,
+        IDesignArtifactGatewayGrantService gatewayGrants,
         IConfiguration configuration,
         ILogger<OpenDesignServiceArtifactExecutor> logger)
     {
         _httpClientFactory = httpClientFactory;
         _workspaceBroker = workspaceBroker;
+        _gatewayGrants = gatewayGrants;
         _configuration = configuration;
         _logger = logger;
     }
@@ -225,7 +227,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ("code", "transport_configuration_incomplete"), ("transport", TransportLogName),
                 ("problem", transport.Problem ?? MissingConfigurationReason));
 
-        var workspace = await _workspaceBroker.PrepareAsync(run, currentHtml, CancellationToken.None);
+        var workspace = await _workspaceBroker.PrepareForDirectGatewayAsync(run, currentHtml, CancellationToken.None);
         var ticketExpiresAt = run.RuntimeTicketExpiresAt ?? UtcNow().Add(FallbackTicketTtl);
         // 排队不能把票据耗光：任务真正开跑时，票据至少还要够它跑满上限。
         var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(TaskTimeoutSeconds) - TicketSafetyMargin;
@@ -239,6 +241,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         var remoteTerminal = false;
         var queuedSince = UtcNow();
         DateTime? unavailableSince = null;
+        string? observedModel = null;
 
         try
         {
@@ -343,6 +346,26 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     afterSeq = Math.Max(afterSeq, evt.Seq);
                     sawEvent = true;
                     consecutiveFailures = 0;
+                    if (evt.Type == OpenDesignEventTranslator.Done
+                        || evt.Type == OpenDesignEventTranslator.Status && observedModel is null)
+                    {
+                        var usage = await ObserveGrantUsageAsync(
+                            workspace.ModelGrantId,
+                            run,
+                            CancellationToken.None);
+                        if (usage is not null
+                            && !string.IsNullOrWhiteSpace(usage.Model)
+                            && !string.Equals(observedModel, usage.Model, StringComparison.Ordinal))
+                        {
+                            observedModel = usage.Model;
+                            yield return new DesignArtifactExecutorChunk(
+                                "model",
+                                usage.Model,
+                                ResolvedModel: new DesignArtifactResolvedModel(
+                                    usage.Model,
+                                    string.IsNullOrWhiteSpace(usage.Platform) ? "LLMGW" : usage.Platform));
+                        }
+                    }
                     switch (evt.Type)
                     {
                         case OpenDesignEventTranslator.Done:
@@ -390,6 +413,33 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             // 用 CancellationToken.None：这一步恰恰要在调用方已取消之后做完。
             if ((accepted || dispatched) && !remoteTerminal)
                 await CancelRemoteTaskAsync(transport, run.Id);
+            try
+            {
+                await _gatewayGrants.ObserveAsync(workspace.ModelGrantId, run, CancellationToken.None);
+            }
+            catch (Exception observationError)
+            {
+                _logger.LogWarning(
+                    observationError,
+                    "OpenDesign 任务短期网关凭据用量回写失败 run={RunId} grant={GrantId}",
+                    run.Id,
+                    workspace.ModelGrantId);
+            }
+            finally
+            {
+                try
+                {
+                    await _gatewayGrants.RevokeAsync(workspace.ModelGrantId, CancellationToken.None);
+                }
+                catch (Exception revocationError)
+                {
+                    _logger.LogWarning(
+                        revocationError,
+                        "OpenDesign 任务短期网关凭据撤销失败，凭据仍会按到期时间失效 run={RunId} grant={GrantId}",
+                        run.Id,
+                        workspace.ModelGrantId);
+                }
+            }
         }
     }
 
@@ -420,10 +470,36 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["protocol"] = "openai",
                 ["apiKey"] = workspace.ModelToken,
                 ["model"] = workspace.Model,
+                ["sourceSystem"] = "map",
+                ["appCallerCode"] = run.Operation == DesignArtifactOperations.Edit
+                    ? AppCallerRegistry.Admin.WebHosting.EditHtml
+                    : AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ["userId"] = run.UserId,
+                ["runId"] = run.Id,
             },
             ["timeoutSeconds"] = timeoutSeconds,
             ["envelope"] = JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
         };
+
+    private async Task<DesignArtifactGatewayGrantUsage?> ObserveGrantUsageAsync(
+        string grantId,
+        DesignArtifactRun run,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await _gatewayGrants.ObserveAsync(grantId, run, ct);
+        }
+        catch (Exception error)
+        {
+            _logger.LogWarning(
+                error,
+                "OpenDesign 任务模型用量同步暂时失败，任务继续执行 run={RunId} grant={GrantId}",
+                run.Id,
+                grantId);
+            return null;
+        }
+    }
 
     private static string BusyPhase(string? slot, TimeSpan wait, TimeSpan queued)
     {
