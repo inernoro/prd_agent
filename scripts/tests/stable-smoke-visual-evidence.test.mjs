@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -191,6 +191,44 @@ test('manifest 元数据只能来自计划且同轮重试幂等复用同一证�
     });
     assert.equal(retried.captured, false);
     assert.equal(retried.reason, 'slot-already-captured');
+    assert.equal(JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8')).length, 1);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
+test('自动检查失败的证据不写入 manifest 且同一槽位可以重试', async () => {
+  const current = fixture();
+  try {
+    const rejectedHarness = fakeHarness();
+    const rejectedCapture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => ({
+        ...rejectedHarness,
+        shot: async (...args) => ({
+          ...(await rejectedHarness.shot(...args)),
+          automatedStatus: '失败',
+        }),
+      }),
+    });
+    await assert.rejects(
+      () => rejectedCapture(page(), undefined, {
+        slotId: 'CDS-VISUAL-SINGLE-01',
+        target: target(),
+      }),
+      /自动检查未通过/,
+    );
+    assert.equal(existsSync(join(current.outputPath, 'manifest.json')), false);
+
+    const retryCapture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => fakeHarness(),
+    });
+    const retried = await retryCapture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+    });
+    assert.equal(retried.captured, true);
     assert.equal(JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8')).length, 1);
   } finally {
     rmSync(current.root, { recursive: true, force: true });

@@ -329,6 +329,9 @@ export function createStableSmokeVisualEvidence(options = {}) {
           mobileStage: input.mobileStage || slot.mobileStage || null,
         });
         validateRecord(record, plan, slot, runtime, actual);
+        if (status === '通过' && record.automatedStatus !== '通过') {
+          throw new Error(`视觉位 ${slotId} 自动检查未通过，不能按通过核销。`);
+        }
         if (testInfo?.attach) {
           await testInfo.attach(slotId, { path: record.path, contentType: 'image/png' });
         }
@@ -344,9 +347,6 @@ export function createStableSmokeVisualEvidence(options = {}) {
         await atomicWriteJson(manifestPath, [...existing, record]);
       });
 
-      if (status === '通过' && record.automatedStatus !== '通过') {
-        throw new Error(`视觉位 ${slotId} 自动检查未通过，不能按通过核销。`);
-      }
       return { captured: true, record, manifestPath };
     });
   };

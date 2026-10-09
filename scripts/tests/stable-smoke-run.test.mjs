@@ -279,17 +279,48 @@ test('CDS 公网稳定门会验证入口、首屏资源和懒加载资源', asyn
   const requested = [];
   const fetchFn = async (url) => {
     requested.push(String(url));
-    if (String(url).includes('/assets/lazy-page.js')) return new Response('export default {};', { status: 200 });
+    if (String(url).includes('/assets/lazy-page.js')) return new Response('export default {};', {
+      status: 200,
+      headers: { 'content-type': 'application/javascript' },
+    });
     if (String(url).includes('/assets/index.js')) {
-      return new Response('const page = () => import("/assets/lazy-page.js");', { status: 200 });
+      return new Response('const page = () => import("/assets/lazy-page.js");', {
+        status: 200,
+        headers: { 'content-type': 'application/javascript; charset=utf-8' },
+      });
     }
-    if (String(url).includes('/assets/index.css')) return new Response('body{}', { status: 200 });
-    return new Response('<script type="module" src="/assets/index.js"></script><link rel="stylesheet" href="/assets/index.css">', { status: 200 });
+    if (String(url).includes('/assets/index.css')) return new Response('body{}', {
+      status: 200,
+      headers: { 'content-type': 'text/css' },
+    });
+    return new Response('<script type="module" src="/assets/index.js"></script><link rel="stylesheet" href="/assets/index.css">', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
   };
   const result = await probeCdsPublicEntry('https://preview.example.test', fetchFn);
   assert.equal(result.entries, 3);
   assert.equal(result.assets, 3);
   assert.ok(requested.some((url) => url.includes('/assets/lazy-page.js')));
+});
+
+test('CDS 公网稳定门拒绝被入口 HTML 回退伪装成成功的静态资源', async () => {
+  const fetchFn = async (url) => {
+    if (String(url).includes('/assets/missing.js')) {
+      return new Response('<!doctype html><html><body>fallback</body></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+    return new Response('<script type="module" src="/assets/missing.js"></script>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+  };
+  await assert.rejects(
+    () => probeCdsPublicEntry('https://preview.example.test', fetchFn),
+    /无效的 JavaScript 内容/,
+  );
 });
 
 test('CDS 公网稳定门要求连续两轮通过并在瞬时 502 后重新计数', async () => {
@@ -298,8 +329,14 @@ test('CDS 公网稳定门要求连续两轮通过并在瞬时 502 后重新计�
   const fetchFn = async (url) => {
     if (!String(url).includes('/assets/')) entryRequests += 1;
     if (entryRequests <= 3) return new Response('', { status: 502 });
-    if (String(url).includes('/assets/index.js')) return new Response('export default {};', { status: 200 });
-    return new Response('<script type="module" src="/assets/index.js"></script>', { status: 200 });
+    if (String(url).includes('/assets/index.js')) return new Response('export default {};', {
+      status: 200,
+      headers: { 'content-type': 'application/javascript' },
+    });
+    return new Response('<script type="module" src="/assets/index.js"></script>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
   };
   const result = await waitForCdsPublicEntryStability('https://preview.example.test', {
     attempts: 3,

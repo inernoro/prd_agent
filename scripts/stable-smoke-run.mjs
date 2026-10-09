@@ -468,6 +468,20 @@ async function fetchPublicAsset(url, fetchFn, { readBody = false } = {}) {
     throw new Error(`CDS 公网资源请求失败 ${url}：${error?.cause?.code || error?.message || '未知传输错误'}`);
   }
   if (!response.ok) throw new Error(`CDS 公网资源 ${url} 返回 HTTP ${response.status}`);
+  const pathname = new URL(url).pathname.toLowerCase();
+  const assetType = pathname.endsWith('.js') ? 'script' : pathname.endsWith('.css') ? 'style' : null;
+  if (assetType) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const validType = assetType === 'script'
+      ? /(?:javascript|ecmascript)/.test(contentType)
+      : contentType.includes('text/css');
+    const body = await response.text();
+    const looksLikeHtml = /^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(body);
+    if (!validType || looksLikeHtml) {
+      throw new Error(`CDS 公网资源 ${url} 返回了无效的 ${assetType === 'script' ? 'JavaScript' : 'CSS'} 内容`);
+    }
+    return { response, body: readBody ? body : '' };
+  }
   if (readBody) return { response, body: await response.text() };
   await response.body?.cancel().catch(() => undefined);
   return { response, body: '' };
