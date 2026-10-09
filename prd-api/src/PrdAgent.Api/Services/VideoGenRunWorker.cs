@@ -284,6 +284,7 @@ public class VideoGenRunWorker : BackgroundService
                 & runFb.Eq(x => x.Id, task.RunId)
                 & runFb.Eq(x => x.LatestExportTaskId, task.Id))
             .FirstOrDefaultAsync(ct);
+        double? recoveredCost = null;
 
         if (run?.Status == VideoGenRunStatus.Rendering)
         {
@@ -310,9 +311,16 @@ public class VideoGenRunWorker : BackgroundService
                     .Set(x => x.WorkerLeasePhase, (string?)null),
                 cancellationToken: ct);
             if (completed.ModifiedCount != 1) return false;
-            await UpdateProjectAsync(run, VideoProjectStatus.Completed);
-            await PublishEventAsync(run.Id, "export.completed", new { videoUrl = task.OutputUrl, cost = totalCost });
+            run.Status = VideoGenRunStatus.Completed;
+            recoveredCost = totalCost;
         }
+
+        // 项目状态也是完成恢复单元的一部分。只有先把项目幂等对齐为 Completed，才能关闭 task 的
+        // RunReconciledAt；若进程在这里退出，下一轮会从仍为空的标记重新执行项目对齐。
+        if (run?.Status == VideoGenRunStatus.Completed)
+            await UpdateProjectAsync(run, VideoProjectStatus.Completed);
+        if (recoveredCost.HasValue)
+            await PublishEventAsync(run!.Id, "export.completed", new { videoUrl = task.OutputUrl, cost = recoveredCost });
 
         // run 已完成、被取消、已删除或后续导出已成为 latest 时，都不存在“永久 Rendering”窗口。
         // task 自身仍是对象的有效引用，因此只标记已核对，不删除其输出。
@@ -2569,6 +2577,7 @@ public class VideoGenRunWorker : BackgroundService
                 await DeleteStoredVideoIfUnreferencedAsync(stored.Sha256, stored.Url);
                 return;
             }
+            await UpdateProjectAsync(run, VideoProjectStatus.Completed);
             if (exportTask != null)
             {
                 await _db.VideoExportTasks.UpdateOneAsync(
@@ -2578,7 +2587,6 @@ public class VideoGenRunWorker : BackgroundService
                     Builders<VideoExportTask>.Update.Set(x => x.RunReconciledAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
             }
-            await UpdateProjectAsync(run, VideoProjectStatus.Completed);
             await PublishEventAsync(run.Id, "export.completed", new { videoUrl = stored.Url, cost = totalCost });
         }
         finally

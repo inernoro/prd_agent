@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -10,6 +11,55 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class CapsuleExecutorVideoDownloaderSecurityTests
 {
+    [Fact]
+    public void ResolveDownloadedVideoContentType_ShouldDetectMp4WhenServerReturnsOctetStream()
+    {
+        var bytes = new byte[]
+        {
+            0, 0, 0, 24,
+            (byte)'f', (byte)'t', (byte)'y', (byte)'p',
+            (byte)'i', (byte)'s', (byte)'o', (byte)'m',
+        };
+
+        CapsuleExecutor.ResolveDownloadedVideoContentType(bytes, "application/octet-stream")
+            .ShouldBe("video/mp4");
+    }
+
+    [Fact]
+    public void ResolveDownloadedVideoContentType_ShouldPreserveWebmContainer()
+    {
+        var bytes = new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }
+            .Concat(Encoding.ASCII.GetBytes("header-webm-video"))
+            .ToArray();
+
+        CapsuleExecutor.ResolveDownloadedVideoContentType(bytes, null)
+            .ShouldBe("video/webm");
+    }
+
+    [Fact]
+    public void ResolveDownloadedVideoContentType_ShouldRejectUnknownBinary()
+    {
+        var ex = Should.Throw<InvalidOperationException>(() =>
+            CapsuleExecutor.ResolveDownloadedVideoContentType(
+                Encoding.ASCII.GetBytes("not-a-video-container"),
+                "application/octet-stream"));
+
+        ex.Message.ShouldContain("无法识别的二进制格式");
+    }
+
+    [Fact]
+    public void ResolveDownloadedVideoContentType_ShouldNormalizeM4vAndRejectOgv()
+    {
+        CapsuleExecutor.ResolveDownloadedVideoContentType([], "video/x-m4v")
+            .ShouldBe("video/mp4");
+        var ex = Should.Throw<InvalidOperationException>(() =>
+            CapsuleExecutor.ResolveDownloadedVideoContentType(
+                new byte[] { (byte)'O', (byte)'g', (byte)'g', (byte)'S' },
+                "application/octet-stream"));
+
+        ex.Message.ShouldContain("不支持 OGV");
+    }
+
     [Fact]
     public async Task ExecuteVideoDownloaderAsync_ShouldBlockPrivateNetworkTargets()
     {

@@ -62,10 +62,31 @@ public class ShortVideoMaterialProcessorTests
     [Theory]
     [InlineData("https://www.bilibili.com/video/BV1test")]
     [InlineData("https://cdn.example.test/video.mp4.txt")]
+    [InlineData("https://cdn.example.test/video.ogv")]
     [InlineData("file:///tmp/video.mp4")]
     [InlineData("这不是链接")]
     public void IsDirectVideoUrl_ShouldRejectSharePagesAndInvalidUrls(string value)
     {
         ShortVideoMaterialProcessor.IsDirectVideoUrl(value).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("video/mp4", "发布演示.mp4")]
+    [InlineData("video/quicktime", "发布演示.mov")]
+    [InlineData("video/webm", "发布演示.webm")]
+    [InlineData("video/x-matroska", "发布演示.mkv")]
+    [InlineData("video/x-msvideo", "发布演示.avi")]
+    public void BuildVideoFileName_ShouldMatchStoredContainer(string mimeType, string expected)
+    {
+        ShortVideoMaterialProcessor.BuildVideoFileName("发布演示", mimeType).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void BuildVideoFileName_ShouldRejectUnsupportedMimeType()
+    {
+        var ex = Should.Throw<InvalidOperationException>(() =>
+            ShortVideoMaterialProcessor.BuildVideoFileName("发布演示", "application/octet-stream"));
+
+        ex.Message.ShouldContain("视频格式不受支持");
     }
 }

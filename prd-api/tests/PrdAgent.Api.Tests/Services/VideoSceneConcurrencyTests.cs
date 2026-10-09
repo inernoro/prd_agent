@@ -464,6 +464,57 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task Worker_ShouldReconcileProjectBeforeClosingCompletedExportTask()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string durableScope = "project-a::feature-video";
+        const string currentScope = $"{durableScope}::revision::new";
+        var previousScope = $"{durableScope}::revision::old";
+        var project = await test.CreateService().CreateProjectAsync(
+            "video-agent",
+            test.OwnerId,
+            new CreateVideoProjectRequest { Title = "导出恢复项目", SourceMarkdown = "测试" });
+        await test.Context.VideoProjects.UpdateOneAsync(
+            item => item.Id == project.Id,
+            Builders<VideoProject>.Update.Set(item => item.Status, VideoProjectStatus.Rendering));
+
+        var run = NewRun("recover-completed-project", test.OwnerId, SceneItemStatus.Done);
+        run.ProjectId = project.Id;
+        run.Status = VideoGenRunStatus.Completed;
+        run.DeploymentSlug = previousScope;
+        run.LatestExportTaskId = "completed-project-export-task";
+        run.VideoAssetUrl = "https://assets.example/video-agent/video/exported.mp4";
+        run.VideoAssetSha256 = new string('p', 64);
+        await test.SaveRunAsync(run);
+        var exportTask = new VideoExportTask
+        {
+            Id = run.LatestExportTaskId,
+            RunId = run.Id,
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = previousScope,
+            Status = VideoExportTaskStatus.Completed,
+            CurrentPhase = "completed",
+            Progress = 100,
+            OutputUrl = run.VideoAssetUrl,
+            OutputSha256 = run.VideoAssetSha256,
+            EndedAt = DateTime.UtcNow.AddSeconds(-5),
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(exportTask);
+
+        var worker = test.CreateWorker();
+        (await worker.RecoverCompletedExportTaskAsync(
+            currentScope,
+            durableScope,
+            CancellationToken.None)).ShouldBeTrue();
+
+        (await test.Context.VideoProjects.Find(item => item.Id == project.Id).SingleAsync())
+            .Status.ShouldBe(VideoProjectStatus.Completed);
+        var reconciledTask = await test.Context.VideoExportTasks.Find(item => item.Id == exportTask.Id).SingleAsync();
+        reconciledTask.DeploymentSlug.ShouldBe(currentScope);
+        reconciledTask.RunReconciledAt.ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task Worker_ShouldNotAdoptLiveRunOrProcessingExportLeases()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
