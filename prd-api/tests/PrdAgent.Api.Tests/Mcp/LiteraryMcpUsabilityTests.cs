@@ -814,6 +814,8 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None)).GetProperty("workspaceId").GetString()!;
             var ws = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
             ws.ArticleWorkflow!.AssetIdByMarkerIndex = new() { ["0"] = "a0", ["1"] = "a1", ["2"] = "a2" };
+            ws.ArticleWorkflow.Markers[0].PlanItem!.Size = "1536x1024";
+            ws.ArticleWorkflow.Markers[2].PlanItem!.Size = "1024x1536";
             await db.ImageMasterWorkspaces.ReplaceOneAsync(x => x.Id == id, ws);
             await db.ImageAssets.InsertManyAsync(new[] { 0, 1, 2 }.Select(i => new ImageAsset
             {
@@ -828,6 +830,10 @@ public class LiteraryMcpUsabilityTests
             }, CancellationToken.None));
             Assert.Equal(new[] { 0, 2 }, written.GetProperty("reusedImages").EnumerateArray().Select(x => x.GetInt32()));
             Assert.Equal(new[] { 1 }, written.GetProperty("needsGeneration").EnumerateArray().Select(x => x.GetInt32()));
+            var keptPlans = (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers;
+            Assert.Equal("1536x1024", keptPlans[0].PlanItem!.Size);
+            Assert.Equal("1024x1024", keptPlans[1].PlanItem!.Size);
+            Assert.Equal("1024x1536", keptPlans[2].PlanItem!.Size);
 
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None, "illustrated"));
             var ill = read.GetProperty("illustrations").EnumerateArray().ToList();
