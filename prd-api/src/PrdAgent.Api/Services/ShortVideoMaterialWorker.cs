@@ -79,12 +79,12 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
                 legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
-                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Running),
                 ownerScope);
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
-                    .Set(r => r.Status, "failed")
+                    .Set(r => r.Status, ShortVideoMaterialRunStatus.Failed)
                     .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
@@ -123,14 +123,14 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
-                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Running),
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
                 ownerScope);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 filter,
                 Builders<ShortVideoMaterialRun>.Update
-                    .Set(r => r.Status, "failed")
+                    .Set(r => r.Status, ShortVideoMaterialRunStatus.Failed)
                     .Set(r => r.OwnerInstanceId, instanceId)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_TIMEOUT)
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
@@ -153,9 +153,9 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             await db.ShortVideoMaterialRuns.UpdateOneAsync(
-                r => r.Id == _currentRunId && r.Status == "running",
+                r => r.Id == _currentRunId && r.Status == ShortVideoMaterialRunStatus.Running,
                 Builders<ShortVideoMaterialRun>.Update
-                    .Set(r => r.Status, "failed")
+                    .Set(r => r.Status, ShortVideoMaterialRunStatus.Failed)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, message)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -182,10 +182,10 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
-                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Queued),
                 ownerScope),
             Builders<ShortVideoMaterialRun>.Update
-                .Set(r => r.Status, "running")
+                .Set(r => r.Status, ShortVideoMaterialRunStatus.Running)
                 .Set(r => r.ErrorCode, (string?)null)
                 .Set(r => r.ErrorMessage, (string?)null)
                 // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
@@ -214,7 +214,7 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             var latest = await db.ShortVideoMaterialRuns.Find(r => r.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
             if (latest != null)
             {
-                latest.Status = "failed";
+                latest.Status = ShortVideoMaterialRunStatus.Failed;
                 latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
                 latest.ErrorMessage = ex.Message;
                 ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
@@ -340,7 +340,7 @@ public sealed class ShortVideoMaterialProcessor
             MarkStage(run, "ready", "done", "视频已入库；文字、文案和时间线需要后续通过转写或人工补充继续加工");
         }
 
-        run.Status = "done";
+        run.Status = ShortVideoMaterialRunStatus.Done;
         run.UpdatedAt = DateTime.UtcNow;
         await SaveRunAsync(run);
     }

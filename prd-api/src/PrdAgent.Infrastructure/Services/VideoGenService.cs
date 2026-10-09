@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -28,6 +30,26 @@ public class VideoGenService : IVideoGenService
         _assetStorage = assetStorage;
         _logger = logger;
     }
+
+    public static FilterDefinition<T> BuildBranchDeploymentFilter<T>(
+        string fieldName,
+        string? currentScope,
+        string? durableScope)
+    {
+        var fb = Builders<T>.Filter;
+        if (currentScope == null) return fb.Eq<string?>(fieldName, null);
+        if (string.IsNullOrWhiteSpace(durableScope)) return fb.Eq(fieldName, currentScope);
+
+        var revisionPrefix = new BsonRegularExpression(
+            $"^{Regex.Escape(durableScope)}::revision::");
+        return fb.Or(
+            fb.Eq(fieldName, currentScope),
+            fb.Eq(fieldName, durableScope),
+            fb.Regex(fieldName, revisionPrefix));
+    }
+
+    private static FilterDefinition<T> CurrentBranchDeploymentFilter<T>(string fieldName)
+        => BuildBranchDeploymentFilter<T>(fieldName, DeploymentScope.Current, DeploymentScope.CurrentDurable);
 
     public async Task<VideoProject> CreateProjectAsync(
         string appKey,
@@ -281,6 +303,7 @@ public class VideoGenService : IVideoGenService
         {
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Generating),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, DeploymentScope.Current),
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
         await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
@@ -326,6 +349,7 @@ public class VideoGenService : IVideoGenService
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.SubmissionStartedAt", DateTime.UtcNow),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.RenderLeaseId", (string?)null),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.RenderLeaseExpiresAt", (DateTime?)null),
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, DeploymentScope.Current),
         };
         if (reopenCompletedRun) AddReopenEditingUpdates(updates);
         var fb = Builders<VideoGenRun>.Filter;
@@ -491,12 +515,39 @@ public class VideoGenService : IVideoGenService
         if (run.Scenes.Count == 0 || run.Scenes.Any(scene => scene.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(scene.VideoUrl)))
             throw new InvalidOperationException("所有分镜生成完成后才能导出完整视频");
 
+        if (!string.Equals(run.DeploymentSlug, DeploymentScope.Current, StringComparison.Ordinal))
+        {
+            var adopted = await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id
+                     && x.OwnerAdminId == ownerAdminId
+                     && x.DeploymentSlug == run.DeploymentSlug
+                     && x.Status == VideoGenRunStatus.Editing,
+                Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, DeploymentScope.Current),
+                cancellationToken: ct);
+            if (adopted.ModifiedCount != 1)
+                throw new InvalidOperationException("任务状态已经变化，请刷新后重试导出");
+            run.DeploymentSlug = DeploymentScope.Current;
+        }
+
         var existing = await _db.VideoExportTasks.Find(task =>
                 task.RunId == runId && task.OwnerAdminId == ownerAdminId &&
-                task.DeploymentSlug == DeploymentScope.Current &&
                 (task.Status == VideoExportTaskStatus.Queued || task.Status == VideoExportTaskStatus.Processing))
             .FirstOrDefaultAsync(ct);
-        if (existing != null) return existing;
+        if (existing != null)
+        {
+            if (existing.Status == VideoExportTaskStatus.Queued
+                && !string.Equals(existing.DeploymentSlug, DeploymentScope.Current, StringComparison.Ordinal))
+            {
+                var adoptedTask = await _db.VideoExportTasks.UpdateOneAsync(
+                    task => task.Id == existing.Id
+                            && task.Status == VideoExportTaskStatus.Queued
+                            && task.DeploymentSlug == existing.DeploymentSlug,
+                    Builders<VideoExportTask>.Update.Set(task => task.DeploymentSlug, DeploymentScope.Current),
+                    cancellationToken: ct);
+                if (adoptedTask.ModifiedCount == 1) existing.DeploymentSlug = DeploymentScope.Current;
+            }
+            return existing;
+        }
 
         var task = new VideoExportTask
         {
@@ -542,7 +593,7 @@ public class VideoGenService : IVideoGenService
         var fb = Builders<VideoExportTask>.Filter;
         var filter = fb.Eq(x => x.ProjectId, projectId)
                      & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
-                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
+                     & CurrentBranchDeploymentFilter<VideoExportTask>(nameof(VideoExportTask.DeploymentSlug));
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
         return await _db.VideoExportTasks.Find(filter)
             .SortByDescending(x => x.CreatedAt)
@@ -555,7 +606,7 @@ public class VideoGenService : IVideoGenService
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Id, runId)
                      & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
-                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                     & CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug))
                      & fb.Eq(x => x.DeletionRequestedAt, null);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
         return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
@@ -568,7 +619,7 @@ public class VideoGenService : IVideoGenService
 
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId)
-                     & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                     & CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug))
                      & fb.Eq(x => x.DeletionRequestedAt, null);
         if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
 
@@ -586,15 +637,26 @@ public class VideoGenService : IVideoGenService
         if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled)
             return true;
 
-        // Queued 尚未进入 worker，Editing 已经没有 worker 持有；这两个状态只写
-        // CancelRequested 永远不会再有人把它们推进到终态，随后删除会一直返回 409。
-        // 先用状态条件原子落终态；若并发间状态已被 worker 领取，再回退到请求取消，
-        // 由运行中的 worker 观察标记并完成终态收敛。
+        // Queued 尚未进入 worker，可以直接落终态。Editing 只有在没有任何活动分镜
+        // 持有者时才同样处理；状态判断必须放进同一个原子过滤器，避免先查后改期间
+        // 分镜被 worker 领取。若已有持有者，仅写 CancelRequested，由持有者停止后续写回。
         if (run.Status is VideoGenRunStatus.Queued or VideoGenRunStatus.Editing)
         {
+            var fb = Builders<VideoGenRun>.Filter;
+            var sceneFb = Builders<VideoGenScene>.Filter;
+            var hasActiveScene = fb.ElemMatch(
+                x => x.Scenes,
+                sceneFb.In(x => x.Status,
+                    [SceneItemStatus.Generating, SceneItemStatus.SubmittingClaimed,
+                     SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering]));
+            var directCancellationState = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)
+                                          | (fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                                             & fb.Not(hasActiveScene));
             var direct = await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == runId
-                     && (x.Status == VideoGenRunStatus.Queued || x.Status == VideoGenRunStatus.Editing),
+                fb.Eq(x => x.Id, runId)
+                & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                & fb.Eq(x => x.DeploymentSlug, run.DeploymentSlug)
+                & directCancellationState,
                 Builders<VideoGenRun>.Update
                     .Set(x => x.CancelRequested, true)
                     .Set(x => x.Status, VideoGenRunStatus.Cancelled)
@@ -617,7 +679,9 @@ public class VideoGenService : IVideoGenService
         }
 
         await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+            x => x.Id == runId
+                 && x.OwnerAdminId == ownerAdminId
+                 && x.DeploymentSlug == run.DeploymentSlug,
             Builders<VideoGenRun>.Update.Set(x => x.CancelRequested, true),
             cancellationToken: ct);
 
@@ -637,13 +701,17 @@ public class VideoGenService : IVideoGenService
             $"run-delete:{runId}",
             ct);
         var fb = Builders<VideoGenRun>.Filter;
+        var visibleOwnedFilter = fb.Eq(x => x.Id, runId)
+                               & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                               & CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug));
+        if (appKey != null) visibleOwnedFilter &= fb.Eq(x => x.AppKey, appKey);
+
+        var run = await _db.VideoGenRuns.Find(visibleOwnedFilter).FirstOrDefaultAsync(ct);
+        if (run == null) return null;
         var ownedFilter = fb.Eq(x => x.Id, runId)
                           & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
-                          & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
+                          & fb.Eq(x => x.DeploymentSlug, run.DeploymentSlug);
         if (appKey != null) ownedFilter &= fb.Eq(x => x.AppKey, appKey);
-
-        var run = await _db.VideoGenRuns.Find(ownedFilter).FirstOrDefaultAsync(ct);
-        if (run == null) return null;
         if (run.Status is not (VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled))
             throw new InvalidOperationException("任务仍在生成，请先取消并等待任务结束后再删除");
 
@@ -792,7 +860,7 @@ public class VideoGenService : IVideoGenService
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId)
                     & fb.Eq(x => x.AppKey, appKey)
-                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+                    & CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug))
                     & fb.Gte(x => x.CreatedAt, startOfDay);
         return await _db.VideoGenRuns.CountDocumentsAsync(filter, cancellationToken: ct);
     }
@@ -805,7 +873,7 @@ public class VideoGenService : IVideoGenService
             var fb = Builders<VideoGenRun>.Filter;
             var run = await _db.VideoGenRuns.Find(
                     fb.Eq(x => x.Id, runId)
-                    & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current))
+                    & CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug)))
                 .FirstOrDefaultAsync(ct);
             if (run == null) return null;
             if (run.Status == VideoGenRunStatus.Completed

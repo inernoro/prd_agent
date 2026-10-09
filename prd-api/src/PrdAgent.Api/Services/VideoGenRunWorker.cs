@@ -56,6 +56,10 @@ public class VideoGenRunWorker : BackgroundService
         {
             try
             {
+                if (await AdoptPreviousRevisionWorkAsync(
+                        DeploymentScope.Current,
+                        DeploymentScope.CurrentDurable,
+                        stoppingToken)) continue;
                 if (await ResumePendingDeletionAsync(stoppingToken)) continue;
 
                 // 路径 1: Queued → 根据 Mode 路由
@@ -211,6 +215,70 @@ public class VideoGenRunWorker : BackgroundService
         {
             _logger.LogWarning(ex, "VideoGen 删除恢复失败，稍后重试: runId={RunId}", pending.Id);
         }
+        return true;
+    }
+
+    /// <summary>
+    /// 同一 CDS 项目与分支重新部署后，只接管可以通过 Mongo 原子状态证明尚未被旧 worker
+    /// 持有的工作。Queued 尚未开始；Editing 仅允许没有活动分镜持有者的任务迁移。
+    /// 已过期的分镜 claim/lease 也可迁移，随后仍走既有恢复逻辑，避免重复提交上游任务。
+    /// </summary>
+    internal async Task<bool> AdoptPreviousRevisionWorkAsync(
+        string? currentScope,
+        string? durableScope,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(currentScope)
+            || string.IsNullOrWhiteSpace(durableScope)
+            || string.Equals(currentScope, durableScope, StringComparison.Ordinal))
+            return false;
+
+        var fb = Builders<VideoGenRun>.Filter;
+        var sceneFb = Builders<VideoGenScene>.Filter;
+        var previousRevision = VideoGenService.BuildBranchDeploymentFilter<VideoGenRun>(
+                                   nameof(VideoGenRun.DeploymentSlug),
+                                   currentScope,
+                                   durableScope)
+                               & fb.Ne(x => x.DeploymentSlug, currentScope);
+
+        // 删除已经持久化删除意图且受 run 级互斥锁保护，迁移后可由当前 worker 续作。
+        var deletion = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            previousRevision & fb.Ne(x => x.DeletionRequestedAt, null),
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (deletion != null) return true;
+
+        var now = DateTime.UtcNow;
+        var staleClaimBefore = now - SceneClaimTimeout;
+        var activeScene = sceneFb.Eq(x => x.Status, SceneItemStatus.Generating)
+                          | sceneFb.Eq(x => x.Status, SceneItemStatus.Rendering)
+                          | (sceneFb.Eq(x => x.Status, SceneItemStatus.SubmittingClaimed)
+                             & (sceneFb.Eq(x => x.SubmissionStartedAt, null)
+                                | sceneFb.Gt(x => x.SubmissionStartedAt, staleClaimBefore)))
+                          | (sceneFb.Eq(x => x.Status, SceneItemStatus.PollingClaimed)
+                             & (sceneFb.Eq(x => x.RenderLeaseExpiresAt, null)
+                                | sceneFb.Gt(x => x.RenderLeaseExpiresAt, now)));
+        var adoptableState = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)
+                             | (fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                                & fb.Not(fb.ElemMatch(x => x.Scenes, activeScene)));
+        var adopted = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            previousRevision
+            & fb.Eq(x => x.DeletionRequestedAt, null)
+            & adoptableState,
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            new FindOneAndUpdateOptions<VideoGenRun>
+            {
+                Sort = Builders<VideoGenRun>.Sort.Ascending(x => x.CreatedAt),
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (adopted == null) return false;
+
+        _logger.LogInformation(
+            "[VideoGenWorker] 已接管同分支上一 revision 的安全任务: runId={RunId}, status={Status}",
+            adopted.Id,
+            adopted.Status);
         return true;
     }
 
@@ -1007,6 +1075,12 @@ public class VideoGenRunWorker : BackgroundService
     {
         var scene = run.Scenes[sceneIdx];
 
+        if (await IsRunCancellationRequestedAsync(run.Id))
+        {
+            await CancelRunAsync(run);
+            return;
+        }
+
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
         // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
         var appCallerCode = run.AppKey == "visual-agent"
@@ -1073,6 +1147,12 @@ public class VideoGenRunWorker : BackgroundService
                     return;
                 }
 
+                if (await IsRunCancellationRequestedAsync(run.Id))
+                {
+                    await CancelRunAsync(run);
+                    return;
+                }
+
                 var submitted = await _db.VideoGenRuns.UpdateOneAsync(
                     Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
                     & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
@@ -1107,6 +1187,11 @@ public class VideoGenRunWorker : BackgroundService
 
             while (DateTime.UtcNow < deadline)
             {
+                if (await IsRunCancellationRequestedAsync(run.Id))
+                {
+                    await CancelRunAsync(run);
+                    return;
+                }
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
                 var status = string.IsNullOrWhiteSpace(scene.OfferingId)
@@ -1122,6 +1207,12 @@ public class VideoGenRunWorker : BackgroundService
                         scene.OfferingId,
                         CancellationToken.None);
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
+
+                if (await IsRunCancellationRequestedAsync(run.Id))
+                {
+                    await CancelRunAsync(run);
+                    return;
+                }
 
                 if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
                 {
@@ -1253,6 +1344,11 @@ public class VideoGenRunWorker : BackgroundService
     /// <summary>处理单镜重生成 prompt（用户点"重新设计这个分镜"）</summary>
     private async Task ProcessSceneRegenerateAsync(VideoGenRun run)
     {
+        if (await IsRunCancellationRequestedAsync(run.Id))
+        {
+            await CancelRunAsync(run);
+            return;
+        }
         var sceneIdx = run.Scenes.FindIndex(s => s.Status == SceneItemStatus.Generating);
         if (sceneIdx < 0) return;
         var scene = run.Scenes[sceneIdx];
@@ -1306,6 +1402,12 @@ public class VideoGenRunWorker : BackgroundService
             return;
         }
 
+        if (await IsRunCancellationRequestedAsync(run.Id))
+        {
+            await CancelRunAsync(run);
+            return;
+        }
+
         var newPrompt = ExtractAssistantText(resp.Content ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(newPrompt))
         {
@@ -1322,6 +1424,13 @@ public class VideoGenRunWorker : BackgroundService
             cancellationToken: CancellationToken.None);
 
         await PublishEventAsync(run.Id, "scene.prompt.regenerated", new { sceneIndex = sceneIdx, prompt = newPrompt });
+    }
+
+    private async Task<bool> IsRunCancellationRequestedAsync(string runId)
+    {
+        return await _db.VideoGenRuns.Find(x => x.Id == runId)
+            .Project(x => x.CancelRequested)
+            .FirstOrDefaultAsync(CancellationToken.None);
     }
 
     private async Task MarkSceneErrorAsync(

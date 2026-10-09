@@ -177,6 +177,110 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task BranchVisibility_ShouldIncludePreviousRevisionsButExcludeOtherBranches()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string durableScope = "project-a::feature-video";
+        const string currentScope = $"{durableScope}::revision::new";
+        var current = NewRun("visible-current", test.OwnerId, SceneItemStatus.Draft);
+        current.DeploymentSlug = currentScope;
+        var previous = NewRun("visible-previous", test.OwnerId, SceneItemStatus.Draft);
+        previous.DeploymentSlug = $"{durableScope}::revision::old";
+        var legacyBranch = NewRun("visible-durable", test.OwnerId, SceneItemStatus.Draft);
+        legacyBranch.DeploymentSlug = durableScope;
+        var foreign = NewRun("hidden-foreign", test.OwnerId, SceneItemStatus.Draft);
+        foreign.DeploymentSlug = "project-a::another-branch::revision::old";
+        await Task.WhenAll(
+            test.SaveRunAsync(current),
+            test.SaveRunAsync(previous),
+            test.SaveRunAsync(legacyBranch),
+            test.SaveRunAsync(foreign));
+
+        var filter = VideoGenService.BuildBranchDeploymentFilter<VideoGenRun>(
+            nameof(VideoGenRun.DeploymentSlug),
+            currentScope,
+            durableScope);
+        var visibleIds = await test.Context.VideoGenRuns.Find(filter)
+            .Project(run => run.Id)
+            .ToListAsync();
+
+        visibleIds.ShouldBe([current.Id, previous.Id, legacyBranch.Id], ignoreOrder: true);
+        visibleIds.ShouldNotContain(foreign.Id);
+    }
+
+    [Fact]
+    public async Task Worker_ShouldAdoptOnlySafePreviousRevisionWork()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string durableScope = "project-a::feature-video";
+        const string currentScope = $"{durableScope}::revision::new";
+        var previousScope = $"{durableScope}::revision::old";
+        var queued = NewRun("adopt-queued", test.OwnerId, SceneItemStatus.Draft);
+        queued.Status = VideoGenRunStatus.Queued;
+        queued.Mode = VideoGenMode.Direct;
+        queued.DeploymentSlug = previousScope;
+        var idleEditing = NewRun("adopt-idle-editing", test.OwnerId, SceneItemStatus.Submitting);
+        idleEditing.DeploymentSlug = previousScope;
+        var activeEditing = NewRun("keep-active-editing", test.OwnerId, SceneItemStatus.PollingClaimed);
+        activeEditing.DeploymentSlug = previousScope;
+        activeEditing.Scenes[0].JobId = "upstream-job";
+        activeEditing.Scenes[0].RenderLeaseId = "lease:active";
+        activeEditing.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1);
+        var foreign = NewRun("keep-foreign", test.OwnerId, SceneItemStatus.Submitting);
+        foreign.DeploymentSlug = "project-a::another-branch::revision::old";
+        await Task.WhenAll(
+            test.SaveRunAsync(queued),
+            test.SaveRunAsync(idleEditing),
+            test.SaveRunAsync(activeEditing),
+            test.SaveRunAsync(foreign));
+
+        var worker = test.CreateWorker();
+        (await worker.AdoptPreviousRevisionWorkAsync(currentScope, durableScope, CancellationToken.None))
+            .ShouldBeTrue();
+        (await worker.AdoptPreviousRevisionWorkAsync(currentScope, durableScope, CancellationToken.None))
+            .ShouldBeTrue();
+        (await worker.AdoptPreviousRevisionWorkAsync(currentScope, durableScope, CancellationToken.None))
+            .ShouldBeFalse();
+
+        (await test.Context.VideoGenRuns.Find(x => x.Id == queued.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(currentScope);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == idleEditing.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(currentScope);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == activeEditing.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(previousScope);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == foreign.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(foreign.DeploymentSlug);
+    }
+
+    [Fact]
+    public async Task CancelEditingRun_WithActiveScene_ShouldWaitForHolderToConverge()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-active", test.OwnerId, SceneItemStatus.PollingClaimed);
+        run.Scenes[0].JobId = "upstream-job-active";
+        run.Scenes[0].RenderLeaseId = "lease:active";
+        run.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1);
+        await test.SaveRunAsync(run);
+        var service = test.CreateService();
+
+        (await service.CancelRunAsync(run.Id, run.OwnerAdminId, run.AppKey)).ShouldBeTrue();
+
+        var requested = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        requested.Status.ShouldBe(VideoGenRunStatus.Editing);
+        requested.CancelRequested.ShouldBeTrue();
+
+        var worker = test.CreateWorker();
+        await worker.ProcessSceneRenderAsync(requested, 0, "lease:active", resumeExistingJob: true);
+
+        var cancelled = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.VideoClient.Verify(client => client.SubmitAsync(
+            It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        test.VideoClient.Verify(client => client.GetStatusAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ConcurrentBatchRequests_ShouldQueueEachEligibleSceneExactlyOnce()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

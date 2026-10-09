@@ -7270,18 +7270,154 @@ def _verify_infra_image(svc_name: str, svc: dict) -> list[dict]:
     return []
 
 
-def _verify_runtime_credential_vars(infra_services: dict) -> set[str]:
-    """Return credential aliases injected by CDS for declared infra services.
+def _verify_runtime_credential_vars(
+    infra_services: dict,
+    project_env: dict | None = None,
+) -> set[str]:
+    """Return credential aliases that CDS can actually derive at runtime.
 
-    The server derives these names from the infra service id rather than the
-    image kind (for example ``redis-2`` becomes ``CDS_REDIS_2_PASSWORD``).
-    Keeping the same derivation here lets verify accept real runtime aliases
-    without turning every ``CDS_*_PASSWORD`` typo into a trusted variable.
+    A declared service id is not enough: the server only injects aliases when
+    it can resolve a complete credential account, and Redis/NATS additionally
+    require startup arguments proving that authentication is enabled.  Verify
+    mirrors that contract so an unresolved placeholder cannot be downgraded to
+    INFO merely because an unrelated infra service has the same id.
     """
+    declared_env = {
+        str(k): str(v)
+        for k, v in (project_env or {}).items()
+        if v is not None
+    }
+
+    def _env(svc: dict) -> dict[str, str]:
+        raw = svc.get("environment") or svc.get("env") or {}
+        parsed = dict(declared_env)
+        if isinstance(raw, dict):
+            parsed.update({str(k): str(v) for k, v in raw.items() if v is not None})
+            return parsed
+        if isinstance(raw, list):
+            for item in raw:
+                key, sep, value = str(item).partition("=")
+                if sep and key:
+                    parsed[key] = value
+            return parsed
+        return {}
+
+    def _args(svc: dict) -> str:
+        parts: list[str] = []
+        for field in ("command", "entrypoint"):
+            value = svc.get(field)
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif value:
+                parts.append(str(value))
+        return " ".join(parts)
+
+    def _value(env: dict[str, str], key: str, seen: set[str] | None = None) -> str:
+        seen = set(seen or ())
+        if key in seen:
+            return ""
+        seen.add(key)
+        value = env.get(key, "").strip()
+        reference = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)
+        if reference:
+            return _value(env, reference.group(1), seen)
+        return "" if "${" in value else value
+
+    def _flag_value(args: str, env: dict[str, str], *flags: str) -> str:
+        try:
+            tokens = shlex.split(args)
+        except ValueError:
+            tokens = args.split()
+
+        def _resolve(raw: str) -> str:
+            value = raw.strip().strip('"\'')
+            match = re.fullmatch(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", value)
+            if match:
+                return _value(env, match.group(1))
+            return "" if "${" in value else value
+
+        lowered_flags = {flag.lower() for flag in flags}
+        for index, token in enumerate(tokens):
+            lowered = token.lower()
+            if lowered in lowered_flags:
+                if index + 1 < len(tokens) and not tokens[index + 1].startswith("-"):
+                    value = _resolve(tokens[index + 1])
+                    if value:
+                        return value
+                continue
+            for flag in flags:
+                prefix = f"{flag.lower()}="
+                if lowered.startswith(prefix):
+                    value = _resolve(token[len(flag) + 1:])
+                    if value:
+                        return value
+        return ""
+
+    def _resolved_account(svc: dict) -> tuple[bool, bool]:
+        env = _env(svc)
+        args = _args(svc)
+
+        redis_password = (_value(env, "REDIS_PASSWORD")
+                          or _flag_value(args, env, "--requirepass"))
+        redis_auth = bool(
+            _flag_value(args, env, "--requirepass", "--user", "--aclfile"))
+        if redis_password and redis_auth:
+            return bool(_value(env, "REDIS_USERNAME")), True
+
+        nats_password = _value(env, "NATS_PASSWORD") or _flag_value(args, env, "--pass")
+        nats_auth = bool(_flag_value(args, env, "--pass", "--auth"))
+        if nats_password and nats_auth:
+            nats_user = _value(env, "NATS_USER") or _flag_value(args, env, "--user")
+            if nats_user:
+                return True, True
+
+        memcached_auth = bool(
+            _flag_value(args, env, "-Y", "--auth-file")
+            or re.search(r"(?:^|\s)-S(?:\s|$)", args))
+        memcached_user = _value(env, "MEMCACHED_USER")
+        memcached_password = _value(env, "MEMCACHED_PASSWORD")
+        if memcached_auth and memcached_user and memcached_password:
+            return True, True
+
+        accounts = (
+            (("MONGO_INITDB_ROOT_USERNAME",), "MONGO_INITDB_ROOT_PASSWORD", False),
+            (("MONGO_USERNAME",), "MONGO_PASSWORD", False),
+            (("MONGODB_USERNAME",), "MONGODB_PASSWORD", False),
+            (("MYSQL_USER",), "MYSQL_PASSWORD", False),
+            (("MARIADB_USER",), "MARIADB_PASSWORD", False),
+            ((), "MYSQL_ROOT_PASSWORD", True),
+            ((), "MARIADB_ROOT_PASSWORD", True),
+            (("POSTGRES_USER",), "POSTGRES_PASSWORD", True),
+            (("POSTGRES_USER",), "PGPASSWORD", True),
+            (("RABBITMQ_DEFAULT_USER",), "RABBITMQ_DEFAULT_PASS", False),
+            (("MINIO_ROOT_USER",), "MINIO_ROOT_PASSWORD", False),
+            (("MINIO_ACCESS_KEY",), "MINIO_SECRET_KEY", False),
+            ((), "MSSQL_SA_PASSWORD", True),
+            ((), "SA_PASSWORD", True),
+            (("CLICKHOUSE_USER",), "CLICKHOUSE_PASSWORD", True),
+        )
+        for user_keys, password_key, has_default_user in accounts:
+            if not _value(env, password_key):
+                continue
+            has_user = has_default_user or any(_value(env, key) for key in user_keys)
+            if has_user:
+                return True, True
+        elastic_security = (_value(env, "xpack.security.enabled")
+                            or _value(env, "XPACK_SECURITY_ENABLED")).lower()
+        if elastic_security != "false" and _value(env, "ELASTIC_PASSWORD"):
+            return True, True
+        return False, False
+
     aliases: set[str] = set()
-    for name in infra_services:
+    for name, svc in infra_services.items():
+        if not isinstance(svc, dict):
+            continue
+        has_user, has_password = _resolved_account(svc)
+        if not has_password:
+            continue
         prefix = str(name).upper().replace("-", "_")
-        aliases.add(f"CDS_{prefix}_USER")
+        if has_user:
+            aliases.add(f"CDS_{prefix}_USER")
         aliases.add(f"CDS_{prefix}_PASSWORD")
     return aliases
 
@@ -7622,7 +7758,7 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     env_decls = doc.get("x-cds-env") if isinstance(doc.get("x-cds-env"), dict) else {}
     app_services = {n: s for n, s in services.items() if isinstance(s, dict) and _verify_is_app_service(s)}
     infra_services = {n: s for n, s in services.items() if isinstance(s, dict) and not _verify_is_app_service(s)}
-    runtime_credential_vars = _verify_runtime_credential_vars(infra_services)
+    runtime_credential_vars = _verify_runtime_credential_vars(infra_services, env_decls)
 
     issues: list[dict] = []
     # ERROR

@@ -10,7 +10,11 @@
 import { createRequire } from 'module';
 import { loadPlaywright } from './playwright-runtime.mjs';
 const require = createRequire(import.meta.url);
-const { chromium, devices } = loadPlaywright();
+let playwrightRuntime;
+function getPlaywrightRuntime() {
+  playwrightRuntime ||= loadPlaywright();
+  return playwrightRuntime;
+}
 const pageEnvironments = new WeakMap();
 
 export function loadConfig(path) {
@@ -40,6 +44,7 @@ export async function launch(cfg, opts = {}) {
   // 沙箱里那条路走不通，验收会卡在第一步。给一个与 ACC_BROWSER_PROXY 同构的 env 口子，
   // 显式指到镜像里那个可执行文件即可，不设则维持原行为。
   if (process.env.ACC_BROWSER_EXECUTABLE) launchOpts.executablePath = process.env.ACC_BROWSER_EXECUTABLE;
+  const { chromium } = getPlaywrightRuntime();
   const browser = await chromium.launch(launchOpts);
   // opts.viewport 允许调用方覆盖视口（手机端验收时传 {width:390,height:844}）。
   const vp = opts.viewport || { width: sc.width || 1440, height: sc.height || 900 };
@@ -78,6 +83,7 @@ export async function launch(cfg, opts = {}) {
 export async function createMobileContext(browser, cfg, opts = {}) {
   const session = _captureSession;
   const deviceName = opts.deviceName || 'iPhone 13';
+  const { devices } = getPlaywrightRuntime();
   const profile = devices[deviceName];
   if (!profile) throw new Error(`未知 Playwright 移动设备：${deviceName}`);
   const viewport = opts.viewport || profile.viewport || { width: 390, height: 844 };
