@@ -200,13 +200,7 @@ public static class LiteraryIllustrationChoices
         => AspectSizes.Where(kv => SameRatio(RatioOf(kv.Value), ratio)).Select(kv => kv.Value).FirstOrDefault();
 
     private static string FriendlyRatio(int w, int h)
-    {
-        var known = AspectSizes.Keys.FirstOrDefault(k => TryAspectRatio(k, out var ratio) && SameRatio(ratio, w / (double)h));
-        if (known != null) return known;
-        int a = w, b = h;
-        while (b != 0) (a, b) = (b, a % b);
-        return $"{w / a}:{h / a}";
-    }
+        => GatewayImageModelCatalog.DescribeAspectRatio(w, h);
 
     private static bool SameRatio(double x, double y) => Math.Abs(x - y) / y <= RatioTolerance;
 
@@ -230,12 +224,20 @@ public static class LiteraryIllustrationChoices
     }
 
     /// <summary>只保留比例：文章记住的是上个模型的像素，换了模型时按同一比例重新落。</summary>
-    public static SizeRequest AsRatio(SizeRequest request)
-        => request.IsExact ? new SizeRequest(FriendlyRatio(request.Width!.Value, request.Height!.Value), null, null, request.Ratio) : request;
+    public static SizeRequest AsRatio(SizeRequest request, string? declaredAspect = null)
+        => request.IsExact ? ParseSize(TryAspectRatio(declaredAspect, out _) ? declaredAspect
+            : FriendlyRatio(request.Width!.Value, request.Height!.Value)).request! : request;
 
     /// <summary>上一次落到的尺寸能不能算「同一个尺寸意图」：精确像素要逐字相同，比例只比比例。</summary>
-    public static bool SameIntent(string previousSize, SizeRequest request)
-        => request.IsExact ? previousSize == request.Raw : SameRatio(RatioOf(previousSize), request.Ratio);
+    public static bool SameIntent(string previousSize, SizeRequest request, string? declaredAspect = null)
+        => request.IsExact ? previousSize == request.Raw
+            : TryParse(previousSize, out var w, out var h)
+              && TryAspectRatio(TryAspectRatio(declaredAspect, out _) ? declaredAspect : FriendlyRatio(w, h), out var ratio)
+              && SameRatio(ratio, request.Ratio);
+
+    public static string AspectForSize(ImageGenAdapterInfo model, string size)
+        => model.SizesByResolution.Values.SelectMany(x => x).FirstOrDefault(x => x.Size == size)?.AspectRatio
+           ?? (TryParse(size, out var w, out var h) ? FriendlyRatio(w, h) : "1:1");
 
     /// <summary>
     /// 一篇文章当前该用的风格与水印：这篇记住的优先（记住的那套已被删时退回账号默认并给出说明），否则账号默认。
@@ -270,7 +272,7 @@ public static class LiteraryIllustrationChoices
     /// 两步都带「当时是否为空」的条件，夹在中间被别人建好了就再按字段改一次。
     /// 智能体生图与网页顶栏都走这里：整份写回读到的快照，会把另一个入口刚改的那一项改回去。
     /// </summary>
-    public static async Task RememberExplicitAsync(MongoDbContext db, string workspaceId, string ownerUserId, string? styleId, string? watermarkId, string? size)
+    public static async Task RememberExplicitAsync(MongoDbContext db, string workspaceId, string ownerUserId, string? styleId, string? watermarkId, string? size, string? sizeAspectRatio = null)
     {
         var F = Builders<ImageMasterWorkspace>.Filter;
         var U = Builders<ImageMasterWorkspace>.Update;
@@ -279,14 +281,18 @@ public static class LiteraryIllustrationChoices
         var sets = new List<UpdateDefinition<ImageMasterWorkspace>> { U.Set(x => x.IllustrationPrefs!.UpdatedAt, now) };
         if (styleId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.StyleId, styleId));
         if (watermarkId != null) sets.Add(U.Set(x => x.IllustrationPrefs!.WatermarkId, watermarkId));
-        if (size != null) sets.Add(U.Set(x => x.IllustrationPrefs!.Size, size));
+        if (size != null)
+        {
+            sets.Add(U.Set(x => x.IllustrationPrefs!.Size, size));
+            sets.Add(U.Set(x => x.IllustrationPrefs!.SizeAspectRatio, sizeAspectRatio));
+        }
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var patched = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Ne(x => x.IllustrationPrefs, null)),
                 U.Combine(sets), cancellationToken: CancellationToken.None);
             if (patched.MatchedCount > 0) return;
             var created = await db.ImageMasterWorkspaces.UpdateOneAsync(F.And(owned, F.Eq(x => x.IllustrationPrefs, null)),
-                U.Set(x => x.IllustrationPrefs, new LiteraryIllustrationPrefs { StyleId = styleId, WatermarkId = watermarkId, Size = size, UpdatedAt = now }),
+                U.Set(x => x.IllustrationPrefs, new LiteraryIllustrationPrefs { StyleId = styleId, WatermarkId = watermarkId, Size = size, SizeAspectRatio = sizeAspectRatio, UpdatedAt = now }),
                 cancellationToken: CancellationToken.None);
             if (created.MatchedCount > 0) return;
         }

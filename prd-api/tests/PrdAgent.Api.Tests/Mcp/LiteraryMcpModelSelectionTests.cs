@@ -239,38 +239,56 @@ public sealed class LiteraryMcpModelSelectionTests
 
     private static Mock<ILlmGateway> Gateway() => new(MockBehavior.Strict);
 
-    [Fact]
-    public async Task CatalogSnapshotRetainsStandardRatiosThroughActualCapabilityService()
+    [Theory]
+    [InlineData("nano-banana-2", 7)]
+    [InlineData("nano-banana", 10)]
+    [InlineData("stable-diffusion", 9)]
+    [InlineData("qwen-image", 5)]
+    public async Task CatalogSnapshotRetainsStandardRatiosThroughActualCapabilityService(string modelId, int count)
     {
-        // 使用正式目录的快照生产器；它只下发像素，不下发注册表中的比例标签。
+        // 使用正式目录的快照生产器，并经过公开 JSON 契约，不绕过实际目录转换。
         var builder = typeof(PrdAgent.Infrastructure.LlmGateway.ModelResolver).GetMethod(
             "BuildImageCapabilitiesSnapshot", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        var snapshot = Assert.IsType<GatewayImageCapabilitiesSnapshot>(builder.Invoke(null, ["nano-banana-2"]));
+        var snapshot = Assert.IsType<GatewayImageCapabilitiesSnapshot>(builder.Invoke(null, [modelId]));
+        var jsonOptions = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        snapshot = System.Text.Json.JsonSerializer.Deserialize<GatewayImageCapabilitiesSnapshot>(
+            System.Text.Json.JsonSerializer.Serialize(snapshot, jsonOptions), jsonOptions)!;
         var gateway = Gateway();
         gateway.Setup(x => x.GetAvailablePoolsAsync(
                 AppCallerRegistry.LiteraryAgent.Illustration.Text2Img,
                 ModelTypes.ImageGen, It.IsAny<CancellationToken>()))
             .ReturnsAsync([new AvailableModelPool
             {
-                Code = "nano-banana-2", ResolutionType = "LogicalModel",
+                Code = modelId, ResolutionType = "LogicalModel",
                 Models = [new PoolModelInfo { ImageCapabilities = snapshot }],
             }]);
         var service = new LiteraryMcpModelSelectionService(null!, gateway.Object,
             NullLogger<LiteraryMcpModelSelectionService>.Instance);
         var model = await service.GetImageCapabilitiesAsync(
-            AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, "nano-banana-2", CancellationToken.None);
+            AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, modelId, CancellationToken.None);
         Assert.NotNull(model);
         var sizes = PrdAgent.Api.Services.LiteraryIllustrationChoices.SupportedSizes(model);
-        Assert.Equal(7, sizes.Count);
-        Assert.Contains(sizes, x => x.Aspect == "4:3" && x.Size == "1184x864");
-        Assert.Contains(sizes, x => x.Aspect == "3:4" && x.Size == "864x1184");
-        Assert.Contains(sizes, x => x.Aspect == "16:9" && x.Size == "1344x768");
+        Assert.Equal(count, sizes.Count);
+        if (modelId.StartsWith("nano-banana"))
+        {
+            Assert.Contains(sizes, x => x.Aspect == "4:3" && x.Size == "1184x864");
+            Assert.Contains(sizes, x => x.Aspect == "3:4" && x.Size == "864x1184");
+            Assert.Contains(sizes, x => x.Aspect == "16:9" && x.Size == "1344x768");
+        }
+        if (modelId == "stable-diffusion")
+        {
+            Assert.Contains(sizes, x => x.Aspect == "9:7" && x.Size == "1152x896");
+            Assert.Contains(sizes, x => x.Aspect == "7:9" && x.Size == "896x1152");
+            Assert.DoesNotContain(sizes, x => x.Aspect == "5:4" || x.Aspect == "4:5");
+        }
+        if (modelId == "qwen-image")
+            Assert.Contains(sizes, x => x.Aspect == "4:3" && x.Size == "1472x1140");
         foreach (var choice in sizes)
             Assert.Equal(choice.Size, PrdAgent.Api.Services.LiteraryIllustrationChoices.FitSize(
-                PrdAgent.Api.Services.LiteraryIllustrationChoices.ParseSize(choice.Aspect).request!, model, "nano-banana-2").size);
-        foreach (var unsupported in new[] { "4:5", "5:4", "21:9" })
+                PrdAgent.Api.Services.LiteraryIllustrationChoices.ParseSize(choice.Aspect).request!, model, modelId).size);
+        foreach (var unsupported in modelId == "nano-banana-2" ? new[] { "4:5", "5:4", "21:9" } : new[] { "2:1" })
             Assert.NotNull(PrdAgent.Api.Services.LiteraryIllustrationChoices.FitSize(
-                PrdAgent.Api.Services.LiteraryIllustrationChoices.ParseSize(unsupported).request!, model, "nano-banana-2").error);
+                PrdAgent.Api.Services.LiteraryIllustrationChoices.ParseSize(unsupported).request!, model, modelId).error);
         gateway.Verify(x => x.GetAvailablePoolsAsync(
             AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, ModelTypes.ImageGen,
             It.IsAny<CancellationToken>()), Times.Once);

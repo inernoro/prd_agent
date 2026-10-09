@@ -86,7 +86,7 @@ public static class GatewayImageModelCatalog
         foreach (var (bucket, rawSizes) in snapshot.SizesByResolution)
         {
             sizes[bucket] = rawSizes
-                .Select(raw => ParseSizeOption(raw, snapshot.SizeConstraintType == SizeConstraintTypes.AspectRatio))
+                .Select(raw => ParseSizeOption(raw, snapshot.AspectRatiosBySize))
                 .Where(option => option is not null)
                 .Cast<SizeOption>()
                 .DistinctBy(option => option.Size, StringComparer.OrdinalIgnoreCase)
@@ -116,7 +116,7 @@ public static class GatewayImageModelCatalog
         };
     }
 
-    private static SizeOption? ParseSizeOption(string? raw, bool isAspectRatioModel)
+    private static SizeOption? ParseSizeOption(string? raw, IReadOnlyDictionary<string, string>? declaredAspects)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var parts = raw.Trim().Split(new[] { 'x', 'X', '×', '*' }, StringSplitOptions.RemoveEmptyEntries);
@@ -124,24 +124,26 @@ public static class GatewayImageModelCatalog
             || !int.TryParse(parts[0].Trim(), out var width)
             || !int.TryParse(parts[1].Trim(), out var height)
             || width <= 0 || height <= 0) return null;
+        var size = $"{width}x{height}";
+        var aspect = declaredAspects?.GetValueOrDefault(size);
+        return new SizeOption(size, string.IsNullOrWhiteSpace(aspect) ? DescribeAspectRatio(width, height) : aspect);
+    }
+
+    /// <summary>旧快照没有比例字段时的通用显示标签，不改变像素或模型支持清单。</summary>
+    public static string DescribeAspectRatio(int width, int height)
+    {
         var divisor = GreatestCommonDivisor(width, height);
-        var aspect = $"{width / divisor}:{height / divisor}";
-        if (isAspectRatioModel)
+        // 仅兼容没有声明比例的旧记录；新快照、任务与文章直接保留模型声明值。
+        var standard = new (int Width, int Height)[]
         {
-            // 比例型模型的原生像素有取整，例如 1184x864 声明为 4:3。
-            // 公开快照只携带像素；恢复有限标准比例标签，保留未匹配的自定义比例。
-            var standard = new (int Width, int Height)[]
-            {
-                (1, 1), (2, 3), (3, 2), (3, 4), (4, 3),
-                (4, 5), (5, 4), (9, 16), (16, 9), (21, 9),
-            };
-            var ratio = width / (double)height;
-            var closest = standard.Select(x => (x.Width, x.Height,
-                    Difference: Math.Abs(ratio / (x.Width / (double)x.Height) - 1)))
-                .OrderBy(x => x.Difference).First();
-            if (closest.Difference <= 0.03) aspect = $"{closest.Width}:{closest.Height}";
-        }
-        return new SizeOption($"{width}x{height}", aspect);
+            (1, 1), (2, 3), (3, 2), (3, 4), (4, 3),
+            (4, 5), (5, 4), (9, 16), (16, 9), (21, 9),
+        };
+        var ratio = width / (double)height;
+        var closest = standard.Select(x => (x.Width, x.Height,
+                Difference: Math.Abs(ratio / (x.Width / (double)x.Height) - 1)))
+            .OrderBy(x => x.Difference).First();
+        return closest.Difference <= 0.02 ? $"{closest.Width}:{closest.Height}" : $"{width / divisor}:{height / divisor}";
     }
 
     private static int GreatestCommonDivisor(int left, int right)

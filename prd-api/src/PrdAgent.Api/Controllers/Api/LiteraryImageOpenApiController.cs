@@ -222,6 +222,7 @@ public class LiteraryImageOpenApiController(
         }
 
         string? usedModel = null;
+        string? appliedSizeAspect = null;
         if (pending.Count > 0)
         {
             if (styleError != null) return BadRequest(ApiResponse<object>.Fail("STYLE_NOT_FOUND", styleError));
@@ -260,7 +261,7 @@ public class LiteraryImageOpenApiController(
             {
                 // 文章记住的尺寸是上次那个模型的像素。换了模型不收时，先按同一比例重新落；
                 // 这个比例也不收，才退回 1:1。两种都在回执里说清楚，不静默改。
-                var sameRatio = LiteraryIllustrationChoices.AsRatio(sizeRequest!);
+                var sameRatio = LiteraryIllustrationChoices.AsRatio(sizeRequest!, remembered?.SizeAspectRatio);
                 var (byRatio, ratioError) = LiteraryIllustrationChoices.FitSize(sameRatio, caps, modelId!);
                 if (ratioError == null)
                 {
@@ -280,6 +281,7 @@ public class LiteraryImageOpenApiController(
             if (fitError != null)
                 return BadRequest(ApiResponse<object>.Fail("SIZE_NOT_SUPPORTED", fitError));
             size = fitted;
+            appliedSizeAspect = LiteraryIllustrationChoices.AspectForSize(caps, size!);
 
             foreach (var index in pending)
             {
@@ -303,6 +305,7 @@ public class LiteraryImageOpenApiController(
                     Status = ImageGenRunStatus.ScopedQueued, DeploymentSlug = DeploymentScope.Current,
                     IdempotencyKey = idem, Total = 1, MaxConcurrency = 1,
                     Size = size!, ResponseFormat = "b64_json",
+                    LiterarySizeAspectRatio = appliedSizeAspect,
                     Items = new() { new() { Prompt = effectivePrompt, DisplayPrompt = prompt, Count = 1, Size = size } },
                     CreatedAt = DateTime.UtcNow,
                 };
@@ -342,7 +345,8 @@ public class LiteraryImageOpenApiController(
             // 只写明确指定的那几项：整份写回读到的旧快照，会把入队期间网页顶栏刚改的另一项改回去。
             // 不动 UpdatedAt：它是正文的版本令牌，记住偏好不该让智能体手里的令牌失效。
             await LiteraryIllustrationChoices.RememberExplicitAsync(db, workspaceId, userId,
-                explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null);
+                explicitStyle ? style!.StyleId : null, explicitWatermark ? watermark!.WatermarkId : null, explicitSize ? size : null,
+                explicitSize ? appliedSizeAspect : null);
         }
 
         const string hint = "图在服务端生成，关掉客户端也不会断。每 5-10 秒调用一次 map_literary_get_workspace 看 illustrations[].status（done 即有 url），全部 done 后用 format=illustrated 取图文稿；也可用 map_literary_get_image_run 查单张。";
@@ -384,7 +388,7 @@ public class LiteraryImageOpenApiController(
         => previous.WorkspaceId != workspaceId || previous.ArticleMarkerIndex != markerIndex
            || previous.ArticleWorkflowVersion != version
            // 比尺寸意图而不是落到的像素：同一个「16:9」在不同模型上像素不同，但仍是同一件事
-           || (explicitSize != null && previous.Size != null && !LiteraryIllustrationChoices.SameIntent(previous.Size, explicitSize))
+           || (explicitSize != null && previous.Size != null && !LiteraryIllustrationChoices.SameIntent(previous.Size, explicitSize, previous.LiterarySizeAspectRatio))
            || (explicitWatermark != null && previous.WatermarkConfigId != null && previous.WatermarkConfigId != explicitWatermark.WatermarkId)
            || (explicitStyle != null && !string.Equals(previous.InitImageAssetSha256, explicitStyle.Sha, StringComparison.Ordinal));
 

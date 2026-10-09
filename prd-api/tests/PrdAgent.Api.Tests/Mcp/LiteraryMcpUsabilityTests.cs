@@ -634,7 +634,8 @@ public class LiteraryMcpUsabilityTests
 
             // 文章记住的是上一个模型的 16:9，换到不收它的模型：退回 1:1 并在回执里写明，不静默改、也不报错卡住
             await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
-                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.Size, "1376x768"));
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.IllustrationPrefs!.Size, "1376x768")
+                    .Set(x => x.IllustrationPrefs!.SizeAspectRatio, (string?)null)); // 模拟没有比例元数据的旧文章
             var switched = Data(await images.Generate(id, new()
             {
                 MarkerIndex = 2, WorkflowVersion = version, ClientRequestId = "g-switched",
@@ -719,6 +720,50 @@ public class LiteraryMcpUsabilityTests
         // 范围型模型仍能显式传符合范围与步长的自定义像素。
         Assert.Equal("960x640", LiteraryIllustrationChoices.FitSize(
             LiteraryIllustrationChoices.ParseSize("960x640").request!, model, "flux-pro").size);
+    }
+
+    [Fact]
+    public async Task 原生取整尺寸重放不冲突_换模型仍沿用同一比例()
+    {
+        var (db, name, connection) = NewDb("literary_rounded_retry");
+        try
+        {
+            var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
+            var created = Data(await drafts.CreateWorkspace(new()
+            {
+                MarkedContent = "第一段。\n[插图]: 书店\n第二段。\n[插图]: 窗边\n",
+                ClientRequestId = "rounded-article",
+            }, CancellationToken.None));
+            var id = created.GetProperty("workspaceId").GetString()!;
+            var version = created.GetProperty("workflowVersion").GetInt32();
+            var selection = new FixedModelSelection("nano-banana-2");
+            var images = WithUser(new LiteraryImageOpenApiController(db, selection), "writer");
+            var request = new LiteraryImageOpenApiController.GenerateRequest
+            {
+                MarkerIndex = 0, WorkflowVersion = version, ClientRequestId = "rounded-image", Size = "4:3",
+            };
+            var first = Data(await images.Generate(id, request, CancellationToken.None));
+            Assert.Equal("1184x864", first.GetProperty("applied").GetProperty("size").GetString());
+            Assert.Equal("4:3", (await db.ImageGenRuns.Find(x => x.WorkspaceId == id).SingleAsync()).LiterarySizeAspectRatio);
+            Assert.Equal("4:3", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).IllustrationPrefs!.SizeAspectRatio);
+            var replay = Data(await images.Generate(id, request, CancellationToken.None));
+            Assert.True(replay.GetProperty("deduplicated").GetBoolean());
+            Assert.Equal(0, replay.GetProperty("queuedImages").GetInt32());
+            Assert.Equal(1, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
+            request.Size = "3:4";
+            var conflict = Assert.IsType<ConflictObjectResult>(await images.Generate(id, request, CancellationToken.None));
+            Assert.Equal("IDEMPOTENCY_CONFLICT", Assert.IsType<ApiResponse<object>>(conflict.Value).Error!.Code);
+
+            selection.ModelId = "gemini-3.1-flash-image";
+            var remembered = Data(await images.Generate(id, new()
+            {
+                MarkerIndex = 1, WorkflowVersion = version, ClientRequestId = "rounded-remembered",
+            }, CancellationToken.None)).GetProperty("applied");
+            Assert.Equal("1200x896", remembered.GetProperty("size").GetString());
+            Assert.Equal("remembered", remembered.GetProperty("sizeSource").GetString());
+            Assert.Contains(remembered.GetProperty("notes").EnumerateArray(), x => x.GetString()!.Contains("同一比例 4:3"));
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }
 
     [Fact]
