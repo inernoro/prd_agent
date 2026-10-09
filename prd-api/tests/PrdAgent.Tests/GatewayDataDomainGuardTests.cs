@@ -2331,7 +2331,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ProdPreflightWorkflow_RunsReadOnlyPreflightWithoutLeakingKeys()
+    public void ProdPreflightWorkflow_UsesShortLivedSessionWithoutLeakingKeys()
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");
 
@@ -2339,10 +2339,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("workflow_dispatch:", workflow);
         Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
         Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_SIGNING_KEY_ID", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_USER", workflow);
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("LLMGW_PROD_EXPECT_COMMIT", workflow);
-        Assert.Contains("logs:read access", workflow);
+        Assert.Contains("Configure Stable Smoke RSA credentials or the legacy API key", workflow);
         Assert.Contains("scripts/llmgw-prod-preflight.py", workflow);
         Assert.Contains("--map-base \"$map_base\"", workflow);
         Assert.Contains("--gw-base \"$gw_base\"", workflow);
@@ -2355,6 +2358,7 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("llmgw-prod-stage", workflow);
         Assert.DoesNotContain("echo \"$PRD_AGENT_API_KEY\"", workflow);
         Assert.DoesNotContain("echo \"$LLMGW_GATE_KEY\"", workflow);
+        Assert.DoesNotContain("echo \"$STABLE_SMOKE_SIGNING_PRIVATE_KEY\"", workflow);
     }
 
     [Fact]
@@ -3041,6 +3045,17 @@ public class GatewayDataDomainGuardTests
     {
         var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs");
 
+        Assert.Contains("ImageReferenceContract.Validate", worker);
+        Assert.Contains("run.ExpectedImageRefCount", worker);
+        var referenceContract = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs");
+        Assert.Contains("IMAGE_REF_INCOMPLETE", referenceContract);
+        Assert.Contains("IMAGE_REF_COUNT_REQUIRED", referenceContract);
+        Assert.Contains("ImageReferenceContract.ValidateDeclared", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+        Assert.Contains("run.ExpectedImageRefCount", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs"));
+        Assert.True(
+            worker.IndexOf("ImageReferenceContract.Validate", StringComparison.Ordinal)
+            < worker.IndexOf("ResolveModelGroupAsync", StringComparison.Ordinal),
+            "参考图完整性必须在模型解析和上游调用前校验");
         Assert.Contains("expectedReferenceCount", worker);
         Assert.Contains("IMAGE_REF_UNAVAILABLE", worker);
         Assert.Contains("其他输入已保留", worker);
@@ -3049,6 +3064,32 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.VisionGen", worker);
+    }
+
+    [Fact]
+    public void GenericVisualModelAndHandoffPolicies_DoNotBranchOnCurrentProductModelIds()
+    {
+        var genericSources = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/VisualModelPolicyService.cs",
+            "prd-api/src/PrdAgent.Core/Models/VisualModelPolicy.cs",
+            "prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts",
+            "prd-admin/src/lib/visualAgentHandoff.ts",
+        };
+        var productModelTokens = new[]
+        {
+            "gpt-image",
+            "gemini-3-pro-image-preview",
+            "doubao-seedream",
+            "image2",
+        };
+
+        foreach (var sourcePath in genericSources)
+        {
+            var source = ReadRepoFile(sourcePath);
+            Assert.All(productModelTokens, token =>
+                Assert.DoesNotContain(token, source, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     [Fact]

@@ -338,7 +338,7 @@ export function buildAgentStarterPrompt(input: AgentStarterPromptInput): string 
     '先读取这些技能的 SKILL.md，再按触发场景使用。技能是方法，不是越过项目规则和用户授权的理由。',
     '',
     '四、把长期规则写进项目',
-    '识别当前宿主：Codex/通用 Agent Skills 使用 AGENTS.md，Claude Code 使用 CLAUDE.md，Cursor 使用 AGENTS.md；多个宿主同时存在时，从同一段规则生成对应文件，避免漂移。',
+    '识别当前宿主：Codex/通用 Agent Skills 使用 AGENTS.md，Claude Code 使用 CLAUDE.md；多个宿主同时存在时，从同一段规则生成对应文件，避免漂移。',
     '先检查目标项目的长期规则是否已包含角色决策回复受管区块。如果不存在，把本提示词中的角色决策协议增量写入长期规则；如果已存在，只更新受管区块。',
     '绝不覆盖项目原有规则，也不得重复追加相同区块。',
     '',
@@ -459,7 +459,7 @@ for cmd in curl unzip tar; do
 done
 [ -z "$missing" ] || fail "缺少命令:$missing。请安装后重新运行。"
 
-for host in .agents .cursor .claude; do
+for host in .agents .claude; do
   [ -d "$host" ] && SKILLS_DIRS="$SKILLS_DIRS $host/skills"
 done
 [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"

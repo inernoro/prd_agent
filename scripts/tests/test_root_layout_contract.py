@@ -13,7 +13,6 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 # Root files are intentionally explicit. Adding a new one requires deciding that
 # it is a project-wide entrypoint rather than placing it in its owning module.
 ALLOWED_ROOT_FILES = {
-    ".cursorrules",
     ".dockerignore",
     ".editorconfig",
     ".env.template",
@@ -45,7 +44,6 @@ ALLOWED_ROOT_DIRECTORIES = {
     ".Codex",
     ".agents",
     ".claude",
-    ".cursor",
     ".design",
     ".git",
     ".github",

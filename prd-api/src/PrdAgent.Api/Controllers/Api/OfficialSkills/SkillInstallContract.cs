@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// 约定本身：**项目级优先，不写用户主目录**。技能跟着项目的版本库走，
 /// 团队每个人都有；装到 `~` 的话，人一走团队什么都不剩。
 ///
-/// 宿主目录：`.claude` / `.cursor` / `.agents`，**存在几个就装几个**，一个都没有时
-/// 建 `.agents/skills` 兜底。早期版本按 `.claude` → `.cursor` → `.agents` 取第一个
+/// 宿主目录：`.claude` / `.agents`，**存在几个就装几个**，一个都没有时
+/// 建 `.agents/skills` 兜底。早期版本按 `.claude` → `.agents` 取第一个
 /// 命中的，在同时装了多个 Agent 的仓库里会装到「不是当前 Agent 读的那个目录」——
 /// 本仓库同时有 `.claude` 和 `.agents`，从 Codex 跑引导脚本会装进 `.claude/skills`，
 /// 而 Codex 只读 `.agents/skills`，结果是「装完了但一个技能都看不见」。
@@ -33,7 +33,7 @@ public static class SkillInstallContract
     public const string DetectSnippet =
         """
         SKILLS_DIRS=""
-        for h in .claude .cursor .agents; do
+        for h in .claude .agents; do
           [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
         done
         [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
@@ -46,7 +46,7 @@ public static class SkillInstallContract
     /// <c>if ... &amp;&amp; elif ...</c> 不是合法 shell，粘贴过去直接语法错。
     /// </summary>
     public const string DetectOneLiner =
-        "SKILLS_DIRS=$(for h in .claude .cursor .agents; do [ -d \"$h\" ] && "
+        "SKILLS_DIRS=$(for h in .claude .agents; do [ -d \"$h\" ] && "
         + "printf '%s/skills ' \"$h\"; done); [ -n \"$SKILLS_DIRS\" ] || SKILLS_DIRS=.agents/skills";
 
     /// <summary>拼一条「下载并装到项目级技能目录」的完整命令（可直接粘贴执行）。</summary>

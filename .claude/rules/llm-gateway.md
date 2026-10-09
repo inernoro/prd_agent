@@ -26,6 +26,11 @@ paths:
 7. 通知、指标和控制台不是请求执行或自动恢复的前置依赖。任一辅助链路故障不得扩大到数据面。
 8. 所有池不可用时仍必须保留目录、错误详情、恢复和回滚入口。
 9. 隔离、恢复、默认池切换、跨池授权与回滚必须写入审计。
+10. Gateway 模型目录是“模型是否存在”的唯一事实源；MAP 只保存开放范围与默认意图。运行时必须将 MAP 策略与实时目录求交集，失效引用不得继续执行、不得继续标成默认，也不得静默替换成列表第一项。
+11. 删除任何逻辑模型 PublicId 前，必须统一审计 MAP 中仍会参与未来执行的引用，包括视觉模型策略、固定模型/API Key 绑定和未终结生图任务。规则按传入的 PublicId 生效，覆盖全部当前及未来模型，禁止为单个模型追加特判。
+12. 图生图参考图必须作为独立结构化字段贯穿“入口 → 交接包 → 编辑器 → 资产落盘 → ImageRefs → Gateway”；所有新请求必须显式提交入口看到的参考图数量，字段缺失或数量不一致都必须在上游调用前拒绝。禁止把 `data:` / `blob:` 图片塞进消息文本或依赖缩略图推断业务类型。参考图无法持久化时必须阻断生成，禁止静默降级成文生图。
+13. 文生图/图生图的 AppCaller 与日志分类必须由最终提交给后端的结构化 `ImageRefs` 判定，不能由按钮、预览缩略图或页面来源判定。新增入口必须复用同一个交接包构造/解析器，并补一条“data URL 最终仍进入 ImageRefs”的回归测试。
+14. 模型目录、开放策略、默认选择、交接与删除审计属于通用契约层，禁止按某个产品模型 PublicId 写分支。回归测试必须至少使用一个仓库和正式环境从未配置过的虚构未来模型，证明新增模型不需要修改这些通用层代码；具体模型协议差异只能留在 Adapter/Offering 配置层。
 
 详细规则与验收边界见 `doc/rule.platform.llm-gateway.md` 和 `doc/design.platform.model-pool.md`。
 
@@ -77,7 +82,7 @@ Worker / BackgroundService 场景：UserId 从触发任务的实体读出（如 
 
 ### 反面案例（真实踩过）
 
-Cursor 写的 `pa-agent` Controller 调 `_gateway.StreamAsync` 前没有 `BeginScope`，导致：
+某次 `pa-agent` Controller 实现调用 `_gateway.StreamAsync` 前没有 `BeginScope`，导致：
 1. 日志出现 `[LlmLog] UserId 为空` warning，但 warning 不阻断
 2. Gateway 继续往下走，访问控制层查不到用户，抛 `User not found`
 3. Service 层看到 "LLM stream error: User not found" 以为是上游模型出错

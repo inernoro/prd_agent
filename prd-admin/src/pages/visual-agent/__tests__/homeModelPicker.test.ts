@@ -76,7 +76,7 @@ describe('首页能看见并选择绘图模型', () => {
     // （apiRequest 统一约定，AGENTS.md 规则 #7），所以 .catch() 接不住普通失败。
     // 只靠那次写，写失败时编辑器会读到上一次的模型，用户在首页选了 A 却用 B
     // 跑了一次要花钱的生成（Codex PR #1476 P1）。交接包直接带上就不依赖它。
-    expect(SUBMIT).toMatch(/const payload = \{[^}]*modelId/);
+    expect(SUBMIT).toMatch(/createVisualAgentHandoffPayload\(\{[\s\S]*?modelId/);
     const TAB = strip(readFileSync(resolve(ROOT, 'src/pages/ai-chat/AdvancedVisualAgentTab.tsx'), 'utf8'));
     expect(TAB).toMatch(/handedModelIdRef\.current = handedModelId/);
     // 且服务端偏好不得把它覆盖回去。

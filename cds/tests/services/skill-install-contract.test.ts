@@ -6,7 +6,7 @@
  * 结果是同一个客户项目里分裂出两处技能库：一处跟着 git 走、一处跟着这台机器走，
  * 队友 clone 下来少一半。
  *
- * 约定统一为：**项目级优先，探测顺序 .claude → .cursor → 兜底 .agents**。
+ * 约定统一为：**项目级优先，探测顺序 .claude → 兜底 .agents**。
  * 三处实现跨语言无法共享代码（TS 脚本 / C# 后端 / Markdown 技能），
  * 只能靠本测试把它们钉在一起 —— 任何一处改了，这里就红。
  */
@@ -24,11 +24,11 @@ const read = (rel: string): string => fs.readFileSync(path.join(REPO_ROOT, rel),
 /**
  * 三处实现共同的宿主顺序。改这里 = 改约定，必须处处同步。
  *
- * 写法有两种形态（都合法）：安装侧循环宿主根目录 `for h in .claude .cursor .agents`，
- * 探测侧直接列技能目录 `for d in .claude/skills .cursor/skills .agents/skills`。
- * 断言只看三个宿主名的先后，不绑死写法。
+ * 写法有两种形态（都合法）：安装侧循环宿主根目录 `for h in .claude .agents`，
+ * 探测侧直接列技能目录 `for d in .claude/skills .agents/skills`。
+ * 断言只看两个宿主名的先后，不绑死写法。
  */
-const EXPECTED_ORDER = ['.claude', '.cursor', '.agents'];
+const EXPECTED_ORDER = ['.claude', '.agents'];
 
 describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
   const sources: Array<[string, string]> = [
@@ -37,7 +37,7 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
     ['findmapskills README.md', read('.claude/skills/findmapskills/README.md')],
     ['MAP SkillInstallContract', read('prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/SkillInstallContract.cs')],
     // sdd-init 是引导脚本的下一棒：它探测技能目录来决定角色、技能索引和规则文件名
-    // （CLAUDE.md vs AGENTS.md）。只看 .claude 会把 Codex/Cursor 项目判成「没装技能」。
+    // （CLAUDE.md vs AGENTS.md）。只看 .claude 会把 Codex 项目判成「没装技能」。
     ['sdd-init SKILL.md', read('.claude/skills/sdd-init/SKILL.md')],
     ['sdd-init role-playbooks.md', read('.claude/skills/sdd-init/reference/role-playbooks.md')],
   ];
@@ -45,9 +45,9 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
   /** 真正往磁盘写技能的实现。sdd-init SKILL.md 只做探测、不安装，故不在此列。 */
   const installers = sources.filter(([label]) => label !== 'sdd-init SKILL.md');
 
-  it.each(sources)('%s 覆盖三个宿主且顺序一致', (_label, text) => {
+  it.each(sources)('%s 覆盖两个宿主且顺序一致', (_label, text) => {
     // 直接取遍历宿主的那一行，别用「全文第一次出现」——正文里的说明文字会打乱顺序。
-    const loop = /for\s+\w+\s+in\s+((?:\.\w[\w/]*\s+){2}\.\w[\w/]*)\s*;?\s*do/.exec(text);
+    const loop = /for\s+\w+\s+in\s+((?:\.\w[\w/]*\s+){1}\.\w[\w/]*)\s*;?\s*do/.exec(text);
     expect(loop, '找不到遍历宿主目录的 for 循环').not.toBeNull();
     const hosts = loop![1].trim().split(/\s+/).map((h) => h.replace(/\/skills$/, ''));
     expect(hosts).toEqual(EXPECTED_ORDER);
@@ -61,7 +61,6 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
     // .agents/skills —— 装完了一个技能都看不见。所以必须遍历安装，不能 elif 取一个。
     expect(text).toContain('SKILLS_DIRS');
     // 早期的「取第一个」写法（if/elif 链或 && || 三元）一律不许再出现
-    expect(text).not.toMatch(/elif\s+\[\s+-d\s+"?\.cursor/);
     expect(text).not.toMatch(/SKILLS_DIR=\$\(\[\s+-d\s+\.claude\s+\]\s+&&/);
     // 必须有「对每个目录都装一遍」的循环
     expect(text).toMatch(/for\s+\w+\s+in\s+\$SKILLS_DIRS/);
@@ -183,7 +182,7 @@ describe('匿名路由白名单两处登记一致', () => {
 });
 
 describe('分发技能里不出现写死的宿主路径', () => {
-  // 客户项目可能只有 .cursor 或只有 .agents。技能正文里写死
+  // 客户项目可能只有 .agents。技能正文里写死
   // `python3 .claude/skills/...` 的话，qa-starter 装上了但预览/归档命令当场找不到文件。
   // 这些技能是随套装/技能包发出去的，必须按运行时解析出的技能根走。
   const DISTRIBUTED = [

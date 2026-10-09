@@ -531,6 +531,7 @@ type ImageRunDetail = {
     total: number;
     done: number;
     failed: number;
+    expectedImageRefCount?: number | null;
     imageRefs?: Array<{
       refId: number;
       assetSha256: string;
@@ -588,6 +589,12 @@ type GatewayUpstreamModel = {
   name?: string | null;
   platformId?: string | null;
   protocol?: string | null;
+  enabled?: boolean;
+};
+
+type GatewayPlatform = {
+  id: string;
+  platformType?: string | null;
   enabled?: boolean;
 };
 
@@ -709,20 +716,39 @@ async function disableStrayGatewayBackups(
   return handled;
 }
 
-type GatewayUpstreamIndex = { upstreamIds: Set<string>; upstreamById: Map<string, GatewayUpstreamModel> };
+type GatewayUpstreamIndex = {
+  upstreamIds: Set<string>;
+  upstreamById: Map<string, GatewayUpstreamModel>;
+  platformById: Map<string, GatewayPlatform>;
+};
 
 async function readGatewayUpstreamIndex(
   request: APIRequestContext,
   gateway: { baseUrl: string; headers: Record<string, string> },
 ): Promise<GatewayUpstreamIndex> {
-  const response = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers });
-  const body = await response.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
-  expect(response.ok(), body.error?.message || '无法读取网关模型目录').toBe(true);
+  const [modelResponse, platformResponse] = await Promise.all([
+    request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
+    request.get(`${gateway.baseUrl}/gw/platforms`, { headers: gateway.headers }),
+  ]);
+  const modelBody = await modelResponse.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
+  const platformBody = await platformResponse.json() as ApiEnvelope<{ items: GatewayPlatform[] }>;
+  expect(modelResponse.ok(), modelBody.error?.message || '无法读取网关模型目录').toBe(true);
+  expect(platformResponse.ok(), platformBody.error?.message || '无法读取网关平台目录').toBe(true);
   return {
-    upstreamIds: new Set(body.data.items.map((item) => item.id)),
-    upstreamById: new Map(body.data.items.map((item) => [item.id, item])),
+    upstreamIds: new Set(modelBody.data.items.map((item) => item.id)),
+    upstreamById: new Map(modelBody.data.items.map((item) => [item.id, item])),
+    platformById: new Map(platformBody.data.items.map((item) => [item.id, item])),
   };
 }
+
+/** 与网关运行时一致：Offering 显式值优先，其次物理模型，最后继承 Provider 的 PlatformType。 */
+const resolveGatewayOfferingProtocol = (offering: GatewayOffering, index: GatewayUpstreamIndex) => {
+  const upstream = index.upstreamById.get(offering.targetId);
+  return (offering.protocol
+    || upstream?.protocol
+    || index.platformById.get(upstream?.platformId || '')?.platformType
+    || '').toLowerCase();
+};
 
 const isLiveGatewayUpstream = (offering: GatewayOffering, index: GatewayUpstreamIndex) => (
   offering.enabled
@@ -800,6 +826,7 @@ type GatewayLogItem = {
   statusCode?: number | null;
   isFallback?: boolean | null;
   protocol?: string | null;
+  appCallerCode?: string | null;
 };
 
 type GatewayLogDetail = GatewayLogItem & {
@@ -5538,6 +5565,66 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[VIS-011][REG-image-reference-count-001] 参考图数量缺失或不一致时在调用上游前拒绝', { tag: '@cleanup' }, async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const { workspace } = await createVisualWorkspace(page, token, 'reference-count-contract');
+    try {
+      const pools = await readEnvelope<ImageModelPool[]>(
+        await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }),
+      );
+      const pool = pools.find((item) => item.isDefault);
+      expect(pool, 'MAP 必须配置显式默认模型，不能用目录首项替代').toBeTruthy();
+
+      const requestRun = (suffix: string, expectedImageRefCount?: number) => page.request.post(
+        `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`,
+        {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}`,
+          },
+          data: {
+            prompt: '参考图契约前置校验，不应调用生成模型',
+            userMessageContent: '验证参考图数量契约',
+            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-target`,
+            platformId: 'logical-model',
+            modelId: pool!.code,
+            size: '1024x1024',
+            responseFormat: 'url',
+            ...(expectedImageRefCount === undefined ? {} : { expectedImageRefCount }),
+            imageRefs: [],
+            x: 0,
+            y: 0,
+            w: 1001,
+            h: 1001,
+          },
+        },
+      );
+
+      const missing = await requestRun('missing-count');
+      const missingBody = await missing.json() as ApiEnvelope<never>;
+      expect(missing.status()).toBe(400);
+      expect(missingBody.success).toBe(false);
+      expect(missingBody.error?.code).toBe('IMAGE_REF_COUNT_REQUIRED');
+      expectUserReadable(missingBody.error?.message || '');
+
+      const incomplete = await requestRun('incomplete-count', 1);
+      const incompleteBody = await incomplete.json() as ApiEnvelope<never>;
+      expect(incomplete.status()).toBe(400);
+      expect(incompleteBody.success).toBe(false);
+      expect(incompleteBody.error?.code).toBe('IMAGE_REF_INCOMPLETE');
+      expect(incompleteBody.error?.message || '').toContain('应有 1 张，实际收到 0 张');
+      expectUserReadable(incompleteBody.error?.message || '');
+    } finally {
+      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: {
+          ...authHeaders(token),
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reference-count-delete`,
+        },
+      });
+      await expectDeleteSucceeded(deleted, `删除参考图数量契约工作区 ${workspace.id} 失败`);
+    }
+  });
+
   test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }) => {
     const { baseUrl, headers } = await loginGateway(request);
 
@@ -6543,6 +6630,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1024x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 0,
           x: 0,
           y: 0,
           w: 1001,
@@ -7032,17 +7120,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         '/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) },
       ));
       const gateway = await loginGateway(request);
+      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       const { items } = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(
         `${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers },
       ));
+      const requestedLogicalModel = process.env.STABLE_SMOKE_IMAGE_MODEL_ID?.trim();
       const logical = items.find((item) => {
         const primary = item.offerings.filter((offering) => offering.enabled)
           .sort((left, right) => left.priority - right.priority)[0];
-        return item.enabled && ['openai', 'openai-compatible'].includes(primary?.protocol || '')
+        return item.enabled
+          && (!requestedLogicalModel || item.publicId === requestedLogicalModel)
+          && primary !== undefined
+          && ['openai', 'openai-compatible'].includes(resolveGatewayOfferingProtocol(primary, upstreamIndex))
           && pools.some((pool) => pool.code === item.publicId
             && pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
       });
-      expect(logical, 'JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替').toBeTruthy();
+      expect(
+        logical,
+        `JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替${requestedLogicalModel ? `：${requestedLogicalModel}` : ''}`,
+      ).toBeTruthy();
       const created = await readEnvelope<{ runId: string }>(await page.request.post(
         `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
           headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-run` },
@@ -7052,6 +7148,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-jpeg-target`,
             platformId: 'logical-model', modelId: logical!.publicId,
             size: '1024x1024', responseFormat: 'url',
+            expectedImageRefCount: 1,
             imageRefs: [{ refId: 1, assetSha256: asset.sha256, url: asset.url, label: 'JPEG 参考', role: 'target' }],
             x: 0, y: 0, w: 1001, h: 1001,
           },
@@ -7060,8 +7157,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = created.runId;
       const completed = await waitForImageRun(page, token, runId);
       await assertImageArtifact(page, completed.detail);
+      expect(completed.detail.run.expectedImageRefCount).toBe(1);
       const log = await waitForGatewayLog(request, `${runId}-0-0`);
       expect(log.logicalModelPublicId).toBe(logical!.publicId);
+      expect(log.appCallerCode).toBe('visual-agent.image.img2img::generation');
       expect(['openai', 'openai-compatible']).toContain(log.protocol);
       expect(log.isFallback, '格式错误不能靠切换供应商掩盖').not.toBe(true);
       const wire = JSON.parse(log.requestBodyRedacted || '{}') as {
@@ -7128,20 +7227,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
         await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
       );
-      const upstreamModels = await readEnvelope<{ items: GatewayUpstreamModel[] }>(
-        await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
-      );
-      const upstreamById = new Map(upstreamModels.items.map((item) => [item.id, item]));
+      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       // 主路协议：Offering 没显式声明时继承上游模型的协议。
       const primaryProtocol = (item: GatewayLogicalModel) => {
         const primary = item.offerings
           .filter((offering) => offering.enabled)
           .sort((left, right) => left.priority - right.priority)[0];
         if (!primary) return '';
-        return (primary.protocol || upstreamById.get(primary.targetId)?.protocol || '').toLowerCase();
+        return resolveGatewayOfferingProtocol(primary, upstreamIndex);
       };
-      // 业务默认池排最前：2026-08-31 起 MAP 只开放 image1 / image2 两个 OpenAI 图片模型，
-      // 多图旅程要验的是「业务默认模型带着参考图真实生成」，不再限定必须是 OpenRouter 主路；
+      // 业务默认池排最前；多图旅程验的是「当前业务默认模型带着参考图真实生成」，
+      // 不按具体产品型号或单一 Provider 写死；
       // 协议只要能把 input_references 或 image[] 原样送到上游即可，具体线上契约在 assertWireReferences 里逐条核。
       const businessCandidates = logicalModels.items
         .filter((item) => item.enabled && healthyPoolCodes.has(item.publicId))
@@ -7178,6 +7274,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size,
             responseFormat: 'url',
+            expectedImageRefCount: imageRefs.length,
             imageRefs,
             x: 0,
             y: runIds.length * 1040,
@@ -7193,6 +7290,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
         const log = await waitForGatewayLog(request, `${runId}-0-0`);
         expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
+        expect(log.appCallerCode).toBe('visual-agent.image.vision::generation');
         expect(
           ['openrouter-image', 'openai', 'openai-compatible'],
           '多图逻辑模型只能走保留参考图语义的图片协议',
@@ -7253,6 +7351,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const restoredTwo = (await readEnvelope<ImageRunDetail>(
         await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
       )).run;
+      expect(restoredTwo.expectedImageRefCount).toBe(2);
       expect(restoredTwo.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
@@ -7377,6 +7476,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
       const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
       expect(restoredRun.status).toBe('Completed');
+      expect(restoredRun.expectedImageRefCount).toBe(3);
       expect(restoredRun.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
         { refId: 1, label: '蓝色参考', role: 'target' },
         { refId: 2, label: '黄色参考', role: 'style' },
@@ -7709,6 +7809,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size: '1024x1024',
             responseFormat: 'url',
+            expectedImageRefCount: 2,
             imageRefs: [
               { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
               { refId: 2, assetSha256: 'e'.repeat(64), url: '', label: '不可用参考图', role: 'style' },
@@ -7784,6 +7885,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1024x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 2,
           imageRefs: [
             { refId: 1, assetSha256: valid.asset.sha256, url: valid.asset.url, label: '有效参考图', role: 'target' },
             { refId: 2, assetSha256: 'f'.repeat(64), url: '', label: '已损坏参考图', role: 'style' },

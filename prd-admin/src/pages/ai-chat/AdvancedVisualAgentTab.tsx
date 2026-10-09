@@ -9,6 +9,7 @@ import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader
 import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader'; // 生图等待动效=显影（进度画在画框上，替换旧流光进度条）
 import { anchorRectOf, FALLBACK_ITEM_SIZE, findAlignedFreeTopLeft, occupiedRects, type PlacementRect } from '@/lib/canvasPlacement';
 import { mergeSendCanvas } from '@/lib/sendCanvasMerge'; // 发送时把「刚加、还没刷」的元素并进画布 // 新图贴着锚点共边落位
+import { parseVisualAgentHandoff } from '@/lib/visualAgentHandoff';
 import { recordGenDurationMs } from '@/lib/genTiming';
 import { TwoPhaseRichComposer, type TwoPhaseRichComposerRef, type ImageOption } from '@/components/RichComposer';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
@@ -171,7 +172,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
-import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, normalizeVisualModelOptionId, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -4970,9 +4971,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 手机端那条上一轮已经改成失败即停，桌面端这条是它的兄弟，当时没一起改——
       // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现过好几次。
       //
-      // 判据用「有没有参考图掉光了」而不是「是不是从首页交接过来的」：
+      // 判据用「参考图是否完整」而不是「是不是从首页交接过来的」：
       // 后者要知道来路，前者直接说的就是要防的那件事，编辑器内选图重绘同样成立。
-      if (unifiedImageRefs.length > 0 && imageRefsForBackend.length === 0) {
+      if (unifiedImageRefs.length !== imageRefsForBackend.length) {
         const msg = '参考图没能带上来，这次没有生成';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
         pushMsg('Assistant', `${msg}。提示词留着了，重试一次；或者去掉参考图，改成纯文字生成——那是另一件事，得你自己定。`);
@@ -4996,6 +4997,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           responseFormat: 'url',
           // 统一使用 imageRefs（后端兼容层会处理 initImageAssetSha256）
           imageRefs: imageRefsForBackend.length > 0 ? imageRefsForBackend : undefined,
+          expectedImageRefCount: unifiedImageRefs.length,
           userMessageContent: userMsgForBackend,
         },
         idempotencyKey: `imRun_${workspaceId}_${key}`,
@@ -5332,6 +5334,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 label: '原图',
               },
             ],
+            expectedImageRefCount: 1,
             maskBase64: maskBase64 || undefined,
             userMessageContent: qaMsgForBackend,
           },
@@ -5535,28 +5538,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     try {
       const stored = sessionStorage.getItem(sessionKey);
       if (!stored) return;
-      const data = JSON.parse(stored);
+      const handoff = parseVisualAgentHandoff(stored);
       // 读取后立即删除，避免重复执行
       sessionStorage.removeItem(sessionKey);
+      if (!handoff) return;
       // assetId 是首页那张参考图在本 workspace 里的身份。首页一直在传，这里第一次读。
-      initialAssetIdRef.current = String(data.assetId || '').trim() || null;
+      initialAssetIdRef.current = handoff.assetId;
       // 首页明确选过的模型：优先级高于服务端偏好。
       // 偏好写失败时只返回 { success:false }（不 reject），此时服务端存的还是上一次的值；
       // 若编辑器照读，用户在首页选了 A、这里却用 B 跑了一次要花钱的生成（Codex PR #1476 P1）。
       // 这个 effect 在挂载时同步跑完，而偏好 effect 的赋值在 await 之后，所以标记一定先立起来。
-      const handedModelId = String(data.modelId || '').trim();
+      const handedModelId = normalizeVisualModelOptionId(handoff.modelId);
       if (handedModelId) {
         handedModelIdRef.current = handedModelId;
         setModelPrefAuto(false);
         setModelPrefModelId(handedModelId);
       }
-      const sz = data.imageSize;
-      initialImageSizeRef.current =
-        sz && Number(sz.w) > 0 && Number(sz.h) > 0 ? { w: Number(sz.w), h: Number(sz.h) } : null;
-      const messageText = String(data.messageText || '').trim();
-      if (messageText) {
-        setInitialPrompt(parseInlinePrompt(messageText));
-      }
+      initialImageSizeRef.current = handoff.imageSize;
+      if (handoff.prompt.text) setInitialPrompt(handoff.prompt);
     } catch {
       // ignore
     }
@@ -5591,7 +5590,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
          *   1. 首页跳转前已经 uploadVisualAgentWorkspaceAsset 把它传进这个 workspace；
          *      新 workspace 没有画布快照，boot 走「回退到资产列表重建画布」，
          *      把 workspace 的全部 asset 铺上画布 —— 这是第一张。
-         *   2. 这里再把 messageText 里的 [IMAGE src=...] 当成新图加一遍 —— 第二张。
+         *   2. 这里再把交接包的 inlineImage 当成新图加一遍 —— 第二张。
          *
          * 注意这**不违反**「同图允许上传、传几次就几张」：那条说的是用户按几次就有几张。
          * 这里用户只按了一次，是系统落了两次，属于系统重复，不是用户重复。
@@ -5838,14 +5837,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const foundItems = shas
       .map((sha) => canvasSnapshot.find((c) => c.sha256 === sha || c.originalSha256 === sha))
       .filter((c): c is NonNullable<typeof c> => !!c && !!c.src);
-    if (foundItems.length > 0) {
+    if (foundItems.length === shas.length) {
       const chipRefs = foundItems.map((c, idx) => ({
         refId: originalRefIds[idx] ?? c.refId ?? (idx + 1),
         canvasKey: c.key,
       }));
       void sendText(prompt, { chipRefs });
     } else {
-      void sendText(prompt);
+      toast.error('参考图已失效，这次没有生成', '请重新选择原参考图后再试。');
     }
   };
 
@@ -10583,6 +10582,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     label: '手绘草图',
                   },
                 ],
+                expectedImageRefCount: 1,
                 userMessageContent: sketchMsgForBackend,
               },
               idempotencyKey: `sketchRun_${workspaceId}_${genKey}`,
