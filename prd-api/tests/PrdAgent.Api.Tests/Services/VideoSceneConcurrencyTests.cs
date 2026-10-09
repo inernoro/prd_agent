@@ -999,6 +999,123 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task SlowStatusCheck_ShouldBeCancelledAfterLosingPollingLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("slow-status-lease-lost", test.OwnerId, SceneItemStatus.PollingClaimed);
+        run.Scenes[0].JobId = "upstream-job-slow-status";
+        run.Scenes[0].RenderLeaseId = "lease:original";
+        run.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(2);
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        await test.SaveRunAsync(run);
+
+        var statusStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var authorityCancellationObserved = false;
+        test.VideoClient.Setup(x => x.GetStatusAsync(
+                It.IsAny<string>(),
+                "upstream-job-slow-status",
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string _, string? _, CancellationToken authorityToken) =>
+            {
+                statusStarted.SetResult(true);
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, authorityToken);
+                }
+                finally
+                {
+                    authorityCancellationObserved = authorityToken.IsCancellationRequested;
+                }
+                return new OpenRouterVideoStatus { Status = "pending" };
+            });
+
+        var worker = test.CreateWorker();
+        worker.WorkerLeaseHeartbeatInterval = TimeSpan.FromMilliseconds(10);
+        var processing = worker.ProcessSceneRenderAsync(run, 0, "lease:original", resumeExistingJob: true);
+        await statusStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update
+                .Set("Scenes.0.RenderLeaseId", "lease:new-owner")
+                .Set("Scenes.0.RenderLeaseExpiresAt", DateTime.UtcNow.AddMinutes(2)));
+
+        await processing.WaitAsync(TimeSpan.FromSeconds(2));
+        authorityCancellationObserved.ShouldBeTrue();
+        test.VideoClient.Verify(x => x.DownloadVideoBytesAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<int>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        var persisted = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        persisted.Scenes[0].Versions.ShouldBeEmpty();
+        persisted.Scenes[0].RenderLeaseId.ShouldBe("lease:new-owner");
+    }
+
+    [Fact]
+    public async Task SlowVideoDownload_ShouldBeCancelledAfterLosingPollingLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("slow-download-lease-lost", test.OwnerId, SceneItemStatus.PollingClaimed);
+        run.Scenes[0].JobId = "upstream-job-slow-download";
+        run.Scenes[0].RenderLeaseId = "lease:original";
+        run.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(2);
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        await test.SaveRunAsync(run);
+
+        test.VideoClient.Setup(x => x.GetStatusAsync(
+                It.IsAny<string>(),
+                "upstream-job-slow-download",
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus
+            {
+                Status = "completed",
+                VideoUrl = "https://example.invalid/slow.mp4",
+            });
+        var downloadStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var authorityCancellationObserved = false;
+        test.VideoClient.Setup(x => x.DownloadVideoBytesAsync(
+                It.IsAny<string>(),
+                "upstream-job-slow-download",
+                0,
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (string _, string _, int _, string? _, CancellationToken authorityToken) =>
+            {
+                downloadStarted.SetResult(true);
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, authorityToken);
+                }
+                finally
+                {
+                    authorityCancellationObserved = authorityToken.IsCancellationRequested;
+                }
+                return new OpenRouterVideoDownload { Success = false };
+            });
+
+        var worker = test.CreateWorker();
+        worker.WorkerLeaseHeartbeatInterval = TimeSpan.FromMilliseconds(10);
+        var processing = worker.ProcessSceneRenderAsync(run, 0, "lease:original", resumeExistingJob: true);
+        await downloadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update
+                .Set("Scenes.0.RenderLeaseId", "lease:new-owner")
+                .Set("Scenes.0.RenderLeaseExpiresAt", DateTime.UtcNow.AddMinutes(2)));
+
+        await processing.WaitAsync(TimeSpan.FromSeconds(2));
+        authorityCancellationObserved.ShouldBeTrue();
+        var persisted = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        persisted.Scenes[0].Versions.ShouldBeEmpty();
+        persisted.Scenes[0].RenderLeaseId.ShouldBe("lease:new-owner");
+    }
+
+    [Fact]
     public async Task PreviousRevisionSceneHolder_ShouldStopBeforePollingAfterRunAdoption()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

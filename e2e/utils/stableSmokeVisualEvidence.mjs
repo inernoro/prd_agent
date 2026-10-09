@@ -210,6 +210,13 @@ function runtimeFromEnvironment(environment) {
   };
 }
 
+function recordMatchesRequestedOutcome(record, status, failureEvidence, failureReason) {
+  if (record?.manualStatus !== status) return false;
+  if (Boolean(record?.failureEvidence) !== Boolean(failureEvidence)) return false;
+  if (!failureEvidence) return true;
+  return String(record?.failureReason || '').trim() === String(failureReason || '').trim();
+}
+
 export function createStableSmokeVisualEvidence(options = {}) {
   const environment = options.environment || process.env;
   const harnessLoader = options.harnessLoader || (() => import(defaultHarnessUrl));
@@ -250,6 +257,7 @@ export function createStableSmokeVisualEvidence(options = {}) {
     const slotLock = join(outputPath, `.${slotId}.lock`);
 
     return withFileLock(slotLock, async () => {
+      let recordToReplace = null;
       const existingRecord = await withFileLock(manifestLock, async () => {
         const existing = await readManifest(manifestPath);
         return existing.find((record) => record?.slotId === slotId);
@@ -266,19 +274,27 @@ export function createStableSmokeVisualEvidence(options = {}) {
         await access(existingRecord.path).catch((error) => {
           throw new Error(`视觉位 ${slotId} 已有 manifest 记录，但证据文件不可读：${error.message}`);
         });
-        if (status === '通过'
-          && (existingRecord.manualStatus !== '通过' || existingRecord.automatedStatus !== '通过')) {
-          throw new Error(`视觉位 ${slotId} 的既有证据未通过，不能在重试时按通过复用。`);
+        if (recordMatchesRequestedOutcome(
+          existingRecord,
+          status,
+          input.failureEvidence,
+          input.failureReason,
+        )) {
+          if (status === '通过'
+            && (existingRecord.manualStatus !== '通过' || existingRecord.automatedStatus !== '通过')) {
+            throw new Error(`视觉位 ${slotId} 的既有证据未通过，不能在重试时按通过复用。`);
+          }
+          if (testInfo?.attach) {
+            await testInfo.attach(slotId, { path: existingRecord.path, contentType: 'image/png' });
+          }
+          return {
+            captured: false,
+            reason: 'slot-already-captured',
+            record: existingRecord,
+            manifestPath,
+          };
         }
-        if (testInfo?.attach) {
-          await testInfo.attach(slotId, { path: existingRecord.path, contentType: 'image/png' });
-        }
-        return {
-          captured: false,
-          reason: 'slot-already-captured',
-          record: existingRecord,
-          manifestPath,
-        };
+        recordToReplace = existingRecord;
       }
 
       if (input.target) {
@@ -302,7 +318,12 @@ export function createStableSmokeVisualEvidence(options = {}) {
         const caption = captionSuffix
           ? `${slot.expectedProof}；${captionSuffix}`
           : slot.expectedProof;
-        record = await harness.shot(page, outputPath, figureName(plan, slotId), caption, {
+        // 结论变更时先写新文件，再原子切换 manifest。禁止先覆盖旧图，
+        // 否则进程在 manifest 切换前退出会让旧结论指向新图。
+        const captureName = recordToReplace
+          ? `${figureName(plan, slotId)}-replacement-${randomUUID()}`
+          : figureName(plan, slotId);
+        record = await harness.shot(page, outputPath, captureName, caption, {
           expectText: input.expectText,
           skipReady: Boolean(input.skipReady),
           overview: Boolean(input.overviewJustification),
@@ -341,7 +362,19 @@ export function createStableSmokeVisualEvidence(options = {}) {
 
       await withFileLock(manifestLock, async () => {
         const existing = await readManifest(manifestPath);
-        if (existing.some((candidate) => candidate?.slotId === slotId)) {
+        const existingIndex = existing.findIndex((candidate) => candidate?.slotId === slotId);
+        if (recordToReplace) {
+          if (existingIndex < 0
+            || existing[existingIndex]?.path !== recordToReplace.path
+            || existing[existingIndex]?.capturedAt !== recordToReplace.capturedAt) {
+            throw new Error(`视觉位 ${slotId} 在替换证据时发生并发变化，已中止写入。`);
+          }
+          const updated = [...existing];
+          updated[existingIndex] = record;
+          await atomicWriteJson(manifestPath, updated);
+          return;
+        }
+        if (existingIndex >= 0) {
           throw new Error(`视觉位 ${slotId} 在并发取证期间被其他 worker 写入，禁止覆盖。`);
         }
         await atomicWriteJson(manifestPath, [...existing, record]);

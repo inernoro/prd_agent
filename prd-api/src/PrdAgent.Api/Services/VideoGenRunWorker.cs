@@ -1773,18 +1773,28 @@ public class VideoGenRunWorker : BackgroundService
                 }
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
-                var status = string.IsNullOrWhiteSpace(scene.OfferingId)
-                    ? await client.GetStatusAsync(
-                        appCallerCode,
-                        submittedJobId,
-                        actualModel,
-                        CancellationToken.None)
-                    : await client.GetStatusForOfferingAsync(
-                        appCallerCode,
-                        submittedJobId,
-                        actualModel,
-                        scene.OfferingId,
-                        CancellationToken.None);
+                OpenRouterVideoStatus? status = null;
+                var retainedPollingLease = await ProcessWithSceneRenderLeaseHeartbeatAsync(
+                    run.Id,
+                    sceneIdx,
+                    submittedJobId,
+                    claimId,
+                    async authorityToken =>
+                    {
+                        status = string.IsNullOrWhiteSpace(scene.OfferingId)
+                            ? await client.GetStatusAsync(
+                                appCallerCode,
+                                submittedJobId,
+                                actualModel,
+                                authorityToken)
+                            : await client.GetStatusForOfferingAsync(
+                                appCallerCode,
+                                submittedJobId,
+                                actualModel,
+                                scene.OfferingId,
+                                authorityToken);
+                    });
+                if (!retainedPollingLease || status == null) return;
                 if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
                 if (await IsRunCancellationRequestedAsync(run.Id))
@@ -1795,21 +1805,55 @@ public class VideoGenRunWorker : BackgroundService
 
                 if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
                 {
-                    // 下载到 COS
-                    var dl = string.IsNullOrWhiteSpace(scene.OfferingId)
-                        ? await client.DownloadVideoBytesAsync(
-                            appCallerCode,
-                            submittedJobId,
-                            0,
-                            actualModel,
-                            CancellationToken.None)
-                        : await client.DownloadVideoBytesForOfferingAsync(
-                            appCallerCode,
-                            submittedJobId,
-                            0,
-                            actualModel,
-                            scene.OfferingId,
-                            CancellationToken.None);
+                    OpenRouterVideoDownload? dl = null;
+                    StoredAsset? stored = null;
+                    byte[]? playbackBytes = null;
+                    string? expectedSha256 = null;
+                    var retainedDownloadLease = await ProcessWithSceneRenderLeaseHeartbeatAsync(
+                        run.Id,
+                        sceneIdx,
+                        submittedJobId,
+                        claimId,
+                        async authorityToken =>
+                        {
+                            dl = string.IsNullOrWhiteSpace(scene.OfferingId)
+                                ? await client.DownloadVideoBytesAsync(
+                                    appCallerCode,
+                                    submittedJobId,
+                                    0,
+                                    actualModel,
+                                    authorityToken)
+                                : await client.DownloadVideoBytesForOfferingAsync(
+                                    appCallerCode,
+                                    submittedJobId,
+                                    0,
+                                    actualModel,
+                                    scene.OfferingId,
+                                    authorityToken);
+                            if (!dl.Success || dl.Bytes == null) return;
+
+                            playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
+                            authorityToken.ThrowIfCancellationRequested();
+                            expectedSha256 = Convert.ToHexString(SHA256.HashData(playbackBytes)).ToLowerInvariant();
+                            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                                _db,
+                                $"generated-video:{expectedSha256}",
+                                authorityToken);
+                            RegistryAssetStorage.OverrideNextScope("generated");
+                            stored = await _assetStorage.SaveAsync(
+                                playbackBytes,
+                                dl.ContentType ?? "video/mp4",
+                                authorityToken,
+                                domain: AppDomainPaths.DomainVideoAgent,
+                                type: AppDomainPaths.TypeVideo);
+                        });
+                    if (!retainedDownloadLease)
+                    {
+                        if (stored != null)
+                            await DeleteStoredVideoIfUnreferencedAsync(stored.Sha256, stored.Url);
+                        return;
+                    }
+                    if (dl == null) return;
                     if (!dl.Success || dl.Bytes == null)
                     {
                         await MarkSceneErrorAsync(
@@ -1820,16 +1864,8 @@ public class VideoGenRunWorker : BackgroundService
                             claimId);
                         return;
                     }
-                    var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
-                    var expectedSha256 = Convert.ToHexString(SHA256.HashData(playbackBytes)).ToLowerInvariant();
-                    await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
-                        _db,
-                        $"generated-video:{expectedSha256}",
-                        CancellationToken.None);
-                    RegistryAssetStorage.OverrideNextScope("generated");
-                    var stored = await _assetStorage.SaveAsync(playbackBytes, dl.ContentType ?? "video/mp4",
-                        CancellationToken.None,
-                        domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
+                    if (stored == null || playbackBytes == null || expectedSha256 == null)
+                        throw new InvalidOperationException("视频资产保存未完成");
                     if (!string.Equals(stored.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("视频资产摘要校验失败");
 
@@ -1960,6 +1996,85 @@ public class VideoGenRunWorker : BackgroundService
             cancellationToken: CancellationToken.None);
         // 同一毫秒内两次续租可能写入相同截止时间；匹配到所有权即有效，不能把无值变化当成失租。
         return renewed.MatchedCount == 1;
+    }
+
+    internal async Task<bool> ProcessWithSceneRenderLeaseHeartbeatAsync(
+        string runId,
+        int sceneIdx,
+        string jobId,
+        string claimId,
+        Func<CancellationToken, Task> action)
+    {
+        if (!await RenewSceneRenderLeaseAsync(runId, sceneIdx, jobId, claimId)) return false;
+
+        using var stopHeartbeat = new CancellationTokenSource();
+        using var authorityLost = new CancellationTokenSource();
+        var heartbeat = RenewSceneRenderLeaseUntilStoppedAsync(
+            runId,
+            sceneIdx,
+            jobId,
+            claimId,
+            authorityLost,
+            stopHeartbeat.Token);
+        try
+        {
+            await action(authorityLost.Token);
+            return !authorityLost.IsCancellationRequested;
+        }
+        catch (OperationCanceledException) when (authorityLost.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                "VideoGen 分镜轮询 lease 已失效，旧持有者停止执行: runId={RunId}, scene={SceneIndex}",
+                runId,
+                sceneIdx);
+            return false;
+        }
+        finally
+        {
+            stopHeartbeat.Cancel();
+            await heartbeat;
+        }
+    }
+
+    private async Task RenewSceneRenderLeaseUntilStoppedAsync(
+        string runId,
+        int sceneIdx,
+        string jobId,
+        string claimId,
+        CancellationTokenSource authorityLost,
+        CancellationToken stopToken)
+    {
+        var authorityDeadline = DateTime.UtcNow + SceneRenderLease;
+        while (!stopToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(WorkerLeaseHeartbeatInterval, stopToken);
+                if (!await RenewSceneRenderLeaseAsync(runId, sceneIdx, jobId, claimId))
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
+                authorityDeadline = DateTime.UtcNow + SceneRenderLease;
+            }
+            catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "VideoGen 分镜轮询 lease 续租失败，等待下一轮重试: runId={RunId}, scene={SceneIndex}",
+                    runId,
+                    sceneIdx);
+                if (DateTime.UtcNow >= authorityDeadline)
+                {
+                    await authorityLost.CancelAsync();
+                    return;
+                }
+            }
+        }
     }
 
     internal async Task<bool> ProcessWithSceneSubmissionLeaseHeartbeatAsync(

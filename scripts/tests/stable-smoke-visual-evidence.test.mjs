@@ -197,6 +197,50 @@ test('manifest 元数据只能来自计划且同轮重试幂等复用同一证�
   }
 });
 
+test('同一槽位的当前结论变更时原子替换旧证据', async () => {
+  const current = fixture();
+  let shotCount = 0;
+  try {
+    const harness = fakeHarness();
+    const capture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => ({
+        ...harness,
+        shot: async (...args) => {
+          shotCount += 1;
+          return harness.shot(...args);
+        },
+      }),
+    });
+    await capture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+    });
+    const [original] = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+
+    const replaced = await capture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+      status: '不通过',
+      failureEvidence: true,
+      failureReason: '当前页面结果区域空白',
+    });
+
+    assert.equal(replaced.captured, true);
+    assert.equal(shotCount, 2);
+    const manifest = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.length, 1);
+    assert.equal(manifest[0].manualStatus, '不通过');
+    assert.equal(manifest[0].failureEvidence, true);
+    assert.equal(manifest[0].failureReason, '当前页面结果区域空白');
+    assert.notEqual(manifest[0].path, original.path);
+    assert.equal(existsSync(original.path), true);
+    assert.equal(existsSync(manifest[0].path), true);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
 test('自动检查失败的证据不写入 manifest 且同一槽位可以重试', async () => {
   const current = fixture();
   try {
