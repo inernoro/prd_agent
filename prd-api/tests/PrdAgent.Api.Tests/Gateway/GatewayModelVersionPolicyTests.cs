@@ -47,6 +47,15 @@ public class GatewayModelVersionPolicyTests
         Assert.Equal(GatewayModelVersionPolicy.ErrorCode, policy.Filter(pinned, false, "test::chat").FailureCode);
     }
 
+    [Fact]
+    public void PermittedPinnedModelRetainsNoRetryCandidates()
+    {
+        var pinned = Resolution("gpt-5.6-sol");
+        var filtered = new GatewayModelVersionPolicy(Config()).Filter(pinned, false, "test::chat");
+        Assert.Same(pinned, filtered);
+        Assert.Null(filtered.RetryCandidates);
+    }
+
     [Theory]
     [InlineData("send")]
     [InlineData("stream")]

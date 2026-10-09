@@ -33,10 +33,10 @@ public sealed class GatewayModelVersionPolicy(IConfiguration? configuration)
     public ModelResolutionResult Filter(ModelResolutionResult resolution, bool allowPromotion, string appCallerCode)
     {
         if (!resolution.Success) return resolution;
-        var permitted = (resolution.RetryCandidates ?? []).Where(x => Allows(x.ActualModel)).ToList();
+        var permitted = resolution.RetryCandidates?.Where(x => Allows(x.ActualModel)).ToList();
         resolution.RetryCandidates = permitted;
         if (Allows(resolution.ActualModel)) return resolution;
-        if (allowPromotion && permitted.Count > 0)
+        if (allowPromotion && permitted is { Count: > 0 })
         {
             var selected = permitted[0];
             selected.RetryCandidates = permitted.Skip(1).ToList();
