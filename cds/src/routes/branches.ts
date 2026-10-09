@@ -4934,6 +4934,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
             svc.status = 'stopped';
             b.services[profileId] = svc;
           }
+          // 替换旧容器的退出通知可能残留到部署被控制面重启中断之后。
+          // 显式对账可恢复已就绪的新容器；普通读取及真实崩溃均不走此路径。
+          const previousError = svc.errorMessage;
+          if (!b.executorId && svc.status === 'error'
+            && previousError?.includes('kind=cds-pre-run-replace')
+            && runningNames.has(svc.containerName)
+            && !(branchOperationCoordinator?.getActiveOperations(b.id) || []).some((op) => !op.cancelled)) {
+            const baseline = stateService.getEffectiveProfilesForBranch(b).find((p) => p.id === profileId);
+            const probe = baseline ? resolveEffectiveProfile(baseline, b).readinessProbe : undefined;
+            if (probe?.path && probe.noHttp !== true) {
+              const ready = await containerService.waitForReadiness(svc.hostPort,
+                { ...probe, noHttp: false, timeoutSeconds: 3, intervalSeconds: 1 },
+                undefined, undefined, svc.containerName).catch(() => false);
+              // await 期间的新操作/新错误优先，不能用旧探测覆盖其状态。
+              if (ready && b.services[profileId] === svc && svc.status === 'error'
+                && svc.errorMessage === previousError
+                && !(branchOperationCoordinator?.getActiveOperations(b.id) || []).some((op) => !op.cancelled)) {
+                svc.status = 'running';
+                svc.errorMessage = undefined;
+                serverEventLogStore?.record({ category: 'container', severity: 'info',
+                  source: 'api.branches.live', action: 'service.reconcile.replacement-ready',
+                  message: `replacement container passed HTTP readiness: ${svc.containerName}`,
+                  projectId: b.projectId, branchId: b.id, profileId, requestId,
+                  details: { readinessPath: probe.path, reason: 'stale-pre-run-replace-error' } });
+              }
+            }
+          }
         }
         // Update overall status
         reconcileBranchStatus(b);

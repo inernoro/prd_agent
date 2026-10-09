@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -2505,6 +2505,34 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(200);
       expect((res.body as any).branches[0].services.api.status).toBe('stopped');
       expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(true);
+    });
+
+    it.each([[true, false], [false, false], [true, true]])('explicit live reconcile checks HTTP readiness=%s and concurrent operation=%s', async (ready, superseded) => {
+      stateService.addBuildProfile({ id: 'worker', name: 'Worker', dockerImage: 'img', workDir: '.', command: 'run', containerPort: 9999, projectId: 'default', readinessProbe: { path: '/', noHttp: false } });
+      stateService.addBranch({ id: 'replacement-ready', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'replacement-ready'), status: 'error', services: {}, createdAt: new Date().toISOString() });
+      const branch = stateService.getBranch('replacement-ready')!;
+      branch.status = 'error';
+      branch.services = {
+        worker: { profileId: 'worker', containerName: 'cds-worker', hostPort: 10001, status: 'error', errorMessage: '旧容器退出 kind=cds-pre-run-replace' },
+        failed: { profileId: 'failed', containerName: 'cds-failed', hostPort: 10002, status: 'error', errorMessage: '应用启动失败' },
+      };
+      mock.addResponsePattern(/docker ps --format/, () => ({ stdout: 'cds-worker\ncds-failed', stderr: '', exitCode: 0 }));
+      const check = vi.spyOn(containerService, 'waitForReadiness').mockImplementation(async () => {
+        if (superseded) branchOperationCoordinator.begin({ branchId: branch.id, kind: 'stop', trigger: 'manual' });
+        return ready;
+      });
+      try {
+        await request(server, 'GET', '/api/branches?project=default');
+        expect(check).not.toHaveBeenCalled();
+        const res = await request(server, 'GET', '/api/branches?project=default&live=true');
+        expect(res.status).toBe(200);
+        expect(check).toHaveBeenCalledOnce();
+        expect(check).toHaveBeenCalledWith(10001, { path: '/', noHttp: false, timeoutSeconds: 3, intervalSeconds: 1 }, undefined, undefined, 'cds-worker');
+        expect(branch.services.worker.status).toBe(ready && !superseded ? 'running' : 'error');
+        expect(branch.services.worker.errorMessage).toBe(ready && !superseded ? undefined : '旧容器退出 kind=cds-pre-run-replace');
+        expect(branch.services.failed.status).toBe('error');
+        expect(branch.services.failed.errorMessage).toBe('应用启动失败');
+      } finally { check.mockRestore(); }
     });
 
     it('P4 Part 3b: filters by ?project= query param', async () => {
