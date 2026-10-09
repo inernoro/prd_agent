@@ -508,8 +508,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   // 写入合并（2026-06-21 性能修复）：高频 save() 不再每次都同步
   // structuredClone(整个 state)。那是 CDS master 事件循环被部署日志/调和器
   // save 风暴堵死的根因——网页 524、就绪探测超时、容器被误判部署失败而清理，
-  // 都源于此。改为只记最新 live 引用 + 每个事件循环 tick 最多做一次快照克隆 +
-  // 落盘。flush() 会强制立即快照，保证 delete/stop 等终止操作的持久化语义不变。
+  // 都源于此。普通保存只记最新 live 引用并按五秒窗口合并快照。
+  // flush() 会强制立即快照，保证 delete/stop 等终止操作的持久化语义不变。
   //
   // 增量快照（2026-07-21 性能重构）：在写入合并之上再加两层，消除 O(state)
   // 全量成本（state 随部署历史增长到几十 MB 后，每 tick 一次全量 clone + 双侧
@@ -530,6 +530,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private dirtyKinds = new Set<StateDirtyKind>();
   private dirtyIds = new Map<StateDirtyKind, Set<string> | null>();
   private snapshotScheduled = false;
+  private snapshotTimer: NodeJS.Timeout | null = null;
   // 一次（可能部分成功的）写入失败后，被丢弃的 pending 内容无法靠后续 hint
   // 快照找回 —— 置位后下一次 takeSnapshot 强制全量，重新与序列化缓存对账。
   private needFullResync = false;
@@ -738,7 +739,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   save(state: CdsState, hints?: StateSaveHint[]): void {
     // load() 立即看到最新（引用，不克隆——克隆推迟到本 tick 末的 takeSnapshot）。
     this.cache = state;
-    // 记最新 live 引用 + 逻辑代次；本 tick 内多次 save 只在末尾克隆一次。
+    // 记最新 live 引用 + 逻辑代次；批次窗口内多次 save 只克隆最新态一次。
     this.dirtyState = state;
     this.liveStateRef = state;
     this.dirtyGeneration = ++this.writeGeneration;
@@ -762,9 +763,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   private scheduleSnapshot(): void {
     if (this.snapshotScheduled || this.writeInFlight || !this.dirtyState) return;
     this.snapshotScheduled = true;
-    // setImmediate：把一连串同步 save（部署日志 append 风暴 / 调和器遍历分支）
-    // 合并成本 tick 末的一次克隆 + 落盘，事件循环不再被反复同步阻塞。
-    setImmediate(() => this.takeSnapshot());
+    // 部署输出跨多个 tick 到达；只合并同一 tick 仍会不断克隆整个状态。
+    // 第一条脏变更起最多等待 5 秒，不被后续日志重置；内存和 SSE 仍即时更新。
+    // 明确要求持久化的操作走 flush()，绕过此窗口立即快照。
+    this.snapshotTimer = setTimeout(() => this.takeSnapshot(), 5_000);
+    this.snapshotTimer.unref?.();
   }
 
   /** 累积一条脏范围声明（实体级 kind 支持按 id 收窄，重复声明自动并集）。 */
@@ -782,11 +785,15 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   /**
-   * 把当前 dirty 的 live state 固化成不可变待写内容并入写队列（每 tick 至多一次）。
+   * 把当前 dirty 的 live state 固化成不可变待写内容并入写队列。
    * 异步写盘期间 live state 仍会被业务代码 mutate，故写入必须基于此刻的克隆：
    * 全量路径克隆整个 state；hint 路径只克隆被点名的 kind/实体（部分快照）。
    */
   private takeSnapshot(): void {
+    if (this.snapshotTimer) {
+      clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = null;
+    }
     this.snapshotScheduled = false;
     const live = this.dirtyState;
     if (!live) return;

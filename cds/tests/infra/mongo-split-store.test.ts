@@ -371,6 +371,7 @@ describe('MongoSplitStateBackingStore', () => {
 
     state.branches.a.status = 'building';
     store.save(state);
+    const firstFlush = store.flush();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     for (let i = 0; i < 8; i++) {
@@ -384,9 +385,58 @@ describe('MongoSplitStateBackingStore', () => {
     expect(cloneSpy.mock.calls.length - callsBefore).toBe(1);
 
     release();
+    await firstFlush;
     await store.flush();
     expect(handle.branches.docs.get('a')?.doc.updatedAt).toBe('tick-7');
     cloneSpy.mockRestore();
+  });
+
+  it('batches saves arriving in different ticks without postponing the first dirty deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    const state = emptyState();
+    try {
+      await store.init();
+      for (let i = 0; i < 20; i++) {
+        state.nextPortIndex = i;
+        store.save(state);
+        expect(store.load()?.nextPortIndex).toBe(i);
+        await vi.advanceTimersByTimeAsync(200);
+      }
+      expect(handle.global.replaceWrites).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(handle.global.replaceWrites).toHaveLength(1);
+      expect(handle.global.docs.get('global')?.state.nextPortIndex).toBe(19);
+      await store.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes immediately and cancels an old batch deadline before scheduling new changes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    const state = emptyState();
+    try {
+      await store.init();
+      state.nextPortIndex = 1;
+      store.save(state);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await store.flush();
+      expect(handle.global.docs.get('global')?.state.nextPortIndex).toBe(1);
+      state.nextPortIndex = 2;
+      store.save(state);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(handle.global.replaceWrites).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(handle.global.replaceWrites).toHaveLength(2);
+      expect(handle.global.docs.get('global')?.state.nextPortIndex).toBe(2);
+      await store.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('upgrades a queued partial to full when the in-flight write fails (Codex P1, PR #1213)', async () => {
