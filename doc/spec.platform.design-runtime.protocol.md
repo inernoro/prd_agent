@@ -4,7 +4,7 @@
 **谁该读**：实现 MAP 侧适配器的研发、实现新执行服务（例如 CloseDesign）的研发、排查「设计任务为什么失败」的人。
 **读完能做什么**：知道 MAP 该往执行服务发什么、会收回什么、每种拒绝意味着什么、下一步该怎么做，并能照着写一个兼容的执行服务或调用方。
 
-版本：1（2026-09-24）　上位设计：[design.platform.design-runtime.md](./design.platform.design-runtime.md)
+版本：1.1（2026-10-09）　上位设计：[design.platform.design-runtime.md](./design.platform.design-runtime.md)
 
 ---
 
@@ -22,7 +22,7 @@ OpenDesign 以前住在 CDS 里：MAP 先向 CDS 开一个会话，CDS 再替它
 
 1. MAP 查一次能力，确认服务健康、空闲、支持需要的设计系统。
 2. MAP 提交任务：带上任务编号（等于 MAP 的 runId）、传输地址与短期票据、模型出口、超时和信封。服务立刻返回 202，任务在后台跑。
-3. 服务自己去 MAP 取任务包、经 MAP 出口调模型、向 MAP 推实时预览、最后把结果包提交回 MAP。
+3. 服务自己去 MAP 取任务包，持任务级短期授权直接调用 LLMGW，向 MAP 推实时预览，最后把结果包提交回 MAP。MAP 仍管理任务和产物，但不再代理模型请求正文。
 4. MAP 按序号读事件（长连接或轮询都行，断线从上次序号续读），看到 `done` 就拿结果引用，看到 `error` 就拿原因。
 5. 任务结束后（成功、失败、取消、超时一律如此），服务清空工作目录与引擎数据、换一组新令牌重启引擎，才接下一个任务。
 
@@ -47,7 +47,7 @@ OpenDesign 以前住在 CDS 里：MAP 先向 CDS 开一个会话，CDS 再替它
 | `attempt` | 否 | 第几次尝试，默认 1，范围 1–100。上一次尝试以失败或取消结束后，才能用更大的值重新提交同一个 taskId |
 | `transfer` | 是 | MAP 工作区传输参数：`schemaVersion`（`map-design-workspace-v1`）、`inputPackageUrl`、`inputSha256`、`resultCommitUrl`、`transferToken`、`baseRevision`、`maxInputBytes`、`maxOutputBytes`、`allowedOutputPaths`，可选 `previewUrl` |
 | `transfer.previewUrl` | 否 | 实时预览推送地址。缺省时按结果提交地址推导（与经 CDS 时一致）；给了就必须与其它传输地址同源 |
-| `model` | 是 | MAP 模型出口：`baseUrl`、`protocol`（只支持 `openai`）、`apiKey`（MAP 发的短期票据）、`model`。`baseUrl` 必须与传输地址同源 |
+| `model` | 是 | 模型出口：`baseUrl`、`protocol`（只支持 `openai`）、`apiKey`（MAP 为本任务签发的短期 LLMGW 授权）、`model`、`sourceSystem`、`appCallerCode`、`userId`、`runId`。正式服务的 `baseUrl` 必须等于部署时钉死的 LLMGW 地址，身份字段必须与任务一致；旧 CDS 回滚路径仍可使用与工作区同源的 MAP 代理 |
 | `timeoutSeconds` | 否 | 整个任务的上限，默认 900，范围 30–7200 |
 | `envelope` | 是 | `map-design-artifact-command-v2` 信封：`schemaVersion`、`runId`（必须等于 taskId）、`workspaceTask`（固定 `/workspace/brief/task.json`）、`command`，可选 `runtimeProtocol`。序列化后不超过 12000 字符 |
 
@@ -124,7 +124,7 @@ OpenDesign 以前住在 CDS 里：MAP 先向 CDS 开一个会话，CDS 再替它
 
 ## 七、安全边界
 
-- **密钥不进引擎**。MAP 的短期票据只在服务进程里；引擎只拿到一个随机占位令牌，经服务内的出口中继调模型，中继校验占位令牌、只放行 MAP 出口路径下的 GET/POST、拒绝重定向与解析到内网或元数据地址的目标、剥掉凭据类请求头后才换上真票据。引擎以另一个系统用户运行，读不到服务进程的环境变量。
+- **长期密钥不进设计服务，短期授权不进引擎**。MAP 只把按任务签发、限时、限调用次数的 LLMGW 授权交给设计服务进程，数据库只保存其哈希；引擎只拿随机占位令牌。出口中继只允许部署时钉死的 LLMGW 地址或旧 MAP 同源代理，覆盖调用方自报的 source、appCaller、user、run，剥掉其它凭据并拒绝重定向。LLMGW 再以授权记录为准冻结租户、任务、用户、调用方和模型策略，不信任请求正文或请求头里的同名字段。
 - **任务之间不共存**。一个实例同时只跑一个任务；任务结束后停引擎、清空四个目录（工作区、引擎数据、模板拷贝、导出目录）、核对确实为空、换一组新令牌重启。核对不通过就暂停接单，而不是带着残留继续。
 - **产物出工作区之前逐字节核对**。符号链接、特殊文件、超深目录、超量文件、被改动的 MAP 输入、白名单外的路径，一律拒收，判据与经 CDS 时相同。
 - **出网**。中继只管引擎调模型这一条路；容器本身的网络白名单交给部署配置（分支预览接受「能出网但不带任何密钥」，见债务台账）。

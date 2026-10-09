@@ -5,9 +5,10 @@ namespace PrdAgent.Api.Services;
 /// <summary>
 /// 从网关回给设计执行器的响应里读出「这一次网关实际用哪个模型回答的」。
 ///
-/// 为什么在 MAP 的模型出口读：OpenDesign 在执行服务（或 CDS 容器）里调模型，MAP 的执行器收不到网关的
-/// Start 分片；但这些调用全部经过 MAP 的运行时模型代理，网关在响应里如实写着 model 字段
-///（serving：有解析结果时就是 Resolution.ActualModel）。在这里读，拿到的是网关自己报的值，不是执行器自报。
+/// 为什么旧 CDS 路径在 MAP 的模型出口读：OpenDesign 在 CDS 容器里调模型，MAP 的执行器收不到网关的
+/// Start 分片；旧路径经过 MAP 的运行时模型代理，网关在响应里如实写着 model 字段
+///（serving：有解析结果时就是 Resolution.ActualModel）。正式设计服务直达 LLMGW 后从网关审计日志投影，
+/// 这份嗅探器只继续服务旧 CDS 回滚路径。
 ///
 /// 口径：
 /// - 非流式 JSON：顶层 <c>model</c>（chat.completion / response 对象都在这里）。

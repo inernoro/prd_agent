@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -599,6 +600,19 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
             _keyRoot = keyRoot;
             Db = new MongoDbContext(connectionString, databaseName);
             Storage = new BlockingAssetStorage(new LocalAssetStorage(assetRoot));
+            var grants = new Mock<IDesignArtifactGatewayGrantService>();
+            grants.Setup(service => service.IssueAsync(
+                    It.IsAny<DesignArtifactRun>(),
+                    It.IsAny<DateTime>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((DesignArtifactRun run, DateTime expiresAt, CancellationToken _) =>
+                    new DesignArtifactGatewayGrant(
+                        $"grant-{run.Id}",
+                        "http://gateway/gw/v1",
+                        "runtime-grant-secret",
+                        "default-chat-curated",
+                        AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                        expiresAt));
             Broker = new DesignArtifactWorkspaceBroker(
                 Db,
                 Storage,
@@ -608,7 +622,8 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
                     {
                         ["DesignArtifactRuntime:PublicBaseUrl"] = "https://map.example.test",
                     })
-                    .Build());
+                    .Build(),
+                grants.Object);
         }
 
         internal MongoDbContext Db { get; }

@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -1815,6 +1817,60 @@ public sealed class GatewayRuntimeGovernanceTests
         audits.Count.ShouldBe(30);
         audits.Count(x => x["TenantId"] == "tenant-a").ShouldBe(15);
         audits.Count(x => x["TenantId"] == "tenant-b").ShouldBe(15);
+    }
+
+    [Fact]
+    public async Task RuntimeGrant_IsRunScopedAtomicAndBoundToGatewayIdentity()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        const string key = "gwrg_runtime_test_secret";
+        const string caller = "prd-agent-web.web-hosting.generate-html::chat";
+        var grants = scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        await grants.InsertOneAsync(new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-1",
+            TenantId = GatewayTenantDefaults.InternalTenantId,
+            KeyPrefix = "gwrg_runtime",
+            KeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant(),
+            RunId = "run-1",
+            UserId = "user-1",
+            AppCallerCode = caller,
+            Environment = "test",
+            Model = "default-chat-curated",
+            MaxCalls = 1,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        });
+        var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        var inactiveTenant = await authorizer.AuthorizeAsync(
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None);
+        inactiveTenant.StatusCode.ShouldBe(403);
+        inactiveTenant.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_TENANT_INACTIVE");
+        await scope.Context.Database.GetCollection<BsonDocument>("llmgw_tenants").InsertOneAsync(new BsonDocument
+        {
+            { "_id", GatewayTenantDefaults.InternalTenantId },
+            { "Status", "active" },
+        });
+
+        var wrongCaller = await authorizer.AuthorizeAsync(
+            key, "different-legacy-key", "map", "other::chat", "gw-native", "invoke", null, CancellationToken.None);
+        var allowed = await authorizer.AuthorizeAsync(
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None);
+        var exhausted = await authorizer.AuthorizeAsync(
+            key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None);
+
+        wrongCaller.StatusCode.ShouldBe(403);
+        wrongCaller.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_SCOPE_DENIED");
+        allowed.Allowed.ShouldBeTrue();
+        allowed.RuntimeGrant.ShouldNotBeNull();
+        allowed.RuntimeGrant!.RunId.ShouldBe("run-1");
+        allowed.RuntimeGrant.UserId.ShouldBe("user-1");
+        exhausted.StatusCode.ShouldBe(429);
+        exhausted.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_EXHAUSTED");
+        (await grants.Find(x => x.Id == "grant-1").SingleAsync()).CallCount.ShouldBe(1);
     }
 
     private static async Task<TestDatabase?> TryCreateDatabaseAsync()

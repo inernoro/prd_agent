@@ -670,7 +670,8 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             _db,
             new Mock<IAssetStorage>(MockBehavior.Strict).Object,
             new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
-            new ConfigurationBuilder().Build());
+            new ConfigurationBuilder().Build(),
+            Mock.Of<IDesignArtifactGatewayGrantService>());
 
         Assert.True(await broker.RecordServedModelAsync(running.Id, "gpt-served", null, default));
         // 同一个模型的后续调用一条都不写：这就是「每次调用最多一次、不是每个分片一次」。

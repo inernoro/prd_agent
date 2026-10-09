@@ -86,6 +86,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_model_exchanges",
             "llmgw_service_keys",
             "llmgw_service_key_rate_windows",
+            "llmgw_runtime_grants",
             "llmgw_prompt_policies",
             "llmrequestlogs",
             "llmgw_operation_audits",
@@ -429,6 +430,24 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         await serviceKeyDirectory.Indexes.CreateOneAsync(new CreateIndexModel<GatewayServiceKeyDirectoryRecord>(
             Builders<GatewayServiceKeyDirectoryRecord>.IndexKeys.Ascending(x => x.KeyHash),
             new CreateIndexOptions { Name = "uniq_llmgw_service_key_directory_hash", Unique = true }), cancellationToken: ct);
+
+        var runtimeGrants = _data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        await runtimeGrants.Indexes.CreateManyAsync(new[]
+        {
+            new CreateIndexModel<GatewayRuntimeGrantRecord>(
+                Builders<GatewayRuntimeGrantRecord>.IndexKeys.Ascending(x => x.KeyHash),
+                new CreateIndexOptions { Name = "uniq_llmgw_runtime_grant_hash", Unique = true }),
+            new CreateIndexModel<GatewayRuntimeGrantRecord>(
+                Builders<GatewayRuntimeGrantRecord>.IndexKeys.Ascending(x => x.ExpiresAt),
+                new CreateIndexOptions
+                {
+                    Name = "ttl_llmgw_runtime_grants",
+                    ExpireAfter = TimeSpan.Zero,
+                }),
+            new CreateIndexModel<GatewayRuntimeGrantRecord>(
+                Builders<GatewayRuntimeGrantRecord>.IndexKeys.Ascending(x => x.TenantId).Ascending(x => x.RunId),
+                new CreateIndexOptions { Name = "idx_llmgw_runtime_grant_tenant_run" }),
+        }, cancellationToken: ct);
 
         var promptPolicies = _data.Database.GetCollection<BsonDocument>("llmgw_prompt_policies");
         await promptPolicies.Indexes.CreateManyAsync(new[]

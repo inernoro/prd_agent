@@ -97,6 +97,7 @@ public sealed class OpenDesignArtifactDeliveryTests
 
     private static PreparedDesignArtifactWorkspace BuildWorkspace() => new(
         "https://map.test/input", new string('a', 64), "https://map.test/commit", "transfer-token",
+        "grant-id",
         "https://map.test/gw", "model-token", "gpt-test", "revision-1",
         1024 * 1024, 6 * 1024 * 1024, ["index.html", "manifest.json", "assets/**"]);
 

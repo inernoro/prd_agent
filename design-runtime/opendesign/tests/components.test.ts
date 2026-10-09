@@ -212,31 +212,60 @@ describe('model egress relay', () => {
     return { origin: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, seen };
   }
 
-  it('swaps the placeholder for the real ticket and strips caller credentials', async () => {
+  it('swaps the placeholder for the task grant, strips caller credentials and overwrites gateway identity', async () => {
     const { origin, seen } = await startUpstream();
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/api/design-artifacts/runtime/run-1/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
+      sourceSystem: 'map',
+      appCallerCode: 'prd-agent-web.web-hosting.generate-html::chat',
+      userId: 'user-1',
+      runId: 'run-1',
       // 上游在回环地址上只因为这是测试；默认判据会拒绝它（见下一条用例）。
       isDeniedAddress: () => false,
     });
     expect(relay.proxiedBaseUrl).toBe(`http://127.0.0.1:${relay.port}/api/design-artifacts/runtime/run-1/llm/v1`);
     const ok = await fetch(`${relay.proxiedBaseUrl}/responses`, {
       method: 'POST',
-      headers: { Authorization: 'Bearer placeholder', Cookie: 'session=1', 'X-Api-Key': 'caller-key', 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: 'Bearer placeholder', Cookie: 'session=1', 'X-Api-Key': 'caller-key', 'Content-Type': 'application/json',
+        'X-Gateway-Source': 'spoofed', 'X-Gateway-App-Caller': 'spoofed', 'X-Gateway-User-Id': 'spoofed', 'X-Gateway-Run-Id': 'spoofed',
+      },
       body: '{}',
     });
     expect(ok.status).toBe(200);
     expect(seen[0].headers.authorization).toBe('Bearer real-map-ticket');
     expect(seen[0].headers.cookie).toBeUndefined();
     expect(seen[0].headers['x-api-key']).toBeUndefined();
+    expect(seen[0].headers['x-gateway-source']).toBe('map');
+    expect(seen[0].headers['x-gateway-app-caller']).toBe('prd-agent-web.web-hosting.generate-html::chat');
+    expect(seen[0].headers['x-gateway-user-id']).toBe('user-1');
+    expect(seen[0].headers['x-gateway-run-id']).toBe('run-1');
     expect((await fetch(`${relay.proxiedBaseUrl}/responses`, { method: 'POST', headers: { Authorization: 'Bearer wrong' } })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${relay.port}/other/path`, { headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
     expect((await fetch(`${relay.proxiedBaseUrl}/x`, { method: 'DELETE', headers: { Authorization: 'Bearer placeholder' } })).status).toBe(403);
     expect((await fetch(`${relay.proxiedBaseUrl}/redirect`, { headers: { Authorization: 'Bearer placeholder' }, redirect: 'manual' })).status).toBe(502);
     expect((await fetch(`http://127.0.0.1:${relay.port}/__health`)).status).toBe(204);
+  });
+
+  it('allows only an explicitly trusted private HTTP model target', async () => {
+    await expect(startEgressRelay({
+      modelBaseUrl: 'http://10.0.0.8/gw/v1',
+      modelGatewayCredential: 'task-grant',
+      relayClientToken: 'placeholder',
+      port: 0,
+    })).rejects.toThrow('modelBaseUrl must use HTTPS outside local tests');
+
+    relay = await startEgressRelay({
+      modelBaseUrl: 'http://10.0.0.8/gw/v1',
+      modelGatewayCredential: 'task-grant',
+      relayClientToken: 'placeholder',
+      port: 0,
+      allowPrivateTarget: true,
+    });
+    expect(relay.proxiedBaseUrl).toBe(`http://127.0.0.1:${relay.port}/gw/v1`);
   });
 
   it('closes the downstream stream as soon as the upstream drops mid-response', async () => {
@@ -250,7 +279,7 @@ describe('model egress relay', () => {
     const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
       isDeniedAddress: () => false,
@@ -275,7 +304,7 @@ describe('model egress relay', () => {
     const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
       isDeniedAddress: () => false,
@@ -295,7 +324,7 @@ describe('model egress relay', () => {
     const { origin, seen } = await startUpstream();
     relay = await startEgressRelay({
       modelBaseUrl: `${origin}/llm/v1`,
-      mapModelTicket: 'real-map-ticket',
+      modelGatewayCredential: 'real-map-ticket',
       relayClientToken: 'placeholder',
       port: 0,
     });

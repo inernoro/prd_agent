@@ -42,6 +42,105 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewayKeyGateContractTests
 {
     [Fact]
+    public async Task NativeResponses_RuntimeGrantOverridesCallerRoutingIdentityAndModelPolicy()
+    {
+        JsonObject? forwarded = null;
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            forwarded = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"id\":\"resp_grant\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}",
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+        var resolver = NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated");
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        var gateway = NativeResponsesGateway(resolver, handler, NativeResponsesLogWriter(starts, dones).Object);
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-1",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            PinnedPlatformId = "native-platform",
+            PinnedModelId = "gpt-5.6-sol",
+            Temperature = 0.25,
+            TopP = 0.8,
+            ReasoningMode = "effort",
+            ReasoningEffort = "high",
+            OutputTokenMode = "omit",
+            RequireDeclaredParameters = false,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"attacker-model",
+              "store":false,
+              "input":"hello",
+              "temperature":1.9,
+              "top_p":0.1,
+              "max_output_tokens":99999,
+              "reasoning":{"effort":"minimal"},
+              "model_pool_id":"attacker-pool",
+              "pinned_platform_id":"attacker-platform",
+              "pinned_model_id":"attacker-model-id",
+              "run_id":"attacker-run",
+              "provider":{"require_parameters":false}
+            }
+            """)!.AsObject();
+            using var request = NativeResponsesRequest(body, "runtime-grant-policy");
+            request.Headers.Remove("X-Gateway-Run-Id");
+            request.Headers.Add("X-Gateway-Run-Id", "attacker-run-header");
+            request.Headers.Remove("X-Gateway-User-Id");
+            request.Headers.Add("X-Gateway-User-Id", "attacker-user-header");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            resolver.Verify(x => x.ResolveAsync(
+                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ModelTypes.Chat,
+                "default-chat-curated",
+                "native-platform",
+                "gpt-5.6-sol",
+                It.IsAny<CancellationToken>()), Times.Once);
+            var started = starts.ShouldHaveSingleItem();
+            started.RunId.ShouldBe("trusted-run");
+            started.UserId.ShouldBe("trusted-user");
+            started.AppCallerCode.ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+            started.SourceSystem.ShouldBe("map");
+            forwarded.ShouldNotBeNull();
+            forwarded!["model"]!.GetValue<string>().ShouldBe("gpt-5.6-sol");
+            forwarded["temperature"]!.GetValue<double>().ShouldBe(0.25);
+            forwarded["top_p"]!.GetValue<double>().ShouldBe(0.8);
+            forwarded["reasoning"]!["effort"]!.GetValue<string>().ShouldBe("high");
+            forwarded.ContainsKey("max_output_tokens").ShouldBeFalse();
+            forwarded.ContainsKey("model_pool_id").ShouldBeFalse();
+            forwarded.ContainsKey("pinned_platform_id").ShouldBeFalse();
+            forwarded.ContainsKey("run_id").ShouldBeFalse();
+            forwarded.ContainsKey("provider").ShouldBeFalse();
+            dones.ShouldHaveSingleItem().Status.ShouldBe("succeeded");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task NativeResponses_TwoToolRoundsPreserveRawStreamAndTrustedAttribution()
     {
         const string first = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_native\",\"status\":\"in_progress\"}}\n\n";
@@ -473,13 +572,14 @@ public class GatewayKeyGateContractTests
     }
 
     private static Mock<IModelResolver> NativeResponsesResolver(bool? functionCalling = true,
-        string model = "native-model", bool? vision = true)
+        string model = "native-model", bool? vision = true, string? logicalModelPublicId = null)
     {
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new ModelResolutionResult
             {
                 Success = true, ActualModel = model, ActualPlatformId = "native-platform", ApiUrl = "https://upstream.test",
+                LogicalModelPublicId = logicalModelPublicId,
                 ApiKey = "synthetic-provider-key", PlatformType = "openai", Protocol = "openai",
                 SupportsFunctionCalling = functionCalling, SupportsThinking = true, SupportsVision = vision,
                 InputPricePerMillion = 1, OutputPricePerMillion = 2,
@@ -3740,11 +3840,16 @@ public class GatewayKeyGateContractTests
     {
         private readonly Func<string, bool> _scopeAllowed;
         private readonly string? _resolvedAppCallerCode;
+        private readonly GatewayRuntimeGrantRecord? _runtimeGrant;
 
-        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed, string? resolvedAppCallerCode = null)
+        public CapturingScopedKeyAuthorizer(
+            Func<string, bool> scopeAllowed,
+            string? resolvedAppCallerCode = null,
+            GatewayRuntimeGrantRecord? runtimeGrant = null)
         {
             _scopeAllowed = scopeAllowed;
             _resolvedAppCallerCode = resolvedAppCallerCode;
+            _runtimeGrant = runtimeGrant;
         }
 
         public int CallCount { get; private set; }
@@ -3782,7 +3887,8 @@ public class GatewayKeyGateContractTests
                 ClientCode: "content-agent",
                 Environment: "test",
                 KeyPrefixSnapshot: "gwk_test",
-                ResolvedAppCallerCode: _resolvedAppCallerCode));
+                ResolvedAppCallerCode: _resolvedAppCallerCode,
+                RuntimeGrant: _runtimeGrant));
         }
     }
 

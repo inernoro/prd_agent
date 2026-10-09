@@ -57,9 +57,13 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         submit.Body["attempt"]!.GetValue<int>().ShouldBe(1);
         submit.Body["transfer"]!["transferToken"]!.GetValue<string>().ShouldBe("transfer-token");
         submit.Body["transfer"]!["inputPackageUrl"]!.GetValue<string>().ShouldBe("https://map.example/api/design-artifacts/runtime/r/workspace/input");
-        submit.Body["model"]!["baseUrl"]!.GetValue<string>().ShouldBe("https://map.example/api/design-artifacts/runtime/r/llm/v1");
-        submit.Body["model"]!["apiKey"]!.GetValue<string>().ShouldBe("model-ticket");
+        submit.Body["model"]!["baseUrl"]!.GetValue<string>().ShouldBe("http://gateway/gw/v1");
+        submit.Body["model"]!["apiKey"]!.GetValue<string>().ShouldBe("run-scoped-grant");
         submit.Body["model"]!["protocol"]!.GetValue<string>().ShouldBe("openai");
+        submit.Body["model"]!["sourceSystem"]!.GetValue<string>().ShouldBe("map");
+        submit.Body["model"]!["appCallerCode"]!.GetValue<string>().ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+        submit.Body["model"]!["userId"]!.GetValue<string>().ShouldBe("user-1");
+        submit.Body["model"]!["runId"]!.GetValue<string>().ShouldBe(RunId);
         submit.Body["envelope"]!["runId"]!.GetValue<string>().ShouldBe(RunId);
         submit.Body["envelope"]!["schemaVersion"]!.GetValue<string>().ShouldBe("map-design-artifact-command-v2");
         service.EventRequests.ShouldHaveSingleItem().Accept.ShouldContain("text/event-stream");
@@ -380,6 +384,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         services.AddSingleton(Mock.Of<IInfraConnectionService>());
         services.AddSingleton(Mock.Of<IInfraAgentSessionService>());
         services.AddSingleton(Mock.Of<IDesignArtifactWorkspaceBroker>());
+        services.AddSingleton(Mock.Of<IDesignArtifactGatewayGrantService>());
         services.AddOpenDesignExecutors();
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
@@ -732,9 +737,15 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         // 假时钟：每次「等待」立即返回并把时钟往前推，排队 / 不可用的截止时间按它算，
         // 用例既不真等、也不会在真实时间里空转到上限。
         var now = DateTime.UtcNow;
+        var grants = new Mock<IDesignArtifactGatewayGrantService>();
+        grants.Setup(x => x.ObserveAsync(It.IsAny<string>(), It.IsAny<DesignArtifactRun>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(0, null, null));
+        grants.Setup(x => x.RevokeAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         return new(
             new SingleClientFactory(service),
             broker,
+            grants.Object,
             Config(configuration ?? new Dictionary<string, string?>
             {
                 [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
@@ -756,7 +767,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     private static Mock<IDesignArtifactWorkspaceBroker> BuildBroker()
     {
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
-        broker.Setup(x => x.PrepareAsync(It.IsAny<DesignArtifactRun>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        broker.Setup(x => x.PrepareForDirectGatewayAsync(It.IsAny<DesignArtifactRun>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DesignArtifactRun run, string? _, CancellationToken _) =>
             {
                 run.RuntimeTicketExpiresAt = DateTime.UtcNow.AddMinutes(25);
@@ -765,9 +776,10 @@ public sealed class OpenDesignServiceArtifactExecutorTests
                     new string('a', 64),
                     "https://map.example/api/design-artifacts/runtime/r/workspace/result",
                     "transfer-token",
-                    "https://map.example/api/design-artifacts/runtime/r/llm/v1",
-                    "model-ticket",
-                    "map-managed",
+                    "grant-id",
+                    "http://gateway/gw/v1",
+                    "run-scoped-grant",
+                    "default-chat-curated",
                     "revision-1",
                     1024 * 1024,
                     6 * 1024 * 1024,
