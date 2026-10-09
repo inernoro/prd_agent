@@ -1903,9 +1903,33 @@ def _severity_class(severity):
     return ""
 
 
-def _reviewed_warning(shot, warning):
-    """保留原始捕获等级；仅凭已确认、可定位的诊断分类呈现风险。"""
+def _warning_review_for(shot, warning):
+    """返回与当前告警精确绑定的人工复核，避免截图级复核覆盖同图其他告警。"""
+    reviews = shot.get("warningReviews")
+    if reviews is not None:
+        if not isinstance(reviews, list):
+            raise ValueError("warningReviews 必须是逐条复核数组")
+        matches = []
+        for review in reviews:
+            if not isinstance(review, dict) or not str(review.get("warning") or "").strip():
+                raise ValueError("warningReviews 每项必须包含原始 warning")
+            if str(review["warning"]) == str(warning):
+                matches.append(review)
+        if len(matches) > 1:
+            raise ValueError("同一 warning 只能有一条人工复核")
+        return matches[0] if matches else None
+
     review = shot.get("warningReview")
+    if review is not None:
+        warnings = [str(item) for item in (shot.get("warnings") or [])]
+        if len(warnings) != 1 or warnings[0] != str(warning):
+            raise ValueError("同图存在多条告警时禁止使用截图级 warningReview，请改用逐条 warningReviews")
+    return review
+
+
+def _reviewed_warning(shot, warning):
+    """保留原始捕获等级；仅凭已确认、可定位且逐条匹配的诊断分类呈现风险。"""
+    review = _warning_review_for(shot, warning)
     if review is None:
         return _severity_from_text(warning), warning
     if not isinstance(review, dict) or not all(
@@ -2410,11 +2434,16 @@ def build_interactive_html(
     for technical_state, readable_state in _EVIDENCE_STATE_TRANSLATIONS.items():
         render_markdown = render_markdown.replace(technical_state, readable_state)
     problem_items = _collect_problem_items(render_markdown, manifest)
-    problem_anchors = {
-        it["anchor"]: it["severity"]
-        for it in problem_items
-        if it.get("anchor")
-    }
+    severity_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    problem_anchors = {}
+    for item in problem_items:
+        anchor = item.get("anchor")
+        severity = item.get("severity")
+        if not anchor or not severity:
+            continue
+        current = problem_anchors.get(anchor)
+        if current is None or severity_rank.get(severity, 9) < severity_rank.get(current, 9):
+            problem_anchors[anchor] = severity
     body_html = _decorate_problem_figures(markdown_to_html(render_markdown), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
     section_navigation = _collect_section_navigation(render_markdown, problem_items)
@@ -2465,8 +2494,14 @@ def build_interactive_html(
         src = html.escape(raw_src, quote=True)
         thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
         nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
-        warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
-        severity = problem_anchors.get(anchor) or _reviewed_warning(shot, warnings)[0]
+        warnings = [str(w) for w in (shot.get("warnings") or [])]
+        reviewed_severities = [_reviewed_warning(shot, warning)[0] for warning in warnings]
+        warning_severity = min(
+            (item for item in reviewed_severities if item),
+            key=lambda item: severity_rank.get(item, 9),
+            default="",
+        )
+        severity = problem_anchors.get(anchor) or warning_severity
         status_class = _severity_class(severity)
         nav_class = f' class="is-{status_class}"' if status_class else ""
         card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"

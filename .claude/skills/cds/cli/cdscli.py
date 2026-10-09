@@ -7393,24 +7393,28 @@ def _verify_runtime_credential_vars(
 
     def _resolved_account(svc: dict) -> tuple[bool, bool]:
         env = _env(svc)
+        # 服务端 resolveCommandTemplate 使用项目环境解析 command / entrypoint；
+        # 同时保留已解析的服务环境，兼容把凭据显式复制到 service.env 的项目。
+        startup_env = dict(declared_env)
+        startup_env.update(env)
         args = _args(svc)
 
         redis_password = (_value(env, "REDIS_PASSWORD")
-                          or _flag_value(args, env, "--requirepass"))
+                          or _flag_value(args, startup_env, "--requirepass"))
         redis_auth = bool(
-            _flag_value(args, env, "--requirepass", "--user", "--aclfile"))
+            _flag_value(args, startup_env, "--requirepass", "--user", "--aclfile"))
         if redis_password and redis_auth:
             return bool(_value(env, "REDIS_USERNAME")), True
 
-        nats_password = _value(env, "NATS_PASSWORD") or _flag_value(args, env, "--pass")
-        nats_auth = bool(_flag_value(args, env, "--pass", "--auth"))
+        nats_password = _value(env, "NATS_PASSWORD") or _flag_value(args, startup_env, "--pass")
+        nats_auth = bool(_flag_value(args, startup_env, "--pass", "--auth"))
         if nats_password and nats_auth:
-            nats_user = _value(env, "NATS_USER") or _flag_value(args, env, "--user")
+            nats_user = _value(env, "NATS_USER") or _flag_value(args, startup_env, "--user")
             if nats_user:
                 return True, True
 
         memcached_auth = bool(
-            _flag_value(args, env, "-Y", "--auth-file")
+            _flag_value(args, startup_env, "-Y", "--auth-file")
             or re.search(r"(?:^|\s)-S(?:\s|$)", args))
         memcached_user = _value(env, "MEMCACHED_USER")
         memcached_password = _value(env, "MEMCACHED_PASSWORD")

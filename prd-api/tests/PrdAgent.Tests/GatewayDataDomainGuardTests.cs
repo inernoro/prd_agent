@@ -1689,6 +1689,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LegacyOwnerScope.Build<ShortVideoMaterialRun>", shortVideoWorker);
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", documentWorker);
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", shortVideoWorker);
+        Assert.Contains("RenewProcessingLeaseAsync", shortVideoWorker);
+        Assert.Contains("ProcessingLeaseHeartbeatInterval", shortVideoWorker);
+        Assert.Contains("current.ProcessingToken == processingToken", shortVideoWorker);
+        Assert.Contains("Filter.Ne(r => r.ProcessingToken, (string?)null)", shortVideoWorker);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);
         Assert.Contains("while (!ct.IsCancellationRequested)", transcriptController);

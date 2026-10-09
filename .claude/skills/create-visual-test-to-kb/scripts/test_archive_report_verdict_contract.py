@@ -1026,6 +1026,37 @@ class ReportRiskDecisionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 archive_report._collect_problem_items("", [{"name": "01-old", "warnings": [self.warning], "warningReview": review}])
 
+    def test_single_review_cannot_override_multiple_warnings(self):
+        shot = {
+            "name": "01-mixed",
+            "warnings": [self.warning, "自动捕获(P0,network): HTTP 500"],
+            "warningReview": self.review,
+        }
+        with self.assertRaisesRegex(ValueError, "逐条 warningReviews"):
+            archive_report._collect_problem_items("", [shot])
+
+    def test_per_warning_reviews_do_not_downgrade_unrelated_p0(self):
+        shot = {
+            "name": "01-mixed",
+            "caption": "混合告警截图",
+            "warnings": [self.warning, "自动捕获(P0,network): HTTP 500"],
+            "warningReviews": [{"warning": self.warning, **self.review}],
+        }
+        items = archive_report._collect_problem_items("", [shot])
+        self.assertEqual(["P0", "P2"], [item["severity"] for item in items])
+        self.assertIn("HTTP 500", items[0]["detail"])
+        self.assertIn("test/infrastructure", items[1]["detail"])
+        rendered = archive_report.build_interactive_html(
+            "混合告警",
+            "fail",
+            '## 混合告警证据\n\n'
+            '<span id="fig-01-mixed" class="figure-anchor"></span>\n\n'
+            '![混合告警截图](https://assets.example.test/mixed.png)',
+            [shot],
+            figure_srcs={"fig-01-mixed": "https://assets.example.test/mixed.png"},
+        )
+        self.assertIn("验收失败 · P0", rendered)
+
     def test_business_decision_cannot_release_with_unexecuted_cases(self):
         for not_run in (0, 227):
             body = InteractiveReportLinkContractTests.business_decision_body(not_run, 0)

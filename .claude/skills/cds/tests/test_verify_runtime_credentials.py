@@ -183,6 +183,20 @@ def test_service_self_reference_resolves_against_separate_project_scope():
     assert aliases == {"CDS_POSTGRES_USER", "CDS_POSTGRES_PASSWORD"}
 
 
+def test_startup_flag_resolves_against_project_scope():
+    aliases = cdscli._verify_runtime_credential_vars(
+        {
+            "redis": {
+                "image": "redis:7-alpine",
+                "command": ["redis-server", "--requirepass", "${REDIS_SECRET}"],
+            },
+        },
+        {"REDIS_SECRET": "project-secret"},
+    )
+
+    assert aliases == {"CDS_REDIS_PASSWORD"}
+
+
 def test_required_template_without_value_does_not_whitelist_runtime_alias():
     aliases = cdscli._verify_runtime_credential_vars(
         {

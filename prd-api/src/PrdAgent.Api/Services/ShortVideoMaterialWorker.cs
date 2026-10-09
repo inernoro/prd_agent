@@ -16,6 +16,8 @@ namespace PrdAgent.Api.Services;
 public sealed class ShortVideoMaterialWorker : BackgroundService
 {
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan ProcessingLeaseHeartbeatInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ProcessingLeaseTimeout = TimeSpan.FromMinutes(15);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ShortVideoMaterialWorker> _logger;
     private string? _currentRunId;
@@ -121,11 +123,14 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 includeUnowned: true,
                 retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
                 legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
-            var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
+            var cutoff = DateTime.UtcNow - ProcessingLeaseTimeout;
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
                 Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Running),
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
+                // 只回收一个已经超时的显式租约。无 token 的历史脏数据由有权限的启动迁移处理，
+                // 不能在多副本运行时用宽泛条件把新认领任务一起判死。
+                Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.ProcessingToken, (string?)null),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
                 ownerScope);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
@@ -144,6 +149,50 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[short-video-material] 周期兜底回收失败");
+        }
+    }
+
+    private async Task RenewProcessingLeaseAsync(
+        string runId,
+        string ownerInstanceId,
+        string processingToken,
+        CancellationToken stopToken)
+    {
+        using var timer = new PeriodicTimer(ProcessingLeaseHeartbeatInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stopToken))
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+                    var renewed = await db.ShortVideoMaterialRuns.UpdateOneAsync(
+                        current => current.Id == runId
+                                   && current.Status == ShortVideoMaterialRunStatus.Running
+                                   && current.OwnerInstanceId == ownerInstanceId
+                                   && current.ProcessingToken == processingToken,
+                        Builders<ShortVideoMaterialRun>.Update.Set(current => current.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                    if (renewed.MatchedCount != 1)
+                    {
+                        _logger.LogWarning(
+                            "[short-video-material] 处理租约已失效，停止续租 run={RunId}",
+                            runId);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 瞬时数据库故障不应立刻终止业务调用；下一拍继续续租。若持续超过租约期限，
+                    // 周期回收才会按 token + UpdatedAt 的原子条件接管。
+                    _logger.LogError(ex, "[short-video-material] 处理租约续租失败 run={RunId}", runId);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+        {
+            // 正常收尾。
         }
     }
 
@@ -208,6 +257,14 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
 
         _currentRunId = run.Id;
         _currentProcessingToken = run.ProcessingToken;
+        if (string.IsNullOrWhiteSpace(run.OwnerInstanceId) || string.IsNullOrWhiteSpace(run.ProcessingToken))
+            throw new InvalidOperationException("短视频任务认领后缺少处理租约");
+        using var leaseHeartbeatStop = new CancellationTokenSource();
+        var leaseHeartbeatTask = RenewProcessingLeaseAsync(
+            run.Id,
+            run.OwnerInstanceId,
+            run.ProcessingToken,
+            leaseHeartbeatStop.Token);
         try
         {
             // 不用 WaitAsync 套超时:那只会让 await 提前返回、原 ProcessAsync 仍在后台跑(无 ct
@@ -242,6 +299,8 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         }
         finally
         {
+            leaseHeartbeatStop.Cancel();
+            await leaseHeartbeatTask;
             _currentRunId = null;
             _currentProcessingToken = null;
         }
