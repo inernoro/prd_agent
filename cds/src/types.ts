@@ -3666,7 +3666,28 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+export interface ProjectIdentitySnapshot {
+  name: string;
+  displayName: string;
+  previewIdentifier: string;
+  originalIdentifier: string;
+  repository: string;
+}
+
+export interface ProjectIdentityRecord {
+  id: string;
+  at: string;
+  kind: 'created' | 'baseline' | 'changed';
+  actor: string;
+  requestId?: string;
+  slugSource?: 'explicit' | 'repository' | 'name';
+  before?: ProjectIdentitySnapshot;
+  after: ProjectIdentitySnapshot;
+}
+
 export interface Project {
+  /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
+  identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */
   mirror?: PreviewMirrorTag;
   /**
@@ -3712,11 +3733,8 @@ export interface Project {
    */
   aliasName?: string;
   /**
-   * Optional alternative slug, reserved for a future "use alias in new
-   * branch ids" toggle. Stored here so the Settings UI can capture it
-   * alongside `aliasName`, but NOT consumed by branch-id derivation
-   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
-   * prefix change is scoped to a follow-up PR).
+   * 自定义预览地址标识。预览域名优先使用它；缺省使用原 slug。
+   * 不参与内部 branch id 的生成，项目内部身份保持稳定。
    *
    * Must pass the same SLUG_REGEX as `slug` and must not collide with
    * any other project's `slug` or `aliasSlug`.

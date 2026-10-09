@@ -40,6 +40,8 @@ import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { projectIdentityActorFromRequest } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
@@ -538,6 +540,8 @@ interface RepoSiblingRef {
 }
 
 interface ProjectSummary extends Project, ProjectStats {
+  previewIdentifier: string;
+  identityVersion: string;
   /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
   resourceUsage?: ProjectResourceUsage | null;
   /**
@@ -561,8 +565,9 @@ interface ProjectSummary extends Project, ProjectStats {
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
   // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
   // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
-  const { branchGroups: _branchGroups, ...rest } = project;
-  return { ...rest, ...stats, resourceUsage: usage ?? null };
+  const { branchGroups: _branchGroups, identityHistory: _identityHistory, ...rest } = project;
+  return { ...rest, ...stats, previewIdentifier: buildPreviewUrlForProject('', '', project).projectIdentity.slug,
+    identityVersion: project.identityHistory?.at(-1)?.id || '', resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
@@ -617,7 +622,7 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
     // Members need card/workbench metadata, not the persisted Project object.
     // A finite projection also keeps future credential fields private by default.
     const keys = [
-      'id', 'slug', 'name', 'aliasName', 'aliasSlug', 'description', 'kind', 'legacyFlag',
+      'id', 'slug', 'name', 'aliasName', 'aliasSlug', 'previewIdentifier', 'identityVersion', 'description', 'kind', 'legacyFlag',
       'createdAt', 'updatedAt', 'deliveryMode', 'gitRepoUrl', 'githubRepoFullName',
       'gitDefaultBranch', 'defaultBranch', 'cloneStatus', 'resourceChipDisplay',
       'paused', 'pausedAt', 'pauseReason', 'branchCount', 'runningBranchCount',
@@ -2765,6 +2770,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   });
 
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
+  router.get('/projects/:id/identity-history', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+    const mismatch = assertProjectAccess(req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }, project.id);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    if (!canHumanAccessProject(req, stateService, project.id)) {
+      res.status(403).json({ error: 'project_forbidden', message: '没有权限查看此项目的设置记录。' }); return;
+    }
+    const entries = [...(project.identityHistory || [])].reverse();
+    const before = typeof req.query.before === 'string' ? req.query.before : '';
+    const cursor = before ? entries.findIndex((entry) => entry.id === before) : -1;
+    if (before && cursor < 0) { res.status(400).json({ error: 'invalid_cursor', message: '记录位置已失效，请刷新后重试。' }); return; }
+    const page = entries.slice(cursor + 1, cursor + 51);
+    res.json({ records: page, nextCursor: cursor + 51 < entries.length ? page.at(-1)?.id : null,
+      coverage: project.identityHistory?.[0]?.kind === 'created' ? 'since-creation' : 'since-baseline' });
+  });
+
   // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
   router.get('/projects/:id/activity-logs', (req, res) => {
     const project = stateService.getProject(req.params.id);
@@ -3126,7 +3148,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     try {
-      stateService.addProject(newProject);
+      stateService.addProject(newProject, { ...projectIdentityActorFromRequest(req),
+        slugSource: slugProvidedExplicitly ? 'explicit' : repoSlugFromGitUrl ? 'repository' : 'name' });
     } catch (err) {
       // Rollback the network we just created. Best-effort — we log the
       // rollback result but still return the original save error so the
@@ -3382,7 +3405,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // legacyFlag, dockerNetwork, createdAt) are intentionally not
   // patchable through this endpoint — changing slug would break the
   // URL routing and changing dockerNetwork would orphan containers.
-  router.put('/projects/:id', (req, res) => {
+  router.put('/projects/:id', async (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({
@@ -3404,6 +3427,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       name: string;
       aliasName: string;
       aliasSlug: string;
+      previewIdentifier: string;
+      expectedIdentityVersion: string;
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
@@ -3428,6 +3453,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         slashCommand?: boolean;
       };
     }>;
+
+    if (body.expectedIdentityVersion !== undefined &&
+        body.expectedIdentityVersion !== (project.identityHistory?.at(-1)?.id || '')) {
+      res.status(409).json({ error: 'settings_changed', message: '项目设置已被其他操作修改。请刷新页面，核对最新值后重新保存。' });
+      return;
+    }
+    if (body.previewIdentifier !== undefined) {
+      if (typeof body.previewIdentifier !== 'string' || !body.previewIdentifier.trim()) {
+        res.status(400).json({ error: 'validation', field: 'previewIdentifier', message: '请填写预览地址标识，或使用默认标识。' });
+        return;
+      }
+      if (body.aliasSlug !== undefined) {
+        res.status(400).json({ error: 'validation', message: '请只提交一个预览地址标识。' });
+        return;
+      }
+      const identifier = body.previewIdentifier.trim().toLowerCase();
+      body.aliasSlug = identifier === project.slug ? '' : identifier;
+    }
 
     // Validate name when supplied
     if (body.name !== undefined) {
@@ -3466,11 +3509,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (body.aliasSlug !== undefined) {
       const trimmed = String(body.aliasSlug).trim().toLowerCase();
       if (trimmed !== '') {
+        if (trimmed.length > 50) {
+          res.status(400).json({ error: 'validation', field: 'previewIdentifier', message: '预览地址标识不能超过 50 个字符。' });
+          return;
+        }
         if (!SLUG_REGEX.test(trimmed)) {
           res.status(400).json({
             error: 'validation',
             field: 'aliasSlug',
-            message: '别名 slug 只能包含小写字母、数字和短横线，且不能以短横线开头或结尾',
+            message: '预览地址标识只能包含小写字母、数字和短横线，且不能以短横线开头或结尾。',
           });
           return;
         }
@@ -3494,7 +3541,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           res.status(409).json({
             error: 'duplicate',
             field: 'aliasSlug',
-            message: `别名 slug '${trimmed}' 已被项目 '${collision.name}' 占用`,
+            message: `预览地址标识 '${trimmed}' 已被项目 '${collision.name}' 占用，请换一个。`,
           });
           return;
         }
@@ -3646,7 +3693,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
 
     try {
-      stateService.updateProject(project.id, patch);
+      stateService.updateProject(project.id, patch, projectIdentityActorFromRequest(req));
+      if (await waitForFlushWithTimeout(() => stateService.flush(), 5000) !== 'flushed') {
+        res.status(503).json({ error: 'state_save_pending', message: '设置已接收，但尚未确认记录持久保存。请刷新核对，暂时不要重复修改。' });
+        return;
+      }
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',

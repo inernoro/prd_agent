@@ -152,6 +152,11 @@ describe('Projects router (P4 Part 2)', () => {
 
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      const id = req.headers['x-test-project-key'];
+      if (typeof id === 'string') (req as any).cdsProjectKey = { projectId: id, keyId: 'test' };
+      next();
+    });
     const githubApp = {
       getInstallationToken: async () => 'github-app-installation-token',
     } as GitHubAppClient;
@@ -659,6 +664,114 @@ describe('Projects router (P4 Part 2)', () => {
     });
 
     // ── Alias fields (follow-up PR for doc/plan.cds-github-integration-followups P0) ──
+    it('uses one effective identifier, supports restoring the default, and records changes', async () => {
+      delete stateService.getProject('default')!.identityHistory;
+      const initial = await request(server, 'GET', '/api/projects/default');
+      expect(initial.body.previewIdentifier).toBe(initial.body.slug);
+      const changed = await request(server, 'PUT', '/api/projects/default', {
+        previewIdentifier: 'short-preview', expectedIdentityVersion: initial.body.identityVersion,
+      });
+      expect(changed.status).toBe(200);
+      expect(changed.body.project.previewIdentifier).toBe('short-preview');
+      const restored = await request(server, 'PUT', '/api/projects/default', {
+        previewIdentifier: initial.body.slug, expectedIdentityVersion: changed.body.project.identityVersion,
+      });
+      expect(restored.status).toBe(200);
+      expect(restored.body.project.aliasSlug).toBeUndefined();
+      expect(restored.body.project.previewIdentifier).toBe(initial.body.slug);
+      const history = await request(server, 'GET', '/api/projects/default/identity-history');
+      expect(history.body.coverage).toBe('since-baseline');
+      expect(history.body.records[0].before.previewIdentifier).toBe('short-preview');
+      expect(history.body.records[0].after.previewIdentifier).toBe(initial.body.slug);
+      expect(history.body.records.at(-1).kind).toBe('baseline');
+      // The migration observation is not presented as historical creation evidence.
+      expect(history.body.records.at(-1).before).toBeUndefined();
+    });
+
+    it('rejects stale, blank, duplicate and ambiguous identifiers without writing history', async () => {
+      const initial = await request(server, 'GET', '/api/projects/default');
+      await request(server, 'POST', '/api/projects', { name: 'Taken', slug: 'taken-identity' });
+      await request(server, 'PUT', '/api/projects/default', { name: 'Changed elsewhere' });
+      const count = stateService.getProject('default')!.identityHistory!.length;
+      for (const body of [
+        { name: 'Stale write', expectedIdentityVersion: initial.body.identityVersion },
+        { previewIdentifier: 'taken-identity' },
+        { previewIdentifier: '' },
+        { previewIdentifier: 'bad identifier' },
+        { previewIdentifier: 'x'.repeat(51) },
+        { previewIdentifier: 'one', aliasSlug: 'two' },
+      ]) {
+        const res = await request(server, 'PUT', '/api/projects/default', body);
+        expect(res.status).toBeGreaterThanOrEqual(400);
+      }
+      expect(stateService.getProject('default')!.identityHistory).toHaveLength(count);
+      expect(stateService.getProject('default')!.name).toBe('Changed elsewhere');
+    });
+
+    it('persists before/after history across restart and beyond activity-log retention', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Initial', slug: 'history-persist' });
+      const id = created.body.project.id;
+      await request(server, 'PUT', `/api/projects/${id}`, {
+        name: 'Recorded name', gitRepoUrl: 'https://user:secret@example.com/repo.git?token=private#private',
+      });
+      const count = stateService.getProject(id)!.identityHistory!.length;
+      // Unchanged saves do not manufacture new setting changes.
+      await request(server, 'PUT', `/api/projects/${id}`, { name: 'Recorded name' });
+      for (let i = 0; i < 205; i++) stateService.appendActivityLog(id, { type: 'pull' });
+      stateService.save();
+      await stateService.flush();
+      const reloaded = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      reloaded.load();
+      const history = reloaded.getProject(id)!.identityHistory!;
+      expect(history).toHaveLength(count);
+      expect(history.at(-1)?.before?.name).not.toBe('Recorded name');
+      expect(history.at(-1)?.after.name).toBe('Recorded name');
+      expect(history.at(-1)?.after.repository).toBe('https://example.com/repo.git');
+      expect(JSON.stringify(history)).not.toMatch(/secret|private/);
+      expect(reloaded.getActivityLogs(id)).toHaveLength(StateService.ACTIVITY_LOG_MAX);
+    });
+
+    it('records the creation input source and paginates history without exposing it in project lists', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'New', slug: 'explicit-history' });
+      const id = created.body.project.id;
+      for (let i = 0; i < 52; i++) stateService.updateProject(id, { name: `Name ${i}` });
+      const first = await request(server, 'GET', `/api/projects/${id}/identity-history`);
+      expect(first.body.coverage).toBe('since-creation');
+      expect(first.body.records).toHaveLength(50);
+      const second = await request(server, 'GET', `/api/projects/${id}/identity-history?before=${first.body.nextCursor}`);
+      expect(second.body.records).toHaveLength(3);
+      expect(second.body.records.at(-1).slugSource).toBe('explicit');
+      expect(new Set([...first.body.records, ...second.body.records].map((entry: any) => entry.id)).size).toBe(53);
+      expect(created.body.project.identityHistory).toBeUndefined();
+      const denied = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': 'other-project' });
+      expect(denied.status).toBe(403);
+      const invalid = await request(server, 'GET', `/api/projects/${id}/identity-history?before=missing`);
+      expect(invalid.status).toBe(400);
+    });
+
+    it('does not acknowledge success when persistence fails', async () => {
+      const originalFlush = stateService.flush;
+      stateService.flush = async () => { throw new Error('simulated storage failure'); };
+      try {
+        const result = await request(server, 'PUT', '/api/projects/default', { name: 'Pending persistence' });
+        expect(result.status).toBe(503);
+        expect(result.body.error).toBe('state_save_pending');
+        expect(result.body.message).toContain('尚未确认');
+        expect(result.body.message).not.toContain('simulated storage failure');
+      } finally { stateService.flush = originalFlush; }
+    });
+
+    it('attributes changes to the verified key instead of a caller-supplied identity header', async () => {
+      const result = await request(server, 'PUT', '/api/projects/default', { name: 'Verified actor' }, {
+        'x-test-project-key': 'default', 'x-ai-agent': 'spoofed-user',
+      });
+      expect(result.status).toBe(200);
+      const history = stateService.getProject('default')!.identityHistory!;
+      expect(history.at(-1)?.actor).toBe('agent:test');
+      expect(history.at(-1)?.requestId).toBeTruthy();
+      expect(history.at(-1)?.actor).not.toContain('spoofed');
+    });
+
     it('accepts aliasName + aliasSlug and returns them on the project', async () => {
       const res = await request(server, 'PUT', '/api/projects/default', {
         aliasName: 'PRD Agent',

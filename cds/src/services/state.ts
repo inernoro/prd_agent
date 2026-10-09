@@ -1,5 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { identityChanged, identityRecord, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
 import type {
   DbLedgerEntry,
@@ -526,6 +527,14 @@ export class StateService {
       // intact, but set a preview alias from the Git repo so new URLs do
       // not keep exposing the container/workspace folder name.
       this.migrateLegacyPreviewAlias();
+      let identityBaselineAdded = false;
+      for (const project of this.state.projects) {
+        if (!project.identityHistory?.length) {
+          project.identityHistory = [identityRecord(project, 'baseline', { actor: 'system:history-baseline' })];
+          identityBaselineAdded = true;
+        }
+      }
+      if (identityBaselineAdded) this.save();
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
@@ -1954,7 +1963,7 @@ export class StateService {
    * method (no HTTP surface) so tests can exercise the storage layer
    * without waiting for Part 2's route work.
    */
-  addProject(project: Project): void {
+  addProject(project: Project, context: ProjectIdentityActor = { actor: 'unknown' }): void {
     if (!this.state.projects) this.state.projects = [];
     if (this.state.projects.some((p) => p.id === project.id)) {
       throw new Error(`Project with id '${project.id}' already exists`);
@@ -1962,6 +1971,7 @@ export class StateService {
     if (this.state.projects.some((p) => p.slug === project.slug)) {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }
+    project.identityHistory = [identityRecord(project, 'created', context)];
     this.state.projects.push(project);
     this.save();
   }
@@ -2240,16 +2250,24 @@ export class StateService {
         | 'composeSource'
       >
     >,
+    context: ProjectIdentityActor = { actor: 'unknown' },
   ): void {
     if (!this.state.projects) return;
     const idx = this.state.projects.findIndex((p) => p.id === id);
     if (idx < 0) return;
     const current = this.state.projects[idx];
-    this.state.projects[idx] = {
+    const next = {
       ...current,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+    if (identityChanged(current, next)) {
+      const history = current.identityHistory?.length ? current.identityHistory : [
+        identityRecord(current, 'baseline', { actor: 'system:history-baseline' }),
+      ];
+      next.identityHistory = [...history, identityRecord(next, 'changed', context, projectIdentitySnapshot(current))];
+    }
+    this.state.projects[idx] = next;
     this.save();
   }
 

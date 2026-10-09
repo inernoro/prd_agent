@@ -55,6 +55,7 @@ import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+import { ProjectIdentityHistory } from '@/components/project/ProjectIdentityHistory';
 import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
 
 interface ProjectSummary {
@@ -63,6 +64,8 @@ interface ProjectSummary {
   name: string;
   aliasName?: string;
   aliasSlug?: string;
+  previewIdentifier?: string;
+  identityVersion?: string;
   /** 项目声明的 Agent 角色（GET /api/projects 带出）；未声明时缺省。 */
   agentProfile?: { role: string; experience: string; cardTitle?: string };
   resourceChipDisplay?: ResourceChipDisplay;
@@ -648,7 +651,7 @@ export function ProjectSettingsPage(): JSX.Element {
               <TabsList aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
                 <div className="cds-settings-rail-head">
                   <div className="text-sm font-semibold">项目设置</div>
-                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.slug || project.id}</div>
+                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.previewIdentifier || project.aliasSlug || project.slug || project.id}</div>
                 </div>
                 {tabGroups.map((group, groupIdx) => (
                   <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
@@ -1226,7 +1229,7 @@ function AutoLifecycleSection({
   );
 }
 
-function GeneralTab({
+export function GeneralTab({
   project,
   projectId,
   onSaved,
@@ -1239,7 +1242,8 @@ function GeneralTab({
 }): JSX.Element {
   const [name, setName] = useState(project.name || '');
   const [aliasName, setAliasName] = useState(project.aliasName || '');
-  const [aliasSlug, setAliasSlug] = useState(project.aliasSlug || '');
+  const savedIdentifier = project.previewIdentifier || project.aliasSlug || project.slug;
+  const [previewIdentifier, setPreviewIdentifier] = useState(savedIdentifier);
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
@@ -1277,7 +1281,7 @@ function GeneralTab({
   useEffect(() => {
     setName(project.name || '');
     setAliasName(project.aliasName || '');
-    setAliasSlug(project.aliasSlug || '');
+    setPreviewIdentifier(project.previewIdentifier || project.aliasSlug || project.slug);
     setDescription(project.description || '');
     setGitRepoUrl(project.gitRepoUrl || '');
     setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
@@ -1304,7 +1308,8 @@ function GeneralTab({
         body: {
           name: trimmedName,
           aliasName: aliasName.trim(),
-          aliasSlug: aliasSlug.trim(),
+          previewIdentifier: previewIdentifier.trim(),
+          expectedIdentityVersion: project.identityVersion,
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
           autoSmokeEnabled,
@@ -1334,7 +1339,7 @@ function GeneralTab({
     <div className="space-y-8">
       <Section
         title="项目基础信息"
-        description="这些字段只影响项目展示、仓库来源和项目级自动冒烟测试，不会改写项目 ID 或 Docker 网络。"
+        description="修改展示名称、预览地址标识和仓库来源；保存前可核对变化，保存后可查看记录。"
       >
         {/*
          * 方向 A：表单列锁可读宽度（620px），右列放这一组设置的「当前生效 /
@@ -1347,26 +1352,36 @@ function GeneralTab({
             <span className="text-sm font-medium">项目名称</span>
             <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} maxLength={60} />
           </label>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">显示别名</span>
-            <input
-              className={inputClass}
-              value={aliasName}
-              onChange={(event) => setAliasName(event.target.value)}
-              maxLength={60}
-              placeholder="留空则使用项目名称"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">别名 slug</span>
-            <input
-              className={monoInputClass}
-              value={aliasSlug}
-              onChange={(event) => setAliasSlug(event.target.value.toLowerCase())}
-              maxLength={50}
-              placeholder="留空则使用项目原 slug"
-            />
-          </label>
+          <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">预览地址标识</span>
+              <input className={monoInputClass} value={previewIdentifier}
+                onChange={(event) => setPreviewIdentifier(event.target.value.toLowerCase())}
+                maxLength={Math.max(50, project.slug.length)} required aria-describedby="preview-identifier-help" />
+            </label>
+            <p id="preview-identifier-help" className="text-xs text-muted-foreground break-all">
+              当前使用：<span className="font-mono text-foreground">{savedIdentifier}</span>。
+              用于各分支预览地址的项目部分，修改项目名称或仓库不会自动改变它。
+            </p>
+            {previewIdentifier.trim() !== savedIdentifier ? (
+              <p className="text-xs text-warn break-all" role="status">
+                保存后使用：{previewIdentifier.trim() || '请填写标识'}。将影响该项目已有和未来分支的预览地址；已分享的链接可能受影响。
+              </p>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" disabled={previewIdentifier === project.slug}
+              onClick={() => setPreviewIdentifier(project.slug)}>恢复默认标识</Button>
+          </div>
+          <details className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">高级展示设置与内部标识</summary>
+            <div className="mt-3 space-y-3">
+              <label className="block space-y-1.5">
+                <span>显示名称覆盖（可选）</span>
+                <input className={inputClass} value={aliasName} onChange={(event) => setAliasName(event.target.value)}
+                  maxLength={60} placeholder={name || '使用项目名称'} />
+              </label>
+              <p className="break-all">创建时的内部标识：<span className="font-mono">{project.slug}</span>。用于内部关联，保持稳定。</p>
+            </div>
+          </details>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">描述</span>
             <textarea
@@ -1465,8 +1480,8 @@ function GeneralTab({
                   <dd className="truncate font-mono">{project.id}</dd>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">项目 slug</dt>
-                  <dd className="truncate font-mono">{project.slug}</dd>
+                  <dt className="text-muted-foreground">预览地址标识</dt>
+                  <dd className="break-all font-mono">{savedIdentifier}</dd>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-muted-foreground">Docker 网络</dt>
@@ -1487,23 +1502,29 @@ function GeneralTab({
                 改动影响
               </div>
               <p className="text-xs leading-relaxed">
-                改名只影响展示。项目 ID、slug 前缀和已存在分支的预览域名不会变，旧地址继续可用。
+                修改项目名称只影响展示；修改预览地址标识会改变预览入口。项目 ID 与 Docker 网络保持稳定。
               </p>
             </div>
           </aside>
         </div>
       </Section>
 
-      <Section title="项目标识">
+      <ProjectIdentityHistory projectId={projectId} version={project.identityVersion} />
+
+      <details className="rounded-lg border border-border p-4">
+        <summary className="cursor-pointer text-sm text-muted-foreground">技术信息</summary>
+      <Section title="内部项目标识">
         <div className="grid max-w-4xl gap-3 md:grid-cols-2">
           <InfoRow label="项目 ID" value={project.id} action={<CopyButton onClick={() => void copyProjectId()} />} />
-          <InfoRow label="项目 slug" value={project.slug} />
+          <InfoRow label="创建时的内部标识" value={project.slug} />
           <InfoRow label="Docker 网络" value={project.dockerNetwork || '暂无'} />
           <InfoRow label="项目类型" value={project.kind || 'git'} />
           <InfoRow label="创建时间" value={formatDate(project.createdAt)} />
           <InfoRow label="最近更新" value={formatDate(project.updatedAt)} />
         </div>
       </Section>
+
+      </details>
 
       <Section title="GitHub 关联">
         <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
