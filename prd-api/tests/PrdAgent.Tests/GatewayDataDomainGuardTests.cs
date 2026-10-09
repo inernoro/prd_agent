@@ -2307,7 +2307,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void ProdPreflightWorkflow_RunsReadOnlyPreflightWithoutLeakingKeys()
+    public void ProdPreflightWorkflow_UsesShortLivedSessionWithoutLeakingKeys()
     {
         var workflow = ReadRepoFile(".github/workflows/llmgw-prod-preflight.yml");
 
@@ -2315,10 +2315,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("workflow_dispatch:", workflow);
         Assert.Contains("PRD_AGENT_PROD_BASE", workflow);
         Assert.Contains("PRD_AGENT_PROD_API_KEY", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_SIGNING_KEY_ID", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY", workflow);
+        Assert.Contains("STABLE_SMOKE_PROD_USER", workflow);
         Assert.Contains("LLMGW_PROD_GATE_BASE", workflow);
         Assert.Contains("LLMGW_PROD_GATE_KEY", workflow);
         Assert.Contains("LLMGW_PROD_EXPECT_COMMIT", workflow);
-        Assert.Contains("logs:read access", workflow);
+        Assert.Contains("Configure Stable Smoke RSA credentials or the legacy API key", workflow);
         Assert.Contains("scripts/llmgw-prod-preflight.py", workflow);
         Assert.Contains("--map-base \"$map_base\"", workflow);
         Assert.Contains("--gw-base \"$gw_base\"", workflow);
@@ -2331,6 +2334,7 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("llmgw-prod-stage", workflow);
         Assert.DoesNotContain("echo \"$PRD_AGENT_API_KEY\"", workflow);
         Assert.DoesNotContain("echo \"$LLMGW_GATE_KEY\"", workflow);
+        Assert.DoesNotContain("echo \"$STABLE_SMOKE_SIGNING_PRIVATE_KEY\"", workflow);
     }
 
     [Fact]
