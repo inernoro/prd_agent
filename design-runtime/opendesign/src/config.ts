@@ -11,6 +11,7 @@ export interface ServiceConfig {
   webPrototypeSourceDir: string;
   designSystemsDir: string;
   odPort: number;
+  odStartTimeoutSeconds: number;
   odCommand: string[];
   odCwd: string;
   engineHome: string;
@@ -43,6 +44,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig 
     webPrototypeSourceDir: env.DESIGN_RUNTIME_WEB_PROTOTYPE_SOURCE || '/app/plugins/_official/examples/web-prototype',
     designSystemsDir: env.DESIGN_RUNTIME_DESIGN_SYSTEMS_DIR || '/app/design-systems',
     odPort: integer(env.DESIGN_RUNTIME_OD_PORT, 7456, 'DESIGN_RUNTIME_OD_PORT'),
+    odStartTimeoutSeconds: integer(
+      env.DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS,
+      180,
+      'DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS',
+    ),
     odCommand: env.DESIGN_RUNTIME_OD_COMMAND
       ? env.DESIGN_RUNTIME_OD_COMMAND.split(' ').filter(Boolean)
       : [process.execPath, 'apps/daemon/dist/cli.js', '--no-open'],

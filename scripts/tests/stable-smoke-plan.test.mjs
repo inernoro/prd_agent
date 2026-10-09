@@ -126,7 +126,11 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
   ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
   const cdsOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
+  const productionOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.productionOnlyRegressionCaseIds || []));
+  assert.deepEqual(
+    new Set(plan.requiredCaseIdsByEnvironment.cds),
+    new Set([...selected.cds, ...functionalRegressions.filter((caseId) => !productionOnlyRegressions.has(caseId))]),
+  );
   assert.deepEqual(
     new Set(plan.requiredCaseIdsByEnvironment.production),
     new Set([...selected.production, ...functionalRegressions.filter((caseId) => !cdsOnlyRegressions.has(caseId))]),
@@ -140,6 +144,10 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('VIS-004'));
   assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-visual-policy-001'));
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-visual-policy-001'));
+  assert.ok(!plan.requiredCaseIdsByEnvironment.cds.includes('REG-stsmk-production-read-only-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-stsmk-production-read-only-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-stsmk-cds-runtime-equivalence-001'));
+  assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('REG-stsmk-cds-runtime-equivalence-001'));
   assert.deepEqual(
     new Set(plan.requiredCaseIds),
     new Set([...plan.requiredCaseIdsByEnvironment.cds, ...plan.requiredCaseIdsByEnvironment.production]),

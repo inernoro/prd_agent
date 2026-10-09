@@ -956,6 +956,65 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
   };
 }
 
+export function runCdsVersionEvidence(runDir, commandRunner = command) {
+  const readiness = readJson(resolve(runDir, 'cds-readiness.json'));
+  const contract = commandRunner('node', [
+    '--test', '--test-name-pattern',
+    'CDS 版本冻结门禁|纯验收工具变化可复用已部署业务版本|业务运行时代码变化不得借用旧镜像',
+    'scripts/tests/stable-smoke-run.test.mjs',
+  ]);
+  const ready = readiness?.ready === true
+    && Boolean(readiness?.versionId)
+    && Boolean(readiness?.expectedCommit)
+    && readiness?.commit === readiness?.expectedCommit;
+  const contractPassed = contract.status === 0;
+  const artifactPath = resolve(runDir, 'cds-version-evidence.log');
+  writeFileSync(artifactPath, [
+    JSON.stringify({
+      ready,
+      expectedCommit: readiness?.expectedCommit || '',
+      commit: readiness?.commit || '',
+      runtimeCommit: readiness?.runtimeCommit || '',
+      runtimeEquivalent: readiness?.runtimeEquivalent === true,
+      versionId: readiness?.versionId || '',
+      reasons: readiness?.reasons || [],
+    }),
+    String(contract.stdout || ''),
+    String(contract.stderr || ''),
+  ].join('\n'), 'utf8');
+  const row = (caseId, title, passed, error) => ({
+    caseId,
+    environment: 'cds',
+    title,
+    tags: ['deployment-evidence'],
+    status: passed ? 'pass' : 'fail',
+    durationMs: 0,
+    error: passed ? '' : error,
+    retryCount: 0,
+    hadFailedAttempt: !passed,
+    attemptErrors: passed ? [] : [error],
+  });
+  return {
+    execution: {
+      environment: 'cds-version-evidence',
+      status: ready && contractPassed ? 'passed' : 'failed',
+      resultPath: null,
+      artifactPath,
+      policy: 'authoritative-deployment-plus-deterministic-regression',
+      gateReasons: readiness?.reasons || [],
+    },
+    rows: [
+      row('COMMON-003', '[COMMON-003] 固定提交、不可变运行版本与恢复锚点', ready, 'CDS 固定版本或恢复锚点证据不完整'),
+      row(
+        'REG-stsmk-cds-runtime-equivalence-001',
+        '[REG-stsmk-cds-runtime-equivalence-001] CDS 运行时等价分类与真实部署版本',
+        ready && contractPassed,
+        ready ? 'CDS 运行时等价分类回归失败' : 'CDS 真实部署版本证据不完整',
+      ),
+    ],
+  };
+}
+
 export function runFolderRegressionTests(runDir, commandRunner = command, dependencyExists = existsSync) {
   const vitestPath = resolve(repoRoot, 'prd-admin/node_modules/.bin/vitest');
   let dependencyReady = dependencyExists(vitestPath);
@@ -1895,6 +1954,13 @@ async function main() {
       const reportRiskRegression = runReportRiskRegression(runDir);
       executions.push(reportRiskRegression.execution);
       supplementalRows.push(...reportRiskRegression.rows);
+    }
+    if (selectedCdsCases.some((caseId) => (
+      caseId === 'COMMON-003' || caseId === 'REG-stsmk-cds-runtime-equivalence-001'
+    ))) {
+      const versionEvidence = runCdsVersionEvidence(runDir);
+      executions.push(versionEvidence.execution);
+      supplementalRows.push(...versionEvidence.rows);
     }
 
     for (const environment of selected) {

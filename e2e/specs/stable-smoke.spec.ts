@@ -1564,9 +1564,17 @@ async function visibleButton(page: Page, name: string) {
 }
 
 async function openDocumentStoreAction(page: Page, name: '上传文件' | '解析短视频') {
+  const fab = page.locator('[data-tour-id="doc-create-fab"]');
+  await expect.poll(async () => {
+    if (await visibleButton(page, name)) return 'direct';
+    if (await fab.isVisible().catch(() => false)) return 'fab';
+    return '';
+  }, {
+    message: `知识库必须提供 ${name} 的空状态入口或新增菜单`,
+    timeout: 10_000,
+  }).not.toBe('');
   const direct = await visibleButton(page, name);
   if (direct) return direct;
-  const fab = page.locator('[data-tour-id="doc-create-fab"]');
   await expect(fab, `知识库必须提供 ${name} 的空状态入口或新增菜单`).toBeVisible();
   await fab.click();
   const importGroupButton = page.getByRole('button', { name: '上传与导入', exact: true });
@@ -2140,7 +2148,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     ).toEqual([]);
   });
 
-  test('[CORE-002][CORE-003] 登录与本人头像完成上传、生成、保存、刷新和移动端闭环', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
+  test('[CORE-002][CORE-003][REG-avatar-asset-001] 登录与本人头像完成上传、生成、保存、刷新和移动端闭环', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止创建一次性头像用户和执行头像生成');
     test.setTimeout(420_000);
 
@@ -2247,6 +2255,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto('/', { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'light');
+      const defaultAvatar = page.locator('button[aria-label="打开用户菜单"] img[alt="avatar"]').first();
+      await expect(defaultAvatar).toHaveAttribute('src', /\/avatars\/nohead\.webp(?:[?#]|$)/);
+      await expect.poll(
+        () => defaultAvatar.evaluate((image) => (image as HTMLImageElement).naturalWidth),
+        { message: '默认头像必须完成浏览器解码', timeout: 15_000 },
+      ).toBeGreaterThan(0);
+      const defaultAvatarResponse = await page.request.get('/avatars/nohead.webp');
+      expect(defaultAvatarResponse.ok(), '同源默认头像资源必须可访问').toBe(true);
+      expect((await defaultAvatarResponse.body()).byteLength, '默认头像不得退回多兆字节旧资源').toBeLessThan(32 * 1024);
       const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(desktopOverflow, '根页面暗色桌面不应出现横向溢出').toBeLessThanOrEqual(1);
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -2485,7 +2502,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-002][CORE-003] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[CORE-002][CORE-003][CORE-009][COMMON-002][REG-auth-diagnosis-001] 合成会话刷新恢复、授权诊断且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动注入错误凭据和撤销会话');
     const adminToken = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });
     expect(allowed.ok()).toBe(true);
@@ -2499,9 +2517,31 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const afterReload = await readStableAuthSnapshot(page);
     expect(afterReload).toBe(beforeReload);
 
+    const authorizationProbes: Array<{ headers: Record<string, string>; expectedCode: string }> = [
+      {
+        headers: { 'X-AI-Access-Key': 'stsmk-invalid-ai-access-key', 'X-AI-Impersonate': 'stable-smoke' },
+        expectedCode: 'AUTH_AI_KEY_INVALID',
+      },
+      {
+        headers: { 'X-AI-Access-Key': 'sk-ak-stsmk-invalid-agent-key' },
+        expectedCode: 'AUTH_AGENT_KEY_INVALID',
+      },
+    ];
+    for (const probe of authorizationProbes) {
+      const response = await request.get('/api/authz/me', { headers: probe.headers });
+      expect(response.status()).toBe(401);
+      expect(response.headers()['x-auth-diagnosis']).toBe(probe.expectedCode);
+      expect(decodeURIComponent(response.headers()['x-auth-recovery'] || '')).toBeTruthy();
+      const body = await response.json() as ApiEnvelope<unknown>;
+      expect(body.error?.code).toBe(probe.expectedCode);
+      expect(JSON.stringify(body)).not.toContain('stsmk-invalid');
+    }
+    expect(await readStableAuthSnapshot(page)).toBe(beforeReload);
+
     const username = `stsmk_noauth_${Date.now().toString(36)}`;
     const password = `StsmkOnly_${Date.now()}_A9`;
     let restrictedUserId = '';
+    let restrictedToken = '';
     try {
       const created = await readEnvelope<{
         userId: string;
@@ -2568,7 +2608,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(renewed.refreshToken).toBe(login.refreshToken);
       expect(renewed.sessionKey).toBe(login.sessionKey);
       expect(renewed.user).toMatchObject({ userId: restrictedUserId, username });
-      const restrictedToken = renewed.accessToken;
+      restrictedToken = renewed.accessToken;
       const restrictedMe = await readEnvelope<{
         effectivePermissions: string[];
         isRoot: boolean;
@@ -2617,6 +2657,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           data: { targets: ['admin', 'desktop'] },
         });
         expect(expired.ok(), '受限用户会话回收失败').toBe(true);
+        if (restrictedToken) {
+          const revoked = await request.get('/api/authz/me', { headers: authHeaders(restrictedToken) });
+          expect(revoked.status()).toBe(401);
+          expect(revoked.headers()['x-auth-diagnosis']).toBe('AUTH_SESSION_REVOKED');
+        }
         const deleted = await page.request.post('/api/users/bulk-delete', {
           headers: authHeaders(adminToken),
           data: { userIds: [restrictedUserId] },
@@ -2626,6 +2671,48 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers: authHeaders(adminToken),
         })).status()).toBe(404);
       }
+    }
+  });
+
+  test('[REG-auth-diagnosis-001][REG-auth-health-entry-001] 授权健康中心从桌面搜索与移动抽屉均可进入并回读', async ({ page, request, browser }, testInfo) => {
+    const token = await loginAndReadToken(page, request, '/');
+    const authState = await readStableAuthSnapshot(page);
+
+    const search = page.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' });
+    await search.fill('授权健康');
+    await expect(page.getByText('授权健康中心', { exact: true })).toBeVisible();
+    await search.press('Enter');
+    await page.waitForURL(/\/authorization-health(?:[?#]|$)/);
+    await expect(page.getByRole('heading', { name: '授权健康中心' })).toBeVisible();
+    const healthResponsePromise = page.waitForResponse((response) => (
+      response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/authorization-health'
+    ));
+    await page.getByRole('button', { name: '重新检查' }).click();
+    const healthResponse = await healthResponsePromise;
+    expect(healthResponse.ok(), await healthResponse.text()).toBe(true);
+    await expect(page.getByText('诊断覆盖率', { exact: true })).toBeVisible();
+    await expect(page.getByText('未分类 401', { exact: true })).toBeVisible();
+    expect((await page.request.get('/api/authz/me', { headers: authHeaders(token) })).ok()).toBe(true);
+
+    const mobileContext = await browser.newContext({
+      ...devices['iPhone 13'],
+      baseURL: testInfo.project.use.baseURL,
+    });
+    try {
+      await mobileContext.addInitScript((value) => {
+        window.localStorage.setItem('prd-admin-auth', value);
+      }, authState);
+      const mobilePage = await mobileContext.newPage();
+      await mobilePage.goto('/', { waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(mobilePage);
+      await mobilePage.getByRole('button', { name: '打开导航菜单' }).click();
+      const entry = mobilePage.locator('[data-mobile-drawer-utility="/authorization-health"]');
+      await expect(entry).toBeVisible();
+      await entry.click();
+      await expect(mobilePage.getByRole('heading', { name: '授权健康中心' })).toBeVisible();
+    } finally {
+      await mobileContext.close();
     }
   });
 
@@ -6414,7 +6501,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001][REG-visual-model-contract-001][REG-visual-viewport-001][REG-visual-progress-002] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     // 生产生图 HTTP 契约允许最长 600 秒。测试总时限额外保留页面验证、审计查询与清理余量，
     // 避免上游仍在合法执行时先由 Playwright 误杀，再把取消/删除冲突误报成模型故障。
     test.setTimeout(720_000);

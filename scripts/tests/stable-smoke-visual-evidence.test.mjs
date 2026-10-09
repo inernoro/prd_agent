@@ -509,6 +509,10 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   );
   assert.match(
     source,
+    /openDocumentStoreAction[\s\S]*?expect\.poll[\s\S]*?visibleButton\(page, name\)[\s\S]*?fab\.isVisible/,
+  );
+  assert.match(
+    source,
     /CDS-VISUAL-SHORT-VIDEO-PARSING-01[\s\S]*?openDocumentStoreAction\(page, '解析短视频'\)[\s\S]*?CDS-VISUAL-SHORT-VIDEO-PARSING-03/,
   );
   assert.match(

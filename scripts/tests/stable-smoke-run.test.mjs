@@ -44,6 +44,7 @@ import {
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
+  runCdsVersionEvidence,
   runNotificationEvidenceRegression,
   runReportViewRegression,
   runReportRiskRegression,
@@ -927,6 +928,58 @@ test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集�
     e2eSource,
     /test\('\[WEB-001\][^']*\[REG-web-folder-(?:canonical|fence|create-rename)-001\]/,
   );
+});
+
+test('CDS 固定版本与运行时等价回归同时产出部署证据', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-version-evidence-'));
+  try {
+    writeFileSync(resolve(directory, 'cds-readiness.json'), JSON.stringify({
+      ready: true,
+      expectedCommit: 'abc123',
+      commit: 'abc123',
+      runtimeCommit: 'abc123',
+      runtimeEquivalent: false,
+      versionId: 'dv-current',
+      reasons: [],
+    }));
+    const calls = [];
+    const result = runCdsVersionEvidence(directory, (name, args) => {
+      calls.push([name, args]);
+      return { status: 0, stdout: '3 tests passed', stderr: '' };
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'node');
+    assert.match(calls[0][1].join(' '), /纯验收工具变化可复用已部署业务版本/);
+    assert.deepEqual(
+      result.rows.map((row) => [row.caseId, row.environment, row.status]),
+      [
+        ['COMMON-003', 'cds', 'pass'],
+        ['REG-stsmk-cds-runtime-equivalence-001', 'cds', 'pass'],
+      ],
+    );
+    assert.equal(result.execution.status, 'passed');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('CDS 部署版本证据不完整时固定版本与等价回归都失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-version-missing-'));
+  try {
+    writeFileSync(resolve(directory, 'cds-readiness.json'), JSON.stringify({
+      ready: false,
+      expectedCommit: 'abc123',
+      commit: 'old123',
+      runtimeCommit: 'old123',
+      versionId: '',
+      reasons: ['CDS 分支提交尚未同步到目标提交'],
+    }));
+    const result = runCdsVersionEvidence(directory, () => ({ status: 0, stdout: '', stderr: '' }));
+    assert.equal(result.execution.status, 'failed');
+    assert.ok(result.rows.every((row) => row.status === 'fail'));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('前端权威键回归失败时不会冒领另外两条服务端回归', () => {
