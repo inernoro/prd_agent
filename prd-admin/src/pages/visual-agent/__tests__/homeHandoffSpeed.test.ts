@@ -207,7 +207,7 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     // 只断言「调用了某个转换函数」是不够的——那句话在口径反过来之后依然成立，
     // 上一版就是这么漏过去的。真正的行为判据在 visualAgentModelOptions.test.ts：
     // 归一后必须真的能被 selectVisualModel 选中。
-    expect(MOBILE).toMatch(/visualModelOptionIdOf\(poolIdFromVisualModelOptionId\(raw\)\)/);
+    expect(MOBILE).toMatch(/normalizeVisualModelOptionId\(handoff\.modelId\)/);
   });
 
   it('【关键】手机端参考图落盘失败时不替他跑一次纯文字生成', () => {

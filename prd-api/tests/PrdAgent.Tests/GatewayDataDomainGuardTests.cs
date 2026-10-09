@@ -4416,7 +4416,10 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("ImageReferenceContract.Validate", worker);
         Assert.Contains("run.ExpectedImageRefCount", worker);
-        Assert.Contains("IMAGE_REF_INCOMPLETE", ReadRepoFile("prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs"));
+        var referenceContract = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs");
+        Assert.Contains("IMAGE_REF_INCOMPLETE", referenceContract);
+        Assert.Contains("IMAGE_REF_COUNT_REQUIRED", referenceContract);
+        Assert.Contains("ImageReferenceContract.ValidateDeclared", ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
         Assert.True(
             worker.IndexOf("ImageReferenceContract.Validate", StringComparison.Ordinal)
             < worker.IndexOf("ResolveModelGroupAsync", StringComparison.Ordinal),
@@ -4429,6 +4432,32 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Builders<ImageGenRun>.Update.Set(x => x.AppCallerCode, appCallerCode)", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.Img2Img", worker);
         Assert.Contains("AppCallerRegistry.VisualAgent.Image.VisionGen", worker);
+    }
+
+    [Fact]
+    public void GenericVisualModelAndHandoffPolicies_DoNotBranchOnCurrentProductModelIds()
+    {
+        var genericSources = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/VisualModelPolicyService.cs",
+            "prd-api/src/PrdAgent.Core/Models/VisualModelPolicy.cs",
+            "prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts",
+            "prd-admin/src/lib/visualAgentHandoff.ts",
+        };
+        var productModelTokens = new[]
+        {
+            "gpt-image",
+            "gemini-3-pro-image-preview",
+            "doubao-seedream",
+            "image2",
+        };
+
+        foreach (var sourcePath in genericSources)
+        {
+            var source = ReadRepoFile(sourcePath);
+            Assert.All(productModelTokens, token =>
+                Assert.DoesNotContain(token, source, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     [Fact]

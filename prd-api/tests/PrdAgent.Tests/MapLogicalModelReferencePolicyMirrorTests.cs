@@ -49,11 +49,9 @@ public sealed class MapLogicalModelReferencePolicyMirrorTests
     }
 
     [Theory]
-    [InlineData("image2")]
-    [InlineData("gpt-image-2")]
-    [InlineData("gpt-image-2.5-sunburst")]
-    [InlineData("gemini-3-pro-image-preview")]
-    [InlineData("doubao-seedream-4-5-251128")]
+    [InlineData("future-image-model-2099")]
+    [InlineData("vendor-neutral-image-edit-v42")]
+    [InlineData("newly-added-model-without-code-change")]
     public void 三类过滤器都按任意公开模型标识生效(string publicId)
     {
         var rendered = new[]

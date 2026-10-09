@@ -1602,15 +1602,18 @@ public class ImageMasterController : ControllerBase
             var submittedImageRefCount = request?.ImageRefs?.Count > 0
                 ? request.ImageRefs.Count
                 : string.IsNullOrWhiteSpace(initSha) ? 0 : 1;
-            var referenceValidation = ImageReferenceContract.Validate(
+            var referenceValidation = ImageReferenceContract.ValidateDeclared(
                 request?.ExpectedImageRefCount,
                 submittedImageRefCount,
                 !string.IsNullOrWhiteSpace(request?.MaskBase64));
             if (!referenceValidation.IsValid)
             {
+                var message = referenceValidation.ErrorCode == ImageReferenceContract.RequiredCountCode
+                    ? "请求缺少参考图数量声明，这次没有生成。请刷新页面后重新提交。"
+                    : $"参考图没有完整传到生成任务：应有 {referenceValidation.ExpectedCount} 张，实际收到 {referenceValidation.SubmittedCount} 张。这次没有生成，请重新选择参考图后再试。";
                 return BadRequest(ApiResponse<object>.Fail(
                     referenceValidation.ErrorCode ?? ImageReferenceContract.IncompleteCode,
-                    $"参考图没有完整传到生成任务：应有 {referenceValidation.ExpectedCount} 张，实际收到 {referenceValidation.SubmittedCount} 张。这次没有生成，请重新选择参考图后再试。"));
+                    message));
             }
 
             // 关键：先把”占位元素”写入画布（服务端写入，避免前端关闭导致元素不存在）

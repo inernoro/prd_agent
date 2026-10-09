@@ -21,6 +21,29 @@ public sealed class ImageReferenceContractTests
     }
 
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void NewRequestsMustDeclareExpectedReferenceCount(int submitted)
+    {
+        var result = ImageReferenceContract.ValidateDeclared(null, submitted);
+
+        Assert.False(result.IsValid);
+        Assert.Equal(ImageReferenceContract.RequiredCountCode, result.ErrorCode);
+        Assert.Equal(submitted, result.SubmittedCount);
+    }
+
+    [Theory]
+    [InlineData(0, 0, true)]
+    [InlineData(1, 1, true)]
+    [InlineData(1, 0, false)]
+    public void DeclaredReferenceCountUsesTheSameCompletenessContract(int expected, int submitted, bool valid)
+    {
+        var result = ImageReferenceContract.ValidateDeclared(expected, submitted);
+
+        Assert.Equal(valid, result.IsValid);
+    }
+
+    [Theory]
     [InlineData(1, 0)]
     [InlineData(2, 0)]
     [InlineData(2, 1)]

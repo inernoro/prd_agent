@@ -10,7 +10,7 @@ describe('visual agent 首页交接包', () => {
     const payload = createVisualAgentHandoffPayload({
       prompt: '重新设计一版',
       size: '1024x1024',
-      modelId: 'pool_image2',
+      modelId: 'pool_future-model-2099',
       imageSize: { w: 320, h: 240 },
       inlineImage: { src, name: '参考图.png' },
       timestamp: 1,
@@ -24,7 +24,7 @@ describe('visual agent 首页交接包', () => {
         size: '1024x1024',
         inlineImage: { src, name: '参考图.png' },
       },
-      modelId: 'pool_image2',
+      modelId: 'pool_future-model-2099',
       imageSize: { w: 320, h: 240 },
     });
   });

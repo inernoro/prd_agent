@@ -4,7 +4,9 @@
 | rule | platform | 固化参考图结构化交接、模型目录权威与逻辑模型删除审计规则 |
 | fix | prd-admin | 修复桌面与手机重试、多图和局部编辑链路丢参考图后静默降级的问题 |
 | fix | prd-api | 新增参考图期望数量跨层契约，Controller 与 Worker 双重拒绝不完整图生图请求 |
-| test | prd-api | 增加参考图数量契约及 image2、2.5 等逻辑模型通用引用审计矩阵 |
+| test | prd-api | 使用虚构未来模型验证逻辑模型同步、默认失效与引用审计不依赖具体型号 |
 | refactor | platform | 删除已停用的 Cursor 规则镜像、同步脚本与宿主安装分支，收敛到 Claude 和通用 Agent 两套目录 |
 | test | cds | 更新技能安装跨端契约，防止重新生成或分发 Cursor 目录 |
 | docs | visual-agent | 记录 image2.5 正式上游单线路超时的验收证据与恢复条件 |
+| fix | visual-agent | 将模型选择 ID 归一与参考图预期数量升级为桌面端、手机端和后端入口的强契约 |
+| rule | platform | 禁止通用模型策略按产品型号写分支，并要求用未配置的未来模型做回归验收 |

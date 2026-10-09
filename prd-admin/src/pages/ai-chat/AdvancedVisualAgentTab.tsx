@@ -172,7 +172,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
-import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
+import { buildVisualAgentModelOptions, normalizeVisualModelOptionId, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -5544,7 +5544,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 偏好写失败时只返回 { success:false }（不 reject），此时服务端存的还是上一次的值；
       // 若编辑器照读，用户在首页选了 A、这里却用 B 跑了一次要花钱的生成（Codex PR #1476 P1）。
       // 这个 effect 在挂载时同步跑完，而偏好 effect 的赋值在 await 之后，所以标记一定先立起来。
-      const handedModelId = handoff.modelId;
+      const handedModelId = normalizeVisualModelOptionId(handoff.modelId);
       if (handedModelId) {
         handedModelIdRef.current = handedModelId;
         setModelPrefAuto(false);

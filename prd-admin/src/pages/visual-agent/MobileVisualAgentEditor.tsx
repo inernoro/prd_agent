@@ -18,7 +18,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { ArrowLeft, Download, Expand, ImagePlus, LayoutGrid, RefreshCw, Send, Wand2, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { poolIdFromVisualModelOptionId, visualModelOptionIdOf } from '@/pages/ai-chat/visualAgentModelOptions';
+import { normalizeVisualModelOptionId } from '@/pages/ai-chat/visualAgentModelOptions';
 import {
   createWorkspaceImageGenRun,
   getImageGenRun,
@@ -232,8 +232,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
       // 所以这里不再手写方向，而是**归一到选项 id 这个口径**：先剥再加，
       // 无论交接包给的是哪一种写法，结果都是同一个规范形式。判据纪律形状 6：
       // 读到的值真实存在不代表它是这里真正生效的那个。
-      const raw = handoff.modelId;
-      const handedModelId = raw ? visualModelOptionIdOf(poolIdFromVisualModelOptionId(raw)) : '';
+      const handedModelId = normalizeVisualModelOptionId(handoff.modelId);
       if (handedModelId) setPickedPoolId(handedModelId);
     } catch {
       // ignore

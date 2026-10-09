@@ -9,9 +9,17 @@ namespace PrdAgent.Core.Models.MultiImage;
 /// </summary>
 public static class ImageReferenceContract
 {
+    public const string RequiredCountCode = "IMAGE_REF_COUNT_REQUIRED";
     public const string InvalidCountCode = "IMAGE_REF_COUNT_INVALID";
     public const string IncompleteCode = "IMAGE_REF_INCOMPLETE";
 
+    /// <summary>新请求必须显式声明入口看到的参考图数量，缺字段时拒绝而不是自行猜测。</summary>
+    public static ImageReferenceValidation ValidateDeclared(int? expectedCount, int submittedCount, bool hasMask = false)
+        => expectedCount is null
+            ? new ImageReferenceValidation(false, RequiredCountCode, 0, submittedCount)
+            : Validate(expectedCount, submittedCount, hasMask);
+
+    /// <summary>兼容已落库的旧任务；新入口必须调用 ValidateDeclared。</summary>
     public static ImageReferenceValidation Validate(int? expectedCount, int submittedCount, bool hasMask = false)
     {
         if (expectedCount is < 0 || submittedCount < 0)
