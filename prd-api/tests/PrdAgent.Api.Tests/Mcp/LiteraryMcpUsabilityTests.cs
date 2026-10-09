@@ -692,6 +692,36 @@ public class LiteraryMcpUsabilityTests
     // ───────────── 端到端：改稿后重新配图、历史配图不丢 ─────────────
 
     [Fact]
+    public void 比例型模型只列声明比例_精确像素也不静默换比例()
+    {
+        var model = ImageGenModelAdapterRegistry.GetAdapterInfo("nano-banana-2")!;
+        var sizes = LiteraryIllustrationChoices.SupportedSizes(model);
+        Assert.Equal(7, sizes.Count);
+        Assert.Contains(sizes, s => s.Aspect == "16:9" && s.Size == "1344x768");
+        Assert.Equal("1184x864", LiteraryIllustrationChoices.FitSize(
+            LiteraryIllustrationChoices.ParseSize("4:3").request!, model, "nano-banana-2").size);
+        foreach (var invalid in new[] { "4:5", "5:4", "21:9", "1200x1500" })
+            Assert.NotNull(LiteraryIllustrationChoices.FitSize(
+                LiteraryIllustrationChoices.ParseSize(invalid).request!, model, "nano-banana-2").error);
+        Assert.All(sizes, s => Assert.Contains(model.SizesByResolution.Values.SelectMany(x => x),
+            declared => declared.Size == s.Size && declared.AspectRatio == s.Aspect));
+    }
+
+    [Fact]
+    public void 范围型模型的比例使用声明的合法像素_不是通用换算表()
+    {
+        var model = ImageGenModelAdapterRegistry.GetAdapterInfo("flux-pro")!;
+        var sizes = LiteraryIllustrationChoices.SupportedSizes(model);
+        Assert.Contains(sizes, s => s.Aspect == "4:3" && s.Size == "1024x768");
+        Assert.Equal("1024x768", LiteraryIllustrationChoices.FitSize(
+            LiteraryIllustrationChoices.ParseSize("4:3").request!, model, "flux-pro").size);
+        Assert.All(sizes, s => Assert.Null(PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageModelCatalog.ValidateSize(s.Size, model)));
+        // 范围型模型仍能显式传符合范围与步长的自定义像素。
+        Assert.Equal("960x640", LiteraryIllustrationChoices.FitSize(
+            LiteraryIllustrationChoices.ParseSize("960x640").request!, model, "flux-pro").size);
+    }
+
+    [Fact]
     public async Task 改稿可带标记重新配图_旧图保留进历史()
     {
         var (db, name, connection) = NewDb("literary_mcp_rewrite");

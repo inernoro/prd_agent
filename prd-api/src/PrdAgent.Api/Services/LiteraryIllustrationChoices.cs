@@ -147,9 +147,11 @@ public static class LiteraryIllustrationChoices
         if (model.SizesNotApplicable)
             return (request.IsExact ? request.Raw : TableSizeFor(request.Ratio) ?? DefaultSize, null);
         string? candidate;
-        if (request.IsExact) candidate = request.Raw;
-        else if (model.SizeConstraintType == SizeConstraintTypes.Whitelist) candidate = PickForRatio(WhitelistSizes(model), request.Ratio);
-        else candidate = TableSizeFor(request.Ratio);
+        var declared = DeclaredSizes(model);
+        if (request.IsExact)
+            candidate = model.SizeConstraintType == SizeConstraintTypes.AspectRatio
+                && !declared.Any(x => x.size == request.Raw) ? null : request.Raw;
+        else candidate = PickForRatio(declared, request.Ratio);
         if (candidate != null && GatewayImageModelCatalog.ValidateSize(candidate, model) == null) return (candidate, null);
 
         var choices = SupportedSizes(model);
@@ -164,29 +166,30 @@ public static class LiteraryIllustrationChoices
     public static List<SizeChoice> SupportedSizes(ImageGenAdapterInfo model)
     {
         if (model.SizesNotApplicable) return new();
-        if (model.SizeConstraintType == SizeConstraintTypes.Whitelist)
-        {
-            var all = WhitelistSizes(model);
-            return all.GroupBy(x => FriendlyRatio(x.w, x.h))
-                .Select(g => new SizeChoice(g.Key, PickForRatio(g.ToList(), g.First().w / (double)g.First().h)!))
-                .OrderBy(c => RatioOf(c.Size)).ToList();
-        }
-        return AspectSizes.Where(kv => GatewayImageModelCatalog.ValidateSize(kv.Value, model) == null)
-            .Select(kv => new SizeChoice(kv.Key, kv.Value)).OrderBy(c => RatioOf(c.Size)).ToList();
+        return DeclaredSizes(model).GroupBy(x => x.aspect)
+            .Select(g => new SizeChoice(g.Key, PickForRatio(g.ToList(), g.First().ratio)!))
+            .OrderBy(c => RatioOf(c.Size)).ToList();
     }
 
-    private static List<(string size, int w, int h)> WhitelistSizes(ImageGenAdapterInfo model)
-        => model.SizesByResolution.Values.SelectMany(x => x).Select(x => x.Size).Distinct()
-            .Select(s => (s, ok: TryParse(s, out var w, out var h), w, h)).Where(x => x.ok)
-            .Select(x => (x.s, x.w, x.h)).ToList();
+    private static List<(string size, int w, int h, string aspect, double ratio)> DeclaredSizes(ImageGenAdapterInfo model)
+        => model.SizesByResolution.Values.SelectMany(x => x).DistinctBy(x => x.Size)
+            .Where(x => GatewayImageModelCatalog.ValidateSize(x.Size, model) == null)
+            .Select(x =>
+            {
+                var valid = TryParse(x.Size, out var w, out var h);
+                var hasAspect = TryAspectRatio(x.AspectRatio, out var ratio);
+                return (x.Size, w, h, aspect: hasAspect ? x.AspectRatio : valid ? FriendlyRatio(w, h) : "",
+                    ratio: hasAspect ? ratio : valid ? w / (double)h : 0, valid);
+            }).Where(x => x.valid)
+            .Select(x => (x.Size, x.w, x.h, x.aspect, x.ratio)).ToList();
 
     /// <summary>
     /// 同一比例常有好几档（512 / 1K / 2K）。网页尺寸表里那一档在就用它（与网页出图一致），
     /// 不在就取面积最接近 1024x1024 的一档：不至于小到 688x384，也不至于大到 4K 拖慢出图。
     /// </summary>
-    private static string? PickForRatio(List<(string size, int w, int h)> sizes, double ratio)
+    private static string? PickForRatio(List<(string size, int w, int h, string aspect, double ratio)> sizes, double ratio)
     {
-        var matches = sizes.Where(x => SameRatio(x.w / (double)x.h, ratio)).ToList();
+        var matches = sizes.Where(x => SameRatio(x.ratio, ratio)).ToList();
         if (matches.Count == 0) return null;
         var table = TableSizeFor(ratio);
         if (table != null && matches.Any(x => x.size == table)) return table;
@@ -198,7 +201,7 @@ public static class LiteraryIllustrationChoices
 
     private static string FriendlyRatio(int w, int h)
     {
-        var known = AspectSizes.Keys.FirstOrDefault(k => SameRatio(RatioOf(AspectSizes[k]), w / (double)h));
+        var known = AspectSizes.Keys.FirstOrDefault(k => TryAspectRatio(k, out var ratio) && SameRatio(ratio, w / (double)h));
         if (known != null) return known;
         int a = w, b = h;
         while (b != 0) (a, b) = (b, a % b);
@@ -206,6 +209,16 @@ public static class LiteraryIllustrationChoices
     }
 
     private static bool SameRatio(double x, double y) => Math.Abs(x - y) / y <= RatioTolerance;
+
+    private static bool TryAspectRatio(string? aspect, out double ratio)
+    {
+        ratio = 0;
+        var parts = aspect?.Split(':');
+        if (parts?.Length != 2 || !int.TryParse(parts[0], out var w) || !int.TryParse(parts[1], out var h)
+            || w <= 0 || h <= 0) return false;
+        ratio = w / (double)h;
+        return true;
+    }
 
     private static double RatioOf(string size) => TryParse(size, out var w, out var h) ? w / (double)h : 0;
 
