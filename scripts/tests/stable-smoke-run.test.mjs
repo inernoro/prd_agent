@@ -934,6 +934,23 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
 });
 
+test('正式环境视觉计划同时传入主应用与网关权威地址', () => {
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  const productionPlanCall = source.match(
+    /const productionVisualPlanResult = command\('node', \[([\s\S]*?)\n\s*\]\);/,
+  );
+
+  assert.ok(productionPlanCall, '必须保留正式环境视觉计划生成调用');
+  assert.match(
+    productionPlanCall[1],
+    /'--production-origin', values\.STABLE_SMOKE_PROD_BASE_URL \|\| ''/,
+  );
+  assert.match(
+    productionPlanCall[1],
+    /'--production-gateway-origin', values\.STABLE_SMOKE_PROD_GW_BASE_URL \|\| ''/,
+  );
+});
+
 test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集成测试产生证据', () => {
   const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
   const e2eSource = readFileSync(resolve('e2e/specs/stable-smoke.spec.ts'), 'utf8');

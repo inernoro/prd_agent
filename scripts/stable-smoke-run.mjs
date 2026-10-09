@@ -2117,6 +2117,7 @@ async function main() {
               '--capture-started-at', unlockedAt,
               '--scope', 'full',
               '--production-origin', values.STABLE_SMOKE_PROD_BASE_URL || '',
+              '--production-gateway-origin', values.STABLE_SMOKE_PROD_GW_BASE_URL || '',
             ]);
             if (productionVisualPlanResult.status !== 0) {
               throw new Error('正式环境视觉取证计划生成失败');
