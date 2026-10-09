@@ -793,8 +793,11 @@ public class LiteraryMcpUsabilityTests
             Assert.Equal(originalSize, (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Size);
             // 精确控制两个并发请求的交错：先占位的请求没有先入库，另一请求赢得唯一任务。
             await db.ImageGenRuns.InsertOneAsync(insertedFirst);
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.0.planItem.prompt", "后来改过的描述"));
             await images.SyncPlanFromRunAsync(await db.ImageGenRuns.Find(x => x.Id == insertedFirst.Id).SingleAsync());
             Assert.Equal("1024x1536", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Size);
+            Assert.Equal("后来改过的描述", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[0].PlanItem!.Prompt);
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }

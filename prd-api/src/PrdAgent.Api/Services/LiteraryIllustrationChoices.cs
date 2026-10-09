@@ -139,7 +139,7 @@ public static class LiteraryIllustrationChoices
 
     /// <summary>
     /// 把尺寸意图落到所选模型真正收的尺寸上（MCP-LIT-18）。判据与网关执行前的校验是同一个函数，
-    /// 所以这里放行的，网关一定收；这里拒的，在入队之前就拒，不扣额度、不留一张失败的图。
+    /// 校验对应所传的能力快照；异构线路切换的共同契约另见 MCP-LIT-19。
     /// 不支持就明说并列出可选项，不悄悄换比例、不换模型。
     /// </summary>
     public static (string? size, string? error) FitSize(SizeRequest request, ImageGenAdapterInfo model, string modelId)
