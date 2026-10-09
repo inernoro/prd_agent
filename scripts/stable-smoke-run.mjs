@@ -439,6 +439,70 @@ async function retryGatewayProbeOperation(operation, {
   throw lastError;
 }
 
+function publicAssetUrls(source, baseUrl) {
+  const matches = String(source || '').matchAll(/(?:["'`(])((?:\/?assets\/)[A-Za-z0-9._/-]+\.(?:css|js))(?:["'`)])/g);
+  return [...new Set([...matches].map((match) => new URL(match[1], baseUrl).href))];
+}
+
+export async function probeCdsPublicEntry(baseUrl, fetchFn = globalThis.fetch) {
+  const origin = withoutTrailingSlash(baseUrl);
+  const cacheBust = `stable_smoke_readiness=${Date.now()}`;
+  const entryUrls = ['/', '/document-store', '/web-pages'].map((path) => `${origin}${path}?${cacheBust}`);
+  const entryResponses = await Promise.all(entryUrls.map((url) => fetchFn(url, {
+    signal: AbortSignal.timeout(15_000),
+    headers: { 'Cache-Control': 'no-cache' },
+  })));
+  for (const response of entryResponses) {
+    if (!response.ok) throw new Error(`CDS_PUBLIC_HTTP_${response.status}`);
+  }
+  const entryBodies = await Promise.all(entryResponses.map((response) => response.text()));
+  const entryAssets = [...new Set(entryBodies.flatMap((body) => publicAssetUrls(body, origin)))];
+  if (entryAssets.length === 0) throw new Error('CDS 公网入口没有可验证的静态资源');
+
+  const assetResponses = await Promise.all(entryAssets.map((url) => fetchFn(url, {
+    signal: AbortSignal.timeout(15_000),
+    headers: { 'Cache-Control': 'no-cache' },
+  })));
+  for (const response of assetResponses) {
+    if (!response.ok) throw new Error(`CDS_PUBLIC_ASSET_HTTP_${response.status}`);
+  }
+  const scriptBodies = await Promise.all(assetResponses.map(async (response, index) => (
+    entryAssets[index].endsWith('.js') ? response.text() : ''
+  )));
+  const lazyAssets = [...new Set(scriptBodies.flatMap((body) => publicAssetUrls(body, origin)))]
+    .filter((url) => !entryAssets.includes(url));
+  const lazyResponses = await Promise.all(lazyAssets.map((url) => fetchFn(url, {
+    signal: AbortSignal.timeout(15_000),
+    headers: { 'Cache-Control': 'no-cache' },
+  })));
+  for (const response of lazyResponses) {
+    if (!response.ok) throw new Error(`CDS_PUBLIC_LAZY_ASSET_HTTP_${response.status}`);
+  }
+  return { entries: entryUrls.length, assets: entryAssets.length + lazyAssets.length };
+}
+
+export async function waitForCdsPublicEntryStability(baseUrl, {
+  attempts = 12,
+  requiredConsecutivePasses = 2,
+  fetchFn = globalThis.fetch,
+  sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+} = {}) {
+  let consecutivePasses = 0;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await probeCdsPublicEntry(baseUrl, fetchFn);
+      consecutivePasses += 1;
+      if (consecutivePasses >= requiredConsecutivePasses) return result;
+    } catch (error) {
+      lastError = error;
+      consecutivePasses = 0;
+    }
+    if (attempt < attempts) await sleepFn(2_000);
+  }
+  throw new Error(`CDS 公网入口在部署后未稳定：${lastError?.message || '连续健康次数不足'}`);
+}
+
 export function canReuseGatewayPersistenceProbe(record, { runId, commit }) {
   const deploymentRunIds = new Set((record?.attempts || []).map((attempt) => attempt.deploymentRunId));
   return record?.status === 'pass'
@@ -467,6 +531,7 @@ export async function runCdsGatewayPersistenceProbe({
   waitFn = waitForCdsDeployment,
   fetchFn = globalThis.fetch,
   sleepFn,
+  stabilizeFn = waitForCdsPublicEntryStability,
 }) {
   const existing = readJson(recordPath);
   if (canReuseGatewayPersistenceProbe(existing, { runId, commit })) return existing;
@@ -546,6 +611,7 @@ export async function runCdsGatewayPersistenceProbe({
       securityVersion: fresh.securityVersion,
     });
   }
+  await stabilizeFn(values.STABLE_SMOKE_CDS_BASE_URL, { fetchFn, sleepFn });
 
   const record = {
     schemaVersion: '1.0',

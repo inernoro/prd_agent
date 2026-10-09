@@ -34,6 +34,7 @@ import {
   isHttpsReportUrl,
   parseEnvFile,
   parseRunnerArgs,
+  probeCdsPublicEntry,
   removeStaleLockIfSafe,
   runnerHelpText,
   resolveRuntimeExpectation,
@@ -45,6 +46,7 @@ import {
   runReportViewRegression,
   runReportRiskRegression,
   runCdsGatewayPersistenceProbe,
+  waitForCdsPublicEntryStability,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
   selectCoverageCaseIdsByEnvironment,
@@ -184,6 +186,7 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   let deployments = 0;
   let transientContextFailures = 0;
   let transientLoginFailures = 0;
+  let stabilizations = 0;
   const values = {
     STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example.test',
     STABLE_SMOKE_CDS_GW_USER: 'admin',
@@ -236,8 +239,10 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       waitFn: async () => ({ ready: true, versionId: `version-${deployments}`, runtimeCommit: 'a'.repeat(40) }),
       fetchFn,
       sleepFn: async () => {},
+      stabilizeFn: async () => { stabilizations += 1; },
     });
     assert.equal(deployments, 2);
+    assert.equal(stabilizations, 1);
     assert.equal(transientContextFailures, 1);
     assert.equal(transientLoginFailures, 1);
     assert.equal(canReuseGatewayPersistenceProbe(record, {
@@ -257,11 +262,49 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       waitFn: async () => ({ ready: true }),
       fetchFn,
       sleepFn: async () => {},
+      stabilizeFn: async () => { stabilizations += 1; },
     });
     assert.equal(deployments, 2);
+    assert.equal(stabilizations, 1, '复用同一轮证据时不应再次触发公网稳定等待');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('CDS 公网稳定门会验证入口、首屏资源和懒加载资源', async () => {
+  const requested = [];
+  const fetchFn = async (url) => {
+    requested.push(String(url));
+    if (String(url).includes('/assets/lazy-page.js')) return new Response('export default {};', { status: 200 });
+    if (String(url).includes('/assets/index.js')) {
+      return new Response('const page = () => import("/assets/lazy-page.js");', { status: 200 });
+    }
+    if (String(url).includes('/assets/index.css')) return new Response('body{}', { status: 200 });
+    return new Response('<script type="module" src="/assets/index.js"></script><link rel="stylesheet" href="/assets/index.css">', { status: 200 });
+  };
+  const result = await probeCdsPublicEntry('https://preview.example.test', fetchFn);
+  assert.equal(result.entries, 3);
+  assert.equal(result.assets, 3);
+  assert.ok(requested.some((url) => url.includes('/assets/lazy-page.js')));
+});
+
+test('CDS 公网稳定门要求连续两轮通过并在瞬时 502 后重新计数', async () => {
+  let entryRequests = 0;
+  let sleeps = 0;
+  const fetchFn = async (url) => {
+    if (!String(url).includes('/assets/')) entryRequests += 1;
+    if (entryRequests <= 3) return new Response('', { status: 502 });
+    if (String(url).includes('/assets/index.js')) return new Response('export default {};', { status: 200 });
+    return new Response('<script type="module" src="/assets/index.js"></script>', { status: 200 });
+  };
+  const result = await waitForCdsPublicEntryStability('https://preview.example.test', {
+    attempts: 3,
+    requiredConsecutivePasses: 2,
+    fetchFn,
+    sleepFn: async () => { sleeps += 1; },
+  });
+  assert.equal(result.entries, 3);
+  assert.equal(sleeps, 2);
 });
 
 test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {

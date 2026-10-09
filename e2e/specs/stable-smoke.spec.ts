@@ -4019,9 +4019,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       runId = createBody.data.runId;
       const progressView = page.getByTestId('video-storyboard-progress');
       await expect(progressView).toBeVisible({ timeout: 30_000 });
+      await expect(progressView).toContainText('正在把内容变成可编辑分镜');
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-VIDEO-CREATION-04',
         target: progressView,
+        skipReady: true,
         overviewJustification: '需要同时证明真实文稿已提交、拆镜阶段、整体进度、实时通道与停止操作均属于同一任务。',
         caption: '真实文稿已进入故事拆镜，页面持续展示阶段、整体进度、服务信号和可停止操作。',
       });
@@ -6213,11 +6215,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '视觉创作工作区通过真实导航打开，画板、输入区和主要操作均可见。',
       });
       await expect(page.getByTestId('canvas-image')).toHaveCount(0);
+      await canvas.focus();
+      await page.keyboard.press('h');
+      await expect(page.getByRole('button', { name: '工具' })).toHaveAttribute('title', 'Hand tool');
+      await page.getByRole('button', { name: '缩小' }).click();
+      await page.getByRole('button', { name: '缩小' }).click();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-02',
         target: canvas,
-        duplicateOf: '073-cds-visual-single-image-creation-01',
-        caption: '新工作区为空且可编辑，没有旧图片或旧任务混入。',
+        caption: '新工作区为空且可编辑，没有旧图片或旧任务混入；手型工具和缩放操作可用。',
       });
 
       const shortPrompt = '一枚放在白色背景上的蓝色陶瓷杯';
@@ -6609,13 +6615,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { message: '画布图片必须完成浏览器解码', timeout: 30_000 },
       ).toBeGreaterThan(0);
       await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
-      await generatedImage.click();
+      const quickEdit = page.getByRole('textbox', { name: '快捷编辑描述', exact: true });
+      await expect(quickEdit).toHaveCount(0);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-10',
         target: generatedImage,
-        caption: '真实生成图已完成浏览器解码，并在刷新后的同一工作区恢复。',
+        caption: '真实生成图已完成浏览器解码，并在刷新后的同一工作区以未选中结果态恢复。',
       });
-      const quickEdit = page.getByRole('textbox', { name: '快捷编辑描述', exact: true });
+      await generatedImage.click();
       await expect(quickEdit).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-11',
@@ -6624,7 +6631,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-15',
-        target: generatedImage,
+        target: page.locator('[data-tour-id="visual-editor-root"]'),
         themeTarget: page.locator('[data-tour-id="visual-editor-root"]'),
         caption: '暗色桌面中真实结果、选中反馈、继续编辑与下载操作完整可见。',
       });
