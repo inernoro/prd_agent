@@ -17,9 +17,11 @@ import { InfraLifecycleWatcher } from '../src/services/infra-lifecycle-watcher.j
 import { ObservationStreamExecutor } from '../src/services/observation-stream-executor.js';
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import { SystemLogMonitor } from '../src/services/system-log-monitor.js';
+import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
+import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -117,6 +119,45 @@ async function main(): Promise<void> {
     report.processIsolation = { masterPid: process.pid, masterRss, retainedStateBytes: masterState.length, warmStats, afterQuery: shell.getStats(), queryParentPid: parentPid };
     report.actualIndependentProcessesVerified = true;
     report.checks.push({ name: 'large-master-independent-query-parent-and-bounded-actor-memory', passed: true });
+
+    report.stage = 'compiled-owned-release-git-read';
+    const commitClockModule = compiled ? await import(new URL('../dist/services/release-commit-clock.js', import.meta.url).href) as typeof import('../src/services/release-commit-clock.js') : { ReleaseCommitClock };
+    const commitRailModule = compiled ? await import(new URL('../dist/services/release-commit-rail.js', import.meta.url).href) as typeof import('../src/services/release-commit-rail.js') : { ReleaseCommitRailReader };
+    const releaseRepo = path.join(temp, 'release-git-owned');
+    await fs.mkdir(releaseRepo, { mode: 0o700 });
+    const setupGit = async (...args: string[]): Promise<string> => {
+      const result = await operationShell.exec(['git', '-C', releaseRepo, ...args].map(shellQuoteArg).join(' '), { timeout: 5000 });
+      assert.equal(result.exitCode, 0); return result.stdout.trim();
+    };
+    await setupGit('init', '-q');
+    await setupGit('config', 'user.email', 'owned@example.test');
+    await setupGit('config', 'user.name', 'Owned Git Probe');
+    await fs.writeFile(path.join(releaseRepo, 'owned.txt'), 'first');
+    await setupGit('add', 'owned.txt'); await setupGit('commit', '-qm', '自有第一版');
+    const firstCommit = await setupGit('rev-parse', 'HEAD');
+    await fs.writeFile(path.join(releaseRepo, 'owned.txt'), 'second');
+    await setupGit('add', 'owned.txt'); await setupGit('commit', '-qm', '自有第二版');
+    const latestCommit = await setupGit('rev-parse', 'HEAD');
+    await setupGit('update-ref', 'refs/remotes/origin/main', latestCommit);
+    const commitClock = new commitClockModule.ReleaseCommitClock({ shell });
+    const commitRail = new commitRailModule.ReleaseCommitRailReader({ shell, repoRootResolver: () => releaseRepo });
+    assert.ok(await commitClock.remember(owner, latestCommit, releaseRepo));
+    assert.equal(commitClock.getMeta(owner, latestCommit)?.subject, '自有第二版');
+    const input = { projectId: owner, branch: 'main', targets: [{ targetId: 'owned', commitSha: firstCommit }] };
+    const [railRead, sharedRead] = await Promise.all([commitRail.read(input), commitRail.read(input)]);
+    assert.strictEqual(railRead, sharedRead);
+    assert.equal(railRead.rail.nodes[0].sha, latestCommit);
+    assert.equal(railRead.positions.owned.behindCount, 1);
+    assert.equal(railRead.positions.owned.aheadCount, 0);
+    assert.equal(await commitRail.countCommitsBetween(owner, firstCommit, latestCommit), 1);
+    assert.equal(await commitRail.countCommitsBetween(owner, 'HEAD', latestCommit), null);
+    assert.equal(shell.getStats().active, 0);
+    report.releaseGit = { firstCommit, latestCommit, observedCommit: railRead.rail.nodes[0].sha,
+      behindCount: railRead.positions.owned.behindCount, aheadCount: railRead.positions.owned.aheadCount,
+      sharedRead: railRead === sharedRead, afterReads: shell.getStats(),
+      scope: 'owned real local Git repository through compiled readers and existing process pool; not public release HTTP or complete synchronous filesystem removal' };
+    report.checks.push({ name: 'compiled-owned-release-git-metadata-rail-and-unknown-contract', passed: true });
+
     report.stage = 'create-owned-container';
     const mountedDir = path.join(temp, 'mounted');
     await fs.mkdir(mountedDir);

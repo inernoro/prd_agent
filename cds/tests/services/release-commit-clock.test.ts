@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   MAX_COMMIT_TIME_ENTRIES,
   ReleaseCommitClock,
@@ -10,6 +10,11 @@ import {
   isCommitShaLike,
   releaseCommitKey,
 } from '../../src/services/release-commit-clock.js';
+import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
+import { ShellExecutor } from '../../src/services/shell-executor.js';
+const readPool = new IsolatedShellExecutor(new ShellExecutor());
+beforeAll(async () => { await readPool.start(); });
+afterAll(async () => { await readPool.close(); });
 
 /**
  * 真实 git 读取的「只要时间」口径。
@@ -19,8 +24,8 @@ import {
  * 包装删掉后，这三条用例直接打在真正被接上的那个 reader 上：断言的行为一字未改，
  * 但覆盖的是生产路径而不是一层没人用的壳。
  */
-const readCommitTime = (worktreePath: string, commitSha: string): string | undefined => {
-  const meta = gitCommitMetaReader(worktreePath, commitSha);
+const readCommitTime = async (worktreePath: string, commitSha: string): Promise<string | undefined> => {
+  const meta = (await gitCommitMetaReader(worktreePath, commitSha, readPool));
   return typeof meta === 'string' ? meta : meta?.at;
 };
 
@@ -85,18 +90,18 @@ describe('真实 git 读取器', () => {
     if (fs.existsSync(repo)) fs.rmSync(repo, { recursive: true, force: true });
   });
 
-  it('读到的是 committer date 本身，不是「现在」', () => {
-    expect(readCommitTime(repo, sha)).toBe('2026-01-02T03:04:05.000Z');
+  it('读到的是 committer date 本身，不是「现在」', async () => {
+    expect((await readCommitTime(repo, sha))).toBe('2026-01-02T03:04:05.000Z');
   });
 
-  it('worktree 已被回收 / sha 不在本地 → undefined，不抛给发布主链路', () => {
-    expect(readCommitTime(path.join(repo, '不存在'), sha)).toBeUndefined();
-    expect(readCommitTime(repo, 'f'.repeat(40))).toBeUndefined();
+  it('worktree 已被回收 / sha 不在本地 → undefined，不抛给发布主链路', async () => {
+    expect((await readCommitTime(path.join(repo, '不存在'), sha))).toBeUndefined();
+    expect((await readCommitTime(repo, 'f'.repeat(40)))).toBeUndefined();
   });
 
-  it('形状不合法的 sha 压根不起 git 进程', () => {
-    expect(readCommitTime(repo, '--upload-pack=/bin/echo')).toBeUndefined();
-    expect(readCommitTime('', sha)).toBeUndefined();
+  it('形状不合法的 sha 压根不起 git 进程', async () => {
+    expect((await readCommitTime(repo, '--upload-pack=/bin/echo'))).toBeUndefined();
+    expect((await readCommitTime('', sha))).toBeUndefined();
   });
 });
 
@@ -111,57 +116,57 @@ describe('台账行为', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('记一次之后不再起第二次 git 进程', () => {
+  it('记一次之后不再起第二次 git 进程', async () => {
     let calls = 0;
     const clock = new ReleaseCommitClock({
       reader: () => { calls += 1; return '2026-01-02T03:04:05.000Z'; },
     });
 
-    expect(clock.remember('p1', 'a'.repeat(40), '/w')).toBe('2026-01-02T03:04:05.000Z');
-    expect(clock.remember('p1', 'a'.repeat(40), '/w')).toBe('2026-01-02T03:04:05.000Z');
+    expect((await clock.remember('p1', 'a'.repeat(40), '/w'))).toBe('2026-01-02T03:04:05.000Z');
+    expect((await clock.remember('p1', 'a'.repeat(40), '/w'))).toBe('2026-01-02T03:04:05.000Z');
     // 事故值：不缓存的话，发布中心每被打开一次就按 run 数放大出一串 git 进程。
     expect(calls).toBe(1);
   });
 
-  it('读不到就不记，绝不拿别的时间戳顶替', () => {
+  it('读不到就不记，绝不拿别的时间戳顶替', async () => {
     const clock = new ReleaseCommitClock({ reader: () => undefined });
 
-    expect(clock.remember('p1', 'b'.repeat(40), '/w')).toBeUndefined();
+    expect((await clock.remember('p1', 'b'.repeat(40), '/w'))).toBeUndefined();
     expect(clock.get('p1', 'b'.repeat(40))).toBeUndefined();
   });
 
-  it('reader 抛异常被吞掉——统计旁路不许炸掉发布', () => {
+  it('reader 抛异常被吞掉——统计旁路不许炸掉发布', async () => {
     const clock = new ReleaseCommitClock({ reader: () => { throw new Error('git 炸了'); } });
 
-    expect(() => clock.remember('p1', 'c'.repeat(40), '/w')).not.toThrow();
+    await expect(clock.remember('p1', 'c'.repeat(40), '/w')).resolves.toBeUndefined();
     expect(clock.get('p1', 'c'.repeat(40))).toBeUndefined();
   });
 
-  it('缺 projectId / sha / worktree 任一都不记', () => {
+  it('缺 projectId / sha / worktree 任一都不记', async () => {
     const clock = new ReleaseCommitClock({ reader: () => '2026-01-02T03:04:05.000Z' });
 
-    expect(clock.remember('', 'd'.repeat(40), '/w')).toBeUndefined();
-    expect(clock.remember('p1', '', '/w')).toBeUndefined();
-    expect(clock.remember('p1', 'd'.repeat(40), undefined)).toBeUndefined();
+    expect((await clock.remember('', 'd'.repeat(40), '/w'))).toBeUndefined();
+    expect((await clock.remember('p1', '', '/w'))).toBeUndefined();
+    expect((await clock.remember('p1', 'd'.repeat(40), undefined))).toBeUndefined();
   });
 
-  it('不同项目的同一个 sha 各记各的，不串台', () => {
+  it('不同项目的同一个 sha 各记各的，不串台', async () => {
     const clock = new ReleaseCommitClock({
       reader: (worktree) => (worktree === '/w1' ? '2026-01-01T00:00:00.000Z' : '2026-02-02T00:00:00.000Z'),
     });
     const sha = 'e'.repeat(40);
 
-    clock.remember('p1', sha, '/w1');
-    clock.remember('p2', sha, '/w2');
+    (await clock.remember('p1', sha, '/w1'));
+    (await clock.remember('p2', sha, '/w2'));
 
     expect(clock.get('p1', sha)).toBe('2026-01-01T00:00:00.000Z');
     expect(clock.get('p2', sha)).toBe('2026-02-02T00:00:00.000Z');
     expect(releaseCommitKey('p1', sha)).not.toBe(releaseCommitKey('p2', sha));
   });
 
-  it('条数有上界，超出丢最旧——台账不许无界增长', () => {
+  it('条数有上界，超出丢最旧——台账不许无界增长', async () => {
     const clock = new ReleaseCommitClock({ maxEntries: 3, reader: () => '2026-01-02T03:04:05.000Z' });
-    for (let i = 0; i < 5; i += 1) clock.remember('p1', String(i).repeat(8), '/w');
+    for (let i = 0; i < 5; i += 1) (await clock.remember('p1', String(i).repeat(8), '/w'));
 
     // 事故值：无上界时这里会留 5 条，跑够久就是又一份无界增长的台账。
     expect(clock.get('p1', '0'.repeat(8))).toBeUndefined();
@@ -170,10 +175,10 @@ describe('台账行为', () => {
     expect(MAX_COMMIT_TIME_ENTRIES).toBeGreaterThan(0);
   });
 
-  it('落盘后新实例能读回来（跨重启前置时间不清零）', () => {
+  it('落盘后新实例能读回来（跨重启前置时间不清零）', async () => {
     const storePath = path.join(dir, '.cds', 'release-commit-times.json');
     const first = new ReleaseCommitClock({ storePath, reader: () => '2026-03-03T03:03:03.000Z' });
-    first.remember('p1', 'f'.repeat(40), '/w');
+    (await first.remember('p1', 'f'.repeat(40), '/w'));
 
     const second = new ReleaseCommitClock({ storePath, reader: () => undefined });
 
@@ -191,10 +196,10 @@ describe('台账行为', () => {
     expect(warnings.some((w) => w.includes('[release-commit-clock]'))).toBe(true);
   });
 
-  it('无 storePath 时纯内存，不往 process.cwd() 写东西', () => {
+  it('无 storePath 时纯内存，不往 process.cwd() 写东西', async () => {
     const before = fs.readdirSync(process.cwd());
     const clock = new ReleaseCommitClock({ reader: () => '2026-01-02T03:04:05.000Z' });
-    clock.remember('p1', 'a'.repeat(40), '/w');
+    (await clock.remember('p1', 'a'.repeat(40), '/w'));
 
     expect(clock.get('p1', 'a'.repeat(40))).toBe('2026-01-02T03:04:05.000Z');
     expect(fs.readdirSync(process.cwd())).toEqual(before);
