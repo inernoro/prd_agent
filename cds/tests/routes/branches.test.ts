@@ -17,7 +17,7 @@ import {
 } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
-import { ContainerService } from '../../src/services/container.js';
+import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { candidateOperationAdmission } from '../../src/services/candidate-operation-admission.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
@@ -3749,6 +3749,86 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it.each([true, false])('only joins a profile target if the actual path respects its pinned SHA: exact=%s', async exact => {
+      const sha = '4'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: exact ? 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}' : 'node',
+        command: 'node server.js', workDir: '.', containerPort: 3000, prebuiltImage: exact, prebuiltCommitPolicy: exact ? 'exact' : undefined });
+      const branch: BranchEntry = { id: 'profile-owned', projectId: 'default', branch: 'feature/profile-owned', worktreePath: tmpDir,
+        status: 'idle', createdAt: new Date().toISOString(), services: {}, githubCommitSha: '5'.repeat(40) };
+      stateService.addBranch(branch); stateService.save();
+      const env = { ...stateService.getCdsEnvVars('default'), ...stateService.getMirrorEnvVars(), ...stateService.getCustomEnv('default'),
+        ...stateService.getCustomEnvScope(branch.id), CDS_PROJECT_ID: 'default', CDS_PROJECT_SLUG: 'default' };
+      const context = exact ? { ...branch, ciTargetSha: sha, githubCommitSha: sha } : branch;
+      const configHash = deploymentVersionService.computeConfigHash(stateService.getEffectiveProfilesForBranch(branch).map(p => resolveEffectiveProfile(p, context)), env);
+      const active = branchOperationCoordinator.begin({ branchId: branch.id, projectId: 'default', profileId: 'api', kind: 'deploy-profile',
+        trigger: 'manual', commitSha: sha, commitPinned: true, configHash });
+      const run = await deploymentRunService.begin({ projectId: 'default', branchId: branch.id, trigger: 'manual', operationId: active.operationId, commitSha: sha });
+      const before = mock.commands.length;
+      const response = await request(server, 'POST', `/api/branches/${branch.id}/deploy/api`, { commitSha: sha });
+      if (exact) {
+        expect(String(response.body)).toContain('"operationStatus":"joined"');
+        expect(response.headers['x-cds-deployment-run-id']).toBe(run.id);
+        const placeholder = deploymentRunService.list({ branchId: branch.id }).find(r => r.id !== run.id)!;
+        expect(placeholder.status).toBe('cancelled');
+        expect(placeholder.events.some(e => e.message.includes(run.id))).toBe(true);
+      } else {
+        expect(String(response.body)).not.toContain('"operationStatus":"joined"');
+        expect(branchOperationCoordinator.getPendingWebhookDeploy(branch.id)).toBeUndefined();
+      }
+      expect(mock.commands.length).toBe(before);
+      expect(active.lease!.isCurrent()).toBe(true);
+      branchOperationCoordinator.complete(active.lease!, 'completed');
+    });
+
+    it('does not join a whole-branch source request on the strength of a body SHA that pull does not respect', async () => {
+      const sha = '4'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const branch: BranchEntry = { id: 'whole-source-owned', projectId: 'default', branch: 'feature/whole-source-owned', worktreePath: tmpDir,
+        status: 'idle', createdAt: new Date().toISOString(), services: {}, githubCommitSha: sha };
+      stateService.addBranch(branch); stateService.save();
+      const env = { ...stateService.getCdsEnvVars('default'), ...stateService.getMirrorEnvVars(), ...stateService.getCustomEnv('default'),
+        ...stateService.getCustomEnvScope(branch.id), CDS_PROJECT_ID: 'default', CDS_PROJECT_SLUG: 'default' };
+      const configHash = deploymentVersionService.computeConfigHash(stateService.getEffectiveProfilesForBranch(branch).map(p => resolveEffectiveProfile(p, branch)), env);
+      const active = branchOperationCoordinator.begin({ branchId: branch.id, projectId: 'default', kind: 'deploy', trigger: 'manual',
+        commitSha: sha, commitPinned: true, configHash });
+      const response = await request(server, 'POST', `/api/branches/${branch.id}/deploy`, { commitSha: sha });
+      expect(String(response.body)).not.toContain('"operationStatus":"joined"');
+      expect(String(response.body)).toContain('"operationStatus":"merged"');
+      expect(active.lease!.isCurrent()).toBe(true);
+      branchOperationCoordinator.cancelBranch(branch.id, 'owned cleanup');
+      branchOperationCoordinator.complete(active.lease!, 'cancelled');
+    });
+
+    it('replays a pending profile through its service endpoint without widening to the whole branch', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      stateService.addBranch({ id: 'pending-profile', projectId: 'default', branch: 'feature/pending-profile', worktreePath: tmpDir,
+        status: 'idle', createdAt: new Date().toISOString(), services: {}, githubCommitSha: '1'.repeat(40) });
+      stateService.save();
+      let started!: () => void; let release!: () => void;
+      const startedGate = new Promise<void>(resolve => { started = resolve; });
+      const releaseGate = new Promise<void>(resolve => { release = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-pending-profile-api')) { started(); await releaseGate; return { stdout: 'cid-owned', stderr: '', exitCode: 0 }; }
+        return originalExec(command, options);
+      };
+      const calls: Array<{ url: string; body: unknown }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push({ url: String(input), body: JSON.parse(String(init?.body)) });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+      let active: ReturnType<typeof request> | undefined;
+      try {
+        active = request(server, 'POST', '/api/branches/pending-profile/deploy', { commitSha: '1'.repeat(40) });
+        await startedGate;
+        const pending = await request(server, 'POST', '/api/branches/pending-profile/deploy/api', { commitSha: '2'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        expect(String(pending.body)).toContain('"operationStatus":"merged"');
+        release(); await active;
+        expect(calls).toEqual([{ url: 'http://127.0.0.1:9900/api/branches/pending-profile/deploy/api', body: { commitSha: '2'.repeat(40) } }]);
+      } finally { release(); if (active) await active; globalThis.fetch = originalFetch; }
+    });
+
     // Codex 三轮 P1：并入在途部署时，响应头必须指向那条真的会跑完的 run。
     // 外层 handler 在取租约前就建了占位 run 并写进 X-CDS-Deployment-Run-Id，并入后
     // 占位 run 会被取消，而 cdscli 只认这个头、见 cancelled 即判部署失败——正是本批
@@ -3756,7 +3836,7 @@ describe('Branch Routes', () => {
     it('points a joined deploy at the in-flight run, not the cancelled placeholder', async () => {
       const sha = '4444444444444444444444444444444444444444';
       await request(server, 'POST', '/api/build-profiles', {
-        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+        id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}', command: 'node server.js', workDir: '.', containerPort: 3000, prebuiltImage: true, prebuiltCommitPolicy: 'exact',
       });
       stateService.addBranch({
         id: 'joined-run',
@@ -3769,6 +3849,9 @@ describe('Branch Routes', () => {
         githubCommitSha: sha,
       });
       stateService.save();
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
 
       let releaseRun!: () => void;
       const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
@@ -3788,7 +3871,7 @@ describe('Branch Routes', () => {
         server, 'POST', '/api/branches/joined-run/deploy', { commitSha: sha },
         { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-active' },
       );
-      await runStarted;
+      await Promise.race([runStarted, activeDeploy.then(() => { throw new Error('active express deploy ended before the owned hold'); })]);
       const activeRunId = deploymentRunService.list({ branchId: 'joined-run' })[0]?.id;
       expect(activeRunId).toBeTruthy();
 

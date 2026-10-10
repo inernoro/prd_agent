@@ -3043,7 +3043,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId = joinedRunId || undefined;
 
     const payload = {
-      ok: true,
+      ok: accepted,
       operationStatus: decision.status,
       operationId: decision.operationId,
       activeOperationId: decision.activeOperationId,
@@ -3162,7 +3162,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`;
+    const profilePath = pending.request.kind === 'deploy-profile' && pending.request.profileId
+      ? `/${encodeURIComponent(pending.request.profileId)}` : '';
+    const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy${profilePath}`;
     void fetch(url, {
       method: 'POST',
       headers: {
@@ -12680,7 +12682,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
-    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+    const configTargetContext = requestedCommitForPlan && /^[0-9a-f]{40}$/i.test(requestedCommitForPlan)
+      ? { ...entry, ciTargetSha: requestedCommitForPlan, githubCommitSha: requestedCommitForPlan } : entry;
+    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, configTargetContext));
     let deploymentConfigHash = selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
         effectiveProfilesForHash,
@@ -13025,10 +13029,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
-      // 只有请求自己钉住了提交（webhook 的 head sha / body.commitSha）才允许并入：
+      // 请求明确提交且所选范围全部按exact制品执行时，才声明已实际钉住：
       // 没钉住时下面 pull 会 hard-reset 到届时的分支 HEAD，entry 上那个缓存 SHA
       // 说明不了这次要部署什么（Codex 六轮 P1）。
-      commitPinned: Boolean(requestCommitSha),
+      commitPinned: Boolean(requestCommitSha && effectiveProfilesForHash.length > 0
+        && effectiveProfilesForHash.every(profile => profile.prebuiltImage && profile.prebuiltCommitPolicy === 'exact')),
       // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
       // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
       configHash: deploymentConfigHash || null,
@@ -14697,6 +14702,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
+    const profileTargetContext = profileRequestCommitSha && /^[0-9a-f]{40}$/i.test(profileRequestCommitSha)
+      ? { ...entry, ciTargetSha: profileRequestCommitSha, githubCommitSha: profileRequestCommitSha } : entry;
+    const profileForAdmission = resolveEffectiveProfile(profile, profileTargetContext);
+    // Source deployment resets to branch HEAD; a request SHA does not pin that path.
+    const profileCommitPinned = Boolean(profileRequestCommitSha && profileForAdmission.prebuiltImage
+      && profileForAdmission.prebuiltCommitPolicy === 'exact');
+    const profileConfigHash = deploymentVersionService?.computeConfigHash(
+      profiles.map(item => resolveEffectiveProfile(item, profileTargetContext)),
+      getMergedEnv(entry.projectId || 'default', entry.id),
+    );
     const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
       branchId: entry.id,
@@ -14710,13 +14725,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy-profile',
       profileId,
-      commitSha: entry.githubCommitSha || null,
+      commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
+      commitPinned: profileCommitPinned,
+      configHash: profileConfigHash || null,
+      versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
+      hasOneShotOptions: req.query.force === '1' || req.query.ignoreRequired === '1' || Boolean(req.body?.targetExecutorId),
       source: 'api.deploy-profile',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,
+      deploymentRunId: deploymentRun?.id || null,
     });
     if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '单服务部署请求未取得分支操作租约');
+      const joinedRunId = (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId as string | undefined;
+      cancelDeploymentRun(deploymentRun?.id, joinedRunId
+        ? `已并入在途部署 ${joinedRunId}，本次不重复拆装容器` : '单服务部署请求未取得分支操作租约');
       return;
     }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';

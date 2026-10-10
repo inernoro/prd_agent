@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BranchOperationCoordinator, BranchOperationSupersededError, sameCommitIdentity } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
@@ -843,6 +843,140 @@ describe('BranchOperationCoordinator', () => {
     expect(api.operationId).not.toBe(admin.operationId);
     expect(apiAgain.status).toBe('rejected');
     expect(apiAgain.activeOperationId).toBe(api.operationId);
+  });
+
+  it('joins the same pinned service and config without joining another service', () => {
+    const c = new BranchOperationCoordinator();
+    const request = { branchId: 'owned', projectId: 'p', profileId: 'api', kind: 'deploy-profile' as const,
+      trigger: 'manual' as const, commitSha: SHA_A, commitPinned: true, configHash: 'owned-config' };
+    const first = c.begin(request);
+    expect(c.begin(request)).toMatchObject({ status: 'joined', operationId: first.operationId });
+    expect(c.begin({ ...request, profileId: 'web' }).status).toBe('started');
+    expect(first.lease!.isCurrent()).toBe(true);
+  });
+
+  it('preserves distinct pending service targets behind a whole-branch writer and replaces only the same service', () => {
+    const c = new BranchOperationCoordinator();
+    const active = c.begin({ branchId: 'owned', kind: 'deploy', trigger: 'manual' });
+    const request = { branchId: 'owned', profileId: 'api', kind: 'deploy-profile' as const,
+      trigger: 'webhook' as const, commitSha: SHA_A, commitPinned: true, configHash: 'owned-config' };
+    expect(c.begin(request).status).toBe('merged');
+    expect(c.begin({ ...request, profileId: 'web' }).status).toBe('merged');
+    expect(c.begin({ ...request, commitSha: SHA_B }).status).toBe('merged');
+    const api = c.complete(active.lease!, 'completed')!;
+    expect(api.request).toMatchObject({ profileId: 'api', commitSha: SHA_B });
+    const apiRun = c.begin(api.request);
+    const web = c.complete(apiRun.lease!, 'completed')!;
+    expect(web.request).toMatchObject({ profileId: 'web', commitSha: SHA_A });
+  });
+
+  it('keeps branch-wide pending work until the last conflicting profile writer settles', () => {
+    const c = new BranchOperationCoordinator();
+    const api = c.begin({ branchId: 'owned', profileId: 'api', kind: 'deploy-profile', trigger: 'manual' });
+    const web = c.begin({ branchId: 'owned', profileId: 'web', kind: 'deploy-profile', trigger: 'manual' });
+    c.begin({ branchId: 'owned', kind: 'deploy', trigger: 'webhook', commitSha: SHA_A });
+    expect(c.complete(api.lease!, 'completed')).toBeNull();
+    expect(c.getPendingWebhookDeploy('owned')).toBeDefined();
+    expect(c.complete(web.lease!, 'completed')!.request.kind).toBe('deploy');
+  });
+
+  it('keeps two profile force-rebuild continuations bound to their original operations', () => {
+    const c = new BranchOperationCoordinator();
+    const force = { branchId: 'owned', kind: 'force-rebuild' as const, trigger: 'manual' as const, continueWith: 'deploy-profile' as const };
+    const api = c.begin({ ...force, profileId: 'api' });
+    const web = c.begin({ ...force, profileId: 'web' });
+    c.complete(api.lease!, 'completed'); c.complete(web.lease!, 'completed');
+    const continuedApi = c.begin({ branchId: 'owned', kind: 'deploy-profile', trigger: 'manual', profileId: 'api' });
+    const continuedWeb = c.begin({ branchId: 'owned', kind: 'deploy-profile', trigger: 'manual', profileId: 'web' });
+    expect(continuedApi.operationId).toBe(api.operationId);
+    expect(continuedWeb.operationId).toBe(web.operationId);
+    expect(continuedApi.lease!.isCurrent()).toBe(true);
+    expect(continuedWeb.lease!.isCurrent()).toBe(true);
+  });
+
+  it('expires only the pending scopes that conflict with that force-rebuild continuation', () => {
+    const clock = vi.spyOn(Date, 'now');
+    try {
+      const start = 1_800_000_000_000; clock.mockReturnValue(start);
+      const c = new BranchOperationCoordinator();
+      const force = { branchId: 'owned', kind: 'force-rebuild' as const, trigger: 'manual' as const, continueWith: 'deploy-profile' as const };
+      const api = c.begin({ ...force, profileId: 'api' }); c.complete(api.lease!, 'completed');
+      c.begin({ branchId: 'owned', profileId: 'api', kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_A });
+      clock.mockReturnValue(start + 120_000);
+      const web = c.begin({ ...force, profileId: 'web' }); c.complete(web.lease!, 'completed');
+      c.begin({ branchId: 'owned', profileId: 'web', kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_B });
+      clock.mockReturnValue(start + 300_001);
+      const newApi = c.begin({ branchId: 'owned', profileId: 'api', kind: 'deploy-profile', trigger: 'manual' });
+      expect(newApi.status).toBe('started');
+      expect(c.getPendingWebhookDeploy('owned')?.request).toMatchObject({ profileId: 'web', commitSha: SHA_B });
+      const newWeb = c.begin({ branchId: 'owned', profileId: 'web', kind: 'deploy-profile', trigger: 'manual' });
+      expect(newWeb.operationId).toBe(web.operationId);
+      expect(c.complete(newWeb.lease!, 'completed')?.request.profileId).toBe('web');
+    } finally { clock.mockRestore(); }
+  });
+
+  it('clears sibling force-rebuild reservations when a branch-wide stop supersedes an active profile', () => {
+    const c = new BranchOperationCoordinator();
+    const force = c.begin({ branchId: 'owned', profileId: 'web', kind: 'force-rebuild', trigger: 'manual', continueWith: 'deploy-profile' });
+    c.complete(force.lease!, 'completed');
+    const api = c.begin({ branchId: 'owned', profileId: 'api', kind: 'deploy-profile', trigger: 'manual' });
+    const stop = c.begin({ branchId: 'owned', kind: 'stop', trigger: 'manual' });
+    expect(api.lease!.isCurrent()).toBe(false);
+    c.complete(stop.lease!, 'completed');
+    const laterWeb = c.begin({ branchId: 'owned', profileId: 'web', kind: 'deploy-profile', trigger: 'manual' });
+    expect(laterWeb.operationId).not.toBe(force.operationId);
+  });
+
+  it('queues a changed pinned profile config, but never joins a different project or a whole branch', () => {
+    const c = new BranchOperationCoordinator();
+    const request = { branchId: 'owned', projectId: 'p', profileId: 'api', kind: 'deploy-profile' as const,
+      trigger: 'manual' as const, commitSha: SHA_A, commitPinned: true, configHash: 'a' };
+    const active = c.begin(request);
+    expect(c.begin({ ...request, configHash: 'b' }).status).toBe('merged');
+    expect(c.begin({ ...request, projectId: 'other' }).status).not.toBe('joined');
+    expect(c.begin({ ...request, profileId: null, kind: 'deploy', trigger: 'webhook' }).status).not.toBe('joined');
+    expect(active.lease!.isCurrent()).toBe(true);
+  });
+
+  it('keeps unsafe manual profile requests rejected instead of dropping their version or one-shot intent', () => {
+    for (const override of [{ commitPinned: false }, { commitSha: 'abc1234' }, { configHash: null },
+      { versionId: 'version-1' }, { hasOneShotOptions: true }]) {
+      const c = new BranchOperationCoordinator();
+      const request = { branchId: 'owned', profileId: 'api', kind: 'deploy-profile' as const,
+        trigger: 'manual' as const, commitSha: SHA_A, commitPinned: true, configHash: 'a' };
+      const active = c.begin(request);
+      expect(c.begin({ ...request, ...override }).status).toBe('rejected');
+      expect(c.complete(active.lease!, 'completed')).toBeNull();
+    }
+  });
+
+  it('rejects a 65th pending service without losing the first 64 and allows a same-scope replacement', () => {
+    const c = new BranchOperationCoordinator();
+    const active = c.begin({ branchId: 'owned', kind: 'deploy', trigger: 'manual' });
+    const request = { branchId: 'owned', profileId: 'service-0', kind: 'deploy-profile' as const, trigger: 'webhook' as const, commitSha: SHA_A };
+    for (let i = 0; i < 64; i++) expect(c.begin({ ...request, profileId: `service-${i}` }).status).toBe('merged');
+    expect(c.begin({ ...request, profileId: 'overflow' })).toMatchObject({ status: 'rejected', reason: 'branch_pending_capacity' });
+    expect(c.begin({ ...request, commitSha: SHA_B }).status).toBe('merged');
+    const next = c.complete(active.lease!, 'completed')!;
+    expect(next.request).toMatchObject({ profileId: 'service-0', commitSha: SHA_B });
+    c.cancelBranch('owned', 'owned stop');
+    expect(c.getPendingWebhookDeploy('owned')).toBeUndefined();
+    const afterStop = c.begin({ branchId: 'owned', kind: 'stop', trigger: 'manual' });
+    expect(c.complete(afterStop.lease!, 'completed')).toBeNull();
+  });
+
+  it('bounds pending scopes across projects while allowing a replacement in a full global queue', () => {
+    const c = new BranchOperationCoordinator();
+    for (let b = 0; b < 9; b++) {
+      c.begin({ projectId: `p-${b}`, branchId: `b-${b}`, kind: 'deploy', trigger: 'manual' });
+      if (b === 8) continue;
+      for (let p = 0; p < 64; p++) expect(c.begin({ projectId: `p-${b}`, branchId: `b-${b}`, profileId: `s-${p}`,
+        kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_A }).status).toBe('merged');
+    }
+    expect(c.begin({ projectId: 'p-8', branchId: 'b-8', profileId: 'api', kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_A }).status).toBe('rejected');
+    expect(c.begin({ projectId: 'p-0', branchId: 'b-0', profileId: 's-0', kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_B }).status).toBe('merged');
+    c.cancelBranch('b-0', 'owned cancel');
+    expect(c.begin({ projectId: 'p-8', branchId: 'b-8', profileId: 'api', kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_A }).status).toBe('merged');
   });
 
   it('branch-wide delete cancels all active profile operations on that branch', () => {
