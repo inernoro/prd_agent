@@ -16,6 +16,7 @@ import {
 } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
+import { slugifyBranchForImage } from './image-template-vars.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
@@ -326,12 +327,7 @@ export function resolveImageTemplate(image: string | undefined, branch?: BranchE
  *   - 例: `my/branch`→`my-branch`、`Codex/fix`→`Codex-fix`、`release/v1.2`→`release-v1.2`。
  * 额外去掉前导 '.'/'-'(Docker tag 不能以它们开头) + 截到 128 字符上限。
  */
-export function slugifyBranchForImage(branch: string): string {
-  return branch
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^[.-]+/, '')
-    .slice(0, 128);
-}
+export { slugifyBranchForImage };
 
 /**
  * Merge a branch-level BuildProfileOverride onto the shared baseline profile.

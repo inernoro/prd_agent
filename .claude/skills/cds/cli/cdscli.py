@@ -7275,6 +7275,8 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
 
     CDS 运行时变量白名单（由 CDS 服务端在容器启动时注入，verify 阶段无法预知）：
       - CDS_HOST：CDS 服务地址
+      - CDS_PROJECT_ID / CDS_PROJECT_SLUG：项目身份
+      - CDS_COMMIT_SHA / CDS_BRANCH_SLUG：本次部署的版本身份
       - CDS_*_PORT：CDS 为每个 service 分配的端口变量
       - CDS_*_HOST：CDS 为每个 service 分配的 hostname 变量
       - CDS_*_URL：CDS 自动组装的连接串
@@ -7284,6 +7286,13 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     # 仅包含 CDS 服务端自动分配的网络层变量（端口/主机名/连接串）。
     # _PASSWORD / _USER / _DB 等凭据变量不在此列——它们必须由项目在 x-cds-env 中显式定义。
     _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL")
+    _CDS_RUNTIME_EXACT = {
+        "CDS_HOST",
+        "CDS_PROJECT_ID",
+        "CDS_PROJECT_SLUG",
+        "CDS_COMMIT_SHA",
+        "CDS_BRANCH_SLUG",
+    }
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
@@ -7301,7 +7310,9 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
             if var in env_self_keys:
                 continue
             # CDS 运行时变量白名单
-            if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
+            if var in _CDS_RUNTIME_EXACT or (
+                var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES)
+            ):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
