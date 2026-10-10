@@ -86,6 +86,7 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             "llmgw_model_exchanges",
             "llmgw_service_keys",
             "llmgw_service_key_rate_windows",
+            "llmgw_runtime_grants",
             "llmgw_prompt_policies",
             "llmrequestlogs",
             "llmgw_operation_audits",

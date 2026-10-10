@@ -8,7 +8,7 @@
 
 ---
 
-PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库索引由 DBA 使用仓库内的可执行清单手动维护，文档不再复制一千余行 DDL。
+PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库与 LLMGW 独立数据库的索引都由 DBA 使用仓库内的可执行清单手动维护，文档不再复制一千余行 DDL。
 
 ## 1. 事实源
 
@@ -20,6 +20,10 @@ PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库索引由
 | 禁止自动建索引规则 | `.claude/rules/no-auto-index.md` | 约束 PRD API 应用库 |
 
 新增或修改查询时，应先更新可执行清单，再在设计或债务文档中引用集合名和索引名；不要把完整 DDL 再粘回文档。
+
+OpenDesign 直连 LLMGW 使用的 `llmgw_runtime_grants` 需要三条人工维护索引：授权哈希唯一索引、
+过期时间 TTL 索引，以及租户与任务联合索引。它们只在网关库生效；首次初始化空网关库时，
+DBA 必须按脚本说明设置 `PRD_GATEWAY_DB=1` 后执行清单。API 和 LLMGW 启动过程都不会创建这些索引。
 
 网页托管的删除清理新增两项人工维护索引：`hosted_sites` 的
 `idx_hosted_sites_asset_cleanup_due`（只收还欠着待删对象的站点）与 `hosted_site_deletion_tasks` 的

@@ -121,7 +121,8 @@ public static class GatewayHttpEndpoints
                         authorizationInputs.RequiredScope,
                         context.Connection.RemoteIpAddress,
                         context.RequestAborted,
-                        authorizationInputs.AllowSingleAppCallerInference);
+                        authorizationInputs.AllowSingleAppCallerInference,
+                        path);
                 if (!authorization.Allowed)
                 {
                     await WriteRejectedGatewayRequestLogAsync(
@@ -410,6 +411,9 @@ public static class GatewayHttpEndpoints
             IServiceProvider services) =>
         {
             var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            var runtimeGrant = GetVerifiedRuntimeGrant(http);
+            if (body is not null && runtimeGrant is not null)
+                ApplyRuntimeGrantPolicy(body, runtimeGrant);
             if (PrdAgent.Infrastructure.LlmGateway.LlmGateway.ValidateNativeResponsesBody(body) is { } invalid)
             {
                 await WriteCompatErrorAsync(http, invalid.ErrorMessage!, "invalid_request_error", invalid.ErrorCode, invalid.StatusCode);
@@ -418,15 +422,21 @@ public static class GatewayHttpEndpoints
             var nativeBody = body!;
             var requestId = TrackGatewayRequestId(http);
             var stream = ReadBool(nativeBody, "stream");
-            var model = ReadString(nativeBody, "model");
-            var pool = ResolveCompatModelPoolId(http, nativeBody);
+            var model = runtimeGrant is null ? ReadString(nativeBody, "model") : runtimeGrant.Model;
+            var pool = runtimeGrant is null ? ResolveCompatModelPoolId(http, nativeBody) : runtimeGrant.ModelPoolId;
             // gw-native 是内部路：MAP 侧代理先剥掉运行时自带的 pin，再按自己冻结的快照盖上去。
             // 兼容入口（/v1/*）一律拒绝客户端自带 pin（见 RejectClientSuppliedPinnedTarget），
             // 那条禁令按 gw-native / 兼容两分面划界，不覆盖这一条。
-            var (platform, pinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
-            var policy = ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel);
-            var strict = ReadProviderRequireParameters(nativeBody);
-            var runId = ResolveCompatRunId(http, nativeBody);
+            var (declaredPlatform, declaredPinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
+            var platform = runtimeGrant is null ? declaredPlatform : runtimeGrant.PinnedPlatformId;
+            var pinnedModel = runtimeGrant is null ? declaredPinnedModel : runtimeGrant.PinnedModelId;
+            var policy = runtimeGrant is null
+                ? ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel)
+                : !string.IsNullOrWhiteSpace(pool) ? "pool"
+                : !string.IsNullOrWhiteSpace(platform) ? "pinned"
+                : "pinned";
+            var strict = runtimeGrant?.RequireDeclaredParameters ?? ReadProviderRequireParameters(nativeBody);
+            var runId = runtimeGrant?.RunId ?? ResolveCompatRunId(http, nativeBody);
             StripGatewayRoutingFields(nativeBody);
             // provider 是本网关的路由信封，不属于原生 OpenAI JSON；未知选项不可悄悄丢弃。
             if (nativeBody["provider"] is JsonObject provider)
@@ -444,9 +454,9 @@ public static class GatewayHttpEndpoints
             var ingress = new GatewayIngressRequest
             {
                 RequestId = requestId,
-                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "map",
+                SourceSystem = runtimeGrant is null ? ResolveHeader(http, "X-Gateway-Source") ?? "map" : "map",
                 IngressProtocol = "gw-native",
-                AppCallerCode = ResolveVerifiedAppCaller(http, string.Empty),
+                AppCallerCode = runtimeGrant?.AppCallerCode ?? ResolveVerifiedAppCaller(http, string.Empty),
                 RequestType = requestType,
                 ExpectedModel = policy == "pool" && !string.IsNullOrWhiteSpace(pool) ? pool : model,
                 ModelPoolId = pool,
@@ -459,7 +469,7 @@ public static class GatewayHttpEndpoints
                 {
                     RequestId = requestId, RunId = runId,
                     SessionId = ResolveHeader(http, "X-Gateway-Session-Id"),
-                    UserId = ResolveHeader(http, "X-Gateway-User-Id"),
+                    UserId = runtimeGrant?.UserId ?? ResolveHeader(http, "X-Gateway-User-Id"),
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
@@ -490,6 +500,26 @@ public static class GatewayHttpEndpoints
             {
                 var resolution = await gateway.ResolveModelAsync(request.AppCallerCode, request.ModelType,
                     request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, token);
+                Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null;
+                if (runtimeGrant is not null)
+                {
+                    admit = async admissionToken =>
+                    {
+                        var counter = services.GetService<IGatewayRuntimeGrantCallCounter>();
+                        if (counter is null)
+                            return GatewayRawResponse.Fail(
+                                "GATEWAY_RUNTIME_GRANT_ADMISSION_UNAVAILABLE",
+                                "运行时授权计数服务不可用",
+                                StatusCodes.Status503ServiceUnavailable);
+                        var admission = await counter.TryReserveAsync(runtimeGrant, admissionToken);
+                        return admission.Allowed
+                            ? null
+                            : GatewayRawResponse.Fail(
+                                admission.ErrorCode,
+                                admission.Detail,
+                                admission.StatusCode);
+                    };
+                }
                 var disconnected = false;
                 var outcome = await gateway.SendNativeResponsesWithResolutionAsync(request, resolution, async (chunk, _) =>
                 {
@@ -512,7 +542,7 @@ public static class GatewayHttpEndpoints
                     catch (IOException) { disconnected = true; }
                     catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { disconnected = true; }
                     catch (ObjectDisposedException) { disconnected = true; }
-                }, token);
+                }, admit, token);
                 http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
                 if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
                     http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
@@ -1970,6 +2000,58 @@ public static class GatewayHttpEndpoints
         => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
             ? authorization.TeamId
             : null;
+
+    private static GatewayRuntimeGrantRecord? GetVerifiedRuntimeGrant(HttpContext context)
+        => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
+            ? authorization.RuntimeGrant
+            : null;
+
+    private static void ApplyRuntimeGrantPolicy(JsonObject body, GatewayRuntimeGrantRecord grant)
+    {
+        var requestedReasoning = body["reasoning"] is JsonObject reasoning
+            ? reasoning.DeepClone().AsObject()
+            : new JsonObject();
+        body.Remove("model");
+        StripGatewayRoutingFields(body);
+        if (body["provider"] is JsonObject provider)
+        {
+            provider.Clear();
+            if (grant.RequireDeclaredParameters) provider["require_parameters"] = true;
+            else body.Remove("provider");
+        }
+        else if (grant.RequireDeclaredParameters)
+        {
+            body["provider"] = new JsonObject { ["require_parameters"] = true };
+        }
+
+        if (grant.ReasoningMode is not null)
+            foreach (var field in new[] { "reasoning", "reasoning_effort", "reasoningEffort", "thinking", "include_reasoning" })
+                body.Remove(field);
+        if (grant.OutputTokenMode == "omit")
+            foreach (var field in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }) body.Remove(field);
+        if (grant.Temperature is { } temperature) body["temperature"] = temperature;
+        if (grant.TopP is { } topP) { body.Remove("topP"); body["top_p"] = topP; }
+        if (grant.ReasoningMode == "effort")
+        {
+            requestedReasoning["effort"] = grant.ReasoningEffort;
+            body["reasoning"] = requestedReasoning;
+        }
+
+        if (!string.IsNullOrWhiteSpace(grant.ModelPoolId))
+        {
+            body["model_pool_id"] = grant.ModelPoolId;
+            body["model_policy"] = "pool";
+        }
+        else
+        {
+            body["model"] = grant.Model;
+        }
+        if (!string.IsNullOrWhiteSpace(grant.PinnedPlatformId))
+        {
+            body["pinned_platform_id"] = grant.PinnedPlatformId;
+            body["pinned_model_id"] = grant.PinnedModelId;
+        }
+    }
 
     private static GatewayAuthorizationInputs GetVerifiedAuthorizationInputs(HttpContext context)
         => context.Items["llmgw.key.authorization.inputs"] is GatewayAuthorizationInputs inputs

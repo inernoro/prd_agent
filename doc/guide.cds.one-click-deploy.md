@@ -23,7 +23,7 @@
 
 在项目列表点击“一键部署项目”。
 
-如果希望由 Codex、Cursor 或 Claude Code 代为操作，先点击“接入 Agent”，把无密钥接入口令交给 Agent，并在页面批准。
+如果希望由 Codex 或 Claude Code 代为操作，先点击“接入 Agent”，把无密钥接入口令交给 Agent，并在页面批准。
 
 ## 第二步：选择仓库
 

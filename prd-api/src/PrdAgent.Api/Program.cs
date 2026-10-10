@@ -366,6 +366,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
     sp.GetRequiredService<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactGatewayGrantService,
+    PrdAgent.Api.Services.DesignArtifactGatewayGrantService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
     PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
@@ -1863,7 +1865,8 @@ static async Task<IResult> DeepHealth(
     string visualImageRouteOutput;
     try
     {
-        var policy = await visualModels.ReadAsync(cancellationToken);
+        // 健康探针必须审计原始配置，不能读运行时已求交集的视图，否则脏引用会被过滤后假装健康。
+        var policy = await visualModels.ReadStoredAsync(cancellationToken);
         var openModels = policy.Models
             .Select(x => x.ModelId?.Trim())
             .Where(x => !string.IsNullOrWhiteSpace(x))

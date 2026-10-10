@@ -2,7 +2,7 @@
  * 智能体接入指令模板（SSOT）。
  *
  * 「接入 AI」签发长效 Key 后，会把一段"给智能体的完整指令"复制进剪贴板，
- * 用户粘贴到 Claude Code / Cursor，AI 照做即可自行完成配置。
+ * 用户粘贴到 Claude Code / Codex，AI 照做即可自行完成配置。
  * 该文案被两处消费：
  *  1. 知识库入口 `pages/document-store/ConnectAiDialog.tsx`
  *  2. 海鲜市场入口 `pages/marketplace/skillOpenApi/CreateKeyTab.tsx`（document-store 分支）

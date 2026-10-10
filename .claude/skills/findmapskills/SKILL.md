@@ -71,7 +71,7 @@ curl -sSL -o "$NAME" "$URL"
 # 一个仓库可能同时装了多个 Agent（比如同时有 .claude 和 .agents）：
 # 只装第一个命中的，从另一个 Agent 跑就「装完了一个技能都看不见」。
 SKILLS_DIRS=""
-for h in .claude .cursor .agents; do
+for h in .claude .agents; do
   [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
 done
 [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"   # 一个都没有时兜底
@@ -160,7 +160,7 @@ echo "本地版本: 1.3.0"
 > # 这一段必须自带宿主识别：换个 shell 跑时 $SKILLS_DIRS 是空的，
 > # for 循环会零次迭代然后正常退出——命令看着成功，技能一个没更新。
 > SKILLS_DIRS=""
-> for h in .claude .cursor .agents; do
+> for h in .claude .agents; do
 >   [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
 > done
 > [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"

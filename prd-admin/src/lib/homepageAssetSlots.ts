@@ -154,7 +154,7 @@ export const DEMO_VIDEO_SLOTS: DemoVideoSlot[] = [
     slot: 'demo.skill-openapi.agent-paste.video',
     label: '接入 AI · 粘贴密钥给智能体',
     hint:
-      '录一段 10-30 秒的流程：在海鲜市场创建 Key → 点「复制给智能体使用」→ 切到 Claude Code / Cursor 粘贴 → AI 自动 export 环境变量 + 下载 findmapskills 技能的全过程。建议 16:9、MP4 或 WebM、≤ 20 MB。未上传时前端会显示静态占位卡。',
+      '录一段 10-30 秒的流程：在海鲜市场创建 Key → 点「复制给智能体使用」→ 切到 Claude Code / Codex 粘贴 → AI 自动 export 环境变量 + 下载 findmapskills 技能的全过程。建议 16:9、MP4 或 WebM、≤ 20 MB。未上传时前端会显示静态占位卡。',
   },
 ];
 

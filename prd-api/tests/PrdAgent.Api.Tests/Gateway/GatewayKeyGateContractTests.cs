@@ -42,6 +42,223 @@ namespace PrdAgent.Api.Tests.Gateway;
 public class GatewayKeyGateContractTests
 {
     [Fact]
+    public async Task NativeResponses_RuntimeGrantOverridesCallerRoutingIdentityAndModelPolicy()
+    {
+        JsonObject? forwarded = null;
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            forwarded = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    "{\"id\":\"resp_grant\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}",
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+        });
+        var resolver = NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated");
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        var gateway = NativeResponsesGateway(resolver, handler, NativeResponsesLogWriter(starts, dones).Object);
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-1",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            PinnedPlatformId = "native-platform",
+            PinnedModelId = "gpt-5.6-sol",
+            Temperature = 0.25,
+            TopP = 0.8,
+            ReasoningMode = "effort",
+            ReasoningEffort = "high",
+            OutputTokenMode = "omit",
+            RequireDeclaredParameters = false,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            gateway,
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"attacker-model",
+              "store":false,
+              "input":"hello",
+              "temperature":1.9,
+              "top_p":0.1,
+              "max_output_tokens":99999,
+              "reasoning":{"effort":"minimal","summary":"auto"},
+              "model_pool_id":"attacker-pool",
+              "pinned_platform_id":"attacker-platform",
+              "pinned_model_id":"attacker-model-id",
+              "run_id":"attacker-run",
+              "provider":{"require_parameters":false}
+            }
+            """)!.AsObject();
+            using var request = NativeResponsesRequest(body, "runtime-grant-policy");
+            request.Headers.Remove("X-Gateway-Run-Id");
+            request.Headers.Add("X-Gateway-Run-Id", "attacker-run-header");
+            request.Headers.Remove("X-Gateway-User-Id");
+            request.Headers.Add("X-Gateway-User-Id", "attacker-user-header");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            authorizer.RequestPath.ShouldBe("/gw/v1/responses");
+            resolver.Verify(x => x.ResolveAsync(
+                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ModelTypes.Chat,
+                "default-chat-curated",
+                "native-platform",
+                "gpt-5.6-sol",
+                It.IsAny<CancellationToken>()), Times.Once);
+            var started = starts.ShouldHaveSingleItem();
+            started.RunId.ShouldBe("trusted-run");
+            started.UserId.ShouldBe("trusted-user");
+            started.AppCallerCode.ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+            started.SourceSystem.ShouldBe("map");
+            forwarded.ShouldNotBeNull();
+            forwarded!["model"]!.GetValue<string>().ShouldBe("gpt-5.6-sol");
+            forwarded["temperature"]!.GetValue<double>().ShouldBe(0.25);
+            forwarded["top_p"]!.GetValue<double>().ShouldBe(0.8);
+            forwarded["reasoning"]!["effort"]!.GetValue<string>().ShouldBe("high");
+            forwarded["reasoning"]!["summary"]!.GetValue<string>().ShouldBe("auto");
+            forwarded.ContainsKey("max_output_tokens").ShouldBeFalse();
+            forwarded.ContainsKey("model_pool_id").ShouldBeFalse();
+            forwarded.ContainsKey("pinned_platform_id").ShouldBeFalse();
+            forwarded.ContainsKey("run_id").ShouldBeFalse();
+            forwarded.ContainsKey("provider").ShouldBeFalse();
+            dones.ShouldHaveSingleItem().Status.ShouldBe("succeeded");
+            callCounter.CallCount.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_RuntimeGrantWithoutFrozenRouteIgnoresClientRoutingHeaders()
+    {
+        var resolver = NativeResponsesResolver(logicalModelPublicId: "default-chat-curated");
+        var handler = new NativeResponsesHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "{\"id\":\"resp_unpinned\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        }));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-unpinned",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(resolver, handler),
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            using var request = NativeResponsesRequest(
+                JsonNode.Parse("{\"model\":\"attacker-model\",\"store\":false,\"input\":\"hello\"}")!.AsObject(),
+                "runtime-grant-unpinned");
+            request.Headers.Add("X-Gateway-Model-Pool-Id", "attacker-pool");
+            request.Headers.Add("X-Gateway-Pinned-Platform-Id", "attacker-platform");
+            request.Headers.Add("X-Gateway-Pinned-Model-Id", "attacker-model-id");
+
+            using var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            resolver.Verify(x => x.ResolveAsync(
+                AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ModelTypes.Chat,
+                "default-chat-curated",
+                null,
+                null,
+                It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(1);
+            callCounter.CallCount.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_RejectedRuntimeGrantRequestDoesNotConsumeCallAllowance()
+    {
+        var resolver = NativeResponsesResolver(functionCalling: null);
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-rejected",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "trusted-run",
+            UserId = "trusted-user",
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            Environment = "test",
+            Model = "default-chat-curated",
+            RequireDeclaredParameters = true,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+            CreatedAt = DateTime.UtcNow,
+        };
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant);
+        var callCounter = new CapturingRuntimeGrantCallCounter();
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(resolver, handler),
+            keyAuthorizer: authorizer,
+            runtimeGrantCallCounter: callCounter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"default-chat-curated",
+              "store":false,
+              "input":"hello",
+              "tools":[{"type":"function","name":"run"}],
+              "provider":{"require_parameters":true}
+            }
+            """)!.AsObject();
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(body, "runtime-grant-rejected"));
+
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await response.Content.ReadAsStringAsync()).ShouldContain("FUNCTION_CALLING_UNVERIFIED");
+            resolver.Verify(x => x.ResolveAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(0);
+            callCounter.CallCount.ShouldBe(0);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
     public async Task NativeResponses_TwoToolRoundsPreserveRawStreamAndTrustedAttribution()
     {
         const string first = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_native\",\"status\":\"in_progress\"}}\n\n";
@@ -473,13 +690,14 @@ public class GatewayKeyGateContractTests
     }
 
     private static Mock<IModelResolver> NativeResponsesResolver(bool? functionCalling = true,
-        string model = "native-model", bool? vision = true)
+        string model = "native-model", bool? vision = true, string? logicalModelPublicId = null)
     {
         var resolver = new Mock<IModelResolver>();
         resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new ModelResolutionResult
             {
                 Success = true, ActualModel = model, ActualPlatformId = "native-platform", ApiUrl = "https://upstream.test",
+                LogicalModelPublicId = logicalModelPublicId,
                 ApiKey = "synthetic-provider-key", PlatformType = "openai", Protocol = "openai",
                 SupportsFunctionCalling = functionCalling, SupportsThinking = true, SupportsVision = vision,
                 InputPricePerMillion = 1, OutputPricePerMillion = 2,
@@ -3696,6 +3914,7 @@ public class GatewayKeyGateContractTests
         PrdAgent.Core.LlmGateway.ILlmGateway gateway,
         IGatewayServingReadinessProbe? readinessProbe = null,
         IGatewayScopedKeyAuthorizer? keyAuthorizer = null,
+        IGatewayRuntimeGrantCallCounter? runtimeGrantCallCounter = null,
         ILLMRequestContextAccessor? contextAccessor = null,
         LlmGatewayDataContext? gatewayData = null,
         IHttpContextAccessor? httpContextAccessor = null)
@@ -3713,6 +3932,8 @@ public class GatewayKeyGateContractTests
             builder.Services.AddSingleton(readinessProbe);
         if (keyAuthorizer != null)
             builder.Services.AddSingleton(keyAuthorizer);
+        if (runtimeGrantCallCounter != null)
+            builder.Services.AddSingleton(runtimeGrantCallCounter);
         if (gatewayData != null)
             builder.Services.AddSingleton(gatewayData);
 
@@ -3740,17 +3961,23 @@ public class GatewayKeyGateContractTests
     {
         private readonly Func<string, bool> _scopeAllowed;
         private readonly string? _resolvedAppCallerCode;
+        private readonly GatewayRuntimeGrantRecord? _runtimeGrant;
 
-        public CapturingScopedKeyAuthorizer(Func<string, bool> scopeAllowed, string? resolvedAppCallerCode = null)
+        public CapturingScopedKeyAuthorizer(
+            Func<string, bool> scopeAllowed,
+            string? resolvedAppCallerCode = null,
+            GatewayRuntimeGrantRecord? runtimeGrant = null)
         {
             _scopeAllowed = scopeAllowed;
             _resolvedAppCallerCode = resolvedAppCallerCode;
+            _runtimeGrant = runtimeGrant;
         }
 
         public int CallCount { get; private set; }
         public string? SourceSystem { get; private set; }
         public string? AppCallerCode { get; private set; }
         public string? RequiredScope { get; private set; }
+        public string? RequestPath { get; private set; }
         public bool AllowSingleAppCallerInference { get; private set; }
 
         public Task<GatewayKeyAuthorization> AuthorizeAsync(
@@ -3762,12 +3989,14 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             CallCount++;
             SourceSystem = sourceSystem;
             AppCallerCode = appCallerCode;
             RequiredScope = requiredScope;
+            RequestPath = requestPath;
             AllowSingleAppCallerInference = allowSingleAppCallerInference;
             var allowed = _scopeAllowed(requiredScope);
             return Task.FromResult(new GatewayKeyAuthorization(
@@ -3782,7 +4011,25 @@ public class GatewayKeyGateContractTests
                 ClientCode: "content-agent",
                 Environment: "test",
                 KeyPrefixSnapshot: "gwk_test",
-                ResolvedAppCallerCode: _resolvedAppCallerCode));
+                ResolvedAppCallerCode: _resolvedAppCallerCode,
+                RuntimeGrant: _runtimeGrant));
+        }
+    }
+
+    private sealed class CapturingRuntimeGrantCallCounter : IGatewayRuntimeGrantCallCounter
+    {
+        public int CallCount { get; private set; }
+
+        public Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+            GatewayRuntimeGrantRecord grant,
+            CancellationToken ct)
+        {
+            CallCount++;
+            return Task.FromResult(new GatewayRuntimeGrantCallAdmission(
+                true,
+                StatusCodes.Status200OK,
+                string.Empty,
+                "runtime grant call reserved"));
         }
     }
 
@@ -3797,7 +4044,8 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             var teamId = providedKey switch
             {
@@ -3828,7 +4076,8 @@ public class GatewayKeyGateContractTests
             string requiredScope,
             System.Net.IPAddress? remoteIp,
             CancellationToken ct,
-            bool allowSingleAppCallerInference = false)
+            bool allowSingleAppCallerInference = false,
+            string? requestPath = null)
         {
             var tenantId = providedKey switch
             {

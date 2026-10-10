@@ -2280,6 +2280,13 @@ export interface CdsState {
   userCredentials?: UserCredential[];
   /** 身份层：项目授权表，「要不要再批一次」的唯一判据。 */
   projectGrants?: ProjectGrant[];
+  /** 与授权同属global原子快照；未确认写入重启时先恢复安全快照。 */
+  humanAccessRecovery?: Record<string, {
+    startedAt: string;
+    mode: 'grants' | 'disabled';
+    grants: ProjectGrant[];
+    principal?: Principal;
+  }>;
   /**
    * Legacy single-slot GitHub Device Flow token. Kept for installations
    * without CDS user sessions and for backwards-compatible state loading.

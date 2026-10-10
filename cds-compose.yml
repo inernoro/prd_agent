@@ -546,6 +546,8 @@ services:
     environment:
       # 任务接口的 Bearer 密钥。未注入时服务照常起来，但拒绝一切任务接口并在 /v1/capabilities 说明原因。
       DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
+      # CDS 的 serving 服务别名与正式 Compose 不同；模型数据面仍由任务级短期授权直达 LLMGW。
+      DESIGN_RUNTIME_LLMGW_BASE_URL: "http://llmgw-serve:8091/gw/v1"
     labels:
       cds.prebuilt-image: "true"
       # CI 构建该镜像的输入范围，与 x-cds-deploy-modes.design-opendesign.express.buildScope 同一份、

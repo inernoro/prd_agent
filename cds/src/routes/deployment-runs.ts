@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import type { DeploymentRun, DeploymentRunStatus } from '../types.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
 import type { DeploymentDiagnosisService } from '../services/deployment-diagnosis.js';
+import { logPayloadForHumanView } from '../services/human-project-access.js';
 
 const DEPLOYMENT_RUN_STATUSES = new Set<DeploymentRunStatus>([
   'pending',
@@ -52,7 +53,7 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
       status: statusValue as DeploymentRunStatus | undefined,
     }).slice(0, limit).map(toRunSummary);
 
-    res.json({ runs, total: runs.length });
+    res.json(logPayloadForHumanView(req, { runs, total: runs.length }));
   });
 
   router.get('/deployment-runs/:id/stream', (req, res) => {
@@ -145,7 +146,7 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
       res.status(503).json({ error: '部署诊断服务未启用' });
       return;
     }
-    res.json({ diagnosis: deps.deploymentDiagnosisService.deterministic(run.id) });
+    res.json(logPayloadForHumanView(req, { diagnosis: deps.deploymentDiagnosisService.deterministic(run.id) }));
   });
 
   router.get('/deployment-runs/:id/diagnosis/stream', async (req, res) => {
@@ -188,7 +189,7 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
       res.status(access.status).json(access.body);
       return;
     }
-    res.json({ run });
+    res.json(logPayloadForHumanView(req, { run }));
   });
 
   return router;
@@ -222,7 +223,7 @@ function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events'> & {
 function writeSse(res: Response, eventName: string, data: unknown, id?: number): void {
   if (id !== undefined) res.write(`id: ${id}\n`);
   res.write(`event: ${eventName}\n`);
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
+  res.write(`data: ${JSON.stringify(logPayloadForHumanView(res.locals.cdsHumanRequest, data))}\n\n`);
 }
 
 function cleanQuery(value: unknown): string | undefined {

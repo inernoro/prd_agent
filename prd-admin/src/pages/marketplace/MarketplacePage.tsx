@@ -425,7 +425,7 @@ export const MarketplacePage: React.FC = () => {
                   }}
                   className="marketplace-nav-pill"
                   data-active={quickConnectOpen ? 'true' : 'false'}
-                  title="一键生成 API Key，让 Claude Code / Cursor 等 AI 接入海鲜市场"
+                  title="一键生成 API Key，让 Claude Code / Codex 等 AI 接入海鲜市场"
                   aria-label="接入 AI"
                 >
                   <Zap size={13} />
@@ -541,7 +541,7 @@ export const MarketplacePage: React.FC = () => {
           <span className="marketplace-compat-label">通过「接入 AI」一键安装到：</span>
           <span className="marketplace-compat-agent">Claude Code</span>
           <span className="marketplace-compat-dot">·</span>
-          <span className="marketplace-compat-agent">Cursor</span>
+          <span className="marketplace-compat-agent">Codex</span>
           <span className="marketplace-compat-dot">·</span>
           <span className="marketplace-compat-agent">Gemini CLI</span>
           <span className="marketplace-compat-dot">·</span>

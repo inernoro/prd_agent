@@ -95,6 +95,8 @@ export interface ExecutorOptions {
   pollIntervalMs?: number;
   /** 转发口监听的本机端口；0 表示临时端口（测试）。 */
   relayPort: number;
+  /** MAP 与运行时共同钉住的 LLMGW 原生 Responses 基址。 */
+  llmgwBaseUrl: string;
   /** 以 root 运行时，把工作区与配置文件的属主交还给引擎用户。 */
   engineUid?: number;
   engineGid?: number;
@@ -282,7 +284,7 @@ export class DesignTaskExecutor {
     if (!instruction.trim() || instruction.length > 12_000) {
       throw new AgentWorkspaceRuntimeError('design_instruction_invalid', 'design instruction must contain 1 to 12000 characters');
     }
-    validateModelAuthority(model, transfer.inputPackageUrl);
+    validateModelAuthority(model, transfer.inputPackageUrl, this.options.llmgwBaseUrl);
     const transferToken = transfer.transferToken;
     if (!transferToken || transferToken.length > 8192) {
       throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
@@ -319,21 +321,26 @@ export class DesignTaskExecutor {
     if (!model.apiKey || /[\0\r\n]/.test(model.apiKey) || !relayClientToken || /[\0\r\n]/.test(relayClientToken)) {
       throw new AgentWorkspaceRuntimeError(
         'model_authority_invalid',
-        'MAP model ticket is missing or malformed',
+        'Task-scoped model gateway credential is missing or malformed',
       );
     }
     let relay: EgressRelay;
     try {
       relay = await this.startRelay({
         modelBaseUrl: model.baseUrl,
-        mapModelTicket: model.apiKey,
+        modelGatewayCredential: model.apiKey,
         relayClientToken,
         port: this.options.relayPort,
+        sourceSystem: model.sourceSystem,
+        appCallerCode: model.appCallerCode,
+        userId: model.userId,
+        runId: model.runId,
+        allowPrivateTarget: model.baseUrl.replace(/\/$/, '') === this.options.llmgwBaseUrl.replace(/\/$/, ''),
       });
     } catch (error) {
       throw new AgentWorkspaceRuntimeError(
         'workspace_egress_unavailable',
-        `MAP-only egress relay could not be started: ${error instanceof Error ? error.message.slice(0, 200) : 'unknown error'}`,
+        `Controlled model egress relay could not be started: ${error instanceof Error ? error.message.slice(0, 200) : 'unknown error'}`,
         true,
       );
     }
@@ -862,4 +869,3 @@ function remainingExecutionMs(deadline: number): number {
 function assertExecutionDeadline(deadline: number): void {
   remainingExecutionMs(deadline);
 }
-

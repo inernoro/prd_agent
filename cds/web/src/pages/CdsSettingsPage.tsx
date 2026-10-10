@@ -2,10 +2,10 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { LoadingBlock } from '@/pages/cds-settings/components';
 import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
-import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
+import { AppShell, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
+import { apiRequest, fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
@@ -273,8 +273,15 @@ function SettingsTabFallback(): JSX.Element {
   return <LoadingBlock label="加载设置" />;
 }
 
+export function settingsTabForViewer(requested: TabValue, canManageSettings: boolean): TabValue {
+  return canManageSettings ? requested : 'activity';
+}
+
 export function CdsSettingsPage(): JSX.Element {
-  const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const [requestedTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const [viewerStatus, setViewerStatus] = useState<ShellAuthStatus | null>(null);
+  const canManageSettings = canManageSystemSettings(viewerStatus);
+  const activeTab = settingsTabForViewer(requestedTab, canManageSettings);
   const [toast, setToast] = useState('');
   // null = 探测中;'probe-failed' = 没问出来。**探测失败不等于「认证未启用」**:
   // 把失败当成 disabled，会让一台其实跑在 GitHub 模式的实例被告知「认证没开、去改
@@ -293,9 +300,11 @@ export function CdsSettingsPage(): JSX.Element {
     // 是判定当前模式的权威且安全入口。
     setAuthMode(null);
     setAuthCapabilities(null);
-    fetchAuthPublicStatus()
-      .then((status) => {
+    setViewerStatus(null);
+    Promise.all([fetchAuthPublicStatus(), apiRequest<ShellAuthStatus>('/api/auth/status')])
+      .then(([status, viewer]) => {
         if (alive) {
+          setViewerStatus(viewer);
           setAuthMode(status.mode);
           setAuthCapabilities(status.capabilities);
           setAuthProbeError('');
@@ -309,12 +318,15 @@ export function CdsSettingsPage(): JSX.Element {
     return () => { alive = false; };
   }, [authProbeSeq]);
 
-  // tab 不再按模式隐藏:#hash 直链到 users 仍然落在 users,只是内容换成说明面板。
-  const visibleTabGroups = tabGroups;
+  // 所有者保留原模式提示；成员只能看自己的痕迹，深链也不能挂载维护页。
+  const visibleTabGroups = canManageSettings ? tabGroups : [
+    { label: '观测', items: tabs.filter(tab => tab.value === 'activity') },
+  ];
 
   useEffect(() => {
+    if (!viewerStatus) return;
     window.history.replaceState(null, '', `#${activeTab}`);
-  }, [activeTab]);
+  }, [activeTab, viewerStatus]);
 
   useEffect(() => {
     const syncFromHash = () => setActiveTab(getInitialTab());
@@ -337,7 +349,7 @@ export function CdsSettingsPage(): JSX.Element {
             <Crumb
               items={[
                 { label: 'CDS', href: '/project-list' },
-                { label: '系统设置' },
+                { label: canManageSettings ? '系统设置' : '个人痕迹' },
               ]}
             />
           }
@@ -347,6 +359,10 @@ export function CdsSettingsPage(): JSX.Element {
       {/* 与项目设置页同一套满铺外壳：两个设置页此前一个 1440 居中、一个 1240 居中，
           宽度本来就不一致；项目设置改成满铺后若只搬一半，反而更割裂。 */}
       <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {authMode === 'probe-failed' ? (
+          <AuthModeGatedNotice feature="设置页面" mode="probe-failed" probeError={authProbeError}
+            onRetryProbe={() => setAuthProbeSeq(n => n + 1)} onGoToAuth={() => setActiveTab('auth')} />
+        ) : !viewerStatus || !authCapabilities ? <SettingsTabFallback /> : (
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as TabValue)}
@@ -355,8 +371,8 @@ export function CdsSettingsPage(): JSX.Element {
           <div className="cds-settings-layout">
             <TabsList aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
               <div className="cds-settings-rail-head">
-                <div className="text-sm font-semibold">CDS 系统设置</div>
-                <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">system</div>
+                <div className="text-sm font-semibold">{canManageSettings ? 'CDS 系统设置' : '个人痕迹'}</div>
+                <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{canManageSettings ? 'system' : 'account'}</div>
               </div>
               {visibleTabGroups.map((group, groupIdx) => (
                 <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
@@ -404,6 +420,8 @@ export function CdsSettingsPage(): JSX.Element {
                 <TabsContent value="activity">
                   {activeTab !== 'activity' ? null : activityVisible ? (
                     <ActivityTab />
+                  ) : !canManageSettings ? (
+                    <p className="text-sm text-muted-foreground">当前认证方式不提供个人操作记录，请联系系统所有者。</p>
                   ) : (
                     <AuthModeGatedNotice
                       feature="用户痕迹"
@@ -480,6 +498,7 @@ export function CdsSettingsPage(): JSX.Element {
             </div>
           </div>
         </Tabs>
+        )}
 
         {toast ? (
           <div
