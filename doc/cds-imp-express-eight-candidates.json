@@ -1,0 +1,383 @@
+{
+  "goalId": "CDS-IMP-EXPRESS-DURABLE-20261010",
+  "observedAt": "2026-10-10T21:04:17+00:00",
+  "scope": "local-candidate-branches-only",
+  "patchCommit": "a35b160067cf2f9b7a41b5f5f2d37afb05ba8130",
+  "patchSha256": "cba7288e18627546556f5341b0b09247e57922455c9c5b6454cbc9cdb0ec8308",
+  "rows": [
+    {
+      "sample": "A01",
+      "sourceRef": "main",
+      "latestSourceSha": "2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c",
+      "previousBaselineSha": "2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c",
+      "localBranch": "codex/cds-imp-express-a01-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "aa04bbdfdb3b888ce0d306a109d578af082d421b",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "9d21025dc39ceb031ffdbdd48232d68d8ab0b76d",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A01-contract-tests.log",
+        "sha256": "35e194314e437f071983920d6128ae71c32c4580e867dd276582a9b433aa10ba"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    },
+    {
+      "sample": "A02",
+      "sourceRef": "test",
+      "latestSourceSha": "e2fd7c8f5ebaed2561229a7864835949d1ce0904",
+      "previousBaselineSha": "e2fd7c8f5ebaed2561229a7864835949d1ce0904",
+      "localBranch": "codex/cds-imp-express-a02-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "83662ff01555aee26a918dbb368cf84e150b619c",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "34ea138a2aef0f92b07923a562bd6cfddeacd30b",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A02-contract-tests.log",
+        "sha256": "1352eeb2af71aadbf3683ea7f57495c8452d64a77793376408366db06fe725b0"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    },
+    {
+      "sample": "A03",
+      "sourceRef": "claude/marketing-consumption-b5",
+      "latestSourceSha": "50b3db6c26c99dccd3c1d11a796c1e8ab2993e45",
+      "previousBaselineSha": "50b3db6c26c99dccd3c1d11a796c1e8ab2993e45",
+      "localBranch": "codex/cds-imp-express-a03-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "f3bfca854e66e092152d17130034cb9d17ae56b1",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "c1e85c14c9e5f24797d9c29d008d9c5506820d05",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A03-contract-tests.log",
+        "sha256": "ec08676d4e164dd139ad6af9d91d16c1464d73331406888c53bebe8e70107490"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    },
+    {
+      "sample": "A04",
+      "sourceRef": "claude/emergence-volume-archive-202609",
+      "latestSourceSha": "004a67c4d8fb65c000c1ddea5dda2ccd8b4451e8",
+      "previousBaselineSha": "004a67c4d8fb65c000c1ddea5dda2ccd8b4451e8",
+      "localBranch": "codex/cds-imp-express-a04-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "4a1aa0499445bac0cfda5b338772814b5a17c0dd",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "83ef77a6a7f903a017ac9d2e5d76022ffffc5a0a",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A04-contract-tests.log",
+        "sha256": "bd0cb8a00fe521e1f9825bd29d3036d3368bb159aa45f8db54a5988d911404b8"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    },
+    {
+      "sample": "A05",
+      "sourceRef": "claude/cl08-real-acceptance-20261008",
+      "latestSourceSha": "d5201b07a8914aaddb86d96d277c63235060f4fa",
+      "previousBaselineSha": "d5201b07a8914aaddb86d96d277c63235060f4fa",
+      "localBranch": "codex/cds-imp-express-a05-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "c6ce30be5b1532d86340bafe33520b7afdb5a48c",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "35398f5ab5255998d60b80b8f1849106015cb567",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A05-contract-tests.log",
+        "sha256": "0344306aeb8cba102eb49727255426066c2cc29f0f7a1f8b31cc4c45a6fe9251"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    },
+    {
+      "sample": "A06",
+      "sourceRef": "claude/app04-real-acceptance-20261008",
+      "latestSourceSha": "a5dae8b25469d03c4563cd669fc84dc4e5bd19ac",
+      "previousBaselineSha": "a5dae8b25469d03c4563cd669fc84dc4e5bd19ac",
+      "localBranch": "codex/cds-imp-express-a06-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "55954270928c4812ef17c78e80de1e505116644a",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "841400d1e2dcd5b183640331186602ea1ffc9b2f",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A06-contract-tests.log",
+        "sha256": "7308ef83c121676f13397660cadd4e22916f4cd05c3af84cfbf3df33d5643404"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    },
+    {
+      "sample": "A07",
+      "sourceRef": "codex/all-cds-express-20261009",
+      "latestSourceSha": "917d9bc03e25a9abfc9667b578f04f889795ae1b",
+      "previousBaselineSha": "917d9bc03e25a9abfc9667b578f04f889795ae1b",
+      "localBranch": "codex/cds-imp-express-a07-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "8010f05e8954c15aa2777d01122db491887619aa",
+      "patchOutputHash": "7f5a6733a5500ffee05575a891378458a965ba85d01e28addd749fd62d09c736",
+      "preparation": "local-branch-created-contract-verified",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A07-contract-tests.log",
+        "sha256": "b8b8e67553bf8a4ea23fa85332a8bad1b965ccde0e7ed2299ee8375f67bf0878"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "priorPreparation": "patch-conflict-not-forced",
+      "treeSha": "4b166dfbf9ee5767fc0f2e648f6ceb31773415fb",
+      "conflictResolution": "preserved-source-guide-with-targeted-exact-yellow-and-auxiliary-contract-edits"
+    },
+    {
+      "sample": "A08",
+      "sourceRef": "codex/cds-sync-test",
+      "latestSourceSha": "9de7ccdf0ce7b29a9237e07bb2fdd25caae67598",
+      "previousBaselineSha": "9de7ccdf0ce7b29a9237e07bb2fdd25caae67598",
+      "localBranch": "codex/cds-imp-express-a08-20261011",
+      "publication": "not-pushed",
+      "deployment": "not-executed",
+      "targetSha": "0fb2cf34715a7f29c75f7083e46319064c116929",
+      "patchOutputHash": "186bba8dc0e218313a72468ca6277351dc02532c9ee6a768097bd399b9de8a01",
+      "treeSha": "d13a76925d9d874c97647279686503ee653bdecb",
+      "baselineContract": {
+        "kind": "contract",
+        "problems": [
+          "imp-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-scan-runtime-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-api.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "cloudbridge-web.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-admin.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-vendor.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-open-platform.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-generation.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-code-return.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-product-batch.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译",
+          "imp-worker-common.express.commitPolicy 必须为 exact：缺目标制品不能回退旧SHA或源码编译"
+        ]
+      },
+      "candidateContract": {
+        "kind": "contract",
+        "problems": []
+      },
+      "contractTests": {
+        "exitCode": 0,
+        "log": "/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/local-eight-A08-contract-tests.log",
+        "sha256": "128439ec8da6063f833d36e71c1789d8241393a93712dfc0669c263c9bf361be"
+      },
+      "changedPaths": [
+        "cds-compose.yml",
+        "doc/CDS极速构建（CI预构建镜像）方案.md",
+        "scripts/cds-express-contract.mjs",
+        "scripts/verify-cds-express-contract.test.mjs"
+      ],
+      "preparation": "local-branch-created-contract-verified"
+    }
+  ],
+  "runtimeVerdict": "not-executed",
+  "visualVerdict": "not-executed",
+  "remotePublication": "not-pushed",
+  "readiness": "eight-local-contracts-verified-runtime-not-executed"
+}
