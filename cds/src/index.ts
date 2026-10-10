@@ -22,6 +22,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, t
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
+import { DeploymentRunService } from './services/deployment-run.js';
 import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
@@ -3878,6 +3879,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
   try {
   // janitor 回收前先留痕，否则用户看到分支整个消失却无任何记录。
+  await new DeploymentRunService(stateService).persistBranchCancellation(branch.projectId || 'default', branch.id, branchOperationLease);
   try {
     stateService.appendActivityLog(branch.projectId, {
       type: 'branch-deleted',

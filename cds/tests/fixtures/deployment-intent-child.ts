@@ -21,6 +21,13 @@ if (mode === 'accept') {
   const run = await runs.begin({ projectId: 'p', branchId: 'b', profileId: 'api', trigger: 'webhook', initialStatus: 'queued',
     operationId: decision.operationId, operationGeneration: decision.generation, commitSha: request.commitSha, configHash: 'cfg', executionInput: { request, input } });
   process.send?.({ phase: 'accepted', runId: run.id, operationId: run.operationId, generation: run.operationGeneration });
+} else if (mode === 'stop') {
+  const restored = runs.restoreQueued(coordinator);
+  const decision = coordinator.begin({ projectId: 'p', branchId: 'b', kind: 'stop', trigger: 'manual' });
+  if (decision.status !== 'started' || !decision.lease) throw new Error('Recovered queue was not stoppable');
+  await runs.persistBranchCancellation('p', 'b', decision.lease);
+  process.send?.({ phase: 'stopped', runId: restored[0]?.id, status: runs.get('dr_child')?.status,
+    privateInputCleared: state.getDeploymentIntents().length === 0 });
 } else {
   const restored = runs.restoreQueued(coordinator);
   const pending = coordinator.drainReady()[0];

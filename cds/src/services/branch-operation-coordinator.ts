@@ -164,6 +164,10 @@ const TERMINAL_KINDS = new Set<BranchOperationKind>([
   'janitor-remove',
 ]);
 
+export function cancelsBranchDeployments(kind: BranchOperationKind): boolean {
+  return kind === 'stop' || TERMINAL_KINDS.has(kind);
+}
+
 function priorityOf(req: BranchOperationRequest): number {
   if (req.trigger === 'manual' && TERMINAL_KINDS.has(req.kind)) return 100;
   if (req.trigger === 'manual' && req.kind === 'stop') return 95;
@@ -448,7 +452,7 @@ export class BranchOperationCoordinator {
           supersededByTrigger: request.trigger,
         });
       }
-      if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
+      if (cancelsBranchDeployments(request.kind)) {
         this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`, {}, request);
         this.cancelReservedContinuations(request, `superseded by ${request.kind}`);
       } else {
@@ -637,7 +641,7 @@ export class BranchOperationCoordinator {
 
   private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; admissionGeneration?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
     if (!request.pendingReplay && !existing?.continuedFrom) {
-      if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
+      if (cancelsBranchDeployments(request.kind)) {
         this.cancelPendingWebhookDeploy(request.branchId, `superseded by ${request.kind}`, {}, request);
         this.cancelReservedContinuations(request, `superseded by ${request.kind}`);
       }
@@ -745,9 +749,9 @@ export class BranchOperationCoordinator {
 
     const incomingPriority = priorityOf(request);
     const reservedPriority = priorityOf(reserved.request);
-    if (incomingPriority > reservedPriority || TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
+    if (incomingPriority > reservedPriority || cancelsBranchDeployments(request.kind)) {
       this.cancelReservedContinuations(request, `reserved continuation superseded by ${request.kind}`);
-      if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
+      if (cancelsBranchDeployments(request.kind)) {
         this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`, {}, request);
       }
       return this.start(request);
@@ -850,7 +854,7 @@ export class BranchOperationCoordinator {
   }
 
   private invalidatePendingReplayClaims(request: BranchOperationRequest, reason: string): void {
-    const terminal = TERMINAL_KINDS.has(request.kind) || request.kind === 'stop';
+    const terminal = cancelsBranchDeployments(request.kind);
     for (const [key, claim] of this.pendingReplayClaims) {
       if (terminal ? this.operationsConflict(request, claim.pending.request)
         : this.operationKey(request) === this.operationKey(claim.pending.request)) {

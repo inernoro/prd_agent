@@ -153,7 +153,7 @@ import {
 import { pendingDeployRoute, pendingDeployBody } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
-import type { DeploymentRunService, BeginDeploymentRunInput } from '../services/deployment-run.js';
+import { DeploymentRunService, type BeginDeploymentRunInput } from '../services/deployment-run.js';
 import { DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
@@ -3286,6 +3286,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     lease?.assertCurrent(step);
   }
 
+  async function persistBranchCancellation(entry: Pick<BranchEntry, 'id' | 'projectId'>, lease: BranchOperationLease | null | undefined): Promise<void> {
+    await (deploymentRunService || new DeploymentRunService(stateService)).persistBranchCancellation(entry.projectId || 'default', entry.id, lease);
+  }
+
   async function waitForRestartSafeBranchOperationsForRoute(
     source: string,
     // 默认 timeout=0: self-update 不再为 in-flight branch operation 等 180s。
@@ -6001,6 +6005,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationLease = decision.lease;
       }
       try {
+        await persistBranchCancellation({ id: item.branchId, projectId: item.projectId || 'default' }, branchOperationLease);
         assertBranchOperationCurrent(branchOperationLease, `cleanup orphan before remove ${item.profileId}`);
         await containerService.remove(item.containerName, {
           projectId: item.projectId || undefined,
@@ -11875,6 +11880,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       lastStopReason: entry.lastStopReason,
     };
     try {
+      await persistBranchCancellation(entry, branchOperationLease);
       entry.status = 'stopping';
       // 克隆完成栅栏（Codex 第十六轮 P1）：先置删除标记再遍历快照台账。
       // 复制集的在途克隆完成回调查到该标记即自弃（drop 刚克隆的库、不入账），
@@ -15318,6 +15324,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
 
+    try {
+      await persistBranchCancellation(entry, branchOperationLease);
+    } catch (err) {
+      const superseded = err instanceof BranchOperationSupersededError;
+      completeBranchOperation(branchOperationLease, superseded ? 'cancelled' : 'failed');
+      res.status(superseded ? 409 : 503).json({ error: superseded
+        ? '停止请求已被更新的操作取代，请查看最新状态'
+        : '原部署取消记录暂未能可靠保存，尚未停止服务，请稍后重试' });
+      return;
+    }
+
     // ── Cluster-aware stop ──
     //
     // Branches owned by a remote executor have no local containers — calling
@@ -15359,10 +15376,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           return;
         }
+        assertBranchOperationCurrent(branchOperationLease, 'after-remote-stop');
         // The executor's next heartbeat will reconcile status, but set
         // plausible local state in the meantime.
         for (const svc of Object.values(entry.services)) svc.status = 'stopped';
-        entry.status = 'idle';
+        assertBranchOperationCurrent(branchOperationLease, 'after-stop-log-archive');
+      entry.status = 'idle';
         entry.lastStoppedAt = new Date().toISOString();
         entry.lastStopReason = `${stopAttribution.reason}，远端执行器 ${remoteExecutor.id} 已停止`;
         entry.lastStopSource = stopAttribution.source === 'user' ? 'executor' : stopAttribution.source;
@@ -15378,10 +15397,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           note: entry.lastStopReason,
         });
         stateService.save();
+        await stateService.flush();
+        assertBranchOperationCurrent(branchOperationLease, 'remote-stop-confirmation');
         res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-        res.status(502).json({ error: `无法连接执行器: ${(err as Error).message}` });
+        res.status(err instanceof BranchOperationSupersededError ? 409 : 502).json({ error: err instanceof BranchOperationSupersededError
+          ? '停止请求已被更新的操作取代，请查看最新状态'
+          : `无法确认执行器停止结果: ${(err as Error).message}` });
       } finally {
         completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       }
@@ -15401,6 +15424,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Actually stop containers
       for (const svc of Object.values(entry.services)) {
+        assertBranchOperationCurrent(branchOperationLease, `before-stop-${svc.profileId}`);
         try {
           await containerService.stop(svc.containerName, stopAttribution.reason, {
             kind: stopIntentKindFrom(stopAttribution.source),
@@ -15415,6 +15439,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             source: 'api.stop-branch',
           });
         } catch { /* ok */ }
+        assertBranchOperationCurrent(branchOperationLease, `after-stop-${svc.profileId}`);
         svc.status = 'stopped';
       }
       // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
@@ -15425,6 +15450,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 按状态就地放弃。
       for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
         for (const member of replicaSet.members) {
+          assertBranchOperationCurrent(branchOperationLease, `before-stop-member-${member.id}`);
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, stopAttribution.reason, {
@@ -15441,6 +15467,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
             } catch { /* 失败与否统一由下面的实测判定，不靠异常 */ }
           }
+          assertBranchOperationCurrent(branchOperationLease, `after-stop-member-${member.id}`);
           // 停止必须核实再落状态（Codex 第三十五轮 P1，判定见 services/replica-stop.ts）
           await settleMemberAfterStop(member, {
             isRunning: (name) => containerService.isRunning(name),
@@ -15473,6 +15500,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: resolveActorFromRequest(req),
         trigger: triggerFromRequest(req),
       });
+      assertBranchOperationCurrent(branchOperationLease, 'after-stop-log-archive');
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();
@@ -15489,10 +15517,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: stopAttribution.reason,
       });
       stateService.save();
+      await stateService.flush();
+      assertBranchOperationCurrent(branchOperationLease, 'local-stop-confirmation');
       res.json({ message: '所有服务已停止' });
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-      res.status(500).json({ error: (err as Error).message });
+      res.status(err instanceof BranchOperationSupersededError ? 409 : 500).json({ error: err instanceof BranchOperationSupersededError
+        ? '停止请求已被更新的操作取代，请查看最新状态'
+        : (err as Error).message });
     } finally {
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
     }
@@ -18130,7 +18162,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Reset branch status ──
 
-  router.post('/branches/:id/reset', (req, res) => {
+  router.post('/branches/:id/reset', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);
     if (!entry) {
@@ -18144,6 +18176,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     if (!branchOperationLease) return;
     try {
+      await persistBranchCancellation(entry, branchOperationLease);
       assertBranchOperationCurrent(branchOperationLease, 'reset before state write');
       entry.status = 'idle';
       entry.errorMessage = undefined;
@@ -18155,6 +18188,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       assertBranchOperationCurrent(branchOperationLease, 'reset before state save');
       stateService.save();
+      await stateService.flush();
       completeBranchOperation(branchOperationLease, 'completed');
       res.json({ message: '分支状态已重置', operationId: branchOperationLease.operationId });
     } catch (err) {
@@ -18512,6 +18546,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
           let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
           try {
+            await persistBranchCancellation(entry, branchOperationLease);
             assertBranchOperationCurrent(branchOperationLease, `delete build profile before ${entry.id}/${removedProfileId}`);
             if (svc?.containerName) {
               try {
@@ -19874,6 +19909,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
             let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
             try {
+              await persistBranchCancellation(entry, branchOperationLease);
               assertBranchOperationCurrent(branchOperationLease, `cleanup cross-project before ${profileId}`);
               // Best-effort stop the orphan container.
               if (svc?.containerName) {
@@ -19960,6 +19996,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
+          await persistBranchCancellation(entry, branchOperationLease);
           sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
           await archiveBranchContainerLogs({
             stateService,
@@ -20144,6 +20181,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
+          await persistBranchCancellation(entry, branchOperationLease);
           sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
           await archiveBranchContainerLogs({
             stateService,
@@ -20374,6 +20412,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
           let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
           try {
+          await persistBranchCancellation(entry, branchOperationLease);
           sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
           for (const svc of Object.values(entry.services)) {
             assertBranchOperationCurrent(branchOperationLease, `factory reset before ${svc.profileId}`);
@@ -20521,6 +20560,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
         try {
+        await persistBranchCancellation(entry, branchOperationLease);
         sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
           assertBranchOperationCurrent(branchOperationLease, `factory reset before ${svc.profileId}`);

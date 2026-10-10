@@ -12,6 +12,7 @@ import { StateService } from '../src/services/state.js';
 import { DeploymentRunService } from '../src/services/deployment-run.js';
 import { BranchOperationCoordinator, pendingDeployBody, type BranchOperationRequest } from '../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput } from '../src/services/deployment-input.js';
+import { readDeploymentIntent } from '../src/services/deployment-intent.js';
 
 /** 该演练只允许专用本机 Mongo 和新建隔离数据库，绝不读取生产配置。 */
 export function assertIsolatedDatabase(uri: string, database: string): void {
@@ -104,6 +105,65 @@ async function worker(uri: string, database: string, mode: string, scope: string
     assert.equal(persisted?.doc.profileId, profileId);
     process.send?.({ phase: 'claimed', scope, runId: restored[0].id, operationId: pending.operationId, generation: pending.generation,
       originalInputPreserved: true, prebuiltGatePreserved: true, runCount: runs.list().length });
+  } else if (mode === 'stop-partial') {
+    assert.equal(runs.restoreQueued(coordinator).length, 0);
+    coordinator.begin({ projectId: 'drill', branchId: 'drill-b', kind: 'deploy', trigger: 'manual' });
+    let sequence = 0;
+    const stopRuns = new DeploymentRunService(state, { idFactory: () => `dr_isolated_stop_${++sequence}` });
+    for (const service of ['api', 'web']) {
+      const request: BranchOperationRequest = { projectId: 'drill', branchId: 'drill-b', kind: 'deploy-profile', profileId: service,
+        trigger: 'webhook', commitSha: 'c'.repeat(40), commitPinned: true, configHash: 'stop-config' };
+      const decision = coordinator.begin(request); assert.equal(decision.status, 'queued');
+      const input = captureDeploymentInput(state.getBranch('drill-b')!, [{ id: service, projectId: 'drill', name: service,
+        dockerImage: 'node', workDir: '.', command: `node original-${service}.js`, containerPort: 3000 }], { TOKEN: 'synthetic-stop-original' });
+      input.configHash = 'stop-config';
+      await stopRuns.begin({ projectId: 'drill', branchId: 'drill-b', profileId: service, trigger: 'webhook', initialStatus: 'queued',
+        operationId: decision.operationId, operationGeneration: decision.generation, commitSha: request.commitSha || undefined,
+        configHash: 'stop-config', executionInput: { request, input } });
+    }
+    await state.flush();
+    const collection = handle.deploymentRunsCollection(); handle.deploymentRunsCollection = () => collection;
+    const original = collection.replaceOne.bind(collection);
+    let confirmed!: () => void;
+    const otherWriteConfirmed = new Promise<void>((resolve) => { confirmed = resolve; });
+    collection.replaceOne = async (...args) => {
+      if (args[0]._id === 'dr_isolated_stop_1' && args[1].doc.status === 'cancelled') {
+        throw new Error('synthetic stop record unavailable before real write');
+      }
+      const result = await original(...args);
+      if (args[0]._id === 'dr_isolated_stop_2' && args[1].doc.status === 'cancelled') confirmed();
+      return result;
+    };
+    const decision = coordinator.begin({ projectId: 'drill', branchId: 'drill-b', kind: 'stop', trigger: 'manual' });
+    assert.equal(decision.status, 'started');
+    await assert.rejects(stopRuns.persistBranchCancellation('drill', 'drill-b', decision.lease));
+    await otherWriteConfirmed;
+    const first = await collection.findOne({ _id: 'dr_isolated_stop_1' });
+    const second = await collection.findOne({ _id: 'dr_isolated_stop_2' });
+    assert.equal(first?.doc.status, 'queued'); assert.ok(first?.executionIntent);
+    assert.equal(second?.doc.status, 'cancelled'); assert.equal(second?.executionIntent, undefined);
+    process.send?.({ phase: 'stop-unconfirmed', scope, confirmed: false, statuses: ['queued', 'cancelled'],
+      runIds: [first.doc.id, second.doc.id], partialRealWriteVerified: true });
+  } else if (mode === 'stop-retry') {
+    const restored = runs.restoreQueued(coordinator);
+    assert.deepEqual(restored.map((run) => run.id), ['dr_isolated_stop_1']);
+    const input = readDeploymentIntent(restored[0], state.getState().deploymentIntents![restored[0].id]);
+    assert.equal(input.configuredEnv.TOKEN, 'synthetic-stop-original');
+    assert.equal(input.profiles[0].command, 'node original-api.js');
+    assert.equal(restored[0].commitSha, 'c'.repeat(40));
+    const decision = coordinator.begin({ projectId: 'drill', branchId: 'drill-b', kind: 'stop', trigger: 'manual' });
+    assert.equal(decision.status, 'started');
+    await runs.persistBranchCancellation('drill', 'drill-b', decision.lease);
+    for (const id of ['dr_isolated_stop_1', 'dr_isolated_stop_2']) {
+      const row = await handle.deploymentRunsCollection().findOne({ _id: id });
+      assert.equal(row?.doc.status, 'cancelled'); assert.equal(row?.executionIntent, undefined);
+    }
+    process.send?.({ phase: 'stop-confirmed', scope, restoredOriginalRun: restored[0].id, originalInputPreserved: true, confirmed: true, runCount: runs.list().length });
+  } else if (mode === 'stop-inspect') {
+    assert.equal(runs.restoreQueued(coordinator).length, 0);
+    assert.equal(coordinator.drainReady().length, 0); assert.equal(state.getDeploymentIntents().length, 0);
+    for (const id of ['dr_isolated_stop_1', 'dr_isolated_stop_2']) assert.equal(runs.get(id)?.status, 'cancelled');
+    process.send?.({ phase: 'stop-restarted', scope, restored: 0, runCount: runs.list().length, privateInputCleared: true });
   } else if (mode === 'inspect') {
     assert.equal(runs.restoreQueued(coordinator).length, 0); assert.equal(coordinator.drainReady().length, 0);
     runs.reconcileOrphanedByRestart(new Date('2099-01-01T00:00:00Z')); await runs.flush();
@@ -170,6 +230,11 @@ export async function main(): Promise<void> {
       const inspected = await runWorker('inspect', scope); (report.checks as unknown[]).push(inspected);
       assert.equal(accepted.runId, claimed.runId); assert.equal(accepted.operationId, claimed.operationId); assert.equal(accepted.generation, claimed.generation);
       assert.equal(inspected.runCount, scope === 'full' ? 1 : 2);
+    }
+    for (const mode of ['stop-partial', 'stop-retry', 'stop-inspect']) {
+      const result = await runWorker(mode, 'full'); (report.checks as unknown[]).push(result);
+      if (mode === 'stop-partial') assert.equal(result.confirmed, false);
+      else assert.equal(result.runCount, 4);
     }
     report.verdict = 'passed';
   } finally {

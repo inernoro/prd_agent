@@ -15,6 +15,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { captureDeploymentInput } from '../../src/services/deployment-input.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import { ManagedProjectService } from '../../src/services/managed-project.js';
 import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
@@ -5213,6 +5214,93 @@ describe('Branch Routes', () => {
       expect(mock.commands.some((command) =>
         command.includes('docker run -d') && command.includes('--name cds-race-delete-during-runservice-api'),
       )).toBe(false);
+    });
+
+    async function seedStopRecovery(remote = false): Promise<string> {
+      const id = 'durable-stop';
+      const branch: BranchEntry = { id, projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'running', createdAt: new Date().toISOString(), services: { api: { profileId: 'api', containerName: 'durable-stop-api', hostPort: 10001, status: 'running' } } };
+      if (remote) {
+        branch.executorId = 'remote-stop';
+        registryNodes.push({ id: 'remote-stop', role: 'worker', host: '127.0.0.1', port: 12345 });
+      }
+      stateService.addBranch(branch);
+      branchOperationCoordinator.begin({ projectId: 'default', branchId: id, kind: 'deploy', trigger: 'manual', commitSha: 'a'.repeat(40), commitPinned: true });
+      const queuedRequest = { projectId: 'default', branchId: id, kind: 'deploy' as const, trigger: 'webhook' as const,
+        commitSha: 'b'.repeat(40), commitPinned: true, configHash: 'stop-config' };
+      const queued = branchOperationCoordinator.begin(queuedRequest);
+      const input = captureDeploymentInput(branch, [{ id: 'api', projectId: 'default', name: 'API', dockerImage: 'node', command: 'node original.js', workDir: '.', containerPort: 3000 }], { TOKEN: 'synthetic-stop-input' });
+      input.configHash = 'stop-config';
+      const run = await deploymentRunService.begin({ projectId: 'default', branchId: id, trigger: 'webhook', commitSha: queuedRequest.commitSha,
+        configHash: 'stop-config', initialStatus: 'queued', operationId: queued.operationId, operationGeneration: queued.generation,
+        executionInput: { request: queuedRequest, input } });
+      await stateService.flush();
+      return run.id;
+    }
+
+    it.each([false, true])('停止旧队列保存失败时不得停止本地容器或发送远端请求，remote=%s', async (remote) => {
+      const runId = await seedStopRecovery(remote);
+      const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(new Error('synthetic stop persistence failure'));
+      const originalFetch = globalThis.fetch, calls: string[] = [];
+      globalThis.fetch = (async (url: RequestInfo | URL) => { calls.push(String(url)); return new Response('{}', { status: 200 }); }) as typeof fetch;
+      try {
+        const result = await request(server, 'POST', '/api/branches/durable-stop/stop');
+        expect(result.status).toBe(503);
+        expect(mock.commands.some((command) => command.startsWith('docker stop '))).toBe(false);
+        expect(calls).toEqual([]);
+        const restarted = new StateService(path.join(tmpDir, 'state.json')); restarted.load();
+        const recovered = new DeploymentRunService(restarted);
+        expect(recovered.restoreQueued(new BranchOperationCoordinator()).map((run) => run.id)).toEqual([runId]);
+      } finally { rename.mockRestore(); globalThis.fetch = originalFetch; }
+    });
+
+    it('停止返回成功前原队列及最终分支状态落盘，立即重启不恢复旧待办', async () => {
+      const runId = await seedStopRecovery();
+      const result = await request(server, 'POST', '/api/branches/durable-stop/stop');
+      expect(result.status).toBe(200);
+      const restarted = new StateService(path.join(tmpDir, 'state.json')); restarted.load();
+      const recovered = new DeploymentRunService(restarted);
+      expect(recovered.restoreQueued(new BranchOperationCoordinator())).toEqual([]);
+      expect(recovered.get(runId)?.status).toBe('cancelled');
+      expect(restarted.getDeploymentIntents()).toEqual([]);
+      expect(restarted.getBranch('durable-stop')).toMatchObject({ status: 'idle', services: { api: { status: 'stopped' } } });
+    });
+
+    it('停止等待容器时被重置取代，不继续停止下一服务或改写新状态', async () => {
+      await seedStopRecovery();
+      const branch = stateService.getBranch('durable-stop')!;
+      branch.services.web = { profileId: 'web', containerName: 'durable-stop-web', hostPort: 10002, status: 'running' };
+      await stateService.flush();
+      let started!: () => void, release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const reached = new Promise<void>((resolve) => { started = resolve; });
+      const stop = vi.spyOn(containerService, 'stop').mockImplementation(async () => { started(); await gate; });
+      const stopping = request(server, 'POST', '/api/branches/durable-stop/stop');
+      try {
+        await reached;
+        const reset = await request(server, 'POST', '/api/branches/durable-stop/reset');
+        expect(reset.status).toBe(200);
+        release();
+        const result = await stopping;
+        expect(result.status).toBe(409);
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(stop.mock.calls[0][0]).toBe('durable-stop-api');
+        expect(branch.lastStoppedAt).toBeUndefined();
+      } finally { release(); await stopping; stop.mockRestore(); }
+    });
+
+    it.each(['DELETE', 'reset'])('取消记录保存失败时%s不得移除分支或确认重置', async (action) => {
+      const runId = await seedStopRecovery();
+      const rename = vi.spyOn(fs.promises, 'rename').mockRejectedValue(new Error('synthetic cancellation persistence failure'));
+      try {
+        const result = await request(server, action === 'DELETE' ? 'DELETE' : 'POST',
+          '/api/branches/durable-stop' + (action === 'DELETE' ? '' : '/reset'));
+        expect(result.status).toBeGreaterThanOrEqual(400);
+        expect(stateService.getBranch('durable-stop')?.status).toBe('running');
+        expect(mock.commands.some((command) => command.startsWith('docker stop ') || command.startsWith('docker rm '))).toBe(false);
+        const restarted = new StateService(path.join(tmpDir, 'state.json')); restarted.load();
+        expect(new DeploymentRunService(restarted).restoreQueued(new BranchOperationCoordinator()).map((run) => run.id)).toEqual([runId]);
+      } finally { rename.mockRestore(); }
     });
 
     it('manual stop clears an active and queued webhook deploy without dispatching the queued commit', async () => {

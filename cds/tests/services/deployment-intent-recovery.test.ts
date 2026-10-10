@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { StateService } from '../../src/services/state.js';
+import { StateService, MAX_DEPLOYMENT_RUNS_PER_PROJECT } from '../../src/services/state.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
@@ -97,7 +97,60 @@ describe('已受理部署的持久输入与重启恢复', () => {
     await reopened.flush(); await state.flush();
   });
 
-  it('真实进程受理后被SIGKILL仍恢复同一run；领取后再次SIGKILL不重复执行', async () => {
+  it('正在确认的取消记录不被其他分支新增历史裁剪，确认后才允许回收', async () => {
+    const { run, service } = await accepted();
+    service.cancel(run.id, 'stop');
+    state.addBranch({ id: 'other', projectId: 'p', branch: 'other', worktreePath: dir, status: 'idle', createdAt: new Date().toISOString(), services: {} });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = fs.promises.rename.bind(fs.promises);
+    const rename = vi.spyOn(fs.promises, 'rename').mockImplementation(async (...args) => { await gate; await original(...args); });
+    const write = state.flushDeploymentRun(run.id);
+    try {
+      for (let i = 0; i < MAX_DEPLOYMENT_RUNS_PER_PROJECT + 1; i++) {
+        state.addDeploymentRun({ ...run, id: `other-${i}`, branchId: 'other', status: 'failed', startedAt: `2099-01-01T00:00:${String(i).padStart(2, '0')}.000Z` });
+      }
+      expect(state.getDeploymentRun(run.id)?.status).toBe('cancelled');
+      release(); await write;
+      const reopened = new StateService(file); reopened.load();
+      expect(new DeploymentRunService(reopened).restoreQueued(new BranchOperationCoordinator())).toEqual([]);
+      state.addDeploymentRun({ ...run, id: 'after-confirmation', status: 'failed', startedAt: '2099-02-01T00:00:00.000Z' });
+      expect(state.getDeploymentRun(run.id)).toBeUndefined();
+    } finally { release(); await write.catch(() => {}); rename.mockRestore(); }
+  });
+
+  it('取消保存期间被新操作取代时旧停止者失去执行资格；不取消别的项目或不重叠服务', async () => {
+    const { run, service, coordinator } = await accepted('api');
+    service.bindOperationCoordinator(coordinator);
+    const stop = coordinator.begin({ projectId: 'p', branchId: 'b', profileId: 'api', kind: 'cleanup-orphans', trigger: 'manual' });
+    expect(stop.status).toBe('started');
+    const other = await accepted('web');
+    state.addProject({ id: 'q', name: 'Q', slug: 'q' } as any);
+    state.addBranch({ id: 'qb', projectId: 'q', branch: 'main', worktreePath: dir, status: 'idle', createdAt: new Date().toISOString(), services: {} });
+    state.addDeploymentRun({ ...other.run, id: 'other-project', projectId: 'q', branchId: 'qb' });
+    const original = state.flushDeploymentRun.bind(state);
+    let changed = false;
+    const save = vi.spyOn(state, 'flushDeploymentRun').mockImplementation(async (id) => {
+      await original(id);
+      if (!changed) { changed = true; coordinator.cancelBranch('b', 'new owner'); }
+    });
+    try {
+      await expect(service.persistBranchCancellation('p', 'b', stop.lease)).rejects.toThrow('no longer current');
+      expect(service.get(run.id)?.status).toBe('cancelled');
+      expect(service.get(other.run.id)?.status).toBe('queued');
+      expect(state.getDeploymentRun('other-project')?.status).toBe('queued');
+    } finally { save.mockRestore(); }
+  });
+
+  it('部署租约不能冒用终止权限取消合法待办', async () => {
+    const { run, service, coordinator } = await accepted();
+    const active = coordinator.getActiveOperations('b')[0];
+    const lease = { ...active, isCurrent: () => true, assertCurrent: () => {} };
+    await expect(service.persistBranchCancellation('p', 'b', lease)).rejects.toThrow('terminating owner');
+    expect(service.get(run.id)?.status).toBe('queued');
+  });
+
+  it.each(['claim', 'stop'])('真实进程受理后被SIGKILL仍恢复同一run；%s确认后再次SIGKILL不恢复旧任务', async (mode) => {
     const fixture = fileURLToPath(new URL('../fixtures/deployment-intent-child.ts', import.meta.url));
     async function child(mode: string): Promise<any> {
       const processChild = fork(fixture, [file, mode], { cwd: fileURLToPath(new URL('../../', import.meta.url)),
@@ -120,10 +173,14 @@ describe('已受理部署的持久输入与重启恢复', () => {
     // 避免父实例尚未保存的初始化状态覆盖子进程结果。
     await state.flush();
     const accepted = await child('accept');
-    const claimed = await child('claim');
-    expect(claimed).toMatchObject({ phase: 'claimed', runId: accepted.runId, operationId: accepted.operationId,
-      generation: accepted.generation, command: 'node original.js', secretPreserved: true, prebuiltGated: true, runCount: 1 });
-    expect(await child('inspect')).toEqual({ phase: 'restarted', restored: 0, pending: false, runCount: 1, status: 'failed' });
+    const confirmed = await child(mode);
+    if (mode === 'claim') {
+      expect(confirmed).toMatchObject({ phase: 'claimed', runId: accepted.runId, operationId: accepted.operationId,
+        generation: accepted.generation, command: 'node original.js', secretPreserved: true, prebuiltGated: true, runCount: 1 });
+    } else {
+      expect(confirmed).toMatchObject({ phase: 'stopped', runId: accepted.runId, status: 'cancelled', privateInputCleared: true });
+    }
+    expect(await child('inspect')).toEqual({ phase: 'restarted', restored: 0, pending: false, runCount: 1, status: mode === 'claim' ? 'failed' : 'cancelled' });
   }, 30000);
 
   it('较新的覆盖范围终态阻止旧队列恢复，重建续接按原受理顺序保留其后任务', async () => {

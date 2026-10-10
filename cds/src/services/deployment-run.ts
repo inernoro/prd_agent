@@ -7,7 +7,8 @@ import type {
   DeploymentRunTrigger,
 } from '../types.js';
 import type { StateService } from './state.js';
-import type { BranchOperationCoordinator } from './branch-operation-coordinator.js';
+import type { BranchOperationCoordinator, BranchOperationLease } from './branch-operation-coordinator.js';
+import { cancelsBranchDeployments } from './branch-operation-coordinator.js';
 import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
 
 /**
@@ -124,6 +125,23 @@ export class DeploymentRunService {
 
   async flush(): Promise<void> {
     await this.stateService.flush();
+  }
+
+  /** 终止操作先确认覆盖范围内的取消记录，成功后才可停止或删除实际实例。 */
+  async persistBranchCancellation(projectId: string, branchId: string, lease?: BranchOperationLease | null): Promise<void> {
+    if (lease && (!cancelsBranchDeployments(lease.request.kind) || lease.branchId !== branchId || (lease.request.projectId || 'default') !== projectId)) {
+      throw new Error('Durable cancellation requires the current terminating owner');
+    }
+    lease?.assertCurrent('before durable deployment cancellation');
+    const profileId = lease?.request.profileId;
+    const covered = this.list({ projectId, branchId }).filter((run) =>
+      (!profileId || !run.profileId || run.profileId === profileId)
+      && (!lease || run.operationGeneration === undefined || run.operationGeneration < lease.generation));
+    for (const run of covered) {
+      if (!TERMINAL_STATUSES.has(run.status)) this.cancel(run.id, '终止操作取消原部署，旧待办不再恢复', 'operation-stop');
+    }
+    await Promise.all(covered.map((run) => this.stateService.flushDeploymentRun(run.id)));
+    lease?.assertCurrent('after durable deployment cancellation');
   }
 
   /** 领取必须先可靠迁移到 preparing，避免已执行任务仍以 queued 落盘而重复恢复。 */

@@ -357,6 +357,7 @@ export interface ProjectRemovalSummary {
 
 export class StateService {
   private state: CdsState = emptyState();
+  private readonly criticalDeploymentRunReferences = new Map<string, number>();
   private readonly filePath: string;
   private readonly repoRoot?: string;
   /** P3: the persistence seam. Mutable — setBackingStore() swaps it
@@ -1053,8 +1054,15 @@ export class StateService {
   }
 
   async flushDeploymentRun(id: string): Promise<void> {
-    if (this.backingStore.flushDeploymentRun) await this.backingStore.flushDeploymentRun(id);
-    else await this.flush();
+    this.criticalDeploymentRunReferences.set(id, (this.criticalDeploymentRunReferences.get(id) || 0) + 1);
+    try {
+      if (this.backingStore.flushDeploymentRun) await this.backingStore.flushDeploymentRun(id);
+      else await this.flush();
+    } finally {
+      const remaining = (this.criticalDeploymentRunReferences.get(id) || 1) - 1;
+      if (remaining) this.criticalDeploymentRunReferences.set(id, remaining);
+      else this.criticalDeploymentRunReferences.delete(id);
+    }
   }
 
   getState(): Readonly<CdsState> {
@@ -1672,6 +1680,7 @@ export class StateService {
     if (overflow <= 0) return;
     for (const run of runs) {
       if (overflow <= 0) break;
+      if (this.criticalDeploymentRunReferences.has(run.id)) continue;
       if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
       delete this.state.deploymentRuns?.[run.id];
       delete this.state.deploymentIntents?.[run.id];
