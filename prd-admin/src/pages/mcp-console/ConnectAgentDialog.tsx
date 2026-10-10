@@ -16,12 +16,11 @@ import type { McpCapabilityDto, McpVisibleToolsDto } from '@/services/contracts/
 import { toast } from '@/lib/toast';
 import { copyToClipboard } from './clipboard';
 import { capabilityVisual } from './capabilityRegistry';
+import { CLIENT_ORDER, CLIENT_REGISTRY, type ClientKind } from './clientRegistry';
 import { autoPicks, picksToScopes, samePicks, type CapabilityPicks } from './scopePlan';
 
 /** 只有两屏：填名字 / 拿配置。中间那道「选能力」被收进高级设置了。 */
 type Step = 'form' | 'connect';
-
-type ClientKind = 'claude-code' | 'claude-desktop' | 'codex';
 
 /**
  * 授权自检的等待上限。
@@ -75,7 +74,7 @@ export function ConnectAgentDialog({
   onCreated: () => void;
 }) {
   const [step, setStep] = useState<Step>('form');
-  const [clientName, setClientName] = useState('我的 Claude Code');
+  const [clientName, setClientName] = useState('我的 WorkBuddy');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState('');
@@ -85,7 +84,7 @@ export function ConnectAgentDialog({
   const [checkError, setCheckError] = useState<string | null>(null);
   // 留着密钥 id 才能重试自检。明文不能重来，自检可以。
   const [issuedKeyId, setIssuedKeyId] = useState<string | null>(null);
-  const [configTab, setConfigTab] = useState<ClientKind>('claude-code');
+  const [configTab, setConfigTab] = useState<ClientKind>('workbuddy');
 
   const defaults = useMemo(() => autoPicks(capabilities), [capabilities]);
   const [picks, setPicks] = useState<CapabilityPicks>(defaults);
@@ -113,7 +112,8 @@ export function ConnectAgentDialog({
 
   const reset = useCallback(() => {
     setStep('form');
-    setClientName('我的 Claude Code');
+    setClientName('我的 WorkBuddy');
+    setConfigTab('workbuddy');
     setAdvancedOpen(false);
     setPicks(defaults);
     setDirty(false);
@@ -193,37 +193,42 @@ export function ConnectAgentDialog({
     await runSelfCheck(keyId);
   }, [clientName, scopes, scopeMode, onCreated, runSelfCheck]);
 
-  const configSnippet = useMemo(() => {
-    const key = plaintext || 'sk-ak-你的密钥';
-    if (configTab === 'claude-code') {
-      return `claude mcp add --transport http map \\\n  ${endpointUrl} \\\n  --header "Authorization: Bearer ${key}"`;
-    }
-    if (configTab === 'claude-desktop') {
-      return JSON.stringify(
-        {
-          mcpServers: {
-            map: { type: 'http', url: endpointUrl, headers: { Authorization: `Bearer ${key}` } },
-          },
-        },
-        null,
-        2,
-      );
-    }
-    // Codex 的键是 http_headers（map<string,string>），不是嵌套的 [mcp_servers.map.headers] 表 ——
-    // 写成嵌套表 TOML 照样解析得过，但 Codex 认不出来，鉴权头被静默丢掉，
-    // 请求会以匿名身份打到需要密钥的 MCP 端点。见 Codex 配置参考 mcp_servers.<id>.http_headers。
-    return `[mcp_servers.map]\nurl = "${endpointUrl}"\nhttp_headers = { Authorization = "Bearer ${key}" }`;
-  }, [configTab, endpointUrl, plaintext]);
+  const configSnippet = useMemo(
+    () => CLIENT_REGISTRY[configTab].snippet(endpointUrl, plaintext || 'sk-ak-你的密钥'),
+    [configTab, endpointUrl, plaintext],
+  );
 
   return (
     <Dialog
       open={open}
       onOpenChange={handleClose}
       title="接入你的智能体"
-      description="复制一段配置粘进 Claude Code、Codex，它就能替你生图、写稿、整理知识库、把网页托管出来"
+      description="复制配置接入 WorkBuddy、Codex 或 Claude，使用 MAP 工具。"
       maxWidth={560}
       content={
         <div className="flex flex-col gap-4">
+          <div className="flex gap-1 rounded-[11px] p-1" role="group" aria-label="选择客户端" style={{ background: 'var(--tab-container-bg)' }}>
+            {CLIENT_ORDER.map((client) => (
+              <button
+                key={client}
+                type="button"
+                aria-pressed={configTab === client}
+                onClick={() => {
+                  if (clientName === `我的 ${CLIENT_REGISTRY[configTab].label}`) {
+                    setClientName(`我的 ${CLIENT_REGISTRY[client].label}`);
+                  }
+                  setConfigTab(client);
+                }}
+                className="flex-1 rounded-[9px] py-1.5 text-[12.5px] font-medium"
+                style={configTab === client
+                  ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
+                  : { background: 'transparent', color: 'var(--text-muted)' }}
+              >
+                {CLIENT_REGISTRY[client].label}
+              </button>
+            ))}
+          </div>
+
           {step === 'form' && (
             <>
               <label className="flex flex-col gap-1.5">
@@ -287,31 +292,9 @@ export function ConnectAgentDialog({
                 <CopyButton text={plaintext} label="复制" />
               </div>
 
-              <div className="flex gap-1 rounded-[11px] p-1" style={{ background: 'var(--tab-container-bg)' }}>
-                {([
-                  { key: 'claude-code' as const, label: 'Claude Code' },
-                  { key: 'claude-desktop' as const, label: 'Claude 桌面' },
-                  { key: 'codex' as const, label: 'Codex' },
-                ]).map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setConfigTab(t.key)}
-                    className="flex-1 rounded-[9px] py-1.5 text-[12.5px] font-medium"
-                    style={
-                      configTab === t.key
-                        ? { background: 'var(--bg-card)', color: 'var(--text-primary)' }
-                        : { background: 'transparent', color: 'var(--text-muted)' }
-                    }
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
               <div className="flex flex-col gap-2">
                 <span className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-                  {configTab === 'claude-code' ? '在终端里跑这一行' : '粘进配置文件'}
+                  {CLIENT_REGISTRY[configTab].instruction}
                 </span>
                 <pre
                   className="overflow-x-auto rounded-[11px] px-3.5 py-3 text-[11.5px] leading-relaxed"
@@ -406,6 +389,18 @@ export function ConnectAgentDialog({
             </div>
           )}
 
+          <details
+            className="rounded-[11px] px-3.5 py-3 text-[12px] leading-relaxed"
+            style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+          >
+            <summary className="cursor-pointer font-medium">MCP 要搭配技能吗？</summary>
+            <div className="mt-2 flex flex-col gap-1.5">
+              <p>MCP 提供工具，连接后就能直接用；技能告诉智能体怎样组合工具、选择配置和检查结果。简单任务不必先装技能。</p>
+              <p>文章批量配图等多步骤任务推荐搭配技能：先查可用风格、水印和尺寸，再按你的要求生成，等待完成并核对图片；重试时沿用请求编号，避免重复生成。</p>
+              <p>技能需要另外安装到客户端。复制这里的 MCP 配置不会自动安装技能，也不会增加这把钥匙的权限。</p>
+            </div>
+          </details>
+
           {/* 底部动作 */}
           <div className="flex items-center gap-2.5 pt-0.5">
             {step === 'form' && (
@@ -441,7 +436,7 @@ export function ConnectAgentDialog({
           <p className="text-center text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
             {step === 'form'
               ? '有效期 90 天；明文只显示一次。续期在「海鲜市场 → 开放接口 → 密钥」那一屏（接入台这一页暂时只能调上限和断开）。'
-              : '粘完重启客户端，跟它说一句「把这周周报做成一页网页发出来」就能用。'}
+              : '保存配置后在客户端检查 MAP 连接状态，再试一句「列出我可用的风格、水印和图片尺寸」。'}
           </p>
         </div>
       }
