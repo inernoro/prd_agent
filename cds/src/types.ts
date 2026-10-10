@@ -116,6 +116,8 @@ export interface BuildProfile {
    * 推断结果会在画布上标成「推断」；声明后覆盖一切推断。
    */
   role?: ServiceRole;
+  /** Candidate replacement constraint. Workers and writable mounts cannot opt into parallel consumption. */
+  replacementStrategy?: 'parallel' | 'stop-and-restore';
   /**
    * 显式声明的调用关系（compose label `cds.calls`，逗号分隔的服务 id）。环境变量里推不出
    * 「谁调用谁」时用它补上，画布按声明画边并标来源为声明。
@@ -1277,6 +1279,8 @@ export interface BranchEntry {
 export interface ServiceState {
   profileId: string;
   containerName: string;
+  /** Actual immutable Docker ID captured at the owned replacement boundary; missing legacy IDs remain unknown. */
+  containerId?: string;
   /** Host port allocated for this service */
   hostPort: number;
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
@@ -1379,10 +1383,15 @@ export interface DeploymentCandidateRecord {
   /** Both graphs remain capacity reservations until actual reconciliation releases them. */
   serving: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
   services: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
+  /** Durable stop intent; unknown create outcomes must not restore a single consumer blindly. */
+  stopBeforeStart?: string[];
 }
 
 export interface DeploymentVersionProfile {
   profileId: string;
+  role?: ServiceRole;
+  replacementStrategy?: BuildProfile['replacementStrategy'];
+  cacheMounts?: CacheMount[];
   name: string;
   artifactImage: string;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';

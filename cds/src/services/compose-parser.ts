@@ -21,6 +21,11 @@ import { parseWebEntryLabels } from './web-entry.js';
 import { isProbePrefix } from './topology-lint.js';
 import { normalizeBuildScope } from './prebuilt-reuse.js';
 
+function parseReplacementStrategy(value: string): NonNullable<BuildProfile['replacementStrategy']> {
+  if (value !== 'parallel' && value !== 'stop-and-restore') throw new Error('replacement_strategy: unknown cds.replacement-strategy');
+  return value;
+}
+
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
   id: string;
@@ -609,6 +614,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(subdomain ? { subdomain } : {}),
           ...(webEntry ? { webEntry } : {}),
           ...(role ? { role } : {}),
+          ...(labels['cds.replacement-strategy'] ? { replacementStrategy: parseReplacementStrategy(labels['cds.replacement-strategy']) } : {}),
           ...(calls && calls.length ? { calls } : {}),
           ...(buildScope ? { buildScope } : {}),
         });
@@ -819,6 +825,7 @@ export function toCdsCompose(
       entryLabels['cds.calls'] = p.calls.join(',');
     }
     if (p.prebuiltCommitPolicy === 'exact') entryLabels['cds.prebuilt-commit-policy'] = 'exact';
+    if (p.replacementStrategy) entryLabels['cds.replacement-strategy'] = p.replacementStrategy;
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {
       entryLabels['cds.prebuilt-image'] = 'true';

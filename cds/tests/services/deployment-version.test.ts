@@ -55,6 +55,26 @@ describe('DeploymentVersionService', () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('includes replacement role, strategy, mount and exact policy in the frozen configuration', () => {
+    const service = new DeploymentVersionService(stateService);
+    const baseline = service.computeConfigHash([profile()], {});
+    for (const change of [{ role: 'worker' as const }, { replacementStrategy: 'stop-and-restore' as const },
+      { cacheMounts: [{ hostPath: 'data', containerPath: '/data' }] }, { prebuiltCommitPolicy: 'exact' as const }]) {
+      expect(service.computeConfigHash([profile(change)], {})).not.toBe(baseline);
+    }
+  });
+
+  it('materializes frozen replacement constraints rather than current weaker declarations', () => {
+    const service = new DeploymentVersionService(stateService);
+    const original = profile({ role: 'worker', replacementStrategy: 'stop-and-restore', cacheMounts: [{ hostPath: 'data', containerPath: '/data' }] });
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'a'.repeat(40), configHash: 'frozen',
+      profiles: [original], branch, createdByRunId: 'run' });
+    original.cacheMounts![0].hostPath = 'changed-after-capture';
+    const restored = service.materializeProfiles(version, [profile({ role: 'api', replacementStrategy: 'parallel', cacheMounts: [] })])[0];
+    expect(restored.role).toBe('worker'); expect(restored.replacementStrategy).toBe('stop-and-restore');
+    expect(restored.cacheMounts).toEqual([{ hostPath: 'data', containerPath: '/data' }]);
+  });
+
   it('creates an immutable content-addressed version and reuses the same identity', () => {
     const service = new DeploymentVersionService(stateService, () => new Date('2026-07-10T01:00:00.000Z'));
     branch.services.web = {

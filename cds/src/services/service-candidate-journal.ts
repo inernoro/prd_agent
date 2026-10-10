@@ -6,7 +6,7 @@ export function snapshotCandidateServices(services: Record<string, ServiceState>
   const result: DeploymentCandidateRecord['services'] = Object.create(null);
   for (const [id, service] of Object.entries(services).sort(([a], [b]) => a.localeCompare(b))) {
     // Explicit projection prevents logs, credentials and future arbitrary config fields entering this ledger.
-    result[id] = { profileId: service.profileId, containerName: service.containerName, hostPort: service.hostPort,
+    result[id] = { profileId: service.profileId, containerName: service.containerName, containerId: service.containerId, hostPort: service.hostPort,
       status: service.status, deployedMode: service.deployedMode, deployedImage: service.deployedImage,
       deployedArtifactRef: service.deployedArtifactRef, deployedPrebuilt: service.deployedPrebuilt,
       deployedCommitSha: service.deployedCommitSha };
@@ -41,7 +41,7 @@ const NEXT: Record<Phase, readonly Phase[]> = {
 export class CandidateJournal {
   constructor(private readonly state: StateService) {}
 
-  async prepare(runId: string, candidate: BranchEntry): Promise<DeploymentCandidateRecord> {
+  async prepare(runId: string, candidate: BranchEntry, stopBeforeStart?: readonly string[]): Promise<DeploymentCandidateRecord> {
     const run = this.state.getDeploymentRun(runId);
     const serving = this.state.getBranch(candidate.id);
     if (!run || !serving || run.branchId !== candidate.id || run.projectId !== candidate.projectId ||
@@ -73,6 +73,12 @@ export class CandidateJournal {
     }
     const record: DeploymentCandidateRecord = { operationId: run.operationId, targetSha: target, configHash: run.configHash,
       networkName, phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshotCandidateServices(serving.services), services: snapshotCandidateServices(candidate.services) };
+    if (stopBeforeStart?.length) {
+      if (new Set(stopBeforeStart).size !== stopBeforeStart.length || stopBeforeStart.some(id => !serving.services[id]?.containerId)) {
+        throw new Error('candidate_stop_intent: captured serving identity required');
+      }
+      record.stopBeforeStart = [...stopBeforeStart].sort();
+    }
     this.state.updateDeploymentRun(runId, current => { current.candidate = record; });
     await this.state.flush(); // The caller must await this barrier before Docker create.
     return record;

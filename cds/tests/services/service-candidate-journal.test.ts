@@ -21,6 +21,17 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 const candidate = (port = 10002) => createCandidateRuntime(branch, [{ id: 'api' } as BuildProfile], 'op-test', () => port);
 describe('P3 durable private candidate reservations', () => {
+  it('persists immutable serving ID and stop intent before a single consumer can be stopped', async () => {
+    const journal = new CandidateJournal(state);
+    await expect(journal.prepare(runId, candidate(), ['api'])).rejects.toThrow('candidate_stop_intent');
+    expect(state.getDeploymentRun(runId)!.candidate).toBeUndefined();
+    branch.services.api.containerId = 'c'.repeat(64);
+    await journal.prepare(runId, candidate(), ['api']);
+    const restored = new StateService(path.join(dir, 'state.json')); restored.load();
+    expect(restored.getDeploymentRun(runId)!.candidate!.stopBeforeStart).toEqual(['api']);
+    expect(restored.getDeploymentRun(runId)!.candidate!.serving.api.containerId).toBe('c'.repeat(64));
+  });
+
   it('keeps the canonical phase at its durable value and rejects a competing advance while flushing', async () => {
     const journal = new CandidateJournal(state); const graph = candidate();
     await journal.prepare(runId, graph);
