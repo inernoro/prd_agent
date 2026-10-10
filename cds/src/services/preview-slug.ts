@@ -70,6 +70,7 @@ export interface PreviewProjectIdentity {
   id?: string | null;
   slug?: string | null;
   identityHistory?: ProjectIdentityRecord[];
+  mirror?: { routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] } };
   name?: string | null;
   gitRepoUrl?: string | null;
   githubRepoFullName?: string | null;
@@ -241,7 +242,7 @@ export function previewProjectSlugCandidates(
 
 /** 历史名称只用于旧入口和资源兼容，不是第二份可编辑配置。 */
 export function projectHistoricalSlugs(project: PreviewProjectIdentity | undefined | null): string[] {
-  const values = [project?.slug];
+  const values = [project?.slug, ...(project?.mirror?.routingIdentity?.historicalSlugs || [])];
   for (const record of project?.identityHistory || []) {
     for (const snapshot of [record.before, record.after]) {
       if (snapshot) values.push(snapshot.slug, snapshot.originalIdentifier, snapshot.previewIdentifier);
@@ -258,7 +259,7 @@ export function projectReservedIdentifiers(project: PreviewProjectIdentity): str
 /** 已创建资源的名字不随项目改名重算；关联始终由项目 id 及资源 id 保存。 */
 export function projectResourceNamespace(project: PreviewProjectIdentity): string {
   const initial = project.identityHistory?.[0]?.after;
-  return initial?.originalIdentifier || initial?.slug || project.slug || project.id || 'default';
+  return project.mirror?.routingIdentity?.resourceNamespace || initial?.originalIdentifier || initial?.slug || project.slug || project.id || 'default';
 }
 
 export function previewSlugMatchPercent(

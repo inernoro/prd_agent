@@ -23,6 +23,7 @@
  * 相同）重复启动不重写，新镜像整体替换旧镜像播下的条目，镜像里消失的条目一并删掉。
  */
 import fs from 'node:fs';
+import { projectHistoricalSlugs, projectResourceNamespace } from './preview-slug.js';
 import { importLegacyProjectSlug } from './project-identity-history.js';
 import { profileHostsPreviewInstance } from './preview-instance.js';
 import path from 'node:path';
@@ -159,7 +160,7 @@ function redactProfile(profile: BuildProfile): BuildProfile {
 }
 
 const PROJECT_KEYS: ReadonlyArray<keyof Project> = [
-  'id', 'slug', 'name', 'aliasName', 'identityHistory', 'description', 'kind', 'deliveryMode',
+  'id', 'slug', 'name', 'aliasName', 'description', 'kind', 'deliveryMode',
   'inheritGlobalEnv', 'infraIsolation', 'resourceChipDisplay', 'branchGroups', 'gitRepoUrl', 'gitDefaultBranch',
   'cloneStatus', 'dockerNetwork', 'createdAt', 'updatedAt',
 ];
@@ -176,7 +177,9 @@ function redactProject(project: Project, tag: PreviewMirrorTag): Project {
     if (v !== undefined) (out as Record<string, unknown>)[k] = v;
   }
   if (project.managedProfiles) out.managedProfiles = project.managedProfiles.map(redactProfile);
-  return { ...deepRedactForMirror(out as Project), mirror: tag };
+  return { ...deepRedactForMirror(out as Project), mirror: { ...tag, routingIdentity: {
+    resourceNamespace: projectResourceNamespace(project), historicalSlugs: projectHistoricalSlugs(project),
+  } } };
 }
 
 /** 分支：标量字段全拷，嵌套结构逐个处理，重的 / 带 env 的 / 副本集的不带或脱敏。 */
@@ -336,6 +339,7 @@ export function findMirrorLeaks(mirror: PreviewMirrorFile): string[] {
   const text = JSON.stringify(mirror);
   const leaks: string[] = [];
   if (/"(agentKeys|globalAgentKeys|principals|userCredentials|projectGrants|customEnv|githubCredentialUserId|statusPageToken)"\s*:/.test(text)) leaks.push('carries-credential-collections');
+  if (mirror.projects.some(project => project.identityHistory?.length)) leaks.push('carries-project-identity-history');
   // URL 的 userinfo 段无论 user:pass 还是只有 user（PAT 形式）都算凭据；自己打的码（***:***@ / ***@）先剥掉
   const stripped = text.replace(/:\/\/\*\*\*(?::\*\*\*)?@/g, '://');
   if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/?#]+@/i.test(stripped)) leaks.push('url-with-inline-credentials');
@@ -351,7 +355,10 @@ export function readPreviewMirror(repoRoot: string): PreviewMirrorFile | null {
   if (parsed?.version !== PREVIEW_MIRROR_VERSION || !Array.isArray(parsed.projects)) {
     throw new Error(`preview-mirror.json 版本不认识（version=${String(parsed?.version)}）`);
   }
-  parsed.projects = parsed.projects.map(importLegacyProjectSlug);
+  const hadHistory = parsed.projects.some(project => project.identityHistory?.length);
+  parsed.projects = parsed.projects.map(project => redactProject(importLegacyProjectSlug(project),
+    project.mirror || { capturedAt: parsed.capturedAt, source: 'parent-cds' }));
+  if (hadHistory) writePreviewMirror(repoRoot, parsed);
   return parsed;
 }
 

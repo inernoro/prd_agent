@@ -1988,7 +1988,7 @@ export class StateService {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }
     if (!project.mirror || !project.identityHistory?.length) {
-      project.identityHistory = [identityRecord(project, 'created', context)];
+      project.identityHistory = [identityRecord(project, project.mirror ? 'baseline' : 'created', context)];
     }
     this.state.projects.push(project);
     this.save();

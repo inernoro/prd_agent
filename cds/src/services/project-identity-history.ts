@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Project, ProjectIdentityRecord, ProjectIdentitySnapshot } from '../types.js';
 import { establishAgentOperationContext } from './agent-operation-context.js';
 
@@ -39,7 +39,8 @@ function safeRepository(raw: string | undefined): string {
     return url.toString();
   } catch {
     // SCP-style Git remotes are valid; never retain arbitrary credential-bearing text.
-    return /^[\w.-]+@[\w.-]+:[\w./-]+$/.test(raw) ? raw : '[仓库地址未记录：无法安全脱敏]';
+    return /^[\w.-]+@[\w.-]+:[\w./-]+$/.test(raw) ? raw
+      : `[仓库地址已脱敏：指纹 ${createHash('sha256').update(raw).digest('hex').slice(0, 16)}]`;
   }
 }
 
@@ -65,7 +66,8 @@ export function identityRecord(
 }
 
 export function identityChanged(before: Project, after: Project): boolean {
-  return JSON.stringify(projectIdentitySnapshot(before)) !== JSON.stringify(projectIdentitySnapshot(after));
+  return before.gitRepoUrl !== after.gitRepoUrl ||
+    JSON.stringify(projectIdentitySnapshot(before)) !== JSON.stringify(projectIdentitySnapshot(after));
 }
 
 /** 对外只显示一个 slug，旧快照中的原始字段仍留在存储中用于兼容取证。 */

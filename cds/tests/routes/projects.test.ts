@@ -769,6 +769,31 @@ describe('Projects router (P4 Part 2)', () => {
       expect(reloaded.getActivityLogs(id)).toHaveLength(StateService.ACTIVITY_LOG_MAX);
     });
 
+    it('records raw repository changes despite redaction and rejects stale writes', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Local', slug: 'local-history' });
+      expect(created.status).toBe(201);
+      const id = created.body.project.id;
+      const initial = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: '/srv/repo-a' });
+      expect(initial.status).toBe(200);
+      let version = initial.body.project.identityVersion;
+      for (const repository of ['/srv/repo-b', 'https://user:secret-one@example.com/repo.git', 'https://user:secret-two@example.com/repo.git']) {
+        const changed = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: repository, expectedIdentityVersion: version });
+        expect(changed.status).toBe(200);
+        expect(changed.body.project.identityVersion).not.toBe(version);
+        const stale = await request(server, 'PUT', `/api/projects/${id}`, { name: 'Stale', expectedIdentityVersion: version });
+        expect(stale.status).toBe(409);
+        version = changed.body.project.identityVersion;
+      }
+      const history = stateService.getProject(id)!.identityHistory!;
+      expect(history).toHaveLength(5);
+      expect(history[2].before?.repository).not.toBe(history[2].after.repository);
+      expect(history.at(-1)?.before?.repository).toBe('https://example.com/repo.git');
+      expect(history.at(-1)?.after.repository).toBe('https://example.com/repo.git');
+      expect(JSON.stringify(history)).not.toMatch(/secret-one|secret-two|\/srv\/repo/);
+      const unchanged = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: 'https://user:secret-two@example.com/repo.git', expectedIdentityVersion: version });
+      expect(unchanged.body.project.identityVersion).toBe(version);
+    });
+
     it('records the creation input source and paginates history without exposing it in project lists', async () => {
       const created = await request(server, 'POST', '/api/projects', { name: 'New', slug: 'explicit-history' });
       const id = created.body.project.id;
@@ -781,6 +806,9 @@ describe('Projects router (P4 Part 2)', () => {
       expect(second.body.records.at(-1).slugSource).toBe('explicit');
       expect(new Set([...first.body.records, ...second.body.records].map((entry: any) => entry.id)).size).toBe(53);
       expect(created.body.project.identityHistory).toBeUndefined();
+      const scoped = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': id });
+      expect(scoped.status).toBe(200);
+      expect(scoped.body.records).toHaveLength(50);
       const denied = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': 'other-project' });
       expect(denied.status).toBe(403);
       const invalid = await request(server, 'GET', `/api/projects/${id}/identity-history?before=missing`);

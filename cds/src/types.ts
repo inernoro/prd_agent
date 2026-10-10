@@ -897,6 +897,8 @@ export interface PreviewMirrorTag {
   previewUrl?: string;
   previewUrls?: string[];
   subject?: string;
+  /** 只读镜像的路由投影，不携带父实例的设置审计记录。 */
+  routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
 }
 
 export interface BranchEntry {

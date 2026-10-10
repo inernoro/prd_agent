@@ -162,6 +162,9 @@ function mirrorFullySeeded(
   if (!stampedProjects.every((p) => p.mirror?.capturedAt === mirror.capturedAt)) return false;
   if (!stampedBranches.every((b) => b.mirror?.capturedAt === mirror.capturedAt)) return false;
   if (stampedProjects.length !== mirror.projects.length || stampedBranches.length !== mirror.branches.length) return false;
+  // 同一采集时刻的旧镜像也要升级为不含父实例审计记录的路由投影。
+  if (!stampedProjects.every(p => JSON.stringify(p.mirror?.routingIdentity) ===
+    JSON.stringify(mirror.projects.find(source => source.id === p.id)?.mirror?.routingIdentity))) return false;
   const projectIds = new Set(stampedProjects.map((p) => p.id));
   const branchIds = new Set(stampedBranches.map((b) => b.id));
   const expectedProfiles = mirror.buildProfiles.filter((p) => projectIds.has(p.projectId)).length;

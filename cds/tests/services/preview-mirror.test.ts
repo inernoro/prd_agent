@@ -20,6 +20,7 @@ import {
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
 import { recordContainerSample, __resetContainerMetricsHistory } from '../../src/services/container-metrics-history.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../../src/types.js';
+import { projectHistoricalSlugs, projectResourceNamespace } from '../../src/services/preview-slug.js';
 
 const SRC = path.resolve(__dirname, '../../src');
 let tmp: string;
@@ -48,6 +49,50 @@ beforeEach(() => { __resetContainerMetricsHistory(); __resetLoadedPreviewMirror(
 afterEach(async () => { await flushAllJsonStateStores(); });
 
 describe('脱敏（不带凭据）', () => {
+  it('项目镜像只携带路由投影，磁盘与子实例不携带父实例设置审计', () => {
+    const parent = parentState();
+    parent.updateProject('map', { slug: 'renamed-map', gitRepoUrl: 'https://example.com/current.git' }, { actor: 'user:parent-private', requestId: 'parent-private-request' });
+    const source = parent.getProject('map')!;
+    const parentRecordIds = source.identityHistory!.map(record => record.id);
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const file = writePreviewMirror(tmp, mirror);
+    expect(mirror.projects[0].identityHistory).toBeUndefined();
+    const text = fs.readFileSync(file, 'utf8');
+    for (const privateValue of [...parentRecordIds, 'user:parent-private', 'parent-private-request']) expect(text).not.toContain(privateValue);
+    const loaded = readPreviewMirror(tmp)!;
+    const child = freshState('routing-only');
+    expect(seedPreviewInstanceMirror(child, structuredClone(loaded))).toBe(true);
+    const project = child.getProject('map')!;
+    expect(projectHistoricalSlugs(project)).toEqual(['renamed-map', 'map']);
+    expect(projectResourceNamespace(project)).toBe('map');
+    expect(project.identityHistory?.[0].kind).toBe('baseline');
+    expect(project.identityHistory?.some(record => parentRecordIds.includes(record.id))).toBe(false);
+    expect(seedPreviewInstanceMirror(child, loaded)).toBe(false);
+
+    // 已播种的旧版本不能因采集时间相同而保留父实例历史。
+    project.identityHistory = source.identityHistory;
+    delete project.mirror!.routingIdentity;
+    expect(seedPreviewInstanceMirror(child, loaded)).toBe(true);
+    expect(child.getProject('map')!.identityHistory?.some(record => parentRecordIds.includes(record.id))).toBe(false);
+    expect(seedPreviewInstanceMirror(child, loaded)).toBe(false);
+  });
+
+  it('读取旧镜像时去掉审计并原子回写，仍保留旧入口与原资源名称', () => {
+    const parent = parentState();
+    parent.updateProject('map', { slug: 'renamed-map' }, { actor: 'user:private-actor', requestId: 'private-request' });
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    mirror.projects[0].identityHistory = parent.getProject('map')!.identityHistory;
+    delete mirror.projects[0].mirror!.routingIdentity;
+    expect(findMirrorLeaks(mirror)).toContain('carries-project-identity-history');
+    const file = writePreviewMirror(tmp, mirror);
+    const loaded = readPreviewMirror(tmp)!;
+    expect(loaded.projects[0].identityHistory).toBeUndefined();
+    expect(projectHistoricalSlugs(loaded.projects[0])).toEqual(['renamed-map', 'map']);
+    expect(projectResourceNamespace(loaded.projects[0])).toBe('map');
+    expect(fs.readFileSync(file, 'utf8')).not.toMatch(/identityHistory|private-actor|private-request/);
+    expect(findMirrorLeaks(loaded)).toEqual([]);
+  });
+
   it('敏感 key 与带凭据的值只留形状；URL 保留 scheme 与主机名，服务关系图还画得出基础设施连线', () => {
     const out = redactEnvForMirror({ MONGO_URL: 'mongodb://root:hunter2@mongo:27017/db', JWT_SECRET: 'abcdef', PORT: '5000', CDS_PATH_PREFIX: '/api/' })!;
     expect(out.MONGO_URL).toBe('mongodb://***:***@mongo:27017/db');
