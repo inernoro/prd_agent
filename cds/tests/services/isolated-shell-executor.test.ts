@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import * as childProcess from 'node:child_process';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
@@ -243,6 +244,27 @@ describe('IsolatedShellExecutor 真实进程', () => {
       return /^(Z.*)?$/.test(state.stdout.trim());
     });
     await expect(e.exec('echo no-retry', observation)).rejects.toMatchObject({ code: 'unavailable' });
+  });
+
+  it('独立命令关闭空闲观测池后仍执行清理回执，不提前以成功退出', async () => {
+    const dir = await directory();
+    const receipt = path.join(dir, 'closed.receipt');
+    const loader = createRequire(import.meta.url).resolve('tsx/esm/api');
+    const parent = import.meta.url;
+    const isolated = new URL('../../src/services/isolated-shell-executor.ts', parent).href;
+    const shell = new URL('../../src/services/shell-executor.ts', parent).href;
+    const script = `(async()=>{
+      const {tsImport}=require(${JSON.stringify(loader)});
+      const {IsolatedShellExecutor}=await tsImport(${JSON.stringify(isolated)},{parentURL:${JSON.stringify(parent)}});
+      const {ShellExecutor}=await tsImport(${JSON.stringify(shell)},{parentURL:${JSON.stringify(parent)}});
+      const executor=new IsolatedShellExecutor(new ShellExecutor());
+      await executor.exec('true',{executionLane:'observation',timeout:5000});
+      await executor.close();
+      require('node:fs').writeFileSync(${JSON.stringify(receipt)},'closed');
+    })().catch(()=>{process.exitCode=1;});`;
+    const result = await new ShellExecutor().exec(`${quote(process.execPath)} --eval ${quote(script)}`, { timeout: 10000 });
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(receipt, 'utf8')).toBe('closed');
   });
 
   it('启动 PID 尚未登记时，工厂故障仍回收带私有归属的独立进程且不启动查询', async () => {

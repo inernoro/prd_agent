@@ -4745,7 +4745,9 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
-  await localShell.close();
+  await localShell.close().catch(() => {
+    console.warn('[shutdown] 观测进程清理尚未确认；继续保存关键状态。');
+  });
   // JSON 存储模式的 save() 是去抖异步落盘（2026-07-09），退出前必须 flush，
   // 否则最后一个 tick 的改动会丢。mongo 系 store 在下方 activeMongoHandle
   // 分支里 flush，这里只兜 json（duck-typing，不依赖具体类）。

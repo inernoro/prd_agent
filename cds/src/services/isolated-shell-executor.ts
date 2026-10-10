@@ -176,6 +176,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private stopPool(): Promise<void> {
     if (this.stopping) return this.stopping;
     this.ready = false; clearTimeout(this.startTimer);
+    // 空闲池已 unref。关停确认必须重新持有句柄，否则独立 CLI 会在 close/回执前退出0。
+    this.refPool();
     this.stopping = (async () => {
       const groups = new Set([...this.actors.values()].map(actor => actor.pid));
       if (this.factory?.pid) groups.add(this.factory.pid);
