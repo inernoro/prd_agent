@@ -74,6 +74,25 @@ describe('P3 durable private candidate reservations', () => {
     await expect(new CandidateJournal(state).prepare(runId, foreign)).rejects.toThrow('candidate_journal_identity');
     expect(state.getDeploymentRun(runId)!.candidate).toBeUndefined();
   });
+  it('cannot skip phases or claim readiness without the complete exact runtime graph', async () => {
+    const journal = new CandidateJournal(state); const graph = candidate();
+    await journal.prepare(runId, graph);
+    await expect(journal.advance(runId, 'prepared', 'released')).rejects.toThrow('candidate_journal_phase');
+    await journal.advance(runId, 'prepared', 'starting', graph);
+    await expect(journal.advance(runId, 'starting', 'ready')).rejects.toThrow('candidate_ready');
+    await expect(journal.advance(runId, 'starting', 'ready', graph)).rejects.toThrow('candidate_ready');
+    Object.assign(graph.services.api, { status: 'running', deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: 'image:sha-' + sha });
+    await journal.advance(runId, 'starting', 'ready', graph);
+    expect(state.getDeploymentRun(runId)!.candidate!.services.api.deployedImage).toBe('image:sha-' + sha);
+    graph.services.api.deployedImage = 'mutated';
+    expect(state.getDeploymentRun(runId)!.candidate!.services.api.deployedImage).toBe('image:sha-' + sha);
+  });
+  it('rejects configuration drift during phase updates without releasing reservations', async () => {
+    const journal = new CandidateJournal(state); await journal.prepare(runId, candidate());
+    state.getDeploymentRun(runId)!.configHash = 'changed';
+    await expect(journal.advance(runId, 'prepared', 'starting', candidate())).rejects.toThrow('candidate_journal_phase');
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('prepared');
+  });
   it('does not prune or explicitly discard a terminal run whose candidates remain unresolved', async () => {
     await new CandidateJournal(state).prepare(runId, candidate());
     state.updateDeploymentRun(runId, run => { run.status = 'failed'; }); await state.flush();

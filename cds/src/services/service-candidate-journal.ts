@@ -2,9 +2,9 @@ import type { BranchEntry, DeploymentCandidateRecord, ServiceState } from '../ty
 import type { StateService } from './state.js';
 import { candidateRuntimeIdentity } from './service-candidate.js';
 
-function snapshot(services: Record<string, ServiceState>): DeploymentCandidateRecord['services'] {
+export function snapshotCandidateServices(services: Record<string, ServiceState>): DeploymentCandidateRecord['services'] {
   const result: DeploymentCandidateRecord['services'] = Object.create(null);
-  for (const [id, service] of Object.entries(services)) {
+  for (const [id, service] of Object.entries(services).sort(([a], [b]) => a.localeCompare(b))) {
     // Explicit projection prevents logs, credentials and future arbitrary config fields entering this ledger.
     result[id] = { profileId: service.profileId, containerName: service.containerName, hostPort: service.hostPort,
       status: service.status, deployedMode: service.deployedMode, deployedImage: service.deployedImage,
@@ -13,6 +13,29 @@ function snapshot(services: Record<string, ServiceState>): DeploymentCandidateRe
   }
   return result;
 }
+
+export function candidateIdentityKey(services: DeploymentCandidateRecord['services']): string {
+  return JSON.stringify(Object.entries(services).sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, service]) => [id, service.profileId, service.containerName, service.hostPort]));
+}
+
+export function assertCandidateReady(graph: BranchEntry, record: DeploymentCandidateRecord): void {
+  if (!Object.keys(graph.services).length || candidateIdentityKey(graph.services) !== candidateIdentityKey(record.services) ||
+    graph.deploymentTargetSha !== record.targetSha || Object.values(graph.services).some(service =>
+      service.status !== 'running' || service.deployedPrebuilt !== true || !service.deployedImage ||
+      service.deployedCommitSha !== record.targetSha)) throw new Error('candidate_ready: complete exact runtime graph required');
+  if (record.phase === 'ready' && JSON.stringify(snapshotCandidateServices(graph.services)) !== JSON.stringify(record.services)) {
+    throw new Error('candidate_ready: frozen readiness facts changed');
+  }
+}
+
+type Phase = DeploymentCandidateRecord['phase'];
+const NEXT: Record<Phase, readonly Phase[]> = {
+  prepared: ['starting', 'reconciling'], starting: ['ready', 'reconciling'],
+  ready: ['switch-intent', 'reconciling'], 'switch-intent': ['routed', 'rollback-intent', 'reconciling'],
+  routed: ['released', 'reconciling'], 'rollback-intent': ['rollback-verified', 'reconciling'],
+  'rollback-verified': ['released', 'reconciling'], reconciling: [], released: [],
+};
 
 /** Write-ahead ledger only. Preparing it never replaces the live graph or publishes routes. */
 export class CandidateJournal {
@@ -49,9 +72,29 @@ export class CandidateJournal {
       reserved.add(service.hostPort); networkName = identity.networkName;
     }
     const record: DeploymentCandidateRecord = { operationId: run.operationId, targetSha: target, configHash: run.configHash,
-      networkName, phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshot(serving.services), services: snapshot(candidate.services) };
+      networkName, phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshotCandidateServices(serving.services), services: snapshotCandidateServices(candidate.services) };
     this.state.updateDeploymentRun(runId, current => { current.candidate = record; });
     await this.state.flush(); // The caller must await this barrier before Docker create.
     return record;
+  }
+
+  /** Compare-and-set phase, with immutable target/identity and an explicit durability barrier. */
+  async advance(runId: string, expected: Phase, next: Phase, graph?: BranchEntry): Promise<void> {
+    const run = this.state.getDeploymentRun(runId); const record = run?.candidate;
+    if (!run || !record || record.phase !== expected || !NEXT[expected]?.includes(next) ||
+      run.operationId !== record.operationId || run.commitSha !== record.targetSha || run.configHash !== record.configHash) {
+      throw new Error('candidate_journal_phase: owned frozen phase required');
+    }
+    if (graph) {
+      if (graph.id !== run.branchId || graph.projectId !== run.projectId ||
+        graph.deploymentTargetSha !== record.targetSha || candidateIdentityKey(graph.services) !== candidateIdentityKey(record.services)) throw new Error('candidate_journal_identity: graph changed');
+      if (next === 'ready') assertCandidateReady(graph, record);
+    }
+    if (next === 'ready' && !graph) throw new Error('candidate_ready: runtime evidence required');
+    this.state.updateDeploymentRun(runId, current => {
+      if (graph) current.candidate!.services = snapshotCandidateServices(graph.services);
+      current.candidate!.phase = next; current.candidate!.updatedAt = new Date().toISOString();
+    });
+    await this.state.flush();
   }
 }
