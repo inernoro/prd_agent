@@ -206,6 +206,32 @@ describe('container lifecycle intent correlation', () => {
 });
 
 describe('failure diagnostic IO budget', () => {
+  it('archives delayed old events but fences their state callbacks after same-ID restart or name recreation', async () => {
+    for (const nextId of ['c'.repeat(64), 'd'.repeat(64)]) {
+      const id = 'c'.repeat(64);
+      let release!: (value: ShellResult) => void;
+      const pending = new Promise<ShellResult>(resolve => { release = resolve; });
+      const exec = vi.fn().mockImplementationOnce(() => pending).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+      const records: any[] = [];
+      let visibleStatus = 'running';
+      const callback = vi.fn((event: any) => {
+        if (event.action === 'start') visibleStatus = 'running';
+        if (event.action === 'die' && event.stateSyncEligible !== false) visibleStatus = 'stopped';
+      });
+      const monitor = new DockerEventMonitor({ exec }, { record: r => { records.push(r); } }, callback);
+      const event = (Action: string, ID: string) => (monitor as any).handleLine(JSON.stringify({ Action,
+        Actor: { ID, Attributes: { name: 'canonical-name', 'cds.branch.id': 'branch' } } }));
+      const old = event('die', id);
+      await Promise.resolve();
+      await event('start', nextId);
+      release({ stdout: JSON.stringify({ Id: id, State: { Status: 'exited', ExitCode: 137 } }), stderr: '', exitCode: 0 });
+      await old;
+      expect(records).toHaveLength(2);
+      expect(visibleStatus).toBe('running');
+      expect(callback).toHaveBeenCalledWith(expect.objectContaining({ action: 'die', containerId: id, stateSyncEligible: false }));
+      expect(callback).toHaveBeenCalledWith(expect.objectContaining({ action: 'start', containerId: nextId, stateSyncEligible: true }));
+    }
+  });
   it('captures unhealthy events and invalidates the snapshot on start and healthy recovery', async () => {
     const id = 'b'.repeat(64);
     const records: any[] = [];

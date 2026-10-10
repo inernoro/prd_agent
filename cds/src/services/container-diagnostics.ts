@@ -258,6 +258,7 @@ export class DockerEventMonitor {
   private stopping = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly diagnosticBudget: ContainerDiagnosticBudget;
+  private readonly eventGenerations = new Map<string, { id: string }>();
 
   constructor(
     private readonly shell: IShellExecutor,
@@ -265,6 +266,8 @@ export class DockerEventMonitor {
     private readonly onManagedEvent?: (event: {
       action: string;
       containerName?: string;
+      containerId?: string;
+      stateSyncEligible?: boolean;
       branchId?: string;
       profileId?: string;
       serviceId?: string;
@@ -376,9 +379,17 @@ export class DockerEventMonitor {
     const ref = immutableId || containerName || evt.id || evt.Actor?.ID;
     const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
     const normalizedAction = action.toLowerCase();
-    if (immutableId && (['create', 'start', 'restart', 'unpause'].includes(normalizedAction) || normalizedAction === 'health_status: healthy')) {
+    const generationKey = immutableId && (containerName || immutableId);
+    const advancesGeneration = ['create', 'start', 'restart', 'unpause'].includes(normalizedAction) || normalizedAction === 'health_status: healthy';
+    if (immutableId && advancesGeneration) {
       this.diagnosticBudget.invalidate(immutableId);
     }
+    if (generationKey && (!this.eventGenerations.has(generationKey) || advancesGeneration)) {
+      this.eventGenerations.delete(generationKey);
+      if (this.eventGenerations.size >= 1024) this.eventGenerations.delete(this.eventGenerations.keys().next().value!);
+      this.eventGenerations.set(generationKey, { id: immutableId });
+    }
+    const observedGeneration = generationKey ? this.eventGenerations.get(generationKey) : undefined;
     const scope = JSON.stringify([attrs['cds.project.id'] || lifecycleIntent?.projectId || '', branchId || '', profileId || '',
       attrs['cds.deployment.operation'] || lifecycleIntent?.operationId || '']);
     const diagnostics = ref && shouldCaptureDiagnostics(action)
@@ -449,6 +460,7 @@ export class DockerEventMonitor {
       logs: diagnostics.logs,
       error: diagnostics.error,
       details: {
+        stateSyncEligible: !generationKey || (observedGeneration?.id === immutableId && this.eventGenerations.get(generationKey) === observedGeneration),
         ...(lifecycleIntent ? { lifecycleIntent } : {}),
         ...(classification ? {
           classification: {
@@ -467,6 +479,8 @@ export class DockerEventMonitor {
       await this.onManagedEvent?.({
         action,
         containerName,
+        containerId: immutableId,
+        stateSyncEligible: !generationKey || (observedGeneration?.id === immutableId && this.eventGenerations.get(generationKey) === observedGeneration),
         branchId,
         profileId,
         serviceId,

@@ -135,6 +135,7 @@ import { startRotationRecoveryArtifactCleanup } from './services/infra-local-rec
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
 import { DockerEventMonitor } from './services/container-diagnostics.js';
 import { classifyDockerLifecycleEvent } from './services/docker-lifecycle-classifier.js';
+import { canApplyDockerLifecycleState } from './services/docker-event-state-guard.js';
 import { SystemLogMonitor } from './services/system-log-monitor.js';
 import {
   BranchOperationCoordinator,
@@ -2617,6 +2618,7 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   const branch = stateService.getBranch(event.branchId);
   const svc = branch?.services?.[event.profileId];
   if (!branch || !svc || svc.containerName !== event.containerName) return;
+  if (!canApplyDockerLifecycleState(svc.containerId, event)) return;
   const previousStatus = svc.status;
   if (!['running', 'starting', 'building', 'restarting'].includes(String(previousStatus || ''))) return;
 
