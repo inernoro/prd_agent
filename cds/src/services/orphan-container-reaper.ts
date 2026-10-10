@@ -53,6 +53,8 @@ export interface OrphanReaperStateView extends TombstoneStateView {
     replicaSets?: Record<string, { members: Array<{ id: string; containerName?: string }> }>;
   }>;
   getInfraServices(): Array<{ containerName: string }>;
+  /** Unreleased journals own both graphs even if their run is failed/cancelled or a profile was removed. */
+  getDeploymentRuns?(): Array<{ candidate?: { phase: string; serving: Record<string, { containerName?: string }>; services: Record<string, { containerName?: string }> } }>;
   /** 启用中的外部访问代理容器名（缺省视为无启用策略）。 */
   getActiveExternalAccessProxyContainerNames?(): Set<string>;
 }
@@ -307,6 +309,12 @@ export async function sweepOrphanCdsContainers(opts: {
       }
     }
   }
+  for (const run of state.getDeploymentRuns?.() || []) {
+    if (!run.candidate || run.candidate.phase === 'released') continue;
+    for (const service of [...Object.values(run.candidate.serving), ...Object.values(run.candidate.services)]) {
+      if (service.containerName) knownAppContainerNames.add(service.containerName);
+    }
+  }
   const knownBranchIds = new Set(branches.map((b) => b.id));
 
   const nowMs = Date.now();
@@ -364,6 +372,8 @@ export async function sweepOrphanCdsContainers(opts: {
     await stopOne(c, 'infra', undefined);
   }
   for (const c of appContainers) {
+    // Candidate reclamation requires its journal and immutable inspected ID, not a generic name stop.
+    if (isProtectedByLabel(c.labels) || /(^|,)cds\.deployment\.kind=candidate(,|$)/.test(c.labels)) continue;
     if (belongsToOtherInstance(c)) continue;
     const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
     const profileId = c.labels.match(/cds\.profile\.id=([^,]+)/)?.[1];

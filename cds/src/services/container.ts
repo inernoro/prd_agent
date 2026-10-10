@@ -3327,11 +3327,11 @@ export class ContainerService {
    * 同 discoverInfraContainers：移除了 `cds.network=` filter,改用 branchId
    * 关联,branch 自带 projectId 不会跨项目串数据。
    */
-  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
-    return (await this.discoverAppContainersWithStatus()).containers;
+  async discoverAppContainers(options: { canonicalNames?: ReadonlyMap<string, string>; instanceId?: string } = {}): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
+    return (await this.discoverAppContainersWithStatus(options)).containers;
   }
 
-  async discoverAppContainersWithStatus(): Promise<{
+  async discoverAppContainersWithStatus(options: { canonicalNames?: ReadonlyMap<string, string>; instanceId?: string } = {}): Promise<{
     ok: boolean;
     containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
   }> {
@@ -3351,6 +3351,12 @@ export class ContainerService {
       const networkMatch = labels?.match(/cds\.network=([^,]+)/);
       if (branchMatch && profileMatch) {
         const key = `${branchMatch[1]}/${profileMatch[1]}`;
+        // Multiple generations share branch/profile labels. Only the published name is serving.
+        if (options.canonicalNames && options.canonicalNames.get(key) !== name) continue;
+        if (options.instanceId && labels?.match(/(?:^|,)cds\.instance=([^,]+)/)?.[1] !== options.instanceId) {
+          return { ok: false, containers: new Map() };
+        }
+        if (discovered.has(key)) return { ok: false, containers: new Map() };
         discovered.set(key, {
           running: state === 'running',
           containerName: name,

@@ -3972,13 +3972,21 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
 
     // ── Discover and reconcile app containers ──
-    const appDiscovery = await containerService.discoverAppContainersWithStatus();
-    const appContainers = appDiscovery.containers;
     const branches = stateService.getAllBranches();
+    const canonicalNames = new Map<string, string>(branches.flatMap(branch => Object.entries(branch.services || {})
+      .map(([profileId, service]) => [`${branch.id}/${profileId}`, service.containerName] as const)));
+    const appDiscovery = await containerService.discoverAppContainersWithStatus({ canonicalNames,
+      instanceId: computeCdsInstanceId(config.repoRoot) });
+    const appContainers = appDiscovery.containers;
+    if (!appDiscovery.ok) activeServerEventLogStore?.record({ category: 'container', severity: 'warn',
+      source: 'startup-reconcile', action: 'app.reconcile.discovery-unconfirmed',
+      message: 'Docker查询或运行身份尚未确认，保留应用服务状态等待对账' });
     let appReconciled = 0;
     const hostBootedAtMs = Date.now() - os.uptime() * 1000;
 
     for (const branch of branches) {
+      // Failed/ambiguous Docker discovery is not evidence that canonical services disappeared.
+      if (!appDiscovery.ok || stateService.getBranch(branch.id) !== branch) continue;
       if (appDiscovery.ok && reconcileHostRebootBranch(branch, appContainers, hostBootedAtMs,
         stateService.getProjects().find((p) => p.id === branch.projectId)?.paused === true)) {
         appReconciled++;
@@ -4020,7 +4028,10 @@ janitorService.setRemoveFn(async (slug: string) => {
       }
       for (const [profileId, svc] of Object.entries(branch.services)) {
         const key = `${branch.id}/${profileId}`;
-        const found = appContainers.get(key);
+        const discovered = appContainers.get(key);
+        // Canonical state may advance while discovery is in flight; preserve the newer owner.
+        if (canonicalNames.get(key) !== svc.containerName) continue;
+        const found = discovered?.containerName === svc.containerName ? discovered : undefined;
         if (found) {
           // Docker "running" only means PID 1 is alive. It does not prove the
           // mapped service port is ready; build-mode containers can spend
@@ -4296,12 +4307,17 @@ janitorService.setRemoveFn(async (slug: string) => {
     const crashRecordedThisTick = new Set<string>();
 
     // App 容器
-    const appContainers = await containerService.discoverAppContainers();
     const branches = stateService.getAllBranches();
+    const canonicalNames = new Map<string, string>(branches.flatMap(branch => Object.entries(branch.services || {})
+      .map(([profileId, service]) => [`${branch.id}/${profileId}`, service.containerName] as const)));
+    const appContainers = await containerService.discoverAppContainers({ canonicalNames,
+      instanceId: computeCdsInstanceId(config.repoRoot) });
     for (const branch of branches) {
+      if (stateService.getBranch(branch.id) !== branch) continue;
       for (const [profileId, svc] of Object.entries(branch.services)) {
         if (svc.status !== 'running') continue;
         const key = `${branch.id}/${profileId}`;
+        if (canonicalNames.get(key) !== svc.containerName) continue;
         const found = appContainers.get(key);
         if (found && found.running) continue;
         if (!found) continue; // 容器完全不存在 → 已是 error,不在本 loop 范围(走 redeploy)

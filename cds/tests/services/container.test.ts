@@ -1091,6 +1091,25 @@ describe('ContainerService', () => {
   });
 
   describe('discoverAppContainersWithStatus', () => {
+    it.each(['candidate-last', 'candidate-first'])('uses canonical names rather than last Docker row for the same branch/profile: %s', async order => {
+      const old = 'old-api|exited|cds.branch.id=b,cds.profile.id=api';
+      const candidate = 'candidate-api|running|cds.branch.id=b,cds.profile.id=api,cds.deployment.kind=candidate';
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: (order === 'candidate-last' ? [old, candidate] : [candidate, old]).join('\n'), stderr: '', exitCode: 0 }));
+      const result = await service.discoverAppContainersWithStatus({ canonicalNames: new Map([['b/api', 'old-api']]) });
+      expect(result.ok).toBe(true); expect(result.containers.get('b/api')).toMatchObject({ containerName: 'old-api', running: false });
+    });
+
+    it.each(['foreign', 'missing'])('does not use a canonical name with an unconfirmed instance owner: %s', async instance => {
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: 'old-api|running|cds.branch.id=b,cds.profile.id=api' + (instance === 'foreign' ? ',cds.instance=other' : ''), stderr: '', exitCode: 0 }));
+      const result = await service.discoverAppContainersWithStatus({ canonicalNames: new Map([['b/api', 'old-api']]), instanceId: 'ours' });
+      expect(result.ok).toBe(false); expect(result.containers.size).toBe(0);
+    });
+    it('does not guess an identity when a caller has no canonical map and Docker returns duplicate service keys', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: 'old-api|running|cds.branch.id=b,cds.profile.id=api\ncandidate-api|running|cds.branch.id=b,cds.profile.id=api', stderr: '', exitCode: 0 }));
+      const result = await service.discoverAppContainersWithStatus();
+      expect(result.ok).toBe(false); expect(result.containers.size).toBe(0);
+    });
+
     it('collects exit evidence without reading Docker environment variables', async () => {
       mock.addResponsePattern(/docker ps/, () => ({
         stdout: 'c-api|exited|cds.branch.id=b,cds.profile.id=api\nc-web|running|cds.branch.id=b,cds.profile.id=web',

@@ -64,6 +64,23 @@ describe('isOrphanReaperEnabled', () => {
 });
 
 describe('sweepOrphanCdsContainers', () => {
+  it('preserves both graphs in a failed but unreleased journal even after a profile is removed', async () => {
+    const shell = new MockShellExecutor();
+    mockPs(shell, [], ['old-worker', 'candidate-worker'].map(name => `${name}|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.branch.id=branch,cds.profile.id=worker`));
+    const state = { ...makeState(), getDeploymentRuns: () => [{ status: 'failed', candidate: { phase: 'reconciling', serving: { worker: { containerName: 'old-worker' } }, services: { worker: { containerName: 'candidate-worker' } } } }] };
+    const result = await sweepOrphanCdsContainers({ shell, state, env: {} });
+    expect(result.actions).toEqual([]); expect(shell.commands.some(command => command.startsWith('docker stop'))).toBe(false);
+  });
+  it('leaves unknown candidate and protected app containers to immutable-ID reconciliation', async () => {
+    const shell = new MockShellExecutor();
+    mockPs(shell, [], [
+      `unknown-candidate|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.deployment.kind=candidate`,
+      `protected-app|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.protected=true`,
+    ]);
+    const result = await sweepOrphanCdsContainers({ shell, state: makeState(), env: {} });
+    expect(result.actions).toEqual([]); expect(shell.commands.some(command => command.startsWith('docker stop'))).toBe(false);
+  });
+
   it('stops running orphan infra + app containers, spares known owners', async () => {
     const shell = new MockShellExecutor();
     mockPs(
