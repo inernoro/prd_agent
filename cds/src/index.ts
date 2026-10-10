@@ -1,3 +1,4 @@
+import { CandidateReconciler } from './services/candidate-reconciler.js';
 import { recordContainerLifecycleIntent } from './services/container-diagnostics.js';
 import { OwnedCandidateNetworkLifecycle } from './services/owned-candidate-network.js';
 import { OwnedContainerLifecycle } from './services/owned-container-lifecycle.js';
@@ -4719,6 +4720,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
+  candidateReconciliationStop?.();
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
@@ -5473,6 +5475,35 @@ const serverDeps: ServerDeps = {
 };
 const app = createServer(serverDeps);
 
+let candidateReconciliationStop: (() => void) | undefined;
+function startCandidateReconciliation(): void {
+  const bindings = serverDeps.candidateDeployment;
+  if (candidateReconciliationStop || !bindings?.networks) return;
+  const available = () => !gracefulShutdownController.isDraining() && !isSelfUpdateDraining(Date.now());
+  const reconciler = new CandidateReconciler(stateService, branchOperationCoordinator, bindings.lifecycle,
+    bindings.networks, containerService, (branch, signal) => bindings.acknowledge(branch, signal), available);
+  const observations = new Map<string, string>();
+  const tick = async () => {
+    if (!available()) return;
+    try {
+      for (const result of await reconciler.scan(1)) {
+        const key = result.status + ':' + (result.reason || '');
+        if (observations.get(result.runId) === key) continue;
+        if (observations.size >= 256) observations.delete(observations.keys().next().value!);
+        observations.set(result.runId, key);
+        activeServerEventLogStore?.record({ category: 'container', severity: result.status === 'released' ? 'info' : 'warn',
+          source: 'candidate-reconciler', action: 'candidate.reconcile.' + result.status,
+          message: 'candidate recovery: ' + key, details: { runId: result.runId } });
+      }
+    } catch { /* Do not copy private CLI output or fail the dashboard during conservative recovery. */ }
+  };
+  // One bounded run per tick, rotating journals; never fan out a restart into a recovery storm.
+  const timer = setInterval(() => { void tick(); }, 60_000); timer.unref();
+  candidateReconciliationStop = () => { clearInterval(timer); };
+  void tick();
+}
+
+
 // ── Helper: kill process on port so CDS can bind ──
 // force=true → kill any process (used for masterPort which belongs exclusively to CDS)
 // force=false → kill only CDS node processes (safe default)
@@ -5768,6 +5799,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
+    startCandidateReconciliation();
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
     console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);

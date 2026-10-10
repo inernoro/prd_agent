@@ -1,3 +1,4 @@
+import { candidateControlFingerprint, candidateSettlementFingerprint } from './candidate-recovery-evidence.js';
 import type { BranchEntry, DeploymentCandidateRecord, ServiceState, CandidateRecoveryProof } from '../types.js';
 import type { OwnedCandidateNetworkReference } from './owned-candidate-network.js';
 import type { OwnedContainerReference } from './owned-container-lifecycle.js';
@@ -78,7 +79,7 @@ export class CandidateJournal {
       reserved.add(service.hostPort); networkName = identity.networkName;
     }
     const record: DeploymentCandidateRecord = { operationId: run.operationId, targetSha: target, configHash: run.configHash,
-      networkName, phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshotCandidateServices(serving.services), services: snapshotCandidateServices(candidate.services) };
+      networkName, servingControlFingerprint: candidateControlFingerprint(serving), phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshotCandidateServices(serving.services), services: snapshotCandidateServices(candidate.services) };
 
     if (recoveryProof !== undefined) {
       const plainRecord = (value: unknown): boolean => !!value && typeof value === 'object' &&
@@ -224,6 +225,36 @@ export class CandidateJournal {
   }
   recordNetwork(runId: string, reference: OwnedCandidateNetworkReference, assertCurrent: () => void): Promise<void> {
     return this.serializeCreation(runId, () => this.persistNetwork(runId, assertCurrent, reference));
+  }
+
+  /** Called only after the original executor has awaited its last external action. */
+  recordExecutorSettlement(runId: string, owner: { operationId?: string; commitSha?: string; configHash?: string;
+    branchId: string; projectId: string }): Promise<void> {
+    return this.serializeCreation(runId, async () => {
+      const run = this.state.getDeploymentRun(runId); const record = run?.candidate;
+      if (!record || record.phase === 'released') return;
+      const validate = () => {
+        if (!run || this.state.getDeploymentRun(runId) !== run || run.candidate !== record ||
+          run.operationId !== owner.operationId || run.commitSha !== owner.commitSha || run.configHash !== owner.configHash ||
+          run.branchId !== owner.branchId || run.projectId !== owner.projectId ||
+          record.operationId !== owner.operationId || record.targetSha !== owner.commitSha || record.configHash !== owner.configHash) {
+          throw new Error('candidate_executor_settlement: frozen original owner required');
+        }
+      };
+      validate(); const fingerprint = candidateSettlementFingerprint(record);
+      if (record.executorSettlement) {
+        if (record.executorSettlement.version !== 1 || record.executorSettlement.fingerprint !== fingerprint) {
+          throw new Error('candidate_executor_settlement: receipt cannot be overwritten');
+        }
+        return;
+      }
+      await this.state.updateDeploymentRunDurably(runId, draft => {
+        draft.candidate!.executorSettlement = { version: 1, finishedAt: new Date().toISOString(), fingerprint };
+      }, () => this.state.flush(), () => {
+        validate();
+        if (candidateSettlementFingerprint(record) !== fingerprint) throw new Error('candidate_executor_settlement: facts changed during persistence');
+      });
+    });
   }
 
   /** Compare-and-set phase, with immutable target/identity and an explicit durability barrier. */

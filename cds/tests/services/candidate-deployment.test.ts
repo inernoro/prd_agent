@@ -1,3 +1,6 @@
+import { CandidateReconciler } from '../../src/services/candidate-reconciler.js';
+import { candidateOperationAdmission } from '../../src/services/candidate-operation-admission.js';
+import { candidateSettlementFingerprint } from '../../src/services/candidate-recovery-evidence.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -88,11 +91,78 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false) {
   const options = { runId, entry, profiles: [profile], allocatePort: () => 10002, assertCurrent: () => {},
     admit: async () => {}, acknowledge: async () => { events.push('ack'); return true; }, customEnv: {} };
   const service = new CandidateDeploymentService(state, containers as any, new OwnedContainerLifecycle(shell, 'instance'), withNetwork ? new OwnedCandidateNetworkLifecycle(shell, 'instance') : undefined);
-  return { service, options, containers, old, events, objects,
+  return { service, options, containers, old, events, objects, shell,
     getNetwork: () => network, networkExists: () => networkExists, setReady: (value: boolean) => { ready = value; },
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('persists an executor settlement bound to the frozen journal after cancellation during readiness', async () => {
+    const f = fixture('worker', true); const coordinator = new BranchOperationCoordinator();
+    const lease = coordinator.begin({ branchId: entry.id, kind: 'deploy', trigger: 'manual' }).lease!;
+    f.setWait(async () => { coordinator.cancelBranch(entry.id, 'cancel ready'); return false; });
+    await expect(f.service.deploy({ ...f.options, signal: lease.signal, assertCurrent: step => lease.assertCurrent(step) }))
+      .rejects.toBeInstanceOf(BranchOperationSupersededError);
+    const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+    expect((disk.getDeploymentRun(runId)!.candidate as any).executorSettlement).toMatchObject({ version: 1,
+      fingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/), finishedAt: expect.any(String) });
+    expect(f.old.State.Running).toBe(false); expect(f.networkExists()).toBe(true);
+  });
+
+  async function cancelledRecovery() {
+    const f = fixture('worker', true); const coordinator = new BranchOperationCoordinator(null, request => candidateOperationAdmission(state, request));
+    const lease = coordinator.begin({ branchId: entry.id, projectId: 'project', kind: 'deploy', trigger: 'manual' }).lease!;
+    f.setWait(async () => { coordinator.cancelBranch(entry.id, 'cancel ready'); return false; });
+    await expect(f.service.deploy({ ...f.options, signal: lease.signal, assertCurrent: step => lease.assertCurrent(step) }))
+      .rejects.toBeInstanceOf(BranchOperationSupersededError);
+    coordinator.complete(lease, 'cancelled');
+    state.updateDeploymentRun(runId, run => { run.status = 'cancelled'; run.finishedAt = new Date().toISOString(); });
+    await state.flush(); const disk = new StateService(path.join(dir, 'state.json')); disk.load(); state = disk;
+    entry = state.getBranch(entry.id)!;
+    const reconciler = new CandidateReconciler(state, coordinator, new OwnedContainerLifecycle(f.shell, 'instance'),
+      new OwnedCandidateNetworkLifecycle(f.shell, 'instance'), f.containers as any,
+      async () => { f.events.push('recovery-ack'); return true; });
+    return { f, reconciler };
+  }
+  it('recovers a cancelled known graph from actual JSON: candidate ID and private network first, then original readiness and final ACK', async () => {
+    const { f, reconciler } = await cancelledRecovery();
+    const before = f.events.length;
+    expect(await reconciler.reconcile(runId)).toEqual({ runId, status: 'released' });
+    expect(f.objects.size).toBe(1); expect(f.old.State.Running).toBe(true); expect(f.networkExists()).toBe(false);
+    const events = f.events.slice(before);
+    const network = events.indexOf('docker network rm ' + '9'.repeat(64));
+    const restore = events.indexOf('docker start ' + f.old.Id);
+    expect(network).toBeGreaterThan(0); expect(restore).toBeGreaterThan(network);
+    expect(events[0]).toBe('recovery-ack'); expect(events.at(-1)).toBe('recovery-ack');
+    const saved = new StateService(path.join(dir, 'state.json')); saved.load();
+    expect(saved.getDeploymentRun(runId)!.candidate!.phase).toBe('released');
+    expect(saved.getBranch(entry.id)!.services.api.status).toBe('running');
+    expect(state.allocatePort(10002)).toBe(10002);
+  });
+  it.each(['missing-receipt', 'wrong-receipt', 'unknown-create', 'unknown-network', 'manual-stop', 'original-version', 'foreign-endpoint'])
+    ('keeps both reservations and does not restore the original when recovery is unproved: %s', async variant => {
+      const { f, reconciler } = await cancelledRecovery(); const record = state.getDeploymentRun(runId)!.candidate!;
+      if (variant === 'missing-receipt') delete record.executorSettlement;
+      if (variant === 'wrong-receipt') record.executorSettlement!.fingerprint = 'sha256:' + 'f'.repeat(64);
+      if (variant === 'unknown-create') { delete record.createdContainers!.api; record.executorSettlement!.fingerprint = candidateSettlementFingerprint(record); }
+      if (variant === 'unknown-network') { delete record.networkCreation!.identity; record.executorSettlement!.fingerprint = candidateSettlementFingerprint(record); }
+      if (variant === 'manual-stop') { entry.lastStoppedAt = new Date().toISOString(); entry.lastStopSource = 'user'; }
+      if (variant === 'original-version') state.getDeploymentVersion('dv-original')!.profiles[0].readinessProbe!.path = '/changed';
+      if (variant === 'foreign-endpoint') f.getNetwork().Containers['e'.repeat(64)] = { Name: 'unknown-consumer' };
+      const before = f.events.length; const result = await reconciler.reconcile(runId);
+      expect(result.status).toBe('blocked'); expect(f.old.State.Running).toBe(false);
+      expect(f.events.slice(before)).not.toContain('docker start ' + f.old.Id);
+      expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+      expect(state.allocatePort(10002)).not.toBe(10002);
+    });
+  it('does not retire candidates or restart a worker until the old route consumer ACK is proven', async () => {
+    const { f } = await cancelledRecovery(); const coordinator = new BranchOperationCoordinator(null, request => candidateOperationAdmission(state, request));
+    const reconciler = new CandidateReconciler(state, coordinator, new OwnedContainerLifecycle(f.shell, 'instance'),
+      new OwnedCandidateNetworkLifecycle(f.shell, 'instance'), f.containers as any, async () => false);
+    const before = f.events.length;
+    expect(await reconciler.reconcile(runId)).toMatchObject({ status: 'blocked', reason: 'candidate_reconcile_route_ack' });
+    expect(f.events.slice(before)).toEqual([]); expect(f.objects.size).toBe(2); expect(f.old.State.Running).toBe(false);
+  });
+
   it('keeps an API rollback reservation until its private network has actually been retired', async () => {
     const f = fixture('api', true); let acknowledgements = 0;
     f.options.acknowledge = async () => {

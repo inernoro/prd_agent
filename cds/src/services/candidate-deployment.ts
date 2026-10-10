@@ -36,6 +36,18 @@ export class CandidateDeploymentService {
     private readonly lifecycle: OwnedContainerLifecycle, private readonly networks?: OwnedCandidateNetworkLifecycle) {}
 
   async deploy(options: CandidateDeploymentOptions): Promise<void> {
+    const run = this.state.getDeploymentRun(options.runId);
+    const owner = run && { operationId: run.operationId, commitSha: run.commitSha, configHash: run.configHash,
+      branchId: run.branchId, projectId: run.projectId };
+    try { await this.execute(options); }
+    finally {
+      // A revoked lease must not suppress its own settlement, but it cannot bless a newer journal.
+      // Missing/failed durability remains conservative: the reconciler refuses absent receipts.
+      if (owner) try { await new CandidateJournal(this.state).recordExecutorSettlement(options.runId, owner); } catch { /* Keep unresolved. */ }
+    }
+  }
+
+  private async execute(options: CandidateDeploymentOptions): Promise<void> {
     const { entry, runId } = options;
     if (unresolvedCandidateRun(this.state, entry.id, runId)) throw new Error('candidate_reconciliation_required: previous graph is unresolved');
     const run = this.state.getDeploymentRun(runId);
@@ -95,8 +107,8 @@ export class CandidateDeploymentService {
       const old = oldReferences.get(profile.id);
       return resolveCandidateReplacement(profile, old?.writableMounts || []).strategy === 'stop-and-restore' && old?.wasRunning;
     }).map(profile => profile.id);
-    if (stopBeforeStart.length) {
-      servingVersion = captureServingVersion(this.state, entry, stopBeforeStart);
+    if (stopBeforeStart.length || entry.currentVersionId) {
+      servingVersion = captureServingVersion(this.state, entry, Object.keys(entry.services));
       if (stopBeforeStart.some(id => oldReferences.get(id)!.image !== entry.services[id].deployedImage)) {
         throw new Error('candidate_serving_version: actual original image differs from version runtime');
       }

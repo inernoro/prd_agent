@@ -1383,6 +1383,10 @@ export interface CandidateRecoveryProof {
 }
 
 export interface DeploymentCandidateRecord {
+  /** End-of-executor receipt; absence never proves that pending external mutations ended. */
+  executorSettlement?: { version: 1; finishedAt: string; fingerprint: string };
+  /** Stop controls frozen before candidate mutations; a later stop must not be undone. */
+  servingControlFingerprint?: string;
   operationId: string;
   targetSha: string;
   configHash: string;
