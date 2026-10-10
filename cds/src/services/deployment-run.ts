@@ -108,7 +108,7 @@ export class DeploymentRunService {
       }],
     };
     const persisted = this.stateService.addDeploymentRun(run, input.executionInput ? captureDeploymentIntent(run, input.executionInput) : undefined);
-    const write = this.stateService.flush();
+    const write = this.stateService.flushDeploymentRun(persisted.id);
     this.acceptanceWrites.set(persisted.id, write);
     try { await write; return persisted; }
     finally { this.acceptanceWrites.delete(persisted.id); }
@@ -131,7 +131,7 @@ export class DeploymentRunService {
     const run = this.get(id);
     if (!run || run.status !== 'queued') return;
     this.transition(id, 'preparing', { phase: 'admission-replay', message: '排队目标已领取，正在保存执行身份' });
-    const write = this.stateService.flush();
+    const write = this.stateService.flushDeploymentRun(id);
     this.acceptanceWrites.set(id, write);
     try { await write; } finally { if (this.acceptanceWrites.get(id) === write) this.acceptanceWrites.delete(id); }
   }

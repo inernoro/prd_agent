@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord, PersistedDeploymentIntent } from '../../src/types.js';
+import { StateService } from '../../src/services/state.js';
+import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import { captureDeploymentInput } from '../../src/services/deployment-input.js';
+import { readDeploymentIntent } from '../../src/services/deployment-intent.js';
+import { BSON } from 'mongodb';
 
 function emptyState(): CdsState {
   return {
@@ -25,7 +31,7 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
   bulkWriteGate: Promise<void> | null = null;
   failNextBulkWrite: Error | null = null;
 
-  async findOne(filter: { _id: string }): Promise<TDoc | null> {
+  async findOne(filter: { _id: string }, _options?: Parameters<ISplitMongoCollection<TDoc>['findOne']>[1]): Promise<TDoc | null> {
     return this.docs.get(filter._id) || null;
   }
 
@@ -34,7 +40,7 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
     return { toArray: async () => [...this.docs.values()] };
   }
 
-  async replaceOne(filter: { _id: string }, doc: TDoc): Promise<void> {
+  async replaceOne(filter: { _id: string }, doc: TDoc, _options?: Parameters<ISplitMongoCollection<TDoc>['replaceOne']>[2]): Promise<void> {
     this.docs.set(filter._id, doc);
     this.replaceWrites.push(doc);
   }
@@ -43,7 +49,7 @@ class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCo
     this.docs.delete(filter._id);
   }
 
-  async bulkWrite(operations: Array<unknown>): Promise<void> {
+  async bulkWrite(operations: Array<unknown>, _options?: { ignoreUndefined: boolean }): Promise<void> {
     if (this.bulkWriteGate) {
       const gate = this.bulkWriteGate;
       this.bulkWriteGate = null;
@@ -132,6 +138,116 @@ function makeActivityLog(projectId: string, seq: number, at: string): ProjectAct
 }
 
 describe('MongoSplitStateBackingStore', () => {
+  async function acceptedRunFixture() {
+    const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle); await store.init();
+    const seed = emptyState(); seed.projects = [{ id: 'prd-agent', slug: 'prd-agent', name: 'PRD' } as Project];
+    seed.branches.b = { id: 'b', projectId: 'prd-agent', branch: 'main', worktreePath: '/unused', status: 'idle', createdAt: new Date().toISOString(), services: {} };
+    store.save(seed); await store.flush();
+    const state = new StateService('/tmp/cds-receipt-unused/state.json', undefined, store); state.load(); await state.flush();
+    const runs = new DeploymentRunService(state), coordinator = new BranchOperationCoordinator();
+    coordinator.begin({ projectId: 'prd-agent', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    const request = { projectId: 'prd-agent', branchId: 'b', kind: 'deploy' as const, trigger: 'webhook' as const,
+      commitPinned: true, commitSha: 'b'.repeat(40), configHash: 'cfg' };
+    const decision = coordinator.begin(request);
+    const input = captureDeploymentInput(state.getBranch('b')!, [], { TOKEN: 'synthetic-receipt-secret' }); input.configHash = 'cfg';
+    const begin = () => runs.begin({ projectId: 'prd-agent', branchId: 'b', trigger: 'webhook', initialStatus: 'queued',
+      operationId: decision.operationId, operationGeneration: decision.generation, commitSha: request.commitSha, configHash: 'cfg', executionInput: { request, input } });
+    return { handle, store, state, runs, begin };
+  }
+
+  it.each(['global', 'other-run'])('自己的配对run保存成功后%s失败仍确认原受理，未保存变更继续对账', async (failure) => {
+    const { handle, store, state, begin } = await acceptedRunFixture();
+    if (failure === 'global') {
+      (state.getState() as any).nextPortIndex = 123; state.save([{ kind: 'global' }]);
+      vi.spyOn(handle.global, 'replaceOne').mockRejectedValueOnce(new Error('unrelated global failed'));
+    } else {
+      state.addDeploymentRun(makeRun('unrelated-run', 'b'));
+      handle.deploymentRuns.failNextBulkWrite = new Error('unrelated run failed');
+    }
+    const run = await begin();
+    expect(handle.deploymentRuns.docs.get(run.id)?.executionIntent?.runId).toBe(run.id);
+    await expect(store.flush()).rejects.toThrow(failure === 'global' ? 'unrelated global failed' : 'unrelated run failed');
+    const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+    const afterRestart = new StateService('/tmp/cds-receipt-unused/reopen.json', undefined, reopened); afterRestart.load();
+    const restored = new DeploymentRunService(afterRestart).restoreQueued(new BranchOperationCoordinator());
+    expect(restored.map((r) => r.id)).toEqual([run.id]);
+    await afterRestart.flush();
+    state.save([{ kind: 'deploymentRuns', id: run.id }]); await state.flush();
+    if (failure === 'global') expect(handle.global.docs.get('global')?.state.nextPortIndex).toBe(123);
+    else expect(handle.deploymentRuns.docs.has('unrelated-run')).toBe(true);
+  });
+
+  it('配对run保存后global仍挂起时已确认受理，不等待无关状态写入', async () => {
+    const { handle, state, begin } = await acceptedRunFixture();
+    (state.getState() as any).nextPortIndex = 123; state.save([{ kind: 'global' }]);
+    let release!: () => void, started!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const original = handle.global.replaceOne.bind(handle.global);
+    vi.spyOn(handle.global, 'replaceOne').mockImplementationOnce(async (...args) => { started(); await hold; return original(...args); });
+    let accepted = false; const run = begin().then((value) => { accepted = true; return value; });
+    try { await entered; await Promise.resolve(); expect(accepted).toBe(true); }
+    finally { release(); await run; await state.flush(); }
+  });
+
+  it('前置分支写入失败不得确认或持久保存部署意图', async () => {
+    const { handle, state, begin } = await acceptedRunFixture();
+    handle.branches.failNextBulkWrite = new Error('branch failed before own write');
+    await expect(begin()).rejects.toThrow('branch failed before own write');
+    expect([...handle.deploymentRuns.docs.values()].some((doc) => doc.executionIntent)).toBe(false);
+    // 调用方取消未受理记录，下一次恢复写入时不引入待执行的私有输入。
+    const run = state.getDeploymentRuns()[0]; new DeploymentRunService(state).cancel(run.id, '受理失败');
+    await state.flush();
+  });
+
+  it('没有新业务操作时失败状态仍在五秒内重试，未恢复期间健康检查失败', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle);
+    try {
+      await store.init(); const state = emptyState(); state.nextPortIndex = 123;
+      vi.spyOn(handle.global, 'replaceOne').mockRejectedValueOnce(new Error('transient global failure'));
+      store.save(state); await expect(store.flush()).rejects.toThrow('transient global failure');
+      expect(await store.isHealthy()).toBe(false);
+      await vi.advanceTimersByTimeAsync(4999); expect(handle.global.docs.has('global')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1); expect(handle.global.docs.get('global')?.state.nextPortIndex).toBe(123);
+      expect(await store.isHealthy()).toBe(true); await store.close();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each([false, true])('写入确认连接中断时精确多数读取匹配=%s，不能借不相同的旧记录确认', async (matches) => {
+    const { handle, state, begin } = await acceptedRunFixture();
+    const original = handle.deploymentRuns.replaceOne.bind(handle.deploymentRuns);
+    const write = vi.spyOn(handle.deploymentRuns, 'replaceOne').mockImplementationOnce(async (filter, doc, options) => {
+      if (matches) await original(filter, BSON.deserialize(BSON.serialize(doc, { ignoreUndefined: options?.ignoreUndefined ?? false })) as typeof doc);
+      throw new Error('write acknowledgement lost');
+    });
+    const read = vi.spyOn(handle.deploymentRuns, 'findOne');
+    if (matches) {
+      const run = await begin(); expect(handle.deploymentRuns.docs.get(run.id)?.doc.status).toBe('queued');
+      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true }, maxTimeMS: 5000, ignoreUndefined: true });
+    } else {
+      await expect(begin()).rejects.toThrow('write acknowledgement lost');
+      const run = state.getDeploymentRuns()[0]; new DeploymentRunService(state).cancel(run.id, '受理失败');
+    }
+    expect(read.mock.calls[0][1]).toEqual({ readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000 });
+    await state.flush();
+  });
+
+  it('真实BSON序列化后普通任务更新仍保留可恢复的完整配对输入', async () => {
+    const { handle, state, runs, begin } = await acceptedRunFixture();
+    const replace = handle.deploymentRuns.replaceOne.bind(handle.deploymentRuns);
+    vi.spyOn(handle.deploymentRuns, 'replaceOne').mockImplementation(async (filter, doc, options) =>
+      replace(filter, BSON.deserialize(BSON.serialize(doc, { ignoreUndefined: options?.ignoreUndefined ?? false })) as typeof doc));
+    const bulk = handle.deploymentRuns.bulkWrite.bind(handle.deploymentRuns);
+    vi.spyOn(handle.deploymentRuns, 'bulkWrite').mockImplementation(async (ops, options) => bulk(ops.map((op: any) =>
+      op.replaceOne ? { replaceOne: { ...op.replaceOne, replacement: BSON.deserialize(BSON.serialize(op.replaceOne.replacement, { ignoreUndefined: options?.ignoreUndefined ?? false })) } } : op)));
+    const run = await begin();
+    runs.append(run.id, { phase: 'waiting', level: 'info', status: 'queued', message: 'still waiting' }); await state.flush();
+    const persisted = handle.deploymentRuns.docs.get(run.id)!;
+    expect(persisted.doc.seq).toBe(2); expect(persisted.doc.profileId).toBeUndefined();
+    expect(readDeploymentIntent(persisted.doc, persisted.executionIntent!).configuredEnv.TOKEN).toBe('synthetic-receipt-secret');
+  });
+
   it('私有部署输入与run同一实体增量落盘和恢复，不进入global或公开run', async () => {
     const handle = new FakeSplitHandle(); const store = new MongoSplitStateBackingStore(handle); await store.init();
     const state = emptyState(); const run = makeRun('input-run', 'b'); run.status = 'queued';

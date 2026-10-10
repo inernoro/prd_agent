@@ -1052,6 +1052,11 @@ export class StateService {
     }
   }
 
+  async flushDeploymentRun(id: string): Promise<void> {
+    if (this.backingStore.flushDeploymentRun) await this.backingStore.flushDeploymentRun(id);
+    else await this.flush();
+  }
+
   getState(): Readonly<CdsState> {
     return this.state;
   }

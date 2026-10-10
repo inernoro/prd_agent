@@ -1,0 +1,54 @@
+name: CDS Isolated Recovery
+
+on:
+  push:
+    branches: [codex/cds-state-write-throttle-20261009]
+    paths:
+      - cds/src/**
+      - cds/package.json
+      - cds/pnpm-lock.yaml
+      - cds/scripts/deployment-recovery-drill.ts
+      - cds/scripts/tsconfig.acceptance.json
+      - .github/workflows/cds-isolated-recovery.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cds-isolated-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ["127.0.0.1:27017:27017"]
+        options: >-
+          --cpus 1 --memory 1g
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check recovery drill
+        run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Real Mongo persistence and SIGKILL recovery
+        run: pnpm -C cds exec tsx scripts/deployment-recovery-drill.ts --mongo-uri 'mongodb://127.0.0.1:27017/?directConnection=true' --mongo-container-id '${{ job.services.mongo.id }}'
+      - name: Preserve isolated evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-isolated-recovery-${{ github.sha }}
+          path: cds/acceptance-output/report.json
+          if-no-files-found: warn
+          retention-days: 14

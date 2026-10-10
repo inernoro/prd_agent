@@ -90,6 +90,8 @@ async function request(
     const req = http.request(
       {
         hostname: '127.0.0.1',
+        // 每例都关闭临时服务器，避免全局 keep-alive 池复用已关闭的夹具连接。
+        agent: false,
         port: addr.port,
         path: urlPath,
         method,
@@ -1163,6 +1165,7 @@ function sseRequest(
     const req = http.request(
       {
         hostname: '127.0.0.1',
+        agent: false,
         port: addr.port,
         path: urlPath,
         method,
