@@ -148,7 +148,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
-import { pendingDeployRoute } from '../services/branch-operation-coordinator.js';
+import { pendingDeployRoute, pendingDeployBody } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
@@ -2967,6 +2967,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
+      pendingReplay: req.body?.pendingReplay || null,
     });
     if (decision.status === 'started') return decision.lease || null;
 
@@ -3083,6 +3084,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!pending) return;
     const branch = stateService.getBranch(pending.branchId);
     if (!branch) {
+      branchOperationCoordinator?.releasePendingReplay(pending, 'branch removed before dispatch');
       serverEventLogStore?.record({
         category: 'system',
         severity: 'warn',
@@ -3122,7 +3124,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
         'X-CDS-Source-Branch-Id': pending.branchId,
       },
-      body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
+      body: JSON.stringify(pendingDeployBody(pending)),
     }).then((response) => {
       if (!response.ok) {
         return response.text().then((body) => {
@@ -3141,6 +3143,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })();
       }
     }).catch((err) => {
+      branchOperationCoordinator?.releasePendingReplay(pending, 'pending dispatch failed');
       serverEventLogStore?.record({
         category: 'system',
         severity: 'error',
@@ -14456,6 +14459,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       kind: 'deploy-profile',
       profileId,
       commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
+      commitPinned: Boolean(profileRequestCommitSha),
       source: 'api.deploy-profile',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,

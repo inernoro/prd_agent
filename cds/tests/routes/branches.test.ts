@@ -3481,7 +3481,8 @@ describe('Branch Routes', () => {
         expect(stateService.getBranch('force-webhook')?.currentVersionId).toBe(profileRun?.versionId);
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0].url).toContain('/api/branches/force-webhook/deploy');
-        expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222' });
+        expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222',
+          pendingReplay: { operationId: expect.any(String), generation: expect.any(Number) } });
         expect(fetchCalls[0].requestId).toBe('req-force-webhook');
 
         const events = operationEvents.filter((event) => event.branchId === 'force-webhook');
@@ -3511,6 +3512,60 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it('已派发待办的HTTP重放迟于新目标到达时，不得重新启动旧目标', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'replay-fence', projectId: 'default', branch: 'feature/replay-fence',
+        worktreePath: path.join(tmpDir, 'worktrees', 'replay-fence'), status: 'idle',
+        createdAt: new Date().toISOString(), services: {}, githubCommitSha: 'a'.repeat(40),
+      });
+      let release!: () => void;
+      const hold = new Promise<void>(resolve => { release = resolve; });
+      let markStarted!: () => void;
+      const started = new Promise<void>(resolve => { markStarted = resolve; });
+      let actualRuns = 0;
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-replay-fence-api')) {
+          if (actualRuns++ === 0) { markStarted(); await hold; }
+          return { stdout: `cid-replay-fence-${actualRuns}`, stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+      const replays: Record<string, unknown>[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+        if (String(url).includes('/api/branches/replay-fence/deploy')) replays.push(JSON.parse(String(init?.body)));
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }));
+      setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+      let active: ReturnType<typeof request> | undefined;
+      try {
+        active = request(server, 'POST', '/api/branches/replay-fence/deploy', { commitSha: 'a'.repeat(40) });
+        await started;
+        const queued = await request(server, 'POST', '/api/branches/replay-fence/deploy',
+          { commitSha: 'b'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        expect(String(queued.body)).toContain('merged');
+        const pending = branchOperationCoordinator.getPendingWebhookDeploy('replay-fence')!;
+        release();
+        await active;
+        expect(replays).toHaveLength(1);
+        await request(server, 'POST', '/api/branches/replay-fence/deploy', { commitSha: 'c'.repeat(40) });
+        const stale = await request(server, 'POST', '/api/branches/replay-fence/deploy', {
+          ...replays[0], pendingReplay: { operationId: pending.operationId, generation: pending.generation },
+        }, { 'X-CDS-Trigger': 'webhook' });
+        expect(String(stale.body)).toContain('"operationStatus":"rejected"');
+        expect(actualRuns).toBe(2);
+        expect(replays[0].pendingReplay).toEqual({ operationId: pending.operationId, generation: pending.generation });
+      } finally {
+        release();
+        await Promise.allSettled([active]);
+        setBuildGateHostLoadProvider(null);
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('实际HTTP路径保留API和Web待办，API更新不覆盖Web且重放走各自服务入口', async () => {
       for (const id of ['api', 'web']) await request(server, 'POST', '/api/build-profiles', {
         id, name: id, dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
@@ -3768,7 +3823,8 @@ describe('Branch Routes', () => {
         expect(active.status).toBe(200);
         expect(fetchCalls).toHaveLength(1);
         expect(fetchCalls[0].url).toContain('/api/branches/pending-latest/deploy');
-        expect(fetchCalls[0].body).toEqual({ commitSha: '3333333333333333333333333333333333333333' });
+        expect(fetchCalls[0].body).toEqual({ commitSha: '3333333333333333333333333333333333333333',
+          pendingReplay: { operationId: expect.any(String), generation: expect.any(Number) } });
         expect(fetchCalls[0].requestId).toBe('req-c');
 
         const pendingDispatch = operationEvents.find((event) =>

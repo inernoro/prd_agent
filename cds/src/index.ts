@@ -135,7 +135,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from './services/branch-operation-coordinator.js';
-import { pendingDeployRoute } from './services/branch-operation-coordinator.js';
+import { pendingDeployRoute, pendingDeployBody } from './services/branch-operation-coordinator.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -2227,6 +2227,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
   if (!pending) return;
   const branch = stateService.getBranch(pending.branchId);
   if (!branch) {
+    branchOperationCoordinator.releasePendingReplay(pending, 'branch removed before dispatch');
     activeServerEventLogStore?.record({
       category: 'system',
       severity: 'warn',
@@ -2264,7 +2265,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
       'X-CDS-Source-Branch-Id': pending.branchId,
     },
-    body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
+    body: JSON.stringify(pendingDeployBody(pending)),
   }).then(async (response) => {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
@@ -2276,6 +2277,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       if (done) break;
     }
   }).catch((err) => {
+    branchOperationCoordinator.releasePendingReplay(pending, 'pending dispatch failed');
     activeServerEventLogStore?.record({
       category: 'system',
       severity: 'error',
