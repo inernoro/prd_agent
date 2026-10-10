@@ -8,6 +8,7 @@ import { OwnedContainerLifecycle, type OwnedContainerReference } from './owned-c
 import { resolveCandidateReplacement } from './candidate-replacement-policy.js';
 import { topoSortLayers } from './topo-sort.js';
 import { runLayerWithSharedAbort } from './deploy-layer-runner.js';
+import { BranchOperationSupersededError } from './branch-operation-coordinator.js';
 
 export interface CandidateDeploymentOptions {
   runId: string;
@@ -132,13 +133,16 @@ export class CandidateDeploymentService {
           current(); captured.set(profile.id, reference); service.containerId = reference.id;
           if (reference.image !== profile.preparedArtifactId || !reference.wasRunning || service.deployedPrebuilt !== true ||
             service.deployedCommitSha !== targetSha) throw new Error('candidate_artifact: inspected exact runtime required');
-          if (profile.startupSignal && !await this.containers.waitForStartupSignal(service.containerName, profile.startupSignal,
-            output, profile.readinessProbe?.timeoutSeconds || 300, signal)) throw new Error('candidate_readiness: startup signal missing');
-          current();
-          if (!await this.containers.waitForReadiness(service.hostPort, profile.readinessProbe, undefined, output, service.containerName, signal)) {
-            throw new Error('candidate_readiness: application is not ready');
+          if (profile.startupSignal) {
+            const started = await this.containers.waitForStartupSignal(service.containerName, profile.startupSignal,
+              output, profile.readinessProbe?.timeoutSeconds || 300, signal);
+            current();
+            if (!started) throw new Error('candidate_readiness: startup signal missing');
           }
-          current(); service.status = 'running';
+          const ready = await this.containers.waitForReadiness(service.hostPort, profile.readinessProbe, undefined, output, service.containerName, signal);
+          current();
+          if (!ready) throw new Error('candidate_readiness: application is not ready');
+          service.status = 'running';
         });
         active();
       }
@@ -157,6 +161,11 @@ export class CandidateDeploymentService {
         },
       });
     } catch (error) {
+      // Normalize raw abort reasons only when the operation lease was actually revoked.
+      // A sibling's shared abort must retain the original application/Daemon failure.
+      try { options.assertCurrent('candidate-deployment-error'); } catch (leaseError) {
+        if (leaseError instanceof BranchOperationSupersededError) error = leaseError;
+      }
       // A switched but unresolved consumer might still serve candidates. Preserve both sides.
       const phase = this.state.getDeploymentRun(runId)?.candidate?.phase;
       const oldMapping = Object.entries(entry.services).every(([id, service]) => service.containerName === oldReferences.get(id)?.name);

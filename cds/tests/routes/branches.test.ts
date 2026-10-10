@@ -857,9 +857,9 @@ describe('Branch Routes', () => {
       expect(branch.services.api.status).toBe('running'); expect(branch.services.orphan.status).toBe('running');
     });
 
-    it('P3 HTTP deployment starts a private graph and acknowledges it before retiring old and orphan IDs', async () => {
+    it.each(['success', 'capture-cancel', 'create-cancel', 'startup-cancel', 'readiness-cancel'] as const)('P3 HTTP candidate deployment preserves the terminal contract: %s', async phase => {
       seedGateProject(false); candidateReplacementEnabled = true;
-      const sha = 'b'.repeat(40); const image = `sha256:${'c'.repeat(64)}`;
+      const sha = createHash('sha1').update('candidate-cancel-' + phase).digest('hex'); const image = `sha256:${'c'.repeat(64)}`;
       stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact' });
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
       const branch = stateService.getBranch('b1')!;
@@ -876,8 +876,13 @@ describe('Branch Routes', () => {
         return id;
       };
       const oldId = add(branch.services.api); const orphanId = add(branch.services.orphan);
+      if (phase === 'startup-cancel') stateService.updateBuildProfile('api', { startupSignal: 'READY' });
+      const cancel = () => branchOperationCoordinator.cancelBranch(branch.id, 'user cancelled');
+      const readiness = phase === 'readiness-cancel' ? vi.spyOn(containerService, 'waitForReadiness').mockImplementation(async () => { cancel(); return false; }) : undefined;
+      const startup = phase === 'startup-cancel' ? vi.spyOn(containerService, 'waitForStartupSignal').mockImplementation(async () => { cancel(); return false; }) : undefined;
       mock.addResponsePatternFirst(/docker inspect --format='\{\{json \.\}\}' .*$/, ([command]) => {
         const identity = command.split(' ').at(-1)!.replaceAll("'", '');
+        if (phase === 'capture-cancel') { cancel(); throw 'user cancelled'; }
         const info = objects.get(identity) || [...objects.values()].find(object => object.Name === '/' + identity);
         return { stdout: info ? JSON.stringify(info) : '', stderr: info ? '' : 'No such object', exitCode: info ? 0 : 1 };
       });
@@ -894,6 +899,7 @@ describe('Branch Routes', () => {
         events.push('create'); add(service, context!.candidateRunId);
         Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image,
           deployedArtifactRef: profile.preparedArtifactRef, deployedMode: 'express' });
+        if (phase === 'create-cancel') { cancel(); context!.signal!.throwIfAborted(); }
       });
       candidateBindings = { lifecycle: new OwnedContainerLifecycle(mock, computeCdsInstanceId(config.repoRoot)),
         admit: async () => { events.push('admit'); }, acknowledge: async graph => {
@@ -902,12 +908,25 @@ describe('Branch Routes', () => {
         } };
       try {
         const result = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: sha });
+        if (phase !== 'success') {
+          expect(typeof result.body === 'string' ? result.body : JSON.stringify(result.body)).toContain('"operationStatus":"cancelled"');
+          const record = deploymentRunService.get(String(result.headers['x-cds-deployment-run-id']))!;
+          expect(record.status).toBe('cancelled');
+          if (phase === 'capture-cancel') expect(record.candidate).toBeUndefined();
+          else expect(record.candidate!.phase).toBe('reconciling');
+          const saved = new StateService(path.join(tmpDir, 'state.json')); saved.load();
+          expect(saved.getDeploymentRun(record.id)!.status).toBe('cancelled');
+          expect(events).toEqual(phase === 'capture-cancel' ? [] : ['admit', 'create']);
+          expect(objects.size).toBe(phase === 'capture-cancel' ? 2 : 3);
+          expect(branch.services.api.containerName).toBe('cds-b1-api');
+          expect(branch.services.orphan.status).toBe('running'); return;
+        }
         expect(String(result.body)).toContain('"ok":true'); expect(run).toHaveBeenCalledTimes(1);
         expect(events).toEqual(['admit', 'create', 'ack', 'docker rm -f ' + oldId, 'docker rm -f ' + orphanId]);
         expect(branch.services.api.deployedCommitSha).toBe(sha); expect(branch.services.orphan).toBeUndefined();
         const record = deploymentRunService.get(String(result.headers['x-cds-deployment-run-id']))!;
         expect(record.status).toBe('running'); expect(record.candidate!.phase).toBe('released');
-      } finally { run.mockRestore(); }
+      } finally { run.mockRestore(); readiness?.mockRestore(); startup?.mockRestore(); }
     });
 
     it('P4 actual runtime evidence is independent from configured coverage and includes extra services', async () => {

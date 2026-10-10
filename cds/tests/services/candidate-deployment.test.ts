@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { StateService } from '../../src/services/state.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { OwnedContainerLifecycle } from '../../src/services/owned-container-lifecycle.js';
+import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
 import { CandidateDeploymentService } from '../../src/services/candidate-deployment.js';
 import type { BranchEntry, BuildProfile, IShellExecutor } from '../../src/types.js';
 const sha = 'a'.repeat(40); const image = 'sha256:' + 'a'.repeat(64);
@@ -62,10 +63,28 @@ function fixture(role: 'api' | 'worker' = 'api') {
   const options = { runId, entry, profiles: [profile], allocatePort: () => 10002, assertCurrent: () => {},
     admit: async () => {}, acknowledge: async () => { events.push('ack'); return true; }, customEnv: {} };
   const service = new CandidateDeploymentService(state, containers as any, new OwnedContainerLifecycle(shell, 'instance'));
-  return { service, options, old, events, objects, setReady: (value: boolean) => { ready = value; },
+  return { service, options, containers, old, events, objects, setReady: (value: boolean) => { ready = value; },
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it.each(['create', 'startup', 'readiness'] as const)('normalizes explicit cancellation during %s into the lease error without deleting either graph', async phase => {
+    const f = fixture(); const coordinator = new BranchOperationCoordinator();
+    const lease = coordinator.begin({ branchId: entry.id, kind: 'deploy', trigger: 'manual' }).lease!;
+    const options = { ...f.options, signal: lease.signal, assertCurrent: (step: string) => lease.assertCurrent(step) };
+    const cancel = () => coordinator.cancelBranch(entry.id, 'user cancelled');
+    if (phase === 'create') {
+      const create = f.containers.runService;
+      f.containers.runService = async (...args: Parameters<typeof create>) => { await create(...args); cancel(); lease.signal!.throwIfAborted(); };
+    } else if (phase === 'startup') {
+      options.profiles[0].startupSignal = 'READY';
+      f.containers.waitForStartupSignal = async () => { cancel(); return false; };
+    } else f.setWait(async () => { cancel(); return false; });
+    await expect(f.service.deploy(options)).rejects.toBeInstanceOf(BranchOperationSupersededError);
+    expect(f.events).toEqual(['create-candidate']); expect(f.old.State.Running).toBe(true);
+    expect(entry.services.api.containerName).toBe('old'); expect(f.objects.size).toBe(2);
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+  });
+
   it('leaves the serving graph untouched until all candidates are ready and consumer ACK is durable', async () => {
     const f = fixture(); let release!: () => void; let entered!: () => void;
     const gate = new Promise<boolean>(resolve => { release = () => resolve(true); });

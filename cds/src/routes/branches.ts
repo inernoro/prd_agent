@@ -14448,6 +14448,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
     } catch (err) {
+      // Container/Daemon helpers may reject with an AbortSignal's raw reason.
+      // Only a revoked candidate operation lease warrants the cancelled terminal.
+      if (candidateMode && branchOperationLease && !branchOperationLease.isCurrent()) {
+        err = new BranchOperationSupersededError(branchOperationLease.operationId, id, 'candidate-deploy-error');
+      }
       // 2026-04-27 (用户明确反馈"日志看不到原因"): 这里以前只把错误塞进
       // entry.errorMessage + sendSSE，opLog.events 里没有任何 error 事件，
       // 导致 GET /api/branches/:id/logs 显示全部 done 但 entry.status=error
