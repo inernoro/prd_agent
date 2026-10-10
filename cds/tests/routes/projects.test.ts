@@ -852,6 +852,31 @@ describe('Projects router (P4 Part 2)', () => {
       expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
     });
 
+    it.each([false, true])('restores synchronous save exceptions and reports compensation availability (%s)', async (persistentFailure) => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Sync', slug: 'sync-save-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const store = stateService.getBackingStore();
+      const originalSave = store.save.bind(store);
+      let calls = 0;
+      store.save = (...args) => { if (++calls === 1 || persistentFailure) throw new Error('private-storage-detail'); originalSave(...args); };
+      try {
+        const result = await request(server, 'PUT', `/api/projects/${id}`, { slug: 'failed-sync-slug', name: 'Failed sync name' });
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(!persistentFailure);
+        expect(result.body.message).not.toContain('private-storage-detail');
+        expect(stateService.getProject(id)!.slug).toBe(before.slug);
+        expect(stateService.getProject(id)!.name).toBe(before.name);
+        expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      } finally { store.save = originalSave; }
+      stateService.save();
+      await stateService.flush();
+      const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      restarted.load();
+      expect(restarted.getProject(id)!.slug).toBe(before.slug);
+      expect(restarted.getProject(id)!.name).toBe(before.name);
+      expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+    });
+
     it('restores failed settings and confirms the compensation across restart', async () => {
       const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
       const before = structuredClone(stateService.getProject(id)!);

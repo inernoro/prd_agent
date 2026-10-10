@@ -3645,24 +3645,36 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
 
     const beforeSave = structuredClone(project);
+    let writtenProject: Project | undefined;
+    let applied: Project | undefined;
+    let flushResult: BoundedFlushResult = 'failed';
     try {
-      stateService.updateProject(project.id, patch, projectIdentityActorFromRequest(req));
-      const writtenProject = stateService.getProject(project.id)!;
-      const applied = { ...writtenProject };
-      if (await waitForFlushWithTimeout(() => stateService.flush(), 5000) !== 'flushed') {
-        const reverted = stateService.restoreProjectSettingsUpdate(project.id, beforeSave, applied, Object.keys(patch) as Array<keyof Project>, writtenProject);
-        const restoreConfirmed = await waitForFlushWithTimeout(() => stateService.flush(), 5000) === 'flushed';
-        res.status(503).json({ error: 'state_save_pending', restored: reverted && restoreConfirmed,
-          message: restoreConfirmed
-            ? reverted ? '设置没有保存，已恢复保存前的版本。请稍后重试。' : '本次保存未确认，期间收到的最新修改已保留。请重新加载后核对。'
-            : '设置保存及恢复写入尚未确认，存储版本暂时不确定。请等待存储恢复后核对，暂时不要重复修改。',
-        });
-        return;
+      try {
+        stateService.updateProject(project.id, patch, projectIdentityActorFromRequest(req));
+      } finally {
+        // save 可在安装新对象之后同步抛错，异常路径也必须取得本次恢复依据。
+        writtenProject = stateService.getProject(project.id);
+        applied = writtenProject ? { ...writtenProject } : undefined;
       }
+      flushResult = await waitForFlushWithTimeout(() => stateService.flush(), 5000);
     } catch (err) {
-      res.status(500).json({
-        error: 'state_save_failed',
-        message: (err as Error).message,
+      console.error(`[project-settings] 项目 ${project.id} 保存失败`, err);
+    }
+    if (flushResult !== 'flushed') {
+      let reverted = false;
+      let restoreConfirmed = false;
+      try {
+        if (writtenProject && applied) {
+          reverted = stateService.restoreProjectSettingsUpdate(project.id, beforeSave, applied, Object.keys(patch) as Array<keyof Project>, writtenProject);
+          restoreConfirmed = await waitForFlushWithTimeout(() => stateService.flush(), 5000) === 'flushed';
+        }
+      } catch (err) {
+        console.error(`[project-settings] 项目 ${project.id} 恢复写入未确认`, err);
+      }
+      res.status(503).json({ error: 'state_save_pending', restored: reverted && restoreConfirmed,
+        message: restoreConfirmed
+          ? reverted ? '设置没有保存，已恢复保存前的版本。请稍后重试。' : '本次保存未确认，期间收到的最新修改已保留。请重新加载后核对。'
+          : '设置保存及恢复写入尚未确认，存储版本暂时不确定。请等待存储恢复后核对，暂时不要重复修改。',
       });
       return;
     }
