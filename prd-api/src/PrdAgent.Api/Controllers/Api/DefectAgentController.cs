@@ -2749,8 +2749,10 @@ public class DefectAgentController : ControllerBase
             acceptance = new
             {
                 skill = "create-visual-test-to-kb",
+                reportMode = "cds",
+                folderName = DefectAcceptanceStoreName,
                 storeName = DefectAcceptanceStoreName,
-                note = "正式缺陷系统只负责拉取、评论、回写 commit/PR/validation-report 和通知；修复验证与视觉验收在测试或预览环境执行。验收技能归档时复制 acceptance.config.json 到临时目录，并把 report.storeName 改为“缺陷修复验收报告”。"
+                note = "正式缺陷系统只负责拉取、评论、回写 commit/PR/validation-report 和通知；修复验证与视觉验收在测试或预览环境执行。验收技能归档时复制 acceptance.config.json 到临时目录，设置 report.mode=cds、report.cdsFolder=“缺陷修复验收报告”，归档并验证 CDS 线上报告。storeName 仅为旧客户端兼容字段；不得改存 MAP 知识库。"
             },
             policy = BuildAutomationPolicyPayload(),
             agentLaunch = BuildAutomationAgentLaunchPayload(projectId, teamId, status),
@@ -3085,6 +3087,8 @@ public class DefectAgentController : ControllerBase
                     acceptance = new
                     {
                         skill = "create-visual-test-to-kb",
+                        reportMode = "cds",
+                        folderName = DefectAcceptanceStoreName,
                         storeName = DefectAcceptanceStoreName,
                         reportType = "修复",
                         target = $"{t.DefectNo ?? t.DefectId} {t.DefectTitle}".Trim(),
@@ -4503,6 +4507,8 @@ public class DefectAgentController : ControllerBase
                 runOnlyAfterPublish = true,
                 pendingEndpoint = "/api/defect-agent/agent/published-pending",
                 reportEndpoint = "/api/defect-agent/agent/resolution-traces/{traceId}/validation-report",
+                reportMode = "cds",
+                folderName = DefectAcceptanceStoreName,
                 storeName = DefectAcceptanceStoreName,
                 notifyReporterAfterValidation = true,
             },
