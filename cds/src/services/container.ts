@@ -681,6 +681,13 @@ export function niceBuildCommands(command: string): string {
   return `NICE=$(command -v nice >/dev/null 2>&1 && echo 'nice -n ${n}'); ${out}`;
 }
 
+export class ContainerStopUnconfirmedError extends Error {
+  constructor(readonly running: boolean | undefined) {
+    super('容器停止结果未确认，请查看状态并重试');
+    this.name = 'ContainerStopUnconfirmedError';
+  }
+}
+
 export class ContainerService {
   constructor(
     private readonly shell: IShellExecutor,
@@ -2480,11 +2487,13 @@ export class ContainerService {
     const result = await this.shell.exec(`docker stop ${containerName}`);
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
+    const confirmed = state?.running === false
+      || (state?.running !== true && (result.exitCode === 0 || isDockerNoSuchContainer(result)));
     this.recordContainerEvent({
-      severity: result.exitCode === 0 ? 'info' : 'error',
+      severity: confirmed ? 'info' : 'error',
       source: 'cds-container-service',
-      action: 'container.stop.completed',
-      message: `docker stop completed for ${containerName}: ${reason}`,
+      action: confirmed ? 'container.stop.completed' : 'container.stop.failed',
+      message: confirmed ? `docker stop completed for ${containerName}: ${reason}` : `docker stop not confirmed for ${containerName}: ${reason}`,
       projectId: context.projectId ?? undefined,
       branchId: context.branchId ?? undefined,
       profileId: context.profileId ?? undefined,
@@ -2507,6 +2516,7 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    if (!confirmed) throw new ContainerStopUnconfirmedError(typeof state?.running === 'boolean' ? state.running : undefined);
   }
 
   /**

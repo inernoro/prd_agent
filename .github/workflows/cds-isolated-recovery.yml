@@ -9,6 +9,7 @@ on:
       - cds/pnpm-lock.yaml
       - cds/scripts/deployment-recovery-drill.ts
       - cds/scripts/replica-confirmation-drill.ts
+      - cds/scripts/actual-stop-drill.ts
       - cds/scripts/tsconfig.acceptance.json
       - .github/workflows/cds-isolated-recovery.yml
 
@@ -77,5 +78,33 @@ jobs:
         with:
           name: cds-replica-confirmation-${{ github.sha }}
           path: cds/replica-output/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  actual-stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check isolated drills
+        run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Real containers demonstrate old false stop confirmation
+        run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts --reference
+      - name: Real HTTP stop failure retry restart and supersession
+        run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts
+      - name: Preserve actual stop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-actual-stop-${{ github.sha }}
+          path: cds/stop-output/
           if-no-files-found: warn
           retention-days: 14

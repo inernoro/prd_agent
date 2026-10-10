@@ -845,6 +845,22 @@ describe('ContainerService', () => {
       expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
     });
 
+    it.each(['command-failed', 'still-running', 'unavailable'])('停止未确认时%s必须失败，不能报告成功', async (mode) => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'isolated command unavailable', exitCode: mode === 'still-running' ? 0 : 1 }));
+      mock.addResponsePattern(/docker inspect/, () => mode === 'unavailable'
+        ? ({ stdout: '', stderr: 'isolated daemon unavailable', exitCode: 1 })
+        : ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'running', Running: true } }]), stderr: '', exitCode: 0 }));
+      await expect(service.stop('cds-feature-a-api')).rejects.toThrow('停止结果未确认');
+    });
+
+    it('停止确认连接失败但随后实际读取已停止时允许确认同一结果', async () => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'acknowledgement unavailable', exitCode: 1 }));
+      mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'exited', Running: false } }]), stderr: '', exitCode: 0 }));
+      await expect(service.stop('cds-feature-a-api')).resolves.toBeUndefined();
+    });
+
     it('records operationId and branch identity on stop events', async () => {
       const records: Array<{
         action: string;

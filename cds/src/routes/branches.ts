@@ -16,7 +16,7 @@ import { recordContainerSample, queryContainerSeries } from '../services/contain
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
-import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
+import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
@@ -15422,6 +15422,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      const failedServices: string[] = [];
       // Actually stop containers
       for (const svc of Object.values(entry.services)) {
         assertBranchOperationCurrent(branchOperationLease, `before-stop-${svc.profileId}`);
@@ -15438,9 +15439,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             operation: 'branch-stop',
             source: 'api.stop-branch',
           });
-        } catch { /* ok */ }
+        } catch (err) {
+          assertBranchOperationCurrent(branchOperationLease, `after-failed-stop-${svc.profileId}`);
+          svc.status = err instanceof ContainerStopUnconfirmedError && err.running === true ? 'running' : 'error';
+          svc.errorMessage = '服务停止结果未确认，请查看状态并重试';
+          failedServices.push(svc.profileId);
+          continue;
+        }
         assertBranchOperationCurrent(branchOperationLease, `after-stop-${svc.profileId}`);
         svc.status = 'stopped';
+        delete svc.errorMessage;
       }
       // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
       // 快照里，必须显式停掉，否则分支停止/睡眠后成员版本继续占资源。
@@ -15451,6 +15459,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
         for (const member of replicaSet.members) {
           assertBranchOperationCurrent(branchOperationLease, `before-stop-member-${member.id}`);
+          let stopFailed = false;
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, stopAttribution.reason, {
@@ -15465,9 +15474,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 operation: 'branch-stop-replica-member',
                 source: 'api.stop-branch',
               });
-            } catch { /* 失败与否统一由下面的实测判定，不靠异常 */ }
+            } catch {
+              stopFailed = true;
+            }
           }
           assertBranchOperationCurrent(branchOperationLease, `after-stop-member-${member.id}`);
+          if (stopFailed) {
+            member.status = 'error';
+            member.statusMessage = '副本停止结果未确认，请查看状态并重试';
+            failedServices.push(`${replicaSet.profileId}--${member.id}`);
+            continue;
+          }
           // 停止必须核实再落状态（Codex 第三十五轮 P1，判定见 services/replica-stop.ts）
           await settleMemberAfterStop(member, {
             isRunning: (name) => containerService.isRunning(name),
@@ -15486,6 +15503,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
             },
           });
+          if (member.status === 'error') failedServices.push(`${replicaSet.profileId}--${member.id}`);
         }
       }
       await archiveBranchContainerLogs({
@@ -15501,6 +15519,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         trigger: triggerFromRequest(req),
       });
       assertBranchOperationCurrent(branchOperationLease, 'after-stop-log-archive');
+      if (failedServices.length > 0) {
+        branchOperationFinalStatus = 'failed';
+        entry.status = 'error';
+        stateService.save();
+        await stateService.flush();
+        assertBranchOperationCurrent(branchOperationLease, 'failed-stop-confirmation');
+        res.status(503).json({ error: '部分服务停止结果未确认，请查看服务状态并重试', failedServices });
+        return;
+      }
       entry.status = 'idle';
       // 2026-05-14: 记录最近一次停止信息，UI 让用户看清"为什么变灰"
       entry.lastStoppedAt = new Date().toISOString();

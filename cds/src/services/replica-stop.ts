@@ -1,7 +1,7 @@
 /**
  * 副本成员「停止后落状态」的唯一判定（Codex 第三十五轮 P1 的完整版）。
  *
- * `ContainerService.stop` 在 `docker stop` 非零退出时只记录事件、**不抛异常**。
+ * `ContainerService.stop` 先确认停止结果，未确认会抛错；已确认停止后仍须核实成员状态。
  * 三处停止循环（分支停止路由、调度器降温、auto-lifecycle 自动停止）此前都是
  * 「try stop → 无条件 member.status = 'stopped'」：一个其实还活着的共享库副本
  * 就此从所有视野里消失——发布器把它摘出路由，成员对账只看 running 记录，

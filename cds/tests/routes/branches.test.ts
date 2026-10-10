@@ -2947,6 +2947,26 @@ describe('Branch Routes', () => {
       expect(operationActions).toContain('branch.operation.completed');
     });
 
+    it('实际停止失败仍在运行时返回失败，保留服务事实并继续停止其他服务', async () => {
+      const branch: BranchEntry = { id: 'stop-failed', projectId: 'default', branch: 'stop-failed', worktreePath: tmpDir,
+        status: 'running', createdAt: new Date().toISOString(), services: {
+          api: { profileId: 'api', containerName: 'stop-failed-api', hostPort: 10001, status: 'running' },
+          web: { profileId: 'web', containerName: 'stop-failed-web', hostPort: 10002, status: 'running' },
+        } };
+      stateService.addBranch(branch); await stateService.flush();
+      mock.addResponsePatternFirst(/^docker stop stop-failed-api$/, () => ({ stdout: '', stderr: 'isolated daemon unavailable', exitCode: 1 }));
+      mock.addResponsePatternFirst(/^docker inspect 'stop-failed-api'$/, () => ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'running', Running: true } }]), stderr: '', exitCode: 0 }));
+      const result = await request(server, 'POST', '/api/branches/stop-failed/stop');
+      expect(result.status).toBe(503);
+      expect(branch.status).toBe('error'); expect(branch.services.api.status).toBe('running');
+      expect(branch.services.api.errorMessage).toContain('停止'); expect(branch.services.web.status).toBe('stopped');
+      expect(branch.lastStoppedAt).toBeUndefined(); expect(branch.stopCount || 0).toBe(0);
+      expect(mock.commands).toContain('docker stop stop-failed-web');
+      const reopened = new StateService(path.join(tmpDir, 'state.json')); reopened.load();
+      expect(reopened.getBranch(branch.id)?.services.api.status).toBe('running');
+      expect(JSON.stringify(result.body)).not.toContain('isolated daemon unavailable');
+    });
+
     it('attributes webhook-triggered stops to webhook instead of user', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/webhook-stop' });
       const res = await request(
