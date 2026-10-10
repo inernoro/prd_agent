@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.29；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.30；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -328,3 +328,13 @@ fd113固定独立23/24局部，原三问题关闭，但history shared task保留
 dc2f7d0ce47584656d948e61d048f17696f0da26本地源码例外queue按冻结project轮转/同项目FIFO，匿名兼容组FIFO；默认512等待/30min上限，超量与过期明确失败且不取消运行holder，授予/取消/超时清timer/listener，onStart观察异常释放槽位。whole/profile两路实际传projectId、任何gate失败结束排队episode，日志/UI改等待总量不承诺绝对位置；tracker旧min位置断言退场并保留旧红。主5新反例真红→25 gate绿，5files288相关/core及web tsc0，固定全量655files9560绿/6files19skip/1obsolete snapshot/65.48s。独立固定复验进行中；phase公平队列、durable pending、实际Master/Daemon与公网未验。
 
 两仓库最新fetch远端仍为CDS origin/main45533b、IMP origin/test e2fd7与origin/main2bf49；未发布、未操作共享宿主，固定八候选未变。38条partial-local/11todo，49正式not-executed、visual N/A。expected result：排队有界且跨项目不被积压垄断；current evidence：288相关、9560全量及两侧tsc0；visible result：未部署；gap：dc2f独立、真实阶段公平/持久队列/八分支/公网未验；required action：按原同编号继续实施与末尾复验，不提前关闭目标。
+
+## v1.30 固定队列轮转、立即取消与当前缺口
+
+4d51286ca9e0159b778bff6b854ef0a33bc28ec2以有界稳定项目环保留下一个项目的轮次，已排空组从环移除、不长期缓存项目身份；旧dc2f独立direct12/13与actualRouter7/8的三项目轮转红原件保留，主1新反例真红→289相关/core tsc0，固定全量655files9561绿/6files19skip/1旧obsolete snapshot/68.42s。末尾4d原28/28局部绿，但追加whole/profile取消100ms仍有waiter/chip的两真红，transfer时安全不能替代立即取消。
+
+2642d388ada74e7ffe14bd7f6cfa9441602659e5将实际lease signal直接接两入口的source gate，whole合并layer signal，15s tick只兼容缺signal旧租约；主两实际HTTP/StateJSON反例在旧4d 100ms仍queued1真红，新5files291相关/core tsc0。末尾唯一31/31局部：direct13+扩展5+实际自有nativeHTTP/Router/Coordinator/gate/StateJSON v5路由12+真实whole layer abort控制1；取消100ms前后JSONcancelled、chip清、gateactive1唯一a0，尚未release其他holder，取消者不进runtime。runtime/pull/readiness仍受控替身，非真实Daemon。原4d两红与重复v4/v6控制保留、不重复计数。
+
+2642d全量654files9562绿/1failedfile1HTTP超时/6files19skip，68.77s；uptime-agent-selfservice的无地址台账拒绝用例5秒超时，单独16/16复跑绿，根因未证明，原失败保留，不称全量绿或线上500闭合。日志/tmp/cds-express-2642d-full.log、/tmp/cds-express-2642d-uptime-recheck.log；主取消红绿/tmp/cds-source-queue-immediate-cancel-final-{red,green}.log及-tsc.log。
+
+expected result：源例外项目轮转和立即取消不影响在途holder。current evidence：固定独立31与主291/core0、全量1未闭合超时。visible result：未部署、候选视觉N/A。gap：49正式/8支完整交付、实际Daemon/公网/双主题、持久队列与其他同步热点未验。required action：继续本地TDD消除热点、保留原失败，在隔离准入后按既有八支push/selfupdate授权执行真实验收；不提前关目标。
