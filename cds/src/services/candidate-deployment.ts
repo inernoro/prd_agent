@@ -9,6 +9,7 @@ import { resolveCandidateReplacement } from './candidate-replacement-policy.js';
 import { topoSortLayers } from './topo-sort.js';
 import { runLayerWithSharedAbort } from './deploy-layer-runner.js';
 import { BranchOperationSupersededError } from './branch-operation-coordinator.js';
+import { unresolvedCandidateRun } from './candidate-operation-admission.js';
 
 export interface CandidateDeploymentOptions {
   runId: string;
@@ -34,6 +35,7 @@ export class CandidateDeploymentService {
 
   async deploy(options: CandidateDeploymentOptions): Promise<void> {
     const { entry, runId } = options;
+    if (unresolvedCandidateRun(this.state, entry.id, runId)) throw new Error('candidate_reconciliation_required: previous graph is unresolved');
     const run = this.state.getDeploymentRun(runId);
     const targetSha = entry.deploymentTargetSha;
     if (!run || !run.operationId || !run.configHash || run.branchId !== entry.id || run.projectId !== entry.projectId ||

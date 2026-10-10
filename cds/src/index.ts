@@ -126,6 +126,7 @@ import { readPreviewMirror, registerLoadedPreviewMirror } from './services/previ
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { candidateOperationAdmission } from './services/candidate-operation-admission.js';
 import { startRotationRecoveryArtifactCleanup } from './services/infra-local-recovery-drill.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
@@ -2136,7 +2137,8 @@ const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
 // 而今天崩的恰恰就是启动期。
 installProcessFuse({ store: activeServerEventLogStore, processName: 'cds-master' });
 
-const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
+const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore,
+  request => candidateOperationAdmission(stateService, request));
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);

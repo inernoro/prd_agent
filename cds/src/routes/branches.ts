@@ -1,4 +1,5 @@
 import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
+import { unresolvedCandidateRun } from '../services/candidate-operation-admission.js';
 import type { OwnedContainerLifecycle } from '../services/owned-container-lifecycle.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
@@ -15515,7 +15516,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           note: entry.lastStopReason,
         });
         stateService.save();
-        res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
+        const candidateReconciliationPending = Boolean(unresolvedCandidateRun(stateService, id));
+        res.json({ message: candidateReconciliationPending ? `已请求执行器 ${remoteExecutor.id} 停止当前服务；候选实例仍待对账`
+          : `已请求执行器 ${remoteExecutor.id} 停止所有服务`, ...(candidateReconciliationPending ? { candidateReconciliationPending: true } : {}) });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
         res.status(502).json({ error: `无法连接执行器: ${(err as Error).message}` });
@@ -15626,7 +15629,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: stopAttribution.reason,
       });
       stateService.save();
-      res.json({ message: '所有服务已停止' });
+      const candidateReconciliationPending = Boolean(unresolvedCandidateRun(stateService, id));
+      res.json({ message: candidateReconciliationPending ? '已请求停止当前服务；候选实例仍待对账' : '所有服务已停止',
+        ...(candidateReconciliationPending ? { candidateReconciliationPending: true } : {}) });
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       res.status(500).json({ error: (err as Error).message });

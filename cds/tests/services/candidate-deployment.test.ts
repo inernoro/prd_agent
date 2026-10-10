@@ -67,6 +67,14 @@ function fixture(role: 'api' | 'worker' = 'api') {
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('rejects a second candidate graph while a previous failed journal for the branch remains unreleased', async () => {
+    const f = fixture('worker');
+    const previous = (await new DeploymentRunService(state).begin({ projectId: 'project', branchId: entry.id, trigger: 'manual', commitSha: sha, operationId: 'previous', configHash: 'old' })).id;
+    state.updateDeploymentRun(previous, current => { current.status = 'failed'; current.candidate = { operationId: 'previous', targetSha: sha, configHash: 'old', phase: 'reconciling', networkName: 'unknown', updatedAt: '2026-10-11', serving: {}, services: {} }; });
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_reconciliation_required');
+    expect(f.events).toEqual([]); expect(f.old.State.Running).toBe(true);
+  });
+
   it.each(['create', 'startup', 'readiness'] as const)('normalizes explicit cancellation during %s into the lease error without deleting either graph', async phase => {
     const f = fixture(); const coordinator = new BranchOperationCoordinator();
     const lease = coordinator.begin({ branchId: entry.id, kind: 'deploy', trigger: 'manual' }).lease!;

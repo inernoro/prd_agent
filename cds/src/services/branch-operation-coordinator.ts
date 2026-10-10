@@ -257,12 +257,15 @@ export class BranchOperationCoordinator {
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private generations = new Map<string, number>();
 
-  constructor(private readonly events?: ServerEventLogSink | null) {}
+  constructor(private readonly events?: ServerEventLogSink | null,
+    private readonly admitStart?: (request: BranchOperationRequest) => string | null) {}
 
   begin(request: BranchOperationRequest): BranchOperationDecision {
     const branchId = request.branchId;
     const active = this.findBlockingActive(request);
     if (!active) {
+      const rejection = this.admissionRejection(request);
+      if (rejection) return rejection;
       const reserved = this.getUsableReservedContinuation(branchId, request);
       if (reserved) return this.beginAgainstReservedContinuation(request, reserved);
       return this.start(request);
@@ -318,6 +321,9 @@ export class BranchOperationCoordinator {
     const incomingPriority = priorityOf(request);
     const activePriority = priorityOf(active.request);
     if (incomingPriority > activePriority) {
+      // Admission must precede revocation: a rejected replacement leaves the current lease intact.
+      const rejection = this.admissionRejection(request);
+      if (rejection) return rejection;
       for (const item of this.findBlockingActives(request)) {
         item.cancelled = true;
         item.cancelReason = `superseded by ${request.kind}`;
@@ -491,6 +497,15 @@ export class BranchOperationCoordinator {
     this.pendingWebhookDeploys.clear();
     this.reservedContinuations.clear();
     this.generations.clear();
+  }
+
+  private admissionRejection(request: BranchOperationRequest): BranchOperationDecision | null {
+    let reason: string | null = null;
+    try { reason = this.admitStart?.(request) || null; } catch { reason = 'branch_operation_admission_unavailable'; }
+    if (!reason) return null;
+    const operationId = this.createOperationId(); const generation = this.currentGeneration(request.branchId);
+    this.record('branch.operation.rejected', request, operationId, generation, 'warn', { reason });
+    return { status: 'rejected', operationId, generation, reason };
   }
 
   private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {

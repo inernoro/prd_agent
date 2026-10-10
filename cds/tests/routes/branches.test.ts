@@ -16,6 +16,7 @@ import {
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
+import { candidateOperationAdmission } from '../../src/services/candidate-operation-admission.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
@@ -247,7 +248,7 @@ describe('Branch Routes', () => {
         });
       },
     };
-    branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
+    branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore, request => candidateOperationAdmission(stateService, request));
     deploymentRunService = new DeploymentRunService(stateService);
     deploymentVersionService = new DeploymentVersionService(stateService);
     managedProjectService = new ManagedProjectService(stateService);
@@ -840,6 +841,30 @@ describe('Branch Routes', () => {
       expect(branch.services.api.status).toBe('running');
     });
 
+
+    it.each(['deploy', 'deploy/api', 'restart', 'delete'] as const)('P3 blocks %s while a failed journal still owns unreleased instances', async action => {
+      seedGateProject(false);
+      const branch = stateService.getBranch('b1')!;
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      const previous = await deploymentRunService.begin({ projectId: branch.projectId!, branchId: branch.id, trigger: 'manual', commitSha: 'a'.repeat(40), operationId: 'previous', configHash: 'frozen' });
+      stateService.updateDeploymentRun(previous.id, current => { current.status = 'failed'; current.candidate = { operationId: 'previous', targetSha: 'a'.repeat(40), configHash: 'frozen', phase: 'reconciling', networkName: 'candidate-network', updatedAt: '2026-10-11', services: {}, serving: {} }; });
+      const result = await request(server, action === 'delete' ? 'DELETE' : 'POST', '/api/branches/b1' + (action === 'delete' ? '' : '/' + action), { commitSha: createHash('sha1').update('unreleased-' + action).digest('hex') });
+      expect(typeof result.body === 'string' ? result.body : JSON.stringify(result.body)).toContain('candidate_reconciliation_required');
+      expect(mock.commands.some(command => /docker (stop|run|rm|create|restart)/.test(command))).toBe(false);
+      expect(stateService.getBranch('b1')).toBe(branch); expect(branch.services.api.status).toBe('running');
+      expect(stateService.getDeploymentRun(previous.id)!.candidate!.phase).toBe('reconciling');
+    });
+
+    it('P3 explicit stop preserves unreleased reservations and reports that candidate reconciliation is pending', async () => {
+      seedGateProject(false); const branch = stateService.getBranch('b1')!;
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      const previous = await deploymentRunService.begin({ projectId: branch.projectId!, branchId: branch.id, trigger: 'manual', commitSha: 'a'.repeat(40), operationId: 'previous', configHash: 'frozen' });
+      stateService.updateDeploymentRun(previous.id, current => { current.status = 'cancelled'; current.candidate = { operationId: 'previous', targetSha: 'a'.repeat(40), configHash: 'frozen', phase: 'reconciling', networkName: 'candidate-network', updatedAt: '2026-10-11', services: {}, serving: {} }; });
+      const result = await request(server, 'POST', '/api/branches/b1/stop', {});
+      expect(result.status).toBe(200); expect((result.body as any).candidateReconciliationPending).toBe(true);
+      expect((result.body as any).message).toContain('待对账');
+      expect(stateService.getDeploymentRun(previous.id)!.candidate!.phase).toBe('reconciling');
+    });
     it('P3 enabled candidate replacement cannot fall into destructive legacy deployment without consumer and admission bindings', async () => {
       seedGateProject(false); candidateReplacementEnabled = true;
       const sha = 'b'.repeat(40);

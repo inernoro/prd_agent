@@ -50,6 +50,42 @@ function eventSink(): {
 }
 
 describe('BranchOperationCoordinator', () => {
+  it('keeps same-target joining and pending coalescing while admission blocks new writers', () => {
+    let blocked = false; const coordinator = new BranchOperationCoordinator(null, () => blocked ? 'candidate_reconciliation_required' : null);
+    const identity = { branchId: 'branch', commitSha: SHA_A, commitPinned: true, configHash: 'frozen' };
+    const active = coordinator.begin({ ...identity, kind: 'deploy', trigger: 'webhook' }); blocked = true;
+    expect(coordinator.begin({ ...identity, kind: 'deploy', trigger: 'manual' }).status).toBe('joined');
+    expect(coordinator.begin({ ...identity, commitSha: SHA_B, kind: 'deploy', trigger: 'webhook' }).status).toBe('merged');
+    expect(active.lease!.isCurrent()).toBe(true);
+    const pending = coordinator.complete(active.lease!, 'failed', 'reconcile first')!;
+    expect(coordinator.begin(pending.request).status).toBe('rejected');
+  });
+  it('fails closed if the admission evidence reader fails', () => {
+    const coordinator = new BranchOperationCoordinator(null, () => { throw new Error('private failure'); });
+    const result = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'manual' });
+    expect(result.status).toBe('rejected'); expect(result.reason).toBe('branch_operation_admission_unavailable');
+    expect(coordinator.getActiveOperations()).toEqual([]);
+  });
+
+  it('rejects a higher priority start before aborting the current lease when recovery admission is closed', () => {
+    let blocked = false;
+    const coordinator = new BranchOperationCoordinator(null, () => blocked ? 'candidate_reconciliation_required' : null);
+    const first = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'webhook' });
+    blocked = true;
+    const next = coordinator.begin({ branchId: 'branch', kind: 'restart', trigger: 'manual' });
+    expect(next.status).toBe('rejected'); expect(next.reason).toBe('candidate_reconciliation_required');
+    expect(first.lease!.isCurrent()).toBe(true); expect(first.lease!.signal!.aborted).toBe(false);
+  });
+  it('does not acquire a fresh lease or a reserved continuation when recovery admission is closed', () => {
+    let blocked = false;
+    const coordinator = new BranchOperationCoordinator(null, () => blocked ? 'candidate_reconciliation_required' : null);
+    const first = coordinator.begin({ branchId: 'branch', kind: 'force-rebuild', trigger: 'manual', continueWith: 'deploy' });
+    coordinator.complete(first.lease!, 'completed'); blocked = true;
+    expect(coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'manual' }).status).toBe('rejected');
+    expect(coordinator.begin({ branchId: 'other', kind: 'deploy', trigger: 'manual' }).status).toBe('rejected');
+    expect(coordinator.getActiveOperations()).toEqual([]);
+  });
+
   it('records queryable lifecycle events with top-level operationId', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);
