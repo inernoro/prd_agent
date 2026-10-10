@@ -110,7 +110,7 @@ import { archiveBranchContainerLogs } from './services/container-log-archiver.js
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
 import { settleMemberAfterStop } from './services/replica-stop.js';
 import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
-import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
+import { StuckDeployRuntimeDiff } from './services/stuck-deploy-runtime-diff.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
@@ -1538,13 +1538,9 @@ function startStaleDeployDispatchReconciler(
   // stuck reconciler on executors too）。故不再对 executor 提前返回；webhook 派发部分用 mode 守卫。
   const isMaster = config.mode !== 'executor';
   let running = false;
-  // diffRuntimePaths 结果记忆化：ciTargetSha..githubCommitSha 是不可变提交对，
-  // 同一对的 git diff 结果永不变化。旧写法每个 5 分钟 tick 对每条分歧分支重跑
-  // execSync(git diff)（同步阻塞整个事件循环），多条 stale 分支叠加即一次冻结
-  // 数十秒的悬崖（2026-07-21 性能事故：/api/projects 排队 40s+）。命中缓存零成本；
-  // 只缓存成功计算的结果，git 失败（保守返回 false）不缓存以便下轮重试。
-  const runtimeDiffCache = new Map<string, boolean>();
-  const RUNTIME_DIFF_CACHE_MAX = 512;
+  // Unknown diff evidence queues bounded read-only IO outside the Master.
+  // The next watchdog tick uses the immutable pair's successful cached result.
+  const runtimeDiff = new StuckDeployRuntimeDiff(shell);
   const run = () => {
     if (running) return;
     running = true;
@@ -1606,36 +1602,7 @@ function startStaleDeployDispatchReconciler(
         // 用 master 传来的 profilesData、不写本地注册表），过滤会把真实 executor 服务全当僵尸、
         // 把在跑分支误判 idle（Codex P2「Do not filter executor services with local profiles」）。
         filterZombieProfiles: isMaster,
-        diffRuntimePaths: (b) => {
-          // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
-          const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
-          const cacheKey = `${b.worktreePath}:${range}`;
-          const cached = runtimeDiffCache.get(cacheKey);
-          if (cached !== undefined) return cached;
-          try {
-            // 不加 `|| true`:worktree 暂缺 / sha 未 fetch 等 git 失败必须以非零退出
-            // 抛进 catch 走「不缓存」路径。旧写法 `|| true` 会把失败洗成空输出成功,
-            // 被下面缓存成 false 后告警永久压制到进程重启(Codex P2, PR #1213)。
-            const out = timeMainThreadSection('git.sync.stuck-deploy-diff', () => execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
-              encoding: 'utf-8',
-            })).trim();
-            const result = out
-              ? (() => {
-                  const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
-                  return impact.needsRestart || impact.hotReloadablePaths.length > 0;
-                })()
-              : false;
-            if (runtimeDiffCache.size >= RUNTIME_DIFF_CACHE_MAX) {
-              const oldest = runtimeDiffCache.keys().next().value;
-              if (oldest !== undefined) runtimeDiffCache.delete(oldest);
-            }
-            runtimeDiffCache.set(cacheKey, result);
-            return result;
-          } catch {
-            // 取不到 diff 证据 → 保守不告警（无根不喊）。不缓存，等下轮重试。
-            return false;
-          }
-        },
+        diffRuntimePaths: (b) => timeMainThreadSection('git.stuck-deploy-diff.enqueue', () => runtimeDiff.hasRuntimeChanges(b)),
         appendLog: (branchId, log) => state.appendLog(branchId, log),
         emitBranchUpdated: (b) => branchEvents.emitEvent({
           type: 'branch.updated',
