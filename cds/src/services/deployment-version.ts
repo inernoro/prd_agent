@@ -124,6 +124,9 @@ export class DeploymentVersionService {
   materializeProfiles(version: DeploymentVersion, currentProfiles: BuildProfile[]): BuildProfile[] {
     this.assertReusable(version);
     return version.profiles.map((snapshot) => {
+      if (snapshot.replacementContractVersion !== undefined && snapshot.replacementContractVersion !== 1) {
+        throw new Error('replacement_contract_version: unsupported or malformed frozen replacement contract');
+      }
       const current = currentProfiles.find((profile) => profile.id === snapshot.profileId);
       if (!current) {
         throw new Error(`当前项目缺少版本所需构建配置: ${snapshot.profileId}`);

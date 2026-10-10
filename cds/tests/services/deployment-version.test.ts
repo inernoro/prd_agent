@@ -87,6 +87,15 @@ describe('DeploymentVersionService', () => {
     expect(restored.cacheMounts).toEqual([]); expect(restored.prebuiltCommitPolicy).toBeUndefined();
   });
 
+  it.each([2, '1', null])('rejects explicit unsupported replacement contract schema %s', (schema) => {
+    const service = new DeploymentVersionService(stateService);
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'a'.repeat(40), configHash: 'frozen',
+      profiles: [profile()], branch, createdByRunId: 'run' });
+    (version.profiles[0] as any).replacementContractVersion = schema;
+    expect(() => service.materializeProfiles(version, [profile({ role: 'worker', replacementStrategy: 'stop-and-restore' })]))
+      .toThrow('replacement_contract_version');
+  });
+
   it('creates an immutable content-addressed version and reuses the same identity', () => {
     const service = new DeploymentVersionService(stateService, () => new Date('2026-07-10T01:00:00.000Z'));
     branch.services.web = {
