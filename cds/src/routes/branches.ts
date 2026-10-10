@@ -1,3 +1,4 @@
+import { singleServiceArtifactSet } from '../services/single-service-artifact-set.js';
 import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
 import { unresolvedCandidateRun } from '../services/candidate-operation-admission.js';
 import type { OwnedCandidateNetworkLifecycle } from '../services/owned-candidate-network.js';
@@ -14789,11 +14790,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
           (typeof req.body?.commitSha === 'string' ? req.body.commitSha : '') || fallbackPulledSha || entry.githubCommitSha || '', entry.worktreePath);
         entry.deploymentTargetSha = targetSha;
         stateService.save();
-        [effectiveProfile] = await prepareExactPrebuiltArtifacts(shell, [effectiveProfile], targetSha, {
+        // Resolve templates with this exact target, including first deployments with no cached CI SHA.
+        // Other services are admitted as artifacts only; this endpoint does not implicitly redeploy them.
+        const exactContext = { ...entry, ciTargetSha: targetSha, githubCommitSha: targetSha };
+        const artifactProfiles = singleServiceArtifactSet(profiles.map(item => resolveEffectiveProfile(item, exactContext)), profile.id,
+          new Set(stateService.getInfraServicesForProject(entry.projectId || 'default')
+            .filter(infra => infra.status === 'running').map(infra => infra.id)));
+        const prepared = await prepareExactPrebuiltArtifacts(shell, artifactProfiles, targetSha, {
           assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
             signal: branchOperationLease?.signal,
           onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
         });
+        effectiveProfile = prepared.find(item => item.id === profile.id)!;
+        if (!effectiveProfile) throw new Error('artifact_dependency_graph: admitted target is missing');
         deployedCommitSha = targetSha;
         Object.assign(opLog, deriveCommitMeta(entry, targetSha));
       }

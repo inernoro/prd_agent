@@ -824,6 +824,30 @@ describe('Branch Routes', () => {
       expect(none.prebuiltCoverage).toBe('none');
     });
 
+    it.each(['cached', 'empty'])('P1 exact single-service admission preserves the old service when a transitive dependency artifact is missing (%s SHA cache)', async cache => {
+      seedGateProject(false); const sha = 'b'.repeat(40);
+      stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact', dependsOn: ['bridge'] });
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.addBuildProfile({ id: 'bridge', projectId: 'proj-a', name: 'Bridge', workDir: '.', command: '',
+        dockerImage: 'ghcr.io/x/bridge:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, prebuiltCommitPolicy: 'exact',
+        containerPort: 8080, dependsOn: ['worker'] });
+      stateService.addBuildProfile({ id: 'worker', projectId: 'proj-a', name: 'Worker', workDir: '.', command: '',
+        dockerImage: 'ghcr.io/x/worker:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, prebuiltCommitPolicy: 'exact', containerPort: 8080 });
+      const branch = stateService.getBranch('b1')!;
+      if (cache === 'cached') branch.githubCommitSha = sha;
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha,
+        id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull .*$/, ([command]) => ({ stdout: '', stderr: command.includes('worker:') ? 'manifest unknown' : '',
+        exitCode: command.includes('worker:') ? 1 : 0 }));
+      const result = await request(server, 'POST', '/api/branches/b1/deploy/api', { commitSha: sha });
+      expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
+      expect(String(result.body)).toContain('artifact_pull_failed');
+      expect(branch.services.api.status).toBe('running');
+      expect(mock.commands.some(command => command.includes('worker:sha-' + sha))).toBe(true);
+    });
+
     it('P1 exact branch admission preserves every old service when any artifact is missing', async () => {
       seedGateProject(false);
       const sha = 'b'.repeat(40);
