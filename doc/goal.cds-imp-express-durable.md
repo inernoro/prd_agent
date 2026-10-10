@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.18；日期：2026-10-11；状态：active。
+版本：v1.19；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -50,6 +50,10 @@ TDD先红：候选create/start/readiness任一失败旧路由仍可服务；固�
 
 精确单服务部署先检查声明dependsOn的项目内应用传递制品闭包，基础设施仅从应用制品集合排除；Profile缺失、跨项目、依赖循环、非exact预构建依赖都失败关闭。以本次目标展开模板，旧CI缓存或首次空缓存不能改变制品目标。此检查不隐式重部署依赖，也不让制品通过替代依赖真实就绪。自动恢复组件每次扫描同样最多一条，不开放批量恢复入口。
 
+## P2 故障诊断有界合同
+
+e5fd故障诊断IO按完整容器ID及项目/分支/Profile/交付归属合并：1在途、16排队、5秒排队过期、完成后5秒/64项缓存；mutable name/短ID不缓存，启动与健康恢复使同ID旧cache失效、旧pending不重入cache。低优先级执行并在CLI侧投影inspect，不复制解析失败原文。主20事件触发40命令是真红，修后2命令且20事实/回调仍保留；malformed inspect敏感原文泄漏是真红，改有界错误后绿。缓存/归属/重建/满载/排队过期/异常等相关69、显式tsc绿。只验证IO预算，不声称异步旧事件回调顺序、批量巡检或真实事件风暴/公网性能通过；独立固定检查点待验。 该临时实施说明在P2-04真实报告及自动门禁接管后退场。
+
 ## 验收与真实收口
 
 严格采用计划v1.3公网和48小时门槛；八分支完整服务验收、失败保旧、取消恢复与双主题视觉证据必须同时成立。输出页面、交互、命令、权限、闭环的enumerated/mapped/executed/closed_loop_pass/failed/blocked/uncovered，不传播旧SHA结果。阶段通过不关闭原生目标，尚无线上视觉pass。
@@ -58,15 +62,15 @@ TDD先红：候选create/start/readiness任一失败旧路由仍可服务；固�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:d3b7e2ad2944257beaa7d8522d3f2135cff8d1b9,IMP:2a8e22723eae3330d081204ba37cfe5925495777（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:87/0相对origin/main,IMP:15/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:e5fd48b3ad177cbfa834533f06033f6b02810ff4,IMP:780741929342685f8587ffc9b3d1cb1249a3faa6（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:89/0相对origin/main,IMP:16/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
 - 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。
-- 本批实现检查点：2b72收尾回执/已核验旧图自动恢复已实现，启动与分钟tick每轮一条、轮转/去重、暂停/draining不恢复，主相关463。dc9f把组件scan也限为1：原批量放行1真红→44绿/tsc，独立2b72 scan(8)三run边界红保留，不扩张为生产tick红（它原本显式1）。2b72独立新整链复验尚未归档，不能算真实Master/Daemon、未知晚创建/无回执崩溃或新图发布对账通过。 d3b7补exact单服务的dependsOn项目内应用传递制品闭包，不包含无关服务；缺Profile/未登记running infra、跨项目、循环或非exact依赖失败。按本次target展开模板，不依赖旧/空CI缓存；依赖制品缺失前保留在线容器，不隐式重部署依赖。valid cached SHA的旧真实HTTP＋假Docker出现破坏性替换是真红；第一次空缓存仅api模板invalid是安全拒绝，不计依赖漏检红。cached/empty两场景复绿，闭包7/制品6/路由237共250与显式tsc绿。基础设施status仅用于排除应用制品集合，不证明实际健康；固定d3b独立复验和真实OCI/依赖运行待验。
-- 证据纪元：`target_sha=CDS:d3b7e2ad2944257beaa7d8522d3f2135cff8d1b9,IMP:2a8e22723eae3330d081204ba37cfe5925495777；tested_sha=CDS:d3b7相关250/显式tsc,dc9f组件44；2b72历史全量9403/相关463；独立c329网络15/CLI24/Journal12/HTTP1及恢复门禁45+10/HTTP6历史局部,2b72新批待归档；IMP:a35b160产品合同35历史局部,之后仅文档；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS API/SSH/浏览器只读；observed_at=2026-10-10T20:04:49+00:00`
-- 新鲜验证证据：2b72固定全量643文件9403通过、6文件19条跳过、1obsolete snapshot，86.40s；相关463/tsc绿。d3b最新代码仅250相关与显式tsc，dc9f另44；不继承2b72全量。历史628/733失败与池连接停顿风险复现仍保留，根因未闭。49项正式not-executed，候选视觉、实际八分支、公网30分钟/48小时仍未验。 共享浏览器截图是旧线上基线（9分支1出错1运行7未运行，运行app01混合13/14且属于他人任务），不是候选视觉验收；只有Master执行器且18核共享宿主CPU100%/负载约20，隔离宿主未冻结。
+- 本批实现检查点：e5fd故障诊断IO按完整容器ID及项目/分支/Profile/交付归属合并：1在途、16排队、5秒排队过期、完成后5秒/64项缓存；mutable name/短ID不缓存，启动与健康恢复使同ID旧cache失效、旧pending不重入cache。低优先级执行并在CLI侧投影inspect，不复制解析失败原文。主20事件触发40命令是真红，修后2命令且20事实/回调仍保留；malformed inspect敏感原文泄漏是真红，改有界错误后绿。缓存/归属/重建/满载/排队过期/异常等相关69、显式tsc绿。只验证IO预算，不声称异步旧事件回调顺序、批量巡检或真实事件风暴/公网性能通过；独立固定检查点待验。 2b72独立实际Container→Engine取消→收尾回执→原租约完成→真实JSON重载→Reconciler与自有HTTP探针/路由ACK共35/35，Journal收尾16/16；删receipt与前置ACK分别2红/1红，恢复3绿。scan(8)三run边界红保留，主dc9f修为只接1，固定d3b独立复验待归档。上述是假Docker/自有HTTP组件整链，不是真实共享Master/Daemon、未知晚创建或无回执崩溃、新图已发布恢复通过。
+- 证据纪元：`target_sha=CDS:e5fd48b3ad177cbfa834533f06033f6b02810ff4,IMP:780741929342685f8587ffc9b3d1cb1249a3faa6；tested_sha=CDS:e5fd相关69/显式tsc；d3b相关250/dc9f44历史局部；2b72历史全量9403/相关463/独立35+16；IMP:a35b160产品合同35历史局部,之后仅文档；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS API/SSH/浏览器只读；observed_at=2026-10-10T20:14:35+00:00`
+- 新鲜验证证据：最新e5fd相关69与显式tsc绿，d3b250与2b72全量9403是历史局部，不继承。主2条诊断真红与独立2b72 scan批量红有据保存。49正式、候选视觉、实际八分支、公网30分钟/48小时仍未执行；旧共享浏览器基线不是本修订视觉验收。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；本机16GiB已大量压缩/交换，不在其上新增压力VM冒充隔离验收宿主；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：固定2b72独立收尾回执/恢复归档后固定d3b复验单服务依赖与单run扫描；补P2失败诊断预算/P4增量SSE、真实Daemon晚创建/无回执重启与新图发布对账、其他入口、IMP辅助生命周期；冻结隔离八分支运行与视觉证据。49项正式与A01–A12真实证据未收齐，目标保持active。
+- 下一动作与完成条件：固定d3b独立依赖/单run扫描归档后验e5fd诊断预算及旧事件状态时序；继续P4增量SSE、真实Daemon晚创建/无回执重启与新图发布对账、其他入口、IMP辅助生命周期；冻结隔离八分支运行与视觉证据。49项正式与A01–A12真实证据未收齐，目标保持active。
 - 终止/接替结论：active
