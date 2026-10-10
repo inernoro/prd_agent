@@ -158,6 +158,12 @@ public class ImageGenRun
     public List<ImageRefInput>? ImageRefs { get; set; }
 
     /// <summary>
+    /// 用户在入口明确选择的参考图数量。Worker 必须确认最终 ImageRefs 数量与它一致；
+    /// 不一致时拒绝执行，禁止静默退化为文生图或少图生成。
+    /// </summary>
+    public int? ExpectedImageRefCount { get; set; }
+
+    /// <summary>
     /// 可选：局部重绘蒙版（base64 data URI）。
     /// 白色区域 = 要重绘的区域，黑色区域 = 保持不变。
     /// 与 InitImageAssetSha256 / ImageRefs[0] 配合使用。

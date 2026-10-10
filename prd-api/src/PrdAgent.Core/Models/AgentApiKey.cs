@@ -19,7 +19,7 @@ public class AgentApiKey
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>Key 展示名（如"我的 Cursor 工作站"）</summary>
+    /// <summary>Key 展示名（如"我的 Codex 工作站"）</summary>
     public string Name { get; set; } = string.Empty;
 
     /// <summary>Key 说明（可选，如用途、调用方来源）</summary>

@@ -406,7 +406,10 @@ const VERIFIED_PACKAGE_ARTIFACT_CSP = [
 ].join('; ');
 const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
-const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
+const IGNORED_RUNTIME_OUTPUT_PATHS = [
+  'index.html.artifact.json',
+  'current/index.html.artifact.json',
+] as const;
 const CDS_GENERATED_ARTIFACT_PATHS = [
   'assets/accessibility-static-report.json',
   'assets/design-tokens.json',

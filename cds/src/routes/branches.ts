@@ -21454,7 +21454,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
 | Agent | 项目级目录 |
 |------|-----------|
 | Codex / 通用 Agent Skills | \`.agents/skills\` |
-| Cursor | \`.cursor/skills\` |
 | Claude Code | \`.claude/skills\` |
 
 不要写入用户主目录，不要修改 PATH、\`.bashrc\`、\`.zshrc\` 或系统环境变量。

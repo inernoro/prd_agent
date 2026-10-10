@@ -3,8 +3,9 @@ name: LLM Gateway Production Preflight
 # GitHub only exposes workflow_dispatch entries from the default branch.
 # Merge this workflow to the default branch before treating it as a clickable production gate.
 #
-# 只读预检：发布前确认 MAP 与网关可达、凭据可用、commit 符合预期、MAP 没有绕过网关的直连调用。
-# 不部署、不改数据；正式发布仍是 fast.sh --commit X && exec_dep.sh --commit X。
+# 业务只读预检：发布前确认 MAP 与网关可达、凭据可用、commit 符合预期、MAP 没有绕过网关的直连调用。
+# 不部署、不改业务数据；RSA 认证会创建短会话并对齐专用巡检身份权限。
+# 正式发布仍是 fast.sh --commit X && exec_dep.sh --commit X。
 
 on:
   workflow_dispatch:
@@ -40,6 +41,9 @@ jobs:
       INPUT_EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || '' }}
       EXPECT_COMMIT: ${{ github.event.inputs.expect_commit || vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
       PRD_AGENT_API_KEY: ${{ secrets.PRD_AGENT_PROD_API_KEY }}
+      STABLE_SMOKE_SIGNING_KEY_ID: ${{ vars.STABLE_SMOKE_PROD_SIGNING_KEY_ID }}
+      STABLE_SMOKE_SIGNING_PRIVATE_KEY: ${{ secrets.STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY }}
+      STABLE_SMOKE_USER: ${{ vars.STABLE_SMOKE_PROD_USER }}
       LLMGW_GATE_KEY: ${{ secrets.LLMGW_PROD_GATE_KEY }}
 
     steps:
@@ -63,8 +67,15 @@ jobs:
             echo "ERROR: missing gateway base URL. Set vars.LLMGW_PROD_GATE_BASE or workflow_dispatch input gw_base." >&2
             exit 1
           fi
-          if [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
-            echo "ERROR: missing MAP API key. Set secrets.PRD_AGENT_PROD_API_KEY with logs:read access." >&2
+          has_signed_identity=false
+          if [ -n "$(printf '%s' "${STABLE_SMOKE_SIGNING_KEY_ID:-}" | xargs)" ] \
+            && [ -n "$(printf '%s' "${STABLE_SMOKE_SIGNING_PRIVATE_KEY:-}" | xargs)" ] \
+            && [ -n "$(printf '%s' "${STABLE_SMOKE_USER:-}" | xargs)" ]; then
+            has_signed_identity=true
+          fi
+          if [ "$has_signed_identity" != true ] \
+            && [ -z "$(printf '%s' "${PRD_AGENT_API_KEY:-}" | xargs)" ]; then
+            echo "ERROR: missing MAP automation identity. Configure Stable Smoke RSA credentials or the legacy API key." >&2
             exit 1
           fi
           if [ -z "$(printf '%s' "${LLMGW_GATE_KEY:-}" | xargs)" ]; then

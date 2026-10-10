@@ -86,6 +86,7 @@ describe('edit runs seeded from the current published site', () => {
         for (const asset of assets) expect(fs.readFileSync(path.join(workspaceDir, asset.path))).toEqual(Buffer.from(asset.content));
         for (const filePath of [...metadataPaths, 'manifest.json']) expect(fs.existsSync(path.join(workspaceDir, filePath))).toBe(false);
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), html.replace('Original sentence.', 'Updated sentence.'));
+        fs.writeFileSync(path.join(workspaceDir, 'current/index.html.artifact.json'), '{"runtime":"metadata"}');
         if (removeAsset) fs.unlinkSync(path.join(workspaceDir, 'assets/pixel.png'));
       }
       for (const file of inputFiles) expect(fs.readFileSync(path.join(workspaceDir, file.path))).toEqual(Buffer.from(file.content));
@@ -114,6 +115,7 @@ describe('edit runs seeded from the current published site', () => {
     const manifest = JSON.parse(Buffer.from(committed.files.find((item: { path: string }) => item.path === 'manifest.json').contentBase64, 'base64').toString('utf8'));
     expect(manifest.artifactRevision).toBe(computePublicArtifactRevision(committed.files.filter((item: { path: string }) => item.path !== 'manifest.json')));
     expect(Buffer.from(committed.files.find((item: { path: string }) => item.path === 'index.html').contentBase64, 'base64').toString('utf8')).toContain('Updated sentence.');
+    expect(committed.files.some((item: { path: string }) => item.path === 'current/index.html.artifact.json')).toBe(false);
   });
 
   it.each([
@@ -360,6 +362,7 @@ describe('collecting the deliverable', () => {
   it.each([
     ['a symbolic link', (workspaceDir: string) => fs.symlinkSync('/etc/hostname', path.join(workspaceDir, 'assets-link')), 'design_output_invalid'],
     ['a path outside the allowlist', (workspaceDir: string) => fs.writeFileSync(path.join(workspaceDir, 'runtime-state.json'), '{}'), 'design_output_invalid'],
+    ['an unrelated current sidecar', (workspaceDir: string) => { fs.mkdirSync(path.join(workspaceDir, 'current')); fs.writeFileSync(path.join(workspaceDir, 'current/runtime-state.json'), '{}'); }, 'design_output_invalid'],
     ['a modified frozen input', (workspaceDir: string) => fs.writeFileSync(path.join(workspaceDir, 'brief/task.json'), '{}'), 'workspace_input_changed'],
   ])('rejects an output containing %s during preflight', async (_label, tamper, code) => {
     harness = await startHarness();
