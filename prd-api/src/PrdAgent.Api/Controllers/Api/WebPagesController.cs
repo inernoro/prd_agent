@@ -1203,7 +1203,7 @@ public class WebPagesController : ControllerBase
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
-        const long maxBytes = 2L * 1024 * 1024; // 知识库正文按文本存储，2MB 足够覆盖单文件 HTML
+        const long maxBytes = 16L * 1024 * 1024; // 覆盖约 12MB 的网页入口，同时限制匿名代理单次内存占用
         try
         {
             var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
@@ -1220,7 +1220,7 @@ public class WebPagesController : ControllerBase
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
             if (resp.Content.Headers.ContentLength is > maxBytes)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
 
             // 边读边卡上限，**不能**先 ReadAsStringAsync 再判长度。
             //
@@ -1244,7 +1244,7 @@ public class WebPagesController : ControllerBase
                 bytes = buffered.ToArray();
             }
             if (over)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 2MB，不支持读取"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
 
             // 去掉 UTF-8 BOM，否则首字符是 \ufeff，注进 srcDoc 会在页面顶部留一个空白字符
             var html = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
