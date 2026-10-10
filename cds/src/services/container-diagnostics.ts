@@ -163,7 +163,7 @@ export async function collectContainerDiagnostics(
   if (!safe) return { error: { message: `unsafe container reference: ${containerRef}` } };
 
   let inspect: Record<string, unknown> | undefined;
-  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000 });
+  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000, executionLane: 'observation' });
   if (inspectResult.exitCode === 0 && inspectResult.stdout.trim()) {
     try {
       inspect = summarizeDockerInspect(JSON.parse(inspectResult.stdout));
@@ -174,7 +174,7 @@ export async function collectContainerDiagnostics(
 
   const logsResult = await shell.exec(
     `docker logs --timestamps --tail ${Math.max(1, Math.min(tailLines, 1000))} ${shellQuote(safe)}`,
-    { timeout: 7000 },
+    { timeout: 7000, executionLane: 'observation' },
   );
   const rawLogs = `${logsResult.stdout || ''}${logsResult.stderr || ''}`;
   return {

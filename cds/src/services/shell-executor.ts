@@ -1,44 +1,81 @@
-import { exec as cpExec } from 'node:child_process';
+import { exec as cpExec, spawn, type ChildProcess } from 'node:child_process';
 import type { IShellExecutor, ExecResult, ExecOptions } from '../types.js';
+
+/** 仅供内部观测 worker 使用，不暴露 shell RPC 或状态写入能力。 */
+export interface OwnedShellControl {
+  env: NodeJS.ProcessEnv;
+  cancelled: () => boolean;
+  onSpawn: (child: ChildProcess) => void;
+}
+
+export function executeShellCommand(command: string, options?: ExecOptions, owned?: OwnedShellControl): Promise<ExecResult> {
+  if (owned) return executeOwnedShellCommand(command, options, owned);
+  return new Promise((resolve) => {
+    const cp = cpExec(command, {
+      cwd: options?.cwd,
+      timeout: options?.timeout,
+      maxBuffer: 10 * 1024 * 1024,
+      ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
+    }, (error, stdout, stderr) => {
+      resolve({ stdout: stdout ?? '', stderr: stderr ?? '', exitCode: error ? (error.code ?? 1) : 0 });
+    });
+    if (options?.stdin !== undefined) cp.stdin?.end(options.stdin);
+    if (options?.onData) {
+      cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString()));
+      cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString()));
+    }
+    cp.on('error', () => resolve({ stdout: '', stderr: 'Process error', exitCode: 1 }));
+  });
+}
+
+function executeOwnedShellCommand(command: string, options: ExecOptions | undefined, owned: OwnedShellControl): Promise<ExecResult> {
+  return new Promise((resolve, reject) => {
+    let cancelled = false;
+    let overflow = false;
+    let failed = false;
+    let stdout = '';
+    let stderr = '';
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    // exec/execFile 不下传 detached；必须用 spawn 创建独立进程组才能回收 shell 的子进程。
+    const child = spawn(command, { shell: true, detached: process.platform !== 'win32', cwd: options?.cwd, env: owned.env });
+    const kill = (): void => {
+      if (!child.pid) return;
+      try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL'); } catch { /* 已退出 */ }
+    };
+    const check = (): void => { if (owned.cancelled()) { cancelled = true; kill(); } };
+    const poll = setInterval(check, 20);
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      stdoutBytes += Buffer.byteLength(chunk);
+      if (stdoutBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
+      stdout += chunk;
+      options?.onData?.(chunk);
+    });
+    child.stderr?.on('data', (chunk: string) => {
+      stderrBytes += Buffer.byteLength(chunk);
+      if (stderrBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
+      stderr += chunk;
+      options?.onData?.(chunk);
+    });
+    child.on('error', () => { failed = true; });
+    child.stdin?.on('error', () => { /* 子进程提前退出时以 close 结果为准 */ });
+    child.on('close', (code) => {
+      clearInterval(poll);
+      kill();
+      if (cancelled) reject(new Error('Observation execution cancelled'));
+      else resolve({ stdout, stderr: failed ? 'Process error' : stderr, exitCode: failed || overflow ? 1 : code ?? 1 });
+    });
+    owned.onSpawn(child);
+    if (options?.stdin !== undefined) child.stdin?.end(options.stdin);
+    check();
+  });
+}
 
 export class ShellExecutor implements IShellExecutor {
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    return new Promise((resolve) => {
-      const cp = cpExec(
-        command,
-        {
-          cwd: options?.cwd,
-          timeout: options?.timeout,
-          maxBuffer: 10 * 1024 * 1024,
-          // 2026-05-04:支持调用方覆盖部分 env 变量。提供 env 时与
-          // process.env 合并,本字段后写覆盖。不提供时沿用 process.env(默认行为)。
-          // 2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。
-          ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
-        },
-        (error, stdout, stderr) => {
-          resolve({
-            stdout: stdout ?? '',
-            stderr: stderr ?? '',
-            exitCode: error ? (error.code ?? 1) : 0,
-          });
-        },
-      );
-
-      // 只在调用方显式给了 stdin 时才碰它。写完必须 end()，否则子进程里的
-      // `sh -s` 会一直等输入结束，直到 exec 超时才被杀——那种挂起最难查。
-      if (options?.stdin !== undefined) {
-        cp.stdin?.end(options.stdin);
-      }
-
-      if (options?.onData) {
-        cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString()));
-        cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString()));
-      }
-
-      cp.on('error', () => {
-        resolve({ stdout: '', stderr: 'Process error', exitCode: 1 });
-      });
-    });
+    return executeShellCommand(command, options);
   }
 }
 

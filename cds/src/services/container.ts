@@ -956,13 +956,15 @@ export class ContainerService {
     const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
     const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
     const findResult = await this.shell.exec(
-      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`,
+      { timeout: 5000, executionLane: 'observation' }
     );
     const ffmpegPath = findResult.stdout?.trim();
     if (ffmpegPath) {
       volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
       const findProbe = await this.shell.exec(
-        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`,
+        { timeout: 5000, executionLane: 'observation' }
       );
       const ffprobePath = findProbe.stdout?.trim();
       if (ffprobePath) {
@@ -2044,6 +2046,7 @@ export class ContainerService {
 
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
+        { timeout: 5000, executionLane: 'observation' },
       );
       if (inspect.exitCode !== 0) {
         throw new Error(`容器 "${containerName}" 已消失`);
@@ -2151,6 +2154,7 @@ export class ContainerService {
       if (!containerName || attempt % 5 !== 0) return false;
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
+        { timeout: 5000, executionLane: 'observation' },
       );
       const gone = inspect.exitCode !== 0;
       const [status, exitCode] = gone ? ['missing', ''] : inspect.stdout.trim().split('|');
@@ -2591,6 +2595,7 @@ export class ContainerService {
   async isRunning(containerName: string): Promise<boolean> {
     const result = await this.shell.exec(
       `docker inspect --format="{{.State.Running}}" ${containerName}`,
+      { timeout: 5000, executionLane: 'observation' },
     );
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
@@ -2616,7 +2621,7 @@ export class ContainerService {
    * 健康检查必须区分“确认没有运行”和“根本没读到”，不能把探测失败伪装成空集合。
    */
   async getRunningContainerNamesSnapshot(): Promise<Set<string> | null> {
-    const result = await this.shell.exec(`docker ps --format "{{.Names}}"`);
+    const result = await this.shell.exec(`docker ps --format "{{.Names}}"`, { timeout: 5000, executionLane: 'observation' });
     if (result.exitCode !== 0) return null;
     return new Set(
       result.stdout
@@ -2658,7 +2663,7 @@ export class ContainerService {
     // 累计计数器只在新值比旧值小的时候才暴露重建，新容器抢先跑量时差值仍为正，
     // 就会记出一个巨大的假速率尖峰（Codex P2，核对属实）。
     const cmd = `docker stats --no-stream --format "{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}\\t{{.ID}}" ${safeNames.join(' ')}`;
-    const result = await this.shell.exec(cmd, { timeout: 5000 });
+    const result = await this.shell.exec(cmd, { timeout: 5000, executionLane: 'observation' });
     if (result.exitCode !== 0) {
       // 容器全停 / 名字全错时 docker stats 返回非 0,但 stderr 一般是
       // "No such container",这种情况返回空 map 让调用方静默降级。
@@ -2693,7 +2698,7 @@ export class ContainerService {
   }
 
   async getLogs(containerName: string, tail = 500): Promise<string> {
-    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`);
+    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`, { timeout: 7000, executionLane: 'observation' });
     return combinedOutput(result);
   }
 
@@ -3270,6 +3275,7 @@ export class ContainerService {
   async discoverInfraContainers(): Promise<Map<string, { running: boolean; containerName: string; serviceId: string }>> {
     const result = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=infra" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      { timeout: 30_000, executionLane: 'observation' },
     );
 
     const discovered = new Map<string, { running: boolean; containerName: string; serviceId: string }>();
@@ -3307,6 +3313,7 @@ export class ContainerService {
   }> {
     const result = await this.shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      { timeout: 30_000, executionLane: 'observation' },
     );
 
     const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
@@ -3336,7 +3343,7 @@ export class ContainerService {
     if (exited.length) {
       const inspection = await this.shell.exec(
         `docker inspect --format '{{.Name}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.State.FinishedAt}}' ${exited.map((c) => this.shellQuote(c.containerName)).join(' ')}`,
-        { timeout: 30_000 },
+        { timeout: 30_000, executionLane: 'observation' },
       );
       if (inspection.exitCode === 0) {
         const byName = new Map(exited.map((c) => [c.containerName, c]));
@@ -3357,6 +3364,7 @@ export class ContainerService {
   async getInfraHealth(containerName: string): Promise<'healthy' | 'unhealthy' | 'starting' | 'none'> {
     const result = await this.shell.exec(
       `docker inspect --format="{{.State.Health.Status}}" ${containerName} 2>/dev/null || echo none`,
+      { timeout: 5000, executionLane: 'observation' },
     );
     const status = result.stdout.trim();
     if (['healthy', 'unhealthy', 'starting'].includes(status)) {

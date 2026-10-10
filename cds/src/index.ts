@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, type ServerDeps } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
+import { IsolatedShellExecutor } from './services/isolated-shell-executor.js';
 import { StateService } from './services/state.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
@@ -181,9 +182,10 @@ function diagnoseBootDisks(): string | null {
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
+const localShell = new IsolatedShellExecutor(new ShellExecutor());
 const shell = isPreviewInstance()
-  ? new PreviewInstanceShellExecutor(new ShellExecutor())
-  : new ShellExecutor();
+  ? new PreviewInstanceShellExecutor(localShell)
+  : localShell;
 if (isPreviewInstance()) {
   console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
   console.log('[preview-instance] 后台服务(janitor/auto-lifecycle/docker-events/self-update)将跳过启动。');
@@ -4740,6 +4742,7 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
+  await localShell.close();
   // JSON 存储模式的 save() 是去抖异步落盘（2026-07-09），退出前必须 flush，
   // 否则最后一个 tick 的改动会丢。mongo 系 store 在下方 activeMongoHandle
   // 分支里 flush，这里只兜 json（duck-typing，不依赖具体类）。

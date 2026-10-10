@@ -4959,6 +4959,10 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
 }
 
 export interface ExecOptions {
+  /** 明确标记只读观测。默认操作仍走原执行路径，不能延迟已有操作资格检查。 */
+  executionLane?: 'observation' | 'operation';
+  /** 观测排队取消不会启动进程；执行中的取消等待进程收尾。普通操作暂不消费此字段。 */
+  signal?: AbortSignal;
   cwd?: string;
   timeout?: number;
   onData?: (chunk: string) => void;

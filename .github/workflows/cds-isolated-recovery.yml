@@ -10,6 +10,7 @@ on:
       - cds/scripts/deployment-recovery-drill.ts
       - cds/scripts/replica-confirmation-drill.ts
       - cds/scripts/actual-stop-drill.ts
+      - cds/scripts/observation-isolation-drill.ts
       - cds/scripts/tsconfig.acceptance.json
       - .github/workflows/cds-isolated-recovery.yml
 
@@ -21,6 +22,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  observation-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check and compile observation worker
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real process cancellation and main-thread isolation regressions
+        run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts
+      - name: Real owned Docker reads through compiled observation worker
+        run: pnpm -C cds exec tsx scripts/observation-isolation-drill.ts --compiled
+      - name: Preserve observation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-observation-isolation-${{ github.sha }}
+          path: cds/observation-output/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
   recovery:
     runs-on: ubuntu-latest
     timeout-minutes: 10
