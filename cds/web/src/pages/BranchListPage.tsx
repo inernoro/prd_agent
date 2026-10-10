@@ -2361,12 +2361,13 @@ export function BranchListPage(): JSX.Element {
       if (needsEmptyRecheck) void confirmEmptyBranchList(action.type === 'sseSnapshot' ? action.source : '实时事件');
     };
     source.addEventListener('snapshot', (ev) => {
-      const data = parseSseJson<{ branches?: BranchSummary[]; projectId?: string }>(ev);
+      const data = parseSseJson<{ branches?: BranchSummary[]; projectId?: string; resyncRequired?: boolean }>(ev);
       if (!data) {
         applySseAction({ type: 'sseMalformed', source: '实时快照' });
         return;
       }
       if (data.projectId && data.projectId !== projectId) return;
+      if (data.resyncRequired) { void confirmEmptyBranchList('实时重同步'); return; }
       applySseAction({ type: 'sseSnapshot', branches: data.branches, source: '实时快照' });
     });
     source.addEventListener('branch.created', (ev) => {

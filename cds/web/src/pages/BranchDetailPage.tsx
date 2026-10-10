@@ -657,9 +657,13 @@ export function BranchDetailPage(): JSX.Element {
 
   useEffect(() => {
     if (!branchStreamProjectId || !branchStreamBranchId) return;
-    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(branchStreamProjectId)}`);
+    const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(branchStreamProjectId)}&branch=${encodeURIComponent(branchStreamBranchId)}`);
     // 2026-05-28 阻断浏览器原生 3s 重试,避免 Cloudflare 边缘 400 风暴
     source.onerror = () => { try { source.close(); } catch { /* tolerate */ } };
+    source.addEventListener('snapshot', (ev) => {
+      const data = parseSseJson<{ projectId?: string; branchId?: string; resyncRequired?: boolean }>(ev);
+      if (data?.resyncRequired && data.projectId === branchStreamProjectId && data.branchId === branchStreamBranchId) void load(false);
+    });
     source.addEventListener('branch.status', (ev) => {
       const data = parseSseJson<{ branchId?: string; projectId?: string; status?: BranchSummary['status'] }>(ev);
       if (!data || data.branchId !== branchStreamBranchId || !data.status) return;
@@ -676,7 +680,7 @@ export function BranchDetailPage(): JSX.Element {
       setState((current) => (current.status === 'ok' ? { ...current, branch: { ...current.branch, ...data.branch } } : current));
     });
     return () => source.close();
-  }, [branchStreamBranchId, branchStreamProjectId]);
+  }, [branchStreamBranchId, branchStreamProjectId, load]);
 
   const proxyStreamKey = state.status === 'ok'
     ? `${state.branch.id}|${state.branch.previewSlug || ''}|${state.aliases.aliases.join(',')}`

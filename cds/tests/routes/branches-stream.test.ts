@@ -52,11 +52,15 @@ async function collectSseEvents(
   server: http.Server,
   urlPath: string,
   onEvent: (ev: { event: string; data: any }) => Promise<boolean | void> | boolean | void,
+  headers: Record<string, string> = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (err?: unknown) => { clearTimeout(timeout); err ? reject(err) : resolve(); };
     const addr = server.address() as { port: number };
     const req = http.request({
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method: 'GET',
+      headers,
     }, (res) => {
       let buffer = '';
       let currentEvent = 'message';
@@ -78,24 +82,24 @@ async function collectSseEvents(
             const stop = await onEvent({ event: currentEvent, data: parsed });
             if (stop) {
               req.destroy();
-              resolve();
+              finish();
               return;
             }
           } catch (err) {
             req.destroy();
-            reject(err);
+            finish(err);
             return;
           }
           currentEvent = 'message';
         }
       });
-      res.on('error', reject);
-      res.on('end', () => resolve());
+      res.on('error', finish);
+      res.on('end', () => finish(new Error('SSE ended before expected event')));
     });
-    req.on('error', reject);
+    req.on('error', finish);
     req.end();
     // hard timeout guard
-    setTimeout(() => { req.destroy(); resolve(); }, 2500);
+    timeout = setTimeout(() => { req.destroy(); finish(new Error('SSE expected event timeout')); }, 2500);
   });
 }
 
@@ -103,6 +107,8 @@ describe('GET /api/branches/stream', () => {
   let tmpDir: string;
   let server: http.Server;
   let stateService: StateService;
+  let blockedResponse: http.ServerResponse | undefined;
+  let writes: number;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bstream-'));
@@ -127,6 +133,24 @@ describe('GET /api/branches/stream', () => {
     const containerService = new ContainerService(mock, config);
     const app = express();
     app.use(express.json());
+    writes = 0;
+    blockedResponse = undefined;
+    app.use((req, res, next) => {
+      const scope = req.headers['x-test-project-key'];
+      if (typeof scope === 'string') (req as any).cdsProjectKey = { projectId: scope };
+      const globalScope = req.headers['x-test-global-projects'];
+      if (typeof globalScope === 'string') (req as any).cdsAccess = { access: { projects: globalScope.split(',') } };
+      if (req.headers['x-test-block'] === 'true') {
+        blockedResponse = res;
+        const write = res.write.bind(res);
+        res.write = ((...args: Parameters<typeof res.write>) => {
+          writes++;
+          const result = (write as any)(...args);
+          return writes === 1 ? false : result;
+        }) as typeof res.write;
+      }
+      next();
+    });
     app.use('/api', createBranchRouter({
       stateService, worktreeService, containerService, shell: mock, config,
     }));
@@ -154,6 +178,108 @@ describe('GET /api/branches/stream', () => {
     expect(snap).toBeDefined();
     expect(Array.isArray(snap.data.branches)).toBe(true);
     expect(snap.data.branches.map((b: any) => b.id)).toContain('existing');
+  });
+
+  it('coalesces events during backpressure and sends a fresh scoped recovery snapshot after drain', async () => {
+    let initialSeen = false;
+    await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
+      if (ev.event !== 'snapshot') throw new Error(`unexpected queued event: ${ev.event}`);
+      if (!initialSeen) {
+        initialSeen = true;
+        const branch = stateService.getBranch('existing')!;
+        branch.status = 'idle';
+        stateService.save();
+        for (let i = 0; i < 20; i++) branchEvents.emitEvent({ type: 'branch.status', payload: {
+          branchId: 'existing', projectId: 'default', status: 'idle', ts: nowIso(),
+        } });
+        expect(writes).toBe(1);
+        blockedResponse!.emit('drain');
+        return;
+      }
+      expect(ev.data.resyncRequired).toBe(true);
+      expect(ev.data.branches.find((b: any) => b.id === 'existing').status).toBe('idle');
+      expect(writes).toBe(2);
+      return true;
+    }, { 'x-test-block': 'true' });
+    expect(initialSeen).toBe(true);
+  });
+
+  it('limits the snapshot to one requested branch', async () => {
+    stateService.addBranch({ ...stateService.getBranch('existing')!, id: 'other', branch: 'other' });
+    await collectSseEvents(server, '/api/branches/stream?project=default&branch=existing', ev => {
+      expect(ev.data.branches.map((b: any) => b.id)).toEqual(['existing']);
+      return true;
+    });
+  });
+
+  it('locks a project credential to its own scope when the query omits project', async () => {
+    stateService.addBranch({ ...stateService.getBranch('existing')!, id: 'other-project', projectId: 'alt' });
+    await collectSseEvents(server, '/api/branches/stream', ev => {
+      expect(ev.data.branches.map((b: any) => b.id)).toEqual(['existing']);
+      expect(ev.data.projectId).toBe('default');
+      return true;
+    }, { 'x-test-project-key': 'default' });
+  });
+
+  it('filters a restricted global credential snapshot to its granted projects', async () => {
+    stateService.addBranch({ ...stateService.getBranch('existing')!, id: 'other-project', projectId: 'alt' });
+    await collectSseEvents(server, '/api/branches/stream', ev => {
+      expect(ev.data.branches.map((b: any) => b.id)).toEqual(['existing']);
+      return true;
+    }, { 'x-test-global-projects': 'default' });
+  });
+
+  it('denies a project credential requesting another project before opening SSE', async () => {
+    const status = await new Promise<number>(resolve => {
+      const request = http.get({ hostname: '127.0.0.1', port: (server.address() as any).port,
+        path: '/api/branches/stream?project=alt', headers: { 'x-test-project-key': 'default' } }, response => {
+        resolve(response.statusCode!); response.destroy(); request.destroy();
+      });
+    });
+    expect(status).toBe(403);
+  });
+
+  it('sends only the selected branch live event and ignores scoped events without project identity', async () => {
+    stateService.addBranch({ ...stateService.getBranch('existing')!, id: 'other', branch: 'other' });
+    const seen: string[] = [];
+    await collectSseEvents(server, '/api/branches/stream?project=default&branch=existing', ev => {
+      if (ev.event === 'snapshot') {
+        branchEvents.emitEvent({ type: 'branch.status', payload: { branchId: 'unknown', status: 'idle', ts: nowIso() } });
+        branchEvents.emitEvent({ type: 'branch.status', payload: { branchId: 'other', projectId: 'default', status: 'idle', ts: nowIso() } });
+        branchEvents.emitEvent({ type: 'branch.status', payload: { branchId: 'existing', status: 'idle', ts: nowIso() } });
+        return;
+      }
+      seen.push(ev.data.branchId);
+      return true;
+    }, { 'x-test-project-key': 'default' });
+    expect(seen).toEqual(['existing']);
+  });
+
+  it('invalidates list cache on a saved mutation before a recovery GET', async () => {
+    const getBranches = () => new Promise<any>((resolve, reject) => {
+      http.get({ hostname: '127.0.0.1', port: (server.address() as any).port,
+        path: '/api/branches?project=default', headers: { Connection: 'close' } }, response => {
+        let data = ''; response.on('data', chunk => { data += chunk; });
+        response.on('end', () => { try { resolve(JSON.parse(data)); } catch (err) { reject(err); } });
+      }).on('error', reject);
+    });
+    const branch = stateService.getBranch('existing')!;
+    branch.notes = 'before'; stateService.save();
+    expect((await getBranches()).branches[0].notes).toBe('before');
+    branch.notes = 'after'; stateService.save();
+    expect((await getBranches()).branches[0].notes).toBe('after');
+  });
+
+  it('does not multiply a large build log into state snapshots while preserving runtime identity', async () => {
+    stateService.getBranch('existing')!.services.api = { profileId: 'api', containerName: 'owned-api',
+      containerId: 'a'.repeat(64), hostPort: 10001, status: 'error', buildLog: 'private-log'.repeat(50000) };
+    await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
+      const service = ev.data.branches[0].services.api;
+      expect(service.containerId).toBe('a'.repeat(64));
+      expect(service.buildLog).toBeUndefined();
+      expect(JSON.stringify(ev.data).length).toBeLessThan(256 * 1024);
+      return true;
+    });
   });
 
   it('forwards emitted branch.created events to connected clients', async () => {

@@ -14,7 +14,7 @@ describe('BranchDetailPage SSE contract', () => {
     expect(source).toContain('const branchStreamBranchId =');
     expect(source).toContain('parseSseJson<{ branchId?: string; projectId?: string; status?: BranchSummary');
     expect(source).toContain('parseSseJson<{ branch?: BranchSummary }>');
-    expect(source).toContain('}, [branchStreamBranchId, branchStreamProjectId]);');
+    expect(source).toContain('}, [branchStreamBranchId, branchStreamProjectId, load]);');
     expect(source).not.toContain('JSON.parse((ev as MessageEvent).data)');
   });
 });
