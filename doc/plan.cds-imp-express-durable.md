@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.8；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.9；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -80,18 +80,20 @@ CDS TDD先覆盖主线程执行隔离、完整制品门禁、旧版保护、队�
 
 主进程状态不等于独立正式验收。结构化副本每条 `local_evidence_note` 说明已证实行为、证据限制与下一缺口；49项正式acceptance全部保留not-executed。P1/P2/P4及IMP合同已部分实现，其余完整候选替换、持久化/SSE、默认策略、辅助生命周期、八分支与生产指标仍须推进。独立账本保留每次红判据和另存复绿结果，不用文件计数或单前端部署替代完整服务验收。
 
-## v1.8 实施检查点（2026-10-11）
+## v1.9 实施检查点（2026-10-11）
 
-CDS:dfb9edf8448759ee2a9f8065d5b9f97dbe689c5b; IMP:6cd8eeae05b6e250d8feb963e357c69f53f936f7（IMP产品代码a35b160；本地实施检查点，后续计划文档提交另计，非部署验收版本）。两仓库最新fetch基线未变化；没有push、PR、自更新或共享环境写入。
+CDS:532654ed9e5323bb20aaabb6dbac702991d24456; IMP:6fb843bc456040c356ca1215b3dcdce733d4ceb0（IMP产品代码a35b160；本地实施检查点，后续计划文档提交另计，非部署验收版本）。没有push、PR、自更新或共享环境写入。
 
-整图候选编排已串联exact制品、显式容量回调、依赖/私有图、不可变ID、就绪、切换、失败恢复；dfb9主编排/日志22条及tsc绿，容量跳过/未知创建盲恢复两条真红保留。实际路由尚未接，Daemon与所有入口未证明；独立编排复验待返回。
+两独立工作树与最新fetch基线未变化；18:00 UTC只读SSH看见共享Master cwd=/root/inernoro/prd_agent/cds、checkout=e4e0c8b6552315642c6d78a5620b5669901abd37，PID1799360未注入可验证运行SHA，不能用checkout代替运行版本；Forwarder PID1058/9090。未修改在线或其他bootstrap。
 
-固定c7独立候选事务17+真实JSON阶段7+实际Forwarder3共27局部绿；固定949不可变ID边界23+策略/JSON/版本31共54局部绿（实际假Docker CLI，不是Daemon）。持久阶段与全部运行事实/初始旧图比较已补强；Daemon对账、网络回收和实际接线未完成。
+532654受控整分支实际路由已接：完整exact→prepared账本/显式容量→私有图/不可变ID/就绪→实际Forwarder消费者ACK→旧及孤儿ID回收。CDS_CANDIDATE_REPLACEMENT=1；缺绑定失败关闭，保持旧实例，不回旧破坏流程。HTTP成功与缺绑定真红绿；源模式其他入口未接，真实Daemon未证。
 
-worker/推断worker及可写卷默认stop-and-restore，显式不安全parallel拒绝；Compose往返与版本hash/克隆/新版本未声明字段冻结，未知schema数字/字符串/null拒绝。固定949独立54局部绿；dfb9编排停止日志先落盘、未知创建保留停止现场。固定宿主端口、真实Daemon恢复、所选历史版本准入与所有入口仍待证明。
+固定c7事务27、949边界54、dfb编排19均独立局部绿，历史源/红保留。532654整分支接线待独立复验；创建未知/事实漂移保留两图，未进入starting的prepared、无stop/create且释放快照可靠落盘可解除预留；启动后/未知/新owner仍不释放。Daemon取消/重启/网络回收未完成。
 
-固定1376两次全量失败保留：OAuth404与bug-reports超时/ECONNRESET根因未知，后者单模块34/34不能证明全量。49f相关路由8文件289条绿仅历史局部；dfb9前七模块77条、补完整坐标/env冻结后编排/日志22条及tsc绿。独立949边界54局部绿，不是正式或全量结论。
+worker/推断worker/可写卷默认stop-and-restore，显式不安全parallel拒绝，角色/策略/mount/exact冻结版本，未知schema拒绝；生命周期意图在inspect后、ID命令前记录并再fence。532654恢复存活但未就绪写有界recoveryFailure阶段码及SSE，保留待对账。固定端口与真实恢复、其他入口仍待验证。
 
-真实JSON多等待者屏障与durable run暂存实现；空清单/整分支/单服务三入口已接可靠终态。独立空清单30/30、整/单旧0/8→1376新8/8；其他入口、Mongo和实际Daemon重启对账未完成。
+532654容量读取Daemon memory及所有实际running身份，合并所有未释放新旧图去重；不漏error仍运行/其他容器/未知创建。沿用512MiB单元与1GiB保留的规划上限，超限/未知拒绝。忽略actual或reservation两条真红绿；该规划不是实际峰值/OOM证明，分阶段并发、公平性和隔离压力仍待校准。
 
-首次候选编排测试有fixture语法错误，已修正并保留原日志，不作为产品TDD红。所有49项正式验收仍为not-executed，视觉证据为N/A；本地实现与独立局部绿不得继承为公网、实际Daemon或八分支通过。
+532654当前全量641文件9276测试通过、6文件19条跳过、1旧snapshot obsolete；相关8文件299及cds tsc通过。此前1376两次全量失败/OAuth404与bug-reports超时/ECONNRESET保留、原因未完全查明；当前通过不称已修复历史根因。新JSON allocator fixture初版让observer写同原文件导致双writer临时文件冲突，改为复制磁盘snapshot至独立文件+flush，不算产品红。正式49/视觉/8分支未执行。
+
+真实JSON屏障和三入口终态独立30/30、8/8仅历史局部；Mongo与其他入口/实际Daemon重启未完成。新固定532654独立复验待返回，原红与全部fixture错误日志保留。所有49项正式acceptance仍not-executed，视觉N/A；本地全量和独立组件证据不继承为公网、实际Daemon或八分支通过。
