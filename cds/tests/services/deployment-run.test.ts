@@ -62,6 +62,56 @@ describe('DeploymentRunService', () => {
     expect(reloadedState.getBranch('b1')?.lastDeploymentRunId).toBe('dr_test');
   });
 
+  async function verifying(service: DeploymentRunService) {
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    for (const status of ['preparing', 'building', 'starting', 'verifying'] as const) service.transition('dr_test', status, { phase: status, message: status });
+    await stateService.flush();
+  }
+
+  it('keeps completion invisible until its real durable snapshot and owner fence succeed', async () => {
+    const service = createService(); await verifying(service);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+    const complete = service.completeDurably('dr_test', { phase: 'complete', message: 'done' }, async () => {
+      entered(); await gate; await stateService.flush();
+    }, () => {});
+    try {
+      await started; expect(service.get('dr_test')?.status).toBe('verifying');
+      expect(() => service.heartbeat('dr_test')).toThrow('finalizing');
+      stateService.getBranch('b1')!.errorMessage = 'other entity'; stateService.save();
+    } finally { release(); }
+    await complete;
+    const restored = new StateService(stateFile); restored.load();
+    expect(restored.getDeploymentRun('dr_test')?.status).toBe('running');
+    expect(service.get('dr_test')?.status).toBe('running');
+    expect(restored.getBranch('b1')?.errorMessage).toBe('other entity');
+  });
+
+  it('does not seal running on real disk failure and can persist failed instead', async () => {
+    const service = createService(); await verifying(service);
+    fs.unlinkSync(stateFile); fs.mkdirSync(stateFile);
+    try {
+      await expect(service.completeDurably('dr_test', { phase: 'complete', message: 'done' }, () => stateService.flush(), () => {})).rejects.toThrow();
+      expect(service.get('dr_test')?.status).toBe('verifying');
+    } finally { fs.rmdirSync(stateFile); }
+    service.fail('dr_test', { code: 'state_flush', category: 'platform', summary: 'disk failed', phase: 'state-flush', retryable: true } as any);
+    await stateService.flush();
+    const restored = new StateService(stateFile); restored.load();
+    expect(restored.getDeploymentRun('dr_test')?.status).toBe('failed');
+  });
+
+  it('can cancel a completion superseded during its durable barrier without changing the newer branch', async () => {
+    const service = createService(); await verifying(service);
+    await expect(service.completeDurably('dr_test', { phase: 'complete', message: 'done' }, async () => {
+      await stateService.flush(); stateService.getBranch('b1')!.status = 'starting'; stateService.save();
+    }, () => { throw new Error('superseded'); })).rejects.toThrow('superseded');
+    expect(service.get('dr_test')?.status).toBe('verifying');
+    service.cancel('dr_test', 'new owner'); await stateService.flush();
+    const restored = new StateService(stateFile); restored.load();
+    expect(restored.getDeploymentRun('dr_test')?.status).toBe('cancelled');
+    expect(restored.getBranch('b1')?.status).toBe('starting');
+  });
+
   it('enforces legal transitions and keeps terminal runs immutable', async () => {
     const service = createService();
     await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });

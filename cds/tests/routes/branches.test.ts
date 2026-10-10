@@ -4204,7 +4204,9 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(200);
       expect(String(res.body)).toContain('complete');
       expect(stateService.getBranch('flush-empty-cleanup')?.services.obsolete).toBeUndefined();
-      expect(flushedRunStatuses).toContain('running');
+      expect(flushedRunStatuses).toContain('verifying');
+      expect(flushedRunStatuses).not.toContain('running');
+      expect(deploymentRunService.get(stateService.getBranch('flush-empty-cleanup')!.lastDeploymentRunId!)?.status).toBe('running');
       const actions = operationEvents
         .filter((event) => event.branchId === 'flush-empty-cleanup')
         .map((event) => event.action);

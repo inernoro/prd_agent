@@ -1003,6 +1003,8 @@ export class StateService {
 
   /** Listeners notified after every save() */
   private onSaveListeners: Array<() => void> = [];
+  /** A terminal snapshot is written while API readers still see the active run. */
+  private durableRunDrafts = new Map<string, DeploymentRun>();
 
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
@@ -1034,7 +1036,13 @@ export class StateService {
     // hints（2026-07-21 增量快照）：mutator 确定本次只改了哪块 state 时传入，
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
-    this.backingStore.save(this.state, hints);
+    const drafts = [...this.durableRunDrafts];
+    const snapshot = drafts.length ? { ...this.state,
+      deploymentRuns: { ...this.state.deploymentRuns, ...Object.fromEntries(drafts) } } : this.state;
+    // Concurrent entity writes must preserve the staged terminal rows, including split-store hints.
+    const effectiveHints = hints && drafts.length
+      ? [...hints, ...drafts.map(([id]) => ({ kind: 'deploymentRuns' as const, id }))] : hints;
+    this.backingStore.save(snapshot, effectiveHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
 
@@ -1653,11 +1661,33 @@ export class StateService {
    * run 自身 —— save 带的实体级 hint 依赖这一点做增量持久化。
    */
   updateDeploymentRun(id: string, mutate: (run: DeploymentRun) => void): DeploymentRun {
+    if (this.durableRunDrafts.has(id)) throw new Error(`DeploymentRun ${id} is finalizing`);
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
     mutate(run);
     this.save([{ kind: 'deploymentRuns', id }]);
     return run;
+  }
+
+  /** Publish a terminal run only after its snapshot is durable and the caller still owns it. */
+  async updateDeploymentRunDurably(id: string, mutate: (draft: DeploymentRun) => void,
+    flush: () => Promise<void>, assertCurrent: () => void): Promise<DeploymentRun> {
+    const run = this.state.deploymentRuns?.[id];
+    if (!run || this.durableRunDrafts.has(id)) throw new Error(`DeploymentRun ${id} missing or finalizing`);
+    const seq = run.seq; const draft = structuredClone(run); mutate(draft);
+    this.durableRunDrafts.set(id, draft);
+    try {
+      this.save([{ kind: 'deploymentRuns', id }]); await flush(); assertCurrent();
+      if (this.state.deploymentRuns?.[id] !== run || run.seq !== seq) throw new Error(`DeploymentRun ${id} changed during finalization`);
+      Object.assign(run, draft); this.durableRunDrafts.delete(id);
+      // The canonical row now equals the already durable snapshot; no second unconfirmed write.
+      for (const fn of this.onSaveListeners) { try { fn(); } catch { /* ignore */ } }
+      return run;
+    } catch (error) {
+      this.durableRunDrafts.delete(id);
+      // Re-enqueue the active row. A caller can legally fail/cancel it and persist that outcome.
+      this.save([{ kind: 'deploymentRuns', id }]); throw error;
+    }
   }
 
   private pruneDeploymentRuns(projectId: string): void {

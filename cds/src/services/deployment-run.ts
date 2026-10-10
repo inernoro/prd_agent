@@ -27,6 +27,20 @@ const ALLOWED_TRANSITIONS: Record<DeploymentRunStatus, ReadonlySet<DeploymentRun
   cancelled: new Set(),
 };
 
+export interface DeploymentRunTransitionInput {
+  phase: string;
+  message: string;
+  level?: DeploymentRunEvent['level'];
+  detail?: Record<string, unknown>;
+  evidenceRefs?: string[];
+  versionId?: string;
+  commitSha?: string;
+  configHash?: string;
+  operationId?: string;
+  executorId?: string;
+  failure?: DeploymentFailure;
+}
+
 export interface BeginDeploymentRunInput {
   projectId: string;
   branchId: string;
@@ -118,46 +132,38 @@ export class DeploymentRunService {
     });
   }
 
-  transition(
-    id: string,
-    nextStatus: DeploymentRunStatus,
-    input: {
-      phase: string;
-      message: string;
-      level?: DeploymentRunEvent['level'];
-      detail?: Record<string, unknown>;
-      evidenceRefs?: string[];
-      versionId?: string;
-      commitSha?: string;
-      configHash?: string;
-      operationId?: string;
-      executorId?: string;
-      failure?: DeploymentFailure;
-    },
-  ): DeploymentRun {
-    return this.stateService.updateDeploymentRun(id, (run) => {
-      this.assertTransition(run, nextStatus);
-      const at = this.nowIso();
-      run.status = nextStatus;
-      run.phase = input.phase;
-      run.updatedAt = at;
-      run.heartbeatAt = at;
-      if (input.versionId !== undefined) run.versionId = input.versionId;
-      if (input.commitSha !== undefined) run.commitSha = input.commitSha;
-      if (input.configHash !== undefined) run.configHash = input.configHash;
-      if (input.operationId !== undefined) run.operationId = input.operationId;
-      if (input.executorId !== undefined) run.executorId = input.executorId;
-      if (input.failure !== undefined) run.failure = input.failure;
-      if (TERMINAL_STATUSES.has(nextStatus)) run.finishedAt = at;
-      this.appendEvent(run, {
-        at,
-        phase: input.phase,
-        level: input.level || (nextStatus === 'failed' ? 'error' : 'info'),
-        status: nextStatus,
-        message: input.message,
-        detail: input.detail,
-        evidenceRefs: input.evidenceRefs,
-      });
+  transition(id: string, nextStatus: DeploymentRunStatus, input: DeploymentRunTransitionInput): DeploymentRun {
+    return this.stateService.updateDeploymentRun(id, run => this.applyTransition(run, nextStatus, input));
+  }
+
+  async completeDurably(id: string, input: DeploymentRunTransitionInput,
+    flush: () => Promise<void>, assertCurrent: () => void): Promise<DeploymentRun> {
+    return this.stateService.updateDeploymentRunDurably(id,
+      draft => this.applyTransition(draft, 'running', input), flush, assertCurrent);
+  }
+
+  private applyTransition(run: DeploymentRun, nextStatus: DeploymentRunStatus, input: DeploymentRunTransitionInput): void {
+    this.assertTransition(run, nextStatus);
+    const at = this.nowIso();
+    run.status = nextStatus;
+    run.phase = input.phase;
+    run.updatedAt = at;
+    run.heartbeatAt = at;
+    if (input.versionId !== undefined) run.versionId = input.versionId;
+    if (input.commitSha !== undefined) run.commitSha = input.commitSha;
+    if (input.configHash !== undefined) run.configHash = input.configHash;
+    if (input.operationId !== undefined) run.operationId = input.operationId;
+    if (input.executorId !== undefined) run.executorId = input.executorId;
+    if (input.failure !== undefined) run.failure = input.failure;
+    if (TERMINAL_STATUSES.has(nextStatus)) run.finishedAt = at;
+    this.appendEvent(run, {
+      at,
+      phase: input.phase,
+      level: input.level || (nextStatus === 'failed' ? 'error' : 'info'),
+      status: nextStatus,
+      message: input.message,
+      detail: input.detail,
+      evidenceRefs: input.evidenceRefs,
     });
   }
 
