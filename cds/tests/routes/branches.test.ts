@@ -1,3 +1,6 @@
+import { OwnedContainerLifecycle } from '../../src/services/owned-container-lifecycle.js';
+import { computeCdsInstanceId } from '../../src/services/orphan-container-reaper.js';
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
@@ -7,6 +10,7 @@ import os from 'node:os';
 import {
   clearRunningServiceErrorMessages,
   createBranchRouter,
+  type RouterDeps,
   shouldSkipFencedDeployCleanupForNewerRuntime,
 } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
@@ -150,6 +154,8 @@ describe('Branch Routes', () => {
   let deploymentRunService: DeploymentRunService;
   let deploymentVersionService: DeploymentVersionService;
   let managedProjectService: ManagedProjectService;
+  let candidateReplacementEnabled = false;
+  let candidateBindings: RouterDeps['candidateDeployment'];
   let registryNodes: any[];
   let operationEvents: Array<{
     category?: string;
@@ -180,6 +186,7 @@ describe('Branch Routes', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
     config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
+    candidateReplacementEnabled = false; candidateBindings = undefined;
 
     // Default mocks
     mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -258,6 +265,8 @@ describe('Branch Routes', () => {
       deploymentRunService,
       deploymentVersionService,
       managedProjectService,
+      candidateReplacementEnabled: () => candidateReplacementEnabled,
+      get candidateDeployment() { return candidateBindings; },
     }));
 
     await new Promise<void>((resolve) => {
@@ -829,6 +838,76 @@ describe('Branch Routes', () => {
       expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
       expect(branch.services.orphan.status).toBe('running');
       expect(branch.services.api.status).toBe('running');
+    });
+
+    it('P3 enabled candidate replacement cannot fall into destructive legacy deployment without consumer and admission bindings', async () => {
+      seedGateProject(false); candidateReplacementEnabled = true;
+      const sha = 'b'.repeat(40);
+      stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact' });
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const branch = stateService.getBranch('b1')!;
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      branch.services.orphan = { profileId: 'orphan', containerName: 'cds-b1-orphan', hostPort: 10002, status: 'running' };
+      mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull .*$/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const result = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: sha });
+      expect(String(result.body)).toContain('candidate_deployment_unavailable');
+      expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
+      expect(branch.services.api.status).toBe('running'); expect(branch.services.orphan.status).toBe('running');
+    });
+
+    it('P3 HTTP deployment starts a private graph and acknowledges it before retiring old and orphan IDs', async () => {
+      seedGateProject(false); candidateReplacementEnabled = true;
+      const sha = 'b'.repeat(40); const image = `sha256:${'c'.repeat(64)}`;
+      stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact' });
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const branch = stateService.getBranch('b1')!;
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      branch.services.orphan = { profileId: 'orphan', containerName: 'cds-b1-orphan', hostPort: 10002, status: 'running' };
+      const objects = new Map<string, any>(); const events: string[] = [];
+      const add = (service: any, operationId?: string) => {
+        const id = createHash('sha256').update(service.containerName).digest('hex');
+        objects.set(id, { Id: id, Name: '/' + service.containerName, Image: image, State: { Running: true }, Mounts: [],
+          HostConfig: { PortBindings: { '8080/tcp': [{ HostPort: String(service.hostPort) }] } },
+          Config: { Labels: { 'cds.managed': 'true', 'cds.type': 'app', 'cds.instance': computeCdsInstanceId(config.repoRoot),
+            'cds.project.id': 'proj-a', 'cds.branch.id': 'b1', 'cds.profile.id': service.profileId,
+            ...(operationId ? { 'cds.deployment.operation': operationId, 'cds.deployment.kind': 'candidate' } : {}) } } });
+        return id;
+      };
+      const oldId = add(branch.services.api); const orphanId = add(branch.services.orphan);
+      mock.addResponsePatternFirst(/docker inspect --format='\{\{json \.\}\}' .*$/, ([command]) => {
+        const identity = command.split(' ').at(-1)!.replaceAll("'", '');
+        const info = objects.get(identity) || [...objects.values()].find(object => object.Name === '/' + identity);
+        return { stdout: info ? JSON.stringify(info) : '', stderr: info ? '' : 'No such object', exitCode: info ? 0 : 1 };
+      });
+      mock.addResponsePatternFirst(/docker rm -f [a-f0-9]{64}/, ([command]) => {
+        events.push(command); objects.delete(command.split(' ').at(-1)!); return { stdout: '', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, id: image }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull .*$/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const run = vi.spyOn(containerService, 'runService').mockImplementation(async (graph, profile, service, _out, _env, context) => {
+        expect(graph).not.toBe(branch); expect(service.containerName).toMatch(/^cds-candidate-/);
+        expect(branch.services.api.containerName).toBe('cds-b1-api'); expect(objects.has(oldId)).toBe(true);
+        expect(objects.has(orphanId)).toBe(true); expect(context!.candidateRunId).toBeTruthy();
+        events.push('create'); add(service, context!.candidateRunId);
+        Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image,
+          deployedArtifactRef: profile.preparedArtifactRef, deployedMode: 'express' });
+      });
+      candidateBindings = { lifecycle: new OwnedContainerLifecycle(mock, computeCdsInstanceId(config.repoRoot)),
+        admit: async () => { events.push('admit'); }, acknowledge: async graph => {
+          expect(graph.services.api.status).toBe('running'); expect(graph.services.orphan).toBeUndefined();
+          expect(objects.has(oldId)).toBe(true); expect(objects.has(orphanId)).toBe(true); events.push('ack'); return true;
+        } };
+      try {
+        const result = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: sha });
+        expect(String(result.body)).toContain('"ok":true'); expect(run).toHaveBeenCalledTimes(1);
+        expect(events).toEqual(['admit', 'create', 'ack', 'docker rm -f ' + oldId, 'docker rm -f ' + orphanId]);
+        expect(branch.services.api.deployedCommitSha).toBe(sha); expect(branch.services.orphan).toBeUndefined();
+        const record = deploymentRunService.get(String(result.headers['x-cds-deployment-run-id']))!;
+        expect(record.status).toBe('running'); expect(record.candidate!.phase).toBe('released');
+      } finally { run.mockRestore(); }
     });
 
     it('P4 actual runtime evidence is independent from configured coverage and includes extra services', async () => {

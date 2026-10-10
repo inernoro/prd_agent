@@ -1,4 +1,4 @@
-import type { BranchEntry, BuildProfile, ServiceState } from '../types.js';
+import type { BranchEntry, BuildProfile, DeploymentCandidateRecord } from '../types.js';
 import type { ContainerService } from './container.js';
 import type { StateService } from './state.js';
 import { createCandidateRuntime } from './service-candidate.js';
@@ -17,10 +17,11 @@ export interface CandidateDeploymentOptions {
   assertCurrent(step: string): void;
   acknowledge(branch: BranchEntry): Promise<boolean>;
   /** Must admit overlap resources using actual old/candidate occupancy; no implicit allow. */
-  admit(graph: BranchEntry, stopBeforeStart: readonly string[]): Promise<void>;
+  admit(graph: BranchEntry, stopBeforeStart: readonly string[], context: { assertCurrent(): void; signal?: AbortSignal }): Promise<void>;
   customEnv: Record<string, string>;
   signal?: AbortSignal;
   onOutput?: (profileId: string, chunk: string) => void;
+  onRecoveryFailure?: (stage: NonNullable<DeploymentCandidateRecord['recoveryFailure']>['stage']) => void;
   context?: Pick<NonNullable<Parameters<ContainerService['runService']>[5]>, 'requestId' | 'actor' | 'trigger'>;
 }
 
@@ -74,7 +75,7 @@ export class CandidateDeploymentService {
       .filter(infra => infra.status === 'running').map(infra => infra.id));
     const { layers, warnings } = topoSortLayers(profiles, profile => profile.id, profile => profile.dependsOn || [], infraIds);
     if (warnings.length) throw new Error('candidate_deploy_dependencies: unresolved dependency');
-    const owner = { projectId: entry.projectId!, branchId: entry.id };
+    const owner = { projectId: entry.projectId!, branchId: entry.id, operationId: frozen.operationId };
     const initialFacts = JSON.stringify(snapshotCandidateServices(entry.services));
     const oldReferences = new Map<string, OwnedContainerReference>();
     for (const [id, service] of Object.entries(entry.services)) {
@@ -97,7 +98,7 @@ export class CandidateDeploymentService {
     const attempted = new Set<string>();
     const stopped = new Set<string>();
     try {
-      await options.admit(graph, stopBeforeStart); active();
+      await options.admit(graph, stopBeforeStart, { assertCurrent: active, signal: options.signal }); active();
       await journal.advance(runId, 'prepared', 'starting'); active();
       for (const id of stopBeforeStart) {
         ownedStops.add(id);
@@ -161,23 +162,39 @@ export class CandidateDeploymentService {
       const oldMapping = Object.entries(entry.services).every(([id, service]) => service.containerName === oldReferences.get(id)?.name);
       const mayRestore = !switched || phase === 'released' && oldMapping;
       if (mayRestore) {
+        let recoveryStage: NonNullable<DeploymentCandidateRecord['recoveryFailure']>['stage'] = 'ownership';
         try {
           servingFence();
           // Even a failed CLI may have delivered create to the Daemon: no absent-name assumption permits worker restore.
+          recoveryStage = 'daemon-create';
           if ([...attempted].some(id => !captured.has(id))) throw new Error('candidate_create_unconfirmed: reconciliation required');
           const recoverySignal = AbortSignal.timeout(30_000);
+          recoveryStage = 'candidate-remove';
           if (!switched) for (const reference of captured.values()) await this.lifecycle.remove(reference, servingFence, recoverySignal);
           for (const id of stopped) {
+            recoveryStage = 'serving-start';
             await this.lifecycle.start(oldReferences.get(id)!, servingFence, recoverySignal); servingFence();
             const profile = profiles.find(profile => profile.id === id)!; const service = entry.services[id];
+            recoveryStage = 'serving-readiness';
             if (!await this.containers.waitForReadiness(service.hostPort, profile.readinessProbe, undefined, undefined,
               service.containerName, recoverySignal)) throw new Error('candidate_restore_readiness: original instance is not ready');
             servingFence(); service.status = 'running';
           }
+          recoveryStage = 'serving-persist';
           this.state.save(); await this.state.flush(); servingFence();
+          recoveryStage = 'route-ack';
           if (stopped.size && !await options.acknowledge(entry)) throw new Error('candidate_restore_ack: old consumer mapping unconfirmed');
           servingFence();
-        } catch { /* Unknown outcome stays reserved; original failure remains observable. */ }
+        } catch {
+          // Persist a stage code without copying potentially sensitive CLI output or replacing the original error.
+          try {
+            await journal.recordRecoveryFailure(runId, recoveryStage, fence);
+            options.onRecoveryFailure?.(recoveryStage);
+          } catch { /* Failed persistence/newer owner remains unresolved; never claim durable recovery. */ }
+        }
+      }
+      if (!switched && attempted.size === 0 && stopped.size === 0 && this.state.getDeploymentRun(runId)?.candidate?.phase === 'prepared') {
+        try { await journal.releaseUnstarted(runId, servingFence); } catch { /* Failed durability or newer ownership keeps the reservation. */ }
       }
       const currentPhase = this.state.getDeploymentRun(runId)?.candidate?.phase;
       if (currentPhase && currentPhase !== 'released' && currentPhase !== 'reconciling') {

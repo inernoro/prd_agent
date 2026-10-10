@@ -1,3 +1,5 @@
+import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
+import type { OwnedContainerLifecycle } from '../services/owned-container-lifecycle.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -2027,6 +2029,13 @@ export interface RouterDeps {
   deploymentVersionService?: DeploymentVersionService;
   /** Generates the constrained managed delivery plan; compose projects bypass it. */
   managedProjectService?: ManagedProjectService;
+  /** Controlled rollout; enabled express deployments must have actual consumer and admission bindings. */
+  candidateReplacementEnabled?: () => boolean;
+  candidateDeployment?: {
+    lifecycle: OwnedContainerLifecycle;
+    admit: CandidateDeploymentOptions['admit'];
+    acknowledge(branch: BranchEntry, signal?: AbortSignal): Promise<boolean>;
+  };
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -4264,6 +4273,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     actor?: string;
     trigger?: string;
     assertCurrent?: (step: string) => void;
+    allowWrites?: boolean;
     logEvent: (ev: OperationLogEvent) => void;
   }): Promise<void> {
     const { entry, profiles, requestId, operationId, actor, trigger, assertCurrent, logEvent } = params;
@@ -4333,6 +4343,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         continue;
       }
+
+      if (params.allowWrites === false) throw new Error('candidate_database_contract: automatic database writes require a separate confirmed recovery or migration contract');
 
       if (init.kind === 'sql') {
         try {
@@ -13134,6 +13146,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 这里在 try 外先捕获进入部署前的状态，供 catch 块发事件用（try 内部的
     // const __prevStatus 是块级作用域，catch 看不到）。
     const __deployEntryStatus = entry.status;
+    let candidateMode = false;
 
     // 2026-07-23: 本轮部署打开的 check-run id（try 外声明，供 superseded catch
     // 分支收尾用）。被取代的部署此前直接 return，check run 永远停在 in_progress。
@@ -13225,6 +13238,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const effective = selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry);
         return effective.prebuiltImage && effective.prebuiltCommitPolicy === 'exact';
       });
+      candidateMode = deps.candidateReplacementEnabled?.() === true && requiresExactArtifacts;
+      if (candidateMode && (!deps.candidateDeployment || !deploymentRunService || !deploymentRun || !branchOperationLease || !deploymentVersionService)) {
+        throw new Error('candidate_deployment_unavailable: consumer, admission and owned run bindings required');
+      }
       const preparedExactProfiles = new Map<string, BuildProfile>();
       const cleanupRemovedProfiles = async () => {
         const desiredIds = new Set(profiles.map((p) => p.id));
@@ -13379,7 +13396,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         Object.assign(opLog, deriveCommitMeta(entry, targetSha));
         advanceDeploymentRun(deploymentRun?.id, 'building', { phase: 'build', commitSha: targetSha, message: '完整精确制品就绪，开始启动服务' });
         logEvent({ step: 'artifact-admission', status: 'done', title: '完整精确极速制品已核验', timestamp: new Date().toISOString() });
-        await cleanupRemovedProfiles();
+        if (!candidateMode) await cleanupRemovedProfiles();
       }
 
       // ── Ensure required infrastructure is running ──
@@ -13557,6 +13574,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+          allowWrites: !candidateMode,
           logEvent,
         });
       }
@@ -13606,6 +13624,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
         timestamp: new Date().toISOString(),
       });
 
+      if (candidateMode) {
+        const bindings = deps.candidateDeployment!;
+        const resolved = profiles.map(profile => ({ ...(preparedExactProfiles.get(profile.id) || profile),
+          dependsOn: profile.dependsOn, calls: profile.calls }));
+        // Hash the intended configuration, not prepared image IDs; keep it comparable to later version lookup.
+        const frozenProfiles = profiles.map(profile => selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry));
+        const effectiveEnv = getMergedEnv(entry.projectId || 'default', entry.id);
+        deploymentConfigHash = deploymentVersionService!.computeConfigHash(frozenProfiles, effectiveEnv);
+        stateService.updateDeploymentRun(deploymentRun!.id, run => { run.configHash = deploymentConfigHash!; });
+        stateService.save(); await stateService.flush();
+        const selectedVersion = selectedDeploymentVersion;
+        const assertCandidateCurrent = (step: string) => {
+          assertBranchOperationCurrent(branchOperationLease, step);
+          const currentProfiles = selectedVersion ? normalizeProjectProfileDependencies(deploymentVersionService!.materializeProfiles(selectedVersion,
+            stateService.getEffectiveProfilesForBranch(entry)), deployProfileSuffix) : normalizeProjectProfileDependencies(
+              stateService.getEffectiveProfilesForBranch(entry).map(profile => resolveEffectiveProfile(profile, entry)), deployProfileSuffix);
+          if (deploymentVersionService!.computeConfigHash(currentProfiles, getMergedEnv(entry.projectId || 'default', entry.id)) !== deploymentConfigHash) {
+            throw new Error('candidate_deployment_configuration_changed: frozen profiles or environment changed');
+          }
+        };
+        assertCandidateCurrent('candidate-before-create');
+        const liveUsedPorts = await collectListeningPorts(shell);
+        assertCandidateCurrent('candidate-after-port-snapshot');
+        await new CandidateDeploymentService(stateService, containerService, bindings.lifecycle).deploy({
+          runId: deploymentRun!.id, entry, profiles: resolved, customEnv: effectiveEnv,
+          allocatePort: reserved => {
+            const port = stateService.allocatePort(config.portStart, new Set([...liveUsedPorts, ...reserved]));
+            liveUsedPorts.add(port); return port;
+          },
+          assertCurrent: assertCandidateCurrent, signal: branchOperationLease!.signal,
+          context: { requestId, actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req) },
+          admit: bindings.admit,
+          acknowledge: branch => bindings.acknowledge(branch, branchOperationLease!.signal),
+          onRecoveryFailure: stage => logEvent({ step: 'candidate-recovery', status: 'error',
+            title: `旧实例恢复尚未确认，等待对账: ${stage}`, detail: { recoveryStage: stage }, timestamp: nowIso() }),
+          onOutput: (profileId, chunk) => sendSSE(res, 'log', { profileId, chunk }),
+        });
+        assertCandidateCurrent('candidate-after-switch');
+        logEvent({ step: 'candidate-replacement', status: 'done', title: '完整候选就绪并经实际路由确认，旧实例已回收', timestamp: nowIso() });
+      } else {
       // ── Pre-allocate ports (before parallel execution) ──
       const liveUsedPorts = await collectListeningPorts(shell);
       for (const profile of profiles) {
@@ -14052,6 +14110,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       }
 
+      }
+
       // ── Update overall status ──
       assertBranchOperationCurrent(branchOperationLease, 'before-deploy-finalize');
       advanceDeploymentRun(deploymentRun?.id, 'verifying', {
@@ -14398,7 +14458,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const errStack = (err as Error)?.stack || '';
       if (err instanceof BranchOperationSupersededError) {
         cancelDeploymentRun(deploymentRun?.id, '部署操作被更高优先级操作取代');
-        await cleanupFencedDeployContainers(
+        if (!candidateMode) await cleanupFencedDeployContainers(
           entry,
           new Set(profiles.map((profile) => profile.id)),
           requestId,

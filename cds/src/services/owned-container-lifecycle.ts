@@ -1,6 +1,7 @@
 import type { ExecResult, IShellExecutor, ServiceState } from '../types.js';
 
 export interface OwnedContainerReference {
+  readonly owner: Readonly<{ projectId: string; branchId: string; profileId: string; operationId?: string }>;
   readonly id: string;
   readonly name: string;
   readonly image: string;
@@ -44,9 +45,10 @@ function validMount(mount: ContainerFacts['Mounts'][number]): boolean {
 
 /** Immutable-ID stop/restore/retire boundary. Never recreates a stopped serving configuration. */
 export class OwnedContainerLifecycle {
-  constructor(private readonly shell: IShellExecutor, private readonly instanceId: string) {}
+  constructor(private readonly shell: IShellExecutor, private readonly instanceId: string,
+    private readonly beforeMutation?: (reference: OwnedContainerReference, action: 'stop' | 'start' | 'remove') => void) {}
 
-  async capture(owner: { projectId: string; branchId: string; candidateOperationId?: string }, service: Readonly<ServiceState>,
+  async capture(owner: { projectId: string; branchId: string; candidateOperationId?: string; operationId?: string }, service: Readonly<ServiceState>,
     assertCurrent: () => void, signal?: AbortSignal): Promise<OwnedContainerReference> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(service.containerName)) throw new Error('container_identity: invalid name');
     assertCurrent(); signal?.throwIfAborted();
@@ -62,7 +64,7 @@ export class OwnedContainerLifecycle {
     if (info.Config.Labels['cds.protected'] === 'true' || !Object.entries(expected).every(([key, value]) => info.Config.Labels[key] === value)) throw new Error('container_owner: actual ownership unconfirmed or protected');
     if (info.Name !== '/' + service.containerName || !Object.values(info.HostConfig.PortBindings).some(bindings =>
       bindings?.some(binding => binding.HostPort === String(service.hostPort)))) throw new Error('container_identity: actual name/port mismatch');
-    return Object.freeze({ id: info.Id, name: service.containerName, image: info.Image, wasRunning: info.State.Running,
+    return Object.freeze({ owner: Object.freeze({ projectId: owner.projectId, branchId: owner.branchId, profileId: service.profileId, operationId: owner.operationId }), id: info.Id, name: service.containerName, image: info.Image, wasRunning: info.State.Running,
       writableMounts: Object.freeze(info.Mounts.filter(mount => mount.RW).map(mount => mount.Destination)),
       fingerprint: fingerprint(info) });
   }
@@ -94,6 +96,8 @@ export class OwnedContainerLifecycle {
     if (fingerprint(this.parse(before)) !== reference.fingerprint) throw new Error('container_drift: captured runtime facts changed');
     const command = action === 'remove' ? `docker rm -f ${reference.id}`
       : action === 'stop' ? `docker stop -t 10 ${reference.id}` : `docker start ${reference.id}`;
+    this.beforeMutation?.(reference, action);
+    assertCurrent(); signal?.throwIfAborted();
     const result = await this.shell.exec(command, { priority: 'delivery', timeout: 30_000, signal });
     assertCurrent(); signal?.throwIfAborted();
     if (result.exitCode !== 0) throw new Error(`container_${action}: Daemon operation failed`);

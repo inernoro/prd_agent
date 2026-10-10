@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { createBranchRouter } from './routes/branches.js';
+import { createBranchRouter, type RouterDeps } from './routes/branches.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
@@ -526,6 +526,8 @@ async function collectActiveHttpRequests(
 }
 
 export interface ServerDeps {
+  candidateReplacementEnabled?: RouterDeps['candidateReplacementEnabled'];
+  candidateDeployment?: RouterDeps['candidateDeployment'];
   stateService: StateService;
   worktreeService: WorktreeService;
   containerService: ContainerService;
@@ -4984,6 +4986,8 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
 
   app.use('/api', createBranchRouter({
+    candidateReplacementEnabled: deps.candidateReplacementEnabled,
+    candidateDeployment: deps.candidateDeployment,
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
     containerService: deps.containerService,

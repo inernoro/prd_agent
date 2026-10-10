@@ -32,6 +32,31 @@ describe('P3 durable private candidate reservations', () => {
     expect(restored.getDeploymentRun(runId)!.candidate!.serving.api.containerId).toBe('c'.repeat(64));
   });
 
+  it('does not copy arbitrary diagnostics text into the recovery ledger', async () => {
+    const journal = new CandidateJournal(state); await journal.prepare(runId, candidate());
+    await expect(journal.recordRecoveryFailure(runId, 'token=private-command-output' as any, () => {})).rejects.toThrow('candidate_recovery_stage');
+    expect(state.getDeploymentRun(runId)!.candidate!.recoveryFailure).toBeUndefined();
+    await journal.recordRecoveryFailure(runId, 'serving-readiness', () => {});
+    const loaded = new StateService(path.join(dir, 'state.json')); loaded.load();
+    expect(loaded.getDeploymentRun(runId)!.candidate!.recoveryFailure).toMatchObject({ stage: 'serving-readiness' });
+  });
+
+  it('releases only unchanged durable pre-start reservations and never a started or drifted graph', async () => {
+    const journal = new CandidateJournal(state); await journal.prepare(runId, candidate());
+    branch.services.api.hostPort = 10009;
+    await expect(journal.releaseUnstarted(runId, () => {})).rejects.toThrow('candidate_release_unstarted');
+    branch.services.api.hostPort = 10001;
+    await journal.releaseUnstarted(runId, () => {});
+    const reloadFile = path.join(dir, 'reload-observer.json'); fs.copyFileSync(path.join(dir, 'state.json'), reloadFile);
+    const loaded = new StateService(reloadFile); loaded.load();
+    expect(loaded.getDeploymentRun(runId)!.candidate!.phase).toBe('released');
+    expect(loaded.allocatePort(10002)).toBe(10002); await loaded.flush();
+    state.getDeploymentRun(runId)!.candidate = undefined;
+    await journal.prepare(runId, candidate()); await journal.advance(runId, 'prepared', 'starting');
+    await expect(journal.releaseUnstarted(runId, () => {})).rejects.toThrow('candidate_release_unstarted');
+    expect(state.allocatePort(10002)).not.toBe(10002);
+  });
+
   it('durably records only an inspected intended stop and rejects unrelated serving fact drift', async () => {
     const journal = new CandidateJournal(state); branch.services.api.containerId = 'c'.repeat(64);
     await journal.prepare(runId, candidate(), ['api']); await journal.advance(runId, 'prepared', 'starting');

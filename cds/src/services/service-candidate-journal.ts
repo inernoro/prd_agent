@@ -116,6 +116,56 @@ export class CandidateJournal {
     });
   }
 
+  async recordRecoveryFailure(runId: string, stage: NonNullable<DeploymentCandidateRecord['recoveryFailure']>['stage'],
+    assertCurrent: () => void): Promise<void> {
+    assertCurrent();
+    if (!['ownership', 'daemon-create', 'candidate-remove', 'serving-start', 'serving-readiness', 'serving-persist', 'route-ack'].includes(stage)) {
+      throw new Error('candidate_recovery_stage: bounded recovery code required');
+    }
+    const run = this.state.getDeploymentRun(runId); const record = run?.candidate;
+    if (!run || !record || !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status) ||
+      run.operationId !== record.operationId || run.commitSha !== record.targetSha || run.configHash !== record.configHash) {
+      throw new Error('candidate_recovery_owner: frozen owned journal required');
+    }
+    const frozen = JSON.stringify(record);
+    await this.state.updateDeploymentRunDurably(runId, draft => {
+      draft.candidate!.recoveryFailure = { stage, observedAt: new Date().toISOString() };
+    }, () => this.state.flush(), () => {
+      assertCurrent();
+      if (this.state.getDeploymentRun(runId) !== run || run.candidate !== record || JSON.stringify(record) !== frozen ||
+        run.operationId !== record.operationId || run.commitSha !== record.targetSha || run.configHash !== record.configHash) {
+        throw new Error('candidate_recovery_owner: owner or facts changed during persistence');
+      }
+    });
+  }
+
+  /** Only a durable pre-start phase proves this executor has never issued stop/create. */
+  async releaseUnstarted(runId: string, assertCurrent: () => void): Promise<void> {
+    assertCurrent();
+    const run = this.state.getDeploymentRun(runId); const record = run?.candidate;
+    const branch = run && this.state.getBranch(run.branchId);
+    const owner = run && { branchId: run.branchId, projectId: run.projectId, operationId: run.operationId, targetSha: run.commitSha, configHash: run.configHash };
+    const validate = () => {
+      assertCurrent();
+      if (!run || !record || !branch || !owner || this.state.getDeploymentRun(runId) !== run || run.candidate !== record ||
+        run.branchId !== owner.branchId || run.projectId !== owner.projectId || run.operationId !== owner.operationId ||
+        run.commitSha !== owner.targetSha || run.configHash !== owner.configHash || branch.id !== owner.branchId || branch.projectId !== owner.projectId ||
+        (branch.deploymentTargetSha || branch.githubCommitSha) !== owner.targetSha || this.state.getBranch(run.branchId) !== branch || record.phase !== 'prepared' || run.operationId !== record.operationId ||
+        run.commitSha !== record.targetSha || run.configHash !== record.configHash ||
+        !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status) ||
+        Object.values(record.services).some(service => service.status !== 'idle' || service.containerId || service.deployedImage) ||
+        JSON.stringify(snapshotCandidateServices(branch.services)) !== JSON.stringify(record.serving)) {
+        throw new Error('candidate_release_unstarted: unchanged owned pre-start facts required');
+      }
+    };
+    validate(); const frozen = JSON.stringify(record);
+    await this.state.updateDeploymentRunDurably(runId, draft => {
+      draft.candidate!.phase = 'released'; draft.candidate!.updatedAt = new Date().toISOString();
+    }, () => this.state.flush(), () => {
+      validate(); if (JSON.stringify(record) !== frozen) throw new Error('candidate_release_unstarted: journal changed during persistence');
+    });
+  }
+
   /** Record an owned, inspected stop; arbitrary serving drift cannot be re-frozen as recovery evidence. */
   async recordServingStopped(runId: string, profileId: string, assertCurrent: () => void): Promise<void> {
     const run = this.state.getDeploymentRun(runId); const record = run?.candidate;

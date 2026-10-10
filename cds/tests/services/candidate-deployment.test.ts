@@ -52,18 +52,18 @@ function fixture(role: 'api' | 'worker' = 'api') {
   } } as unknown as IShellExecutor;
   const profile = { id: 'api', projectId: 'project', role, name: 'API', containerPort: 8080, workDir: '.', dockerImage: image,
     prebuiltImage: true, prebuiltCommitPolicy: 'exact', preparedCommitSha: sha, preparedArtifactId: image } as BuildProfile;
-  let ready = true; let createFails = false; let wait: (() => Promise<boolean>) | undefined;
+  let ready = true; let oldReady = true; let createFails = false; let wait: (() => Promise<boolean>) | undefined;
   const containers = { runService: async (graph: BranchEntry, p: BuildProfile, service: any, _output: any, _env: any, context: any) => {
     expect(graph).not.toBe(entry); expect(context.candidateRunId).toBe('operation');
     events.push('create-candidate'); if (createFails) throw new Error('create-unknown');
     add(service.containerName, service.hostPort, true);
     Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image, deployedMode: 'express' });
-  }, waitForStartupSignal: async () => true, waitForReadiness: async (port: number) => port === 10001 ? true : wait ? await wait() : ready };
+  }, waitForStartupSignal: async () => true, waitForReadiness: async (port: number) => port === 10001 ? oldReady : wait ? await wait() : ready };
   const options = { runId, entry, profiles: [profile], allocatePort: () => 10002, assertCurrent: () => {},
     admit: async () => {}, acknowledge: async () => { events.push('ack'); return true; }, customEnv: {} };
   const service = new CandidateDeploymentService(state, containers as any, new OwnedContainerLifecycle(shell, 'instance'));
   return { service, options, old, events, objects, setReady: (value: boolean) => { ready = value; },
-    failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
+    setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
   it('leaves the serving graph untouched until all candidates are ready and consumer ACK is durable', async () => {
@@ -114,13 +114,13 @@ describe('P3 actual deployment candidate orchestration', () => {
     expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
     expect(state.allocatePort(10002)).not.toBe(10002);
   });
-  it('does not create or stop before capacity admits the overlap, and preserves both reservations on rejection', async () => {
+  it('does not create or stop before capacity admits the overlap, and releases a proven unstarted reservation on rejection', async () => {
     const f = fixture('worker');
     f.options.admit = async () => { throw new Error('capacity-denied'); };
     await expect(f.service.deploy(f.options)).rejects.toThrow('capacity-denied');
     expect(f.events).toEqual([]); expect(f.old.State.Running).toBe(true);
-    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
-    expect(state.allocatePort(10002)).not.toBe(10002);
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('released');
+    expect(state.allocatePort(10002)).toBe(10002);
   });
   it('does not erase a serving fact mutation during readiness', async () => {
     const f = fixture(); f.setWait(async () => { entry.services.api.deployedImage = 'foreign-new-version'; return true; });
@@ -137,6 +137,14 @@ describe('P3 actual deployment candidate orchestration', () => {
     expect(f.events.slice(0, removed)).toContain('ack'); expect(restored).toBeGreaterThan(removed);
     expect(f.old.State.Running).toBe(true); expect(entry.services.api.status).toBe('running');
     expect(entry.services.api.containerName).toBe('old');
+  });
+
+  it('records an explicit recovery failure when the restored original instance is alive but not ready', async () => {
+    const f = fixture('worker'); f.setReady(false); f.setOldReady(false);
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');
+    expect(f.old.State.Running).toBe(true); expect(entry.services.api.status).toBe('stopped');
+    expect(state.getDeploymentRun(runId)!.candidate!.recoveryFailure).toMatchObject({ stage: 'serving-readiness' });
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
   });
 
 });

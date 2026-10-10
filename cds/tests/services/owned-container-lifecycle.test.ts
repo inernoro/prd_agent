@@ -25,6 +25,20 @@ function fixture() {
 }
 const owner = { projectId: 'project', branchId: 'branch' };
 describe('P3 immutable owned container lifecycle', () => {
+  it('records lifecycle intent after inspected ownership and fences again before the immutable-ID command', async () => {
+    const f = fixture(); let superseded = false;
+    const hook = vi.fn((reference, action) => {
+      expect(f.exec.mock.calls.at(-1)![0]).toContain('docker inspect');
+      expect(reference.owner).toEqual({ ...owner, profileId: 'api', operationId: 'op' });
+      expect(action).toBe('stop'); superseded = true;
+    });
+    const lifecycle = new OwnedContainerLifecycle({ exec: f.exec } as unknown as IShellExecutor, 'instance', hook);
+    const ref = await lifecycle.capture({ ...owner, operationId: 'op' }, service, () => {});
+    expect(Object.isFrozen(ref.owner)).toBe(true);
+    await expect(lifecycle.stop(ref, () => { if (superseded) throw new Error('new-owner'); })).rejects.toThrow('new-owner');
+    expect(hook).toHaveBeenCalledOnce(); expect(f.mutations).toEqual([]);
+  });
+
   it.each(['missing', 'unknown-type', 'mode-conflict', 'propagation-drift'])('fails closed on unknown or changed mounts: %s', async variant => {
     const f = fixture();
     if (variant === 'propagation-drift') {

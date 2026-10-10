@@ -1,3 +1,7 @@
+import { recordContainerLifecycleIntent } from './services/container-diagnostics.js';
+import { OwnedContainerLifecycle } from './services/owned-container-lifecycle.js';
+import { admitCandidateCapacity } from './services/candidate-capacity.js';
+import { ForwarderRouteAcknowledgement } from './services/forwarder-route-acknowledgement.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
@@ -5412,6 +5416,20 @@ startMainThreadDiagnostics();
 // ── Master server (dashboard + API on masterPort) ──
 // serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。
 const serverDeps: ServerDeps = {
+  candidateReplacementEnabled: () => process.env.CDS_CANDIDATE_REPLACEMENT === '1',
+  candidateDeployment: process.env.CDS_CANDIDATE_REPLACEMENT === '1' && forwarderRoutePublisher ? {
+    lifecycle: new OwnedContainerLifecycle(shell, computeCdsInstanceId(config.repoRoot), (reference, action) => {
+      if (action === 'start') return;
+      recordContainerLifecycleIntent({ containerName: reference.name, ...reference.owner,
+        kind: action === 'stop' ? 'cds-stop' : 'cds-remove', reason: '精确候选交付停止或回收已核验实例',
+        source: 'candidate-deployment', operation: 'candidate-' + action });
+    }),
+    admit: async (_graph, _stops, context) => {
+      await admitCandidateCapacity(stateService, shell, context);
+    },
+    acknowledge: (branch, signal) => new ForwarderRouteAcknowledgement(forwarderRoutePublisher!,
+      Number.parseInt(process.env.CDS_FORWARDER_PORT ?? '9090', 10)).wait(branch.id, { signal }),
+  } : undefined,
   getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,

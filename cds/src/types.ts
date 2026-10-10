@@ -1385,6 +1385,8 @@ export interface DeploymentCandidateRecord {
   services: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
   /** Durable stop intent; unknown create outcomes must not restore a single consumer blindly. */
   stopBeforeStart?: string[];
+  /** Recovery is separate from candidate retirement; contains bounded stage codes, never command output. */
+  recoveryFailure?: { stage: 'ownership' | 'daemon-create' | 'candidate-remove' | 'serving-start' | 'serving-readiness' | 'serving-persist' | 'route-ack'; observedAt: string };
 }
 
 export interface DeploymentVersionProfile {
