@@ -24,7 +24,7 @@
  */
 import fs from 'node:fs';
 import { projectHistoricalSlugs, projectResourceNamespace } from './preview-slug.js';
-import { importLegacyProjectSlug } from './project-identity-history.js';
+import { importLegacyProjectSlug, projectIdentitySnapshot } from './project-identity-history.js';
 import { profileHostsPreviewInstance } from './preview-instance.js';
 import path from 'node:path';
 import type {
@@ -177,6 +177,7 @@ function redactProject(project: Project, tag: PreviewMirrorTag): Project {
     if (v !== undefined) (out as Record<string, unknown>)[k] = v;
   }
   if (project.managedProfiles) out.managedProfiles = project.managedProfiles.map(redactProfile);
+  if (project.gitRepoUrl) out.gitRepoUrl = projectIdentitySnapshot(project).repository;
   return { ...deepRedactForMirror(out as Project), mirror: { ...tag, routingIdentity: {
     resourceNamespace: projectResourceNamespace(project), historicalSlugs: projectHistoricalSlugs(project),
   } } };

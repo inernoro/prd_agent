@@ -794,6 +794,21 @@ describe('Projects router (P4 Part 2)', () => {
       expect(unchanged.body.project.identityVersion).toBe(version);
     });
 
+    it('redacts SCP usernames from history while still advancing the version on raw changes', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'SSH', slug: 'ssh-history' })).body.project.id;
+      const first = await request(server, 'PUT', `/api/projects/${id}`, { gitRepoUrl: 'deploy-token@host:owner/repo.git' });
+      const second = await request(server, 'PUT', `/api/projects/${id}`, {
+        gitRepoUrl: 'git@host:owner/repo.git', expectedIdentityVersion: first.body.project.identityVersion,
+      });
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(second.body.project.identityVersion).not.toBe(first.body.project.identityVersion);
+      const history = await request(server, 'GET', `/api/projects/${id}/identity-history`);
+      expect(history.body.records[0].before.repository).toBe('host:owner/repo.git');
+      expect(history.body.records[0].after.repository).toBe('host:owner/repo.git');
+      expect(JSON.stringify(history.body)).not.toMatch(/deploy-token|git@/);
+    });
+
     it('records the creation input source and paginates history without exposing it in project lists', async () => {
       const created = await request(server, 'POST', '/api/projects', { name: 'New', slug: 'explicit-history' });
       const id = created.body.project.id;

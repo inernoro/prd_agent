@@ -30,6 +30,8 @@ export function projectIdentityActorFromRequest(req: unknown): ProjectIdentityAc
 
 function safeRepository(raw: string | undefined): string {
   if (!raw) return '';
+  // 镜像重复读取时保留本函数生成的安全展示值，不对指纹再次求指纹。
+  if (/^\[仓库地址已脱敏：指纹 [a-f0-9]{16}\]$/.test(raw)) return raw;
   try {
     const url = new URL(raw);
     url.username = '';
@@ -38,8 +40,9 @@ function safeRepository(raw: string | undefined): string {
     url.hash = '';
     return url.toString();
   } catch {
-    // SCP-style Git remotes are valid; never retain arbitrary credential-bearing text.
-    return /^[\w.-]+@[\w.-]+:[\w./-]+$/.test(raw) ? raw
+    // SCP 格式也去掉用户名，与 URL 的 userinfo 脱敏保持一致。
+    const scp = /^[\w.-]+@([\w.-]+):([\w./-]+)$/.exec(raw);
+    return scp ? `${scp[1]}:${scp[2]}`
       : `[仓库地址已脱敏：指纹 ${createHash('sha256').update(raw).digest('hex').slice(0, 16)}]`;
   }
 }

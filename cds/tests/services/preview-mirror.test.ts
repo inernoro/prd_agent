@@ -156,11 +156,35 @@ describe('脱敏（不带凭据）', () => {
     parent.addProject({ id: 'pat', slug: 'pat', name: 'PAT', kind: 'git', gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git', createdAt: now, updatedAt: now } as Project);
     const m = buildPreviewMirror(parent, { nowMs: Date.now() });
     const exported = m.projects.find((p) => p.id === 'pat');
-    expect(exported?.gitRepoUrl).toBe('https://***@github.com/acme/repo.git');
+    expect(exported?.gitRepoUrl).toBe('https://github.com/acme/repo.git');
     expect(JSON.stringify(m)).not.toContain('ghp_abcDEF123456');
     expect(findMirrorLeaks(m)).toEqual([]);
     const raw = { version: 1, capturedAt: 'x', source: { kind: 'parent-cds', label: 'p' }, projects: [{ gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git' }], buildProfiles: [], branches: [], deploymentRuns: [], reports: [], logs: {}, metrics: {} } as unknown as PreviewMirrorFile;
     expect(findMirrorLeaks(raw)).toContain('url-with-inline-credentials');
+  });
+
+  it('镜像的当前仓库元数据复用历史脱敏，不携带 SCP 用户名', () => {
+    const parent = parentState();
+    parent.updateProject('map', { gitRepoUrl: 'deploy-token@host:owner/repo.git' });
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    expect(mirror.projects[0].gitRepoUrl).toBe('host:owner/repo.git');
+    const file = writePreviewMirror(tmp, mirror);
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('deploy-token');
+    const scpLoaded = readPreviewMirror(tmp)!;
+    expect(scpLoaded.projects[0].gitRepoUrl).toBe('host:owner/repo.git');
+    const child = freshState('scp-scrub');
+    expect(seedPreviewInstanceMirror(child, structuredClone(scpLoaded))).toBe(true);
+    child.getProject('map')!.gitRepoUrl = 'deploy-token@host:owner/repo.git';
+    expect(seedPreviewInstanceMirror(child, scpLoaded)).toBe(true);
+    expect(child.getProject('map')!.gitRepoUrl).toBe('host:owner/repo.git');
+    expect(seedPreviewInstanceMirror(child, scpLoaded)).toBe(false);
+    parent.updateProject('map', { gitRepoUrl: '/private/local-repository' });
+    const local = buildPreviewMirror(parent, { nowMs: Date.now() });
+    writePreviewMirror(tmp, local);
+    const loaded = readPreviewMirror(tmp)!;
+    expect(loaded.projects[0].gitRepoUrl).toBe(local.projects[0].gitRepoUrl);
+    expect(readPreviewMirror(tmp)!.projects[0].gitRepoUrl).toBe(local.projects[0].gitRepoUrl);
+    expect(JSON.stringify(loaded)).not.toContain('/private/local-repository');
   });
 
   it('只有用户名段 / 只有密码段的 URL（amqp://user@host、redis://:pass@host）脱敏与自检认同一组形状，父实例不会因为自检误判而不写（2026-09-20 实机）', () => {
