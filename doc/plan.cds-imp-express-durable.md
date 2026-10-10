@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.9；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.10；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -97,3 +97,15 @@ worker/推断worker/可写卷默认stop-and-restore，显式不安全parallel拒
 532654当前全量641文件9276测试通过、6文件19条跳过、1旧snapshot obsolete；相关8文件299及cds tsc通过。此前1376两次全量失败/OAuth404与bug-reports超时/ECONNRESET保留、原因未完全查明；当前通过不称已修复历史根因。新JSON allocator fixture初版让observer写同原文件导致双writer临时文件冲突，改为复制磁盘snapshot至独立文件+flush，不算产品红。正式49/视觉/8分支未执行。
 
 真实JSON屏障和三入口终态独立30/30、8/8仅历史局部；Mongo与其他入口/实际Daemon重启未完成。新固定532654独立复验待返回，原红与全部fixture错误日志保留。所有49项正式acceptance仍not-executed，视觉N/A；本地全量和独立组件证据不继承为公网、实际Daemon或八分支通过。
+
+## v1.10 实施检查点（2026-10-11）
+
+CDS:f8b814f9892416f2a21baf7ebbb21a5d7de5c590; IMP:6bbf61ec5ce02934fe7aeed926ac12f1dfa4eb2e（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地实施检查点，后续文档提交另计，未部署）。主进程按同编号实施；独立末尾账本保持仓库外。
+
+e091固定独立HTTP原11/11、扩展13/13：create原reason、startup false、真实Container readiness取消、capture原reason均内存/磁盘/SSE cancelled；lease仍current的AbortError仍failed。原532固定8/11、扩展9/13四红保留，只关闭局部取消归类红。f8启动扫描按canonical容器名/instance，同branch/profile不按行顺序选候选，失败/身份重复保持状态，等待中后继服务名不回写；4原红复绿+归属2补充。真实Daemon取消/重启/网络与完整恢复未完成。
+
+f8通用孤儿收割保护未released记录中的serving/candidate名字，run failed/cancelled或Profile移除不解除保护；unknown candidate/protected app交不可变ID专门对账，不按名字stop。保留完整旧账本与容量事实。原误stop命令真红复绿，正式Daemon/恢复/网络待验。
+
+f8本地4相关文件321测试及显式cds tsc通过；带HTTP/事件循环脱敏trace全量641文件9290测试通过、6文件19条跳过、1旧obsolete snapshot。此前e091首轮640文件9282测试绿/1operator-console-auth GET ops 5s超时红保留；此前1376 OAuth404/bug-report超时与ECONNRESET保留。绿色trace中operator请求<5ms，未复现首轮红，不能称根因已修复。trace只测试进程，不是公网/线上性能证据。正式49/视觉/8分支均未执行。
+
+主HTTP夹具错误（不存在的config.stateFile、跨场景重复同SHA触发正常空转熔断）已纠正并留日志，不作为产品红。两副本49条正式状态不变；没有push/PR/共享CDS写入。
