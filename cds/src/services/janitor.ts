@@ -429,12 +429,9 @@ async function listMountedHostPaths(run: DockerRunner): Promise<string[] | null>
         // println 不需要引号，从根上避开这一类转义坑。
         ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000,
       );
-      // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
-      // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
-      // 忽略它完全安全。真正危险的是「一条都没查到却当成没人挂载」——那种情况下
-      // stdout 为空，下面按失败处理返回 null，调用方整轮只报不删。
-      //（生产实测：容器持续增删，此前恒定走 null 分支，孤儿回收一直停在 0/66。）
-      if (!r.ok && !r.stdout) return null;
+      // 部分输出不能证明遗漏的容器已经消失：权限、daemon 或传输失败也会漏项。
+      // 未完整确认挂载占用时整轮只报不删，下轮成功重采后再允许回收。
+      if (!r.ok) return null;
       for (const line of r.stdout.split('\n')) {
         const t = line.trim();
         if (t) paths.push(t);

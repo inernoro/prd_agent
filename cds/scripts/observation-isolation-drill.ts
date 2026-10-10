@@ -75,8 +75,10 @@ async function main(): Promise<void> {
     report.actualIndependentProcessesVerified = true;
     report.checks.push({ name: 'large-master-independent-query-parent-and-bounded-actor-memory', passed: true });
     report.stage = 'create-owned-container';
+    const mountedDir = path.join(temp, 'mounted');
+    await fs.mkdir(mountedDir);
     docker(['pull', 'alpine:3.20']);
-    id = docker(['run', '-d', '--name', name, '--label', `cds.acceptance.owner=${owner}`, '--network', 'none', '--cpus', '0.25', '--memory', '64m', 'alpine:3.20', 'sh', '-c', 'echo owned-observation; sleep 300']);
+    id = docker(['run', '-d', '--name', name, '--label', `cds.acceptance.owner=${owner}`, '--network', 'none', '--cpus', '0.25', '--memory', '64m', '--mount', `type=bind,source=${mountedDir},target=/owned-readonly,readonly`, 'alpine:3.20', 'sh', '-c', 'echo owned-observation; sleep 300']);
     owned();
     report.stage = 'real-container-reads';
     assert.equal(await container.isRunning(id), true);
@@ -92,9 +94,25 @@ async function main(): Promise<void> {
     ]);
     assert.ok(images.includes('alpine:3.20'));
     assert.ok(inUseImages.includes('alpine:3.20'));
-    assert.ok(Array.isArray(mountedPaths));
+    assert.ok(Array.isArray(mountedPaths) && mountedPaths.includes(mountedDir));
     owned();
     report.checks.push({ name: 'compiled-janitor-image-reference-and-mount-observations', passed: true });
+    report.stage = 'real-janitor-partial-mount-failure';
+    // 仅替换此前枚举到的ID清单，实际inspect仍由独立进程调用真实Docker。
+    // 一个ID已不存在时会输出另一容器的真实挂载并非零退出，不能视作完整结果。
+    let partialReceipt: { exitCode: number; knownMountPresent: boolean } | undefined;
+    const partialJanitor = janitorModule.createJanitorDockerAdapters({ exec: async (command, options) => {
+      if (command === "docker 'ps' '-aq'") return { stdout: `${id}\n${'0'.repeat(64)}`, stderr: '', exitCode: 0 };
+      const result = await shell.exec(command, options);
+      partialReceipt = { exitCode: result.exitCode, knownMountPresent: result.stdout.includes(mountedDir) };
+      return result;
+    } });
+    assert.equal(await partialJanitor.orphanWorktreeFs.listMountedHostPaths(), null);
+    assert.ok(partialReceipt && partialReceipt.exitCode !== 0 && partialReceipt.knownMountPresent);
+    report.partialMountReceipt = { ...partialReceipt, returnedUnknown: true, roster: 'owned ID plus absent ID' };
+    owned();
+    report.checks.push({ name: 'compiled-janitor-real-partial-inspect-protects-unknown-mounts', passed: true });
+
     report.stage = 'bounded-read-concurrency';
     const requests = Array.from({ length: 8 }, () => container.isRunning(id!));
     assert.ok(shell.getStats().active <= 2 && shell.getStats().queued >= 6);

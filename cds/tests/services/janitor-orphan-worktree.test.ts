@@ -160,16 +160,8 @@ describe('janitor 孤儿 worktree 接线', () => {
 });
 
 describe('挂载枚举的容错（2026-07-28 生产实测两轮定位）', () => {
-  // 第二轮定位：改走 inspect 后仍然 removed 0 / deferred 66。根因是
-  // `docker inspect a b c` 只要有一个 id 在 ps 与 inspect 之间消失就整体非零退出，
-  // 而我把非零一律当查不到 → 恒返回 null → 回收恒被降级。消失的容器本就不可能
-  // 挂着任何目录，忽略它是安全的；真正危险的是「一条都没查到却当成没人挂载」。
-  it('部分容器消失（非零退出但有输出）时仍要用得到的那部分', () => {
-    // 契约在实现里：!r.ok && !r.stdout 才返回 null；有 stdout 就继续用
-    const src = readFileSync(new URL('../../src/services/janitor.ts', import.meta.url), 'utf8');
-    expect(src).toMatch(/if \(!r\.ok && !r\.stdout\) return null;/);
-  });
-
+  // 非零退出有部分输出的安全性由 janitor-observation 的实际目录回归覆盖；
+  // 不能仅凭有输出就假定遗漏容器已消失，也不使用源码正则来规定删除资格。
   it('完全查不到（非零且无输出）才返回 null，让整轮只报不删', () => {
     const src = readFileSync(new URL('../../src/services/janitor.ts', import.meta.url), 'utf8');
     expect(src).toMatch(/execDockerDetailed/);

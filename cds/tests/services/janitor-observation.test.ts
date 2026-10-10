@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import * as childProcess from 'node:child_process';
@@ -105,10 +105,10 @@ describe('Janitor 真实命令与观测隔离', () => {
     await expect(access(sentinel)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('inspect 的部分输出保留已知挂载，查询失败且无输出则返回未知', async () => {
+  it('inspect 部分失败或无输出都返回未知，执行器关闭不回退', async () => {
     const f = await fixture();
     process.env.CDS_JANITOR_INSPECT = 'partial';
-    expect(await f.adapters.orphanWorktreeFs.listMountedHostPaths()).toEqual(['/owned/mounted']);
+    expect(await f.adapters.orphanWorktreeFs.listMountedHostPaths()).toBeNull();
     process.env.CDS_JANITOR_INSPECT = 'empty';
     expect(await f.adapters.orphanWorktreeFs.listMountedHostPaths()).toBeNull();
     process.env.CDS_JANITOR_QUERY_FAILURE = 'ps';
@@ -124,4 +124,31 @@ describe('Janitor 真实命令与观测隔离', () => {
     expect(await f.adapters.imageDocker.removeImage(f.image)).toBeTruthy();
     expect((await f.trace()).filter(item => item.args[0] === 'rmi')).toHaveLength(1);
   });
+  it('批量 inspect 部分失败不删除未报告挂载的实际目录，完整重采后仍可回收', async () => {
+    const f = await fixture();
+    const root = path.join(f.dir, 'worktrees');
+    const orphan = path.join(root, 'proj', 'omitted');
+    const marker = path.join(orphan, 'must-survive');
+    await mkdir(orphan, { recursive: true });
+    await writeFile(marker, 'owned fixture');
+    const old = new Date(Date.now() - 24 * 60 * 60_000);
+    await utimes(orphan, old, old);
+    const state = { getAllBranches: () => [], getDeploymentVersions: () => [],
+      getProjects: () => [{ id: 'proj' }], getDeletedProjectWorktreeBuckets: () => [],
+      getDefaultBranchFor: () => null } as unknown as StateService;
+    const janitor = new janitorModule.JanitorService(state,
+      { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600,
+        dockerPrune: false, imageRetention: false }, root, undefined, () => null,
+      f.adapters.dockerPrune, f.adapters.imageDocker, f.adapters.orphanWorktreeFs);
+    process.env.CDS_JANITOR_INSPECT = 'partial';
+    const deferred = await janitor.sweep();
+    await expect(access(marker)).resolves.toBeUndefined();
+    expect(deferred.orphanWorktrees?.removed).toEqual([]);
+    expect(deferred.orphanWorktrees?.deferred).toBe(1);
+    delete process.env.CDS_JANITOR_INSPECT;
+    const confirmed = await janitor.sweep();
+    expect(confirmed.orphanWorktrees?.removed).toEqual([orphan]);
+    await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
 });
