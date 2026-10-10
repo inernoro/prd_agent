@@ -182,6 +182,25 @@ describe('P3 actual deployment candidate orchestration', () => {
     expect(entry.services.api.containerName).toBe('old');
   });
 
+  it.each(['readiness', 'route-ack'])('does not release rollback reservations before the restored worker %s is confirmed', async failure => {
+    const f = fixture('worker'); let acknowledgements = 0;
+    f.options.acknowledge = async () => {
+      acknowledgements += 1;
+      if (acknowledgements === 1) return false;
+      const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+      expect(disk.getDeploymentRun(runId)!.candidate!.phase).not.toBe('released');
+      return failure !== 'route-ack' || acknowledgements === 2;
+    };
+    if (failure === 'readiness') f.setOldReady(false);
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_switch_ack');
+    const loaded = new StateService(path.join(dir, 'state.json')); loaded.load();
+    expect(loaded.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+    expect(loaded.getDeploymentRun(runId)!.candidate!.recoveryFailure?.stage).toBe(failure === 'readiness' ? 'serving-readiness' : 'route-ack');
+    expect(state.allocatePort(10002)).not.toBe(10002);
+    expect(f.objects.get(f.old.Id)).toBe(f.old);
+    expect(f.events).not.toContain('docker rm -f ' + f.old.Id);
+  });
+
   it('records an explicit recovery failure when the restored original instance is alive but not ready', async () => {
     const f = fixture('worker'); f.setReady(false); f.setOldReady(false);
     await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');

@@ -175,7 +175,7 @@ export class CandidateDeploymentService {
       // A switched but unresolved consumer might still serve candidates. Preserve both sides.
       const phase = this.state.getDeploymentRun(runId)?.candidate?.phase;
       const oldMapping = Object.entries(entry.services).every(([id, service]) => service.containerName === oldReferences.get(id)?.name);
-      const mayRestore = !switched || phase === 'released' && oldMapping;
+      const mayRestore = !switched || phase === 'rollback-verified' && oldMapping;
       if (mayRestore) {
         let recoveryStage: NonNullable<DeploymentCandidateRecord['recoveryFailure']>['stage'] = 'ownership';
         try {
@@ -200,6 +200,9 @@ export class CandidateDeploymentService {
           recoveryStage = 'route-ack';
           if (stopped.size && !await options.acknowledge(entry)) throw new Error('candidate_restore_ack: old consumer mapping unconfirmed');
           servingFence();
+          if (switched && this.state.getDeploymentRun(runId)?.candidate?.phase === 'rollback-verified') {
+            await journal.advance(runId, 'rollback-verified', 'released'); servingFence();
+          }
         } catch {
           // Persist a stage code without copying potentially sensitive CLI output or replacing the original error.
           try {
