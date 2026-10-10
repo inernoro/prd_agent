@@ -111,9 +111,11 @@ describe('已受理部署的持久输入与重启恢复', () => {
         state.addDeploymentRun({ ...run, id: `other-${i}`, branchId: 'other', status: 'failed', startedAt: `2099-01-01T00:00:${String(i).padStart(2, '0')}.000Z` });
       }
       expect(state.getDeploymentRun(run.id)?.status).toBe('cancelled');
-      release(); await write;
-      const reopened = new StateService(file); reopened.load();
-      expect(new DeploymentRunService(reopened).restoreQueued(new BranchOperationCoordinator())).toEqual([]);
+      release(); await write; await state.flush();
+      // 恢复路径另有强退回归；本例直接核对真实文件，避免两个活实例并发写同一临时文件。
+      const persisted = JSON.parse(fs.readFileSync(file, 'utf8'));
+      expect(persisted.deploymentRuns[run.id]?.status).toBe('cancelled');
+      expect(persisted.deploymentIntents[run.id]).toBeUndefined();
       state.addDeploymentRun({ ...run, id: 'after-confirmation', status: 'failed', startedAt: '2099-02-01T00:00:00.000Z' });
       expect(state.getDeploymentRun(run.id)).toBeUndefined();
     } finally { release(); await write.catch(() => {}); rename.mockRestore(); }

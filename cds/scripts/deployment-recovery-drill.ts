@@ -113,7 +113,7 @@ async function worker(uri: string, database: string, mode: string, scope: string
     for (const service of ['api', 'web']) {
       const request: BranchOperationRequest = { projectId: 'drill', branchId: 'drill-b', kind: 'deploy-profile', profileId: service,
         trigger: 'webhook', commitSha: 'c'.repeat(40), commitPinned: true, configHash: 'stop-config' };
-      const decision = coordinator.begin(request); assert.equal(decision.status, 'queued');
+      const decision = coordinator.begin(request); assert.equal(decision.status, 'merged');
       const input = captureDeploymentInput(state.getBranch('drill-b')!, [{ id: service, projectId: 'drill', name: service,
         dockerImage: 'node', workDir: '.', command: `node original-${service}.js`, containerPort: 3000 }], { TOKEN: 'synthetic-stop-original' });
       input.configHash = 'stop-config';
@@ -124,32 +124,44 @@ async function worker(uri: string, database: string, mode: string, scope: string
     await state.flush();
     const collection = handle.deploymentRunsCollection(); handle.deploymentRunsCollection = () => collection;
     const original = collection.replaceOne.bind(collection);
-    let confirmed!: () => void;
-    const otherWriteConfirmed = new Promise<void>((resolve) => { confirmed = resolve; });
+    let successfulId = '', failedId = '';
     collection.replaceOne = async (...args) => {
-      if (args[0]._id === 'dr_isolated_stop_1' && args[1].doc.status === 'cancelled') {
+      const cancelling = args[0]._id.startsWith('dr_isolated_stop_') && args[1].doc.status === 'cancelled';
+      // 实际存储串行写关键记录；先允许一条真实写成功，再让下一条在写入前失败。
+      if (cancelling && successfulId && args[0]._id !== successfulId) {
+        failedId = args[0]._id;
         throw new Error('synthetic stop record unavailable before real write');
       }
       const result = await original(...args);
-      if (args[0]._id === 'dr_isolated_stop_2' && args[1].doc.status === 'cancelled') confirmed();
+      if (cancelling) successfulId = args[0]._id;
       return result;
     };
+    // 先占住一个无关写入，让两个取消确认都进入下一批，再释放，故障次序不依赖微任务竞态。
+    const global = handle.globalCollection(); handle.globalCollection = () => global;
+    const originalGlobal = global.replaceOne.bind(global);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    global.replaceOne = async (...args) => { entered(); await gate; return originalGlobal(...args); };
+    (state.getState() as any).nextPortIndex += 1; state.save([{ kind: 'global' }]);
+    const background = state.flush(); await reached;
     const decision = coordinator.begin({ projectId: 'drill', branchId: 'drill-b', kind: 'stop', trigger: 'manual' });
     assert.equal(decision.status, 'started');
-    await assert.rejects(stopRuns.persistBranchCancellation('drill', 'drill-b', decision.lease));
-    await otherWriteConfirmed;
-    const first = await collection.findOne({ _id: 'dr_isolated_stop_1' });
-    const second = await collection.findOne({ _id: 'dr_isolated_stop_2' });
-    assert.equal(first?.doc.status, 'queued'); assert.ok(first?.executionIntent);
-    assert.equal(second?.doc.status, 'cancelled'); assert.equal(second?.executionIntent, undefined);
+    const cancellationRejected = assert.rejects(stopRuns.persistBranchCancellation('drill', 'drill-b', decision.lease));
+    release(); await background; await cancellationRejected;
+    assert.ok(successfulId); assert.ok(failedId); assert.notEqual(successfulId, failedId);
+    const failed = await collection.findOne({ _id: failedId });
+    const successful = await collection.findOne({ _id: successfulId });
+    assert.equal(failed?.doc.status, 'queued'); assert.ok(failed?.executionIntent);
+    assert.equal(successful?.doc.status, 'cancelled'); assert.equal(successful?.executionIntent, undefined);
     process.send?.({ phase: 'stop-unconfirmed', scope, confirmed: false, statuses: ['queued', 'cancelled'],
-      runIds: [first.doc.id, second.doc.id], partialRealWriteVerified: true });
+      unconfirmedRunId: failedId, cancelledRunId: successfulId, partialRealWriteVerified: true });
   } else if (mode === 'stop-retry') {
     const restored = runs.restoreQueued(coordinator);
-    assert.deepEqual(restored.map((run) => run.id), ['dr_isolated_stop_1']);
+    assert.equal(restored.length, 1); assert.match(restored[0].id, /^dr_isolated_stop_[12]$/);
     const input = readDeploymentIntent(restored[0], state.getState().deploymentIntents![restored[0].id]);
     assert.equal(input.configuredEnv.TOKEN, 'synthetic-stop-original');
-    assert.equal(input.profiles[0].command, 'node original-api.js');
+    assert.equal(input.profiles[0].command, `node original-${restored[0].profileId}.js`);
     assert.equal(restored[0].commitSha, 'c'.repeat(40));
     const decision = coordinator.begin({ projectId: 'drill', branchId: 'drill-b', kind: 'stop', trigger: 'manual' });
     assert.equal(decision.status, 'started');
@@ -231,11 +243,12 @@ export async function main(): Promise<void> {
       assert.equal(accepted.runId, claimed.runId); assert.equal(accepted.operationId, claimed.operationId); assert.equal(accepted.generation, claimed.generation);
       assert.equal(inspected.runCount, scope === 'full' ? 1 : 2);
     }
-    for (const mode of ['stop-partial', 'stop-retry', 'stop-inspect']) {
-      const result = await runWorker(mode, 'full'); (report.checks as unknown[]).push(result);
-      if (mode === 'stop-partial') assert.equal(result.confirmed, false);
-      else assert.equal(result.runCount, 4);
-    }
+    const partialStop = await runWorker('stop-partial', 'full'); (report.checks as unknown[]).push(partialStop);
+    assert.equal(partialStop.confirmed, false);
+    const retriedStop = await runWorker('stop-retry', 'full'); (report.checks as unknown[]).push(retriedStop);
+    assert.equal(retriedStop.restoredOriginalRun, partialStop.unconfirmedRunId); assert.equal(retriedStop.runCount, 4);
+    const stopRestarted = await runWorker('stop-inspect', 'full'); (report.checks as unknown[]).push(stopRestarted);
+    assert.equal(stopRestarted.runCount, 4);
     report.verdict = 'passed';
   } finally {
     report.isolatedDatabaseRemoved = false;

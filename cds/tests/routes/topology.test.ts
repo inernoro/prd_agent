@@ -17,7 +17,7 @@ function request(server: http.Server, method: string, urlPath: string, body?: un
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
-    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
+    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, agent: false,
       headers: { 'Content-Type': 'application/json', ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}) } },
     (res) => {
       let raw = '';
