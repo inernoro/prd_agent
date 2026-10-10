@@ -25,7 +25,7 @@ export class CandidateReconciler {
 
   async scan(limit = 1): Promise<CandidateReconcileResult[]> {
     if (this.scanning) return [];
-    if (!Number.isInteger(limit) || limit < 1 || limit > 8) throw new Error('candidate_reconcile_limit');
+    if (limit !== 1) throw new Error('candidate_reconcile_limit');
     this.scanning = true;
     try {
       const runs = this.state.getDeploymentRuns().filter(run => run.candidate && run.candidate.phase !== 'released' &&

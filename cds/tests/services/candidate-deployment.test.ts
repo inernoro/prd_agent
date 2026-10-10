@@ -123,6 +123,13 @@ describe('P3 actual deployment candidate orchestration', () => {
       async () => { f.events.push('recovery-ack'); return true; });
     return { f, reconciler };
   }
+  it('rejects batch recovery before any external mutation: every scan is bounded to one run', async () => {
+    const { f, reconciler } = await cancelledRecovery(); const before = f.events.length;
+    await expect(reconciler.scan(2)).rejects.toThrow('candidate_reconcile_limit');
+    expect(f.events.slice(before)).toEqual([]); expect(f.old.State.Running).toBe(false);
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+  });
+
   it('recovers a cancelled known graph from actual JSON: candidate ID and private network first, then original readiness and final ACK', async () => {
     const { f, reconciler } = await cancelledRecovery();
     const before = f.events.length;
