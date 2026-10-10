@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { ExecOptions, IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
@@ -324,6 +325,50 @@ export class WorktreeService {
       { cwd: targetDir },
     );
     return { head: logResult.stdout.trim(), before, after, afterFull, updated: before !== after };
+  }
+
+  static deploymentSourceRootFor(targetDir: string): string {
+    return path.join(path.dirname(targetDir), '.deployment-sources', path.basename(targetDir));
+  }
+
+  /** 准备本次部署专用的源码目录，不 reset 已运行容器可能挂载的旧目录。 */
+  async prepareDeploymentSource(branch: string, targetDir: string, commitSha?: string): Promise<{
+    head: string; before: string; after: string; afterFull: string; updated: boolean; sourcePath: string;
+  }> {
+    if (commitSha !== undefined && !/^[0-9a-f]{7,40}$/i.test(commitSha)) throw new Error('目标提交必须是有效的 Git SHA');
+    const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+    const valid = await this.shell.exec(`git check-ref-format --branch ${quote(branch)}`, { cwd: targetDir });
+    if (valid.exitCode !== 0) throw new Error('无法准备非法分支的部署源码');
+    const before = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
+    const fetched = await this.fetchWithLockRetry(targetDir, branch);
+    if (fetched.exitCode !== 0) throw new Error(`部署源码拉取失败:\n${combinedOutput(fetched)}`);
+    const ref = commitSha || `origin/${branch}`;
+    const resolve = () => this.shell.exec(`git rev-parse --verify ${quote(`${ref}^{commit}`)}`, { cwd: targetDir });
+    let resolved = await resolve();
+    // 浅克隆或已前进的分支可能不含旧提交；全长身份可向原仓库精确取回，不能退到 HEAD。
+    if (resolved.exitCode !== 0 && commitSha?.length === 40) {
+      const targeted = await this.fetchWithLockRetry(targetDir, commitSha);
+      if (targeted.exitCode === 0) resolved = await resolve();
+    }
+    const sha = resolved.stdout.trim().toLowerCase();
+    if (resolved.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('目标提交不可用，请确认完整提交及仓库访问权限');
+    const sourceRoot = WorktreeService.deploymentSourceRootFor(targetDir);
+    fs.mkdirSync(sourceRoot, { recursive: true, mode: 0o700 });
+    const sourcePath = path.join(sourceRoot, randomUUID());
+    const added = await this.shell.exec(`git worktree add --detach ${quote(sourcePath)} ${quote(sha)}`, { cwd: targetDir });
+    if (added.exitCode !== 0) {
+      await fs.promises.rm(sourcePath, { recursive: true, force: true });
+      throw new Error(`部署源码目录准备失败:\n${combinedOutput(added)}`);
+    }
+    const actual = await this.shell.exec('git rev-parse HEAD', { cwd: sourcePath });
+    if (actual.exitCode !== 0 || actual.stdout.trim().toLowerCase() !== sha) {
+      await this.shell.exec(`git worktree remove --force ${quote(sourcePath)}`, { cwd: targetDir });
+      await fs.promises.rm(sourcePath, { recursive: true, force: true });
+      throw new Error('部署源码目录未匹配目标提交，已拒绝执行');
+    }
+    const log = await this.shell.exec(`git log --oneline -1 ${quote(sha)}`, { cwd: targetDir });
+    return { head: log.stdout.trim() || sha, before: before.stdout.trim(), after: sha.slice(0, 7),
+      afterFull: sha, updated: before.stdout.trim().toLowerCase() !== sha, sourcePath };
   }
 
   async remove(repoRoot: string, targetDir: string): Promise<void> {

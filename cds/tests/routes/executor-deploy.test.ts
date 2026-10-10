@@ -21,10 +21,11 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
-import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createExecutorRouter } from '../../src/executor/routes.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
@@ -155,6 +156,10 @@ describe('Executor /exec/deploy', () => {
     });
 
     mock = new MockShellExecutor();
+    mock.addResponsePattern(/git rev-parse --verify '([^']+)\^\{commit\}'/, (match) => ({
+      stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : 'a'.repeat(40), stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/git rev-parse HEAD/, () => ({ stdout: 'a'.repeat(40), stderr: '', exitCode: 0 }));
     // Make every git/docker/mkdir/etc shell-out succeed silently.
     mock.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
@@ -189,6 +194,38 @@ describe('Executor /exec/deploy', () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('远端执行器点名A时实际挂载A且不改原目录B', async () => {
+    const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const repo = path.join(tmpDir, 'remote-source-repo'); fs.mkdirSync(repo);
+    git(['init', '--initial-branch=main'], repo); git(['config', 'user.name', 'source-test'], repo);
+    git(['config', 'user.email', 'source-test@example.invalid'], repo);
+    fs.writeFileSync(path.join(repo, 'version.txt'), 'A'); git(['add', '.'], repo); git(['commit', '-m', '版本A'], repo);
+    const shaA = git(['rev-parse', 'HEAD'], repo);
+    fs.writeFileSync(path.join(repo, 'version.txt'), 'B'); git(['commit', '-am', '版本B'], repo);
+    const shaB = git(['rev-parse', 'HEAD'], repo);
+    const current = path.join(tmpDir, 'remote-source-current'); git(['clone', repo, current], tmpDir);
+    stateService.addBranch({ id: 'remote-source', projectId: 'default', branch: 'main', worktreePath: current,
+      status: 'idle', createdAt: new Date().toISOString(), services: {} });
+    const shell = new ShellExecutor(); const original = mock.exec.bind(mock);
+    const mounts: Array<{ path: string; version: string }> = [];
+    mock.exec = async (command, options) => {
+      if (command.startsWith('git ') && (options?.cwd === current || options?.cwd?.includes('.deployment-sources'))) {
+        return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+      }
+      if (/^docker (run|create) /.test(command)) {
+        const mount = command.match(/-v '([^']+)':'\/app'/);
+        if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
+      }
+      return original(command, options);
+    };
+    const result = await postSse(server, '/exec/deploy', { branchId: 'remote-source', branchName: 'main', projectId: 'default', commitSha: shaA,
+      profiles: [{ id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 5000 }] });
+    expect(result.events.some((event) => event.event === 'error' || event.data?.status === 'error')).toBe(false);
+    expect(mounts).toHaveLength(1); expect(mounts[0].version).toBe('A'); expect(mounts[0].path).not.toBe(current);
+    expect(git(['rev-parse', 'HEAD'], current)).toBe(shaB);
+    expect(stateService.getBranch('remote-source')?.services.api.sourceCommitSha).toBe(shaA);
   });
 
   it('stamps the master-supplied projectId on the new entry + scopes worktree dir by it', async () => {
@@ -378,7 +415,7 @@ describe('Executor /exec/deploy', () => {
       createdAt: now,
     });
     // Force the git reset (inside WorktreeService.pull) to fail — exact responses win over the catch-all.
-    mock.addResponse('git reset --hard origin/feature/pullfail', { stdout: '', stderr: 'fatal: couldn\'t find remote ref', exitCode: 1 });
+    mock.addResponse("git rev-parse --verify 'origin/feature/pullfail^{commit}'", { stdout: '', stderr: 'fatal: couldn\'t find remote ref', exitCode: 1 });
 
     const result = await postSse(server, '/exec/deploy', {
       branchId: 'realproj-pullfail',

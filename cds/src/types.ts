@@ -1281,6 +1281,10 @@ export interface ServiceState {
   deployedMode?: string;
   /** 当前容器实际使用的镜像引用；用于生成不可变 DeploymentVersion。 */
   deployedImage?: string;
+  /** 当前源码容器实际挂载的部署专用目录；重启时继续使用同一份源码。 */
+  sourceCheckoutPath?: string;
+  /** 部署专用目录的实际完整 Git 提交。 */
+  sourceCommitSha?: string;
 }
 
 /** 分支部署的触发来源。 */

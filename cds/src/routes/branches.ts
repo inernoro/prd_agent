@@ -1715,6 +1715,7 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  sourceCheckout?: { path: string; commitSha: string };
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
   /** CI 构建输入路径在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
@@ -1802,6 +1803,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
+          sourceCheckout: options.sourceCheckout,
           onSourceCompileFallback: options.onSourceCompileFallback,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
@@ -3564,6 +3566,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       actor?: string | null;
       trigger?: string | null;
       deploymentRunId?: string;
+      requestedCommitSha?: string;
       deploymentVersionId?: string;
       deploymentConfigHash?: string;
       deploymentCapabilities?: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
@@ -3669,6 +3672,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const payload = {
       branchId: entry.id,
       branchName: entry.branch,
+      commitSha: context.requestedCommitSha,
       // 2026-04-24: thread the master's project attribution so the
       // executor stamps it on its local entry instead of falling back
       // to a hardcoded 'default'. Older executors that ignore this
@@ -12758,6 +12762,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
+    if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
+      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
+      return;
+    }
     const requestCommitSha = selectedDeploymentVersion?.commitSha || (
       typeof req.body?.commitSha === 'string'
         && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
@@ -12971,6 +12979,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           deploymentRunId: deploymentRun?.id,
+          requestedCommitSha: requestCommitSha,
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
           deploymentCapabilities: managedPlan?.capabilities,
@@ -13167,14 +13176,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         title: selectedDeploymentVersion ? '准备不可变版本…' : '拉取最新代码…',
         summary: selectedDeploymentVersion
           ? `分支: \`${entry.branch}\`\n版本: \`${selectedDeploymentVersion.id}\``
-          : `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
+          : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
       const pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath);
+        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha);
+      const deploymentSourceEntry = 'sourcePath' in pullResult
+        ? { ...entry, worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
+        : entry;
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
         status: 'done',
@@ -13195,8 +13207,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 取裸 SHA（优先 after = rev-parse --short HEAD），否则旧的 bare-SHA 正则永不匹配、整段跳过，
       // 历史「版本」列停在 pull 前旧 SHA（Codex P2）。
       const pulledSha = parsePulledSha(pullResult);
-      // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
-      // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
+      // 源码部署使用独立目录：显式请求锁定该提交，未点名请求锁定此次解析的远端 HEAD。
       // 「是否真的从源码构建」必须把**两种**极速版形态都排掉（Codex PR #1275 四轮 P2
       // 修复时发现）：branchUsesPrebuiltMode 只认 deployModes.<mode>.prebuilt，认不出
       // profile 级的 prebuiltImage=true。后者部署的是 tag 锁死在某个 sha 的镜像，
@@ -13212,26 +13223,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // entry.githubCommitSha 被 check-run/release/集成复用：仅在**未显式请求** commit 时跟随 HEAD。
         entry.githubCommitSha = pulledSha;
       }
-      // 构建历史「版本」列必须记**实际部署**的 SHA = pulledSha，**不受 requestCommitSha 影响**：
-      // 即使 webhook 带 requestCommitSha=A、origin 已前进到 B，pull hard-reset 到分支 HEAD 落地的是 B，
-      // 冻结在请求 SHA 上会给 reviewer 指错版本（Codex P2「Do not freeze webhook history on the
-      // requested SHA」）。极速版/skip 除外（镜像锁 CI 就绪 SHA，opLog 保持 deriveCommitMeta(entry,…) 初值）。
+      // 历史记实际独立源码提交；预构建镜像继续记录所用产物身份。
       if (isSourcePull) {
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
-      // run 台账 / 不可变版本记的也必须是**实际落地**的 SHA（Codex PR #1275 四轮 P2）。
-      // 上面那段只在 `!requestCommitSha` 时才把 entry.githubCommitSha 跟到 HEAD —— 这是
-      // 有意的（该字段被 check-run/release 复用）。但 webhook 带 requestCommitSha=A 而
-      // origin 已前进到 B 时，pull 硬 reset 落地的是 B，entry 上却仍是 A：opLog 已经用
-      // pulledSha 记对了，run 与 version 却照抄 entry，于是部署审计挂在一份**没有被部署过**
-      // 的代码上，findReusable 还可能据此复用 A 的构建产物顶替 B。这里统一取实际落地值。
-      // 已选中不可变版本时，真正启动的是**那个版本的产物**（下面 building 的文案就是
-      // 「不可变版本已准备，开始启动服务」），此刻落地的 commit 是版本自己的 sha，
-      // 不是 worktree 刚拉到的 HEAD —— 否则又会反过来把 run 贴错成 pulledSha。
-      // 用 let：极速版镜像拉不到时 runService 会**自动回退源码编译**（container.ts 的
-      // sourceFallbackProfile 分支），那一刻实际落地的就从「镜像锁定的 sha」变成了
-      // 刚 pull 到的 HEAD。回退发生在这句之后，所以只能由回调回来修正
-      //（Codex PR #1275 六轮 P2）。
+      // run/version 与实际源码或已选版本一致；镜像回退时由回调修正为独立源码提交。
       let deployedCommitSha = selectedDeploymentVersion?.commitSha
         ?? (isSourcePull ? pulledSha : entry.githubCommitSha);
       // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
@@ -13246,10 +13242,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
 
 
-      // Clear pinned commit — deploy always restores to branch HEAD
+      // 清除分支级手工固定；本次独立源码仍遵守请求目标提交。
       if (entry.pinnedCommit && !selectedDeploymentVersion) {
         entry.pinnedCommit = undefined;
-        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+        logEvent({ step: 'pull', status: 'done', title: '已取消分支固定提交，本次部署使用已准备的目标源码', timestamp: new Date().toISOString() });
       }
       stateService.save();
 
@@ -13421,7 +13417,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       } else {
         await runDatabaseInitializationForDeploy({
-          entry,
+          entry: deploymentSourceEntry,
           profiles,
           requestId,
           operationId: branchOperationLease?.operationId || undefined,
@@ -13674,7 +13670,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // 立刻让位（finally 会释放刚拿到的槽），不为已取消的部署跑构建。
             assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
-            maybeWritePreviewMirror(entry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
+            maybeWritePreviewMirror(deploymentSourceEntry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
             await archiveBranchContainerLogs({
               stateService,
               containerService,
@@ -13714,6 +13710,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               containerService,
               serverEventLogStore,
               entry,
+              sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
               profile: effectiveProfile,
               service: svc,
               customEnv: mergedEnv,
@@ -14441,6 +14438,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
+    if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
+      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
+      return;
+    }
     const profileRequestCommitSha = typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
@@ -14524,12 +14525,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath);
+        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha);
+      const deploymentSourceEntry = 'sourcePath' in pullResult
+        ? { ...entry, worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
+        : entry;
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
       // SHA after pulling latest code + require CI readiness for the deployed SHA）。
-      // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
+      // 单服务同样区分请求提交与已解析的源码提交;
       // 用本 profile 的 prebuiltImage 判定是否极速版。
       // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
       let deployedCommitSha: string | undefined = entry.githubCommitSha;
@@ -14545,9 +14549,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (!bodySha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
           entry.githubCommitSha = pulledSha;
         }
-        // opLog.commitSha 记**实际部署**的 SHA = pulledSha，不受 body.commitSha 影响：deploy 总是
-        // reset 到分支 HEAD（下方清 pinnedCommit），冻结在请求 SHA 会指错版本（Codex P2「Do not
-        // freeze webhook history on the requested SHA」）。极速版/skip 除外。
+        // 单服务历史也记实际独立源码提交。
         if (isSourcePull) {
           Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
@@ -14566,10 +14568,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         detail: { profileId },
       });
 
-      // Clear pinned commit — deploy always restores to branch HEAD
+      // 清除分支级手工固定；本次独立源码仍遵守请求目标提交。
       if (entry.pinnedCommit) {
         entry.pinnedCommit = undefined;
-        logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
+        logEvent({ step: 'pull', status: 'done', title: '已取消分支固定提交，本次部署使用已准备的目标源码', timestamp: new Date().toISOString() });
         stateService.save();
       }
 
@@ -14725,7 +14727,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
-        maybeWritePreviewMirror(entry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
+        maybeWritePreviewMirror(deploymentSourceEntry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
         await archiveBranchContainerLogs({
           stateService,
           containerService,
@@ -14746,6 +14748,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           containerService,
           serverEventLogStore,
           entry,
+          sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
           profile: effectiveProfile,
           service: svc,
           customEnv: mergedEnv,

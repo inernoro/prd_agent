@@ -63,9 +63,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger, commitSha } = req.body as {
       branchId: string;
       branchName: string;
+      commitSha?: string;
       // P4 follow-up (2026-04-24): master now passes projectId so the
       // executor stamps the right scope onto its local entry. Older
       // masters that omit this field still work via the
@@ -79,6 +80,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       actor?: string | null;
       trigger?: string | null;
     };
+    if (commitSha !== undefined && (typeof commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(commitSha))) {
+      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
+      return;
+    }
     // 缺省 profiles 视为空清单（Bugbot Low「Executor deploy missing profiles guard」）：旧 master 或手工
     // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
     // 变成不透明的部署错误。归一为 []，让下方孤儿收敛 + 空清单落 idle 的路径正常走。
@@ -202,7 +207,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
       // Pull latest
       sendEvent('step', { step: 'pull', status: 'running', title: '正在拉取最新代码...' });
-      const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
+      const pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, commitSha);
       // 带上结构化 SHA（head/after/afterFull），让 master 代理路径用 parsePulledSha 取**全 SHA**刷新
       // 构建历史 commit 与 branch HEAD，避免只从 title 解析出短 SHA（Bugbot Low「Remote pull omits
       // full SHA」）。head 是 `git log --oneline -1`（带标题），afterFull 是完整 40 位。
@@ -283,6 +288,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             }, mergedEnv, {
               requestId: requestId || null,
               operationId: operationId || null,
+              sourceCheckout: { path: pullResult.sourcePath, commitSha: pullResult.afterFull },
               actor: actor || 'executor',
               trigger: trigger || 'executor-deploy',
             });

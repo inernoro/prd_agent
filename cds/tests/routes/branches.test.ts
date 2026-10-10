@@ -4,6 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import {
   clearRunningServiceErrorMessages,
   createBranchRouter,
@@ -19,7 +20,7 @@ import { ManagedProjectService } from '../../src/services/managed-project.js';
 import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
-import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -182,6 +183,25 @@ describe('Branch Routes', () => {
     config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
 
+    // 模拟真正的 detached worktree：解析得到完整身份，快照 HEAD 与请求目标一致。
+    const sourceHeads = new Map<string, string>();
+    const defaultSourceSha = 'abc1234' + '0'.repeat(33);
+    mock.addResponsePattern(/git check-ref-format --branch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/git rev-parse --verify '([^']+)\^\{commit\}'/, (match) => ({
+      stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : defaultSourceSha,
+      stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/git worktree add --detach '([^']+)' '([0-9a-f]{40})'/, (match, options) => {
+      sourceHeads.set(match[1], match[2]);
+      fs.mkdirSync(match[1], { recursive: true });
+      if (options?.cwd && fs.existsSync(options.cwd) && !match[1].startsWith(`${options.cwd}${path.sep}`)) {
+        fs.cpSync(options.cwd, match[1], { recursive: true });
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    mock.addResponsePattern(/git rev-parse HEAD$/, (_match, options) => ({
+      stdout: sourceHeads.get(options?.cwd || '') || 'abc1234', stderr: '', exitCode: 0,
+    }));
     // Default mocks
     mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/git worktree add/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -273,6 +293,98 @@ describe('Branch Routes', () => {
     delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  describe('真实Git部署目标与运行源码隔离', () => {
+    async function sourceFixture(withMigration = false) {
+      const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const repo = path.join(tmpDir, 'source-repo'); fs.mkdirSync(repo);
+      git(['init', '--initial-branch=main'], repo);
+      git(['config', 'user.name', 'source-test'], repo);
+      git(['config', 'user.email', 'source-test@example.invalid'], repo);
+      fs.writeFileSync(path.join(repo, 'version.txt'), 'A');
+      if (withMigration) {
+        fs.mkdirSync(path.join(repo, 'prisma'));
+        fs.writeFileSync(path.join(repo, 'prisma/schema.prisma'), '// schema A');
+        fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'source-test', packageManager: 'pnpm@10.0.0' }));
+        fs.writeFileSync(path.join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0');
+      }
+      git(['add', '.'], repo); git(['commit', '-m', '版本A'], repo);
+      const shaA = git(['rev-parse', 'HEAD'], repo);
+      fs.writeFileSync(path.join(repo, 'version.txt'), 'B');
+      if (withMigration) fs.writeFileSync(path.join(repo, 'prisma/schema.prisma'), '// schema B');
+      git(['commit', '-am', '版本B'], repo);
+      const shaB = git(['rev-parse', 'HEAD'], repo);
+      const current = path.join(tmpDir, 'source-current'); git(['clone', repo, current], tmpDir);
+      const entry: BranchEntry = { id: 'source-check', projectId: 'default', branch: 'main', worktreePath: current,
+        status: 'idle', createdAt: new Date().toISOString(), services: {} };
+      stateService.addBranch(entry);
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 5000 });
+      stateService.addBuildProfile({ id: 'web', projectId: 'default', name: 'Web', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 5001 });
+      const shell = new ShellExecutor(); const original = mock.exec.bind(mock);
+      const mounts: Array<{ path: string; version: string }> = [];
+      const migrationMounts: string[] = [];
+      mock.exec = async (command, options) => {
+        if (command.startsWith('git ') && (options?.cwd === current || options?.cwd?.includes('.deployment-sources'))) {
+          return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+        }
+        if (command.startsWith('docker run --rm') && command.includes('prisma')) {
+          const mount = command.match(/-v '([^']+)':'\/app'/);
+          if (mount) migrationMounts.push(fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8'));
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command.startsWith('docker run -d')) {
+          const mount = command.match(/-v '([^']+)':'\/app'/);
+          if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
+        }
+        return original(command, options);
+      };
+      return { git, current, entry, shaA, shaB, mounts, migrationMounts };
+    }
+    it('整分支迁移任务和应用均从请求A的源码读取', async () => {
+      const f = await sourceFixture(true);
+      const result = await request(server, 'POST', `/api/branches/${f.entry.id}/deploy`, { commitSha: f.shaA });
+      expect(String(result.body)).not.toContain('event: error');
+      expect(f.migrationMounts.length).toBeGreaterThan(0);
+      expect(f.migrationMounts.every((version) => version === 'A')).toBe(true);
+      expect(f.mounts.every((mount) => mount.version === 'A')).toBe(true);
+      expect(f.git(['rev-parse', 'HEAD'], f.current)).toBe(f.shaB);
+    });
+    it.each(['/deploy', '/deploy/api'])('请求A时%s实际挂载A而原分支目录仍是B', async (endpoint) => {
+      const f = await sourceFixture();
+      const result = await request(server, 'POST', `/api/branches/${f.entry.id}${endpoint}`, { commitSha: f.shaA });
+      expect(result.status).toBe(200);
+      expect(String(result.body)).not.toContain('event: error');
+      expect(f.mounts.length).toBeGreaterThan(0);
+      expect(f.mounts.every((mount) => mount.version === 'A' && mount.path !== f.current)).toBe(true);
+      expect(fs.readFileSync(path.join(f.current, 'version.txt'), 'utf8')).toBe('B');
+      expect(f.git(['rev-parse', 'HEAD'], f.current)).toBe(f.shaB);
+      expect(f.entry.services.api.sourceCommitSha).toBe(f.shaA);
+      expect(f.entry.services.api.sourceCheckoutPath).toBe(f.mounts[0].path);
+    });
+    it.each(['/deploy', '/deploy/api'])('%s非法提交拒绝且没有Git和容器操作', async (endpoint) => {
+      const f = await sourceFixture(); const before = mock.commands.length;
+      const result = await request(server, 'POST', `/api/branches/${f.entry.id}${endpoint}`, { commitSha: 'not-a-sha' });
+      expect(result.status).toBe(400);
+      expect(mock.commands.slice(before).some((command) => command.startsWith('git ') || command.startsWith('docker '))).toBe(false);
+    });
+    it('不存在的目标提交不启动容器，也不回退到HEAD', async () => {
+      const f = await sourceFixture();
+      const result = await request(server, 'POST', `/api/branches/${f.entry.id}/deploy/api`, { commitSha: 'f'.repeat(40) });
+      expect(String(result.body)).toContain('目标提交不可用'); expect(f.mounts).toHaveLength(0);
+      expect(f.git(['rev-parse', 'HEAD'], f.current)).toBe(f.shaB);
+    });
+    it('API部署A后Web部署B，API原挂载仍为A，服务重启沿用其实际源码', async () => {
+      const f = await sourceFixture();
+      await request(server, 'POST', `/api/branches/${f.entry.id}/deploy/api`, { commitSha: f.shaA });
+      await request(server, 'POST', `/api/branches/${f.entry.id}/deploy/web`, { commitSha: f.shaB });
+      expect(f.mounts.map((mount) => mount.version)).toEqual(['A', 'B']);
+      expect(f.mounts[0].path).not.toBe(f.mounts[1].path);
+      expect(fs.readFileSync(path.join(f.mounts[0].path, 'version.txt'), 'utf8')).toBe('A');
+      await containerService.runService(f.entry, stateService.getBuildProfiles()[0], f.entry.services.api);
+      expect(f.mounts.map((mount) => mount.version)).toEqual(['A', 'B', 'A']);
+      expect(f.entry.services.api.sourceCommitSha).toBe(f.shaA);
+    });
   });
 
   // ── Remote branches ──
@@ -3163,7 +3275,7 @@ describe('Branch Routes', () => {
       // leave demo-extra as a ghost.
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('git reset --hard') && command.includes('orphan-prepull')) {
+        if (command.includes('git fetch') && options?.cwd?.includes('orphan-prepull')) {
           throw new Error('simulated pull failure');
         }
         return originalExec(command, options);
@@ -3229,12 +3341,12 @@ describe('Branch Routes', () => {
         commitSha,
         profiles: [expect.objectContaining({ artifactImage: image, reusable: true })],
       });
-      const sourcePullCount = mock.commands.filter((command) => command.includes('git reset --hard')).length;
+      const sourcePullCount = mock.commands.filter((command) => command.includes('git fetch')).length;
 
       const second = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
       expect(second.status).toBe(200);
       expect(String(second.body)).toContain('已锁定版本');
-      expect(mock.commands.filter((command) => command.includes('git reset --hard'))).toHaveLength(sourcePullCount);
+      expect(mock.commands.filter((command) => command.includes('git fetch'))).toHaveLength(sourcePullCount);
       const secondRunId = String(second.headers['x-cds-deployment-run-id']);
       expect(deploymentRunService.get(secondRunId)).toMatchObject({
         versionId,
@@ -3300,14 +3412,14 @@ describe('Branch Routes', () => {
         reusable: true,
       });
       const buildExecCount = mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build')).length;
-      const sourcePullCount = mock.commands.filter((command) => command.includes('git reset --hard')).length;
+      const sourcePullCount = mock.commands.filter((command) => command.includes('git fetch')).length;
 
       const second = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
       expect(second.status).toBe(200);
       expect(String(second.body)).toContain('已锁定版本');
       expect(String(second.body)).not.toContain('npm install && npm run build');
       expect(mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build'))).toHaveLength(buildExecCount);
-      expect(mock.commands.filter((command) => command.includes('git reset --hard'))).toHaveLength(sourcePullCount);
+      expect(mock.commands.filter((command) => command.includes('git fetch'))).toHaveLength(sourcePullCount);
       expect(stateService.getDeploymentVersions({ branchId: 'managed-auto' })).toHaveLength(1);
     });
   });
@@ -4629,10 +4741,10 @@ describe('Branch Routes', () => {
       let dockerRunCount = 0;
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('git reset --hard')) {
+        if (command.includes('git worktree add --detach')) {
           markResetStarted();
           await resetRelease;
-          return { stdout: 'HEAD is now at abc1234', stderr: '', exitCode: 0 };
+          return originalExec(command, options);
         }
         if (command.includes('docker run -d') && command.includes('--name cds-race-delete-before-run-api')) {
           dockerRunCount += 1;
@@ -4907,6 +5019,7 @@ describe('Branch Routes', () => {
         expect(second.status).toBe(200);
         expect(String(second.body)).not.toContain('merged');
         expect(fetchCalls).toHaveLength(2);
+        expect(fetchCalls.map((call) => call.body.commitSha)).toEqual(['1'.repeat(40), '2'.repeat(40)]);
         const secondRunId = String(second.headers['x-cds-deployment-run-id']);
         expect(secondRunId).not.toBe(firstRunId);
         expect(fetchCalls[0].body.deploymentRunId).toBe(firstRunId);

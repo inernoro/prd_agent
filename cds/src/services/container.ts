@@ -1175,6 +1175,7 @@ export class ContainerService {
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
       assertCurrent?: (step: string) => void;
+      sourceCheckout?: { path: string; commitSha: string };
       /**
        * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
        * 构建槽（build-gate，见 branches.ts 部署循环），但回退到源码编译就是
@@ -1203,6 +1204,24 @@ export class ContainerService {
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
+    // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
+    const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
+      ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
+    if (sourceCheckout) {
+      const sourceWorkDir = path.resolve(sourceCheckout.path, profile.workDir || '.');
+      const relative = path.relative(path.resolve(sourceCheckout.path), sourceWorkDir);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error('服务工作目录超出本次部署源码，已拒绝启动');
+      }
+      if (!context.sourceCheckout) {
+        const head = await this.shell.exec('git rev-parse HEAD', { cwd: sourceCheckout.path });
+        if (head.exitCode !== 0 || head.stdout.trim().toLowerCase() !== sourceCheckout.commitSha.toLowerCase()) {
+          throw new Error('原部署源码不可用或提交不一致，请重新部署服务');
+        }
+      }
+      entry = { ...entry, worktreePath: sourceCheckout.path };
+      if (!profile.prebuiltImage) entry = { ...entry, githubCommitSha: sourceCheckout.commitSha, ciTargetSha: undefined };
+    }
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
     const managedArtifactReady = !!profile.managedBuild || profile.localArtifact === true;
@@ -1751,6 +1770,8 @@ export class ContainerService {
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
       service.deployedImage = runImage;
+      service.sourceCheckoutPath = !profile.prebuiltImage ? sourceCheckout?.path : undefined;
+      service.sourceCommitSha = !profile.prebuiltImage ? sourceCheckout?.commitSha : undefined;
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟

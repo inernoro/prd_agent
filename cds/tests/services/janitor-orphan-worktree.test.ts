@@ -26,12 +26,15 @@ let recheckMtime: number | null = OLD;
 let aliasRealPath: string | null = null;
 let failOnDir: string | null = null;
 
+let sourceCandidates: string[] = [];
+
 const fsFake = (): OrphanWorktreeFs => ({
   listWorktreeDirs: async (_base, knownProjectIds) => {
     seenProjectIds = knownProjectIds;
     return {
       dirs: [
         { path: `${BASE}/proj/live`, mtimeMs: OLD },
+        ...sourceCandidates.map((p) => ({ path: p, mtimeMs: OLD })),
         { path: `${BASE}/proj/orphan`, mtimeMs: OLD, ...(aliasRealPath ? { realPath: aliasRealPath } : {}) },
       ],
       unreadable: [],
@@ -68,9 +71,16 @@ const mkJanitor = (): JanitorService => new JanitorService(
   fsFake(),
 );
 
-beforeEach(() => { removed = []; mounted = []; removeError = null; seenProjectIds = null; recheckMtime = OLD; aliasRealPath = null; failOnDir = null; });
+beforeEach(() => { sourceCandidates = []; removed = []; mounted = []; removeError = null; seenProjectIds = null; recheckMtime = OLD; aliasRealPath = null; failOnDir = null; });
 
 describe('janitor 孤儿 worktree 接线', () => {
+  it('部署专用源码桶及其父目录在分支准备期间不被当作孤儿删除', async () => {
+    sourceCandidates = [`${BASE}/proj/.deployment-sources`, `${BASE}/proj/.deployment-sources/live/op`];
+    const report = await mkJanitor().sweep();
+    expect(removed).toEqual([`${BASE}/proj/orphan`]);
+    for (const candidate of sourceCandidates) expect(report.orphanWorktrees?.keptReasons[candidate]).toContain('台账');
+  });
+
   it('台账无人认领且无容器挂载 → 真的删掉', async () => {
     const report = await mkJanitor().sweep();
     expect(removed).toEqual([`${BASE}/proj/orphan`]);

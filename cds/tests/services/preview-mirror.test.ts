@@ -297,7 +297,7 @@ describe('接线守卫', () => {
   const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
   it('两个部署点都会在拿到 mergedEnv 之后写镜像；子实例自己不导出', () => {
     const src = read('routes/branches.ts');
-    expect((src.match(/maybeWritePreviewMirror\(entry, effectiveProfile, mergedEnv,/g) ?? []).length).toBe(2);
+    expect((src.match(/maybeWritePreviewMirror\(deploymentSourceEntry, effectiveProfile, mergedEnv,/g) ?? []).length).toBe(2);
     const fn = src.slice(src.indexOf('function maybeWritePreviewMirror'), src.indexOf('function computeBranchWebEntries'));
     expect(fn).toContain('if (isPreviewInstance()) return;');
     // 写不写镜像看构建档 env + 项目 / 分支 env 的同一个谓词：selfhost compose 把开关写在构建档 env 里，

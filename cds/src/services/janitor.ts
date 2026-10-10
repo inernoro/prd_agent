@@ -1,3 +1,4 @@
+import { WorktreeService } from './worktree.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -15,6 +16,14 @@ import {
   describeBranchProtectionReason,
   type BranchProtectionReason,
 } from './branch-protection.js';
+
+/** 部署准备期尚无容器挂载，分支在册即认领其源码桶，专用回收另走容量治理。 */
+function claimedWorktreePaths(branches: BranchEntry[]): string[] {
+  return branches.flatMap((branch) => branch.worktreePath
+    ? [branch.worktreePath, WorktreeService.deploymentSourceRootFor(branch.worktreePath),
+        ...Object.values(branch.services || {}).map((service) => service.sourceCheckoutPath).filter((p): p is string => !!p)]
+    : []);
+}
 
 /**
  * JanitorService — Phase 2 of the CDS resilience plan.
@@ -560,9 +569,7 @@ export class JanitorService {
     const knownProjectIds = [...new Set([...liveProjectIds, ...tombstones.map((t) => t.projectId)])];
     const enumeration = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase, knownProjectIds);
     const diskDirs = enumeration.dirs;
-    const claimedPaths = this.stateService.getAllBranches()
-      .map((b) => b.worktreePath)
-      .filter((p): p is string => !!p);
+    const claimedPaths = claimedWorktreePaths(this.stateService.getAllBranches());
     const mountedPaths = await this.orphanWorktreeFs.listMountedHostPaths();
     // 查不到挂载占用 = 本轮不删（只报不删）：删一个还被容器挂着的目录，那个容器
     // 当场瞎掉，代价远大于晚一轮回收。
@@ -588,16 +595,11 @@ export class JanitorService {
     // 先删残留目录再 `git worktree add`，`addBranch()` 落台账更在其后，于是存在一个
     // 「目录已是新 checkout、台账还没记上」的窗口；拿陈旧计划直接删，删掉的就是
     // 别人刚拉出来的工作树。删之前把台账与 mtime 都重新读一遍，任一变化即放弃本条。
-    const freshClaimed = new Set(
-      this.stateService.getAllBranches()
-        .flatMap((b) => [b.worktreePath])
-        .filter((p): p is string => !!p)
-        .map(normalizeWorktreePath),
-    );
+    const freshClaimed = claimedWorktreePaths(this.stateService.getAllBranches()).map(normalizeWorktreePath);
     const plannedMtime = new Map(diskDirs.map((d) => [normalizeWorktreePath(d.path), d.mtimeMs]));
     const skippedByRecheck: string[] = [];
     for (const dir of plan.remove) {
-      if (freshClaimed.has(dir)) {
+      if (freshClaimed.some((claimed) => claimed === dir || claimed.startsWith(`${dir}/`) || dir.startsWith(`${claimed}/`))) {
         // 台账在本轮期间认领了它 —— 分支重建已完成
         plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
         skippedByRecheck.push(dir);
