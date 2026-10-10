@@ -29,6 +29,44 @@ public sealed class VisualModelPolicyTests
     }
 
     [Fact]
+    public void BusinessNicknamePreservesPublicIdentityAndRoutingMembers()
+    {
+        var policy = Policy();
+        policy.Models[1].DisplayName = " GPT 画师 ";
+        policy.Models[1].Description = "上传参考图修改";
+        var catalog = Model("image1");
+        var result = Assert.Single(VisualModelPolicyService.Project(policy, [catalog]), x => x.Code == "image1");
+        Assert.Equal("GPT 画师", result.Name);
+        Assert.Equal("image1", result.Code);
+        Assert.Equal("id-image1", result.Id);
+        Assert.Equal("上传参考图修改", result.Description);
+        Assert.Same(catalog.Model.Models, result.Models);
+        Assert.True(result.IsDefault);
+        Assert.Equal("image1", policy.Select(null));
+    }
+
+    [Theory]
+    [InlineData("", "目录名称")]
+    [InlineData("  ", "目录名称")]
+    [InlineData(" 自定义短名 ", "自定义短名")]
+    public void DisplayNameNormalizesWithoutChangingModelId(string name, string expected)
+    {
+        var entry = new VisualModelEntry { ModelId = "image1", DisplayName = name };
+        Assert.Equal(expected, entry.ResolveDisplayName("目录名称"));
+        Assert.Equal("image1", entry.ModelId);
+    }
+
+    [Fact]
+    public void TooLongDisplayNameIsRejected()
+    {
+        var policy = Policy();
+        policy.Models[0].DisplayName = new string('字', 81);
+        Assert.NotNull(policy.Validate());
+        policy.Models[0].DisplayName = new string('字', 80);
+        Assert.Null(policy.Validate());
+    }
+
+    [Fact]
     public void UnavailableDefaultRemainsVisible_ButLosesExecutableDefaultFlag()
     {
         var result = VisualModelPolicyService.Project(Policy(), [Model("image2")]);

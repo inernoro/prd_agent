@@ -20,6 +20,7 @@ export type VisualAgentModelOption = Model & {
   recommended?: boolean;
   poolCode?: string;
   poolName?: string;
+  isRecoveryProbeAvailable?: boolean;
   recentTenRequests?: number;
   recentTenSuccessRatePercent?: number | null;
   averageDurationMs?: number | null;
@@ -136,6 +137,7 @@ export function buildVisualAgentModelOptions(pools: ModelGroupForApp[]): VisualA
       description: pool.description,
       poolCode: pool.code,
       poolName: pool.name,
+      isRecoveryProbeAvailable: preferredMember?.isRecoveryProbeAvailable === true,
       recentTenRequests: pool.recentTenRequests,
       recentTenSuccessRatePercent: pool.recentTenSuccessRatePercent,
       averageDurationMs: pool.averageDurationMs,

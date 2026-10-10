@@ -107,7 +107,13 @@ export function VisualModelSettings() {
                 <Button size="xs" variant="secondary" onClick={() => setPolicy({ ...policy, models: policy.models.filter(x => x.modelId !== model.modelId), defaultModelId: policy.defaultModelId === model.modelId ? '' : policy.defaultModelId })}>移除</Button>
                 </div>
               </div>
-              <input aria-label={`${model.displayName} 业务说明`} placeholder="业务说明（可选）" maxLength={500} value={model.description || ''}
+              <label className="block text-xs" style={{ color: 'var(--text-secondary)' }}>显示名称
+              <input aria-label={`${model.modelId} 显示名称`} placeholder="给模型起个好记的名字" maxLength={80} value={model.displayName}
+                className="w-full mt-1 rounded-md px-3 py-2 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                onChange={e => setPolicy({ ...policy, models: policy.models.map(x => x.modelId === model.modelId ? { ...x, displayName: e.target.value } : x) })} />
+              </label>
+              <div className="text-xs break-all" style={{ color: 'var(--text-secondary)' }}>{model.modelId}</div>
+              <input aria-label={`${model.modelId} 用途说明`} placeholder="用一句话说明怎么用（可选）" maxLength={500} value={model.description || ''}
                 className="w-full rounded-md px-3 py-2 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
                 onChange={e => setPolicy({ ...policy, models: policy.models.map(x => x.modelId === model.modelId ? { ...x, description: e.target.value } : x) })} />
               {!available && <p className="text-xs">该模型当前不可用；保留原配置用于迁移，不会自动换成其他型号。</p>}

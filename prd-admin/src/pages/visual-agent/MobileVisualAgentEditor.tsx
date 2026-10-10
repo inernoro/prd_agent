@@ -34,6 +34,7 @@ import type { ImageAsset } from '@/services/contracts/visualAgent';
 import type { ModelGroupForApp } from '@/types/modelGroup';
 import type { ModelAdapterInfo } from '@/services/contracts/models';
 import { buildVisualAgentModelOptions, selectVisualModel, visualImageSizeChoices } from '../ai-chat/visualAgentModelOptions';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
 import { buildInlineImageToken, parseInlinePrompt, tryParseWxH } from '@/lib/visualAgentPromptUtils';
 
 // 与 AdvancedVisualAgentTab 的持久化契约一致（schemaVersion=1）
@@ -689,11 +690,11 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
           modelOptions.length > 1 ? (
             <button
               type="button"
-              className="h-8 px-2.5 rounded-lg text-[11px] font-mono truncate max-w-[120px] active:opacity-70"
+              className="h-8 px-2.5 rounded-lg text-[11px] inline-flex items-center gap-1.5 max-w-[150px] active:opacity-70"
               style={{ color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.06)' }}
               onClick={() => setPoolSheetOpen(true)}
             >
-              {pickedPool.name}
+              <VisualModelIcon model={pickedPool} size={14} /><span className="truncate">{pickedPool.name}</span>
             </button>
           ) : (
             <span className="text-[11px] font-mono truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.55)' }}>
@@ -914,18 +915,16 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         ? createPortal(
             <div className="fixed inset-0 z-[120] flex flex-col justify-end" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setPoolSheetOpen(false)}>
               <div
-                className="surface-tone-dark rounded-t-2xl px-3 pt-3 flex flex-col gap-1"
+                className="surface-tone-dark rounded-t-2xl flex flex-col"
                 style={{
-                  background: '#1a1a20',
-                  maxHeight: '60vh',
-                  overflowY: 'auto',
+                  background: 'var(--panel-solid)',
+                  maxHeight: '85dvh',
                   paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)',
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="text-[13px] font-medium px-1 pb-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
-                  选择生图模型
-                </div>
+                <VisualModelMenuHeading onClose={() => setPoolSheetOpen(false)} />
+                <div className="min-h-0 p-1.5" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
                 {modelOptions.length === 0 && <p className="p-3 text-sm">尚未开放业务模型，请管理员在视觉创作首页的模型设置中配置。</p>}
                 {modelOptions.map((g) => (
                   <button
@@ -933,24 +932,22 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
                     type="button"
                     disabled={!g.enabled}
                     className="w-full text-left px-3 py-3 rounded-xl active:opacity-70"
-                    style={
-                      g.id === pickedPool?.id
-                        ? { background: 'rgba(120,120,255,0.18)', color: 'rgba(220,220,255,0.95)' }
-                        : { color: 'rgba(255,255,255,0.75)' }
-                    }
+                    aria-pressed={g.id === pickedPool?.id}
+                    style={{
+                      background: g.id === pickedPool?.id ? 'var(--report-accent-soft)' : 'transparent',
+                      border: g.id === pickedPool?.id ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                      opacity: g.enabled ? 1 : 0.7,
+                    }}
                     onClick={() => {
                       setPickedPoolId(g.id);
                       setPoolSheetOpen(false);
                     }}
                   >
-                    <div className="text-[14px]">{g.name}{g.isDefault ? ' · 默认' : ''}{!g.enabled ? ' · 暂不可用' : ''}</div>
-                    {g.description ? (
-                      <div className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                        {g.description}
-                      </div>
-                    ) : null}
+                    <VisualModelOptionContent model={g} selected={g.id === pickedPool?.id} />
                   </button>
                 ))}
+                </div>
+                <VisualModelMenuHint />
               </div>
             </div>,
             document.body

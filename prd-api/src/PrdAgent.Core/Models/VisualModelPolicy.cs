@@ -14,7 +14,8 @@ public sealed class VisualModelPolicy
         if (Revision < 0) return "配置版本无效，请刷新后重试。";
         if (Models is null || Models.Count is < 1 or > 30) return "请选择 1 至 30 个开放模型。";
         if (Models.Any(x => x is null || string.IsNullOrWhiteSpace(x.ModelId) || x.ModelId.Length > 200
-                            || (x.Description?.Length ?? 0) > 500)) return "模型标识或业务说明不符合要求。";
+                            || (x.DisplayName?.Trim().Length ?? 0) > 80
+                            || (x.Description?.Length ?? 0) > 500)) return "模型标识、显示名称或业务说明不符合要求。";
         if (Models.Select(x => x.ModelId).Distinct(StringComparer.Ordinal).Count() != Models.Count)
             return "开放模型不能重复。";
         return Models.Any(x => x.ModelId == DefaultModelId) ? null : "默认模型必须在开放列表中。";
@@ -30,7 +31,12 @@ public sealed class VisualModelPolicy
 public sealed class VisualModelEntry
 {
     public string ModelId { get; set; } = string.Empty;
-    /// <summary>保存时由网关目录补全；故障时用于保留可辨认的菜单，不用于路由。</summary>
+    /// <summary>业务侧可编辑短名；留空时由网关目录补全，不用于路由。</summary>
     public string DisplayName { get; set; } = string.Empty;
     public string? Description { get; set; }
+
+    public string ResolveDisplayName(string? catalogName)
+        => string.IsNullOrWhiteSpace(DisplayName)
+            ? string.IsNullOrWhiteSpace(catalogName) ? ModelId : catalogName.Trim()
+            : DisplayName.Trim();
 }

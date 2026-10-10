@@ -171,6 +171,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
 import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
@@ -8382,7 +8383,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           title="切换绘图模型"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <Sparkles size={10} className="shrink-0" />
+                          <VisualModelIcon model={effectiveModel} size={14} />
                           <span className="truncate max-w-[140px]">
                             {effectiveModel?.name || effectiveModel?.modelName || '选择模型'}
                           </span>
@@ -8393,12 +8394,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <DropdownMenu.Content
                           side="top"
                           align="start"
-                          sideOffset={10}
-                          className="surface-popover z-50 min-w-[320px] rounded-[18px] p-3"
+                          sideOffset={6}
+                          className="surface-popover z-50 rounded-[16px] p-1.5"
+                          style={{ width: 360, maxWidth: 'calc(100vw - 16px)', maxHeight: 'var(--radix-dropdown-menu-content-available-height)', overflowY: 'auto' }}
                         >
-                          <div className="px-2 py-1 text-[11px] font-semibold text-token-muted">
-                            绘图模型
-                          </div>
+                          <VisualModelMenuHeading />
 
                           {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
                           <div className="surface-inset mx-1 mb-1 flex items-center justify-between gap-2 rounded-[10px] px-2 py-1.5">
@@ -8438,7 +8438,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               />
                             </button>
                           </div>
-                          <div className="max-h-[320px] overflow-auto p-1">
+                          <div className="overflow-auto p-1" style={{ maxHeight: 420 }}>
                               {allImageGenModels.length === 0 ? (
                                 <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
                                   {modelsError ? (
@@ -8469,15 +8469,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               .map((m) => {
                                 const disabled = !m.enabled;
                                 const using = modelPrefAuto ? effectiveModel?.id === m.id : modelPrefModelId === m.id;
-                                const sourceLabel = disabled ? '暂不可用' : m.isDefault ? '默认模型' : '业务模型';
                                 return (
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[12px] px-3 py-2 hover-bg-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
+                                    disabled={disabled}
+                                    aria-pressed={using}
                                     style={{
-                                      border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
-                                      background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
+                                      border: using ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                                      background: using ? 'var(--report-accent-soft)' : 'transparent',
                                     }}
                                     onClick={() => {
                                       setModelPrefAuto(false);
@@ -8485,40 +8486,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       setQuickModelOpen(false);
                                     }}
                                   >
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-1.5">
-                                          <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary, rgba(255,255,255,0.92))' }}>
-                                            {m.name || m.modelName}
-                                          </div>
-                                          {m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(147,51,234,0.20)', color: 'var(--accent-fg-violet)' }}>
-                                              专属
-                                            </span>
-                                          )}
-                                          {m.isDefault && !m.isDedicated && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(34,197,94,0.18)', color: 'var(--accent-fg-success)' }}>
-                                              默认
-                                            </span>
-                                          )}
-                                          {m.isLegacy && (
-                                            <span className="shrink-0 text-[9px] px-1.5 py-0.5 rounded-[4px]" style={{ background: 'rgba(234,179,8,0.18)', color: 'var(--accent-fg-amber)' }}>
-                                              传统
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="mt-0.5 truncate text-[11px] text-token-muted">
-                                          {m.subtitle || (disabled ? '当前不建议使用，可继续选择' : sourceLabel)}
-                                        </div>
-                                      </div>
-                                      <div className="ml-auto shrink-0">
-                                        {using ? <Check size={16} style={{ color: 'rgba(250,204,21,0.95)' }} /> : null}
-                                      </div>
-                                    </div>
+                                    <VisualModelOptionContent model={m} selected={using} />
                                   </button>
                                 );
                               })}
                           </div>
+                          <VisualModelMenuHint />
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
@@ -9326,7 +9299,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       type="button"
                                       className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover-bg-soft"
                                       onClick={() => {
-                                        replaceMentionAtCursor(`@model(${m.name || m.modelName}) `);
+                                        replaceMentionAtCursor(`@model(${m.modelName}) `);
                                       }}
                                     >
                                       <div className="text-[13px] font-semibold truncate">{m.name || m.modelName}</div>

@@ -100,7 +100,7 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
             {
                 Id = available?.Id ?? entry.ModelId,
                 Code = entry.ModelId,
-                Name = available?.Name ?? entry.DisplayName,
+                Name = entry.ResolveDisplayName(available?.Name),
                 Description = entry.Description ?? available?.Description,
                 Priority = index,
                 ResolutionType = "LogicalModel",
@@ -121,7 +121,7 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
         {
             if (!discovered.TryGetValue(entry.ModelId, out var model))
                 return "开放列表包含未授权或暂不可用的模型，请刷新目录后重试。";
-            entry.DisplayName = model.Model.Name;
+            entry.DisplayName = entry.ResolveDisplayName(model.Model.Name);
         }
         // 默认必须能完成无参考图的新建流程，不能把仅支持编辑的模型设为默认。
         var textModels = await DiscoverAsync(AppCallers[0], ct);

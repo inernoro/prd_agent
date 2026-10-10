@@ -54,6 +54,7 @@ import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode 
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
 import { readGeneratedBackdrops } from '@/lib/backdropStudio';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
 import { placeAnchoredPanel, type AnchoredPanelPlacement } from '@/lib/anchoredPanel';
 import { consumeWakeOnce } from '@/lib/wakeSweep';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
@@ -278,7 +279,7 @@ function ModelPickerButton(props: {
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<AnchoredPanelPlacement | null>(null);
 
-  // 按实际内容高度定位；320px 只是滚动上限，不能拿来抵掉短菜单的高度。
+  // 按实际内容高度定位；高度上限只限制滚动空间，不能拿来抵掉短菜单的高度。
   // 捕获内层滚动，观察内容变化与手机视觉视口，菜单始终跟随触发器。
   useLayoutEffect(() => {
     if (!open) { setPos(null); return; }
@@ -295,8 +296,8 @@ function ModelPickerButton(props: {
         },
         height: panelRef.current?.getBoundingClientRect().height,
         prefer: 'above',
-        width: 260,
-        maxHeight: 320,
+        width: 360,
+        maxHeight: 640,
       }));
     };
     place();
@@ -355,7 +356,7 @@ function ModelPickerButton(props: {
         aria-controls="visual-home-model-menu"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
       >
-        <Sparkles size={13} className="shrink-0" />
+        <VisualModelIcon model={current} size={15} />
         <span className="truncate" style={{ maxWidth: 120, whiteSpace: 'nowrap' }}>
           {current?.name || current?.modelName || '选择模型'}
         </span>
@@ -374,14 +375,16 @@ function ModelPickerButton(props: {
             style={{
               width: pos.width,
               maxHeight: pos.maxHeight,
-              overflowY: 'auto',
-              overscrollBehavior: 'contain',
+              display: 'flex',
+              flexDirection: 'column',
               background: 'var(--panel-solid)',
               border: '1px solid var(--border-default)',
               boxShadow: 'var(--shadow-card)',
-              padding: 5,
+              padding: 0,
             }}
           >
+            <VisualModelMenuHeading onClose={() => setOpen(false)} />
+            <div className="min-h-0 p-1.5" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {options.map((opt) => {
               const active = opt.id === modelId;
               return (
@@ -390,37 +393,31 @@ function ModelPickerButton(props: {
                   type="button"
                   className="w-full text-left hover-bg-soft transition-colors"
                   style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2,
-                    padding: '7px 9px',
+                    padding: '12px 10px',
                     borderRadius: 8,
-                    border: 0,
-                    background: active ? 'var(--bg-secondary)' : 'transparent',
+                    border: active ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                    background: active ? 'var(--report-accent-soft)' : 'transparent',
                     color: 'var(--text-primary)',
                     cursor: opt.enabled ? 'pointer' : 'not-allowed',
                     // 不可用的模型不隐藏、只压暗并说明：藏起来用户会以为「怎么少了一个」，
                     // 而看见「暂不可用」至少知道发生了什么（no-rootless-tree：暴露缺失）。
-                    opacity: opt.enabled ? 1 : 0.45,
+                    opacity: opt.enabled ? 1 : 0.7,
                   }}
                   // 压暗不等于点不了。上一版只调了透明度，这一行照样能点中：
                   // 选了之后交接包里带的就是一个没有健康成员的池，手机端把它过滤掉，
                   // 静默退回「第一个可用池」——用户明明选了 A，花钱跑的是 B
                   //（Codex PR #1476 P1）。看得见的「不可用」和点不动必须一起给。
                   disabled={!opt.enabled}
-                  title={opt.enabled ? undefined : '该模型池当前没有健康成员，暂时不能选'}
+                  aria-pressed={active}
+                  title={opt.enabled ? undefined : '暂时无法生成，请选其他模型'}
                   onClick={() => { if (!opt.enabled) return; onChange(opt.id); setOpen(false); }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: active ? 600 : 500 }}>
-                    {opt.name || opt.modelName}
-                    {opt.isDefault ? <span style={{ marginLeft: 6, fontSize: 9.5, color: 'var(--text-muted)' }}>默认</span> : null}
-                  </span>
-                  <span style={{ fontSize: 9.5, color: 'var(--text-muted)' }}>
-                    {opt.enabled ? (opt.subtitle || opt.actualModelId || '') : '暂不可用'}
-                  </span>
+                  <VisualModelOptionContent model={opt} selected={active} />
                 </button>
               );
             })}
+            </div>
+            <VisualModelMenuHint />
           </div>
         </div>,
         document.body,
