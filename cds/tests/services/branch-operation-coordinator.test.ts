@@ -132,9 +132,11 @@ describe('BranchOperationCoordinator', () => {
       actor: 'user',
       profileId: 'api',
     });
+    const rejected = coordinator.begin({ branchId: 'prd-agent-main', kind: 'deploy-profile', trigger: 'manual', profileId: 'api', versionId: 'v1' });
     coordinator.complete(continuation.lease!, 'completed');
 
-    expect(repeated.status).toBe('rejected');
+    expect(repeated.status).toBe('merged');
+    expect(rejected.status).toBe('rejected');
     expect(records.map((record) => record.action)).toEqual(expect.arrayContaining([
       'branch.operation.started',
       'branch.operation.merged',
@@ -795,7 +797,8 @@ describe('BranchOperationCoordinator', () => {
     expect(api.status).toBe('started');
     expect(admin.status).toBe('started');
     expect(api.operationId).not.toBe(admin.operationId);
-    expect(apiAgain.status).toBe('rejected');
+    expect(apiAgain.status).toBe('merged');
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main', 'api')?.request.profileId).toBe('api');
     expect(apiAgain.activeOperationId).toBe(api.operationId);
   });
 
@@ -1120,9 +1123,9 @@ describe('BranchOperationCoordinator', () => {
     });
 
     expect(restart.status).toBe('started');
-    expect(deployProfile.status).toBe('rejected');
+    expect(deployProfile.status).toBe('merged');
     expect(deployProfile.activeOperationId).toBe(restart.operationId);
-    expect(records.find((record) => record.action === 'branch.operation.rejected')?.details?.activeKind).toBe('restart');
+    expect(records.find((record) => record.action === 'branch.operation.merged')?.details?.activeKind).toBe('restart');
   });
 
   // ── 2026-07-16 队列堵死复盘：manual 整分支 deploy 合并去重 ──
@@ -1186,7 +1189,7 @@ describe('BranchOperationCoordinator', () => {
     expect(pending!.request.commitSha).toBe('bbbbbbb');
   });
 
-  it('manual deploy-profile 撞车仍 409（单服务合并语义不明确，维持拒绝）', () => {
+  it('manual deploy-profile 撞车按单服务范围排队，完成后保持该范围', () => {
     const { sink } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);
     coordinator.begin({
@@ -1202,7 +1205,8 @@ describe('BranchOperationCoordinator', () => {
       trigger: 'manual',
       actor: 'user',
     });
-    expect(profileRetry.status).toBe('rejected');
+    expect(profileRetry.status).toBe('merged');
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main', 'api')?.request.profileId).toBe('api');
   });
 
   it('stop 在途时 manual deploy 维持 409——不得合并后在停止完成时自动重启（Codex P2）', () => {

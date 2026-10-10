@@ -125,7 +125,7 @@ describe('assessDeployLoop：判定「同一分支反复部署同一个提交」
  * 出现，全文匹配会给出假绿（判定被摘掉、import 还留着，守卫照样通过）。
  */
 /**
- * 截取 deploy 处理器里「判熔断 → 登记 run → 取租约 → 记账」这一段。
+ * 截取 deploy 处理器里「判熔断 → 统一受理（取租约后登记 run）→ 执行放行 → 记账」这一段。
  *
  * 窗口下界不写死长度：2026-08-30 把 recordBuild 从租约前挪到租约后之后，
  * 原来 4000 字符的窗口正好把它切在外面，守卫对着**修好了的**代码判红——
@@ -139,7 +139,7 @@ function deployHandlerSlice(source: string): string {
   expect(recordAt, 'deploy 处理器里找不到 recordBuild').toBeGreaterThan(anchor);
   const end = source.indexOf('\n', recordAt) + 1;
   const slice = source.slice(anchor, end);
-  for (const needle of ['assessDeployLoop(', 'deploymentRunService?.begin(', 'beginBranchOperation(']) {
+  for (const needle of ['assessDeployLoop(', 'admitBranchDeployment(', 'if (!admission.started) return;']) {
     expect(slice, `deploy 切片没覆盖到 ${needle}`).toContain(needle);
   }
   return slice;
@@ -164,11 +164,9 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
     const source = read('src/routes/branches.ts');
     const slice = deployHandlerSlice(source);
     const guardAt = slice.indexOf('assessDeployLoop(');
-    const runAt = slice.indexOf('deploymentRunService?.begin(');
-    const leaseAt = slice.indexOf('beginBranchOperation(');
+    const admissionAt = slice.indexOf('admitBranchDeployment(');
     expect(guardAt).toBeGreaterThan(-1);
-    expect(runAt).toBeGreaterThan(guardAt);
-    if (leaseAt > -1) expect(leaseAt).toBeGreaterThan(guardAt);
+    expect(admissionAt).toBeGreaterThan(guardAt);
   });
 
   it('recordBuild 带上了 commitSha，否则判据永远数不到东西（形状 8：证据不成立）', () => {
@@ -194,15 +192,15 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
   it('recordBuild 必须排在取得分支操作租约之后，否则数的是请求数不是部署数', () => {
     const source = read('src/routes/branches.ts');
     const slice = deployHandlerSlice(source);
-    const leaseAt = slice.indexOf('const branchOperationLease = beginBranchOperation(');
+    const leaseAt = slice.indexOf('const admission = await admitBranchDeployment(');
     const recordAt = slice.indexOf('recordBuild(entry.projectId');
     expect(leaseAt, '找不到租约获取').toBeGreaterThan(-1);
     expect(recordAt, '找不到 recordBuild').toBeGreaterThan(-1);
     expect(recordAt).toBeGreaterThan(leaseAt);
     // 还要在「没拿到租约就 return」那道闸之后，否则等于没挪。
-    // 锚点只取调用本身，不含取消文案——文案会随并入语义变（joined 时写「已并入在途部署」），
-    // 把它写进判据等于要求某段实现字面存在，改文案的人会莫名其妙地被判红。
-    const bailAt = slice.indexOf('cancelDeploymentRun(');
+    // 统一受理显式返回 started，重复和排队均在记账之前返回。
+    // 只查执行闸门，不将取消文案或占位记录当作契约。
+    const bailAt = slice.indexOf('if (!admission.started) return;');
     expect(bailAt, '找不到未取得租约的提前返回').toBeGreaterThan(-1);
     expect(recordAt).toBeGreaterThan(bailAt);
   });
@@ -211,7 +209,7 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
     // 守卫谓词与上一条绿用例同一个，分别跑真源码与变异源码。
     const guard = (source: string) => {
       const slice = deployHandlerSlice(source);
-      const leaseAt = slice.indexOf('const branchOperationLease = beginBranchOperation(');
+      const leaseAt = slice.indexOf('const admission = await admitBranchDeployment(');
       const recordAt = slice.indexOf('recordBuild(entry.projectId');
       expect(leaseAt).toBeGreaterThan(-1);
       expect(recordAt).toBeGreaterThan(-1);
@@ -224,7 +222,7 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
     const lineEnd = real.indexOf('\n', recordAt) + 1;
     const line = real.slice(lineStart, lineEnd);
     const withoutLine = real.slice(0, lineStart) + real.slice(lineEnd);
-    const leaseAt = withoutLine.indexOf('    const branchOperationLease = beginBranchOperation(');
+    const leaseAt = withoutLine.indexOf('    const admission = await admitBranchDeployment(');
     expect(leaseAt, '找不到租约获取行').toBeGreaterThan(-1);
     const moved = withoutLine.slice(0, leaseAt) + line + withoutLine.slice(leaseAt);
     expectGuardRedOnMutation(guard, real, moved);

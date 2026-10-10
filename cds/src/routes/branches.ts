@@ -143,6 +143,7 @@ import {
   BranchOperationSupersededError,
   type BranchOperationCoordinator,
   type BranchOperationDecision,
+  type BranchOperationRequest,
   type BranchOperationKind,
   type BranchOperationLease,
   type BranchOperationTrigger,
@@ -151,12 +152,12 @@ import {
 import { pendingDeployRoute, pendingDeployBody } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
-import type { DeploymentRunService } from '../services/deployment-run.js';
+import type { DeploymentRunService, BeginDeploymentRunInput } from '../services/deployment-run.js';
 import { DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
-import type { DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
+import type { DeploymentRun, DeploymentRunStatus, DeploymentRunTrigger } from '../types.js';
 import {
   buildSecureMongoDockerInvocation,
   buildSecureMongoHostInvocation,
@@ -2333,6 +2334,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     managedProjectService,
   } = deps;
 
+  if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
@@ -2915,7 +2917,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * （请求里写 `4444…`、落库可能是 `abc1234`），拿它比对必然静默漏配；何况
    * 「是不是同一个提交」协调器已经判过了，这里再判一遍就是第二份会漂的判据。
    *
-   * 匹配不上时只在「排除自己后恰好只剩一条非终态 run」的情况下兜底；有歧义就返回
+   * 未提供操作身份时才在「排除自己后恰好只剩一条非终态 run」的情况下兜底；有歧义就返回
    * null，让调用方摘掉响应头退回分支状态轮询，而不是指一条可能错的 run。
    */
   function findLiveDeploymentRunId(branchId: string, activeOperationId: string | null, excludeRunId: string | null): string | null {
@@ -2926,7 +2928,89 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const exact = live.find((run) => run.operationId === activeOperationId);
       if (exact) return exact.id;
     }
-    return live.length === 1 ? live[0].id : null;
+    return activeOperationId ? null : live.length === 1 ? live[0].id : null;
+  }
+
+  function buildBranchOperationRequest(req: Request, entry: BranchEntry, input: Parameters<typeof beginBranchOperation>[3]): BranchOperationRequest {
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    return {
+      branchId: entry.id,
+      projectId: entry.projectId,
+      profileId: input.profileId || null,
+      kind: input.kind,
+      trigger: triggerFromRequest(req),
+      actor: resolveActorFromRequest(req),
+      requestId: requestId || null,
+      commitSha: input.commitSha || null,
+      versionId: input.versionId || null,
+      hasOneShotOptions: input.hasOneShotOptions || false,
+      commitPinned: input.commitPinned || false,
+      configHash: input.configHash || null,
+      source: input.source,
+      reason: input.reason || null,
+      continueWith: input.continueWith || null,
+      pendingReplay: req.body?.pendingReplay || null,
+    };
+  }
+
+  async function admitBranchDeployment(
+    req: Request, res: Response, entry: BranchEntry, input: Parameters<typeof beginBranchOperation>[3],
+    runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
+  ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
+    // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
+    const decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input));
+    if (decision?.status === 'rejected') {
+      beginBranchOperation(req, res, entry, input, decision);
+      return { started: false, lease: null, run: undefined };
+    }
+    let run: DeploymentRun | undefined;
+    try {
+      if (decision) run = deploymentRunService?.getForOperation(decision.operationId, decision.generation);
+      if (decision?.status === 'joined') {
+        if (!run && decision.joinedPending) {
+          const pending = branchOperationCoordinator?.getPendingWebhookDeploy(entry.id, input.profileId);
+          run = await deploymentRunService?.begin({ ...runInput, projectId: entry.projectId || 'default', branchId: entry.id,
+            profileId: input.profileId || undefined, operationId: decision.operationId, operationGeneration: decision.generation,
+            trigger: pending?.request.trigger === 'webhook' ? 'webhook' : 'manual', initialStatus: 'queued', phase: 'operation-queue',
+            message: '沿用已受理的目标部署，等待当前操作释放' });
+        }
+        if (!run && !decision.joinedPending) {
+          const legacyId = findLiveDeploymentRunId(entry.id, decision.operationId, null);
+          run = legacyId ? deploymentRunService?.get(legacyId) : undefined;
+        }
+        if (run) await deploymentRunService?.waitForAcceptance(run.id);
+        if (decision.cancelledPending) await deploymentRunService?.flush();
+      } else if (run) {
+        // 内部重放复用原排队记录，不能再创建一条与调用方脱节的 run。
+        await deploymentRunService?.waitForAcceptance(run.id);
+        if (DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status)) throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '原排队部署已结束');
+      } else {
+        run = await deploymentRunService?.begin({ ...runInput, projectId: entry.projectId || 'default', branchId: entry.id,
+          profileId: input.profileId || undefined, operationId: decision?.operationId, operationGeneration: decision?.generation,
+          initialStatus: decision?.status === 'merged' ? 'queued' : 'pending',
+          phase: decision?.status === 'merged' ? 'operation-queue' : runInput.phase,
+          message: decision?.status === 'merged' ? '目标部署已排队，等待当前操作释放' : runInput.message });
+      }
+      if (run?.status === 'cancelled' || run?.status === 'failed') throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '受理期间原部署已结束');
+      decision?.lease?.assertCurrent('after-admission-persistence');
+    } catch (err) {
+      if (decision?.lease) completeBranchOperation(decision.lease, err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed');
+      else if (decision) branchOperationCoordinator?.abandonAdmission(decision.operationId, decision.generation);
+      const superseded = err instanceof BranchOperationSupersededError;
+      res.status(superseded ? 409 : 503).json({ error: superseded
+        ? '部署已被更新的操作取代，请查看最新部署结果'
+        : '部署记录暂未能可靠保存，尚未开始执行，请稍后重试' });
+      return { started: false, lease: null, run };
+    }
+    if (run) {
+      res.setHeader('X-CDS-Deployment-Run-Id', run.id);
+      (res.locals as Record<string, unknown>).cdsAdmissionDeploymentRunId = run.id;
+    }
+    if (decision && decision.status !== 'started') {
+      beginBranchOperation(req, res, entry, input, decision);
+      return { started: false, lease: null, run };
+    }
+    return { started: true, lease: decision?.lease || null, run };
   }
 
   function beginBranchOperation(
@@ -2947,44 +3031,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason?: string | null;
       sse?: boolean;
       continueWith?: 'deploy' | 'deploy-profile' | null;
-      /** 外层在拿租约前就建好的占位 run；并入在途部署时用来排除自己。 */
+      /** 既有调用方提供的关联记录，仅供未走统一受理流程时排除候选记录。 */
       deploymentRunId?: string | null;
     },
+    decisionOverride?: BranchOperationDecision,
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
-    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
-    const decision = branchOperationCoordinator.begin({
-      branchId: entry.id,
-      projectId: entry.projectId,
-      profileId: input.profileId || null,
-      kind: input.kind,
-      trigger: triggerFromRequest(req),
-      actor: resolveActorFromRequest(req),
-      requestId: requestId || null,
-      commitSha: input.commitSha || null,
-      versionId: input.versionId || null,
-      hasOneShotOptions: input.hasOneShotOptions || false,
-      commitPinned: input.commitPinned || false,
-      configHash: input.configHash || null,
-      source: input.source,
-      reason: input.reason || null,
-      continueWith: input.continueWith || null,
-      pendingReplay: req.body?.pendingReplay || null,
-    });
+    const decision = decisionOverride || branchOperationCoordinator.begin(buildBranchOperationRequest(req, entry, input));
     if (decision.status === 'started') return decision.lease || null;
 
     // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
     // joined 直接并入在途的同 commit 部署（2026-09-08，治 push 后紧跟手动 deploy 拆两遍容器）。
     const accepted = decision.status === 'merged' || decision.status === 'joined';
 
-    // 并入在途部署时，调用方必须拿到一条**真的会跑完**的 run 来追踪。
-    // 外层 deploy handler 在取租约之前就 begin 了占位 run 并把它写进
-    // X-CDS-Deployment-Run-Id，而并入之后那条占位 run 会被取消；cdscli 只认这个头、
-    // 见 cancelled 即判「部署失败」——本 PR 要治的正是「push 后紧跟 deploy」这条路径，
-    // 头指错了等于治了个寂寞（Codex 三轮 P1）。所以这里把头改指向在途那次部署的 run；
-    // 实在找不到就把头摘掉，让 CLI 退回分支状态轮询，而不是盯着一条注定被取消的记录。
+    // 并入和排队都向调用方返回原始 run；未配置 run 台账时保留分支轮询兜底。
+    const acceptedRunId = (res.locals as Record<string, unknown>).cdsAdmissionDeploymentRunId as string | undefined;
     const joinedRunId = decision.status === 'joined'
-      ? findLiveDeploymentRunId(entry.id, decision.activeOperationId || null, input.deploymentRunId || null)
+      ? acceptedRunId || findLiveDeploymentRunId(entry.id, decision.operationId || null, input.deploymentRunId || null)
       : null;
     if (decision.status === 'joined' && !res.headersSent) {
       if (joinedRunId) res.setHeader('X-CDS-Deployment-Run-Id', joinedRunId);
@@ -2999,9 +3062,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
-      deploymentRunId: joinedRunId || undefined,
+      deploymentRunId: acceptedRunId || joinedRunId || undefined,
       message: decision.status === 'joined'
-        ? `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`
+        ? (decision.joinedPending ? '同一目标部署已在队列，本次请求沿用原排队任务'
+          : `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`)
         : decision.status === 'merged'
           ? (triggerFromRequest(req) === 'manual'
             ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
@@ -12468,6 +12532,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
+      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
+      return;
+    }
+
     // P4 Part 18 (G1.5): same clone-ready guard as POST /branches.
     // Deploy uses worktree pull/create which would fail with a
     // cryptic git error if the target project's clone isn't ready.
@@ -12608,28 +12677,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : undefined;
       const remoteOwned = !!owningRemoteNode; // 在线远端 owned（离线已被上方护栏挡下）
       if (!remoteOwned) {
-        const cleanupRun = await deploymentRunService?.begin({
-          projectId: entry.projectId || 'default',
-          branchId: entry.id,
-          trigger: deploymentRunTriggerFromRequest(req, entry),
-          commitSha: entry.githubCommitSha,
-          phase: 'accepted',
-          message: '空期望清单清理请求已受理',
-        });
-        if (cleanupRun) res.setHeader('X-CDS-Deployment-Run-Id', cleanupRun.id);
-        const cleanupLease = beginBranchOperation(req, res, entry, {
-          kind: 'deploy',
-          source: 'api.deploy-branch',
-          reason: '期望清单为空，清理残留服务容器',
-          // deploy 端点契约是 SSE event-stream；本「就地清空」路径以前回 200 JSON，EventSource 客户端会
-          // 因 content-type 不符报错/挂起（Bugbot Medium「Deploy route returns JSON not SSE」）。改为 SSE：
-          // 拿不到租约时 beginBranchOperation 直接发 SSE 终止事件；拿到后下面 initSSE 开流、逐步 push、complete 收尾。
-          sse: true,
-        });
-        if (branchOperationCoordinator && !cleanupLease) {
-          cancelDeploymentRun(cleanupRun?.id, '清理请求未取得分支操作租约');
-          return;
-        }
+        const cleanupAdmission = await admitBranchDeployment(req, res, entry, {
+          kind: 'deploy', source: 'api.deploy-branch', reason: '期望清单为空，清理残留服务容器', sse: true,
+          hasOneShotOptions: forceDeployWhilePaused || Boolean(req.query.ignoreRequired || req.body?.targetExecutorId),
+        }, { trigger: deploymentRunTriggerFromRequest(req, entry), commitSha: entry.githubCommitSha,
+          phase: 'accepted', message: '空期望清单清理请求已受理' });
+        if (!cleanupAdmission.started) return;
+        const cleanupRun = cleanupAdmission.run;
+        const cleanupLease = cleanupAdmission.lease;
         advanceDeploymentRun(cleanupRun?.id, 'preparing', {
           phase: 'prepare',
           message: '残留服务清理上下文已准备完成',
@@ -12762,10 +12817,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    if (req.body?.commitSha !== undefined && (typeof req.body.commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(req.body.commitSha))) {
-      res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
-      return;
-    }
     const requestCommitSha = selectedDeploymentVersion?.commitSha || (
       typeof req.body?.commitSha === 'string'
         && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
@@ -12853,20 +12904,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
-    const deploymentRun = await deploymentRunService?.begin({
-      projectId: entry.projectId || 'default',
-      branchId: entry.id,
-      trigger: deploymentRunTriggerFromRequest(req, entry),
-      commitSha: requestCommitSha || entry.githubCommitSha,
-      versionId: selectedDeploymentVersion?.id,
-      configHash: deploymentConfigHash,
-      phase: 'accepted',
-      message: '分支部署请求已受理',
-    });
-    if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
-    if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
-
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
+    const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
       // 版本重部署（body.versionId）不参与 manual 合并去重：pending 重放只送
@@ -12877,7 +12915,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
       // 只有请求自己钉住了提交（webhook 的 head sha / body.commitSha）才允许并入：
-      // 没钉住时下面 pull 会 hard-reset 到届时的分支 HEAD，entry 上那个缓存 SHA
+      // 没钉住时源码准备取当时的远端 HEAD，entry 上那个缓存 SHA
       // 说明不了这次要部署什么（Codex 六轮 P1）。
       commitPinned: Boolean(requestCommitSha),
       // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
@@ -12886,18 +12924,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
-      deploymentRunId: deploymentRun?.id || null,
+    }, {
+      trigger: deploymentRunTriggerFromRequest(req, entry),
+      commitSha: requestCommitSha || entry.githubCommitSha,
+      versionId: selectedDeploymentVersion?.id,
+      configHash: deploymentConfigHash,
+      phase: 'accepted',
+      message: '分支部署请求已受理',
     });
-    if (branchOperationCoordinator && !branchOperationLease) {
-      // 并入在途部署时占位 run 照样取消（它确实什么都没做），但要写清去向：
-      // 调用方已被改指向 joinedRunId，运行记录里也能看出这次为什么没自己跑。
-      const joinedRunId = (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId as string | undefined;
-      cancelDeploymentRun(
-        deploymentRun?.id,
-        joinedRunId ? `已并入在途部署 ${joinedRunId}，本次不重复拆装容器` : '部署请求未取得分支操作租约',
-      );
-      return;
-    }
+    if (!admission.started) return;
+    const deploymentRun = admission.run;
+    const branchOperationLease = admission.lease;
+    if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
 
     // 记一次构建活动。**必须在拿到分支操作租约之后**——这个账本同时喂着资源面板的
     // 构建频次和 assessDeployLoop 的空转熔断计数。
@@ -14446,29 +14484,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    const deploymentRun = await deploymentRunService?.begin({
-      projectId: entry.projectId || 'default',
-      branchId: entry.id,
-      trigger: deploymentRunTriggerFromRequest(req, entry),
-      commitSha: profileRequestCommitSha || entry.githubCommitSha,
-      phase: 'accepted',
-      message: `单服务部署请求已受理: ${profile.name}`,
-    });
-    if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
-
-    const branchOperationLease = beginBranchOperation(req, res, entry, {
+    const profileDeploymentConfigHash = deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, entry)], getMergedEnv(entry.projectId || 'default', entry.id));
+    const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy-profile',
       profileId,
       commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
       commitPinned: Boolean(profileRequestCommitSha),
+      configHash: profileDeploymentConfigHash,
+      hasOneShotOptions: Boolean(req.query.force || req.query.ignoreRequired || req.body?.targetExecutorId),
+      versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
       source: 'api.deploy-profile',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,
+    }, {
+      trigger: deploymentRunTriggerFromRequest(req, entry),
+      commitSha: profileRequestCommitSha || entry.githubCommitSha,
+      configHash: profileDeploymentConfigHash,
+      phase: 'accepted',
+      message: `单服务部署请求已受理: ${profile.name}`,
     });
-    if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '单服务部署请求未取得分支操作租约');
-      return;
-    }
+    if (!admission.started) return;
+    const deploymentRun = admission.run;
+    const branchOperationLease = admission.lease;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     advanceDeploymentRun(deploymentRun?.id, 'preparing', {
       phase: 'prepare',

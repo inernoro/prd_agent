@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { StateService } from '../../src/services/state.js';
 
@@ -26,6 +27,45 @@ describe('DeploymentRunService', () => {
       createdAt: '2026-07-10T00:00:00.000Z',
     });
     clock = new Date('2026-07-10T01:00:00.000Z');
+  });
+
+  it('有效排队不按执行心跳超时，队列取消立即更新同一代次run', async () => {
+    const runs = new DeploymentRunService(stateService, { now: () => clock });
+    const coordinator = new BranchOperationCoordinator(); runs.bindOperationCoordinator(coordinator);
+    const active = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'manual' });
+    const queued = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'webhook', commitSha: 'b'.repeat(40), commitPinned: true, configHash: 'cfg' });
+    const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook', initialStatus: 'queued', operationId: queued.operationId, operationGeneration: queued.generation });
+    clock = new Date(clock.getTime() + 30 * 60_000);
+    expect(runs.reconcileInterrupted()).toEqual([]); expect(runs.get(run.id)?.status).toBe('queued');
+    coordinator.completeAll(active.lease!, 'completed');
+    expect(runs.reconcileInterrupted()).toEqual([]);
+    coordinator.cancelBranch('b1', '停止分支');
+    expect(runs.get(run.id)?.status).toBe('cancelled');
+  });
+
+  it('重放凭据过期在等待查询中取消原run，不重复迁移终态', async () => {
+    let realNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow);
+    try {
+      const runs = new DeploymentRunService(stateService, { now: () => clock });
+      const coordinator = new BranchOperationCoordinator(); runs.bindOperationCoordinator(coordinator);
+      const active = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'manual' });
+      const queued = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'webhook', commitSha: 'b'.repeat(40), commitPinned: true, configHash: 'cfg' });
+      const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook', initialStatus: 'queued', operationId: queued.operationId, operationGeneration: queued.generation });
+      coordinator.completeAll(active.lease!, 'completed');
+      realNow += 6 * 60_000; clock = new Date(clock.getTime() + 30 * 60_000);
+      expect(() => runs.reconcileInterrupted()).not.toThrow();
+      expect(runs.get(run.id)?.status).toBe('cancelled');
+      expect(runs.get(run.id)?.events.filter((event) => event.phase === 'superseded')).toHaveLength(1);
+    } finally { nowSpy.mockRestore(); }
+  });
+
+  it('没有对应实际待办的过期queued记录仍收敛为失败', async () => {
+    const runs = new DeploymentRunService(stateService, { now: () => clock });
+    const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual', initialStatus: 'queued', operationId: 'op_missing', operationGeneration: 2 });
+    clock = new Date(clock.getTime() + 30 * 60_000);
+    expect(runs.reconcileInterrupted().map((r) => r.id)).toEqual([run.id]);
+    expect(runs.get(run.id)?.status).toBe('failed');
   });
 
   afterEach(async () => {

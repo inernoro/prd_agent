@@ -1614,6 +1614,15 @@ export class StateService {
     return this.state.deploymentRuns?.[id];
   }
 
+  getDeploymentRunForOperation(operationId: string, generation: number): DeploymentRun | undefined {
+    // 写操作关联读取无需生成、过滤和排序整份历史列表。
+    for (const id in this.state.deploymentRuns || {}) {
+      const run = this.state.deploymentRuns![id];
+      if (run.operationId === operationId && run.operationGeneration === generation) return run;
+    }
+    return undefined;
+  }
+
   getDeploymentRuns(filters: { projectId?: string; branchId?: string; status?: DeploymentRun['status'] } = {}): DeploymentRun[] {
     return Object.values(this.state.deploymentRuns || {})
       .filter((run) => !filters.projectId || run.projectId === filters.projectId)

@@ -94,6 +94,8 @@ export interface BranchOperationDecision {
   activeOperationId?: string;
   activeKind?: BranchOperationKind;
   pendingCommitSha?: string | null;
+  joinedPending?: boolean;
+  cancelledPending?: boolean;
   lease?: BranchOperationLease;
 }
 
@@ -203,13 +205,15 @@ export function sameCommitIdentity(a?: string | null, b?: string | null): boolea
 }
 
 /**
- * 「同一个 commit 的整分支部署已经在跑」判定（2026-09-08）。
- * 只认整分支 deploy 对整分支 deploy、双方都带 commitSha 且相等、在途未被取消。
+ * 「同范围、同完整提交和配置的部署已经在跑」判定（2026-09-08）。
+ * 整分支与单服务分别比较，同项目同范围、双方固定完整提交且配置一致、在途未被取消。
  * 带版本 / 一次性选项的 manual deploy 语义不同（重放会丢配置），不并入。
  */
 function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: ActiveOperation): boolean {
   if (active.cancelled) return false;
-  if (incoming.kind !== 'deploy' || active.request.kind !== 'deploy') return false;
+  if (!['deploy', 'deploy-profile'].includes(incoming.kind) || incoming.kind !== active.request.kind) return false;
+  if ((incoming.profileId || null) !== (active.request.profileId || null)
+    || (incoming.projectId || null) !== (active.request.projectId || null)) return false;
   // 两边都得是「钉住了提交」的请求。没钉住的落地的是届时的分支 HEAD，
   // 手里这个缓存 SHA 说明不了它要部署什么（见 commitPinned 注释）。
   if (!incoming.commitPinned || !active.request.commitPinned) return false;
@@ -233,8 +237,7 @@ function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: Ac
  * 撞上同优先级的在途 manual deploy 只会 409，agent 排队焦虑 → 反复重试 →
  * 同分支部署叠加、每次重试往全局构建队列塞一整层服务（重试风暴正反馈）。
  * 现在与 webhook 同样合并为「当前部署完成后自动执行的最新待部署请求」
- * （last-writer-wins）。范围仅限**整分支 deploy**：manual deploy-profile /
- * restart 语义按单服务隔离，合并归属不明确，维持 409。
+ * （last-writer-wins）。整分支与单服务各自按范围保存，restart 不参与部署合并。
  * 带 versionId 的版本重部署不合并（pending 重放会丢版本捕获配置，Codex P2）。
  * 带一次性选项（force/ignoreRequired/targetExecutorId）的请求同理不合并
  * （pending 重放只送 commitSha，选项丢失后重放可能直接失败，Codex P2）。
@@ -242,7 +245,7 @@ function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: Ac
  * 比较在 begin() 里先于本判定执行，manual 压 webhook 的既有语义不变。
  */
 function isMergeableManualDeploy(req: BranchOperationRequest): boolean {
-  return req.trigger === 'manual' && req.kind === 'deploy' && !req.versionId && !req.hasOneShotOptions;
+  return req.trigger === 'manual' && (req.kind === 'deploy' || req.kind === 'deploy-profile') && !req.versionId && !req.hasOneShotOptions;
 }
 
 /**
@@ -279,7 +282,29 @@ export class BranchOperationCoordinator {
   private readonly pendingReplayClaims = new Map<string, { pending: PendingWebhookDeploy; expiresAt: number }>();
   private generations = new Map<string, number>();
 
+  private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
+
   constructor(private readonly events?: ServerEventLogSink | null) {}
+
+  onOperationEnded(listener: (operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void): () => void {
+    this.operationEndListeners.add(listener);
+    return () => this.operationEndListeners.delete(listener);
+  }
+
+  hasWaitingOperation(operationId: string, generation: number): boolean {
+    this.prunePendingReplayClaims();
+    return [...this.pendingWebhookDeploys.values()].some((pending) => pending.operationId === operationId && pending.generation === generation)
+      || this.pendingReplayClaims.has(this.replayKey({ operationId, generation }));
+  }
+
+  abandonAdmission(operationId: string, generation: number): void {
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      if (pending.operationId !== operationId || pending.generation !== generation) continue;
+      this.pendingWebhookDeploys.delete(key);
+      this.record('branch.operation.failed', pending.request, operationId, generation, 'error', { reason: 'admission persistence failed', pending: true });
+    }
+  }
+
 
   begin(request: BranchOperationRequest): BranchOperationDecision {
     this.prunePendingReplayClaims();
@@ -317,7 +342,21 @@ export class BranchOperationCoordinator {
       return this.start(request, replay ? { operationId: replay.operationId, generation: replay.generation } : undefined);
     }
 
+    const queued = this.pendingWebhookDeploys.get(this.operationKey(request));
+    if (queued && isSameCommitDeployInFlight(request, { ...queued, startedAt: queued.updatedAt, cancelled: false })) {
+      this.record('branch.operation.joined', request, queued.operationId, queued.generation, 'info', {
+        activeOperationId: active.operationId, pending: true, commitSha: request.commitSha || null,
+      });
+      return { status: 'joined', operationId: queued.operationId, generation: queued.generation,
+        activeOperationId: active.operationId, activeKind: active.request.kind, joinedPending: true,
+        pendingCommitSha: queued.request.commitSha || null, reason: 'same target already queued' };
+    }
+
     if (isSameCommitDeployInFlight(request, active)) {
+      // 最新请求回到当前目标时，旧的同范围待办不能在其完成后再次覆盖它。
+      const cancelledPending = !!this.pendingWebhookDeploys.get(this.operationKey(request));
+      this.cancelPendingWebhookDeploy(branchId, 'superseded by request joining current target', {}, request, true);
+      this.invalidatePendingReplayClaims(request, 'superseded by request joining current target');
       this.record('branch.operation.joined', request, active.operationId, active.generation, 'info', {
         activeOperationId: active.operationId,
         activeKind: active.request.kind,
@@ -326,6 +365,7 @@ export class BranchOperationCoordinator {
       });
       return {
         status: 'joined',
+        cancelledPending,
         operationId: active.operationId,
         generation: active.generation,
         activeOperationId: active.operationId,
@@ -336,33 +376,7 @@ export class BranchOperationCoordinator {
     }
 
     if (isWebhookDeploy(request)) {
-      this.invalidatePendingReplayClaims(request, 'superseded by newer pending request');
-      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
-      const generation = this.nextGeneration(branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(this.operationKey(request), {
-        operationId,
-        branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'webhook deploy merged into latest pending operation',
-      };
+      return this.mergePending(request, active.operationId, active.request.kind, 'webhook deploy merged into latest pending operation');
     }
 
     const incomingPriority = priorityOf(request);
@@ -402,34 +416,7 @@ export class BranchOperationCoordinator {
     // 仅限部署类在途操作（stop/reset/delete 在途时维持 409，见
     // MANUAL_MERGE_BEHIND_KINDS 注释）。
     if (isMergeableManualDeploy(request) && MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind)) {
-      this.invalidatePendingReplayClaims(request, 'superseded by newer pending request');
-      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
-      const generation = this.nextGeneration(branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(this.operationKey(request), {
-        operationId,
-        branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-        manualMerge: true,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'manual deploy merged into latest pending operation',
-      };
+      return this.mergePending(request, active.operationId, active.request.kind, 'manual deploy merged into latest pending operation', { manualMerge: true });
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(branchId), 'warn', {
@@ -617,39 +604,41 @@ export class BranchOperationCoordinator {
     return { status: 'started', operationId, generation, lease };
   }
 
+  private mergePending(request: BranchOperationRequest, blockerId: string, blockerKind: BranchOperationKind,
+    reason: string, details: Record<string, unknown> = {}): BranchOperationDecision {
+    const key = this.operationKey(request);
+    const existing = this.pendingWebhookDeploys.get(key);
+    if (existing && isSameCommitDeployInFlight(request, { ...existing, startedAt: existing.updatedAt, cancelled: false })) {
+      this.record('branch.operation.joined', request, existing.operationId, existing.generation, 'info', {
+        activeOperationId: blockerId, activeKind: blockerKind, pending: true, ...details,
+      });
+      return { status: 'joined', operationId: existing.operationId, generation: existing.generation,
+        activeOperationId: blockerId, activeKind: blockerKind, joinedPending: true,
+        pendingCommitSha: existing.request.commitSha || null, reason: 'same target already queued' };
+    }
+    this.invalidatePendingReplayClaims(request, 'superseded by newer pending request');
+    if (existing) this.record('branch.operation.cancelled', existing.request, existing.operationId, existing.generation, 'warn', {
+      reason: 'superseded by newer pending target', pending: true, supersededByCommitSha: request.commitSha || null,
+    });
+    const generation = this.nextGeneration(request.branchId);
+    const operationId = existing?.operationId || this.createOperationId();
+    this.pendingWebhookDeploys.set(key, { operationId, branchId: request.branchId, generation, request,
+      mergedCount: (existing?.mergedCount || 0) + 1, updatedAt: nowIso() });
+    this.record('branch.operation.merged', request, operationId, generation, 'info', {
+      activeOperationId: blockerId, activeKind: blockerKind, mergedCount: (existing?.mergedCount || 0) + 1,
+      commitSha: request.commitSha || null, ...details,
+    });
+    return { status: 'merged', operationId, generation, activeOperationId: blockerId, activeKind: blockerKind,
+      pendingCommitSha: request.commitSha || null, reason };
+  }
+
   private beginAgainstReservedContinuation(
     request: BranchOperationRequest,
     reserved: ReservedContinuation,
   ): BranchOperationDecision {
     if (isWebhookDeploy(request)) {
-      this.invalidatePendingReplayClaims(request, 'superseded by newer pending request');
-      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
-      const generation = this.nextGeneration(request.branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(this.operationKey(request), {
-        operationId,
-        branchId: request.branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        reservedContinuation: true,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'webhook deploy merged while force-rebuild waits for its deploy continuation',
-      };
+      return this.mergePending(request, reserved.operationId, reserved.request.kind,
+        'webhook deploy merged while force-rebuild waits for its deploy continuation', { reservedContinuation: true });
     }
 
     if (this.requestMatchesContinuation(request, reserved)) {
@@ -684,35 +673,8 @@ export class BranchOperationCoordinator {
     // is reserved」）。必须放在 requestMatchesContinuation 之后——force-rebuild
     // 自己的 deploy 续约仍优先接续执行，不能被合并吞掉。
     if (isMergeableManualDeploy(request)) {
-      this.invalidatePendingReplayClaims(request, 'superseded by newer pending request');
-      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
-      const generation = this.nextGeneration(request.branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(this.operationKey(request), {
-        operationId,
-        branchId: request.branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        reservedContinuation: true,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-        manualMerge: true,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'manual deploy merged while force-rebuild waits for its deploy continuation',
-      };
+      return this.mergePending(request, reserved.operationId, reserved.request.kind,
+        'manual deploy merged while force-rebuild waits for its deploy continuation', { reservedContinuation: true, manualMerge: true });
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(request.branchId), 'warn', {
@@ -882,6 +844,13 @@ export class BranchOperationCoordinator {
     severity: 'info' | 'warn' | 'error',
     details: Record<string, unknown> = {},
   ): void {
+    const terminal = action === 'branch.operation.cancelled' ? 'cancelled'
+      : action === 'branch.operation.failed' ? 'failed'
+      : action === 'branch.operation.interrupted' ? 'interrupted' : undefined;
+    if (terminal) for (const listener of this.operationEndListeners) {
+      try { listener(operationId, generation, terminal); }
+      catch (err) { console.error('[branch-operation] run lifecycle observer failed', (err as Error).name); }
+    }
     this.events?.record({
       category: 'system',
       severity,

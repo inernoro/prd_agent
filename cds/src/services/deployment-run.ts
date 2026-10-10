@@ -7,6 +7,7 @@ import type {
   DeploymentRunTrigger,
 } from '../types.js';
 import type { StateService } from './state.js';
+import type { BranchOperationCoordinator } from './branch-operation-coordinator.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -33,6 +34,9 @@ export interface BeginDeploymentRunInput {
   trigger: DeploymentRunTrigger;
   commitSha?: string;
   operationId?: string;
+  operationGeneration?: number;
+  profileId?: string;
+  initialStatus?: 'pending' | 'queued';
   executorId?: string;
   versionId?: string;
   configHash?: string;
@@ -56,6 +60,8 @@ export class DeploymentRunService {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly maxEvents: number;
+  private readonly acceptanceWrites = new Map<string, Promise<void>>();
+  private readonly boundCoordinators = new Set<BranchOperationCoordinator>();
 
   constructor(
     private readonly stateService: StateService,
@@ -74,12 +80,14 @@ export class DeploymentRunService {
       projectId: input.projectId,
       branchId: input.branchId,
       trigger: input.trigger,
-      status: 'pending',
+      status: input.initialStatus || 'pending',
       phase,
       seq: 1,
       firstEventSeq: 1,
       commitSha: input.commitSha,
       operationId: input.operationId,
+      operationGeneration: input.operationGeneration,
+      profileId: input.profileId,
       executorId: input.executorId,
       versionId: input.versionId,
       configHash: input.configHash,
@@ -91,13 +99,39 @@ export class DeploymentRunService {
         at,
         phase,
         level: 'info',
-        status: 'pending',
+        status: input.initialStatus || 'pending',
         message: this.normalizeMessage(input.message || '部署请求已受理'),
       }],
     };
     const persisted = this.stateService.addDeploymentRun(run);
+    const write = this.stateService.flush();
+    this.acceptanceWrites.set(persisted.id, write);
+    try { await write; return persisted; }
+    finally { this.acceptanceWrites.delete(persisted.id); }
+  }
+
+  getForOperation(operationId: string, generation: number): DeploymentRun | undefined {
+    return this.stateService.getDeploymentRunForOperation(operationId, generation);
+  }
+
+  async waitForAcceptance(id: string): Promise<void> {
+    await this.acceptanceWrites.get(id);
+  }
+
+  async flush(): Promise<void> {
     await this.stateService.flush();
-    return persisted;
+  }
+
+  bindOperationCoordinator(coordinator: BranchOperationCoordinator): void {
+    if (this.boundCoordinators.has(coordinator)) return;
+    this.boundCoordinators.add(coordinator);
+    coordinator.onOperationEnded((operationId, generation, status) => {
+      const run = this.getForOperation(operationId, generation);
+      if (!run || TERMINAL_STATUSES.has(run.status)) return;
+      if (status === 'cancelled') this.cancel(run.id, '部署操作被更新的请求或终止操作取代', 'superseded');
+      else this.fail(run.id, { code: `cds.operation.${status}`, owner: 'cds', retryable: true,
+        summary: '部署操作未能继续执行，请查看最新部署结果', phase: 'operation-ended', evidenceRefs: [] });
+    });
   }
 
   get(id: string): DeploymentRun | undefined {
@@ -235,6 +269,11 @@ export class DeploymentRunService {
   reconcileInterrupted(now = this.now(), staleAfterMs = 15 * 60 * 1000): DeploymentRun[] {
     const reconciled: DeploymentRun[] = [];
     for (const run of this.stateService.getDeploymentRuns()) {
+      if (TERMINAL_STATUSES.has(run.status)) continue;
+      // 排队尚未进入执行，不以执行心跳判超时；必须仍有协调器中的实际待办。
+      if (run.status === 'queued' && run.operationId && run.operationGeneration !== undefined
+        && [...this.boundCoordinators].some((coordinator) => coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!))) continue;
+      // 等待查询可收敛过期重放凭据，观察器已更新终态时不得再次迁移。
       if (TERMINAL_STATUSES.has(run.status)) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || now.getTime() - heartbeat < staleAfterMs) continue;

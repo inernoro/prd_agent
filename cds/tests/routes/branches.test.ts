@@ -368,6 +368,14 @@ describe('Branch Routes', () => {
       expect(result.status).toBe(400);
       expect(mock.commands.slice(before).some((command) => command.startsWith('git ') || command.startsWith('docker '))).toBe(false);
     });
+    it('配置清空时非法提交仍在任何服务清理之前拒绝', async () => {
+      const f = await sourceFixture();
+      for (const profile of stateService.getBuildProfiles()) stateService.removeBuildProfile(profile.id);
+      const before = mock.commands.length;
+      const result = await request(server, 'POST', `/api/branches/${f.entry.id}/deploy`, { commitSha: 'not-a-sha' });
+      expect(result.status).toBe(400);
+      expect(mock.commands.slice(before).some((command) => command.startsWith('git ') || command.startsWith('docker '))).toBe(false);
+    });
     it('不存在的目标提交不启动容器，也不回退到HEAD', async () => {
       const f = await sourceFixture();
       const result = await request(server, 'POST', `/api/branches/${f.entry.id}/deploy/api`, { commitSha: 'f'.repeat(40) });
@@ -3797,6 +3805,143 @@ describe('Branch Routes', () => {
     // 外层 handler 在取租约前就建了占位 run 并写进 X-CDS-Deployment-Run-Id，并入后
     // 占位 run 会被取消，而 cdscli 只认这个头、见 cancelled 即判部署失败——正是本批
     // 要治的「push 后紧跟 deploy」路径。
+    it('受理落盘失败返回503并释放租约，旧服务未被替换', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      stateService.addBranch({ id: 'admission-fail', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'admission-fail'),
+        status: 'running', createdAt: new Date().toISOString(), services: { api: { profileId: 'api', containerName: 'old-api', hostPort: 10001, status: 'running' } } });
+      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('disk unavailable'));
+      const before = mock.commands.length;
+      try {
+        const result = await request(server, 'POST', '/api/branches/admission-fail/deploy', { commitSha: 'a'.repeat(40) });
+        expect(result.status).toBe(503);
+        expect(String(JSON.stringify(result.body))).toContain('尚未开始执行');
+        expect(mock.commands.slice(before).some((command) => command.startsWith('docker ') || command.startsWith('git '))).toBe(false);
+        expect(branchOperationCoordinator.getActive('admission-fail')).toBeUndefined();
+        expect(stateService.getBranch('admission-fail')?.services.api.containerName).toBe('old-api');
+        expect(deploymentRunService.list({ branchId: 'admission-fail' })[0]?.status).toBe('failed');
+      } finally { flush.mockRestore(); }
+    });
+
+    it('最新请求回到当前A时取消旧待办B，不在A完成后重放B', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      stateService.addBranch({ id: 'return-current', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'return-current'), status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      let release!: () => void, started!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
+      const original = mock.exec.bind(mock); let actualRuns = 0;
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker run -d') && command.includes('cds-return-current-api')) { actualRuns++; started(); await gate; }
+        return original(command, options);
+      };
+      const fetches = vi.fn(async () => new Response('event: complete\ndata: {}\n\n')); vi.stubGlobal('fetch', fetches);
+      const first = request(server, 'POST', '/api/branches/return-current/deploy', { commitSha: 'a'.repeat(40) });
+      try {
+        await start; const activeId = deploymentRunService.list({ branchId: 'return-current' })[0].id;
+        const queued = await request(server, 'POST', '/api/branches/return-current/deploy', { commitSha: 'b'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        const bId = String(queued.headers['x-cds-deployment-run-id']);
+        const latest = await request(server, 'POST', '/api/branches/return-current/deploy', { commitSha: 'a'.repeat(40) });
+        expect(latest.headers['x-cds-deployment-run-id']).toBe(activeId);
+        const persisted = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state.json'), 'utf8'));
+        expect(persisted.deploymentRuns[bId]?.status).toBe('cancelled');
+        release(); await first; expect(actualRuns).toBe(1); expect(fetches).not.toHaveBeenCalled();
+      } finally { release(); await first; vi.unstubAllGlobals(); }
+    });
+
+    it('排队受理等待写盘期间被新目标取代，返回409且不删除新待办', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      stateService.addBranch({ id: 'admission-replaced', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'admission-replaced'), status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      branchOperationCoordinator.begin({ branchId: 'admission-replaced', projectId: 'default', kind: 'deploy', trigger: 'manual' });
+      let release!: () => void, blocked!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; }); const started = new Promise<void>((resolve) => { blocked = resolve; });
+      const originalFlush = stateService.flush.bind(stateService);
+      const flush = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => { blocked(); await gate; await originalFlush(); });
+      const previous = request(server, 'POST', '/api/branches/admission-replaced/deploy', { commitSha: 'b'.repeat(40) });
+      try {
+        await started;
+        const latest = await request(server, 'POST', '/api/branches/admission-replaced/deploy', { commitSha: 'c'.repeat(40) });
+        expect(latest.status).toBe(200); release(); expect((await previous).status).toBe(409);
+        expect(branchOperationCoordinator.getPendingWebhookDeploy('admission-replaced')?.request.commitSha).toBe('c'.repeat(40));
+        expect(deploymentRunService.get(String(latest.headers['x-cds-deployment-run-id']))?.status).toBe('queued');
+        expect(mock.commands.some((command) => command.startsWith('docker run -d'))).toBe(false);
+      } finally { release(); await previous; flush.mockRestore(); branchOperationCoordinator.cancelBranch('admission-replaced', '测试结束'); }
+    });
+
+    it('同目标并入等待原受理落盘，不创建占位run、不启动第二次部署', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      stateService.addBranch({ id: 'acceptance-wait', projectId: 'default', branch: 'feature/acceptance-wait', worktreePath: path.join(tmpDir, 'worktrees', 'acceptance-wait'),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      let release!: () => void, blocked!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { blocked = resolve; });
+      const originalFlush = stateService.flush.bind(stateService);
+      const flush = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => { blocked(); await gate; await originalFlush(); });
+      const addRun = vi.spyOn(stateService, 'addDeploymentRun'); let duplicateAnswered = false;
+      const sha = 'a'.repeat(40);
+      const first = request(server, 'POST', '/api/branches/acceptance-wait/deploy', { commitSha: sha });
+      let duplicate: ReturnType<typeof request> | undefined;
+      try {
+        await started;
+        duplicate = request(server, 'POST', '/api/branches/acceptance-wait/deploy', { commitSha: sha }).then((r) => { duplicateAnswered = true; return r; });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(duplicateAnswered).toBe(false);
+        expect(addRun).toHaveBeenCalledTimes(1); expect(flush).toHaveBeenCalledTimes(1);
+        expect(mock.commands.filter((command) => command.startsWith('docker run -d'))).toHaveLength(0);
+        release(); const [a, b] = await Promise.all([first, duplicate]);
+        expect(a.headers['x-cds-deployment-run-id']).toBe(b.headers['x-cds-deployment-run-id']);
+        expect(mock.commands.filter((command) => command.startsWith('docker run -d'))).toHaveLength(1);
+      } finally { release(); await Promise.allSettled([first, duplicate]); flush.mockRestore(); addRun.mockRestore(); }
+    });
+
+    it.each(['/deploy', '/deploy/api'])('排队%s沿用原run、重复目标不新建run、新目标取消旧待办', async (endpoint) => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      stateService.addBranch({ id: 'queued-run', projectId: 'default', branch: 'feature/queued-run', worktreePath: path.join(tmpDir, 'worktrees', 'queued-run'),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      const shaA = 'a'.repeat(40), shaB = 'b'.repeat(40), shaC = 'c'.repeat(40);
+      let release!: () => void, started!: () => void, replayed!: () => void;
+      const hold = new Promise<void>((resolve) => { release = resolve; });
+      const start = new Promise<void>((resolve) => { started = resolve; });
+      const replayDone = new Promise<void>((resolve) => { replayed = resolve; });
+      const original = mock.exec.bind(mock); let actualRuns = 0; const replayRunIds: string[] = [];
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker run -d') && command.includes('cds-queued-run-api')) {
+          actualRuns++;
+          if (actualRuns === 1) { started(); await hold; }
+        }
+        return original(command, options);
+      };
+      const addRun = vi.spyOn(stateService, 'addDeploymentRun');
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const replay = await request(server, 'POST', url.pathname, JSON.parse(String(init?.body)), init?.headers as Record<string, string>);
+        replayRunIds.push(String(replay.headers['x-cds-deployment-run-id']));
+        replayed();
+        return new Response(String(replay.body), { status: replay.status });
+      });
+      setBuildGateHostLoadProvider(async () => ({ loadAvg1: 0, cpuCores: 16, usedMemPercent: 10, memAvailableMB: 32000 }));
+      const first = request(server, 'POST', `/api/branches/queued-run${endpoint}`, { commitSha: shaA });
+      try {
+        await start;
+        const queued = await request(server, 'POST', `/api/branches/queued-run${endpoint}`, { commitSha: shaB }, { 'X-CDS-Trigger': 'webhook' });
+        const queuedId = String(queued.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(queuedId)?.status).toBe('queued');
+        const persisted = JSON.parse(fs.readFileSync(path.join(tmpDir, 'state.json'), 'utf8'));
+        expect(persisted.deploymentRuns[queuedId]?.status).toBe('queued');
+        const count = addRun.mock.calls.length;
+        const duplicate = await request(server, 'POST', `/api/branches/queued-run${endpoint}`, { commitSha: shaB });
+        expect(duplicate.headers['x-cds-deployment-run-id']).toBe(queuedId);
+        expect(addRun.mock.calls.length).toBe(count);
+        const newer = await request(server, 'POST', `/api/branches/queued-run${endpoint}`, { commitSha: shaC }, { 'X-CDS-Trigger': 'webhook' });
+        expect(newer.status, JSON.stringify(newer.body)).toBe(200);
+        const newId = String(newer.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(queuedId)?.status).toBe('cancelled');
+        expect(deploymentRunService.get(newId)?.status).toBe('queued');
+        release(); await first; await replayDone;
+        expect(replayRunIds).toEqual([newId]);
+        expect(deploymentRunService.get(newId)?.status).toBe('running');
+        expect(deploymentRunService.list({ branchId: 'queued-run' })).toHaveLength(3);
+        expect(actualRuns).toBe(2);
+      } finally { release(); await first; setBuildGateHostLoadProvider(null); vi.unstubAllGlobals(); addRun.mockRestore(); }
+    });
+
     it('points a joined deploy at the in-flight run, not the cancelled placeholder', async () => {
       const sha = '4444444444444444444444444444444444444444';
       await request(server, 'POST', '/api/build-profiles', {
@@ -3836,20 +3981,20 @@ describe('Branch Routes', () => {
       const activeRunId = deploymentRunService.list({ branchId: 'joined-run' })[0]?.id;
       expect(activeRunId).toBeTruthy();
 
+      try {
       // cdscli 的同 sha 手动部署：并入，不再自己拆装容器
       const joined = await request(server, 'POST', '/api/branches/joined-run/deploy', { commitSha: sha });
       expect(String(joined.body)).toContain('joined');
       const headerRunId = joined.headers['x-cds-deployment-run-id'];
       expect(headerRunId).toBe(activeRunId);
-      // 被并入这次自己那条占位 run 确实取消了，但没人被引导去看它
-      const placeholder = deploymentRunService.list({ branchId: 'joined-run' }).find((r) => r.id !== activeRunId);
-      expect(placeholder?.status).toBe('cancelled');
-      expect(placeholder?.events.some((e) => e.message.includes('已并入在途部署'))).toBe(true);
+      // 同目标不创建占位记录，也不触发额外部署。
+      expect(deploymentRunService.list({ branchId: 'joined-run' })).toHaveLength(1);
 
       releaseRun();
       await activeDeploy;
       // CLI 跟着这个头轮询，最终看到的是 running（成功），不是 cancelled（失败）
       expect(deploymentRunService.get(String(headerRunId))?.status).toBe('running');
+      } finally { releaseRun(); await activeDeploy; }
     });
 
     it('dispatches only the latest merged webhook commit after the active deploy completes', async () => {

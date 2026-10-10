@@ -1344,6 +1344,8 @@ export interface DeploymentRun {
   commitSha?: string;
   versionId?: string;
   operationId?: string;
+  operationGeneration?: number;
+  profileId?: string;
   executorId?: string;
   configHash?: string;
   startedAt: string;
