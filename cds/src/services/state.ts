@@ -69,7 +69,7 @@ import { createReportObjectStore, type ReportObjectStore } from './report-object
 import { buildCacheMounts } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
-import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs } from './preview-slug.js';
+import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -842,7 +842,7 @@ export class StateService {
         (project.legacyFlag && isGenericPreviewProjectSlug(project.slug)
           ? repoNameFromGitRef(project.gitRepoUrl) || repoNameFromGitRef(project.githubRepoFullName) || repoNameFromGitRef(readGitOriginUrl(this.repoRoot))
           : '') || project.slug;
-      const resolved = !oldAlias && projects.some((other) => other.id !== project.id && projectHistoricalSlugs(other).includes(candidate)) ? project.slug : candidate;
+      const resolved = !oldAlias && projects.some((other) => other.id !== project.id && projectReservedIdentifiers(other).includes(candidate)) ? project.slug : candidate;
       return { project, candidate: resolved, hadAlias: Object.hasOwn(project, 'aliasSlug') };
     });
     // 先校验整批，冲突时不覆盖任何项目，保留原状态供原版本恢复。
@@ -852,7 +852,7 @@ export class StateService {
         throw new Error(`项目「${project.name}」的旧标识格式无效，迁移未执行。请先在原版本修正。`);
       }
       if (changes.some((other) => other.project.id !== project.id &&
-          (other.candidate === candidate || projectHistoricalSlugs(other.project).includes(candidate)))) {
+          (other.candidate === candidate || projectReservedIdentifiers(other.project).includes(candidate)))) {
         throw new Error(`项目「${project.name}」的 slug「${candidate}」冲突，迁移未执行。请先在原版本修改冲突标识。`);
       }
     }
@@ -1984,7 +1984,7 @@ export class StateService {
     if (this.state.projects.some((p) => p.id === project.id)) {
       throw new Error(`Project with id '${project.id}' already exists`);
     }
-    if (this.state.projects.some((p) => projectHistoricalSlugs(p).includes(project.slug))) {
+    if (this.state.projects.some((p) => projectReservedIdentifiers(p).includes(project.slug))) {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }
     if (!project.mirror || !project.identityHistory?.length) {

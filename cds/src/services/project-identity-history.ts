@@ -12,6 +12,12 @@ export function projectIdentityVersion(project: Project): string {
   return project.identityHistory?.at(-1)?.id || '';
 }
 
+/** 摘要携带版本，完整设置记录只通过独立分页接口读取。 */
+export function projectIdentityResponse(project: Project) {
+  const { identityHistory: _history, ...summary } = project;
+  return { ...summary, identityVersion: projectIdentityVersion(project) };
+}
+
 /** 操作者取自已认证账号或凭据归属；不把调用方自报的 header 当成已验证身份。 */
 export function projectIdentityActorFromRequest(req: unknown): ProjectIdentityActor {
   const request = req as { cdsUser?: { id?: string }; cdsProjectKey?: { keyId?: string }; cdsAccess?: { keyId?: string } };

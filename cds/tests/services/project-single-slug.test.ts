@@ -55,7 +55,7 @@ describe('项目只保留一个 slug', () => {
     expect(projectResourceNamespace(state.getProject('p1')!)).toBe('old-project');
   });
 
-  it.each(['taken-project', 'invalid_slug'])('迁移遇到冲突或非法旧值 %s 时保留原始配置', async (alias) => {
+  it.each(['taken-project', 'p2', 'invalid_slug'])('迁移遇到冲突或非法旧值 %s 时保留原始配置', async (alias) => {
     seed([project('p1', 'old-project', alias), project('p2', 'taken-project')]);
     const state = new StateService(file, dir);
     expect(() => state.load()).toThrow(/迁移未执行/);

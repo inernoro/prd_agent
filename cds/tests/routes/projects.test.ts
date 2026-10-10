@@ -723,6 +723,21 @@ describe('Projects router (P4 Part 2)', () => {
       expect(stateService.getProject(id)?.slug).toBe('reserved-new');
     });
 
+    it('其他项目的 id 同样保留，创建与改名不能使 slug 指向错误项目', async () => {
+      const other = await request(server, 'POST', '/api/projects', { name: '另一项目', slug: 'other-readable' });
+      expect(other.status).toBe(201);
+      const reservedId = other.body.project.id;
+      const current = stateService.getProject('default')!;
+      const slug = current.slug;
+      const history = current.identityHistory;
+      expect((await request(server, 'PUT', '/api/projects/default', { slug: reservedId })).status).toBe(409);
+      expect((await request(server, 'POST', '/api/projects', { name: '错误归属', slug: reservedId })).status).toBe(409);
+      expect(stateService.getProject('default')!.slug).toBe(slug);
+      expect(stateService.getProject('default')!.identityHistory).toEqual(history);
+      expect(stateService.getProject(slug)!.id).toBe('default');
+      expect(stateService.getProject(reservedId)!.slug).toBe('other-readable');
+    });
+
     it.each(['aliasSlug', 'previewIdentifier'])('创建项目也拒绝废弃的 %s 字段', async (field) => {
       const count = stateService.getProjects().length;
       const res = await request(server, 'POST', '/api/projects', { name: '创建', slug: 'single-slug', [field]: 'second-slug' });

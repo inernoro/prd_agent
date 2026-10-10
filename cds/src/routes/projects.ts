@@ -39,9 +39,9 @@ import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parse
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
-import { repoNameFromGitRef, projectHistoricalSlugs, projectResourceNamespace } from '../services/preview-slug.js';
+import { repoNameFromGitRef, projectReservedIdentifiers, projectResourceNamespace } from '../services/preview-slug.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { projectIdentityActorFromRequest, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
+import { projectIdentityActorFromRequest, projectIdentityResponse, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
@@ -564,8 +564,8 @@ interface ProjectSummary extends Project, ProjectStats {
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
   // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
   // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
-  const { branchGroups: _branchGroups, identityHistory: _identityHistory, ...rest } = project;
-  return { ...rest, ...stats, identityVersion: projectIdentityVersion(project), resourceUsage: usage ?? null };
+  const { branchGroups: _branchGroups, ...rest } = projectIdentityResponse(project);
+  return { ...rest, ...stats, resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
@@ -3017,7 +3017,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // named prd_agent). Capped at 99 attempts so a corrupted state
     // can't hang the request.
     const existingProjects = stateService.getProjects();
-    const takenSlugs = new Set(existingProjects.flatMap((p) => projectHistoricalSlugs(p)));
+    const takenSlugs = new Set(existingProjects.flatMap((p) => projectReservedIdentifiers(p)));
     let slug = baseSlug;
     if (takenSlugs.has(slug)) {
       if (slugProvidedExplicitly) {
@@ -3454,7 +3454,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }>;
 
     if (body.expectedIdentityVersion !== undefined &&
-        body.expectedIdentityVersion !== (project.identityHistory?.at(-1)?.id || '')) {
+        body.expectedIdentityVersion !== projectIdentityVersion(project)) {
       res.status(409).json({ error: 'settings_changed', message: '项目设置已被其他操作修改。请刷新页面，核对最新值后重新保存。' });
       return;
     }
@@ -3499,7 +3499,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         res.status(400).json({ error: 'validation', field: 'slug', message: '请填写有效的项目 slug：最多 50 个小写字母、数字或短横线，不能以短横线开头或结尾。' });
         return;
       }
-      const collision = stateService.getProjects().find((p) => p.id !== project.id && projectHistoricalSlugs(p).includes(slug));
+      const collision = stateService.getProjects().find((p) => p.id !== project.id && projectReservedIdentifiers(p).includes(slug));
       if (collision) {
         res.status(409).json({ error: 'duplicate', field: 'slug', message: `项目 slug「${slug}」已被项目「${collision.name}」使用或保留，请换一个。` });
         return;

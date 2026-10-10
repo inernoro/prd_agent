@@ -250,6 +250,11 @@ export function projectHistoricalSlugs(project: PreviewProjectIdentity | undefin
   return [...new Set(values.map((value) => slugifyForPreview(value || '')).filter(Boolean))];
 }
 
+/** 项目查找优先匹配 id；slug 不能占用其他项目的 id 或历史名称。 */
+export function projectReservedIdentifiers(project: PreviewProjectIdentity): string[] {
+  return [...new Set([project.id || '', ...projectHistoricalSlugs(project)].filter(Boolean))];
+}
+
 /** 已创建资源的名字不随项目改名重算；关联始终由项目 id 及资源 id 保存。 */
 export function projectResourceNamespace(project: PreviewProjectIdentity): string {
   const initial = project.identityHistory?.[0]?.after;
