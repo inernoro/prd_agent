@@ -72,8 +72,8 @@ export class CandidateSwitchCoordinator {
         await this.journal.advance(runId, 'rollback-intent', 'rollback-verified');
         await this.removeGraph(newGraph, 'candidate', actions, () => fence('candidate-rejected-recycle', oldKey));
         // Old route ACK does not prove a previously stopped consumer is serving again.
-        // The executor owns original-ID start/readiness/persistence and the final ACK.
-        if (!record.stopBeforeStart?.length) await this.journal.advance(runId, 'rollback-verified', 'released');
+        // The executor owns original-ID start/readiness/persistence, final ACK and private network retirement.
+        if (!record.stopBeforeStart?.length && !record.networkCreation?.intent) await this.journal.advance(runId, 'rollback-verified', 'released');
       } catch (rollbackError) { await this.reconcile(runId); throw rollbackError; }
       throw error;
     }

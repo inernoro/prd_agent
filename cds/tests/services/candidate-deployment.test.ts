@@ -93,6 +93,21 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false) {
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('keeps an API rollback reservation until its private network has actually been retired', async () => {
+    const f = fixture('api', true); let acknowledgements = 0;
+    f.options.acknowledge = async () => {
+      ++acknowledgements;
+      if (acknowledgements === 2) expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('rollback-intent');
+      return acknowledgements !== 1;
+    };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_switch_ack');
+    expect(f.events).toContain('docker network rm ' + '9'.repeat(64));
+    expect(f.networkExists()).toBe(false);
+    const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+    expect(disk.getDeploymentRun(runId)!.candidate!.phase).toBe('released');
+    expect(f.old.State.Running).toBe(true);
+  });
+
   it('durably freezes the private network identity and removes it before restoring a failed candidate worker', async () => {
     const f = fixture('worker', true); f.setReady(false);
     const ready = f.containers.waitForReadiness;
