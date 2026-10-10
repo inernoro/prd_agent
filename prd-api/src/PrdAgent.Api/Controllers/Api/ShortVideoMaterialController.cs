@@ -70,7 +70,7 @@ public class ShortVideoMaterialController : ControllerBase
             RequestedTitle = req.Title,
             InputSourceText = req.SourceText,
             SourceMode = "resolving",
-            Status = "queued",
+            Status = ShortVideoMaterialRunStatus.Queued,
             StoreId = string.IsNullOrWhiteSpace(req.StoreId) ? null : req.StoreId,
             CreatedAt = now,
             UpdatedAt = now,
@@ -97,6 +97,35 @@ public class ShortVideoMaterialController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
         return Ok(ApiResponse<ShortVideoMaterialRun>.Ok(run));
+    }
+
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(string runId)
+    {
+        var userId = GetUserId();
+        // 状态与删除必须在同一个 Mongo 过滤器里判断：queued 与 worker 的
+        // queued -> running 领取并发时，只允许一方成功，避免返回删除成功后
+        // worker 仍继续创建附件和知识库条目。
+        var deleted = await _db.ShortVideoMaterialRuns.DeleteOneAsync(
+            run => run.Id == runId
+                   && run.UserId == userId
+                   && (run.Status == ShortVideoMaterialRunStatus.Queued
+                       || run.Status == ShortVideoMaterialRunStatus.Done
+                       || (run.Status == ShortVideoMaterialRunStatus.Failed
+                           && run.ProcessingToken == null)),
+            CancellationToken.None);
+        if (deleted.DeletedCount == 1)
+            return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+
+        var existing = await _db.ShortVideoMaterialRuns
+            .Find(run => run.Id == runId && run.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (existing == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+
+        return Conflict(ApiResponse<object>.Fail(
+            "SHORT_VIDEO_RUN_ACTIVE",
+            "短视频仍在处理中，暂时不能删除。请等待处理完成或失败后再重试"));
     }
 
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import {
 } from './stable-smoke-results.mjs';
 import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
+import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -28,8 +29,16 @@ const valueOptions = new Set([
   '--production-visual-manifest',
   '--report-url',
 ]);
-const flagOptions = new Set(['--force-unlock', '--cds-only', '--production-only', '--dry-run', '--preflight', '--help']);
-export const productionReadOnlyGrep = '\\[CORE-001\\]';
+const flagOptions = new Set([
+  '--force-unlock',
+  '--cds-only',
+  '--production-only',
+  '--dry-run',
+  '--preflight',
+  '--capture-visual',
+  '--help',
+]);
+export const productionReadOnlyGrep = '\\[CORE-001\\]|\\[REG-stsmk-production-read-only-001\\]';
 
 export const runnerHelpText = `稳定冒烟本地运行器
 
@@ -46,6 +55,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --env-file <路径>    指定本地凭据兼容文件
   --grep <表达式>      只运行匹配的 Playwright 用例
   --visual-manifest <路径> 指定本轮真人浏览器视觉取证 manifest；完整运行必填
+  --capture-visual     在 CDS 真实业务旅程中按 visual-plan.json 自动逐槽取证并生成 manifest
   --production-visual-manifest <路径> 指定 CDS 门禁通过后采集的正式环境视觉 manifest
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
@@ -72,6 +82,12 @@ export function parseRunnerArgs(argv) {
   }
   if (flags.has('--cds-only') && flags.has('--production-only')) {
     throw new Error('--cds-only 与 --production-only 不能同时使用');
+  }
+  if (flags.has('--capture-visual') && flags.has('--production-only')) {
+    throw new Error('--capture-visual 只允许先在 CDS 环境使用；正式环境视觉必须通过 CDS 门禁后单独取证');
+  }
+  if (flags.has('--capture-visual') && values['--visual-manifest']) {
+    throw new Error('--capture-visual 与 --visual-manifest 不能同时使用');
   }
   return {
     has: (name) => flags.has(name),
@@ -387,12 +403,129 @@ async function readGatewayLoginSnapshot(values, fetchFn = globalThis.fetch) {
     || payload?.success !== true
     || !payload?.data?.token
     || payload?.data?.mustChangePassword !== false) {
-    throw new Error('CDS 网关固定管理员账号登录失败');
+    const code = payload?.error?.code || `HTTP_${response.status}`;
+    throw new Error(`CDS 网关固定管理员账号登录失败:${code}`);
   }
   const claims = decodeJwtPayload(payload.data.token);
   const securityVersion = String(claims.user_security_version || '').trim();
   if (!securityVersion) throw new Error('CDS 网关管理员会话缺少安全版本声明');
   return { token: payload.data.token, securityVersion };
+}
+
+function isRetryableGatewayProbeError(error) {
+  if (error instanceof TypeError) return true;
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return true;
+  const causeCode = String(error?.cause?.code || '');
+  if (['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT'].includes(causeCode)) {
+    return true;
+  }
+  return /(?:HTTP_|GW_TRANSIENT_HTTP_)(502|503|504)\b/.test(String(error?.message || ''));
+}
+
+async function retryGatewayProbeOperation(operation, {
+  attempts = 6,
+  sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableGatewayProbeError(error) || attempt === attempts) throw error;
+      await sleepFn(Math.min(10_000, 1_000 * (2 ** (attempt - 1))));
+    }
+  }
+  throw lastError;
+}
+
+function publicAssetUrls(source, baseUrl) {
+  const matches = String(source || '').matchAll(/(?:["'`(])((?:\/?assets\/)[A-Za-z0-9._/-]+\.(?:css|js))(?:["'`)])/g);
+  return [...new Set([...matches].map((match) => new URL(match[1], baseUrl).href))];
+}
+
+async function mapWithConcurrency(values, limit, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index], index);
+    }
+  }));
+  return results;
+}
+
+async function fetchPublicAsset(url, fetchFn, { readBody = false } = {}) {
+  let response;
+  try {
+    response = await fetchFn(url, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+  } catch (error) {
+    throw new Error(`CDS 公网资源请求失败 ${url}：${error?.cause?.code || error?.message || '未知传输错误'}`);
+  }
+  if (!response.ok) throw new Error(`CDS 公网资源 ${url} 返回 HTTP ${response.status}`);
+  const pathname = new URL(url).pathname.toLowerCase();
+  const assetType = pathname.endsWith('.js') ? 'script' : pathname.endsWith('.css') ? 'style' : null;
+  if (assetType) {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const validType = assetType === 'script'
+      ? /(?:javascript|ecmascript)/.test(contentType)
+      : contentType.includes('text/css');
+    const body = await response.text();
+    const looksLikeHtml = /^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(body);
+    if (!validType || looksLikeHtml) {
+      throw new Error(`CDS 公网资源 ${url} 返回了无效的 ${assetType === 'script' ? 'JavaScript' : 'CSS'} 内容`);
+    }
+    return { response, body: readBody ? body : '' };
+  }
+  if (readBody) return { response, body: await response.text() };
+  await response.body?.cancel().catch(() => undefined);
+  return { response, body: '' };
+}
+
+export async function probeCdsPublicEntry(baseUrl, fetchFn = globalThis.fetch) {
+  const origin = withoutTrailingSlash(baseUrl);
+  const cacheBust = `stable_smoke_readiness=${Date.now()}`;
+  const entryUrls = ['/', '/document-store', '/web-pages'].map((path) => `${origin}${path}?${cacheBust}`);
+  const entryResults = await mapWithConcurrency(entryUrls, 3, (url) => fetchPublicAsset(url, fetchFn, { readBody: true }));
+  const entryBodies = entryResults.map((result) => result.body);
+  const entryAssets = [...new Set(entryBodies.flatMap((body) => publicAssetUrls(body, origin)))];
+  if (entryAssets.length === 0) throw new Error('CDS 公网入口没有可验证的静态资源');
+
+  const assetResults = await mapWithConcurrency(entryAssets, 4, (url) => (
+    fetchPublicAsset(url, fetchFn, { readBody: url.endsWith('.js') })
+  ));
+  const scriptBodies = assetResults.map((result, index) => (entryAssets[index].endsWith('.js') ? result.body : ''));
+  const lazyAssets = [...new Set(scriptBodies.flatMap((body) => publicAssetUrls(body, origin)))]
+    .filter((url) => !entryAssets.includes(url));
+  await mapWithConcurrency(lazyAssets, 8, (url) => fetchPublicAsset(url, fetchFn));
+  return { entries: entryUrls.length, assets: entryAssets.length + lazyAssets.length };
+}
+
+export async function waitForCdsPublicEntryStability(baseUrl, {
+  attempts = 12,
+  requiredConsecutivePasses = 2,
+  fetchFn = globalThis.fetch,
+  sleepFn = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
+} = {}) {
+  let consecutivePasses = 0;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await probeCdsPublicEntry(baseUrl, fetchFn);
+      consecutivePasses += 1;
+      if (consecutivePasses >= requiredConsecutivePasses) return result;
+    } catch (error) {
+      lastError = error;
+      consecutivePasses = 0;
+    }
+    if (attempt < attempts) await sleepFn(2_000);
+  }
+  throw new Error(`CDS 公网入口在部署后未稳定：${lastError?.message || '连续健康次数不足'}`);
 }
 
 export function canReuseGatewayPersistenceProbe(record, { runId, commit }) {
@@ -414,6 +547,13 @@ export function canReuseGatewayPersistenceProbe(record, { runId, commit }) {
     ));
 }
 
+export function resolveNotificationBaseUrl(values) {
+  return values.STABLE_SMOKE_NOTIFY_BASE_URL
+    || values.STABLE_SMOKE_PROD_BASE_URL
+    || values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL
+    || '';
+}
+
 export async function runCdsGatewayPersistenceProbe({
   recordPath,
   runId,
@@ -422,11 +562,17 @@ export async function runCdsGatewayPersistenceProbe({
   commandFn = command,
   waitFn = waitForCdsDeployment,
   fetchFn = globalThis.fetch,
+  sleepFn,
+  stabilizeFn = waitForCdsPublicEntryStability,
 }) {
   const existing = readJson(recordPath);
   if (canReuseGatewayPersistenceProbe(existing, { runId, commit })) return existing;
 
-  const initial = await readGatewayLoginSnapshot(values, fetchFn);
+  const retryOptions = { sleepFn };
+  const initial = await retryGatewayProbeOperation(
+    () => readGatewayLoginSnapshot(values, fetchFn),
+    retryOptions,
+  );
   const branchIdResult = commandFn('python3', [
     '.claude/skills/cds/cli/cdscli.py',
     'branch-id',
@@ -458,17 +604,29 @@ export async function runCdsGatewayPersistenceProbe({
     }
     deploymentRunIds.add(deploymentRunId);
     const readiness = await waitFn(commit);
-    const oldSession = await fetchFn(
-      `${withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL)}/gw/auth/context`,
-      {
-        signal: AbortSignal.timeout(10_000),
-        headers: { Authorization: `Bearer ${initial.token}` },
+    const oldSession = await retryGatewayProbeOperation(
+      async () => {
+        const response = await fetchFn(
+          `${withoutTrailingSlash(values.STABLE_SMOKE_CDS_GW_BASE_URL)}/gw/auth/context`,
+          {
+            signal: AbortSignal.timeout(10_000),
+            headers: { Authorization: `Bearer ${initial.token}` },
+          },
+        );
+        if ([502, 503, 504].includes(response.status)) {
+          throw new Error(`GW_TRANSIENT_HTTP_${response.status}`);
+        }
+        return response;
       },
+      retryOptions,
     );
     if (!oldSession.ok) {
       throw new Error(`CDS 第 ${sequence} 次重新部署后旧网关会话失效`);
     }
-    const fresh = await readGatewayLoginSnapshot(values, fetchFn);
+    const fresh = await retryGatewayProbeOperation(
+      () => readGatewayLoginSnapshot(values, fetchFn),
+      retryOptions,
+    );
     if (fresh.securityVersion !== initial.securityVersion) {
       throw new Error(`CDS 第 ${sequence} 次重新部署后管理员安全版本发生漂移`);
     }
@@ -485,6 +643,7 @@ export async function runCdsGatewayPersistenceProbe({
       securityVersion: fresh.securityVersion,
     });
   }
+  await stabilizeFn(values.STABLE_SMOKE_CDS_BASE_URL, { fetchFn, sleepFn });
 
   const record = {
     schemaVersion: '1.0',
@@ -501,9 +660,11 @@ export async function runCdsGatewayPersistenceProbe({
 
 const validationOnlyPrefixes = [
   '.agents/skills/',
+  '.claude/skills/cds/',
   '.claude/skills/create-visual-test-to-kb/',
   '.claude/skills/stable-smoke/',
   '.Codex/',
+  'cds/',
   'changelogs/',
   'doc/',
   'e2e/',
@@ -602,13 +763,21 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   const runtimeCommit = runtimeExpectation.runtimeCommit || expectedCommit;
   const runtimeEquivalent = runtimeExpectation.runtimeEquivalent === true;
   const serviceRuntimeCommits = runtimeExpectation.serviceRuntimeCommits || {};
+  const latestDeploymentRun = branch?.latestDeploymentRun || {};
+  const completedDeploymentRunMatches = (
+    [expectedCommit, runtimeCommit].includes(latestDeploymentRun.commitSha)
+    && latestDeploymentRun.status === 'running'
+    && latestDeploymentRun.phase === 'complete'
+  );
   const reasons = [];
   const services = Object.values(branch?.services || {});
   if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
   if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到目标提交');
   if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
   if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
-  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
+  if (branch?.lastDeployDispatchCommitSha !== runtimeCommit && !completedDeploymentRunMatches) {
+    reasons.push('CDS 尚未对运行时目标提交完成部署调度');
+  }
   if (branch?.deployRuntime?.drift?.hasDrift) reasons.push('CDS 服务存在版本漂移');
   if (services.length === 0) reasons.push('CDS 未返回任何业务服务');
   for (const [serviceKey, service] of Object.entries(branch?.services || {})) {
@@ -638,7 +807,9 @@ function runtimeExpectationForBranch(branch, expectedCommit) {
     .filter((commit) => commit && commit !== expectedCommit))];
   const changedFilesByCommit = {};
   for (const deployedCommit of deployedCommits) {
-    const diffResult = command('git', ['diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
+    // Git 默认会把中文等非 ASCII 路径转义并包进引号，导致 `changelogs/` 等
+    // 前缀分类失真。只关闭路径显示转义，不改变 diff 范围或内容判定。
+    const diffResult = command('git', ['-c', 'core.quotePath=false', 'diff', '--name-only', `${deployedCommit}..${expectedCommit}`]);
     if (diffResult.status === 0) {
       changedFilesByCommit[deployedCommit] = String(diffResult.stdout || '')
         .split(/\r?\n/)
@@ -655,22 +826,51 @@ function runtimeExpectationForBranch(branch, expectedCommit) {
   );
 }
 
-function readCdsBranchStatus() {
-  const branchIdResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
-  const branchIdPayload = branchIdResult.status === 0 ? JSON.parse(String(branchIdResult.stdout || '{}')) : null;
+function readCdsBranchStatusOnce(commandFn = command) {
+  const branchIdResult = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
+  const branchIdPayload = branchIdResult.status === 0 ? readJsonFromText(branchIdResult.stdout) : null;
   const branchId = branchIdPayload?.data?.branchId;
   if (!branchId) throw new Error('CDS 权威分支标识读取失败，拒绝在未知部署版本上开测');
-  const statusResult = command('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
-  const statusPayload = statusResult.status === 0 ? JSON.parse(String(statusResult.stdout || '{}')) : null;
+  const statusResult = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
+  const statusPayload = statusResult.status === 0 ? readJsonFromText(statusResult.stdout) : null;
   if (!statusPayload?.data) throw new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
-  return statusPayload.data;
+  const branch = statusPayload.data;
+  if (branch.lastDeploymentRunId) {
+    const runResult = commandFn('python3', [
+      '.claude/skills/cds/cli/cdscli.py',
+      'deployment-run', 'show', branch.lastDeploymentRunId,
+    ]);
+    const runPayload = runResult.status === 0 ? readJsonFromText(runResult.stdout) : null;
+    if (!runPayload?.data?.run) {
+      throw new Error('CDS 部署运行状态读取失败，拒绝在未知部署版本上开测');
+    }
+    branch.latestDeploymentRun = runPayload?.data?.run || null;
+  }
+  return branch;
+}
+
+export async function readCdsBranchStatusWithRetries(commandFn = command, {
+  attempts = 3,
+  delayMs = 2_000,
+  delayFn = delay,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return readCdsBranchStatusOnce(commandFn);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await delayFn(delayMs * attempt);
+    }
+  }
+  throw lastError || new Error('CDS 分支部署状态读取失败，拒绝在未知部署版本上开测');
 }
 
 async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) {
   const startedAt = Date.now();
   let readiness = { ready: false, reasons: ['尚未检查'], versionId: '', commit: '' };
   while (Date.now() - startedAt < timeoutMs) {
-    const branch = readCdsBranchStatus();
+    const branch = await readCdsBranchStatusWithRetries();
     readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
     if (readiness.ready) return { ...readiness, waitedMs: Date.now() - startedAt };
     await delay(10_000);
@@ -678,11 +878,13 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
-function runPlaywright(environment, values, runDir, grep = '') {
+function runPlaywright(environment, values, runDir, grep = '', visualCapture = null, artifactStem = environment) {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
-  const resultPath = resolve(runDir, `${environment}-results.json`);
-  const htmlPath = resolve(runDir, `${environment}-playwright-report`);
-  const testResultPath = resolve(runDir, `${environment}-test-results`);
+  const resultPath = resolve(runDir, `${artifactStem}-results.json`);
+  const htmlPath = resolve(runDir, `${artifactStem}-playwright-report`);
+  const testResultPath = resolve(runDir, `${artifactStem}-test-results`);
+  // 同一 runId 恢复执行时不得保留旧版 HTML/trace，其中可能包含未脱敏网络头。
+  rmSync(htmlPath, { recursive: true, force: true });
   const env = {
     ...process.env,
     ...values,
@@ -701,13 +903,23 @@ function runPlaywright(environment, values, runDir, grep = '') {
     STABLE_SMOKE_JSON_OUTPUT: resultPath,
     STABLE_SMOKE_HTML_OUTPUT: htmlPath,
     STABLE_SMOKE_TEST_OUTPUT: testResultPath,
+    ...(visualCapture ? {
+      STABLE_SMOKE_VISUAL_PLAN: visualCapture.planPath,
+      STABLE_SMOKE_VISUAL_OUTPUT: visualCapture.outputPath,
+    } : {}),
   };
   const args = [
     '--dir', 'e2e', 'exec', 'playwright', 'test', 'specs/stable-smoke.spec.ts',
   ];
   if (grep) args.push('--grep', grep);
   const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
-  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
+  const sanitization = [resultPath, testResultPath]
+    .map((path) => sanitizeStableSmokeArtifactTree(path))
+    .reduce((total, item) => ({
+      scanned: total.scanned + item.scanned,
+      changed: total.changed + item.changed,
+    }), { scanned: 0, changed: 0 });
+  return { status: result.status ?? 1, resultPath, htmlPath, testResultPath, sanitization };
 }
 
 const folderRegressionCaseIds = [
@@ -716,9 +928,123 @@ const folderRegressionCaseIds = [
   'REG-web-folder-create-rename-001',
 ];
 
-export function runFolderRegressionTests(runDir, commandRunner = command) {
+export function runNotificationEvidenceRegression(runDir, commandRunner = command) {
+  const result = commandRunner('node', [
+    '--test', '--test-name-pattern', 'REG-stsmk-notify-evidence-001',
+    'scripts/tests/stable-smoke-run.test.mjs',
+  ]);
+  const passed = result.status === 0;
+  const artifactPath = resolve(runDir, 'notification-evidence-regression.log');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}`, 'utf8');
+  return {
+    execution: { environment: 'cds-notification-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
+    rows: [{ caseId: 'REG-stsmk-notify-evidence-001', environment: 'cds', title: '未验证报告不得通知', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '通知证据安全回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['通知证据安全回归失败'] }],
+  };
+}
+
+export function runReportViewRegression(runDir, commandRunner = command) {
+  const result = commandRunner('node', [
+    '--test', '--test-name-pattern', 'REG-stsmk-report-view-001',
+    'scripts/tests/stable-smoke-run.test.mjs',
+  ]);
+  const passed = result.status === 0;
+  const artifactPath = resolve(runDir, 'report-view-regression.log');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}`, 'utf8');
+  return {
+    execution: { environment: 'cds-report-view-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
+    rows: [{ caseId: 'REG-stsmk-report-view-001', environment: 'cds', title: '真实展开完整版核对报告正文', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '报告视图安全回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['报告视图安全回归失败'] }],
+  };
+}
+
+export function runReportRiskRegression(runDir, commandRunner = command) {
+  const result = commandRunner('python3', [
+    '.claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py',
+    'ReportRiskDecisionTests',
+  ]);
+  const passed = result.status === 0;
+  const artifactPath = resolve(runDir, 'report-risk-regression.log');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}`, 'utf8');
+  return {
+    execution: { environment: 'cds-report-risk-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
+    rows: [{ caseId: 'REG-stsmk-report-risk-001', environment: 'cds', title: '报告首屏结论与风险分类不得误导', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '报告风险呈现回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['报告风险呈现回归失败'] }],
+  };
+}
+
+export function runCdsVersionEvidence(runDir, commandRunner = command) {
+  const readiness = readJson(resolve(runDir, 'cds-readiness.json'));
+  const contract = commandRunner('node', [
+    '--test', '--test-name-pattern',
+    'CDS 版本冻结门禁|纯验收工具变化可复用已部署业务版本|业务运行时代码变化不得借用旧镜像',
+    'scripts/tests/stable-smoke-run.test.mjs',
+  ]);
+  const ready = readiness?.ready === true
+    && Boolean(readiness?.versionId)
+    && Boolean(readiness?.expectedCommit)
+    && readiness?.commit === readiness?.expectedCommit;
+  const contractPassed = contract.status === 0;
+  const artifactPath = resolve(runDir, 'cds-version-evidence.log');
+  writeFileSync(artifactPath, [
+    JSON.stringify({
+      ready,
+      expectedCommit: readiness?.expectedCommit || '',
+      commit: readiness?.commit || '',
+      runtimeCommit: readiness?.runtimeCommit || '',
+      runtimeEquivalent: readiness?.runtimeEquivalent === true,
+      versionId: readiness?.versionId || '',
+      reasons: readiness?.reasons || [],
+    }),
+    String(contract.stdout || ''),
+    String(contract.stderr || ''),
+  ].join('\n'), 'utf8');
+  const row = (caseId, title, passed, error) => ({
+    caseId,
+    environment: 'cds',
+    title,
+    tags: ['deployment-evidence'],
+    status: passed ? 'pass' : 'fail',
+    durationMs: 0,
+    error: passed ? '' : error,
+    retryCount: 0,
+    hadFailedAttempt: !passed,
+    attemptErrors: passed ? [] : [error],
+  });
+  return {
+    execution: {
+      environment: 'cds-version-evidence',
+      status: ready && contractPassed ? 'passed' : 'failed',
+      resultPath: null,
+      artifactPath,
+      policy: 'authoritative-deployment-plus-deterministic-regression',
+      gateReasons: readiness?.reasons || [],
+    },
+    rows: [
+      row('COMMON-003', '[COMMON-003] 固定提交、不可变运行版本与恢复锚点', ready, 'CDS 固定版本或恢复锚点证据不完整'),
+      row(
+        'REG-stsmk-cds-runtime-equivalence-001',
+        '[REG-stsmk-cds-runtime-equivalence-001] CDS 运行时等价分类与真实部署版本',
+        ready && contractPassed,
+        ready ? 'CDS 运行时等价分类回归失败' : 'CDS 真实部署版本证据不完整',
+      ),
+    ],
+  };
+}
+
+export function runFolderRegressionTests(runDir, commandRunner = command, dependencyExists = existsSync) {
+  const vitestPath = resolve(repoRoot, 'prd-admin/node_modules/.bin/vitest');
+  let dependencyReady = dependencyExists(vitestPath);
+  let installResult = { status: 0 };
+  if (!dependencyReady) {
+    installResult = commandRunner('pnpm', [
+      '--dir', 'prd-admin', 'install', '--frozen-lockfile',
+    ], {
+      env: { ...process.env },
+      stdio: 'inherit',
+      encoding: undefined,
+    });
+    dependencyReady = installResult.status === 0;
+  }
   const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
-  const clientResult = commandRunner('pnpm', [
+  const clientResult = dependencyReady ? commandRunner('pnpm', [
     '--dir', 'prd-admin', 'exec', 'vitest', 'run',
     'src/components/web-hosting/folderDrop.test.ts',
     '--reporter=junit', `--outputFile=${clientArtifactPath}`,
@@ -726,7 +1052,7 @@ export function runFolderRegressionTests(runDir, commandRunner = command) {
     env: { ...process.env },
     stdio: 'inherit',
     encoding: undefined,
-  });
+  }) : installResult;
   const serverArtifactPath = resolve(runDir, 'web-folder-regressions.trx');
   const serverResult = commandRunner('dotnet', [
     'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
@@ -1131,11 +1457,16 @@ export function buildStableSmokeArchiveCommand({
   reportPath,
   manifestPath,
   branch,
+  projectId = '',
+  branchId = '',
   commit,
   folderPath,
   reportDate = new Date().toISOString().slice(0, 10),
 }) {
   if (productionReadOnly) {
+    if (!projectId || !branchId) {
+      throw new Error('正式只读归档缺少 CDS 项目或分支归属，拒绝生成无项目报告');
+    }
     return {
       program: 'python3',
       contract: 'functional-read-only',
@@ -1149,6 +1480,8 @@ export function buildStableSmokeArchiveCommand({
         '--folder-path', folderPath,
         '--verdict', verdict,
         '--tier', 'P0 只读冒烟',
+        '--project', projectId,
+        '--branch-id', branchId,
         '--branch', branch,
         '--commit', commit,
       ],
@@ -1198,7 +1531,7 @@ function readLooseArg(argv, name, fallback = '') {
   return value && !value.startsWith('--') ? value : fallback;
 }
 
-export function buildUnhandledFailureSummary({ runId, selected, reason, reportUrl = '' }) {
+export function buildUnhandledFailureSummary({ runId, selected, reason, reportUrl = '', productionBaseline = null }) {
   return {
     runId,
     verdict: 'fail',
@@ -1212,6 +1545,40 @@ export function buildUnhandledFailureSummary({ runId, selected, reason, reportUr
       ? { status: 'provided', reportUrl }
       : { status: 'unavailable', reportUrl: '', reason: '执行链异常发生在在线报告归档完成之前' },
     notification: { status: 'pending' },
+    ...(productionBaseline ? { productionBaseline } : {}),
+  };
+}
+
+export function buildProductionBaselineCheckpoint({ runId, commit, execution, missing = [] }) {
+  if (missing.length > 0) {
+    return {
+      runId,
+      commit,
+      checkedAt: new Date().toISOString(),
+      status: 'blocked',
+      caseId: 'CORE-001',
+      missing,
+      conclusion: '正式环境基础可用性未执行，缺少只读基线配置。',
+    };
+  }
+  const rows = execution?.resultPath
+    ? collectPlaywrightCases(readJson(execution.resultPath), 'production')
+    : [];
+  const coreRows = rows.filter((row) => row.caseId === 'CORE-001');
+  const passed = execution?.status === 0
+    && coreRows.length > 0
+    && coreRows.every((row) => row.status === 'pass');
+  return {
+    runId,
+    commit,
+    checkedAt: new Date().toISOString(),
+    status: passed ? 'pass' : 'fail',
+    caseId: 'CORE-001',
+    execution: execution ? buildExecutionRecord('production', execution) : null,
+    rows: coreRows,
+    conclusion: passed
+      ? '正式环境首页、入口资源与根页面渲染可用。'
+      : '正式环境基础可用性未通过；该结论独立于 CDS 状态。',
   };
 }
 
@@ -1227,13 +1594,6 @@ export async function deliverUnhandledFailure(argv, error) {
       : ['cds', 'production'];
   const reason = error instanceof Error ? error.message : '未知执行异常';
   const providedReportUrl = '';
-  const summaryDocument = buildUnhandledFailureSummary({
-    runId,
-    selected,
-    reason,
-    reportUrl: providedReportUrl,
-  });
-
   try {
     mkdirSync(runDir, { recursive: true });
   } catch {
@@ -1241,57 +1601,22 @@ export async function deliverUnhandledFailure(argv, error) {
     runDir = resolve(outputRoot, runId);
     mkdirSync(runDir, { recursive: true });
   }
+  const productionBaseline = readJson(resolve(runDir, 'production-baseline.json'));
+  const summaryDocument = buildUnhandledFailureSummary({
+    runId,
+    selected,
+    reason,
+    reportUrl: providedReportUrl,
+    productionBaseline,
+  });
   const summaryPath = resolve(runDir, 'summary.json');
   if (argv.includes('--dry-run')) {
     summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
   } else {
-    try {
-      const envPath = resolve(readLooseArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
-      let local = { loaded: false, values: {} };
-      try {
-        local = loadLocalEnvironment(envPath);
-      } catch (credentialError) {
-        summaryDocument.credentialWarning = credentialError instanceof Error
-          ? credentialError.message
-          : '本地凭据文件读取失败';
-      }
-      const registry = readJson(credentialRegistryPath) || {};
-      const values = applyCredentialRegistry({ ...local.values, ...process.env }, registry, readKeychainSecret);
-      const notificationCenterUrl = values.STABLE_SMOKE_PROD_BASE_URL
-        ? `${values.STABLE_SMOKE_PROD_BASE_URL.replace(/\/+$/, '')}/?panel=notifications`
-        : '';
-      const notification = command('node', [
-        'scripts/stable-smoke-notify.mjs',
-        '--verdict', 'fail',
-        '--run-id', runId,
-        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
-        '--module', '稳定冒烟执行链',
-        '--recovery', '稳定冒烟异常终止。请先处理执行摘要中的失败阶段，再使用相同 runId 重新执行并核对验收报告。',
-        '--report-url', providedReportUrl || notificationCenterUrl,
-        '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
-      ], {
-        env: {
-          ...process.env,
-          ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
-        },
-      });
-      summaryDocument.notification = notification.status === 0
-        ? {
-            status: 'sent',
-            result: readJsonFromText(notification.stdout),
-            actionUrl: providedReportUrl || notificationCenterUrl,
-          }
-        : {
-            status: 'delivery-failed',
-            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
-          };
-    } catch (deliveryError) {
-      summaryDocument.notification = {
-        status: 'delivery-failed',
-        error: deliveryError instanceof Error ? deliveryError.message : 'MAP 通知发送失败',
-      };
-    }
+    summaryDocument.notification = {
+      status: 'withheld-unverified-report',
+      reason: '执行异常发生前没有完成 CDS 线上报告与 verify-open；禁止发送未验证链接或通知中心替代链接。',
+    };
   }
   writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: 'fail', notification: summaryDocument.notification })}\n`);
@@ -1330,59 +1655,14 @@ export async function deliverLockedRun(argv, dependencies = {}) {
       : ['cds', 'production'];
   const providedReportUrl = '';
   const summaryDocument = buildLockedRunSummary({ runId, selected, reportUrl: providedReportUrl });
-  const commandFn = dependencies.commandFn || command;
-
   mkdirSync(runDir, { recursive: true });
   if (argv.includes('--dry-run')) {
     summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
   } else {
-    try {
-      const envPath = resolve(readLooseArg(argv, '--env-file', resolve(repoRoot, '.env.stable-smoke.local')));
-      const local = dependencies.values
-        ? { loaded: true, values: dependencies.values }
-        : loadLocalEnvironment(envPath);
-      const registry = readJson(credentialRegistryPath) || {};
-      const values = applyCredentialRegistry(
-        { ...local.values, ...process.env },
-        registry,
-        dependencies.secretReader || readKeychainSecret,
-      );
-      const notificationCenterUrl = values.STABLE_SMOKE_PROD_BASE_URL
-        ? `${values.STABLE_SMOKE_PROD_BASE_URL.replace(/\/+$/, '')}/?panel=notifications`
-        : '';
-      const actionUrl = providedReportUrl || notificationCenterUrl;
-      const notification = commandFn('node', [
-        'scripts/stable-smoke-notify.mjs',
-        '--verdict', 'conditional',
-        '--run-id', runId,
-        '--environment', selected.map((item) => item === 'cds' ? 'CDS 环境' : '正式环境').join('、'),
-        '--module', '稳定冒烟调度',
-        '--recovery', summaryDocument.recovery,
-        '--report-url', actionUrl,
-        '--action-label', providedReportUrl ? '查看验收证据' : '打开通知中心',
-      ], {
-        env: {
-          ...process.env,
-          ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
-        },
-      });
-      summaryDocument.notification = notification.status === 0
-        ? { status: 'sent', result: readJsonFromText(notification.stdout), actionUrl }
-        : {
-            status: 'delivery-failed',
-            error: String(notification.stderr || notification.stdout || 'MAP 通知发送失败').trim().slice(0, 500),
-          };
-    } catch (deliveryError) {
-      summaryDocument.notification = {
-        status: 'delivery-failed',
-        error: deliveryError instanceof Error ? deliveryError.message : 'MAP 通知发送失败',
-      };
-    }
-  }
-  if (summaryDocument.notification.status === 'delivery-failed') {
-    summaryDocument.verdict = 'fail';
-    summaryDocument.deliveryFailure = '重叠执行结果未能送达指定用户';
+    summaryDocument.notification = {
+      status: 'withheld-unverified-report',
+      reason: '本次重叠运行没有自己的已验证 CDS 报告；由持锁任务完成线上归档、verify-open 后再通知。',
+    };
   }
   const summaryPath = resolve(runDir, 'summary.json');
   const blockedPath = resolve(runDir, 'blocked.json');
@@ -1487,7 +1767,10 @@ async function main() {
   );
   const preflightBlockers = [];
   const cdsAddressBlockers = [];
-  if (selected.includes('cds')) {
+  let cdsAddressResolved = false;
+  const resolveAuthoritativeCdsAddresses = () => {
+    if (cdsAddressResolved || !selected.includes('cds')) return;
+    cdsAddressResolved = true;
     try {
       const cdsUrls = resolveCdsPreviewUrls(
         values.STABLE_SMOKE_CDS_BASE_URL || '',
@@ -1499,6 +1782,13 @@ async function main() {
       cdsAddressBlockers.push(error instanceof Error ? error.message : 'CDS 预览地址读取失败');
       preflightBlockers.push(...cdsAddressBlockers);
     }
+  };
+  const productionBaselineFirst = selected.includes('cds')
+    && selected.includes('production')
+    && !options.has('--preflight')
+    && !options.has('--dry-run');
+  if (!productionBaselineFirst) {
+    resolveAuthoritativeCdsAddresses();
   }
   for (const environment of selected) {
     const missing = validateSelectedEnvironmentConfig(environment, selected, values);
@@ -1523,7 +1813,7 @@ async function main() {
         preflightBlockers.push('无法读取待验收提交');
       } else {
         try {
-          const branch = readCdsBranchStatus();
+          const branch = await readCdsBranchStatusWithRetries();
           const readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
           preflightBlockers.push(...readiness.reasons);
         } catch (error) {
@@ -1552,14 +1842,51 @@ async function main() {
   }
 
   try {
+    const commitResult = command('git', ['rev-parse', 'HEAD']);
+    values.STABLE_SMOKE_COMMIT = String(commitResult.stdout || '').trim();
+    if (commitResult.status !== 0 || !values.STABLE_SMOKE_COMMIT) {
+      throw new Error('无法读取待验收提交，拒绝生成无版本绑定的正式环境基线');
+    }
+
+    let productionBaseline = readJson(resolve(runDir, 'production-baseline.json'));
+    if (selected.includes('cds') && selected.includes('production') && !options.has('--dry-run')) {
+      const missing = validateProductionReadOnlyConfig(values);
+      if (missing.length > 0) {
+        productionBaseline = buildProductionBaselineCheckpoint({
+          runId,
+          commit: values.STABLE_SMOKE_COMMIT,
+          execution: null,
+          missing,
+        });
+      } else {
+        const execution = runPlaywright(
+          'production',
+          values,
+          runDir,
+          productionReadOnlyGrep,
+          null,
+          'production-baseline',
+        );
+        productionBaseline = buildProductionBaselineCheckpoint({
+          runId,
+          commit: values.STABLE_SMOKE_COMMIT,
+          execution,
+        });
+      }
+      writeFileSync(
+        resolve(runDir, 'production-baseline.json'),
+        `${JSON.stringify(productionBaseline, null, 2)}\n`,
+        'utf8',
+      );
+    }
+
+    resolveAuthoritativeCdsAddresses();
     if (selected.includes('cds')) requireAuthoritativeCdsAddress(cdsAddressBlockers);
     if (selected.includes('cds')
       && !options.has('--dry-run')
       && cdsAddressBlockers.length === 0
       && validateEnvironmentConfig('cds', values).length === 0) {
-      const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const expectedCommit = String(commitResult.stdout || '').trim();
-      if (commitResult.status !== 0 || !expectedCommit) throw new Error('无法读取待验收提交，拒绝开测');
+      const expectedCommit = values.STABLE_SMOKE_COMMIT;
       const readiness = await waitForCdsDeployment(expectedCommit);
       writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
         checkedAt: new Date().toISOString(),
@@ -1576,8 +1903,10 @@ async function main() {
     ]);
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
     const plan = readJson(planPath);
-    values.STABLE_SMOKE_COMMIT = String(plan?.commit || '').trim();
-    if (!values.STABLE_SMOKE_COMMIT) throw new Error('稳定冒烟计划缺少待验收提交，拒绝生成无版本绑定的视觉证据');
+    const plannedCommit = String(plan?.commit || '').trim();
+    if (!plannedCommit || plannedCommit !== values.STABLE_SMOKE_COMMIT) {
+      throw new Error('稳定冒烟计划与正式环境基线提交不一致，拒绝混用不同版本证据');
+    }
 
     const executions = [];
     const grep = options.read('--grep');
@@ -1597,7 +1926,8 @@ async function main() {
     const visualScope = selected.length === 1 && selected[0] === 'production' && productionSafetyGate.restricted
       ? 'production-read-only'
       : 'full';
-    const requestedVisualManifest = options.read('--visual-manifest');
+    const captureVisual = options.has('--capture-visual');
+    let requestedVisualManifest = options.read('--visual-manifest');
     const requestedProductionVisualManifest = options.read('--production-visual-manifest');
     const productionReadOnlyVisual = visualScope === 'production-read-only';
     const initialVisualEnvironments = selected.includes('cds') ? ['cds'] : selected;
@@ -1652,13 +1982,20 @@ async function main() {
       return;
     }
 
+    const automaticCdsVisualOutput = resolve(runDir, 'cds-visual-evidence');
+    if (captureVisual) {
+      mkdirSync(automaticCdsVisualOutput, { recursive: true });
+      requestedVisualManifest = resolve(automaticCdsVisualOutput, 'manifest.json');
+      if (!existsSync(requestedVisualManifest)) writeFileSync(requestedVisualManifest, '[]\n', 'utf8');
+    }
     if (!productionReadOnlyVisual && !requestedVisualManifest) {
       throw new Error(
         `完整稳定冒烟缺少本轮视觉取证清单。请先使用 runId ${runId} 执行 --dry-run 生成视觉计划，`
-        + '再按 visual-plan.json 运行 /验收 浏览器取证，并通过 --visual-manifest 显式传入 CDS manifest.json。',
+        + '再按 visual-plan.json 运行 /验收 浏览器取证并通过 --visual-manifest 显式传入，'
+        + '或使用 --capture-visual 让真实业务旅程逐槽生成 manifest。',
       );
     }
-    if (requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
+    if (!captureVisual && requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
       throw new Error(`指定的视觉取证清单不存在：${resolve(requestedVisualManifest)}`);
     }
     if (requestedProductionVisualManifest && !existsSync(resolve(requestedProductionVisualManifest))) {
@@ -1700,6 +2037,28 @@ async function main() {
       const folderRegressions = runFolderRegressionTests(runDir);
       executions.push(folderRegressions.execution);
       supplementalRows = folderRegressions.rows;
+    }
+    if (selectedCdsCases.includes('REG-stsmk-notify-evidence-001')) {
+      const notificationRegression = runNotificationEvidenceRegression(runDir);
+      executions.push(notificationRegression.execution);
+      supplementalRows.push(...notificationRegression.rows);
+    }
+    if (selectedCdsCases.includes('REG-stsmk-report-view-001')) {
+      const reportViewRegression = runReportViewRegression(runDir);
+      executions.push(reportViewRegression.execution);
+      supplementalRows.push(...reportViewRegression.rows);
+    }
+    if (selectedCdsCases.includes('REG-stsmk-report-risk-001')) {
+      const reportRiskRegression = runReportRiskRegression(runDir);
+      executions.push(reportRiskRegression.execution);
+      supplementalRows.push(...reportRiskRegression.rows);
+    }
+    if (selectedCdsCases.some((caseId) => (
+      caseId === 'COMMON-003' || caseId === 'REG-stsmk-cds-runtime-equivalence-001'
+    ))) {
+      const versionEvidence = runCdsVersionEvidence(runDir);
+      executions.push(versionEvidence.execution);
+      supplementalRows.push(...versionEvidence.rows);
     }
 
     for (const environment of selected) {
@@ -1758,6 +2117,7 @@ async function main() {
               '--capture-started-at', unlockedAt,
               '--scope', 'full',
               '--production-origin', values.STABLE_SMOKE_PROD_BASE_URL || '',
+              '--production-gateway-origin', values.STABLE_SMOKE_PROD_GW_BASE_URL || '',
             ]);
             if (productionVisualPlanResult.status !== 0) {
               throw new Error('正式环境视觉取证计划生成失败');
@@ -1778,6 +2138,7 @@ async function main() {
               runId,
               verdict: 'awaiting-production-visual',
               commit: values.STABLE_SMOKE_COMMIT,
+              productionBaseline,
               executions,
               productionSafetyGate,
               cdsVisual: { verdict: cdsVisualGate.result.verdict, manifestPath: resolve(requestedVisualManifest) },
@@ -1818,7 +2179,15 @@ async function main() {
       const effectiveGrep = environment === 'production' && productionSafetyGate.restricted
         ? productionSafetyGate.grep
         : policyGrep;
-      const execution = runPlaywright(environment, values, runDir, effectiveGrep);
+      const execution = runPlaywright(
+        environment,
+        values,
+        runDir,
+        effectiveGrep,
+        captureVisual && environment === 'cds'
+          ? { planPath: visualPlanPath, outputPath: automaticCdsVisualOutput }
+          : null,
+      );
       executions.push({
         ...buildExecutionRecord(environment, execution),
         grep: effectiveGrep,
@@ -1910,9 +2279,13 @@ async function main() {
       catalogVersion: plan?.catalogVersion,
       commit: plan?.commit,
       envFileLoaded: local.loaded,
+      productionBaseline,
       executions,
       productionSafetyGate,
-      supplementalEvidenceRows: gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),
+      supplementalEvidenceRows: [
+        ...supplementalRows,
+        ...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),
+      ],
       environmentCoverage: selected.map((environment) => {
         const environmentCoverageRows = rows.filter((row) => row.environment === environment);
         const passed = environmentCoverageRows.filter((row) => row.status === 'pass').length;
@@ -1990,6 +2363,7 @@ async function main() {
     } else if (!options.has('--dry-run')) {
       const branchResult = command('git', ['branch', '--show-current']);
       const commitResult = command('git', ['rev-parse', 'HEAD']);
+      const archiveBranchStatus = productionReadOnlyArchive ? await readCdsBranchStatusWithRetries() : null;
       const archiveCommand = buildStableSmokeArchiveCommand({
         productionReadOnly: productionReadOnlyArchive,
         runId,
@@ -1997,6 +2371,8 @@ async function main() {
         reportPath: archiveReportPath,
         manifestPath: visualManifestPath,
         branch: String(branchResult.stdout || '').trim(),
+        projectId: String(archiveBranchStatus?.projectId || '').trim(),
+        branchId: String(archiveBranchStatus?.id || '').trim(),
         commit: String(commitResult.stdout || '').trim(),
         folderPath: `稳定冒烟/${new Date().toISOString().slice(0, 7)}`,
       });
@@ -2074,7 +2450,7 @@ async function main() {
           env: {
             ...process.env,
             ...values,
-            STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
+            STABLE_SMOKE_NOTIFY_BASE_URL: resolveNotificationBaseUrl(values),
           },
         });
         return {

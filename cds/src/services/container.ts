@@ -11,6 +11,7 @@ import {
   collectReuseCandidates,
   targetShaOf,
   normalizeBuildScope,
+  immutableImageForRevision,
   proveFallbackImage,
   type ReuseCandidate,
 } from './prebuilt-reuse.js';
@@ -1325,11 +1326,27 @@ export class ContainerService {
               isComponentUnchangedSince: context.isComponentUnchangedSince,
             });
             if (proof.accepted) {
-              pulledImage = cand.image;
+              const immutableImage = immutableImageForRevision(cand.image, proof.revision);
+              if (!immutableImage) {
+                lastDetail = `回退镜像 ${cand.image} 虽通过源码归属校验，但无法生成不可变 SHA 镜像`;
+                onOutput?.(`── ${lastDetail}，不运行浮动标签 ──\n`);
+                continue;
+              }
+              const immutablePull = await this.shell.exec(`docker pull ${this.shellQuote(immutableImage)}`);
+              if (immutablePull.exitCode !== 0) {
+                lastDetail = (
+                  immutablePull.stderr
+                  || immutablePull.stdout
+                  || `不可变镜像 ${immutableImage} 不存在`
+                ).trim();
+                onOutput?.(`── 回退镜像已校验，但同 revision 不可变镜像拉取失败：${lastDetail}，不运行浮动标签 ──\n`);
+                continue;
+              }
+              pulledImage = immutableImage;
               const proofText = proof.reason === 'exact-target'
                 ? `镜像 revision 与目标提交一致（${proof.revision!.slice(0, 7)}）`
                 : `组件构建输入在 ${proof.revision!.slice(0, 7)}..${proof.targetSha!.slice(0, 7)} 间无差异`;
-              onOutput?.(`── 回退镜像内容校验通过: ${proofText} ──\n`);
+              onOutput?.(`── 回退镜像内容校验通过: ${proofText}；运行不可变镜像 ${immutableImage} ──\n`);
               this.recordContainerEvent({
                 severity: 'info',
                 source: 'cds-container-service',
@@ -1342,6 +1359,7 @@ export class ContainerService {
                 operationId: context.operationId ?? undefined,
                 details: {
                   image: cand.image,
+                  immutableImage,
                   revision: proof.revision,
                   targetSha: proof.targetSha,
                   buildScope,

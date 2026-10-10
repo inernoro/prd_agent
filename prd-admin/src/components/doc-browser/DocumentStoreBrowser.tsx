@@ -83,7 +83,7 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
     for (const file of files) {
       const res = await uploadDocumentFile(storeId, file);
       if (res.success) { setEntries((prev) => [res.data.entry, ...prev]); ok++; }
-      else toast.error(`上传失败: ${file.name}`, res.error?.message);
+      else toast.error(`上传失败: ${file.name}`, res.error?.message, 8000);
     }
     if (ok > 0) toast.success('上传完成', `${ok} 个文件已存储`);
     setUploading(false);

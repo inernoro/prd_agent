@@ -143,7 +143,7 @@ public sealed class NotificationsController : ControllerBase
             User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value,
             "1",
             StringComparison.Ordinal);
-        var configuredTarget = _configuration["StableSmokeAuthentication:NotificationTargetUsername"]?.Trim();
+        var configuredTarget = ResolveStableSmokeNotificationTarget(_configuration);
         if (isStableSmoke)
         {
             if (!IsStableSmokeNotificationTargetAllowed(request, configuredTarget))
@@ -207,6 +207,16 @@ public sealed class NotificationsController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+    }
+
+    internal static string? ResolveStableSmokeNotificationTarget(IConfiguration configuration)
+    {
+        var target = configuration["StableSmokeAuthentication:NotificationTargetUsername"];
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            target = configuration["STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME"];
+        }
+        return string.IsNullOrWhiteSpace(target) ? null : target.Trim();
     }
 
     internal static bool IsStableSmokeNotificationTargetAllowed(

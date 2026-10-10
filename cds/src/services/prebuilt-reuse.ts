@@ -148,6 +148,20 @@ export function normalizeImageRevision(value: string | undefined | null): string
   return /^[0-9a-f]{40}$/.test(normalized) ? normalized : null;
 }
 
+/**
+ * 把已校验 OCI revision 的浮动镜像转成同仓库的不可变 SHA 标签。
+ *
+ * CDS 可以用 `branch-main` 找到可复用产物，但运行与版本台账必须指向
+ * `sha-<revision>`，否则后续无法证明容器对应的具体提交。
+ */
+export function immutableImageForRevision(image: string, revision: string | undefined | null): string | null {
+  const normalized = normalizeImageRevision(revision);
+  const source = (image || '').trim();
+  if (!normalized || !source || source.includes('@')) return null;
+  const repository = imageRepositoryOf(source);
+  return repository ? `${repository}:sha-${normalized}` : null;
+}
+
 export type FallbackImageProofReason =
   | 'exact-target'
   | 'component-unchanged'

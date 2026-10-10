@@ -8,9 +8,13 @@
 // 运行：PWPATH=$(npm root -g)/playwright node driver.mjs
 
 import { createRequire } from 'module';
+import { loadPlaywright } from './playwright-runtime.mjs';
 const require = createRequire(import.meta.url);
-const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium, devices } = require(PW);
+let playwrightRuntime;
+function getPlaywrightRuntime() {
+  playwrightRuntime ||= loadPlaywright();
+  return playwrightRuntime;
+}
 const pageEnvironments = new WeakMap();
 
 export function loadConfig(path) {
@@ -40,6 +44,7 @@ export async function launch(cfg, opts = {}) {
   // 沙箱里那条路走不通，验收会卡在第一步。给一个与 ACC_BROWSER_PROXY 同构的 env 口子，
   // 显式指到镜像里那个可执行文件即可，不设则维持原行为。
   if (process.env.ACC_BROWSER_EXECUTABLE) launchOpts.executablePath = process.env.ACC_BROWSER_EXECUTABLE;
+  const { chromium } = getPlaywrightRuntime();
   const browser = await chromium.launch(launchOpts);
   // opts.viewport 允许调用方覆盖视口（手机端验收时传 {width:390,height:844}）。
   const vp = opts.viewport || { width: sc.width || 1440, height: sc.height || 900 };
@@ -78,6 +83,7 @@ export async function launch(cfg, opts = {}) {
 export async function createMobileContext(browser, cfg, opts = {}) {
   const session = _captureSession;
   const deviceName = opts.deviceName || 'iPhone 13';
+  const { devices } = getPlaywrightRuntime();
   const profile = devices[deviceName];
   if (!profile) throw new Error(`未知 Playwright 移动设备：${deviceName}`);
   const viewport = opts.viewport || profile.viewport || { width: 390, height: 844 };
@@ -103,6 +109,16 @@ export async function createMobileContext(browser, cfg, opts = {}) {
   });
   attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
   return { ctx, page };
+}
+
+export function isMeasuredMobileEnvironment({ configuredMobile = false, viewportWidth = 0, touchPoints = 0, userAgent = '' } = {}) {
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(String(userAgent || ''));
+  return Boolean(
+    (configuredMobile || mobileUserAgent)
+    && Number(viewportWidth) > 0
+    && Number(viewportWidth) <= 480
+    && Number(touchPoints) >= 1,
+  );
 }
 
 // 登录（走表单，不注入 token）。返回登录后 URL。
@@ -534,11 +550,13 @@ async function validateShot(page, path, expectText, allowBlockingOverlay = false
  *   - automatedStatus: 自动检查结论；不传时由截图 warning 推导
  *   - manualStatus: 人工视觉结论；不传时沿用调用方声明的 status
  *   - theme: light 或 dark；不传时从页面主题自动识别
+ *   - themeTarget: 可选 Locator；存在局部作用域皮肤时，以该区域最终不透明底色判定主题
  *   - methodAnchor: 报告内关联测试方法锚点
  *   - breadcrumb: 从入口到当前状态的真实页面操作路径
  *   - environment: cds 或 production；不传时继承 launch/createMobileContext 的同名选项
  *   - runId: 本轮稳定冒烟运行标识；不传时读取 STABLE_SMOKE_RUN_ID
  *   - commit: 本轮待验收提交；不传时读取 STABLE_SMOKE_COMMIT
+ *   - duplicateOf: 当前截图复用已有证据时，指向已有截图 name
  *   - failureEvidence: 当前图是否专门证明一个真实失败；只能用于 conditional/fail 报告
  *   - failureReason: failureEvidence=true 时必须说明失败事实，归档门禁会核对
  *   - allowBlockingOverlay: 当前截图本来就在验收全屏弹窗或教程遮罩；默认 false
@@ -562,11 +580,13 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     automatedStatus,
     manualStatus,
     theme,
+    themeTarget,
     methodAnchor,
     breadcrumb,
     environment: targetEnvironment,
     runId,
     commit,
+    duplicateOf,
     failureEvidence = false,
     failureReason,
     allowBlockingOverlay = false,
@@ -610,17 +630,38 @@ export async function shot(page, outDir, name, caption, opts = {}) {
 
   const viewport = page.viewportSize();
   const touchPoints = await page.evaluate(() => Number(navigator.maxTouchPoints || 0)).catch(() => 0);
+  const userAgent = await page.evaluate(() => navigator.userAgent || '').catch(() => '');
   const pageEnvironment = pageEnvironments.get(page) || {};
-  const isMobile = Boolean(
-    pageEnvironment.configuredMobile
-    && viewport
-    && viewport.width <= 480
-    && touchPoints >= 1,
-  );
+  const isMobile = isMeasuredMobileEnvironment({
+    configuredMobile: pageEnvironment.configuredMobile,
+    viewportWidth: viewport?.width || 0,
+    touchPoints,
+    userAgent,
+  });
   // 实测，不取脚本意图：这个字段曾经把 20 张暗色图全记成 light（调用方传什么就记什么），
   // 于是「浅色其实没切成功」在账面上看不出来 —— predicate-and-wiring-discipline 形状 6。
   // 现在无论调用方传没传 theme，都以页面当时真实渲染出来的为准。
-  const resolvedTheme = await page.evaluate(() => {
+  const measuredTargetTheme = themeTarget
+    ? await themeTarget.evaluate((element) => {
+      const opaqueTheme = (value) => {
+        const match = String(value || '').match(/rgba?\(([^)]+)\)/);
+        if (!match) return null;
+        const parts = match[1].split(',').map((item) => parseFloat(item));
+        const [r, g, b] = parts;
+        const a = parts.length > 3 ? parts[3] : 1;
+        if (![r, g, b, a].every((item) => Number.isFinite(item)) || a < 1) return null;
+        return (0.2126 * r + 0.7152 * g + 0.0722 * b) < 128 ? 'dark' : 'light';
+      };
+      let current = element;
+      while (current) {
+        const measured = opaqueTheme(getComputedStyle(current).backgroundColor);
+        if (measured) return measured;
+        current = current.parentElement;
+      }
+      return null;
+    }).catch(() => null)
+    : null;
+  const resolvedTheme = measuredTargetTheme || await page.evaluate(() => {
     const root = document.documentElement;
     // 标记只当**线索**，不当结论。切主题时 data-theme / class 先翻，对应的 CSS 没生效
     // （变量没加载、样式表 404、选择器写错）是完全可能的 —— 而那恰恰是双主题验收要抓的
@@ -673,6 +714,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     path,
     runId: runId || process.env.STABLE_SMOKE_RUN_ID || undefined,
     commit: commit || process.env.STABLE_SMOKE_COMMIT || undefined,
+    duplicateOf: duplicateOf || null,
     capturedAt: new Date().toISOString(),
     pageOrigin,
     pagePath,
@@ -694,6 +736,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     automatedStatus: warnings.length > 0 ? '不通过' : automatedStatus || '通过',
     manualStatus: manualStatus || status || undefined,
     theme: resolvedTheme || undefined,
+    themeProbe: measuredTargetTheme ? 'target' : 'page',
     viewportClass: isMobile ? 'mobile' : 'desktop',
     methodAnchor: methodAnchor || undefined,
     breadcrumb: breadcrumb || undefined,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VideoProject, VideoProjectInput } from '@/services/contracts/videoAgent';
-import { buildDirectVideoRunInput, normalizeVideoRunId } from './VideoAgentPage';
+import { buildDirectVideoRunInput, normalizeVideoRunId, normalizeVideoWorkspaceLists } from './VideoAgentPage';
 
 const project: VideoProject = {
   id: 'project-1',
@@ -47,6 +47,19 @@ describe('buildDirectVideoRunInput', () => {
       directFirstFrameUrl: 'https://example.com/rain.jpg',
     });
   });
+
+  it('accepts project summaries that omit assets while restoring a deep link', () => {
+    const summary = { ...project, assets: undefined } as unknown as VideoProject;
+    const input: VideoProjectInput = {
+      sourceMarkdown: '两个人在雨夜重逢。',
+      defaultAspectRatio: '16:9',
+      defaultResolution: '720p',
+      defaultDuration: 5,
+      generateAudio: false,
+    };
+
+    expect(buildDirectVideoRunInput(summary, input).directFirstFrameUrl).toBeUndefined();
+  });
 });
 
 describe('normalizeVideoRunId', () => {
@@ -57,5 +70,25 @@ describe('normalizeVideoRunId', () => {
   it('rejects empty run ids instead of opening a broken editor', () => {
     expect(normalizeVideoRunId('   ')).toBeNull();
     expect(normalizeVideoRunId(null)).toBeNull();
+  });
+});
+
+describe('normalizeVideoWorkspaceLists', () => {
+  it('keeps the workspace renderable when a successful response omits list payloads', () => {
+    expect(normalizeVideoWorkspaceLists(undefined, null, {})).toEqual({
+      projects: [],
+      runs: [],
+      models: [],
+    });
+  });
+
+  it('preserves valid collections', () => {
+    const run = { id: 'run-1' };
+    const model = { id: 'model-1' };
+    expect(normalizeVideoWorkspaceLists([project], [run], [model])).toEqual({
+      projects: [project],
+      runs: [run],
+      models: [model],
+    });
   });
 });

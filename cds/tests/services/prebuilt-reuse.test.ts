@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
-  normalizeBuildScope, normalizeImageRevision, proveFallbackImage,
+  normalizeBuildScope, normalizeImageRevision, immutableImageForRevision, proveFallbackImage,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
@@ -191,6 +191,13 @@ describe('浮动回退镜像的源码归属证明', () => {
     expect(normalizeImageRevision(` ${SHA_A.toUpperCase()}\n`)).toBe(SHA_A);
     expect(normalizeImageRevision('abc1234')).toBeNull();
     expect(normalizeImageRevision('<no value>')).toBeNull();
+  });
+
+  it('已校验的浮动镜像转成同仓库不可变 SHA 镜像', () => {
+    expect(immutableImageForRevision(`${REPO}:branch-main`, SHA_A))
+      .toBe(`${REPO}:sha-${SHA_A}`);
+    expect(immutableImageForRevision(`${REPO}:branch-main`, 'abc1234')).toBeNull();
+    expect(immutableImageForRevision(`${REPO}@sha256:${'d'.repeat(64)}`, SHA_A)).toBeNull();
   });
 
   it('revision 正好等于目标提交时直接接受', async () => {

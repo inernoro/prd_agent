@@ -55,7 +55,7 @@ scripts/stable-smoke-login.sh \
 |---|---|---|---|
 | CDS | `preview-url` 返回的当前主分支入口；`STABLE_SMOKE_CDS_BASE_URL` 只作本地显式固定值 | `STABLE_SMOKE_CDS_SIGNING_KEY_ID` + `STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_CDS_USER` |
 | 正式 | `STABLE_SMOKE_PROD_BASE_URL` 由部署环境注入；独立允许值 `STABLE_SMOKE_PROD_ALLOWED_BASE_URL` 由凭据登记表对应的 Keychain / Secret Store 注入 | `STABLE_SMOKE_PROD_SIGNING_KEY_ID` + `STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_PROD_USER` |
-| MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL`、`STABLE_SMOKE_NOTIFY_SOURCE` 均由部署环境注入 | `STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID` + `STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID`；首次可用服务端固定的 `STABLE_SMOKE_NOTIFY_TARGET_USERNAME` 安全解析 |
+| MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL`、`STABLE_SMOKE_NOTIFY_SOURCE` 均由部署环境注入 | `STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID` + `STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID`；首次由服务端把固定用户名 `inernoro` 安全解析为真实 userId |
 
 双环境默认使用 RSA-PSS 签名身份：服务端只保存公钥，私钥只存在自动化执行机安全凭据库。签名绑定请求方法、路径、正文哈希、账号、时间戳与一次性 nonce；时间窗口为两分钟，nonce 使用数据库唯一约束防重放；签名认证只允许合成登录票据、模型网关短票据和定向通知三个端点。模型网关不再保存巡检长期密码：MAP 签发 60 秒单次票据，LLMGW 只自动补齐缺失账号或成员关系；人工停用、角色漂移和连续失败必须熔断。旧的全局 `AI_ACCESS_KEY` 与网关固定密码仅作存量兼容，不再作为稳定冒烟的首选凭据。
 
@@ -76,6 +76,8 @@ Codex 桌面端创建本地自动化 `stable-smoke-48h`：
 - CDS 环境和正式环境独立出结果，不允许一边失败导致另一边证据丢失。
 - 任务先读取项目主工作区最新代码和功能台账，再执行 `/稳测 all`。GitHub Actions 与本调度无关。
 - 首次创建后必须立即手动运行一次；之后每 48 小时由本机 Codex 自动化唤醒。
+
+每个 48 小时批次先独立执行正式环境 `CORE-001` 只读基线，再检查 CDS 并运行完整矩阵。正式只读基线不登录、不创建资源、不调用模型，CDS 地址、部署或控制面异常不得阻断它；正式限额写入矩阵仍须等待同一批次 CDS 功能、清理和视觉门禁通过。
 
 人工执行或排查前先运行只读预检：
 

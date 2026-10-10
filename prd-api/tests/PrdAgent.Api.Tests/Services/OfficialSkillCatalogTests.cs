@@ -153,7 +153,8 @@ public class OfficialSkillCatalogTests
         var verifyOpen = ReadZipText(zip, "create-visual-test-to-kb/scripts/verify-open.mjs");
         Assert.Contains("VERIFY_OPEN_MAX_ATTEMPTS || '3'", verifyOpen);
         Assert.Contains("VERIFY_OPEN_SETTLE_TIMEOUT_MS", verifyOpen);
-        Assert.Contains("ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0", verifyOpen);
+        Assert.Contains("if (reportBodyCount === 0 && internalLinkCount === 0) continue;", verifyOpen);
+        Assert.Contains("ok: broken.length === 0 && clickErrors.length === 0", verifyOpen);
 
         var archiveReport = ReadZipText(zip, "create-visual-test-to-kb/scripts/archive_report.py");
         Assert.Contains("改动规模与深度预算", archiveReport);

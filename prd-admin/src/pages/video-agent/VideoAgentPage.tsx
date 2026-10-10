@@ -27,12 +27,22 @@ const SELECTED_PROJECT_KEY = 'video-agent.selectedProjectId';
 
 export const normalizeVideoRunId = (value: string | null | undefined) => value?.trim() || null;
 
+export const normalizeVideoWorkspaceLists = (
+  projects: unknown,
+  runs: unknown,
+  models: unknown,
+): { projects: VideoProject[]; runs: VideoGenRunListItem[]; models: VideoModelOption[] } => ({
+  projects: Array.isArray(projects) ? projects as VideoProject[] : [],
+  runs: Array.isArray(runs) ? runs as VideoGenRunListItem[] : [],
+  models: Array.isArray(models) ? models as VideoModelOption[] : [],
+});
+
 export const buildDirectVideoRunInput = (project: VideoProject, input: VideoProjectInput) => {
   const prompt = input.sourceMarkdown?.trim() ?? '';
   const directPrompt = input.styleDescription && input.styleDescription !== '智能匹配'
     ? `${prompt}\n视觉风格：${input.styleDescription}`
     : prompt;
-  const directFirstFrameUrl = project.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const directFirstFrameUrl = project.assets?.find((asset) => asset.type !== 'audio' && asset.url)?.url;
 
   return {
     projectId: project.id,
@@ -68,15 +78,20 @@ export const VideoAgentPage: React.FC = () => {
         listVideoGenRunsReal({ limit: 50 }),
         listVideoModelsReal(),
       ]);
+      const normalized = normalizeVideoWorkspaceLists(
+        projectResponse.success ? projectResponse.data : [],
+        runResponse.success ? runResponse.data?.items : [],
+        modelResponse.success ? modelResponse.data : [],
+      );
       if (projectResponse.success) {
-        setProjects(projectResponse.data);
+        setProjects(normalized.projects);
         setSelectedProjectId((current) => {
-          if (current && projectResponse.data.some((project) => project.id === current)) return current;
-          return projectResponse.data[0]?.id ?? null;
+          if (current && normalized.projects.some((project) => project.id === current)) return current;
+          return normalized.projects[0]?.id ?? null;
         });
       }
-      if (runResponse.success) setRuns(runResponse.data.items);
-      if (modelResponse.success) setModels(modelResponse.data);
+      if (runResponse.success) setRuns(normalized.runs);
+      if (modelResponse.success) setModels(normalized.models);
     } catch (error) {
       toast.error('加载视频制作台失败', error instanceof Error ? error.message : '网络错误');
     } finally {

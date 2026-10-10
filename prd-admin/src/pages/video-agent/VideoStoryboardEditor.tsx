@@ -215,11 +215,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         return;
       }
 
-      setRun(response.data);
+      const normalizedRun = {
+        ...response.data,
+        scenes: Array.isArray(response.data.scenes) ? response.data.scenes : [],
+      };
+      setRun(normalizedRun);
       markServerSignal();
       setError(null);
-      setSelectedSceneIndex((current) => Math.min(current, Math.max(response.data.scenes.length - 1, 0)));
-      if (shouldKeepVideoRunPolling(response.data, Date.now(), keepPollingUntilRef.current)) startPolling();
+      setSelectedSceneIndex((current) => Math.min(current, Math.max(normalizedRun.scenes.length - 1, 0)));
+      if (shouldKeepVideoRunPolling(normalizedRun, Date.now(), keepPollingUntilRef.current)) startPolling();
       else stopPolling();
 
       if (response.data.status === 'Completed' && response.data.videoAssetUrl) {
@@ -243,14 +247,18 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   useEffect(() => {
     void listVideoModelsReal().then((response) => {
-      if (response.success) setModels(response.data);
+      if (response.success) setModels(Array.isArray(response.data) ? response.data : []);
     });
   }, []);
 
   useEffect(() => {
     if (!run?.projectId) { setProject(null); return; }
     void getVideoProjectReal(run.projectId).then((response) => {
-      if (response.success) setProject(response.data);
+      if (response.success) setProject({
+        ...response.data,
+        assets: Array.isArray(response.data.assets) ? response.data.assets : [],
+        timelineTracks: Array.isArray(response.data.timelineTracks) ? response.data.timelineTracks : [],
+      });
     });
   }, [run?.projectId]);
 
@@ -293,12 +301,12 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     () => run?.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0) ?? 0,
     [run],
   );
-  const previewSceneUrl = selectedScene?.versions.find((version) => version.id === previewVersionId)?.videoUrl
+  const previewSceneUrl = selectedScene?.versions?.find((version) => version.id === previewVersionId)?.videoUrl
     ?? selectedScene?.videoUrl;
   const previewUrl = previewMode === 'export'
     ? run?.videoAssetUrl
     : previewSceneUrl;
-  const compareVersions = selectedScene?.versions.filter((version) => compareVersionIds.includes(version.id)) ?? [];
+  const compareVersions = selectedScene?.versions?.filter((version) => compareVersionIds.includes(version.id)) ?? [];
 
   useEffect(() => {
     setCompareVersionIds([]);

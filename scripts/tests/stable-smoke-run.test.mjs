@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { generateKeyPairSync } from 'node:crypto';
+import { expandCompleteReport } from '../../.claude/skills/create-visual-test-to-kb/scripts/report-view.mjs';
 import {
   acquireLock,
   applyCredentialRegistry,
@@ -13,6 +14,7 @@ import {
   buildAffectedNotificationTargets,
   buildStableSmokeArchiveCommand,
   buildLockedRunSummary,
+  buildProductionBaselineCheckpoint,
   buildUnhandledFailureSummary,
   canReuseGatewayPersistenceProbe,
   canReuseVisualPlan,
@@ -33,14 +35,23 @@ import {
   isHttpsReportUrl,
   parseEnvFile,
   parseRunnerArgs,
+  probeCdsPublicEntry,
+  productionReadOnlyGrep,
   removeStaleLockIfSafe,
   runnerHelpText,
   resolveRuntimeExpectation,
   resolveServiceRuntimeCommits,
+  resolveNotificationBaseUrl,
+  readCdsBranchStatusWithRetries,
   resolveCdsPreviewUrls,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
+  runCdsVersionEvidence,
+  runNotificationEvidenceRegression,
+  runReportViewRegression,
+  runReportRiskRegression,
   runCdsGatewayPersistenceProbe,
+  waitForCdsPublicEntryStability,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
   selectCoverageCaseIdsByEnvironment,
@@ -57,18 +68,102 @@ function gatewayToken(securityVersion = '7') {
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;
 }
 
+test('REG-stsmk-report-view-001 简版必须真实点击完整版才读取隐藏版本', async () => {
+  let view = 'brief';
+  let clicks = 0;
+  const frame = { locator: (selector) => selector === 'body'
+    ? { getAttribute: async () => view }
+    : { count: async () => 1, isVisible: async () => true, click: async () => { clicks += 1; view = 'full'; } } };
+  assert.equal(view === 'full', false, '旧执行链的隐藏版本断言应变红');
+  assert.equal(await expandCompleteReport({ frames: () => [frame] }), 1);
+  assert.equal(view, 'full');
+  assert.equal(clicks, 1);
+  assert.equal(await expandCompleteReport({ frames: () => [frame] }), 0);
+  const source = readFileSync('.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs', 'utf8');
+  assert.match(source, /await expandCompleteReport\(page\);\s*if.*\n\s*snapshot = await inspectRenderedContent\(\)/);
+});
+
+test('REG-stsmk-report-view-001 无切换按钮的历史完整报告保持可校验', async () => {
+  const page = { frames: () => [{ locator: () => ({ count: async () => 0 }) }] };
+  assert.equal(await expandCompleteReport(page), 0);
+});
+
+test('报告视图永久回归必须接线并传播失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-report-view-'));
+  try {
+    for (const status of [0, 1]) {
+      const result = runReportViewRegression(directory, (name, args) => {
+        assert.equal(name, 'node');
+        assert.ok(args.includes('REG-stsmk-report-view-001'));
+        return { status, stdout: '守卫结果', stderr: '' };
+      });
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.ok(existsSync(result.execution.artifactPath));
+    }
+    const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+    assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-view-001'\)/);
+    assert.match(source, /supplementalRows.push\(\.\.\.reportViewRegression.rows\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('报告风险分类永久回归必须接线并传播失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-report-risk-'));
+  try {
+    for (const status of [0, 1]) {
+      const result = runReportRiskRegression(directory, (name, args) => {
+        assert.equal(name, 'python3');
+        assert.ok(args.includes('ReportRiskDecisionTests'));
+        return { status, stdout: '风险判据', stderr: '' };
+      });
+      assert.equal(result.rows[0].caseId, 'REG-stsmk-report-risk-001');
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.ok(existsSync(result.execution.artifactPath));
+    }
+    const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+    assert.match(source, /selectedCdsCases.includes\('REG-stsmk-report-risk-001'\)/);
+    assert.match(source, /supplementalRows.push\(\.\.\.reportRiskRegression.rows\)/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('运行器帮助和预检参数不会误启动正式测试', () => {
-  const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--grep', '\\[REC-003\\]']);
+  const parsed = parseRunnerArgs(['--preflight', '--cds-only', '--capture-visual', '--grep', '\\[REC-003\\]']);
   assert.equal(parsed.has('--preflight'), true);
   assert.equal(parsed.has('--cds-only'), true);
+  assert.equal(parsed.has('--capture-visual'), true);
   assert.equal(parsed.read('--grep'), '\\[REC-003\\]');
   assert.match(runnerHelpText, /只检查双环境地址、身份和 CDS 部署状态，不启动测试/);
+  assert.match(runnerHelpText, /按 visual-plan\.json 自动逐槽取证并生成 manifest/);
 });
 
 test('运行器拒绝未知参数、缺值和冲突环境', () => {
   assert.throws(() => parseRunnerArgs(['--unknown']), /不支持的参数/);
   assert.throws(() => parseRunnerArgs(['--grep']), /必须提供值/);
   assert.throws(() => parseRunnerArgs(['--cds-only', '--production-only']), /不能同时使用/);
+  assert.throws(() => parseRunnerArgs(['--production-only', '--capture-visual']), /只允许先在 CDS 环境使用/);
+  assert.throws(
+    () => parseRunnerArgs(['--capture-visual', '--visual-manifest', '/tmp/manifest.json']),
+    /不能同时使用/,
+  );
+});
+
+test('正式环境只读范围同时执行基础入口和永久回归', () => {
+  const gate = initializeProductionSafetyGate(['production']);
+  assert.match(gate.grep, /CORE-001/);
+  assert.match(gate.grep, /REG-stsmk-production-read-only-001/);
+  const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
+  assert.match(source, /\[REG-stsmk-production-read-only-001\] 正式环境只读复测链真实执行/);
+});
+
+test('自动视觉取证把本轮计划和统一输出目录注入真实 Playwright 旅程', () => {
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(source, /STABLE_SMOKE_VISUAL_PLAN:\s*visualCapture\.planPath/);
+  assert.match(source, /STABLE_SMOKE_VISUAL_OUTPUT:\s*visualCapture\.outputPath/);
+  assert.match(source, /requestedVisualManifest\s*=\s*resolve\(automaticCdsVisualOutput, 'manifest\.json'\)/);
+  assert.match(source, /captureVisual\s*&&\s*environment\s*===\s*'cds'/);
 });
 
 test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () => {
@@ -102,6 +197,9 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   const recordPath = resolve(directory, 'probe.json');
   const token = gatewayToken();
   let deployments = 0;
+  let transientContextFailures = 0;
+  let transientLoginFailures = 0;
+  let stabilizations = 0;
   const values = {
     STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example.test',
     STABLE_SMOKE_CDS_GW_USER: 'admin',
@@ -124,12 +222,20 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   };
   const fetchFn = async (url) => {
     if (String(url).endsWith('/gw/auth/login')) {
+      if (deployments === 1 && transientLoginFailures === 0) {
+        transientLoginFailures += 1;
+        return new Response('', { status: 503 });
+      }
       return new Response(JSON.stringify({
         success: true,
         data: { token, mustChangePassword: false },
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     if (String(url).endsWith('/gw/auth/context')) {
+      if (deployments === 1 && transientContextFailures === 0) {
+        transientContextFailures += 1;
+        throw new TypeError('fetch failed');
+      }
       return new Response(JSON.stringify({ success: true, data: {} }), { status: 200 });
     }
     return new Response('', { status: 404 });
@@ -145,8 +251,13 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       commandFn,
       waitFn: async () => ({ ready: true, versionId: `version-${deployments}`, runtimeCommit: 'a'.repeat(40) }),
       fetchFn,
+      sleepFn: async () => {},
+      stabilizeFn: async () => { stabilizations += 1; },
     });
     assert.equal(deployments, 2);
+    assert.equal(stabilizations, 1);
+    assert.equal(transientContextFailures, 1);
+    assert.equal(transientLoginFailures, 1);
     assert.equal(canReuseGatewayPersistenceProbe(record, {
       runId: 'stsmk-gateway',
       commit: 'a'.repeat(40),
@@ -163,11 +274,121 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       commandFn,
       waitFn: async () => ({ ready: true }),
       fetchFn,
+      sleepFn: async () => {},
+      stabilizeFn: async () => { stabilizations += 1; },
     });
     assert.equal(deployments, 2);
+    assert.equal(stabilizations, 1, '复用同一轮证据时不应再次触发公网稳定等待');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('CDS 公网稳定门会验证入口、首屏资源和懒加载资源', async () => {
+  const requested = [];
+  const fetchFn = async (url) => {
+    requested.push(String(url));
+    if (String(url).includes('/assets/lazy-page.js')) return new Response('export default {};', {
+      status: 200,
+      headers: { 'content-type': 'application/javascript' },
+    });
+    if (String(url).includes('/assets/index.js')) {
+      return new Response('const page = () => import("/assets/lazy-page.js");', {
+        status: 200,
+        headers: { 'content-type': 'application/javascript; charset=utf-8' },
+      });
+    }
+    if (String(url).includes('/assets/index.css')) return new Response('body{}', {
+      status: 200,
+      headers: { 'content-type': 'text/css' },
+    });
+    return new Response('<script type="module" src="/assets/index.js"></script><link rel="stylesheet" href="/assets/index.css">', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+  };
+  const result = await probeCdsPublicEntry('https://preview.example.test', fetchFn);
+  assert.equal(result.entries, 3);
+  assert.equal(result.assets, 3);
+  assert.ok(requested.some((url) => url.includes('/assets/lazy-page.js')));
+});
+
+test('CDS 公网稳定门拒绝被入口 HTML 回退伪装成成功的静态资源', async () => {
+  const fetchFn = async (url) => {
+    if (String(url).includes('/assets/missing.js')) {
+      return new Response('<!doctype html><html><body>fallback</body></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8' },
+      });
+    }
+    return new Response('<script type="module" src="/assets/missing.js"></script>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+  };
+  await assert.rejects(
+    () => probeCdsPublicEntry('https://preview.example.test', fetchFn),
+    /无效的 JavaScript 内容/,
+  );
+});
+
+test('CDS 公网稳定门要求连续两轮通过并在瞬时 502 后重新计数', async () => {
+  let entryRequests = 0;
+  let sleeps = 0;
+  const fetchFn = async (url) => {
+    if (!String(url).includes('/assets/')) entryRequests += 1;
+    if (entryRequests <= 3) return new Response('', { status: 502 });
+    if (String(url).includes('/assets/index.js')) return new Response('export default {};', {
+      status: 200,
+      headers: { 'content-type': 'application/javascript' },
+    });
+    return new Response('<script type="module" src="/assets/index.js"></script>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+  };
+  const result = await waitForCdsPublicEntryStability('https://preview.example.test', {
+    attempts: 3,
+    requiredConsecutivePasses: 2,
+    fetchFn,
+    sleepFn: async () => { sleeps += 1; },
+  });
+  assert.equal(result.entries, 3);
+  assert.equal(sleeps, 2);
+});
+
+test('CDS-only 通知缺少独立地址时使用已验证的正式允许地址', () => {
+  assert.equal(resolveNotificationBaseUrl({
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://map.example.test',
+  }), 'https://map.example.test');
+  assert.equal(resolveNotificationBaseUrl({
+    STABLE_SMOKE_NOTIFY_BASE_URL: 'https://notify.example.test',
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://map.example.test',
+  }), 'https://notify.example.test');
+});
+
+test('CDS 权威分支状态在控制面瞬断后有限重试', async () => {
+  let branchIdAttempts = 0;
+  const delays = [];
+  const branch = await readCdsBranchStatusWithRetries((program, args) => {
+    assert.equal(program, 'python3');
+    if (args.at(-1) === 'branch-id') {
+      branchIdAttempts += 1;
+      if (branchIdAttempts === 1) return { status: 1, stdout: '' };
+      return { status: 0, stdout: JSON.stringify({ data: { branchId: 'branch-1' } }) };
+    }
+    if (args.includes('status')) {
+      return { status: 0, stdout: JSON.stringify({ data: { id: 'branch-1', status: 'running' } }) };
+    }
+    throw new Error(`未预期命令: ${args.join(' ')}`);
+  }, {
+    attempts: 3,
+    delayMs: 5,
+    delayFn: async (ms) => { delays.push(ms); },
+  });
+  assert.equal(branch.id, 'branch-1');
+  assert.equal(branchIdAttempts, 2);
+  assert.deepEqual(delays, [5]);
 });
 
 test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {
@@ -399,7 +620,7 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   const processGate = evaluateProductionSafetyGate({ status: 'failed' }, []);
   assert.equal(processGate.restricted, true);
   assert.equal(processGate.mode, 'read-only');
-  assert.equal(processGate.grep, '\\[CORE-001\\]');
+  assert.equal(processGate.grep, productionReadOnlyGrep);
 
   const cleanupGate = evaluateProductionSafetyGate({ status: 'executed' }, [{
     caseId: 'FILE-001',
@@ -476,7 +697,7 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   );
   assert.equal(filteredGate.restricted, true);
   assert.equal(filteredGate.mode, 'read-only');
-  assert.equal(filteredGate.grep, '\\[CORE-001\\]');
+  assert.equal(filteredGate.grep, productionReadOnlyGrep);
   assert.match(filteredGate.reasons.join('；'), /仅执行了筛选用例/);
   assert.equal(evaluateProductionSafetyGate({ status: 'blocked' }, []).restricted, true);
   assert.deepEqual(validateProductionReadOnlyConfig({
@@ -493,7 +714,7 @@ test('正式环境单独运行时默认禁止业务写入', () => {
   assert.deepEqual(initializeProductionSafetyGate(['production']), {
     restricted: true,
     mode: 'read-only',
-    grep: '\\[CORE-001\\]',
+    grep: productionReadOnlyGrep,
     reasons: ['本轮未执行 CDS 全量测试，正式环境仅允许只读健康检查'],
   });
   assert.deepEqual(initializeProductionSafetyGate(['cds', 'production']), {
@@ -522,16 +743,16 @@ test('正式环境单独 dry-run 只校验只读健康检查地址', () => {
 });
 
 test('正式环境只读模式只对账安全门实际执行的健康检查', () => {
-  const required = ['CORE-001', 'REC-003', 'VIS-001'];
+  const required = ['CORE-001', 'REC-003', 'VIS-001', 'REG-stsmk-production-read-only-001'];
   const gate = initializeProductionSafetyGate(['production']);
 
   assert.deepEqual(
     selectCoverageCaseIds(required, '', ['production'], gate),
-    ['CORE-001'],
+    ['CORE-001', 'REG-stsmk-production-read-only-001'],
   );
   assert.deepEqual(
     selectCoverageCaseIds(required, '\\[VIS-001\\]', ['production'], gate),
-    ['CORE-001'],
+    ['CORE-001', 'REG-stsmk-production-read-only-001'],
   );
   assert.deepEqual(
     selectCoverageCaseIds(required, '', ['cds', 'production'], { ...gate, restricted: false }),
@@ -584,6 +805,15 @@ test('所有持久化清理用例都必须声明清理元数据', () => {
   assert.match(source, /\[REC-010\][\s\S]*?tag: '@cleanup'/);
 });
 
+test('录音旅程隔离 CDS 浮层竞态且主动屏蔽请求不制造取证告警', () => {
+  const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
+  assert.match(source, /htmlElement\.style\.display = 'none'/);
+  assert.match(source, /htmlElement\.style\.pointerEvents = 'none'/);
+  assert.match(source, /await expect\(widget\)\.toBeHidden\(\)/);
+  assert.match(source, /attachAutoCapture\(page, \{ ignore: \[\/\\\/api\\\/submissions\\\/public/);
+  assert.doesNotMatch(source, /expect\(page\.locator\('#cds-widget'\)\)\.toHaveCount\(0\)/);
+});
+
 test('只有归档输出中的 HTTPS 深链可以进入通知', () => {
   const output = '正在归档\n{"mode":"cds","deeplink":"https://cds.example/reports?report=1"}\n归档完成\n';
   assert.equal(extractArchivedReportUrl(output), 'https://cds.example/reports?report=1');
@@ -605,6 +835,8 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
     reportPath: '/tmp/report.md',
     manifestPath: '/tmp/empty-manifest.json',
     branch: 'codex/review',
+    projectId: 'prd-agent',
+    branchId: 'prd-agent-codex-review',
     commit: 'a'.repeat(40),
     folderPath: '稳定冒烟/2026-08',
     reportDate: '2026-08-13',
@@ -613,7 +845,36 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
   assert.equal(archive.args.includes('archive_report.py'), false);
   assert.equal(archive.args.includes('report'), true);
   assert.equal(archive.args.includes('P0 只读冒烟'), true);
+  assert.deepEqual(archive.args.slice(archive.args.indexOf('--project'), archive.args.indexOf('--project') + 2), [
+    '--project', 'prd-agent',
+  ]);
+  assert.deepEqual(archive.args.slice(archive.args.indexOf('--branch-id'), archive.args.indexOf('--branch-id') + 2), [
+    '--branch-id', 'prd-agent-codex-review',
+  ]);
   assert.equal(archive.args.includes('/tmp/empty-manifest.json'), false);
+
+  assert.throws(() => buildStableSmokeArchiveCommand({
+    productionReadOnly: true,
+    runId: 'read-only-test',
+    verdict: 'pass',
+    reportPath: '/tmp/report.md',
+    manifestPath: '/tmp/empty-manifest.json',
+    branch: 'codex/review',
+    commit: 'a'.repeat(40),
+    folderPath: '稳定冒烟/2026-08',
+  }), /缺少 CDS 项目或分支归属/);
+
+  assert.throws(() => buildStableSmokeArchiveCommand({
+    productionReadOnly: true,
+    runId: 'read-only-test',
+    verdict: 'pass',
+    reportPath: '/tmp/report.md',
+    manifestPath: '/tmp/empty-manifest.json',
+    branch: 'codex/review',
+    branchId: 'prd-agent-codex-review',
+    commit: 'a'.repeat(40),
+    folderPath: '稳定冒烟/2026-08',
+  }), /缺少 CDS 项目或分支归属/);
 
   const verifyArgs = buildReportVerificationArgs(
     'https://cds.example/reports?report=1',
@@ -655,6 +916,10 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /buildReportVerificationArgs/);
   assert.match(verifyOpenSource, /requiredTexts\.every/);
   assert.match(verifyOpenSource, /const clickedTargets = new Set\(\)/);
+  assert.match(verifyOpenSource, /reportBodyCount === 0 && internalLinkCount === 0/);
+  assert.match(verifyOpenSource, /ok: broken\.length === 0 && clickErrors\.length === 0/);
+  assert.match(verifyOpenSource, /for \(const candidate of page\.frames\(\)\)/);
+  assert.match(verifyOpenSource, /if \(liveLinkFound\) continue/);
   assert.match(verifyOpenSource, /Array\.from\(document\.images\)\.every/);
   assert.match(source, /scripts\/compose-stable-smoke-supervisor-report\.mjs/);
   assert.match(source, /create-visual-test-to-kb\/scripts\/archive_report\.py/);
@@ -678,6 +943,23 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
 });
 
+test('正式环境视觉计划同时传入主应用与网关权威地址', () => {
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  const productionPlanCall = source.match(
+    /const productionVisualPlanResult = command\('node', \[([\s\S]*?)\n\s*\]\);/,
+  );
+
+  assert.ok(productionPlanCall, '必须保留正式环境视觉计划生成调用');
+  assert.match(
+    productionPlanCall[1],
+    /'--production-origin', values\.STABLE_SMOKE_PROD_BASE_URL \|\| ''/,
+  );
+  assert.match(
+    productionPlanCall[1],
+    /'--production-gateway-origin', values\.STABLE_SMOKE_PROD_GW_BASE_URL \|\| ''/,
+  );
+});
+
 test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集成测试产生证据', () => {
   const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
   const e2eSource = readFileSync(resolve('e2e/specs/stable-smoke.spec.ts'), 'utf8');
@@ -685,7 +967,7 @@ test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集�
   const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-test', (name, args, options) => {
     calls.push({ name, args, options });
     return { status: 0 };
-  });
+  }, () => true);
 
   assert.match(source, /FullyQualifiedName~WebFolderRenameFenceTests/);
   assert.match(source, /runFolderRegressionTests\(runDir\)/);
@@ -712,10 +994,67 @@ test('文件夹永久回归分别由前端权威键测试和真实 MongoDB 集�
   );
 });
 
+test('CDS 固定版本与运行时等价回归同时产出部署证据', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-version-evidence-'));
+  try {
+    writeFileSync(resolve(directory, 'cds-readiness.json'), JSON.stringify({
+      ready: true,
+      expectedCommit: 'abc123',
+      commit: 'abc123',
+      runtimeCommit: 'abc123',
+      runtimeEquivalent: false,
+      versionId: 'dv-current',
+      reasons: [],
+    }));
+    const calls = [];
+    const result = runCdsVersionEvidence(directory, (name, args) => {
+      calls.push([name, args]);
+      return { status: 0, stdout: '3 tests passed', stderr: '' };
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'node');
+    assert.match(calls[0][1].join(' '), /纯验收工具变化可复用已部署业务版本/);
+    assert.deepEqual(
+      result.rows.map((row) => [row.caseId, row.environment, row.status]),
+      [
+        ['COMMON-003', 'cds', 'pass'],
+        ['REG-stsmk-cds-runtime-equivalence-001', 'cds', 'pass'],
+      ],
+    );
+    assert.equal(result.execution.status, 'passed');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('主报告必须带全部补充证据行，不得只保留网关持久化证据', () => {
+  const runner = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(runner, /supplementalEvidenceRows:\s*\[\s*\.\.\.supplementalRows,\s*\.\.\.gatewayPersistenceEvidenceRow\(gatewayPersistenceProbe\),\s*\]/);
+});
+
+test('CDS 部署版本证据不完整时固定版本与等价回归都失败', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-version-missing-'));
+  try {
+    writeFileSync(resolve(directory, 'cds-readiness.json'), JSON.stringify({
+      ready: false,
+      expectedCommit: 'abc123',
+      commit: 'old123',
+      runtimeCommit: 'old123',
+      versionId: '',
+      reasons: ['CDS 分支提交尚未同步到目标提交'],
+    }));
+    const result = runCdsVersionEvidence(directory, () => ({ status: 0, stdout: '', stderr: '' }));
+    assert.equal(result.execution.status, 'failed');
+    assert.ok(result.rows.every((row) => row.status === 'fail'));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('前端权威键回归失败时不会冒领另外两条服务端回归', () => {
   const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-split-test', (name) => ({
     status: name === 'pnpm' ? 1 : 0,
-  }));
+  }), () => true);
   assert.deepEqual(
     result.rows.map((row) => [row.caseId, row.status]),
     [
@@ -725,6 +1064,19 @@ test('前端权威键回归失败时不会冒领另外两条服务端回归', ()
     ],
   );
   assert.equal(result.execution.status, 'failed');
+});
+
+test('隔离 worktree 缺少前端依赖时先按锁文件恢复再执行回归', () => {
+  const calls = [];
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-bootstrap-test', (name, args) => {
+    calls.push([name, args]);
+    return { status: 0 };
+  }, () => false);
+  assert.deepEqual(calls[0], ['pnpm', ['--dir', 'prd-admin', 'install', '--frozen-lockfile']]);
+  assert.deepEqual(calls[1][1].slice(0, 6), [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run', 'src/components/web-hosting/folderDrop.test.ts',
+  ]);
+  assert.equal(result.execution.status, 'passed');
 });
 
 test('未捕获异常会持久化失败摘要并进入失败交付路径', async () => {
@@ -746,6 +1098,22 @@ test('未捕获异常会持久化失败摘要并进入失败交付路径', async
     assert.deepEqual({ ...summary, notification: expected.notification }, expected);
     assert.equal(summary.notification.status, 'skipped');
     assert.equal(summary.verdict, 'fail');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('[REG-stsmk-notify-evidence-001] 非 dry-run 异常也不得借通知中心或用户提供链接发送通知', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-fatal-proof-'));
+  try {
+    const result = await deliverUnhandledFailure([
+      '--run-id', 'fatal-proof-test', '--output-root', directory,
+      '--report-url', 'https://cds.example/reports?report=not-verified',
+    ], new Error('线上报告尚未验证'));
+    assert.equal(result.summary.verdict, 'fail');
+    assert.equal(result.summary.archive.status, 'unavailable');
+    assert.equal(result.summary.notification.status, 'withheld-unverified-report');
+    assert.equal(result.summary.notification.actionUrl, undefined);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -777,6 +1145,54 @@ test('环境模板账号与凭据注册表保持一致', () => {
   assert.match(template, new RegExp(`STABLE_SMOKE_PROD_USER=${values.STABLE_SMOKE_PROD_USER}\\b`));
   assert.match(template, /SYNTHETIC_LOGIN_ALLOWED_USERS=stsmk_cds,stsmk_prod\b/);
   assert.doesNotMatch(template, /stsmk_(?:cds|prod)_admin/);
+  assert.equal(values.STABLE_SMOKE_NOTIFY_TARGET_USERNAME, 'inernoro');
+});
+
+test('48 小时合同先保留正式只读基线再用 CDS 解锁正式写入', () => {
+  const contract = readFileSync('.claude/skills/stable-smoke/SKILL.md', 'utf8');
+  assert.match(contract, /正式环境 `CORE-001` 只读基线先行并独立记账/);
+  assert.match(contract, /CDS 门禁通过后，再运行正式环境限额写入安全矩阵/);
+  assert.match(contract, /不得因 CDS 控制面阻塞而把正式环境标成未测/);
+
+  const runner = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  const main = runner.slice(runner.indexOf('async function main()'));
+  const baselineIndex = main.indexOf("'production-baseline'");
+  const cdsAddressIndex = main.indexOf('resolveAuthoritativeCdsAddresses();', baselineIndex);
+  const cdsWaitIndex = main.indexOf('await waitForCdsDeployment(expectedCommit)');
+  const planIndex = main.indexOf("'scripts/stable-smoke-plan.mjs'", baselineIndex);
+  assert.ok(baselineIndex > 0);
+  assert.ok(cdsWaitIndex > baselineIndex, '正式环境只读基线必须在 CDS 部署等待之前执行');
+  assert.ok(cdsAddressIndex > baselineIndex, '正式环境只读基线必须在 CDS 权威地址读取之前执行');
+  assert.ok(planIndex > baselineIndex, '正式环境只读基线不得被完整矩阵计划生成阻断');
+});
+
+test('正式环境基线检查点可被异常摘要保留', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-production-baseline-'));
+  try {
+    const resultPath = resolve(directory, 'production-baseline-results.json');
+    writeFileSync(resultPath, JSON.stringify({
+      suites: [{ specs: [{ title: '[CORE-001] 首页可用', tests: [{ results: [{ status: 'passed', duration: 12 }] }] }] }],
+    }));
+    const checkpoint = buildProductionBaselineCheckpoint({
+      runId: 'stsmk-baseline-test',
+      commit: 'abc123',
+      execution: { status: 0, resultPath, htmlPath: '', testResultPath: '' },
+    });
+    assert.equal(checkpoint.status, 'pass');
+    assert.equal(checkpoint.rows[0].caseId, 'CORE-001');
+
+    const summary = buildUnhandledFailureSummary({
+      runId: 'stsmk-baseline-test',
+      selected: ['cds', 'production'],
+      reason: 'CDS 控制面超时',
+      productionBaseline: checkpoint,
+    });
+    assert.equal(summary.verdict, 'fail');
+    assert.equal(summary.productionBaseline.status, 'pass');
+    assert.match(summary.productionBaseline.conclusion, /正式环境/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('双环境凭据缺失时前置检查明确阻断', () => {
@@ -983,7 +1399,7 @@ test('无效锁先保留 owner 发布宽限期，超时后才允许强制清理'
   }
 });
 
-test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通知', async () => {
+test('[REG-stsmk-notify-evidence-001] 互斥锁阻塞无已验证报告时持久化结论且不发送通知', async () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-locked-'));
   const calls = [];
   try {
@@ -1004,16 +1420,31 @@ test('互斥锁阻塞的定时任务仍持久化有条件结论并发送 MAP 通
       summary.archive,
     );
     assert.equal(summary.verdict, 'conditional');
-    assert.equal(summary.notification.status, 'sent');
+    assert.equal(summary.notification.status, 'withheld-unverified-report');
     assert.equal(existsSync(result.blockedPath), true);
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args.slice(0, 5), [
-      'scripts/stable-smoke-notify.mjs',
-      '--verdict',
-      'conditional',
-      '--run-id',
-      'locked-test',
-    ]);
+    assert.equal(calls.length, 0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('通知证据永久回归真实接线且不会把失败写为通过', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-notify-wiring-'));
+  try {
+    for (const status of [0, 1]) {
+      const calls = [];
+      const result = runNotificationEvidenceRegression(directory, (name, args) => {
+        calls.push({ name, args });
+        return { status, stdout: 'fixture result', stderr: '' };
+      });
+      assert.equal(calls[0].name, 'node');
+      assert.ok(calls[0].args.includes('REG-stsmk-notify-evidence-001'));
+      assert.equal(result.rows[0].status, status === 0 ? 'pass' : 'fail');
+      assert.equal(result.rows[0].caseId, 'REG-stsmk-notify-evidence-001');
+      assert.equal(readFileSync(result.execution.artifactPath, 'utf8').trim(), 'fixture result');
+    }
+    const source = readFileSync(resolve('scripts/stable-smoke-run.mjs'), 'utf8');
+    assert.match(source, /selectedCdsCases\.includes\('REG-stsmk-notify-evidence-001'\)/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -1142,6 +1573,35 @@ test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移'
   assert.ok(blocked.reasons.some((reason) => reason.includes('admin 未运行')));
 });
 
+test('CDS 手动部署成功时不受陈旧 webhook 调度记录阻塞', () => {
+  const commit = 'abc123';
+  const branch = {
+    status: 'running',
+    commitSha: commit,
+    ciTargetSha: commit,
+    ciImageStatus: 'ready',
+    lastDeployDispatchCommitSha: 'old123',
+    currentVersionId: 'dv-manual',
+    lastDeploymentRunId: 'dr-manual',
+    latestDeploymentRun: {
+      id: 'dr-manual',
+      commitSha: commit,
+      status: 'running',
+      phase: 'complete',
+    },
+    deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api', status: 'running', deployedImage: `registry/api:sha-${commit}` },
+    },
+  };
+
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  branch.latestDeploymentRun.status = 'building';
+  const blocked = evaluateCdsReadiness(branch, commit);
+  assert.equal(blocked.ready, false);
+  assert.ok(blocked.reasons.includes('CDS 尚未对运行时目标提交完成部署调度'));
+});
+
 test('纯验收工具变化可复用已部署业务版本且留下等价记录', () => {
   const deployedCommit = '1111111';
   const expectedCommit = '2222222';
@@ -1152,6 +1612,11 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
     ciImageStatus: 'waiting',
     lastDeployDispatchCommitSha: deployedCommit,
     currentVersionId: 'dv-runtime',
+    latestDeploymentRun: {
+      commitSha: expectedCommit,
+      status: 'running',
+      phase: 'complete',
+    },
     deployRuntime: { drift: { hasDrift: false } },
     services: {
       api: { profileId: 'api', status: 'running', deployedImage: `registry/api:sha-${deployedCommit}` },
@@ -1160,16 +1625,25 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   };
   const files = [
     '.claude/skills/stable-smoke/reference/regression-ledger.md',
+    '.claude/skills/cds/cli/cdscli.py',
+    '.claude/skills/cds/tests/test_verify_runtime_credentials.py',
     '.Codex/rules/user-readable-errors.md',
+    'cds/src/commands/compose/verify.ts',
+    'cds/web/src/lib/report-document.ts',
+    'cds/tests/commands/compose-verify.test.ts',
     'e2e/specs/stable-smoke.spec.ts',
     'scripts/stable-smoke-visual-gate.mjs',
     'scripts/tests/stable-smoke-visual-gate.test.mjs',
     'changelogs/2026-08-05_stable-smoke.md',
+    'changelogs/2026-10-04_修复稳定冒烟归档.md',
   ];
   assert.equal(deployedRuntimeCommit(branch), deployedCommit);
   assert.equal(files.every(isValidationOnlyPath), true);
   assert.equal(isValidationOnlyPath('.codex/rules/user-readable-errors.md'), false);
+  assert.equal(isValidationOnlyPath('cds-compose.yml'), false);
+  assert.match(readFileSync('scripts/stable-smoke-run.mjs', 'utf8'), /'core\.quotePath=false'/);
   const expectation = resolveRuntimeExpectation(branch, expectedCommit, files);
+  branch.lastDeployDispatchCommitSha = 'stale-dispatch';
   assert.deepEqual(evaluateCdsReadiness(branch, expectedCommit, expectation), {
     ready: true,
     reasons: [],

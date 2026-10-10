@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -7270,7 +7270,206 @@ def _verify_infra_image(svc_name: str, svc: dict) -> list[dict]:
     return []
 
 
-def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[dict]:
+def _verify_runtime_credential_vars(
+    infra_services: dict,
+    project_env: dict | None = None,
+) -> set[str]:
+    """Return credential aliases that CDS can actually derive at runtime.
+
+    A declared service id is not enough: the server only injects aliases when
+    it can resolve a complete credential account, and Redis/NATS additionally
+    require startup arguments proving that authentication is enabled.  Verify
+    mirrors that contract so an unresolved placeholder cannot be downgraded to
+    INFO merely because an unrelated infra service has the same id.
+    """
+    declared_env = {
+        str(k): str(v)
+        for k, v in (project_env or {}).items()
+        if v is not None
+    }
+
+    template_re = re.compile(r"\$\{(\w+)(?::([-=?+])([^}]*))?\}")
+    max_resolve_iterations = 8
+
+    def _value(env: dict[str, str], key: str, seen: set[str] | None = None) -> str:
+        """Resolve a value with the server's `resolveEnvTemplates` semantics."""
+        seen = set(seen or ())
+        if key in seen:
+            return ""
+        seen.add(key)
+        raw_value = env.get(key)
+        if raw_value is None:
+            raw_value = os.environ.get(key, "")
+        value = str(raw_value).strip()
+
+        for _ in range(max_resolve_iterations):
+            def _replace(match: re.Match[str]) -> str:
+                name, operator, operand = match.groups()
+                current = _value(env, name, seen)
+                has_non_empty_value = current != ""
+                if operator == "-":
+                    return current if has_non_empty_value else (operand or "")
+                if operator == "=":
+                    if has_non_empty_value:
+                        return current
+                    assigned = operand or ""
+                    env[name] = assigned
+                    return assigned
+                if operator == "+":
+                    return (operand or "") if has_non_empty_value else ""
+                if operator == "?":
+                    return current if has_non_empty_value else ""
+                return current
+
+            resolved = template_re.sub(_replace, value)
+            if resolved == value:
+                break
+            value = resolved
+        return "" if "${" in value else value
+
+    def _resolve_text(raw_value: object, lookup: dict[str, str]) -> str:
+        probe_key = "__CDS_VERIFY_VALUE__"
+        scope = dict(lookup)
+        scope[probe_key] = str(raw_value)
+        return _value(scope, probe_key)
+
+    def _env(svc: dict) -> dict[str, str]:
+        raw = svc.get("environment") or svc.get("env") or {}
+        service_env: dict[str, str] = {}
+        if isinstance(raw, dict):
+            service_env.update({str(k): str(v) for k, v in raw.items() if v is not None})
+        elif isinstance(raw, list):
+            for item in raw:
+                key, sep, value = str(item).partition("=")
+                if sep and key:
+                    service_env[key] = value
+        # 运行时 resolveEnvTemplates(service.env, projectEnv) 使用两个独立作用域。
+        # 服务级同名占位不能覆盖 project env 后再解析，否则
+        # POSTGRES_PASSWORD=${POSTGRES_PASSWORD} 会被误判为自引用。
+        return {
+            key: _resolve_text(value, declared_env)
+            for key, value in service_env.items()
+        }
+
+    def _args(svc: dict) -> str:
+        parts: list[str] = []
+        for field in ("command", "entrypoint"):
+            value = svc.get(field)
+            if isinstance(value, list):
+                parts.extend(str(item) for item in value)
+            elif value:
+                parts.append(str(value))
+        return " ".join(parts)
+
+    def _flag_value(args: str, env: dict[str, str], *flags: str) -> str:
+        try:
+            tokens = shlex.split(args)
+        except ValueError:
+            tokens = args.split()
+
+        def _resolve(raw: str) -> str:
+            value = raw.strip().strip('"\'')
+            match = re.fullmatch(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", value)
+            if match:
+                return _value(env, match.group(1))
+            return "" if "${" in value else value
+
+        lowered_flags = {flag.lower() for flag in flags}
+        for index, token in enumerate(tokens):
+            lowered = token.lower()
+            if lowered in lowered_flags:
+                if index + 1 < len(tokens) and not tokens[index + 1].startswith("-"):
+                    value = _resolve(tokens[index + 1])
+                    if value:
+                        return value
+                continue
+            for flag in flags:
+                prefix = f"{flag.lower()}="
+                if lowered.startswith(prefix):
+                    value = _resolve(token[len(flag) + 1:])
+                    if value:
+                        return value
+        return ""
+
+    def _resolved_account(svc: dict) -> tuple[bool, bool]:
+        env = _env(svc)
+        # 服务端 resolveCommandTemplate 使用项目环境解析 command / entrypoint；
+        # 同时保留已解析的服务环境，兼容把凭据显式复制到 service.env 的项目。
+        startup_env = dict(declared_env)
+        startup_env.update(env)
+        args = _args(svc)
+
+        redis_password = (_value(env, "REDIS_PASSWORD")
+                          or _flag_value(args, startup_env, "--requirepass"))
+        redis_auth = bool(
+            _flag_value(args, startup_env, "--requirepass", "--user", "--aclfile"))
+        if redis_password and redis_auth:
+            return bool(_value(env, "REDIS_USERNAME")), True
+
+        nats_password = _value(env, "NATS_PASSWORD") or _flag_value(args, startup_env, "--pass")
+        nats_auth = bool(_flag_value(args, startup_env, "--pass", "--auth"))
+        if nats_password and nats_auth:
+            nats_user = _value(env, "NATS_USER") or _flag_value(args, startup_env, "--user")
+            if nats_user:
+                return True, True
+
+        memcached_auth = bool(
+            _flag_value(args, startup_env, "-Y", "--auth-file")
+            or re.search(r"(?:^|\s)-S(?:\s|$)", args))
+        memcached_user = _value(env, "MEMCACHED_USER")
+        memcached_password = _value(env, "MEMCACHED_PASSWORD")
+        if memcached_auth and memcached_user and memcached_password:
+            return True, True
+
+        accounts = (
+            (("MONGO_INITDB_ROOT_USERNAME",), "MONGO_INITDB_ROOT_PASSWORD", False),
+            (("MONGO_USERNAME",), "MONGO_PASSWORD", False),
+            (("MONGODB_USERNAME",), "MONGODB_PASSWORD", False),
+            (("MYSQL_USER",), "MYSQL_PASSWORD", False),
+            (("MARIADB_USER",), "MARIADB_PASSWORD", False),
+            ((), "MYSQL_ROOT_PASSWORD", True),
+            ((), "MARIADB_ROOT_PASSWORD", True),
+            (("POSTGRES_USER",), "POSTGRES_PASSWORD", True),
+            (("POSTGRES_USER",), "PGPASSWORD", True),
+            (("RABBITMQ_DEFAULT_USER",), "RABBITMQ_DEFAULT_PASS", False),
+            (("MINIO_ROOT_USER",), "MINIO_ROOT_PASSWORD", False),
+            (("MINIO_ACCESS_KEY",), "MINIO_SECRET_KEY", False),
+            ((), "MSSQL_SA_PASSWORD", True),
+            ((), "SA_PASSWORD", True),
+            (("CLICKHOUSE_USER",), "CLICKHOUSE_PASSWORD", True),
+        )
+        for user_keys, password_key, has_default_user in accounts:
+            if not _value(env, password_key):
+                continue
+            has_user = has_default_user or any(_value(env, key) for key in user_keys)
+            if has_user:
+                return True, True
+        elastic_security = (_value(env, "xpack.security.enabled")
+                            or _value(env, "XPACK_SECURITY_ENABLED")).lower()
+        if elastic_security != "false" and _value(env, "ELASTIC_PASSWORD"):
+            return True, True
+        return False, False
+
+    aliases: set[str] = set()
+    for name, svc in infra_services.items():
+        if not isinstance(svc, dict):
+            continue
+        has_user, has_password = _resolved_account(svc)
+        if not has_password:
+            continue
+        prefix = str(name).upper().replace("-", "_")
+        if has_user:
+            aliases.add(f"CDS_{prefix}_USER")
+        aliases.add(f"CDS_{prefix}_PASSWORD")
+    return aliases
+
+
+def _verify_env_resolves(
+    svc_name: str,
+    svc: dict,
+    env_keys: set[str],
+    runtime_credential_vars: set[str] | None = None,
+) -> list[dict]:
     """ERROR:env 里的 ${VAR} 在 x-cds-env 里没定义,也无 default。
 
     CDS 运行时变量白名单（由 CDS 服务端在容器启动时注入，verify 阶段无法预知）：
@@ -7284,6 +7483,7 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
     # 仅包含 CDS 服务端自动分配的网络层变量（端口/主机名/连接串）。
     # _PASSWORD / _USER / _DB 等凭据变量不在此列——它们必须由项目在 x-cds-env 中显式定义。
     _CDS_RUNTIME_SUFFIXES = ("_PORT", "_HOST", "_URL")
+    runtime_credential_vars = runtime_credential_vars or set()
 
     issues: list[dict] = []
     env = svc.get("environment") or {}
@@ -7301,13 +7501,19 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
             if var in env_self_keys:
                 continue
             # CDS 运行时变量白名单
-            if var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES):
+            is_runtime_credential = var in runtime_credential_vars
+            if ((var.startswith("CDS_") and any(var.endswith(sfx) for sfx in _CDS_RUNTIME_SUFFIXES))
+                    or is_runtime_credential):
                 issues.append({
                     "severity": "INFO",
                     "service": svc_name,
                     "rule": "env-var-cds-runtime",
                     "message": f"{svc_name}.{field_label} 引用 ${{{var}}}，这是 CDS 运行时注入变量，无需在 x-cds-env 中定义",
-                    "fix": "如需本地 verify 通过，可加 fallback: ${" + var + ":-localhost}",
+                    "fix": (
+                        "无需在 x-cds-env 重复定义；确保对应基础设施服务已启用认证且项目 env 已配置凭据"
+                        if is_runtime_credential
+                        else "该变量由 CDS 运行时注入，无需修复"
+                    ),
                 })
                 continue
             issues.append({
@@ -7594,16 +7800,17 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     env_decls = doc.get("x-cds-env") if isinstance(doc.get("x-cds-env"), dict) else {}
     app_services = {n: s for n, s in services.items() if isinstance(s, dict) and _verify_is_app_service(s)}
     infra_services = {n: s for n, s in services.items() if isinstance(s, dict) and not _verify_is_app_service(s)}
+    runtime_credential_vars = _verify_runtime_credential_vars(infra_services, env_decls)
 
     issues: list[dict] = []
     # ERROR
     for name, svc in app_services.items():
         issues += _verify_app_workdir(name, svc, root)
         issues += _verify_app_ports(name, svc)
-        issues += _verify_env_resolves(name, svc, env_keys)
+        issues += _verify_env_resolves(name, svc, env_keys, runtime_credential_vars)
     for name, svc in infra_services.items():
         issues += _verify_infra_image(name, svc)
-        issues += _verify_env_resolves(name, svc, env_keys)
+        issues += _verify_env_resolves(name, svc, env_keys, runtime_credential_vars)
     # WARNING
     issues += _verify_schemaful_db_migration(infra_services, app_services)
     issues += _verify_scan_signals(doc)

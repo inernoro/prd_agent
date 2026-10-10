@@ -15,8 +15,9 @@
 //   指向"单个具体元素/按钮/输入框"用 shape:"circle"；框一片"区域/差异"用方框。
 // --login 用 env MAP_AI_USER / MAP_ACCEPT_PASS 表单登录；--mobile 用 iPhone 13 视口；--click 截图前先点开某元素。
 import { createRequire } from 'module';
+import { loadPlaywright } from './playwright-runtime.mjs';
 const require = createRequire(import.meta.url);
-const { chromium, devices } = require(process.env.PWPATH || '/opt/node22/lib/node_modules/playwright');
+const { chromium, devices } = loadPlaywright();
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name);

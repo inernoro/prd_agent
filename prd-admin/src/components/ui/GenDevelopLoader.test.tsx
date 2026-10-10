@@ -302,6 +302,12 @@ describe('【关键】底边那行必须夹在画布可见区域内', () => {
     expect(usages.length, '画布应有两处 GenDevelopLoader').toBe(2);
     for (const usage of usages) expect(usage).toContain('viewportRef={stageRef}');
   });
+
+  it('真实生成任务在画板上显示可访问的队列状态', () => {
+    expect(CANVAS).toContain('aria-label="生成队列"');
+    expect(CANVAS).toContain("item.status === 'running'");
+    expect(CANVAS).toContain('{activeGenerationCount} 项进行中');
+  });
 });
 
 describe('GenDevelopLoader 接线守卫：底边一行的定位只能从共享换算函数拿', () => {

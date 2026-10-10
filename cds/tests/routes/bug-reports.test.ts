@@ -533,8 +533,9 @@ describe('POST /api/bug-reports', () => {
 
   it('server.ts 的全局解析器跳过名单必须包含 /api/bug-reports', () => {
     expect(SERVER_SOURCE).toMatch(
-      /req\.path === '\/api\/bug-reports' \|\| req\.path\.startsWith\('\/api\/bug-reports\/'\)/,
+      /req\.path === '\/api\/bug-reports'\s*\|\|\s*req\.path\.startsWith\('\/api\/bug-reports\/'\)/,
     );
+    expect(SERVER_SOURCE).toMatch(/if \(routeOwnsRequestBody\(req\)\) return next\(\);/);
   });
 
   it('超过路由自身上限时返回可读的中文 413 JSON（不是 HTML）', async () => {

@@ -50,12 +50,15 @@ const alarmDeps: Partial<Parameters<typeof createUptimeRouter>[0]> = {
 
 async function get(app: express.Express, url: string) {
   const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once('listening', resolve));
   const port = (server.address() as { port: number }).port;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}${url}`);
+    // 每次请求都使用短生命周期服务器，不能把连接留进 fetch 的全局池；
+    // 并行全量测试复用临时端口时，否则可能命中刚关闭的旧连接。
+    const res = await fetch(`http://127.0.0.1:${port}${url}`, { headers: { Connection: 'close' } });
     return { status: res.status, body: (await res.json()) as Json };
   } finally {
-    server.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
 

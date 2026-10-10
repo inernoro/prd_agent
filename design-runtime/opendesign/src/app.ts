@@ -54,6 +54,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     },
     fetchImpl: overrides.fetchImpl,
     pollIntervalMs: overrides.pollIntervalMs,
+    startTimeoutSeconds: config.odStartTimeoutSeconds,
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     // 服务自己的代码目录（镜像里是 /opt/map-design-runtime/dist）、工作目录与只读资源都不许落进任务目录。

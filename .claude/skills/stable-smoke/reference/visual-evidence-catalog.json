@@ -71,18 +71,18 @@
     {
       "id": "short-video-parsing",
       "name": "短视频上传与链接解析",
-      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 时间轴结果",
+      "breadcrumb": "首页 → 知识库 → 我的空间 → 右下角新增 → 上传与导入 → 解析短视频 → 抽取与转写 → 入库结果",
       "entryPath": "/document-store",
       "uniqueScreenshotFloor": 12,
       "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
-      "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "时间轴结果", "失败恢复", "移动端"],
+      "requiredStates": ["入口", "视频上传", "链接输入", "抽取进度", "转写进度", "入库结果", "失败恢复", "移动端"],
       "methods": ["双输入路径", "异步进度", "结果完整性", "失败恢复"],
       "additionalEvidenceSlots": [
         {"label": "暗色桌面链接输入", "primaryState": "链接输入", "theme": "dark", "viewportClass": "desktop", "expectedProof": "暗色主题下输入、提交与校验信息完整"},
         {"label": "移动端视频上传", "primaryState": "视频上传", "theme": "dark", "viewportClass": "mobile", "expectedProof": "真实触控移动端可选择并上传短视频"},
         {"label": "超长错误提示", "primaryState": "失败恢复", "theme": "dark", "viewportClass": "desktop", "expectedProof": "错误长文案不溢出并给出恢复动作"},
-        {"label": "移动端时间轴", "primaryState": "时间轴结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏时间轴可滚动且内容不裁切"}
+        {"label": "移动端入库结果", "primaryState": "入库结果", "theme": "dark", "viewportClass": "mobile", "expectedProof": "窄屏终态卡片、原始视频和继续加工入口完整且不裁切"}
       ]
     },
     {
@@ -165,7 +165,8 @@
         },
         "前台选择": {
           "originKind": "app",
-          "entryPath": "/visual-agent"
+          "entryPath": "/visual-agent",
+          "theme": "dark"
         },
         "真实调用": {
           "originKind": "app",
@@ -191,6 +192,13 @@
       "name": "用户可读错误、生成进度与响应式布局",
       "breadcrumb": "各业务功能 → 触发等待或失败 → 查看提示 → 执行恢复；各功能 → 切换窄屏 → 完成关键操作",
       "entryPath": "/",
+      "stateBindings": {
+        "超长文案": {"entryPath": "/document-store"},
+        "弹窗": {"entryPath": "/document-store"},
+        "滚动": {"entryPath": "/document-store"},
+        "暗色桌面超长错误": {"entryPath": "/document-store"},
+        "移动端弹窗与滚动": {"entryPath": "/"}
+      },
       "uniqueScreenshotFloor": 12,
       "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],

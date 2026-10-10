@@ -1903,6 +1903,58 @@ def _severity_class(severity):
     return ""
 
 
+def _warning_review_for(shot, warning):
+    """返回与当前告警精确绑定的人工复核，避免截图级复核覆盖同图其他告警。"""
+    reviews = shot.get("warningReviews")
+    if reviews is not None:
+        if not isinstance(reviews, list):
+            raise ValueError("warningReviews 必须是逐条复核数组")
+        matches = []
+        for review in reviews:
+            if not isinstance(review, dict) or not str(review.get("warning") or "").strip():
+                raise ValueError("warningReviews 每项必须包含原始 warning")
+            if str(review["warning"]) == str(warning):
+                matches.append(review)
+        if len(matches) > 1:
+            raise ValueError("同一 warning 只能有一条人工复核")
+        return matches[0] if matches else None
+
+    review = shot.get("warningReview")
+    if review is not None:
+        warnings = [str(item) for item in (shot.get("warnings") or [])]
+        if len(warnings) != 1 or warnings[0] != str(warning):
+            raise ValueError("同图存在多条告警时禁止使用截图级 warningReview，请改用逐条 warningReviews")
+    return review
+
+
+def _reviewed_warning(shot, warning):
+    """保留原始捕获等级；仅凭已确认、可定位且逐条匹配的诊断分类呈现风险。"""
+    review = _warning_review_for(shot, warning)
+    if review is None:
+        return _severity_from_text(warning), warning
+    if not isinstance(review, dict) or not all(
+        str(review.get(key) or "").strip()
+        for key in ("severity", "classification", "defectId", "reason")
+    ):
+        raise ValueError("warningReview 必须包含严重级、分类、defectId与确认依据")
+    severity = review["severity"]
+    if severity not in {"P0", "P1", "P2", "P3"} or review["classification"] not in {
+        "product", "test", "test/infrastructure", "configuration", "environment",
+    }:
+        raise ValueError("warningReview 严重级或分类非法")
+    detail = (
+        f'已确认 {severity} · {review["classification"]} · {review["defectId"]}：'
+        f'{review["reason"]}；原始捕获等级（非产品严重级）：{warning}'
+    )
+    return severity, detail
+
+
+def _verdict_label(verdict, markdown):
+    if verdict == "conditional" and _coverage_gap_count(markdown) > 0:
+        return "未完成，不放行"
+    return {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(verdict, verdict)
+
+
 def _plain_cell_text(value):
     """把表格单元格里的 markdown 标记压成纯文本。
 
@@ -2050,7 +2102,8 @@ def _collect_problem_items(markdown, manifest):
         label = f"图{num.upper()}" if num else (shot.get("name") or "截图")
         cap = _evidence_caption(shot, label)
         for warning in shot.get("warnings") or []:
-            add(_severity_from_text(warning), f"{label} · {cap}", warning, anchor)
+            severity, detail = _reviewed_warning(shot, warning)
+            add(severity, f"{label} · {cap}", detail, anchor)
 
     order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     return sorted(items, key=lambda it: order.get(it["severity"], 9))
@@ -2381,11 +2434,16 @@ def build_interactive_html(
     for technical_state, readable_state in _EVIDENCE_STATE_TRANSLATIONS.items():
         render_markdown = render_markdown.replace(technical_state, readable_state)
     problem_items = _collect_problem_items(render_markdown, manifest)
-    problem_anchors = {
-        it["anchor"]: it["severity"]
-        for it in problem_items
-        if it.get("anchor")
-    }
+    severity_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    problem_anchors = {}
+    for item in problem_items:
+        anchor = item.get("anchor")
+        severity = item.get("severity")
+        if not anchor or not severity:
+            continue
+        current = problem_anchors.get(anchor)
+        if current is None or severity_rank.get(severity, 9) < severity_rank.get(current, 9):
+            problem_anchors[anchor] = severity
     body_html = _decorate_problem_figures(markdown_to_html(render_markdown), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
     section_navigation = _collect_section_navigation(render_markdown, problem_items)
@@ -2407,7 +2465,7 @@ def build_interactive_html(
     defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
-        "conditional": ("原则性通过", "conditional"),
+        "conditional": (_verdict_label(verdict, markdown_content), "conditional"),
         "fail": ("不通过", "fail"),
     }.get(verdict, (verdict, "unknown"))
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
@@ -2436,8 +2494,14 @@ def build_interactive_html(
         src = html.escape(raw_src, quote=True)
         thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
         nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
-        warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
-        severity = problem_anchors.get(anchor) or _severity_from_text(warnings)
+        warnings = [str(w) for w in (shot.get("warnings") or [])]
+        reviewed_severities = [_reviewed_warning(shot, warning)[0] for warning in warnings]
+        warning_severity = min(
+            (item for item in reviewed_severities if item),
+            key=lambda item: severity_rank.get(item, 9),
+            default="",
+        )
+        severity = problem_anchors.get(anchor) or warning_severity
         status_class = _severity_class(severity)
         nav_class = f' class="is-{status_class}"' if status_class else ""
         card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"
@@ -2599,6 +2663,7 @@ def build_interactive_html(
         release_failed = (
             verdict == "fail"
             or counts["失败"] > 0
+            or counts["未执行"] > 0
             or visual.get("明确不通过", 0) > 0
         )
         release_conditional = (
@@ -2723,7 +2788,7 @@ def build_interactive_html(
                 f'{fallback_link}</div>'
             )
         if verdict == "conditional":
-            focus_kicker = "原则性通过重点"
+            focus_kicker = "未完成项与风险" if row_gap_count else "原则性通过重点"
             focus_title = "先看这里：风险证据和未覆盖项"
         else:
             focus_kicker = "不通过定位"
@@ -4646,8 +4711,8 @@ def main():
         raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
-    verdict_cn = {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(a.verdict, a.verdict)
     body = ensure_report_time(open(a.report_md, encoding="utf-8").read().lstrip(), dt)
+    verdict_cn = _verdict_label(a.verdict, body)
     title, a.report_kind, a.report_date = build_report_title(a, cfg, now, body)
     # 项目由 projectId、状态由 verdict、操作方式与档位由 metadata/tags 表达，不再挤占标题。
     tags = [t for t in [verdict_cn, a.report_kind, a.type, a.tier] if (t or "").strip()]
