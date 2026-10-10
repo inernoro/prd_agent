@@ -59,9 +59,8 @@ export class JsonStateBackingStore implements StateBackingStore {
   private dirtyState: CdsState | null = null;
   private flushScheduled = false;
   /** 串行写链：一次只有一个磁盘写在飞，后来的快照排队。 */
-  private writeChain: Promise<void> = Promise.resolve();
+  private writeChain: Promise<Error | null> = Promise.resolve(null);
   /** 最近一次写盘失败的错误；flush() 时抛出，避免静默吞错。 */
-  private lastWriteError: Error | null = null;
   private lastBackupAtMs = 0;
 
   constructor(private readonly filePath: string) {
@@ -128,12 +127,10 @@ export class JsonStateBackingStore implements StateBackingStore {
       this.snapshotAndEnqueue();
     }
     this.flushScheduled = false;
-    await this.writeChain;
-    if (this.lastWriteError) {
-      const err = this.lastWriteError;
-      this.lastWriteError = null;
-      throw err;
-    }
+    // Capture this barrier's result. One observer must not consume the failure of
+    // another waiter, nor may a later successful write rewrite an older result.
+    const error = await this.writeChain;
+    if (error) throw error;
   }
 
   /** 序列化当前 dirty state（序列化即不可变快照）并入串行写队列。 */
@@ -142,12 +139,18 @@ export class JsonStateBackingStore implements StateBackingStore {
     const live = this.dirtyState;
     if (!live) return;
     this.dirtyState = null;
-    const serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
+    let serialized: string;
+    try {
+      serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
+    } catch (error) {
+      this.writeChain = this.writeChain.then(() => error as Error);
+      return;
+    }
     this.writeChain = this.writeChain
-      .then(() => this.writeToDisk(serialized))
+      .then(async () => { await this.writeToDisk(serialized); return null; })
       .catch((err) => {
-        this.lastWriteError = err as Error;
         console.error(`[state] async state.json write failed: ${(err as Error).message}`);
+        return err as Error;
       });
   }
 

@@ -21,6 +21,22 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 const candidate = (port = 10002) => createCandidateRuntime(branch, [{ id: 'api' } as BuildProfile], 'op-test', () => port);
 describe('P3 durable private candidate reservations', () => {
+  it('cannot lose a real disk error to a competing onSave flush observer', async () => {
+    const file = path.join(dir, 'state.json'); fs.unlinkSync(file); fs.mkdirSync(file);
+    let observed: Promise<string> | undefined;
+    state.onSave(() => { observed = state.flush().then(() => 'resolved', () => 'rejected'); });
+    try {
+      await expect(new CandidateJournal(state).prepare(runId, candidate())).rejects.toThrow();
+      expect(await observed).toBe('rejected');
+    } finally {
+      fs.rmdirSync(file); state.save(); await state.flush(); await observed;
+    }
+  });
+  it('rejects unknown run states before recording candidate identities', async () => {
+    state.getDeploymentRun(runId)!.status = 'unknown' as any;
+    await expect(new CandidateJournal(state).prepare(runId, candidate())).rejects.toThrow('candidate_journal_owner');
+    expect(state.getDeploymentRun(runId)!.candidate).toBeUndefined();
+  });
   it('persists both identities before returning without replacing live services or storing logs/config', async () => {
     const graph = candidate(); (graph.services.api as any).env = { token: 'private' };
     await new CandidateJournal(state).prepare(runId, graph);

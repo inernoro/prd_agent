@@ -23,7 +23,7 @@ export class CandidateJournal {
     const serving = this.state.getBranch(candidate.id);
     if (!run || !serving || run.branchId !== candidate.id || run.projectId !== candidate.projectId ||
       serving.projectId !== candidate.projectId || !run.operationId || !run.configHash || run.candidate ||
-      ['running', 'failed', 'cancelled'].includes(run.status)) throw new Error('candidate_journal_owner: active owned run required');
+      !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status)) throw new Error('candidate_journal_owner: active owned run required');
     const target = candidate.deploymentTargetSha || candidate.githubCommitSha || '';
     if (!/^[0-9a-f]{40}$/.test(target) || run.commitSha !== target) throw new Error('candidate_journal_target: frozen target mismatch');
     const identities = Object.entries(candidate.services);

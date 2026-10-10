@@ -174,6 +174,11 @@ export class ForwarderRoutePublisher {
     }
   }
 
+  /** Snapshot the desired mapping before publishing; file writes are not consumer acknowledgement. */
+  getDesiredRoutes(): RouteRecord[] {
+    return this.buildRoutes();
+  }
+
   private buildRoutes(): RouteRecord[] {
     const records: RouteRecord[] = [];
     // 全部分支已保存的子域别名标签 → 拥有它的分支 id。

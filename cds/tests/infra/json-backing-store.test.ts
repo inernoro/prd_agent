@@ -183,4 +183,26 @@ describe('JsonStateBackingStore', () => {
       expect(store.kind).toBe('json');
     });
   });
+
+  it('reports a failed disk barrier to every waiter and clears it only after a newer successful write', async () => {
+    fs.mkdirSync(filePath); // Real rename failure: a directory occupies the state file path.
+    store.save(emptyState());
+    const results = await Promise.allSettled([store.flush(), store.flush()]);
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    await expect(store.flush()).rejects.toThrow();
+    fs.rmdirSync(filePath);
+    const recovered = emptyState(); recovered.nextPortIndex = 19;
+    store.save(recovered);
+    await expect(store.flush()).resolves.toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).nextPortIndex).toBe(19);
+  });
+  it('retains a serialization failure for all observers until a serializable snapshot succeeds', async () => {
+    const state = emptyState(); (state as any).cycle = state;
+    store.save(state);
+    const results = await Promise.allSettled([store.flush(), store.flush()]);
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    await expect(store.flush()).rejects.toThrow();
+    store.save(emptyState()); await store.flush();
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8')).nextPortIndex).toBe(0);
+  });
 });
