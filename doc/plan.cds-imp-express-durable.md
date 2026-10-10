@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.10；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.11；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -109,3 +109,17 @@ f8通用孤儿收割保护未released记录中的serving/candidate名字，run f
 f8本地4相关文件321测试及显式cds tsc通过；带HTTP/事件循环脱敏trace全量641文件9290测试通过、6文件19条跳过、1旧obsolete snapshot。此前e091首轮640文件9282测试绿/1operator-console-auth GET ops 5s超时红保留；此前1376 OAuth404/bug-report超时与ECONNRESET保留。绿色trace中operator请求<5ms，未复现首轮红，不能称根因已修复。trace只测试进程，不是公网/线上性能证据。正式49/视觉/8分支均未执行。
 
 主HTTP夹具错误（不存在的config.stateFile、跨场景重复同SHA触发正常空转熔断）已纠正并留日志，不作为产品红。两副本49条正式状态不变；没有push/PR/共享CDS写入。
+
+## v1.11 实施检查点（2026-10-11）
+
+CDS:c6155ab7a3d6e736dc8d598093c0019b7c09e7f2; IMP:f69a024400c9192a6d03f8e8edaadbf04c962227（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地检查点，后续文档提交另计，未部署）。
+
+c615新写入准入：未released两图即使run failed/cancelled也拒绝deploy/deploy-profile/restart/delete等新租约；高优先级拒绝在撤销旧租约前，相同精确目标joined与pending合并不创建执行者，重放重查。index给共享coordinator注入实际state检查，直接candidate executor同样拒绝旧未释放图。本地coordinator/真实自有HTTP Docker模型原3红/4删除守卫红均复绿；实际Master/Daemon/全部入口独立仍待验。
+
+e091独立取消13局部绿保留原SHA。f8独立discovery/reaper原25/25，扩展30新增5个canonical-name归属缺/错红；b988已从实际Name反向核对冻结branch/profile，unknown-present不当missing，本地5红复绿，新的独立复验待返回。实际Daemon重启/取消/网络与完整恢复未验。
+
+c615明确stop仍可取消旧执行者/请求停止已发布图，未释放候选通过candidateReconciliationPending及待对账提示报告，不释放日志、不声称全部候选停止。本地缺字段真红复绿。普通reaper保留未释放两图与unknown candidate/protected的f8局部独立25证据不继承到新SHA；不可变ID专门reconciler待实现。
+
+c615固定主全量641文件9306测试通过、6文件19条跳过、1旧obsolete snapshot，100.04s。相关取消/准入3文件296、owner3文件97与显式tsc绿。e091首operator-auth 5s超时红、1376 OAuth404/bug-reports超时/ECONNRESET继续保留，尚未证明根因修复；f8带脱敏trace全量9290绿属历史。主修改导入断言首次失败未写入，随后未应用代码的stop缺字段仍红，纠正导入后绿，不计新产品红。正式49/真实Daemon/视觉/八分支未执行。
+
+本轮仍没有push、PR、自更新或共享环境写入；保持双副本49条正式状态与强验收门槛。
