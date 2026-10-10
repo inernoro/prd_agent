@@ -56,7 +56,19 @@ async function request(
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any; text: string; contentType: string }> {
+  const observations: Array<{ phase: string; elapsedMs: number }> = [];
+  const started = Date.now();
+  const observe = (phase: string) => { if (observations.length < 24) observations.push({ phase, elapsedMs: Date.now() - started }); };
   const server = app.listen(0);
+  server.on('connection', socket => {
+    observe('server-connection');
+    socket.once('close', hadError => observe(hadError ? 'server-socket-close-error' : 'server-socket-close'));
+  });
+  server.on('request', (_req, res) => {
+    observe('server-request');
+    res.once('finish', () => observe('server-response-finish'));
+    res.once('close', () => observe('server-response-close'));
+  });
   await new Promise((resolve) => server.once('listening', resolve));
   const addr = server.address();
   if (!addr || typeof addr === 'string') throw new Error('no server address');
@@ -73,7 +85,8 @@ async function request(
         response.on('end', () => resolve({ status: response.statusCode || 0,
           text: Buffer.concat(chunks).toString('utf8'), contentType: String(response.headers['content-type'] || '') }));
       });
-      req.on('error', reject);
+      req.once('socket', socket => { observe('client-socket'); socket.once('connect', () => observe('client-connect')); });
+      req.on('error', err => { observe('client-error'); reject(err); });
       req.setTimeout(5000, () => req.destroy(new Error('Test HTTP request timed out')));
       req.end(body === undefined ? undefined : JSON.stringify(body));
     });
@@ -85,6 +98,10 @@ async function request(
       parsed = null;
     }
     return { status: res.status, body: parsed, text, contentType: res.contentType };
+  } catch (error) {
+    // Keep the actual failure. Diagnostics contain no bodies, headers or credentials.
+    console.warn('[owned-test-http]', JSON.stringify({ method, errorCode: (error as NodeJS.ErrnoException).code || 'unknown', observations }));
+    throw error;
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
