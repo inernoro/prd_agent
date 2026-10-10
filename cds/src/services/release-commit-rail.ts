@@ -402,18 +402,34 @@ function unavailableRail(input: ReleaseCommitRailInput, reason: string): Release
     positions: positionsWithReason(input.targets, reason) };
 }
 
-/** Each subscriber owns its wait deadline; it cannot cancel another subscriber's work. */
+type QueryObserver = (value: unknown, failed: boolean) => void;
+const queryObservers = new WeakMap<Promise<unknown>, Set<QueryObserver>>();
+
+/** Each task has one settlement reaction; cancelled subscribers leave its registry immediately. */
 function observeQuery<T>(task: Promise<T>, signal: AbortSignal, cancelled: () => T): Promise<T> {
   if (signal.aborted) return Promise.resolve(cancelled());
+  let observers = queryObservers.get(task);
+  if (!observers) {
+    observers = new Set(); queryObservers.set(task, observers);
+    const registry = observers;
+    const settle = (value: unknown, failed: boolean) => {
+      queryObservers.delete(task);
+      for (const observer of registry) observer(value, failed);
+      registry.clear();
+    };
+    task.then(value => settle(value, false), () => settle(undefined, true));
+  }
+  const registry = observers;
   return new Promise(resolve => {
     let settled = false;
     const finish = (value: T) => {
       if (settled) return;
-      settled = true; signal.removeEventListener('abort', onAbort); resolve(value);
+      settled = true; registry.delete(observer);
+      signal.removeEventListener('abort', onAbort); resolve(value);
     };
+    const observer: QueryObserver = (value, failed) => finish(failed || signal.aborted ? cancelled() : value as T);
     const onAbort = () => finish(cancelled());
+    registry.add(observer);
     signal.addEventListener('abort', onAbort, { once: true });
-    task.then(value => { if (!settled) finish(signal.aborted ? cancelled() : value); },
-      () => { if (!settled) finish(cancelled()); });
   });
 }

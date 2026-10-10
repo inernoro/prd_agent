@@ -294,6 +294,42 @@ describe('跨环境提交距离直算', async () => {
 });
 
 describe('P2 asynchronous release history', () => {
+  it.each(['history', 'count'] as const)('removes cancelled %s subscribers while the shared query stays pending', async kind => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const reader = new ReleaseCommitRailReader({ repoRootResolver: () => '/repo', runner: async args => {
+      await held; return defaultReply([...args])!;
+    } });
+    const read = (signal: AbortSignal) => kind === 'history'
+      ? reader.read({ projectId: 'p', branch: 'main', targets: [] }, signal)
+      : reader.countCommitsBetween('p', SHA_C, SHA_A, signal);
+    const firstController = new AbortController();
+    const first = read(firstController.signal);
+    const attachments = new WeakMap<Promise<unknown>, number>();
+    let maxAttachments = 0;
+    const nativeThen = Promise.prototype.then;
+    Promise.prototype.then = function (this: Promise<unknown>, ...args: any[]) {
+      const count = (attachments.get(this) ?? 0) + 1;
+      attachments.set(this, count); maxAttachments = Math.max(maxAttachments, count);
+      return nativeThen.apply(this, args as any);
+    } as typeof nativeThen;
+    try {
+      for (let i = 0; i < 2_000; i++) {
+        const controller = new AbortController();
+        const waiter = read(controller.signal); controller.abort();
+        const result = await waiter;
+        if (kind === 'count') expect(result).toBeNull();
+        else expect((result as any).rail.unavailableReason).toBeTruthy();
+      }
+      // A held task must not retain one reaction per already-cancelled subscriber.
+      expect(maxAttachments).toBeLessThan(16);
+      Promise.prototype.then = nativeThen; release();
+      const result = await first;
+      if (kind === 'count') expect(result).toBe(2);
+      else expect((result as any).rail.nodes[0].sha).toBe(SHA_A);
+    } finally { Promise.prototype.then = nativeThen; release(); firstController.abort(); await first; }
+  });
+
   it('reuses immutable commit comparisons across repeated and concurrent promotion probes', async () => {
     let calls = 0;
     const reader = new ReleaseCommitRailReader({ repoRootResolver: () => '/repo', runner: async () => { calls++; return '2\n'; } });
