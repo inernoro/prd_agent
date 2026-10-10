@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.27；日期：2026-10-11；状态：active。
+版本：v1.28；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,17 +76,18 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:fd1135f7b36b9f2b013648850de4975c415ab9d0,IMP:cc70154e5209a4917499a32e2bef89ca7d22d5d7（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:124/0相对origin/main,IMP:22/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:59d8736036cb6faa699fe73c506c5cce867eef39,IMP:4cc2dc98de6713939bfa4388b789ec94560dbadb（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:132/0相对origin/main,IMP:23/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
 - 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。
 - 本批实现检查点：2ea固定独立44项41绿3红（未消费续约时pending提前出队）；ec939原44及新增3共47/47局部复绿，删除Map存在守卫1真红。原3红保留；相关313/core tsc绿。 efcdaf0dc21687fbcecb6af0b0fafaaa953fdfc0重放观察：5秒响应头、30分钟观察、256KiB帧/16KiB解码片；非2xx不读正文，complete.ok/错误/mergedjoined/unknown分别记录，只记有界枚举及合法run ID；不重试或取消实际执行。实际入站HTTP＋fake出站/Docker5旧红→5绿，观察器13及协调/路由共331局部绿、core tsc绿；efcd固定独立实际自有HTTP/native fetch23项21绿2真红（complete.ok=true却带started/rejected被误判完成）；明确cancelled被记失败也已发现。12ad新增有限状态及取消归因，主3旧红→绿，相关335/core tsc绿，固定独立待返。未改实际run，不把观察取消当Daemon闭合。 仍未实现durable pending队列，不证明实际Master/Daemon或线上通过。 八候选固定清单未变，独立8/8与280合同局部绿，104角色仅静态枚举，未push/未部署。
-- 证据纪元：`target_sha=CDS:fd1135f7b36b9f2b013648850de4975c415ab9d0,IMP:cc70154e5209a4917499a32e2bef89ca7d22d5d7；tested_sha=CDS:12ad主335/core tsc局部及固定独立待返；9f1b全量9516历史；efcd独立23中2红；ec939独立47局部与全量2红；330独立29与53ce独立8为历史；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-10T22:25:12+00:00`
-- 新鲜验证证据：ec939全量649文件9495绿/2红/6文件19跳过，97.10s；2红是user-project-access在20ms故障注入后末尾正常写入500。额外40ms正常flush确定性复现2红；9f1b仅在已恢复/解锁后的正常写入前还原原环境预算，保留全部20ms负面、409/401、补偿及真实JSON断言，完整60绿。生产默认30秒未改；这不关闭线上持续500、历史OAuth/超时/ECONNRESET或bug-reports socket hang up。9f1b固定全量651文件9516通过、6文件19条跳过、1旧obsolete snapshot，67.15s；不能继承到12ad。唯一trace路径已纠正，不与d786混合。 ec939诊断路径常量误指d786追加trace，不能用于新纪元性能统计；此次独立trace路径已纠正。 d786650文件9496全量绿为历史，不赋予新SHA通过；所有旧红原件保留。49正式、视觉、八支完整部署仍未执行。
+- 证据纪元：`target_sha=CDS:59d8736036cb6faa699fe73c506c5cce867eef39,IMP:4cc2dc98de6713939bfa4388b789ec94560dbadb；tested_sha=CDS:59d主344/core tsc0,固定独立待验；66fb主402/full9552及独立15/17仅历史；792独立44/full9541,3635独立23/full1红仅历史；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-10T22:55:07+00:00`
+- 本批新增恢复事实：66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
+- 新鲜验证证据：792baa固定独立44/44局部，实际自有HTTP→ReleaseService hook→StateJSON→真实ShellWorker慢Git无Master native Git；8POST14–23ms，真实committer date保留；3秒取消owned PID已消失，不cache晚结果。固定全量653files9541绿/6files19skip/1obsolete snapshot/65.67s。 3635固定独立23/23局部：冷探测共享一次、epoch突变2红及index await突变3红保留、真实10秒截止及owned PID取消；仅自有假Docker info，未调用实际Docker。主tick13ms对旧470ms支持隔离；冷HTTP897–898ms比旧474–480ms更慢，不能声称冷请求更快。相关75/core tsc0。主3635全量652files9543绿/1权限恢复测试红/19skip，66.63s；故障20ms预算延续正常磁盘恢复触发安全重试，受控第3flush40ms复现3-vs-5红。 66fb1c9b8610ccc60d0ff575fcad0eeb7cea5761使index后台与route共用重放：原单服务错派整分支、私有错误体日志、HTTP200失败漏判、无响应无限等4真红→绿；新增整分支/受理/已删分支控制组。仅调整权限恢复夹具预算范围，另补清理超时保持409/原grant与真实JSON重载，提前放gate外部突变1红→还原。相关5files402绿/core tsc0；固定全量654files9552绿/6files19skip/1obsolete snapshot/71.27s。末尾固定独立进行中；内存pending仍非durable，不证明实际Master/Daemon/公网/视觉或八支通过。 所有历史实际红/夹具错误按源保存，不混纪元；49正式、候选视觉、八支完整部署未执行。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；本机16GiB已大量压缩/交换，不在其上新增压力VM冒充隔离验收宿主；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。 额外只读探测mycds SSH成功（Linux16CPU/约31GiB RAM），sudo -n Docker可读，承载大量他人及IMP/MAP常驻服务；2026-10-11 05:32 CST可用628MiB、swap8191/8191MiB、load2.25/26.60/33.20，不作隔离压力宿主，不停他人服务/启新容器。本机Docker仍不可达；隔离宿主问题待用户回复。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：固定fd113三个历史查询反例与新边界独立复验，71e原红保留；之后继续元信息clock及剩余既定范围；继续durable pending/分阶段公平队列、P2其余Master热点、P4增量/其他SSE、P3实际Daemon对账及IMP辅助生命周期；隔离宿主问题待答。平台/制品准入后依既有授权实际push八支完整部署，再按49项及真实视觉、公网/恢复、48小时/一周任务收口。
+- 下一动作与完成条件：固定59d归属/范围按末尾原反例独立复验，有红继续修；推进durable pending/阶段公平队列、P2其余Master热点、P4增量/其他SSE及IMP辅助生命周期。隔离宿主问题待答。准入后依既有授权实际push八支完整部署，按49项及真实视觉、公网/恢复、48小时/一周门槛收口。
 - 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
@@ -108,3 +109,26 @@ expected result：失败/取消属于本次目标、旧运行实例保留、消�
 71e固定独立12/16局部绿，三个缺口：warm promotion重复Git（旧已存在热点）、second caller自身取消截止被忽略、empty环境history已超时仍推荐提升；direct和实际HTTP3s均留红。主新增三个反例3/3真红→修复：位置与promotion共用完整immutable pair的512成功缓存/64pending，短SHA/null不cache；shared caller各自观察signal，second退出不取消first；已过historyDeadline任何环境都不推荐。d2713c229e0c78a57feefb10151fcb47b9c8fb9d加fd113指南v2.43，相关83/core tsc0。fd113固定全量652文件9534绿、6文件19跳过、1obsolete snapshot，65.08s；71e原全量9530绿/1红/19跳过的红是已退场sync诊断静态守卫，不算线上500，改为实际parse CPU埋点后相关诊断12绿。独立fd113原actualWorkerHTTP v3 5/5，原protocol v2 10/11：唯一false要求TTL/eviction每次5个Git，但immutable pair缓存依法复用2个；保原10/11，末尾补只判确有重算且warm0的v3与新边界，尚未冻结最终总表。
 
 最新fetch完成，origin/main(CDS)=45533b419e1cfc54b145a545a716563617659d01，origin/test(IMP)=e2fd7c8f5ebaed2561229a7864835949d1ce0904及origin/main(IMP)=2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c未变化。未修改共享运行时、未推送候选、无新视觉；原生目标active，49正式未执行。
+
+
+## v1.28 取消观察及元信息旁路检查点
+
+fd113固定独立23/24局部，原三问题关闭，但history shared task保留每个已取消订阅reaction新真红：30,000次GC后heap21.97→105.60MB；追加count旧fd红22.00→90.44MB。58087508db6d1dcf7155730a801c37bb80d29636改为共享task单完成reaction与可撤销观察集合，主history/count两反例各2000reaction真红→54绿/core tsc0；初版vi.spyOn递归仅夹具错误，原件保留。580固定独立25/25局部，原history/count各30,000取消后max1reaction/heap22.61与22.73MB，actualWorkerHTTP5、protocol11、countbudget7保持；主固定全量652files9536绿/6files19skip/1obsolete snapshot/67.09s。
+
+792baa5d597006145b7dd7f4b48ff6d22094dbf3将发布发起元信息git show移共享Shell Worker，公共runner抽独立模块保持rail出口；Router旁路void/catch不等待发布，32不同在途、同project/SHA/候选roots合并，候选共用3秒截止，不cache超时/late/失败，500台账及v1/v2/真实committer date保持。主async三反例真红→绿，移除Router注入自有HTTP接线1真红→还原；相关96/core tsc0。指南v2.44已同步；固定独立与全量进行中。同步台账文件load/persist、磁盘/启动及其他热点仍待核对；不作正式Master性能结论。
+
+expected result：取消立即释放等待闭包、元信息不阻塞发布且仍是实际提交来源。current evidence：580独立25及全量9536；792baa主96/core tsc0。visible result：当前候选未部署、视觉N/A。gap：792baa固定独立和全量待返，所有正式运行门槛未执行。required action：按原反例逐条复验、继续既定实现并补隔离宿主；不能用本地通过关闭目标。
+
+## v1.28 固定复验续记
+
+792baa固定独立44/44局部，实际自有HTTP→ReleaseService hook→StateJSON→真实ShellWorker慢Git无Master native Git；8POST14–23ms，真实committer date保留；3秒取消owned PID已消失，不cache晚结果。固定全量653files9541绿/6files19skip/1obsolete snapshot/65.67s。
+
+3635固定独立23/23局部：冷探测共享一次、epoch突变2红及index await突变3红保留、真实10秒截止及owned PID取消；仅自有假Docker info，未调用实际Docker。主tick13ms对旧470ms支持隔离；冷HTTP897–898ms比旧474–480ms更慢，不能声称冷请求更快。相关75/core tsc0。主3635全量652files9543绿/1权限恢复测试红/19skip，66.63s；故障20ms预算延续正常磁盘恢复触发安全重试，受控第3flush40ms复现3-vs-5红。
+
+66fb1c9b8610ccc60d0ff575fcad0eeb7cea5761使index后台与route共用重放：原单服务错派整分支、私有错误体日志、HTTP200失败漏判、无响应无限等4真红→绿；新增整分支/受理/已删分支控制组。仅调整权限恢复夹具预算范围，另补清理超时保持409/原grant与真实JSON重载，提前放gate外部突变1红→还原。相关5files402绿/core tsc0；固定全量654files9552绿/6files19skip/1obsolete snapshot/71.27s。末尾固定独立进行中；内存pending仍非durable，不证明实际Master/Daemon/公网/视觉或八支通过。
+
+expected result：两个重放来源维持原范围且观察有界，权限恢复确认前保持关闭。current evidence：402局部/9552全量及独立历史44/23。visible result：候选未部署、视觉N/A。gap：66fb独立复验及49正式运行判据未执行。required action：末尾固定复验、继续范围内修复并补隔离宿主，不用本地结果关闭目标。
+
+### v1.28 重放归属独立红与修复
+
+66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
