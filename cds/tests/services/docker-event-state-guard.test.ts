@@ -39,5 +39,7 @@ describe('exact Docker event timestamp projection', () => {
   it('keeps seconds-only legacy precision explicit and rejects malformed seconds', () => {
     expect(parseDockerEvent('{"time":200}').timeNs).toBe(200000000000n);
     expect(parseDockerEvent('{"time":"200"}').timeNs).toBeUndefined();
+    expect(parseDockerEvent('{"time":18446744074}').timeNs).toBeUndefined();
+    expect(parseDockerEvent('{"time":9007199254740991}').timeNs).toBeUndefined();
   });
 });

@@ -206,6 +206,24 @@ describe('container lifecycle intent correlation', () => {
 });
 
 describe('failure diagnostic IO budget', () => {
+  it('keeps a newer pending exit eligible when an intermediate historical start arrives', async () => {
+    const id = 'f'.repeat(64);
+    let release!: (value: ShellResult) => void;
+    const pending = new Promise<ShellResult>(resolve => { release = resolve; });
+    const exec = vi.fn().mockImplementationOnce(() => pending).mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    const callback = vi.fn();
+    const monitor = new DockerEventMonitor({ exec }, { record: () => {} }, callback);
+    const event = (Action: string, time: number) => (monitor as any).handleLine(JSON.stringify({ Action, time,
+      Actor: { ID: id, Attributes: { name: 'ordered-instance' } } }));
+    await event('start', 100);
+    const exit = event('die', 300);
+    await Promise.resolve();
+    await event('start', 200);
+    expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'start', stateSyncEligible: false }));
+    release({ stdout: '', stderr: '', exitCode: 0 });
+    await exit;
+    expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'die', stateSyncEligible: true }));
+  });
   it('does not let a historical event arriving after start reset state, including nanoseconds beyond JS integer precision', async () => {
     const id = 'e'.repeat(64);
     const callback = vi.fn();

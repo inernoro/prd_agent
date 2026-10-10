@@ -259,7 +259,7 @@ export class DockerEventMonitor {
   private stopping = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly diagnosticBudget: ContainerDiagnosticBudget;
-  private readonly eventGenerations = new Map<string, { id: string; startedAtNs?: bigint }>();
+  private readonly eventGenerations = new Map<string, { id: string; latestAtNs?: bigint }>();
 
   constructor(
     private readonly shell: IShellExecutor,
@@ -387,15 +387,19 @@ export class DockerEventMonitor {
     const generationKey = immutableId && (containerName || immutableId);
     const advancesGeneration = ['create', 'start', 'restart', 'unpause'].includes(normalizedAction) || normalizedAction === 'health_status: healthy';
     const previousGeneration = generationKey ? this.eventGenerations.get(generationKey) : undefined;
-    const timeEligible = previousGeneration?.startedAtNs === undefined ||
-      (eventTimeNs !== undefined && eventTimeNs > previousGeneration.startedAtNs);
+    const timeEligible = previousGeneration?.latestAtNs === undefined ||
+      (eventTimeNs !== undefined && eventTimeNs > previousGeneration.latestAtNs);
     if (immutableId && advancesGeneration && timeEligible) {
       this.diagnosticBudget.invalidate(immutableId);
     }
     if (generationKey && (!previousGeneration || (advancesGeneration && timeEligible))) {
       this.eventGenerations.delete(generationKey);
       if (this.eventGenerations.size >= 1024) this.eventGenerations.delete(this.eventGenerations.keys().next().value!);
-      this.eventGenerations.set(generationKey, { id: immutableId, startedAtNs: advancesGeneration ? eventTimeNs : undefined });
+      this.eventGenerations.set(generationKey, { id: immutableId, latestAtNs: eventTimeNs });
+    } else if (previousGeneration && previousGeneration.id === immutableId && timeEligible && eventTimeNs !== undefined) {
+      // Advance the ordering watermark without changing the observed generation token.
+      // A historical start between two newer observations cannot fence a pending exit.
+      previousGeneration.latestAtNs = eventTimeNs;
     }
     const observedGeneration = generationKey ? this.eventGenerations.get(generationKey) : undefined;
     const scope = JSON.stringify([attrs['cds.project.id'] || lifecycleIntent?.projectId || '', branchId || '', profileId || '',

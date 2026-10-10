@@ -27,7 +27,8 @@ export function parseDockerEvent(line: string): { event: any; timeNs?: bigint } 
   }
   // Never infer ordering from a rounded or malformed declared nanosecond timestamp.
   if (event.timeNano === undefined && Number.isSafeInteger(event.time) && event.time >= 0) {
-    return { event, timeNs: BigInt(event.time) * 1000000000n };
+    const timeNs = BigInt(event.time) * 1000000000n;
+    return timeNs <= 18446744073709551615n ? { event, timeNs } : { event };
   }
   return { event };
 }
