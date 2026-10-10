@@ -150,12 +150,16 @@ describe('selfStatusCache', () => {
         },
         { terminal: true },
       );
+      // 新订阅只加入当前工作，不能把待刷新的终态覆盖为读取请求。
+      const joined = selfStatusCache.enqueueRefresh('stream-subscribe', { dedupeWindowMs: 5_000 });
+      expect(joined.status).toBe('running');
       releaseFirstRefresh?.();
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       expect(computeCalls).toBe(2);
       expect(selfStatusCache.getSnapshot().activeSelfUpdate).toBeNull();
       expect(selfStatusCache.getSnapshot().lastSelfUpdate).toEqual(completed);
+      expect(selfStatusCache.getSnapshot().lastRefreshTrigger).toBe('self-update-terminal');
 
       const statusEvents = events.filter((event) => event.type === 'self.status');
       expect(statusEvents.length).toBeGreaterThan(0);

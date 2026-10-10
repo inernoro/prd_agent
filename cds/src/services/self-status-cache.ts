@@ -288,7 +288,8 @@ class SelfStatusCache {
     if (this.activeJob && (this.activeJob.status === 'queued' || this.activeJob.status === 'running')) {
       // 运行中再被请求 → 标脏,当前 job 收尾时补跑一次(见 runRefreshJob 末尾)。
       // 否则 self-update 收尾的最终状态变化会被静默丢弃,浏览器卡 updating。
-      this.pendingRefreshTrigger = trigger;
+      // 订阅只是读取当前状态，既不产生新事实，也不能覆盖待刷新的终态。
+      if (trigger !== 'stream-subscribe') this.pendingRefreshTrigger = trigger;
       return { ...this.activeJob };
     }
 

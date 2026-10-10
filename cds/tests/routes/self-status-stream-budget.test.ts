@@ -99,8 +99,21 @@ describe('legacy self-status state stream budget', () => {
     for (const request of requests) request.destroy(); for (let i = 0; i < 5; i++) await tick();
     finish({ currentBranch: 'completed-without-clients' });
     for (let i = 0; i < 10; i++) await tick();
+    expect(computes).toBe(1);
+    expect(selfStatusCache.getActiveJob()?.status).toBe('done');
     expect(selfStatusCache.getSnapshot().currentBranch).toBe('completed-without-clients');
     expect(shell.commands).toHaveLength(0);
+  });
+
+  it('preserves legacy degraded reasons in the ordinary refresh update frame', async () => {
+    selfStatusCache.init({ computeSnapshot: async () => { throw new Error('owned refresh failure'); }, scanRemoteBranches: async () => [] });
+    await connect('failed-refresh');
+    selfStatusCache.enqueueRefresh('manual', { dedupeWindowMs: 0 });
+    for (let i = 0; i < 10; i++) await tick();
+    const update = frames.get('failed-refresh')!.find(frame => frame.startsWith('event: update\n'));
+    expect(update).toBeDefined();
+    const payload = JSON.parse(update!.split('data: ')[1].trim());
+    expect(payload.degraded).toMatchObject({ reason: 'refresh_failed', reasons: ['owned refresh failure'] });
   });
 
   it('rejects an oversized initial snapshot before subscribing the response', async () => {

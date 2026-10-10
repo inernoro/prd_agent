@@ -199,6 +199,15 @@ const selfStatusClients = new Set<BoundedSseWriter>();
 // 旧的 /api/self-status/stream 订阅者仍能收到 update。新的 cds-events 端点
 // 独立订阅 bus,不走这个桥。
 let busBridgeInstalled = false;
+function legacySelfStatusPayload(payload: unknown): Record<string, unknown> {
+  const snapshot = payload as ReturnType<typeof selfStatusCache.getSnapshot>;
+  return {
+    ...snapshot,
+    degraded: snapshot.degraded
+      ? { ...snapshot.degraded, reasons: [snapshot.degraded.message] }
+      : null,
+  };
+}
 function installLegacyStreamBridge(): void {
   if (busBridgeInstalled) return;
   busBridgeInstalled = true;
@@ -206,7 +215,7 @@ function installLegacyStreamBridge(): void {
     if (envelope.type !== 'self.status') return;
     if (selfStatusClients.size === 0) return;
     for (const client of selfStatusClients) {
-      client.send(() => `event: update\ndata: ${JSON.stringify(envelope.data)}\n\n`);
+      client.send(() => `event: update\ndata: ${JSON.stringify(legacySelfStatusPayload(envelope.data))}\n\n`);
     }
   });
 }
@@ -23681,12 +23690,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const usingLastKnownGood = !snapshot.lastRefreshAt && !!lastKnownGood;
     const payload = usingLastKnownGood ? lastKnownGood : snapshot;
     return {
-      ...payload,
-      // 旧 client 还依赖 `degraded: { reasons: [...] }` 形状;cache 用 `degraded: {reason}`。
-      // 这里同时给两个,保持兼容。
-      degraded: payload.degraded
-        ? { degraded: true, reason: payload.degraded.reason, message: payload.degraded.message, reasons: [payload.degraded.message] }
-        : null,
+      ...legacySelfStatusPayload(payload),
       lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
     };
   }
