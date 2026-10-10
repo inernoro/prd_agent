@@ -28,6 +28,7 @@ import type { ServerEventLogSink } from '../../src/services/server-event-log-sto
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
+import { acquireBuildSlot, buildGateStatus, __resetBuildGateForTest, setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string): CdsConfig {
   return {
@@ -884,6 +885,42 @@ describe('Branch Routes', () => {
         expect(branch.status).toBe('running'); expect(branch.services.api.status).toBe('running');
         expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
       } finally { release(); pull.mockRestore(); }
+    });
+
+    it.each(['deploy', 'deploy/api'])('P3 cancels a source queue waiter immediately without releasing another holder: %s', async action => {
+      __resetBuildGateForTest();
+      const previousLimit = process.env.CDS_MAX_CONCURRENT_BUILDS;
+      process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 8 }));
+      seedGateProject(false);
+      const branch = stateService.getBranch('b1')!;
+      const sha = 'c'.repeat(40);
+      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockResolvedValue({ head: sha, afterFull: sha } as any);
+      const run = vi.spyOn(containerService, 'runService');
+      const holder = await acquireBuildSlot({ holder: { projectId: 'other', branchId: 'held-other' } });
+      const pending = request(server, 'POST', '/api/branches/b1/' + action, { commitSha: sha });
+      try {
+        await vi.waitFor(() => expect(buildGateStatus().queued).toBe(1));
+        expect(branch.buildQueue?.serviceIds).toContain('api');
+        branchOperationCoordinator.cancelBranch('b1', 'user cancelled');
+        await vi.waitFor(() => {
+          expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
+          expect(branch.buildQueue).toBeUndefined();
+        }, { timeout: 100, interval: 5 });
+        const result = await pending;
+        expect(buildGateStatus().holders[0]).toMatchObject({ branchId: 'held-other' });
+        expect(branch.buildQueue).toBeUndefined();
+        expect(run).not.toHaveBeenCalled();
+        expect(String(result.body)).toContain('"operationStatus":"cancelled"');
+        const runId = String(result.headers['x-cds-deployment-run-id']);
+        const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
+        expect(restored.getDeploymentRun(runId)).toMatchObject({ status: 'cancelled', commitSha: sha });
+      } finally {
+        holder.release(); await pending;
+        pull.mockRestore(); run.mockRestore(); __resetBuildGateForTest();
+        if (previousLimit === undefined) delete process.env.CDS_MAX_CONCURRENT_BUILDS;
+        else process.env.CDS_MAX_CONCURRENT_BUILDS = previousLimit;
+      }
     });
 
     it('P1 exact branch admission preserves every old service when any artifact is missing', async () => {

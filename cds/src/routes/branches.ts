@@ -13670,11 +13670,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // ── 全局构建并发闸 ──
           // 撞上 CDS_MAX_CONCURRENT_BUILDS 上限时排队，避免多分支构建同时跑把
           // 宿主 CPU 吃满、彼此饿死（实测并发时 admin 构建从 ~300s 膨胀到 845s）。
-          // 排队状态写进部署日志 + SSE，让用户看到「排队中，前面还有 N 个」而不是
+          // 排队状态写进部署日志 + SSE，让用户看到等待总量与项目轮转，而不是
           // 疑似卡死的 spinner（expectation-management.md：排队 ≠ 卡死，必须可感知）。
           //
           // 2026-07-16 队列堵死复盘后的三条纪律：
-          // 1. 排队可取消：15s 刷新 tick 检查租约，被 supersede 的部署 abort 出队，
+          // 1. 排队可取消：租约signal直接中止等待，15s tick兼容检查无signal旧租约，
           //    不再僵尸占位（此前僵尸把全局等待数撑到 54、醒来才抛错）。
           // 2. 极速版不占槽：prebuilt 部署只 docker pull + 启动，零编译；镜像拉取
           //    失败回退源码编译时经 onSourceCompileFallback 回补槽位。
@@ -13687,9 +13687,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           };
           const gateAbort = new AbortController();
-          // 层级共享 abort（兄弟被 supersede 首败广播）级联到本服务的排队等待。
-          if (layerSignal.aborted) gateAbort.abort();
-          else layerSignal.addEventListener('abort', () => gateAbort.abort(), { once: true });
+          // 同时观察层级失败与租约取消；取消排队不等待15秒状态刷新。
+          const gateSignal = AbortSignal.any([gateAbort.signal, deploymentSignal]);
           const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
           const acquireGateSlot = async (): Promise<BuildSlot> => {
             try {
@@ -13702,7 +13701,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   operationId: branchOperationLease?.operationId,
                   label: effectiveProfile.name,
                 },
-                signal: gateAbort.signal,
+                signal: gateSignal,
                 isCancelled: leaseCancelled,
                 onQueued: ({ ahead, active, max }) => {
                   logEvent({
@@ -14807,7 +14806,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // ── 全局构建并发闸（2026-07-16 复盘补齐）──
       // 此前单服务重部署完全绕过 build-gate，源码编译不受全局并发控制。
-      // 与主部署路径同一套语义：排队可取消（15s tick 查租约）、极速版不占槽、
+      // 与主部署路径同一套语义：排队直接观察租约取消（15s tick兼容旧租约）、极速版不占槽、
       // 持有者身份可观测；镜像拉取失败回退源码编译时经钩子回补槽位。
       const deployQueueTracker = createDeployQueueTracker({
         entry,
@@ -14823,6 +14822,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }),
       });
       const gateAbort = new AbortController();
+      const gateSignal = branchOperationLease?.signal
+        ? AbortSignal.any([gateAbort.signal, branchOperationLease.signal]) : gateAbort.signal;
       const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
       let queueRefreshTimer: NodeJS.Timeout | undefined;
       const clearQueueTimer = () => {
@@ -14842,7 +14843,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               operationId: branchOperationLease?.operationId,
               label: effectiveProfile.name,
             },
-            signal: gateAbort.signal,
+            signal: gateSignal,
             isCancelled: leaseCancelled,
             onQueued: ({ ahead, active, max }) => {
               logEvent({
