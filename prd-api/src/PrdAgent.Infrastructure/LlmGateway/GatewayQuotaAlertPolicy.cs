@@ -21,6 +21,7 @@ internal static class GatewayQuotaAlertPolicy
         var message = (errorMessage ?? string.Empty).ToLowerInvariant();
         return message.Contains("llm_quota_exceeded")
             || message.Contains("key limit exceeded")
+            || message.Contains("quota is not enough")
             || message.Contains("额度已用尽")
             || message.Contains("额度用尽")
             || (message.Contains("quota") && (message.Contains("exceed") || message.Contains("insufficient")));

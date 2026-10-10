@@ -17,6 +17,19 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class AdminPushNotificationServiceTests
 {
+    [Theory]
+    [InlineData("gateway-alert")]
+    [InlineData("api-request-log")]
+    [InlineData("api-request-alert")]
+    public void RequestFailureNotification_MatchesOnlyRequestAlertTopic(string source)
+    {
+        var notification = new AdminNotification { Source = source, Level = "warning" };
+        Assert.True(AdminPushNotificationService.MatchesTopic("api-request-alert", notification));
+        Assert.False(AdminPushNotificationService.MatchesTopic("system-alert", notification));
+        Assert.True(AdminPushNotificationService.MatchesTopic("system-alert",
+            new AdminNotification { Source = "llm-gateway-quota", Level = "error" }));
+    }
+
     [Fact]
     public async Task DispatchPendingAsync_DeliversOpenNotificationOnce()
     {

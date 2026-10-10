@@ -769,7 +769,7 @@ public sealed class AdminPushNotificationService
         };
     }
 
-    private static bool MatchesTopic(string topicKey, AdminNotification notification)
+    internal static bool MatchesTopic(string topicKey, AdminNotification notification)
     {
         var source = (notification.Source ?? string.Empty).Trim();
         if (topicKey.Equals("defect-management", StringComparison.OrdinalIgnoreCase))
@@ -804,6 +804,8 @@ public sealed class AdminPushNotificationService
                 || source.Equals("server-expiry", StringComparison.OrdinalIgnoreCase)
                 || source.Equals("user-voice", StringComparison.OrdinalIgnoreCase)
                 || source.Equals("api-request-alert", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("api-request-log", StringComparison.OrdinalIgnoreCase)
+                || source.Equals("gateway-alert", StringComparison.OrdinalIgnoreCase)
                 || source.Contains("expiry", StringComparison.OrdinalIgnoreCase)
                 || source.Contains("expire", StringComparison.OrdinalIgnoreCase))
                 return false;

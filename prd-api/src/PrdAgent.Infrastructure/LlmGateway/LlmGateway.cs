@@ -434,13 +434,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (IsContentPolicyDenial(statusCode, responseBody))
             return Task.CompletedTask;
 
-        if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
-            return _modelResolver.RecordUnavailableAsync(resolution, ct);
-
-        // 部分供应商用 429 insufficient_quota 表示额度耗尽。它不是普通请求限流，
-        // 应累计 Offering 健康失败以触发路由回退；明确的 rate limit 仍由下方 4xx 分支忽略。
+        // APIyi 也会用 403 表示额度不足；须先识别额度，再判断凭据/路由永久隔离。
+        // 额度补足后允许半开恢复；普通 429 限流仍由下方 4xx 分支忽略。
         if (IsQuotaExceeded(statusCode, responseBody))
             return _modelResolver.RecordFailureAsync(resolution, ct);
+
+        if (ShouldQuarantineRawProviderResponse(statusCode, responseBody, request))
+            return _modelResolver.RecordUnavailableAsync(resolution, ct);
 
         // 408 表示 Provider 在时限内没有完成请求，属于服务健康失败而不是用户输入错误。
         // 保留回退能力并累计健康失败，避免持续把超时 Offering 排在首位。
@@ -3603,7 +3603,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         if (m.Length == 0) return false;
 
         // 只认明确指向「额度/余额/账单/key 限额」的信号；裸 "limit exceeded" 不再单独判定为额度。
-        return m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
+        return m.Contains("quota is not enough")                    // APIyi 403：user quota is not enough
+            || m.Contains("key limit")                                   // OpenRouter "Key limit exceeded"
             || m.Contains("credit limit")
             || (m.Contains("limit exceeded") && (m.Contains("credit") || m.Contains("quota") || m.Contains("balance") || m.Contains("key")))
             || (m.Contains("quota") && (m.Contains("exceed") || m.Contains("insufficient")))
