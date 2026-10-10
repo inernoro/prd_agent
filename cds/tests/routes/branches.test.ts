@@ -268,6 +268,7 @@ describe('Branch Routes', () => {
   afterEach(async () => {
     await flushAllJsonStateStores();
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
+    delete process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS;
     delete process.env.CDS_BRANCHES_SLOW_MS;
     delete process.env.CDS_BRANCH_NETWORK_ISOLATION;
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -4191,7 +4192,10 @@ describe('Branch Routes', () => {
       });
       stateService.save();
 
+      const flushedRunStatuses: string[] = [];
       stateService.flush = async () => {
+        const runId = stateService.getBranch('flush-empty-cleanup')?.lastDeploymentRunId;
+        flushedRunStatuses.push(deploymentRunService.get(runId!)?.status || 'missing');
         operationEvents.push({ action: 'test.state-flushed', branchId: 'flush-empty-cleanup' });
       };
 
@@ -4200,11 +4204,57 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(200);
       expect(String(res.body)).toContain('complete');
       expect(stateService.getBranch('flush-empty-cleanup')?.services.obsolete).toBeUndefined();
+      expect(flushedRunStatuses).toContain('running');
       const actions = operationEvents
         .filter((event) => event.branchId === 'flush-empty-cleanup')
         .map((event) => event.action);
       expect(actions.indexOf('test.state-flushed')).toBeGreaterThanOrEqual(0);
       expect(actions.indexOf('branch.operation.completed')).toBeGreaterThan(actions.indexOf('test.state-flushed'));
+    });
+
+    it('waits for the failed empty-cleanup terminal flush before ending HTTP', async () => {
+      stateService.addBranch({ id: 'empty-failure-barrier', projectId: 'default', branch: 'feature/empty-failure-barrier',
+        worktreePath: tmpDir, status: 'running', createdAt: new Date().toISOString(),
+        services: { obsolete: { profileId: 'obsolete', containerName: 'cds-empty-failure-barrier', hostPort: 10002, status: 'running' } } });
+      mock.addResponsePatternFirst(/^docker rm cds-empty-failure-barrier$/, () => ({ stdout: '', stderr: 'daemon refused removal', exitCode: 1 }));
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      let started!: () => void;
+      const entered = new Promise<void>(resolve => { started = resolve; });
+      stateService.flush = async () => {
+        const runId = stateService.getBranch('empty-failure-barrier')?.lastDeploymentRunId;
+        if (deploymentRunService.get(runId!)?.status !== 'failed') return;
+        started(); await gate;
+      };
+      let finished = false;
+      const pending = request(server, 'POST', '/api/branches/empty-failure-barrier/deploy').then(res => { finished = true; return res; });
+      try {
+        const reached = await Promise.race([entered.then(() => true), pending.then(() => false)]);
+        expect(reached).toBe(true);
+        expect(finished).toBe(false);
+      } finally { release(); }
+      const response = await pending;
+      expect(String(response.body)).toContain('event: error');
+      expect(String(response.body)).not.toContain('event: complete');
+    });
+
+    it.each(['failed', 'timeout'] as const)('reports %s terminal persistence for empty-cleanup failure', async failure => {
+      stateService.addBranch({ id: 'empty-disk-failure', projectId: 'default', branch: 'feature/empty-disk-failure',
+        worktreePath: tmpDir, status: 'running', createdAt: new Date().toISOString(),
+        services: { obsolete: { profileId: 'obsolete', containerName: 'cds-empty-disk-failure', hostPort: 10002, status: 'running' } } });
+      mock.addResponsePatternFirst(/^docker rm cds-empty-disk-failure$/, () => ({ stdout: '', stderr: 'daemon refused removal', exitCode: 1 }));
+      process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS = '20';
+      stateService.flush = async () => {
+        const runId = stateService.getBranch('empty-disk-failure')?.lastDeploymentRunId;
+        if (deploymentRunService.get(runId!)?.status !== 'failed') return;
+        if (failure === 'failed') throw new Error('disk refused write');
+        await new Promise(() => {});
+      };
+      const response = await request(server, 'POST', '/api/branches/empty-disk-failure/deploy');
+      expect(String(response.body)).toContain('daemon refused removal');
+      expect(String(response.body)).toContain(`"stateFlush":"${failure}"`);
+      expect(String(response.body)).toContain('stateMessage');
+      expect(String(response.body)).not.toContain('event: complete');
     });
 
     it('records branch delete completion only after state flush succeeds', async () => {
@@ -4322,6 +4372,7 @@ describe('Branch Routes', () => {
       const startedAt = Date.now();
       const del = await request(server, 'DELETE', '/api/branches/hung-flush-delete');
       delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
+    delete process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS;
       const elapsedMs = Date.now() - startedAt;
 
       expect(elapsedMs).toBeLessThan(2_000);

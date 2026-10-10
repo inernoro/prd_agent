@@ -12754,23 +12754,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
             res.end();
             return;
           }
+          assertBranchOperationCurrent(cleanupLease, 'empty-profiles-cleanup branch state flushed');
+          advanceDeploymentRun(cleanupRun?.id, 'running', {
+            phase: 'complete',
+            message: `残留服务清理完成，共下掉 ${cleared.length} 个容器`,
+            operationId: cleanupLease?.operationId,
+            detail: { cleared },
+          });
+          // The terminal run is a separate write from the cleaned branch graph.
+          // Both barriers must finish before complete SSE or lease handoff.
+          const terminalFlush = await flushBranchStateBeforeSuccess({
+            source: 'branch-deploy', actionPrefix: 'branch.deploy-empty-cleanup-terminal', branch: entry,
+            requestId: cleanupReqId || null, operationId: cleanupLease?.operationId || null,
+            actor: cActor, trigger: cTrigger,
+          });
+          assertBranchOperationCurrent(cleanupLease, 'empty-profiles-cleanup terminal state flushed');
+          if (terminalFlush !== 'flushed') {
+            cleanupStatus = 'failed';
+            const message = branchStateFlushFailureMessage(terminalFlush, '残留服务已清理，部署终态已写入内存');
+            completeBranchOperation(cleanupLease, cleanupStatus, message);
+            sendSSE(res, 'error', { message, stateFlush: terminalFlush });
+            res.end();
+            return;
+          }
         } catch (err) {
           cleanupStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
           if (cleanupStatus === 'cancelled') cancelDeploymentRun(cleanupRun?.id, '残留服务清理被更高优先级操作取代');
           else failDeploymentRun(cleanupRun?.id, (err as Error).message, 'cleanup');
+          const terminalFlush = await flushBranchStateBeforeSuccess({
+            source: 'branch-deploy', actionPrefix: 'branch.deploy-empty-cleanup-terminal', branch: entry,
+            requestId: cleanupReqId || null, operationId: cleanupLease?.operationId || null,
+            actor: cActor, trigger: cTrigger,
+          });
           completeBranchOperation(cleanupLease, cleanupStatus);
-          sendSSE(res, 'error', cleanupStatus === 'cancelled'
+          const failure = cleanupStatus === 'cancelled'
             ? { message: '清理被更高优先级操作取代', operationStatus: 'cancelled' }
-            : { message: (err as Error).message });
+            : { message: (err as Error).message };
+          sendSSE(res, 'error', terminalFlush === 'flushed' ? failure : {
+            ...failure, stateFlush: terminalFlush,
+            stateMessage: branchStateFlushFailureMessage(terminalFlush, '清理失败或取消终态已写入内存'),
+          });
           res.end();
           return;
         }
-        advanceDeploymentRun(cleanupRun?.id, 'running', {
-          phase: 'complete',
-          message: `残留服务清理完成，共下掉 ${cleared.length} 个容器`,
-          operationId: cleanupLease?.operationId,
-          detail: { cleared },
-        });
         completeBranchOperation(cleanupLease, cleanupStatus);
         sendSSE(res, 'complete', { ok: true, cleared, runId: cleanupRun?.id, message: `已清空所有服务（无构建配置，已下掉 ${cleared.length} 个残留容器）` });
         res.end();
