@@ -1,3 +1,5 @@
+import { candidateRuntimeIdentity } from '../../src/services/service-candidate.js';
+import { OwnedCandidateNetworkLifecycle } from '../../src/services/owned-candidate-network.js';
 import { OwnedContainerLifecycle } from '../../src/services/owned-container-lifecycle.js';
 import { computeCdsInstanceId } from '../../src/services/orphan-container-reaper.js';
 import { createHash } from 'node:crypto';
@@ -865,8 +867,10 @@ describe('Branch Routes', () => {
       expect((result.body as any).message).toContain('待对账');
       expect(stateService.getDeploymentRun(previous.id)!.candidate!.phase).toBe('reconciling');
     });
-    it('P3 enabled candidate replacement cannot fall into destructive legacy deployment without consumer and admission bindings', async () => {
+    it.each(['all', 'network'])('P3 enabled candidate replacement cannot fall into destructive legacy deployment without bindings: %s', async missing => {
       seedGateProject(false); candidateReplacementEnabled = true;
+      if (missing === 'network') candidateBindings = { lifecycle: new OwnedContainerLifecycle(mock, computeCdsInstanceId(config.repoRoot)),
+        admit: async () => {}, acknowledge: async () => true };
       const sha = 'b'.repeat(40);
       stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact' });
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
@@ -900,6 +904,8 @@ describe('Branch Routes', () => {
             ...(operationId ? { 'cds.deployment.operation': operationId, 'cds.deployment.kind': 'candidate' } : {}) } } });
         return id;
       };
+      let networkFacts: any;
+      mock.addResponsePatternFirst(/docker network inspect --format='\{\{json \.\}\}'/, () => ({ stdout: JSON.stringify(networkFacts), stderr: '', exitCode: 0 }));
       const oldId = add(branch.services.api); const orphanId = add(branch.services.orphan);
       if (phase === 'startup-cancel') stateService.updateBuildProfile('api', { startupSignal: 'READY' });
       const cancel = () => branchOperationCoordinator.cancelBranch(branch.id, 'user cancelled');
@@ -921,12 +927,20 @@ describe('Branch Routes', () => {
         expect(graph).not.toBe(branch); expect(service.containerName).toMatch(/^cds-candidate-/);
         expect(branch.services.api.containerName).toBe('cds-b1-api'); expect(objects.has(oldId)).toBe(true);
         expect(objects.has(orphanId)).toBe(true); expect(context!.candidateRunId).toBeTruthy();
+        await context!.onCandidateNetworkIntent!();
+        networkFacts = { Id: '9'.repeat(64), Name: candidateRuntimeIdentity(branch.id, profile.id, context!.candidateRunId!).networkName,
+          Driver: 'bridge', Scope: 'local', Internal: false, Attachable: false, Ingress: false, EnableIPv6: false,
+          IPAM: { Driver: 'default', Config: [] }, Options: {}, Containers: {}, Labels: { 'cds.managed': 'true',
+            'cds.type': 'candidate-network', 'cds.instance': computeCdsInstanceId(config.repoRoot), 'cds.project.id': 'proj-a',
+            'cds.branch.id': 'b1', 'cds.deployment.operation': context!.candidateRunId! } };
+        await context!.onCandidateNetworkPrepared!(networkFacts.Name);
         events.push('create'); add(service, context!.candidateRunId);
         Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image,
           deployedArtifactRef: profile.preparedArtifactRef, deployedMode: 'express' });
         if (phase === 'create-cancel') { cancel(); context!.signal!.throwIfAborted(); }
       });
-      candidateBindings = { lifecycle: new OwnedContainerLifecycle(mock, computeCdsInstanceId(config.repoRoot)),
+      candidateBindings = { networks: new OwnedCandidateNetworkLifecycle(mock, computeCdsInstanceId(config.repoRoot)),
+        lifecycle: new OwnedContainerLifecycle(mock, computeCdsInstanceId(config.repoRoot)),
         admit: async () => { events.push('admit'); }, acknowledge: async graph => {
           expect(graph.services.api.status).toBe('running'); expect(graph.services.orphan).toBeUndefined();
           expect(objects.has(oldId)).toBe(true); expect(objects.has(orphanId)).toBe(true); events.push('ack'); return true;

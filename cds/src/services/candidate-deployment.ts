@@ -9,6 +9,7 @@ import { resolveCandidateReplacement } from './candidate-replacement-policy.js';
 import { topoSortLayers } from './topo-sort.js';
 import { runLayerWithSharedAbort } from './deploy-layer-runner.js';
 import { BranchOperationSupersededError } from './branch-operation-coordinator.js';
+import type { OwnedCandidateNetworkLifecycle, OwnedCandidateNetworkReference } from './owned-candidate-network.js';
 import { captureServingVersion, assertServingVersion } from './candidate-serving-version.js';
 import { unresolvedCandidateRun } from './candidate-operation-admission.js';
 
@@ -32,7 +33,7 @@ export interface CandidateDeploymentOptions {
 export class CandidateDeploymentService {
   constructor(private readonly state: StateService,
     private readonly containers: Pick<ContainerService, 'runService' | 'waitForStartupSignal' | 'waitForReadiness'>,
-    private readonly lifecycle: OwnedContainerLifecycle) {}
+    private readonly lifecycle: OwnedContainerLifecycle, private readonly networks?: OwnedCandidateNetworkLifecycle) {}
 
   async deploy(options: CandidateDeploymentOptions): Promise<void> {
     const { entry, runId } = options;
@@ -112,6 +113,7 @@ export class CandidateDeploymentService {
       artifacts: Object.fromEntries(profiles.map(profile => [profile.id, { image: profile.preparedArtifactId!, targetSha: profile.preparedCommitSha! }])) });
     active();
     const captured = new Map<string, OwnedContainerReference>();
+    let capturedNetwork: OwnedCandidateNetworkReference | undefined;
     const attempted = new Set<string>();
     const stopped = new Set<string>();
     try {
@@ -144,6 +146,13 @@ export class CandidateDeploymentService {
           await this.containers.runService(graph, profile, service, output, customEnv, {
             ...options.context, operationId: frozen.operationId, candidateRunId: frozen.operationId,
             assertCurrent: current, signal,
+            ...(this.networks ? {
+              onCandidateNetworkIntent: () => journal.recordNetworkIntent(runId, current),
+              onCandidateNetworkPrepared: async (name: string) => {
+                const reference = await this.networks!.capture(owner, name, current, signal); current();
+                await journal.recordNetwork(runId, reference, current); current(); capturedNetwork = reference;
+              },
+            } : {}),
             onCandidateCreateIntent: () => journal.recordCreateIntent(runId, profile.id, current),
             onCandidateCreated: async id => {
               const reference = await this.lifecycle.capture({ ...owner, candidateOperationId: frozen.operationId }, service, current, signal);
@@ -154,6 +163,7 @@ export class CandidateDeploymentService {
             },
           });
           current();
+          if (this.networks && !capturedNetwork) throw new Error('candidate_network_identity: durable actual network result required');
           const reference = await this.lifecycle.capture({ ...owner, candidateOperationId: frozen.operationId }, service, current, signal);
           current(); captured.set(profile.id, reference); service.containerId = reference.id;
           await journal.recordCreated(runId, profile.id, reference, service, current); current();
@@ -206,6 +216,7 @@ export class CandidateDeploymentService {
           const recoverySignal = AbortSignal.timeout(30_000);
           recoveryStage = 'candidate-remove';
           if (!switched) for (const reference of captured.values()) await this.lifecycle.remove(reference, servingFence, recoverySignal);
+          if (this.networks && capturedNetwork) await this.networks.remove(capturedNetwork, servingFence, recoverySignal);
           for (const id of stopped) {
             recoveryStage = 'serving-start';
             await this.lifecycle.start(oldReferences.get(id)!, servingFence, recoverySignal); servingFence();

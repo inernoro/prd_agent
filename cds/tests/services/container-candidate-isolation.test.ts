@@ -28,6 +28,21 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('P3-04 candidate runtime boundary', () => {
+  it.each(['network-intent', 'network-identity', 'cancel-after-network'])('does not create a container beyond an unconfirmed private network boundary: %s', async failure => {
+    const candidate = { profileId: 'api', containerName: candidateRuntimeIdentity('branch', 'api', 'op-test').containerName,
+      hostPort: 10002, status: 'idle' } as ServiceState;
+    let current = true; const events: string[] = [];
+    await expect(container.runService(entry(), profile(), candidate, undefined, undefined, {
+      candidateRunId: 'op-test', assertCurrent: () => { if (!current) throw new Error('new-owner'); },
+      onCandidateNetworkIntent: async () => { events.push('network-intent'); if (failure === 'network-intent') throw new Error('disk-unavailable'); },
+      onCandidateNetworkPrepared: async (name: string) => { expect(name).toBe(candidateRuntimeIdentity('branch', 'api', 'op-test').networkName);
+        events.push('network-identity'); if (failure === 'network-identity') throw new Error('disk-unavailable'); current = false; },
+    } as any)).rejects.toThrow(failure === 'cancel-after-network' ? 'new-owner' : 'disk-unavailable');
+    expect(events).toEqual(failure === 'network-intent' ? ['network-intent'] : ['network-intent', 'network-identity']);
+    expect(shell.commands.some(command => command.startsWith('docker create') || command.startsWith('docker start') || command.startsWith('docker network connect'))).toBe(false);
+    if (failure === 'network-intent') expect(shell.commands.some(command => command.startsWith('docker network create'))).toBe(false);
+  });
+
   it.each(['intent-write', 'created-write', 'cancel-after-created'])('does not create/connect/start beyond an unconfirmed candidate ledger boundary: %s', async failure => {
     const candidate = { profileId: 'api', containerName: candidateRuntimeIdentity('branch', 'api', 'op-test').containerName,
       hostPort: 10002, status: 'idle' } as ServiceState;

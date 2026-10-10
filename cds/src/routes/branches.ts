@@ -1,5 +1,6 @@
 import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
 import { unresolvedCandidateRun } from '../services/candidate-operation-admission.js';
+import type { OwnedCandidateNetworkLifecycle } from '../services/owned-candidate-network.js';
 import type { OwnedContainerLifecycle } from '../services/owned-container-lifecycle.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
@@ -2034,6 +2035,7 @@ export interface RouterDeps {
   candidateReplacementEnabled?: () => boolean;
   candidateDeployment?: {
     lifecycle: OwnedContainerLifecycle;
+    networks?: OwnedCandidateNetworkLifecycle;
     admit: CandidateDeploymentOptions['admit'];
     acknowledge(branch: BranchEntry, signal?: AbortSignal): Promise<boolean>;
   };
@@ -13240,8 +13242,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return effective.prebuiltImage && effective.prebuiltCommitPolicy === 'exact';
       });
       candidateMode = deps.candidateReplacementEnabled?.() === true && requiresExactArtifacts;
-      if (candidateMode && (!deps.candidateDeployment || !deploymentRunService || !deploymentRun || !branchOperationLease || !deploymentVersionService)) {
-        throw new Error('candidate_deployment_unavailable: consumer, admission and owned run bindings required');
+      if (candidateMode && (!deps.candidateDeployment?.networks || !deploymentRunService || !deploymentRun || !branchOperationLease || !deploymentVersionService)) {
+        throw new Error('candidate_deployment_unavailable: consumer, admission, network and owned run bindings required');
       }
       const preparedExactProfiles = new Map<string, BuildProfile>();
       const cleanupRemovedProfiles = async () => {
@@ -13648,7 +13650,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         assertCandidateCurrent('candidate-before-create');
         const liveUsedPorts = await collectListeningPorts(shell);
         assertCandidateCurrent('candidate-after-port-snapshot');
-        await new CandidateDeploymentService(stateService, containerService, bindings.lifecycle).deploy({
+        await new CandidateDeploymentService(stateService, containerService, bindings.lifecycle, bindings.networks).deploy({
           runId: deploymentRun!.id, entry, profiles: resolved, customEnv: effectiveEnv,
           allocatePort: reserved => {
             const port = stateService.allocatePort(config.portStart, new Set([...liveUsedPorts, ...reserved]));

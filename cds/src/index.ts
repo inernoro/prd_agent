@@ -1,4 +1,5 @@
 import { recordContainerLifecycleIntent } from './services/container-diagnostics.js';
+import { OwnedCandidateNetworkLifecycle } from './services/owned-candidate-network.js';
 import { OwnedContainerLifecycle } from './services/owned-container-lifecycle.js';
 import { admitCandidateCapacity } from './services/candidate-capacity.js';
 import { ForwarderRouteAcknowledgement } from './services/forwarder-route-acknowledgement.js';
@@ -5442,6 +5443,7 @@ const serverDeps: ServerDeps = {
         kind: action === 'stop' ? 'cds-stop' : 'cds-remove', reason: '精确候选交付停止或回收已核验实例',
         source: 'candidate-deployment', operation: 'candidate-' + action });
     }),
+    networks: new OwnedCandidateNetworkLifecycle(shell, computeCdsInstanceId(config.repoRoot)),
     admit: async (_graph, _stops, context) => {
       await admitCandidateCapacity(stateService, shell, context);
     },

@@ -58,6 +58,35 @@ describe('P3 durable private candidate reservations', () => {
       expect(reload.getDeploymentRun(runId)!.candidate).toBeUndefined();
     });
 
+  it('persists a run network intent and inspected identity without losing simultaneous container intents', async () => {
+    branch.services.api.containerId = 'c'.repeat(64); const journal = new CandidateJournal(state);
+    await journal.prepare(runId, candidate(), undefined, proof()); await journal.advance(runId, 'prepared', 'starting');
+    const name = state.getDeploymentRun(runId)!.candidate!.networkName;
+    const reference = { owner: { projectId: 'project', branchId: 'branch', operationId: 'op-test' },
+      name, id: '1'.repeat(64), fingerprint: 'sha256:' + '2'.repeat(64) };
+    await expect(journal.recordNetwork(runId, reference, () => {})).rejects.toThrow('candidate_network_intent');
+    await Promise.all([journal.recordNetworkIntent(runId, () => {}), journal.recordCreateIntent(runId, 'api', () => {})]);
+    await journal.recordNetwork(runId, reference, () => {});
+    const loaded = new StateService(path.join(dir, 'state.json')); loaded.load();
+    const record = loaded.getDeploymentRun(runId)!.candidate!;
+    expect(record.networkCreation).toEqual({ intent: true, identity: { id: reference.id, fingerprint: reference.fingerprint } });
+    expect(record.createIntents).toEqual(['api']);
+    await expect(journal.recordNetwork(runId, { ...reference, id: '3'.repeat(64) }, () => {})).rejects.toThrow('candidate_network_identity');
+  });
+  it('refuses changed network ownership and fences a held durable network write', async () => {
+    branch.services.api.containerId = 'c'.repeat(64); const journal = new CandidateJournal(state);
+    await journal.prepare(runId, candidate(), undefined, proof()); await journal.advance(runId, 'prepared', 'starting');
+    await journal.recordNetworkIntent(runId, () => {});
+    const reference = { owner: { projectId: 'project', branchId: 'branch', operationId: 'other-op' },
+      name: state.getDeploymentRun(runId)!.candidate!.networkName, id: '1'.repeat(64), fingerprint: 'sha256:' + '2'.repeat(64) };
+    await expect(journal.recordNetwork(runId, reference, () => {})).rejects.toThrow('candidate_network_identity');
+    let revoked = false;
+    vi.spyOn(state, 'flush').mockImplementation(async () => { revoked = true; });
+    await expect(journal.recordNetwork(runId, { ...reference, owner: { ...reference.owner, operationId: 'op-test' } },
+      () => { if (revoked) throw new Error('superseded'); })).rejects.toThrow('superseded');
+    expect(state.getDeploymentRun(runId)!.candidate!.networkCreation!.identity).toBeUndefined();
+  });
+
   it('serializes parallel per-service creation evidence through actual JSON persistence without losing sibling identities', async () => {
     branch.services.api.containerId = 'c'.repeat(64);
     const graph = createCandidateRuntime(branch, [{ id: 'api' }, { id: 'web' }] as BuildProfile[], 'op-test', reserved => reserved.has(10002) ? 10003 : 10002);

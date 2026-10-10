@@ -1,4 +1,5 @@
 import type { BranchEntry, DeploymentCandidateRecord, ServiceState, CandidateRecoveryProof } from '../types.js';
+import type { OwnedCandidateNetworkReference } from './owned-candidate-network.js';
 import type { OwnedContainerReference } from './owned-container-lifecycle.js';
 import type { StateService } from './state.js';
 import { captureServingVersion } from './candidate-serving-version.js';
@@ -178,6 +179,51 @@ export class CandidateJournal {
   recordCreated(runId: string, profileId: string, reference: OwnedContainerReference,
     service: Readonly<ServiceState>, assertCurrent: () => void): Promise<void> {
     return this.serializeCreation(runId, () => this.persistCreation(runId, profileId, assertCurrent, reference, service));
+  }
+
+  private async persistNetwork(runId: string, assertCurrent: () => void, reference?: OwnedCandidateNetworkReference): Promise<void> {
+    assertCurrent();
+    const run = this.state.getDeploymentRun(runId); const record = run?.candidate;
+    if (!run || !record || record.phase !== 'starting' || record.recoveryProof?.version !== 1 ||
+      run.operationId !== record.operationId || run.commitSha !== record.targetSha || run.configHash !== record.configHash ||
+      !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status)) {
+      throw new Error('candidate_network_owner: active frozen creation journal required');
+    }
+    if (reference && !record.networkCreation?.intent) throw new Error('candidate_network_intent: durable intent required');
+    if (reference && (reference.name !== record.networkName || reference.owner.projectId !== run.projectId ||
+      reference.owner.branchId !== run.branchId || reference.owner.operationId !== record.operationId ||
+      typeof reference.id !== 'string' || !/^[a-f0-9]{64}$/.test(reference.id) ||
+      typeof reference.fingerprint !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(reference.fingerprint))) {
+      throw new Error('candidate_network_identity: matching inspected private network required');
+    }
+    const previous = record.networkCreation?.identity;
+    if (previous && reference) {
+      if (previous.id !== reference.id || previous.fingerprint !== reference.fingerprint) {
+        throw new Error('candidate_network_identity: network identity cannot be overwritten');
+      }
+      return;
+    }
+    if (!reference && record.networkCreation?.intent) return;
+    const frozen = { record: JSON.stringify(record), operationId: run.operationId, targetSha: run.commitSha,
+      configHash: run.configHash, projectId: run.projectId, branchId: run.branchId };
+    await this.state.updateDeploymentRunDurably(runId, draft => {
+      draft.candidate!.networkCreation = { intent: true,
+        ...(reference ? { identity: { id: reference.id, fingerprint: reference.fingerprint } } : {}) };
+    }, () => this.state.flush(), () => {
+      assertCurrent();
+      if (this.state.getDeploymentRun(runId) !== run || run.candidate !== record || JSON.stringify(record) !== frozen.record ||
+        run.operationId !== frozen.operationId || run.commitSha !== frozen.targetSha || run.configHash !== frozen.configHash ||
+        run.projectId !== frozen.projectId || run.branchId !== frozen.branchId || record.phase !== 'starting' ||
+        !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status)) {
+        throw new Error('candidate_network_owner: network facts or owner changed during persistence');
+      }
+    });
+  }
+  recordNetworkIntent(runId: string, assertCurrent: () => void): Promise<void> {
+    return this.serializeCreation(runId, () => this.persistNetwork(runId, assertCurrent));
+  }
+  recordNetwork(runId: string, reference: OwnedCandidateNetworkReference, assertCurrent: () => void): Promise<void> {
+    return this.serializeCreation(runId, () => this.persistNetwork(runId, assertCurrent, reference));
   }
 
   /** Compare-and-set phase, with immutable target/identity and an explicit durability barrier. */

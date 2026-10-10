@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { StateService } from '../../src/services/state.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { OwnedCandidateNetworkLifecycle } from '../../src/services/owned-candidate-network.js';
 import { OwnedContainerLifecycle } from '../../src/services/owned-container-lifecycle.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
 import { CandidateDeploymentService } from '../../src/services/candidate-deployment.js';
@@ -27,7 +28,7 @@ beforeEach(async () => {
     commitSha: sha, operationId: 'operation', configHash: 'frozen' })).id;
 });
 afterEach(async () => { await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
-function fixture(role: 'api' | 'worker' = 'api') {
+function fixture(role: 'api' | 'worker' = 'api', withNetwork = false) {
   const events: string[] = []; const objects = new Map<string, any>();
   const add = (name: string, port: number, candidate = false) => {
     const id = createHash('sha256').update(name).digest('hex');
@@ -39,8 +40,15 @@ function fixture(role: 'api' | 'worker' = 'api') {
     objects.set(id, info); return info;
   };
   const old = add('old', 10001);
+  let network: any;
+  let networkExists = false;
   const shell = { exec: async (command: string) => {
     const identity = command.split(' ').at(-1)!.replaceAll("'", '');
+    if (command.startsWith('docker network inspect')) return networkExists ? { exitCode: 0, stdout: JSON.stringify(network), stderr: '' }
+      : { exitCode: 1, stdout: '', stderr: 'network not found' };
+    if (command.startsWith('docker network rm')) {
+      events.push(command); networkExists = false; return { exitCode: 0, stdout: network.Id, stderr: '' };
+    }
     const info = objects.get(identity) || [...objects.values()].find(object => object.Name === '/' + identity);
     if (command.startsWith('docker inspect')) return info ? { exitCode: 0, stdout: JSON.stringify(info), stderr: '' }
       : { exitCode: 1, stdout: '', stderr: 'No such object: ' + identity };
@@ -65,17 +73,57 @@ function fixture(role: 'api' | 'worker' = 'api') {
   let ready = true; let oldReady = true; let createFails = false; let wait: (() => Promise<boolean>) | undefined;
   const containers = { runService: async (graph: BranchEntry, p: BuildProfile, service: any, _output: any, _env: any, context: any) => {
     expect(graph).not.toBe(entry); expect(context.candidateRunId).toBe('operation');
+    if (withNetwork) {
+      await context.onCandidateNetworkIntent();
+      network = { Id: '9'.repeat(64), Name: state.getDeploymentRun(runId)!.candidate!.networkName, Driver: 'bridge', Scope: 'local',
+        Internal: false, Attachable: false, Ingress: false, EnableIPv6: false, Options: {}, IPAM: { Driver: 'default', Config: [] },
+        Containers: {}, Labels: { 'cds.managed': 'true', 'cds.type': 'candidate-network', 'cds.instance': 'instance',
+          'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.deployment.operation': 'operation' } };
+      networkExists = true; await context.onCandidateNetworkPrepared(network.Name);
+    }
     events.push('create-candidate'); if (createFails) throw new Error('create-unknown');
     add(service.containerName, service.hostPort, true);
     Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image, deployedMode: 'express' });
   }, waitForStartupSignal: async () => true, waitForReadiness: async (port: number) => port === 10001 ? oldReady : wait ? await wait() : ready };
   const options = { runId, entry, profiles: [profile], allocatePort: () => 10002, assertCurrent: () => {},
     admit: async () => {}, acknowledge: async () => { events.push('ack'); return true; }, customEnv: {} };
-  const service = new CandidateDeploymentService(state, containers as any, new OwnedContainerLifecycle(shell, 'instance'));
-  return { service, options, containers, old, events, objects, setReady: (value: boolean) => { ready = value; },
+  const service = new CandidateDeploymentService(state, containers as any, new OwnedContainerLifecycle(shell, 'instance'), withNetwork ? new OwnedCandidateNetworkLifecycle(shell, 'instance') : undefined);
+  return { service, options, containers, old, events, objects,
+    getNetwork: () => network, networkExists: () => networkExists, setReady: (value: boolean) => { ready = value; },
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('durably freezes the private network identity and removes it before restoring a failed candidate worker', async () => {
+    const f = fixture('worker', true); f.setReady(false);
+    const ready = f.containers.waitForReadiness;
+    f.containers.waitForReadiness = async (port: number, ...args: any[]) => {
+      if (port !== 10001) {
+        const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+        expect(disk.getDeploymentRun(runId)!.candidate!.networkCreation).toMatchObject({ intent: true,
+          identity: { id: '9'.repeat(64), fingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) } });
+      }
+      return ready(port);
+    };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');
+    const remove = f.events.indexOf('docker network rm ' + '9'.repeat(64));
+    const restore = f.events.indexOf('docker start ' + f.old.Id);
+    expect(remove).toBeGreaterThan(-1); expect(restore).toBeGreaterThan(remove); expect(f.networkExists()).toBe(false);
+  });
+  it('preserves the stopped worker and both reservations if actual network endpoints prevent cleanup', async () => {
+    const f = fixture('worker', true); f.setReady(false);
+    const ready = f.containers.waitForReadiness;
+    f.containers.waitForReadiness = async (port: number, ...args: any[]) => {
+      if (port !== 10001) f.getNetwork().Containers['e'.repeat(64)] = { Name: 'unknown-consumer' };
+      return ready(port);
+    };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');
+    expect(f.events.some(event => event.startsWith('docker network rm') || event.startsWith('docker start'))).toBe(false);
+    expect(f.old.State.Running).toBe(false); expect(f.networkExists()).toBe(true);
+    const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+    expect(disk.getDeploymentRun(runId)!.candidate).toMatchObject({ phase: 'reconciling',
+      recoveryFailure: { stage: 'candidate-remove' }, networkCreation: { identity: { id: '9'.repeat(64) } } });
+  });
+
   it('uses the frozen original version readiness instead of the incoming profile while restoring the old worker', async () => {
     const f = fixture('worker'); f.options.profiles[0].readinessProbe = { path: '/new-health', timeoutSeconds: 1 };
     f.setReady(false); const check = f.containers.waitForReadiness;

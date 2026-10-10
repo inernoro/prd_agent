@@ -1190,6 +1190,8 @@ export class ContainerService {
       /** Awaited write-ahead boundaries for private candidate creation. */
       onCandidateCreateIntent?: () => Promise<void>;
       onCandidateCreated?: (id: string) => Promise<void>;
+      onCandidateNetworkIntent?: () => Promise<void>;
+      onCandidateNetworkPrepared?: (name: string) => Promise<void>;
       /**
        * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
        * 构建槽（build-gate，见 branches.ts 部署循环），但回退到源码编译就是
@@ -1276,7 +1278,14 @@ export class ContainerService {
     const netPlan = candidate ? { runNetwork: candidate.networkName, runAliases: profileAliases, connectNetworks: [network] }
       : resolveAppNetworkPlan({ isolated: branchNetworkIsolationEnabled(process.env), sharedNetwork: network,
         branchId: entry.id, aliases: profileAliases });
-    if (candidate) await this.ensureCandidateNetwork(candidate.networkName, entry, context.candidateRunId!);
+    if (candidate) {
+      await context.onCandidateNetworkIntent?.(); context.assertCurrent?.('candidate-network-intent-durable');
+      context.signal?.throwIfAborted();
+      await this.ensureCandidateNetwork(candidate.networkName, entry, context.candidateRunId!, context);
+      context.assertCurrent?.('candidate-network-prepared'); context.signal?.throwIfAborted();
+      await context.onCandidateNetworkPrepared?.(candidate.networkName);
+      context.assertCurrent?.('candidate-network-identity-durable'); context.signal?.throwIfAborted();
+    }
     else if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
@@ -3453,12 +3462,19 @@ export class ContainerService {
     return removed;
   }
 
-  private async ensureCandidateNetwork(name: string, entry: BranchEntry, runId: string): Promise<void> {
+  private async ensureCandidateNetwork(name: string, entry: BranchEntry, runId: string,
+    context: { assertCurrent?: (step: string) => void; signal?: AbortSignal } = {}): Promise<void> {
+    const current = () => { context.assertCurrent?.('candidate-network'); context.signal?.throwIfAborted(); };
+    current();
     const expected: Record<string, string> = { 'cds.managed': 'true', 'cds.type': 'candidate-network',
       'cds.instance': computeCdsInstanceId(this.config.repoRoot), 'cds.project.id': entry.projectId || '_unknown',
       'cds.branch.id': entry.id, 'cds.deployment.operation': runId };
-    const inspect = () => this.shell.exec(`docker network inspect --format='{{json .Labels}}' ${this.shellQuote(name)}`,
-      { priority: 'delivery', timeout: 10_000 });
+    const inspect = async () => {
+      current();
+      const result = await this.shell.exec(`docker network inspect --format='{{json .Labels}}' ${this.shellQuote(name)}`,
+        { priority: 'delivery', timeout: 10_000, signal: context.signal });
+      current(); return result;
+    };
     const owned = (result: ExecResult) => {
       if (result.exitCode !== 0) return false;
       try {
@@ -3475,8 +3491,10 @@ export class ContainerService {
       throw new Error('candidate_network_inspect: cannot establish network ownership');
     }
     const labels = Object.entries(expected).map(([key, value]) => `--label ${this.shellQuote(`${key}=${value}`)}`).join(' ');
+    current();
     const create = await this.shell.exec(`docker network create ${labels} ${this.shellQuote(name)}`,
-      { priority: 'delivery', timeout: 10_000 });
+      { priority: 'delivery', timeout: 10_000, signal: context.signal });
+    current();
     // Parallel members may race to create the same run-owned network. Only a verified owner can win.
     if (!owned(await inspect())) throw new Error(`candidate_network_owner: creation not verified (exit ${create.exitCode})`);
   }

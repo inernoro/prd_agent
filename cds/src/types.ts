@@ -1387,6 +1387,8 @@ export interface DeploymentCandidateRecord {
   targetSha: string;
   configHash: string;
   networkName: string;
+  /** Write-ahead network intent and inspected immutable identity; no IPAM/options plaintext. */
+  networkCreation?: { intent: true; identity?: { id: string; fingerprint: string } };
   phase: 'prepared' | 'starting' | 'ready' | 'switch-intent' | 'routed' | 'rollback-intent' | 'rollback-verified' | 'reconciling' | 'released';
   updatedAt: string;
   /** Persisted before any stop/create; historical missing proofs cannot justify automatic recovery. */
