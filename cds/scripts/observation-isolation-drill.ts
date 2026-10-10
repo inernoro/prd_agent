@@ -19,9 +19,9 @@ import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import { SystemLogMonitor } from '../src/services/system-log-monitor.js';
 import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
-import type { CdsConfig } from '../src/types.js';
+import type { CdsConfig, IShellExecutor } from '../src/types.js';
 
-const sourcePaths = ['src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -157,6 +157,74 @@ async function main(): Promise<void> {
       sharedRead: railRead === sharedRead, afterReads: shell.getStats(),
       scope: 'owned real local Git repository through compiled readers and existing process pool; not public release HTTP or complete synchronous filesystem removal' };
     report.checks.push({ name: 'compiled-owned-release-git-metadata-rail-and-unknown-contract', passed: true });
+
+    report.stage = 'compiled-owned-nonurgent-git-health-reservation';
+    const gitGate = path.join(temp, 'nonurgent-release');
+    const gitMarker = path.join(temp, 'nonurgent-git-producer.json');
+    const blockerMarker = path.join(temp, 'nonurgent-blocker-producer.json');
+    const gitBin = path.join(temp, 'nonurgent-git-bin'); await fs.mkdir(gitBin, { mode: 0o700 });
+    const shim = path.join(gitBin, 'git');
+    await fs.writeFile(shim, `#!${process.execPath}\nconst fs=require('fs'),cp=require('child_process');\nfs.writeFileSync(${JSON.stringify(gitMarker)},JSON.stringify({pid:process.pid,ppid:process.ppid}));\nconst t=setInterval(()=>{if(!fs.existsSync(${JSON.stringify(gitGate)}))return;clearInterval(t);const p=cp.spawn('/usr/bin/git',process.argv.slice(2),{stdio:'inherit'});p.on('error',()=>process.exit(1));p.on('close',c=>process.exit(c??1));},10);\n`, { mode: 0o700 });
+    const waitProducer = async (file: string): Promise<{ pid: number; ppid: number }> => {
+      for (let attempt = 0; attempt < 200; attempt++) {
+        try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { await new Promise(resolve => setTimeout(resolve, 10)); }
+      }
+      throw new Error('Owned nonurgent producer did not start');
+    };
+    const gitExecutor: IShellExecutor = {
+      exec: (command, options) => shell.exec(command, { ...options, env: { PATH: `${gitBin}${path.delimiter}${process.env.PATH}` }, timeout: 10000 }),
+      execBackgroundObservation: (command, options) => shell.execBackgroundObservation(command, { ...options, env: { PATH: `${gitBin}${path.delimiter}${process.env.PATH}` }, timeout: 10000 }),
+    };
+    const slowClock = new commitClockModule.ReleaseCommitClock({ shell: gitExecutor });
+    const slowRead = slowClock.remember(owner + '-slow', latestCommit, releaseRepo);
+    let normalBlocker: Promise<unknown> | undefined;
+    try {
+      const gitProducer = await waitProducer(gitMarker);
+      assert.equal(shell.getStats().active, 0); assert.equal(operationShell.getStats().active, 1);
+      const blockCode = `const fs=require('fs');fs.writeFileSync(${JSON.stringify(blockerMarker)},JSON.stringify({pid:process.pid,ppid:process.ppid}));const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(gitGate)})){clearInterval(t);process.exit(0);}},10);`;
+      normalBlocker = operationShell.exec(['exec', process.execPath, '-e', blockCode].map(shellQuoteArg).join(' '), { timeout: 10000 });
+      void normalBlocker.catch(() => {});
+      const blockerProducer = await waitProducer(blockerMarker);
+      assert.equal(operationShell.getStats().active, 2);
+      const healthCommand = ['exec', process.execPath, '-e', 'console.log(process.ppid)'].map(shellQuoteArg).join(' ');
+      const healthResults = await Promise.all([shell.exec(healthCommand, { executionLane: 'observation' }), shell.exec(healthCommand, { executionLane: 'observation' })]);
+      assert.ok(healthResults.every(result => result.exitCode === 0 && shell.getStats().actors.some(actor => actor.pid === Number(result.stdout.trim()))));
+      const groups: Array<{ pid: number; ppid: number; pgid: number }> = [];
+      for (const producer of [gitProducer, blockerProducer]) {
+        assert.ok(Number.isSafeInteger(producer.pid) && producer.pid > 1);
+        const result = await shell.exec(`ps -p ${producer.pid} -o pgid=`, { executionLane: 'observation' });
+        const pgid = Number(result.stdout.trim()); assert.ok(operationShell.getStats().actors.some(actor => actor.pid === pgid));
+        groups.push({ ...producer, pgid });
+      }
+      assert.equal(await slowClock.remember(owner + '-overload', latestCommit, releaseRepo), undefined);
+      assert.equal(operationShell.getStats().queued, 0);
+      await assert.rejects(shell.execBackgroundObservation('true', { executionPurpose: 'temporary-cleanup' }), { code: 'capacity' });
+      const cleanupMarker = path.join(temp, 'nonurgent-owned-cleanup');
+      const cleanupResult = await shell.exec(`touch ${shellQuoteArg(cleanupMarker)}`, { executionPurpose: 'temporary-cleanup', timeout: 5000 });
+      assert.equal(cleanupResult.exitCode, 0); await fs.access(cleanupMarker);
+      assert.equal(operationShell.getStats().active, 2);
+      report.nonurgentGit = { producers: groups, ordinaryStatsWhileBlocked: operationShell.getStats(), healthStatsWhileBlocked: shell.getStats(),
+        healthDuringGit: true, cleanupDuringGit: true, overloadRemainedUnknown: true, cleanupPurposeCannotBorrowReservation: true,
+        fixtureTimeoutMs: 10000, productionGitTimeoutMs: 3000,
+        scope: 'owned real Git held by private shim via compiled reader and existing operation pool; two health reads and reserved private cleanup remain available; not application phase fairness, full RSS or public performance acceptance' };
+    } finally {
+      await fs.writeFile(gitGate, 'release', { mode: 0o600 });
+      await Promise.all([slowRead, normalBlocker]);
+    }
+    assert.equal(slowClock.getMeta(owner + '-slow', latestCommit)?.subject, '自有第二版');
+    assert.equal(JSON.parse(await fs.readFile(gitMarker, 'utf8')).pid, report.nonurgentGit.producers[0].pid);
+    assert.equal(slowClock.get(owner + '-overload', latestCommit), undefined);
+    report.nonurgentGit.expiredReadNeverStarted = true;
+    assert.equal(operationShell.getStats().active, 0); assert.equal(operationShell.getStats().bytes, 0);
+    report.nonurgentGit.afterReads = operationShell.getStats();
+    report.nonurgentGit.closedProducerStates = [];
+    for (const producer of report.nonurgentGit.producers) {
+      const result = await shell.exec(`ps -p ${producer.pid} -o stat=`, { executionLane: 'observation' });
+      assert.match(result.stdout.trim(), /^(Z.*)?$/);
+      report.nonurgentGit.closedProducerStates.push({ pid: producer.pid, state: result.stdout.trim() });
+    }
+    report.checks.push({ name: 'compiled-owned-nonurgent-git-health-and-cleanup-reservation', passed: true });
+
 
     report.stage = 'create-owned-container';
     const mountedDir = path.join(temp, 'mounted');

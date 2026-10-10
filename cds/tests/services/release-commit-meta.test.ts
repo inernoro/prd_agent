@@ -24,7 +24,7 @@ import {
 } from '../../src/services/release-commit-clock.js';
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
-const readPool = new IsolatedShellExecutor(new ShellExecutor());
+const readPool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
 beforeAll(async () => { await readPool.start(); });
 afterAll(async () => { await readPool.close(); });
 

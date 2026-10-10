@@ -118,6 +118,18 @@ export class IsolatedShellExecutor implements IShellExecutor {
     return this.starting;
   }
 
+  /** 复用既有操作池；缺少操作隔离能力就拒绝，不占健康池或委托原生Shell。 */
+  execBackgroundObservation(command: string, options?: ExecOptions): Promise<ExecResult> {
+    if (this.closed) return Promise.reject(this.executionError('closed'));
+    if (this.isolatedLane === 'operation') {
+      return this.exec(command, { ...options, executionLane: 'operation', executionPurpose: undefined });
+    }
+    if (this.operation.execBackgroundObservation) {
+      return this.operation.execBackgroundObservation(command, { ...options, executionPurpose: undefined });
+    }
+    return Promise.reject(this.executionError('unavailable'));
+  }
+
   exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     if ((options?.executionLane ?? 'operation') !== this.isolatedLane) return this.operation.exec(command, options);
     options ??= {};

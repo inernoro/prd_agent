@@ -13,6 +13,35 @@ vi.mock('node:child_process', async original => { const actual = await original<
 const pools: IsolatedShellExecutor[] = []; const dirs: string[] = [];
 afterEach(async () => { await Promise.all(pools.splice(0).map(p => p.close())); await Promise.all(dirs.splice(0).map(d => rm(d, { recursive: true, force: true }))); vi.restoreAllMocks(); });
 describe('发布Git读取隔离', () => {
+  it('共享非紧急读取最多同时执行一个，等待满额拒绝后仍按先后顺序推进', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let active = 0; let maxActive = 0;
+    const calls: string[] = [];
+    const shell = { execBackgroundObservation: async (command, options) => {
+      calls.push(command); active++; maxActive = Math.max(maxActive, active);
+      if (calls.length === 1) await gate;
+      options?.onData?.('owned', 'stdout'); active--;
+      return { exitCode: 0, stdout: '', stderr: '' };
+    } } as IShellExecutor;
+    const firstReader = createReleaseGitRunner(shell); const otherReader = createReleaseGitRunner(shell);
+    const pending = Array.from({ length: 17 }, (_, index) => (index % 2 ? firstReader : otherReader)([String(index)]));
+    expect(calls).toHaveLength(1);
+    await expect(firstReader(['overflow'])).rejects.toThrow('input capacity exceeded');
+    release(); expect(await Promise.all(pending)).toEqual(Array(17).fill('owned'));
+    expect(maxActive).toBe(1);
+    expect(calls).toEqual(Array.from({ length: 17 }, (_, index) => `'git' '${index}'`));
+    await expect(firstReader(['reused'])).resolves.toBe('owned');
+  });
+  it('超过输入字节预算不创建命令，之后有限读取仍可执行', async () => {
+    const execute = vi.fn(async (_command, options) => {
+      options?.onData?.('owned', 'stdout'); return { exitCode: 0, stdout: '', stderr: '' };
+    });
+    const read = createReleaseGitRunner({ execBackgroundObservation: execute } as unknown as IShellExecutor);
+    await expect(read(['x'.repeat(1024 * 1024)])).rejects.toThrow('input capacity exceeded');
+    expect(execute).not.toHaveBeenCalled();
+    await expect(read(['reused'])).resolves.toBe('owned');
+  });
   it('缺执行器保持未知，不能回退到Master创建命令或把未知计数变成零', async () => {
     vi.mocked(cp.execFileSync).mockClear();
     vi.mocked(cp.spawn).mockClear();
@@ -28,7 +57,7 @@ describe('发布Git读取隔离', () => {
   });
   it('超过输出预算明确失败，不返回截断的提交元信息；随后有限读取仍可成功', async () => {
     let overflow = true;
-    const shell = { exec: async (_command, options) => {
+    const shell = { execBackgroundObservation: async (_command, options) => {
       options?.onData?.(overflow ? 'x'.repeat(256 * 1024) : 'owned', 'stdout');
       if (overflow) options?.onData?.('extra', 'stderr');
       return { exitCode: 0, stdout: '', stderr: '' };
@@ -44,7 +73,9 @@ describe('发布Git读取隔离', () => {
     git('init', '-q'); git('config', 'user.name', 'Owned Test'); git('config', 'user.email', 'owned@example.test');
     await writeFile(path.join(dir, 'owned.txt'), 'owned'); git('add', '.'); git('commit', '-qm', '自有提交');
     const sha = git('rev-parse', 'HEAD').trim(); git('update-ref', 'refs/remotes/origin/main', sha);
-    const shell = new IsolatedShellExecutor(new ShellExecutor()); pools.push(shell); await shell.start();
+    const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
+    const shell = new IsolatedShellExecutor(operation); pools.push(shell, operation);
+    await Promise.all([shell.start(), operation.start()]);
     vi.mocked(cp.execFileSync).mockClear(); vi.mocked(cp.spawn).mockClear();
     const clock = new ReleaseCommitClock({ shell });
     const rail = new ReleaseCommitRailReader({ shell, repoRootResolver: () => dir });

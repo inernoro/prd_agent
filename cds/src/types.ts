@@ -4991,4 +4991,6 @@ export interface ExecOptions {
 
 export interface IShellExecutor {
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  /** 非紧急纯读取：已有隔离操作池承接，不占健康池或保留清理槽；缺能力时调用方保持未知。 */
+  execBackgroundObservation?(command: string, options?: ExecOptions): Promise<ExecResult>;
 }
