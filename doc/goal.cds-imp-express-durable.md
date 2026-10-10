@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.30；日期：2026-10-11；状态：active。
+版本：v1.34；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,18 +76,18 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:2642d388ada74e7ffe14bd7f6cfa9441602659e5,IMP:f6491b51ec1be0689aea4bc114b552d43f257714（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:137/0相对origin/main,IMP:25/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:d1a56ac49b4117eef0e832a0dc6074ff23cc50f0,IMP:35d1581566f4ac45c6a0406f073b9742a5ba5d50（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:141/0相对origin/main,IMP:27/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。
+- 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。 systemd命令共享Worker、实际path/inode唯一writer、回滚归属与最终结果fence已固定本地实现，独立37/37；直接异步递归回收草案因新owner误删真红已否决并还原，不作完成。
 - 本批实现检查点：2ea固定独立44项41绿3红（未消费续约时pending提前出队）；ec939原44及新增3共47/47局部复绿，删除Map存在守卫1真红。原3红保留；相关313/core tsc绿。 efcdaf0dc21687fbcecb6af0b0fafaaa953fdfc0重放观察：5秒响应头、30分钟观察、256KiB帧/16KiB解码片；非2xx不读正文，complete.ok/错误/mergedjoined/unknown分别记录，只记有界枚举及合法run ID；不重试或取消实际执行。实际入站HTTP＋fake出站/Docker5旧红→5绿，观察器13及协调/路由共331局部绿、core tsc绿；efcd固定独立实际自有HTTP/native fetch23项21绿2真红（complete.ok=true却带started/rejected被误判完成）；明确cancelled被记失败也已发现。12ad新增有限状态及取消归因，主3旧红→绿，相关335/core tsc绿，固定独立待返。未改实际run，不把观察取消当Daemon闭合。 仍未实现durable pending队列，不证明实际Master/Daemon或线上通过。 八候选固定清单未变，独立8/8与280合同局部绿，104角色仅静态枚举，未push/未部署。
-- 证据纪元：`target_sha=CDS:2642d388ada74e7ffe14bd7f6cfa9441602659e5,IMP:f6491b51ec1be0689aea4bc114b552d43f257714；tested_sha=CDS:2642d主291/core tsc0与独立31/31局部,全量9562绿/1HTTP超时未闭合,16定向绿；4d512full9561仅历史；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-10T23:21:18.759771+00:00`
+- 证据纪元：`target_sha=CDS:d1a56ac49b4117eef0e832a0dc6074ff23cc50f0,IMP:35d1581566f4ac45c6a0406f073b9742a5ba5d50；tested_sha=CDS:d1a56主66/core0/full9589,固定独立37/37；80e941独立29绿6物理归属红/full9583仅历史；1f977独立20绿1物理别名红仅历史；2642d独立31及full9562绿1HTTP超时仅历史；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-10T23:51:00.355904+00:00`
 - 本批新增恢复事实：66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
 - 新鲜验证证据：59d固定独立59/59局部（重放原17+扩展7+observer24+实际Router失败4/取消4+观察socket外部abort后执行仍受租约控制2+真实默认5秒头budget1）；原66fb两scope红关闭。whole正例旧带Profile与State自动填legacy项目两轮夹具偏差原件保留，未放宽scope。66fb权限清理v2独立6/6：清理ACK未知memory gate/竞态更新409，磁盘若已完成cleanup则重载仅安全old=a、新b无grant，5flush确认后清账。v1要求此时磁盘仍有journal的探索红保留解释，不作越权或500修复结论。 dc2f7d0ce47584656d948e61d048f17696f0da26本地源码例外queue按冻结project轮转/同项目FIFO，匿名兼容组FIFO；默认512等待/30min上限，超量与过期明确失败且不取消运行holder，授予/取消/超时清timer/listener，onStart观察异常释放槽位。whole/profile两路实际传projectId、任何gate失败结束排队episode，日志/UI改等待总量不承诺绝对位置；tracker旧min位置断言退场并保留旧红。主5新反例真红→25 gate绿，5files288相关/core及web tsc0，固定全量655files9560绿/6files19skip/1obsolete snapshot/65.48s。独立固定复验进行中；phase公平队列、durable pending、实际Master/Daemon与公网未验。 原3635全量1红与受控3-vs-5夹具红、66fb9552绿各按固定源保留；所有正式49/视觉/8支仍未执行。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；本机16GiB已大量压缩/交换，不在其上新增压力VM冒充隔离验收宿主；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。 额外只读探测mycds SSH成功（Linux16CPU/约31GiB RAM），sudo -n Docker可读，承载大量他人及IMP/MAP常驻服务；2026-10-11 05:32 CST可用628MiB、swap8191/8191MiB、load2.25/26.60/33.20，不作隔离压力宿主，不停他人服务/启新容器。本机Docker仍不可达；隔离宿主问题待用户回复。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：按P2-06合同迁移systemd启动native命令，继续其余同步文件/磁盘热点、durable pending/阶段公平、P4增量/其他SSE、IMP辅助终结receipt。保留2642d全量HTTP超时历史，不称根因已闭合；隔离宿主问题待答。准入后依既有授权push八支完整交付，按49项与双主题视觉、公网/恢复、48小时/一周门槛收口。
+- 下一动作与完成条件：固定d1a56局部独立37与full9589已闭合，本目标其余同步文件/磁盘热点、durable pending/阶段公平、P4增量/其他SSE、IMP辅助terminal receipt仍须同编号实施。直接异步递归删除草案新owner误删真红已否决，先做独占path与可恢复回收设计。原2642d HTTP超时未证明根因闭合；隔离宿主问题待答。准入后依既有授权push八支完整交付，按49项与双主题视觉、公网/恢复、48小时/一周门槛收口。
 - 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
@@ -161,6 +161,42 @@ expected result：源例外项目轮转和立即取消不影响在途holder。cu
 
 ## P2-06 systemd 启动子进程迁移合同
 
-现有root/已安装或允许安装/模板存在/完整node-pnpm-npx路径准入保持；备份、daemon-reload失败恢复旧文件、master只热应用权重、Forwarder只在reload成功后重启的顺序保持。把command -v与systemctl命令交给已共享Shell Worker，发现单命令3秒、reload/权重10秒、restart15秒边界；启动装配await完成，不后台无序重启。嵌入调用使用有界共享fallback（1执行/3排队），不直接native execSync，不把未成功命令算已应用。文件读取/备份/小unit写入仍同步，不能称所有文件热点已迁移。 异步等待期间同一规范化installedUnit只允许一个写入者，竞态明确返回error而不覆盖在途unit；进程内最多32个不同unit同步，无排队或自动重放，结束才释放。这个内存边界不替代重启后宿主对账。
+现有root/已安装或允许安装/模板存在/完整node-pnpm-npx路径准入保持；备份、daemon-reload失败恢复旧文件、master只热应用权重、Forwarder只在reload成功后重启的顺序保持。把command -v与systemctl命令交给已共享Shell Worker，发现单命令3秒、reload/权重10秒、restart15秒边界；启动装配await完成，不后台无序重启。嵌入调用使用有界共享fallback（1执行/3排队），不直接native execSync，不把未成功命令算已应用。文件读取/备份/小unit写入仍同步，不能称所有文件热点已迁移。 异步等待期间同一实际unit（已存在文件的真实路径及dev/ino；未创建文件的真实父目录及basename，含末级悬空链接）只允许一个写入者，竞态明确返回error而不覆盖在途unit；进程内最多32个不同unit同步，无排队或自动重放，结束才释放。首次await前冻结实际目标，systemctl保留linked unit的原请求名，写入前及reload完成后复核原名字仍绑定冻结实际目标，检测到改向即error且禁止后续动作；已发出命令不能撤回，结果未知不报告权重或restart已应用，需宿主对账；写入前复核并在新文件创建后登记inode，未能核身份明确error不启动命令。这个内存边界不替代重启后宿主对账。
 
 先红判据：注入共享executor时旧实现仍native调用；reload尚未返回不能报告fixed或重启；reload失败必须恢复原unit并留备份；热权重/重启失败维持既有返回语义。测试只允许自有临时文件与假命令、不调用宿主systemctl，不用局部启动检查代替真实自更新或公网性能。此临时实施合同在P2-06正式报告及自动门禁完整接管后退场。
+
+## v1.31 systemd启动迁移固定检查点
+
+1f977155b354e8c89180d7ba6faf195dc86419b9将systemd发现/reload/权重/重启迁共享Shell Worker，index传现有shell并await；嵌入fallback1执行/3排队，单命令发现3秒/reload与权重10秒/restart15秒。异步前冻结原unit/install意图，同规范化installedUnit唯一写入、不同unit上限32、无重放；备份及reload失败恢复旧文件，首次安装失败移除本次文件。小unit文件仍同步，实际自更新未执行。
+
+主共享executor接线4真红、actual index移除inject1红/仅去await1红、异步目标变化1红、并发writer1红保留并复绿；原index夹具直接执行TS的SyntaxError原件保留为夹具错误，transpile后反例才是真红。新增11判据及原模板/真实自有ShellWorker隔离控制共4files51绿/core tsc0；不调用宿主systemctl/写etc。固定全量656files9574绿/6files19skip/1旧obsolete snapshot/70.16s。原2642d HTTP5秒超时本次正常，但未改其测试或生产，不证明历史HTTP/线上500根因关闭。
+
+固定1f977独立复验进行中；P2剩余热点只读清单在仓库外p2-native-hotspots-1f977-local.json，仍有clock同步load/persist、janitor statfs与Docker native execFile、启动端口execSync、特殊tar/数据库/SSH流native spawn。不能用异步API或本次51/9574绿声称所有Master热点闭合。
+
+expected result：启动命令不在Master native执行，完整维护旧顺序和单写入归属。current evidence：8类主局部真红演练、51相关/core0与9574全量，固定独立待返。visible result：未部署、视觉N/A。gap：49正式/8分支/实际Daemon/公网/双主题与其他实施条目仍未完成。required action：末尾固定复验，有红继续原夹具修复；主继续同编号剩余有界实施，隔离宿主准入后按既有push/selfupdate授权执行真实交付与视觉。不提前收口。
+
+## v1.32 实际unit单写入恢复审计
+
+1f977固定独立20/21：14协议+3自有真实ShellWorker/fake systemctl/nativeHTTP+3actual index接线通过；同一实际unit的符号链接别名竞争写1真红。真实Worker控制轻HTTP5ms/76tick、Master native spawn/execSync0；自有12秒fake reload在10028ms被10秒deadline终止、PID消失、旧unit恢复。原2642d同步假CLI阻塞834ms保留。以上都不是实际宿主systemctl或正式公网性能。
+
+80e9414691adefa602551541ba25a1e7d531e46e用真实path和dev/ino共同锁定实际文件；未创建按真实父目录/basename解析末级悬空链接，32容量按写入调用计数。首次await冻结实际写入目标，创建后补inode锁；写入前和reload完成后核原请求路径绑定，未知或改向返回error，不更新权重或restart其他服务，回滚只触及冻结目标。linked unit保持原服务名字，不能把路径外目标basename当systemctl名字；硬链接锁共享文件不等于不同Daemon服务实例。主旧1f源8反例真红→20新判据及原12模板/11Shell/17隔离共4files60绿，core tsc0；固定全量656files9583绿/6files19skip/1旧obsolete snapshot/66.64s。日志/tmp/cds-systemd-physical-owner-final-{red,green,tsc}.log、/tmp/cds-express-80e941-full.log。固定新SHA独立复验进行中，不传播原1f的full到新源。
+
+expected result：别名不能绕过实际unit单写入，等待中改向不修改或重启其他目标。current evidence：原独立1真红及主8真红，当前60相关/core0/full9583，固定独立待返。visible result：未部署、visual N/A。gap：49正式/八分支完整交付、真实Daemon/公网/双主题仍未执行；clock同步文件、janitor statfs及其他热点、durable pending/阶段公平、P4其余流、IMP辅助终结receipt继续实施。required action：末尾原fixture固定源复验；主同步计划并继续有界TDD，隔离准入后依既有八支push/selfupdate授权完成真实验收。38partial-local/11todo保持，目标active。
+
+回滚归属补充：backup恢复及首次失败remove前复核冻结路径仍绑定本writer登记inode；替代inode或symlink未知时不覆盖或删除，保留备份和error。这个结束fence不能撤回在途systemctl，也不能当真实Daemon应用或恢复证据。P2-06正式自动门禁接管后该临时说明退场。
+
+## v1.33 回滚归属与最终结果恢复审计
+
+80e941固定独立29/35局部：原20控制及原symlink1绿，扩展物理身份8/14，六真红：reload等待后同path替代inode或指向foreign的symlink被backup回滚覆盖；首次安装同path替代inode被rm清掉；no-drift未核改向；权重和restart等待后改向却仍报已应用。原1f与80e所有反例、固定源hash与自有Worker/HTTP控制均保留，不传播到生产。
+
+d1a56ac49b4117eef0e832a0dc6074ff23cc50f0在no-drift前复核；回滚/首次失败移除仅冻结实际路径仍canonical同path且当前dev/ino属于原writer，未知或已替换则保留备份/error，不覆盖或删除foreign。权重/restart await结束及最终fixed返回前复核；检测到改向不报告runtimeWeightsApplied/restarted true，已发命令不能撤回，真实Daemon结果未知须另对账。主固定旧80e源六真红→4files66绿/core tsc0，日志/tmp/cds-systemd-rollback-owner-final-{red,green,tsc}.log。固定新SHA全量与独立复验进行中；80e历史full9583与原2642d HTTP超时单独保留，不能继承为新源结果。
+
+expected result：回滚只写本次owned inode，所有成功终结绑定实际目标。current evidence：旧源六主/独立真红、当前66相关/core0；新源full和独立待返。visible result：未部署、visual N/A。gap：49正式/八分支/实际Daemon/公网/双主题与其余计划条目仍未完成。required action：末尾原六反例固定源复验，有红继续修；主继续其余本地有界实施，隔离准入后依既有授权真实八支交付与正式视觉。38partial-local/11todo、49not-executed保持，目标active。
+
+## v1.34 固定独立闭合与回收草案否决
+
+d1a56固定独立37/37局部：原14协议、3actual ShellWorker/fake systemctl/own nativeHTTP、3actual index、原symlink1、原physical v2十四项、backup失败与错误后锁释放2。80e六红原fixture/期望不变复绿，历史29/35及原1f20/21保留。完整四源Git hash一致，source-manifest与evidence-summary在独立账本目录，epoch checkpoint-d1a56-systemd-physical-local-37green。主66相关/core0，固定全量656files9589绿/6files19skip/1旧obsolete snapshot/65.44s（/tmp/cds-express-d1a56-full.log）；原2642d HTTP超时与线上500根因仍未证明关闭。
+
+P2后续直接把janitor rmSync/stat改fs.promises的草案已否决：初始6files97/core0后，ownFS held rm→同path重建→释放清理会误删新owner，1可复现真红。草案/测试/hash和/tmp/cds-janitor-async-removal-replacement-draft-red.log保存在仓库外janitor-async-removal-rejected-draft.*；跟踪janitor精确还原d1a56，草案未提交/发布。此是被否定局部设计，不是d1a56新增产品红，也不能把草案97绿计入固定源。后续先设计独占path/实际身份与可恢复回收，再迁移递归删除；主负责，同编号P2-06，不为异步API丢掉安全护栏。
+
+expected result：systemd本地身份漂移不伪报成功；后台回收不删新worktree。current evidence：前者37固定独立、66相关/core0/full9589；后者否决草案1真红，未采用。visible result：本候选未部署/视觉N/A。gap：49正式全部not-executed，八支完整交付、隔离宿主、实际Daemon/公网/双主题、durable pending/阶段公平、P4其余流、IMP辅助terminal receipt仍待完成。required action：主继续安全回收设计及其他计划实施，末尾按新固定源逐项复验；准入后依既有push/selfupdate授权运行完整验收。38partial-local/11todo保持，active，不宣称全部黄闪电或不卡。
