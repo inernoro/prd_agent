@@ -9,7 +9,8 @@
  *
  *   - save() 只记 dirty 引用；setImmediate 在本 tick 末把一连串 save
  *     合并成一次序列化（序列化即快照，之后 live state 被 mutate 也不影响
- *     写盘内容），异步串行落盘。
+ *     写盘内容），异步串行落盘；慢IO期间普通save只合并脏引用。
+ *   - 至多一个在途快照和一个显式flush待写快照，不累积全量字符串队列。
  *   - 写路径仍保持原子语义：state.json.tmp.<pid>.<ts> → fsync → rename。
  *   - .bak 轮转从「每次 save 写一份」改为 ≥60s 节流（每次 save 双倍磁盘
  *     写是旧实现的第二个放大器）。
@@ -58,9 +59,16 @@ export class JsonStateBackingStore implements StateBackingStore {
   /** 本 tick 内最新的 live state 引用；setImmediate 末合并写。 */
   private dirtyState: CdsState | null = null;
   private flushScheduled = false;
-  /** 串行写链：一次只有一个磁盘写在飞，后来的快照排队。 */
-  private writeChain: Promise<Error | null> = Promise.resolve(null);
-  /** 最近一次写盘失败的错误；flush() 时抛出，避免静默吞错。 */
+  private writeGeneration = 0;
+  private dirtyGeneration = 0;
+  private persistedGeneration = 0;
+  private failedGeneration = 0;
+  private lastWriteError: unknown;
+  private writeInFlight = false;
+  private inFlightGeneration = 0;
+  private pendingSnapshot: { generation: number; serialized: string } | null = null;
+  private flushWaiters: Array<{ generation: number; resolve: () => void; reject: (error: unknown) => void }> = [];
+  /** 最近一次备份时间；备份失败不影响主文件边界。 */
   private lastBackupAtMs = 0;
 
   constructor(private readonly filePath: string) {
@@ -110,48 +118,94 @@ export class JsonStateBackingStore implements StateBackingStore {
 
   save(state: CdsState): void {
     this.dirtyState = state;
-    if (!this.flushScheduled) {
-      this.flushScheduled = true;
-      // setImmediate：把一连串同步 save 合并成本 tick 末的一次序列化 + 异步落盘，
-      // 事件循环不再被反复同步阻塞（模式同 mongo-split-store.save）。
-      setImmediate(() => this.snapshotAndEnqueue());
-    }
+    this.dirtyGeneration = ++this.writeGeneration;
+    this.scheduleSnapshot();
   }
 
-  /**
-   * 把 pending 写强制落盘并等待写链清空。进程退出前必须调用，
-   * 否则最后一个 tick 的改动会丢。写盘曾失败时在这里抛出。
-   */
+  private scheduleSnapshot(): void {
+    if (this.flushScheduled || this.writeInFlight || !this.dirtyState) return;
+    this.flushScheduled = true;
+    setImmediate(() => {
+      this.flushScheduled = false;
+      // A preceding critical flush may have started disk IO already.
+      if (!this.writeInFlight) this.snapshotAndEnqueue();
+    });
+  }
+
+  /** Freeze this barrier's state; never let another observer consume its error. */
   async flush(): Promise<void> {
-    if (this.dirtyState) {
-      this.snapshotAndEnqueue();
-    }
-    this.flushScheduled = false;
-    // Capture this barrier's result. One observer must not consume the failure of
-    // another waiter, nor may a later successful write rewrite an older result.
-    const error = await this.writeChain;
-    if (error) throw error;
+    const target = this.writeGeneration;
+    if (this.dirtyState) this.snapshotAndEnqueue();
+    if (target <= this.persistedGeneration) return;
+    if (target <= this.failedGeneration && this.lastWriteError) throw this.lastWriteError;
+    await new Promise<void>((resolve, reject) => {
+      this.flushWaiters.push({ generation: target, resolve, reject });
+    });
   }
 
-  /** 序列化当前 dirty state（序列化即不可变快照）并入串行写队列。 */
   private snapshotAndEnqueue(): void {
-    this.flushScheduled = false;
     const live = this.dirtyState;
     if (!live) return;
+    const generation = this.dirtyGeneration;
     this.dirtyState = null;
     let serialized: string;
     try {
       serialized = timeMainThreadSection('state.persist.serialize.json-file', () => JSON.stringify(live, null, 2), (out) => out.length);
     } catch (error) {
-      this.writeChain = this.writeChain.then(() => error as Error);
+      // Older valid frozen snapshots still own their independent barriers.
+      const protectedThrough = Math.max(this.persistedGeneration, this.inFlightGeneration,
+        this.pendingSnapshot?.generation || 0);
+      this.failBarrier(generation, error, protectedThrough);
       return;
     }
-    this.writeChain = this.writeChain
-      .then(async () => { await this.writeToDisk(serialized); return null; })
-      .catch((err) => {
-        console.error(`[state] async state.json write failed: ${(err as Error).message}`);
-        return err as Error;
-      });
+    // One latest full snapshot covers all earlier unsaved generations.
+    this.pendingSnapshot = { generation, serialized };
+    this.drainWrites();
+  }
+
+  private failBarrier(generation: number, error: unknown, protectedThrough = 0): void {
+    if (generation >= this.failedGeneration) {
+      this.failedGeneration = generation;
+      this.lastWriteError = error;
+    }
+    const waiting: typeof this.flushWaiters = [];
+    for (const waiter of this.flushWaiters) {
+      if (waiter.generation > protectedThrough && waiter.generation <= generation) waiter.reject(error);
+      else waiting.push(waiter);
+    }
+    this.flushWaiters = waiting;
+  }
+
+  private drainWrites(): void {
+    if (this.writeInFlight || !this.pendingSnapshot) return;
+    this.writeInFlight = true;
+    void (async () => {
+      try {
+        while (this.pendingSnapshot) {
+          const snapshot = this.pendingSnapshot;
+          this.pendingSnapshot = null;
+          this.inFlightGeneration = snapshot.generation;
+          try {
+            await this.writeToDisk(snapshot.serialized);
+            this.persistedGeneration = snapshot.generation;
+            if (snapshot.generation >= this.failedGeneration) this.lastWriteError = undefined;
+            const waiting: typeof this.flushWaiters = [];
+            for (const waiter of this.flushWaiters) {
+              if (waiter.generation <= snapshot.generation) waiter.resolve();
+              else waiting.push(waiter);
+            }
+            this.flushWaiters = waiting;
+          } catch (error) {
+            console.error(`[state] async state.json write failed: ${(error as Error).message}`);
+            this.failBarrier(snapshot.generation, error);
+          }
+        }
+      } finally {
+        this.inFlightGeneration = 0;
+        this.writeInFlight = false;
+        this.scheduleSnapshot();
+      }
+    })();
   }
 
   private async writeToDisk(serialized: string): Promise<void> {

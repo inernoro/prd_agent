@@ -36,14 +36,15 @@ export class BoundedSseWriter {
 
   send(frame: () => string, heartbeat = false): boolean {
     if (this.closed) return false;
+    if ((this.peer.writableLength || 0) > 512 * 1024) { this.close(true); return false; }
     if (this.blocked) {
       if (!heartbeat) this.needsSnapshot = true;
       return true;
     }
     try {
-      if ((this.peer.writableLength || 0) > 512 * 1024) { this.close(true); return false; }
       const serialized = frame();
-      if (Buffer.byteLength(serialized) > 256 * 1024) { this.close(true); return false; }
+      const frameBytes = Buffer.byteLength(serialized);
+      if (frameBytes > 256 * 1024 || (this.peer.writableLength || 0) + frameBytes > 512 * 1024) { this.close(true); return false; }
       if (!this.peer.write(serialized)) {
         this.blocked = true;
         this.deadline = setTimeout(() => this.close(true), 5000);

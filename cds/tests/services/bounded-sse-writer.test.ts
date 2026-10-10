@@ -73,6 +73,23 @@ describe('bounded branch state stream writer', () => {
     expect(factory).not.toHaveBeenCalled();
     expect(peer.write).not.toHaveBeenCalled();
   });
+  it('counts the next frame against existing socket bytes before admitting the write', () => {
+    const peer = new Peer(); peer.writableLength = 512 * 1024;
+    const writer = new BoundedSseWriter(peer, () => '', () => {});
+    expect(writer.send(() => 'x'.repeat(256 * 1024))).toBe(false);
+    expect(peer.write).not.toHaveBeenCalled();
+    expect(peer.destroy).toHaveBeenCalledTimes(1);
+  });
+  it('detects external socket growth even when this writer is already blocked', () => {
+    const peer = new Peer(); peer.write.mockReturnValueOnce(false);
+    const writer = new BoundedSseWriter(peer, () => '', () => {});
+    writer.send(() => 'first');
+    peer.writableLength = 512 * 1024 + 1;
+    const factory = vi.fn(() => 'later');
+    expect(writer.send(factory)).toBe(false);
+    expect(factory).not.toHaveBeenCalled();
+    expect(peer.destroy).toHaveBeenCalledTimes(1);
+  });
   it('handles failed serialization/write or recovery without throwing into the publisher', () => {
     const peer = new Peer();
     const writer = new BoundedSseWriter(peer, () => '', () => { throw new Error('cleanup'); });

@@ -4893,33 +4893,40 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // scoped clients must only receive events with explicit projectId or
     // branch.projectId. Legacy/global events without project identity are
     // ignored so a malformed event cannot blank or mutate another project.
-    const eventMatchesFilter = (type: string, payload: any): boolean => {
+    const eventMatchesFilter = (_type: string, payload: any): boolean => {
+      const branchId = payload?.branch?.id || payload?.branchId;
+      if (payload?.branch?.id && payload?.branchId && payload.branch.id !== payload.branchId) return false;
+      const known = branchId && stateService.getBranch(branchId);
+      const claims = [payload?.branch?.projectId, payload?.projectId].filter(value => value !== undefined);
+      const projectId = known ? (known.projectId || 'default') : claims[0];
+      // Current state owns a known branch's identity. Contradictory envelopes
+      // must not be enriched with another project's complete branch state.
+      if (claims.some(claim => typeof claim !== 'string' || claim !== projectId)) return false;
       if (isScopedHuman(req) || keyProject || (req as any).cdsAccess) {
-        const projectId = payload?.branch?.projectId || payload?.projectId
-          || (payload?.branchId && stateService.getBranch(payload.branchId)?.projectId);
         if (!projectId || !projectAllowed(projectId)) return false;
       }
-      if (!projectFilter) return true;
-      const branchId = payload?.branch?.id || payload?.branchId;
       if (branchFilter && branchId !== branchFilter) return false;
-      const projectId = payload?.branch?.projectId || payload?.projectId
-        || (branchId && stateService.getBranch(branchId)?.projectId);
-      return projectId === projectFilter;
+      return !projectFilter || projectId === projectFilter;
     };
 
     // Initial snapshot — retained for stream liveness and reconnect
     // hints. Dashboard list authority is GET /api/branches?project=...
     // so clients must not treat this event as permission to replace the
     // full branch list.
-    const branchForStream = (branch: BranchEntry): BranchEntry => branchForHumanView(req, {
-      ...branch,
-      // Build output has its own run/log channel. Repeating it in state events
-      // multiplies diagnostic payloads by every dashboard connection.
-      services: Object.fromEntries(Object.entries(branch.services || {}).map(([id, service]) => {
+    const servicesForStream = (services: Record<string, any>): Record<string, any> =>
+      Object.fromEntries(Object.entries(services).map(([id, service]) => {
+        if (!service || typeof service !== 'object') return [id, service];
         const { buildLog: _buildLog, ...summary } = service;
         return [id, summary];
-      })),
+      }));
+    const branchForStream = (branch: BranchEntry): BranchEntry => branchForHumanView(req, {
+      ...branch,
+      // Build output belongs to run/log channels, including incremental patches.
+      services: servicesForStream(branch.services || {}),
     });
+    const payloadForStream = (payload: any) => payload?.patch?.services ? {
+      ...payload, patch: { ...payload.patch, services: servicesForStream(payload.patch.services) },
+    } : payload;
     const currentSnapshot = (resyncRequired = false) => {
       const snapshot = stateService.getAllBranches().filter(b =>
         projectAllowed(b.projectId || 'default') &&
@@ -4954,22 +4961,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
       if (envelope.payload?.branch) {
         safeSend(envelope.type, () => ({
-          ...envelope.payload,
+          ...payloadForStream(envelope.payload),
           branch: exposeBranchForStream(envelope.payload.branch),
         }));
         return;
       }
       if (envelope.type === 'branch.updated' && envelope.payload?.branchId) {
         const branch = stateService.getBranch(envelope.payload.branchId);
-        safeSend(envelope.type, () => branch ? { ...envelope.payload, branch: exposeBranchForStream(branch) } : envelope.payload);
+        safeSend(envelope.type, () => branch ? { ...payloadForStream(envelope.payload), branch: exposeBranchForStream(branch) } : payloadForStream(envelope.payload));
         return;
       }
       if (envelope.type === 'branch.status' && envelope.payload?.branchId) {
         const branch = stateService.getBranch(envelope.payload.branchId);
-        safeSend(envelope.type, () => branch ? { ...envelope.payload, branch: exposeBranchForStream(branch) } : envelope.payload);
+        safeSend(envelope.type, () => branch ? { ...payloadForStream(envelope.payload), branch: exposeBranchForStream(branch) } : payloadForStream(envelope.payload));
         return;
       }
-      safeSend(envelope.type, () => envelope.payload);
+      safeSend(envelope.type, () => payloadForStream(envelope.payload));
     };
     branchEvents.on('any', anyHandler);
 

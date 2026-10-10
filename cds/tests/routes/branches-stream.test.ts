@@ -255,6 +255,39 @@ describe('GET /api/branches/stream', () => {
     expect(seen).toEqual(['existing']);
   });
 
+  it('rejects a conflicting event project instead of enriching it with a foreign branch', async () => {
+    stateService.addBranch({ ...stateService.getBranch('existing')!, id: 'foreign', projectId: 'alt', notes: 'foreign-note' });
+    const seen: string[] = [];
+    await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
+      if (ev.event === 'snapshot') {
+        branchEvents.emitEvent({ type: 'branch.updated', payload: {
+          branchId: 'foreign', projectId: 'default', patch: { notes: 'forged' }, ts: nowIso(),
+        } });
+        branchEvents.emitEvent({ type: 'branch.updated', payload: {
+          branchId: 'existing', projectId: 'default', patch: { notes: 'owned' }, ts: nowIso(),
+        } });
+        return;
+      }
+      seen.push(ev.data.branchId);
+      expect(JSON.stringify(ev.data)).not.toContain('foreign-note');
+      return true;
+    }, { 'x-test-project-key': 'default' });
+    expect(seen).toEqual(['existing']);
+  });
+
+  it('does not send build output through a service patch in a branch state event', async () => {
+    await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
+      if (ev.event === 'snapshot') {
+        branchEvents.emitEvent({ type: 'branch.updated', payload: { branchId: 'existing', projectId: 'default',
+          patch: { services: { api: { status: 'error', buildLog: 'private-build-output' } } } as any, ts: nowIso() } });
+        return;
+      }
+      expect(JSON.stringify(ev.data)).not.toContain('private-build-output');
+      expect(ev.data.patch.services.api.status).toBe('error');
+      return true;
+    });
+  });
+
   it('invalidates list cache on a saved mutation before a recovery GET', async () => {
     const getBranches = () => new Promise<any>((resolve, reject) => {
       http.get({ hostname: '127.0.0.1', port: (server.address() as any).port,
