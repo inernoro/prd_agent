@@ -278,20 +278,22 @@ function ModelPickerButton(props: {
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<AnchoredPanelPlacement | null>(null);
 
-  // 落点交给 lib/anchoredPanel 算：上方装不下就翻到下方，宽高一律夹回视口。
-  // 上一版是恒定 `top: rect.top - 8` + CSS translateY(-100%)——页面往下滚、
-  // 工具行接近视口顶部时，面板整个跑到屏幕上方，一个选项都点不到；
-  // 而且只在打开那一刻算一次，滚动/改窗口都不重算，浮层会和按钮脱开
-  //（Codex PR #1476 P1）。scroll 用捕获阶段：真正在滚的往往是某个内层容器，
-  // 冒泡阶段收不到它的 scroll 事件。
+  // 按实际内容高度定位；320px 只是滚动上限，不能拿来抵掉短菜单的高度。
+  // 捕获内层滚动，观察内容变化与手机视觉视口，菜单始终跟随触发器。
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!open) { setPos(null); return; }
     const place = () => {
       const r = btnRef.current?.getBoundingClientRect();
       if (!r) return;
+      const visualViewport = window.visualViewport;
       setPos(placeAnchoredPanel({
         anchor: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
+        viewport: {
+          width: visualViewport?.width ?? window.innerWidth,
+          height: visualViewport?.height ?? window.innerHeight,
+          top: visualViewport?.offsetTop, left: visualViewport?.offsetLeft,
+        },
+        height: panelRef.current?.getBoundingClientRect().height,
         prefer: 'above',
         width: 260,
         maxHeight: 320,
@@ -300,11 +302,18 @@ function ModelPickerButton(props: {
     place();
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
+    const observer = new ResizeObserver(place);
+    if (panelRef.current) observer.observe(panelRef.current);
+    window.visualViewport?.addEventListener('resize', place);
+    window.visualViewport?.addEventListener('scroll', place);
     return () => {
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
+      observer.disconnect();
+      window.visualViewport?.removeEventListener('resize', place);
+      window.visualViewport?.removeEventListener('scroll', place);
     };
-  }, [open]);
+  }, [open, pos?.width]);
 
   useEffect(() => {
     if (!open) return;
@@ -315,7 +324,12 @@ function ModelPickerButton(props: {
       setOpen(false);
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', onEsc);
+    };
   }, [open]);
 
   const current = options.find((o) => o.id === modelId) ?? null;
@@ -337,6 +351,8 @@ function ModelPickerButton(props: {
           cursor: 'pointer',
         }}
         title="选择绘图模型"
+        aria-expanded={open}
+        aria-controls="visual-home-model-menu"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
       >
         <Sparkles size={13} className="shrink-0" />
@@ -348,6 +364,9 @@ function ModelPickerButton(props: {
       {open && pos && createPortal(
         <div
           ref={panelRef}
+          id="visual-home-model-menu"
+          role="group"
+          aria-label="绘图模型选项"
           style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999 }}
         >
           <div
