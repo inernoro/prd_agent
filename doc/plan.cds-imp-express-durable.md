@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.14；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.16；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -161,3 +161,21 @@ CDS:733731065fcb2499781c112d9540571de76be0b8; IMP:d3465cb58（IMP产品a35b16006
 八分支最近一周源基线及每支13个标准角色已只读枚举并镜像存档于doc/cds-imp-express-eight-baselines.json（104应用实例）。cl08另有生命周期待核实的bootstrap；活跃app01属于其他任务已排除。新验收分支未创建/未推送、目标SHA未冻结，源基线不是正式完整运行图；隔离宿主和副作用前提仍未通过。
 
 最新733全量：640文件通过、1文件失败、6文件跳过；9346通过、1失败、19跳过，81.59s。projects.test.ts非法aliasSlug预期400实际404；聚焦90/90绿，只说明未稳定重现，根因未闭合。此前e169全量9339绿作为历史保留，不能抹掉本次红或此前OAuth/超时/ECONNRESET。49正式、视觉、真实八分支均not-executed。
+
+## v1.15 实施检查点（2026-10-11）
+
+CDS:628e7ce140115cf2df832722c7c1f5cc59e890b5; IMP:bfc94e1da（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地检查点，后续文档提交另计，未部署）。
+
+733固定独立恢复24/24、实际Container→Engine→真实JSON12/12、直接Journal并行与不可覆盖16/16；旧e169恢复22/24及创建6边界0/6红保留，外部删除不可覆盖护栏14/16仅判敏感性。新628网络创建intent及实际ID/完整配置摘要在应用create前保存，禁止覆写；有端点/配置漂移/Daemon查询失败不删除网络、不恢复单消费者，空私有网络按已确认ID删除并复查消失。缺网络核验绑定的受控入口拒绝，不回落旧流程。主7文件366与显式tsc通过；Container3红、Journal2红、网络回收护栏2红、入口缺绑定1红已复绿。真实Daemon/Master、网络晚创建/重启自主reconciler尚未完成，628独立待执行。
+
+733带安全HTTP诊断全量新增2失败9345通过：项目自动repoPath clone pending测试5s超时，下一already-ready测试socket hang up；alias400/404本轮未重现，不能宣称根因解决。保留733首轮1红9346绿与e169历史9339绿。628新产品全量当前进行中，不宣称全绿；49正式/视觉/八分支均not-executed。
+
+## v1.16 实施检查点（2026-10-11）
+
+CDS:c329d9a1ec1e316677b6dcc2678feab834672594; IMP:bfc94e1dae6a7006640b9fc2302463c4fdf7d3cf（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地检查点，后续文档提交另计，未部署）。
+
+独立628：Owned实际假CLI24/24、Journal真实JSON12/12、HTTP缺network绑定1/1、实际Container→Engine→JSON14/15；API回滚released但empty private network仍在/rm0是真红，旧733边界0/3与入口0/1保留。bb30已补本地红并修复：networkCreation.intent的回滚即使stopBeforeStart为空也延后released，Engine实际网络回收后释放。主相关367/tsc绿，独立修订复验待执行。
+
+c329新增整分支内部恢复租约，唯一终态run/项目/精确目标/config/proof/阶段匹配后才准入；取消或取代后active为空仍登记旧执行未结束，原lease完成前拒绝恢复。复制完成及同operationId旧generation重复完成不动当前写入者或pending。旧bb合法scope7红及额外完成所有权2红复绿，直接JSON准入15含合法正例，主7文件372/显式tsc绿。初始JSON fixture缺branch13错与dr-old命名2错仅测试夹具失败保留，不算产品红。租约仅证明本进程执行结束，不证明重启或Daemon闭合；自主reconciler尚未实现。
+
+bb30固定源码带测试HTTP诊断全量642文件9367通过、6文件19条跳过、1obsolete snapshot，81.39s。3901脱敏trace事件/669响应/349复用连接，本轮无identity mismatch或transport error。628全量2红9364绿（compose-drift ECONNRESET、detect socket hang up）及733两次红保留，根因未闭；自有子进程复现stale pooled socket+停顿→ECONNRESET且reused:true，而one-off200，仅风险复现非原失败闭因。c329新代码只372相关及tsc，不继承bb全量。49正式/视觉/实际八分支均not-executed。
