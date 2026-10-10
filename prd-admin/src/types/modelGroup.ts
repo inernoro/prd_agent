@@ -15,6 +15,8 @@ export interface ModelGroupItem {
   platformId: string;
   priority: number;
   healthStatus: ModelHealthStatus;
+  /** 只读恢复资格；实际请求仍由网关认领试探租约。 */
+  isRecoveryProbeAvailable?: boolean;
   lastFailedAt?: string;
   lastSuccessAt?: string;
   consecutiveFailures: number;

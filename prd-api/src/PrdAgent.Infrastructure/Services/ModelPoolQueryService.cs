@@ -84,6 +84,7 @@ public class ModelPoolQueryService : IModelPoolQueryService
                 ActualPlatformId = model.ActualPlatformId,
                 Priority = model.Priority,
                 HealthStatus = model.HealthStatus,
+                IsRecoveryProbeAvailable = model.IsRecoveryProbeAvailable,
             }).ToList(),
             ResolutionType = pool.ResolutionType,
             IsDedicated = pool.IsDedicated,

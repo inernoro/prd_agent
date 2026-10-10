@@ -177,23 +177,37 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
             Assert.Equal("Unavailable", halfOpenMember.HealthStatus);
             Assert.Equal(0, halfOpenMember.HealthScore);
+            Assert.True(halfOpenMember.IsRecoveryProbeAvailable);
             var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
             Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+            // 人工恢复即使尚在冷却期，也应开放入口；只读目录仍不认领租约。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                    .Set(x => x.ManualRecoveryAt, DateTime.UtcNow));
+            var manualCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.True(Assert.Single(manualCatalog[0].Models).IsRecoveryProbeAvailable);
+            Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
             var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
             Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
             var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
             Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
+            var leasedCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.False(Assert.Single(leasedCatalog[0].Models).IsRecoveryProbeAvailable);
 
             await offerings
                 .UpdateManyAsync(
                     FilterDefinition<GatewayModelOffering>.Empty,
                     Builders<GatewayModelOffering>.Update
                         .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
-                        .Set(x => x.LastFailedAt, DateTime.UtcNow));
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                        .Unset(x => x.ManualRecoveryAt));
             var unavailableCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             Assert.Equal(new[] { "image2", "image1" }, unavailableCatalog.Select(x => x.Code));
             Assert.All(unavailableCatalog, item =>
                 Assert.Equal("Unavailable", Assert.Single(item.Models).HealthStatus));
+            Assert.All(unavailableCatalog, item =>
+                Assert.False(Assert.Single(item.Models).IsRecoveryProbeAvailable));
             Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
 
             await gateway.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models")

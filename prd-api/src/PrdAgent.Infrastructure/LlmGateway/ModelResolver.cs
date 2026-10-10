@@ -1124,6 +1124,11 @@ public class ModelResolver : IModelResolver
                         PlatformName = "LLM Gateway",
                         Priority = 1,
                         HealthStatus = catalogOffering?.HealthStatus.ToString() ?? "Unavailable",
+                        IsRecoveryProbeAvailable = catalogOffering is not null
+                            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                                catalogOffering.HealthStatus, catalogOffering.HalfOpenLeaseUntil,
+                                catalogOffering.ManualRecoveryAt, catalogOffering.LastFailedAt,
+                                nowUtc, halfOpenCutoff),
                         HealthScore = catalogOffering?.HealthStatus switch
                         {
                             ModelHealthStatus.Healthy => 100,

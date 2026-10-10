@@ -61,4 +61,6 @@ public class ModelPoolModelItem
     public string? ActualPlatformId { get; set; }
     public int Priority { get; set; }
     public string HealthStatus { get; set; } = "Healthy";
+    /// <summary>允许用户发起恢复试探；不代表线路已经恢复健康。</summary>
+    public bool IsRecoveryProbeAvailable { get; set; }
 }

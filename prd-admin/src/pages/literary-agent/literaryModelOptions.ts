@@ -1,3 +1,4 @@
+import { isModelAvailableForRequest } from '@/lib/modelAvailability';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
 
 export type LiteraryModelOption = {
@@ -50,7 +51,7 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
         actualModelId: displayModelId,
         platformId: first.platformId,
         actualPlatformId: first.actualPlatformId || first.platformId,
-        enabled: pool.models.some((model) => model.healthStatus === 'Healthy' || model.healthStatus === 'Degraded'),
+        enabled: pool.models.some(isModelAvailableForRequest),
         isDedicated: pool.isDedicated,
         isDefault: pool.isDefault,
       };
