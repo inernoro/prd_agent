@@ -206,6 +206,19 @@ describe('container lifecycle intent correlation', () => {
 });
 
 describe('failure diagnostic IO budget', () => {
+  it('does not let a historical event arriving after start reset state, including nanoseconds beyond JS integer precision', async () => {
+    const id = 'e'.repeat(64);
+    const callback = vi.fn();
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    const monitor = new DockerEventMonitor({ exec }, { record: () => {} }, callback);
+    const line = (Action: string, nanos: string) => JSON.stringify({ Action, timeNano: 'STAMP',
+      Actor: { ID: id, Attributes: { name: 'timed-name' } } }).replace('"STAMP"', nanos);
+    await (monitor as any).handleLine(line('start', '1770000000000000001'));
+    await (monitor as any).handleLine(line('die', '1770000000000000000'));
+    expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'die', stateSyncEligible: false }));
+    await (monitor as any).handleLine(line('die', '1770000000000000002'));
+    expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'die', stateSyncEligible: true }));
+  });
   it('archives delayed old events but fences their state callbacks after same-ID restart or name recreation', async () => {
     for (const nextId of ['c'.repeat(64), 'd'.repeat(64)]) {
       const id = 'c'.repeat(64);

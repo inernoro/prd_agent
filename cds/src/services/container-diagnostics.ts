@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { IShellExecutor } from '../types.js';
 import { ContainerDiagnosticBudget, type DiagnosticResult } from './container-diagnostic-budget.js';
+import { parseDockerEvent } from './docker-event-state-guard.js';
 import {
   normalizeLogText,
   type ServerEventLogSink,
@@ -258,7 +259,7 @@ export class DockerEventMonitor {
   private stopping = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly diagnosticBudget: ContainerDiagnosticBudget;
-  private readonly eventGenerations = new Map<string, { id: string }>();
+  private readonly eventGenerations = new Map<string, { id: string; startedAtNs?: bigint }>();
 
   constructor(
     private readonly shell: IShellExecutor,
@@ -352,8 +353,11 @@ export class DockerEventMonitor {
   private async handleLine(line: string): Promise<void> {
     if (!this.store) return;
     let evt: any;
+    let eventTimeNs: bigint | undefined;
     try {
-      evt = JSON.parse(line);
+      const parsed = parseDockerEvent(line);
+      evt = parsed.event;
+      eventTimeNs = parsed.timeNs;
     } catch {
       this.store.record({
         category: 'docker',
@@ -364,6 +368,7 @@ export class DockerEventMonitor {
       });
       return;
     }
+    if (!evt || typeof evt !== 'object') return;
 
     const action = String(evt.Action || evt.status || 'unknown');
     if (!shouldRecordDockerEvent(action)) return;
@@ -381,13 +386,16 @@ export class DockerEventMonitor {
     const normalizedAction = action.toLowerCase();
     const generationKey = immutableId && (containerName || immutableId);
     const advancesGeneration = ['create', 'start', 'restart', 'unpause'].includes(normalizedAction) || normalizedAction === 'health_status: healthy';
-    if (immutableId && advancesGeneration) {
+    const previousGeneration = generationKey ? this.eventGenerations.get(generationKey) : undefined;
+    const timeEligible = previousGeneration?.startedAtNs === undefined ||
+      (eventTimeNs !== undefined && eventTimeNs > previousGeneration.startedAtNs);
+    if (immutableId && advancesGeneration && timeEligible) {
       this.diagnosticBudget.invalidate(immutableId);
     }
-    if (generationKey && (!this.eventGenerations.has(generationKey) || advancesGeneration)) {
+    if (generationKey && (!previousGeneration || (advancesGeneration && timeEligible))) {
       this.eventGenerations.delete(generationKey);
       if (this.eventGenerations.size >= 1024) this.eventGenerations.delete(this.eventGenerations.keys().next().value!);
-      this.eventGenerations.set(generationKey, { id: immutableId });
+      this.eventGenerations.set(generationKey, { id: immutableId, startedAtNs: advancesGeneration ? eventTimeNs : undefined });
     }
     const observedGeneration = generationKey ? this.eventGenerations.get(generationKey) : undefined;
     const scope = JSON.stringify([attrs['cds.project.id'] || lifecycleIntent?.projectId || '', branchId || '', profileId || '',
@@ -460,7 +468,7 @@ export class DockerEventMonitor {
       logs: diagnostics.logs,
       error: diagnostics.error,
       details: {
-        stateSyncEligible: !generationKey || (observedGeneration?.id === immutableId && this.eventGenerations.get(generationKey) === observedGeneration),
+        stateSyncEligible: timeEligible && (!generationKey || (observedGeneration?.id === immutableId && this.eventGenerations.get(generationKey) === observedGeneration)),
         ...(lifecycleIntent ? { lifecycleIntent } : {}),
         ...(classification ? {
           classification: {
@@ -480,7 +488,7 @@ export class DockerEventMonitor {
         action,
         containerName,
         containerId: immutableId,
-        stateSyncEligible: !generationKey || (observedGeneration?.id === immutableId && this.eventGenerations.get(generationKey) === observedGeneration),
+        stateSyncEligible: timeEligible && (!generationKey || (observedGeneration?.id === immutableId && this.eventGenerations.get(generationKey) === observedGeneration)),
         branchId,
         profileId,
         serviceId,
