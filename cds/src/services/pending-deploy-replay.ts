@@ -17,13 +17,23 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
   const serverEventLogStore = deps.activeServerEventLogStore;
   if (!pending) return;
   const branch = stateService.getBranch(pending.branchId);
-  if (!branch) {
+  // Never derive original ownership or widen a malformed service scope from current state.
+  const validScope = pending.request.branchId === pending.branchId && (
+    (pending.request.kind === 'deploy-profile' && typeof pending.request.profileId === 'string'
+      && pending.request.profileId.trim().length > 0) ||
+    (pending.request.kind === 'deploy' && !pending.request.profileId)
+  );
+  const dropReason = !branch ? 'branch_gone'
+    : (pending.request.projectId || null) !== (branch.projectId || null) ? 'project_mismatch'
+    : !validScope ? 'invalid_scope' : undefined;
+  if (dropReason) {
     serverEventLogStore?.record({
       category: 'system',
       severity: 'warn',
       source: 'branch-operation-coordinator',
       action: 'branch.operation.pending-drop',
-      message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
+      message: `pending deploy dropped: ${dropReason}`,
+      projectId: pending.request.projectId || undefined,
       branchId: pending.branchId,
       requestId: pending.request.requestId || null,
       operationId: pending.operationId,
@@ -33,6 +43,7 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
       operationSource: pending.request.source || null,
       commitSha: pending.request.commitSha || null,
       details: {
+        reason: dropReason,
         operationId: pending.operationId,
         commitSha: pending.request.commitSha || null,
         trigger: pending.request.trigger,
@@ -44,6 +55,7 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
     });
     return;
   }
+  if (!branch) return;
   const profilePath = pending.request.kind === 'deploy-profile' && pending.request.profileId
     ? `/${encodeURIComponent(pending.request.profileId)}` : '';
   const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy${profilePath}`;

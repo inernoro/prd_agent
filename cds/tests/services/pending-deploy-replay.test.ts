@@ -73,4 +73,36 @@ describe('shared pending replay from background and route completions', () => {
     expect(events.map(e => e.action)).toEqual(['branch.operation.pending-drop']);
   });
 
+
+  it('does not reattribute an old request to a replacement branch owned by another project', async () => {
+    const fetcher = vi.fn(); const { deps, events } = fixture(fetcher as typeof fetch);
+    deps.stateService.getBranch = () => ({ id: 'owned', projectId: 'new-project' });
+    replayPendingDeploy(pending, deps); await settle();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(events[0]).toMatchObject({ action: 'branch.operation.pending-drop', projectId: 'p',
+      details: { reason: 'project_mismatch' } });
+    expect(JSON.stringify(events)).not.toContain('new-project');
+  });
+
+  it('fails closed if a single-service target is missing instead of expanding it to whole branch', async () => {
+    const fetcher = vi.fn(); const { deps, events } = fixture(fetcher as typeof fetch);
+    replayPendingDeploy({ ...pending, request: { ...pending.request, profileId: undefined } }, deps); await settle();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(events[0]).toMatchObject({ action: 'branch.operation.pending-drop', details: { reason: 'invalid_scope' } });
+  });
+
+  it('rejects an unknown original project and contradictory branch or service scopes', async () => {
+    for (const request of [
+      { ...pending.request, projectId: undefined },
+      { ...pending.request, branchId: 'different' },
+      { ...pending.request, kind: 'deploy' },
+      { ...pending.request, kind: 'stop' },
+    ]) {
+      const fetcher = vi.fn(); const { deps, events } = fixture(fetcher as typeof fetch);
+      replayPendingDeploy({ ...pending, request }, deps); await settle();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(events[0].action).toBe('branch.operation.pending-drop');
+    }
+  });
+
 });
