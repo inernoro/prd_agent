@@ -216,6 +216,22 @@ describe('脱敏（不带凭据）', () => {
 });
 
 describe('只读 + 幂等（子实例播种）', () => {
+  it('镜像项目避开本地历史 slug 及已占用的后缀，构建配置和分支完整播种', () => {
+    const mirror = buildPreviewMirror(parentState(), { nowMs: Date.now() });
+    const child = freshState('child-history-collision');
+    const now = new Date().toISOString();
+    child.addProject({ id: PREVIEW_DEMO_PROJECT_ID, slug: 'map', name: '本地演示项目', kind: 'git', createdAt: now, updatedAt: now } as Project);
+    child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'map-mirror' });
+    child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'renamed-demo' });
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(true);
+    expect(child.getProject('map')?.slug).toBe('map-mirror-2');
+    expect(child.getBuildProfiles().some(p => p.id === 'api' && p.projectId === 'map')).toBe(true);
+    expect(child.getBranch('map-main')?.projectId).toBe('map');
+    expect(child.getLogs('map-main')).toHaveLength(1);
+    expect(mirror.projects.find(p => p.id === 'map')?.slug).toBe('map');
+    expect(child.getProject(PREVIEW_DEMO_PROJECT_ID)?.slug).toBe('renamed-demo');
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(false);
+  });
   it('首播：项目 / 构建配置 / 分支 / 日志带 mirror 标记落库，静态快照不再播', () => {
     const parent = parentState();
     const m = buildPreviewMirror(parent, { nowMs: Date.now() });

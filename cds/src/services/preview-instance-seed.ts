@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../types.js';
 import type { PreviewMirrorFile } from './preview-mirror.js';
+import { projectReservedIdentifiers } from './preview-slug.js';
 
 export const PREVIEW_DEMO_PROJECT_ID = 'preview-demo';
 
@@ -96,12 +97,17 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
 
   // 4. 按新镜像加。单条失败只记日志不中断：一条怪配置不该让整份镜像消失
   const warn = (what: string, err: unknown): void => console.warn(`  [preview-mirror] ${what}: ${(err as Error).message}`);
-  const existingSlugs = new Set(state.getProjects().map((p) => p.slug));
+  const reservedIdentifiers = new Set(state.getProjects().flatMap(projectReservedIdentifiers));
   for (const p of mirror.projects) {
     try {
-      const slug = existingSlugs.has(p.slug) ? `${p.slug}-mirror` : p.slug;
+      let slug = p.slug;
+      let suffix = 1;
+      while (reservedIdentifiers.has(slug)) {
+        slug = `${p.slug}-mirror${suffix === 1 ? '' : `-${suffix}`}`;
+        suffix++;
+      }
       state.addProject({ ...p, slug, legacyFlag: undefined } as Project);
-      existingSlugs.add(slug);
+      for (const identifier of projectReservedIdentifiers(state.getProject(p.id)!)) reservedIdentifiers.add(identifier);
     } catch (err) { warn(`项目 ${p.id}`, err); }
   }
   const projectIds = new Set(state.getProjects().filter((p) => p.mirror).map((p) => p.id));
