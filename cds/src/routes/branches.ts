@@ -193,7 +193,7 @@ let selfStatusContext: {
   stateService: StateService;
   gitAuthEnvProvider?: (repoRoot: string) => Promise<ExecOptions['env'] | undefined>;
 } | null = null;
-const selfStatusClients = new Set<import('express').Response>();
+const selfStatusClients = new Set<BoundedSseWriter>();
 
 // 启动时把 bus 的 self.status 事件桥接到旧 selfStatusClients 池,保证
 // 旧的 /api/self-status/stream 订阅者仍能收到 update。新的 cds-events 端点
@@ -205,13 +205,8 @@ function installLegacyStreamBridge(): void {
   cdsEventsBus.subscribe((envelope) => {
     if (envelope.type !== 'self.status') return;
     if (selfStatusClients.size === 0) return;
-    const line = `event: update\ndata: ${JSON.stringify(envelope.data)}\n\n`;
-    for (const client of Array.from(selfStatusClients)) {
-      try {
-        client.write(line);
-      } catch {
-        selfStatusClients.delete(client);
-      }
+    for (const client of selfStatusClients) {
+      client.send(() => `event: update\ndata: ${JSON.stringify(envelope.data)}\n\n`);
     }
   });
 }
@@ -227,11 +222,6 @@ function installLegacyStreamBridge(): void {
  *   - 远端不可达 → 用 fetchOk=false + cached refs 兜底,不阻塞推送
  *   - 写失败的 client 从池里清除(对端已断开)
  */
-// 2026-05-28 重构后,broadcast 的 coalesce / queue 逻辑收敛到 selfStatusCache。
-// 这里保留 broadcastInFlight = false 哨兵给 /api/self-status/stream 端点的
-// per-client first-update 检测用(它依赖这个标志判断"现在是否已经有 broadcast
-// 在跑,我不要再 fetch 一遍")。cache 同时刻只允许一个 job,行为等价。
-let broadcastInFlight = false;
 const DELETE_COMPLETION_AUDIT_TIMEOUT_MS = 500;
 const DEFAULT_DELETE_STATE_FLUSH_TIMEOUT_MS = 30_000;
 const DEFAULT_BRANCH_STATE_FLUSH_TIMEOUT_MS = 30_000;
@@ -265,17 +255,7 @@ function getBranchStateFlushTimeoutMs(): number {
  */
 export async function broadcastSelfStatus(): Promise<void> {
   if (!selfStatusContext) return;
-  // 进入 in-flight 标记,只为兼容旧 /api/self-status/stream 端点的
-  // per-client first-update 跳过逻辑(避免 snapshot → broadcast → per-client 三连闪)
-  broadcastInFlight = true;
-  try {
-    selfStatusCache.enqueueRefresh('webhook');
-  } finally {
-    // 立即放标记 — cache 是异步跑的,这里只阻止 stream handler 在同一 tick 内
-    // 启动 per-client fetch。cache 的 job 内部 publish self.status 后,
-    // bus bridge 会把 update 推给 selfStatusClients,客户端体验等价。
-    broadcastInFlight = false;
-  }
+  selfStatusCache.enqueueRefresh('webhook');
 }
 
 /**
@@ -23693,6 +23673,24 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // 避免在没人订阅时白白扫 git + 干扰 vitest 里测无关端点的 mock.commands 期望。
   }
 
+  function legacySelfStatusSnapshot(): Record<string, unknown> {
+    const snapshot = selfStatusCache.getSnapshot();
+    const lastKnownGood = selfStatusCache.getLastKnownGood();
+    // 如果当前 snapshot 是 EMPTY(cache 还没跑过任何 refresh)+ 有 lastKnownGood,
+    // 优先返 lastKnownGood;否则返当前 snapshot(可能是空的兜底)。
+    const usingLastKnownGood = !snapshot.lastRefreshAt && !!lastKnownGood;
+    const payload = usingLastKnownGood ? lastKnownGood : snapshot;
+    return {
+      ...payload,
+      // 旧 client 还依赖 `degraded: { reasons: [...] }` 形状;cache 用 `degraded: {reason}`。
+      // 这里同时给两个,保持兼容。
+      degraded: payload.degraded
+        ? { degraded: true, reason: payload.degraded.reason, message: payload.degraded.message, reasons: [payload.degraded.message] }
+        : null,
+      lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
+    };
+  }
+
   router.get('/self-status', async (req, res) => {
     // 2026-05-28 重构:本端点(挂在 /api router 内,server.ts 顶层未抢答的情况)
     // 永远从 selfStatusCache 读快照 — 不再同步触发 git fetch。
@@ -23707,21 +23705,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 触发后台 refresh,不阻塞响应。dedupe 由 cache 自己处理(同 trigger 5s 内合并)。
       selfStatusCache.enqueueRefresh('manual');
     }
-    const snapshot = selfStatusCache.getSnapshot();
-    const lastKnownGood = selfStatusCache.getLastKnownGood();
-    // 如果当前 snapshot 是 EMPTY(cache 还没跑过任何 refresh)+ 有 lastKnownGood,
-    // 优先返 lastKnownGood;否则返当前 snapshot(可能是空的兜底)。
-    const usingLastKnownGood = !snapshot.lastRefreshAt && !!lastKnownGood;
-    const payload = usingLastKnownGood ? lastKnownGood : snapshot;
-    res.json({
-      ...payload,
-      // 旧 client 还依赖 `degraded: { reasons: [...] }` 形状;cache 用 `degraded: {reason}`。
-      // 这里同时给两个,保持兼容。
-      degraded: payload.degraded
-        ? { degraded: true, reason: payload.degraded.reason, message: payload.degraded.message, reasons: [payload.degraded.message] }
-        : null,
-      lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
-    });
+    res.json(legacySelfStatusSnapshot());
   });
 
   // GET /api/self-update-history — 完整历史(含每条 record 的完整 SSE 步骤序列)
@@ -23756,7 +23740,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   3. 每 25s 一条 `event: keepalive` 防 nginx 60s 超时把连接断掉
   //
   // 鉴权沿用 router 上的 auth middleware(本路由器的所有 GET 都已过 auth)。
-  router.get('/self-status/stream', async (req, res) => {
+  router.get('/self-status/stream', (req, res) => {
     // SSE 标准头部(同 initSSE,但显式写一遍以贴近 SSE 契约)
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -23773,90 +23757,29 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       (res as { flushHeaders: () => void }).flushHeaders();
     }
 
-    // 1) 首屏 snapshot:用本地 cached refs(不触发 git fetch,首屏要快)。
-    //    只是初始数据;后续靠 webhook 触发的 update 事件保持新鲜。
-    //
-    // 警告 Bugbot Review 2026-05-06: snapshot 必须**先于** add(res) 写入,否则
-    // 在 computeSelfStatusPayload 异步期间如果发生 broadcastSelfStatus()
-    // (push webhook 触发),client 会先收到 update 再收到 snapshot,违反
-    // SSE 协议契约 (snapshot = "Initial cached state on connection")。
-    try {
-      const snapshot = await computeSelfStatusPayload(
-        {
-          repoRoot: config.repoRoot,
-          shell,
-          stateService,
-          gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
-        },
-        { skipFetch: true },
-      );
-      res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`);
-    } catch (err) {
-      // snapshot 失败也不挂断 — 客户端会等下一个 update/keepalive
-      // eslint-disable-next-line no-console
-      console.warn('[self-status/stream] snapshot 失败:', (err as Error).message);
-    }
-
-    // 2) snapshot 写完才加进客户端池,确保事件顺序 snapshot → update → keepalive
-    //
-    // 警告 Bugbot Review 2026-05-06 a105ae91: 客户端在 await 期间断开时
-    // req.on('close') 已经触发但 selfStatusClients 还没包含 res, delete
-    // 形同 no-op。await 完后再 add(res) 把死客户端加进池, 启动的
-    // setInterval 会一直 keepalive 直到第一次 res.write 失败 (~25s) 才清。
-    // 加 req.destroyed 守卫立刻 return, 避免给死客户端起 keepalive。
-    if (req.destroyed) {
-      // 警告 Bugbot 2026-05-06 a9793a4a:res.writeHead 已写头,半开响应应显式 end()
-      // 兜底,即使底层 socket 已 destroy,Express 内部状态也干净下来。
-      try { res.end(); } catch { /* ignore */ }
+    let keepalive: ReturnType<typeof setInterval> | undefined;
+    const onRequestClose = () => writer.close();
+    const writer = new BoundedSseWriter(res,
+      () => `event: update\ndata: ${JSON.stringify(legacySelfStatusSnapshot())}\n\n`,
+      () => {
+        if (keepalive) clearInterval(keepalive);
+        selfStatusClients.delete(writer);
+        req.off('close', onRequestClose);
+      });
+    req.on('close', onRequestClose);
+    // No per-client Git work. The cache's one refresh job also serves older clients.
+    if (req.destroyed || !writer.send(() => `event: snapshot\ndata: ${JSON.stringify(legacySelfStatusSnapshot())}\n\n`)) {
+      writer.close();
       return;
     }
-    selfStatusClients.add(res);
-
-    // 警告 Bugbot 2026-05-06 d7db4dba + d19e3cf1:snapshot 用 skipFetch=true 避免
-    // 连接被 git fetch 阻塞,代价是 fetchOk=false / remoteAheadCount 走 cached refs
-    // (可能 stale)。原方案 broadcastSelfStatus() 会把 update 推给**所有**客户端
-    // → 多 tab 时每开一个新 tab,旧 tab 都收到一条冗余 update + git fetch 也跑一次。
-    // 改成只给**当前新连接**真 fetch 一次推 update,不打扰别的 client。
-    void (async () => {
-      // 警告 Bugbot 2026-05-06 9514bd0b:正在 broadcast 时本 client 跳过 per-client
-      // update — broadcast 会推到整个 selfStatusClients 池(本 res 已在池里),
-      // 避免 snapshot → broadcast update → per-client update 的三连闪烁。
-      if (broadcastInFlight) return;
-      try {
-        const payload = await computeSelfStatusPayload(
-          {
-            repoRoot: config.repoRoot,
-            shell,
-            stateService,
-            gitAuthEnvProvider: async (repoRoot: string) => (await gitAuthForRepo(repoRoot)).env,
-          },
-          { skipFetch: false },
-        );
-        // 期间客户端可能断开 / 主动关 / broadcast 抢先了
-        if (req.destroyed || !selfStatusClients.has(res) || broadcastInFlight) return;
-        res.write(`event: update\ndata: ${JSON.stringify(payload)}\n\n`);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[self-status/stream] 首屏 fresh fetch 失败,下一条 webhook update 会兜底:', (err as Error).message);
-      }
-    })();
-
-    // 3) 25s keepalive,防 nginx/中间代理 60s 闲置超时 cut 连接
-    const keepalive = setInterval(() => {
-      try {
-        res.write(`event: keepalive\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`);
-      } catch {
-        clearInterval(keepalive);
-        selfStatusClients.delete(res);
-      }
-    }, 25_000);
-
-    // 4) 客户端断开时清池(server-authority.md:断开只清池,不取消任何
-    //    git/db 操作 — 本路由也没启动任何长任务,纯被动等推送)
-    req.on('close', () => {
-      clearInterval(keepalive);
-      selfStatusClients.delete(res);
-    });
+    selfStatusClients.add(writer);
+    keepalive = setInterval(() => writer.send(
+      () => `event: keepalive\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`, true), 25_000);
+    keepalive.unref?.();
+    const snapshot = selfStatusCache.getSnapshot();
+    if (!snapshot.lastRefreshAt || snapshot.lastRefreshTrigger === 'startup') {
+      selfStatusCache.enqueueRefresh('stream-subscribe', { dedupeWindowMs: 5_000 });
+    }
   });
 
   // POST /api/self-restart — restart the exact currently running revision.
