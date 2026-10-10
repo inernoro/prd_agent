@@ -9,6 +9,7 @@ import { IsolatedShellExecutor } from '../src/services/isolated-shell-executor.j
 import { ContainerService } from '../src/services/container.js';
 import { collectContainerDiagnostics } from '../src/services/container-diagnostics.js';
 import { createJanitorDockerAdapters } from '../src/services/janitor.js';
+import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import type { CdsConfig } from '../src/types.js';
 
 const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
@@ -52,6 +53,9 @@ async function main(): Promise<void> {
     assert.equal(view.HostConfig.NanoCpus, 250000000);
     assert.equal(view.HostConfig.Memory, 67108864);
     assert.equal(view.HostConfig.NetworkMode, 'none');
+    if (report.stage !== 'create-owned-container') {
+      assert.ok(view.Mounts.some((mount: any) => mount.Type === 'bind' && mount.Source === path.join(temp, 'mounted') && mount.Destination === '/owned-readonly' && mount.RW === false));
+    }
     report.containerReceipts ??= [];
     report.containerReceipts.push({ stage: report.stage, id, name, owner, image: view.Config.Image,
       nanoCpus: view.HostConfig.NanoCpus, memory: view.HostConfig.Memory, networkMode: view.HostConfig.NetworkMode });
@@ -102,12 +106,14 @@ async function main(): Promise<void> {
     // 一个ID已不存在时会输出另一容器的真实挂载并非零退出，不能视作完整结果。
     let partialReceipt: { exitCode: number; knownMountPresent: boolean } | undefined;
     const partialJanitor = janitorModule.createJanitorDockerAdapters({ exec: async (command, options) => {
-      if (command === "docker 'ps' '-aq'") return { stdout: `${id}\n${'0'.repeat(64)}`, stderr: '', exitCode: 0 };
+      if (command === ['docker', 'ps', '-aq'].map(shellQuoteArg).join(' ')) return { stdout: `${id}\n${'0'.repeat(64)}`, stderr: '', exitCode: 0 };
       const result = await shell.exec(command, options);
       partialReceipt = { exitCode: result.exitCode, knownMountPresent: result.stdout.includes(mountedDir) };
       return result;
     } });
-    assert.equal(await partialJanitor.orphanWorktreeFs.listMountedHostPaths(), null);
+    const partialPaths = await partialJanitor.orphanWorktreeFs.listMountedHostPaths();
+    report.partialMountReceipt = { ...partialReceipt, returnedUnknown: partialPaths === null, roster: 'owned ID plus absent ID' };
+    assert.equal(partialPaths, null);
     assert.ok(partialReceipt && partialReceipt.exitCode !== 0 && partialReceipt.knownMountPresent);
     report.partialMountReceipt = { ...partialReceipt, returnedUnknown: true, roster: 'owned ID plus absent ID' };
     owned();
