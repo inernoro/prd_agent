@@ -246,9 +246,10 @@ async function main(): Promise<void> {
     const journalTrace = path.join(temp, 'journal-trace.jsonl');
     const journalUnit = `${owner}.service`;
     await fs.writeFile(path.join(journalBin, 'journalctl'), String.raw`#!${process.execPath}
-const fs=require('node:fs');const args=process.argv.slice(2);
+const fs=require('node:fs');const {execFileSync}=require('node:child_process');const args=process.argv.slice(2);
 if(!args.includes(${JSON.stringify(journalUnit)})||!args.includes('warning..alert'))process.exit(2);
-fs.appendFileSync(${JSON.stringify(journalTrace)},JSON.stringify({pid:process.pid,ppid:process.ppid,args})+'\n');
+const pgid=Number(execFileSync('ps',['-o','pgid=','-p',String(process.pid)],{encoding:'utf8'}).trim());
+fs.appendFileSync(${JSON.stringify(journalTrace)},JSON.stringify({pid:process.pid,ppid:process.ppid,pgid,args})+'\n');
 const emit=(cursor,message)=>process.stdout.write(JSON.stringify({__CURSOR:cursor,PRIORITY:'4',MESSAGE:message})+'\n');
 emit('owned-shared-cursor','warning owned backfill');
 if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('owned-tail-cursor','warning owned tail');setInterval(()=>{},1000);}
@@ -259,15 +260,21 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     journalMonitor = new journalModule.SystemLogMonitor(shell, { record: record => { journalRecords.push(record); } }, [journalUnit], journalStreams);
     await journalMonitor.start();
     for (let wait = 0; wait < 500 && !journalRecords.some(record => record.action === 'journal.tail'); wait++) await new Promise(resolve => setTimeout(resolve, 10));
+    const journalCommands = (await fs.readFile(journalTrace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    report.journalReceipt = { journalBinaryVersion: journalVersion.split('\n')[0], commands: journalCommands, stats: journalMonitor.getStats(),
+      streamStats: journalStreams.getStats(), scope: 'owned synthetic journal producer via compiled monitor and real process/IPC; version is actual journalctl binary, not actual service journald contents' };
+    report.stage = 'compiled-journal-output-contract';
     assert.ok(journalRecords.some(record => record.action === 'journal.tail'));
     assert.equal(journalMonitor.getStats().overflowLines, 1);
     assert.deepEqual(journalRecords.filter(record => record.action.startsWith('journal.') && record.action !== 'journal.oversize').map(record => record.message), ['warning owned backfill', 'warning owned tail']);
-    const journalCommands = (await fs.readFile(journalTrace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    report.stage = 'compiled-journal-owned-process-group';
     assert.equal(journalCommands.length, 2);
-    assert.ok(journalCommands.every(command => command.ppid !== process.pid && journalStreams.getStats().actors.some(actor => actor.pid === command.ppid)));
+    // /bin/sh可保留中间Shell；独立actor的进程组才是执行与取消归属，不要求生产者是直接子进程。
+    assert.ok(journalCommands.every(command => Number.isSafeInteger(command.pgid) && command.pgid > 1 &&
+      command.ppid !== process.pid && journalStreams.getStats().actors.some(actor => actor.pid === command.pgid)));
+    report.stage = 'compiled-journal-health-and-drain';
     assert.equal(await container.isRunning(id!), true); owned();
-    report.journalReceipt = { journalBinaryVersion: journalVersion.split('\n')[0], commands: journalCommands, stats: journalMonitor.getStats(),
-      healthReadable: true, streamStats: journalStreams.getStats(), scope: 'owned synthetic journal producer via compiled monitor and real process/IPC; version is actual journalctl binary, not actual service journald contents' };
+    report.journalReceipt.healthReadable = true;
     await journalMonitor.stop(); assert.equal(journalStreams.getStats().admitted, 0); assert.equal(journalMonitor.getStats().bufferedBytes, 0);
     report.journalReceipt.drainedStats = journalStreams.getStats();
     journalStreams.exec = realJournalExec;
