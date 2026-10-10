@@ -185,6 +185,7 @@ function diagnoseBootDisks(): string | null {
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
 const localShell = new IsolatedShellExecutor(new ShellExecutor());
 const startupStreams = new ObservationStreamExecutor();
+const eventStreams = new ObservationStreamExecutor(2);
 const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
   : localShell;
@@ -192,6 +193,7 @@ if (!isPreviewInstance()) {
   await Promise.all([
     localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。')),
     startupStreams.start().catch(() => console.warn('[observation] 启动日志执行器暂不可用；启动信号不报告就绪。')),
+    eventStreams.start().catch(() => console.warn('[observation] 容器事件执行器暂不可用；保留未知状态。')),
   ]);
 }
 if (isPreviewInstance()) {
@@ -2716,7 +2718,7 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
       reason: 'sync-cds-state-after-docker-lifecycle-event',
     },
   });
-});
+}, eventStreams);
 const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
@@ -3503,7 +3505,7 @@ diskGuard.refreshNow();
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
 // infra 生命周期取证器（doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：常驻 docker events 监听，
 // 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
-const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
+const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore, streams: eventStreams });
 
 const infraFlapWatchdog = new InfraFlapWatchdog(
   {
@@ -4676,14 +4678,14 @@ janitorService.setRemoveFn(async (slug: string) => {
   }
   function stopBackgroundServices(): void {
     for (const t of orphanReaperTimers.splice(0)) clearTimeout(t as NodeJS.Timeout);
-    dockerEventMonitor.stop();
+    void dockerEventMonitor.stop().catch(() => console.warn('[observation] 容器事件清理未确认。'));
     systemLogMonitor.stop();
     schedulerService.stop();
     janitorService.stop();
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
-    infraLifecycleWatcher.stop();
+    void infraLifecycleWatcher.stop().catch(() => console.warn('[observation] 基础设施事件清理未确认。'));
     forwarderRoutePublisher?.stop();
     previewCanaryService?.stop();
   }
@@ -4726,7 +4728,7 @@ async function shutdown(signal: string): Promise<void> {
   clearInterval(rotationRecoveryCleanup);
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
   if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
-  dockerEventMonitor.stop();
+  await Promise.all([dockerEventMonitor.stop(), infraLifecycleWatcher.stop()]).catch(() => console.warn('[shutdown] 容器事件清理未确认；继续关键状态保存。'));
   systemLogMonitor.stop();
   schedulerService.stop();
   janitorService.stop();
@@ -4752,6 +4754,7 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
+  await eventStreams.close().catch(() => console.warn('[shutdown] 事件执行槽清理未确认；继续关键状态保存。'));
   await startupStreams.close().catch(() => {
     console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。');
   });

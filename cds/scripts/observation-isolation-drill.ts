@@ -7,13 +7,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import { ShellExecutor } from '../src/services/shell-executor.js';
 import { IsolatedShellExecutor } from '../src/services/isolated-shell-executor.js';
 import { ContainerService } from '../src/services/container.js';
-import { collectContainerDiagnostics } from '../src/services/container-diagnostics.js';
+import { collectContainerDiagnostics, DockerEventMonitor } from '../src/services/container-diagnostics.js';
 import { createJanitorDockerAdapters } from '../src/services/janitor.js';
+import { InfraLifecycleWatcher } from '../src/services/infra-lifecycle-watcher.js';
 import { ObservationStreamExecutor } from '../src/services/observation-stream-executor.js';
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   const host = 'unix:///var/run/docker.sock';
   const docker = (args: string[]): string => execFileSync('docker', ['--host', host, ...args], { encoding: 'utf8', timeout: 120000 }).trim();
   const owner = `cds_observe_${randomBytes(8).toString('hex')}`;
-  const name = `${owner}-app`;
+  const name = `cds-infra-${owner}-app`;
   const output = path.resolve('observation-output');
   await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-observe-ci-'));
@@ -36,6 +37,16 @@ async function main(): Promise<void> {
   const shell = new module.IsolatedShellExecutor(new ShellExecutor(), { concurrency: 2, maxQueued: 16 });
   const streamModule = compiled ? await import(new URL('../dist/services/observation-stream-executor.js', import.meta.url).href) as typeof import('../src/services/observation-stream-executor.js') : { ObservationStreamExecutor };
   const startupStreams = new streamModule.ObservationStreamExecutor(2);
+  const eventStreams = new streamModule.ObservationStreamExecutor(2);
+  const diagnosticsModule = compiled ? await import(new URL('../dist/services/container-diagnostics.js', import.meta.url).href) as typeof import('../src/services/container-diagnostics.js') : { collectContainerDiagnostics, DockerEventMonitor };
+  const infraModule = compiled ? await import(new URL('../dist/services/infra-lifecycle-watcher.js', import.meta.url).href) as typeof import('../src/services/infra-lifecycle-watcher.js') : { InfraLifecycleWatcher };
+  const managedActions: string[] = [];
+  const eventWarnings: string[] = [];
+  const eventStore = { record: (record: { action?: string; message?: string }) => { if (record.action?.includes('warning') && eventWarnings.length < 10) eventWarnings.push((record.message || '').slice(0, 200)); } };
+  const dockerEvents = new diagnosticsModule.DockerEventMonitor(shell, eventStore, event => {
+    if (event.containerName === name && event.attrs['cds.acceptance.owner'] === owner && managedActions.length < 20) managedActions.push(event.action);
+  }, eventStreams);
+  const infraEvents = new infraModule.InfraLifecycleWatcher({ streams: eventStreams, serverEventLogStore: eventStore });
   const container = new ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams);
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -65,8 +76,9 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'independent-process-prewarm';
-    await Promise.all([shell.start(), startupStreams.start()]);
+    await Promise.all([shell.start(), startupStreams.start(), eventStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();
+    report.eventWarmStats = eventStreams.getStats();
     const warmStats = shell.getStats();
     assert.ok(warmStats.factoryPid && warmStats.factoryPid !== process.pid);
     assert.equal(warmStats.actors.length, 2);
@@ -86,11 +98,11 @@ async function main(): Promise<void> {
     const mountedDir = path.join(temp, 'mounted');
     await fs.mkdir(mountedDir);
     docker(['pull', 'alpine:3.20']);
-    id = docker(['run', '-d', '--name', name, '--label', `cds.acceptance.owner=${owner}`, '--network', 'none', '--cpus', '0.25', '--memory', '64m', '--mount', `type=bind,source=${mountedDir},target=/owned-readonly,readonly`, 'alpine:3.20', 'sh', '-c', 'echo owned-observation; sleep 300']);
+    id = docker(['run', '-d', '--name', name, '--label', `cds.acceptance.owner=${owner}`, '--label', 'cds.managed=true', '--network', 'none', '--cpus', '0.25', '--memory', '64m', '--mount', `type=bind,source=${mountedDir},target=/owned-readonly,readonly`, 'alpine:3.20', 'sh', '-c', 'echo owned-observation; sleep 300']);
     owned();
     report.stage = 'real-container-reads';
     assert.equal(await container.isRunning(id), true);
-    const diagnostics = await collectContainerDiagnostics(shell, id, 20);
+    const diagnostics = await diagnosticsModule.collectContainerDiagnostics(shell, id, 20);
     assert.equal((diagnostics.inspect?.state as Record<string, unknown>)?.running, true);
     assert.ok(JSON.stringify(diagnostics.logs).includes('owned-observation'));
     report.checks.push({ name: 'real-container-running-and-diagnostics', passed: true });
@@ -144,6 +156,26 @@ async function main(): Promise<void> {
     await Promise.all(heldStreams);
     report.streamReceipt = { bytes: streamBytes, parentPid: streamParent, captureBytes: 0, healthReadableWhileStreamSlotsFull: true, stats: startupStreams.getStats() };
     report.checks.push({ name: 'compiled-large-stream-no-capture-and-health-capacity-preserved', passed: true });
+    report.stage = 'real-owned-docker-lifecycle-event-streams';
+    dockerEvents.start(); infraEvents.start();
+    let observed = false;
+    for (let attempt = 0; attempt < 3 && !observed; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      owned(); docker(['stop', '-t', '1', id!]); owned(); docker(['start', id!]); owned();
+      for (let wait = 0; wait < 200; wait++) {
+        observed = managedActions.includes('die') && infraEvents.getEvents(name).some(event => event.event === 'die');
+        if (observed) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    report.eventReceipt = { managedOwnedActions: managedActions, infraOwnedEvents: infraEvents.getEvents(name).map(event => ({ event: event.event, exitCode: event.exitCode })), warnings: eventWarnings, observed };
+    assert.ok(observed);
+    assert.equal(await container.isRunning(id!), true);
+    await Promise.all([dockerEvents.stop(), infraEvents.stop()]);
+    assert.equal(eventStreams.getStats().admitted, 0);
+    report.eventReceipt.drainedStats = eventStreams.getStats();
+    report.checks.push({ name: 'compiled-owned-docker-events-independent-streams-and-drain', passed: true });
+
 
 
     report.stage = 'bounded-read-concurrency';
@@ -182,9 +214,11 @@ async function main(): Promise<void> {
       ...(error && typeof error === 'object' && 'code' in error ? { code: String(error.code).slice(0, 100) } : {}) };
     process.exitCode = 1;
   } finally {
-    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    try { await Promise.all([dockerEvents.stop(), infraEvents.stop()]); }
+    catch { report.verdict = 'failed'; process.exitCode = 1; }
+    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await Promise.all([shell.close(), startupStreams.close()]);
+      await Promise.all([shell.close(), startupStreams.close(), eventStreams.close()]);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
         try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }

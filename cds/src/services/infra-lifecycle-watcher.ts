@@ -10,7 +10,8 @@
 //   - `oom` 事件出现        → cgroup 级 OOM kill（容器内存上限触发）
 //   - `die` exitCode=137 且无 oom → 外部 SIGKILL（宿主 OOM killer / systemd-oomd / 人为）
 //   - `die` 其他 exitCode   → 进程自身退出（panic / ENOSPC / bug）
-import { spawn, type ChildProcess } from 'node:child_process';
+import { DockerObservationEventStream } from './docker-observation-event-stream.js';
+import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export interface InfraLifecycleEvent {
@@ -49,29 +50,25 @@ export function setReplicaMemberDeathListener(fn: ReplicaMemberDeathListener | n
 }
 
 export class InfraLifecycleWatcher {
-  private proc: ChildProcess | null = null;
+  private readonly eventStream?: DockerObservationEventStream;
   private events: InfraLifecycleEvent[] = [];
   /** 容器名 → 最近一次 oom 事件时间戳（用于把紧随其后的 die/137 正确归因）。 */
   private recentOom = new Map<string, number>();
-  private stopped = false;
-
-  constructor(private readonly deps: { serverEventLogStore?: ServerEventLogSink | null } = {}) {}
-
+  constructor(private readonly deps: { serverEventLogStore?: ServerEventLogSink | null; streams?: ObservationStreamExecutor } = {}) {
+    if (deps.streams) this.eventStream = new DockerObservationEventStream(deps.streams,
+      ['events', '--format', '{{json .}}', '--filter', 'type=container', ...['oom', 'die', 'kill', 'start', 'restart'].flatMap(event => ['--filter', `event=${event}`])],
+      line => this.ingest(line),
+      reason => this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.warning', message: reason }));
+  }
   start(): void {
-    this.stopped = false;
     activeWatcher = this;
-    this.spawnWatcher();
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+    if (!this.eventStream) {
+      this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.unavailable', message: '事件读取执行器未配置，无法确认基础设施事件。' });
+      return;
     }
-    try { this.proc?.kill('SIGTERM'); } catch { /* noop */ }
-    this.proc = null;
+    this.eventStream.start();
   }
+  stop(): Promise<void> { return this.eventStream?.stop() ?? Promise.resolve(); }
 
   /** 指定容器（或全部 infra）的近期生命周期事件，新→旧。 */
   getEvents(containerName?: string): InfraLifecycleEvent[] {
@@ -79,52 +76,6 @@ export class InfraLifecycleWatcher {
       ? this.events.filter((e) => e.containerName === containerName)
       : this.events;
     return [...list].reverse();
-  }
-
-  private spawnWatcher(): void {
-    if (this.stopped) return;
-    const proc = spawn('docker', [
-      'events',
-      '--format', '{{json .}}',
-      '--filter', 'type=container',
-      '--filter', 'event=oom',
-      '--filter', 'event=die',
-      '--filter', 'event=kill',
-      '--filter', 'event=start',
-      '--filter', 'event=restart',
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
-    this.proc = proc;
-    let buf = '';
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      buf += chunk.toString();
-      let idx = buf.indexOf('\n');
-      while (idx >= 0) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (line) this.ingest(line);
-        idx = buf.indexOf('\n');
-      }
-      if (buf.length > 64 * 1024) buf = '';
-    });
-    // docker daemon 重启 / 网络抖动导致 events 流断开时自愈重连。
-    // error 与 close 必须汇入**同一个**带闸的重连定时器（Codex P2）：spawn 失败时
-    // Node 会先 error 后 close 各触发一次，双定时器会各起一条常驻 events 流——
-    // 反复失败还会成倍繁殖 watcher，生命周期记录/死亡回调全部翻倍。
-    proc.on('close', () => this.scheduleReconnect(5_000));
-    proc.on('error', () => this.scheduleReconnect(30_000));
-  }
-
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /** 单一重连闸：已排定则不重复排（首个触发者的延迟生效）。 */
-  private scheduleReconnect(delayMs: number): void {
-    this.proc = null;
-    if (this.stopped || this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      if (!this.stopped) this.spawnWatcher();
-    }, delayMs);
-    this.reconnectTimer.unref?.();
   }
 
   private ingest(line: string): void {

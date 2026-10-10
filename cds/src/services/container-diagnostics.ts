@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { DockerObservationEventStream } from './docker-observation-event-stream.js';
+import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import type { IShellExecutor } from '../types.js';
 import {
   normalizeLogText,
@@ -154,6 +155,7 @@ export async function collectContainerDiagnostics(
   shell: IShellExecutor,
   containerRef: string,
   tailLines = 200,
+  signal?: AbortSignal,
 ): Promise<{
   inspect?: Record<string, unknown>;
   logs?: ReturnType<typeof normalizeLogText>;
@@ -163,7 +165,7 @@ export async function collectContainerDiagnostics(
   if (!safe) return { error: { message: `unsafe container reference: ${containerRef}` } };
 
   let inspect: Record<string, unknown> | undefined;
-  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000, executionLane: 'observation' });
+  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000, executionLane: 'observation', signal });
   if (inspectResult.exitCode === 0 && inspectResult.stdout.trim()) {
     try {
       inspect = summarizeDockerInspect(JSON.parse(inspectResult.stdout));
@@ -174,7 +176,7 @@ export async function collectContainerDiagnostics(
 
   const logsResult = await shell.exec(
     `docker logs --timestamps --tail ${Math.max(1, Math.min(tailLines, 1000))} ${shellQuote(safe)}`,
-    { timeout: 7000, executionLane: 'observation' },
+    { timeout: 7000, executionLane: 'observation', signal },
   );
   const rawLogs = `${logsResult.stdout || ''}${logsResult.stderr || ''}`;
   return {
@@ -243,10 +245,7 @@ function shouldRecordDockerEvent(action: string): boolean {
 }
 
 export class DockerEventMonitor {
-  private child: ChildProcess | null = null;
-  private stopping = false;
-  private restartTimer: ReturnType<typeof setTimeout> | null = null;
-
+  private readonly eventStream?: DockerObservationEventStream;
   constructor(
     private readonly shell: IShellExecutor,
     private readonly store: ServerEventLogSink | null | undefined,
@@ -263,77 +262,26 @@ export class DockerEventMonitor {
       inspect?: Record<string, unknown>;
       lifecycleIntent?: ContainerLifecycleIntent;
     }) => void | Promise<void>,
-  ) {}
+    streams?: ObservationStreamExecutor,
+  ) {
+    if (streams) this.eventStream = new DockerObservationEventStream(streams,
+      ['events', '--filter', 'label=cds.managed=true', '--format', '{{json .}}'],
+      (line, signal) => this.handleLine(line, signal),
+      reason => this.store?.record({ category: 'docker', severity: 'warn', source: 'docker-events', action: 'monitor.warning', message: reason }));
+  }
 
   start(): void {
-    if (!this.store || this.child) return;
-    this.stopping = false;
-    this.spawnMonitor();
-  }
-
-  stop(): void {
-    this.stopping = true;
-    if (this.restartTimer) clearTimeout(this.restartTimer);
-    this.restartTimer = null;
-    if (this.child && !this.child.killed) this.child.kill();
-    this.child = null;
-  }
-
-  private spawnMonitor(): void {
-    if (this.stopping || !this.store) return;
-    const child = spawn('docker', [
-      'events',
-      '--filter',
-      'label=cds.managed=true',
-      '--format',
-      '{{json .}}',
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
-    this.child = child;
-    let stdoutBuffer = '';
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf8');
-      const lines = stdoutBuffer.split(/\r?\n/);
-      stdoutBuffer = lines.pop() || '';
-      for (const line of lines) {
-        if (line.trim()) void this.handleLine(line.trim());
-      }
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
-      const message = chunk.toString('utf8').trim();
-      if (!message) return;
-      this.store?.record({
-        category: 'docker',
-        severity: 'warn',
-        source: 'docker-events',
-        action: 'monitor.stderr',
-        message,
-      });
-    });
-    child.on('error', (err) => {
-      this.store?.record({
-        category: 'docker',
-        severity: 'error',
-        source: 'docker-events',
-        action: 'monitor.error',
-        message: err.message,
-      });
-    });
-    child.on('close', (code, signal) => {
-      this.child = null;
-      if (this.stopping) return;
-      this.store?.record({
-        category: 'docker',
-        severity: 'warn',
-        source: 'docker-events',
-        action: 'monitor.closed',
-        message: `docker events exited code=${code ?? 'null'} signal=${signal ?? 'null'}; restarting monitor`,
-      });
-      this.restartTimer = setTimeout(() => this.spawnMonitor(), 5000);
-    });
-  }
-
-  private async handleLine(line: string): Promise<void> {
     if (!this.store) return;
+    if (!this.eventStream) {
+      this.store.record({ category: 'docker', severity: 'warn', source: 'docker-events', action: 'monitor.unavailable', message: '事件读取执行器未配置，无法确认容器事件。' });
+      return;
+    }
+    this.eventStream.start();
+  }
+  stop(): Promise<void> { return this.eventStream?.stop() ?? Promise.resolve(); }
+
+  private async handleLine(line: string, signal?: AbortSignal): Promise<void> {
+    if (!this.store || signal?.aborted) return;
     let evt: any;
     try {
       evt = JSON.parse(line);
@@ -360,8 +308,9 @@ export class DockerEventMonitor {
     const severity = eventSeverity(action, attrs);
     const ref = containerName || evt.id || evt.Actor?.ID;
     const diagnostics = ref && shouldCaptureDiagnostics(action)
-      ? await collectContainerDiagnostics(this.shell, ref, 300)
+      ? await collectContainerDiagnostics(this.shell, ref, 300, signal)
       : {};
+    if (signal?.aborted) return;
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
     const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
     const normalizedAction = action.toLowerCase();

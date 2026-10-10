@@ -17,11 +17,11 @@ interface Job {
   id: number;
   command: string;
   options: { cwd?: string; stdin?: string; env: NodeJS.ProcessEnv; stream: boolean; captureOutput: boolean };
-  onData?: (chunk: string) => void;
+  onData?: ExecOptions['onData'];
   bytes: number;
   dataTail: Promise<void>;
   deadline: number;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   abort?: () => void;
   failure?: FailureCode;
@@ -95,11 +95,12 @@ export class IsolatedShellExecutor implements IShellExecutor {
     const wireOptions = { cwd: options.cwd, stdin: options.stdin, env: { ...process.env, ...options.env }, stream: !!options.onData, captureOutput: options.captureOutput !== false };
     const bytes = Buffer.byteLength(command) + Buffer.byteLength(JSON.stringify(wireOptions));
     if (this.queue.length >= this.maxQueued || this.bytes + bytes > this.maxBytes) return Promise.reject(new ObservationExecutionError('capacity'));
-    const timeout = options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : 30_000;
+    const continuous = options.captureOutput === false && options.timeout === 0 && !!options.signal && !!options.onData;
+    const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : 30_000;
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
       const job: Job = { id, command, options: wireOptions, onData: options.onData, bytes, dataTail: Promise.resolve(), active: false,
-        deadline: performance.now() + timeout, timer: setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
+        deadline: performance.now() + timeout, timer: continuous ? undefined : setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
       if (job.signal) { job.abort = () => this.cancel(id, 'cancelled'); job.signal.addEventListener('abort', job.abort, { once: true }); }
       this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes;
       this.refPool();
@@ -136,7 +137,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     if (!job?.active) return;
     if (message.type === 'data') {
       job.dataTail = job.dataTail.then(async () => {
-        if (!job.failure) await job.onData?.(message.chunk);
+        if (!job.failure) await job.onData?.(message.chunk, message.channel);
         this.send({ type: 'ack', id: job.id, bytes: message.bytes });
       }).catch(() => { this.cancel(job.id, 'callback'); });
     } else if (message.type === 'result') {

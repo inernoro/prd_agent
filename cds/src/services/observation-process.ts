@@ -23,7 +23,7 @@ function startObservationProcess(): void {
     active = job;
     void executeShellCommand(command, {
       cwd: options.cwd, stdin: options.stdin, captureOutput: options.captureOutput,
-      ...(options.stream ? { onData: (chunk: string) => {
+      ...(options.stream ? { onData: (chunk: string, channel?: 'stdout' | 'stderr') => {
         // 每帧最多8192字符；未确认帧只在有界IPC窗口内等待，不积累完整日志。
         for (let offset = 0; offset < chunk.length;) {
           let end = Math.min(offset + 8192, chunk.length);
@@ -33,7 +33,7 @@ function startObservationProcess(): void {
           offset = end;
           const bytes = Math.max(1024, Buffer.byteLength(frame));
           job.outstanding += bytes;
-          send({ type: 'data', id, chunk: frame, bytes });
+          send({ type: 'data', id, chunk: frame, channel, bytes });
         }
         const highWater = options.captureOutput === false ? 128 * 1024 : 512 * 1024;
         if (job.outstanding >= highWater) { job.child?.stdout?.pause(); job.child?.stderr?.pause(); }

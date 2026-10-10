@@ -24,8 +24,8 @@ export function executeShellCommand(command: string, options?: ExecOptions, owne
     });
     if (options?.stdin !== undefined) cp.stdin?.end(options.stdin);
     if (options?.onData) {
-      cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString()));
-      cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString()));
+      cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString(), 'stdout'));
+      cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString(), 'stderr'));
     }
     cp.on('error', () => resolve({ stdout: '', stderr: 'Process error', exitCode: 1 }));
   });
@@ -54,13 +54,13 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
       stdoutBytes += Buffer.byteLength(chunk);
       if (options?.captureOutput !== false && stdoutBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
       if (options?.captureOutput !== false) stdout += chunk;
-      options?.onData?.(chunk);
+      options?.onData?.(chunk, 'stdout');
     });
     child.stderr?.on('data', (chunk: string) => {
       stderrBytes += Buffer.byteLength(chunk);
       if (options?.captureOutput !== false && stderrBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
       if (options?.captureOutput !== false) stderr += chunk;
-      options?.onData?.(chunk);
+      options?.onData?.(chunk, 'stderr');
     });
     child.on('error', () => { failed = true; });
     child.stdin?.on('error', () => { /* 子进程提前退出时以 close 结果为准 */ });
