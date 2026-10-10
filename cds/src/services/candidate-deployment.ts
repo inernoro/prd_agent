@@ -96,7 +96,11 @@ export class CandidateDeploymentService {
     this.state.save(); await this.state.flush(); active();
     const graph = createCandidateRuntime(entry, profiles, frozen.operationId, options.allocatePort);
     const journal = new CandidateJournal(this.state);
-    await journal.prepare(runId, graph, stopBeforeStart); active();
+    await journal.prepare(runId, graph, stopBeforeStart, { version: 1,
+      serving: Object.fromEntries([...oldReferences].map(([id, ref]) => [id, { id: ref.id, name: ref.name,
+        image: ref.image, wasRunning: ref.wasRunning, fingerprint: ref.fingerprint }])),
+      artifacts: Object.fromEntries(profiles.map(profile => [profile.id, { image: profile.preparedArtifactId!, targetSha: profile.preparedCommitSha! }])) });
+    active();
     const captured = new Map<string, OwnedContainerReference>();
     const attempted = new Set<string>();
     const stopped = new Set<string>();

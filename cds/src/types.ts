@@ -1373,6 +1373,13 @@ export interface DeploymentRun {
   candidate?: DeploymentCandidateRecord;
 }
 
+/** Recovery proof projects only immutable identity and an opaque configuration digest. */
+export interface CandidateRecoveryProof {
+  version: 1;
+  serving: Record<string, { id: string; name: string; image: string; wasRunning: boolean; fingerprint: string }>;
+  artifacts: Record<string, { image: string; targetSha: string }>;
+}
+
 export interface DeploymentCandidateRecord {
   operationId: string;
   targetSha: string;
@@ -1380,6 +1387,8 @@ export interface DeploymentCandidateRecord {
   networkName: string;
   phase: 'prepared' | 'starting' | 'ready' | 'switch-intent' | 'routed' | 'rollback-intent' | 'rollback-verified' | 'reconciling' | 'released';
   updatedAt: string;
+  /** Persisted before any stop/create; historical missing proofs cannot justify automatic recovery. */
+  recoveryProof?: CandidateRecoveryProof;
   /** Both graphs remain capacity reservations until actual reconciliation releases them. */
   serving: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
   services: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;

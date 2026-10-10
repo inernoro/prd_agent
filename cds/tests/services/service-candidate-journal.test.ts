@@ -6,7 +6,7 @@ import { StateService } from '../../src/services/state.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { CandidateJournal } from '../../src/services/service-candidate-journal.js';
 import { createCandidateRuntime } from '../../src/services/service-candidate.js';
-import type { BranchEntry, BuildProfile } from '../../src/types.js';
+import type { BranchEntry, BuildProfile, CandidateRecoveryProof } from '../../src/types.js';
 const sha = 'a'.repeat(40);
 let dir: string; let state: StateService; let runId: string; let branch: BranchEntry;
 beforeEach(async () => {
@@ -21,6 +21,43 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 const candidate = (port = 10002) => createCandidateRuntime(branch, [{ id: 'api' } as BuildProfile], 'op-test', () => port);
 describe('P3 durable private candidate reservations', () => {
+  const proof = (): CandidateRecoveryProof => ({ version: 1,
+    serving: { api: { id: 'c'.repeat(64), name: 'old', image: 'sha256:' + 'd'.repeat(64),
+      wasRunning: true, fingerprint: 'sha256:' + 'e'.repeat(64) } },
+    artifacts: { api: { image: 'sha256:' + 'f'.repeat(64), targetSha: sha } } });
+  it('persists only the complete recovery proof projection without aliases or diagnostic secrets', async () => {
+    branch.services.api.containerId = 'c'.repeat(64);
+    const supplied = proof(); (supplied.serving.api as any).Env = ['TOKEN=private-proof-token'];
+    (supplied.artifacts.api as any).credentials = 'private-proof-token';
+    await new CandidateJournal(state).prepare(runId, candidate(), ['api'], supplied);
+    supplied.serving.api.wasRunning = false; supplied.artifacts.api.targetSha = 'b'.repeat(40);
+    const reload = new StateService(path.join(dir, 'state.json')); reload.load();
+    expect(reload.getDeploymentRun(runId)!.candidate!.recoveryProof).toEqual(proof());
+    expect(JSON.stringify(reload.getDeploymentRun(runId)!.candidate)).not.toContain('private-proof-token');
+  });
+  it.each(['null', 'unknown-version', 'string-version', 'array-serving', 'missing-serving', 'extra-artifact',
+    'wrong-id', 'wrong-name', 'wrong-sha', 'coercible-image', 'coercible-fingerprint', 'unknown-running'])
+    ('rejects defined malformed recovery proof before persisting any candidate: %s', async variant => {
+      branch.services.api.containerId = 'c'.repeat(64);
+      let supplied: any = proof();
+      if (variant === 'null') supplied = null;
+      if (variant === 'unknown-version') supplied.version = 2;
+      if (variant === 'string-version') supplied.version = '1';
+      if (variant === 'array-serving') supplied.serving = Object.assign([], supplied.serving);
+      if (variant === 'missing-serving') supplied.serving = {};
+      if (variant === 'extra-artifact') supplied.artifacts.extra = supplied.artifacts.api;
+      if (variant === 'wrong-id') supplied.serving.api.id = 'd'.repeat(64);
+      if (variant === 'wrong-name') supplied.serving.api.name = 'other';
+      if (variant === 'wrong-sha') supplied.artifacts.api.targetSha = 'b'.repeat(40);
+      if (variant === 'coercible-image') supplied.artifacts.api.image = { toString: () => 'sha256:' + 'f'.repeat(64) };
+      if (variant === 'coercible-fingerprint') supplied.serving.api.fingerprint = { toString: () => 'sha256:' + 'e'.repeat(64) };
+      if (variant === 'unknown-running') supplied.serving.api.wasRunning = 'true';
+      await expect(new CandidateJournal(state).prepare(runId, candidate(), ['api'], supplied)).rejects.toThrow('candidate_recovery_proof');
+      expect(state.getDeploymentRun(runId)!.candidate).toBeUndefined();
+      const reload = new StateService(path.join(dir, 'state.json')); reload.load();
+      expect(reload.getDeploymentRun(runId)!.candidate).toBeUndefined();
+    });
+
   it('persists immutable serving ID and stop intent before a single consumer can be stopped', async () => {
     const journal = new CandidateJournal(state);
     await expect(journal.prepare(runId, candidate(), ['api'])).rejects.toThrow('candidate_stop_intent');

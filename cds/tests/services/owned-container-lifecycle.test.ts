@@ -25,6 +25,30 @@ function fixture() {
 }
 const owner = { projectId: 'project', branchId: 'branch' };
 describe('P3 immutable owned container lifecycle', () => {
+  it.each(['environment', 'command', 'resource-limit', 'network-mode'])('detects complete runtime configuration drift without storing its plaintext: %s', async variant => {
+    const f = fixture(); Object.assign(f.current.Config, { Env: ['TOKEN=private-env-value'], Cmd: ['run', 'old'] });
+    Object.assign(f.current.HostConfig, { Memory: 1024, NetworkMode: 'original-network' });
+    const ref = await f.lifecycle.capture(owner, service, () => {});
+    expect(ref.fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(ref.fingerprint).not.toContain('private-env-value');
+    if (variant === 'environment') (f.current.Config as any).Env = ['TOKEN=new-secret'];
+    if (variant === 'command') (f.current.Config as any).Cmd = ['run', 'new'];
+    if (variant === 'resource-limit') (f.current.HostConfig as any).Memory = 2048;
+    if (variant === 'network-mode') (f.current.HostConfig as any).NetworkMode = 'other-network';
+    await expect(f.lifecycle.start(ref, () => {})).rejects.toThrow('container_drift');
+    expect(f.mutations).toEqual([]);
+  });
+
+  it('keeps runtime comparison proof opaque even when Docker mount metadata contains credentials', async () => {
+    const f = fixture(); (f.current.Mounts[0] as any).DriverOpts = { password: 'mount-private-token' };
+    const captured = await f.lifecycle.capture(owner, service, () => {});
+    expect(captured.fingerprint).not.toContain('mount-private-token');
+    expect(captured.fingerprint).not.toContain('/var/lib/docker/volumes/app');
+    (f.current.Mounts[0] as any).DriverOpts.password = 'changed-private-token';
+    await expect(f.lifecycle.start(captured, () => {})).rejects.toThrow('container_drift');
+    expect(f.mutations).toEqual([]);
+  });
+
   it('records lifecycle intent after inspected ownership and fences again before the immutable-ID command', async () => {
     const f = fixture(); let superseded = false;
     const hook = vi.fn((reference, action) => {

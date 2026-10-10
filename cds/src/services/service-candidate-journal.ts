@@ -1,4 +1,4 @@
-import type { BranchEntry, DeploymentCandidateRecord, ServiceState } from '../types.js';
+import type { BranchEntry, DeploymentCandidateRecord, ServiceState, CandidateRecoveryProof } from '../types.js';
 import type { StateService } from './state.js';
 import { candidateRuntimeIdentity } from './service-candidate.js';
 
@@ -41,7 +41,7 @@ const NEXT: Record<Phase, readonly Phase[]> = {
 export class CandidateJournal {
   constructor(private readonly state: StateService) {}
 
-  async prepare(runId: string, candidate: BranchEntry, stopBeforeStart?: readonly string[]): Promise<DeploymentCandidateRecord> {
+  async prepare(runId: string, candidate: BranchEntry, stopBeforeStart?: readonly string[], recoveryProof?: CandidateRecoveryProof): Promise<DeploymentCandidateRecord> {
     const run = this.state.getDeploymentRun(runId);
     const serving = this.state.getBranch(candidate.id);
     if (!run || !serving || run.branchId !== candidate.id || run.projectId !== candidate.projectId ||
@@ -73,6 +73,27 @@ export class CandidateJournal {
     }
     const record: DeploymentCandidateRecord = { operationId: run.operationId, targetSha: target, configHash: run.configHash,
       networkName, phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshotCandidateServices(serving.services), services: snapshotCandidateServices(candidate.services) };
+
+    if (recoveryProof !== undefined) {
+      const plainRecord = (value: unknown): boolean => !!value && typeof value === 'object' &&
+        !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+      const validImage = (value: unknown) => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/.test(value);
+      const sameKeys = (a: object, b: object) => JSON.stringify(Object.keys(a).sort()) === JSON.stringify(Object.keys(b).sort());
+      if (!plainRecord(recoveryProof) || recoveryProof.version !== 1 || !plainRecord(recoveryProof.serving) || !plainRecord(recoveryProof.artifacts) ||
+        !sameKeys(recoveryProof.serving, record.serving) || !sameKeys(recoveryProof.artifacts, record.services) ||
+        Object.entries(recoveryProof.serving).some(([id, proof]) => !plainRecord(proof) || record.serving[id].profileId !== id ||
+          typeof proof.id !== 'string' || !/^[a-f0-9]{64}$/.test(proof.id) || proof.id !== record.serving[id].containerId ||
+          proof.name !== record.serving[id].containerName || !validImage(proof.image) ||
+          !validImage(proof.fingerprint) || typeof proof.wasRunning !== 'boolean') ||
+        Object.values(recoveryProof.artifacts).some(proof => !plainRecord(proof) || !validImage(proof.image) || proof.targetSha !== target)) {
+        throw new Error('candidate_recovery_proof: complete frozen inspected identities and artifacts required');
+      }
+      // Explicit projection, not a clone of extensible Docker data or caller configuration.
+      record.recoveryProof = { version: 1,
+        serving: Object.fromEntries(Object.entries(recoveryProof.serving).map(([id, p]) => [id,
+          { id: p.id, name: p.name, image: p.image, wasRunning: p.wasRunning, fingerprint: p.fingerprint }])),
+        artifacts: Object.fromEntries(Object.entries(recoveryProof.artifacts).map(([id, p]) => [id, { image: p.image, targetSha: p.targetSha }])) };
+    }
     if (stopBeforeStart?.length) {
       if (new Set(stopBeforeStart).size !== stopBeforeStart.length || stopBeforeStart.some(id => !/^[a-f0-9]{64}$/.test(serving.services[id]?.containerId || ''))) {
         throw new Error('candidate_stop_intent: captured serving identity required');

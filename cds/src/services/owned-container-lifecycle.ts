@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ExecResult, IShellExecutor, ServiceState } from '../types.js';
 
 export interface OwnedContainerReference {
@@ -18,18 +19,17 @@ interface ContainerFacts {
 }
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 const absent = (result: ExecResult) => result.exitCode !== 0 && /no such (?:object|container)/i.test(result.stdout + result.stderr);
-const labelKeys = ['cds.managed', 'cds.type', 'cds.instance', 'cds.project.id', 'cds.branch.id', 'cds.profile.id',
-  'cds.deployment.operation', 'cds.deployment.kind', 'cds.protected'];
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, val]) => [key, stable(val)]));
   return value;
 }
 function fingerprint(info: ContainerFacts): string {
-  return JSON.stringify([info.Id, info.Name, info.Image, labelKeys.map(key => [key, info.Config.Labels[key] ?? null]),
-    Object.entries(info.HostConfig.PortBindings).sort(([a], [b]) => a.localeCompare(b)),
-    // Preserve every returned mount field (including mode, propagation and driver options).
-    stable([...info.Mounts].sort((a, b) => a.Destination.localeCompare(b.Destination)))]);
+  // Hash the complete returned execution/host configuration, including private environment
+  // and mount driver options. Persist only the digest; Running remains lifecycle intent.
+  return 'sha256:' + createHash('sha256').update(JSON.stringify([info.Id, info.Name, info.Image,
+    stable(info.Config), stable(info.HostConfig),
+    stable([...info.Mounts].sort((a, b) => a.Destination.localeCompare(b.Destination)))])).digest('hex');
 }
 function validMount(mount: ContainerFacts['Mounts'][number]): boolean {
   if (!mount || !['bind', 'volume', 'tmpfs'].includes(mount.Type) || typeof mount.Source !== 'string' ||

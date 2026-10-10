@@ -42,6 +42,10 @@ function fixture(role: 'api' | 'worker' = 'api') {
     events.push(command);
     if (!info) return { exitCode: 1, stdout: '', stderr: 'No such container' };
     if (command.startsWith('docker stop')) {
+      const savedProof = new StateService(path.join(dir, 'state.json')); savedProof.load();
+      expect((savedProof.getDeploymentRun(runId)!.candidate as any).recoveryProof).toMatchObject({ version: 1,
+        serving: { api: { id: old.Id, name: 'old', image: old.Image, wasRunning: true, fingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) } },
+        artifacts: { api: { image, targetSha: sha } } });
       const saved = new StateService(path.join(dir, 'state.json')); saved.load();
       expect(saved.getDeploymentRun(runId)!.candidate!.stopBeforeStart).toContain('api');
       expect(saved.getDeploymentRun(runId)!.candidate!.serving.api.containerId).toBe(old.Id);
@@ -124,6 +128,18 @@ describe('P3 actual deployment candidate orchestration', () => {
     await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');
     expect(entry.services.api.containerName).toBe('old'); expect(f.old.State.Running).toBe(true);
     expect(f.events.some(event => event === 'docker rm -f ' + f.old.Id)).toBe(false);
+  });
+
+  it('has an immutable inspected recovery proof on actual disk before the first candidate create', async () => {
+    const f = fixture(); const create = f.containers.runService;
+    f.containers.runService = async (...args: Parameters<typeof create>) => {
+      const saved = new StateService(path.join(dir, 'state.json')); saved.load();
+      expect((saved.getDeploymentRun(runId)!.candidate as any).recoveryProof).toMatchObject({ version: 1,
+        serving: { api: { id: f.old.Id, name: 'old', image: f.old.Image, fingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) } },
+        artifacts: { api: { image, targetSha: sha } } });
+      await create(...args);
+    };
+    await f.service.deploy(f.options);
   });
   it('records stop intent before stopping a worker and starts the original ID after a confirmed candidate failure', async () => {
     const f = fixture('worker'); f.setReady(false);
