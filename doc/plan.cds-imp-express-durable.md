@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.11；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.12；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -123,3 +123,15 @@ c615明确stop仍可取消旧执行者/请求停止已发布图，未释放候�
 c615固定主全量641文件9306测试通过、6文件19条跳过、1旧obsolete snapshot，100.04s。相关取消/准入3文件296、owner3文件97与显式tsc绿。e091首operator-auth 5s超时红、1376 OAuth404/bug-reports超时/ECONNRESET继续保留，尚未证明根因修复；f8带脱敏trace全量9290绿属历史。主修改导入断言首次失败未写入，随后未应用代码的stop缺字段仍红，纠正导入后绿，不计新产品红。正式49/真实Daemon/视觉/八分支未执行。
 
 本轮仍没有push、PR、自更新或共享环境写入；保持双副本49条正式状态与强验收门槛。
+
+## v1.12 实施检查点（2026-10-11）
+
+CDS:05857c9a5a83f9f5ef659e87040ef27a83faa233; IMP:961b1408f7af4e754a96915d37d02631088dfdfe（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地检查点，后续文档提交另计，未部署）。
+
+c615独立Coordinator+真实自有StateJSON21/21绿，旧f8同21仅4绿；独立自有HTTP10/10：failed/cancelled/旧worker未释放拒绝whole/profile/restart/delete，reader异常不启动；released/otherbranch控制组正常，stop报告pending并保留账本/端口。SSE拒绝按实际event:error+operationStatus rejected判定，HTTP200/ok:true不等于启动。Master真实index注入和真实Daemon未验；DirectEngine3独立待结果。
+
+c615独立discovery/reaper扩展30/30复绿，f8原5个归属缺失/错配红关闭；首次29/30是fakeCLI只读查询并发也写同JSON造成queryfail，已修fixture且保原件，不记产品红。05857已把旧不可变ID、镜像、原运行意图与完整Config/HostConfig/Mounts SHA256摘要、各精确候选制品在stop/create前落盘；定义错误/未知代际拒绝，显式投影不存明文凭据。主扩展8真红→316绿+tsc。真实恢复、旧版本就绪、Daemon闭合和专门reconciler仍未完成。
+
+本批05857相关5文件316测试通过及显式tsc；恢复依据首6红和扩展8红保留，本批未再跑全量。最近全量仍为c615的641文件9306绿/19跳过/6跳过文件/1旧obsolete快照；历史operator-auth超时、OAuth404/bug-reports超时/ECONNRESET未证明根因修复。49正式、视觉、真实八分支均not-executed。
+
+没有push、PR、自更新或共享环境写入；本批局部证据不替代49项正式验收。
