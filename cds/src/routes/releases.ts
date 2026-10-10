@@ -16,7 +16,7 @@ import {
   ReleaseTargetHistoryStore,
   recordReleaseTargetUpsert,
 } from '../services/release-target-history.js';
-import { ReleaseCommitClock } from '../services/release-commit-clock.js';
+import { ReleaseCommitClock, shellCommitMetaReader } from '../services/release-commit-clock.js';
 import {
   ReleaseCommitRailReader,
   shellGitRunner,
@@ -68,6 +68,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     logger: { warn: (m) => console.warn(m) },
   });
   const commitClock = new ReleaseCommitClock({
+    ...(deps.shell ? { reader: shellCommitMetaReader(deps.shell) } : {}),
     storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-commit-times.json') : undefined,
     logger: { warn: (m) => console.warn(m) },
   });
@@ -100,7 +101,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   const rememberCommitTime = (run: { projectId: string; commitSha: string; branchId: string }): void => {
     try {
       const branch = deps.stateService.getBranch(run.branchId);
-      commitClock.remember(run.projectId, run.commitSha, branch?.worktreePath, projectRepoRoot(run.projectId));
+      void commitClock.remember(run.projectId, run.commitSha, branch?.worktreePath, projectRepoRoot(run.projectId))
+        .catch(() => { /* 统计旁路，不影响发布 */ });
     } catch { /* 统计旁路，不影响发布 */ }
   };
 

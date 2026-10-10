@@ -26,8 +26,8 @@
  * 执行命令）。execFile 不过 shell 能挡住管道，挡不住「参数被当成选项」这一层。
  */
 
-import type { IShellExecutor } from '../types.js';
-import { ShellExecutor } from './shell-executor.js';
+import { RELEASE_GIT_TIMEOUT_MS as GIT_TIMEOUT_MS, workerGitRunner, type GitRunner } from './release-git-reader.js';
+export { shellGitRunner, workerGitRunner, type GitRunner } from './release-git-reader.js';
 import { isCommitShaLike } from './release-commit-clock.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
 import { timeMainThreadSection } from './main-thread-diagnostics.js';
@@ -43,23 +43,6 @@ export const DEFAULT_RAIL_TTL_MS = 60_000;
  * 却要多起一个进程去翻历史。
  */
 export const MAX_BEHIND_SCAN = 20_000;
-
-const GIT_TIMEOUT_MS = 3_000;
-
-/** Read-only Git uses the same bounded execution worker as deployment diagnostics. */
-export type GitRunner = (args: readonly string[], signal?: AbortSignal) => string | Promise<string>;
-const fallbackShell = new ShellExecutor({ maxConcurrent: 1, maxQueued: 64 });
-const quoteArg = (arg: string): string => "'" + arg.replace(/'/g, "'\"'\"'") + "'";
-export function shellGitRunner(shell: IShellExecutor): GitRunner {
-  return async (args, signal) => {
-    const result = await shell.exec('git ' + args.map(quoteArg).join(' '), {
-      timeout: GIT_TIMEOUT_MS, signal, priority: 'diagnostic', schedulingGroup: 'release-rail',
-    });
-    if (result.exitCode !== 0) throw new Error('release history query unavailable');
-    return result.stdout;
-  };
-}
-export const workerGitRunner: GitRunner = shellGitRunner(fallbackShell);
 
 export interface ReleaseCommitRailNode {
   sha: string;

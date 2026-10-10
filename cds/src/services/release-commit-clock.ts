@@ -20,9 +20,10 @@
  * leadTime.sampleCount / eligibleCount 如实暴露，不做任何回填式猜测。
  */
 
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { IShellExecutor } from '../types.js';
+import { RELEASE_GIT_TIMEOUT_MS, shellGitRunner, workerGitRunner, type GitRunner } from './release-git-reader.js';
 
 /**
  * 一条 commit 的元信息。`at` 是台账存在的原始理由（DORA 变更前置时间），
@@ -46,7 +47,8 @@ export interface ReleaseCommitMetaRead {
 export type CommitTimeReader = (
   worktreePath: string,
   commitSha: string,
-) => string | ReleaseCommitMetaRead | undefined;
+  signal?: AbortSignal,
+) => string | ReleaseCommitMetaRead | undefined | Promise<string | ReleaseCommitMetaRead | undefined>;
 
 /** 台账上限。按 targetId 无关的 projectId::sha 分键，超出从最早的开始丢。 */
 export const MAX_COMMIT_TIME_ENTRIES = 500;
@@ -104,25 +106,38 @@ export function isCommitShaLike(value: string): boolean {
  * 任何失败（worktree 已被回收 / sha 不在本地 / git 不在）都返回 undefined，
  * 让上层退化成「这次没有前置时间样本」，绝不抛给发布主链路。
  */
-export const gitCommitMetaReader: CommitTimeReader = (worktreePath, commitSha) => {
-  if (!worktreePath || !isCommitShaLike(commitSha)) return undefined;
-  try {
-    const out = execFileSync(
-      'git',
-      ['-C', worktreePath, 'show', '-s', `--format=%cI${UNIT_SEPARATOR}%s${UNIT_SEPARATOR}%an`, commitSha],
-      {
-        encoding: 'utf8',
-        timeout: 3_000,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      },
-    );
-    const line = out.split('\n')[0] ?? '';
-    const [at, subject, author] = line.split(UNIT_SEPARATOR);
-    return normalizeMetaRead({ at: (at || '').trim(), subject, author });
-  } catch {
-    return undefined;
-  }
-};
+function commitMetaReader(runner: GitRunner): CommitTimeReader {
+  return async (worktreePath, commitSha, signal = AbortSignal.timeout(RELEASE_GIT_TIMEOUT_MS)) => {
+    if (!worktreePath || !isCommitShaLike(commitSha) || signal.aborted) return undefined;
+    try {
+      const out = await runner(['-C', worktreePath, 'show', '-s',
+        `--format=%cI${UNIT_SEPARATOR}%s${UNIT_SEPARATOR}%an`, commitSha], signal);
+      if (signal.aborted) return undefined;
+      const [at, subject, author] = (out.split('\n')[0] ?? '').split(UNIT_SEPARATOR);
+      return normalizeMetaRead({ at: (at || '').trim(), subject, author });
+    } catch { return undefined; }
+  };
+}
+export const gitCommitMetaReader: CommitTimeReader = commitMetaReader(workerGitRunner);
+export const shellCommitMetaReader = (shell: IShellExecutor): CommitTimeReader =>
+  commitMetaReader(shellGitRunner(shell, 'release-meta'));
+
+/** Deadline also applies to injected readers that do not honour the signal. */
+function readMeta(reader: CommitTimeReader, root: string, sha: string, signal: AbortSignal): Promise<ReleaseCommitMetaRead | undefined> {
+  if (signal.aborted) return Promise.resolve(undefined);
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (raw?: string | ReleaseCommitMetaRead) => {
+      if (settled) return;
+      settled = true; signal.removeEventListener('abort', onAbort);
+      try { resolve(signal.aborted ? undefined : normalizeMetaRead(raw)); }
+      catch { resolve(undefined); }
+    };
+    const onAbort = () => finish();
+    signal.addEventListener('abort', onAbort, { once: true });
+    Promise.resolve().then(() => signal.aborted ? undefined : reader(root, sha, signal)).then(finish, () => finish());
+  });
+}
 
 /**
  * 落盘格式。v1 的条目是裸 ISO 字符串，v2 升级成元信息对象。
@@ -140,12 +155,14 @@ interface CommitClockFile {
 export class ReleaseCommitClock {
   private entries = new Map<string, ReleaseCommitMetaRead>();
   private loaded = false;
+  private pending = new Map<string, Promise<string | undefined>>();
 
   constructor(
     private readonly options: {
       storePath?: string;
       maxEntries?: number;
       reader?: CommitTimeReader;
+      timeoutMs?: number;
       logger?: { warn?: (m: string) => void };
     } = {},
   ) {}
@@ -212,25 +229,36 @@ export class ReleaseCommitClock {
    * 可以传多个候选 worktree：分支 worktree 被回收之后，项目主 clone 里通常
    * 仍然有这个 commit。逐个试到第一个成功为止，全失败才放弃 —— 绝不猜。
    */
-  remember(projectId: string, commitSha: string, ...worktreePaths: Array<string | undefined>): string | undefined {
-    if (!projectId || !commitSha) return undefined;
+  async remember(projectId: string, commitSha: string, ...worktreePaths: Array<string | undefined>): Promise<string | undefined> {
+    if (!projectId || !isCommitShaLike(commitSha)) return undefined;
     this.ensureLoaded();
     const key = releaseCommitKey(projectId, commitSha);
     const cached = this.entries.get(key);
     if (cached) return cached.at;
+    const roots = [...new Set(worktreePaths.filter((root): root is string => !!root))];
+    if (!roots.length) return undefined;
+    const pendingKey = JSON.stringify([key, roots]);
+    const pending = this.pending.get(pendingKey);
+    if (pending) return pending;
+    if (this.pending.size >= 32) return undefined;
+    const signal = AbortSignal.timeout(this.options.timeoutMs ?? RELEASE_GIT_TIMEOUT_MS);
+    const task = this.rememberAtRoots(key, commitSha, roots, signal).finally(() => this.pending.delete(pendingKey));
+    this.pending.set(pendingKey, task);
+    return task;
+  }
+
+  private async rememberAtRoots(key: string, commitSha: string, roots: string[], signal: AbortSignal): Promise<string | undefined> {
     let meta: ReleaseCommitMetaRead | undefined;
-    const seen = new Set<string>();
-    for (const worktreePath of worktreePaths) {
-      if (!worktreePath || seen.has(worktreePath)) continue;
-      seen.add(worktreePath);
+    for (const worktreePath of roots) {
+      if (signal.aborted) break;
       try {
-        meta = normalizeMetaRead((this.options.reader ?? gitCommitMetaReader)(worktreePath, commitSha));
+        meta = await readMeta(this.options.reader ?? gitCommitMetaReader, worktreePath, commitSha, signal);
       } catch {
         meta = undefined;
       }
       if (meta) break;
     }
-    if (!meta) return undefined;
+    if (!meta || signal.aborted) return undefined;
     this.entries.set(key, meta);
     // Map 保插入序，删最早插入的即是最旧的记录。
     while (this.entries.size > this.maxEntries) {

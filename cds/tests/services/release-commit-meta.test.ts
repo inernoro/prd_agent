@@ -73,13 +73,13 @@ describe('台账文件版本兼容', () => {
     });
   });
 
-  it('写出来的是 v2，且新旧实例都能读回说明', () => {
+  it('写出来的是 v2，且新旧实例都能读回说明', async () => {
     const sha = 'c'.repeat(40);
     const first = new ReleaseCommitClock({
       storePath,
       reader: () => ({ at: '2026-06-30T10:00:00.000Z', subject: 'feat: 新东西', author: '李四' }),
     });
-    first.remember('p1', sha, '/w');
+    await first.remember('p1', sha, '/w');
 
     const saved = JSON.parse(fs.readFileSync(storePath, 'utf8'));
     expect(saved.version).toBe(2);
@@ -110,27 +110,27 @@ describe('台账文件版本兼容', () => {
 });
 
 describe('元信息归一', () => {
-  it('说明截断到上界——台账要落盘、要随响应下发，不能无界', () => {
+  it('说明截断到上界——台账要落盘、要随响应下发，不能无界', async () => {
     const clock = new ReleaseCommitClock({
       reader: () => ({ at: '2026-06-30T10:00:00.000Z', subject: '啊'.repeat(500) }),
     });
-    clock.remember('p1', 'f'.repeat(40), '/w');
+    await clock.remember('p1', 'f'.repeat(40), '/w');
 
     expect(clock.getMeta('p1', 'f'.repeat(40))?.subject).toHaveLength(MAX_COMMIT_SUBJECT_LENGTH);
   });
 
-  it('只给时间的旧 reader 仍然合法——退化成「有时间没说明」', () => {
+  it('只给时间的旧 reader 仍然合法——退化成「有时间没说明」', async () => {
     const clock = new ReleaseCommitClock({ reader: () => '2026-06-30T10:00:00.000Z' });
 
-    expect(clock.remember('p1', 'a'.repeat(40), '/w')).toBe('2026-06-30T10:00:00.000Z');
+    expect(await clock.remember('p1', 'a'.repeat(40), '/w')).toBe('2026-06-30T10:00:00.000Z');
     expect(clock.getMeta('p1', 'a'.repeat(40))?.subject).toBeUndefined();
   });
 
-  it('空白说明 / 空白作者当作没有，不落一个空字符串进台账', () => {
+  it('空白说明 / 空白作者当作没有，不落一个空字符串进台账', async () => {
     const clock = new ReleaseCommitClock({
       reader: () => ({ at: '2026-06-30T10:00:00.000Z', subject: '   ', author: '' }),
     });
-    clock.remember('p1', 'b'.repeat(40), '/w');
+    await clock.remember('p1', 'b'.repeat(40), '/w');
 
     const meta = clock.getMeta('p1', 'b'.repeat(40));
     expect(meta?.at).toBe('2026-06-30T10:00:00.000Z');
@@ -138,16 +138,16 @@ describe('元信息归一', () => {
     expect(meta?.author).toBeUndefined();
   });
 
-  it('时间无效整条不记——没有时间的元信息对 DORA 没有意义', () => {
+  it('时间无效整条不记——没有时间的元信息对 DORA 没有意义', async () => {
     const clock = new ReleaseCommitClock({ reader: () => ({ at: '不是时间', subject: 'feat: x' }) });
 
-    expect(clock.remember('p1', 'c'.repeat(40), '/w')).toBeUndefined();
+    expect(await clock.remember('p1', 'c'.repeat(40), '/w')).toBeUndefined();
     expect(clock.getMeta('p1', 'c'.repeat(40))).toBeUndefined();
   });
 });
 
 describe('多候选 worktree', () => {
-  it('分支 worktree 已回收时回落项目主 clone', () => {
+  it('分支 worktree 已回收时回落项目主 clone', async () => {
     const tried: string[] = [];
     const clock = new ReleaseCommitClock({
       reader: (worktree) => {
@@ -156,22 +156,22 @@ describe('多候选 worktree', () => {
       },
     });
 
-    expect(clock.remember('p1', 'd'.repeat(40), '/gone', '/repo')).toBe('2026-06-30T10:00:00.000Z');
+    expect(await clock.remember('p1', 'd'.repeat(40), '/gone', '/repo')).toBe('2026-06-30T10:00:00.000Z');
     expect(tried).toEqual(['/gone', '/repo']);
   });
 
-  it('候选全失败就是不记，绝不猜一个时间', () => {
+  it('候选全失败就是不记，绝不猜一个时间', async () => {
     const clock = new ReleaseCommitClock({ reader: () => undefined });
 
-    expect(clock.remember('p1', 'e'.repeat(40), '/gone', '/also-gone')).toBeUndefined();
+    expect(await clock.remember('p1', 'e'.repeat(40), '/gone', '/also-gone')).toBeUndefined();
     expect(clock.getMeta('p1', 'e'.repeat(40))).toBeUndefined();
   });
 
-  it('重复 / 空候选不重复起进程', () => {
+  it('重复 / 空候选不重复起进程', async () => {
     let calls = 0;
     const clock = new ReleaseCommitClock({ reader: () => { calls += 1; return undefined; } });
 
-    clock.remember('p1', 'f'.repeat(40), '/repo', undefined, '/repo', '');
+    await clock.remember('p1', 'f'.repeat(40), '/repo', undefined, '/repo', '');
 
     expect(calls).toBe(1);
   });
@@ -205,22 +205,22 @@ describe('真实 git 元信息读取器', () => {
     if (fs.existsSync(repo)) fs.rmSync(repo, { recursive: true, force: true });
   });
 
-  it('一次 git 调用同时带回时间 / 说明 / 作者', () => {
-    expect(gitCommitMetaReader(repo, sha)).toEqual({
+  it('一次 git 调用同时带回时间 / 说明 / 作者', async () => {
+    expect(await gitCommitMetaReader(repo, sha)).toEqual({
       at: '2026-01-02T03:04:05.000Z',
       subject: 'fix: 门禁 401 的真实原因',
       author: '发布测试',
     });
   });
 
-  it('形状不合法的 sha 压根不起 git 进程', () => {
+  it('形状不合法的 sha 压根不起 git 进程', async () => {
     // 事故值：--upload-pack=/bin/sh 这类进到 argv 里就是一次任意命令执行。
-    expect(gitCommitMetaReader(repo, '--upload-pack=/bin/echo')).toBeUndefined();
-    expect(gitCommitMetaReader(repo, 'HEAD')).toBeUndefined();
+    expect(await gitCommitMetaReader(repo, '--upload-pack=/bin/echo')).toBeUndefined();
+    expect(await gitCommitMetaReader(repo, 'HEAD')).toBeUndefined();
   });
 
-  it('worktree 已回收 / sha 不在本地 → undefined，不抛给发布主链路', () => {
-    expect(gitCommitMetaReader(path.join(repo, '不存在'), sha)).toBeUndefined();
-    expect(gitCommitMetaReader(repo, 'f'.repeat(40))).toBeUndefined();
+  it('worktree 已回收 / sha 不在本地 → undefined，不抛给发布主链路', async () => {
+    expect(await gitCommitMetaReader(path.join(repo, '不存在'), sha)).toBeUndefined();
+    expect(await gitCommitMetaReader(repo, 'f'.repeat(40))).toBeUndefined();
   });
 });
