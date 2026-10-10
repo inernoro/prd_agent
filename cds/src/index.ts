@@ -22,6 +22,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, t
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { IsolatedShellExecutor } from './services/isolated-shell-executor.js';
+import { ContainerLogStreamHub } from './services/container-log-stream-hub.js';
 import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
 import { DeploymentRunService } from './services/deployment-run.js';
@@ -186,6 +187,8 @@ function diagnoseBootDisks(): string | null {
 const localShell = new IsolatedShellExecutor(new ShellExecutor());
 const startupStreams = new ObservationStreamExecutor();
 const eventStreams = new ObservationStreamExecutor(2);
+const userLogStreams = new ObservationStreamExecutor(2);
+const userLogHub = new ContainerLogStreamHub(userLogStreams);
 const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
   : localShell;
@@ -193,6 +196,7 @@ if (!isPreviewInstance()) {
   await Promise.all([
     localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。')),
     startupStreams.start().catch(() => console.warn('[observation] 启动日志执行器暂不可用；启动信号不报告就绪。')),
+    userLogStreams.start().catch(() => console.warn('[observation] 用户日志执行器暂不可用；保留明确失败和重试入口。')),
     eventStreams.start().catch(() => console.warn('[observation] 容器事件执行器暂不可用；保留未知状态。')),
   ]);
 }
@@ -2592,7 +2596,7 @@ const containerService = new ContainerService(shell, config, {
   // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
-}, activeServerEventLogStore, startupStreams);
+}, activeServerEventLogStore, startupStreams, userLogHub);
 
 // 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
 // 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
@@ -4754,6 +4758,8 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
+  await userLogHub.close().catch(() => console.warn('[shutdown] 用户日志清理未确认；继续关键状态保存。'));
+  await userLogStreams.close().catch(() => console.warn('[shutdown] 用户日志执行槽清理未确认；继续关键状态保存。'));
   await eventStreams.close().catch(() => console.warn('[shutdown] 事件执行槽清理未确认；继续关键状态保存。'));
   await startupStreams.close().catch(() => {
     console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。');

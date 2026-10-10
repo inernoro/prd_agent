@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import type { ContainerLogStreamHub, ContainerLogStreamEnd } from './container-log-stream-hub.js';
 import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
@@ -706,6 +707,7 @@ export class ContainerService {
     private readonly networkResolver?: ProjectNetworkResolver,
     private readonly serverEventLogStore?: ServerEventLogSink | null,
     private readonly startupStreams?: ObservationStreamExecutor,
+    private readonly logStreams?: ContainerLogStreamHub,
   ) {}
 
   /**
@@ -2736,34 +2738,22 @@ export class ContainerService {
    */
   streamLogs(
     containerName: string,
-    onData: (chunk: string) => void,
-    onClose: () => void,
+    onData: (chunk: string) => boolean | void,
+    onClose: (result?: ContainerLogStreamEnd) => void,
     tail = 200,
+    scope = '',
   ): AbortController {
     const ac = new AbortController();
-    // 预览实例守卫（Codex P2，2026-07-15）：本方法绕过 IShellExecutor 直接 spawn docker，
-    // 是预览实例里用户唯一可达的裸 spawn 路径（seed 的演示分支点「日志」就会走到）。
-    // 返回同一句中文拒绝而不是裸 spawn 失败。getLogs 走 shell.exec 已被
-    // PreviewInstanceShellExecutor 覆盖，deploy 链路在路由层已 403。
     if (isPreviewInstance()) {
       queueMicrotask(() => {
         if (ac.signal.aborted) return;
         onData(`${previewInstanceBlockedMessage('docker')}\n`);
-        onClose();
+        onClose({ reason: 'unavailable' });
       });
       return ac;
     }
-    const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const forward = (data: Buffer) => {
-      if (!ac.signal.aborted) onData(data.toString());
-    };
-    child.stdout.on('data', forward);
-    child.stderr.on('data', forward);
-    child.on('close', () => { if (!ac.signal.aborted) onClose(); });
-    child.on('error', () => onClose());
-    ac.signal.addEventListener('abort', () => { child.kill(); });
+    if (this.logStreams) return this.logStreams.subscribe(containerName, onData, onClose, tail, scope);
+    queueMicrotask(() => { if (!ac.signal.aborted) onClose({ reason: 'unavailable' }); });
     return ac;
   }
 

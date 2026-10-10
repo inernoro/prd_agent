@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { ContainerLogStreamHub } from '../src/services/container-log-stream-hub.js';
+import { serveContainerLogStream } from '../src/services/container-log-stream-response.js';
+import { ssePendingBudget } from '../src/services/bounded-sse-writer.js';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { ShellExecutor } from '../src/services/shell-executor.js';
@@ -14,7 +18,7 @@ import { ObservationStreamExecutor } from '../src/services/observation-stream-ex
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -38,6 +42,14 @@ async function main(): Promise<void> {
   const streamModule = compiled ? await import(new URL('../dist/services/observation-stream-executor.js', import.meta.url).href) as typeof import('../src/services/observation-stream-executor.js') : { ObservationStreamExecutor };
   const startupStreams = new streamModule.ObservationStreamExecutor(2);
   const eventStreams = new streamModule.ObservationStreamExecutor(2);
+  const userLogStreams = new streamModule.ObservationStreamExecutor(2);
+  const logHubModule = compiled ? await import(new URL('../dist/services/container-log-stream-hub.js', import.meta.url).href) as typeof import('../src/services/container-log-stream-hub.js') : { ContainerLogStreamHub };
+  const userLogHub = new logHubModule.ContainerLogStreamHub(userLogStreams);
+  const logResponseModule = compiled ? await import(new URL('../dist/services/container-log-stream-response.js', import.meta.url).href) as typeof import('../src/services/container-log-stream-response.js') : { serveContainerLogStream };
+  const logWriterModule = compiled ? await import(new URL('../dist/services/bounded-sse-writer.js', import.meta.url).href) as typeof import('../src/services/bounded-sse-writer.js') : { ssePendingBudget };
+  let logServer: http.Server | undefined;
+  const logRequests: http.ClientRequest[] = [];
+  const archivedLogBytes: number[] = [];
   const diagnosticsModule = compiled ? await import(new URL('../dist/services/container-diagnostics.js', import.meta.url).href) as typeof import('../src/services/container-diagnostics.js') : { collectContainerDiagnostics, DockerEventMonitor };
   const infraModule = compiled ? await import(new URL('../dist/services/infra-lifecycle-watcher.js', import.meta.url).href) as typeof import('../src/services/infra-lifecycle-watcher.js') : { InfraLifecycleWatcher };
   const managedActions: string[] = [];
@@ -47,7 +59,7 @@ async function main(): Promise<void> {
     if (event.containerName === name && event.attrs['cds.acceptance.owner'] === owner && managedActions.length < 20) managedActions.push(event.action);
   }, eventStreams);
   const infraEvents = new infraModule.InfraLifecycleWatcher({ streams: eventStreams, serverEventLogStore: eventStore });
-  const container = new ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams);
+  const container = new ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams, userLogHub);
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
@@ -76,9 +88,10 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'independent-process-prewarm';
-    await Promise.all([shell.start(), startupStreams.start(), eventStreams.start()]);
+    await Promise.all([shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();
     report.eventWarmStats = eventStreams.getStats();
+    report.userLogWarmStats = userLogStreams.getStats();
     const warmStats = shell.getStats();
     assert.ok(warmStats.factoryPid && warmStats.factoryPid !== process.pid);
     assert.equal(warmStats.actors.length, 2);
@@ -178,6 +191,45 @@ async function main(): Promise<void> {
 
 
 
+    report.stage = 'compiled-owned-container-log-http-streams';
+    logServer = http.createServer((req, res) => {
+      if (req.url !== '/owned-log-stream') { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'close' });
+      logResponseModule.serveContainerLogStream(req as Parameters<typeof serveContainerLogStream>[0], res as Parameters<typeof serveContainerLogStream>[1], {
+        containerService: container,
+        stateService: { appendContainerLogArchive: (_branch: string, entry: { logs: string }) => { archivedLogBytes.push(Buffer.byteLength(entry.logs)); }, save: () => {} } as unknown as Parameters<typeof serveContainerLogStream>[2]['stateService'],
+        branch: { id: owner, projectId: owner, branch: owner, worktreePath: temp, createdAt: new Date().toISOString(), status: 'running', services: {} },
+        service: { profileId: 'owned', containerName: id!, hostPort: 0, status: 'running' }, mask: true,
+      });
+    });
+    await new Promise<void>(resolve => logServer!.listen(0, '127.0.0.1', resolve));
+    const logPort = (logServer.address() as { port: number }).port;
+    const logReceived = Array.from({ length: 100 }, () => false);
+    await Promise.all(logReceived.map((_, index) => new Promise<void>((resolve, reject) => {
+      const request = http.get(`http://127.0.0.1:${logPort}/owned-log-stream`, response => {
+        try { assert.equal(response.statusCode, 200); assert.ok(response.headers['content-type']?.startsWith('text/event-stream')); }
+        catch (error) { response.destroy(); reject(error); return; }
+        response.on('error', () => {});
+        response.on('data', (chunk: Buffer) => { if (chunk.toString().includes('owned-observation')) logReceived[index] = true; });
+        resolve();
+      });
+      request.on('error', reject); logRequests.push(request);
+    })));
+    for (let wait = 0; wait < 500 && !logReceived.every(Boolean); wait++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(logReceived.every(Boolean)); assert.equal(userLogHub.getStats().subscribers, 100);
+    assert.equal(userLogStreams.getStats().admitted, 1); assert.equal(userLogHub.getStats().readers, 1);
+    assert.equal(await container.isRunning(id!), true); owned();
+    report.userLogReceipt = { receivedConnections: logReceived.filter(Boolean).length, sharedReaderCount: userLogHub.getStats().readers, healthReadable: true,
+      pendingBytes: logWriterModule.ssePendingBudget.bytes, streamStats: userLogStreams.getStats(), scope: 'owned loopback compiled helper; not public browser or 30-minute load acceptance' };
+    logRequests.splice(0).forEach(request => request.destroy());
+    await new Promise<void>(resolve => logServer!.close(() => resolve())); logServer = undefined;
+    await userLogHub.close();
+    assert.equal(userLogStreams.getStats().admitted, 0); assert.equal(userLogHub.getStats().subscribers, 0);
+    assert.equal(logWriterModule.ssePendingBudget.bytes, 0); assert.equal(archivedLogBytes.length, 100);
+    assert.ok(archivedLogBytes.every(bytes => bytes <= 256 * 1024 + 128));
+    report.userLogReceipt.drained = { ...userLogHub.getStats(), pendingBytes: logWriterModule.ssePendingBudget.bytes, archiveCount: archivedLogBytes.length, maximumArchiveBytes: Math.max(...archivedLogBytes) };
+    report.checks.push({ name: 'compiled-owned-shared-log-http-readers-and-health-capacity', passed: true });
+
     report.stage = 'bounded-read-concurrency';
     const requests = Array.from({ length: 8 }, () => container.isRunning(id!));
     assert.ok(shell.getStats().active <= 2 && shell.getStats().queued >= 6);
@@ -214,11 +266,13 @@ async function main(): Promise<void> {
       ...(error && typeof error === 'object' && 'code' in error ? { code: String(error.code).slice(0, 100) } : {}) };
     process.exitCode = 1;
   } finally {
-    try { await Promise.all([dockerEvents.stop(), infraEvents.stop()]); }
+    logRequests.splice(0).forEach(request => request.destroy());
+    if (logServer) { logServer.closeAllConnections(); await new Promise<void>(resolve => logServer!.close(() => resolve())); }
+    try { await Promise.all([dockerEvents.stop(), infraEvents.stop(), userLogHub.close()]); }
     catch { report.verdict = 'failed'; process.exitCode = 1; }
-    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await Promise.all([shell.close(), startupStreams.close(), eventStreams.close()]);
+      await Promise.all([shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close()]);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
         try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }

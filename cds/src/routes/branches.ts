@@ -1,3 +1,4 @@
+import { serveContainerLogStream } from '../services/container-log-stream-response.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -17546,48 +17547,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     initSSE(res);
 
-    const chunks: string[] = [];
-    const ac = containerService.streamLogs(
-      svc.containerName,
-      (chunk) => {
-        chunks.push(chunk);
-        sendSSE(res, 'log', { chunk });
-      },
-      () => {
-        if (chunks.length > 0) {
-          const logs = maskSecretsText(chunks.join(''), { mask: shouldMask(req) });
-          stateService.appendContainerLogArchive(id, {
-            projectId: entry.projectId,
-            profileId: svc.profileId,
-            containerName: svc.containerName,
-            hostPort: svc.hostPort,
-            status: svc.status,
-            source: 'container-logs-stream',
-            masked: shouldMask(req),
-            logs,
-          });
-          serverEventLogStore?.record({
-            category: 'container',
-            severity: 'info',
-            source: 'container-logs-stream',
-            action: 'container.logs.stream-closed',
-            message: `container log stream closed for ${svc.containerName}`,
-            projectId: entry.projectId,
-            branchId: id,
-            profileId: svc.profileId,
-            containerName: svc.containerName,
-            status: svc.status,
-            logs: normalizeLogText(logs, 200),
-            details: { masked: shouldMask(req), hostPort: svc.hostPort },
-          });
-          stateService.save();
-        }
-        try { res.end(); } catch { /* already closed */ }
-      },
-    );
-
-    // Client disconnect → stop docker logs -f
-    req.on('close', () => ac.abort());
+    serveContainerLogStream(req, res, {
+      containerService, stateService, branch: entry, service: svc, mask: shouldMask(req), serverEventLogStore,
+    });
   });
 
   // ── Container env ──
