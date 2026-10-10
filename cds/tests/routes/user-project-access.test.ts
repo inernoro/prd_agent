@@ -213,6 +213,8 @@ describe('human project grants through the production server', () => {
     expect(status.status).toBe(409);
     expect(status.body.update.reconciling).toBe(true);
     expect((await call('GET', '/api/projects', member)).status).toBe(409);
+    // The injected timeout ends with the stalled primary write; normal restoration keeps its production budget.
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', normalTimeout);
     finish();
     for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -228,6 +230,44 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', normalTimeout);
     flush.mockImplementation(async () => { await new Promise(resolve => setTimeout(resolve, 40)); await realFlush(); });
     expect((await grant(['project-b'])).status).toBe(200);
+  });
+  it('keeps access blocked when journal cleanup times out and releases only after durable retry', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const normalTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
+    const realFlush = state.flush.bind(state);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
+    let finishPrimary!: () => void;
+    let finishCleanup!: () => void;
+    const primary = new Promise<void>(resolve => { finishPrimary = resolve; });
+    const cleanup = new Promise<void>(resolve => { finishCleanup = resolve; });
+    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => primary)
+      .mockImplementationOnce(() => realFlush())
+      .mockImplementationOnce(() => cleanup.then(() => realFlush()));
+    try {
+      expect((await grant(['project-b'])).status).toBe(500);
+      expect((await call('GET', '/api/projects', member)).status).toBe(409);
+      finishPrimary();
+      await vi.waitFor(() => expect(flush).toHaveBeenCalledTimes(3));
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
+      expect(state.getHumanAccessRecoveries()[principalId]).toBeDefined();
+      expect((await call('GET', '/api/projects', member)).status).toBe(409);
+      // Both controlled stalls have now expired. Real disk writes use the normal budget.
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', normalTimeout);
+      finishCleanup();
+      await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined());
+      expect(flush).toHaveBeenCalledTimes(5);
+      expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
+      fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'cleanup-retry-restored.json'));
+      const restored = new StateService(path.join(dir, 'cleanup-retry-restored.json'));
+      restored.load();
+      expect(restored.getHumanAccessRecoveries()).toEqual({});
+      expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    } finally {
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', normalTimeout);
+      finishPrimary(); finishCleanup();
+    }
   });
   it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
     await grant(['project-a']);

@@ -1,0 +1,117 @@
+import { observePendingDeployDispatch } from './pending-deploy-dispatch.js';
+import type { StateService } from './state.js';
+import type { PendingWebhookDeploy } from './branch-operation-coordinator.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
+import type { CdsConfig } from '../types.js';
+
+export interface PendingDeployReplayDeps {
+  stateService: Pick<StateService, 'getBranch'>;
+  config: Pick<CdsConfig, 'masterPort'>;
+  activeServerEventLogStore?: ServerEventLogSink | null;
+  fetch?: typeof fetch;
+  observation?: { headersTimeoutMs?: number; observationTimeoutMs?: number };
+}
+
+export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: PendingDeployReplayDeps): void {
+  const { stateService, config } = deps;
+  const serverEventLogStore = deps.activeServerEventLogStore;
+  if (!pending) return;
+  const branch = stateService.getBranch(pending.branchId);
+  if (!branch) {
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: 'warn',
+      source: 'branch-operation-coordinator',
+      action: 'branch.operation.pending-drop',
+      message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
+      branchId: pending.branchId,
+      requestId: pending.request.requestId || null,
+      operationId: pending.operationId,
+      operationKind: pending.request.kind,
+      operationTrigger: pending.request.trigger,
+      operationActor: pending.request.actor || null,
+      operationSource: pending.request.source || null,
+      commitSha: pending.request.commitSha || null,
+      details: {
+        operationId: pending.operationId,
+        commitSha: pending.request.commitSha || null,
+        trigger: pending.request.trigger,
+        actor: pending.request.actor || null,
+        source: pending.request.source || null,
+        kind: pending.request.kind,
+        mergedCount: pending.mergedCount,
+      },
+    });
+    return;
+  }
+  const profilePath = pending.request.kind === 'deploy-profile' && pending.request.profileId
+    ? `/${encodeURIComponent(pending.request.profileId)}` : '';
+  const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy${profilePath}`;
+  void observePendingDeployDispatch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CDS-Internal': '1',
+      // 透传原始 trigger：合并进 pending 的 manual deploy 重发时仍以 manual
+      // 身份进入（保持优先级 80 语义与 run 账本归因），webhook 照旧。
+      'X-CDS-Trigger': pending.request.trigger,
+      'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
+      ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
+      'X-CDS-Source-Branch-Id': pending.branchId,
+    },
+    body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
+  }, { fetch: deps.fetch, ...deps.observation }).then((result) => {
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: result.outcome === 'failed' ? 'error' : result.outcome === 'unknown' ? 'warn' : 'info',
+      source: 'branch-operation-coordinator',
+      action: `branch.operation.pending-dispatch.${result.outcome}`,
+      message: `pending deploy observation: ${result.reason}`,
+      projectId: branch.projectId,
+      branchId: pending.branchId,
+      requestId: pending.request.requestId || null,
+      operationId: pending.operationId,
+      operationKind: pending.request.kind,
+      operationTrigger: pending.request.trigger,
+      operationActor: pending.request.actor || null,
+      operationSource: pending.request.source || null,
+      commitSha: pending.request.commitSha || null,
+      details: {
+        ...result,
+        operationId: pending.operationId,
+        commitSha: pending.request.commitSha || null,
+        trigger: pending.request.trigger,
+        actor: pending.request.actor || null,
+        source: pending.request.source || null,
+        kind: pending.request.kind,
+        mergedCount: pending.mergedCount,
+      },
+    });
+  });
+  serverEventLogStore?.record({
+    category: 'system',
+    severity: 'info',
+    source: 'branch-operation-coordinator',
+    action: 'branch.operation.pending-dispatch.started',
+    message: `pending webhook deploy dispatched: ${pending.branchId}`,
+    projectId: branch.projectId,
+    branchId: pending.branchId,
+    requestId: pending.request.requestId || null,
+    operationId: pending.operationId,
+    operationKind: pending.request.kind,
+    operationTrigger: pending.request.trigger,
+    operationActor: pending.request.actor || null,
+    operationSource: pending.request.source || null,
+    commitSha: pending.request.commitSha || null,
+    details: {
+      operationId: pending.operationId,
+      commitSha: pending.request.commitSha || null,
+      trigger: pending.request.trigger,
+      actor: pending.request.actor || null,
+      source: pending.request.source || null,
+      kind: pending.request.kind,
+      mergedCount: pending.mergedCount,
+    },
+  });
+}
+

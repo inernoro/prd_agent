@@ -1,3 +1,4 @@
+import { replayPendingDeploy } from './services/pending-deploy-replay.js';
 import { CandidateReconciler } from './services/candidate-reconciler.js';
 import { recordContainerLifecycleIntent } from './services/container-diagnostics.js';
 import { OwnedCandidateNetworkLifecycle } from './services/owned-candidate-network.js';
@@ -2201,107 +2202,7 @@ function beginBackgroundBranchOperation(input: {
 }
 
 function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | null): void {
-  if (!pending) return;
-  const branch = stateService.getBranch(pending.branchId);
-  if (!branch) {
-    activeServerEventLogStore?.record({
-      category: 'system',
-      severity: 'warn',
-      source: 'branch-operation-coordinator',
-      action: 'branch.operation.pending-drop',
-      message: `pending webhook deploy dropped because branch is gone: ${pending.branchId}`,
-      branchId: pending.branchId,
-      requestId: pending.request.requestId || null,
-      operationId: pending.operationId,
-      operationKind: pending.request.kind,
-      operationTrigger: pending.request.trigger,
-      operationActor: pending.request.actor || null,
-      operationSource: pending.request.source || null,
-      commitSha: pending.request.commitSha || null,
-      details: {
-        operationId: pending.operationId,
-        commitSha: pending.request.commitSha || null,
-        trigger: pending.request.trigger,
-        actor: pending.request.actor || null,
-        source: pending.request.source || null,
-        kind: pending.request.kind,
-      },
-    });
-    return;
-  }
-  void fetch(`http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CDS-Internal': '1',
-      // 透传原始 trigger：manual deploy 合并进 pending 后重发仍以 manual 身份
-      // 进入（优先级/账本归因不漂移），webhook 照旧（同 branches.ts 派发器）。
-      'X-CDS-Trigger': pending.request.trigger,
-      'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
-      ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
-      'X-CDS-Source-Branch-Id': pending.branchId,
-    },
-    body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
-  }).then(async (response) => {
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
-    }
-    const reader = response.body?.getReader();
-    if (!reader) return;
-    for (;;) {
-      const { done } = await reader.read();
-      if (done) break;
-    }
-  }).catch((err) => {
-    activeServerEventLogStore?.record({
-      category: 'system',
-      severity: 'error',
-      source: 'branch-operation-coordinator',
-      action: 'branch.operation.pending-dispatch.failed',
-      message: `pending webhook deploy dispatch failed: ${(err as Error).message}`,
-      projectId: branch.projectId,
-      branchId: pending.branchId,
-      requestId: pending.request.requestId || null,
-      operationId: pending.operationId,
-      operationKind: pending.request.kind,
-      operationTrigger: pending.request.trigger,
-      operationActor: pending.request.actor || null,
-      operationSource: pending.request.source || null,
-      commitSha: pending.request.commitSha || null,
-      details: {
-        operationId: pending.operationId,
-        commitSha: pending.request.commitSha || null,
-        trigger: pending.request.trigger,
-        actor: pending.request.actor || null,
-        source: pending.request.source || null,
-        kind: pending.request.kind,
-      },
-    });
-  });
-  activeServerEventLogStore?.record({
-    category: 'system',
-    severity: 'info',
-    source: 'branch-operation-coordinator',
-    action: 'branch.operation.pending-dispatch.started',
-    message: `pending webhook deploy dispatched: ${pending.branchId}`,
-    projectId: branch.projectId,
-    branchId: pending.branchId,
-    requestId: pending.request.requestId || null,
-    operationId: pending.operationId,
-    operationKind: pending.request.kind,
-    operationTrigger: pending.request.trigger,
-    operationActor: pending.request.actor || null,
-    operationSource: pending.request.source || null,
-    commitSha: pending.request.commitSha || null,
-    details: {
-      operationId: pending.operationId,
-      commitSha: pending.request.commitSha || null,
-      trigger: pending.request.trigger,
-      actor: pending.request.actor || null,
-      source: pending.request.source || null,
-      kind: pending.request.kind,
-    },
-  });
+  replayPendingDeploy(pending, { stateService, config, activeServerEventLogStore });
 }
 
 function completeBackgroundBranchOperation(
