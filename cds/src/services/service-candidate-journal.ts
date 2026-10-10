@@ -74,7 +74,7 @@ export class CandidateJournal {
     const record: DeploymentCandidateRecord = { operationId: run.operationId, targetSha: target, configHash: run.configHash,
       networkName, phase: 'prepared', updatedAt: new Date().toISOString(), serving: snapshotCandidateServices(serving.services), services: snapshotCandidateServices(candidate.services) };
     if (stopBeforeStart?.length) {
-      if (new Set(stopBeforeStart).size !== stopBeforeStart.length || stopBeforeStart.some(id => !serving.services[id]?.containerId)) {
+      if (new Set(stopBeforeStart).size !== stopBeforeStart.length || stopBeforeStart.some(id => !/^[a-f0-9]{64}$/.test(serving.services[id]?.containerId || ''))) {
         throw new Error('candidate_stop_intent: captured serving identity required');
       }
       record.stopBeforeStart = [...stopBeforeStart].sort();

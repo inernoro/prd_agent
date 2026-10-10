@@ -13,16 +13,33 @@ interface ContainerFacts {
   Id: string; Name: string; Image: string; State: { Running: boolean };
   Config: { Labels: Record<string, string> };
   HostConfig: { PortBindings: Record<string, { HostIp?: string; HostPort: string }[] | null> };
-  Mounts?: { Type: string; Source?: string; Destination: string; RW: boolean }[];
+  Mounts: { Type: string; Source: string; Destination: string; RW: boolean; Mode: string; Propagation: string }[];
 }
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 const absent = (result: ExecResult) => result.exitCode !== 0 && /no such (?:object|container)/i.test(result.stdout + result.stderr);
 const labelKeys = ['cds.managed', 'cds.type', 'cds.instance', 'cds.project.id', 'cds.branch.id', 'cds.profile.id',
-  'cds.deployment.operation', 'cds.deployment.kind'];
+  'cds.deployment.operation', 'cds.deployment.kind', 'cds.protected'];
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, val]) => [key, stable(val)]));
+  return value;
+}
 function fingerprint(info: ContainerFacts): string {
   return JSON.stringify([info.Id, info.Name, info.Image, labelKeys.map(key => [key, info.Config.Labels[key] ?? null]),
     Object.entries(info.HostConfig.PortBindings).sort(([a], [b]) => a.localeCompare(b)),
-    (info.Mounts || []).map(mount => [mount.Type, mount.Source, mount.Destination, mount.RW]).sort()]);
+    // Preserve every returned mount field (including mode, propagation and driver options).
+    stable([...info.Mounts].sort((a, b) => a.Destination.localeCompare(b.Destination)))]);
+}
+function validMount(mount: ContainerFacts['Mounts'][number]): boolean {
+  if (!mount || !['bind', 'volume', 'tmpfs'].includes(mount.Type) || typeof mount.Source !== 'string' ||
+    (mount.Type !== 'tmpfs' && !mount.Source) || typeof mount.Destination !== 'string' || !mount.Destination.startsWith('/') ||
+    typeof mount.RW !== 'boolean' || typeof mount.Mode !== 'string' || typeof mount.Propagation !== 'string' ||
+    !['', 'private', 'rprivate', 'shared', 'rshared', 'slave', 'rslave'].includes(mount.Propagation)) return false;
+  const modes = mount.Mode.split(',').filter(Boolean);
+  if (modes.some(mode => !['ro', 'rw', 'z', 'Z', 'private', 'rprivate', 'shared', 'rshared', 'slave', 'rslave',
+    'nocopy', 'cached', 'delegated', 'consistent'].includes(mode))) return false;
+  if ((modes.includes('ro') && mount.RW) || (modes.includes('rw') && !mount.RW) || (modes.includes('ro') && modes.includes('rw'))) return false;
+  return true;
 }
 
 /** Immutable-ID stop/restore/retire boundary. Never recreates a stopped serving configuration. */
@@ -42,11 +59,11 @@ export class OwnedContainerLifecycle {
     if (owner.candidateOperationId) {
       expected['cds.deployment.operation'] = owner.candidateOperationId; expected['cds.deployment.kind'] = 'candidate';
     }
-    if (!Object.entries(expected).every(([key, value]) => info.Config.Labels[key] === value)) throw new Error('container_owner: actual ownership unconfirmed');
+    if (info.Config.Labels['cds.protected'] === 'true' || !Object.entries(expected).every(([key, value]) => info.Config.Labels[key] === value)) throw new Error('container_owner: actual ownership unconfirmed or protected');
     if (info.Name !== '/' + service.containerName || !Object.values(info.HostConfig.PortBindings).some(bindings =>
       bindings?.some(binding => binding.HostPort === String(service.hostPort)))) throw new Error('container_identity: actual name/port mismatch');
     return Object.freeze({ id: info.Id, name: service.containerName, image: info.Image, wasRunning: info.State.Running,
-      writableMounts: Object.freeze((info.Mounts || []).filter(mount => mount.RW).map(mount => mount.Destination)),
+      writableMounts: Object.freeze(info.Mounts.filter(mount => mount.RW).map(mount => mount.Destination)),
       fingerprint: fingerprint(info) });
   }
 
@@ -103,8 +120,7 @@ export class OwnedContainerLifecycle {
       typeof info.Config.Labels !== 'object' || !info.HostConfig?.PortBindings || typeof info.HostConfig.PortBindings !== 'object' ||
       !Object.values(info.HostConfig.PortBindings).every(bindings => bindings === null || Array.isArray(bindings) &&
         bindings.every(binding => binding && typeof binding.HostPort === 'string')) ||
-      (info.Mounts !== undefined && (!Array.isArray(info.Mounts) || !info.Mounts.every(mount => mount &&
-        typeof mount.Type === 'string' && typeof mount.Destination === 'string' && typeof mount.RW === 'boolean')))) {
+      !Array.isArray(info.Mounts) || !info.Mounts.every(validMount) || new Set(info.Mounts.map(mount => mount.Destination)).size !== info.Mounts.length) {
       throw new Error('container_inspect: complete actual container facts required');
     }
     return info;

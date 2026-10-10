@@ -8,7 +8,7 @@ const info = () => ({ Id: id, Name: '/old', Image: image, State: { Running: true
   Config: { Labels: { 'cds.managed': 'true', 'cds.type': 'app', 'cds.instance': 'instance',
     'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.profile.id': 'api' } },
   HostConfig: { PortBindings: { '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '10001' }] } },
-  Mounts: [{ Type: 'volume', Source: '/var/lib/docker/volumes/app', Destination: '/data', RW: true }] });
+  Mounts: [{ Type: 'volume', Source: '/var/lib/docker/volumes/app', Destination: '/data', RW: true, Mode: '', Propagation: '' }] });
 const ok = (value: unknown) => ({ exitCode: 0, stdout: JSON.stringify(value), stderr: '' });
 function fixture() {
   let current = info(); let exists = true; const mutations: string[] = [];
@@ -25,6 +25,25 @@ function fixture() {
 }
 const owner = { projectId: 'project', branchId: 'branch' };
 describe('P3 immutable owned container lifecycle', () => {
+  it.each(['missing', 'unknown-type', 'mode-conflict', 'propagation-drift'])('fails closed on unknown or changed mounts: %s', async variant => {
+    const f = fixture();
+    if (variant === 'propagation-drift') {
+      const captured = await f.lifecycle.capture(owner, service, () => {});
+      f.current.Mounts[0].Propagation = 'shared';
+      await expect(f.lifecycle.remove(captured, () => {})).rejects.toThrow('container_drift');
+    } else {
+      if (variant === 'missing') delete (f.current as any).Mounts;
+      if (variant === 'unknown-type') f.current.Mounts[0].Type = 'future-type';
+      if (variant === 'mode-conflict') { f.current.Mounts[0].RW = false; f.current.Mounts[0].Mode = 'rw'; }
+      await expect(f.lifecycle.capture(owner, service, () => {})).rejects.toThrow('container_inspect');
+    }
+    expect(f.mutations).toEqual([]);
+  });
+  it('refuses a protected app even if the normal ownership labels match', async () => {
+    const f = fixture(); (f.current.Config.Labels as Record<string, string>)['cds.protected'] = 'true';
+    await expect(f.lifecycle.capture(owner, service, () => {})).rejects.toThrow('container_owner');
+    expect(f.mutations).toEqual([]);
+  });
   it('captures actual immutable ID and stops/restores the same configuration before retiring it', async () => {
     const f = fixture(); const captured = await f.lifecycle.capture(owner, service, () => {});
     expect(captured.id).toBe(id); expect(captured.image).toBe(image); expect(captured.writableMounts).toEqual(['/data']);
