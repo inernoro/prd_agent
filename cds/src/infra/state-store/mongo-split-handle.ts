@@ -210,8 +210,8 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     col: Collection<T>,
   ): ISplitMongoCollection<T> {
     return {
-      async findOne(filter) {
-        const doc = await col.findOne(filter as never);
+      async findOne(filter, options) {
+        const doc = await col.findOne(filter as never, options);
         return (doc as T) ?? null;
       },
       find(filter) {
@@ -228,8 +228,8 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
       async deleteOne(filter) {
         await col.deleteOne(filter as never);
       },
-      async bulkWrite(operations) {
-        await col.bulkWrite(operations as never);
+      async bulkWrite(operations, options) {
+        await col.bulkWrite(operations as never, options);
       },
       async countDocuments(filter) {
         return await col.countDocuments((filter as never) || {});

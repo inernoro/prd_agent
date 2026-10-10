@@ -15,7 +15,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const connectMock = vi.fn();
 const closeMock = vi.fn();
-const collectionMock = vi.fn(() => ({ name: 'stub-collection' }));
+const findOneMock = vi.fn(async () => null);
+const bulkWriteMock = vi.fn(async () => undefined);
+const collectionMock = vi.fn(() => ({ name: 'stub-collection', findOne: findOneMock, bulkWrite: bulkWriteMock }));
 const dbMock = vi.fn(() => ({ collection: collectionMock }));
 const constructed: unknown[] = [];
 
@@ -37,10 +39,30 @@ beforeEach(() => {
   connectMock.mockReset();
   closeMock.mockReset();
   closeMock.mockResolvedValue(undefined);
+  findOneMock.mockClear();
+  bulkWriteMock.mockClear();
   constructed.length = 0;
 });
 
 describe('RealMongoSplitHandle.connect 失败复位', () => {
+  it('关键确认读的主节点、多数读和期限必须交给真实驱动', async () => {
+    connectMock.mockResolvedValueOnce(undefined);
+    const h = new RealMongoSplitHandle({ uri: 'mongodb://127.0.0.1:27018' });
+    await h.connect();
+    const options = { readConcern: { level: 'majority' as const }, readPreference: 'primary' as const, maxTimeMS: 5000 };
+    await h.deploymentRunsCollection().findOne({ _id: 'original-run' }, options);
+    expect(findOneMock).toHaveBeenCalledWith({ _id: 'original-run' }, options);
+  });
+
+  it('普通批量写入也把可选字段省略策略交给真实驱动', async () => {
+    connectMock.mockResolvedValueOnce(undefined);
+    const h = new RealMongoSplitHandle({ uri: 'mongodb://127.0.0.1:27018' });
+    await h.connect();
+    const operations = [{ replaceOne: { filter: { _id: 'original-run' }, replacement: { profileId: undefined } } }];
+    await h.deploymentRunsCollection().bulkWrite(operations, { ignoreUndefined: true });
+    expect(bulkWriteMock).toHaveBeenCalledWith(operations, { ignoreUndefined: true });
+  });
+
   it('连接失败会关闭半开连接并抛出，实例保持未连接', async () => {
     connectMock.mockRejectedValueOnce(new Error('ECONNREFUSED'));
     const h = new RealMongoSplitHandle({ uri: 'mongodb://127.0.0.1:27018' });

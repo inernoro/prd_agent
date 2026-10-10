@@ -49,12 +49,17 @@ async function worker(uri: string, database: string, mode: string, scope: string
     await state.flush();
     assert.equal(runs.restoreQueued(coordinator).length, 0);
     const global = handle.globalCollection();
+    // 真实 handle 每次返回新的集合适配对象，注入必须接在存储实际取得的对象上。
+    handle.globalCollection = () => global;
+    let markGlobalFailure!: () => void;
+    const globalFailureReached = new Promise<void>((resolve) => { markGlobalFailure = resolve; });
     const original = global.replaceOne.bind(global); let inject = true;
     global.replaceOne = async (...args) => {
-      if (inject) { inject = false; throw new Error('synthetic unrelated global failure'); }
+      if (inject) { inject = false; markGlobalFailure(); throw new Error('synthetic unrelated global failure'); }
       return original(...args);
     };
     const runCollection = handle.deploymentRunsCollection();
+    handle.deploymentRunsCollection = () => runCollection;
     const originalWrite = runCollection.replaceOne.bind(runCollection), originalRead = runCollection.findOne.bind(runCollection);
     let loseAcknowledgement = true, receiptReads = 0;
     runCollection.replaceOne = async (...args) => {
@@ -75,6 +80,7 @@ async function worker(uri: string, database: string, mode: string, scope: string
     input.configHash = 'drill-config'; input.agentPrebuiltGated = true;
     const run = await runs.begin({ projectId: 'drill', branchId: 'drill-b', trigger: 'webhook', profileId, initialStatus: 'queued',
       operationId: decision.operationId, operationGeneration: decision.generation, commitSha: request.commitSha || undefined, configHash: 'drill-config', executionInput: { request, input } });
+    await globalFailureReached;
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(await store.isHealthy(), false);
     assert.equal(receiptReads, 1);
@@ -103,6 +109,8 @@ async function worker(uri: string, database: string, mode: string, scope: string
     runs.reconcileOrphanedByRestart(new Date('2099-01-01T00:00:00Z')); await runs.flush();
     assert.equal(runs.get(runId)?.status, 'failed');
     assert.equal(state.getDeploymentIntents().length, 0);
+    const persisted = await handle.deploymentRunsCollection().findOne({ _id: runId });
+    assert.equal(persisted?.doc.profileId, profileId);
     process.send?.({ phase: 'restarted', scope, restored: 0, runCount: runs.list().length, status: 'failed', privateInputCleared: true });
   } else throw new Error('Unknown isolated worker mode');
   setInterval(() => {}, 1000);
