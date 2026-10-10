@@ -63,7 +63,16 @@ describe('首页点发送后立刻进画板', () => {
     expect(submitBody).toContain('measureDataUrl(selectedImage.previewUrl)');
     expect(submitBody).toMatch(/imageSize/);
     expect(TAB).toContain('initialImageSizeRef');
-    expect(TAB).toMatch(/data\.imageSize/);
+    expect(TAB).toMatch(/handoff\.imageSize/);
+  });
+
+  it('【关键】data URL 参考图必须走交接包独立字段，不能再借消息标记传递', () => {
+    // buildInlineImageToken 会拒绝 data:/blob:；把首页预览图交给它会得到空字符串，
+    // 页面仍显示缩略图，但画板只收到文字，最终静默变成文生图。
+    expect(submitBody).toContain('createVisualAgentHandoffPayload({');
+    expect(submitBody).toMatch(/inlineImage:\s*selectedImage/);
+    expect(TAB).toContain('parseVisualAgentHandoff(stored)');
+    expect(MOBILE).toContain('parseVisualAgentHandoff(stored)');
   });
 
   it('【关键】首页带入的图必须直接递给发送，不靠 setState 刷新', () => {
@@ -185,7 +194,7 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
   });
 
   it('【关键】手机端也认交接包里的模型，不再退回第一个可用池', () => {
-    expect(MOBILE).toMatch(/data\.modelId/);
+    expect(MOBILE).toMatch(/handoff\.modelId/);
     expect(MOBILE).toMatch(/setPickedPoolId\(handedModelId\)/);
     // **读了还得读对**。上一版守卫到上一行为止就收工了，而那两行当时都成立：
     // 交接包确实读了、setPickedPoolId 确实调了——存进去的却是带前缀的选项 id
@@ -198,7 +207,7 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     // 只断言「调用了某个转换函数」是不够的——那句话在口径反过来之后依然成立，
     // 上一版就是这么漏过去的。真正的行为判据在 visualAgentModelOptions.test.ts：
     // 归一后必须真的能被 selectVisualModel 选中。
-    expect(MOBILE).toMatch(/visualModelOptionIdOf\(poolIdFromVisualModelOptionId\(raw\)\)/);
+    expect(MOBILE).toMatch(/normalizeVisualModelOptionId\(handoff\.modelId\)/);
   });
 
   it('【关键】手机端参考图落盘失败时不替他跑一次纯文字生成', () => {
@@ -216,7 +225,7 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     expect(failBranch).toMatch(/setInput\(pending\.text\)/);
   });
 
-  it('【关键】桌面端同理：参考图一张都没带上去就不发这次生成', () => {
+  it('【关键】桌面端同理：参考图少带任意一张都不发这次生成', () => {
     // 上一条修的是手机端那个消费方，桌面端这条是它的兄弟，当时没一起改——
     // 「修了一个消费方、漏了兄弟」这个形状本轮已经重复出现好几次了（Codex PR #1476 P1）。
     //
@@ -229,9 +238,34 @@ describe('交接包有两个消费方，改一个就得改另一个', () => {
     expect(refsAt, '应有 imageRefs 构建').toBeGreaterThan(0);
     const between = TAB.slice(refsAt, runAt);
     // 闸必须在「构建完 refs」和「建 run」之间，且是提前 return，不是只提示一句。
-    expect(between, '参考图掉光了就不许建 run')
-      .toMatch(/unifiedImageRefs\.length > 0 && imageRefsForBackend\.length === 0/);
+    // 不能只防 1→0；2→1 同样改变用户语义。
+    expect(between, '参考图数量不一致就不许建 run')
+      .toMatch(/unifiedImageRefs\.length !== imageRefsForBackend\.length/);
     expect(between, '必须提前 return，不能只弹一句然后照跑').toMatch(/return;/);
+    expect(TAB.slice(runAt, runAt + 900)).toMatch(/expectedImageRefCount:\s*unifiedImageRefs\.length/);
+  });
+
+  it('【关键】桌面历史重试找不回原参考图时不能改跑文生图', () => {
+    const at = TAB.indexOf('retryRef.current =');
+    expect(at, '应有历史消息重试处理').toBeGreaterThan(0);
+    const block = TAB.slice(at, at + 1300);
+    expect(block).toMatch(/foundItems\.length === shas\.length/);
+    expect(block).toContain('参考图已失效');
+    const missingBranch = block.slice(block.indexOf('} else {'));
+    expect(missingBranch).not.toMatch(/sendText\(prompt\)/);
+  });
+
+  it('【关键】手机失败卡重试必须恢复原参考图和原尺寸', () => {
+    expect(MOBILE).toMatch(/ref:\s*ref \?\? undefined/);
+    expect(MOBILE).toMatch(/handleGenerate\(c\.prompt, \{ ref: c\.ref \?\? null, sizeOverride: c\.size \}\)/);
+    expect(MOBILE).toMatch(/expectedImageRefCount:\s*ref \? 1 : 0/);
+  });
+
+  it('所有图生图入口都声明期望参考图数量', () => {
+    expect(TAB.match(/expectedImageRefCount:/g)?.length ?? 0).toBe(3);
+    expect(MOBILE.match(/expectedImageRefCount:/g)?.length ?? 0).toBe(1);
+    const layered = strip(readFileSync(resolve(ROOT, 'src/lib/layeredPsd.ts'), 'utf8'));
+    expect(layered).toMatch(/expectedImageRefCount:\s*1/);
   });
 
   it('【关键】手机端把内联图先落盘再生成，不静默丢图跑纯文字', () => {

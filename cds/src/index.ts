@@ -70,6 +70,7 @@ import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
+import { isPublicPreviewDiscoveryEnabled } from './services/public-exposure-policy.js';
 import crypto from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
@@ -5121,7 +5122,9 @@ function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.
     return;
   }
 
-  const live = liveBranchesForGonePage(host, slug);
+  const live = isPublicPreviewDiscoveryEnabled()
+    ? liveBranchesForGonePage(host, slug)
+    : [];
   const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
   res.writeHead(404, noCache);
   res.end(html);

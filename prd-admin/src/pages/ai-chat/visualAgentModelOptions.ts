@@ -54,6 +54,15 @@ export function poolIdFromVisualModelOptionId(optionId: string): string {
     : id;
 }
 
+/**
+ * 任意来源的模型选择值统一归一为选择器使用的 option id。
+ * 首页交接、用户偏好、桌面端与手机端都必须走这里，避免各自猜测是否带前缀。
+ */
+export function normalizeVisualModelOptionId(rawId: string | null | undefined): string {
+  const poolId = poolIdFromVisualModelOptionId(String(rawId ?? ''));
+  return poolId ? visualModelOptionIdOf(poolId) : '';
+}
+
 export type VisualResultModelMeta = {
   logicalModelPublicId?: string;
   modelPool?: string;

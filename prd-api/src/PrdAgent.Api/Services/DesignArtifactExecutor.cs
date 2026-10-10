@@ -136,6 +136,14 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         return Model;
     }
 
+    internal string? ForDirectGatewayClient()
+    {
+        // Codex 的本地配置要求一个非空 model 字段，但短期授权到达 LLMGW 后会以冻结策略
+        // 覆盖请求：模型池优先走 ModelPoolId，固定线路优先走 pin。这里的值只负责让客户端
+        // 启动，不得用旧 MAP 代理的「模型池不支持」限制拒绝正式直连路径。
+        return Model ?? ModelPoolId ?? Policy?.PinnedModelId;
+    }
+
     internal void ApplyToResponsesRequest(JsonObject body)
     {
         if (ModelPoolId == null && Model == null && Policy?.PinnedModelId == null)

@@ -38,7 +38,8 @@ public sealed record GatewayKeyAuthorization(
     /// 清单照列，随后那次 POST 被拒——清单说能调、运行时说不能（第 72 轮 review）。
     /// 把授权集合带出去，让清单端点自己判；鉴权那一档的豁免不动（预检本来就该放行）。
     /// </summary>
-    IReadOnlyList<string>? AuthorizedAppCallerCodes = null);
+    IReadOnlyList<string>? AuthorizedAppCallerCodes = null,
+    GatewayRuntimeGrantRecord? RuntimeGrant = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -51,7 +52,58 @@ public interface IGatewayScopedKeyAuthorizer
         string requiredScope,
         IPAddress? remoteIp,
         CancellationToken ct,
-        bool allowSingleAppCallerInference = false);
+        bool allowSingleAppCallerInference = false,
+        string? requestPath = null);
+}
+
+public sealed record GatewayRuntimeGrantCallAdmission(
+    bool Allowed,
+    int StatusCode,
+    string ErrorCode,
+    string Detail);
+
+public interface IGatewayRuntimeGrantCallCounter
+{
+    Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+        GatewayRuntimeGrantRecord grant,
+        CancellationToken ct);
+}
+
+public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) : IGatewayRuntimeGrantCallCounter
+{
+    public async Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
+        GatewayRuntimeGrantRecord grant,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var grants = data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.Id, grant.Id),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, grant.KeyHash),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, grant.TenantId),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.RunId, grant.RunId),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, grant.AppCallerCode),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
+            new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
+                new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))));
+        var reserved = await grants.FindOneAndUpdateAsync(
+            filter,
+            Builders<GatewayRuntimeGrantRecord>.Update
+                .Inc(x => x.CallCount, 1)
+                .Set(x => x.LastUsedAt, now),
+            new FindOneAndUpdateOptions<GatewayRuntimeGrantRecord>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            ct);
+        if (reserved is not null)
+            return new(true, 200, string.Empty, "runtime grant call reserved");
+
+        var known = await grants.Find(x => x.Id == grant.Id && x.KeyHash == grant.KeyHash).FirstOrDefaultAsync(ct);
+        return known is not null && known.ExpiresAt > now && known.CallCount >= known.MaxCalls
+            ? new(false, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded")
+            : new(false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+    }
 }
 
 public static class GatewayLegacyProbeScopes
@@ -126,7 +178,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string requiredScope,
         IPAddress? remoteIp,
         CancellationToken ct,
-        bool allowSingleAppCallerInference = false)
+        bool allowSingleAppCallerInference = false,
+        string? requestPath = null)
     {
         if (string.IsNullOrWhiteSpace(providedKey))
             return new(false, false, 401, "GATEWAY_KEY_REQUIRED", "missing gateway key");
@@ -142,7 +195,14 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             ? null
             : await keys.Find(x => x.TenantId == locator.TenantId && x.Id == locator.ServiceKeyId && x.KeyHash == hash).FirstOrDefaultAsync(ct);
         if (record == null || string.IsNullOrWhiteSpace(record.TenantId))
-            return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+            return await AuthorizeRuntimeGrantAsync(
+                hash,
+                sourceSystem,
+                appCallerCode,
+                ingressProtocol,
+                requiredScope,
+                requestPath,
+                ct);
         var effectiveAppCallerCode = allowSingleAppCallerInference
             ? ResolveSingleAppCallerCode(record) ?? appCallerCode
             : appCallerCode;
@@ -345,6 +405,77 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 .Select(x => (x ?? string.Empty).Trim())
                 .Where(x => x.Length > 0)
                 .ToList());
+    }
+
+    private async Task<GatewayKeyAuthorization> AuthorizeRuntimeGrantAsync(
+        string keyHash,
+        string sourceSystem,
+        string appCallerCode,
+        string ingressProtocol,
+        string requiredScope,
+        string? requestPath,
+        CancellationToken ct)
+    {
+        var grants = _data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        var now = DateTime.UtcNow;
+        var tenantActive = await _data.Database.GetCollection<BsonDocument>("llmgw_tenants")
+            .CountDocumentsAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", _internalTenantId),
+                    Builders<BsonDocument>.Filter.Eq("Status", "active")),
+                cancellationToken: ct) == 1;
+        if (!tenantActive)
+            return new(
+                false,
+                true,
+                403,
+                "GATEWAY_RUNTIME_GRANT_TENANT_INACTIVE",
+                "runtime grant tenant is not active");
+        var allowedScope = requiredScope is "invoke" or "stream:invoke";
+        var allowedPath = string.Equals(requestPath, "/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
+        var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, keyHash),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
+            new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
+                new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, _internalTenantId),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode));
+        if (!string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase)
+            || !allowedScope
+            || !allowedPath)
+        {
+            filter &= Builders<GatewayRuntimeGrantRecord>.Filter.Where(_ => false);
+        }
+
+        var grant = await grants.Find(filter).FirstOrDefaultAsync(ct);
+        if (grant is not null)
+        {
+            return new(
+                true,
+                true,
+                200,
+                string.Empty,
+                "run-scoped runtime grant",
+                KeyId: grant.Id,
+                TenantId: grant.TenantId,
+                LegacySharedKey: false,
+                ClientCode: "design-opendesign",
+                Environment: grant.Environment,
+                KeyPrefixSnapshot: grant.KeyPrefix,
+                ResolvedAppCallerCode: grant.AppCallerCode,
+                AuthorizedAppCallerCodes: [grant.AppCallerCode],
+                RuntimeGrant: grant);
+        }
+
+        var known = await grants.Find(x => x.KeyHash == keyHash).FirstOrDefaultAsync(ct);
+        if (known is null || known.ExpiresAt <= now)
+            return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+        if (known.CallCount >= known.MaxCalls)
+            return new(false, true, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded");
+        if (!allowedPath)
+            return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_ROUTE_DENIED", "runtime grant only allows the Responses endpoint");
+        return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_SCOPE_DENIED", "runtime grant does not allow this request");
     }
 
     private static string? ResolveSingleAppCallerCode(GatewayServiceKeyRecord record)

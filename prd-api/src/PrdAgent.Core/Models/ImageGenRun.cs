@@ -66,6 +66,8 @@ public class ImageGenRun
     public string? ModelGroupName { get; set; }
 
     public string Size { get; set; } = "1024x1024";
+    /// <summary>文学任务认领时的模型声明比例，用于幂等重放；旧任务可为空。</summary>
+    public string? LiterarySizeAspectRatio { get; set; }
 
     /// <summary>
     /// b64_json | url
@@ -154,6 +156,12 @@ public class ImageGenRun
     /// 前端传递的 @imgN 引用映射到具体的图片资产。
     /// </summary>
     public List<ImageRefInput>? ImageRefs { get; set; }
+
+    /// <summary>
+    /// 用户在入口明确选择的参考图数量。Worker 必须确认最终 ImageRefs 数量与它一致；
+    /// 不一致时拒绝执行，禁止静默退化为文生图或少图生成。
+    /// </summary>
+    public int? ExpectedImageRefCount { get; set; }
 
     /// <summary>
     /// 可选：局部重绘蒙版（base64 data URI）。

@@ -1,0 +1,13 @@
+| fix | prd-api | 为 OpenDesign 正式任务签发按任务限权的 LLMGW 短期授权 |
+| fix | llmgw | 校验设计任务授权并冻结调用身份与模型策略 |
+| fix | design-runtime | 将模型出口固定到 LLMGW 并保留 MAP 工作区回调 |
+| fix | prd-api | 修复 .NET 8 下图片尺寸分隔符解析的重载歧义 |
+| test | prd-api | 覆盖 OpenDesign 短期网关凭据的签发、授权、计数回写与撤销闭环 |
+| fix | prd-api | 保留 OpenDesign 直连任务冻结的模型池与固定线路策略，并将短期授权索引迁入 DBA 清单 |
+| security | llmgw | 将 OpenDesign 短期授权限制到 Responses 端点并保留请求的 reasoning summary |
+| fix | prd-api | 确保用量回写失败时仍独立撤销 OpenDesign 任务短期授权 |
+| ops | prd-api | 让运行时授权 TTL 索引清单自动收敛错误的索引选项 |
+| fix | llmgw | 将短期授权调用次数延后到请求完成本地准入后原子扣减，拒绝请求不再消耗额度 |
+| test | llmgw | 补充短期授权拒绝路径不扣次数与成功准入扣次数测试 |
+| security | llmgw | 运行时授权忽略客户端物理路由请求头，并在供应商准入通过后才扣减调用次数 |
+| test | llmgw | 覆盖未冻结线路的任务授权拒绝客户端模型池与物理模型请求头 |

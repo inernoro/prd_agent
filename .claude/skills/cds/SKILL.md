@@ -47,7 +47,7 @@ CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"
 
 # 安全接入：默认页面批准，密钥不进入对话或 stdout，不写 shell profile
 $CLI connect --host https://cds.example --project <id> --agent Codex
-$CLI connect --host https://cds.example --new-project --agent Cursor
+$CLI connect --host https://cds.example --new-project --agent Codex
 $CLI init                                # 交互式安全向导
 $CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
 $CLI auth inspect --strict               # 脱敏检查凭据来源；冲突时停止
@@ -192,7 +192,7 @@ curl -sS "$CDS_HOST/api/skills/bundles"               # 有哪些角色套装、
 curl -sSL "$CDS_HOST/api/bootstrap/pm-project" -o init.sh   # 取引导脚本（先读再跑）
 ```
 
-**安装目录约定**：项目级优先，探测顺序 `.claude` → `.cursor` → 兜底 `.agents`。
+**安装目录约定**：项目级优先，探测顺序 `.claude` → 兜底 `.agents`。
 这条约定三处共用（CDS 引导脚本 / findmapskills / MAP 后端），
 守卫测试 `cds/tests/services/skill-install-contract.test.ts` 把它们钉在一起。
 不要装到用户主目录 —— 技能不跟项目走，团队 clone 下来会少一半。

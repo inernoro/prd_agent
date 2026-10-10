@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = (ROOT / "exec_dep.sh").read_text(encoding="utf-8")
 COMPOSE = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+CDS_COMPOSE = (ROOT / "cds-compose.yml").read_text(encoding="utf-8")
 
 assert 'PRD_AGENT_PUBLIC_BASE_URL is required for production deployment' in DEPLOY
 assert 'export LLMGW_MAP_HOME_URL="${LLMGW_MAP_HOME_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"' in DEPLOY
@@ -16,6 +17,8 @@ assert 'DESIGN_ARTIFACT_PUBLIC_BASE_URL="$(config_value DESIGN_ARTIFACT_PUBLIC_B
 assert 'export DESIGN_ARTIFACT_PUBLIC_BASE_URL="${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"' in DEPLOY
 assert "DesignArtifactRuntime__PublicBaseUrl=${DESIGN_ARTIFACT_PUBLIC_BASE_URL:-}" in COMPOSE
 assert "DesignRuntime__OpenDesign__BaseUrl=http://design-opendesign:8093" in COMPOSE
+assert "DESIGN_RUNTIME_LLMGW_BASE_URL=${LLMGW_SERVE_BASE_URL:-http://gateway}/gw/v1" in COMPOSE
+assert 'DESIGN_RUNTIME_LLMGW_BASE_URL: "http://llmgw-serve:8091/gw/v1"' in CDS_COMPOSE
 # 正式环境不许自动退回 CDS 会话：缺密钥必须显式报不可用。
 assert "DesignRuntime__OpenDesign__Transport=service" in COMPOSE
 # 专项服务必须在静态站切换与成功证据之前通过就绪门禁，否则发布会在设计服务不可用时记成功。
