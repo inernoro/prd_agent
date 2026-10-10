@@ -20,6 +20,7 @@ describe('stuck deploy runtime diff IO budget', () => {
     const exec = vi.fn(() => new Promise<ExecResult>(resolve => { finish = resolve; }));
     const cache = new StuckDeployRuntimeDiff({ exec } as IShellExecutor);
     for (let i = 0; i < 20; i++) expect(cache.hasRuntimeChanges(branch())).toBe(false);
+    await tick();
     expect(exec).toHaveBeenCalledTimes(1);
     finish(result('src/api.ts\n')); await tick();
     expect(cache.hasRuntimeChanges(branch())).toBe(true);
@@ -50,12 +51,53 @@ describe('stuck deploy runtime diff IO budget', () => {
       .mockResolvedValue(result('src/api.ts\n'));
     let now = 0; const cache = new StuckDeployRuntimeDiff({ exec } as IShellExecutor, () => now);
     for (let i = 0; i < 100; i++) cache.hasRuntimeChanges(branch(String(i)));
+    await tick();
     expect(exec).toHaveBeenCalledTimes(1);
     now = 5001; finish(result('src/api.ts\n')); await tick();
     expect(exec).toHaveBeenCalledTimes(1);
     expect(cache.hasRuntimeChanges(branch('99'))).toBe(false); await tick();
     expect(cache.hasRuntimeChanges(branch('99'))).toBe(true);
     expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('rotates admission after a timeout under fixed enumeration without querying a preferred branch', async () => {
+    let now = 0;
+    let failFirst!: (value: ExecResult) => void;
+    const attempted: string[] = [];
+    const exec = vi.fn((_command: string, options: { cwd: string }) => {
+      const id = options.cwd.split('/').at(-1)!;
+      attempted.push(id);
+      return id === '0' ? new Promise<ExecResult>(resolve => { failFirst = resolve; })
+        : Promise.resolve(result('src/api.ts\n'));
+    });
+    const cache = new StuckDeployRuntimeDiff({ exec } as IShellExecutor, () => now);
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 100; i++) cache.hasRuntimeChanges(branch(String(i)));
+      await tick();
+      if (attempted.at(-1) === '0') { now += 5001; failFirst(result('', 1)); }
+      await tick();
+    }
+    expect(attempted).toContain('1');
+    expect(attempted).toContain('99');
+    expect(attempted.filter(id => id === '0').length).toBeLessThan(3);
+  });
+
+  it('attempts every identity before wrapping when all 100 targets keep timing out', async () => {
+    let now = 0;
+    let finish!: (value: ExecResult) => void;
+    const attempted: string[] = [];
+    const exec = vi.fn((_command: string, options: { cwd: string }) => {
+      attempted.push(options.cwd.split('/').at(-1)!);
+      return new Promise<ExecResult>(resolve => { finish = resolve; });
+    });
+    const cache = new StuckDeployRuntimeDiff({ exec } as IShellExecutor, () => now);
+    for (let round = 0; round < 100; round++) {
+      for (let i = 0; i < 100; i++) cache.hasRuntimeChanges(branch(String(i)));
+      await tick();
+      expect(attempted).toHaveLength(round + 1);
+      now += 5001; finish(result('', 1)); await tick();
+    }
+    expect(new Set(attempted).size).toBe(100);
   });
 
   it('queries real immutable git commits through the execution worker with a literal shell-looking cwd', async () => {
