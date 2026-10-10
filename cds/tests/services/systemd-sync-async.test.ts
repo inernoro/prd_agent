@@ -7,7 +7,7 @@ import type { IShellExecutor } from '../../src/types.js';
 const native = vi.hoisted(() => ({ exec: vi.fn((command: string) => command.startsWith('command -v ') ? '/usr/bin/' + command.split(' ').at(-1) : '') }));
 // The old implementation is measured without ever executing host systemctl.
 vi.mock('node:child_process', async importOriginal => ({ ...(await importOriginal<any>()), execSync: native.exec }));
-import { syncSystemdUnit } from '../../src/services/systemd-sync.js';
+import { syncSystemdUnit, type SystemdUnitSyncOptions } from '../../src/services/systemd-sync.js';
 
 let tmp: string;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-unit-async-')); native.exec.mockClear(); vi.spyOn(process, 'getuid').mockReturnValue(0); });
@@ -138,7 +138,7 @@ describe('asynchronous systemd ownership and install controls', () => {
 
 describe('systemd asynchronous unit write ownership', () => {
   it('rejects another writer of the same unit while reload still owns the first write', async () => {
-    const opts = fixture(); let release!: () => void;
+    const opts: SystemdUnitSyncOptions = fixture(); let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     const shell = executor(async command => { if (command.includes('daemon-reload')) await held; return ok; });
     const first = syncSystemdUnit(opts, shell);
@@ -170,4 +170,100 @@ it('bounds distinct in-progress unit identities and releases them after completi
   } finally { release(); await Promise.all(pending); }
   const later = await syncSystemdUnit({ ...opts, installedUnit: path.join(tmp, 'later.service'), installIfMissing: true }, executor(async () => ok));
   expect(later.status).toBe('installed');
+});
+
+it.each(['symlink', 'hardlink', 'parent-symlink', 'dangling-symlink'] as const)(
+  'keeps one physical unit writer when a competing caller uses %s', async kind => {
+    const opts: SystemdUnitSyncOptions = fixture(); let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let alias: string;
+    const target = opts.installedUnit;
+    if (kind === 'symlink') { alias = path.join(tmp, 'alias.service'); fs.symlinkSync(target, alias); }
+    else if (kind === 'hardlink') { alias = path.join(tmp, 'alias.service'); fs.linkSync(target, alias); }
+    else if (kind === 'parent-symlink') {
+      fs.rmSync(target); const dir = path.join(tmp, 'alias-dir'); fs.symlinkSync(tmp, dir);
+      alias = path.join(dir, path.basename(target)); opts.installIfMissing = true;
+    } else {
+      fs.rmSync(target); alias = path.join(tmp, 'alias.service'); fs.symlinkSync(target, alias); opts.installIfMissing = true;
+    }
+    const original = { ...opts };
+    const shell = { exec: vi.fn(async (command: string) => {
+      if (command.startsWith('command -v ')) { await held; return { ...ok, stdout: '/usr/bin/' + command.split(' ').at(-1) }; }
+      return ok;
+    }) } as unknown as IShellExecutor;
+    const first = syncSystemdUnit(original, shell);
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      const competingShell = executor(async () => ok);
+      const result = await syncSystemdUnit({ ...opts, installedUnit: alias, cdsDir: '/other-writer/cds' }, competingShell);
+      expect(result).toMatchObject({ status: 'error', error: 'unit synchronization already in progress' });
+      expect(competingShell.exec).not.toHaveBeenCalled();
+    } finally { release(); await first; }
+    expect(fs.readFileSync(target, 'utf8')).toContain(opts.cdsDir + '/entry');
+  });
+
+it('adds the new inode before waiting on reload so a newly created hardlink cannot become a writer', async () => {
+  const opts = { ...fixture(), installIfMissing: true }; fs.rmSync(opts.installedUnit);
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  const shell = executor(async command => { if (command.includes('daemon-reload')) await held; return ok; });
+  const first = syncSystemdUnit(opts, shell);
+  try {
+    await vi.waitFor(() => expect(shell.exec).toHaveBeenCalledWith('systemctl daemon-reload', expect.any(Object)));
+    const alias = path.join(tmp, 'new-hardlink.service'); fs.linkSync(opts.installedUnit, alias);
+    const competing = executor(async () => ok);
+    const result = await syncSystemdUnit({ ...opts, installedUnit: alias, cdsDir: '/another/cds' }, competing);
+    expect(result).toMatchObject({ status: 'error', error: 'unit synchronization already in progress' });
+    expect(competing.exec).not.toHaveBeenCalled();
+  } finally { release(); await first; }
+});
+
+it('rejects a symlink that changes its physical destination during discovery', async () => {
+  const opts = fixture(true); const target = opts.installedUnit;
+  const alias = path.join(tmp, 'service-alias.service'); fs.symlinkSync(target, alias);
+  const other = path.join(tmp, 'other-owner.service'); fs.writeFileSync(other, 'other-owner');
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  const shell = { exec: vi.fn(async (command: string) => {
+    if (command.startsWith('command -v ')) { await held; return { ...ok, stdout: '/usr/bin/' + command.split(' ').at(-1) }; }
+    return ok;
+  }) } as unknown as IShellExecutor;
+  const first = syncSystemdUnit({ ...opts, installedUnit: alias }, shell);
+  fs.unlinkSync(alias); fs.symlinkSync(other, alias);
+  release(); const result = await first;
+  expect(result.status).toBe('error'); expect(fs.readFileSync(target, 'utf8')).toBe('original-unit');
+  expect(fs.readFileSync(other, 'utf8')).toBe('other-owner');
+  expect((shell.exec as any).mock.calls.some(([command]: string[]) => command.includes('systemctl'))).toBe(false);
+});
+
+it('fails before command discovery when the dangling target parent cannot be identified', async () => {
+  const opts = fixture(); const alias = path.join(tmp, 'unresolved-alias.service');
+  fs.symlinkSync(path.join(tmp, 'missing-parent', 'unit.service'), alias);
+  const shell = executor(async () => ok);
+  const result = await syncSystemdUnit({ ...opts, installedUnit: alias, installIfMissing: true }, shell);
+  expect(result).toMatchObject({ status: 'error', error: 'unit path identity unavailable' });
+  expect(shell.exec).not.toHaveBeenCalled();
+});
+
+it('preserves a linked unit name even when its outside target filename is not a unit name', async () => {
+  const opts = fixture(true); const target = path.join(tmp, 'external-config.txt');
+  fs.writeFileSync(target, 'external-original');
+  const alias = path.join(tmp, 'linked-unit.service'); fs.symlinkSync(target, alias);
+  const shell = executor(async () => ok);
+  const result = await syncSystemdUnit({ ...opts, installedUnit: alias }, shell);
+  expect(result).toMatchObject({ status: 'fixed', restarted: true });
+  expect(fs.readFileSync(target, 'utf8')).toContain(opts.cdsDir + '/entry');
+  expect(shell.exec).toHaveBeenCalledWith("systemctl restart 'linked-unit.service'", expect.any(Object));
+});
+
+it('restores only the frozen target and avoids restart when its link changes during reload', async () => {
+  const opts = fixture(true); const target = opts.installedUnit;
+  const alias = path.join(tmp, 'during-reload.service'); fs.symlinkSync(target, alias);
+  const other = path.join(tmp, 'another-owner.service'); fs.writeFileSync(other, 'another-owner');
+  const shell = executor(async command => {
+    if (command.includes('daemon-reload')) { fs.unlinkSync(alias); fs.symlinkSync(other, alias); }
+    return ok;
+  });
+  const result = await syncSystemdUnit({ ...opts, installedUnit: alias }, shell);
+  expect(result.status).toBe('error'); expect(fs.readFileSync(target, 'utf8')).toBe('original-unit');
+  expect(fs.readFileSync(other, 'utf8')).toBe('another-owner');
+  expect((shell.exec as any).mock.calls.some(([command]: string[]) => command.includes('restart'))).toBe(false);
 });

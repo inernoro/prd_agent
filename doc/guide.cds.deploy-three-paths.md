@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.51 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.52 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -243,6 +243,10 @@ IMP的exact极速制品交付不进入源码编译闸门。仍允许源码模式
 
 ### systemd启动命令执行边界（P2-06，本地待真实验收）
 
-启动装配将当前共享ShellExecutor传入并await systemd同步。command -v发现路径3秒、daemon-reload与runtime weights10秒、Forwarder restart15秒均在共享Worker执行；库的嵌入fallback限1执行/3排队。单次调用在首次await前冻结unit目标与安装意图，同一规范化installedUnit在等待期间只准一个写入者，最多32个不同unit并行请求、无排队或自动重放；冲突/满额明确返回error。备份/写入/reload/权重或restart保持原串行顺序。reload失败恢复旧unit，首次安装失败删除本次文件；执行失败不伪报权重或重启已生效。预览模式仍跳过宿主操作。
+启动装配将当前共享ShellExecutor传入并await systemd同步。command -v发现路径3秒、daemon-reload与runtime weights10秒、Forwarder restart15秒均在共享Worker执行；库的嵌入fallback限1执行/3排队。单次调用在首次await前冻结unit目标与安装意图，同一实际unit在等待期间只准一个写入者（真实路径与dev/ino同时锁；未创建按真实父目录/basename并解析悬空链接），最多32个不同unit并行请求、无排队或自动重放；冲突/满额明确返回error。备份/写入/reload/权重或restart保持原串行顺序。reload失败恢复旧unit，首次安装失败删除本次文件；执行失败不伪报权重或重启已生效。预览模式仍跳过宿主操作。
 
 这只迁移启动native子进程，不改systemd安装配置，不对共享宿主执行命令；小unit文件仍同步读写，磁盘statfs和其他文件热点未闭合。TDD覆盖共享执行接线、held reload不提前继续、失败恢复/首次失败、权重与restart结果、异步目标冻结；实际自更新与平台性能另按正式门槛验收。
+
+实际目标在发现命令前冻结，systemctl保留原请求unit名（linked unit的名字不能用外部文件basename代替），写入前和reload完成后核原路径绑定；改向或未知即error，后续权重与restart不执行；写入前重新登记身份，创建后补inode锁，符号链接/硬链接和目录别名不能绕过同一写入权。无法确定身份明确error，不执行命令；32容量按同步unit调用计数，不按多个身份键计数。实际宿主与重启对账仍待正式验收。
+
+命名兼容依据：[systemd.unit官方文档](https://github.com/systemd/systemd/blob/main/man/systemd.unit.xml)区分load path内alias与路径外linked unit；不能仅由realpath basename推断可启动unit名称。物理锁识别共享文件，但不声称不同hardlink服务名是同一Daemon运行实例。

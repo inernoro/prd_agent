@@ -25,7 +25,8 @@ import path from 'node:path';
 import type { IShellExecutor } from '../types.js';
 import { ShellExecutor } from './shell-executor.js';
 
-const unitsInProgress = new Set<string>();
+const unitLocks = new Map<string, Set<string>>();
+const unitsInProgress = new Set<Set<string>>();
 const MAX_UNITS_IN_PROGRESS = 32;
 const fallbackShell = new ShellExecutor({ maxConcurrent: 1, maxQueued: 3 });
 const quoteArg = (arg: string): string => "'" + arg.replace(/'/g, "'\"'\"'") + "'";
@@ -113,29 +114,68 @@ export function renderDesiredUnit(template: string, opts: {
     );
 }
 
-export async function syncSystemdUnit(options: SystemdUnitSyncOptions, shell: IShellExecutor = fallbackShell): Promise<SystemdUnitSyncResult> {
-  // Discovery yields: keep this call bound to its original unit and install intent.
-  const opts = { ...options };
-  const unitKey = path.resolve(opts.installedUnit);
-  if (unitsInProgress.has(unitKey)) return { status: 'error', error: 'unit synchronization already in progress' };
-  if (unitsInProgress.size >= MAX_UNITS_IN_PROGRESS) return { status: 'error', error: 'unit synchronization capacity exceeded' };
-  unitsInProgress.add(unitKey);
-  try { return await syncOwnedSystemdUnit(opts, shell); }
-  finally { unitsInProgress.delete(unitKey); }
+/** Physical identity also covers directory aliases, hardlinks and not-yet-created units. */
+function unitIdentity(input: string, depth = 0): { target: string; keys: string[] } {
+  if (depth > 8) throw new Error('unit path identity unavailable');
+  const absolute = path.resolve(input);
+  try {
+    const target = fs.realpathSync(absolute);
+    const stat = fs.statSync(target);
+    return { target, keys: [`path:${target}`, `inode:${stat.dev}:${stat.ino}`] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const target = path.join(fs.realpathSync(path.dirname(absolute)), path.basename(absolute));
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(target); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return { target, keys: [`path:${target}`] };
+  }
+  if (stat.isSymbolicLink()) return unitIdentity(path.resolve(path.dirname(target), fs.readlinkSync(target)), depth + 1);
+  throw new Error('unit path identity unavailable');
 }
 
-async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellExecutor): Promise<SystemdUnitSyncResult> {
+export async function syncSystemdUnit(options: SystemdUnitSyncOptions, shell: IShellExecutor = fallbackShell): Promise<SystemdUnitSyncResult> {
+  const opts = { ...options };
   const installedExists = fs.existsSync(opts.installedUnit);
   if (!installedExists && !opts.installIfMissing) {
     return { status: 'skipped', reason: `${opts.installedUnit} not installed (dev env?)` };
   }
-  if (!fs.existsSync(opts.repoUnit)) {
-    return { status: 'skipped', reason: `${opts.repoUnit} not in repo` };
-  }
+  if (!fs.existsSync(opts.repoUnit)) return { status: 'skipped', reason: `${opts.repoUnit} not in repo` };
   const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  if (!isRoot) {
-    return { status: 'skipped', reason: 'not running as root, /etc/systemd/system not writable' };
+  if (!isRoot) return { status: 'skipped', reason: 'not running as root, /etc/systemd/system not writable' };
+  let identity: ReturnType<typeof unitIdentity>;
+  try { identity = unitIdentity(opts.installedUnit); }
+  catch { return { status: 'error', error: 'unit path identity unavailable' }; }
+  if (identity.keys.some(key => unitLocks.has(key))) return { status: 'error', error: 'unit synchronization already in progress' };
+  if (unitsInProgress.size >= MAX_UNITS_IN_PROGRESS) return { status: 'error', error: 'unit synchronization capacity exceeded' };
+  const keys = new Set<string>();
+  const requestedPath = path.resolve(opts.installedUnit);
+  const claim = (created = false): boolean => {
+    const binding = unitIdentity(requestedPath);
+    if (binding.target !== opts.installedUnit || (!created && binding.keys.some(key => key.startsWith('inode:') && !keys.has(key)))) {
+      throw new Error('unit path binding changed');
+    }
+    const current = unitIdentity(opts.installedUnit);
+    if (current.keys.some(key => unitLocks.has(key) && unitLocks.get(key) !== keys)) return false;
+    for (const key of current.keys) { keys.add(key); unitLocks.set(key, keys); }
+    return true;
+  };
+  // Freeze filesystem destination, retain linked-unit naming and verify its binding at write/reload boundaries.
+  const unitName = path.basename(requestedPath);
+  opts.installedUnit = identity.target;
+  for (const key of identity.keys) { keys.add(key); unitLocks.set(key, keys); }
+  unitsInProgress.add(keys);
+  try { return await syncOwnedSystemdUnit(opts, shell, installedExists, unitName, claim); }
+  finally {
+    for (const key of keys) if (unitLocks.get(key) === keys) unitLocks.delete(key);
+    unitsInProgress.delete(keys);
   }
+}
+
+async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellExecutor, installedExists: boolean,
+  unitName: string, claim: (created?: boolean) => boolean): Promise<SystemdUnitSyncResult> {
   const nodeBin = await whichBin('node', shell);
   const pnpmBin = await whichBin('pnpm', shell);
   const npxBin = await whichBin('npx', shell);
@@ -164,12 +204,18 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
     return { status: 'no-drift' };
   }
 
+  try {
+    if (!claim()) return { status: 'error', error: 'unit synchronization already in progress' };
+  } catch { return { status: 'error', error: 'unit path identity unavailable' }; }
+
   if (!installedExists) {
     // 首次安装：没有旧文件可备份，写入 + daemon-reload 即可。
     // slice 这类单元没有进程，daemon-reload 后被首个容器引用时自动生效。
     try {
       fs.writeFileSync(opts.installedUnit, desired);
+      if (!claim(true)) throw new Error('unit synchronization already in progress');
       await runCommand(shell, 'systemctl daemon-reload', 10_000);
+      if (!claim()) throw new Error('unit synchronization already in progress');
     } catch (err) {
       try { fs.rmSync(opts.installedUnit, { force: true }); } catch { /* */ }
       return { status: 'error', error: `install/daemon-reload failed: ${(err as Error).message}` };
@@ -185,7 +231,9 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
   }
   try {
     fs.writeFileSync(opts.installedUnit, desired);
+    if (!claim()) throw new Error('unit synchronization already in progress');
     await runCommand(shell, 'systemctl daemon-reload', 10_000);
+    if (!claim()) throw new Error('unit synchronization already in progress');
   } catch (err) {
     // 回滚
     try { fs.copyFileSync(backupPath, opts.installedUnit); } catch { /* */ }
@@ -200,7 +248,6 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
     const weights = extractRuntimeWeights(desired);
     if (weights.length > 0) {
       try {
-        const unitName = path.basename(opts.installedUnit);
         await runCommand(shell, `systemctl set-property --runtime ${quoteArg(unitName)} ${weights.join(' ')}`, 10_000);
         runtimeWeightsApplied = true;
       } catch (err) {
@@ -210,7 +257,6 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
   }
   if (opts.restartAfterReload) {
     try {
-      const unitName = path.basename(opts.installedUnit); // e.g. cds-forwarder.service
       await runCommand(shell, `systemctl restart ${quoteArg(unitName)}`, 15_000);
       restarted = true;
     } catch (err) {
