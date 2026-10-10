@@ -6246,7 +6246,7 @@ const BranchCard = memo(function BranchCard({
   })() : null;
   const buildTitle = buildPhase && buildClock
     ? buildPhase.key === 'queued' && branch.buildQueue
-      ? `构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排在第 ${branch.buildQueue.ahead + 1} 位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`
+      ? `构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），队列另有 ${branch.buildQueue.ahead} 个等待，按项目轮转；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`
       : buildPhase.key === 'ci-waiting'
         ? `极速版：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像，完成后自动拉取部署。${isRunning ? '期间旧版本继续服务，预览照常可用。' : ''}`
         : !isDeployPhase(buildPhase)

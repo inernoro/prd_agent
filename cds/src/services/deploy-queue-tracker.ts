@@ -75,7 +75,7 @@ export function createDeployQueueTracker(deps: DeployQueueTrackerDeps): DeployQu
         if (!entry.buildQueue.serviceIds.includes(profileId)) {
           entry.buildQueue.serviceIds.push(profileId);
         }
-        entry.buildQueue.ahead = Math.min(entry.buildQueue.ahead, info.ahead);
+        entry.buildQueue.ahead = info.ahead;
         entry.buildQueue.active = info.active;
         entry.buildQueue.max = info.max;
       }
@@ -86,9 +86,8 @@ export function createDeployQueueTracker(deps: DeployQueueTrackerDeps): DeployQu
     refresh() {
       if (!entry.buildQueue) return;
       const s = buildGateStatus();
-      // ahead 无法精确到"我前面还有几个"（闸门只知道总排队数），用
-      // min(已知位置, 当前总排队数) 单调收敛——只会变小不会跳大。
-      entry.buildQueue.ahead = Math.min(entry.buildQueue.ahead, s.queued);
+      // 项目轮转不提供绝对位置；此兼容字段仅表示除当前等待者外的队列总量。
+      entry.buildQueue.ahead = Math.max(0, s.queued - 1);
       entry.buildQueue.active = s.active;
       entry.buildQueue.max = s.max;
       // 瞬态位置刷新不值一次全量持久化，只推事件。

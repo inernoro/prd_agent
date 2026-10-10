@@ -3,7 +3,7 @@
  *
  * 覆盖的行为契约：
  *   1. onQueued 首个排队服务建立 buildQueue 快照（queuedAt/ahead/active/max/serviceIds）
- *      并发 branch.updated；后续服务并入集合，ahead 取最小值。
+ *      并发 branch.updated；后续服务并入集合，ahead记录最近等待总量。
  *   2. refresh 只更新位置快照 + 发事件，不触发持久化（瞬态刷新不值一次全量落盘）。
  *   3. onStart 从集合移除服务；集合清空时把「首入队 → 清空」的 wall-clock 区间
  *      累进 lastDeployQueueWaitMs 并清掉 buildQueue。
@@ -50,7 +50,7 @@ describe('deploy-queue-tracker', () => {
     vi.useRealTimers();
   });
 
-  it('onQueued establishes the snapshot and merges subsequent services with min(ahead)', () => {
+  it('onQueued establishes the snapshot and merges subsequent services with the latest backlog count', () => {
     tracker.onQueued('api', { ahead: 2, active: 3, max: 3 });
     expect(entry.buildQueue).toMatchObject({ ahead: 2, active: 3, max: 3, serviceIds: ['api'] });
     expect(entry.buildQueue!.queuedAt).toBe('2026-07-09T00:00:00.000Z');
@@ -59,8 +59,8 @@ describe('deploy-queue-tracker', () => {
 
     tracker.onQueued('web', { ahead: 3, active: 3, max: 3 });
     expect(entry.buildQueue!.serviceIds).toEqual(['api', 'web']);
-    // ahead 取最小（离槽位最近的那个代表分支位置）
-    expect(entry.buildQueue!.ahead).toBe(2);
+    // 项目轮转没有绝对位置；最近入队观察到的等待总量可增长
+    expect(entry.buildQueue!.ahead).toBe(3);
     // 同一服务重复 onQueued 不重复入列
     tracker.onQueued('web', { ahead: 3, active: 3, max: 3 });
     expect(entry.buildQueue!.serviceIds).toEqual(['api', 'web']);
@@ -70,7 +70,7 @@ describe('deploy-queue-tracker', () => {
     tracker.onQueued('api', { ahead: 5, active: 3, max: 3 });
     const savesAfterQueue = saves;
     tracker.refresh();
-    // buildGateStatus 此刻 queued=0（测试里没真排队）→ ahead 单调收敛到 0
+    // buildGateStatus 此刻 queued=0（测试里没真排队）→ 无其他等待者
     expect(entry.buildQueue!.ahead).toBe(0);
     expect(saves).toBe(savesAfterQueue); // 无新增持久化
     expect(emits).toBe(2);

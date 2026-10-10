@@ -25,7 +25,7 @@
  *   在上调后立即唤醒排队者（旧实现只在 release 时唤醒，上调不生效）。
  *
  * 语义要点：
- * - FIFO：先排队先得槽位，保证「前面还有 N 个」是真实位置、不会饿死。
+ * - 同项目FIFO、项目间轮转；匿名兼容组保持FIFO。等待总量不是绝对前序位置。
  * - 槽位转移（slot transfer）：release 时若有等待者，直接把槽位交给它而**不**
  *   先 active--，避免「release 与被唤醒者的 active++ 之间插入一个快路径 acquire」
  *   导致瞬时超额（over-subscription）。active 只在快路径 acquire 与 pumpWaiters
@@ -37,6 +37,13 @@
 import os from 'node:os';
 
 const DEFAULT_MAX_CONCURRENT_BUILDS = 3;
+function boundedQueueSetting(name: string, fallback: number, min: number, max: number): number {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+}
+export const maxQueuedBuilds = (): number => boundedQueueSetting('CDS_MAX_QUEUED_BUILDS', 512, 1, 4096);
+export const maxBuildQueueWaitMs = (): number => boundedQueueSetting('CDS_BUILD_QUEUE_TIMEOUT_MS', 30 * 60_000, 10, 6 * 60 * 60_000);
+
 
 /**
  * 负载自适应准入（2026-09-08 宿主过载复盘）。
@@ -144,6 +151,7 @@ export function maxConcurrentBuilds(): number {
 
 /** 槽位持有者/等待者身份，用于运维可观测（「这 3 个槽被谁占着」）。 */
 export interface BuildGateHolder {
+  projectId?: string;
   branchId?: string;
   profileId?: string;
   runId?: string;
@@ -159,10 +167,18 @@ export class BuildSlotCancelledError extends Error {
   }
 }
 
+export class BuildSlotWaitTimeoutError extends Error {
+  constructor() { super('构建槽位排队已超过等待上限'); this.name = 'BuildSlotWaitTimeoutError'; }
+}
+export class BuildSlotQueueCapacityError extends Error {
+  constructor() { super('构建等待队列已满'); this.name = 'BuildSlotQueueCapacityError'; }
+}
+
 interface Waiter {
   resolve: () => void;
   reject: (err: Error) => void;
   enqueuedAt: number;
+  deadline: number;
   holder?: BuildGateHolder;
   isCancelled?: () => boolean;
   /** 移除 abort listener（防泄漏），出队（无论 resolve/reject）时调用。 */
@@ -171,6 +187,29 @@ interface Waiter {
 
 let active = 0;
 const waiters: Waiter[] = [];
+let lastProject: string | undefined;
+const projectGroup = (holder?: BuildGateHolder): string => holder?.projectId ? `project:${holder.projectId}` : 'legacy';
+function stopIdleLoadPump(): void {
+  if (!waiters.length && loadPumpTimer) { clearInterval(loadPumpTimer); loadPumpTimer = null; }
+}
+function takeNextWaiter(): Waiter | undefined {
+  const groups = [...new Set(waiters.map(w => projectGroup(w.holder)))];
+  if (!groups.length) return undefined;
+  const group = groups[(groups.indexOf(lastProject || '') + 1) % groups.length];
+  const index = waiters.findIndex(w => projectGroup(w.holder) === group);
+  const [next] = waiters.splice(index, 1);
+  stopIdleLoadPump();
+  return next;
+}
+function rejectInvalidWaiter(waiter: Waiter): boolean {
+  waiter.cleanup?.();
+  if (waiter.isCancelled?.()) {
+    waiter.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代')); return true;
+  }
+  if (waiter.deadline <= Date.now()) { waiter.reject(new BuildSlotWaitTimeoutError()); return true; }
+  lastProject = projectGroup(waiter.holder);
+  return false;
+}
 /** 活跃持有者明细（token → 身份 + 拿到槽的时刻）。 */
 const holders = new Map<symbol, BuildGateHolder & { acquiredAt: string }>();
 
@@ -182,14 +221,14 @@ export interface BuildSlot {
 export interface AcquireOptions {
   /**
    * 仅当调用方需要排队时触发一次，带当前排队位置信息。
-   * @param info.ahead  在我前面、同样在等待的构建数（不含正在构建的）
+   * @param info.ahead  入队前的等待总量（不含正在构建的，不承诺绝对执行顺序）
    * @param info.active 当前正在构建的数量
    * @param info.max    并发上限
    */
   onQueued?(info: { ahead: number; active: number; max: number; throttledByLoad?: boolean; load?: BuildLoadPressure }): void;
   /** 等待结束、拿到槽位时触发（仅排过队的调用方会收到）。 */
   onStart?(info: { waitedMs: number }): void;
-  /** 持有者身份（观测用，不参与调度决策）。 */
+  /** 冻结持有者身份；projectId用于项目间轮转，其余字段用于观测。 */
   holder?: BuildGateHolder;
   /** 排队中被 abort → 立即从队列摘除并以 BuildSlotCancelledError 拒绝。 */
   signal?: AbortSignal;
@@ -227,14 +266,9 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
         return;
       }
       // 槽位转移：跳过（并拒绝）已取消的等待者，交给第一个仍存活的。
-      let next = waiters.shift();
+      let next = takeNextWaiter();
       while (next) {
-        next.cleanup?.();
-        if (next.isCancelled?.()) {
-          next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
-          next = waiters.shift();
-          continue;
-        }
+        if (rejectInvalidWaiter(next)) { next = takeNextWaiter(); continue; }
         // 槽位直接转移给下一个等待者：不动 active（它继承当前这把槽位）。
         next.resolve();
         return;
@@ -245,23 +279,28 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
 }
 
 /**
- * 申请一个构建槽位。槽位充足立即返回；否则排队等待（FIFO）。
+ * 申请一个构建槽位。槽位充足立即返回；否则按项目轮转有界等待。
  * 调用方拿到 BuildSlot 后必须在 finally 中 release()。
  * 排队中被 signal abort 或转移时 isCancelled 判真 → 以 BuildSlotCancelledError 拒绝。
  */
 export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot> {
+  opts = opts ? { ...opts, holder: opts.holder ? { ...opts.holder } : undefined } : undefined;
   if (opts?.signal?.aborted) {
     throw new BuildSlotCancelledError('进入排队前已被取消');
   }
   if (opts?.isCancelled?.()) {
     throw new BuildSlotCancelledError('进入排队前操作已失效');
   }
+  if (waiters.length) pumpWaiters();
   const max = maxConcurrentBuilds();
-  if (admissionAllowed()) {
+  if (!waiters.length && admissionAllowed()) {
+    lastProject = projectGroup(opts?.holder);
     active += 1;
     return grantSlot(opts?.holder);
   }
+  if (waiters.length >= maxQueuedBuilds()) throw new BuildSlotQueueCapacityError();
   const enqueuedAt = Date.now();
+  const deadline = enqueuedAt + maxBuildQueueWaitMs();
   const pressure = buildLoadPressure();
   const throttledByLoad = active < max && pressure.saturated;
   // 只有真被负载压住时才附带 throttledByLoad/load，上限排队的旧形态保持不变。
@@ -274,24 +313,29 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
       resolve,
       reject,
       enqueuedAt,
+      deadline,
       holder: opts?.holder,
       isCancelled: opts?.isCancelled,
     };
-    if (opts?.signal) {
-      const signal = opts.signal;
-      const onAbort = () => {
-        const idx = waiters.indexOf(waiter);
-        if (idx >= 0) waiters.splice(idx, 1);
-        reject(new BuildSlotCancelledError('排队等待被中止'));
-      };
-      signal.addEventListener('abort', onAbort, { once: true });
-      waiter.cleanup = () => signal.removeEventListener('abort', onAbort);
-    }
+    if (opts?.signal?.aborted) { stopIdleLoadPump(); reject(new BuildSlotCancelledError('排队等待被中止')); return; }
+    if (waiters.length >= maxQueuedBuilds()) { reject(new BuildSlotQueueCapacityError()); return; }
+    const remove = (error: Error) => {
+      const idx = waiters.indexOf(waiter);
+      if (idx < 0) return;
+      waiters.splice(idx, 1); waiter.cleanup?.(); stopIdleLoadPump(); reject(error);
+    };
+    const onAbort = () => remove(new BuildSlotCancelledError('排队等待被中止'));
+    const timer = setTimeout(() => remove(new BuildSlotWaitTimeoutError()), Math.max(0, deadline - Date.now()));
+    timer.unref?.();
+    opts?.signal?.addEventListener('abort', onAbort, { once: true });
+    waiter.cleanup = () => { clearTimeout(timer); opts?.signal?.removeEventListener('abort', onAbort); };
     waiters.push(waiter);
   });
   // 被唤醒 = 槽位已转移给我（或 pumpWaiters 已 active++），不再重复 ++。
-  opts?.onStart?.({ waitedMs: Date.now() - enqueuedAt });
-  return grantSlot(opts?.holder);
+  const slot = grantSlot(opts?.holder);
+  try { opts?.onStart?.({ waitedMs: Date.now() - enqueuedAt }); }
+  catch (error) { slot.release(); throw error; }
+  return slot;
 }
 
 /**
@@ -302,12 +346,8 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
 export function pumpWaiters(): number {
   let woken = 0;
   while (admissionAllowed() && waiters.length > 0) {
-    const next = waiters.shift()!;
-    next.cleanup?.();
-    if (next.isCancelled?.()) {
-      next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
-      continue;
-    }
+    const next = takeNextWaiter()!;
+    if (rejectInvalidWaiter(next)) continue;
     active += 1;
     woken += 1;
     next.resolve();
@@ -325,18 +365,29 @@ export function buildGateStatus(): {
   active: number;
   queued: number;
   max: number;
+  maxQueued: number;
+  maxWaitMs: number;
+  oldestWaitMs: number;
   /** 宿主负载压力；saturated 为 true 时新构建只在 active=0 时放行 */
   load: BuildLoadPressure;
   holders: Array<BuildGateHolder & { acquiredAt: string }>;
-  waiters: Array<BuildGateHolder & { enqueuedAt: string }>;
+  waiters: Array<BuildGateHolder & { enqueuedAt: string; deadlineAt: string; waitedMs: number; waitingReason: string }>;
 } {
+  const max = maxConcurrentBuilds();
+  const load = buildLoadPressure();
+  const now = Date.now();
   return {
     active,
     queued: waiters.length,
-    max: maxConcurrentBuilds(),
-    load: buildLoadPressure(),
+    max,
+    maxQueued: maxQueuedBuilds(),
+    maxWaitMs: maxBuildQueueWaitMs(),
+    oldestWaitMs: waiters.length ? Math.max(0, now - Math.min(...waiters.map(w => w.enqueuedAt))) : 0,
+    load,
     holders: [...holders.values()],
-    waiters: waiters.map((w) => ({ ...(w.holder || {}), enqueuedAt: new Date(w.enqueuedAt).toISOString() })),
+    waiters: waiters.map((w) => ({ ...(w.holder || {}), enqueuedAt: new Date(w.enqueuedAt).toISOString(),
+      deadlineAt: new Date(w.deadline).toISOString(), waitedMs: Math.max(0, now - w.enqueuedAt),
+      waitingReason: active < max && load.saturated ? 'host_load' : 'build_capacity' })),
   };
 }
 
@@ -349,6 +400,7 @@ export function __resetBuildGateForTest(): void {
   }
   waiters.length = 0;
   holders.clear();
+  lastProject = undefined;
   maxProvider = null;
   hostLoadProvider = defaultHostLoad;
   if (loadPumpTimer) {

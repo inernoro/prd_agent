@@ -13695,6 +13695,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             try {
               const slot = await acquireBuildSlot({
                 holder: {
+                  projectId: entry.projectId,
                   branchId: id,
                   profileId: profile.id,
                   runId: deploymentRun?.id,
@@ -13707,10 +13708,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   logEvent({
                     step: `queue-${profile.id}`,
                     status: 'info',
-                    title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                    title: `${effectiveProfile.name} 排队等待构建槽位：已有 ${ahead} 个在等待，按项目轮转（${active} 个正在构建，并发上限 ${max}）`,
                     timestamp: new Date().toISOString(),
                   });
-                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：已有 ${ahead} 个等待，按项目轮转（${active}/${max} 进行中）...\n` });
                   // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
                   deployQueueTracker.onQueued(profile.id, { ahead, active, max });
                   // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
@@ -13750,9 +13751,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
               return slot;
             } catch (err) {
               clearQueueTimer();
+              deployQueueTracker.onStart(profile.id);
               if (err instanceof BuildSlotCancelledError) {
-                // 排队等待被取消：结束排队 episode 清掉分支卡 chip。
-                deployQueueTracker.onStart(profile.id);
+                // 排队等待被取消：分支卡排队 episode 已结束。
                 logEvent({
                   step: `queue-${profile.id}`,
                   status: 'warning',
@@ -14834,6 +14835,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try {
           const slot = await acquireBuildSlot({
             holder: {
+              projectId: entry.projectId,
               branchId: id,
               profileId: profile.id,
               runId: deploymentRun?.id,
@@ -14846,10 +14848,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               logEvent({
                 step: `queue-${profile.id}`,
                 status: 'info',
-                title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                title: `${effectiveProfile.name} 排队等待构建槽位：已有 ${ahead} 个在等待，按项目轮转（${active} 个正在构建，并发上限 ${max}）`,
                 timestamp: new Date().toISOString(),
               });
-              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：已有 ${ahead} 个等待，按项目轮转（${active}/${max} 进行中）...\n` });
               deployQueueTracker.onQueued(profile.id, { ahead, active, max });
               queueRefreshTimer = setInterval(() => {
                 if (leaseCancelled()) {
@@ -14885,8 +14887,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           return slot;
         } catch (err) {
           clearQueueTimer();
+          deployQueueTracker.onStart(profile.id);
           if (err instanceof BuildSlotCancelledError) {
-            deployQueueTracker.onStart(profile.id);
             logEvent({
               step: `queue-${profile.id}`,
               status: 'warning',
