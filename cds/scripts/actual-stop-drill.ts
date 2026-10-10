@@ -20,6 +20,10 @@ import type { CdsConfig, IShellExecutor, ExecOptions } from '../src/types.js';
 export const STOP_REFERENCE_HEAD = '1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8';
 export const STOP_PROBE_PROGRAM = "require('http').createServer((q,r)=>{r.setHeader('Content-Type','application/json');r.end(JSON.stringify({service:process.env.SERVICE_NAME,version:'original'}));}).listen(3000,'0.0.0.0');";
 const sourcePaths = ['src/services/container.ts', 'src/routes/branches.ts'];
+export function readStopReferenceSource(name: string): Buffer {
+  assert.ok(sourcePaths.includes(name));
+  return execFileSync('/usr/bin/git', ['show', `${STOP_REFERENCE_HEAD}:cds/${name}`], { maxBuffer: 8 * 1024 * 1024, timeout: 30000 });
+}
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 function assertCi(): void {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux');
@@ -184,7 +188,7 @@ export async function runReference(): Promise<void> {
   assertCi(); const originals = new Map<string, Buffer>();
   try {
     execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', STOP_REFERENCE_HEAD], { stdio: 'pipe', timeout: 120000 });
-    for (const name of sourcePaths) { originals.set(name, await fs.readFile(name)); await fs.writeFile(name, execFileSync('/usr/bin/git', ['show', `${STOP_REFERENCE_HEAD}:cds/${name}`])); }
+    for (const name of sourcePaths) { originals.set(name, await fs.readFile(name)); await fs.writeFile(name, readStopReferenceSource(name)); }
     let exitCode = 0;
     try { execFileSync(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url)], { env: { ...process.env, CDS_ACCEPTANCE_REFERENCE: STOP_REFERENCE_HEAD }, timeout: 180000, stdio: 'pipe' }); }
     catch (error) { exitCode = Number((error as any).status); }
@@ -193,7 +197,7 @@ export async function runReference(): Promise<void> {
     assert.equal(report.stopReferenceRevision, STOP_REFERENCE_HEAD); assert.equal(report.verdict, 'failed'); assert.equal(report.errorName, 'AssertionError');
     const check = report.checks.find((c: any) => c.phase === 'stop-unconfirmed'); assert.equal(check.httpStatus, 200); assert.equal(check.apiRunning, true); assert.equal(check.webRunning, false); assert.equal(check.originalRunCancelled, true);
     assert.equal(report.containersRemoved, true); assert.equal(report.isolatedFilesRemoved, true);
-    for (const name of sourcePaths) assert.equal(report.sourceHashes[name], hash(execFileSync('/usr/bin/git', ['show', `${STOP_REFERENCE_HEAD}:cds/${name}`])));
+    for (const name of sourcePaths) assert.equal(report.sourceHashes[name], hash(readStopReferenceSource(name)));
     await fs.writeFile(path.resolve('stop-output/reference-validation.json'), `${JSON.stringify({ verdict: 'passed', scope: 'expected old stop implementation failure only', referenceRevision: STOP_REFERENCE_HEAD, referenceReportSha256: hash(await fs.readFile(path.resolve('stop-output/reference/report.json'))) }, null, 2)}\n`, { mode: 0o600 });
   } finally { for (const [name, bytes] of originals) { await fs.writeFile(name, bytes); assert.equal(hash(await fs.readFile(name)), hash(bytes)); } }
 }

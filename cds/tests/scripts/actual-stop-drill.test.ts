@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertOwnedStopContainer, assertStopCommandTarget, STOP_PROBE_PROGRAM } from '../../scripts/actual-stop-drill.js';
+import { assertOwnedStopContainer, assertStopCommandTarget, readStopReferenceSource, STOP_PROBE_PROGRAM } from '../../scripts/actual-stop-drill.js';
 
 const owner = 'cds_stop_0123456789abcdef', name = `${owner}-api`;
 function container() { return {
@@ -9,6 +9,13 @@ function container() { return {
   NetworkSettings: { Ports: { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '32768' }] } },
 }; }
 describe('真实停止演练资源与命令保护', () => {
+  it('完整读取超过默认输出上限的真实基线路由，拒绝其他源文件', () => {
+    const bytes = readStopReferenceSource('src/routes/branches.ts');
+    expect(bytes.byteLength).toBeGreaterThan(1024 * 1024);
+    expect(bytes.toString()).toContain('export function createBranchRouter');
+    expect(bytes.toString().trimEnd().endsWith('}')).toBe(true);
+    expect(() => readStopReferenceSource('src/index.ts')).toThrow();
+  });
   it('接受本次资源完整匹配，停止后保留声明但没有实际发布端口也可清理', () => {
     const target = container(); expect(() => assertOwnedStopContainer(target, owner, name)).not.toThrow();
     target.NetworkSettings.Ports = null as any; expect(() => assertOwnedStopContainer(target, owner, name)).not.toThrow();
