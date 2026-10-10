@@ -7,6 +7,24 @@ const responseOf = (response: Response) => vi.fn(async () => response) as unknow
 afterEach(() => vi.useRealTimers());
 
 describe('bounded pending deployment observations', () => {
+  it('does not accumulate reactions on the same deadline while reading many progress chunks', async () => {
+    const nativeRace = Promise.race.bind(Promise); const uses = new Map<unknown, number>();
+    const race = vi.spyOn(Promise, 'race').mockImplementation((values: any) => {
+      const list = Array.from(values);
+      for (const value of list) uses.set(value, (uses.get(value) || 0) + 1);
+      return nativeRace(list) as any;
+    });
+    let count = 0; const encoder = new TextEncoder();
+    const response = new Response(new ReadableStream({ pull(controller) {
+      controller.enqueue(encoder.encode(count++ < 2000 ? 'event: log\ndata: {}\n\n'
+        : 'event: complete\ndata: {"ok":true}\n\n'));
+    } }));
+    try {
+      expect(await observePendingDeployDispatch(url, init, { fetch: responseOf(response) })).toMatchObject({ outcome: 'completed' });
+      expect(Math.max(0, ...uses.values())).toBeLessThanOrEqual(1);
+    } finally { race.mockRestore(); }
+  });
+
   it('never reads a rejected HTTP body or copies secrets into its result', async () => {
     const cancel = vi.fn(); const pull = vi.fn();
     const response = new Response(new ReadableStream({ pull, cancel }), { status: 503 });

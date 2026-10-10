@@ -834,7 +834,7 @@ describe('Branch Routes', () => {
       stateService.addBuildProfile({ id: 'worker', projectId: 'proj-a', name: 'Worker', workDir: '.', command: '',
         dockerImage: 'ghcr.io/x/worker:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, prebuiltCommitPolicy: 'exact', containerPort: 8080 });
       const branch = stateService.getBranch('b1')!;
-      if (cache === 'cached') branch.githubCommitSha = sha;
+      if (cache === 'cached') branch.githubCommitSha = 'a'.repeat(40);
       branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
       mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
       mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha,
@@ -844,8 +844,46 @@ describe('Branch Routes', () => {
       const result = await request(server, 'POST', '/api/branches/b1/deploy/api', { commitSha: sha });
       expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
       expect(String(result.body)).toContain('artifact_pull_failed');
+      const runId = String(result.headers['x-cds-deployment-run-id']);
+      expect(deploymentRunService.get(runId)).toMatchObject({ status: 'failed', commitSha: sha });
+      const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
+      expect(restored.getDeploymentRun(runId)).toMatchObject({ status: 'failed', commitSha: sha });
       expect(branch.services.api.status).toBe('running');
       expect(mock.commands.some(command => command.includes('worker:sha-' + sha))).toBe(true);
+    });
+
+    it.each(['worktree', 'artifact'])('P3 cancellation while a single profile pull waits preserves the requested target and old runtime: %s', async phase => {
+      seedGateProject(false);
+      const sha = 'c'.repeat(40); const branch = stateService.getBranch('b1')!;
+      branch.githubCommitSha = 'b'.repeat(40); branch.status = 'running';
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact' });
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      let release!: () => void; let entered!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockImplementation(async () => {
+        if (phase === 'worktree') { entered(); await held; }
+        return { head: sha, afterFull: sha } as any;
+      });
+      if (phase === 'artifact') {
+        mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+        mock.addResponsePatternFirst(/docker pull .*$/, async () => {
+          entered(); await held; return { stdout: '', stderr: 'manifest unknown', exitCode: 1 };
+        });
+      }
+      try {
+        const pending = request(server, 'POST', '/api/branches/b1/deploy/api', { commitSha: sha });
+        await started; branchOperationCoordinator.cancelBranch('b1', 'user cancelled'); release();
+        const result = await pending;
+        expect(String(result.body)).toContain('"operationStatus":"cancelled"');
+        const runId = String(result.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(runId)).toMatchObject({ status: 'cancelled', commitSha: sha });
+        const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
+        expect(restored.getDeploymentRun(runId)).toMatchObject({ status: 'cancelled', commitSha: sha });
+        expect(branch.status).toBe('running'); expect(branch.services.api.status).toBe('running');
+        expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
+      } finally { release(); pull.mockRestore(); }
     });
 
     it('P1 exact branch admission preserves every old service when any artifact is missing', async () => {

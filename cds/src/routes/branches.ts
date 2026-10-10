@@ -14727,11 +14727,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+    let profileRuntimeAttempted = false;
     advanceDeploymentRun(deploymentRun?.id, 'preparing', {
       phase: 'prepare',
       message: `单服务部署上下文已准备完成: ${profile.name}`,
       operationId: branchOperationLease?.operationId,
-      commitSha: entry.githubCommitSha,
+      commitSha: profileCommitPinned ? profileRequestCommitSha : entry.githubCommitSha,
       detail: { profileId },
     });
 
@@ -14783,6 +14784,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal);
+      assertBranchOperationCurrent(branchOperationLease, 'after-profile-pull');
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
@@ -14816,7 +14818,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
       // 触发时缓存的 sha，而非本次构建真正落地的 HEAD（2026-07-27 复盘 P2）。
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
+      const recordPreparedProfile = () => advanceDeploymentRun(deploymentRun?.id, 'building', {
         phase: 'build',
         message: `源码准备完成，开始构建 ${profile.name}`,
         operationId: branchOperationLease?.operationId,
@@ -14839,6 +14841,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (effectiveProfile.prebuiltImage && effectiveProfile.prebuiltCommitPolicy === 'exact') {
         const targetSha = await resolveExactArtifactTargetSha(shell,
           (typeof req.body?.commitSha === 'string' ? req.body.commitSha : '') || fallbackPulledSha || entry.githubCommitSha || '', entry.worktreePath);
+        assertBranchOperationCurrent(branchOperationLease, 'after-profile-target-resolution');
+        deployedCommitSha = targetSha;
+        Object.assign(opLog, deriveCommitMeta(entry, targetSha));
+        // Freeze the attempted target before artifact admission can fail.
+        recordPreparedProfile();
         entry.deploymentTargetSha = targetSha;
         stateService.save();
         // Resolve templates with this exact target, including first deployments with no cached CI SHA.
@@ -14854,8 +14861,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         effectiveProfile = prepared.find(item => item.id === profile.id)!;
         if (!effectiveProfile) throw new Error('artifact_dependency_graph: admitted target is missing');
-        deployedCommitSha = targetSha;
-        Object.assign(opLog, deriveCommitMeta(entry, targetSha));
+      } else {
+        recordPreparedProfile();
       }
       const branchOverride = entry.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
@@ -15018,6 +15025,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
         });
+        assertBranchOperationCurrent(branchOperationLease, `before-profile-runtime-${profile.id}`);
+        profileRuntimeAttempted = true;
         await runServiceWithPortRetry({
           stateService,
           shell,
@@ -15283,11 +15292,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         runId: deploymentRun?.id,
       });
     } catch (err) {
+      // Async Git/artifact failures may surface after the actual operation was cancelled.
+      // Only this lease's lost authority changes failure into cancellation.
+      if (branchOperationLease && !branchOperationLease.isCurrent() && !(err instanceof BranchOperationSupersededError)) {
+        err = new BranchOperationSupersededError(branchOperationLease.operationId, id, 'profile-deploy-error');
+      }
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       if (err instanceof BranchOperationSupersededError) {
         const errMsg = (err as Error).message;
         cancelDeploymentRun(deploymentRun?.id, '单服务部署被更高优先级操作取代');
-        await cleanupFencedDeployContainers(
+        if (profileRuntimeAttempted) await cleanupFencedDeployContainers(
           entry,
           new Set([profile.id]),
           String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,

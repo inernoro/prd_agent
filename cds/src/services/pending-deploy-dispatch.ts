@@ -42,7 +42,23 @@ export async function observePendingDeployDispatch(
     if (!response.ok) return result('failed', 'http_rejected');
     if (!response.body) return result('unknown', 'terminal_missing');
     reader = response.body.getReader();
-    const observationDeadline = deadline(options.observationTimeoutMs ?? 30 * 60_000);
+    // One timer owns at most one current read waiter. Racing every read against
+    // the same pending deadline retains a reaction per chunk until that deadline.
+    let wakeReadOnTimeout: (() => void) | undefined;
+    timer = setTimeout(() => {
+      timedOut = true;
+      wakeReadOnTimeout?.();
+      controller.abort();
+    }, options.observationTimeoutMs ?? 30 * 60_000);
+    timer.unref?.();
+    const readNext = (): Promise<ReadableStreamReadResult<Uint8Array> | typeof timeoutMarker> => {
+      if (timedOut) return Promise.resolve(timeoutMarker);
+      return new Promise((resolve, reject) => {
+        wakeReadOnTimeout = () => resolve(timeoutMarker);
+        reader!.read().then(chunk => { wakeReadOnTimeout = undefined; resolve(chunk); },
+          error => { wakeReadOnTimeout = undefined; reject(error); });
+      });
+    };
     const maxBytes = options.maxFrameBytes ?? 256 * 1024;
     const jsonResponse = (response.headers.get('Content-Type') || '').includes('application/json') || response.status === 202;
     const decoder = new TextDecoder();
@@ -63,7 +79,7 @@ export async function observePendingDeployDispatch(
       return result('completed', 'deployment_completed', runId(data.runId) || runId(response?.headers.get('X-CDS-Deployment-Run-Id')));
     };
     for (;;) {
-      const chunk = await Promise.race([reader.read(), observationDeadline]);
+      const chunk = await readNext();
       if (chunk === timeoutMarker) return result('unknown', 'observation_timeout');
       if (chunk.done) {
         buffer += decoder.decode();
