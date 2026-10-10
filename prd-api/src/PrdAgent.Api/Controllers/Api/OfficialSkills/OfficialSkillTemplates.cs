@@ -95,7 +95,7 @@ DEFECT_AGENT_DOMAIN="{domain}" DEFECT_AGENT_KEY="{K}" node scripts/defect-automa
 
 1. `GET {domain}/api/defect-agent/agent/published-pending?limit=20` 拉取已正式发布但未通知提交人的修复记录。
 2. 正式缺陷系统只负责读取待验收 trace 和回写通知；使用 `create-visual-test-to-kb` 在测试或预览环境跑视觉验收，目标取 `item.acceptance.target`，验收地址取 `item.acceptance.previewUrl`。
-3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，只在临时副本把 `report.storeName` 改为“缺陷修复验收报告”。
+3. 复制验收技能的 `acceptance.config.json` 到 `/tmp/defect-acceptance.config.json`，保留 `report.mode=cds`，把 `report.cdsFolder` 改为“缺陷修复验收报告”。报告归 CDS 项目验收中心，MAP 知识库通过开放协议拉取；不要设置已经下线的 `storeName` 或 `doc-store` 模式。回调兼容字段 `knowledgeBaseUrl` 填真实归档报告链接，并注明归档位置是 CDS。
 4. 视觉验收应进入更新中心的 commit 记录列表，截取对应 commit 行上的“关联缺陷 N”或“我的缺陷 N”按钮，并点击按钮截取弹窗，证明缺陷编号、标题、发布状态、验收报告或知识库链接可见。若 UI 因时间窗口或环境状态无法展示目标 commit，按双轴规则标记证据缺口并记录兜底证据，不得直接判功能失败。普通 changelog 文案行不作为缺陷关联验收目标。
 5. 归档后用 `verify-open.mjs` 打开报告地址，确认标题、正文和截图可见。
 6. `POST {domain}/api/defect-agent/agent/resolution-traces/{traceId}/validation-report` 回写 `knowledgeBaseName`、`knowledgeBaseUrl`、报告地址、`verdict` 并通知提交人。`knowledgeBaseUrl` 必填；只有功能验收为 `fail` 才发送“需要继续改进”。`conditional` 必须提供 `message`，分别说明功能结论、闭环证据状态以及限制或缺口，缺少时后端返回 400。
