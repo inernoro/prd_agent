@@ -894,6 +894,19 @@ describe('BranchOperationCoordinator', () => {
     expect(continuedWeb.lease!.isCurrent()).toBe(true);
   });
 
+  it('does not hand pending work to an unrelated completion while its force-rebuild continuation is reserved', () => {
+    const c = new BranchOperationCoordinator();
+    const force = c.begin({ branchId: 'owned', profileId: 'api', kind: 'force-rebuild', trigger: 'manual', continueWith: 'deploy-profile' });
+    c.complete(force.lease!, 'completed');
+    c.begin({ branchId: 'owned', profileId: 'api', kind: 'deploy-profile', trigger: 'webhook', commitSha: SHA_A });
+    const worker = c.begin({ branchId: 'owned', profileId: 'worker', kind: 'deploy-profile', trigger: 'manual' });
+    expect(c.complete(worker.lease!, 'completed')).toBeNull();
+    expect(c.getPendingWebhookDeploy('owned')?.request.profileId).toBe('api');
+    const continuation = c.begin({ branchId: 'owned', profileId: 'api', kind: 'deploy-profile', trigger: 'manual' });
+    expect(continuation.operationId).toBe(force.operationId);
+    expect(c.complete(continuation.lease!, 'completed')?.request.commitSha).toBe(SHA_A);
+  });
+
   it('expires only the pending scopes that conflict with that force-rebuild continuation', () => {
     const clock = vi.spyOn(Date, 'now');
     try {
@@ -1161,13 +1174,13 @@ describe('BranchOperationCoordinator', () => {
     expect(force.status).toBe('started');
     coordinator.complete(force.lease!, 'completed');
 
-    // B 完成 → complete() 弹出 pending 交给路由内部重放
+    // B 完成时A续约仍占写入意图，pending必须继续留在协调器中。
     const pending = coordinator.complete(profileB.lease!, 'completed');
-    expect(pending?.request.kind).toBe('deploy');
+    expect(pending).toBeNull();
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')?.operationId).toBe(merged.operationId);
 
-    // 重放的整分支 deploy 与 deploy-profile 续约不匹配：修复前这里 rejected，
-    // pending 已被弹出 → 请求静默丢失；现在应重新合并回 pending 等续约消费后派发
-    const replay = coordinator.begin(pending!.request);
+    // 此时外部再次请求整分支部署，仍应合并，而不是拒绝或吞掉续约。
+    const replay = coordinator.begin(coordinator.getPendingWebhookDeploy('prd-agent-main')!.request);
     expect(replay.status).toBe('merged');
 
     // force-rebuild 自己的续约 deploy-profile 仍优先接续（不被合并吞掉）

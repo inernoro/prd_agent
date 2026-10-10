@@ -389,6 +389,9 @@ export class BranchOperationCoordinator {
     }
     for (const [key, pending] of this.pendingWebhookDeploys) {
       if (pending.branchId !== lease.branchId || this.findBlockingActive(pending.request)) continue;
+      if (this.getUsableReservedContinuation(pending.branchId, pending.request)) continue;
+      // Expiry may cancel this scope while checking reservations.
+      if (!this.pendingWebhookDeploys.has(key)) continue;
       this.pendingWebhookDeploys.delete(key);
       return pending;
     }
