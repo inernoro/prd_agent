@@ -80,8 +80,8 @@ describe('多挂载点磁盘诊断', () => {
   it('启动失败路径必须真的量了 docker 数据根（结构契约）', () => {
     // 光有能力不够 —— index.ts 那两处失败诊断得真的调它。
     const src = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
-    expect(src).toMatch(/function diagnoseBootDisks\(\)/);
-    expect(src).toMatch(/resolveDockerDataRoot\(\)/);
+    expect(src).toMatch(/async function diagnoseBootDisks\(\)/);
+    expect(src).toMatch(/await resolveDockerDataRoot\(shell\)/);
     expect(src, '两处 storage 启动失败诊断都要走 diagnoseBootDisks')
       .not.toMatch(/diagnoseDiskForBootFailure\(defaultDiskUsage\(config\.repoRoot\)\)/);
   });

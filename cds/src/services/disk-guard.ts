@@ -1,5 +1,6 @@
-import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import type { IShellExecutor } from '../types.js';
+import { ShellExecutor } from './shell-executor.js';
 
 /**
  * 磁盘分档刹车（2026-07-27 宕机复盘 P0）。
@@ -212,42 +213,65 @@ class DiskGuardState {
  * 常见默认 `/var/lib/docker`；containerd 存储通常与之同一文件系统。
  */
 let cachedDockerRoot: string | null | undefined;
-export function resolveDockerDataRoot(
-  execSyncFn?: (cmd: string) => string,
+let pendingDockerRoot: Promise<string | null> | undefined;
+let dockerRootEpoch = 0;
+const dockerRootShell = new ShellExecutor({ maxConcurrent: 1, maxQueued: 64 });
+type DockerRootReader = (cmd: string, signal: AbortSignal) => string | Promise<string>;
+
+export async function resolveDockerDataRoot(
+  executor?: IShellExecutor | DockerRootReader,
   existsFn?: (p: string) => boolean,
-): string | null {
+): Promise<string | null> {
   if (cachedDockerRoot !== undefined) return cachedDockerRoot;
-  const exists = existsFn ?? ((path: string) => {
-    try { return existsSync(path); } catch { return false; }
-  });
+  if (pendingDockerRoot) return pendingDockerRoot;
+  const exists = (path: string) => { try { return (existsFn ?? existsSync)(path); } catch { return false; } };
   // 运维显式指定优先（master 容器化时把宿主 docker 根挂到别处的场合）
   const override = (process.env.CDS_DOCKER_DATA_ROOT || '').trim();
   if (override) {
     cachedDockerRoot = exists(override) ? override : null;
     return cachedDockerRoot;
   }
-  try {
-    const run = execSyncFn ?? ((cmd: string) => execSync(cmd, { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }));
-    const out = String(run('docker info -f "{{.DockerRootDir}}"') || '').trim();
-    const raw = out && out !== '<no value>' ? out : null;
-    // 命名空间校验（Codex 第三十三轮 P1）：`docker info` 给的是 **daemon 侧**路径。
-    // master 若跑在容器里（挂宿主 docker socket），statfs 这个路径量的是 master
-    // 容器自己命名空间下的同名路径——要么不存在，要么量了个完全无关的文件系统，
-    // 于是 docker 盘满了闸门照样放行（与 projects.ts docker cp 那处同一个坑）。
-    // 只有在本命名空间里能看到真正的 docker 根（有 overlay2 / image 子目录）才采用，
-    // 否则宁可退回只量 worktree，也不给出一个错误读数。
-    cachedDockerRoot = raw && exists(raw) && (exists(`${raw}/overlay2`) || exists(`${raw}/image`))
-      ? raw
-      : null;
-  } catch {
-    cachedDockerRoot = null;
-  }
-  return cachedDockerRoot;
+  const epoch = dockerRootEpoch;
+  const signal = AbortSignal.timeout(10_000);
+  const run: DockerRootReader = typeof executor === 'function' ? executor : async (cmd, currentSignal) => {
+    const result = await (executor ?? dockerRootShell).exec(cmd, {
+      timeout: 10_000, signal: currentSignal, priority: 'diagnostic', schedulingGroup: 'disk-guard',
+    });
+    if (result.exitCode !== 0) throw new Error('Docker data root unavailable');
+    return result.stdout;
+  };
+  const task = (async (): Promise<string | null> => {
+    try {
+      const output = await new Promise<string | undefined>(resolve => {
+        let settled = false;
+        const finish = (value?: string) => {
+          if (settled) return;
+          settled = true; signal.removeEventListener('abort', onAbort); resolve(signal.aborted ? undefined : value);
+        };
+        const onAbort = () => finish();
+        signal.addEventListener('abort', onAbort, { once: true });
+        Promise.resolve().then(() => signal.aborted ? undefined : run('docker info -f "{{.DockerRootDir}}"', signal))
+          .then(finish, () => finish());
+      });
+      const out = String(output || '').trim();
+      const raw = out && out !== '<no value>' ? out : null;
+      // Docker returns its Daemon-side path. Only adopt it when the current namespace
+      // can see the actual data directories; a same-named unrelated mount is not proof.
+      return raw && exists(raw) && (exists(`${raw}/overlay2`) || exists(`${raw}/image`))
+        ? raw
+        : null;
+    } catch { return null; }
+  })().then(root => { if (dockerRootEpoch === epoch) cachedDockerRoot = root; return root; })
+    .finally(() => { if (dockerRootEpoch === epoch) pendingDockerRoot = undefined; });
+  pendingDockerRoot = task;
+  return task;
 }
 
 /** 测试用：清掉 docker 数据目录缓存。 */
 export function resetDockerDataRootCache(): void {
+  dockerRootEpoch++;
   cachedDockerRoot = undefined;
+  pendingDockerRoot = undefined;
 }
 
 export const diskGuard = new DiskGuardState();

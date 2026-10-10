@@ -164,30 +164,69 @@ describe('docker 数据目录必须在本命名空间可见（Codex 第三十三
   beforeEach(() => { resetDockerDataRootCache(); delete process.env.CDS_DOCKER_DATA_ROOT; });
   afterAll(() => { resetDockerDataRootCache(); delete process.env.CDS_DOCKER_DATA_ROOT; });
 
-  it('本命名空间看得见真正的 docker 根（有 overlay2/image）才采用', () => {
-    const seen = new Set(['/var/lib/docker', '/var/lib/docker/overlay2']);
-    expect(resolveDockerDataRoot(() => '/var/lib/docker', (p) => seen.has(p))).toBe('/var/lib/docker');
+  it('shares a delayed cold Docker root read without blocking callers and caches the visible result', async () => {
+    let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); let calls = 0;
+    const reader = async () => { calls++; await held; return '/var/lib/docker'; };
+    const exists = (p: string) => ['/var/lib/docker', '/var/lib/docker/image'].includes(p);
+    try {
+      const first = resolveDockerDataRoot(reader, exists);
+      const second = resolveDockerDataRoot(reader, exists);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      expect(calls).toBe(1); release();
+      expect(await Promise.all([first, second])).toEqual(['/var/lib/docker', '/var/lib/docker']);
+      expect(await resolveDockerDataRoot(reader, exists)).toBe('/var/lib/docker'); expect(calls).toBe(1);
+    } finally { release(); }
   });
 
-  it('master 跑在容器里、daemon 路径在本命名空间不存在时返回 null（宁可不量也不量错）', () => {
+  it('does not let a read started before cache reset overwrite the new Docker root', async () => {
+    let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+    const exists = () => true;
+    try {
+      const old = resolveDockerDataRoot(async () => { await held; return '/old'; }, exists);
+      resetDockerDataRootCache();
+      expect(await resolveDockerDataRoot(() => '/new', exists)).toBe('/new');
+      release(); await old;
+      expect(await resolveDockerDataRoot(() => '/unexpected', exists)).toBe('/new');
+    } finally { release(); }
+  });
+
+  it('passes the cold probe to the injected executor with bounded diagnostic options and caches failures', async () => {
+    const calls: any[] = [];
+    const executor = { exec: async (command: string, options: any) => {
+      calls.push({ command, options }); return { stdout: '/var/lib/docker', stderr: 'private daemon output', exitCode: 1 };
+    } };
+    expect(await resolveDockerDataRoot(executor as any, () => true)).toBeNull();
+    expect(await resolveDockerDataRoot(executor as any, () => true)).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('docker info -f "{{.DockerRootDir}}"');
+    expect(calls[0].options).toMatchObject({ timeout: 10_000, priority: 'diagnostic', schedulingGroup: 'disk-guard' });
+    expect(calls[0].options.signal.aborted).toBe(false);
+  });
+
+  it('本命名空间看得见真正的 docker 根（有 overlay2/image）才采用', async () => {
+    const seen = new Set(['/var/lib/docker', '/var/lib/docker/overlay2']);
+    expect(await resolveDockerDataRoot(() => '/var/lib/docker', (p) => seen.has(p))).toBe('/var/lib/docker');
+  });
+
+  it('master 跑在容器里、daemon 路径在本命名空间不存在时返回 null（宁可不量也不量错）', async () => {
     // docker info 给的是 daemon 侧路径；master 容器里 statfs 同名路径要么不存在、
     // 要么量了个完全无关的文件系统——那会让 docker 盘满时闸门照样放行。
-    expect(resolveDockerDataRoot(() => '/var/lib/docker', () => false)).toBeNull();
+    expect(await resolveDockerDataRoot(() => '/var/lib/docker', () => false)).toBeNull();
   });
 
-  it('路径存在但不像 docker 根（无 overlay2/image）也拒绝采用', () => {
+  it('路径存在但不像 docker 根（无 overlay2/image）也拒绝采用', async () => {
     const seen = new Set(['/var/lib/docker']);
-    expect(resolveDockerDataRoot(() => '/var/lib/docker', (p) => seen.has(p))).toBeNull();
+    expect(await resolveDockerDataRoot(() => '/var/lib/docker', (p) => seen.has(p))).toBeNull();
   });
 
-  it('运维显式指定的挂载点优先，且同样要求存在', () => {
+  it('运维显式指定的挂载点优先，且同样要求存在', async () => {
     process.env.CDS_DOCKER_DATA_ROOT = '/mnt/dockerdata';
-    expect(resolveDockerDataRoot(() => '/var/lib/docker', (p) => p === '/mnt/dockerdata')).toBe('/mnt/dockerdata');
+    expect(await resolveDockerDataRoot(() => '/var/lib/docker', (p) => p === '/mnt/dockerdata')).toBe('/mnt/dockerdata');
     resetDockerDataRootCache();
-    expect(resolveDockerDataRoot(() => '/var/lib/docker', () => false)).toBeNull();
+    expect(await resolveDockerDataRoot(() => '/var/lib/docker', () => false)).toBeNull();
   });
 
-  it('docker info 不可用时返回 null，不抛', () => {
-    expect(resolveDockerDataRoot(() => { throw new Error('docker missing'); }, () => true)).toBeNull();
+  it('docker info 不可用时返回 null，不抛', async () => {
+    expect(await resolveDockerDataRoot(() => { throw new Error('docker missing'); }, () => true)).toBeNull();
   });
 });

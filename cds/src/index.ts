@@ -175,12 +175,12 @@ const config = loadConfig(configPath);
  * 正是 containerd（159GB），只量仓库盘会让这句提示恰好在真凶场景下不出现。
  * 运行期 diskGuard 早就两处都量，但启动失败时进程走不到那里，故这里自己量全。
  */
-function diagnoseBootDisks(): string | null {
+async function diagnoseBootDisks(): Promise<string | null> {
   const readings: Array<{ label: string; usage: { totalBytes: number; freeBytes: number } | null }> = [
     { label: config.repoRoot, usage: defaultDiskUsage(config.repoRoot) },
   ];
   try {
-    const dockerRoot = resolveDockerDataRoot();
+    const dockerRoot = await resolveDockerDataRoot(shell);
     if (dockerRoot) readings.push({ label: `docker: ${dockerRoot}`, usage: defaultDiskUsage(dockerRoot) });
   } catch { /* docker 不可用就只量仓库盘，不能因为诊断本身抛错吞掉真正的启动错误 */ }
   return diagnoseDisksForBootFailure(readings);
@@ -1957,7 +1957,7 @@ async function initStateService(): Promise<void> {
         `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败（已重试至上限）: ${msg}`,
       );
       // 指向真凶：满盘时明写出来，别让运维从数据库连接开始查（事故当天就是这样）
-      const diskHint = diagnoseBootDisks();
+      const diskHint = await diagnoseBootDisks();
       if (diskHint) console.error(`  [storage] ${diskHint}`);
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
@@ -2014,7 +2014,7 @@ async function initStateService(): Promise<void> {
       `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
       + `但 mongo init 失败（已重试至上限）: ${msg}`,
     );
-    const diskHint = diagnoseBootDisks();
+    const diskHint = await diagnoseBootDisks();
     if (diskHint) console.error(`  [storage] ${diskHint}`);
     console.error(
       `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
@@ -3448,10 +3448,11 @@ const janitorService = new JanitorService(
 // 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
 // 文件系统上，而镜像层/容器可写层/state mongo 卷全落在 docker 那侧——2026-07-27
 // 撑爆的正是 containerd（159GB）。只量 worktree 会在 docker 盘 95% 时报「一切正常」。
+// Resolve once through the shared worker before admission; the synchronous disk probe reads only this cache.
+const dockerDataRoot = await resolveDockerDataRoot(shell);
 diskGuard.setProbe(() => {
   const readings = [defaultDiskUsage(config.worktreeBase)];
-  const dockerRoot = resolveDockerDataRoot();
-  if (dockerRoot) readings.push(defaultDiskUsage(dockerRoot));
+  if (dockerDataRoot) readings.push(defaultDiskUsage(dockerDataRoot));
   return readings.filter((r): r is { totalBytes: number; freeBytes: number } => !!r);
 });
 diskGuard.refreshNow();
