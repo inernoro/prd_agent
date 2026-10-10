@@ -16,9 +16,10 @@ import { createJanitorDockerAdapters } from '../src/services/janitor.js';
 import { InfraLifecycleWatcher } from '../src/services/infra-lifecycle-watcher.js';
 import { ObservationStreamExecutor } from '../src/services/observation-stream-executor.js';
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
+import { SystemLogMonitor } from '../src/services/system-log-monitor.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -43,6 +44,9 @@ async function main(): Promise<void> {
   const startupStreams = new streamModule.ObservationStreamExecutor(2);
   const eventStreams = new streamModule.ObservationStreamExecutor(2);
   const userLogStreams = new streamModule.ObservationStreamExecutor(2);
+  const journalStreams = new streamModule.ObservationStreamExecutor(1);
+  const journalModule = compiled ? await import(new URL('../dist/services/system-log-monitor.js', import.meta.url).href) as typeof import('../src/services/system-log-monitor.js') : { SystemLogMonitor };
+  let journalMonitor: SystemLogMonitor | undefined;
   const logHubModule = compiled ? await import(new URL('../dist/services/container-log-stream-hub.js', import.meta.url).href) as typeof import('../src/services/container-log-stream-hub.js') : { ContainerLogStreamHub };
   const userLogHub = new logHubModule.ContainerLogStreamHub(userLogStreams);
   const logResponseModule = compiled ? await import(new URL('../dist/services/container-log-stream-response.js', import.meta.url).href) as typeof import('../src/services/container-log-stream-response.js') : { serveContainerLogStream };
@@ -88,10 +92,11 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'independent-process-prewarm';
-    await Promise.all([shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start()]);
+    await Promise.all([shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();
     report.eventWarmStats = eventStreams.getStats();
     report.userLogWarmStats = userLogStreams.getStats();
+    report.journalWarmStats = journalStreams.getStats();
     const warmStats = shell.getStats();
     assert.ok(warmStats.factoryPid && warmStats.factoryPid !== process.pid);
     assert.equal(warmStats.actors.length, 2);
@@ -230,6 +235,44 @@ async function main(): Promise<void> {
     report.userLogReceipt.drained = { ...userLogHub.getStats(), pendingBytes: logWriterModule.ssePendingBudget.bytes, archiveCount: archivedLogBytes.length, maximumArchiveBytes: Math.max(...archivedLogBytes) };
     report.checks.push({ name: 'compiled-owned-shared-log-http-readers-and-health-capacity', passed: true });
 
+    report.stage = 'compiled-owned-journal-producer';
+    let journalVersion = '';
+    const journalBinary = await journalStreams.exec(['journalctl', '--version'].map(shellQuoteArg).join(' '), {
+      timeout: 8000, onData: chunk => { journalVersion = (journalVersion + chunk).slice(0, 4096); },
+    });
+    assert.equal(journalBinary.exitCode, 0); assert.match(journalVersion, /systemd/i);
+    // 专用合成JSON生产者验证编译类/真实进程与IPC，不冒称已读取真实服务journald。
+    const journalBin = path.join(temp, 'journal-bin'); await fs.mkdir(journalBin, { mode: 0o700 });
+    const journalTrace = path.join(temp, 'journal-trace.jsonl');
+    const journalUnit = `${owner}.service`;
+    await fs.writeFile(path.join(journalBin, 'journalctl'), String.raw`#!${process.execPath}
+const fs=require('node:fs');const args=process.argv.slice(2);
+if(!args.includes(${JSON.stringify(journalUnit)})||!args.includes('warning..alert'))process.exit(2);
+fs.appendFileSync(${JSON.stringify(journalTrace)},JSON.stringify({pid:process.pid,ppid:process.ppid,args})+'\n');
+const emit=(cursor,message)=>process.stdout.write(JSON.stringify({__CURSOR:cursor,PRIORITY:'4',MESSAGE:message})+'\n');
+emit('owned-shared-cursor','warning owned backfill');
+if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('owned-tail-cursor','warning owned tail');setInterval(()=>{},1000);}
+`, { mode: 0o700 });
+    const realJournalExec = journalStreams.exec.bind(journalStreams);
+    journalStreams.exec = (command, options) => realJournalExec(command, { ...options, env: { ...options.env, PATH: `${journalBin}:${process.env.PATH || ''}` } });
+    const journalRecords: any[] = [];
+    journalMonitor = new journalModule.SystemLogMonitor(shell, { record: record => { journalRecords.push(record); } }, [journalUnit], journalStreams);
+    await journalMonitor.start();
+    for (let wait = 0; wait < 500 && !journalRecords.some(record => record.action === 'journal.tail'); wait++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(journalRecords.some(record => record.action === 'journal.tail'));
+    assert.equal(journalMonitor.getStats().overflowLines, 1);
+    assert.deepEqual(journalRecords.filter(record => record.action.startsWith('journal.') && record.action !== 'journal.oversize').map(record => record.message), ['warning owned backfill', 'warning owned tail']);
+    const journalCommands = (await fs.readFile(journalTrace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(journalCommands.length, 2);
+    assert.ok(journalCommands.every(command => command.ppid !== process.pid && journalStreams.getStats().actors.some(actor => actor.pid === command.ppid)));
+    assert.equal(await container.isRunning(id!), true); owned();
+    report.journalReceipt = { journalBinaryVersion: journalVersion.split('\n')[0], commands: journalCommands, stats: journalMonitor.getStats(),
+      healthReadable: true, streamStats: journalStreams.getStats(), scope: 'owned synthetic journal producer via compiled monitor and real process/IPC; version is actual journalctl binary, not actual service journald contents' };
+    await journalMonitor.stop(); assert.equal(journalStreams.getStats().admitted, 0); assert.equal(journalMonitor.getStats().bufferedBytes, 0);
+    report.journalReceipt.drainedStats = journalStreams.getStats();
+    journalStreams.exec = realJournalExec;
+    report.checks.push({ name: 'compiled-owned-journal-producer-bounds-and-drain', passed: true });
+
     report.stage = 'bounded-read-concurrency';
     const requests = Array.from({ length: 8 }, () => container.isRunning(id!));
     assert.ok(shell.getStats().active <= 2 && shell.getStats().queued >= 6);
@@ -268,11 +311,11 @@ async function main(): Promise<void> {
   } finally {
     logRequests.splice(0).forEach(request => request.destroy());
     if (logServer) { logServer.closeAllConnections(); await new Promise<void>(resolve => logServer!.close(() => resolve())); }
-    try { await Promise.all([dockerEvents.stop(), infraEvents.stop(), userLogHub.close()]); }
+    try { await Promise.all([dockerEvents.stop(), infraEvents.stop(), userLogHub.close(), journalMonitor?.stop()]); }
     catch { report.verdict = 'failed'; process.exitCode = 1; }
-    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await Promise.all([shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close()]);
+      await Promise.all([shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
         try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }

@@ -188,6 +188,7 @@ const localShell = new IsolatedShellExecutor(new ShellExecutor());
 const startupStreams = new ObservationStreamExecutor();
 const eventStreams = new ObservationStreamExecutor(2);
 const userLogStreams = new ObservationStreamExecutor(2);
+const journalStreams = new ObservationStreamExecutor(1);
 const userLogHub = new ContainerLogStreamHub(userLogStreams);
 const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
@@ -196,6 +197,7 @@ if (!isPreviewInstance()) {
   await Promise.all([
     localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。')),
     startupStreams.start().catch(() => console.warn('[observation] 启动日志执行器暂不可用；启动信号不报告就绪。')),
+    journalStreams.start().catch(() => console.warn('[observation] 系统日志执行器暂不可用；保留明确失败诊断。')),
     userLogStreams.start().catch(() => console.warn('[observation] 用户日志执行器暂不可用；保留明确失败和重试入口。')),
     eventStreams.start().catch(() => console.warn('[observation] 容器事件执行器暂不可用；保留未知状态。')),
   ]);
@@ -2723,7 +2725,7 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
     },
   });
 }, eventStreams);
-const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore);
+const systemLogMonitor = new SystemLogMonitor(shell, activeServerEventLogStore, undefined, journalStreams);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 proxyService.setHttpLogStore(activeHttpLogStore);
@@ -4683,7 +4685,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   function stopBackgroundServices(): void {
     for (const t of orphanReaperTimers.splice(0)) clearTimeout(t as NodeJS.Timeout);
     void dockerEventMonitor.stop().catch(() => console.warn('[observation] 容器事件清理未确认。'));
-    systemLogMonitor.stop();
+    void systemLogMonitor.stop().catch(() => console.warn('[observation] 系统日志清理未确认。'));
     schedulerService.stop();
     janitorService.stop();
     autoLifecycleService.stop();
@@ -4733,7 +4735,7 @@ async function shutdown(signal: string): Promise<void> {
   if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
   if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
   await Promise.all([dockerEventMonitor.stop(), infraLifecycleWatcher.stop()]).catch(() => console.warn('[shutdown] 容器事件清理未确认；继续关键状态保存。'));
-  systemLogMonitor.stop();
+  await systemLogMonitor.stop().catch(() => console.warn('[shutdown] 系统日志清理未确认；继续关键状态保存。'));
   schedulerService.stop();
   janitorService.stop();
   forwarderRoutePublisher?.stop();
@@ -4760,6 +4762,7 @@ async function shutdown(signal: string): Promise<void> {
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
   await userLogHub.close().catch(() => console.warn('[shutdown] 用户日志清理未确认；继续关键状态保存。'));
   await userLogStreams.close().catch(() => console.warn('[shutdown] 用户日志执行槽清理未确认；继续关键状态保存。'));
+  await journalStreams.close().catch(() => console.warn('[shutdown] 系统日志执行槽清理未确认；继续关键状态保存。'));
   await eventStreams.close().catch(() => console.warn('[shutdown] 事件执行槽清理未确认；继续关键状态保存。'));
   await startupStreams.close().catch(() => {
     console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。');
