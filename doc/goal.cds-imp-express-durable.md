@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.4；日期：2026-10-11；状态：active。
+版本：v1.5；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -46,14 +46,14 @@ TDD先红：候选create/start/readiness任一失败旧路由仍可服务；固�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:e5a8ec7adc05e916c78c037599ccf26d958cff58,IMP:fc6563de7d474e7d2d63feb0fafc83dee6662b70（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:47/0相对origin/main,IMP:3/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:ac86760dfdf1c51a4c9bdb4db84301b69edee261,IMP:9adbad64c9b7004de66f1f02b280249dddfc3749（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:49/0相对origin/main,IMP:4/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：两独立工作树与49项双副本计划/TDD账本已建立；继承安全与状态止血基线，完成本地精确制品准入、版本引用/缓存digest校验、执行Worker/supervisor硬中断清理/ACK背压/调度与日志热点迁移、实际覆盖/黄蓝/独立版本状态、IMP13角色exact合同与权威文档校准。本批又补P3取消从租约贯穿真实命令、pull、启动信号、TCP/HTTP/重试及崩溃日志；P1新发现真实prebuilt自动填缺省新分支默认,保留明确例外与已有分支；候选替换设计合同已写；候选私有服务图/摘要身份/隔离网络/创建前归属校验与候选账本可靠保存已实现，账本仅投影运行身份，新旧端口预留跨重载及终态裁剪保留，初始存活等待可取消；尚未接入部署路由、切换、worker替换约束和Daemon对账。所有实现仍未发布；候选就绪替换、增量存储/SSE进一步治理、默认策略、辅助生命周期和完整生产证据未完成。
-- 证据纪元：`target_sha=CDS:e5a8ec7adc05e916c78c037599ccf26d958cff58,IMP:fc6563de7d474e7d2d63feb0fafc83dee6662b70（IMP产品代码a35b160067cf2f9b7a41b5f5f2d37afb05ba8130）；tested_sha=CDS:e5a8ec7adc05e916c78c037599ccf26d958cff58完整本批内容,635文件9180测试通过及backend tsc;IMP:a35b160067cf2f9b7a41b5f5f2d37afb05ba8130的35条合同内容,fc6563为文档提交；deployed_sha=N/A线上自检20秒超时未证实；environment=本地独立工作树和测试自有无副作用进程,共享CDS只读；observed_at=2026-10-10T16:06:38Z`
-- 新鲜验证证据：本批635文件通过/6跳过、9180测试通过/19跳过，backend tsc通过；一份既有obsolete快照提示保留，不声称快照全部生效。候选归属74条、账本/容量/取消等90条局部绿。独立候选原16项16绿、额外11个删除/竞争反例旧源全红新源全绿（模拟Docker对象，非实际Daemon），账本与新增存活等待独立核验正在执行。账本首轮夹具在未flush时启动第二写入者导致rename失败，原失败保留，明确flush及收尾后复绿，不修改产品判据。前批固定375f016aa取消/新默认：632文件9157测试通过（最后getLogs补丁前），最后补丁86条与tsc通过；独立租约8/8、整/单服务真实HTTP pull2/2、readiness4/4、持久化默认8/8及崩溃日志取消红绿通过。上述全为本地有界证据，不继承为实际OCI/公网/视觉/八分支；主干C#5条在.NET9 roll-forward通过,本机缺.NET8原生运行时。
+- 当前实现事实：两独立工作树与49项双副本计划/TDD账本已建立；继承安全与状态止血基线，完成本地精确制品准入、版本引用/缓存digest校验、执行Worker/supervisor硬中断清理/ACK背压/调度与日志热点迁移、实际覆盖/黄蓝/独立版本状态、IMP13角色exact合同与权威文档校准。本批又补P3取消从租约贯穿真实命令、pull、启动信号、TCP/HTTP/重试及崩溃日志；P1新发现真实prebuilt自动填缺省新分支默认,保留明确例外与已有分支；候选替换设计合同已写；候选私有服务图/摘要身份/隔离网络/创建前归属校验与候选账本可靠保存已实现，账本仅投影运行身份，新旧端口预留跨重载及终态裁剪保留，初始存活等待可取消；尚未接入部署路由、切换、worker替换约束和Daemon对账。所有实现仍未发布；候选就绪替换、增量存储/SSE进一步治理、默认策略、辅助生命周期和完整生产证据未完成。 本批修复真实JSON落盘错误被首个flush观察者消费的缺陷，屏障结果对每个等待者保持一致，未知run状态失败关闭；新增冻结完整映射、从实际Forwarder诊断核验的有界确认组件，尚未接入部署切换。
+- 证据纪元：`target_sha=CDS:ac86760dfdf1c51a4c9bdb4db84301b69edee261,IMP:9adbad64c9b7004de66f1f02b280249dddfc3749（IMP产品代码a35b160067cf2f9b7a41b5f5f2d37afb05ba8130）；tested_sha=CDS:ac86760dfdf1c51a4c9bdb4db84301b69edee261最后503终结修补77条及tsc通过,四worker全量636文件9191测试对应503补丁前;IMP:a35b160067cf2f9b7a41b5f5f2d37afb05ba8130的35条合同内容,后续IMP提交仅计划文档；deployed_sha=N/A线上运行SHA未证实；environment=本地独立工作树/自有测试进程,共享CDS只读；observed_at=2026-10-10T16:19:44Z`
+- 新鲜验证证据：最后503等待终结补丁后6文件77测试及backend tsc通过；503补丁前四worker全量636文件9191测试通过、6文件19测试跳过、1既有obsolete快照提示。此前全量3失败（克隆5秒超时、20ms账户恢复时点、附件ECONNRESET）原件保留；定向原3场景绿，但主进程根目录运行导致另一个样例ENOENT不算产品证据，正确cds目录四worker全量通过，不修改断言。独立账本EISDIR多观察者/未知状态9/9复绿，初始liveness完整runService两反例旧0/2新2/2；独立ACK浅复制后12/13，503悬挂红已修,最后复核待返回。独立自有实际Forwarder文件watch、诊断与代理old→new marker已证实,进程退出；仅本地数据面，不是部署/公网/视觉/八分支。历史e5检查点635文件9180测试与tsc通过；候选16+11归属反例复绿，Daemon为模拟；失败/夹具错误/旧红均保留。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：独立复核本地e5a8ec7ad候选/账本检查点并保留红绿；按P3设计合同接入私有服务图、worker/独占约束、就绪后的实际路由消费者确认与失败恢复，再补取消Daemon对账与重启恢复；继续P1默认/依赖、P4存储/SSE和IMP辅助生命周期；具备可审查候选后处理最小发布前置，最终按49项与A01–A12收齐真实证据。
+- 下一动作与完成条件：固定ac86760dfdf1屏障与消费者确认的独立复核；继续P3实际私有服务图/worker与独占约束/可靠切换意图、路由确认、失败恢复和取消Daemon对账接线；之后推进P1剩余默认与依赖、P4增量/SSE、IMP辅助生命周期。49项正式与A01–A12真实证据未收齐，目标保持active。
 - 终止/接替结论：active
