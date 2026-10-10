@@ -16,6 +16,7 @@ import { BranchOperationCoordinator } from '../../src/services/branch-operation-
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import { ManagedProjectService } from '../../src/services/managed-project.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -3510,6 +3511,67 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it('实际HTTP路径中较新的手动部署不重放此前排队的旧目标', async () => {
+      const shaA = '1111111111111111111111111111111111111111';
+      const shaB = '2222222222222222222222222222222222222222';
+      const shaC = '3333333333333333333333333333333333333333';
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'latest-target', projectId: 'default', branch: 'feature/latest-target',
+        worktreePath: path.join(tmpDir, 'worktrees', 'latest-target'), status: 'idle',
+        createdAt: new Date().toISOString(), services: {}, githubCommitSha: shaA,
+      });
+      const releases: Array<() => void> = [];
+      const waits = [0, 1].map(() => new Promise<void>((resolve) => { releases.push(resolve); }));
+      const marks: Array<() => void> = [];
+      const starts = [0, 1].map(() => new Promise<void>((resolve) => { marks.push(resolve); }));
+      let actualRuns = 0;
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-latest-target-api')) {
+          const index = actualRuns++;
+          marks[index]?.();
+          await waits[index];
+          return { stdout: `cid-latest-target-${index}`, stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+      const replayTargets: unknown[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+        if (String(url).includes('/api/branches/latest-target/deploy')) {
+          replayTargets.push(JSON.parse(String(init?.body)));
+        }
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }));
+      // 此处验证目标调度，避免测试宿主实时负载改变是否获得编译槽位。
+      setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+      let first: ReturnType<typeof request> | undefined;
+      let latest: ReturnType<typeof request> | undefined;
+      try {
+        first = request(server, 'POST', '/api/branches/latest-target/deploy', { commitSha: shaA }, { 'X-CDS-Trigger': 'webhook' });
+        await starts[0];
+        const queued = await request(server, 'POST', '/api/branches/latest-target/deploy', { commitSha: shaB }, { 'X-CDS-Trigger': 'webhook' });
+        expect(String(queued.body)).toContain('merged');
+        latest = request(server, 'POST', '/api/branches/latest-target/deploy', { commitSha: shaC });
+        await starts[1];
+        releases[1]();
+        await latest;
+        releases[0]();
+        await first;
+        expect(actualRuns).toBe(2);
+        expect(replayTargets).toEqual([]);
+        expect(branchOperationCoordinator.getPendingWebhookDeploy('latest-target')).toBeUndefined();
+        expect(stateService.getBranch('latest-target')?.status).toBe('running');
+      } finally {
+        releases.forEach((release) => release());
+        await Promise.allSettled([first, latest]);
+        setBuildGateHostLoadProvider(null);
+        vi.unstubAllGlobals();
+      }
+    });
+
     // Codex 三轮 P1：并入在途部署时，响应头必须指向那条真的会跑完的 run。
     // 外层 handler 在取租约前就建了占位 run 并写进 X-CDS-Deployment-Run-Id，并入后
     // 占位 run 会被取消，而 cdscli 只认这个头、见 cancelled 即判部署失败——正是本批

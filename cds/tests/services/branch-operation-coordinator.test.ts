@@ -50,6 +50,56 @@ function eventSink(): {
 }
 
 describe('BranchOperationCoordinator', () => {
+  it('较新的手动整分支部署取代在途目标时，也取消旧待执行目标并保留审计', () => {
+    const { sink, records } = eventSink();
+    const coordinator = new BranchOperationCoordinator(sink);
+    coordinator.begin({ branchId: 'b', projectId: 'p', kind: 'deploy', trigger: 'webhook', commitSha: SHA_A });
+    const queued = coordinator.begin({ branchId: 'b', projectId: 'p', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+    const latest = coordinator.begin({ branchId: 'b', projectId: 'p', kind: 'deploy', trigger: 'manual', commitSha: SHA_C });
+    expect(latest.status).toBe('started');
+    expect(coordinator.getPendingWebhookDeploy('b')).toBeUndefined();
+    expect(coordinator.complete(latest.lease!, 'completed')).toBeNull();
+    expect(records).toEqual(expect.arrayContaining([expect.objectContaining({
+      action: 'branch.operation.cancelled', operationId: queued.operationId, commitSha: SHA_B,
+      details: expect.objectContaining({ pending: true, supersededByCommitSha: SHA_C }),
+    })]));
+  });
+
+  it('旧部署迟到收尾不能弹出仍被新部署阻挡的最新待办', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const old = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_A });
+    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: SHA_B });
+    const queued = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_C });
+    expect(coordinator.complete(old.lease!, 'cancelled')).toBeNull();
+    expect(active.lease!.isCurrent()).toBe(true);
+    expect(coordinator.getPendingWebhookDeploy('b')?.operationId).toBe(queued.operationId);
+    expect(coordinator.complete(active.lease!, 'completed')?.request.commitSha).toBe(SHA_C);
+  });
+
+  it('并行服务未全部结束时保留整分支待办，最后一个服务才派发一次', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const api = coordinator.begin({ branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual' });
+    const web = coordinator.begin({ branchId: 'b', kind: 'deploy-profile', profileId: 'web', trigger: 'manual' });
+    const queued = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_C });
+    expect(coordinator.complete(api.lease!, 'completed')).toBeNull();
+    expect(coordinator.getPendingWebhookDeploy('b')?.operationId).toBe(queued.operationId);
+    expect(coordinator.complete(web.lease!, 'completed')?.operationId).toBe(queued.operationId);
+    expect(coordinator.getPendingWebhookDeploy('b')).toBeUndefined();
+  });
+
+  it('续接复用操作ID后，旧代次收尾不能删除新租约或重新保留旧续接', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const force = coordinator.begin({ branchId: 'b', kind: 'force-rebuild', profileId: 'api', trigger: 'manual', continueWith: 'deploy-profile' });
+    coordinator.complete(force.lease!, 'completed');
+    const continued = coordinator.begin({ branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual' });
+    expect(continued.operationId).toBe(force.operationId);
+    expect(continued.generation).not.toBe(force.generation);
+    coordinator.complete(force.lease!, 'completed');
+    expect(continued.lease!.isCurrent()).toBe(true);
+    coordinator.complete(continued.lease!, 'completed');
+    expect(coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual' }).status).toBe('started');
+  });
+
   it('records queryable lifecycle events with top-level operationId', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

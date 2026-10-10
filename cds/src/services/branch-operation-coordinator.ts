@@ -326,6 +326,19 @@ export class BranchOperationCoordinator {
       }
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
         this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
+      } else {
+        // 新部署取代在途操作时，同一部署范围的旧待办也被取代；否则 C 完成后
+        // 会重放此前排队的 B。不同服务的请求不因这次替换而被丢弃。
+        const pending = this.pendingWebhookDeploys.get(branchId);
+        if (pending && request.kind === 'deploy' && pending.request.kind === request.kind
+          && (request.profileId || null) === (pending.request.profileId || null)
+          && (request.projectId || null) === (pending.request.projectId || null)) {
+          this.cancelPendingWebhookDeploy(branchId, 'superseded by newer deploy request', {
+            supersededByCommitSha: request.commitSha || null,
+            supersededByTrigger: request.trigger,
+            supersededByRequestId: request.requestId || null,
+          });
+        }
       }
       return this.start(request);
     }
@@ -383,16 +396,21 @@ export class BranchOperationCoordinator {
   complete(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy | null {
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
-    if (activeEntry && active?.operationId === lease.operationId) {
+    const sameGeneration = active?.generation === lease.generation;
+    const wasCurrent = Boolean(active && sameGeneration && !active.cancelled);
+    // force-rebuild 续接会复用 operationId，迟到收尾必须同时匹配代次。
+    if (activeEntry && sameGeneration) {
       this.active.delete(activeEntry.key);
     }
     this.record(`branch.operation.${status}`, lease.request, lease.operationId, lease.generation, status === 'failed' ? 'error' : status === 'cancelled' ? 'warn' : 'info', {
       error: error || null,
       cancelled: active?.cancelled || false,
       cancelReason: active?.cancelReason || null,
+      staleCompletion: !wasCurrent,
     });
     if (
       status === 'completed'
+      && wasCurrent
       && lease.request.kind === 'force-rebuild'
       && (lease.request.continueWith === 'deploy' || lease.request.continueWith === 'deploy-profile')
     ) {
@@ -400,6 +418,8 @@ export class BranchOperationCoordinator {
       return null;
     }
     const pending = this.pendingWebhookDeploys.get(lease.branchId) || null;
+    // 一个 profile 收尾不代表整分支已空闲；也不能让旧租约收尾抢走新操作的待办。
+    if (pending && this.findBlockingActive(pending.request)) return null;
     if (pending) this.pendingWebhookDeploys.delete(lease.branchId);
     return pending;
   }
@@ -658,7 +678,7 @@ export class BranchOperationCoordinator {
     });
   }
 
-  private cancelPendingWebhookDeploy(branchId: string, reason: string): void {
+  private cancelPendingWebhookDeploy(branchId: string, reason: string, details: Record<string, unknown> = {}): void {
     const pending = this.pendingWebhookDeploys.get(branchId);
     if (!pending) return;
     this.pendingWebhookDeploys.delete(branchId);
@@ -667,6 +687,7 @@ export class BranchOperationCoordinator {
       pending: true,
       mergedCount: pending.mergedCount,
       updatedAt: pending.updatedAt,
+      ...details,
     });
   }
 
