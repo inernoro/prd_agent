@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.28；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.29；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -41,7 +41,7 @@
 | P3-04 | 本地部分实现 | 正式未执行 | 候选容器使用独立身份，明确端口、网络和路由切换的处理方式，保留切换失败恢复点。 |
 | P3-05 | 本地部分实现 | 正式未执行 | 对固定端口、独占卷、不能双实例运行的服务声明替换约束，不承诺不具备条件的无中断切换。 |
 | P3-06 | 本地部分实现 | 正式未执行 | 分别限制拉取、启动、就绪等待与诊断的并发；按实际容器与资源记账，不能漏掉 error 状态但仍运行的实例。 |
-| P3-07 | 待办 | 正式未执行 | 提供项目公平性、等待原因、最长等待与超时机制。并发参数按宿主余量和单服务峰值校准，不以盲目加名额解决排队。 |
+| P3-07 | 本地部分实现 | 正式未执行 | 提供项目公平性、等待原因、最长等待与超时机制。并发参数按宿主余量和单服务峰值校准，不以盲目加名额解决排队。 |
 | P3-08 | 待办 | 正式未执行 | 验证重复推送、旧任务取消、启动失败、执行进程重启以及高负载场景。 |
 | P4-01 | 本地部分实现 | 正式未执行 | 沿用并核对现有保存节流修复，将高频状态更新转为增量，避免每次在 Master 深拷贝整份状态。 |
 | P4-02 | 本地部分实现 | 正式未执行 | 关键终态可靠落盘；重启后由真实容器与运行记录对账，完成记录不可丢失或倒退。 |
@@ -320,3 +320,11 @@ fd113固定独立23/24局部，原三问题关闭，但history shared task保留
 ### v1.28 重放归属独立红与修复
 
 66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
+
+## v1.29 源码例外队列与独立复验检查点
+
+59d固定独立59/59局部（重放原17+扩展7+observer24+实际Router失败4/取消4+观察socket外部abort后执行仍受租约控制2+真实默认5秒头budget1）；原66fb两scope红关闭。whole正例旧带Profile与State自动填legacy项目两轮夹具偏差原件保留，未放宽scope。66fb权限清理v2独立6/6：清理ACK未知memory gate/竞态更新409，磁盘若已完成cleanup则重载仅安全old=a、新b无grant，5flush确认后清账。v1要求此时磁盘仍有journal的探索红保留解释，不作越权或500修复结论。
+
+dc2f7d0ce47584656d948e61d048f17696f0da26本地源码例外queue按冻结project轮转/同项目FIFO，匿名兼容组FIFO；默认512等待/30min上限，超量与过期明确失败且不取消运行holder，授予/取消/超时清timer/listener，onStart观察异常释放槽位。whole/profile两路实际传projectId、任何gate失败结束排队episode，日志/UI改等待总量不承诺绝对位置；tracker旧min位置断言退场并保留旧红。主5新反例真红→25 gate绿，5files288相关/core及web tsc0，固定全量655files9560绿/6files19skip/1obsolete snapshot/65.48s。独立固定复验进行中；phase公平队列、durable pending、实际Master/Daemon与公网未验。
+
+两仓库最新fetch远端仍为CDS origin/main45533b、IMP origin/test e2fd7与origin/main2bf49；未发布、未操作共享宿主，固定八候选未变。38条partial-local/11todo，49正式not-executed、visual N/A。expected result：排队有界且跨项目不被积压垄断；current evidence：288相关、9560全量及两侧tsc0；visible result：未部署；gap：dc2f独立、真实阶段公平/持久队列/八分支/公网未验；required action：按原同编号继续实施与末尾复验，不提前关闭目标。
