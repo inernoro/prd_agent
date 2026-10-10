@@ -77,7 +77,7 @@ export interface ISplitMongoCollection<TDoc extends { _id: string }> {
   replaceOne(
     filter: { _id: string },
     doc: TDoc,
-    options?: { upsert: boolean; writeConcern?: { w: 'majority'; j: boolean }; maxTimeMS?: number; ignoreUndefined?: boolean },
+    options?: { upsert: boolean; writeConcern?: { w: 'majority'; j: boolean; wtimeoutMS?: number }; maxTimeMS?: number; ignoreUndefined?: boolean },
   ): Promise<unknown>;
   deleteOne(filter: { _id: string }): Promise<unknown>;
   bulkWrite(operations: Array<unknown>, options?: { ignoreUndefined: boolean }): Promise<unknown>;
@@ -517,6 +517,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     id: string; generation: number; expected: string;
     resolve: () => void; reject: (err: unknown) => void;
   }> = [];
+  // 内容 diff 缓存不证明多数持久确认；凭据还必须覆盖最后一次相关逻辑变更。
+  private confirmedDeploymentRuns = new Map<string, { json: string; generation: number; epoch: number }>();
+  private deploymentRunDirtyGeneration = 0;
+  private deploymentRunDirtyIds = new Map<string, number>();
+  private deploymentRunConfirmationEpoch = 0;
   // 写入合并（2026-06-21 性能修复）：高频 save() 不再每次都同步
   // structuredClone(整个 state)。那是 CDS master 事件循环被部署日志/调和器
   // save 风暴堵死的根因——网页 524、就绪探测超时、容器被误判部署失败而清理，
@@ -746,6 +751,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   load(): CdsState | null {
+    this.liveStateRef = this.cache;
     return this.cache;
   }
 
@@ -756,6 +762,13 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     this.dirtyState = state;
     this.liveStateRef = state;
     this.dirtyGeneration = ++this.writeGeneration;
+    if (!hints?.length || hints.some((hint) => hint.kind === 'deploymentRuns' && !hint.id)) {
+      this.deploymentRunDirtyGeneration = this.dirtyGeneration;
+    } else {
+      for (const hint of hints) {
+        if (hint.kind === 'deploymentRuns' && hint.id) this.deploymentRunDirtyIds.set(hint.id, this.dirtyGeneration);
+      }
+    }
     if (!hints || hints.length === 0) {
       // 无 hint = 调用方没有（或无法）声明改动范围 → 本 tick 退化为全量快照。
       this.dirtyAll = true;
@@ -821,6 +834,8 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     this.dirtyKinds = new Set();
     this.dirtyIds = new Map();
     if (useFull) {
+      this.deploymentRunDirtyGeneration = Math.max(this.deploymentRunDirtyGeneration, generation);
+      this.deploymentRunDirtyIds.clear();
       this.needFullResync = false;
       const snapshot = timeMainThreadSection('state.snapshot.full-clone', () => structuredClone(live));
       this.cache = snapshot;
@@ -861,7 +876,12 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
           pending.deploymentRuns = {
             ids: new Set(Object.keys(live.deploymentRuns || {})),
             entities: new Map((dirtyIds === null ? Object.keys(live.deploymentRuns || {}) : [...dirtyIds])
-              .filter((id) => live.deploymentRuns?.[id])
+              .filter((id) => {
+                if (live.deploymentRuns?.[id]) return true;
+                this.confirmedDeploymentRuns.delete(id);
+                this.deploymentRunDirtyIds.delete(id);
+                return false;
+              })
               .map((id) => [id, structuredClone(runWithIntent(live, id, live.deploymentRuns![id]))])),
           };
           break;
@@ -899,6 +919,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     currentIds: ReadonlySet<string>;
     candidates: Iterable<[string, T]>;
     serialize: (id: string, entity: T) => { json: string; replacement: Record<string, unknown> };
+    onRemoved?: (id: string) => void;
   }): Promise<void> {
     const ops: unknown[] = [];
     const upserts: Array<[string, string]> = [];
@@ -925,7 +946,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (ops.length === 0) return;
     await input.collection.bulkWrite(ops, input.label === 'deploymentRuns' ? { ignoreUndefined: true } : undefined);
     for (const [id, json] of upserts) input.cache.set(id, json);
-    for (const id of removals) input.cache.delete(id);
+    for (const id of removals) { input.cache.delete(id); input.onRemoved?.(id); }
   }
 
   private async persistProjects(currentIds: ReadonlySet<string>, candidates: Iterable<[string, Project]>, now: string): Promise<void> {
@@ -970,16 +991,18 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       const critical = this.deploymentRunReceipts.some((receipt) => receipt.id === id && receipt.generation <= generation);
       if (!critical || !currentIds.has(id)) { ordinary.push([id, entity]); continue; }
       const { json, replacement } = serialize(id, entity);
-      if (this.persistedJson.deploymentRuns.get(id) !== json) {
+      if (!this.hasConfirmedDeploymentRun(id, json)) {
+        const epoch = this.deploymentRunConfirmationEpoch;
         try {
           // 单实体确认不受后续无关实体/全局状态失败影响，也不借整批成功推断自身成功。
-          await collection.replaceOne({ _id: id }, replacement, { upsert: true, writeConcern: { w: 'majority', j: true }, maxTimeMS: 5000, ignoreUndefined: true });
+          await collection.replaceOne({ _id: id }, replacement, { upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, ignoreUndefined: true });
         } catch (error) {
           // Mongo 可能已完成写入但确认连接中断；只接受主节点多数读到的精确配对记录。
           const stored = await collection.findOne({ _id: id }, { readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000 }).catch(() => null);
           if (!stored || stableJson({ run: sanitizeDeploymentRun(stored.doc), intent: stored.executionIntent }) !== json) throw error;
         }
         this.persistedJson.deploymentRuns.set(id, json);
+        this.confirmedDeploymentRuns.set(id, { json, generation, epoch });
       }
       this.settleDeploymentRunReceipts(id, generation, json);
     }
@@ -990,17 +1013,30 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       currentIds,
       candidates: ordinary,
       serialize,
+      onRemoved: (id) => {
+        if (this.liveStateRef?.deploymentRuns?.[id]) return;
+        this.confirmedDeploymentRuns.delete(id);
+        this.deploymentRunDirtyIds.delete(id);
+      },
     });
     for (const receipt of [...this.deploymentRunReceipts]) {
-      if (receipt.generation <= generation) this.settleDeploymentRunReceipts(receipt.id, generation, this.persistedJson.deploymentRuns.get(receipt.id));
+      if (receipt.generation <= generation) this.settleDeploymentRunReceipts(receipt.id, generation, this.confirmedDeploymentRuns.get(receipt.id)?.json);
     }
+  }
+
+  private hasConfirmedDeploymentRun(id: string, expected: string): boolean {
+    const confirmed = this.confirmedDeploymentRuns.get(id);
+    return Boolean(confirmed && confirmed.json === expected && confirmed.epoch === this.deploymentRunConfirmationEpoch
+      && confirmed.generation >= Math.max(this.deploymentRunDirtyGeneration, this.deploymentRunDirtyIds.get(id) || 0));
   }
 
   private settleDeploymentRunReceipts(id: string, generation: number, json?: string): void {
     const ready = this.deploymentRunReceipts.filter((receipt) => receipt.id === id && receipt.generation <= generation);
     this.deploymentRunReceipts = this.deploymentRunReceipts.filter((receipt) => !ready.includes(receipt));
     for (const receipt of ready) {
-      if (receipt.expected === json) receipt.resolve();
+      const confirmed = this.confirmedDeploymentRuns.get(id);
+      if (receipt.expected === json && confirmed?.epoch === this.deploymentRunConfirmationEpoch
+        && confirmed.generation >= receipt.generation) receipt.resolve();
       else receipt.reject(new Error('Deployment run changed before critical persistence'));
     }
   }
@@ -1195,6 +1231,9 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   }
 
   async forceFullSave(state: CdsState): Promise<void> {
+    // 导入走普通批量写；不能继承导入前凭据，也不能被迟到的旧确认重新激活。
+    this.deploymentRunConfirmationEpoch++;
+    this.confirmedDeploymentRuns.clear();
     // 全量写覆盖任何挂起的增量快照，避免 takeSnapshot 再做一次冗余落盘。
     this.liveStateRef = state;
     this.dirtyState = null;
@@ -1384,7 +1423,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     const run = state?.deploymentRuns?.[id];
     if (!state || !run) throw new Error('Deployment run not found for critical persistence');
     const expected = stableJson({ run: sanitizeDeploymentRun(run), intent: state.deploymentIntents?.[id] });
-    if (this.persistedJson.deploymentRuns.get(id) === expected) return;
+    if (this.hasConfirmedDeploymentRun(id, expected)) return;
     this.save(state, [{ kind: 'deploymentRuns', id }]);
     await new Promise<void>((resolve, reject) => {
       this.deploymentRunReceipts.push({ id, generation: this.writeGeneration, expected, resolve, reject });

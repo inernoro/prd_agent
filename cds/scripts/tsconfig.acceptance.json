@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": { "rootDir": "..", "noEmit": true, "tsBuildInfoFile": "../dist/.acceptance.tsbuildinfo" },
-  "include": ["deployment-recovery-drill.ts"]
+  "include": ["deployment-recovery-drill.ts", "replica-confirmation-drill.ts"]
 }

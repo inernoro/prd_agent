@@ -224,13 +224,109 @@ describe('MongoSplitStateBackingStore', () => {
     const read = vi.spyOn(handle.deploymentRuns, 'findOne');
     if (matches) {
       const run = await begin(); expect(handle.deploymentRuns.docs.get(run.id)?.doc.status).toBe('queued');
-      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true }, maxTimeMS: 5000, ignoreUndefined: true });
+      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, ignoreUndefined: true });
     } else {
       await expect(begin()).rejects.toThrow('write acknowledgement lost');
       const run = state.getDeploymentRuns()[0]; new DeploymentRunService(state).cancel(run.id, '受理失败');
     }
     expect(read.mock.calls[0][1]).toEqual({ readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000 });
     await state.flush();
+  });
+
+  it.each(['ordinary', 'reload', 'roundtrip', 'import'])('关键确认不能沿用%s普通写入或本地读取的内容缓存', async (mode) => {
+    const { handle, store, state, runs, begin } = await acceptedRunFixture();
+    const run = await begin();
+    let target = state;
+    if (mode === 'ordinary' || mode === 'reload') {
+      runs.cancel(run.id, 'stop'); await state.flush();
+      if (mode === 'reload') {
+        const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+        target = new StateService('/tmp/cds-receipt-unused/cold.json', undefined, reopened); target.load(); await target.flush();
+      }
+    } else if (mode === 'roundtrip') {
+      const original = structuredClone(run);
+      state.updateDeploymentRun(run.id, (value) => { value.phase = 'ordinary'; }); await state.flush();
+      state.updateDeploymentRun(run.id, (value) => { Object.assign(value, original); }); await state.flush();
+    } else await store.forceFullSave(state.getState() as CdsState);
+    const write = vi.spyOn(handle.deploymentRuns, 'replaceOne').mockRejectedValue(new Error('majority write unavailable'));
+    const read = vi.spyOn(handle.deploymentRuns, 'findOne').mockResolvedValue(null);
+    try {
+      await expect(target.flushDeploymentRun(run.id)).rejects.toThrow('majority write unavailable');
+      expect(write).toHaveBeenCalled();
+      expect(write.mock.calls[0][2]?.writeConcern).toEqual({ w: 'majority', j: true, wtimeoutMS: 5000 });
+      expect(read.mock.calls[0][1]?.readConcern).toEqual({ level: 'majority' });
+    } finally { write.mockRestore(); read.mockRestore(); target.save([{ kind: 'deploymentRuns', id: run.id }]); await target.flush(); }
+  });
+
+  it('普通写入在途时发起关键确认，普通确认完成也不能免去多数写入', async () => {
+    const { handle, state, runs, begin } = await acceptedRunFixture(); const run = await begin();
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const original = handle.deploymentRuns.bulkWrite.bind(handle.deploymentRuns);
+    const ordinary = vi.spyOn(handle.deploymentRuns, 'bulkWrite').mockImplementationOnce(async (...args) => { entered(); await gate; return original(...args); });
+    const critical = vi.spyOn(handle.deploymentRuns, 'replaceOne');
+    runs.cancel(run.id, 'stop'); const background = state.flush(); await reached;
+    const confirmation = state.flushDeploymentRun(run.id);
+    try {
+      release(); await background; await confirmation;
+      expect(critical).toHaveBeenCalledTimes(1);
+      expect(critical.mock.calls[0][2]?.writeConcern).toEqual({ w: 'majority', j: true, wtimeoutMS: 5000 });
+      expect(handle.deploymentRuns.docs.get(run.id)?.doc.status).toBe('cancelled');
+    } finally { release(); await confirmation.catch(() => {}); ordinary.mockRestore(); critical.mockRestore(); await state.flush(); }
+  });
+
+  it('已经确认且没有新的部署变更时重复确认复用凭据，无关全局保存不使其失效', async () => {
+    const { handle, state, begin } = await acceptedRunFixture(); const run = await begin();
+    const critical = vi.spyOn(handle.deploymentRuns, 'replaceOne');
+    (state.getState() as any).nextPortIndex += 1; state.save([{ kind: 'global' }]); await state.flush();
+    await state.flushDeploymentRun(run.id); await state.flushDeploymentRun(run.id);
+    expect(critical).not.toHaveBeenCalled();
+  });
+
+  it('迟到关键写入不能用旧代次缓存确认其间发生的新变更，即使最终内容相同', async () => {
+    const { handle, state, begin } = await acceptedRunFixture(); const run = await begin();
+    state.updateDeploymentRun(run.id, (value) => { value.phase = 'confirmed-content'; });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const original = handle.deploymentRuns.replaceOne.bind(handle.deploymentRuns);
+    const critical = vi.spyOn(handle.deploymentRuns, 'replaceOne').mockImplementationOnce(async (...args) => { entered(); await gate; return original(...args); });
+    const first = state.flushDeploymentRun(run.id); await reached;
+    try {
+      state.updateDeploymentRun(run.id, (value) => { value.phase = 'intermediate-content'; });
+      state.updateDeploymentRun(run.id, (value) => { value.phase = 'confirmed-content'; });
+      release(); await first;
+      await state.flushDeploymentRun(run.id);
+      expect(critical).toHaveBeenCalledTimes(2);
+      expect(handle.deploymentRuns.docs.get(run.id)?.doc.phase).toBe('confirmed-content');
+    } finally { release(); await first.catch(() => {}); critical.mockRestore(); await state.flush(); }
+  });
+
+  it('导入开始后迟到的旧关键确认不能确认原凭据，后续必须重新多数写入', async () => {
+    const { handle, store, state, begin } = await acceptedRunFixture(); const run = await begin();
+    state.updateDeploymentRun(run.id, (value) => { value.phase = 'before-import'; });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const original = handle.deploymentRuns.replaceOne.bind(handle.deploymentRuns);
+    const critical = vi.spyOn(handle.deploymentRuns, 'replaceOne').mockImplementationOnce(async (...args) => { entered(); await gate; return original(...args); });
+    const outcome = state.flushDeploymentRun(run.id).then(() => null, (error: unknown) => error); await reached;
+    try {
+      await store.forceFullSave(state.getState() as CdsState);
+      release(); expect(await outcome).toBeInstanceOf(Error);
+      await state.flushDeploymentRun(run.id);
+      expect(critical).toHaveBeenCalledTimes(2);
+    } finally { release(); await outcome; critical.mockRestore(); await state.flush(); }
+  });
+
+  it('其他任务普通更新不撤销已确认原任务的凭据', async () => {
+    const { handle, state, begin } = await acceptedRunFixture(); const run = await begin();
+    state.addDeploymentRun(makeRun('other-run', 'b')); await state.flush();
+    const critical = vi.spyOn(handle.deploymentRuns, 'replaceOne');
+    state.updateDeploymentRun('other-run', (value) => { value.phase = 'ordinary-other'; }); await state.flush();
+    await state.flushDeploymentRun(run.id);
+    expect(critical).not.toHaveBeenCalled();
   });
 
   it('真实BSON序列化后普通任务更新仍保留可恢复的完整配对输入', async () => {
