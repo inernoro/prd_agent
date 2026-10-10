@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   clearContainerLifecycleIntentsForTest,
+  collectContainerDiagnostics,
   DockerEventMonitor,
   findRecentContainerLifecycleIntent,
   recordContainerLifecycleIntent,
@@ -201,5 +202,61 @@ describe('container lifecycle intent correlation', () => {
       unexpected: false,
       nextServiceStatus: 'stopped',
     });
+  });
+});
+
+describe('failure diagnostic IO budget', () => {
+  it('captures unhealthy events and invalidates the snapshot on start and healthy recovery', async () => {
+    const id = 'b'.repeat(64);
+    const records: any[] = [];
+    const exec = vi.fn(async (command: string) => ({
+      stdout: command.startsWith('docker inspect') ? JSON.stringify({ Id: id }) : '', stderr: '', exitCode: 0,
+    }));
+    const monitor = new DockerEventMonitor({ exec }, { record: r => { records.push(r); } });
+    const event = (Action: string) => (monitor as any).handleLine(JSON.stringify({ Action, Actor: { ID: id,
+      Attributes: { name: 'same-name', 'cds.deployment.operation': 'run' } } }));
+    await event('health_status: unhealthy');
+    await event('die');
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(records[0].severity).toBe('error');
+    await event('start');
+    await event('die');
+    expect(exec).toHaveBeenCalledTimes(4);
+    await event('health_status: healthy');
+    await event('health_status: unhealthy');
+    expect(exec).toHaveBeenCalledTimes(6);
+    expect(records).toHaveLength(6);
+  });
+  it('deduplicates concurrent immutable-container events without dropping lifecycle facts', async () => {
+    const id = 'a'.repeat(64);
+    const records: any[] = [];
+    const callback = vi.fn();
+    const exec = vi.fn(async (command: string) => ({
+      stdout: command.startsWith('docker inspect')
+        ? JSON.stringify({ Id: id, State: { Status: 'exited', ExitCode: 137 } }) : 'stopped',
+      stderr: '', exitCode: 0,
+    }));
+    const monitor = new DockerEventMonitor({ exec }, { record: r => { records.push(r); } }, callback);
+    await Promise.all(Array.from({ length: 20 }, (_, i) => (monitor as any).handleLine(JSON.stringify({
+      Action: i % 2 ? 'die' : 'stop', Actor: { ID: id, Attributes: {
+        name: 'mutable-name', 'cds.deployment.operation': 'run-1', 'cds.branch.id': 'b',
+      } },
+    }))));
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec.mock.calls.every(([command]) => command.includes(id))).toBe(true);
+    expect(exec.mock.calls.every((call: any[]) => call[1]?.priority === 'diagnostic')).toBe(true);
+    expect(records).toHaveLength(20);
+    expect(callback).toHaveBeenCalledTimes(20);
+  });
+
+  it('does not copy malformed inspect output into a diagnostic record', async () => {
+    const exec = vi.fn(async (command: string) => ({
+      stdout: command.startsWith('docker inspect') ? '{"Env":["TOKEN=private-value"]' : '',
+      stderr: '', exitCode: 0,
+    }));
+    const result = await collectContainerDiagnostics({ exec }, 'a'.repeat(64));
+    expect(JSON.stringify(result)).not.toContain('private-value');
+    expect(result.inspect).toEqual({ parseError: 'invalid_inspect_json' });
+    expect(exec.mock.calls[0][0]).toContain('--format');
   });
 });

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { IShellExecutor } from '../types.js';
+import { ContainerDiagnosticBudget, type DiagnosticResult } from './container-diagnostic-budget.js';
 import {
   normalizeLogText,
   type ServerEventLogSink,
@@ -12,6 +13,13 @@ import {
 
 const VALID_DOCKER_REF = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/;
 const INTENT_TTL_MS = 5 * 60 * 1000;
+// Project before crossing the CLI boundary: no Env, command or health-check log.
+const INSPECT_DIAGNOSTIC_FORMAT = '{"Id":{{json .Id}},"Name":{{json .Name}},"Config":{"Image":{{json .Config.Image}},"Labels":{' +
+  ['cds.managed', 'cds.type', 'cds.branch.id', 'cds.profile.id', 'cds.service.id', 'cds.network']
+    .map(key => `${JSON.stringify(key)}:{{json (index .Config.Labels ${JSON.stringify(key)})}}`).join(',') +
+  '}},"State":{' + ['Status', 'Running', 'Paused', 'Restarting', 'OOMKilled', 'Dead', 'Pid', 'ExitCode', 'Error', 'StartedAt', 'FinishedAt']
+    .map(key => `${JSON.stringify(key)}:{{json .State.${key}}}`).join(',') +
+  ',"Health":{{if .State.Health}}{"Status":{{json .State.Health.Status}},"FailingStreak":{{json .State.Health.FailingStreak}}}{{else}}null{{end}}},"HostConfig":{"RestartPolicy":{{json .HostConfig.RestartPolicy}},"NetworkMode":{{json .HostConfig.NetworkMode}}}';
 
 export type ContainerLifecycleIntentKind =
   | 'cds-stop'
@@ -154,34 +162,33 @@ export async function collectContainerDiagnostics(
   shell: IShellExecutor,
   containerRef: string,
   tailLines = 200,
-): Promise<{
-  inspect?: Record<string, unknown>;
-  logs?: ReturnType<typeof normalizeLogText>;
-  error?: { message: string };
-}> {
+  schedulingGroup = 'docker-events',
+): Promise<DiagnosticResult> {
   const safe = safeDockerRef(containerRef);
-  if (!safe) return { error: { message: `unsafe container reference: ${containerRef}` } };
+  if (!safe) return { error: { message: 'unsafe_container_reference' } };
 
   let inspect: Record<string, unknown> | undefined;
-  const inspectResult = await shell.exec(`docker inspect ${shellQuote(safe)}`, { timeout: 5000 });
+  const inspectResult = await shell.exec(`docker inspect --format ${shellQuote(INSPECT_DIAGNOSTIC_FORMAT)} ${shellQuote(safe)}`, {
+    timeout: 5000, priority: 'diagnostic', schedulingGroup,
+  });
   if (inspectResult.exitCode === 0 && inspectResult.stdout.trim()) {
     try {
       inspect = summarizeDockerInspect(JSON.parse(inspectResult.stdout));
     } catch {
-      inspect = { parseError: inspectResult.stdout.slice(0, 2000) };
+      inspect = { parseError: 'invalid_inspect_json' };
     }
   }
 
   const logsResult = await shell.exec(
     `docker logs --timestamps --tail ${Math.max(1, Math.min(tailLines, 1000))} ${shellQuote(safe)}`,
-    { timeout: 7000 },
+    { timeout: 7000, priority: 'diagnostic', schedulingGroup },
   );
   const rawLogs = `${logsResult.stdout || ''}${logsResult.stderr || ''}`;
   return {
     inspect,
     logs: rawLogs ? normalizeLogText(rawLogs, tailLines) : undefined,
     error: inspectResult.exitCode !== 0 && logsResult.exitCode !== 0
-      ? { message: `${inspectResult.stderr || inspectResult.stdout || ''}${logsResult.stderr || logsResult.stdout || ''}`.slice(0, 1200) }
+      ? { message: 'diagnostic_container_unavailable' }
       : undefined,
   };
 }
@@ -189,7 +196,7 @@ export async function collectContainerDiagnostics(
 function eventSeverity(action: string, attrs: Record<string, string>): ServerEventSeverity {
   const normalized = action.toLowerCase();
   if (normalized.includes('oom') || normalized === 'die' || normalized === 'kill' || normalized === 'destroy') return 'error';
-  if (normalized.startsWith('health_status') && !normalized.includes('healthy')) return 'error';
+  if (isUnhealthyEvent(normalized)) return 'error';
   if (normalized === 'stop' || normalized === 'restart') return 'warn';
   const exitCode = attrs.exitCode || attrs.exitcode;
   if (exitCode && exitCode !== '0') return 'error';
@@ -223,7 +230,11 @@ function shouldCaptureDiagnostics(action: string): boolean {
     || normalized === 'stop'
     || normalized === 'destroy'
     || normalized === 'restart'
-    || (normalized.startsWith('health_status') && !normalized.includes('healthy'));
+    || isUnhealthyEvent(normalized);
+}
+
+function isUnhealthyEvent(action: string): boolean {
+  return action.startsWith('health_status') && !/^health_status:?\s*healthy$/.test(action);
 }
 
 function shouldRecordDockerEvent(action: string): boolean {
@@ -246,6 +257,7 @@ export class DockerEventMonitor {
   private child: ChildProcess | null = null;
   private stopping = false;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly diagnosticBudget: ContainerDiagnosticBudget;
 
   constructor(
     private readonly shell: IShellExecutor,
@@ -263,7 +275,9 @@ export class DockerEventMonitor {
       inspect?: Record<string, unknown>;
       lifecycleIntent?: ContainerLifecycleIntent;
     }) => void | Promise<void>,
-  ) {}
+  ) {
+    this.diagnosticBudget = new ContainerDiagnosticBudget((ref, scope) => collectContainerDiagnostics(this.shell, ref, 300, scope));
+  }
 
   start(): void {
     if (!this.store || this.child) return;
@@ -358,13 +372,19 @@ export class DockerEventMonitor {
     const profileId = attrs['cds.profile.id'];
     const serviceId = attrs['cds.service.id'];
     const severity = eventSeverity(action, attrs);
-    const ref = containerName || evt.id || evt.Actor?.ID;
-    const diagnostics = ref && shouldCaptureDiagnostics(action)
-      ? await collectContainerDiagnostics(this.shell, ref, 300)
-      : {};
-    const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
+    const immutableId = [evt.id, evt.Actor?.ID].find(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
+    const ref = immutableId || containerName || evt.id || evt.Actor?.ID;
     const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
     const normalizedAction = action.toLowerCase();
+    if (immutableId && (['create', 'start', 'restart', 'unpause'].includes(normalizedAction) || normalizedAction === 'health_status: healthy')) {
+      this.diagnosticBudget.invalidate(immutableId);
+    }
+    const scope = JSON.stringify([attrs['cds.project.id'] || lifecycleIntent?.projectId || '', branchId || '', profileId || '',
+      attrs['cds.deployment.operation'] || lifecycleIntent?.operationId || '']);
+    const diagnostics = ref && shouldCaptureDiagnostics(action)
+      ? await this.diagnosticBudget.collectFor(ref, scope)
+      : {};
+    const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
     const exitCode = Number.isFinite(Number(state?.exitCode ?? attrs.exitCode))
       ? Number(state?.exitCode ?? attrs.exitCode)
       : undefined;
