@@ -3343,12 +3343,22 @@ export class ContainerService {
     if (result.exitCode !== 0) return { ok: false, containers: discovered };
     if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
+    const canonicalOwners = new Map<string, string>();
+    for (const [key, name] of options.canonicalNames || []) {
+      if (canonicalOwners.has(name)) return { ok: false, containers: new Map() };
+      canonicalOwners.set(name, key);
+    }
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
       const [name, state, labels] = line.split('|');
-      const branchMatch = labels?.match(/cds\.branch\.id=([^,]+)/);
-      const profileMatch = labels?.match(/cds\.profile\.id=([^,]+)/);
-      const networkMatch = labels?.match(/cds\.network=([^,]+)/);
+      const branchMatch = labels?.match(/(?:^|,)cds\.branch\.id=([^,]+)/);
+      const profileMatch = labels?.match(/(?:^|,)cds\.profile\.id=([^,]+)/);
+      const networkMatch = labels?.match(/(?:^|,)cds\.network=([^,]+)/);
+      // A known canonical name with missing/wrong labels is present-but-unowned, never absent.
+      const expectedOwner = canonicalOwners.get(name);
+      if (expectedOwner && (!branchMatch || !profileMatch || `${branchMatch[1]}/${profileMatch[1]}` !== expectedOwner)) {
+        return { ok: false, containers: new Map() };
+      }
       if (branchMatch && profileMatch) {
         const key = `${branchMatch[1]}/${profileMatch[1]}`;
         // Multiple generations share branch/profile labels. Only the published name is serving.

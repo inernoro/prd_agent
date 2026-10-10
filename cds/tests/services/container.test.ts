@@ -1099,6 +1099,17 @@ describe('ContainerService', () => {
       expect(result.ok).toBe(true); expect(result.containers.get('b/api')).toMatchObject({ containerName: 'old-api', running: false });
     });
 
+
+    it.each(['branch-missing', 'profile-missing', 'owner-missing', 'branch-drift', 'profile-drift'])('fails closed when canonical name has unknown branch/profile ownership: %s', async variant => {
+      const labels = { 'cds.instance': 'ours', 'cds.branch.id': 'b', 'cds.profile.id': 'api' } as Record<string, string>;
+      if (variant === 'branch-missing' || variant === 'owner-missing') delete labels['cds.branch.id'];
+      if (variant === 'profile-missing' || variant === 'owner-missing') delete labels['cds.profile.id'];
+      if (variant === 'branch-drift') labels['cds.branch.id'] = 'other';
+      if (variant === 'profile-drift') labels['cds.profile.id'] = 'other';
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: 'old-api|running|' + Object.entries(labels).map(([key, value]) => `${key}=${value}`).join(','), stderr: '', exitCode: 0 }));
+      const result = await service.discoverAppContainersWithStatus({ canonicalNames: new Map([['b/api', 'old-api']]), instanceId: 'ours' });
+      expect(result.ok).toBe(false); expect(result.containers.size).toBe(0);
+    });
     it.each(['foreign', 'missing'])('does not use a canonical name with an unconfirmed instance owner: %s', async instance => {
       mock.addResponsePattern(/docker ps/, () => ({ stdout: 'old-api|running|cds.branch.id=b,cds.profile.id=api' + (instance === 'foreign' ? ',cds.instance=other' : ''), stderr: '', exitCode: 0 }));
       const result = await service.discoverAppContainersWithStatus({ canonicalNames: new Map([['b/api', 'old-api']]), instanceId: 'ours' });
