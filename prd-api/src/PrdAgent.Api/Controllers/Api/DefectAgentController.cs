@@ -37,7 +37,7 @@ public class DefectAgentController : ControllerBase
 
     private const string AppKey = "defect-agent";
     private const string DefectResolveSkillName = "ai-defect-resolve";
-    private const string DefectResolveSkillMinVersion = "1.9.1";
+    private const string DefectResolveSkillMinVersion = "1.9.2";
     private const string CommitInfoStructuredKey = "提交信息";
     private const string SuggestedAutomationKeyName = "缺陷处理 Agent 授权";
     private const string DefectAcceptanceStoreName = "缺陷修复验收报告";
@@ -2731,6 +2731,7 @@ public class DefectAgentController : ControllerBase
             endpoints = new
             {
                 next = "/api/defect-agent/agent/next?runId={runId}",
+                diagnostics = "/api/defect-agent/agent/defects/{defectId}/diagnostics",
                 postComment = "/api/defect-agent/agent/defects/{defectId}/comments",
                 submitCommitInfo = "/api/defect-agent/agent/defects/{defectId}/commit-info",
                 updateFixStatus = "/api/defect-agent/agent/defects/{defectId}/fix-status",
@@ -3266,6 +3267,61 @@ public class DefectAgentController : ControllerBase
     }
 
     /// <summary>
+    /// [自动化] 获取缺陷日志中已捕获的生图任务终态。权限始终限制在当前缺陷和报告人。
+    /// </summary>
+    [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
+    [HttpGet("agent/defects/{defectId}/diagnostics")]
+    public async Task<IActionResult> GetAutomationDiagnostics(string defectId, CancellationToken ct)
+    {
+        var defect = await FindDefectByIdOrNoAsync(defectId, ct);
+        if (defect == null || defect.IsDeleted)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "缺陷不存在"));
+        if (!CanAutomationAccessDefect(defect, GetUserId(), HasManagePermission(), IsAiAccessRequest()))
+            return AutomationForbidden("无权访问该缺陷的诊断信息");
+
+        var runIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var attachment in defect.Attachments.Where(x => x.IsSystemGenerated && x.Type == DefectAttachmentType.LogRequest).Take(3))
+        {
+            var key = DefectImageRunDiagnostics.AttachmentKey(attachment);
+            if (key == null) continue;
+            // 用内部资产存储按固定前缀取对象；绝不访问附件 URL 的主机。
+            var bytes = await _assetStorage.TryDownloadBytesAsync(key, ct);
+            if (bytes == null || bytes.Length > 1024 * 1024) continue;
+            foreach (var id in DefectImageRunDiagnostics.ExtractRunIds(Encoding.UTF8.GetString(bytes))) runIds.Add(id);
+        }
+        var capturedIds = runIds.Take(20).ToList();
+        var runs = capturedIds.Count == 0 ? new List<ImageGenRun>() : await _db.ImageGenRuns
+            .Find(x => capturedIds.Contains(x.Id) && x.OwnerAdminId == defect.ReporterId)
+            .ToListAsync(ct);
+        runs = runs.Where(x => DefectImageRunDiagnostics.CanExpose(x, defect, capturedIds)).ToList();
+        var accessibleIds = runs.Select(x => x.Id).ToList();
+        var images = accessibleIds.Count == 0 ? new List<ImageGenRunItem>() : await _db.ImageGenRunItems
+            .Find(x => accessibleIds.Contains(x.RunId) && x.OwnerAdminId == defect.ReporterId)
+            .Limit(400).ToListAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            defectId = defect.Id,
+            evidenceStatus = capturedIds.Count == 0 ? "missing" : runs.Count == capturedIds.Count ? "complete" : "partial",
+            note = "HTTP/SSE 200 只表示入口可达；业务结论以关联任务和图片终态为准。未包含提示词、图片、凭据或其他用户任务。",
+            runs = runs.Select(run => new
+            {
+                run.Id, run.AppKey, run.Status, run.ModelId, run.Size, run.ErrorCode,
+                // Worker 已将图片失败转换为用户可读错误，不返回原始上游响应。
+                errorMessage = string.IsNullOrWhiteSpace(run.ErrorMessage) ? null : PrdAgent.Api.Services.Mcp.McpArtifactExtractor.UserFacing(run.ErrorMessage),
+                run.Done, run.Failed,
+                items = images.Where(x => x.RunId == run.Id).Select(x => new
+                {
+                    x.ItemIndex, x.ImageIndex, x.Status, x.RequestedSize, x.EffectiveSize,
+                    x.ErrorCode,
+                    errorMessage = string.IsNullOrWhiteSpace(x.ErrorMessage) ? null : PrdAgent.Api.Services.Mcp.McpArtifactExtractor.UserFacing(x.ErrorMessage),
+                    requestId = $"{run.Id}-{x.ItemIndex}-{x.ImageIndex}",
+                }),
+            }),
+        }));
+    }
+
+    /// <summary>
     /// [自动化] 获取下一条待处理缺陷。定时任务每次只拿一条，处理完再拉下一条。
     /// </summary>
     [Authorize(AuthenticationSchemes = "ApiKey,AiAccessKey")]
@@ -3409,7 +3465,8 @@ public class DefectAgentController : ControllerBase
                 updateCenterRelation = "commit-id",
                 publishState = "waiting_publish",
                 visualAcceptance = "run-after-production-publish",
-                requiredEvidence = new[] { "pull-request", "commit", "validation-report" },
+                requiredEvidence = new[] { "commit", "validation-report" },
+                pullRequest = "subject-to-repository-rules-and-user-authorization",
             },
         }));
     }
@@ -3889,7 +3946,7 @@ public class DefectAgentController : ControllerBase
                 "评论修复计划",
                 "判断是否轻量修复",
                 "修改代码并完成自测",
-                "通过 PR 提交中文 commit",
+                "按仓库规则和用户授权提交中文 commit 与 PR",
                 "把 PR、commit 和验收信息填入 complete 或把阻塞原因填入 block",
             },
             serverResponsibilities = new[]
@@ -3916,6 +3973,13 @@ public class DefectAgentController : ControllerBase
             defectNo = defect.DefectNo,
             title = defect.Title,
             phase = "agent-analysis-and-fix",
+            diagnostics = new
+            {
+                method = "GET",
+                url = $"/api/defect-agent/agent/defects/{defect.Id}/diagnostics",
+                requiredScope = AgentFixScope,
+                rule = "先读取关联任务终态；SSE 200 不算成功。接口只提供本缺陷关联的报告人任务，不要求扩大业务应用权限。",
+            },
             lightweightCriteria = BuildAutomationLightweightCriteria(),
             completeWith = new
             {
@@ -4702,7 +4766,7 @@ public class DefectAgentController : ControllerBase
             : $"{shaLabel} {request.CommitMessage.Trim()}";
         var lines = new List<string>
         {
-            "自动化修复已提交，等待 PR 合并和正式环境发布后验收。",
+            "自动化修复已提交，正式环境发布后完成验收。",
             "",
             "证据链：",
             string.IsNullOrWhiteSpace(request.CommitUrl)
@@ -4719,7 +4783,7 @@ public class DefectAgentController : ControllerBase
         }
         else
         {
-            lines.Add("- PR：待创建或待回写，正式发布前必须补齐");
+            lines.Add("- PR：本次未提供；按仓库规则和用户授权决定是否创建");
         }
 
         if (!string.IsNullOrWhiteSpace(request.PreviewUrl))

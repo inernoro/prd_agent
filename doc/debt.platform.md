@@ -924,3 +924,9 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 
 - 有过滤的一侧：`prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` 的 `GetStatsOverview`
 - 无过滤的一侧：`prd-api/src/PrdAgent.Api/Controllers/Api/ExecutiveController.cs` 的 `GetTeamInsights`（`openDefects`）
+
+### DEF-2026-0195：图片能力与外部额度边界
+
+- 当前最小热修将文学网页限制在模型已公布的尺寸目录，避免豆包最小面积仅写在说明中、旧模型尺寸穿透预检。通用任意范围尺寸和 MCP 精确像素仍需把最小像素面积结构化贯穿能力快照与共享校验；此次不解析自由文本 Notes。
+- APIyi Gemini 额度不足属于外部账户条件，已暂时停用两个失败模型并将文学配图默认调整到实测成功的豆包。恢复 Gemini 前须确认账户可用并重新走真实生图验收，不能仅重置熔断。
+- 缺陷诊断目前覆盖日志捕获的文学/视觉生图任务；无关联日志、超出采集窗口或已过期的记录会明确缺失，其他异步任务需逐类建立有限关联。

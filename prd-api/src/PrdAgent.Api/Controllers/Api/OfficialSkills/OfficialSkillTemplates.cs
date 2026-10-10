@@ -12,8 +12,8 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 public static class OfficialSkillTemplates
 {
     public const string AiDefectResolveKey = "ai-defect-resolve";
-    public const string AiDefectResolveVersion = "1.9.1";
-    public const string AiDefectResolveReleaseDate = "2026-07-17";
+    public const string AiDefectResolveVersion = "1.9.2";
+    public const string AiDefectResolveReleaseDate = "2026-10-10";
 
     public const string AiDefectResolveSkillMd = """
 ---
@@ -65,9 +65,9 @@ Content-Type: application/json
 
 1. `GET {domain}/api/defect-agent/agent/connector` 确认连接器协议和长期授权。响应会返回连接器类型、当前 K 元信息、授权创建建议和自动化端点清单。
 2. `POST {domain}/api/defect-agent/agent/workflow/start-next` 创建或复用运行记录，并领取下一条缺陷。响应必须包含 `protocol.version == defect-agent-workflow.v1`。
-3. `POST {domain}/api/defect-agent/agent/defects/{defectId}/comments` 评论修复计划，body 带 `runId`。
+3. 先读取任务返回的 `diagnostics`（`GET /api/defect-agent/agent/defects/{defectId}/diagnostics`），再评论修复计划，body 带 `runId`。诊断仍使用原 `defect-agent:use` Key，只读取服务端日志捕获、且属于报告人的关联生图任务；HTTP 200/SSE 建连不代表生图成功，必须核对任务与图片终态、尺寸、错误和 requestId。诊断缺失时记录缺口，结合已经授权的浏览器或其他真实证据排查，不因跨应用接口 403 直接停止，也不扩大 Key 权限。
 4. 按轻量标准判断能否自动修复；重量级问题调用 `POST /api/defect-agent/agent/workflow/block` 写失败原因并默认停止。
-5. 轻量修复后执行代码校验并提交中文 commit。
+5. 轻量修复后执行代码校验并提交中文 commit。是否创建 PR 遵循仓库规则和用户授权；没有 PR 本身不是业务阻塞。区分参数错误、上游额度不足和未覆盖模型，配置调整也要验证真实生成与刷新恢复后才能完成。
 6. `POST {domain}/api/defect-agent/agent/workflow/complete` 一次性回写 `commitSha`、分支、预览和验收报告地址，写入 `defect_resolution_traces`，并标记缺陷已修复。
 7. `workflow/complete` 返回下一次 `workflow/start-next` 入参；再拉下一条，重复以上步骤。
 

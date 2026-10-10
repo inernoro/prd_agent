@@ -387,6 +387,24 @@ public class LiteraryAgentImageGenController : ControllerBase
             }
         }
 
+        // 网页与智能体都须在入队前核对当前场景能力，不能把旧模型尺寸交给 Worker 才失败。
+        // 目录读取不占用半开线路租约；真正的调度留给 Worker 执行一次。
+        var catalog = await GatewayImageModelCatalog.ReadAsync(_gateway, resolvedAppCallerCode, ct);
+        modelId ??= catalog.FirstOrDefault(x => x.Model.IsDefault)?.Model.Code;
+        var selectedModel = catalog
+            .FirstOrDefault(x => string.Equals(x.Model.Code, modelId, StringComparison.Ordinal));
+        if (selectedModel?.ImageCapabilities is not { } capabilities)
+            return BadRequest(ApiResponse<object>.Fail("LITERARY_MODEL_CAPABILITIES_UNAVAILABLE", "无法读取当前配图模型的能力，请刷新后重新选择模型。"));
+        foreach (var item in plan)
+        {
+            var selectedSize = item.Size ?? size;
+            var sizeError = PrdAgent.Api.Services.LiteraryIllustrationChoices.ValidateWebSize(selectedSize, capabilities);
+            if (sizeError != null)
+                return BadRequest(ApiResponse<object>.Fail("SIZE_NOT_SUPPORTED", sizeError));
+        }
+        platformId = "logical-model";
+        cfgModelId = null;
+
         var run = new ImageGenRun
         {
             OwnerAdminId = adminId,
