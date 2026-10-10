@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import datetime as dt
 import importlib.util
 import json
@@ -108,6 +109,27 @@ def header_config(headers: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def curl_timings(meta: dict) -> dict:
+    """累计阶段计时用于定位链路；首字节等待仍含网络，不能直接当作服务端耗时。"""
+    result = {}
+    for field, label in (("time_namelookup", "dnsCompletedMs"),
+                         ("time_connect", "tcpConnectedMs"),
+                         ("time_appconnect", "tlsConnectedMs"),
+                         ("time_pretransfer", "transferReadyMs"),
+                         ("time_starttransfer", "firstByteMs"),
+                         ("time_total", "curlTotalMs")):
+        value = meta.get(field)
+        result[label] = (round(value * 1000, 3)
+                         if isinstance(value, (int, float)) and not isinstance(value, bool)
+                         and math.isfinite(value) and value >= 0 else None)
+    return result
+
+
+def append_evidence(stream, value: object) -> None:
+    stream.write(json.dumps(value, ensure_ascii=False) + "\n")
+    stream.flush()
+
+
 class Probe:
     def __init__(self, base: str, headers: dict[str, str], timeout: int):
         parsed = urlsplit(base)
@@ -117,6 +139,7 @@ class Probe:
 
     def request(self, name: str, path: str) -> tuple[dict, object]:
         started_at, start = utc_now(), time.monotonic()
+        meta = {}
         cmd = ["curl", "--disable", "--silent", "--show-error", "--max-time", str(self.timeout),
                "--max-filesize", "10485760", "--proto", "=http,https", "--config", "-",
                "--write-out", MARKER + "%{json}", self.base + path]
@@ -138,6 +161,7 @@ class Probe:
         record = {"at": started_at, "name": name, "path": path, "status": status,
                   "elapsedMs": round((time.monotonic() - start) * 1000, 1),
                   "curlExitCode": code, "contentType": mime,
+                  "timings": curl_timings(meta),
                   "error": classify(name, status, code, mime, body)}
         return record, body
 
@@ -171,6 +195,7 @@ def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     metadata = {"startedAt": utc_now(), "status": "running", "host": probe.base,
+                "evidenceSchemaVersion": 2,
                 "collectorPid": os.getpid(),
                 "durationSeconds": args.duration_seconds, "intervalSeconds": args.interval_seconds,
                 "timeoutSeconds": args.timeout_seconds, "endpoints": ENDPOINTS,
@@ -179,14 +204,20 @@ def main() -> int:
     write_json(args.output / "metadata.json", metadata)
     start_record, start_body = probe.request("version", VERSION)
     versions = {"start": {"request": start_record, "fingerprint": version_fingerprint(start_body) if isinstance(start_body, dict) else None}}
+    write_json(args.output / "versions.json", versions)
     records, diagnostics, loads = [], [], []
     start = time.monotonic()
     metadata["windowStartedAt"] = utc_now()
     write_json(args.output / "metadata.json", metadata)
     next_round, next_diag, skipped = 0.0, 0.0, 0
-    raw_file = args.output / "requests.jsonl"
-    with raw_file.open("w", encoding="utf-8") as stream, concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        os.chmod(raw_file, 0o600)
+    with contextlib.ExitStack() as stack:
+        streams = {}
+        for name in ("requests", "diagnostics", "workload"):
+            path = args.output / (name + ".jsonl")
+            streams[name] = stack.enter_context(path.open("w", encoding="utf-8"))
+            os.chmod(path, 0o600)
+        stream = streams["requests"]
+        pool = stack.enter_context(concurrent.futures.ThreadPoolExecutor(max_workers=4))
         while not stop.is_set() and time.monotonic() - start < args.duration_seconds:
             if stop.wait(max(0, next_round - (time.monotonic() - start))):
                 break
@@ -199,14 +230,15 @@ def main() -> int:
             for name, task in tasks.items():
                 record, body = task.result()
                 records.append(record)
-                stream.write(json.dumps(record, ensure_ascii=False) + "\n")
-                stream.flush()
+                append_evidence(stream, record)
                 if not record["error"] and isinstance(body, dict):
                     if name == "diagnostics":
                         diagnostics.append(diagnostic_snapshot(body))
+                        append_evidence(streams["diagnostics"], diagnostics[-1])
                     elif name == "runs":
                         loads.append({"at": record["at"], "observedActiveProjects": active_projects(body),
                                       "returnedRuns": len(body["runs"]), "totalRuns": body.get("total")})
+                        append_evidence(streams["workload"], loads[-1])
             next_round += args.interval_seconds
             elapsed = time.monotonic() - start
             if elapsed > next_round + args.interval_seconds:
@@ -217,6 +249,7 @@ def main() -> int:
             write_json(args.output / "metadata.json", metadata)
     end_record, end_body = probe.request("version", VERSION)
     versions["end"] = {"request": end_record, "fingerprint": version_fingerprint(end_body) if isinstance(end_body, dict) else None}
+    write_json(args.output / "versions.json", versions)
     required = max(180, math.ceil(args.duration_seconds / args.interval_seconds))
     summary = {name: latency_summary([r for r in records if r["name"] == name], required) for name in ENDPOINTS}
     metadata.update({"finishedAt": utc_now(), "status": "interrupted" if stop.is_set() else "complete",

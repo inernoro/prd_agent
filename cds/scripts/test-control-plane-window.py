@@ -1,6 +1,7 @@
 import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import io
 from pathlib import Path
 import threading
 import unittest
@@ -11,6 +12,32 @@ spec.loader.exec_module(window)
 
 
 class WindowEvidenceTests(unittest.TestCase):
+    def test_transport_timings_whitelist_rejects_invalid_and_sensitive_fields(self):
+        result = window.curl_timings({"time_namelookup": .01, "time_connect": .02,
+                                      "time_appconnect": float("nan"), "time_starttransfer": -1,
+                                      "time_pretransfer": True, "time_total": .5,
+                                      "url_effective": "never-save", "password": "never-save"})
+        self.assertEqual(result["dnsCompletedMs"], 10)
+        self.assertEqual(result["tcpConnectedMs"], 20)
+        self.assertEqual(result["curlTotalMs"], 500)
+        self.assertIsNone(result["tlsConnectedMs"])
+        self.assertIsNone(result["firstByteMs"])
+        self.assertIsNone(result["transferReadyMs"])
+        self.assertNotIn("never-save", str(result))
+
+    def test_incremental_evidence_is_flushed_before_window_completion(self):
+        class RecordingStream(io.StringIO):
+            flushed = False
+
+            def flush(self):
+                self.flushed = True
+                super().flush()
+
+        stream = RecordingStream()
+        window.append_evidence(stream, {"process": {"pid": 123}})
+        self.assertTrue(stream.flushed)
+        self.assertEqual(json.loads(stream.getvalue()), {"process": {"pid": 123}})
+
     def test_nearest_rank_and_empty_sample_do_not_fake_success(self):
         self.assertEqual(window.nearest_rank(list(range(1, 101)), .95), 95)
         self.assertIsNone(window.nearest_rank([], .95))
@@ -85,6 +112,8 @@ class WindowEvidenceTests(unittest.TestCase):
             html, _ = probe.request("branches", "/branches")
             failed, _ = probe.request("runs", "/runs")
             self.assertIsNone(health["error"])
+            self.assertGreater(health["timings"]["curlTotalMs"], 0)
+            self.assertGreaterEqual(health["timings"]["firstByteMs"], health["timings"]["tcpConnectedMs"])
             self.assertEqual(html["error"], "invalid_response")
             self.assertEqual(failed["status"], 503)
             self.assertEqual(failed["error"], "http_error")
