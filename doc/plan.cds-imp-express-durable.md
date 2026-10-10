@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.16；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.18；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -179,3 +179,25 @@ CDS:c329d9a1ec1e316677b6dcc2678feab834672594; IMP:bfc94e1dae6a7006640b9fc2302463
 c329新增整分支内部恢复租约，唯一终态run/项目/精确目标/config/proof/阶段匹配后才准入；取消或取代后active为空仍登记旧执行未结束，原lease完成前拒绝恢复。复制完成及同operationId旧generation重复完成不动当前写入者或pending。旧bb合法scope7红及额外完成所有权2红复绿，直接JSON准入15含合法正例，主7文件372/显式tsc绿。初始JSON fixture缺branch13错与dr-old命名2错仅测试夹具失败保留，不算产品红。租约仅证明本进程执行结束，不证明重启或Daemon闭合；自主reconciler尚未实现。
 
 bb30固定源码带测试HTTP诊断全量642文件9367通过、6文件19条跳过、1obsolete snapshot，81.39s。3901脱敏trace事件/669响应/349复用连接，本轮无identity mismatch或transport error。628全量2红9364绿（compose-drift ECONNRESET、detect socket hang up）及733两次红保留，根因未闭；自有子进程复现stale pooled socket+停顿→ECONNRESET且reused:true，而one-off200，仅风险复现非原失败闭因。c329新代码只372相关及tsc，不继承bb全量。49正式/视觉/实际八分支均not-executed。
+
+## v1.17 实施检查点（2026-10-11）
+
+CDS:2b72ab448acea5791099e34528b5409aeb89b8fa; IMP:2a8e22723eae3330d081204ba37cfe5925495777（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地检查点，后续文档提交另计，未部署）。
+
+2b72：原执行最后外部动作后可靠保存executorSettlement摘要；自动恢复绑定唯一终态run、控制摘要、旧图及原版本，缺回执/未知创建或网络/停止意图不齐均保留。确认旧路由后回收候选ID和私有网络ID，再原ID恢复、原版本所有原运行服务就绪、保存、final ACK、durable released。Dashboard启动及每分钟最多一条轮转已接受控开关，暂停/draining不恢复，去重有界结果事件。主11文件463及显式tsc绿；去掉收尾回执守卫2真红、去掉清理前路由ACK1真红，均还原。重读实际JSON＋假CLI局部不能替代真实Master/Daemon重启；新图已发布、无回执崩溃、未知晚创建及历史不完整仍待对账；固定2b72独立复验待执行。
+
+独立c329固定13模块Git hashes：网络整链15/15关闭628 API回滚漏网红；CLI24、Journal12、HTTP1重跑绿，恢复门禁45＋10和自有HTTP结算6绿。旧628主22/45及结算1/6红保留；这些是组件/实际JSON/自有HTTP，不是自主恢复或Daemon通过。
+
+只读浏览器共享IMP页面实见9分支：1出错、1运行、7未运行；app01混合13/14且属于他人任务，cl08混合13/14并11启动失败，main/app04/marketing混合待生效，四支极速待生效。截图为旧线上失败基线，不是本修订视觉验收；/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/shared-imp-baseline.jpg。共享宿主18核可用约51GiB但负载约20且CPU100%；只有一个Master执行器，无隔离验收宿主。
+
+2b72相关11文件463/tsc通过；2b72全量正在执行，结果未到。bb30历史全量642文件9367绿不继承本修订；628和733历史全量失败及池连接复现根因未闭。49项正式not-executed，候选视觉、实际八分支、公网30分钟/48小时仍未验。
+
+## v1.18 实施检查点（2026-10-11）
+
+CDS:d3b7e2ad2944257beaa7d8522d3f2135cff8d1b9; IMP:2a8e22723eae3330d081204ba37cfe5925495777（IMP产品a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；本地检查点，后续文档提交另计，未部署）。
+
+2b72收尾回执/已核验旧图自动恢复已实现，启动与分钟tick每轮一条、轮转/去重、暂停/draining不恢复，主相关463。dc9f把组件scan也限为1：原批量放行1真红→44绿/tsc，独立2b72 scan(8)三run边界红保留，不扩张为生产tick红（它原本显式1）。2b72独立新整链复验尚未归档，不能算真实Master/Daemon、未知晚创建/无回执崩溃或新图发布对账通过。
+
+d3b7补exact单服务的dependsOn项目内应用传递制品闭包，不包含无关服务；缺Profile/未登记running infra、跨项目、循环或非exact依赖失败。按本次target展开模板，不依赖旧/空CI缓存；依赖制品缺失前保留在线容器，不隐式重部署依赖。valid cached SHA的旧真实HTTP＋假Docker出现破坏性替换是真红；第一次空缓存仅api模板invalid是安全拒绝，不计依赖漏检红。cached/empty两场景复绿，闭包7/制品6/路由237共250与显式tsc绿。基础设施status仅用于排除应用制品集合，不证明实际健康；固定d3b独立复验和真实OCI/依赖运行待验。
+
+2b72固定全量643文件9403通过、6文件19条跳过、1obsolete snapshot，86.40s；相关463/tsc绿。d3b最新代码仅250相关与显式tsc，dc9f另44；不继承2b72全量。历史628/733失败与池连接停顿风险复现仍保留，根因未闭。49项正式not-executed，候选视觉、实际八分支、公网30分钟/48小时仍未验。
