@@ -1745,6 +1745,8 @@ export class StateService {
     const protectedIds = new Set([
       ...Object.values(this.state.branches).map((branch) => branch.currentVersionId).filter(Boolean),
       ...Object.values(this.state.deploymentRuns || {}).map((run) => run.versionId).filter(Boolean),
+      ...Object.values(this.state.deploymentRuns || {}).filter(run => run.candidate && run.candidate.phase !== 'released')
+        .map(run => run.candidate!.recoveryProof?.servingVersion?.id).filter(Boolean),
     ]);
     for (const version of versions) {
       if (overflow <= 0) break;

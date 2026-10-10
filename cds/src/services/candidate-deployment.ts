@@ -9,6 +9,7 @@ import { resolveCandidateReplacement } from './candidate-replacement-policy.js';
 import { topoSortLayers } from './topo-sort.js';
 import { runLayerWithSharedAbort } from './deploy-layer-runner.js';
 import { BranchOperationSupersededError } from './branch-operation-coordinator.js';
+import { captureServingVersion, assertServingVersion } from './candidate-serving-version.js';
 import { unresolvedCandidateRun } from './candidate-operation-admission.js';
 
 export interface CandidateDeploymentOptions {
@@ -40,9 +41,11 @@ export class CandidateDeploymentService {
     const targetSha = entry.deploymentTargetSha;
     if (!run || !run.operationId || !run.configHash || run.branchId !== entry.id || run.projectId !== entry.projectId ||
       run.commitSha !== targetSha || !/^[a-f0-9]{40}$/.test(targetSha || '')) throw new Error('candidate_deploy_owner: frozen exact run required');
+    let servingVersion: ReturnType<typeof captureServingVersion> | undefined;
     const frozen = { operationId: run.operationId, configHash: run.configHash, targetSha, branchId: entry.id, projectId: run.projectId };
     const fence = (step = 'candidate-deployment') => {
       options.assertCurrent(step);
+      if (servingVersion) assertServingVersion(this.state, entry, servingVersion.proof);
       const current = this.state.getDeploymentRun(runId);
       if (current !== run || current.operationId !== frozen.operationId || current.configHash !== frozen.configHash ||
         current.commitSha !== frozen.targetSha || current.projectId !== frozen.projectId || current.branchId !== frozen.branchId ||
@@ -91,12 +94,19 @@ export class CandidateDeploymentService {
       const old = oldReferences.get(profile.id);
       return resolveCandidateReplacement(profile, old?.writableMounts || []).strategy === 'stop-and-restore' && old?.wasRunning;
     }).map(profile => profile.id);
+    if (stopBeforeStart.length) {
+      servingVersion = captureServingVersion(this.state, entry, stopBeforeStart);
+      if (stopBeforeStart.some(id => oldReferences.get(id)!.image !== entry.services[id].deployedImage)) {
+        throw new Error('candidate_serving_version: actual original image differs from version runtime');
+      }
+      active();
+    }
     // Persist inspected IDs, never infer them from a mutable Docker name at deletion time.
     for (const [id, reference] of oldReferences) { entry.services[id].containerId = reference.id; servingFacts[id].containerId = reference.id; }
     this.state.save(); await this.state.flush(); active();
     const graph = createCandidateRuntime(entry, profiles, frozen.operationId, options.allocatePort);
     const journal = new CandidateJournal(this.state);
-    await journal.prepare(runId, graph, stopBeforeStart, { version: 1,
+    await journal.prepare(runId, graph, stopBeforeStart, { version: 1, servingVersion: servingVersion?.proof,
       serving: Object.fromEntries([...oldReferences].map(([id, ref]) => [id, { id: ref.id, name: ref.name,
         image: ref.image, wasRunning: ref.wasRunning, fingerprint: ref.fingerprint }])),
       artifacts: Object.fromEntries(profiles.map(profile => [profile.id, { image: profile.preparedArtifactId!, targetSha: profile.preparedCommitSha! }])) });
@@ -189,8 +199,14 @@ export class CandidateDeploymentService {
           for (const id of stopped) {
             recoveryStage = 'serving-start';
             await this.lifecycle.start(oldReferences.get(id)!, servingFence, recoverySignal); servingFence();
-            const profile = profiles.find(profile => profile.id === id)!; const service = entry.services[id];
+            const profile = servingVersion?.profiles.get(id); const service = entry.services[id];
+            if (!profile) throw new Error('candidate_serving_version: frozen original readiness missing');
             recoveryStage = 'serving-readiness';
+            if (profile.startupSignal && !await this.containers.waitForStartupSignal(service.containerName, profile.startupSignal,
+              undefined, profile.readinessProbe?.timeoutSeconds || 300, recoverySignal)) {
+              throw new Error('candidate_restore_readiness: original startup signal unconfirmed');
+            }
+            servingFence();
             if (!await this.containers.waitForReadiness(service.hostPort, profile.readinessProbe, undefined, undefined,
               service.containerName, recoverySignal)) throw new Error('candidate_restore_readiness: original instance is not ready');
             servingFence(); service.status = 'running';

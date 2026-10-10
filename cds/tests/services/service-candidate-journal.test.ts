@@ -29,7 +29,7 @@ describe('P3 durable private candidate reservations', () => {
     branch.services.api.containerId = 'c'.repeat(64);
     const supplied = proof(); (supplied.serving.api as any).Env = ['TOKEN=private-proof-token'];
     (supplied.artifacts.api as any).credentials = 'private-proof-token';
-    await new CandidateJournal(state).prepare(runId, candidate(), ['api'], supplied);
+    await new CandidateJournal(state).prepare(runId, candidate(), undefined, supplied);
     supplied.serving.api.wasRunning = false; supplied.artifacts.api.targetSha = 'b'.repeat(40);
     const reload = new StateService(path.join(dir, 'state.json')); reload.load();
     expect(reload.getDeploymentRun(runId)!.candidate!.recoveryProof).toEqual(proof());
@@ -52,7 +52,7 @@ describe('P3 durable private candidate reservations', () => {
       if (variant === 'coercible-image') supplied.artifacts.api.image = { toString: () => 'sha256:' + 'f'.repeat(64) };
       if (variant === 'coercible-fingerprint') supplied.serving.api.fingerprint = { toString: () => 'sha256:' + 'e'.repeat(64) };
       if (variant === 'unknown-running') supplied.serving.api.wasRunning = 'true';
-      await expect(new CandidateJournal(state).prepare(runId, candidate(), ['api'], supplied)).rejects.toThrow('candidate_recovery_proof');
+      await expect(new CandidateJournal(state).prepare(runId, candidate(), undefined, supplied)).rejects.toThrow('candidate_recovery_proof');
       expect(state.getDeploymentRun(runId)!.candidate).toBeUndefined();
       const reload = new StateService(path.join(dir, 'state.json')); reload.load();
       expect(reload.getDeploymentRun(runId)!.candidate).toBeUndefined();

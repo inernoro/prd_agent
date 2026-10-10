@@ -18,6 +18,11 @@ beforeEach(async () => {
     status: 'running', createdAt: '2026-10-11', services: { api: { profileId: 'api', containerName: 'old', hostPort: 10001, status: 'running',
       deployedCommitSha: 'b'.repeat(40), deployedImage: 'sha256:' + 'b'.repeat(64) } } };
   state.addBranch(entry);
+  entry.currentVersionId = 'dv-original';
+  state.addDeploymentVersion({ id: 'dv-original', projectId: 'project', branchId: entry.id, commitSha: 'b'.repeat(40),
+    configHash: 'old-config', createdByRunId: 'dr-original', createdAt: '2026-10-01', migrations: [], capabilities: [],
+    profiles: [{ profileId: 'api', replacementContractVersion: 1, name: 'Original', artifactImage: entry.services.api.deployedImage!,
+      artifactKind: 'prebuilt-image', reusable: true, containerPort: 8080, readinessProbe: { path: '/old-health', timeoutSeconds: 17 } }] });
   runId = (await new DeploymentRunService(state).begin({ projectId: 'project', branchId: entry.id, trigger: 'manual',
     commitSha: sha, operationId: 'operation', configHash: 'frozen' })).id;
 });
@@ -71,6 +76,73 @@ function fixture(role: 'api' | 'worker' = 'api') {
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('uses the frozen original version readiness instead of the incoming profile while restoring the old worker', async () => {
+    const f = fixture('worker'); f.options.profiles[0].readinessProbe = { path: '/new-health', timeoutSeconds: 1 };
+    f.setReady(false); const check = f.containers.waitForReadiness;
+    let oldProbe: unknown;
+    f.containers.waitForReadiness = async (port: number, ...args: any[]) => {
+      if (port === 10001) oldProbe = args[0];
+      return check(port);
+    };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');
+    expect(oldProbe).toEqual({ path: '/old-health', timeoutSeconds: 17 });
+    const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+    expect((disk.getDeploymentRun(runId)!.candidate!.recoveryProof as any).servingVersion).toMatchObject({ id: 'dv-original', fingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) });
+  });
+  it.each(['missing', 'unknown-contract', 'wrong-commit', 'wrong-image', 'wrong-project', 'wrong-probe', 'wrong-signal'])('refuses stopping the original consumer without matching frozen version readiness: %s', async variant => {
+    const f = fixture('worker'); const version = state.getDeploymentVersion('dv-original')!;
+    if (variant === 'missing') entry.currentVersionId = undefined;
+    if (variant === 'unknown-contract') (version.profiles[0] as any).replacementContractVersion = 2;
+    if (variant === 'wrong-commit') version.commitSha = 'e'.repeat(40);
+    if (variant === 'wrong-image') version.profiles[0].artifactImage = image;
+    if (variant === 'wrong-project') version.projectId = 'other';
+    if (variant === 'wrong-probe') (version.profiles[0] as any).readinessProbe = { noHttp: 'false' };
+    if (variant === 'wrong-signal') (version.profiles[0] as any).startupSignal = { value: 'READY' };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_serving_version');
+    expect(f.events).toEqual([]); expect(f.old.State.Running).toBe(true);
+    expect(state.getDeploymentRun(runId)!.candidate).toBeUndefined();
+  });
+  it('requires the original startup signal when restoring rather than borrowing the new version signal', async () => {
+    const f = fixture('worker'); f.setReady(false); f.options.profiles[0].startupSignal = 'NEW_READY';
+    state.getDeploymentVersion('dv-original')!.profiles[0].startupSignal = 'OLD_READY';
+    const signals: string[] = [];
+    f.containers.waitForStartupSignal = async (...args: any[]) => { signals.push(args[1]); return args[1] !== 'OLD_READY'; };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_readiness');
+    expect(signals).toEqual(['NEW_READY', 'OLD_READY']);
+    expect(entry.services.api.status).toBe('stopped');
+    expect(state.getDeploymentRun(runId)!.candidate!.recoveryFailure?.stage).toBe('serving-readiness');
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+  });
+
+  it('protects the original readiness version from pruning while a failed candidate still needs reconciliation', async () => {
+    const f = fixture('worker'); f.failCreate();
+    await expect(f.service.deploy(f.options)).rejects.toThrow('create-unknown');
+    const original = structuredClone(state.getDeploymentVersion('dv-original')!);
+    entry.currentVersionId = undefined;
+    state.updateDeploymentRun(runId, current => { current.status = 'failed'; });
+    for (let i = 0; i < 101; i++) state.addDeploymentVersion({ ...original, id: 'dv-prune-' + i,
+      createdAt: '2026-10-11T00:00:' + String(i).padStart(3, '0') });
+    await state.flush();
+    const loaded = new StateService(path.join(dir, 'state.json')); loaded.load();
+    expect(loaded.getDeploymentVersion('dv-original')!.profiles[0].readinessProbe!.path).toBe('/old-health');
+    expect(loaded.getDeploymentVersions().length).toBeLessThanOrEqual(100);
+    // Control: this test explicitly closes its own fixture ledger; released rows no longer reserve history.
+    state.getDeploymentRun(runId)!.candidate!.phase = 'released';
+    state.addDeploymentVersion({ ...original, id: 'dv-after-fixture-release', createdAt: '2026-10-12' });
+    expect(state.getDeploymentVersion('dv-original')).toBeUndefined();
+  });
+
+  it('does not replace a frozen old readiness contract changed during candidate creation', async () => {
+    const f = fixture('worker'); const create = f.containers.runService;
+    f.containers.runService = async (...args: Parameters<typeof create>) => {
+      await create(...args); state.getDeploymentVersion('dv-original')!.profiles[0].readinessProbe!.path = '/changed-health';
+    };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('candidate_serving_version');
+    expect(f.events).not.toContain('docker start ' + f.old.Id);
+    expect(f.events).not.toContain('docker rm -f ' + f.old.Id);
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).not.toBe('released');
+  });
+
   it('rejects a second candidate graph while a previous failed journal for the branch remains unreleased', async () => {
     const f = fixture('worker');
     const previous = (await new DeploymentRunService(state).begin({ projectId: 'project', branchId: entry.id, trigger: 'manual', commitSha: sha, operationId: 'previous', configHash: 'old' })).id;

@@ -1376,6 +1376,8 @@ export interface DeploymentRun {
 /** Recovery proof projects only immutable identity and an opaque configuration digest. */
 export interface CandidateRecoveryProof {
   version: 1;
+  /** Original version whose readiness contract is protected while consumers may need restoring. */
+  servingVersion?: { id: string; fingerprint: string };
   serving: Record<string, { id: string; name: string; image: string; wasRunning: boolean; fingerprint: string }>;
   artifacts: Record<string, { image: string; targetSha: string }>;
 }

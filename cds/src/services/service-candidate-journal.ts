@@ -1,5 +1,6 @@
 import type { BranchEntry, DeploymentCandidateRecord, ServiceState, CandidateRecoveryProof } from '../types.js';
 import type { StateService } from './state.js';
+import { captureServingVersion } from './candidate-serving-version.js';
 import { candidateRuntimeIdentity } from './service-candidate.js';
 
 export function snapshotCandidateServices(services: Record<string, ServiceState>): DeploymentCandidateRecord['services'] {
@@ -88,8 +89,16 @@ export class CandidateJournal {
         Object.values(recoveryProof.artifacts).some(proof => !plainRecord(proof) || !validImage(proof.image) || proof.targetSha !== target)) {
         throw new Error('candidate_recovery_proof: complete frozen inspected identities and artifacts required');
       }
+      const originalVersion = stopBeforeStart?.length || recoveryProof.servingVersion !== undefined
+        ? captureServingVersion(this.state, serving, stopBeforeStart || []).proof : undefined;
+      if (recoveryProof.servingVersion !== undefined && (!plainRecord(recoveryProof.servingVersion) ||
+        typeof recoveryProof.servingVersion.id !== 'string' || !validImage(recoveryProof.servingVersion.fingerprint)) ||
+        originalVersion && (recoveryProof.servingVersion?.id !== originalVersion.id || recoveryProof.servingVersion?.fingerprint !== originalVersion.fingerprint)) {
+        throw new Error('candidate_recovery_proof: matching original version required for stopped consumers');
+      }
       // Explicit projection, not a clone of extensible Docker data or caller configuration.
       record.recoveryProof = { version: 1,
+        ...(recoveryProof.servingVersion ? { servingVersion: { id: recoveryProof.servingVersion.id, fingerprint: recoveryProof.servingVersion.fingerprint } } : {}),
         serving: Object.fromEntries(Object.entries(recoveryProof.serving).map(([id, p]) => [id,
           { id: p.id, name: p.name, image: p.image, wasRunning: p.wasRunning, fingerprint: p.fingerprint }])),
         artifacts: Object.fromEntries(Object.entries(recoveryProof.artifacts).map(([id, p]) => [id, { image: p.image, targetSha: p.targetSha }])) };

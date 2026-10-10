@@ -194,6 +194,11 @@ export class DeploymentVersionService {
   }
 }
 
+/** Opaque identity for a frozen version, including the original readiness contract. */
+export function deploymentVersionFingerprint(version: DeploymentVersion): string {
+  return 'sha256:' + sha256(stableStringify(version));
+}
+
 export function isImmutableImageReference(image: string): boolean {
   const normalized = image.trim();
   return /@sha256:[0-9a-f]{64}$/i.test(normalized)
