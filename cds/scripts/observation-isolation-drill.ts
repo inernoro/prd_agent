@@ -40,7 +40,8 @@ async function main(): Promise<void> {
   delete process.env.DOCKER_CONTEXT;
   process.env.DOCKER_HOST = host;
   const operationShell = new module.IsolatedShellExecutor(new ShellExecutor(), {
-    isolatedLane: 'operation', concurrency: 3, reservedCleanup: 1, maxQueued: 4, defaultTimeoutMs: 15_000,
+    isolatedLane: 'operation', concurrency: 3, reservedCleanup: 1, maxQueued: 4, maxBytes: 256 * 1024,
+    reservedCleanupBytes: 64 * 1024, defaultTimeoutMs: 15_000,
   });
   const shell = new module.IsolatedShellExecutor(operationShell, { concurrency: 2, maxQueued: 16 });
   const streamModule = compiled ? await import(new URL('../dist/services/observation-stream-executor.js', import.meta.url).href) as typeof import('../src/services/observation-stream-executor.js') : { ObservationStreamExecutor };
@@ -300,12 +301,21 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     void operationBlockers.catch(() => {});
     for (let wait = 0; wait < 500 && operationProducersReady < 2; wait++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(operationProducersReady, 2);
+    await assert.rejects(operationShell.exec('echo ' + 'x'.repeat(192 * 1024), {
+      beforeStart: () => {}, timeout: 100,
+    }), (error: any) => error?.code === 'capacity');
     let qualificationChecks = 0;
     const supersededOperation = new Error('owned-operation-superseded');
     const rejectedOperation = operationShell.exec(`touch ${shellQuoteArg(operationMarker)}`, {
       beforeStart: () => { qualificationChecks++; throw supersededOperation; },
     }).then(() => undefined, error => error);
     assert.ok(operationShell.getStats().queued >= 1);
+    const retainedOperations = Promise.all(Array.from({ length: 2 }, () => operationShell.exec('echo retained-owned', { beforeStart: () => {} })));
+    void retainedOperations.catch(() => {});
+    assert.equal(operationShell.getStats().queued, 3);
+    await assert.rejects(operationShell.exec('echo extra-must-not-enter', {
+      beforeStart: () => {}, timeout: 100,
+    }), (error: any) => error?.code === 'capacity');
     const healthDuringOperations = await container.isRunning(id!);
     assert.equal(healthDuringOperations, true);
     assert.equal(operationShell.getStats().active, 2);
@@ -314,10 +324,12 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
       executionPurpose: 'temporary-cleanup', timeout: 5000,
     });
     assert.equal(cleanupDuringOperations.exitCode, 0); await fs.access(ownedCleanupMarker);
+    assert.equal(operationShell.getStats().queued, 3);
     assert.equal(operationShell.getStats().active, 2);
     await fs.writeFile(operationRelease, 'owned-release', { mode: 0o600 });
     await operationBlockers;
     assert.equal(await rejectedOperation, supersededOperation); assert.equal(qualificationChecks, 1);
+    assert.ok((await retainedOperations).every(result => result.exitCode === 0));
     await assert.rejects(fs.access(operationMarker), { code: 'ENOENT' });
     assert.deepEqual(operationShell.getStats().actors.map(actor => actor.pid), operationActors);
     owned();
@@ -327,7 +339,8 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     const operationStart = await shell.exec(['docker', 'start', id!].map(shellQuoteArg).join(' '));
     assert.equal(operationStart.exitCode, 0); assert.equal(await container.isRunning(id!), true); owned();
     report.operationReceipt = { actualProducer: operationParent, actorPids: operationActors, qualificationChecks,
-      rejectedCommandNeverStarted: true, healthDuringOperations, cleanupDuringOperations: true, actualOwnedStopStart: true, stats: operationShell.getStats(),
+      rejectedCommandNeverStarted: true, healthDuringOperations, cleanupDuringOperations: true, queueAdmissionProtected: true,
+      byteAdmissionProtected: true, queuedOperationsAtCleanup: 3, actualOwnedStopStart: true, stats: operationShell.getStats(),
       scope: 'compiled default operation process routing and owned Docker stop/start; private queued command rejected before start, not application deployment or stage fairness acceptance' };
     report.checks.push({ name: 'compiled-owned-default-operation-qualified-dispatch-and-health-reservation', passed: true });
 

@@ -29,6 +29,40 @@ afterEach(async () => {
   vi.mocked(childProcess.exec).mockClear(); vi.mocked(childProcess.spawn).mockClear();
 });
 describe('普通操作独立执行真实进程', () => {
+  it('普通待办达到上限时，保留清理待办仍能执行且不增加总队列预算', async () => {
+    const e = pool({ concurrency: 2, reservedCleanup: 1, maxQueued: 2 }); await e.start();
+    const dir = await directory(); const ready = path.join(dir, 'ready'); const release = path.join(dir, 'release'); const cleaned = path.join(dir, 'cleaned');
+    const script = `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(ready)},'ready');const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)}))clearInterval(t)},10);`;
+    const blocker = e.exec(node(script)); const pending: Array<Promise<unknown>> = [blocker.catch(error => error)];
+    try {
+      await waitFor(async () => { try { await access(ready); return true; } catch { return false; } });
+      pending.push(e.exec('echo queued-owned', { beforeStart: () => {} }).catch(error => error));
+      expect(e.getStats().queued).toBe(1);
+      await expect(e.exec('echo rejected-extra', { beforeStart: () => {}, timeout: 100 })).rejects.toMatchObject({ code: 'capacity' });
+      expect((await e.exec(`touch ${quote(cleaned)}`, { executionPurpose: 'temporary-cleanup' })).exitCode).toBe(0);
+      await access(cleaned); expect(e.getStats().queued).toBe(1); expect(e.getStats().active).toBe(1);
+    } finally { const { writeFile } = await import('node:fs/promises'); await writeFile(release, 'released'); await Promise.all(pending); }
+    expect(e.getStats().bytes).toBe(0); expect(e.getStats().queued).toBe(0);
+  });
+
+  it('普通输入字节达到预算时，清理字节保留且收尾后精确释放原预算', async () => {
+    const dir = await directory(); const ready = path.join(dir, 'ready'); const release = path.join(dir, 'release'); const cleaned = path.join(dir, 'cleaned');
+    const command = node(`const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(ready)},'ready');const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)}))clearInterval(t)},10);`);
+    const overhead = Buffer.byteLength(JSON.stringify({ env: { ...process.env }, stream: false, captureOutput: true }));
+    const cleanupBytes = overhead + 1024; const normalBytes = overhead + Buffer.byteLength(command) + 512;
+    const e = pool({ concurrency: 2, reservedCleanup: 1, maxQueued: 4, maxBytes: normalBytes + cleanupBytes, reservedCleanupBytes: cleanupBytes }); await e.start();
+    const blocker = e.exec(command); const settled = blocker.catch(error => error);
+    try {
+      await waitFor(async () => { try { await access(ready); return true; } catch { return false; } });
+      await expect(e.exec('echo ' + 'x'.repeat(1024), { beforeStart: () => {}, timeout: 100 })).rejects.toMatchObject({ code: 'capacity' });
+      expect((await e.exec(`touch ${quote(cleaned)}`, { executionPurpose: 'temporary-cleanup' })).exitCode).toBe(0);
+      await access(cleaned); expect(e.getStats().bytes).toBeLessThanOrEqual(normalBytes + cleanupBytes);
+      await expect(e.exec('echo ' + 'x'.repeat(cleanupBytes), { executionPurpose: 'temporary-cleanup' })).rejects.toMatchObject({ code: 'capacity' });
+    } finally { const { writeFile } = await import('node:fs/promises'); await writeFile(release, 'released'); await settled; }
+    expect(e.getStats().bytes).toBe(0); expect(e.getStats().active).toBe(0);
+    expect((await e.exec('echo budget-reused')).stdout.trim()).toBe('budget-reused');
+  });
+
   it('普通操作实际占满时，保留清理槽仍执行私有回收而不放行更多普通操作', async () => {
     const e = pool({ concurrency: 2, reservedCleanup: 1 }); await e.start();
     const dir = await directory(); const release = path.join(dir, 'release'); const ready = path.join(dir, 'ready'); const cleaned = path.join(dir, 'cleaned');

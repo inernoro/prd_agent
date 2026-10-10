@@ -57,6 +57,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private active = 0;
   private activeCleanup = 0;
   private bytes = 0;
+  private cleanupBytes = 0;
   private starting?: Promise<void>;
   private startResolve?: () => void;
   private startReject?: (error: ObservationExecutionError) => void;
@@ -70,10 +71,11 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private readonly isolatedLane: 'observation' | 'operation';
   private readonly defaultTimeoutMs: number;
   private readonly reservedCleanup: number;
+  private readonly reservedCleanupBytes: number;
 
   constructor(private readonly operation: IShellExecutor, config: {
     concurrency?: number; maxQueued?: number; maxBytes?: number; processFactory?: (owner: string) => ChildProcess;
-    isolatedLane?: 'observation' | 'operation'; defaultTimeoutMs?: number; reservedCleanup?: number;
+    isolatedLane?: 'observation' | 'operation'; defaultTimeoutMs?: number; reservedCleanup?: number; reservedCleanupBytes?: number;
   } = {}) {
     this.concurrency = config.concurrency ?? 2;
     this.maxQueued = config.maxQueued ?? 64;
@@ -81,12 +83,16 @@ export class IsolatedShellExecutor implements IShellExecutor {
     this.isolatedLane = config.isolatedLane ?? 'observation';
     this.defaultTimeoutMs = config.defaultTimeoutMs ?? 30_000;
     this.reservedCleanup = config.reservedCleanup ?? 0;
+    this.reservedCleanupBytes = config.reservedCleanupBytes ?? (this.reservedCleanup > 0 ? Math.min(256 * 1024, Math.floor(this.maxBytes / 4)) : 0);
     if (!Number.isSafeInteger(this.reservedCleanup) || this.reservedCleanup < 0 || this.reservedCleanup >= this.concurrency ||
       (this.reservedCleanup > 0 && this.isolatedLane !== 'operation')) throw new Error('Invalid cleanup reservation');
     for (const n of [this.concurrency, this.maxQueued, this.maxBytes, this.defaultTimeoutMs]) {
       if (!Number.isSafeInteger(n) || n < 1) throw new Error('Invalid observation executor capacity');
     }
     if (this.concurrency > 16) throw new Error('Invalid observation executor capacity');
+    if (!Number.isSafeInteger(this.reservedCleanupBytes) || (this.reservedCleanup > 0
+      ? this.maxQueued <= this.reservedCleanup || this.reservedCleanupBytes < 1 || this.reservedCleanupBytes >= this.maxBytes
+      : this.reservedCleanupBytes !== 0)) throw new Error('Invalid cleanup admission reservation');
     this.processFactory = config.processFactory ?? (owner => launchObservationProcess('observation-executor-process', owner));
   }
   private executionError(code: FailureCode): ObservationExecutionError {
@@ -127,6 +133,16 @@ export class IsolatedShellExecutor implements IShellExecutor {
     const wireOptions = { cwd: options.cwd, stdin: options.stdin, env: { ...process.env, ...options.env }, stream: !!options.onData, captureOutput: options.captureOutput !== false };
     const bytes = Buffer.byteLength(command) + Buffer.byteLength(JSON.stringify(wireOptions));
     if (this.queue.length >= this.maxQueued || this.bytes + bytes > this.maxBytes) return Promise.reject(this.executionError('capacity'));
+    if (this.reservedCleanup > 0) {
+      const queuedCleanup = this.queue.filter(job => job.cleanup).length;
+      // 仍使用原总上限；普通任务不能占用清理的等待名额或输入字节，清理自身也有硬限。
+      if (cleanup
+        ? queuedCleanup >= this.reservedCleanup || this.cleanupBytes + bytes > this.reservedCleanupBytes
+        : this.queue.length - queuedCleanup >= this.maxQueued - this.reservedCleanup ||
+          this.bytes - this.cleanupBytes + bytes > this.maxBytes - this.reservedCleanupBytes) {
+        return Promise.reject(this.executionError('capacity'));
+      }
+    }
     const continuous = options.captureOutput === false && options.timeout === 0 && !!options.signal && !!options.onData;
     const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : this.defaultTimeoutMs;
     return new Promise((resolve, reject) => {
@@ -134,15 +150,17 @@ export class IsolatedShellExecutor implements IShellExecutor {
       const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, cleanup, bytes, dataTail: Promise.resolve(), active: false,
         deadline: performance.now() + timeout, timer: continuous ? undefined : setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
       if (job.signal) { job.abort = () => this.cancel(id, 'cancelled'); job.signal.addEventListener('abort', job.abort, { once: true }); }
-      this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes;
+      this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes; if (cleanup) this.cleanupBytes += bytes;
       this.refPool();
       void this.start().catch(() => {});
       this.drain();
     });
   }
 
-  getStats(): { active: number; activeCleanup: number; reservedCleanup: number; queued: number; bytes: number; unavailable: boolean; factoryPid?: number; actors: Array<{ pid: number; rss?: number; heapLimit?: number }> } {
-    return { active: this.active, activeCleanup: this.activeCleanup, reservedCleanup: this.reservedCleanup, queued: this.queue.length, bytes: this.bytes, unavailable: this.unavailable, factoryPid: this.factory?.pid,
+  getStats(): { active: number; activeCleanup: number; reservedCleanup: number; reservedCleanupBytes: number; maxQueued: number; maxBytes: number; queued: number; queuedCleanup: number; bytes: number; cleanupBytes: number; unavailable: boolean; factoryPid?: number; actors: Array<{ pid: number; rss?: number; heapLimit?: number }> } {
+    return { active: this.active, activeCleanup: this.activeCleanup, reservedCleanup: this.reservedCleanup, reservedCleanupBytes: this.reservedCleanupBytes,
+      maxQueued: this.maxQueued, maxBytes: this.maxBytes, queued: this.queue.length, queuedCleanup: this.queue.filter(job => job.cleanup).length,
+      bytes: this.bytes, cleanupBytes: this.cleanupBytes, unavailable: this.unavailable, factoryPid: this.factory?.pid,
       actors: [...this.actors.values()].map(actor => ({ pid: actor.pid, ...actor.metrics })) };
   }
 
@@ -216,6 +234,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     clearTimeout(job.timer); if (job.abort) job.signal?.removeEventListener('abort', job.abort);
     if (job.active) { this.active--; if (job.cleanup) this.activeCleanup--; } else { const i = this.queue.indexOf(job); if (i >= 0) this.queue.splice(i, 1); }
     this.bytes -= job.bytes;
+    if (job.cleanup) this.cleanupBytes -= job.bytes;
     const error = failure === 'cleanup' ? failure : job.failure ?? failure;
     if (error === 'cleanup') job.reject(this.executionError(error));
     else if (job.startRejected) job.reject(job.startError);
