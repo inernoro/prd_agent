@@ -53,6 +53,12 @@ function railWith(distances: Record<string, number | null>): never {
 }
 
 describe('resolvePromotionCandidate', async () => {
+  it('does not suggest promotion for an empty environment after its history deadline was cancelled', async () => {
+    const controller = new AbortController(); controller.abort();
+    expect(await resolvePromotionCandidate(row({ currentCommit: '' }), [row({ currentCommit: '' }), staging(SHA.ahead)],
+      railWith({}), undefined, controller.signal)).toBeUndefined();
+  });
+
   it('直线领先：预发是生产的后代 → 可以晋升', async () => {
     const rail = railWith({
       [`${SHA.base}..${SHA.ahead}`]: 4,

@@ -30,6 +30,7 @@ import type { IShellExecutor } from '../types.js';
 import { ShellExecutor } from './shell-executor.js';
 import { isCommitShaLike } from './release-commit-clock.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
+import { timeMainThreadSection } from './main-thread-diagnostics.js';
 
 /** 单元分隔符。commit subject 里什么字符都可能有，只有它足够安全。 */
 const UNIT_SEPARATOR = '\x1f';
@@ -165,6 +166,8 @@ export interface ReleaseCommitRailOptions {
 export class ReleaseCommitRailReader {
   private cache = new Map<string, CacheEntry>();
   private pending = new Map<string, Promise<ReleaseCommitRailResult>>();
+  private countCache = new Map<string, number>();
+  private countPending = new Map<string, Promise<number | null>>();
   private latest = new Map<string, string>();
 
   constructor(private readonly options: ReleaseCommitRailOptions) {}
@@ -201,12 +204,31 @@ export class ReleaseCommitRailReader {
    * 跨环境「新了几个提交」必须走这里直算，禁止拿两个 behindCount 相减。
    */
   async countCommitsBetween(projectId: string, fromSha: string, toSha: string, signal = AbortSignal.timeout(GIT_TIMEOUT_MS)): Promise<number | null> {
-    if (!isCommitShaLike(fromSha) || !isCommitShaLike(toSha)) return null;
-    if (sameCommit(fromSha, toSha)) return 0;
+    if (signal.aborted || !isCommitShaLike(fromSha) || !isCommitShaLike(toSha)) return null;
     const root = this.resolveRepoRoot(projectId);
     if (!root) return null;
-    const out = await this.run(['-C', root, 'rev-list', '--count', `${fromSha}..${toSha}`], signal);
-    return out === undefined ? null : parseCount(out);
+    return this.countAtRoot(projectId, root, fromSha, toSha, signal);
+  }
+
+  private async countAtRoot(projectId: string, root: string, fromSha: string, toSha: string, signal: AbortSignal): Promise<number | null> {
+    if (signal.aborted) return null;
+    const immutable = /^[a-f0-9]{40}$/i.test(fromSha) && /^[a-f0-9]{40}$/i.test(toSha);
+    if (immutable && fromSha.toLowerCase() === toSha.toLowerCase()) return 0;
+    const key = JSON.stringify([projectId, root, fromSha.toLowerCase(), toSha.toLowerCase()]);
+    if (immutable && this.countCache.has(key)) return this.countCache.get(key)!;
+    const pending = this.countPending.get(key);
+    if (pending) return observeQuery(pending, signal, () => null);
+    if (this.countPending.size >= 64) return null;
+    const task = this.run(['-C', root, 'rev-list', '--count', `${fromSha}..${toSha}`], signal).then(out => {
+      const count = out === undefined ? null : parseCount(out);
+      if (!signal.aborted && immutable && count !== null) {
+        if (this.countCache.size >= 512) this.countCache.delete(this.countCache.keys().next().value!);
+        this.countCache.set(key, count);
+      }
+      return count;
+    }).finally(() => { this.countPending.delete(key); });
+    this.countPending.set(key, task);
+    return observeQuery(task, signal, () => null);
   }
 
   private resolveRepoRoot(projectId: string): string | undefined {
@@ -219,6 +241,7 @@ export class ReleaseCommitRailReader {
   }
 
   async read(input: ReleaseCommitRailInput, signal = AbortSignal.timeout(GIT_TIMEOUT_MS)): Promise<ReleaseCommitRailResult> {
+    if (signal.aborted) return unavailableRail(input, '提交历史读取已取消或超时');
     input = { ...input, targets: input.targets.map(target => ({ ...target })) };
     const signature = JSON.stringify([input.branch || '', this.resolveRepoRoot(input.projectId),
       [...input.targets].map(t => [t.targetId, t.commitSha]).sort()]);
@@ -226,7 +249,7 @@ export class ReleaseCommitRailReader {
     const cached = this.cache.get(input.projectId);
     if (cached && cached.signature === signature && cached.expiresAt > this.now()) return cached.result;
     const pending = this.pending.get(key);
-    if (pending) return pending;
+    if (pending) return observeQuery(pending, signal, () => unavailableRail(input, '提交历史读取已取消或超时'));
     if (this.pending.size >= 32) return unavailableRail(input, '提交历史查询容量已满，等待下次读取');
     this.latest.set(input.projectId, key);
     while (this.latest.size > 128) this.latest.delete(this.latest.keys().next().value!);
@@ -239,7 +262,7 @@ export class ReleaseCommitRailReader {
       return result;
     }).finally(() => { this.pending.delete(key); });
     this.pending.set(key, task);
-    return task;
+    return observeQuery(task, signal, () => unavailableRail(input, '提交历史读取已取消或超时'));
   }
 
   private async compute(input: ReleaseCommitRailInput, signal: AbortSignal): Promise<ReleaseCommitRailResult> {
@@ -266,7 +289,7 @@ export class ReleaseCommitRailReader {
       tip,
     ], signal);
     if (logOut === undefined) return unavailable('git 不可用或读取提交历史失败');
-    const nodes = parseRailLog(logOut);
+    const nodes = timeMainThreadSection('git.release-rail.parse', () => parseRailLog(logOut));
     if (nodes.length === 0) return unavailable(`${ref} 上没有可读的提交`);
 
     const rail: ReleaseCommitRail = {
@@ -278,7 +301,7 @@ export class ReleaseCommitRailReader {
 
     const positions: Record<string, ReleaseTargetCommitPosition> = {};
     for (const target of input.targets) {
-      positions[target.targetId] = await this.positionOf(root, tip, nodes, target.commitSha, signal);
+      positions[target.targetId] = await this.positionOf(input.projectId, root, tip, nodes, target.commitSha, signal);
     }
     return { rail, positions };
   }
@@ -293,6 +316,7 @@ export class ReleaseCommitRailReader {
   }
 
   private async positionOf(
+    projectId: string,
     root: string,
     ref: string,
     nodes: ReleaseCommitRailNode[],
@@ -313,10 +337,8 @@ export class ReleaseCommitRailReader {
     }
 
     const inRail = nodes.some((node) => sameCommit(node.sha, commitSha));
-    const behindOut = await this.run(['-C', root, 'rev-list', '--count', `${commitSha}..${ref}`], signal);
-    const behindCount = behindOut === undefined ? null : parseCount(behindOut);
-    const aheadOut = await this.run(['-C', root, 'rev-list', '--count', `${ref}..${commitSha}`], signal);
-    const aheadCount = aheadOut === undefined ? null : parseCount(aheadOut);
+    const behindCount = await this.countAtRoot(projectId, root, commitSha, ref, signal);
+    const aheadCount = await this.countAtRoot(projectId, root, ref, commitSha, signal);
 
     if (behindCount === null && aheadCount === null) {
       return {
@@ -378,4 +400,20 @@ function positionsWithReason(
 function unavailableRail(input: ReleaseCommitRailInput, reason: string): ReleaseCommitRailResult {
   return { rail: { branch: input.branch || '', ref: '', nodes: [], unavailableReason: reason },
     positions: positionsWithReason(input.targets, reason) };
+}
+
+/** Each subscriber owns its wait deadline; it cannot cancel another subscriber's work. */
+function observeQuery<T>(task: Promise<T>, signal: AbortSignal, cancelled: () => T): Promise<T> {
+  if (signal.aborted) return Promise.resolve(cancelled());
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true; signal.removeEventListener('abort', onAbort); resolve(value);
+    };
+    const onAbort = () => finish(cancelled());
+    signal.addEventListener('abort', onAbort, { once: true });
+    task.then(value => { if (!settled) finish(signal.aborted ? cancelled() : value); },
+      () => { if (!settled) finish(cancelled()); });
+  });
 }

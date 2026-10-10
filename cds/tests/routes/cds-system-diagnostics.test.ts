@@ -94,7 +94,7 @@ describe('主线程诊断接线', () => {
       "'sse.branches.event'",
     ]],
     ['services/uptime-monitor.ts', ["'uptime.persist'"]],
-    ['services/release-commit-rail.ts', ["'git.sync.release-rail'"]],
+    ['services/release-commit-rail.ts', ["'git.release-rail.parse'"]],
     ['index.ts', ["'git.stuck-deploy-diff.enqueue'", 'startMainThreadDiagnostics();']],
     ['server.ts', [
       "'sse.state.broadcast'",

@@ -982,6 +982,7 @@ export async function resolvePromotionCandidate(
   resolveBranchTip?: (releaseId: string) => string | undefined,
   signal?: AbortSignal,
 ): Promise<ReleasePromotionCandidate | undefined> {
+  if (signal?.aborted) return undefined;
   const myEnvironment = normalizeReleaseEnvironment(row.target.environment);
   const candidates = rows
     .filter((other) => other.target.id !== row.target.id)
@@ -994,6 +995,7 @@ export async function resolvePromotionCandidate(
     .slice(0, MAX_PROMOTION_PROBES);
 
   for (const other of candidates) {
+    if (signal?.aborted) return undefined;
     // 本环境从未发布过：对方那一版**一定**比「什么都没有」新，但没有可比较的起点，
     // 所以 aheadCount 如实给 null，而不是编一个数出来。
     const aheadCount = row.currentCommit
@@ -1019,6 +1021,7 @@ export async function resolvePromotionCandidate(
     // tip 取不到（分支已回收 / 未注入解析器）时按可执行处理：这里的职责是
     // 「已知不可执行时提前说」，不是替发布链路再判一次；真判定仍在 startRelease。
     const executable = !tip || tip === other.currentCommit;
+    if (signal?.aborted) return undefined;
     return {
       fromTargetId: other.target.id,
       fromTargetName: other.target.name,

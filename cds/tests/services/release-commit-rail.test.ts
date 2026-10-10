@@ -294,6 +294,26 @@ describe('跨环境提交距离直算', async () => {
 });
 
 describe('P2 asynchronous release history', () => {
+  it('reuses immutable commit comparisons across repeated and concurrent promotion probes', async () => {
+    let calls = 0;
+    const reader = new ReleaseCommitRailReader({ repoRootResolver: () => '/repo', runner: async () => { calls++; return '2\n'; } });
+    expect(await Promise.all(Array.from({ length: 8 }, () => reader.countCommitsBetween('p', SHA_C, SHA_A)))).toEqual(Array(8).fill(2));
+    expect(await reader.countCommitsBetween('p', SHA_C, SHA_A)).toBe(2); expect(calls).toBe(1);
+  });
+
+  it('lets the second shared reader cancel without cancelling the first reader', async () => {
+    let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+    const controller = new AbortController(); let settled = false;
+    const reader = new ReleaseCommitRailReader({ repoRootResolver: () => '/repo', runner: async args => { await held; return defaultReply([...args])!; } });
+    const input = { projectId: 'p', branch: 'main', targets: [] };
+    try {
+      const first = reader.read(input); const second = reader.read(input, controller.signal).then(value => { settled = true; return value; });
+      controller.abort(); await new Promise(resolve => setTimeout(resolve, 20));
+      expect(settled).toBe(true); expect((await second).rail.unavailableReason).toBeTruthy();
+      release(); expect((await first).rail.nodes[0].sha).toBe(SHA_A);
+    } finally { release(); }
+  });
+
   it('returns unknown at the shared deadline even if an injected reader ignores cancellation', async () => {
     const controller = new AbortController(); let calls = 0;
     const reader = new ReleaseCommitRailReader({ repoRootResolver: () => '/repo', runner: async () => {
