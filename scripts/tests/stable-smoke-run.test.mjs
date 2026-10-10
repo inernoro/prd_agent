@@ -1027,6 +1027,11 @@ test('CDS 固定版本与运行时等价回归同时产出部署证据', () => {
   }
 });
 
+test('主报告必须带全部补充证据行，不得只保留网关持久化证据', () => {
+  const runner = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(runner, /supplementalEvidenceRows:\s*\[\s*\.\.\.supplementalRows,\s*\.\.\.gatewayPersistenceEvidenceRow\(gatewayPersistenceProbe\),\s*\]/);
+});
+
 test('CDS 部署版本证据不完整时固定版本与等价回归都失败', () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-version-missing-'));
   try {

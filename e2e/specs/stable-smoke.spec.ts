@@ -3110,7 +3110,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-004][REG-file-002] 损坏文件提示可恢复并允许重试成功', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[FILE-004][FILE-008][REG-file-002] 损坏文件提示可恢复并允许重试成功', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动上传损坏文档');
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
@@ -3362,7 +3362,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
   });
 
-  test('[LIT-001][LIT-002][LIT-005][LIT-010] 文学作品从真实入口新建、流式生成、保存回读并清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[LIT-001][LIT-002][LIT-005][LIT-006][LIT-010] 文学作品从真实入口新建、流式生成、保存回读并清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(360_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学流式创作-r${testInfo.retry}`;
@@ -4716,13 +4716,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-003][REC-007][REC-012] 页面选择音频、显示阶段、真实转写、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[REC-003][REC-007][REC-011][REC-012] 页面选择音频、显示阶段、真实转写、可选整理、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-audio`;
     let storeId = '';
     let entryId = '';
     let runId = '';
+    let restyleRunId = '';
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -4826,7 +4827,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         status: string;
         transcriptText?: string;
         outputEntryId?: string;
-      }>(await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) }));
+      }>(await page.request.get(`/api/document-store/agent-runs/${runId}`, {
+        headers: authHeaders(token),
+        timeout: stableSmokeCleanupTimeoutMs,
+      }));
       expect(run.status).toBe('done');
       expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
       expect(run.outputEntryId).toBe(entryId);
@@ -4838,11 +4842,60 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const transcriptResult = page.getByText(transcriptText, { exact: false }).first();
       await expect(transcriptResult).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole('button', { name: '一键整理', exact: true })).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-RECORDING-AUDIO-13',
         target: transcriptResult,
         caption: '暗色桌面完成抽屉展示真实转录原文、编辑入口和后续整理操作。',
       });
+
+      const styles = await readEnvelope<{ items: Array<{ key: string; label: string }> }>(
+        await page.request.get('/api/document-store/transcribe-styles', {
+          headers: authHeaders(token),
+          timeout: stableSmokeCleanupTimeoutMs,
+        }),
+      );
+      const style = styles.items.find((item) => item.key !== 'custom');
+      expect(style, '转录完成后必须有可用的整理方式').toBeTruthy();
+      const restyle = await readEnvelope<{ runId: string }>(
+        await page.request.post(`/api/document-store/agent-runs/${runId}/restyle`, {
+          headers: authHeaders(token),
+          data: { styleKey: style!.key },
+          timeout: stableSmokeCleanupTimeoutMs,
+        }),
+      );
+      restyleRunId = restyle.runId;
+      let restyled!: {
+        status: string;
+        transcriptText?: string;
+        generatedText?: string;
+        outputEntryId?: string;
+        restyleOfRunId?: string;
+      };
+      await expect.poll(async () => {
+        restyled = await readEnvelope<typeof restyled>(
+          await page.request.get(`/api/document-store/agent-runs/${restyleRunId}`, {
+            headers: authHeaders(token),
+            timeout: stableSmokeCleanupTimeoutMs,
+          }),
+        );
+        return restyled.status;
+      }, {
+        message: '主动整理必须进入终态',
+        timeout: 180_000,
+        intervals: [1_000, 2_000, 3_000],
+      }).toBe('done');
+      expect(restyled.restyleOfRunId).toBe(runId);
+      expect(restyled.outputEntryId).toBe(entryId);
+      expect(restyled.transcriptText).toBe(transcriptText);
+      expect((restyled.generatedText || '').trim().length).toBeGreaterThan(0);
+      const originalAfterRestyle = await readEnvelope<{ transcriptText?: string }>(
+        await page.request.get(`/api/document-store/agent-runs/${runId}`, {
+          headers: authHeaders(token),
+          timeout: stableSmokeCleanupTimeoutMs,
+        }),
+      );
+      expect(originalAfterRestyle.transcriptText).toBe(transcriptText);
 
       const openOriginal = page.getByRole('button', { name: '查看录音原文' });
       await expect(openOriginal).toBeVisible();
@@ -4868,6 +4921,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
         if (runId) {
           expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        }
+        if (restyleRunId) {
+          expect((await page.request.get(`/api/document-store/agent-runs/${restyleRunId}`, { headers: authHeaders(token) })).status()).toBe(404);
         }
       }
     }

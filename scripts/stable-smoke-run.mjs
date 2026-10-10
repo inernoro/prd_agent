@@ -2282,7 +2282,10 @@ async function main() {
       productionBaseline,
       executions,
       productionSafetyGate,
-      supplementalEvidenceRows: gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),
+      supplementalEvidenceRows: [
+        ...supplementalRows,
+        ...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),
+      ],
       environmentCoverage: selected.map((environment) => {
         const environmentCoverageRows = rows.filter((row) => row.environment === environment);
         const passed = environmentCoverageRows.filter((row) => row.status === 'pass').length;
