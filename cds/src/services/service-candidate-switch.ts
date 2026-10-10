@@ -1,6 +1,6 @@
 import type { BranchEntry, ServiceState } from '../types.js';
 import type { StateService } from './state.js';
-import { CandidateJournal, assertCandidateReady, candidateIdentityKey } from './service-candidate-journal.js';
+import { CandidateJournal, assertCandidateReady, candidateIdentityKey, snapshotCandidateServices } from './service-candidate-journal.js';
 
 export interface CandidateSwitchActions {
   assertCurrent(step: string): void;
@@ -27,12 +27,22 @@ export class CandidateSwitchCoordinator {
     const oldGraph = structuredClone(live.services);
     // Copy runtime facts: mutation of the caller's private graph must not change a published target.
     const newGraph = structuredClone(graph.services);
-    const oldKey = candidateIdentityKey(oldGraph); const newKey = candidateIdentityKey(newGraph);
+    const facts = (services: Record<string, ServiceState>) => JSON.stringify(snapshotCandidateServices(services));
+    const oldKey = facts(oldGraph); const newKey = facts(newGraph);
+    const frozen = { branchId: run.branchId, projectId: run.projectId, operationId: record.operationId,
+      targetSha: record.targetSha, configHash: record.configHash,
+      services: JSON.stringify(record.services), serving: JSON.stringify(record.serving) };
     let published = false; let routed = false;
     const fence = (step: string, expectedKey: string) => {
       actions.assertCurrent(step);
-      if (this.state.getBranch(graph.id) !== live || live.deploymentTargetSha !== record.targetSha ||
-        candidateIdentityKey(live.services) !== expectedKey) throw new Error('candidate_switch_drift: serving owner or target changed');
+      const current = this.state.getDeploymentRun(runId); const candidate = current?.candidate;
+      if (current !== run || !candidate || current.branchId !== frozen.branchId || current.projectId !== frozen.projectId ||
+        current.operationId !== frozen.operationId || current.commitSha !== frozen.targetSha || current.configHash !== frozen.configHash ||
+        !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(current.status) ||
+        candidate.operationId !== frozen.operationId || candidate.targetSha !== frozen.targetSha || candidate.configHash !== frozen.configHash ||
+        JSON.stringify(candidate.services) !== frozen.services || JSON.stringify(candidate.serving) !== frozen.serving ||
+        this.state.getBranch(graph.id) !== live || live.projectId !== frozen.projectId || live.deploymentTargetSha !== frozen.targetSha ||
+        facts(live.services) !== expectedKey) throw new Error('candidate_switch_drift: frozen owner, configuration or runtime facts changed');
     };
     try {
       await this.journal.advance(runId, 'ready', 'switch-intent');
@@ -75,6 +85,10 @@ export class CandidateSwitchCoordinator {
 
   private async reconcile(runId: string): Promise<void> {
     const phase = this.state.getDeploymentRun(runId)?.candidate?.phase;
-    if (phase && phase !== 'released' && phase !== 'reconciling') await this.journal.advance(runId, phase, 'reconciling');
+    // A superseding owner may already have changed the run. Keep its unresolved ledger intact;
+    // never overwrite it or mask the original failure merely to rename the recovery phase.
+    if (phase && phase !== 'released' && phase !== 'reconciling') {
+      try { await this.journal.advance(runId, phase, 'reconciling'); } catch { /* Existing phase still reserves both graphs. */ }
+    }
   }
 }

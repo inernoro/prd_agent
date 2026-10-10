@@ -21,6 +21,34 @@ beforeEach(async () => {
 afterEach(async () => { vi.restoreAllMocks(); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 const candidate = (port = 10002) => createCandidateRuntime(branch, [{ id: 'api' } as BuildProfile], 'op-test', () => port);
 describe('P3 durable private candidate reservations', () => {
+  it('keeps the canonical phase at its durable value and rejects a competing advance while flushing', async () => {
+    const journal = new CandidateJournal(state); const graph = candidate();
+    await journal.prepare(runId, graph);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => gate);
+    const pending = journal.advance(runId, 'prepared', 'starting', graph);
+    await new Promise(resolve => setImmediate(resolve));
+    try {
+      expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('prepared');
+      await expect(journal.advance(runId, 'prepared', 'reconciling')).rejects.toThrow();
+    } finally { release(); await pending; flush.mockRestore(); }
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('starting');
+  });
+  it('does not publish a phase whose frozen configuration changed while the write was pending', async () => {
+    const journal = new CandidateJournal(state); const graph = candidate();
+    await journal.prepare(runId, graph);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => gate);
+    const pending = journal.advance(runId, 'prepared', 'starting', graph);
+    const rejected = expect(pending).rejects.toThrow('candidate_journal_phase');
+    await new Promise(resolve => setImmediate(resolve)); state.getDeploymentRun(runId)!.configHash = 'new-owner-config';
+    release(); await rejected; flush.mockRestore(); await state.flush();
+    expect(state.getDeploymentRun(runId)!.configHash).toBe('new-owner-config');
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('prepared');
+    const restored = new StateService(path.join(dir, 'state.json')); restored.load();
+    expect(restored.getDeploymentRun(runId)!.candidate!.phase).toBe('prepared');
+  });
+
   it('cannot lose a real disk error to a competing onSave flush observer', async () => {
     const file = path.join(dir, 'state.json'); fs.unlinkSync(file); fs.mkdirSync(file);
     let observed: Promise<string> | undefined;

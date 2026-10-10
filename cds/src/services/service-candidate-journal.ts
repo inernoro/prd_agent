@@ -91,10 +91,22 @@ export class CandidateJournal {
       if (next === 'ready') assertCandidateReady(graph, record);
     }
     if (next === 'ready' && !graph) throw new Error('candidate_ready: runtime evidence required');
-    this.state.updateDeploymentRun(runId, current => {
+    const frozen = { branchId: run.branchId, projectId: run.projectId, operationId: record.operationId,
+      targetSha: record.targetSha, configHash: record.configHash, record: JSON.stringify(record),
+      graph: graph ? JSON.stringify(snapshotCandidateServices(graph.services)) : undefined };
+    await this.state.updateDeploymentRunDurably(runId, current => {
       if (graph) current.candidate!.services = snapshotCandidateServices(graph.services);
       current.candidate!.phase = next; current.candidate!.updatedAt = new Date().toISOString();
+    }, () => this.state.flush(), () => {
+      const current = this.state.getDeploymentRun(runId);
+      if (current !== run || current.candidate !== record || JSON.stringify(record) !== frozen.record ||
+        current.branchId !== frozen.branchId || current.projectId !== frozen.projectId ||
+        current.operationId !== frozen.operationId || current.commitSha !== frozen.targetSha || current.configHash !== frozen.configHash ||
+        (next !== 'reconciling' && !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(current.status)) ||
+        (graph && (graph.id !== frozen.branchId || graph.projectId !== frozen.projectId || graph.deploymentTargetSha !== frozen.targetSha ||
+          JSON.stringify(snapshotCandidateServices(graph.services)) !== frozen.graph))) {
+        throw new Error('candidate_journal_phase: frozen facts changed during persistence');
+      }
     });
-    await this.state.flush();
   }
 }

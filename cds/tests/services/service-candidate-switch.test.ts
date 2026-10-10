@@ -31,6 +31,27 @@ beforeEach(async () => {
 afterEach(async () => { await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('P3 durable serving graph switch', () => {
+  it.each(['image-during-ack', 'config-during-delete', 'image-during-delete'])('preserves both graphs when frozen facts drift: %s', async scenario => {
+    const removed: string[] = [];
+    const mutate = () => {
+      if (scenario === 'config-during-delete') state.getDeploymentRun(runId)!.configHash = 'changed';
+      else branch.services.api.deployedImage = 'changed-image';
+      state.save();
+    };
+    await expect(new CandidateSwitchCoordinator(state).commit(runId, graph, {
+      assertCurrent: () => {},
+      acknowledge: async () => { if (scenario === 'image-during-ack') mutate(); return true; },
+      remove: async (service, _kind, fence) => {
+        await Promise.resolve(); mutate(); fence(); removed.push(service.containerName);
+      },
+    })).rejects.toThrow();
+    expect(removed).toEqual([]);
+    const restored = reload();
+    expect(restored.getDeploymentRun(runId)!.candidate!.phase).not.toBe('released');
+    expect(restored.allocatePort(10001)).not.toBe(10001);
+    expect(restored.allocatePort(10002)).not.toBe(10002);
+  });
+
   it('never recycles before durable intent and actual consumer acknowledgement', async () => {
     const events: string[] = [];
     let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
