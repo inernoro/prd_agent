@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import type { BranchOperationRequest } from '../../src/services/branch-operation-coordinator.js';
+import type { DeploymentInputSnapshot } from '../../src/services/deployment-input.js';
 
 const target = (profileId?: string): BranchOperationRequest => ({
   projectId: 'p', branchId: 'b', profileId, kind: profileId ? 'deploy-profile' : 'deploy',
@@ -18,6 +19,23 @@ function claim(profileId?: string) {
 }
 
 describe('待办HTTP重放的身份与代次', () => {
+  it('私有配置快照仅原领取可读，范围/目标错误或已撤销请求不能读取', () => {
+    const { coordinator, pending, replay } = claim('api');
+    const input: DeploymentInputSnapshot = { profiles: [], profileOverrides: {}, ciTargetSha: undefined,
+      configuredEnv: { TOKEN: 'private-accepted-input' }, configHash: 'config-b' };
+    coordinator.rememberDeploymentInput(pending.operationId, pending.generation, input);
+    input.configuredEnv.TOKEN = 'mutated-caller';
+    expect(coordinator.getDeploymentInputForReplay(replay)?.configuredEnv.TOKEN).toBe('private-accepted-input');
+    const returned = coordinator.getDeploymentInputForReplay(replay)!; returned.configuredEnv.TOKEN = 'mutated-reader';
+    expect(coordinator.getDeploymentInputForReplay(replay)?.configuredEnv.TOKEN).toBe('private-accepted-input');
+    for (const wrong of [{ ...replay, projectId: 'other' }, { ...replay, profileId: 'web' }, { ...replay, commitSha: 'c'.repeat(40) }]) {
+      expect(coordinator.getDeploymentInputForReplay(wrong)).toBeUndefined();
+    }
+    expect(JSON.stringify({ pending, body: pendingDeployBody(pending) })).not.toContain('private-accepted-input');
+    coordinator.releasePendingReplay(pending, '派发失败');
+    expect(coordinator.getDeploymentInputForReplay(replay)).toBeUndefined();
+  });
+
   it('消费一次原操作身份和来源，不允许通过重放提高优先级或更换施动者', () => {
     const { coordinator, pending, replay } = claim();
     const accepted = coordinator.begin({ ...replay, trigger: 'manual', actor: 'replacement', source: 'replacement' });

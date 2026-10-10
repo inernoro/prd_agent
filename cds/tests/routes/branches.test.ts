@@ -3911,6 +3911,149 @@ describe('Branch Routes', () => {
       } finally { release(); await previous; flush.mockRestore(); branchOperationCoordinator.cancelBranch('admission-replaced', '测试结束'); }
     });
 
+    it.each(['/deploy', '/deploy/api'])('受理%s后配置修改不改变已受理部署的命令、覆盖和环境变量', async (endpoint) => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node original.js', containerPort: 3000,
+        env: { PROFILE_VALUE: 'profile-before', CONFIG_VALUE: '${CONFIG_VALUE}' } });
+      const branchId = 'input-snapshot';
+      stateService.addBranch({ id: branchId, projectId: 'default', branch: 'feature/input-snapshot', worktreePath: path.join(tmpDir, 'worktrees', branchId),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      stateService.setBranchProfileOverride(branchId, 'api', { command: 'node override-before.js', env: { OVERRIDE_VALUE: 'override-before' } });
+      stateService.setCustomEnvVar('CONFIG_VALUE', 'config-before', branchId);
+      let release!: () => void, blocked!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { blocked = resolve; });
+      const originalFlush = stateService.flush.bind(stateService);
+      const flush = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => { blocked(); await gate; await originalFlush(); });
+      const environments: string[] = [];
+      let infrastructurePort = '18081';
+      const cdsEnv = vi.spyOn(stateService, 'getCdsEnvVars').mockImplementation(() => ({ CDS_MONGODB_PORT: infrastructurePort }));
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker run -d')) {
+          const envFile = command.match(/--env-file "([^"]+)"/)?.[1];
+          if (envFile) environments.push(fs.readFileSync(envFile, 'utf8'));
+        }
+        return originalExec(command, options);
+      };
+      const deploy = request(server, 'POST', `/api/branches/${branchId}${endpoint}`, { commitSha: 'a'.repeat(40) });
+      try {
+        await started;
+        stateService.updateBuildProfile('api', { command: 'node changed.js', env: { PROFILE_VALUE: 'profile-after', CONFIG_VALUE: '${CONFIG_VALUE}' } });
+        stateService.setBranchProfileOverride(branchId, 'api', { command: 'node override-after.js', env: { OVERRIDE_VALUE: 'override-after' } });
+        stateService.setCustomEnvVar('CONFIG_VALUE', 'config-after', branchId);
+        infrastructurePort = '18082';
+        release(); const result = await deploy;
+        expect(result.status).toBe(200);
+        const commands = mock.commands.filter((command) => command.startsWith('docker run -d'));
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toContain('override-before.js');
+        expect(environments).toHaveLength(1);
+        expect(environments[0]).toContain('PROFILE_VALUE=profile-before');
+        expect(environments[0]).toContain('OVERRIDE_VALUE=override-before');
+        expect(environments[0]).toContain('CONFIG_VALUE=config-before');
+        expect(environments[0]).toContain('CDS_MONGODB_PORT=18082');
+        expect(commands[0]).not.toContain('override-after.js');
+        expect(environments[0]).not.toContain('config-after');
+      } finally { release(); await deploy; flush.mockRestore(); cdsEnv.mockRestore(); }
+    });
+
+    it('远端派发沿用受理时配置和环境，发送阶段不重读构建配置', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node remote-before.js', containerPort: 3000 });
+      const id = 'remote-input'; const now = new Date().toISOString();
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/remote-input', worktreePath: path.join(tmpDir, 'worktrees', id), status: 'idle', createdAt: now, services: {} });
+      stateService.setCustomEnvVar('CONFIG_VALUE', 'remote-before', id);
+      registryNodes.push({ id: 'exec-input', host: '127.0.0.1', port: 9102, status: 'online', role: 'remote', labels: [], branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      let release!: () => void, blocked!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; }); const started = new Promise<void>((resolve) => { blocked = resolve; });
+      const originalFlush = stateService.flush.bind(stateService);
+      const flush = vi.spyOn(stateService, 'flush').mockImplementationOnce(async () => { blocked(); await gate; await originalFlush(); });
+      let dispatched: any;
+      vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+        dispatched = JSON.parse(String(init?.body));
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      });
+      const deploy = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'a'.repeat(40), targetExecutorId: 'exec-input' });
+      try {
+        await started; stateService.updateBuildProfile('api', { command: 'node remote-after.js' });
+        stateService.setCustomEnvVar('CONFIG_VALUE', 'remote-after', id); release(); const response = await deploy;
+        expect(response.status).toBe(200); expect(dispatched.profiles[0].command).toBe('node remote-before.js');
+        expect(dispatched.env.CONFIG_VALUE).toBe('remote-before');
+        expect(mock.commands.some((command) => command.startsWith('docker run -d'))).toBe(false);
+      } finally { release(); await deploy; flush.mockRestore(); vi.unstubAllGlobals(); }
+    });
+
+    it.each(['/deploy', '/deploy/api'])('排队%s重放沿用原配置和run，配置编辑不能取消已受理目标', async (endpoint) => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node queue-before.js', containerPort: 3000,
+        env: { CONFIG_VALUE: '${CONFIG_VALUE}' } });
+      const branchId = 'queued-input';
+      stateService.addBranch({ id: branchId, projectId: 'default', branch: 'feature/queued-input', worktreePath: path.join(tmpDir, 'worktrees', branchId),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      stateService.setCustomEnvVar('CONFIG_VALUE', 'queued-private-before', branchId);
+      let release!: () => void, started!: () => void, replayed!: () => void;
+      const hold = new Promise<void>((resolve) => { release = resolve; });
+      const start = new Promise<void>((resolve) => { started = resolve; });
+      const done = new Promise<void>((resolve) => { replayed = resolve; });
+      const originalExec = mock.exec.bind(mock); const runs: Array<{ command: string; env: string }> = [];
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker run -d')) {
+          const envFile = command.match(/--env-file "([^"]+)"/)?.[1];
+          runs.push({ command, env: envFile ? fs.readFileSync(envFile, 'utf8') : '' });
+          if (runs.length === 1) { started(); await hold; }
+        }
+        return originalExec(command, options);
+      };
+      let replayStatus = 0, replayRunId = ''; const replayBodies: unknown[] = [];
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input)); const body = JSON.parse(String(init?.body)); replayBodies.push(body);
+        const replay = await request(server, 'POST', url.pathname, body, init?.headers as Record<string, string>);
+        replayStatus = replay.status; replayRunId = String(replay.headers['x-cds-deployment-run-id']); replayed();
+        return new Response(String(replay.body), { status: replay.status });
+      });
+      setBuildGateHostLoadProvider(async () => ({ loadAvg1: 0, cpuCores: 16, usedMemPercent: 10, memAvailableMB: 32000 }));
+      const first = request(server, 'POST', `/api/branches/${branchId}${endpoint}`, { commitSha: 'a'.repeat(40) });
+      try {
+        await start;
+        const queued = await request(server, 'POST', `/api/branches/${branchId}${endpoint}`, { commitSha: 'b'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        const queuedId = String(queued.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(queuedId)?.status).toBe('queued');
+        stateService.updateBuildProfile('api', { command: 'node queue-after.js' });
+        stateService.setCustomEnvVar('CONFIG_VALUE', 'queued-private-after', branchId);
+        release(); await first; await done;
+        expect(replayStatus).toBe(200); expect(replayRunId).toBe(queuedId);
+        expect(deploymentRunService.get(queuedId)?.status).toBe('running');
+        expect(runs).toHaveLength(2); expect(runs[1].command).toContain('queue-before.js');
+        expect(runs[1].env).toContain('CONFIG_VALUE=queued-private-before');
+        expect(runs[1].env).not.toContain('queued-private-after');
+        expect(deploymentRunService.list({ branchId })).toHaveLength(2);
+        expect(JSON.stringify({ replayBodies, operationEvents, active: branchOperationCoordinator.getActiveOperations(), run: deploymentRunService.get(queuedId) })).not.toContain('queued-private-before');
+      } finally { release(); await first; setBuildGateHostLoadProvider(null); vi.unstubAllGlobals(); }
+    });
+
+    it('固定提交的镜像模板指纹不随分支缓存更新而变化，同目标只执行一次', async () => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node:${CDS_COMMIT_SHA}', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      const id = 'input-sha';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/input-sha', worktreePath: path.join(tmpDir, 'worktrees', id), status: 'idle', createdAt: new Date().toISOString(),
+        githubCommitSha: 'a'.repeat(40), services: {} });
+      let release!: () => void, started!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
+      const originalExec = mock.exec.bind(mock); let actualRuns = 0;
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker run -d')) { actualRuns++; if (actualRuns === 1) { started(); await gate; } }
+        return originalExec(command, options);
+      };
+      setBuildGateHostLoadProvider(async () => ({ loadAvg1: 0, cpuCores: 16, usedMemPercent: 10, memAvailableMB: 32000 }));
+      const first = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'b'.repeat(40) });
+      try {
+        await start;
+        const second = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'b'.repeat(40) });
+        expect(String(second.body)).toContain('"operationStatus":"joined"');
+        release(); const original = await first;
+        expect(second.headers['x-cds-deployment-run-id']).toBe(original.headers['x-cds-deployment-run-id']);
+        expect(actualRuns).toBe(1); expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
+      } finally { release(); await first; setBuildGateHostLoadProvider(null); }
+    });
+
     it('同目标并入等待原受理落盘，不创建占位run、不启动第二次部署', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
       stateService.addBranch({ id: 'acceptance-wait', projectId: 'default', branch: 'feature/acceptance-wait', worktreePath: path.join(tmpDir, 'worktrees', 'acceptance-wait'),

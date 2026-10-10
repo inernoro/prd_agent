@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerEventLogSink } from './server-event-log-store.js';
+import type { DeploymentInputSnapshot } from './deployment-input.js';
 
 export type BranchOperationKind =
   | 'deploy'
@@ -280,11 +281,34 @@ export class BranchOperationCoordinator {
   private readonly pendingWebhookDeploys = new Map<string, PendingWebhookDeploy>();
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private readonly pendingReplayClaims = new Map<string, { pending: PendingWebhookDeploy; expiresAt: number }>();
+  private readonly deploymentInputs = new Map<string, DeploymentInputSnapshot>();
   private generations = new Map<string, number>();
 
   private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
 
   constructor(private readonly events?: ServerEventLogSink | null) {}
+
+  /** 首次受理保留私有输入；并入请求不能改写原目标，代次结束立即释放。 */
+  rememberDeploymentInput(operationId: string, generation: number, input: DeploymentInputSnapshot): void {
+    const key = this.replayKey({ operationId, generation });
+    if (!this.deploymentInputs.has(key)) this.deploymentInputs.set(key, structuredClone(input));
+  }
+
+  /** 只对有效领取、同项目/分支/服务及原目标返回输入；begin 仍须再次消费凭据。 */
+  getDeploymentInputForReplay(request: BranchOperationRequest): DeploymentInputSnapshot | undefined {
+    this.prunePendingReplayClaims();
+    const identity = replayIdentity(request.pendingReplay);
+    if (!identity) return undefined;
+    const key = this.replayKey(identity);
+    const pending = this.pendingReplayClaims.get(key)?.pending;
+    if (!pending || this.operationKey(pending.request) !== this.operationKey(request)
+      || pending.request.kind !== request.kind
+      || Boolean(pending.request.commitPinned) !== Boolean(request.commitPinned)
+      || (pending.request.commitPinned && pending.request.commitSha?.toLowerCase() !== request.commitSha?.toLowerCase())
+      || (pending.request.versionId || null) !== (request.versionId || null) || request.hasOneShotOptions) return undefined;
+    const input = this.deploymentInputs.get(key);
+    return input ? structuredClone(input) : undefined;
+  }
 
   onOperationEnded(listener: (operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void): () => void {
     this.operationEndListeners.add(listener);
@@ -591,6 +615,7 @@ export class BranchOperationCoordinator {
     this.pendingWebhookDeploys.clear();
     this.reservedContinuations.clear();
     this.pendingReplayClaims.clear();
+    this.deploymentInputs.clear();
     this.generations.clear();
   }
 
@@ -920,6 +945,9 @@ export class BranchOperationCoordinator {
     severity: 'info' | 'warn' | 'error',
     details: Record<string, unknown> = {},
   ): void {
+    if (['branch.operation.completed', 'branch.operation.cancelled', 'branch.operation.failed', 'branch.operation.interrupted'].includes(action)) {
+      this.deploymentInputs.delete(this.replayKey({ operationId, generation }));
+    }
     const terminal = action === 'branch.operation.cancelled' ? 'cancelled'
       : action === 'branch.operation.failed' ? 'failed'
       : action === 'branch.operation.interrupted' ? 'interrupted' : undefined;

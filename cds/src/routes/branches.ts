@@ -15,6 +15,7 @@ import { StateService } from '../services/state.js';
 import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
+import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
@@ -2956,6 +2957,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   async function admitBranchDeployment(
     req: Request, res: Response, entry: BranchEntry, input: Parameters<typeof beginBranchOperation>[3],
     runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
+    deploymentInput?: DeploymentInputSnapshot,
   ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
     // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
     const decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input));
@@ -2963,6 +2965,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       beginBranchOperation(req, res, entry, input, decision);
       return { started: false, lease: null, run: undefined };
     }
+    if (decision && deploymentInput) branchOperationCoordinator?.rememberDeploymentInput(decision.operationId, decision.generation, deploymentInput);
     let run: DeploymentRun | undefined;
     try {
       if (decision) run = deploymentRunService?.getForOperation(decision.operationId, decision.generation);
@@ -3636,6 +3639,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       deploymentConfigHash?: string;
       deploymentCapabilities?: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
       profiles?: BuildProfile[];
+      env?: Record<string, string>;
     } = {},
   ): Promise<'completed' | 'failed'> {
     // SSE headers on client side — same shape the local deploy uses so the
@@ -3732,7 +3736,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profiles = normalizeProjectProfileDependencies(rawProfiles, remoteProfileSuffix);
     // 2026-06-27：回填本次（远端）部署的部署模式，供构建历史展示「部署类型」。
     opLog.deployMode = deriveDeployMode(profiles);
-    const env = getMergedEnv(entry.projectId || 'default', entry.id);
+    const env = context.env || getMergedEnv(entry.projectId || 'default', entry.id);
 
     const payload = {
       branchId: entry.id,
@@ -4142,7 +4146,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // Branch-scoped env overrides project/global values for one preview branch.
   // Reserved project identity keys are still restored at the end.
   function getMergedEnv(projectId?: string, branchId?: string): Record<string, string> {
-    const cdsEnv = stateService.getCdsEnvVars(projectId);   // CDS_HOST, CDS_MONGODB_PORT, etc.
+    return { ...stateService.getCdsEnvVars(projectId), ...getConfiguredDeploymentEnv(projectId, branchId) };
+  }
+
+  function getDeploymentEnv(input: DeploymentInputSnapshot, projectId?: string): Record<string, string> {
+    return { ...stateService.getCdsEnvVars(projectId), ...input.configuredEnv };
+  }
+
+  function getConfiguredDeploymentEnv(projectId?: string, branchId?: string): Record<string, string> {
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     // Scoped custom env: _global when no projectId, else { _global..., <projectId>... }
     const customEnv = stateService.getCustomEnv(projectId);
@@ -4161,7 +4172,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 系统派生真值。view 与 deploy 两端口因此输出完全一致,前端"显示安全"
     // 不再骗"实际危险"。原 customEnv 最后一条"operator can override"语义被
     // 修正为"operator can override 任何 key,**除了**项目身份这两个保留 key"。
-    return { ...cdsEnv, ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
+    return { ...mirrorEnv, ...customEnv, ...branchEnv, ...projectEnv };
   }
 
   /**
@@ -4272,12 +4283,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     actor?: string;
     trigger?: string;
     assertCurrent?: (step: string) => void;
+    customEnv?: Record<string, string>;
     logEvent: (ev: OperationLogEvent) => void;
   }): Promise<void> {
     const { entry, profiles, requestId, operationId, actor, trigger, assertCurrent, logEvent } = params;
     if (profiles.length === 0) return;
     const projectId = entry.projectId || 'default';
-    const customEnv = getMergedEnv(projectId, entry.id);
+    const customEnv = params.customEnv || getMergedEnv(projectId, entry.id);
     const firstEffective = resolveEffectiveProfile(profiles[0], entry);
     const scanTargets: Array<{ profile: BuildProfile; scanDir: string; label: string; root: boolean }> = profiles.map((profile) => {
       const effective = resolveEffectiveProfile(profile, entry);
@@ -12578,8 +12590,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const requestedCommitForPlan = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    let managedPlan: ManagedProjectPlan | null = null;
-    if (!requestedVersionId && managedProjectService) {
+    const replayInput = branchOperationCoordinator?.getDeploymentInputForReplay(buildBranchOperationRequest(req, entry, {
+      kind: 'deploy', commitSha: requestedCommitForPlan, commitPinned: Boolean(requestedCommitForPlan),
+      versionId: requestedVersionId || null, hasOneShotOptions: forceDeployWhilePaused || Boolean(req.query.ignoreRequired || req.body?.targetExecutorId), source: 'api.deploy-branch',
+    }));
+    let managedPlan: ManagedProjectPlan | null = replayInput?.managedPlan || null;
+    if (!replayInput && !requestedVersionId && managedProjectService) {
       try {
         managedPlan = managedProjectService.planForBranch(entry, requestedCommitForPlan);
       } catch (err) {
@@ -12591,7 +12607,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
     }
-    const currentProfiles = managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry);
+    const deploymentInput = replayInput || captureDeploymentInput(entry, managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry),
+      getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), managedPlan, requestedCommitForPlan);
+    const currentProfiles = deploymentInput.profiles;
+    const inputBranch = () => deploymentInputBranch(deploymentInput, entry);
 
     // Agent 极速版门禁（2026-09-08）：项目开了 agentPrebuiltOnly，机器凭据发起的部署只要有一个
     // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
@@ -12625,12 +12644,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
-    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
-    let deploymentConfigHash = selectedDeploymentVersion?.configHash
+    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, inputBranch()));
+    let deploymentConfigHash = deploymentInput.configHash || selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
         effectiveProfilesForHash,
-        getMergedEnv(entry.projectId || 'default', entry.id),
+        getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
       );
+    deploymentInput.configHash = deploymentConfigHash;
     // 归属远端执行器但无法确认其在线时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline
     // executor removals」+ Bugbot「Missing executor skips offline guard」）：round-17/27 只在「注册表里查到该
     // executor 且离线」时挡，漏了「executorId 指向远端但注册表查不到（已注销/陈旧归属）或 registry 不可用」——
@@ -12680,9 +12700,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!remoteOwned) {
         const cleanupAdmission = await admitBranchDeployment(req, res, entry, {
           kind: 'deploy', source: 'api.deploy-branch', reason: '期望清单为空，清理残留服务容器', sse: true,
+          commitSha: requestedCommitForPlan || entry.githubCommitSha, commitPinned: Boolean(requestedCommitForPlan), configHash: deploymentConfigHash,
           hasOneShotOptions: forceDeployWhilePaused || Boolean(req.query.ignoreRequired || req.body?.targetExecutorId),
         }, { trigger: deploymentRunTriggerFromRequest(req, entry), commitSha: entry.githubCommitSha,
-          phase: 'accepted', message: '空期望清单清理请求已受理' });
+          phase: 'accepted', message: '空期望清单清理请求已受理', configHash: deploymentConfigHash }, deploymentInput);
         if (!cleanupAdmission.started) return;
         const cleanupRun = cleanupAdmission.run;
         const cleanupLease = cleanupAdmission.lease;
@@ -12848,7 +12869,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 版本物化后的清单在执行时不再套分支覆盖（运行循环里 selectedDeploymentVersion ? profile : resolve…），
       // 判定也不能套：分支此刻若选了显式 prebuilt: false 的模式，重放合规版本会被误拦（Codex 第八轮 P2）。
-      const violations = findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : entry);
+      const violations = findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : inputBranch());
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(gateProject, gateProfiles, violations, {
           branchId: entry.id,
@@ -12904,6 +12925,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 后续部署流程本来就会落盘。上面 trip 分支必须自己存，因为它立即 return。
     }
 
+    deploymentInput.configHash = deploymentConfigHash;
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy',
@@ -12932,7 +12954,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       configHash: deploymentConfigHash,
       phase: 'accepted',
       message: '分支部署请求已受理',
-    });
+    }, deploymentInput);
     if (!admission.started) return;
     const deploymentRun = admission.run;
     const branchOperationLease = admission.lease;
@@ -13021,6 +13043,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           requestedCommitSha: requestCommitSha,
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
+          env: getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
           deploymentCapabilities: managedPlan?.capabilities,
           // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
           // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
@@ -13028,9 +13051,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           profiles: agentPrebuiltGated
             ? (selectedDeploymentVersion || managedPlan
                 ? profiles
-                : currentProfiles.map((p) => resolveEffectiveProfile(p, entry))
+                : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))
               ).map((p) => withoutSourceFallback(p))
-            : (selectedDeploymentVersion || managedPlan ? profiles : undefined),
+            : (selectedDeploymentVersion || managedPlan ? profiles : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))),
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
@@ -13224,8 +13247,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha);
       const deploymentSourceEntry = 'sourcePath' in pullResult
-        ? { ...entry, worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
-        : entry;
+        ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
+        : inputBranch();
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
         status: 'done',
@@ -13253,8 +13276,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 落地的 commit 就是那个 sha，与 worktree 刚拉到的 HEAD 无关；漏判会把 opLog /
       // run / version 全部贴成 pulledSha。单 profile 部署路径本来就是按 profile 的
       // prebuiltImage 判的，这里对齐它。
-      const usesPrebuilt = branchUsesPrebuiltMode(profiles, entry)
-        || profiles.some((p) => resolveEffectiveProfile(p, entry).prebuiltImage === true);
+      const usesPrebuilt = branchUsesPrebuiltMode(profiles, inputBranch())
+        || profiles.some((p) => resolveEffectiveProfile(p, inputBranch()).prebuiltImage === true);
       const isSourcePull = !usesPrebuilt
         && !(pullResult as { skipped?: boolean }).skipped
         && !!pulledSha;
@@ -13419,10 +13442,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
       // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
       if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
-        const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+        const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, inputBranch()));
         deploymentConfigHash = deploymentVersionService.computeConfigHash(
           refreshedEffectiveProfiles,
-          getMergedEnv(entry.projectId || 'default', entry.id),
+          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
         );
         const reusable = deploymentVersionService.findReusable({
           projectId: entry.projectId || 'default',
@@ -13458,6 +13481,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         await runDatabaseInitializationForDeploy({
           entry: deploymentSourceEntry,
           profiles,
+          customEnv: getDeploymentEnv(deploymentInput, entry.projectId),
           requestId,
           operationId: branchOperationLease?.operationId || undefined,
           actor: resolveActorFromRequest(req),
@@ -13561,9 +13585,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const effectiveProfile = selectedDeploymentVersion
             ? profile
             : agentPrebuiltGated
-              ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
-              : resolveEffectiveProfile(profile, entry);
-          const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
+              ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
+              : resolveEffectiveProfile(profile, inputBranch());
+          const branchOverride = selectedDeploymentVersion ? undefined : deploymentInput.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
             ? ` [${effectiveProfile.deployModes[activeMode].label}]`
@@ -13708,7 +13732,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // 拿到槽位后立即复核租约：排队期间可能已被更高优先级操作取代，
             // 立刻让位（finally 会释放刚拿到的槽），不为已取消的部署跑构建。
             assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
-            const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+            const mergedEnv = getDeploymentEnv(deploymentInput, entry.projectId);
             maybeWritePreviewMirror(deploymentSourceEntry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
             await archiveBranchContainerLogs({
               stateService,
@@ -14105,7 +14129,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ranDeployModes.length > 0
           ? ranDeployModes
           : profiles.filter((p) => activeProfileIds.has(p.id)).map((p) =>
-              selectedDeploymentVersion ? p : resolveEffectiveProfile(p, entry)),
+              selectedDeploymentVersion ? p : resolveEffectiveProfile(p, inputBranch())),
       );
       // 2026-06-20：成功部署记一条耗时样本（区分发布版/源码），供分支卡片
       // 在下次构建中展示"预计 MM:SS（近 N 次中位值）"。失败不记。
@@ -14141,7 +14165,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && stateService.getBranch(entry.id) === entry
       ) {
         if (!selectedDeploymentVersion) {
-          const versionProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
+          const versionProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, inputBranch()));
           selectedDeploymentVersion = deploymentVersionService.create({
             projectId: entry.projectId || 'default',
             branchId: entry.id,
@@ -14457,7 +14481,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
     // profile from a different project.
-    const profiles = stateService.getEffectiveProfilesForBranch(entry);
+    const profileRequestedSha = typeof req.body?.commitSha === 'string' ? req.body.commitSha : undefined;
+    const replayInput = branchOperationCoordinator?.getDeploymentInputForReplay(buildBranchOperationRequest(req, entry, {
+      kind: 'deploy-profile', profileId, commitSha: profileRequestedSha, commitPinned: Boolean(profileRequestedSha),
+      versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
+      hasOneShotOptions: Boolean(req.query.force || req.query.ignoreRequired || req.body?.targetExecutorId), source: 'api.deploy-profile',
+    }));
+    const deploymentInput = replayInput || captureDeploymentInput(entry, stateService.getEffectiveProfilesForBranch(entry),
+      getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), undefined, profileRequestedSha);
+    const profiles = deploymentInput.profiles;
+    const inputBranch = () => deploymentInputBranch(deploymentInput, entry);
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
@@ -14467,7 +14500,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const singleDeployProject = stateService.getProject(entry.projectId || 'default');
     const singleDeployGated = Boolean(singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && isAgentGatedRequest(req));
     if (singleDeployGated && singleDeployProject) {
-      const violations = findNonPrebuiltProfiles([profile], entry);
+      const violations = findNonPrebuiltProfiles([profile], inputBranch());
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(singleDeployProject, [profile], violations, {
           branchId: entry.id,
@@ -14485,7 +14518,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    const profileDeploymentConfigHash = deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, entry)], getMergedEnv(entry.projectId || 'default', entry.id));
+    const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, inputBranch())], getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
+    deploymentInput.configHash = profileDeploymentConfigHash;
     const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy-profile',
       profileId,
@@ -14503,7 +14537,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       configHash: profileDeploymentConfigHash,
       phase: 'accepted',
       message: `单服务部署请求已受理: ${profile.name}`,
-    });
+    }, deploymentInput);
     if (!admission.started) return;
     const deploymentRun = admission.run;
     const branchOperationLease = admission.lease;
@@ -14532,7 +14566,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2026-06-27 构建历史元数据：单服务部署。触发器 + commit + 该 profile 的部署模式。
       triggerSource: classifyTriggerSource(triggerFromRequest(req), entry.deployDispatchRetryCount),
       ...deriveCommitMeta(entry),
-      deployMode: deriveDeployMode([resolveEffectiveProfile(profile, entry)]),
+      deployMode: deriveDeployMode([resolveEffectiveProfile(profile, inputBranch())]),
     };
 
     function logEvent(ev: OperationLogEvent) {
@@ -14565,8 +14599,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha);
       const deploymentSourceEntry = 'sourcePath' in pullResult
-        ? { ...entry, worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
-        : entry;
+        ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
+        : inputBranch();
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
@@ -14580,7 +14614,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
-        const isPrebuiltProfile = resolveEffectiveProfile(profile, entry).prebuiltImage === true;
+        const isPrebuiltProfile = resolveEffectiveProfile(profile, inputBranch()).prebuiltImage === true;
         // 同主路径：head 带标题非裸 SHA，用 parsePulledSha 取裸 SHA（优先 after）再比对刷新（Codex P2）。
         const pulledSha = parsePulledSha(pullResult);
         const isSourcePull = !isPrebuiltProfile && !(pullResult as { skipped?: boolean }).skipped && !!pulledSha;
@@ -14616,9 +14650,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Resolve baseline → branch override → deploy-mode override
       // 门禁下摘掉源码回退（同整分支部署）。
       const effectiveProfile = singleDeployGated
-        ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
-        : resolveEffectiveProfile(profile, entry);
-      const branchOverride = entry.profileOverrides?.[profile.id];
+        ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
+        : resolveEffectiveProfile(profile, inputBranch());
+      const branchOverride = deploymentInput.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
         ? ` [${effectiveProfile.deployModes[activeMode].label}]`
@@ -14764,7 +14798,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
-        const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+        const mergedEnv = getDeploymentEnv(deploymentInput, entry.projectId);
         maybeWritePreviewMirror(deploymentSourceEntry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
         await archiveBranchContainerLogs({
           stateService,
@@ -14940,7 +14974,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const ranMode = (svc as { deployedMode?: string }).deployedMode;
         opLog.deployMode = (typeof ranMode === 'string' && ranMode.trim() !== '')
           ? ranMode.trim()
-          : deriveDeployMode([resolveEffectiveProfile(profile, entry)]);
+          : deriveDeployMode([resolveEffectiveProfile(profile, inputBranch())]);
       }
       if (svc.status === 'running') {
         const runtimeReadyAt = new Date().toISOString();
@@ -14971,10 +15005,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && stateService.getBranch(entry.id) === entry
         && profiles.every((candidate) => entry.services[candidate.id]?.status === 'running')
       ) {
-        const versionProfiles = profiles.map((candidate) => resolveEffectiveProfile(candidate, entry));
+        const versionProfiles = profiles.map((candidate) => resolveEffectiveProfile(candidate, inputBranch()));
         const configHash = deploymentVersionService.computeConfigHash(
           versionProfiles,
-          getMergedEnv(entry.projectId || 'default', entry.id),
+          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
         );
         const version = deploymentVersionService.create({
           projectId: entry.projectId || 'default',

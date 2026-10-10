@@ -46,6 +46,18 @@ export class DeploymentVersionService {
       entrypoint: profile.entrypoint,
       resources: profile.resources || null,
       managedBuild: profile.managedBuild || null,
+      buildScope: profile.buildScope,
+      cacheMounts: profile.cacheMounts,
+      buildTimeout: profile.buildTimeout,
+      role: profile.role,
+      calls: profile.calls,
+      hotReload: profile.hotReload,
+      localArtifact: profile.localArtifact,
+      fallbackImage: profile.fallbackImage,
+      sourceFallbackProfile: profile.sourceFallbackProfile,
+      dbScope: profile.dbScope,
+      dbInit: profile.dbInit,
+      deployModes: profile.deployModes,
     })).sort((left, right) => left.id.localeCompare(right.id));
     return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
   }
