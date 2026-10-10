@@ -3829,6 +3829,46 @@ describe('Branch Routes', () => {
       } finally { release(); if (active) await active; globalThis.fetch = originalFetch; }
     });
 
+    it.each([
+      ['complete-failure', 'event: complete\ndata: {"ok":false,"runId":"dr_replayed"}\n\n', 200, 'failed', 'deployment_failed'],
+      ['event-failure', 'event: error\ndata: {"message":"private-token-do-not-log","runId":"dr_replayed"}\n\n', 200, 'failed', 'deployment_error'],
+      ['no-terminal', 'event: log\ndata: {"chunk":"private-token-do-not-log"}\n\n', 200, 'unknown', 'terminal_missing'],
+      ['http-failure', 'private-token-do-not-log', 503, 'failed', 'http_rejected'],
+      ['complete-success', 'event: complete\ndata: {"ok":true,"runId":"dr_replayed"}\n\n', 200, 'completed', 'deployment_completed'],
+    ])('records a bounded pending replay outcome instead of treating HTTP 200 as success: %s', async (_name, stream, status, outcome, reason) => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      const branchId = 'observed-pending';
+      stateService.addBranch({ id: branchId, projectId: 'default', branch: 'feature/observed-pending', worktreePath: tmpDir,
+        status: 'idle', createdAt: new Date().toISOString(), services: {}, githubCommitSha: '1'.repeat(40) });
+      stateService.save();
+      let entered!: () => void; let release!: () => void;
+      const enteredGate = new Promise<void>(resolve => { entered = resolve; });
+      const releaseGate = new Promise<void>(resolve => { release = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-observed-pending-api')) {
+          entered(); await releaseGate; return { stdout: 'cid-observed', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => new Response(stream, { status })) as typeof fetch;
+      let active: ReturnType<typeof request> | undefined;
+      try {
+        active = request(server, 'POST', `/api/branches/${branchId}/deploy`, { commitSha: '1'.repeat(40) });
+        await enteredGate;
+        const queued = await request(server, 'POST', `/api/branches/${branchId}/deploy/api`, { commitSha: '2'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        expect(String(queued.body)).toContain('"operationStatus":"merged"');
+        release(); await active;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const result = operationEvents.find(event => event.action === `branch.operation.pending-dispatch.${outcome}`);
+        expect(result?.details).toMatchObject({ reason, httpStatus: status });
+        if (status === 200 && outcome !== 'unknown') expect(result?.details?.deploymentRunId).toBe('dr_replayed');
+        expect(JSON.stringify(operationEvents.filter(event => event.action.startsWith('branch.operation.pending-dispatch.')))).not.toContain('private-token-do-not-log');
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      } finally { release(); if (active) await active; globalThis.fetch = originalFetch; }
+    });
+
     // Codex 三轮 P1：并入在途部署时，响应头必须指向那条真的会跑完的 run。
     // 外层 handler 在取租约前就建了占位 run 并写进 X-CDS-Deployment-Run-Id，并入后
     // 占位 run 会被取消，而 cdscli 只认这个头、见 cancelled 即判部署失败——正是本批

@@ -156,6 +156,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
+import { observePendingDeployDispatch } from '../services/pending-deploy-dispatch.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
@@ -3165,7 +3166,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profilePath = pending.request.kind === 'deploy-profile' && pending.request.profileId
       ? `/${encodeURIComponent(pending.request.profileId)}` : '';
     const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy${profilePath}`;
-    void fetch(url, {
+    void observePendingDeployDispatch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -3178,30 +3179,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         'X-CDS-Source-Branch-Id': pending.branchId,
       },
       body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
-    }).then((response) => {
-      if (!response.ok) {
-        return response.text().then((body) => {
-          throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);
-        });
-      }
-      const reader = response.body?.getReader();
-      if (reader) {
-        void (async () => {
-          try {
-            for (;;) {
-              const { done } = await reader.read();
-              if (done) break;
-            }
-          } catch { /* ignore drain errors */ }
-        })();
-      }
-    }).catch((err) => {
+    }).then((result) => {
       serverEventLogStore?.record({
         category: 'system',
-        severity: 'error',
+        severity: result.outcome === 'failed' ? 'error' : result.outcome === 'unknown' ? 'warn' : 'info',
         source: 'branch-operation-coordinator',
-        action: 'branch.operation.pending-dispatch.failed',
-        message: `pending webhook deploy dispatch failed: ${(err as Error).message}`,
+        action: `branch.operation.pending-dispatch.${result.outcome}`,
+        message: `pending deploy observation: ${result.reason}`,
         projectId: branch.projectId,
         branchId: pending.branchId,
         requestId: pending.request.requestId || null,
@@ -3212,6 +3196,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         operationSource: pending.request.source || null,
         commitSha: pending.request.commitSha || null,
         details: {
+          ...result,
           operationId: pending.operationId,
           commitSha: pending.request.commitSha || null,
           trigger: pending.request.trigger,
