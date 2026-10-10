@@ -26,10 +26,10 @@
  * 执行命令）。execFile 不过 shell 能挡住管道，挡不住「参数被当成选项」这一层。
  */
 
-import { execFileSync } from 'node:child_process';
+import type { IShellExecutor } from '../types.js';
+import { ShellExecutor } from './shell-executor.js';
 import { isCommitShaLike } from './release-commit-clock.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
-import { timeMainThreadSection } from './main-thread-diagnostics.js';
 
 /** 单元分隔符。commit subject 里什么字符都可能有，只有它足够安全。 */
 const UNIT_SEPARATOR = '\x1f';
@@ -45,15 +45,20 @@ export const MAX_BEHIND_SCAN = 20_000;
 
 const GIT_TIMEOUT_MS = 3_000;
 
-/** 注入点：单测传假 runner，生产走 execFileSync。约定失败时抛异常。 */
-export type GitRunner = (args: readonly string[]) => string;
-
-export const execFileGitRunner: GitRunner = (args) =>
-  timeMainThreadSection('git.sync.release-rail', () => execFileSync('git', [...args], {
-    encoding: 'utf8',
-    timeout: GIT_TIMEOUT_MS,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  }));
+/** Read-only Git uses the same bounded execution worker as deployment diagnostics. */
+export type GitRunner = (args: readonly string[], signal?: AbortSignal) => string | Promise<string>;
+const fallbackShell = new ShellExecutor({ maxConcurrent: 1, maxQueued: 64 });
+const quoteArg = (arg: string): string => "'" + arg.replace(/'/g, "'\"'\"'") + "'";
+export function shellGitRunner(shell: IShellExecutor): GitRunner {
+  return async (args, signal) => {
+    const result = await shell.exec('git ' + args.map(quoteArg).join(' '), {
+      timeout: GIT_TIMEOUT_MS, signal, priority: 'diagnostic', schedulingGroup: 'release-rail',
+    });
+    if (result.exitCode !== 0) throw new Error('release history query unavailable');
+    return result.stdout;
+  };
+}
+export const workerGitRunner: GitRunner = shellGitRunner(fallbackShell);
 
 export interface ReleaseCommitRailNode {
   sha: string;
@@ -159,11 +164,13 @@ export interface ReleaseCommitRailOptions {
 
 export class ReleaseCommitRailReader {
   private cache = new Map<string, CacheEntry>();
+  private pending = new Map<string, Promise<ReleaseCommitRailResult>>();
+  private latest = new Map<string, string>();
 
   constructor(private readonly options: ReleaseCommitRailOptions) {}
 
   private get runner(): GitRunner {
-    return this.options.runner ?? execFileGitRunner;
+    return this.options.runner ?? workerGitRunner;
   }
 
   private get ttlMs(): number {
@@ -178,24 +185,27 @@ export class ReleaseCommitRailReader {
     return this.options.now ? this.options.now() : Date.now();
   }
 
-  private run(args: readonly string[]): string | undefined {
-    try {
-      return this.runner(args);
-    } catch {
-      return undefined;
-    }
+  private async run(args: readonly string[], signal: AbortSignal): Promise<string | undefined> {
+    if (signal.aborted) return undefined;
+    return new Promise(resolve => {
+      const finish = (value?: string) => { signal.removeEventListener('abort', onAbort); resolve(value); };
+      const onAbort = () => finish();
+      signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve().then(() => signal.aborted ? undefined : this.runner(args, signal))
+        .then(output => finish(signal.aborted ? undefined : output), () => finish());
+    });
   }
 
   /**
    * 两个 commit 之间隔了几个提交（`from..to`，即 to 比 from 多几个）。
    * 跨环境「新了几个提交」必须走这里直算，禁止拿两个 behindCount 相减。
    */
-  countCommitsBetween(projectId: string, fromSha: string, toSha: string): number | null {
+  async countCommitsBetween(projectId: string, fromSha: string, toSha: string, signal = AbortSignal.timeout(GIT_TIMEOUT_MS)): Promise<number | null> {
     if (!isCommitShaLike(fromSha) || !isCommitShaLike(toSha)) return null;
     if (sameCommit(fromSha, toSha)) return 0;
     const root = this.resolveRepoRoot(projectId);
     if (!root) return null;
-    const out = this.run(['-C', root, 'rev-list', '--count', `${fromSha}..${toSha}`]);
+    const out = await this.run(['-C', root, 'rev-list', '--count', `${fromSha}..${toSha}`], signal);
     return out === undefined ? null : parseCount(out);
   }
 
@@ -208,27 +218,31 @@ export class ReleaseCommitRailReader {
     }
   }
 
-  read(input: ReleaseCommitRailInput): ReleaseCommitRailResult {
-    const signature = [
-      input.branch || '',
-      ...[...input.targets]
-        .map((t) => `${t.targetId}:${t.commitSha}`)
-        .sort(),
-    ].join('|');
+  async read(input: ReleaseCommitRailInput, signal = AbortSignal.timeout(GIT_TIMEOUT_MS)): Promise<ReleaseCommitRailResult> {
+    input = { ...input, targets: input.targets.map(target => ({ ...target })) };
+    const signature = JSON.stringify([input.branch || '', this.resolveRepoRoot(input.projectId),
+      [...input.targets].map(t => [t.targetId, t.commitSha]).sort()]);
+    const key = JSON.stringify([input.projectId, signature]);
     const cached = this.cache.get(input.projectId);
-    if (cached && cached.signature === signature && cached.expiresAt > this.now()) {
-      return cached.result;
-    }
-    const result = this.compute(input);
-    this.cache.set(input.projectId, {
-      signature,
-      expiresAt: this.now() + this.ttlMs,
-      result,
-    });
-    return result;
+    if (cached && cached.signature === signature && cached.expiresAt > this.now()) return cached.result;
+    const pending = this.pending.get(key);
+    if (pending) return pending;
+    if (this.pending.size >= 32) return unavailableRail(input, '提交历史查询容量已满，等待下次读取');
+    this.latest.set(input.projectId, key);
+    while (this.latest.size > 128) this.latest.delete(this.latest.keys().next().value!);
+    const task = this.compute(input, signal).then(result => {
+      if (!signal.aborted && this.latest.get(input.projectId) === key) {
+        this.cache.delete(input.projectId);
+        if (this.cache.size >= 128) this.cache.delete(this.cache.keys().next().value!);
+        this.cache.set(input.projectId, { signature, expiresAt: this.now() + this.ttlMs, result });
+      }
+      return result;
+    }).finally(() => { this.pending.delete(key); });
+    this.pending.set(key, task);
+    return task;
   }
 
-  private compute(input: ReleaseCommitRailInput): ReleaseCommitRailResult {
+  private async compute(input: ReleaseCommitRailInput, signal: AbortSignal): Promise<ReleaseCommitRailResult> {
     const branch = (input.branch || '').trim();
     const unavailable = (reason: string): ReleaseCommitRailResult => ({
       rail: { branch, ref: '', nodes: [], unavailableReason: reason },
@@ -240,15 +254,17 @@ export class ReleaseCommitRailReader {
     const root = this.resolveRepoRoot(input.projectId);
     if (!root) return unavailable('项目未记录本地仓库路径，无法读取提交历史');
 
-    const ref = this.resolveRef(root, branch);
-    if (!ref) return unavailable(`本地仓库没有 ${branch} 的引用，可能尚未拉取过该分支`);
+    const resolved = await this.resolveRef(root, branch, signal);
+    const ref = resolved?.ref;
+    const tip = resolved?.sha;
+    if (!ref || !tip) return unavailable(`本地仓库没有 ${branch} 的引用，可能尚未拉取过该分支`);
 
-    const logOut = this.run([
+    const logOut = await this.run([
       '-C', root, 'log',
       '--max-count', String(this.maxNodes),
       `--format=%H${UNIT_SEPARATOR}%cI${UNIT_SEPARATOR}%s`,
-      ref,
-    ]);
+      tip,
+    ], signal);
     if (logOut === undefined) return unavailable('git 不可用或读取提交历史失败');
     const nodes = parseRailLog(logOut);
     if (nodes.length === 0) return unavailable(`${ref} 上没有可读的提交`);
@@ -262,26 +278,27 @@ export class ReleaseCommitRailReader {
 
     const positions: Record<string, ReleaseTargetCommitPosition> = {};
     for (const target of input.targets) {
-      positions[target.targetId] = this.positionOf(root, ref, nodes, target.commitSha);
+      positions[target.targetId] = await this.positionOf(root, tip, nodes, target.commitSha, signal);
     }
     return { rail, positions };
   }
 
   /** 优先 origin/<branch>（真实远端状态），本地没有再退到同名本地分支。 */
-  private resolveRef(root: string, branch: string): string | undefined {
+  private async resolveRef(root: string, branch: string, signal: AbortSignal): Promise<{ ref: string; sha: string } | undefined> {
     for (const candidate of [`origin/${branch}`, branch]) {
-      const out = this.run(['-C', root, 'rev-parse', '--verify', '--quiet', `${candidate}^{commit}`]);
-      if (out && out.trim()) return candidate;
+      const out = await this.run(['-C', root, 'rev-parse', '--verify', '--quiet', `${candidate}^{commit}`], signal);
+      if (out && /^[a-f0-9]{40}$/i.test(out.trim())) return { ref: candidate, sha: out.trim() };
     }
     return undefined;
   }
 
-  private positionOf(
+  private async positionOf(
     root: string,
     ref: string,
     nodes: ReleaseCommitRailNode[],
     commitSha: string,
-  ): ReleaseTargetCommitPosition {
+    signal: AbortSignal,
+  ): Promise<ReleaseTargetCommitPosition> {
     const base: ReleaseTargetCommitPosition = {
       commitSha,
       behindCount: null,
@@ -296,9 +313,9 @@ export class ReleaseCommitRailReader {
     }
 
     const inRail = nodes.some((node) => sameCommit(node.sha, commitSha));
-    const behindOut = this.run(['-C', root, 'rev-list', '--count', `${commitSha}..${ref}`]);
+    const behindOut = await this.run(['-C', root, 'rev-list', '--count', `${commitSha}..${ref}`], signal);
     const behindCount = behindOut === undefined ? null : parseCount(behindOut);
-    const aheadOut = this.run(['-C', root, 'rev-list', '--count', `${ref}..${commitSha}`]);
+    const aheadOut = await this.run(['-C', root, 'rev-list', '--count', `${ref}..${commitSha}`], signal);
     const aheadCount = aheadOut === undefined ? null : parseCount(aheadOut);
 
     if (behindCount === null && aheadCount === null) {
@@ -310,7 +327,7 @@ export class ReleaseCommitRailReader {
     }
 
     const oldestUnreleasedAt = behindCount && behindCount > 0 && behindCount <= MAX_BEHIND_SCAN
-      ? this.oldestCommitAt(root, ref, commitSha, behindCount)
+      ? await this.oldestCommitAt(root, ref, commitSha, behindCount, signal)
       : undefined;
 
     return {
@@ -327,14 +344,14 @@ export class ReleaseCommitRailReader {
    * 用 `--skip=N-1 --max-count=1` 而不是 `--reverse`：前者输出恒为一行，
    * 后者要把整段历史打印出来再倒序，落后上千提交时纯属浪费。
    */
-  private oldestCommitAt(root: string, ref: string, commitSha: string, behindCount: number): string | undefined {
-    const out = this.run([
+  private async oldestCommitAt(root: string, ref: string, commitSha: string, behindCount: number, signal: AbortSignal): Promise<string | undefined> {
+    const out = await this.run([
       '-C', root, 'log',
       `--skip=${behindCount - 1}`,
       '--max-count', '1',
       '--format=%cI',
       `${commitSha}..${ref}`,
-    ]);
+    ], signal);
     const iso = (out || '').trim().split('\n')[0]?.trim();
     if (!iso || !Number.isFinite(Date.parse(iso))) return undefined;
     return new Date(iso).toISOString();
@@ -356,4 +373,9 @@ function positionsWithReason(
     };
   }
   return positions;
+}
+
+function unavailableRail(input: ReleaseCommitRailInput, reason: string): ReleaseCommitRailResult {
+  return { rail: { branch: input.branch || '', ref: '', nodes: [], unavailableReason: reason },
+    positions: positionsWithReason(input.targets, reason) };
 }

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
-import type { CdsConfig, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
+import type { IShellExecutor, CdsConfig, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
 import { ReleaseService, isReleaseRunTerminal } from '../services/release-service.js';
 import { readReleaseHealthSnapshot } from '../services/release-health-snapshot.js';
 import {
@@ -19,6 +19,7 @@ import {
 import { ReleaseCommitClock } from '../services/release-commit-clock.js';
 import {
   ReleaseCommitRailReader,
+  shellGitRunner,
   type ReleaseCommitRail,
   type ReleaseTargetCommitPosition,
 } from '../services/release-commit-rail.js';
@@ -34,6 +35,7 @@ import { assertProjectAccess } from './projects.js';
 
 export interface ReleasesRouterDeps {
   stateService: StateService;
+  shell?: IShellExecutor;
   /**
    * repoRoot 只用来定位两个旁路台账文件（变更历史 / commit 时间），故意做成可选：
    * 既有单测只传 worktreeBase，加成必填会把它们全部编译红，而这两个台账缺了
@@ -84,7 +86,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
    * 主干流水轴 + 各环境落点。只读本地 ref、带 TTL 缓存、绝不 fetch，
    * 理由见 release-commit-rail.ts 顶部（打开发布中心是纯读动作）。
    */
-  const commitRail = new ReleaseCommitRailReader({ repoRootResolver: projectRepoRoot });
+  const commitRail = new ReleaseCommitRailReader({ repoRootResolver: projectRepoRoot,
+    ...(deps.shell ? { runner: shellGitRunner(deps.shell) } : {}) });
 
   /**
    * 发布发起后把本次 commit 的元信息（时间 / 说明 / 作者）记下来。
@@ -759,8 +762,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const projectId = resolveReadableProjectId(req, res);
     if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
-    const targets = deps.stateService.getReleaseTargets(projectId);
-    const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {});
+    const targets = deps.stateService.getReleaseTargets(projectId).map(target => ({ ...target }));
+    const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {}).map(run => ({ ...run }));
     const doraWindowDays = clampDoraWindowDays(req.query.doraDays ?? DEFAULT_DORA_WINDOW_DAYS);
     const resolveCommitAt = (run: { projectId: string; commitSha: string }): string | undefined =>
       commitClock.get(run.projectId, run.commitSha);
@@ -774,13 +777,14 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     // 流水轴是「一个项目一条主干」，没有项目语境就画不出来。系统级调用时若
     // 恰好所有目标同属一个项目，仍然可以画——否则如实给不可用原因，不硬凑。
     const railProjectId = projectId || singleProjectIdOf(targets);
-    const rail = commitRail.read({
+    const historyDeadline = AbortSignal.timeout(3000);
+    const rail = await commitRail.read({
       projectId: railProjectId || '',
       branch: railProjectId ? deps.stateService.getProject(railProjectId)?.gitDefaultBranch : undefined,
       targets: targets
         .filter((target) => !railProjectId || target.projectId === railProjectId)
         .map((target) => ({ targetId: target.id, commitSha: currentCommitByTarget.get(target.id) || '' })),
-    });
+    }, historyDeadline);
 
     const rows = await Promise.all(targets.map(async (target) => {
       const targetRuns = runs.filter((run) => run.targetId === target.id);
@@ -838,10 +842,10 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       if (!branch) return undefined;
       return branch.pinnedCommit || branch.githubCommitSha || undefined;
     };
-    const rowsWithPromotion = rows.map((row) => {
-      const promotion = resolvePromotionCandidate(row, rows, commitRail, resolveBranchTip);
+    const rowsWithPromotion = await Promise.all(rows.map(async (row) => {
+      const promotion = await resolvePromotionCandidate(row, rows, commitRail, resolveBranchTip, historyDeadline);
       return promotion ? { ...row, promotion } : row;
-    });
+    }));
     // DORA 四项的传输面。少了这一行，聚合照常能算、前端却恒为 undefined，
     // 发布中心永远显示「暂无指标」——同 releaseEstimate 那次的静默退化。
     // 刻意挂在 center 而不是新开端点：这个 handler 手里已经有全量 runs，
@@ -967,7 +971,7 @@ function buildCommitMetaMap(
  * 版本推荐去提升，是在教用户把故障扩散到下一个环境。健康 unknown 仍然算候选 ——
  * 存活监控可能压根没开，把 unknown 排除等于整个功能对多数部署不可见。
  */
-export function resolvePromotionCandidate(
+export async function resolvePromotionCandidate(
   row: PromotionRowLike,
   rows: ReadonlyArray<PromotionRowLike>,
   rail: ReleaseCommitRailReader,
@@ -976,7 +980,8 @@ export function resolvePromotionCandidate(
    * （单测 / 老调用方零回归），生产由路由注入。
    */
   resolveBranchTip?: (releaseId: string) => string | undefined,
-): ReleasePromotionCandidate | undefined {
+  signal?: AbortSignal,
+): Promise<ReleasePromotionCandidate | undefined> {
   const myEnvironment = normalizeReleaseEnvironment(row.target.environment);
   const candidates = rows
     .filter((other) => other.target.id !== row.target.id)
@@ -992,7 +997,7 @@ export function resolvePromotionCandidate(
     // 本环境从未发布过：对方那一版**一定**比「什么都没有」新，但没有可比较的起点，
     // 所以 aheadCount 如实给 null，而不是编一个数出来。
     const aheadCount = row.currentCommit
-      ? rail.countCommitsBetween(row.target.projectId, row.currentCommit, other.currentCommit)
+      ? await rail.countCommitsBetween(row.target.projectId, row.currentCommit, other.currentCommit, signal)
       : null;
     if (row.currentCommit && (aheadCount === null || aheadCount <= 0)) continue;
     if (row.currentCommit) {
@@ -1000,10 +1005,11 @@ export function resolvePromotionCandidate(
       // `rev-list a..b` 两个方向都是正数。只有反向为 0 —— 我这一版是对方的祖先 ——
       // 才是真正的「同一条线上往前走」。否则把一个无关分叉标成可晋升，
       // 用户点一下就把生产切到另一条线上（Codex review P1，2026-07-29）。
-      const behindCount = rail.countCommitsBetween(
+      const behindCount = await rail.countCommitsBetween(
         row.target.projectId,
         other.currentCommit,
         row.currentCommit,
+        signal,
       );
       // null = 算不出来（仓库读不到 / commit 不在本地）。此时宁可不推荐：
       // 建议用户把生产切过去，是本页面里后果最重的一个动作。

@@ -4643,6 +4643,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
+    shell: deps.shell,
     config: deps.config,
     // 与定时调度器共用同一个实例：settling 期的在途句柄只存在于实例内存里，
     // 分两个实例等于两侧互相看不见对方的在途发布。见 ReleasesRouterDeps.releaseService。
