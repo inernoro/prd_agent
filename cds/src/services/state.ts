@@ -2289,6 +2289,28 @@ export class StateService {
     this.save();
   }
 
+  /** 恢复未确认保存的字段；后续身份版本和独立并发修改不被回退。 */
+  restoreProjectSettingsUpdate(id: string, before: Project, applied: Project, fields: Array<keyof Project>, writtenProject: Project): boolean {
+    const current = this.getProject(id);
+    if (!current) return false;
+    const ownsIdentity = current.identityHistory === applied.identityHistory;
+    const identityFields = new Set<keyof Project>(['name', 'aliasName', 'slug', 'gitRepoUrl']);
+    for (const key of fields) {
+      if (identityFields.has(key) && !ownsIdentity) continue;
+      if (current[key] !== applied[key]) continue;
+      if (Object.hasOwn(before, key)) (current as unknown as Record<string, unknown>)[key] = before[key];
+      else delete (current as unknown as Record<string, unknown>)[key];
+    }
+    if (ownsIdentity) {
+      if (before.identityHistory) current.identityHistory = before.identityHistory;
+      else delete current.identityHistory;
+    }
+    if (current === writtenProject && current.updatedAt === applied.updatedAt) current.updatedAt = before.updatedAt;
+    this.save();
+    return fields.every(key => JSON.stringify(current[key]) === JSON.stringify(before[key])) &&
+      JSON.stringify(current.identityHistory) === JSON.stringify(before.identityHistory);
+  }
+
   /**
    * 2026-06-23：暂停 / 恢复一个项目。暂停（paused=true）会冻结整个项目的
    * 自动部署 / 手动 deploy / reconciler 重试 / scheduler，调用方负责停止

@@ -13,7 +13,7 @@
  * tested against a MockShellExecutor that pretends to be docker.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -816,16 +816,96 @@ describe('Projects router (P4 Part 2)', () => {
     });
 
     it('does not acknowledge success when persistence fails', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
       const originalFlush = stateService.flush;
       stateService.flush = async () => { throw new Error('simulated storage failure'); };
       try {
-        const result = await request(server, 'PUT', '/api/projects/default', { name: 'Pending persistence' });
+        const result = await request(server, 'PUT', `/api/projects/${id}`, { name: 'Pending persistence' });
         expect(result.status).toBe(503);
         expect(result.body.error).toBe('state_save_pending');
         expect(result.body.message).toContain('尚未确认');
         expect(result.body.message).not.toContain('simulated storage failure');
+        expect(result.body.restored).toBe(false);
+        expect(stateService.getProject(id)!.name).toBe(before.name);
+        expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      } finally { stateService.flush = originalFlush; }
+      await stateService.flush();
+      const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      restarted.load();
+      expect(restarted.getProject(id)!.name).toBe(before.name);
+      expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+    });
+
+    it('restores failed settings and confirms the compensation across restart', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const originalFlush = stateService.flush.bind(stateService);
+      let calls = 0;
+      stateService.flush = async () => { if (++calls === 1) throw new Error('first write failed'); await originalFlush(); };
+      try {
+        const result = await request(server, 'PUT', `/api/projects/${id}`, { slug: 'failed-slug', name: 'Failed name' });
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(true);
+        expect(stateService.getProject(id)!.slug).toBe(before.slug);
+        expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+        const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+        restarted.load();
+        expect(restarted.getProject(id)!.slug).toBe(before.slug);
+        expect(restarted.getProject(id)!.identityHistory).toEqual(before.identityHistory);
       } finally { stateService.flush = originalFlush; }
     });
+
+    it('preserves a newer identity write while recovering an earlier failed write', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const originalFlush = stateService.flush.bind(stateService);
+      let rejectFirst!: (err: Error) => void;
+      let calls = 0;
+      stateService.flush = async () => { if (++calls === 1) await new Promise<void>((_resolve, reject) => { rejectFirst = reject; }); else await originalFlush(); };
+      try {
+        const pending = request(server, 'PUT', `/api/projects/${id}`, { name: 'First pending' });
+        await vi.waitFor(() => expect(rejectFirst).toBeTypeOf('function'));
+        stateService.updateProject(id, { name: 'Newer change' }, { actor: 'user:concurrent' });
+        const newerHistory = structuredClone(stateService.getProject(id)!.identityHistory);
+        rejectFirst(new Error('first write failed'));
+        const result = await pending;
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(false);
+        expect(stateService.getProject(id)!.name).toBe('Newer change');
+        expect(stateService.getProject(id)!.identityHistory).toEqual(newerHistory);
+        const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+        restarted.load();
+        expect(restarted.getProject(id)!.name).toBe('Newer change');
+        expect(restarted.getProject(id)!.identityHistory).toEqual(newerHistory);
+      } finally { stateService.flush = originalFlush; }
+    });
+
+    it('restores a timed-out write while retaining an unrelated concurrent clone update', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
+      const before = structuredClone(stateService.getProject(id)!);
+      const originalFlush = stateService.flush.bind(stateService);
+      let finishFirst!: () => void;
+      let calls = 0;
+      stateService.flush = async () => { if (++calls === 1) await new Promise<void>(resolve => { finishFirst = resolve; }); await originalFlush(); };
+      try {
+        const pending = request(server, 'PUT', `/api/projects/${id}`, { slug: 'timeout-slug' });
+        await vi.waitFor(() => expect(finishFirst).toBeTypeOf('function'));
+        stateService.updateProject(id, { cloneStatus: 'ready', repoPath: '/repos/concurrent' });
+        const result = await pending;
+        expect(result.status).toBe(503);
+        expect(result.body.restored).toBe(true);
+        const current = stateService.getProject(id)!;
+        expect(current.slug).toBe(before.slug);
+        expect(current.identityHistory).toEqual(before.identityHistory);
+        expect(current.cloneStatus).toBe('ready');
+        finishFirst();
+        await originalFlush();
+        const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+        restarted.load();
+        expect(restarted.getProject(id)!.slug).toBe(before.slug);
+        expect(restarted.getProject(id)!.cloneStatus).toBe('ready');
+      } finally { finishFirst?.(); stateService.flush = originalFlush; }
+    }, 10_000);
 
     it('attributes changes to the verified key instead of a caller-supplied identity header', async () => {
       const result = await request(server, 'PUT', '/api/projects/default', { name: 'Verified actor' }, {

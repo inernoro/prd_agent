@@ -214,6 +214,7 @@ export class ForwarderRoutePublisher {
       const canonicalPreviewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
       const previewSlugs = new Set([canonicalPreviewSlug, ...projectHistoricalSlugs(project).map((slug) =>
         buildPreviewUrlForProject('', branch.branch, { ...project, slug }, branch.projectId).previewSlug)]);
+      let idx = 0;
       for (const previewSlug of previewSlugs) {
         if (!previewSlug) continue;
 
@@ -360,7 +361,6 @@ export class ForwarderRoutePublisher {
           }
         };
 
-        let idx = 0;
         const emitHostRouteSet = (
           host: string,
           override?: { profileId: string; hostPort: number; replicaGroup?: string; replicaMemberId?: string },

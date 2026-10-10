@@ -3644,10 +3644,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (body.description !== undefined) patch.description = String(body.description).trim();
     if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
 
+    const beforeSave = structuredClone(project);
     try {
       stateService.updateProject(project.id, patch, projectIdentityActorFromRequest(req));
+      const writtenProject = stateService.getProject(project.id)!;
+      const applied = { ...writtenProject };
       if (await waitForFlushWithTimeout(() => stateService.flush(), 5000) !== 'flushed') {
-        res.status(503).json({ error: 'state_save_pending', message: '设置已接收，但尚未确认记录持久保存。请刷新核对，暂时不要重复修改。' });
+        const reverted = stateService.restoreProjectSettingsUpdate(project.id, beforeSave, applied, Object.keys(patch) as Array<keyof Project>, writtenProject);
+        const restoreConfirmed = await waitForFlushWithTimeout(() => stateService.flush(), 5000) === 'flushed';
+        res.status(503).json({ error: 'state_save_pending', restored: reverted && restoreConfirmed,
+          message: restoreConfirmed
+            ? reverted ? '设置没有保存，已恢复保存前的版本。请稍后重试。' : '本次保存未确认，期间收到的最新修改已保留。请重新加载后核对。'
+            : '设置保存及恢复写入尚未确认，存储版本暂时不确定。请等待存储恢复后核对，暂时不要重复修改。',
+        });
         return;
       }
     } catch (err) {

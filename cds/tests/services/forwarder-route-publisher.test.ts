@@ -113,6 +113,7 @@ describe('ForwarderRoutePublisher', () => {
       publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
       publisher.publishNow();
       const routes: RouteRecord[] = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+      expect(new Set(routes.map(route => route._id)).size).toBe(routes.length);
       for (const slug of ['old-project', 'short-project']) {
         const host = `${computePreviewSlug(branch, slug)}.miduo.org`;
         expect(resolveRoute(routes, host, '/')?.upstreamPort).toBe(41200);
