@@ -58,7 +58,8 @@ describe('legacy self-status state stream budget', () => {
       const addr = server.address() as { port: number };
       let buffer = ''; const timer = setTimeout(() => reject(new Error('initial state did not arrive')), 800);
       const req = http.get({ host: '127.0.0.1', port: addr.port, path: '/api/self-status/stream', headers: { 'x-owned-id': id } }, res => {
-        res.on('error', () => {});
+        res.on('error', err => { clearTimeout(timer); reject(err); });
+        res.on('aborted', () => { clearTimeout(timer); reject(new Error('response aborted before initial state')); });
         res.on('data', chunk => { buffer += chunk; if (buffer.includes('\n\n')) { clearTimeout(timer); resolve(buffer.split('\n\n')[0]); } });
         res.on('end', () => { clearTimeout(timer); reject(new Error('ended before initial state')); });
       });
