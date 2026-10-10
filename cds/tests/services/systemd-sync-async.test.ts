@@ -267,3 +267,76 @@ it('restores only the frozen target and avoids restart when its link changes dur
   expect(fs.readFileSync(other, 'utf8')).toBe('another-owner');
   expect((shell.exec as any).mock.calls.some(([command]: string[]) => command.includes('restart'))).toBe(false);
 });
+
+it.each(['replacement', 'symlink'] as const)('does not roll back over a foreign %s at the frozen target', async kind => {
+  const opts = fixture(true); const moved = path.join(tmp, 'held-original');
+  const other = path.join(tmp, 'foreign-target'); fs.writeFileSync(other, 'foreign-owner');
+  const shell = executor(async command => {
+    if (command.includes('daemon-reload')) {
+      fs.renameSync(opts.installedUnit, moved);
+      if (kind === 'symlink') fs.symlinkSync(other, opts.installedUnit);
+      else fs.writeFileSync(opts.installedUnit, 'foreign-owner');
+    }
+    return ok;
+  });
+  const result = await syncSystemdUnit(opts, shell);
+  expect(result.status).toBe('error');
+  expect(fs.readFileSync(opts.installedUnit, 'utf8')).toBe('foreign-owner');
+  expect(fs.readFileSync(other, 'utf8')).toBe('foreign-owner');
+  expect(fs.readFileSync(moved, 'utf8')).toContain(opts.cdsDir + '/entry');
+  expect(fs.readdirSync(tmp).filter(name => name.includes('.bak.'))).toHaveLength(1);
+  expect((shell.exec as any).mock.calls.some(([command]: string[]) => command.includes('restart'))).toBe(false);
+});
+
+it('does not remove a foreign replacement after first installation loses its target ownership', async () => {
+  const opts = { ...fixture(), installIfMissing: true }; fs.rmSync(opts.installedUnit);
+  const moved = path.join(tmp, 'created-original');
+  const shell = executor(async command => {
+    if (command.includes('daemon-reload')) {
+      fs.renameSync(opts.installedUnit, moved); fs.writeFileSync(opts.installedUnit, 'foreign-owner');
+    }
+    return ok;
+  });
+  const result = await syncSystemdUnit(opts, shell);
+  expect(result.status).toBe('error');
+  expect(fs.existsSync(opts.installedUnit)).toBe(true);
+  expect(fs.readFileSync(opts.installedUnit, 'utf8')).toBe('foreign-owner');
+  expect(fs.readFileSync(moved, 'utf8')).toContain(opts.cdsDir + '/entry');
+});
+
+it('rejects changed requested binding even if the original unit has no drift', async () => {
+  const opts = fixture(true); await syncSystemdUnit(opts, executor(async () => ok));
+  const desired = fs.readFileSync(opts.installedUnit, 'utf8');
+  const alias = path.join(tmp, 'no-drift-alias.service'); fs.symlinkSync(opts.installedUnit, alias);
+  const other = path.join(tmp, 'foreign-target'); fs.writeFileSync(other, 'foreign-owner');
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  const shell = { exec: vi.fn(async (command: string) => {
+    if (command.startsWith('command -v ')) { await held; return { ...ok, stdout: '/usr/bin/' + command.split(' ').at(-1) }; }
+    return ok;
+  }) } as unknown as IShellExecutor;
+  const pending = syncSystemdUnit({ ...opts, installedUnit: alias }, shell);
+  fs.unlinkSync(alias); fs.symlinkSync(other, alias); release();
+  expect((await pending).status).toBe('error');
+  expect(fs.readFileSync(opts.installedUnit, 'utf8')).toBe(desired);
+  expect(fs.readFileSync(other, 'utf8')).toBe('foreign-owner');
+  expect((shell.exec as any).mock.calls.some(([command]: string[]) => command.includes('systemctl'))).toBe(false);
+});
+
+it.each(['weights', 'restart'] as const)('does not report a %s outcome as applied after binding changes during the command', async mode => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const opts = fixture(mode === 'restart'); const target = opts.installedUnit;
+  const alias = path.join(tmp, 'last-command.service'); fs.symlinkSync(target, alias);
+  const other = path.join(tmp, 'foreign-target'); fs.writeFileSync(other, 'foreign-owner');
+  const shell = executor(async command => {
+    if (command.includes(mode === 'restart' ? 'systemctl restart' : 'systemctl set-property')) {
+      fs.unlinkSync(alias); fs.symlinkSync(other, alias);
+    }
+    return ok;
+  });
+  const result = await syncSystemdUnit({ ...opts, installedUnit: alias }, shell);
+  expect(result).toMatchObject({ status: 'error', error: 'unit path binding changed; systemd outcome requires reconciliation' });
+  expect(result).not.toMatchObject({ restarted: true });
+  expect(result).not.toMatchObject({ runtimeWeightsApplied: true });
+  expect(fs.readFileSync(other, 'utf8')).toBe('foreign-owner');
+  expect(fs.readFileSync(target, 'utf8')).toContain(opts.cdsDir + '/entry');
+});

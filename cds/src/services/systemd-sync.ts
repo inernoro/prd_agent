@@ -166,8 +166,14 @@ export async function syncSystemdUnit(options: SystemdUnitSyncOptions, shell: IS
   const unitName = path.basename(requestedPath);
   opts.installedUnit = identity.target;
   for (const key of identity.keys) { keys.add(key); unitLocks.set(key, keys); }
+  const ownsTarget = (): boolean => {
+    try {
+      const current = unitIdentity(opts.installedUnit);
+      return current.target === opts.installedUnit && current.keys.some(key => key.startsWith('inode:') && keys.has(key));
+    } catch { return false; }
+  };
   unitsInProgress.add(keys);
-  try { return await syncOwnedSystemdUnit(opts, shell, installedExists, unitName, claim); }
+  try { return await syncOwnedSystemdUnit(opts, shell, installedExists, unitName, claim, ownsTarget); }
   finally {
     for (const key of keys) if (unitLocks.get(key) === keys) unitLocks.delete(key);
     unitsInProgress.delete(keys);
@@ -175,13 +181,16 @@ export async function syncSystemdUnit(options: SystemdUnitSyncOptions, shell: IS
 }
 
 async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellExecutor, installedExists: boolean,
-  unitName: string, claim: (created?: boolean) => boolean): Promise<SystemdUnitSyncResult> {
+  unitName: string, claim: (created?: boolean) => boolean, ownsTarget: () => boolean): Promise<SystemdUnitSyncResult> {
   const nodeBin = await whichBin('node', shell);
   const pnpmBin = await whichBin('pnpm', shell);
   const npxBin = await whichBin('npx', shell);
   if (!nodeBin || !pnpmBin || !npxBin) {
     return { status: 'skipped', reason: 'missing node/pnpm/npx in PATH' };
   }
+  try {
+    if (!claim()) return { status: 'error', error: 'unit synchronization already in progress' };
+  } catch { return { status: 'error', error: 'unit path identity unavailable' }; }
 
   let template: string;
   let installed: string;
@@ -217,7 +226,7 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
       await runCommand(shell, 'systemctl daemon-reload', 10_000);
       if (!claim()) throw new Error('unit synchronization already in progress');
     } catch (err) {
-      try { fs.rmSync(opts.installedUnit, { force: true }); } catch { /* */ }
+      if (ownsTarget()) { try { fs.rmSync(opts.installedUnit, { force: true }); } catch { /* */ } }
       return { status: 'error', error: `install/daemon-reload failed: ${(err as Error).message}` };
     }
     return { status: 'installed' };
@@ -235,8 +244,8 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
     await runCommand(shell, 'systemctl daemon-reload', 10_000);
     if (!claim()) throw new Error('unit synchronization already in progress');
   } catch (err) {
-    // 回滚
-    try { fs.copyFileSync(backupPath, opts.installedUnit); } catch { /* */ }
+    // Only restore this writer's inode; a replacement belongs to a different owner.
+    if (ownsTarget()) { try { fs.copyFileSync(backupPath, opts.installedUnit); } catch { /* */ } }
     return { status: 'error', error: `write/daemon-reload failed: ${(err as Error).message}` };
   }
 
@@ -249,6 +258,7 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
     if (weights.length > 0) {
       try {
         await runCommand(shell, `systemctl set-property --runtime ${quoteArg(unitName)} ${weights.join(' ')}`, 10_000);
+        if (!claim()) throw new Error('unit synchronization already in progress');
         runtimeWeightsApplied = true;
       } catch (err) {
         console.warn(`  [systemd-sync:${opts.label}] 权重热应用失败(下次重启生效): ${(err as Error).message}`);
@@ -258,6 +268,7 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
   if (opts.restartAfterReload) {
     try {
       await runCommand(shell, `systemctl restart ${quoteArg(unitName)}`, 15_000);
+      if (!claim()) throw new Error('unit synchronization already in progress');
       restarted = true;
     } catch (err) {
       // 重启失败不算修复失败 — drift 已修,只是没立刻生效。下次手动 / 重启
@@ -266,6 +277,9 @@ async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellE
     }
   }
 
+  try {
+    if (!claim()) return { status: 'error', error: 'unit synchronization already in progress' };
+  } catch { return { status: 'error', error: 'unit path binding changed; systemd outcome requires reconciliation' }; }
   return { status: 'fixed', backupPath, restarted, runtimeWeightsApplied };
 }
 
