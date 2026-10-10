@@ -31,6 +31,19 @@ beforeEach(async () => {
 afterEach(async () => { await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('P3 durable serving graph switch', () => {
+  it.each(['deployedImage', 'status', 'deployedCommitSha'] as const)('rejects serving facts changed since journal preparation: %s', async key => {
+    (branch.services.api as any)[key] = key === 'status' ? 'error' : 'changed';
+    state.save(); await state.flush();
+    const events: string[] = [];
+    await expect(new CandidateSwitchCoordinator(state).commit(runId, graph, {
+      assertCurrent: () => {}, acknowledge: async () => { events.push('ack'); return true; },
+      remove: async () => { events.push('remove'); },
+    })).rejects.toThrow('candidate_switch_owner');
+    expect(events).toEqual([]);
+    expect(reload().getDeploymentRun(runId)!.candidate!.phase).toBe('ready');
+    expect(state.allocatePort(10001)).not.toBe(10001); expect(state.allocatePort(10002)).not.toBe(10002);
+  });
+
   it.each(['image-during-ack', 'config-during-delete', 'image-during-delete'])('preserves both graphs when frozen facts drift: %s', async scenario => {
     const removed: string[] = [];
     const mutate = () => {

@@ -1,6 +1,6 @@
 import type { BranchEntry, ServiceState } from '../types.js';
 import type { StateService } from './state.js';
-import { CandidateJournal, assertCandidateReady, candidateIdentityKey, snapshotCandidateServices } from './service-candidate-journal.js';
+import { CandidateJournal, assertCandidateReady, snapshotCandidateServices } from './service-candidate-journal.js';
 
 export interface CandidateSwitchActions {
   assertCurrent(step: string): void;
@@ -22,7 +22,7 @@ export class CandidateSwitchCoordinator {
     if (!run || !record || !live || record.phase !== 'ready' || run.branchId !== graph.id ||
       run.projectId !== graph.projectId || run.operationId !== record.operationId || run.commitSha !== record.targetSha ||
       run.configHash !== record.configHash || live.deploymentTargetSha !== record.targetSha ||
-      candidateIdentityKey(live.services) !== candidateIdentityKey(record.serving)) throw new Error('candidate_switch_owner: frozen serving graph required');
+      JSON.stringify(snapshotCandidateServices(live.services)) !== JSON.stringify(record.serving)) throw new Error('candidate_switch_owner: frozen serving graph required');
     assertCandidateReady(graph, record);
     const oldGraph = structuredClone(live.services);
     // Copy runtime facts: mutation of the caller's private graph must not change a published target.
