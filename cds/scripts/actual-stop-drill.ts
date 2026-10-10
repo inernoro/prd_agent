@@ -87,7 +87,7 @@ export async function main(): Promise<void> {
     verdict: 'failed', scope: 'isolated real branch stop HTTP and container state; no build/deploy/storm acceptance',
     actualStopVerified: false, actualDeploymentVerified: false, performanceVerified: false,
     runner: { host: os.hostname(), cpus: os.cpus().length, totalMemoryBytes: os.totalmem(), githubRunId: process.env.GITHUB_RUN_ID },
-    containers: [], checks: [], commands: [], containersRemoved: false, isolatedFilesRemoved: false };
+    containers: [], checks: [], commands: [], commandFailures: [], containersRemoved: false, isolatedFilesRemoved: false };
   let server: http.Server | undefined, failedSocket = true, supersedeAfterStop = false;
   const coordinator = new BranchOperationCoordinator();
   function inspect(member: typeof members[number]): any {
@@ -96,12 +96,18 @@ export async function main(): Promise<void> {
   }
   const realShell = new ShellExecutor();
   const shell: IShellExecutor = { exec: async (command: string, options?: ExecOptions) => {
-    const name = assertStopCommandTarget(command, members.map((m) => m.name)); const member = members.find((m) => m.name === name)!; inspect(member);
+    let stage = 'command-target';
+    try {
+    const name = assertStopCommandTarget(command, members.map((m) => m.name)); const member = members.find((m) => m.name === name)!;
+    stage = 'owned-container'; inspect(member);
+    stage = 'cancellation-on-disk';
     const isStop = command === `docker stop ${name}`;
     if (isStop) {
       const disk = JSON.parse(await fs.readFile(file, 'utf8'));
+      report.checks.push({ phase: 'before-stop-disk', role: member.role, runStatus: disk.deploymentRuns?.dr_actual_stop?.status ?? null, intentPresent: Boolean(disk.deploymentIntents?.dr_actual_stop) });
       assert.equal(disk.deploymentRuns.dr_actual_stop.status, 'cancelled'); assert.equal(disk.deploymentIntents?.dr_actual_stop, undefined);
     }
+    stage = 'owned-shell-command';
     const socket = failedSocket && isStop && member.role === 'api' ? `unix://${temp}/missing.sock` : 'unix:///var/run/docker.sock';
     const result = await realShell.exec(command.replace(/^docker /, `docker --host ${socket} `), { ...options, timeout: Math.min(options?.timeout || 30000, 30000) });
     report.commands.push({ kind: command.split(' ')[1], containerId: member.id, exitCode: result.exitCode, transportFault: socket.endsWith('missing.sock'), cancellationPersistedBeforeStop: isStop || undefined });
@@ -110,6 +116,12 @@ export async function main(): Promise<void> {
       const entry = state.getBranch('b')!; entry.status = 'error'; entry.services.web.errorMessage = 'newer-owned-operation'; state.save();
     }
     return result;
+    } catch (error) {
+      const detail = error as Error & { actual?: unknown; expected?: unknown };
+      const scalar = (value: unknown) => typeof value === 'boolean' || typeof value === 'number' ? value : typeof value === 'string' ? value.slice(0, 120) : typeof value;
+      report.commandFailures.push({ kind: command.split(' ')[1], stage, errorName: detail.name, actual: scalar(detail.actual), expected: scalar(detail.expected) });
+      throw error;
+    }
   } };
   async function probe(member: typeof members[number]): Promise<any> {
     const response = await fetch(`http://127.0.0.1:${member.port}/`, { signal: AbortSignal.timeout(3000) }); assert.equal(response.status, 200);
@@ -156,7 +168,9 @@ export async function main(): Promise<void> {
     assert.equal(branch.status, 'error'); assert.equal(branch.services.api.status, 'running'); assert.equal(branch.lastStoppedAt, undefined); assert.equal(branch.stopCount || 0, 0);
     const disk = JSON.parse(await fs.readFile(file, 'utf8')); assert.equal(disk.branches.b.services.api.status, 'running');
     const reopened = new StateService(file); reopened.load(); assert.equal(new DeploymentRunService(reopened).restoreQueued(new BranchOperationCoordinator()).length, 0);
-    failedSocket = false; const confirmed = await request('stop'); assert.equal(confirmed.status, 200);
+    failedSocket = false; const confirmed = await request('stop');
+    report.checks.push({ phase: 'retry-response', httpStatus: confirmed.status, failedServices: confirmed.body.failedServices ?? [] });
+    assert.equal(confirmed.status, 200);
     assert.equal(inspect(api).State.Running, false); assert.equal(inspect(web).State.Running, false); await probe(other);
     assert.equal(branch.status, 'idle'); assert.equal(branch.stopCount, 1); assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).branches.b.status, 'idle');
     report.checks.push({ phase: 'stop-confirmed', httpStatus: confirmed.status, originalContainerIdsPreserved: true, allTargetContainersStopped: true, unrelatedStillReady: true, cancelledQueueNotRestored: true, finalStatePersisted: true });
