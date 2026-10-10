@@ -20,6 +20,7 @@ import {
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
 import { recordContainerSample, __resetContainerMetricsHistory } from '../../src/services/container-metrics-history.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../../src/types.js';
+import { projectHistoricalSlugs, projectResourceNamespace } from '../../src/services/preview-slug.js';
 
 const SRC = path.resolve(__dirname, '../../src');
 let tmp: string;
@@ -48,6 +49,50 @@ beforeEach(() => { __resetContainerMetricsHistory(); __resetLoadedPreviewMirror(
 afterEach(async () => { await flushAllJsonStateStores(); });
 
 describe('脱敏（不带凭据）', () => {
+  it('项目镜像只携带路由投影，磁盘与子实例不携带父实例设置审计', () => {
+    const parent = parentState();
+    parent.updateProject('map', { slug: 'renamed-map', gitRepoUrl: 'https://example.com/current.git' }, { actor: 'user:parent-private', requestId: 'parent-private-request' });
+    const source = parent.getProject('map')!;
+    const parentRecordIds = source.identityHistory!.map(record => record.id);
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const file = writePreviewMirror(tmp, mirror);
+    expect(mirror.projects[0].identityHistory).toBeUndefined();
+    const text = fs.readFileSync(file, 'utf8');
+    for (const privateValue of [...parentRecordIds, 'user:parent-private', 'parent-private-request']) expect(text).not.toContain(privateValue);
+    const loaded = readPreviewMirror(tmp)!;
+    const child = freshState('routing-only');
+    expect(seedPreviewInstanceMirror(child, structuredClone(loaded))).toBe(true);
+    const project = child.getProject('map')!;
+    expect(projectHistoricalSlugs(project)).toEqual(['renamed-map', 'map']);
+    expect(projectResourceNamespace(project)).toBe('map');
+    expect(project.identityHistory?.[0].kind).toBe('baseline');
+    expect(project.identityHistory?.some(record => parentRecordIds.includes(record.id))).toBe(false);
+    expect(seedPreviewInstanceMirror(child, loaded)).toBe(false);
+
+    // 已播种的旧版本不能因采集时间相同而保留父实例历史。
+    project.identityHistory = source.identityHistory;
+    delete project.mirror!.routingIdentity;
+    expect(seedPreviewInstanceMirror(child, loaded)).toBe(true);
+    expect(child.getProject('map')!.identityHistory?.some(record => parentRecordIds.includes(record.id))).toBe(false);
+    expect(seedPreviewInstanceMirror(child, loaded)).toBe(false);
+  });
+
+  it('读取旧镜像时去掉审计并原子回写，仍保留旧入口与原资源名称', () => {
+    const parent = parentState();
+    parent.updateProject('map', { slug: 'renamed-map' }, { actor: 'user:private-actor', requestId: 'private-request' });
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    mirror.projects[0].identityHistory = parent.getProject('map')!.identityHistory;
+    delete mirror.projects[0].mirror!.routingIdentity;
+    expect(findMirrorLeaks(mirror)).toContain('carries-project-identity-history');
+    const file = writePreviewMirror(tmp, mirror);
+    const loaded = readPreviewMirror(tmp)!;
+    expect(loaded.projects[0].identityHistory).toBeUndefined();
+    expect(projectHistoricalSlugs(loaded.projects[0])).toEqual(['renamed-map', 'map']);
+    expect(projectResourceNamespace(loaded.projects[0])).toBe('map');
+    expect(fs.readFileSync(file, 'utf8')).not.toMatch(/identityHistory|private-actor|private-request/);
+    expect(findMirrorLeaks(loaded)).toEqual([]);
+  });
+
   it('敏感 key 与带凭据的值只留形状；URL 保留 scheme 与主机名，服务关系图还画得出基础设施连线', () => {
     const out = redactEnvForMirror({ MONGO_URL: 'mongodb://root:hunter2@mongo:27017/db', JWT_SECRET: 'abcdef', PORT: '5000', CDS_PATH_PREFIX: '/api/' })!;
     expect(out.MONGO_URL).toBe('mongodb://***:***@mongo:27017/db');
@@ -111,11 +156,35 @@ describe('脱敏（不带凭据）', () => {
     parent.addProject({ id: 'pat', slug: 'pat', name: 'PAT', kind: 'git', gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git', createdAt: now, updatedAt: now } as Project);
     const m = buildPreviewMirror(parent, { nowMs: Date.now() });
     const exported = m.projects.find((p) => p.id === 'pat');
-    expect(exported?.gitRepoUrl).toBe('https://***@github.com/acme/repo.git');
+    expect(exported?.gitRepoUrl).toBe('https://github.com/acme/repo.git');
     expect(JSON.stringify(m)).not.toContain('ghp_abcDEF123456');
     expect(findMirrorLeaks(m)).toEqual([]);
     const raw = { version: 1, capturedAt: 'x', source: { kind: 'parent-cds', label: 'p' }, projects: [{ gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git' }], buildProfiles: [], branches: [], deploymentRuns: [], reports: [], logs: {}, metrics: {} } as unknown as PreviewMirrorFile;
     expect(findMirrorLeaks(raw)).toContain('url-with-inline-credentials');
+  });
+
+  it('镜像的当前仓库元数据复用历史脱敏，不携带 SCP 用户名', () => {
+    const parent = parentState();
+    parent.updateProject('map', { gitRepoUrl: 'deploy-token@host:owner/repo.git' });
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    expect(mirror.projects[0].gitRepoUrl).toBe('host:owner/repo.git');
+    const file = writePreviewMirror(tmp, mirror);
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('deploy-token');
+    const scpLoaded = readPreviewMirror(tmp)!;
+    expect(scpLoaded.projects[0].gitRepoUrl).toBe('host:owner/repo.git');
+    const child = freshState('scp-scrub');
+    expect(seedPreviewInstanceMirror(child, structuredClone(scpLoaded))).toBe(true);
+    child.getProject('map')!.gitRepoUrl = 'deploy-token@host:owner/repo.git';
+    expect(seedPreviewInstanceMirror(child, scpLoaded)).toBe(true);
+    expect(child.getProject('map')!.gitRepoUrl).toBe('host:owner/repo.git');
+    expect(seedPreviewInstanceMirror(child, scpLoaded)).toBe(false);
+    parent.updateProject('map', { gitRepoUrl: '/private/local-repository' });
+    const local = buildPreviewMirror(parent, { nowMs: Date.now() });
+    writePreviewMirror(tmp, local);
+    const loaded = readPreviewMirror(tmp)!;
+    expect(loaded.projects[0].gitRepoUrl).toBe(local.projects[0].gitRepoUrl);
+    expect(readPreviewMirror(tmp)!.projects[0].gitRepoUrl).toBe(local.projects[0].gitRepoUrl);
+    expect(JSON.stringify(loaded)).not.toContain('/private/local-repository');
   });
 
   it('只有用户名段 / 只有密码段的 URL（amqp://user@host、redis://:pass@host）脱敏与自检认同一组形状，父实例不会因为自检误判而不写（2026-09-20 实机）', () => {
@@ -147,6 +216,22 @@ describe('脱敏（不带凭据）', () => {
 });
 
 describe('只读 + 幂等（子实例播种）', () => {
+  it('镜像项目避开本地历史 slug 及已占用的后缀，构建配置和分支完整播种', () => {
+    const mirror = buildPreviewMirror(parentState(), { nowMs: Date.now() });
+    const child = freshState('child-history-collision');
+    const now = new Date().toISOString();
+    child.addProject({ id: PREVIEW_DEMO_PROJECT_ID, slug: 'map', name: '本地演示项目', kind: 'git', createdAt: now, updatedAt: now } as Project);
+    child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'map-mirror' });
+    child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'renamed-demo' });
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(true);
+    expect(child.getProject('map')?.slug).toBe('map-mirror-2');
+    expect(child.getBuildProfiles().some(p => p.id === 'api' && p.projectId === 'map')).toBe(true);
+    expect(child.getBranch('map-main')?.projectId).toBe('map');
+    expect(child.getLogs('map-main')).toHaveLength(1);
+    expect(mirror.projects.find(p => p.id === 'map')?.slug).toBe('map');
+    expect(child.getProject(PREVIEW_DEMO_PROJECT_ID)?.slug).toBe('renamed-demo');
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(false);
+  });
   it('首播：项目 / 构建配置 / 分支 / 日志带 mirror 标记落库，静态快照不再播', () => {
     const parent = parentState();
     const m = buildPreviewMirror(parent, { nowMs: Date.now() });

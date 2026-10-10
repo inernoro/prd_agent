@@ -897,6 +897,8 @@ export interface PreviewMirrorTag {
   previewUrl?: string;
   previewUrls?: string[];
   subject?: string;
+  /** 只读镜像的路由投影，不携带父实例的设置审计记录。 */
+  routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
 }
 
 export interface BranchEntry {
@@ -3666,7 +3668,30 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+export interface ProjectIdentitySnapshot {
+  name: string;
+  displayName: string;
+  slug: string;
+  /** 只读取上一版审计快照，不能作为项目配置写入。 */
+  previewIdentifier?: string;
+  originalIdentifier?: string;
+  repository: string;
+}
+
+export interface ProjectIdentityRecord {
+  id: string;
+  at: string;
+  kind: 'created' | 'baseline' | 'changed' | 'migrated';
+  actor: string;
+  requestId?: string;
+  slugSource?: 'explicit' | 'repository' | 'name';
+  before?: ProjectIdentitySnapshot;
+  after: ProjectIdentitySnapshot;
+}
+
 export interface Project {
+  /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
+  identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */
   mirror?: PreviewMirrorTag;
   /**
@@ -3689,7 +3714,7 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
-  /** URL-friendly slug (may equal id, usually kebab-case). */
+  /** 唯一可编辑的项目 slug，用于预览地址；关联使用稳定的 id。 */
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
@@ -3711,17 +3736,6 @@ export interface Project {
    * the legacy default project) is not the label the user wants to see.
    */
   aliasName?: string;
-  /**
-   * Optional alternative slug, reserved for a future "use alias in new
-   * branch ids" toggle. Stored here so the Settings UI can capture it
-   * alongside `aliasName`, but NOT consumed by branch-id derivation
-   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
-   * prefix change is scoped to a follow-up PR).
-   *
-   * Must pass the same SLUG_REGEX as `slug` and must not collide with
-   * any other project's `slug` or `aliasSlug`.
-   */
-  aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
   /** 旧项目缺省为 compose，保持现有 BuildProfile/compose 行为。 */

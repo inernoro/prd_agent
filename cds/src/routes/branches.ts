@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -5954,7 +5955,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const slugified = StateService.slugify(branch);
       const id = targetProject.legacyFlag
         ? slugified
-        : `${targetProject.slug}-${slugified}`;
+        : `${projectResourceNamespace(targetProject)}-${slugified}`;
       // Collide on the computed id (same-project same-name in the current
       // formula) OR on the (projectId, branch) tuple — the latter catches
       // projects whose `legacyFlag` flipped after an existing branch was
@@ -20661,7 +20662,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // slug head prefixed so two projects can each own `mongodb`.
       const containerName = targetProject.legacyFlag
         ? `cds-infra-${body.id}`
-        : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
+        : `cds-infra-${projectResourceNamespace(targetProject).slice(0, 12)}-${body.id}`;
 
       // Bug Q: when caller omits `volumes`, auto-fill recommended data
       // dirs for known stateful images. Empty array passed explicitly is
@@ -21704,7 +21705,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // previously used the bare slugified branch as the entry id (and
       // looked up by it), which contradicts every other code path
       // (POST /api/branches, auto-build in index.ts, webhook dispatcher)
-      // that uses `${owner.slug}-${slugified}` for non-legacy projects.
+      // that keeps the original resource namespace for non-legacy projects.
       // After rename-default a re-run of init would miss the existing
       // `prd-agent-main` entry and try to create a duplicate `main`.
       //
@@ -21718,7 +21719,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         res.end();
         return;
       }
-      const mainBranchId = owner.legacyFlag ? mainSlug : `${owner.slug}-${mainSlug}`;
+      const mainBranchId = owner.legacyFlag ? mainSlug : `${projectResourceNamespace(owner)}-${mainSlug}`;
       let entry =
         stateService.getBranch(mainBranchId) ??
         stateService.findBranchByProjectAndName(owner.id, mainBranch);
@@ -21787,7 +21788,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               profileId: profile.id,
               // PR #498 round-3 review (Bugbot): container name must
               // track entry.id. After round-2 made mainBranchId
-              // `${owner.slug}-${mainSlug}` for non-legacy projects,
+              // `${projectResourceNamespace(owner)}-${mainSlug}` for non-legacy projects,
               // the hardcoded `cds-${mainSlug}-…` here became a
               // mismatch — same pattern index.ts:1105 already follows.
               containerName: `cds-${entry.id}-${profile.id}`,

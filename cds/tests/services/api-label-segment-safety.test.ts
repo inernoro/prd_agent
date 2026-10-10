@@ -85,4 +85,11 @@ describe('resolveApiLabel — GET /branches/:id segment safety (PR #522 Codex fi
     // 不应该是"查看分支详情"
     expect(label).not.toBe('查看分支详情');
   });
+
+  it('项目设置历史在路由审计和真实请求中都有专用 label', () => {
+    expect(resolveApiLabel('GET', '/projects/:id/identity-history')).toBe('查看设置记录');
+    expect(resolveApiLabel('GET', '/projects/demo-a/identity-history')).toBe('查看设置记录');
+    expect(resolveApiLabel('GET', '/projects/demo-a')).toBe('查询项目');
+    expect(resolveApiLabel('GET', '/projects/demo-a/extra/identity-history')).not.toBe('查看设置记录');
+  });
 });

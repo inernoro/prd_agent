@@ -26,6 +26,7 @@ import path from 'node:path';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { projectIdentityActorFromRequest } from '../services/project-identity-history.js';
 
 const LEGACY_PROJECT_ID = 'default';
 const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/;
@@ -254,9 +255,11 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const defaultProj = projects.find(p => p.id === LEGACY_PROJECT_ID);
     if (defaultProj) {
       defaultProj.id = normalizedId;
-      if (newName && typeof newName === 'string') defaultProj.name = newName.trim();
       // 清 legacyFlag —— 迁移后不再是 legacy
       defaultProj.legacyFlag = false;
+      if (newName && typeof newName === 'string') {
+        stateService.updateProject(normalizedId, { name: newName.trim() }, projectIdentityActorFromRequest(req));
+      }
     } else {
       // 没有 Project 记录但有资源（pre-P4），直接新建一个最小记录
       stateService.addProject?.({

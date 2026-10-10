@@ -946,7 +946,6 @@ KNOWN_ROTTEN_PAIRS = {
     ("cds/src/routes/remote-hosts.ts", "plan.cds-shared-service-extension.md"),
     ("cds/src/services/sidecar/sidecar-deployer.ts", "plan.cds-shared-service-extension.md"),
     ("cds/src/services/state.ts", "plan.cds-shared-service-extension.md"),
-    ("cds/src/types.ts", "plan.cds-github-integration-followups.md"),
     ("cds/src/types.ts", "plan.cds-shared-service-extension.md"),
     ("cds/web/src/pages/cds-settings/tabs/RemoteHostsTab.tsx", "plan.cds-shared-service-extension.md"),
     ("prd-admin/src/pages/infra-services/InfraServicesPage.tsx", "plan.cds-shared-service-extension.md"),

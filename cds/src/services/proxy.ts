@@ -262,8 +262,10 @@ export class ProxyService {
     // ③ v2 兼容：${project.slug}-${slug} 拼接
     for (const project of projects) {
       if (!project.slug || project.legacyFlag) continue;
-      const candidate = state.branches[`${project.slug}-${slug}`];
-      if (candidate) return candidate;
+      for (const historical of previewProjectSlugCandidates(project)) {
+        const candidate = state.branches[`${historical}-${slug}`];
+        if (candidate && candidate.projectId === project.id) return candidate;
+      }
     }
     return undefined;
   }

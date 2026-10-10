@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from '../services/preview-slug.js';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
@@ -260,14 +261,14 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       : `https://${domain}${healthPath}`;
     const appPath = typeof body.appPath === 'string' && body.appPath.trim()
       ? body.appPath.trim()
-      : `/opt/${project.slug}-prod`;
+      : `/opt/${projectResourceNamespace(project)}-prod`;
     const releaseScriptPath = typeof body.releaseScriptPath === 'string' && body.releaseScriptPath.trim()
       ? body.releaseScriptPath.trim()
       : path.resolve(process.cwd(), 'scripts/local-prod-release.sh');
     const worktreeRoot = typeof body.worktreeRoot === 'string' && body.worktreeRoot.trim()
       ? body.worktreeRoot.trim()
       : deps.config?.worktreeBase || path.resolve(process.cwd(), '..', '.cds-worktrees');
-    const composeProject = shellSafeName(`${project.slug}-prod`);
+    const composeProject = shellSafeName(`${projectResourceNamespace(project)}-prod`);
     const allowedBranch = typeof body.allowedBranch === 'string' && body.allowedBranch.trim()
       ? body.allowedBranch.trim()
       : project.gitDefaultBranch || 'main';
@@ -277,7 +278,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       `CDS_LOCAL_PROD_HEALTH_URL=${shellQuote(healthcheckUrl)}`,
       `CDS_LOCAL_PROD_DIR=${shellQuote(appPath)}`,
       `CDS_LOCAL_PROD_COMPOSE_PROJECT=${shellQuote(composeProject)}`,
-      `CDS_LOCAL_PROD_PROJECT_SLUG=${shellQuote(project.slug)}`,
+      `CDS_LOCAL_PROD_PROJECT_SLUG=${shellQuote(projectResourceNamespace(project))}`,
       `CDS_LOCAL_PROD_ALLOWED_BRANCH=${shellQuote(allowedBranch)}`,
       `CDS_WORKTREE_ROOT=${shellQuote(worktreeRoot)}`,
       shellQuote(releaseScriptPath),

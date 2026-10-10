@@ -7,8 +7,8 @@
  *   1. **已吊销** 与 **从未签发** 必须分得开 —— 这正是鉴权路径做不到的事
  *      （它对两者都返回 null），也是用户「吊销页面删也不是留也不是」那个
  *      两难的技术根源。
- *   2. **prefix-mismatch** 能被单独报出来 —— 项目改过 slug 之后，存量凭据
- *      没被吊销、项目卡上看得见，但鉴权按前缀定位项目时会跳过它。
+ *   2. **项目改名不撤销凭据** —— 项目改过 slug 之后，存量凭据
+ *      必须按已保存的哈希归属继续识别，且仍受撤销与到期判据约束。
  *   3. 判据与真实鉴权路径 `StateService.findAgentKeyForAuth` **不漂移**：
  *      对同一把有效凭据，两者必须指向同一个 project/key。
  *   4. 结果里**绝不出现明文或哈希**。
@@ -119,16 +119,16 @@ describe('checkCredential —— 三态可分辨', () => {
     expect(revoked.status).not.toBe(never.status);
   });
 
-  it('项目改过 slug：凭据仍有效，但要报 prefix-mismatch 而不是 active', () => {
+  it('项目改过 slug：凭据哈希归属仍有效，前缀变化不会撤销权限', () => {
     // 凭据在项目还叫 old-slug 时签发；项目后来改名 new-slug。
     const key = makeProjectKey('old-slug-here');
     const facts = factsWith('new-slug-here', [storedFor(key)]);
     const result = checkCredential(key, facts);
-    expect(result.status).toBe('prefix-mismatch');
+    expect(result.status).toBe('active');
     expect(result.projectSlug).toBe('new-slug-here');
     expect(result.revokedAt).toBeUndefined();
-    // 结论必须点明「重试没用」，否则持有者会一直重试
-    expect(result.nextStep).toContain('重新签发');
+    // 改名不要求重签；哈希匹配和授权仍然决定是否可用。
+    expect(result.nextStep).not.toContain('重新签发');
   });
 
   it('形状不对的项目级凭据报 malformed，不报 never-issued', () => {
