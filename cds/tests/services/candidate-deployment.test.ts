@@ -151,6 +151,44 @@ describe('P3 actual deployment candidate orchestration', () => {
     expect(f.events).toEqual([]); expect(f.old.State.Running).toBe(true);
   });
 
+  it.each(['old-readiness', 'old-final-ack'])('returns lease cancellation even when it arrives during recovery: %s', async phase => {
+    const f = fixture('worker'); const coordinator = new BranchOperationCoordinator();
+    const lease = coordinator.begin({ branchId: entry.id, kind: 'deploy', trigger: 'manual' }).lease!;
+    const options = { ...f.options, signal: lease.signal, assertCurrent: (step: string) => lease.assertCurrent(step) };
+    let acks = 0; options.acknowledge = async () => {
+      acks += 1;
+      if (phase === 'old-final-ack' && acks === 3) coordinator.cancelBranch(entry.id, 'cancel recovery');
+      return acks !== 1;
+    };
+    if (phase === 'old-readiness') {
+      const wait = f.containers.waitForReadiness;
+      f.containers.waitForReadiness = async port => { if (port === 10001) coordinator.cancelBranch(entry.id, 'cancel recovery'); return wait(port); };
+    }
+    await expect(f.service.deploy(options)).rejects.toBeInstanceOf(BranchOperationSupersededError);
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+    expect(state.allocatePort(10002)).not.toBe(10002);
+    expect(f.events).not.toContain('docker rm -f ' + f.old.Id);
+  });
+  it('persists the inspected created ID before a later network/start failure, then restores only after owned candidate cleanup', async () => {
+    const f = fixture('worker'); const create = f.containers.runService;
+    f.containers.runService = async (...args: Parameters<typeof create>) => {
+      const context = args[5]; await context.onCandidateCreateIntent(); await create(...args);
+      const created = [...f.objects.values()].find(info => info.Name !== '/old')!;
+      created.State.Running = false; args[2].containerId = created.Id;
+      await context.onCandidateCreated(created.Id);
+      const disk = new StateService(path.join(dir, 'state.json')); disk.load();
+      expect(disk.getDeploymentRun(runId)!.candidate!.createdContainers!.api.id).toBe(created.Id);
+      expect(disk.getDeploymentRun(runId)!.candidate!.createIntents).toEqual(['api']);
+      expect(f.old.State.Running).toBe(false);
+      throw new Error('shared-network-failed');
+    };
+    await expect(f.service.deploy(f.options)).rejects.toThrow('shared-network-failed');
+    expect(f.events.some(event => event.startsWith('docker rm -f '))).toBe(true);
+    expect(f.events).toContain('docker start ' + f.old.Id);
+    expect(f.old.State.Running).toBe(true); expect(f.objects.size).toBe(1);
+    expect(state.getDeploymentRun(runId)!.candidate!.phase).toBe('reconciling');
+  });
+
   it.each(['create', 'startup', 'readiness'] as const)('normalizes explicit cancellation during %s into the lease error without deleting either graph', async phase => {
     const f = fixture(); const coordinator = new BranchOperationCoordinator();
     const lease = coordinator.begin({ branchId: entry.id, kind: 'deploy', trigger: 'manual' }).lease!;

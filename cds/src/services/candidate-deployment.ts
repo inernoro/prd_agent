@@ -139,14 +139,24 @@ export class CandidateDeploymentService {
           const current = () => { active(); signal.throwIfAborted(); };
           current(); const service = graph.services[profile.id]; service.status = 'starting';
           const output = (chunk: string) => options.onOutput?.(profile.id, chunk);
+          await journal.recordCreateIntent(runId, profile.id, current); current();
           attempted.add(profile.id);
           await this.containers.runService(graph, profile, service, output, customEnv, {
             ...options.context, operationId: frozen.operationId, candidateRunId: frozen.operationId,
             assertCurrent: current, signal,
+            onCandidateCreateIntent: () => journal.recordCreateIntent(runId, profile.id, current),
+            onCandidateCreated: async id => {
+              const reference = await this.lifecycle.capture({ ...owner, candidateOperationId: frozen.operationId }, service, current, signal);
+              current();
+              if (reference.id !== id || reference.image !== profile.preparedArtifactId) throw new Error('candidate_create_identity: actual creation differs from Daemon response');
+              await journal.recordCreated(runId, profile.id, reference, service, current); current();
+              captured.set(profile.id, reference);
+            },
           });
           current();
           const reference = await this.lifecycle.capture({ ...owner, candidateOperationId: frozen.operationId }, service, current, signal);
           current(); captured.set(profile.id, reference); service.containerId = reference.id;
+          await journal.recordCreated(runId, profile.id, reference, service, current); current();
           if (reference.image !== profile.preparedArtifactId || !reference.wasRunning || service.deployedPrebuilt !== true ||
             service.deployedCommitSha !== targetSha) throw new Error('candidate_artifact: inspected exact runtime required');
           if (profile.startupSignal) {
@@ -233,6 +243,10 @@ export class CandidateDeploymentService {
       const currentPhase = this.state.getDeploymentRun(runId)?.candidate?.phase;
       if (currentPhase && currentPhase !== 'released' && currentPhase !== 'reconciling') {
         try { await journal.advance(runId, currentPhase, 'reconciling'); } catch { /* Never overwrite a newer owner. */ }
+      }
+      // Recovery awaits can be cancelled after the catch entry classification.
+      try { options.assertCurrent('candidate-recovery-result'); } catch (leaseError) {
+        if (leaseError instanceof BranchOperationSupersededError) error = leaseError;
       }
       throw error;
     }

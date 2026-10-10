@@ -58,6 +58,32 @@ describe('P3 durable private candidate reservations', () => {
       expect(reload.getDeploymentRun(runId)!.candidate).toBeUndefined();
     });
 
+  it('serializes parallel per-service creation evidence through actual JSON persistence without losing sibling identities', async () => {
+    branch.services.api.containerId = 'c'.repeat(64);
+    const graph = createCandidateRuntime(branch, [{ id: 'api' }, { id: 'web' }] as BuildProfile[], 'op-test', reserved => reserved.has(10002) ? 10003 : 10002);
+    const supplied = proof(); supplied.artifacts.web = { ...supplied.artifacts.api };
+    const journal = new CandidateJournal(state); await journal.prepare(runId, graph, undefined, supplied);
+    await journal.advance(runId, 'prepared', 'starting');
+    await Promise.all(['api', 'web'].map(id => journal.recordCreateIntent(runId, id, () => {})));
+    await Promise.all(['api', 'web'].map((id, i) => {
+      const service = graph.services[id]; Object.assign(service, { status: 'starting', containerId: String(i + 1).repeat(64),
+        deployedImage: supplied.artifacts[id].image, deployedCommitSha: sha, deployedPrebuilt: true });
+      return journal.recordCreated(runId, id, { owner: { projectId: 'project', branchId: 'branch', profileId: id, operationId: 'op-test' },
+        id: service.containerId!, name: service.containerName, image: service.deployedImage!, wasRunning: false,
+        writableMounts: [], fingerprint: 'sha256:' + 'e'.repeat(64) }, service, () => {});
+    }));
+    const loaded = new StateService(path.join(dir, 'state.json')); loaded.load();
+    const record = loaded.getDeploymentRun(runId)!.candidate!;
+    expect(record.createIntents).toEqual(['api', 'web']);
+    expect(Object.keys(record.createdContainers!).sort()).toEqual(['api', 'web']);
+    expect(record.services.api.containerId).toBe('1'.repeat(64)); expect(record.services.web.containerId).toBe('2'.repeat(64));
+    const before = JSON.stringify(record);
+    await expect(journal.recordCreated(runId, 'api', { owner: { projectId: 'project', branchId: 'branch', profileId: 'api', operationId: 'op-test' },
+      id: '3'.repeat(64), name: graph.services.api.containerName, image: supplied.artifacts.api.image, wasRunning: false,
+      writableMounts: [], fingerprint: 'sha256:' + 'e'.repeat(64) }, { ...graph.services.api, containerId: '3'.repeat(64) }, () => {})).rejects.toThrow('candidate_create_identity');
+    expect(JSON.stringify(loaded.getDeploymentRun(runId)!.candidate)).toBe(before);
+  });
+
   it('persists immutable serving ID and stop intent before a single consumer can be stopped', async () => {
     const journal = new CandidateJournal(state);
     await expect(journal.prepare(runId, candidate(), ['api'])).rejects.toThrow('candidate_stop_intent');

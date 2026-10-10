@@ -15,7 +15,7 @@ const profile = (): BuildProfile => ({ id: 'api', projectId: 'project', name: 'A
 let shell: MockShellExecutor; let container: ContainerService;
 beforeEach(() => {
   vi.stubEnv('CDS_BRANCH_NETWORK_ISOLATION', '1'); shell = new MockShellExecutor(); container = new ContainerService(shell, config);
-  shell.addResponsePattern(/docker pull|docker create|docker start|docker network connect|docker rm -f/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+  shell.addResponsePattern(/docker pull|docker create|docker start|docker network connect|docker rm -f/, () => ({ stdout: 'd'.repeat(64), stderr: '', exitCode: 0 }));
   shell.addResponsePattern(/docker inspect --format='\{\{json \.\}\}'/, () => ({ stdout: '', stderr: 'Error: No such object', exitCode: 1 }));
   shell.addResponsePattern(/docker network inspect --format/, () => ({ stdout: JSON.stringify({ 'cds.managed': 'true', 'cds.type': 'candidate-network', 'cds.instance': computeCdsInstanceId('/repo'), 'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.deployment.operation': 'op-test' }), stderr: '', exitCode: 0 }));
   shell.addResponsePattern(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
@@ -28,6 +28,35 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('P3-04 candidate runtime boundary', () => {
+  it.each(['intent-write', 'created-write', 'cancel-after-created'])('does not create/connect/start beyond an unconfirmed candidate ledger boundary: %s', async failure => {
+    const candidate = { profileId: 'api', containerName: candidateRuntimeIdentity('branch', 'api', 'op-test').containerName,
+      hostPort: 10002, status: 'idle' } as ServiceState;
+    let current = true; const events: string[] = [];
+    shell.addResponsePatternFirst(/^docker create /, () => { events.push('create'); return { stdout: 'c'.repeat(64), stderr: '', exitCode: 0 }; });
+    await expect(container.runService(entry(), profile(), candidate, undefined, undefined, {
+      candidateRunId: 'op-test', assertCurrent: () => { if (!current) throw new Error('new-owner'); },
+      onCandidateCreateIntent: async () => { events.push('intent-durable'); if (failure === 'intent-write') throw new Error('disk-unavailable'); },
+      onCandidateCreated: async (id: string) => { expect(id).toBe('c'.repeat(64)); events.push('created-durable');
+        if (failure === 'created-write') throw new Error('disk-unavailable'); current = false; },
+    } as any)).rejects.toThrow(failure === 'cancel-after-created' ? 'new-owner' : 'disk-unavailable');
+    expect(events).toEqual(failure === 'intent-write' ? ['intent-durable'] : ['intent-durable', 'create', 'created-durable']);
+    expect(shell.commands.some(command => command.startsWith('docker network connect') || command.startsWith('docker start'))).toBe(false);
+  });
+  it('starts and connects the immutable created ID after both candidate ledger barriers', async () => {
+    const candidate = { profileId: 'api', containerName: candidateRuntimeIdentity('branch', 'api', 'op-test').containerName,
+      hostPort: 10002, status: 'idle' } as ServiceState;
+    const events: string[] = []; const id = 'c'.repeat(64);
+    shell.addResponsePatternFirst(/^docker create /, () => { events.push('create'); return { stdout: id, stderr: '', exitCode: 0 }; });
+    await container.runService(entry(), profile(), candidate, undefined, undefined, {
+      candidateRunId: 'op-test', onCandidateCreateIntent: async () => { events.push('intent-durable'); },
+      onCandidateCreated: async (created: string) => { expect(created).toBe(id); events.push('created-durable'); },
+    } as any);
+    expect(events).toEqual(['intent-durable', 'create', 'created-durable']);
+    expect(shell.commands.filter(command => command.startsWith('docker start'))).toEqual(['docker start ' + id]);
+    expect(shell.commands.filter(command => command.startsWith('docker network connect')).every(command => command.includes(id))).toBe(true);
+    expect(candidate.containerId).toBe(id);
+  });
+
   it('creates in a run-specific network and does not prune the healthy old instance', async () => {
     const candidate = { profileId: 'api', containerName: candidateRuntimeIdentity('branch', 'api', 'op-test').containerName, hostPort: 10002, status: 'idle' } as ServiceState;
     await container.runService(entry(), profile(), candidate, undefined, undefined, { candidateRunId: 'op-test' });

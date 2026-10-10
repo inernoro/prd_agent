@@ -1,4 +1,5 @@
 import type { BranchEntry, DeploymentCandidateRecord, ServiceState, CandidateRecoveryProof } from '../types.js';
+import type { OwnedContainerReference } from './owned-container-lifecycle.js';
 import type { StateService } from './state.js';
 import { captureServingVersion } from './candidate-serving-version.js';
 import { candidateRuntimeIdentity } from './service-candidate.js';
@@ -37,6 +38,9 @@ const NEXT: Record<Phase, readonly Phase[]> = {
   routed: ['released', 'reconciling'], 'rollback-intent': ['rollback-verified', 'reconciling'],
   'rollback-verified': ['released', 'reconciling'], reconciling: [], released: [],
 };
+
+// Parallel profiles share the same run. Serialize their durable facts without dropping siblings.
+const creationWrites = new WeakMap<StateService, Map<string, Promise<void>>>();
 
 /** Write-ahead ledger only. Preparing it never replaces the live graph or publishes routes. */
 export class CandidateJournal {
@@ -112,6 +116,68 @@ export class CandidateJournal {
     this.state.updateDeploymentRun(runId, current => { current.candidate = record; });
     await this.state.flush(); // The caller must await this barrier before Docker create.
     return record;
+  }
+
+  private serializeCreation<T>(runId: string, write: () => Promise<T>): Promise<T> {
+    let queues = creationWrites.get(this.state);
+    if (!queues) { queues = new Map(); creationWrites.set(this.state, queues); }
+    const next = (queues.get(runId) || Promise.resolve()).then(write);
+    const tail = next.then(() => {}, () => {}); queues.set(runId, tail);
+    void tail.then(() => { if (queues!.get(runId) === tail) queues!.delete(runId); });
+    return next;
+  }
+
+  private async persistCreation(runId: string, profileId: string, assertCurrent: () => void,
+    reference?: OwnedContainerReference, service?: Readonly<ServiceState>): Promise<void> {
+    assertCurrent();
+    const run = this.state.getDeploymentRun(runId); const record = run?.candidate; const expected = record?.services[profileId];
+    if (!run || !record || !expected || record.phase !== 'starting' || record.recoveryProof?.version !== 1 ||
+      run.operationId !== record.operationId || run.commitSha !== record.targetSha || run.configHash !== record.configHash ||
+      !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status)) {
+      throw new Error('candidate_create_owner: active frozen creation journal required');
+    }
+    if (reference && (!record.createIntents?.includes(profileId) || !service || service.profileId !== profileId ||
+      service.containerId !== reference.id || service.containerName !== expected.containerName || service.hostPort !== expected.hostPort ||
+      reference.name !== expected.containerName || reference.owner.projectId !== run.projectId || reference.owner.branchId !== run.branchId ||
+      reference.owner.profileId !== profileId || reference.owner.operationId !== record.operationId ||
+      !/^[a-f0-9]{64}$/.test(reference.id) || !/^sha256:[a-f0-9]{64}$/.test(reference.fingerprint) ||
+      reference.image !== record.recoveryProof.artifacts[profileId]?.image || service.deployedImage !== reference.image ||
+      service.deployedCommitSha !== record.targetSha || service.deployedPrebuilt !== true || service.status !== 'starting')) {
+      throw new Error('candidate_create_identity: complete inspected creation result required');
+    }
+    const previous = record.createdContainers?.[profileId];
+    if (previous && reference) {
+      if (previous.id !== reference.id || previous.image !== reference.image || previous.fingerprint !== reference.fingerprint) {
+        throw new Error('candidate_create_identity: creation identity cannot be overwritten');
+      }
+      return;
+    }
+    if (!reference && record.createIntents?.includes(profileId)) return;
+    const frozen = { record: JSON.stringify(record), operationId: run.operationId, targetSha: run.commitSha, configHash: run.configHash,
+      branchId: run.branchId, projectId: run.projectId, service: service ? JSON.stringify(snapshotCandidateServices({ [profileId]: service })) : undefined };
+    await this.state.updateDeploymentRunDurably(runId, draft => {
+      if (reference && service) {
+        (draft.candidate!.createdContainers ||= {})[profileId] = { id: reference.id, image: reference.image, fingerprint: reference.fingerprint };
+        draft.candidate!.services[profileId] = snapshotCandidateServices({ [profileId]: service })[profileId];
+      } else draft.candidate!.createIntents = [...(draft.candidate!.createIntents || []), profileId].sort();
+    }, () => this.state.flush(), () => {
+      assertCurrent();
+      if (this.state.getDeploymentRun(runId) !== run || run.candidate !== record || JSON.stringify(record) !== frozen.record ||
+        run.branchId !== frozen.branchId || run.projectId !== frozen.projectId || run.operationId !== frozen.operationId ||
+        run.commitSha !== frozen.targetSha || run.configHash !== frozen.configHash || record.phase !== 'starting' ||
+        !['pending', 'queued', 'preparing', 'building', 'starting', 'verifying'].includes(run.status) ||
+        (service && JSON.stringify(snapshotCandidateServices({ [profileId]: service })) !== frozen.service)) {
+        throw new Error('candidate_create_owner: creation facts or owner changed during persistence');
+      }
+    });
+  }
+
+  recordCreateIntent(runId: string, profileId: string, assertCurrent: () => void): Promise<void> {
+    return this.serializeCreation(runId, () => this.persistCreation(runId, profileId, assertCurrent));
+  }
+  recordCreated(runId: string, profileId: string, reference: OwnedContainerReference,
+    service: Readonly<ServiceState>, assertCurrent: () => void): Promise<void> {
+    return this.serializeCreation(runId, () => this.persistCreation(runId, profileId, assertCurrent, reference, service));
   }
 
   /** Compare-and-set phase, with immutable target/identity and an explicit durability barrier. */

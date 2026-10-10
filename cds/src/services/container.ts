@@ -1187,6 +1187,9 @@ export class ContainerService {
       signal?: AbortSignal;
       /** Private run-owned instance; caller must persist its ledger before creation and handle commit/cleanup. */
       candidateRunId?: string;
+      /** Awaited write-ahead boundaries for private candidate creation. */
+      onCandidateCreateIntent?: () => Promise<void>;
+      onCandidateCreated?: (id: string) => Promise<void>;
       /**
        * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
        * 构建槽（build-gate，见 branches.ts 部署循环），但回退到源码编译就是
@@ -1758,6 +1761,7 @@ export class ContainerService {
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
+      if (candidate) { await context.onCandidateCreateIntent?.(); context.assertCurrent?.('candidate-create-intent-durable'); }
       const result = await this.shell.exec(runCmd);
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
@@ -1797,12 +1801,19 @@ export class ContainerService {
       else delete service.deployedArtifactRef;
       service.deployedPrebuilt = profile.prebuiltImage === true && !originallyManagedBuild;
       service.deployedCommitSha = runCommitSha || (profile.prebuiltImage ? targetShaOf(profile.dockerImage) || undefined : context.sourceCommitSha || entry.githubCommitSha);
+      if (candidate) {
+        const createdId = result.stdout.trim();
+        if (!/^[a-f0-9]{64}$/.test(createdId)) throw new Error('candidate_create_identity: Daemon result is not an immutable ID');
+        service.containerId = createdId;
+        await context.onCandidateCreated?.(createdId);
+        context.assertCurrent?.('candidate-created-durable');
+      }
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
       // 分支无法在共享网上按 app 别名解析到本容器，杜绝串流。未隔离时 connectNetworks 为空，跳过。
       for (const sharedNet of netPlan.connectNetworks) {
-        await this.connectContainerToSharedNetwork(service.containerName, sharedNet, {
+        await this.connectContainerToSharedNetwork(candidate ? service.containerId! : service.containerName, sharedNet, {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
@@ -1813,7 +1824,7 @@ export class ContainerService {
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (attachSharedBeforeStart) {
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
-        const startRes = await this.shell.exec(`docker start ${service.containerName}`);
+        const startRes = await this.shell.exec(`docker start ${candidate ? service.containerId! : service.containerName}`);
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',

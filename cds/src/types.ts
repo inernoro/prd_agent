@@ -1391,6 +1391,10 @@ export interface DeploymentCandidateRecord {
   updatedAt: string;
   /** Persisted before any stop/create; historical missing proofs cannot justify automatic recovery. */
   recoveryProof?: CandidateRecoveryProof;
+  /** Write-ahead per-service intent; missing Daemon result must remain unresolved. */
+  createIntents?: string[];
+  /** Inspected creation result, persisted before network connection/start/readiness. */
+  createdContainers?: Record<string, { id: string; image: string; fingerprint: string }>;
   /** Both graphs remain capacity reservations until actual reconciliation releases them. */
   serving: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
   services: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
