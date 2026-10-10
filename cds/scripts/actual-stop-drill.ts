@@ -70,11 +70,12 @@ async function ready(check: () => Promise<boolean>): Promise<void> {
   throw new Error('Owned application did not become ready');
 }
 
-export async function main(): Promise<void> {
+export async function main(parallelColdLoad = false): Promise<void> {
   assertCi();
   const reference = process.env.CDS_ACCEPTANCE_REFERENCE;
   if (reference) assert.equal(reference, STOP_REFERENCE_HEAD);
-  const output = path.resolve('stop-output', reference ? 'reference' : 'candidate'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
+  assert.ok(!reference || !parallelColdLoad);
+  const output = path.resolve('stop-output', reference ? 'reference' : parallelColdLoad ? 'parallel-cold' : 'candidate'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const owner = `cds_stop_${randomBytes(8).toString('hex')}`;
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-stop-ci-')); await fs.chmod(temp, 0o700);
@@ -85,10 +86,11 @@ export async function main(): Promise<void> {
   const report: any = { schema: 1, startedAt: new Date().toISOString(), head, stopReferenceRevision: reference || null,
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async (name) => [name, hash(await fs.readFile(name))]))),
     verdict: 'failed', scope: 'isolated real branch stop HTTP and container state; no build/deploy/storm acceptance',
-    actualStopVerified: false, actualDeploymentVerified: false, performanceVerified: false,
+    actualStopVerified: false, actualDeploymentVerified: false, performanceVerified: false, coldLoadLifecycle: parallelColdLoad ? 'parallel' : 'sequential',
     runner: { host: os.hostname(), cpus: os.cpus().length, totalMemoryBytes: os.totalmem(), githubRunId: process.env.GITHUB_RUN_ID },
     containers: [], checks: [], commands: [], commandFailures: [], containersRemoved: false, isolatedFilesRemoved: false };
   let server: http.Server | undefined, failedSocket = true, supersedeAfterStop = false;
+  let reopened: StateService | undefined;
   const coordinator = new BranchOperationCoordinator();
   function inspect(member: typeof members[number]): any {
     assert.ok(members.includes(member)); const view = JSON.parse(docker(['inspect', member.id]))[0];
@@ -167,7 +169,11 @@ export async function main(): Promise<void> {
     report.checks.push(first); assert.equal(failed.status, 503); assert.equal(first.apiRunning, true); assert.equal(first.webRunning, false); assert.equal(first.unrelatedRunning, true);
     assert.equal(branch.status, 'error'); assert.equal(branch.services.api.status, 'running'); assert.equal(branch.lastStoppedAt, undefined); assert.equal(branch.stopCount || 0, 0);
     const disk = JSON.parse(await fs.readFile(file, 'utf8')); assert.equal(disk.branches.b.services.api.status, 'running');
-    const reopened = new StateService(file); reopened.load(); assert.equal(new DeploymentRunService(reopened).restoreQueued(new BranchOperationCoordinator()).length, 0);
+    reopened = new StateService(file); reopened.load();
+    // load 可能触发迁移保存；冷读取先等完自己的写入，随后原 HTTP 实例才继续。
+    // 此演练验证顺序冷加载，不把两个独立 JSON 写入器并行当作实例恢复协议。
+    if (!parallelColdLoad) await reopened.flush();
+    assert.equal(new DeploymentRunService(reopened).restoreQueued(new BranchOperationCoordinator()).length, 0);
     failedSocket = false; const confirmed = await request('stop');
     report.checks.push({ phase: 'retry-response', httpStatus: confirmed.status, failedServices: confirmed.body.failedServices ?? [] });
     assert.equal(confirmed.status, 200);
@@ -188,6 +194,7 @@ export async function main(): Promise<void> {
   finally {
     if (server) { server.closeAllConnections(); await new Promise<void>((resolve) => server!.close(() => resolve())); }
     try { await state.flush(); } catch { report.cleanupFailed = true; report.verdict = 'failed'; }
+    try { await reopened?.flush(); } catch { report.coldLoadWriteFailed = true; report.verdict = 'failed'; }
     let removed = 0;
     for (const member of members) { try { inspect(member); docker(['rm', '-fv', member.id]); removed++; } catch { report.cleanupFailed = true; report.verdict = 'failed'; } }
     report.containersRemoved = removed === members.length;
@@ -215,6 +222,21 @@ export async function runReference(): Promise<void> {
     await fs.writeFile(path.resolve('stop-output/reference-validation.json'), `${JSON.stringify({ verdict: 'passed', scope: 'expected old stop implementation failure only', referenceRevision: STOP_REFERENCE_HEAD, referenceReportSha256: hash(await fs.readFile(path.resolve('stop-output/reference/report.json'))) }, null, 2)}\n`, { mode: 0o600 });
   } finally { for (const [name, bytes] of originals) { await fs.writeFile(name, bytes); assert.equal(hash(await fs.readFile(name)), hash(bytes)); } }
 }
+export async function runColdLoadDiagnostic(): Promise<void> {
+  assertCi(); let exitCode = 0;
+  try { execFileSync(process.execPath, ['--import', 'tsx', fileURLToPath(import.meta.url), '--parallel-cold'], { timeout: 180000, stdio: 'pipe', maxBuffer: 8 * 1024 * 1024 }); }
+  catch (error) { exitCode = Number((error as any).status); }
+  assert.ok(exitCode === 0 || exitCode === 1);
+  const file = path.resolve('stop-output/parallel-cold/report.json');
+  const report = JSON.parse(await fs.readFile(file, 'utf8'));
+  assert.equal(report.coldLoadLifecycle, 'parallel'); assert.equal(report.containersRemoved, true); assert.equal(report.isolatedFilesRemoved, true);
+  assert.equal(report.verdict, exitCode === 0 ? 'passed' : 'failed');
+  // 归因诊断可以捕获旧生命周期的失败；独立顺序候选步骤仍必须完整成功。
+  await fs.writeFile(path.resolve('stop-output/cold-load-diagnostic.json'), `${JSON.stringify({ verdict: 'observed', scope: 'original overlapping cold-load lifecycle diagnosis only; not candidate acceptance', exitCode, reportSha256: hash(await fs.readFile(file)) }, null, 2)}\n`, { mode: 0o600 });
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] === '--reference') await runReference(); else { assert.equal(process.argv.length, 2); await main(); }
+  if (process.argv[2] === '--reference') await runReference();
+  else if (process.argv[2] === '--cold-load-diagnostic') await runColdLoadDiagnostic();
+  else if (process.argv[2] === '--parallel-cold') await main(true);
+  else { assert.equal(process.argv.length, 2); await main(); }
 }

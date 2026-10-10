@@ -98,6 +98,8 @@ jobs:
         run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
       - name: Real containers demonstrate old false stop confirmation
         run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts --reference
+      - name: Record original overlapping cold-load lifecycle diagnosis
+        run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts --cold-load-diagnostic
       - name: Real HTTP stop failure retry restart and supersession
         run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts
       - name: Preserve actual stop evidence
