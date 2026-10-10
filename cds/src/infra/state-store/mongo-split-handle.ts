@@ -12,6 +12,7 @@ import { MongoClient, type Db, type Collection } from 'mongodb';
 import type {
   BranchEntry,
   DeploymentRun,
+  PersistedDeploymentIntent,
   DeploymentVersion,
   GithubWebhookDelivery,
   Project,
@@ -69,6 +70,7 @@ interface DeploymentRunDoc {
   projectId: string;
   branchId: string;
   doc: DeploymentRun;
+  executionIntent?: PersistedDeploymentIntent;
   updatedAt: string;
 }
 

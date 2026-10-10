@@ -2966,13 +2966,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return { started: false, lease: null, run: undefined };
     }
     if (decision && deploymentInput) branchOperationCoordinator?.rememberDeploymentInput(decision.operationId, decision.generation, deploymentInput);
+    const originalRequest = decision?.lease?.request || branchOperationCoordinator?.getPendingWebhookDeploy(entry.id, input.profileId)?.request;
+    const executionInput = deploymentInput && originalRequest ? { request: originalRequest, input: deploymentInput } : undefined;
+    const operationAdmissionGeneration = decision?.lease?.admissionGeneration ?? decision?.generation;
     let run: DeploymentRun | undefined;
     try {
       if (decision) run = deploymentRunService?.getForOperation(decision.operationId, decision.generation);
       if (decision?.status === 'joined') {
         if (!run && decision.joinedPending) {
           const pending = branchOperationCoordinator?.getPendingWebhookDeploy(entry.id, input.profileId);
-          run = await deploymentRunService?.begin({ ...runInput, projectId: entry.projectId || 'default', branchId: entry.id,
+          run = await deploymentRunService?.begin({ ...runInput, executionInput, operationAdmissionGeneration, projectId: entry.projectId || 'default', branchId: entry.id,
             profileId: input.profileId || undefined, operationId: decision.operationId, operationGeneration: decision.generation,
             trigger: pending?.request.trigger === 'webhook' ? 'webhook' : 'manual', initialStatus: 'queued', phase: 'operation-queue',
             message: '沿用已受理的目标部署，等待当前操作释放' });
@@ -2987,8 +2990,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 内部重放复用原排队记录，不能再创建一条与调用方脱节的 run。
         await deploymentRunService?.waitForAcceptance(run.id);
         if (DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status)) throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '原排队部署已结束');
+        if (decision?.status === 'started') await deploymentRunService?.claimQueued(run.id);
       } else {
-        run = await deploymentRunService?.begin({ ...runInput, projectId: entry.projectId || 'default', branchId: entry.id,
+        run = await deploymentRunService?.begin({ ...runInput, executionInput, operationAdmissionGeneration, projectId: entry.projectId || 'default', branchId: entry.id,
           profileId: input.profileId || undefined, operationId: decision?.operationId, operationGeneration: decision?.generation,
           initialStatus: decision?.status === 'merged' ? 'queued' : 'pending',
           phase: decision?.status === 'merged' ? 'operation-queue' : runInput.phase,
@@ -12620,7 +12624,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 不编译源码），不是 currentProfiles——否则分支基线已切回源码模式时，重放一个合规的历史版本也会被
     // 误拦（Codex 第七轮 P2）。
     const gateProject = stateService.getProject(entry.projectId || 'default');
-    const agentPrebuiltGated = Boolean(gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req));
+    deploymentInput.agentRequest ||= isAgentGatedRequest(req);
+    const agentPrebuiltGated = Boolean(deploymentInput.agentPrebuiltGated || (gateProject && isAgentPrebuiltOnly(gateProject) && deploymentInput.agentRequest));
+    deploymentInput.agentPrebuiltGated = agentPrebuiltGated;
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -12644,7 +12650,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
-    const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, inputBranch()));
+    const effectiveProfilesForHash = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
     let deploymentConfigHash = deploymentInput.configHash || selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
         effectiveProfilesForHash,
@@ -13442,7 +13448,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
       // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
       if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
-        const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, inputBranch()));
+        const refreshedEffectiveProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
         deploymentConfigHash = deploymentVersionService.computeConfigHash(
           refreshedEffectiveProfiles,
           getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
@@ -14165,7 +14171,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && stateService.getBranch(entry.id) === entry
       ) {
         if (!selectedDeploymentVersion) {
-          const versionProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, inputBranch()));
+          const versionProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
           selectedDeploymentVersion = deploymentVersionService.create({
             projectId: entry.projectId || 'default',
             branchId: entry.id,
@@ -14498,7 +14504,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     // Agent 极速版门禁：单服务部署与整分支部署同一道闸（Codex PR #1513 P1：此端点绕过了整分支入口）。
     const singleDeployProject = stateService.getProject(entry.projectId || 'default');
-    const singleDeployGated = Boolean(singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && isAgentGatedRequest(req));
+    deploymentInput.agentRequest ||= isAgentGatedRequest(req);
+    const singleDeployGated = Boolean(deploymentInput.agentPrebuiltGated || (singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && deploymentInput.agentRequest));
+    deploymentInput.agentPrebuiltGated = singleDeployGated;
     if (singleDeployGated && singleDeployProject) {
       const violations = findNonPrebuiltProfiles([profile], inputBranch());
       if (violations.length > 0) {
@@ -14518,7 +14526,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, inputBranch())], getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
+    const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([singleDeployGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch())], getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
     deploymentInput.configHash = profileDeploymentConfigHash;
     const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy-profile',

@@ -49,6 +49,7 @@ import type {
   BranchEntry,
   ContainerLogArchiveEntry,
   DeploymentRun,
+  PersistedDeploymentIntent,
   DeploymentRunEvent,
   DeploymentVersion,
   GithubWebhookDelivery,
@@ -89,7 +90,7 @@ export interface ISplitMongoHandle {
   globalCollection(): ISplitMongoCollection<{ _id: string; state: GlobalRest; updatedAt: string }>;
   projectsCollection(): ISplitMongoCollection<{ _id: string; doc: Project; updatedAt: string }>;
   branchesCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>;
-  deploymentRunsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; updatedAt: string }>;
+  deploymentRunsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; executionIntent?: PersistedDeploymentIntent; updatedAt: string }>;
   deploymentVersionsCollection(): ISplitMongoCollection<{ _id: string; projectId: string; doc: DeploymentVersion; updatedAt: string }>;
   selfUpdateHistoryCollection(): ISplitMongoCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>;
   // 2026-07-09（debt.cds.state-json #1/#2）：webhook 投递与项目活动流从 global
@@ -106,7 +107,7 @@ export const GLOBAL_DOC_ID = 'global';
  * "rest of CdsState" — 不含 projects 与 branches 的所有 root-level 字段。
  * 拆出来作为类型，方便 mongo 文档 schema 推导。
  */
-export type GlobalRest = Omit<CdsState, 'projects' | 'branches' | 'deploymentRuns' | 'deploymentVersions'>;
+export type GlobalRest = Omit<CdsState, 'projects' | 'branches' | 'deploymentRuns' | 'deploymentVersions' | 'deploymentIntents'>;
 
 const MAX_LOGS_PER_BRANCH = 5;
 const MAX_EVENTS_PER_OPERATION_LOG = 5;
@@ -309,6 +310,7 @@ function globalRestOf(state: CdsState): GlobalRest {
   delete (restOfState as Partial<CdsState>).projects;
   delete (restOfState as Partial<CdsState>).branches;
   delete (restOfState as Partial<CdsState>).deploymentRuns;
+  delete (restOfState as Partial<CdsState>).deploymentIntents;
   delete (restOfState as Partial<CdsState>).deploymentVersions;
   restOfState.logs = Object.fromEntries(
     Object.entries(state.logs || {}).map(([branchId, logs]) => [
@@ -407,13 +409,19 @@ interface EntitySlice<T> {
   entities: Map<string, T>;
 }
 
+interface RunWithIntent { run: DeploymentRun; intent?: PersistedDeploymentIntent }
+
+function runWithIntent(state: CdsState, id: string, run: DeploymentRun): RunWithIntent {
+  return { run, intent: state.deploymentIntents?.[id] };
+}
+
 /** 一次待落盘的写入。full 非空 = 全量快照路径，忽略所有切片字段。 */
 interface PendingWrite {
   generation: number;
   full: CdsState | null;
   projects?: EntitySlice<Project>;
   branches?: EntitySlice<BranchEntry>;
-  deploymentRuns?: EntitySlice<DeploymentRun>;
+  deploymentRuns?: EntitySlice<RunWithIntent>;
   deploymentVersions?: EntitySlice<DeploymentVersion>;
   selfUpdateHistory?: SelfUpdateRecord[];
   webhookDeliveries?: GithubWebhookDelivery[];
@@ -669,6 +677,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         projects: projectDocs.map((pd) => pd.doc),
         branches,
         deploymentRuns: Object.fromEntries(deploymentRunDocs.map((record) => [record.doc.id, sanitizeDeploymentRun(record.doc)])),
+        deploymentIntents: Object.fromEntries(deploymentRunDocs.filter((record) => record.executionIntent).map((record) => [record.doc.id, record.executionIntent!])),
         deploymentVersions: Object.fromEntries(deploymentVersionDocs.map((record) => [record.doc.id, record.doc])),
       } as CdsState;
       this.cache = rebuilt;
@@ -706,7 +715,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     );
     this.persistedJson.deploymentRuns = new Map(
       Object.entries(state.deploymentRuns || {}).map(
-        ([id, run]): [string, string] => [id, stableJson(sanitizeDeploymentRun(run))],
+        ([id, run]): [string, string] => [id, stableJson({ run: sanitizeDeploymentRun(run), intent: state.deploymentIntents?.[id] })],
       ),
     );
     this.persistedJson.deploymentVersions = new Map(
@@ -845,7 +854,12 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
           pending.branches = sliceEntities(live.branches || {}, dirtyIds);
           break;
         case 'deploymentRuns':
-          pending.deploymentRuns = sliceEntities(live.deploymentRuns || {}, dirtyIds);
+          pending.deploymentRuns = {
+            ids: new Set(Object.keys(live.deploymentRuns || {})),
+            entities: new Map((dirtyIds === null ? Object.keys(live.deploymentRuns || {}) : [...dirtyIds])
+              .filter((id) => live.deploymentRuns?.[id])
+              .map((id) => [id, structuredClone(runWithIntent(live, id, live.deploymentRuns![id]))])),
+          };
           break;
         case 'deploymentVersions':
           pending.deploymentVersions = sliceEntities(live.deploymentVersions || {}, dirtyIds);
@@ -938,22 +952,23 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     });
   }
 
-  private async persistDeploymentRuns(currentIds: ReadonlySet<string>, candidates: Iterable<[string, DeploymentRun]>, now: string): Promise<void> {
+  private async persistDeploymentRuns(currentIds: ReadonlySet<string>, candidates: Iterable<[string, RunWithIntent]>, now: string): Promise<void> {
     await this.syncCollection({
       label: 'deploymentRuns',
       collection: this.handle.deploymentRunsCollection(),
       cache: this.persistedJson.deploymentRuns,
       currentIds,
       candidates,
-      serialize: (id, run) => {
+      serialize: (id, { run, intent }) => {
         const sanitized = sanitizeDeploymentRun(run);
         return {
-          json: stableJson(sanitized),
+          json: stableJson({ run: sanitized, intent }),
           replacement: {
             _id: id,
             projectId: sanitized.projectId,
             branchId: sanitized.branchId,
             doc: sanitized,
+            ...(intent ? { executionIntent: intent } : {}),
             updatedAt: now,
           },
         };
@@ -1049,7 +1064,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     );
     await this.persistDeploymentRuns(
       new Set(Object.keys(snapshot.deploymentRuns || {})),
-      Object.entries(snapshot.deploymentRuns || {}),
+      Object.entries(snapshot.deploymentRuns || {}).map(([id, run]) => [id, runWithIntent(snapshot, id, run)]),
       now,
     );
     await this.persistDeploymentVersions(
@@ -1205,6 +1220,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
           projectId: run.projectId,
           branchId: run.branchId,
           doc: run,
+          ...(snapshot.deploymentIntents?.[run.id] ? { executionIntent: snapshot.deploymentIntents[run.id] } : {}),
           updatedAt: now,
         },
         upsert: true,

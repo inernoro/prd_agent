@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MongoSplitStateBackingStore, type ISplitMongoCollection, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
-import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord } from '../../src/types.js';
+import type { BranchEntry, CdsState, DeploymentRun, DeploymentVersion, GithubWebhookDelivery, Project, ProjectActivityLog, SelfUpdateRecord, PersistedDeploymentIntent } from '../../src/types.js';
 
 function emptyState(): CdsState {
   return {
@@ -73,7 +73,7 @@ class FakeSplitHandle implements ISplitMongoHandle {
   global = new FakeSplitCollection<{ _id: string; state: Omit<CdsState, 'projects' | 'branches'>; updatedAt: string }>();
   projects = new FakeSplitCollection<{ _id: string; doc: Project; updatedAt: string }>();
   branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: BranchEntry; updatedAt: string }>();
-  deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; updatedAt: string }>();
+  deploymentRuns = new FakeSplitCollection<{ _id: string; projectId: string; branchId: string; doc: DeploymentRun; executionIntent?: PersistedDeploymentIntent; updatedAt: string }>();
   deploymentVersions = new FakeSplitCollection<{ _id: string; projectId: string; doc: DeploymentVersion; updatedAt: string }>();
   selfUpdateHistory = new FakeSplitCollection<{ _id: string; ts: string; doc: SelfUpdateRecord; updatedAt: string }>();
   webhookDeliveries = new FakeSplitCollection<{ _id: string; receivedAt: string; doc: GithubWebhookDelivery; updatedAt: string }>();
@@ -132,6 +132,27 @@ function makeActivityLog(projectId: string, seq: number, at: string): ProjectAct
 }
 
 describe('MongoSplitStateBackingStore', () => {
+  it('私有部署输入与run同一实体增量落盘和恢复，不进入global或公开run', async () => {
+    const handle = new FakeSplitHandle(); const store = new MongoSplitStateBackingStore(handle); await store.init();
+    const state = emptyState(); const run = makeRun('input-run', 'b'); run.status = 'queued';
+    state.deploymentRuns = { [run.id]: run };
+    const intent: PersistedDeploymentIntent = { schema: 1, inputDigest: 'digest', runId: run.id, operationId: 'original', generation: 2, admissionGeneration: 2,
+      request: { branchId: 'b', projectId: 'prd-agent', kind: 'deploy', trigger: 'webhook' }, inputPayload: 'private-before' };
+    state.deploymentIntents = { [run.id]: intent };
+    store.save(state); await store.flush();
+    expect(handle.deploymentRuns.docs.get(run.id)?.executionIntent).toEqual(intent);
+    expect(JSON.stringify(handle.deploymentRuns.docs.get(run.id)?.doc)).not.toContain('private-before');
+    expect((handle.global.docs.get('global')?.state as any).deploymentIntents).toBeUndefined();
+    const count = handle.deploymentRuns.bulkWrites.length;
+    intent.inputPayload = 'private-after'; store.save(state, [{ kind: 'deploymentRuns', id: run.id }]); await store.flush();
+    expect(handle.deploymentRuns.bulkWrites).toHaveLength(count + 1);
+    expect(handle.deploymentRuns.docs.get(run.id)?.executionIntent?.inputPayload).toBe('private-after');
+    const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+    expect(reopened.load()?.deploymentIntents?.[run.id]?.inputPayload).toBe('private-after');
+    delete state.deploymentIntents[run.id]; run.status = 'failed'; store.save(state, [{ kind: 'deploymentRuns', id: run.id }]); await store.flush();
+    expect(handle.deploymentRuns.docs.get(run.id)?.executionIntent).toBeUndefined();
+  });
+
   it('persists deployment runs outside the global document and reloads them', async () => {
     const handle = new FakeSplitHandle();
     const store = new MongoSplitStateBackingStore(handle);

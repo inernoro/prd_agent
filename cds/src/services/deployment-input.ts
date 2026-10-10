@@ -11,6 +11,8 @@ export interface DeploymentInputSnapshot {
   configuredEnv: Record<string, string>;
   managedPlan?: ManagedProjectPlan | null;
   configHash?: string;
+  agentRequest?: boolean;
+  agentPrebuiltGated?: boolean;
 }
 
 export function captureDeploymentInput(

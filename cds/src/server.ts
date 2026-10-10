@@ -1834,6 +1834,10 @@ export function createServer(deps: ServerDeps): express.Express {
     ),
   );
   const deploymentRunService = new DeploymentRunService(deps.stateService);
+  if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
+    const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
+    if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
+  }
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
   const aiExplanationEndpoint = String(process.env.CDS_AI_EXPLANATION_GATEWAY_URL || '').trim();

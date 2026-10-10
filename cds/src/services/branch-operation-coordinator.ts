@@ -77,6 +77,7 @@ export interface BranchOperationLease {
   generation: number;
   request: BranchOperationRequest;
   startedAt: string;
+  admissionGeneration?: number;
   isCurrent(): boolean;
   assertCurrent(step?: string): void;
 }
@@ -308,6 +309,21 @@ export class BranchOperationCoordinator {
       || (pending.request.versionId || null) !== (request.versionId || null) || request.hasOneShotOptions) return undefined;
     const input = this.deploymentInputs.get(key);
     return input ? structuredClone(input) : undefined;
+  }
+
+  seedGeneration(branchId: string, generation: number): void {
+    if (Number.isSafeInteger(generation) && generation > this.currentGeneration(branchId)) this.generations.set(branchId, generation);
+  }
+
+  /** 启动期恢复已落盘、尚未执行的意图，原操作与代次保持不变。 */
+  restorePendingDeployment(pending: PendingWebhookDeploy, input: DeploymentInputSnapshot): void {
+    if (this.hasWaitingOperation(pending.operationId, pending.generation)) return;
+    this.seedGeneration(pending.branchId, pending.generation);
+    const restored = { ...pending, request: { ...pending.request, pendingReplay: null } };
+    this.supersedeCoveredWaiting(restored.request);
+    this.pendingWebhookDeploys.set(this.operationKey(restored.request), restored);
+    this.rememberDeploymentInput(restored.operationId, restored.generation, input);
+    this.record('branch.operation.restored', restored.request, restored.operationId, restored.generation, 'info', { pending: true, recoveredAt: nowIso() });
   }
 
   onOperationEnded(listener: (operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void): () => void {
@@ -619,7 +635,7 @@ export class BranchOperationCoordinator {
     this.generations.clear();
   }
 
-  private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
+  private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; admissionGeneration?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
     if (!request.pendingReplay && !existing?.continuedFrom) {
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
         this.cancelPendingWebhookDeploy(request.branchId, `superseded by ${request.kind}`, {}, request);
@@ -631,6 +647,7 @@ export class BranchOperationCoordinator {
     const branchId = request.branchId;
     const key = this.operationKey(request);
     const generation = existing?.generation ?? this.nextGeneration(branchId);
+    const admissionGeneration = existing?.admissionGeneration ?? generation;
     const operationId = existing?.operationId ?? this.createOperationId();
     const active: ActiveOperation = {
       operationId,
@@ -647,6 +664,7 @@ export class BranchOperationCoordinator {
       generation,
       request,
       startedAt: active.startedAt,
+      admissionGeneration,
       isCurrent: () => this.isCurrent(branchId, operationId, generation),
       assertCurrent: (step?: string) => {
         if (!this.isCurrent(branchId, operationId, generation)) {
@@ -720,6 +738,7 @@ export class BranchOperationCoordinator {
       return this.start(request, {
         operationId: reserved.operationId,
         generation,
+        admissionGeneration: reserved.generation,
         continuedFrom: reserved.request,
       });
     }

@@ -13,7 +13,7 @@ import {
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
-import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import { ManagedProjectService } from '../../src/services/managed-project.js';
@@ -710,6 +710,32 @@ describe('Branch Routes', () => {
         status: 'idle', createdAt: now,
       });
     }
+
+    it('机器凭据排队重放仍保留极速版限制，不因内部派发失去身份而允许源码回退', async () => {
+      seedGateProject(true); stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      let release!: () => void, started!: () => void, replayed!: () => void;
+      const hold = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
+      const done = new Promise<void>((resolve) => { replayed = resolve; });
+      const executed: any[] = [];
+      const run = vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, profile, service) => {
+        executed.push(profile); if (executed.length === 1) { started(); await hold; }
+        service.status = 'running'; service.deployedMode = 'express';
+      });
+      let replayStatus = 0;
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input)); const response = await request(server, 'POST', url.pathname, JSON.parse(String(init?.body)), init?.headers as Record<string, string>);
+        replayStatus = response.status; replayed(); return new Response(String(response.body), { status: response.status });
+      });
+      const first = request(server, 'POST', '/api/branches/b1/deploy', { commitSha: 'a'.repeat(40) }, { 'X-Test-Key': 'A' });
+      try {
+        await start;
+        const queued = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: 'b'.repeat(40) }, { 'X-Test-Key': 'A' });
+        expect(deploymentRunService.get(String(queued.headers['x-cds-deployment-run-id']))?.status).toBe('queued');
+        release(); await first; await done;
+        expect(replayStatus).toBe(200); expect(executed).toHaveLength(2);
+        expect(executed.every((profile) => profile.prebuiltImage === true && profile.sourceFallbackProfile === undefined)).toBe(true);
+      } finally { release(); await first; run.mockRestore(); vi.unstubAllGlobals(); }
+    });
 
     it('机器凭据部署源码模式分支被 409 拒绝，响应说清被拦服务与可切模式', async () => {
       seedGateProject(true);
@@ -3632,6 +3658,27 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it.each(['/deploy', '/deploy/api'])('重放%s领取落盘失败返回503，原run失败且不执行Git或Docker', async (endpoint) => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      stateService.addBranch({ id: 'claim-fail', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'claim-fail'),
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      const active = branchOperationCoordinator.begin({ projectId: 'default', branchId: 'claim-fail', kind: 'deploy', trigger: 'manual' });
+      const queued = await request(server, 'POST', `/api/branches/claim-fail${endpoint}`, { commitSha: 'b'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+      const runId = String(queued.headers['x-cds-deployment-run-id']);
+      expect(deploymentRunService.get(runId)?.status).toBe('queued');
+      const pending = branchOperationCoordinator.completeAll(active.lease!, 'completed')[0];
+      const count = mock.commands.length;
+      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('synthetic claim write failure'));
+      try {
+        const replay = await request(server, 'POST', `/api/branches/claim-fail${endpoint}`, pendingDeployBody(pending), { 'X-CDS-Trigger': 'webhook' });
+        expect(replay.status).toBe(503);
+        expect(deploymentRunService.get(runId)?.status).toBe('failed');
+        expect(deploymentRunService.list({ branchId: 'claim-fail' })).toHaveLength(1);
+        expect(mock.commands.slice(count).filter((command) => /git (fetch|pull|checkout)|docker (run|pull)/.test(command))).toEqual([]);
+        expect(branchOperationCoordinator.getActive('claim-fail')).toBeUndefined();
+      } finally { flush.mockRestore(); }
+    });
+
     it('已派发待办的HTTP重放迟于新目标到达时，不得重新启动旧目标', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,

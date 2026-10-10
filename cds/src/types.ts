@@ -1,6 +1,7 @@
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
+import type { BranchOperationRequest } from './services/branch-operation-coordinator.js';
 
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
@@ -1332,6 +1333,18 @@ export interface DeploymentRunEvent {
  * 记录必须在 pull / build / docker 等副作用之前创建。events 是有界窗口，
  * seq 终身递增；firstEventSeq 告诉续传客户端窗口是否已经截断。
  */
+export interface PersistedDeploymentIntent {
+  /** 配对记录损坏时拒绝重放，覆盖请求身份及全部私有执行输入。 */
+  inputDigest: string;
+  schema: 1;
+  runId: string;
+  operationId: string;
+  generation: number;
+  admissionGeneration: number;
+  request: BranchOperationRequest;
+  inputPayload: string | SealedSecret;
+}
+
 export interface DeploymentRun {
   id: string;
   projectId: string;
@@ -1345,6 +1358,8 @@ export interface DeploymentRun {
   versionId?: string;
   operationId?: string;
   operationGeneration?: number;
+  /** 原请求的受理顺序；强制重建续接不因执行代次递增而成为更晚意图。 */
+  operationAdmissionGeneration?: number;
   profileId?: string;
   executorId?: string;
   configHash?: string;
@@ -2129,6 +2144,8 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** 分支部署唯一事实记录，key 为 DeploymentRun.id。旧状态可缺省。 */
   deploymentRuns?: Record<string, DeploymentRun>;
+  /** 私有执行输入，Mongo 与对应 run 同文档落盘，不进入 run API 或 SSE。 */
+  deploymentIntents?: Record<string, PersistedDeploymentIntent>;
   /** 不可变部署版本，key 为 DeploymentVersion.id。旧状态可缺省。 */
   deploymentVersions?: Record<string, DeploymentVersion>;
   /** Release targets keyed by id. */

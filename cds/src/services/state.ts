@@ -47,6 +47,7 @@ import type {
   ScheduledJobRun,
   ScheduledJobAction,
   DeploymentRun,
+  PersistedDeploymentIntent,
   DeploymentVersion,
   ContainerTeardownTombstone,
   DeletedProjectWorktreeTombstone,
@@ -277,6 +278,7 @@ function emptyState(): CdsState {
     nextPortIndex: 0,
     logs: {},
     deploymentRuns: {},
+    deploymentIntents: {},
     deploymentVersions: {},
     containerLogArchives: {},
     defaultBranch: null,
@@ -1575,7 +1577,7 @@ export class StateService {
 
   // ── Deployment runs（分支部署唯一事实源）──
 
-  addDeploymentRun(run: DeploymentRun): DeploymentRun {
+  addDeploymentRun(run: DeploymentRun, intent?: PersistedDeploymentIntent): DeploymentRun {
     if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
     if (this.state.deploymentRuns[run.id]) {
       throw new Error(`DeploymentRun already exists: ${run.id}`);
@@ -1586,6 +1588,13 @@ export class StateService {
       throw new Error(`DeploymentRun project mismatch: ${run.projectId} != ${branch.projectId}`);
     }
     this.state.deploymentRuns[run.id] = run;
+    if (intent) {
+      if (intent.runId !== run.id || intent.operationId !== run.operationId || intent.generation !== run.operationGeneration) {
+        delete this.state.deploymentRuns[run.id];
+        throw new Error('Deployment intent does not match run identity');
+      }
+      (this.state.deploymentIntents ||= {})[run.id] = intent;
+    }
     branch.lastDeploymentRunId = run.id;
     this.pruneDeploymentRuns(run.projectId);
     // prune 只会删同 kind 的其他 run —— 删除检测靠 id 集，单实体 hint 足够覆盖。
@@ -1605,13 +1614,18 @@ export class StateService {
    */
   removeDeploymentRunsForBranch(branchId: string): number {
     const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
-    for (const id of ids) delete this.state.deploymentRuns?.[id];
+    for (const id of ids) { delete this.state.deploymentRuns?.[id]; delete this.state.deploymentIntents?.[id]; }
     if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
     return ids.length;
   }
 
   getDeploymentRun(id: string): DeploymentRun | undefined {
     return this.state.deploymentRuns?.[id];
+  }
+
+  /** 仅供执行恢复读取，不通过公开 run 投影暴露。 */
+  getDeploymentIntents(): PersistedDeploymentIntent[] {
+    return Object.values(this.state.deploymentIntents || {});
   }
 
   getDeploymentRunForOperation(operationId: string, generation: number): DeploymentRun | undefined {
@@ -1640,6 +1654,7 @@ export class StateService {
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
     mutate(run);
+    if (run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') delete this.state.deploymentIntents?.[id];
     this.save([{ kind: 'deploymentRuns', id }]);
     return run;
   }
@@ -1654,6 +1669,7 @@ export class StateService {
       if (overflow <= 0) break;
       if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
       delete this.state.deploymentRuns?.[run.id];
+      delete this.state.deploymentIntents?.[run.id];
       overflow -= 1;
     }
   }

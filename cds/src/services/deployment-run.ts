@@ -8,6 +8,7 @@ import type {
 } from '../types.js';
 import type { StateService } from './state.js';
 import type { BranchOperationCoordinator } from './branch-operation-coordinator.js';
+import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -35,6 +36,8 @@ export interface BeginDeploymentRunInput {
   commitSha?: string;
   operationId?: string;
   operationGeneration?: number;
+  operationAdmissionGeneration?: number;
+  executionInput?: DeploymentExecutionInput;
   profileId?: string;
   initialStatus?: 'pending' | 'queued';
   executorId?: string;
@@ -87,6 +90,7 @@ export class DeploymentRunService {
       commitSha: input.commitSha,
       operationId: input.operationId,
       operationGeneration: input.operationGeneration,
+      operationAdmissionGeneration: input.operationAdmissionGeneration ?? input.operationGeneration,
       profileId: input.profileId,
       executorId: input.executorId,
       versionId: input.versionId,
@@ -103,7 +107,7 @@ export class DeploymentRunService {
         message: this.normalizeMessage(input.message || '部署请求已受理'),
       }],
     };
-    const persisted = this.stateService.addDeploymentRun(run);
+    const persisted = this.stateService.addDeploymentRun(run, input.executionInput ? captureDeploymentIntent(run, input.executionInput) : undefined);
     const write = this.stateService.flush();
     this.acceptanceWrites.set(persisted.id, write);
     try { await write; return persisted; }
@@ -120,6 +124,45 @@ export class DeploymentRunService {
 
   async flush(): Promise<void> {
     await this.stateService.flush();
+  }
+
+  /** 领取必须先可靠迁移到 preparing，避免已执行任务仍以 queued 落盘而重复恢复。 */
+  async claimQueued(id: string): Promise<void> {
+    const run = this.get(id);
+    if (!run || run.status !== 'queued') return;
+    this.transition(id, 'preparing', { phase: 'admission-replay', message: '排队目标已领取，正在保存执行身份' });
+    const write = this.stateService.flush();
+    this.acceptanceWrites.set(id, write);
+    try { await write; } finally { if (this.acceptanceWrites.get(id) === write) this.acceptanceWrites.delete(id); }
+  }
+
+  restoreQueued(coordinator: BranchOperationCoordinator): DeploymentRun[] {
+    this.bindOperationCoordinator(coordinator);
+    const runs = this.list();
+    for (const run of runs) if (run.operationGeneration !== undefined) coordinator.seedGeneration(run.branchId, run.operationGeneration);
+    const restored: DeploymentRun[] = [];
+    const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
+    for (const intent of intents) {
+      const run = this.get(intent.runId);
+      if (!run || run.status !== 'queued') continue;
+      try {
+        const branch = this.stateService.getBranch(run.branchId);
+        if (!branch || (branch.projectId || 'default') !== run.projectId || !this.stateService.getProject(run.projectId)) throw new Error('Deployment intent owner missing');
+        const input = readDeploymentIntent(run, intent);
+        // 最新覆盖范围的已受理结果压住旧排队；重建续接使用原受理顺序，不能取消其后意图。
+        const newer = runs.some((candidate) => candidate.branchId === run.branchId && candidate.projectId === run.projectId
+          && candidate.operationAdmissionGeneration !== undefined && candidate.operationAdmissionGeneration > intent.admissionGeneration
+          && (!candidate.profileId || candidate.profileId === run.profileId));
+        if (newer) { this.cancel(run.id, '已有较新的覆盖范围部署，旧待办不再恢复', 'superseded'); continue; }
+        coordinator.restorePendingDeployment({ operationId: intent.operationId, generation: intent.generation, branchId: run.branchId,
+          request: intent.request, mergedCount: 1, updatedAt: run.startedAt }, input);
+        restored.push(run);
+      } catch {
+        this.fail(run.id, { code: 'cds.intent.unrecoverable', owner: 'cds', retryable: true,
+          summary: '原排队部署的配置或身份无法可靠恢复，请重新部署', phase: 'recovery', evidenceRefs: [], suggestedAction: '重新部署当前目标' });
+      }
+    }
+    return restored;
   }
 
   bindOperationCoordinator(coordinator: BranchOperationCoordinator): void {
@@ -251,6 +294,8 @@ export class DeploymentRunService {
     const reconciled: DeploymentRun[] = [];
     for (const run of this.stateService.getDeploymentRuns()) {
       if (TERMINAL_STATUSES.has(run.status)) continue;
+      if (run.status === 'queued' && run.operationId && run.operationGeneration !== undefined
+        && [...this.boundCoordinators].some((coordinator) => coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!))) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || heartbeat >= boundary) continue;
       reconciled.push(this.fail(run.id, {
