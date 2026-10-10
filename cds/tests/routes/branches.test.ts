@@ -3727,10 +3727,11 @@ describe('Branch Routes', () => {
         }
         release();
         await active;
-        expect(replays).toEqual([
+        expect(replays).toHaveLength(2);
+        expect(replays).toEqual(expect.arrayContaining([
           { url: 'http://127.0.0.1:9900/api/branches/service-pending/deploy/api', commitSha: 'd'.repeat(40) },
           { url: 'http://127.0.0.1:9900/api/branches/service-pending/deploy/web', commitSha: 'c'.repeat(40) },
-        ]);
+        ]));
         expect(branchOperationCoordinator.getPendingWebhookDeploy('service-pending')).toBeUndefined();
       } finally {
         release();
@@ -3805,6 +3806,51 @@ describe('Branch Routes', () => {
     // 外层 handler 在取租约前就建了占位 run 并写进 X-CDS-Deployment-Run-Id，并入后
     // 占位 run 会被取消，而 cdscli 只认这个头、见 cancelled 即判部署失败——正是本批
     // 要治的「push 后紧跟 deploy」路径。
+    it.each([false, true])('真实HTTP整分支领取期间新API等待，传输失败=%s后仍推进原API记录', async (failTransport) => {
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
+      const branchId = 'scope-barrier';
+      stateService.addBranch({ id: branchId, projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', branchId), status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      let releaseActive!: () => void, activeStarted!: () => void, releaseReplay!: () => void, dispatchStarted!: () => void, apiFinished!: () => void;
+      const activeGate = new Promise<void>((r) => { releaseActive = r; }); const activeReady = new Promise<void>((r) => { activeStarted = r; });
+      const replayGate = new Promise<void>((r) => { releaseReplay = r; }); const dispatched = new Promise<void>((r) => { dispatchStarted = r; });
+      const apiDone = new Promise<void>((r) => { apiFinished = r; });
+      const original = mock.exec.bind(mock); let actualRuns = 0; const replayIds: string[] = [];
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker run -d') && command.includes('cds-scope-barrier-api')) {
+          actualRuns++; if (actualRuns === 1) { activeStarted(); await activeGate; }
+        }
+        return original(command, options);
+      };
+      let wholeDispatch: Promise<Response> | undefined;
+      vi.stubGlobal('fetch', vi.fn((url, init) => {
+        const route = new URL(String(url)).pathname;
+        const task = (async () => {
+        if (route === `/api/branches/${branchId}/deploy`) { dispatchStarted(); await replayGate; if (failTransport) throw new Error('controlled pending transport failure'); }
+        const response = await request(server, 'POST', route, JSON.parse(String(init?.body)), { 'X-CDS-Trigger': String((init?.headers as any)?.['X-CDS-Trigger'] || 'webhook') });
+        replayIds.push(String(response.headers['x-cds-deployment-run-id']));
+        if (route.endsWith('/api')) apiFinished();
+        return new Response(String(response.body), { status: response.status });
+        })();
+        if (route === `/api/branches/${branchId}/deploy`) wholeDispatch = task;
+        return task;
+      }));
+      const active = request(server, 'POST', `/api/branches/${branchId}/deploy`, { commitSha: 'a'.repeat(40) });
+      try {
+        await activeReady;
+        const whole = await request(server, 'POST', `/api/branches/${branchId}/deploy`, { commitSha: 'b'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        const wholeId = String(whole.headers['x-cds-deployment-run-id']);
+        releaseActive(); await active; await dispatched;
+        const api = await request(server, 'POST', `/api/branches/${branchId}/deploy/api`, { commitSha: 'c'.repeat(40) });
+        const apiId = String(api.headers['x-cds-deployment-run-id']);
+        expect(String(api.body)).toContain('merged'); expect(actualRuns).toBe(1); expect(deploymentRunService.get(apiId)?.status).toBe('queued');
+        releaseReplay(); await apiDone;
+        expect(actualRuns).toBe(failTransport ? 2 : 3);
+        expect(replayIds).toEqual(failTransport ? [apiId] : [wholeId, apiId]);
+        expect(deploymentRunService.get(wholeId)?.status).toBe(failTransport ? 'cancelled' : 'running');
+        expect(deploymentRunService.get(apiId)?.status).toBe('running');
+      } finally { releaseActive(); releaseReplay(); await Promise.allSettled([active, wholeDispatch]); vi.unstubAllGlobals(); }
+    });
+
     it('受理落盘失败返回503并释放租约，旧服务未被替换', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
       stateService.addBranch({ id: 'admission-fail', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'admission-fail'),

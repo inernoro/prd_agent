@@ -1473,6 +1473,9 @@ function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateSe
 
   const sample = () => {
     try {
+      if (config.mode !== 'executor' && !isSelfUpdateDraining(Date.now())) {
+        for (const pending of branchOperationCoordinator.drainReady()) dispatchBackgroundPendingWebhookDeploy(pending);
+      }
       const health = evaluateBuildGateHealth(buildGateStatus(), state.getDeploymentRuns(), new Date());
       const now = Date.now();
       if (health.ok) {
@@ -2227,6 +2230,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
   if (!pending) return;
   const branch = stateService.getBranch(pending.branchId);
   if (!branch) {
+    branchOperationCoordinator.cancelBranch(pending.branchId, 'branch removed before dispatch');
     branchOperationCoordinator.releasePendingReplay(pending, 'branch removed before dispatch');
     activeServerEventLogStore?.record({
       category: 'system',
@@ -2277,7 +2281,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
       if (done) break;
     }
   }).catch((err) => {
-    branchOperationCoordinator.releasePendingReplay(pending, 'pending dispatch failed');
+    for (const ready of branchOperationCoordinator.releasePendingReplay(pending, 'pending dispatch failed')) dispatchBackgroundPendingWebhookDeploy(ready);
     activeServerEventLogStore?.record({
       category: 'system',
       severity: 'error',

@@ -14,7 +14,7 @@ describe('分支待办的项目与服务范围', () => {
     expect(coordinator.getPendingWebhookDeploy('main', 'web')?.request.commitSha).toBe('b'.repeat(40));
     const pending = coordinator.completeAll(active.lease!, 'completed');
     expect(pending.map(item => [item.request.profileId, item.request.commitSha, item.mergedCount]))
-      .toEqual([['api', 'c'.repeat(40), 2], ['web', 'b'.repeat(40), 1]]);
+      .toEqual([['web', 'b'.repeat(40), 1], ['api', 'c'.repeat(40), 2]]);
     expect(coordinator.completeAll(active.lease!, 'completed')).toEqual([]);
   });
 

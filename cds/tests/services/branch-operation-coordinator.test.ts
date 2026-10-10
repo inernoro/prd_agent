@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BranchOperationCoordinator, BranchOperationSupersededError, sameCommitIdentity } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
@@ -50,6 +50,123 @@ function eventSink(): {
 }
 
 describe('BranchOperationCoordinator', () => {
+  it('新整分支目标取代覆盖范围内旧服务待办，停止后不重放旧服务', () => {
+    const { sink, records } = eventSink(); const c = new BranchOperationCoordinator(sink);
+    const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: SHA_A });
+    const api = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'webhook', commitSha: SHA_B });
+    const web = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'web', trigger: 'webhook', commitSha: SHA_B });
+    const whole = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_C });
+    expect(c.getPendingWebhookDeploy('b', 'api')).toBeUndefined(); expect(c.getPendingWebhookDeploy('b', 'web')).toBeUndefined();
+    expect(c.completeAll(active.lease!, 'completed').map((p) => p.operationId)).toEqual([whole.operationId]);
+    expect(records.filter((r) => r.action === 'branch.operation.cancelled').map((r) => r.operationId)).toEqual(expect.arrayContaining([api.operationId, web.operationId]));
+  });
+
+  it('新API目标等待更早整分支目标，不能在Web释放前先执行而被整分支覆盖', () => {
+    const c = new BranchOperationCoordinator();
+    const api = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual' });
+    const web = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'web', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'webhook', commitSha: SHA_A });
+    const whole = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+    const latestApi = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'webhook', commitSha: SHA_C });
+    expect(c.completeAll(api.lease!, 'completed')).toEqual([]);
+    const [first] = c.completeAll(web.lease!, 'completed'); expect(first.operationId).toBe(whole.operationId);
+    const resumed = c.begin({ ...first.request, pendingReplay: { operationId: first.operationId, generation: first.generation } });
+    expect(resumed.status).toBe('started'); expect(resumed.generation).toBe(whole.generation);
+    expect(c.completeAll(resumed.lease!, 'completed').map((p) => p.operationId)).toEqual([latestApi.operationId]);
+  });
+
+  it('整分支已派发尚未到达时，新API目标排在其后且重放保持原代次', () => {
+    const c = new BranchOperationCoordinator();
+    const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+    const [claimed] = c.completeAll(active.lease!, 'completed');
+    const api = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual', commitSha: SHA_C });
+    expect(api.status).toBe('merged');
+    const resumed = c.begin({ ...claimed.request, pendingReplay: { operationId: claimed.operationId, generation: claimed.generation } });
+    expect(resumed.status).toBe('started'); expect(resumed.generation).toBe(claimed.generation);
+    expect(c.completeAll(resumed.lease!, 'completed').map((p) => p.operationId)).toEqual([api.operationId]);
+  });
+
+  it('再次请求原待办整分支目标也淘汰其后旧API意图，而不另建整分支任务', () => {
+    const c = new BranchOperationCoordinator();
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    const request = { projectId: 'p', branchId: 'b', kind: 'deploy' as const, trigger: 'webhook' as const, commitSha: SHA_B, commitPinned: true, configHash: 'cfg' };
+    const whole = c.begin(request);
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'webhook', commitSha: SHA_C });
+    const duplicate = c.begin(request);
+    expect(duplicate.status).toBe('joined'); expect(duplicate.operationId).toBe(whole.operationId);
+    expect(c.getPendingWebhookDeploy('b', 'api')).toBeUndefined();
+  });
+
+  it('请求当前API目标不能并入在途API而放任更早待办整分支随后覆盖它', () => {
+    const c = new BranchOperationCoordinator();
+    const api = { projectId: 'p', branchId: 'b', kind: 'deploy-profile' as const, profileId: 'api', trigger: 'manual' as const, commitSha: SHA_A, commitPinned: true, configHash: 'cfg' };
+    c.begin(api); c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'web', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+    expect(c.begin(api).status).toBe('merged');
+    expect(c.getPendingWebhookDeploy('b', 'api')?.request.commitSha).toBe(SHA_A);
+  });
+
+  it('整分支重放传输失败后立即释放下一服务目标，不遗留无人唤醒待办', () => {
+    const c = new BranchOperationCoordinator();
+    const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+    const [claimed] = c.completeAll(active.lease!, 'completed');
+    const api = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual', commitSha: SHA_C });
+    expect(c.releasePendingReplay(claimed, 'transport failed').map((p) => p.operationId)).toEqual([api.operationId]);
+  });
+
+  it('领取凭据过期后定时对账释放后继，不依赖新部署触发', () => {
+    let now = Date.now(); const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const c = new BranchOperationCoordinator();
+      const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+      c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+      const [claimed] = c.completeAll(active.lease!, 'completed');
+      const api = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual', commitSha: SHA_C });
+      expect(c.drainReady()).toEqual([]); now += 5 * 60_000 + 1;
+      expect(c.drainReady().map((p) => p.operationId)).toEqual([api.operationId]);
+      expect(c.hasWaitingOperation(claimed.operationId, claimed.generation)).toBe(false);
+    } finally { clock.mockRestore(); }
+  });
+
+  it('只领取尚无活动操作时停止也取消所有重叠待办，不在停止后再次部署', () => {
+    const c = new BranchOperationCoordinator();
+    const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_B });
+    c.completeAll(active.lease!, 'completed');
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual', commitSha: SHA_C });
+    const stop = c.begin({ projectId: 'p', branchId: 'b', kind: 'stop', trigger: 'manual' });
+    expect(c.completeAll(stop.lease!, 'completed')).toEqual([]); expect(c.getPendingWebhookDeploy('b', 'api')).toBeUndefined();
+  });
+
+  it('领取后撞到较新重建时重新排队仍保留原操作和代次，不冒领重建续接', () => {
+    const c = new BranchOperationCoordinator();
+    const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: SHA_B });
+    const [claimed] = c.completeAll(active.lease!, 'completed');
+    const force = c.begin({ projectId: 'p', branchId: 'b', kind: 'force-rebuild', profileId: 'api', trigger: 'manual', continueWith: 'deploy-profile' });
+    const replay = { ...claimed.request, pendingReplay: { operationId: claimed.operationId, generation: claimed.generation } };
+    const waiting = c.begin(replay); expect(waiting.status).toBe('merged'); expect(waiting.generation).toBe(claimed.generation);
+    expect(c.completeAll(force.lease!, 'completed')).toEqual([]);
+    const continuation = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual' });
+    expect(continuation.operationId).toBe(force.operationId);
+    expect(c.completeAll(continuation.lease!, 'completed').map((p) => [p.operationId, p.generation])).toEqual([[claimed.operationId, claimed.generation]]);
+  });
+
+  it('新整分支撤销旧服务领取凭据，单服务更新不丢Web与其他项目', () => {
+    const c = new BranchOperationCoordinator();
+    const whole = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    for (const profileId of ['api', 'web']) c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId, trigger: 'webhook', commitSha: SHA_A });
+    const [api, web] = c.completeAll(whole.lease!, 'completed');
+    const newerApi = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy-profile', profileId: 'api', trigger: 'manual', commitSha: SHA_B });
+    expect(newerApi.status).toBe('started'); expect(c.hasWaitingOperation(web.operationId, web.generation)).toBe(true);
+    expect(c.begin({ ...api.request, pendingReplay: { operationId: api.operationId, generation: api.generation } }).status).toBe('rejected');
+    const other = c.begin({ projectId: 'other', branchId: 'b', kind: 'deploy', trigger: 'manual' });
+    c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: SHA_C });
+    expect(c.hasWaitingOperation(web.operationId, web.generation)).toBe(false); expect(other.lease!.isCurrent()).toBe(true);
+  });
+
   it('较新的手动整分支部署取代在途目标时，也取消旧待执行目标并保留审计', () => {
     const { sink, records } = eventSink();
     const coordinator = new BranchOperationCoordinator(sink);

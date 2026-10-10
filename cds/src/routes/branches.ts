@@ -3150,6 +3150,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!pending) return;
     const branch = stateService.getBranch(pending.branchId);
     if (!branch) {
+      branchOperationCoordinator?.cancelBranch(pending.branchId, 'branch removed before dispatch');
       branchOperationCoordinator?.releasePendingReplay(pending, 'branch removed before dispatch');
       serverEventLogStore?.record({
         category: 'system',
@@ -3209,7 +3210,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         })();
       }
     }).catch((err) => {
-      branchOperationCoordinator?.releasePendingReplay(pending, 'pending dispatch failed');
+      for (const ready of branchOperationCoordinator?.releasePendingReplay(pending, 'pending dispatch failed') || []) dispatchPendingWebhookDeploy(ready);
       serverEventLogStore?.record({
         category: 'system',
         severity: 'error',

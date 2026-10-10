@@ -43,7 +43,8 @@ describe('待办HTTP重放的身份与代次', () => {
 
   it('新目标进入待办后，迟到重放不能覆盖它', () => {
     const { coordinator, replay } = claim();
-    const web = coordinator.begin({ ...target('web'), trigger: 'manual' });
+    const web = coordinator.begin({ ...target('web'), kind: 'force-rebuild', trigger: 'manual' });
+    expect(web.status).toBe('started');
     const latest = coordinator.begin({ ...target(), commitSha: 'c'.repeat(40) });
     expect(latest.status).toBe('merged');
     expect(coordinator.begin(replay).status).toBe('rejected');
