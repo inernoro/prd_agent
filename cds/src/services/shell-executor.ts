@@ -2,7 +2,7 @@ import { exec as cpExec, spawn, type ChildProcess } from 'node:child_process';
 import type { IShellExecutor, ExecResult, ExecOptions } from '../types.js';
 import { cleanObservationGroup } from './observation-process-group.js';
 
-/** 仅供私有观测进程使用，不暴露 shell RPC 或状态写入能力。 */
+/** 仅供私有执行进程使用；操作资格在控制面确认，不暴露公共 shell RPC 或状态写入能力。 */
 export interface OwnedShellControl {
   env: NodeJS.ProcessEnv;
   cancelled: () => boolean;

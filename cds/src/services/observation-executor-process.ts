@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { launchObservationProcess } from './observation-process-launcher.js';
 import { cleanObservationGroup } from './observation-process-group.js';
 
-interface Slot { index: number; child: ChildProcess; ready: boolean; registered: boolean; retiring: boolean; job?: any; timer: NodeJS.Timeout; }
+interface Slot { index: number; child: ChildProcess; ready: boolean; registered: boolean; retiring: boolean; job?: any; started?: boolean; timer: NodeJS.Timeout; }
 function startObservationExecutorProcess(): void {
   if (!process.send || !process.connected) return;
   const slots = new Map<number, Slot>();
@@ -29,8 +29,9 @@ function startObservationExecutorProcess(): void {
       if (!slot.ready || !slot.registered || slot.retiring || slot.job || !pending.length) continue;
       const job = pending.shift()!;
       slot.job = job;
+      slot.started = !job.requireAuthorization;
       send({ type: 'assigned', id: job.id, pid: slot.child.pid });
-      slot.child.send({ type: 'exec', id: job.id, command: job.command, options: job.options });
+      if (slot.started) slot.child.send({ type: 'exec', id: job.id, command: job.command, options: job.options });
     }
   };
   const createSlot = (index: number): void => {
@@ -88,6 +89,13 @@ function startObservationExecutorProcess(): void {
       }
     }
     if (message.type === 'exec') { pending.push(message); pump(); }
+    if (message.type === 'authorize') {
+      const slot = [...slots.values()].find(s => s.job?.id === message.id && !s.retiring && !s.started);
+      if (slot) {
+        slot.started = true;
+        slot.child.send({ type: 'exec', id: slot.job.id, command: slot.job.command, options: slot.job.options });
+      }
+    }
     if (message.type === 'ack') {
       const slot = [...slots.values()].find(s => s.job?.id === message.id && !s.retiring);
       slot?.child.send(message);
@@ -96,7 +104,9 @@ function startObservationExecutorProcess(): void {
       const queued = pending.findIndex(j => j.id === message.id);
       if (queued >= 0) { pending.splice(queued, 1); send({ type: 'cancelled', id: message.id }); return; }
       const slot = [...slots.values()].find(s => s.job?.id === message.id);
-      if (slot) kill(slot);
+      if (slot && !slot.started) {
+        slot.job = undefined; send({ type: 'cancelled', id: message.id }); pump();
+      } else if (slot) kill(slot);
     }
   });
   process.on('disconnect', () => {

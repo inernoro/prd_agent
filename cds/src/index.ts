@@ -184,7 +184,10 @@ function diagnoseBootDisks(): string | null {
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
-const localShell = new IsolatedShellExecutor(new ShellExecutor());
+const operationShell = new IsolatedShellExecutor(new ShellExecutor(), {
+  isolatedLane: 'operation', concurrency: 9, reservedCleanup: 1, maxQueued: 64, defaultTimeoutMs: 15 * 60_000,
+});
+const localShell = new IsolatedShellExecutor(operationShell);
 const startupStreams = new ObservationStreamExecutor();
 const eventStreams = new ObservationStreamExecutor(2);
 const userLogStreams = new ObservationStreamExecutor(2);
@@ -193,6 +196,8 @@ const userLogHub = new ContainerLogStreamHub(userLogStreams);
 const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
   : localShell;
+// 操作池只预热自有IPC进程；预览实例的宿主命令仍由外层守卫拒绝，Git也不延后从大Master建进程。
+await operationShell.start().catch(() => console.warn('[execution] 操作执行器暂不可用；明确拒绝任务，不从Master启动命令。'));
 if (!isPreviewInstance()) {
   await Promise.all([
     localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。')),
@@ -4769,6 +4774,9 @@ async function shutdown(signal: string): Promise<void> {
   });
   await localShell.close().catch(() => {
     console.warn('[shutdown] 观测进程清理尚未确认；继续保存关键状态。');
+  });
+  await operationShell.close().catch(() => {
+    console.warn('[shutdown] 操作执行进程清理尚未确认；继续保存关键状态。');
   });
   // JSON 存储模式的 save() 是去抖异步落盘（2026-07-09），退出前必须 flush，
   // 否则最后一个 tick 的改动会丢。mongo 系 store 在下方 activeMongoHandle

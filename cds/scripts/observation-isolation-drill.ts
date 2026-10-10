@@ -39,7 +39,10 @@ async function main(): Promise<void> {
   const previousContext = process.env.DOCKER_CONTEXT;
   delete process.env.DOCKER_CONTEXT;
   process.env.DOCKER_HOST = host;
-  const shell = new module.IsolatedShellExecutor(new ShellExecutor(), { concurrency: 2, maxQueued: 16 });
+  const operationShell = new module.IsolatedShellExecutor(new ShellExecutor(), {
+    isolatedLane: 'operation', concurrency: 3, reservedCleanup: 1, maxQueued: 4, defaultTimeoutMs: 15_000,
+  });
+  const shell = new module.IsolatedShellExecutor(operationShell, { concurrency: 2, maxQueued: 16 });
   const streamModule = compiled ? await import(new URL('../dist/services/observation-stream-executor.js', import.meta.url).href) as typeof import('../src/services/observation-stream-executor.js') : { ObservationStreamExecutor };
   const startupStreams = new streamModule.ObservationStreamExecutor(2);
   const eventStreams = new streamModule.ObservationStreamExecutor(2);
@@ -63,7 +66,8 @@ async function main(): Promise<void> {
     if (event.containerName === name && event.attrs['cds.acceptance.owner'] === owner && managedActions.length < 20) managedActions.push(event.action);
   }, eventStreams);
   const infraEvents = new infraModule.InfraLifecycleWatcher({ streams: eventStreams, serverEventLogStore: eventStore });
-  const container = new ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams, userLogHub);
+  const containerModule = compiled ? await import(new URL('../dist/services/container.js', import.meta.url).href) as typeof import('../src/services/container.js') : { ContainerService };
+  const container = new containerModule.ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams, userLogHub);
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
@@ -92,7 +96,7 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'independent-process-prewarm';
-    await Promise.all([shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
+    await Promise.all([operationShell.start(), shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();
     report.eventWarmStats = eventStreams.getStats();
     report.userLogWarmStats = userLogStreams.getStats();
@@ -280,6 +284,53 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     journalStreams.exec = realJournalExec;
     report.checks.push({ name: 'compiled-owned-journal-producer-bounds-and-drain', passed: true });
 
+    report.stage = 'compiled-owned-default-operation-and-qualification';
+    const operationProbe = await shell.exec(`exec ${shellQuoteArg(process.execPath)} --eval ${shellQuoteArg("console.log(JSON.stringify({pid:process.pid,ppid:process.ppid}))")}`);
+    const operationParent = JSON.parse(operationProbe.stdout);
+    assert.notEqual(operationParent.ppid, process.pid);
+    assert.ok(operationShell.getStats().actors.some(actor => actor.pid === operationParent.ppid));
+    const operationActors = operationShell.getStats().actors.map(actor => actor.pid);
+    const operationMarker = path.join(temp, 'operation-must-not-start');
+    const operationRelease = path.join(temp, 'release-owned-operations');
+    let operationProducersReady = 0;
+    const blockedOperation = `exec ${shellQuoteArg(process.execPath)} --eval ${shellQuoteArg(`const fs=require('node:fs');console.log('owned-ready');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(operationRelease)}))clearInterval(timer)},10);`)}`;
+    const operationBlockers = Promise.all(Array.from({ length: 2 }, () => operationShell.exec(blockedOperation, {
+      onData: chunk => { if (chunk.includes('owned-ready')) operationProducersReady++; },
+    })));
+    void operationBlockers.catch(() => {});
+    for (let wait = 0; wait < 500 && operationProducersReady < 2; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(operationProducersReady, 2);
+    let qualificationChecks = 0;
+    const supersededOperation = new Error('owned-operation-superseded');
+    const rejectedOperation = operationShell.exec(`touch ${shellQuoteArg(operationMarker)}`, {
+      beforeStart: () => { qualificationChecks++; throw supersededOperation; },
+    }).then(() => undefined, error => error);
+    assert.ok(operationShell.getStats().queued >= 1);
+    const healthDuringOperations = await container.isRunning(id!);
+    assert.equal(healthDuringOperations, true);
+    assert.equal(operationShell.getStats().active, 2);
+    const ownedCleanupMarker = path.join(temp, 'owned-cleanup-started');
+    const cleanupDuringOperations = await operationShell.exec(`touch ${shellQuoteArg(ownedCleanupMarker)}`, {
+      executionPurpose: 'temporary-cleanup', timeout: 5000,
+    });
+    assert.equal(cleanupDuringOperations.exitCode, 0); await fs.access(ownedCleanupMarker);
+    assert.equal(operationShell.getStats().active, 2);
+    await fs.writeFile(operationRelease, 'owned-release', { mode: 0o600 });
+    await operationBlockers;
+    assert.equal(await rejectedOperation, supersededOperation); assert.equal(qualificationChecks, 1);
+    await assert.rejects(fs.access(operationMarker), { code: 'ENOENT' });
+    assert.deepEqual(operationShell.getStats().actors.map(actor => actor.pid), operationActors);
+    owned();
+    const operationStop = await shell.exec(['docker', 'stop', '--time', '1', id!].map(shellQuoteArg).join(' '));
+    assert.equal(operationStop.exitCode, 0); assert.equal(await container.isRunning(id!), false);
+    owned();
+    const operationStart = await shell.exec(['docker', 'start', id!].map(shellQuoteArg).join(' '));
+    assert.equal(operationStart.exitCode, 0); assert.equal(await container.isRunning(id!), true); owned();
+    report.operationReceipt = { actualProducer: operationParent, actorPids: operationActors, qualificationChecks,
+      rejectedCommandNeverStarted: true, healthDuringOperations, cleanupDuringOperations: true, actualOwnedStopStart: true, stats: operationShell.getStats(),
+      scope: 'compiled default operation process routing and owned Docker stop/start; private queued command rejected before start, not application deployment or stage fairness acceptance' };
+    report.checks.push({ name: 'compiled-owned-default-operation-qualified-dispatch-and-health-reservation', passed: true });
+
     report.stage = 'bounded-read-concurrency';
     const requests = Array.from({ length: 8 }, () => container.isRunning(id!));
     assert.ok(shell.getStats().active <= 2 && shell.getStats().queued >= 6);
@@ -320,9 +371,9 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     if (logServer) { logServer.closeAllConnections(); await new Promise<void>(resolve => logServer!.close(() => resolve())); }
     try { await Promise.all([dockerEvents.stop(), infraEvents.stop(), userLogHub.close(), journalMonitor?.stop()]); }
     catch { report.verdict = 'failed'; process.exitCode = 1; }
-    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    const processRoots = [operationShell.getStats().factoryPid, ...operationShell.getStats().actors.map(actor => actor.pid), shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await Promise.all([shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
+      await Promise.all([operationShell.close(), shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
         try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }

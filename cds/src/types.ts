@@ -4959,14 +4959,18 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
 }
 
 export interface ExecOptions {
-  /** 明确标记只读观测。默认操作仍走原执行路径，不能延迟已有操作资格检查。 */
+  /** 明确标记只读观测；生产主装配将普通操作与观测分配到独立进程池。 */
   executionLane?: 'observation' | 'operation';
-  /** 观测排队取消不会启动进程；执行中的取消等待进程收尾。普通操作暂不消费此字段。 */
+  /** 排队取消不会启动进程；执行中的取消等待所属进程组收尾。 */
   signal?: AbortSignal;
+  /** 独立执行槽就绪后在控制面重新检查资格；抛错保留原异常且不启动命令，不经IPC传输此函数。 */
+  beforeStart?: () => void;
+  /** 仅用于已确认创建且按本次调用独立命名的临时容器回收，占用保留清理槽。 */
+  executionPurpose?: 'temporary-cleanup';
   cwd?: string;
-  /** timeout=0仅用于关闭全文捕获且提供AbortSignal的持续观测流。 */
+  /** timeout=0仅用于关闭全文捕获且提供AbortSignal和消费回调的持续流；其他调用使用有限预算。 */
   timeout?: number;
-  /** 独立流式读取可关闭完整输出捕获；回调消费确认后才继续发送。普通操作忽略。 */
+  /** 独立执行可关闭完整输出捕获；回调消费确认后才继续发送，默认仍保留有限全文捕获。 */
   captureOutput?: boolean;
   onData?: (chunk: string, channel?: 'stdout' | 'stderr') => void;
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。

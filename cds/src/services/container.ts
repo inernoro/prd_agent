@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import type { ContainerLogStreamHub, ContainerLogStreamEnd } from './container-log-stream-hub.js';
 import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import { shellQuoteArg } from './secure-database-cli.js';
@@ -764,6 +765,31 @@ export class ContainerService {
     recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
   }
 
+  private qualifiedShell(assertCurrent?: (step: string) => void): IShellExecutor {
+    if (!assertCurrent) return this.shell;
+    return { exec: (command, options) => this.shell.exec(command, {
+      ...options, beforeStart: () => { options?.beforeStart?.(); assertCurrent('执行槽就绪，重新检查部署资格'); },
+    }) };
+  }
+
+  private async cleanupTemporaryContainer(containerName: string, entry: BranchEntry, profileId: string): Promise<void> {
+    let exitCode: number | string | undefined;
+    let code: string | undefined;
+    try {
+      const result = await this.shell.exec(`docker rm -f ${this.shellQuote(containerName)}`, {
+        executionPurpose: 'temporary-cleanup', timeout: 30_000,
+      });
+      if (result.exitCode === 0) return;
+      exitCode = result.exitCode;
+    } catch (error) { code = (error as { code?: string })?.code; }
+    // 迁移可能已经提交，不能为回收失败重跑业务；保留明确未确认事实，资源对账按实际容器计数。
+    this.recordContainerEvent({ severity: 'warn', source: 'cds-container-service',
+      action: 'container.temporary.cleanup.unconfirmed', message: '临时容器回收尚未确认，请核对实际容器和资源。',
+      projectId: entry.projectId, branchId: entry.id, profileId, containerName,
+      details: { exitCode, code, cleanupConfirmed: false },
+    });
+  }
+
   private async buildManagedArtifact(
     entry: BranchEntry,
     profile: BuildProfile,
@@ -773,10 +799,11 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     assertCurrent?: (step: string) => void,
   ): Promise<BuildProfile> {
+    const shell = this.qualifiedShell(assertCurrent);
     const contract = profile.managedBuild;
     if (!contract) return profile;
     const artifactImage = contract.artifactImage.trim();
-    const inspect = await this.shell.exec(`docker image inspect ${this.shellQuote(artifactImage)}`);
+    const inspect = await shell.exec(`docker image inspect ${this.shellQuote(artifactImage)}`);
     if (inspect.exitCode === 0) {
       onOutput?.(`── managed 产物已存在，跳过构建: ${artifactImage} ──\n`);
       return {
@@ -792,15 +819,16 @@ export class ContainerService {
 
     const sourcePath = path.resolve(entry.worktreePath, profile.workDir || '.');
     if (!fs.existsSync(sourcePath)) throw new Error(`managed 构建目录不存在: ${sourcePath}`);
-    const builderName = `${service.containerName}-managed-build`;
+    const builderName = `${service.containerName}-managed-build-${randomBytes(6).toString('hex')}`;
     const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
     onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);
-    await this.shell.exec(`docker rm -f ${this.shellQuote(builderName)}`);
+    let created = false;
     try {
+      await shell.exec(`docker rm -f ${this.shellQuote(builderName)}`);
       assertCurrent?.(`managed build before create ${profile.id}`);
-      const create = await this.shell.exec([
+      const create = await shell.exec([
         'docker create',
         `--name ${this.shellQuote(builderName)}`,
         `--network ${this.shellQuote(network)}`,
@@ -814,16 +842,17 @@ export class ContainerService {
         `sh -c ${this.shellQuote('tail -f /dev/null')}`,
       ].join(' '));
       if (create.exitCode !== 0) throw new Error(`managed 构建容器创建失败:\n${combinedOutput(create)}`);
-      const copy = await this.shell.exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${builderName}:/app`)}`);
+      created = true;
+      const copy = await shell.exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${builderName}:/app`)}`);
       if (copy.exitCode !== 0) throw new Error(`managed 源码复制失败:\n${combinedOutput(copy)}`);
-      const start = await this.shell.exec(`docker start ${this.shellQuote(builderName)}`);
+      const start = await shell.exec(`docker start ${this.shellQuote(builderName)}`);
       if (start.exitCode !== 0) throw new Error(`managed 构建容器启动失败:\n${combinedOutput(start)}`);
       assertCurrent?.(`managed build before exec ${profile.id}`);
       onOutput?.(`── managed build 命令: ${buildCommand} ──\n`);
-      const build = await this.shell.exec(`docker exec ${this.shellQuote(builderName)} sh -c ${this.shellQuote(buildCommand)}`);
+      const build = await shell.exec(`docker exec ${this.shellQuote(builderName)} sh -c ${this.shellQuote(buildCommand)}`);
       if (build.stdout) onOutput?.(`${build.stdout}\n`);
       if (build.exitCode !== 0) throw new Error(`managed 构建失败:\n${combinedOutput(build)}`);
-      const commit = await this.shell.exec(`docker commit ${this.shellQuote(builderName)} ${this.shellQuote(artifactImage)}`);
+      const commit = await shell.exec(`docker commit ${this.shellQuote(builderName)} ${this.shellQuote(artifactImage)}`);
       if (commit.exitCode !== 0) throw new Error(`managed 产物固化失败:\n${combinedOutput(commit)}`);
       onOutput?.(`── managed 产物已固化: ${artifactImage} ──\n`);
       return {
@@ -836,8 +865,8 @@ export class ContainerService {
         sourceFallbackProfile: undefined,
       };
     } finally {
-      await this.shell.exec(`docker rm -f ${this.shellQuote(builderName)}`);
-      try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ }
+      try { if (created) await this.cleanupTemporaryContainer(builderName, entry, profile.id); }
+      finally { try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ } }
     }
   }
 
@@ -1019,8 +1048,9 @@ export class ContainerService {
     network: string,
     aliases: string[],
     onOutput?: (chunk: string) => void,
-    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> = {},
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & { assertCurrent?: (step: string) => void } = {},
   ): Promise<void> {
+    const shell = this.qualifiedShell(context.assertCurrent);
     if (aliases.length === 0) return;
     const removed = new Set<string>();
     const isSameServiceFallbackName = (name: string): boolean =>
@@ -1042,7 +1072,7 @@ export class ContainerService {
         operation: 'deploy-stale-alias-cleanup',
         source: 'container.pruneStaleAppContainersForProfile',
       });
-      const rm = await this.shell.exec(`docker rm -f ${this.shellQuote(target)}`);
+      const rm = await shell.exec(`docker rm -f ${this.shellQuote(target)}`);
       this.recordContainerEvent({
         severity: rm.exitCode === 0 ? 'warn' : 'error',
         source: 'cds-container-service',
@@ -1069,14 +1099,14 @@ export class ContainerService {
         },
       });
       if (rm.exitCode !== 0) {
-        await this.shell.exec(
+        await shell.exec(
           `docker network disconnect -f ${this.shellQuote(network)} ${this.shellQuote(target)}`,
         );
       }
       removed.add(target);
     };
 
-    const list = await this.shell.exec(
+    const list = await shell.exec(
       `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" ` +
       `--filter ${this.shellQuote(`label=cds.branch.id=${entry.id}`)} ` +
       `--filter ${this.shellQuote(`label=cds.profile.id=${profile.id}`)} --format "{{.Names}}"`,
@@ -1092,7 +1122,7 @@ export class ContainerService {
 
       for (const name of list.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
         if (name === service.containerName) continue;
-        const inspect = await this.shell.exec(
+        const inspect = await shell.exec(
           `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(name)}`,
         );
         if (inspect.exitCode !== 0) continue;
@@ -1112,7 +1142,7 @@ export class ContainerService {
       }
     }
 
-    const networkContainers = await this.shell.exec(
+    const networkContainers = await shell.exec(
       `docker ps -aq --filter ${this.shellQuote(`network=${network}`)}`,
     );
     if (networkContainers.exitCode === 0 && networkContainers.stdout.trim()) {
@@ -1122,7 +1152,7 @@ export class ContainerService {
         `{{with index .NetworkSettings.Networks ${JSON.stringify(network)}}}{{json .Aliases}}{{else}}[]{{end}}`,
       ].join('|');
       for (const id of networkContainers.stdout.trim().split('\n').map((line) => line.trim()).filter(Boolean)) {
-        const inspect = await this.shell.exec(
+        const inspect = await shell.exec(
           `docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(id)}`,
         );
         if (inspect.exitCode !== 0) continue;
@@ -1147,7 +1177,7 @@ export class ContainerService {
     // driven by network endpoints, and a service alias cannot be shared on the
     // same project network without round-robin responses. Inspect the network
     // as a second line of defense and keep this profile's aliases unique.
-    const networkInspect = await this.shell.exec(
+    const networkInspect = await shell.exec(
       `docker network inspect --format='{{json .Containers}}' ${this.shellQuote(network)}`,
     );
     if (networkInspect.exitCode !== 0 || !networkInspect.stdout.trim()) return;
@@ -1218,6 +1248,7 @@ export class ContainerService {
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
+    const shell = this.qualifiedShell(context.assertCurrent);
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -1228,7 +1259,7 @@ export class ContainerService {
         throw new Error('服务工作目录超出本次部署源码，已拒绝启动');
       }
       if (!context.sourceCheckout) {
-        const head = await this.shell.exec('git rev-parse HEAD', { cwd: sourceCheckout.path });
+        const head = await shell.exec('git rev-parse HEAD', { cwd: sourceCheckout.path });
         if (head.exitCode !== 0 || head.stdout.trim().toLowerCase() !== sourceCheckout.commitSha.toLowerCase()) {
           throw new Error('原部署源码不可用或提交不一致，请重新部署服务');
         }
@@ -1250,7 +1281,7 @@ export class ContainerService {
         context.assertCurrent,
       );
     } else if (profile.localArtifact) {
-      const localInspect = await this.shell.exec(`docker image inspect ${this.shellQuote(profile.dockerImage)}`);
+      const localInspect = await shell.exec(`docker image inspect ${this.shellQuote(profile.dockerImage)}`);
       if (localInspect.exitCode !== 0) {
         throw new Error(`managed 本地产物不存在: ${profile.dockerImage}。请重新执行源码构建生成该版本。`);
       }
@@ -1356,7 +1387,7 @@ export class ContainerService {
           // 来自 resolved profile 的 dockerImage,而 profile-overrides PUT 可对分支额外服务覆盖 dockerImage,
           // 绕过 extra-services 的严格镜像校验;裸拼进宿主机 `docker pull` 时 `alpine; touch /tmp/pwn` 这类值
           // 会在 CDS 宿主机执行。这里单引号兜底关掉注入面(入口另有镜像引用白名单作边界防御)。
-          const pull = await this.shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
+          const pull = await shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
           if (pull.stdout) onOutput?.(pull.stdout + '\n');
           if (pull.exitCode === 0 && cand.kind === 'latest') {
             pulledImage = cand.image;
@@ -1396,7 +1427,7 @@ export class ContainerService {
             // 浮动 tag 只证明“拉到了一个镜像”，不证明它属于本次提交。读取 CI 写入的
             // OCI revision，再用 Git 判断该组件从镜像版本到目标版本是否完全没变。
             // 无标签、无构建范围、无法比较或确有变化都拒绝，最终走源码构建。
-            const inspect = await this.shell.exec(
+            const inspect = await shell.exec(
               `docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ${this.shellQuote(cand.image)}`,
             );
             const proof = await proveFallbackImage({
@@ -1508,10 +1539,10 @@ export class ContainerService {
         if (picked) {
           // 在跑的那一版镜像本机一定有；台账里的历史版本可能已被镜像回收清掉，
           // 故仍要确认本地存在或能拉到，拉不到就继续往下走源码编译。
-          const localHit = await this.shell.exec(`docker image inspect ${this.shellQuote(picked.image)}`);
+          const localHit = await shell.exec(`docker image inspect ${this.shellQuote(picked.image)}`);
           let usable = localHit.exitCode === 0;
           if (!usable) {
-            const rePull = await this.shell.exec(`docker pull ${this.shellQuote(picked.image)}`);
+            const rePull = await shell.exec(`docker pull ${this.shellQuote(picked.image)}`);
             usable = rePull.exitCode === 0;
           }
           if (usable) {
@@ -1613,7 +1644,7 @@ export class ContainerService {
       operation: 'deploy-pre-run-replace',
       source: 'container.runService',
     });
-    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
+    const preRunRemove = await shell.exec(`docker rm -f ${service.containerName}`);
     this.recordContainerEvent({
       severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
       source: 'cds-container-service',
@@ -1749,7 +1780,7 @@ export class ContainerService {
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
-      const result = await this.shell.exec(runCmd);
+      const result = await shell.exec(runCmd);
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
           severity: 'error',
@@ -1797,12 +1828,13 @@ export class ContainerService {
           profileId: profile.id,
           requestId: context.requestId ?? undefined,
           operationId: context.operationId ?? undefined,
+          assertCurrent: context.assertCurrent,
         });
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (attachSharedBeforeStart) {
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
-        const startRes = await this.shell.exec(`docker start ${service.containerName}`);
+        const startRes = await shell.exec(`docker start ${service.containerName}`);
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',
@@ -1905,6 +1937,7 @@ export class ContainerService {
       timeoutMs?: number;
     } = {},
   ): Promise<ExecResult> {
+    const shell = this.qualifiedShell(context.assertCurrent);
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
     // 分支级隔离下，长生命周期 app 容器的 --network-alias 落在分支网（cds-br-*）而非共享项目网。一次性 job
@@ -1965,33 +1998,35 @@ export class ContainerService {
       if (!attachSharedBeforeStart) {
         // 未隔离：保持原 `docker run --rm` 一次性语义（零回归）。
         const runCmd = ['docker run --rm', `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
-        result = await this.shell.exec(runCmd, { timeout: timeoutMs });
+        result = await shell.exec(runCmd, { timeout: timeoutMs });
       } else {
         // 隔离：create(分支网) → connect(共享 infra 网) → start → wait → logs → rm。让 job 同时可达兄弟 app
         // （分支网别名）与共享 infra（mysql/redis）。不能用 `docker run --rm`（单网、退出即删，无从 connect
         // 第二张网 / 取 exitCode）。connect 失败抛错（与 app 同口径，infra 不可达的 job 没意义）。
-        const jobName = `cds-job-${entry.id}-${profile.id}`;
-        await this.shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined); // 预清理同名残留
+        const jobName = `cds-job-${entry.id}-${profile.id}-${randomBytes(6).toString('hex')}`;
+        await shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined); // 预清理同名残留
+        let created = false;
         try {
           const createCmd = ['docker create', `--name ${this.shellQuote(jobName)}`, `--network ${netPlan.runNetwork}`, ...jobSpec, ...jobTail].join(' ');
-          const createRes = await this.shell.exec(createCmd, { timeout: timeoutMs });
+          const createRes = await shell.exec(createCmd, { timeout: timeoutMs });
           if (createRes.exitCode !== 0) {
             result = createRes;
           } else {
+            created = true;
             for (const sharedNet of netPlan.connectNetworks) {
               await this.connectContainerToSharedNetwork(jobName, sharedNet, {
                 projectId: entry.projectId, branchId: entry.id, profileId: profile.id,
-                requestId: context.requestId ?? undefined, operationId: context.operationId ?? undefined,
+                requestId: context.requestId ?? undefined, operationId: context.operationId ?? undefined, assertCurrent: context.assertCurrent,
               });
             }
-            const startRes = await this.shell.exec(`docker start ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+            const startRes = await shell.exec(`docker start ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
             if (startRes.exitCode !== 0) {
               result = startRes;
             } else {
               // 阻塞到容器退出取退出码，再取日志（合并到 stdout 供展示，与 docker run 捕获等价）。
-              const waitRes = await this.shell.exec(`docker wait ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              const waitRes = await shell.exec(`docker wait ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
               const parsedExit = parseInt((waitRes.stdout || '').trim(), 10);
-              const logsRes = await this.shell.exec(`docker logs ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
+              const logsRes = await shell.exec(`docker logs ${this.shellQuote(jobName)}`, { timeout: timeoutMs });
               result = {
                 stdout: logsRes.stdout,
                 stderr: logsRes.stderr,
@@ -2000,7 +2035,7 @@ export class ContainerService {
             }
           }
         } finally {
-          await this.shell.exec(`docker rm -f ${this.shellQuote(jobName)}`).catch(() => undefined);
+          if (created) await this.cleanupTemporaryContainer(jobName, entry, profile.id);
         }
       }
 
@@ -3415,9 +3450,9 @@ export class ContainerService {
   private async connectContainerToSharedNetwork(
     containerName: string,
     network: string,
-    ctx: { projectId?: string; branchId?: string; profileId?: string; requestId?: string; operationId?: string } = {},
+    ctx: { projectId?: string; branchId?: string; profileId?: string; requestId?: string; operationId?: string; assertCurrent?: (step: string) => void } = {},
   ): Promise<void> {
-    const result = await this.shell.exec(`docker network connect ${network} ${containerName}`);
+    const result = await this.qualifiedShell(ctx.assertCurrent).exec(`docker network connect ${network} ${containerName}`);
     if (result.exitCode === 0) return;
     const stderr = (result.stderr || '').toLowerCase();
     if (stderr.includes('already exists') || stderr.includes('already connected')) return;

@@ -13,11 +13,23 @@ const messages: Record<FailureCode, string> = {
 export class ObservationExecutionError extends Error {
   constructor(readonly code: FailureCode) { super(messages[code]); this.name = 'ObservationExecutionError'; }
 }
+export class OperationExecutionError extends ObservationExecutionError {
+  constructor(code: FailureCode) {
+    super(code); this.name = 'OperationExecutionError';
+    this.message = code === 'deadline' ? '任务执行超时，请核对实际结果后再继续。'
+      : code === 'cleanup' ? '任务进程清理尚未确认，请核对实际状态后再继续。'
+        : messages[code].replaceAll('状态查询执行器', '任务执行器').replaceAll('状态查询', '任务执行');
+  }
+}
 interface Job {
   id: number;
   command: string;
   options: { cwd?: string; stdin?: string; env: NodeJS.ProcessEnv; stream: boolean; captureOutput: boolean };
   onData?: ExecOptions['onData'];
+  beforeStart?: ExecOptions['beforeStart'];
+  startError?: unknown;
+  startRejected?: boolean;
+  cleanup: boolean;
   bytes: number;
   dataTail: Promise<void>;
   deadline: number;
@@ -27,10 +39,10 @@ interface Job {
   failure?: FailureCode;
   active: boolean;
   resolve: (result: ExecResult) => void;
-  reject: (error: ObservationExecutionError) => void;
+  reject: (error: unknown) => void;
 }
 
-/** 显式观测由独立小进程执行；默认操作保留已有资格检查与执行顺序。 */
+/** 按指定通道隔离进程；操作槽在实际派发前向控制面重新取得资格，函数不传入actor。 */
 export class IsolatedShellExecutor implements IShellExecutor {
   private factory?: ChildProcess;
   private factoryExit?: Promise<void>;
@@ -43,6 +55,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private readonly jobs = new Map<number, Job>();
   private readonly queue: Job[] = [];
   private active = 0;
+  private activeCleanup = 0;
   private bytes = 0;
   private starting?: Promise<void>;
   private startResolve?: () => void;
@@ -54,24 +67,36 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private readonly maxQueued: number;
   private readonly maxBytes: number;
   private readonly processFactory: (owner: string) => ChildProcess;
+  private readonly isolatedLane: 'observation' | 'operation';
+  private readonly defaultTimeoutMs: number;
+  private readonly reservedCleanup: number;
 
   constructor(private readonly operation: IShellExecutor, config: {
     concurrency?: number; maxQueued?: number; maxBytes?: number; processFactory?: (owner: string) => ChildProcess;
+    isolatedLane?: 'observation' | 'operation'; defaultTimeoutMs?: number; reservedCleanup?: number;
   } = {}) {
     this.concurrency = config.concurrency ?? 2;
     this.maxQueued = config.maxQueued ?? 64;
     this.maxBytes = config.maxBytes ?? 16 * 1024 * 1024;
-    for (const n of [this.concurrency, this.maxQueued, this.maxBytes]) {
+    this.isolatedLane = config.isolatedLane ?? 'observation';
+    this.defaultTimeoutMs = config.defaultTimeoutMs ?? 30_000;
+    this.reservedCleanup = config.reservedCleanup ?? 0;
+    if (!Number.isSafeInteger(this.reservedCleanup) || this.reservedCleanup < 0 || this.reservedCleanup >= this.concurrency ||
+      (this.reservedCleanup > 0 && this.isolatedLane !== 'operation')) throw new Error('Invalid cleanup reservation');
+    for (const n of [this.concurrency, this.maxQueued, this.maxBytes, this.defaultTimeoutMs]) {
       if (!Number.isSafeInteger(n) || n < 1) throw new Error('Invalid observation executor capacity');
     }
     if (this.concurrency > 16) throw new Error('Invalid observation executor capacity');
     this.processFactory = config.processFactory ?? (owner => launchObservationProcess('observation-executor-process', owner));
   }
+  private executionError(code: FailureCode): ObservationExecutionError {
+    return this.isolatedLane === 'operation' ? new OperationExecutionError(code) : new ObservationExecutionError(code);
+  }
 
   /** 启动时在大状态加载前预热。常规查询和替换查询进程不再由 Master 创建子进程。 */
   start(): Promise<void> {
-    if (this.closed) return Promise.reject(new ObservationExecutionError('closed'));
-    if (this.unavailable) return Promise.reject(new ObservationExecutionError('unavailable'));
+    if (this.closed) return Promise.reject(this.executionError('closed'));
+    if (this.unavailable) return Promise.reject(this.executionError('unavailable'));
     if (this.starting) return this.starting;
     this.starting = new Promise((resolve, reject) => { this.startResolve = resolve; this.startReject = reject; });
     this.startTimer = setTimeout(() => { void this.failPool(); }, 5000);
@@ -88,18 +113,25 @@ export class IsolatedShellExecutor implements IShellExecutor {
   }
 
   exec(command: string, options?: ExecOptions): Promise<ExecResult> {
-    if (options?.executionLane !== 'observation') return this.operation.exec(command, options);
-    if (this.closed) return Promise.reject(new ObservationExecutionError('closed'));
-    if (this.unavailable) return Promise.reject(new ObservationExecutionError('unavailable'));
-    if (options.signal?.aborted) return Promise.reject(new ObservationExecutionError('cancelled'));
+    if ((options?.executionLane ?? 'operation') !== this.isolatedLane) return this.operation.exec(command, options);
+    options ??= {};
+    if (this.closed) return Promise.reject(this.executionError('closed'));
+    if (this.unavailable) return Promise.reject(this.executionError('unavailable'));
+    if (options.signal?.aborted) return Promise.reject(this.executionError('cancelled'));
+    // 尚未提供资格复核的旧操作不能在资格检查后暗中等槽。明确拒绝，交由业务阶段准入重试。
+    const cleanup = this.isolatedLane === 'operation' && this.reservedCleanup > 0 && options.executionPurpose === 'temporary-cleanup';
+    if (this.isolatedLane === 'operation' && !cleanup && !options.beforeStart &&
+      (!this.ready || this.active - this.activeCleanup >= [...this.actors.values()].filter(actor => actor.metrics).length - this.reservedCleanup)) {
+      return Promise.reject(this.executionError('capacity'));
+    }
     const wireOptions = { cwd: options.cwd, stdin: options.stdin, env: { ...process.env, ...options.env }, stream: !!options.onData, captureOutput: options.captureOutput !== false };
     const bytes = Buffer.byteLength(command) + Buffer.byteLength(JSON.stringify(wireOptions));
-    if (this.queue.length >= this.maxQueued || this.bytes + bytes > this.maxBytes) return Promise.reject(new ObservationExecutionError('capacity'));
+    if (this.queue.length >= this.maxQueued || this.bytes + bytes > this.maxBytes) return Promise.reject(this.executionError('capacity'));
     const continuous = options.captureOutput === false && options.timeout === 0 && !!options.signal && !!options.onData;
-    const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : 30_000;
+    const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : this.defaultTimeoutMs;
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
-      const job: Job = { id, command, options: wireOptions, onData: options.onData, bytes, dataTail: Promise.resolve(), active: false,
+      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, cleanup, bytes, dataTail: Promise.resolve(), active: false,
         deadline: performance.now() + timeout, timer: continuous ? undefined : setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
       if (job.signal) { job.abort = () => this.cancel(id, 'cancelled'); job.signal.addEventListener('abort', job.abort, { once: true }); }
       this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes;
@@ -109,8 +141,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     });
   }
 
-  getStats(): { active: number; queued: number; bytes: number; unavailable: boolean; factoryPid?: number; actors: Array<{ pid: number; rss?: number; heapLimit?: number }> } {
-    return { active: this.active, queued: this.queue.length, bytes: this.bytes, unavailable: this.unavailable, factoryPid: this.factory?.pid,
+  getStats(): { active: number; activeCleanup: number; reservedCleanup: number; queued: number; bytes: number; unavailable: boolean; factoryPid?: number; actors: Array<{ pid: number; rss?: number; heapLimit?: number }> } {
+    return { active: this.active, activeCleanup: this.activeCleanup, reservedCleanup: this.reservedCleanup, queued: this.queue.length, bytes: this.bytes, unavailable: this.unavailable, factoryPid: this.factory?.pid,
       actors: [...this.actors.values()].map(actor => ({ pid: actor.pid, ...actor.metrics })) };
   }
 
@@ -135,7 +167,16 @@ export class IsolatedShellExecutor implements IShellExecutor {
     }
     const job = this.jobs.get(message.id);
     if (!job?.active) return;
-    if (message.type === 'data') {
+    if (message.type === 'assigned') {
+      if (this.isolatedLane !== 'operation' && !job.beforeStart) return;
+      if (job.failure) return;
+      if (job.deadline <= performance.now() || job.signal?.aborted) { this.cancel(job.id, job.signal?.aborted ? 'cancelled' : 'deadline'); return; }
+      try { job.beforeStart?.(); }
+      catch (error) { job.startRejected = true; job.startError = error; this.cancel(job.id, 'cancelled'); return; }
+      if (job.failure) return;
+      if (job.deadline <= performance.now() || job.signal?.aborted) { this.cancel(job.id, job.signal?.aborted ? 'cancelled' : 'deadline'); return; }
+      this.send({ type: 'authorize', id: job.id });
+    } else if (message.type === 'data') {
       job.dataTail = job.dataTail.then(async () => {
         if (!job.failure) await job.onData?.(message.chunk, message.channel);
         this.send({ type: 'ack', id: job.id, bytes: message.bytes });
@@ -154,10 +195,13 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private drain(): void {
     if (!this.ready || !this.factory || this.closed || this.unavailable) return;
     while (this.active < this.concurrency && this.queue.length) {
-      const job = this.queue.shift()!;
+      const index = this.queue.findIndex(job => job.cleanup ? this.activeCleanup < this.reservedCleanup : this.active - this.activeCleanup < this.concurrency - this.reservedCleanup);
+      if (index < 0) break;
+      const job = this.queue.splice(index, 1)[0];
       if (job.deadline <= performance.now()) { this.finish(job, undefined, 'deadline'); continue; }
-      job.active = true; this.active++; this.refPool();
-      this.send({ type: 'exec', id: job.id, command: job.command, options: job.options });
+      job.active = true; this.active++; if (job.cleanup) this.activeCleanup++; this.refPool();
+      this.send({ type: 'exec', id: job.id, command: job.command, options: job.options,
+        requireAuthorization: this.isolatedLane === 'operation' || !!job.beforeStart });
     }
     if (!this.jobs.size) { this.factory.unref(); this.factory.channel?.unref(); }
   }
@@ -170,10 +214,12 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private finish(job: Job, result?: ExecResult, failure?: FailureCode): void {
     if (!this.jobs.delete(job.id)) return;
     clearTimeout(job.timer); if (job.abort) job.signal?.removeEventListener('abort', job.abort);
-    if (job.active) this.active--; else { const i = this.queue.indexOf(job); if (i >= 0) this.queue.splice(i, 1); }
+    if (job.active) { this.active--; if (job.cleanup) this.activeCleanup--; } else { const i = this.queue.indexOf(job); if (i >= 0) this.queue.splice(i, 1); }
     this.bytes -= job.bytes;
     const error = failure === 'cleanup' ? failure : job.failure ?? failure;
-    if (error) job.reject(new ObservationExecutionError(error)); else job.resolve(result!);
+    if (error === 'cleanup') job.reject(this.executionError(error));
+    else if (job.startRejected) job.reject(job.startError);
+    else if (error) job.reject(this.executionError(error)); else job.resolve(result!);
     this.drain();
   }
 
@@ -206,7 +252,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     this.unavailable = true;
     let code: FailureCode = 'unavailable';
     try { await this.stopPool(); } catch { code = 'cleanup'; }
-    this.startReject?.(new ObservationExecutionError(code));
+    this.startReject?.(this.executionError(code));
     for (const job of [...this.jobs.values()]) this.finish(job, undefined, code);
   }
   close(): Promise<void> {
@@ -216,9 +262,9 @@ export class IsolatedShellExecutor implements IShellExecutor {
     this.closing = (async () => {
       let failure: FailureCode = 'closed';
       try { await this.stopPool(); } catch { failure = 'cleanup'; }
-      this.startReject?.(new ObservationExecutionError(failure));
+      this.startReject?.(this.executionError(failure));
       for (const job of [...this.jobs.values()]) this.finish(job, undefined, failure);
-      if (failure === 'cleanup') throw new ObservationExecutionError('cleanup');
+      if (failure === 'cleanup') throw this.executionError('cleanup');
     })();
     return this.closing;
   }
