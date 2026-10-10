@@ -32,6 +32,33 @@ describe('P3 durable private candidate reservations', () => {
     expect(restored.getDeploymentRun(runId)!.candidate!.serving.api.containerId).toBe('c'.repeat(64));
   });
 
+  it('durably records only an inspected intended stop and rejects unrelated serving fact drift', async () => {
+    const journal = new CandidateJournal(state); branch.services.api.containerId = 'c'.repeat(64);
+    await journal.prepare(runId, candidate(), ['api']); await journal.advance(runId, 'prepared', 'starting');
+    branch.services.api.status = 'stopped';
+    const before = branch.services.api.deployedImage; branch.services.api.deployedImage = 'foreign';
+    await expect(journal.recordServingStopped(runId, 'api', () => {})).rejects.toThrow('candidate_serving_stop');
+    expect(state.getDeploymentRun(runId)!.candidate!.serving.api.status).toBe('running');
+    branch.services.api.deployedImage = before;
+    await journal.recordServingStopped(runId, 'api', () => {});
+    const loaded = new StateService(path.join(dir, 'state.json')); loaded.load();
+    expect(loaded.getDeploymentRun(runId)!.candidate!.serving.api.status).toBe('stopped');
+    expect(loaded.getBranch('branch')!.services.api.status).toBe('stopped');
+  });
+  it('does not confirm a serving stop whose owner changed during the persistence barrier', async () => {
+    const journal = new CandidateJournal(state); branch.services.api.containerId = 'c'.repeat(64);
+    await journal.prepare(runId, candidate(), ['api']); await journal.advance(runId, 'prepared', 'starting');
+    branch.services.api.status = 'stopped';
+    let release!: () => void; const barrier = new Promise<void>(resolve => { release = resolve; });
+    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => barrier);
+    const pending = journal.recordServingStopped(runId, 'api', () => {});
+    const rejected = expect(pending).rejects.toThrow('candidate_serving_stop');
+    await new Promise(resolve => setImmediate(resolve)); state.getDeploymentRun(runId)!.configHash = 'new-owner';
+    release(); await rejected; flush.mockRestore(); await state.flush();
+    expect(state.getDeploymentRun(runId)!.candidate!.serving.api.status).toBe('running');
+    expect(state.getDeploymentRun(runId)!.configHash).toBe('new-owner');
+  });
+
   it('keeps the canonical phase at its durable value and rejects a competing advance while flushing', async () => {
     const journal = new CandidateJournal(state); const graph = candidate();
     await journal.prepare(runId, graph);

@@ -115,4 +115,30 @@ export class CandidateJournal {
       }
     });
   }
+
+  /** Record an owned, inspected stop; arbitrary serving drift cannot be re-frozen as recovery evidence. */
+  async recordServingStopped(runId: string, profileId: string, assertCurrent: () => void): Promise<void> {
+    const run = this.state.getDeploymentRun(runId); const record = run?.candidate;
+    const branch = run && this.state.getBranch(run.branchId); const service = branch?.services[profileId];
+    const original = record?.serving[profileId];
+    assertCurrent();
+    if (!run || !record || !branch || !service || !original || !record.stopBeforeStart?.includes(profileId) ||
+      !['prepared', 'starting'].includes(record.phase) || service.status !== 'stopped' ||
+      !/^[a-f0-9]{64}$/.test(service.containerId || '') ||
+      JSON.stringify(snapshotCandidateServices({ [profileId]: { ...service, status: original.status } })) !==
+        JSON.stringify({ [profileId]: original })) throw new Error('candidate_serving_stop: frozen inspected identity required');
+    const frozenRecord = JSON.stringify(record); const frozenService = JSON.stringify(snapshotCandidateServices({ [profileId]: service }));
+    const frozen = { operationId: record.operationId, targetSha: record.targetSha, configHash: record.configHash };
+    await this.state.updateDeploymentRunDurably(runId, draft => {
+      draft.candidate!.serving[profileId].status = 'stopped'; draft.candidate!.updatedAt = new Date().toISOString();
+    }, () => this.state.flush(), () => {
+      assertCurrent();
+      const current = this.state.getDeploymentRun(runId);
+      if (current !== run || current.candidate !== record || JSON.stringify(record) !== frozenRecord ||
+        current.operationId !== frozen.operationId || current.commitSha !== frozen.targetSha || current.configHash !== frozen.configHash ||
+        this.state.getBranch(run.branchId) !== branch || JSON.stringify(snapshotCandidateServices({ [profileId]: branch.services[profileId] })) !== frozenService) {
+        throw new Error('candidate_serving_stop: owner or facts changed during persistence');
+      }
+    });
+  }
 }
