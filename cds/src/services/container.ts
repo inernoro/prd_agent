@@ -1170,7 +1170,7 @@ export class ContainerService {
    * Uses profile.command to run everything in one persistent container.
    */
   async runService(...args: Parameters<ContainerService['runServiceInternal']>): Promise<void> {
-    return withShellExecutionContext({ schedulingGroup: args[0].projectId || 'default', priority: 'delivery' },
+    return withShellExecutionContext({ schedulingGroup: args[0].projectId || 'default', priority: 'delivery', signal: args[5]?.signal },
       () => this.runServiceInternal(...args));
   }
 
@@ -1182,6 +1182,7 @@ export class ContainerService {
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
       assertCurrent?: (step: string) => void;
+      signal?: AbortSignal;
       /**
        * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
        * 构建槽（build-gate，见 branches.ts 部署循环），但回退到源码编译就是
@@ -1215,6 +1216,7 @@ export class ContainerService {
       const target = context.latestCommitSha || profile.preparedCommitSha || entry.githubCommitSha || '';
       [profile] = await prepareExactPrebuiltArtifacts(this.shell, [profile], target, {
         assertCurrent: context.assertCurrent,
+        signal: context.signal,
         onProgress: (_id, stage) => onOutput?.(`── 精确极速制品 ${stage}: ${profile.id} ──\n`),
       });
       context.onLatestCommitImage?.(target);
@@ -2073,11 +2075,13 @@ export class ContainerService {
     signal: string,
     onOutput?: (chunk: string) => void,
     timeoutSeconds = 300,
+    operationSignal?: AbortSignal,
   ): Promise<boolean> {
+    if (operationSignal?.aborted) return false;
     const abort = new AbortController(); let found = false; let pending = '';
     try {
       const result = await this.shell.exec(`docker logs -f ${this.shellQuote(containerName)}`, {
-        timeout: Math.max(1, timeoutSeconds * 1000), priority: 'delivery', signal: abort.signal,
+        timeout: Math.max(1, timeoutSeconds * 1000), priority: 'delivery', signal: operationSignal ? AbortSignal.any([operationSignal, abort.signal]) : abort.signal,
         schedulingGroup: containerName,
         onData: chunk => {
           pending += chunk;
@@ -2087,6 +2091,7 @@ export class ContainerService {
       });
       found ||= (result.stdout + result.stderr).includes(signal);
     } catch { /* 明确返回未就绪，不在主线程另起docker兜底 */ }
+    found &&= !operationSignal?.aborted;
     onOutput?.(found ? `── 检测到启动信号: "${signal}" OK ──\n`
       : `── 启动信号未就绪或超时 (${timeoutSeconds}s): "${signal}" ──\n`);
     return found;
@@ -2113,7 +2118,15 @@ export class ContainerService {
     onAttempt?: (info: { attempt: number; max: number; stage: 'tcp' | 'http'; ok: boolean; error?: string }) => void,
     onOutput?: (chunk: string) => void,
     containerName?: string,
+    signal?: AbortSignal,
   ): Promise<boolean> {
+    if (signal?.aborted) return false;
+    const delay = () => new Promise<void>(resolve => {
+      if (signal?.aborted) { resolve(); return; }
+      const finish = () => { clearTimeout(timer); signal?.removeEventListener('abort', finish); resolve(); };
+      const timer = setTimeout(finish, intervalMs);
+      signal?.addEventListener('abort', finish, { once: true });
+    });
     const intervalMs = Math.max(1, (probe?.intervalSeconds ?? 2)) * 1000;
     const timeoutMs = Math.max(intervalMs, (probe?.timeoutSeconds ?? 180) * 1000);
     const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
@@ -2129,14 +2142,14 @@ export class ContainerService {
       if (!containerName || attempt % 5 !== 0) return false;
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
-        { priority: 'health', timeout: 10_000 },
+        { priority: 'health', timeout: 10_000, signal },
       );
       const gone = inspect.exitCode !== 0;
       const [status, exitCode] = gone ? ['missing', ''] : inspect.stdout.trim().split('|');
       if (gone || status === 'exited' || status === 'dead') {
         consecutiveDead += 1;
         if (consecutiveDead >= 2) {
-          const logs = gone ? '' : await this.getLogs(containerName, 30);
+          const logs = gone ? '' : await this.getLogs(containerName, 30, signal);
           onOutput?.(`── 容器已退出 (status=${status}${exitCode ? `, exit ${exitCode}` : ''})，提前终止就绪等待 ──\n${logs ? logs + '\n' : ''}`);
           return true;
         }
@@ -2170,8 +2183,10 @@ export class ContainerService {
       onOutput?.(`── 就绪探测: noHttp 模式(跳过 HTTP,仅 TCP 探测 ${host}:${hostPort})──\n`);
       let lastErr = '';
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
+        if (signal?.aborted) return false;
+        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs), signal);
         onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
+        if (signal?.aborted) return false;
         if (tcp.ok) {
           onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 OK (noHttp)──\n`);
           return true;
@@ -2179,7 +2194,7 @@ export class ContainerService {
         lastErr = tcp.error || 'tcp refused';
         onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastErr}) ──\n`);
         if (await containerGaveUp(attempt)) return false;
-        await new Promise(r => setTimeout(r, intervalMs));
+        await delay();
       }
       onOutput?.(`── noHttp 就绪探测超时 (${Math.round(timeoutMs / 1000)}s),最后错误: ${lastErr} ──\n`);
       return false;
@@ -2189,22 +2204,25 @@ export class ContainerService {
     let lastError = '';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (signal?.aborted) return false;
       if (!tcpOk) {
-        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
+        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs), signal);
         onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
+        if (signal?.aborted) return false;
         if (!tcp.ok) {
           lastError = tcp.error || 'tcp refused';
           onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastError}) ──\n`);
           if (await containerGaveUp(attempt)) return false;
-          await new Promise(r => setTimeout(r, intervalMs));
+          await delay();
           continue;
         }
         tcpOk = true;
         onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 OK ──\n`);
       }
 
-      const httpRes = await this.probeHttp(host, hostPort, probePath, Math.min(5000, intervalMs));
+      const httpRes = await this.probeHttp(host, hostPort, probePath, Math.min(5000, intervalMs), signal);
       onAttempt?.({ attempt, max: maxAttempts, stage: 'http', ok: httpRes.ok, error: httpRes.error });
+      if (signal?.aborted) return false;
       if (httpRes.ok) {
         onOutput?.(`── 就绪探测: HTTP ${probePath} 返回 ${httpRes.status} OK ──\n`);
         return true;
@@ -2212,20 +2230,23 @@ export class ContainerService {
       lastError = httpRes.error || `http ${httpRes.status}`;
       onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: HTTP ${probePath} (${lastError}) ──\n`);
       if (await containerGaveUp(attempt)) return false;
-      await new Promise(r => setTimeout(r, intervalMs));
+      await delay();
     }
 
     onOutput?.(`── 就绪探测超时 (${Math.round(timeoutMs / 1000)}s)，最后错误: ${lastError} ──\n`);
     return false;
   }
 
-  private probeTcp(host: string, port: number, timeoutMs: number): Promise<{ ok: boolean; error?: string }> {
+  private probeTcp(host: string, port: number, timeoutMs: number, signal?: AbortSignal): Promise<{ ok: boolean; error?: string }> {
+    if (signal?.aborted) return Promise.resolve({ ok: false, error: 'cancelled' });
     return new Promise((resolve) => {
       const socket = new net.Socket();
       let settled = false;
+      const cancel = () => done(false, 'cancelled');
       const done = (ok: boolean, error?: string) => {
         if (settled) return;
         settled = true;
+        signal?.removeEventListener('abort', cancel);
         socket.destroy();
         resolve({ ok, error });
       };
@@ -2233,22 +2254,31 @@ export class ContainerService {
       socket.once('connect', () => done(true));
       socket.once('timeout', () => done(false, 'tcp timeout'));
       socket.once('error', (err: NodeJS.ErrnoException) => done(false, err.code || err.message));
+      signal?.addEventListener('abort', cancel, { once: true });
       socket.connect(port, host);
     });
   }
 
-  private probeHttp(host: string, port: number, path: string, timeoutMs: number): Promise<{ ok: boolean; status?: number; error?: string }> {
+  private probeHttp(host: string, port: number, path: string, timeoutMs: number, signal?: AbortSignal): Promise<{ ok: boolean; status?: number; error?: string }> {
+    if (signal?.aborted) return Promise.resolve({ ok: false, error: 'cancelled' });
     return new Promise((resolve) => {
+      let settled = false;
+      const cancel = () => done({ ok: false, error: 'cancelled' });
+      const done = (result: { ok: boolean; status?: number; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', cancel);
+        req.destroy();
+        resolve(result);
+      };
       const req = http.request({ host, port, path, method: 'GET', timeout: timeoutMs }, (res) => {
         const status = res.statusCode || 0;
         res.resume();
-        // 2xx/3xx = ready; 4xx = route exists but maybe needs auth, still "ready"
-        // Only 5xx / no response counts as not ready.
-        if (status >= 200 && status < 500) resolve({ ok: true, status });
-        else resolve({ ok: false, status, error: `http ${status}` });
+        done(status >= 200 && status < 500 ? { ok: true, status } : { ok: false, status, error: `http ${status}` });
       });
-      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'http timeout' }); });
-      req.on('error', (err: NodeJS.ErrnoException) => resolve({ ok: false, error: err.code || err.message }));
+      req.on('timeout', () => done({ ok: false, error: 'http timeout' }));
+      req.on('error', (err: NodeJS.ErrnoException) => done({ ok: false, error: err.code || err.message }));
+      signal?.addEventListener('abort', cancel, { once: true });
       req.end();
     });
   }
@@ -2669,8 +2699,9 @@ export class ContainerService {
     return out;
   }
 
-  async getLogs(containerName: string, tail = 500): Promise<string> {
-    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`);
+  async getLogs(containerName: string, tail = 500, signal?: AbortSignal): Promise<string> {
+    const result = await this.shell.exec(`docker logs --timestamps --tail ${tail} ${containerName}`,
+      { signal, priority: 'diagnostic', timeout: 10_000, schedulingGroup: containerName });
     return combinedOutput(result);
   }
 

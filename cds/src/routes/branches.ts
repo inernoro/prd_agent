@@ -1735,6 +1735,7 @@ interface RunServiceWithPortRetryOptions {
   actor?: string | null;
   trigger?: string | null;
   assertCurrent?: (step: string) => void;
+  signal?: AbortSignal;
   onOutput?: (chunk: string) => void;
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
@@ -1827,6 +1828,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
+          signal: options.signal,
           onSourceCompileFallback: options.onSourceCompileFallback,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
@@ -13226,7 +13228,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath);
+        : await worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal);
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
         status: 'done',
@@ -13315,6 +13317,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const prepared = await prepareExactPrebuiltArtifacts(shell,
           profiles.map(profile => selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry)), targetSha, {
             assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+            signal: branchOperationLease?.signal,
             onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
           });
         for (const profile of prepared) preparedExactProfiles.set(profile.id, profile);
@@ -13592,6 +13595,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 部署收尾（释放分支租约）绝不发生在兄弟闭包还存活的时刻，根治
         // 「脱管闭包 + 同分支重复租约叠加」（2026-07-16 队列堵死复盘）。
         await runLayerWithSharedAbort(layer.items, async (profile, layerSignal) => {
+          const deploymentSignal = branchOperationLease?.signal
+            ? AbortSignal.any([branchOperationLease.signal, layerSignal]) : layerSignal;
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
@@ -13794,6 +13799,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               actor: resolveActorFromRequest(req),
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+              signal: deploymentSignal,
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               sourceCommitSha: pulledSha,
@@ -13879,7 +13885,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
-              });
+              }, 300, deploymentSignal);
             }
 
             // Always run the port-level readiness probe (even after a
@@ -13916,10 +13922,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 },
                 // 容器活性早退：崩溃容器不再让持有的构建槽白等满就绪下限。
                 svc.containerName,
+                deploymentSignal,
               );
               ready = ready ? probeReady : probeReady;
             }
 
+            assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
+            deploymentSignal.throwIfAborted();
             if (ready) {
               svc.status = 'running';
               svc.errorMessage = undefined;
@@ -14596,7 +14605,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath);
+        : await worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
@@ -14657,6 +14666,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
         [effectiveProfile] = await prepareExactPrebuiltArtifacts(shell, [effectiveProfile], targetSha, {
           assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+            signal: branchOperationLease?.signal,
           onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
         });
         deployedCommitSha = targetSha;
@@ -14838,6 +14848,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+              signal: branchOperationLease?.signal,
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           sourceCommitSha: fallbackPulledSha,
           onSourceCompileFallback: async () => {
@@ -14897,7 +14908,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
-          });
+          }, 300, branchOperationLease?.signal);
           ready = signalReady;
         }
         if (!profile.startupSignal || ready) {
@@ -14929,8 +14940,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             },
             // 容器活性早退：崩溃容器立即结束就绪等待，不空转到超时。
             svc.containerName,
+            branchOperationLease?.signal,
           );
         }
+        assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
         if (ready) {
           svc.status = 'running';
           svc.errorMessage = undefined;

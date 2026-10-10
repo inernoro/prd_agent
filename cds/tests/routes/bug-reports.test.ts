@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,20 +61,30 @@ async function request(
   const addr = server.address();
   if (!addr || typeof addr === 'string') throw new Error('no server address');
   try {
-    const res = await fetch(`http://127.0.0.1:${addr.port}${url}`, {
-      method,
-      // 每次请求创建独立服务器，禁止复用已关闭且端口可能被复用的连接。
-      headers: { Connection: 'close', ...(body === undefined ? headers : { 'Content-Type': 'application/json', ...headers }) },
-      body: body === undefined ? undefined : JSON.stringify(body),
+    // Each test request owns a fresh socket. The global fetch pool can reuse a recently closed
+    // ephemeral server port under full-suite load; never retry and hide a route failure.
+    const res = await new Promise<{ status: number; text: string; contentType: string }>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: addr.port, path: url, method, agent: false,
+        headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers } }, response => {
+        const chunks: Buffer[] = [];
+        response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+        response.on('error', reject);
+        response.on('aborted', () => reject(new Error('Test response aborted')));
+        response.on('end', () => resolve({ status: response.statusCode || 0,
+          text: Buffer.concat(chunks).toString('utf8'), contentType: String(response.headers['content-type'] || '') }));
+      });
+      req.on('error', reject);
+      req.setTimeout(5000, () => req.destroy(new Error('Test HTTP request timed out')));
+      req.end(body === undefined ? undefined : JSON.stringify(body));
     });
-    const text = await res.text();
+    const text = res.text;
     let parsed: any = null;
     try {
       parsed = text ? JSON.parse(text) : null;
     } catch {
       parsed = null;
     }
-    return { status: res.status, body: parsed, text, contentType: res.headers.get('content-type') || '' };
+    return { status: res.status, body: parsed, text, contentType: res.contentType };
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

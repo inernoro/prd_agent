@@ -1,3 +1,4 @@
+import { withShellExecutionContext } from './shell-executor.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ExecOptions, IShellExecutor } from '../types.js';
@@ -282,8 +283,12 @@ export class WorktreeService {
    *
    *  NOTE: `pull` does not need `repoRoot` because every git command
    *  runs inside `targetDir` (the worktree itself) rather than the
-   *  host repo root. Kept at the 2-arg signature for that reason. */
-  async pull(branch: string, targetDir: string): Promise<{ head: string; before: string; after: string; afterFull: string; updated: boolean }> {
+   *  host repo root. The optional cancellation signal belongs to the operation, not repository identity. */
+  async pull(branch: string, targetDir: string, signal?: AbortSignal): Promise<{ head: string; before: string; after: string; afterFull: string; updated: boolean }> {
+    return withShellExecutionContext({ signal, priority: 'delivery' }, () => this.pullInternal(branch, targetDir));
+  }
+
+  private async pullInternal(branch: string, targetDir: string): Promise<{ head: string; before: string; after: string; afterFull: string; updated: boolean }> {
     // Get current SHA before pull
     const beforeResult = await this.shell.exec(
       'git rev-parse --short HEAD',

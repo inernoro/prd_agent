@@ -3,9 +3,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { Worker } from 'node:worker_threads';
 import type { IShellExecutor, ExecResult, ExecOptions } from '../types.js';
 
-const executionContext = new AsyncLocalStorage<Pick<ExecOptions, 'priority' | 'schedulingGroup'>>();
-export function withShellExecutionContext<T>(context: Pick<ExecOptions, 'priority' | 'schedulingGroup'>, work: () => T): T {
-  return executionContext.run(context, work);
+const executionContext = new AsyncLocalStorage<Pick<ExecOptions, 'priority' | 'schedulingGroup' | 'signal'>>();
+export function withShellExecutionContext<T>(context: Pick<ExecOptions, 'priority' | 'schedulingGroup' | 'signal'>, work: () => T): T {
+  const parent = executionContext.getStore();
+  const signals = [parent?.signal, context.signal].filter((signal): signal is AbortSignal => Boolean(signal));
+  return executionContext.run({ ...parent, ...context,
+    signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0] }, work);
 }
 
 export interface ShellExecutorSettings {
@@ -178,7 +181,9 @@ export class ShellExecutor implements IShellExecutor {
   }
 
   async exec(command: string, options: ExecOptions = {}): Promise<ExecResult> {
-    options = { ...executionContext.getStore(), ...options };
+    const inherited = executionContext.getStore();
+    const signals = [inherited?.signal, options.signal].filter((signal): signal is AbortSignal => Boolean(signal));
+    options = { ...inherited, ...options, signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0] };
     if (this.closed) return this.failure(1, 'Shell executor closed');
     if (options.signal?.aborted) return this.failure(130, 'Command cancelled');
     const normalLimit = this.maxConcurrent > 1 ? this.maxConcurrent - 1 : 1;

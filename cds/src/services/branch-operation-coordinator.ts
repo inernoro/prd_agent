@@ -74,6 +74,8 @@ export interface BranchOperationLease {
   generation: number;
   request: BranchOperationRequest;
   startedAt: string;
+  /** Aborted when this operation is explicitly cancelled or superseded. */
+  signal?: AbortSignal;
   isCurrent(): boolean;
   assertCurrent(step?: string): void;
 }
@@ -249,6 +251,7 @@ function nowIso(): string {
 }
 
 export class BranchOperationCoordinator {
+  private readonly cancellation = new Map<string, AbortController>();
   private readonly active = new Map<string, ActiveOperation>();
   private readonly pendingWebhookDeploys = new Map<string, PendingWebhookDeploy>();
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
@@ -318,6 +321,8 @@ export class BranchOperationCoordinator {
       for (const item of this.findBlockingActives(request)) {
         item.cancelled = true;
         item.cancelReason = `superseded by ${request.kind}`;
+        this.cancellation.get(item.operationId)?.abort(item.cancelReason);
+        this.cancellation.delete(item.operationId);
         this.record('branch.operation.cancelled', item.request, item.operationId, item.generation, 'warn', {
           reason: item.cancelReason,
           supersededBy: request.kind,
@@ -386,6 +391,8 @@ export class BranchOperationCoordinator {
     if (activeEntry && active?.operationId === lease.operationId) {
       this.active.delete(activeEntry.key);
     }
+    if (status !== 'completed') this.cancellation.get(lease.operationId)?.abort(error || status);
+    this.cancellation.delete(lease.operationId);
     this.record(`branch.operation.${status}`, lease.request, lease.operationId, lease.generation, status === 'failed' ? 'error' : status === 'cancelled' ? 'warn' : 'info', {
       error: error || null,
       cancelled: active?.cancelled || false,
@@ -409,6 +416,8 @@ export class BranchOperationCoordinator {
     for (const [key, active] of activeEntries) {
       active.cancelled = true;
       active.cancelReason = reason;
+      this.cancellation.get(active.operationId)?.abort(reason);
+      this.cancellation.delete(active.operationId);
       this.record('branch.operation.cancelled', active.request, active.operationId, active.generation, 'warn', { reason });
       this.active.delete(key);
     }
@@ -476,6 +485,8 @@ export class BranchOperationCoordinator {
   }
 
   clearForTest(): void {
+    for (const controller of this.cancellation.values()) controller.abort('test cleanup');
+    this.cancellation.clear();
     this.active.clear();
     this.pendingWebhookDeploys.clear();
     this.reservedContinuations.clear();
@@ -496,12 +507,15 @@ export class BranchOperationCoordinator {
       cancelled: false,
     };
     this.active.set(key, active);
+    const cancellation = new AbortController();
+    this.cancellation.set(operationId, cancellation);
     const lease: BranchOperationLease = {
       operationId,
       branchId,
       generation,
       request,
       startedAt: active.startedAt,
+      signal: cancellation.signal,
       isCurrent: () => this.isCurrent(branchId, operationId, generation),
       assertCurrent: (step?: string) => {
         if (!this.isCurrent(branchId, operationId, generation)) {

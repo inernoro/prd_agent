@@ -786,7 +786,8 @@ describe('Projects router (P4 Part 2)', () => {
       expect(dev.status).toBe(409);
       expect(dev.body.error).toBe('agent_prebuilt_only');
       expect(dev.body.message).toContain('defaultDeployModes');
-      expect(stateService.getProject('default')!.defaultDeployModes).toBeUndefined();
+      // Discovery has already selected the prebuilt future-branch default. A rejected write must preserve it.
+      expect(stateService.getProject('default')!.defaultDeployModes).toEqual({ 'gate-api': 'express' });
 
       const express = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express' } }, machine);
       expect(express.status).toBe(200);

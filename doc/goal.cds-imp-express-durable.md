@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.2；日期：2026-10-10；状态：active。
+版本：v1.3；日期：2026-10-10；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -26,22 +26,34 @@ First execution step: 冻结49条任务与独立红绿账本，完成集成基�
 
 潜在涌现观察点：可复用制品集合证据、阶段等待责任、单写入运行坐标和实际服务分母。仅采纳的终态规则或有责任的backlog登记；不为已修一次性细节增设治理条款。
 
+## P3 候选替换设计合同（待实现，不作为已通过证据）
+
+同一交付冻结完整目标SHA、配置指纹和服务图。在线BranchEntry.services继续指向旧实例；候选使用独立容器名、端口和交付级应用网络，保持原branch/project标签并另加run/generation归属。候选服务图在私有运行上下文中解析依赖，不能将旧网络别名与新实例混用。候选记录在创建前可靠落盘，只存身份、版本引用、阶段与运行事实，不复制凭据。
+
+切换顺序：完整制品准入→容量准入→创建候选→完整图就绪→复核租约和目标→可靠保存切换意图与恢复点→发布新路由→核验实际路由消费者已应用完整目标映射→记录切换完成→回收旧实例。publishNow返回写文件不能替代Forwarder消费者确认；Master直连也须校验实际映射。路由确认失败先恢复旧映射并核验，未确认恢复时保留实例与容量事实，不盲删候选或旧实例。
+
+worker默认不能双实例消费；必须有可验证隔离/租约才允许并行候选，否则采用已声明的stop-and-restore约束：保留旧容器及不可变配置，短暂停旧worker后启动候选，失败恢复旧worker。固定宿主端口或独占写卷同样不承诺无中断；缺兼容性/恢复证明时准入失败，不能试运行后再猜测数据是否安全。此目标不自动授权业务库migration或真实消费测试。
+
+取消先终止归属执行进程，再按run/generation清理实际候选容器与网络，释放真实容量；Docker客户端被终止不等于Daemon侧创建已停止，须对账后交给下一写入者。重启时读取候选/切换记录与实际容器及路由对账，未确认切换不自动将候选当运行版本。正常旧实例、其他分支、已推进协作者版本不能被候选清理器回收。
+
+TDD先红：候选create/start/readiness任一失败旧路由仍可服务；固定端口/worker/独占卷约束；消费者未确认不得删旧；取消在create和切换前两窗口；回滚失败保留可恢复事实；执行器/Master重启未知中间态对账。真实独立验证另覆盖完整八分支和所有运行角色，不由纯函数/Mock测试继承通过。
+
 ## 验收与真实收口
 
-严格采用计划v1.2公网和48小时门槛；八分支完整服务验收、失败保旧、取消恢复与双主题视觉证据必须同时成立。输出页面、交互、命令、权限、闭环的enumerated/mapped/executed/closed_loop_pass/failed/blocked/uncovered，不传播旧SHA结果。阶段通过不关闭原生目标，尚无线上视觉pass。
+严格采用计划v1.3公网和48小时门槛；八分支完整服务验收、失败保旧、取消恢复与双主题视觉证据必须同时成立。输出页面、交互、命令、权限、闭环的enumerated/mapped/executed/closed_loop_pass/failed/blocked/uncovered，不传播旧SHA结果。阶段通过不关闭原生目标，尚无线上视觉pass。
 
 ## Goal State
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
-- 当前阶段：implementation-checkpoint
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:8ddc07c9199e1dcd901ae570212e73134b3ad5a1,IMP:dab8f7a862d8957bdfa0835e5ca6e1da440e4c05；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:43/1相对origin/main(新主干文学生图修复待本地检查点后集成),IMP:1/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
-- 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,待提交固定SHA`
+- 当前阶段：implementation
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:669383f89c06f5e5662135edde6babaa7f983025,IMP:a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:45/0相对origin/main,IMP:2/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：两独立工作树与49项双副本计划/TDD账本已建立；继承安全与状态止血基线，完成本地精确制品准入、版本引用/缓存digest校验、执行Worker/supervisor硬中断清理/ACK背压/调度与日志热点迁移、实际覆盖/黄蓝/独立版本状态、IMP13角色exact合同与权威文档校准。所有实现仍未发布；候选就绪替换、增量存储/SSE进一步治理、默认策略、辅助生命周期和完整生产证据未完成。
-- 证据纪元：`target_sha=CDS:本地候选未提交,IMP:本地候选未提交；tested_sha=N/A未在固定提交后重验,本地测试对应本批文件内容；deployed_sha=N/A线上自检20秒超时未证实；environment=本地独立工作树和测试自有无副作用进程,共享CDS只读；observed_at=2026-10-10T15:16:00Z`
-- 新鲜验证证据：CDS全量最新628文件通过/6跳过、9147测试通过/19跳过；backend tsc、web tsc和vite构建通过，IMP35条合同通过。两次全量分别出现不同的HTTP/计时偶发失败并保留，单项复测及最终全量通过，未改判据求绿。独立账本复验制品集合HTTP3项、实际覆盖14项、版本状态8项、硬中断2项且无关进程存活、基本执行契约8项、调度4项、日志热点6项；ACK延迟300ms时256KiB/4条，8MiB输出完整。均为本地有边界证据，非真实OCI/公网/视觉/八分支。仓库外归档77份主进程日志并脱敏，原红另存。
-- 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。
+- 当前实现事实：两独立工作树与49项双副本计划/TDD账本已建立；继承安全与状态止血基线，完成本地精确制品准入、版本引用/缓存digest校验、执行Worker/supervisor硬中断清理/ACK背压/调度与日志热点迁移、实际覆盖/黄蓝/独立版本状态、IMP13角色exact合同与权威文档校准。本批又补P3取消从租约贯穿真实命令、pull、启动信号、TCP/HTTP/重试及崩溃日志；P1新发现真实prebuilt自动填缺省新分支默认,保留明确例外与已有分支；候选替换设计合同已写,尚未接线。所有实现仍未发布；候选就绪替换、增量存储/SSE进一步治理、默认策略、辅助生命周期和完整生产证据未完成。
+- 证据纪元：`target_sha=CDS:669383f89c06f5e5662135edde6babaa7f983025,IMP:a35b160067cf2f9b7a41b5f5f2d37afb05ba8130；tested_sha=CDS:669383f89c06f5e5662135edde6babaa7f983025加本批未提交diff,全量9157条对应最后getLogs补丁前,最后补丁86条与tsc通过;IMP:a35b160067cf2f9b7a41b5f5f2d37afb05ba8130的35条合同内容；deployed_sha=N/A线上自检20秒超时未证实；environment=本地独立工作树和测试自有无副作用进程,共享CDS只读；observed_at=2026-10-10T15:43:20Z`
+- 新鲜验证证据：本批632文件通过/6跳过、9157测试通过/19跳过；最后getLogs取消补丁之后6文件86条与tsc通过。P3独立租约8/8、整/单服务真实HTTP pull2/2、readiness4/4、P1持久化默认8/8，原红保留；最后崩溃日志独立红已冻结,复绿待返回。全量发现一处旧默认空值断言已按新规则保留拒写后原极速默认,一处重复ECONNRESET的临时HTTP夹具改独立socket无重试,124条通过；失败日志保留。上一批历史：CDS全量最新628文件通过/6跳过、9147测试通过/19跳过；backend tsc、web tsc和vite构建通过，IMP35条合同通过。两次全量分别出现不同的HTTP/计时偶发失败并保留，单项复测及最终全量通过，未改判据求绿。独立账本复验制品集合HTTP3项、实际覆盖14项、版本状态8项、硬中断2项且无关进程存活、基本执行契约8项、调度4项、日志热点6项；ACK延迟300ms时256KiB/4条，8MiB输出完整。均为本地有边界证据，非真实OCI/公网/视觉/八分支。仓库外归档77份主进程日志并脱敏，原红另存。
+- 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：保存本地实现检查点，集成刚fetch到的CDS主干新修复并核验；继续P1默认/依赖与P3候选就绪替换/取消容量，推进P4存储/SSE和IMP辅助生命周期；具备可审查候选后处理最小发布前置，最终按49项与A01–A12收齐真实证据。
+- 下一动作与完成条件：本批取消/默认补丁保存本地检查点并固定新证据纪元；按P3设计合同继续候选身份/私有服务图/约束、就绪路由确认和恢复接线；主干继承C#5条在.NET9 roll-forward通过,本机缺.NET8原生运行时；继续P1默认/依赖与P3候选就绪替换/取消容量，推进P4存储/SSE和IMP辅助生命周期；具备可审查候选后处理最小发布前置，最终按49项与A01–A12收齐真实证据。
 - 终止/接替结论：active

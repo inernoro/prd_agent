@@ -1,3 +1,4 @@
+import { isPrebuiltMode } from './agent-prebuilt-gate.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1549,6 +1550,7 @@ export class StateService {
     if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.assertBuildProfileRuntimeBoundary(profile);
     this.state.buildProfiles.push(profile);
+    this.fillPrebuiltDefault(profile);
   }
 
   updateBuildProfile(id: string, updates: Partial<BuildProfile>): void {
@@ -1556,6 +1558,18 @@ export class StateService {
     if (idx === -1) throw new Error(`构建配置 "${id}" 不存在`);
     this.assertBuildProfileRuntimeBoundary({ ...this.state.buildProfiles[idx], ...updates });
     Object.assign(this.state.buildProfiles[idx], updates);
+    this.fillPrebuiltDefault(this.state.buildProfiles[idx]);
+  }
+
+  /** Discovery sets the future-branch default only; explicit exceptions and existing branches remain owned choices. */
+  private fillPrebuiltDefault(profile: BuildProfile): void {
+    const project = this.getProject(profile.projectId);
+    if (!project || Object.prototype.hasOwnProperty.call(project.defaultDeployModes ?? {}, profile.id)) return;
+    const modes = Object.keys(profile.deployModes ?? {});
+    const preferred = profile.activeDeployMode && isPrebuiltMode(profile, profile.activeDeployMode)
+      ? profile.activeDeployMode : modes.find(mode => isPrebuiltMode(profile, mode));
+    if (!preferred) return; // No real prebuilt definition: do not invent a fast mode or artifact.
+    project.defaultDeployModes = { ...project.defaultDeployModes, [profile.id]: preferred };
   }
 
   removeBuildProfile(id: string): void {
