@@ -70,7 +70,20 @@ export async function main(): Promise<void> {
       const view = inspect(member); assert.equal(view.State.Running, true);
       report.containers.push({ id, port, image: view.Image, cpuLimit: view.HostConfig.NanoCpus, memoryLimit: view.HostConfig.Memory });
     }
-    await until(async () => { await raw.connect(); return Boolean((await raw.db('admin').command({ ping: 1 })).ok); }, 'Mongo startup');
+    // docker running不能证明mongod已经监听；初始化需要三个实际成员全部就绪。
+    report.readyMembers = [];
+    await Promise.all(members.map(async member => {
+      inspect(member);
+      const probe = new MongoClient(`mongodb://127.0.0.1:${member.port}/?directConnection=true`,
+        { retryWrites: false, serverSelectionTimeoutMS: 3000, connectTimeoutMS: 3000 });
+      try {
+        await until(async () => { await probe.connect(); return Boolean((await probe.db('admin').command({ ping: 1 })).ok); }, `Mongo member ${member.port} startup`);
+        assert.equal(inspect(member).State.Running, true);
+        report.readyMembers.push({ id: member.id, port: member.port, pingConfirmed: true });
+      } finally { await probe.close(); }
+    }));
+    assert.equal(report.readyMembers.length, members.length);
+    await raw.connect();
     await raw.db('admin').command({ replSetInitiate: { _id: owner, members: ports.map((port, i) => ({ _id: i, host: `localhost:${port}`, priority: i === 0 ? 2 : 0 })),
       settings: { electionTimeoutMillis: 60000 } } });
     await until(async () => { const status = await raw.db('admin').command({ replSetGetStatus: 1 });
