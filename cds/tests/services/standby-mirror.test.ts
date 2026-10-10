@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStandbyMirrorFingerprint,
   compareStandbyFingerprints,
+  planStandbyBranchSync,
   percentile,
 } from '../../src/services/standby-mirror.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
@@ -72,5 +73,64 @@ describe('percentile', () => {
     expect(percentile(samples, 0.5)).toBe(20);
     expect(percentile(samples, 0.95)).toBe(40);
     expect(percentile([], 0.95)).toBeNull();
+  });
+});
+
+describe('standby branch sync plan', () => {
+  function withBranches(items: Array<{ id: string; name: string; status: string; commit: string }>) {
+    const base = fingerprint({ includeBranch: false });
+    return {
+      ...base,
+      branches: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        status: item.status,
+        commitSha: item.commit,
+      })),
+    };
+  }
+
+  it('catalog 只补缺失分支，不启动、不停止、不删除目标独有分支', () => {
+    const source = withBranches([
+      { id: 'source-main', name: 'main', status: 'running', commit: 'a' },
+      { id: 'source-feature', name: 'feature/a', status: 'idle', commit: 'b' },
+    ]);
+    const target = withBranches([
+      { id: 'target-main', name: 'main', status: 'running', commit: 'a' },
+      { id: 'target-local', name: 'local/debug', status: 'running', commit: 'c' },
+    ]);
+    expect(planStandbyBranchSync(source, target, 'catalog')).toEqual([expect.objectContaining({
+      name: 'feature/a',
+      kind: 'create',
+    })]);
+  });
+
+  it('warm-running 对齐运行状态，但提交分叉只报告不覆盖', () => {
+    const source = withBranches([
+      { id: 's-main', name: 'main', status: 'running', commit: 'a' },
+      { id: 's-idle', name: 'idle', status: 'idle', commit: 'b' },
+      { id: 's-new', name: 'new', status: 'running', commit: 'c' },
+      { id: 's-diverged', name: 'diverged', status: 'running', commit: 'd1' },
+    ]);
+    const target = withBranches([
+      { id: 't-main', name: 'main', status: 'idle', commit: 'a' },
+      { id: 't-idle', name: 'idle', status: 'running', commit: 'b' },
+      { id: 't-diverged', name: 'diverged', status: 'idle', commit: 'd2' },
+    ]);
+    expect(planStandbyBranchSync(source, target, 'warm-running')).toEqual([
+      expect.objectContaining({ name: 'main', targetBranchId: 't-main', kind: 'deploy' }),
+      expect.objectContaining({ name: 'idle', targetBranchId: 't-idle', kind: 'stop' }),
+      expect.objectContaining({ name: 'new', kind: 'create' }),
+      expect.objectContaining({ name: 'new', kind: 'deploy' }),
+      expect.objectContaining({ name: 'diverged', targetBranchId: 't-diverged', kind: 'divergent' }),
+    ]);
+  });
+
+  it('audit-only 永远不产生写操作', () => {
+    expect(planStandbyBranchSync(
+      withBranches([{ id: 's-main', name: 'main', status: 'running', commit: 'a' }]),
+      withBranches([]),
+      'audit-only',
+    )).toEqual([]);
   });
 });

@@ -3550,8 +3550,24 @@ interface StandbyConfig {
   remoteProjectId: string;
   enabled: boolean;
   intervalMinutes: number;
+  branchSyncPolicy?: 'audit-only' | 'catalog' | 'warm-running';
   autoFailover: false;
   lastAudit?: StandbyAudit;
+  lastBranchSync?: StandbyBranchSyncResult;
+}
+
+interface StandbyBranchSyncResult {
+  completedAt: string;
+  dryRun: boolean;
+  policy: 'audit-only' | 'catalog' | 'warm-running';
+  sourceBranchCount: number;
+  targetBranchCount: number;
+  planned: Array<{ name: string; kind: 'create' | 'deploy' | 'stop' | 'divergent'; reason: string }>;
+  created: string[];
+  deployed: string[];
+  stopped: string[];
+  divergent: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  failed: Array<{ name: string; action: string; error: string }>;
 }
 
 function ProjectMigrationTab({
@@ -3582,8 +3598,11 @@ function ProjectMigrationTab({
   const [standbyRemoteProjectId, setStandbyRemoteProjectId] = useState(projectId);
   const [standbyEnabled, setStandbyEnabled] = useState(false);
   const [standbyInterval, setStandbyInterval] = useState(15);
+  const [branchSyncPolicy, setBranchSyncPolicy] = useState<'audit-only' | 'catalog' | 'warm-running'>('audit-only');
   const [savingStandby, setSavingStandby] = useState(false);
   const [auditingStandby, setAuditingStandby] = useState(false);
+  const [syncingBranches, setSyncingBranches] = useState<'dry' | 'apply' | null>(null);
+  const [branchSyncResult, setBranchSyncResult] = useState<StandbyBranchSyncResult | null>(null);
   const [auditElapsedSeconds, setAuditElapsedSeconds] = useState(0);
 
   // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
@@ -3595,7 +3614,8 @@ function ProjectMigrationTab({
     setReplicateResult(null); setDataPlan(null); setShowYaml(false);
     setReplicating(null); setScanning(false);
     setStandby(null); setStandbyRemoteProjectId(projectId); setStandbyEnabled(false);
-    setStandbyInterval(15); setSavingStandby(false); setAuditingStandby(false);
+    setStandbyInterval(15); setBranchSyncPolicy('audit-only'); setBranchSyncResult(null);
+    setSavingStandby(false); setAuditingStandby(false); setSyncingBranches(null);
   }, [projectId]);
 
   const loadPeers = useCallback(async () => {
@@ -3643,6 +3663,8 @@ function ProjectMigrationTab({
         setStandbyRemoteProjectId(config.remoteProjectId);
         setStandbyEnabled(config.enabled);
         setStandbyInterval(config.intervalMinutes);
+        setBranchSyncPolicy(config.branchSyncPolicy || 'audit-only');
+        setBranchSyncResult(config.lastBranchSync || null);
       }
     } catch (err) {
       if (reqPid === liveProjectId.current) onToast(`加载备用站设置异常:${(err as Error).message}`);
@@ -3774,6 +3796,7 @@ function ProjectMigrationTab({
           remoteProjectId: standbyRemoteProjectId.trim(),
           enabled: standbyEnabled,
           intervalMinutes: standbyInterval,
+          branchSyncPolicy,
         }),
       });
       const body = await res.json();
@@ -3788,7 +3811,7 @@ function ProjectMigrationTab({
     } finally {
       if (reqPid === liveProjectId.current) setSavingStandby(false);
     }
-  }, [base, onToast, projectId, selectedPeerId, standbyEnabled, standbyInterval, standbyRemoteProjectId]);
+  }, [base, branchSyncPolicy, onToast, projectId, selectedPeerId, standbyEnabled, standbyInterval, standbyRemoteProjectId]);
 
   const auditStandby = useCallback(async () => {
     if (!(await saveStandby())) return;
@@ -3814,6 +3837,39 @@ function ProjectMigrationTab({
       if (reqPid === liveProjectId.current) setAuditingStandby(false);
     }
   }, [base, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
+
+  const reconcileBranches = useCallback(async (dryRun: boolean) => {
+    if (!(await saveStandby())) return;
+    const reqPid = projectId;
+    setSyncingBranches(dryRun ? 'dry' : 'apply');
+    try {
+      const res = await fetch(apiUrl(`${base}/standby/reconcile`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: selectedPeerId,
+          remoteProjectId: standbyRemoteProjectId.trim(),
+          policy: branchSyncPolicy,
+          dryRun,
+        }),
+      });
+      const body = await res.json();
+      if (reqPid !== liveProjectId.current) return;
+      if (body.result) setBranchSyncResult(body.result as StandbyBranchSyncResult);
+      if (!res.ok && res.status !== 207) {
+        onToast(`分支同步失败:${body.error || res.status}`);
+      } else if (body.result?.failed?.length) {
+        onToast(`分支同步部分完成，${body.result.failed.length} 项失败`);
+      } else {
+        onToast(dryRun ? '分支同步预演完成' : '分支同步完成');
+      }
+      if (!dryRun) await loadStandby();
+    } catch (err) {
+      if (reqPid === liveProjectId.current) onToast(`分支同步异常:${(err as Error).message}`);
+    } finally {
+      if (reqPid === liveProjectId.current) setSyncingBranches(null);
+    }
+  }, [base, branchSyncPolicy, loadStandby, onToast, projectId, saveStandby, selectedPeerId, standbyRemoteProjectId]);
 
   if (!peers) return <LoadingBlock label="加载迁移设置…" />;
 
@@ -4003,6 +4059,19 @@ function ProjectMigrationTab({
               onChange={(event) => setStandbyInterval(Number(event.target.value))}
             />
           </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            分支同步策略
+            <select
+              className={monoInputClass}
+              style={{ width: '13rem' }}
+              value={branchSyncPolicy}
+              onChange={(event) => setBranchSyncPolicy(event.target.value as typeof branchSyncPolicy)}
+            >
+              <option value="audit-only">只核对</option>
+              <option value="catalog">补齐分支目录</option>
+              <option value="warm-running">补齐并对齐运行态</option>
+            </select>
+          </label>
           <label className="flex items-center gap-2 pb-2 text-sm">
             <input type="checkbox" checked={standbyEnabled} onChange={(event) => setStandbyEnabled(event.target.checked)} />
             按间隔持续核对
@@ -4010,7 +4079,45 @@ function ProjectMigrationTab({
           <Button type="button" variant="outline" size="sm" onClick={() => void saveStandby()} disabled={savingStandby || auditingStandby || !selectedPeerId}>
             {savingStandby ? <Loader2 className="animate-spin" /> : <Save />} 保存设置
           </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void reconcileBranches(true)} disabled={syncingBranches !== null || savingStandby || !selectedPeerId}>
+            {syncingBranches === 'dry' ? <Loader2 className="animate-spin" /> : <Eye />} 预演分支同步
+          </Button>
+          <Button type="button" size="sm" onClick={() => void reconcileBranches(false)} disabled={syncingBranches !== null || savingStandby || branchSyncPolicy === 'audit-only' || !selectedPeerId}>
+            {syncingBranches === 'apply' ? <Loader2 className="animate-spin" /> : <RefreshCw />} 立即同步分支
+          </Button>
         </div>
+
+        <p className="mb-3 text-xs text-muted-foreground">
+          “补齐分支目录”只创建缺少的分支，不启动容器；“补齐并对齐运行态”会让备用站跟随源站启动或停止。目标独有分支不会删除，提交不同的分支不会自动覆盖。
+        </p>
+
+        {branchSyncResult ? (
+          <div className="mb-3 overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">分支同步</th>
+                  <th className="px-3 py-2 font-medium">数量</th>
+                  <th className="px-3 py-2 font-medium">结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2">源站 / 目标</td>
+                  <td className="px-3 py-2">{branchSyncResult.sourceBranchCount} / {branchSyncResult.targetBranchCount}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{branchSyncResult.dryRun ? '预演' : '已执行'} · {branchSyncResult.policy}</td>
+                </tr>
+                <tr className="border-t border-[hsl(var(--hairline))]">
+                  <td className="px-3 py-2">本轮动作</td>
+                  <td className="px-3 py-2">{branchSyncResult.planned.length}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    创建 {branchSyncResult.created.length}，启动 {branchSyncResult.deployed.length}，停止 {branchSyncResult.stopped.length}，分叉 {branchSyncResult.divergent.length}，失败 {branchSyncResult.failed.length}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : null}
 
         {standby?.lastAudit ? (
           <div className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))]">

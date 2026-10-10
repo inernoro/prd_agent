@@ -3667,6 +3667,8 @@ export interface ManagedProjectSpec {
 }
 
 export interface StandbyMirrorBranchFingerprint {
+  /** 目标节点执行 deploy/stop 时使用的 CDS branch id；不是 Git branch name。 */
+  id: string;
   name: string;
   commitSha: string | null;
   status: string;
@@ -3710,15 +3712,47 @@ export interface StandbyMirrorAudit {
   error?: string;
 }
 
+export type StandbyBranchSyncPolicy = 'audit-only' | 'catalog' | 'warm-running';
+
+export interface StandbyBranchSyncAction {
+  name: string;
+  sourceStatus: string;
+  sourceCommit: string | null;
+  targetBranchId?: string;
+  kind: 'create' | 'deploy' | 'stop' | 'divergent';
+  reason: string;
+}
+
+export interface StandbyBranchSyncResult {
+  startedAt: string;
+  completedAt: string;
+  dryRun: boolean;
+  policy: StandbyBranchSyncPolicy;
+  sourceBranchCount: number;
+  targetBranchCount: number;
+  planned: StandbyBranchSyncAction[];
+  created: string[];
+  deployed: string[];
+  stopped: string[];
+  divergent: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
+  failed: Array<{ name: string; action: StandbyBranchSyncAction['kind']; error: string }>;
+}
+
 export interface StandbyMirrorConfig {
   peerId: string;
   remoteProjectId: string;
   enabled: boolean;
   intervalMinutes: number;
+  /**
+   * audit-only: 只核对；catalog: 补齐分支目录但不启动；warm-running: 另外对齐运行/停止状态。
+   * 任何策略都不自动删除目标独有分支，也不强制覆盖提交分叉。
+   */
+  branchSyncPolicy?: StandbyBranchSyncPolicy;
   /** 自动切流必须经过独立发布门，第一阶段固定 false。 */
   autoFailover: false;
   updatedAt: string;
   lastAudit?: StandbyMirrorAudit;
+  lastBranchSync?: StandbyBranchSyncResult;
   history?: StandbyMirrorAudit[];
 }
 

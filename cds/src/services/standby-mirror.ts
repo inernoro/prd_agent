@@ -5,6 +5,8 @@ import type {
   BuildProfile,
   InfraService,
   RoutingRule,
+  StandbyBranchSyncAction,
+  StandbyBranchSyncPolicy,
   StandbyMirrorFingerprint,
 } from '../types.js';
 import { isSecretEnvKey } from './env-classifier.js';
@@ -82,6 +84,7 @@ export function buildStandbyMirrorFingerprint(input: {
   const secretKeys = Object.keys(input.env).filter(isSecretEnvKey).sort();
   const branches = input.branches
     .map((branch) => ({
+      id: branch.id,
       name: branchName(branch),
       commitSha: branch.githubCommitSha || branch.pinnedCommit || null,
       status: branch.status,
@@ -104,6 +107,79 @@ export function buildStandbyMirrorFingerprint(input: {
     branches,
     generatedAt: input.generatedAt || new Date().toISOString(),
   };
+}
+
+/**
+ * 生成主站到备用站的分支收敛计划。
+ *
+ * 这里刻意不生成 delete/reset：目标独有分支可能承载本地排障，提交分叉也可能是
+ * 人工回滚。自动删除或 reset 会把“备用”变成第二个破坏源，必须留给显式版本迁移。
+ */
+export function planStandbyBranchSync(
+  source: StandbyMirrorFingerprint,
+  target: StandbyMirrorFingerprint,
+  policy: StandbyBranchSyncPolicy,
+): StandbyBranchSyncAction[] {
+  if (policy === 'audit-only') return [];
+  const targetByName = new Map(target.branches.map((branch) => [branch.name, branch]));
+  const actions: StandbyBranchSyncAction[] = [];
+
+  for (const branch of source.branches) {
+    const remote = targetByName.get(branch.name);
+    if (!remote) {
+      actions.push({
+        name: branch.name,
+        sourceStatus: branch.status,
+        sourceCommit: branch.commitSha,
+        kind: 'create',
+        reason: '目标缺少该分支，先补齐分支目录',
+      });
+      if (policy === 'warm-running' && branch.status === 'running') {
+        actions.push({
+          name: branch.name,
+          sourceStatus: branch.status,
+          sourceCommit: branch.commitSha,
+          kind: 'deploy',
+          reason: '源站分支正在运行，创建后在备用站预热',
+        });
+      }
+      continue;
+    }
+
+    if (branch.commitSha !== remote.commitSha) {
+      actions.push({
+        name: branch.name,
+        sourceStatus: branch.status,
+        sourceCommit: branch.commitSha,
+        targetBranchId: remote.id,
+        kind: 'divergent',
+        reason: '两端提交不同，保留现场并阻止自动覆盖',
+      });
+      continue;
+    }
+
+    if (policy !== 'warm-running') continue;
+    if (branch.status === 'running' && remote.status !== 'running') {
+      actions.push({
+        name: branch.name,
+        sourceStatus: branch.status,
+        sourceCommit: branch.commitSha,
+        targetBranchId: remote.id,
+        kind: 'deploy',
+        reason: '源站运行、备用站未运行，补齐热备实例',
+      });
+    } else if (branch.status !== 'running' && remote.status === 'running') {
+      actions.push({
+        name: branch.name,
+        sourceStatus: branch.status,
+        sourceCommit: branch.commitSha,
+        targetBranchId: remote.id,
+        kind: 'stop',
+        reason: '源站未运行、备用站仍运行，释放多余容量',
+      });
+    }
+  }
+  return actions;
 }
 
 export function percentile(samples: number[], ratio: number): number | null {
