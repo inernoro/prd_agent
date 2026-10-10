@@ -12715,7 +12715,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 source: 'api.deploy-branch',
                 reason: '期望清单为空，清理残留服务容器',
               });
-            } catch { /* best-effort：仍删条目 */ }
+            } catch (err) {
+              assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup failed ${sid}`);
+              svc.status = 'error'; svc.errorMessage = `移除失败，保留运行身份和端口等待对账: ${(err as Error).message}`;
+              entry.status = 'error'; entry.errorMessage = svc.errorMessage;
+              stateService.save();
+              throw err;
+            }
             assertBranchOperationCurrent(cleanupLease, `empty-profiles-cleanup after ${sid}`);
             delete entry.services[sid];
             cleared.push(sid);
@@ -13199,7 +13205,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
               });
             } catch (err) {
-              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+              assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan failed ${sid}`);
+              svc.status = 'error'; svc.errorMessage = `移除失败，保留运行身份和端口等待对账: ${(err as Error).message}`;
+              stateService.save();
+              logEvent({ step: 'remove-orphan-service', status: 'error', title: `服务 "${sid}" 容器移除失败，保留记录: ${(err as Error).message}`, timestamp: new Date().toISOString() });
+              throw err;
             }
             assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan after ${sid}`);
             delete entry.services[sid];
@@ -14028,8 +14038,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       // 服务已从「期望清单」移除(分支额外服务被清掉 / 项目 profile 被删) → **拆掉它的容器并删条目**,
       // 让「移除即下掉」成立(分支级额外服务的对称半:加能起、删能下)。此前只对 error 态打 warning、
-      // 容器残留(2026-06-29 实测:清掉额外服务后 demo-extra 容器仍在跑)。best-effort:remove 失败也
-      // 继续删条目,避免卡住整次部署;profiles 非空已由上方 400 守卫保证,不会误删全部。
+      // 容器残留(2026-06-29 实测:清掉额外服务后 demo-extra 容器仍在跑)。remove失败保留
+      // 运行身份和端口并终止部署，未确认实际回收前不能清掉容量事实。profiles非空已由上方守卫保证。
       if (zombieServices.length > 0) {
         const zActor = resolveActorFromRequest(req);
         const zTrigger = triggerFromRequest(req);
@@ -14061,7 +14071,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
               reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
             });
           } catch (err) {
-            logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            assertBranchOperationCurrent(branchOperationLease, `remove-orphan-service failed ${sid}`);
+            svc.status = 'error'; svc.errorMessage = `移除失败，保留运行身份和端口等待对账: ${(err as Error).message}`;
+            stateService.save();
+            logEvent({ step: 'remove-orphan-service', status: 'error', title: `服务 "${sid}" 容器移除失败，保留记录: ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            throw err;
           }
           // remove 的 await 之后、改 state 之前再校验一次：租约还在才删条目。
           assertBranchOperationCurrent(branchOperationLease, `remove-orphan-service after ${sid}`);

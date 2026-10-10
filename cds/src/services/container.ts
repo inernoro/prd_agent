@@ -2592,7 +2592,7 @@ export class ContainerService {
       action: 'container.remove.completed',
       message: completion.status === 'already-absent'
         ? `docker rm skipped for ${containerName}: container already absent`
-        : `docker rm completed for ${containerName}`,
+        : completion.status === 'failed' ? `docker rm failed for ${containerName}` : `docker rm completed for ${containerName}`,
       projectId: context.projectId ?? undefined,
       branchId: context.branchId ?? undefined,
       profileId: context.profileId ?? undefined,
@@ -2615,6 +2615,7 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    if (completion.status === 'failed') throw new Error(`容器移除失败 ${containerName}: ${combinedOutput(rmResult)}`);
   }
 
   async isRunning(containerName: string): Promise<boolean> {

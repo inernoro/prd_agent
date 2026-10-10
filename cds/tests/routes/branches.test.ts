@@ -3182,6 +3182,38 @@ describe('Branch Routes', () => {
       ]));
     });
 
+    it('retains runtime and port evidence when empty-profile cleanup fails', async () => {
+      stateService.addBranch({ id: 'empty-failed', projectId: 'default', branch: 'feature/empty-failed',
+        worktreePath: path.join(tmpDir, 'worktrees', 'empty-failed'), status: 'running', createdAt: new Date().toISOString(), currentVersionId: 'old-version',
+        services: { orphan: { profileId: 'orphan', containerName: 'cds-empty-failed-orphan', hostPort: 10002, status: 'running' } } }); stateService.save();
+      mock.addResponsePatternFirst(/^docker rm cds-empty-failed-orphan$/, () => ({ stdout: '', stderr: 'daemon refused removal', exitCode: 1 }));
+      const response = await request(server, 'POST', '/api/branches/empty-failed/deploy');
+      expect(response.status).toBe(200);
+      expect(stateService.getBranch('empty-failed')?.services.orphan).toMatchObject({ containerName: 'cds-empty-failed-orphan', hostPort: 10002 });
+      expect(stateService.getBranch('empty-failed')?.currentVersionId).toBe('old-version');
+      expect(stateService.allocatePort(10002)).not.toBe(10002);
+      expect(String(response.body)).toContain('event: error'); expect(String(response.body)).not.toContain('event: complete');
+    });
+
+    it('retains runtime and port evidence when orphan cleanup fails', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({ id: 'orphan-failed', projectId: 'default', branch: 'feature/orphan-failed',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-failed'), status: 'running', createdAt: new Date().toISOString(),
+        services: {
+          api: { profileId: 'api', containerName: 'cds-orphan-failed-api', hostPort: 10001, status: 'running' },
+          orphan: { profileId: 'orphan', containerName: 'cds-orphan-failed-orphan', hostPort: 10002, status: 'running' },
+        } }); stateService.save();
+      mock.addResponsePatternFirst(/^docker rm cds-orphan-failed-orphan$/, () => ({ stdout: '', stderr: 'daemon refused removal', exitCode: 1 }));
+      const response = await request(server, 'POST', '/api/branches/orphan-failed/deploy');
+      expect(response.status).toBe(200);
+      expect(stateService.getBranch('orphan-failed')?.services.orphan).toMatchObject({ containerName: 'cds-orphan-failed-orphan', hostPort: 10002 });
+      expect(stateService.allocatePort(10002)).not.toBe(10002);
+      expect(String(response.body)).toContain('daemon refused removal');
+      expect(mock.commands.some(command => command.startsWith('docker run') && command.includes('cds-orphan-failed-api'))).toBe(false);
+    });
+
     it('removes orphan services BEFORE the pull so a later pull failure cannot leave ghosts (Codex P2)', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
