@@ -3,8 +3,10 @@ import net from 'node:net';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { prepareExactPrebuiltArtifacts } from './prebuilt-artifact-gate.js';
 import { withShellExecutionContext } from './shell-executor.js';
+import { candidateRuntimeIdentity } from './service-candidate.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
@@ -1183,6 +1185,8 @@ export class ContainerService {
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
       assertCurrent?: (step: string) => void;
       signal?: AbortSignal;
+      /** Private run-owned instance; caller must persist its ledger before creation and handle commit/cleanup. */
+      candidateRunId?: string;
       /**
        * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
        * 构建槽（build-gate，见 branches.ts 部署循环），但回退到源码编译就是
@@ -1212,8 +1216,25 @@ export class ContainerService {
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
+    const candidate = context.candidateRunId ? candidateRuntimeIdentity(entry.id, profile.id, context.candidateRunId) : undefined;
+    if (candidate) {
+      if (service.containerName !== candidate.containerName || service.profileId !== profile.id || service.status === 'running' || service.deployedImage ||
+          !Number.isInteger(service.hostPort) || service.hostPort < 1 || service.hostPort > 65535 ||
+          Object.values(entry.services).some(existing => existing.containerName !== service.containerName && existing.hostPort === service.hostPort)) {
+        throw new Error('candidate_identity: candidate must not reuse a serving identity or port');
+      }
+      const target = entry.deploymentTargetSha || entry.githubCommitSha || '';
+      if (!/^[0-9a-f]{40}$/.test(target) || (context.latestCommitSha && context.latestCommitSha !== target)) {
+        throw new Error('candidate_target: frozen target cannot drift');
+      }
+      if (!branchNetworkIsolationEnabled(process.env)) throw new Error('candidate_network_isolation: private network required');
+      if (!profile.prebuiltImage || profile.prebuiltCommitPolicy !== 'exact' || profile.managedBuild || profile.localArtifact) {
+        throw new Error('candidate_artifact: exact prebuilt artifact required');
+      }
+    }
     if (profile.prebuiltImage && profile.prebuiltCommitPolicy === 'exact') {
-      const target = context.latestCommitSha || profile.preparedCommitSha || entry.githubCommitSha || '';
+      const target = candidate ? entry.deploymentTargetSha || entry.githubCommitSha || ''
+        : context.latestCommitSha || profile.preparedCommitSha || entry.githubCommitSha || '';
       [profile] = await prepareExactPrebuiltArtifacts(this.shell, [profile], target, {
         assertCurrent: context.assertCurrent,
         signal: context.signal,
@@ -1249,17 +1270,15 @@ export class ContainerService {
     // 运行后再连共享网（无别名，仅为可达共享 infra mysql/redis）。这样一个分支随便部署多少
     // 容器都只落在自己的分支网，杜绝「app 别名跨分支串流」（apigateway 拆服务案例）。未隔离时
     // netPlan 退化为「共享网 + app 别名」= 现状，零回归。详见 branch-network.ts / design 文档。
-    const netPlan = resolveAppNetworkPlan({
-      isolated: branchNetworkIsolationEnabled(process.env),
-      sharedNetwork: network,
-      branchId: entry.id,
-      aliases: profileAliases,
-    });
-    if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
+    const netPlan = candidate ? { runNetwork: candidate.networkName, runAliases: profileAliases, connectNetworks: [network] }
+      : resolveAppNetworkPlan({ isolated: branchNetworkIsolationEnabled(process.env), sharedNetwork: network,
+        branchId: entry.id, aliases: profileAliases });
+    if (candidate) await this.ensureCandidateNetwork(candidate.networkName, entry, context.candidateRunId!);
+    else if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
-    await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
+    if (!candidate) await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
     // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
     // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
@@ -1600,7 +1619,9 @@ export class ContainerService {
       operation: 'deploy-pre-run-replace',
       source: 'container.runService',
     });
-    const preRunRemove = await this.shell.exec(`docker rm -f ${service.containerName}`);
+    const preRunRemove = candidate
+      ? await this.removeStoppedCandidate(service.containerName, entry, profile.id, context.candidateRunId!)
+      : await this.shell.exec(`docker rm -f ${service.containerName}`);
     this.recordContainerEvent({
       severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
       source: 'cds-container-service',
@@ -1726,6 +1747,7 @@ export class ContainerService {
         // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 启动前 connect 共享网，
         // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
         this.appLabels(entry.projectId, entry.id, profile.id, network),
+        ...(candidate ? [`--label cds.deployment.operation=${this.shellQuote(context.candidateRunId!)}`, '--label cds.deployment.kind=candidate'] : []),
         // host-shell 安全（Codex P1「Validate shell-interpolated extra service fields」）：镜像引用与
         // command 都来自用户可控的 BuildProfile（含分支级额外服务），必须对**宿主机 shell** 单引号转义，
         // 否则 dockerImage=`x;rm -rf /` 或 command=`$(...)` 会在 CDS 宿主机上执行（而非仅容器内）。
@@ -1849,7 +1871,7 @@ export class ContainerService {
       // docker run -d returns immediately; the process inside may crash shortly after.
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
       try {
-        await this.waitForContainerAlive(service.containerName, onOutput);
+        await this.waitForContainerAlive(service.containerName, onOutput, context.signal);
       } catch (err) {
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 300);
         const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
@@ -2031,16 +2053,17 @@ export class ContainerService {
   private async waitForContainerAlive(
     containerName: string,
     onOutput?: (chunk: string) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const CHECKS = 3;
     const INTERVAL_MS = 2000;
 
     for (let i = 0; i < CHECKS; i++) {
-      await new Promise(r => setTimeout(r, INTERVAL_MS));
+      await delay(INTERVAL_MS, undefined, { signal });
 
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
-        { priority: 'health', timeout: 10_000 },
+        { priority: 'health', timeout: 10_000, signal },
       );
       if (inspect.exitCode !== 0) {
         throw new Error(`容器 "${containerName}" 已消失`);
@@ -2054,7 +2077,7 @@ export class ContainerService {
       }
 
       if (status === 'exited' || status === 'dead') {
-        const logs = await this.getLogs(containerName, 30);
+        const logs = await this.getLogs(containerName, 30, signal);
         throw new Error(
           `容器 "${containerName}" 启动后退出 (exit code: ${exitCode}):\n${logs}`,
         );
@@ -3378,6 +3401,58 @@ export class ContainerService {
    *
    * 兼容老调用方：网络名缺省时退回到 config.dockerNetwork（pre-P4 共享网络）。
    */
+  private async removeStoppedCandidate(name: string, entry: BranchEntry, profileId: string, runId: string): Promise<ExecResult> {
+    const result = await this.shell.exec(`docker inspect --format='{{json .}}' ${this.shellQuote(name)}`,
+      { priority: 'delivery', timeout: 10_000 });
+    if (result.exitCode !== 0) {
+      if (/no such (?:object|container)/i.test(combinedOutput(result))) return { stdout: '', stderr: '', exitCode: 0 };
+      throw new Error('candidate_container_inspect: cannot establish container ownership');
+    }
+    let info: any;
+    try { info = JSON.parse(result.stdout.trim()); } catch { /* Fail closed below. */ }
+    const expected = { 'cds.managed': 'true', 'cds.instance': computeCdsInstanceId(this.config.repoRoot),
+      'cds.project.id': entry.projectId || '_unknown', 'cds.branch.id': entry.id, 'cds.profile.id': profileId,
+      'cds.deployment.operation': runId, 'cds.deployment.kind': 'candidate' };
+    if (!info || !/^[a-f0-9]{64}$/.test(info.Id || '') ||
+      !Object.entries(expected).every(([key, value]) => info.Config?.Labels?.[key] === value) ||
+      info.State?.Running !== false) {
+      throw new Error('candidate_container_owner: existing container is foreign or may be serving');
+    }
+    // Delete the inspected immutable ID without force: a concurrent start must fail removal,
+    // and a replacement under the same name must never become the deletion target.
+    const removed = await this.shell.exec(`docker rm ${info.Id}`, { priority: 'delivery', timeout: 10_000 });
+    if (removed.exitCode !== 0) throw new Error('candidate_container_remove: stopped candidate removal failed');
+    return removed;
+  }
+
+  private async ensureCandidateNetwork(name: string, entry: BranchEntry, runId: string): Promise<void> {
+    const expected: Record<string, string> = { 'cds.managed': 'true', 'cds.type': 'candidate-network',
+      'cds.instance': computeCdsInstanceId(this.config.repoRoot), 'cds.project.id': entry.projectId || '_unknown',
+      'cds.branch.id': entry.id, 'cds.deployment.operation': runId };
+    const inspect = () => this.shell.exec(`docker network inspect --format='{{json .Labels}}' ${this.shellQuote(name)}`,
+      { priority: 'delivery', timeout: 10_000 });
+    const owned = (result: ExecResult) => {
+      if (result.exitCode !== 0) return false;
+      try {
+        const labels = JSON.parse(result.stdout.trim());
+        return labels && Object.entries(expected).every(([key, value]) => labels[key] === value);
+      } catch { return false; }
+    };
+    const existing = await inspect();
+    if (existing.exitCode === 0) {
+      if (!owned(existing)) throw new Error('candidate_network_owner: existing network belongs to another owner');
+      return;
+    }
+    if (!/no such network|network.*not found/i.test(combinedOutput(existing))) {
+      throw new Error('candidate_network_inspect: cannot establish network ownership');
+    }
+    const labels = Object.entries(expected).map(([key, value]) => `--label ${this.shellQuote(`${key}=${value}`)}`).join(' ');
+    const create = await this.shell.exec(`docker network create ${labels} ${this.shellQuote(name)}`,
+      { priority: 'delivery', timeout: 10_000 });
+    // Parallel members may race to create the same run-owned network. Only a verified owner can win.
+    if (!owned(await inspect())) throw new Error(`candidate_network_owner: creation not verified (exit ${create.exitCode})`);
+  }
+
   private async ensureNetwork(network?: string): Promise<void> {
     const target = network || this.config.dockerNetwork;
     await ensureDockerNetworkWithReclaim(this.shell, target);

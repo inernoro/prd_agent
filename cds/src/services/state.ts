@@ -1487,6 +1487,12 @@ export class StateService {
     for (const svc of this.state.infraServices || []) {
       if (svc.hostPort) usedPorts.add(svc.hostPort);
     }
+    for (const run of Object.values(this.state.deploymentRuns || {})) {
+      if (!run.candidate || run.candidate.phase === 'released') continue;
+      for (const svc of [...Object.values(run.candidate.services), ...Object.values(run.candidate.serving)]) {
+        if (svc.hostPort) usedPorts.add(svc.hostPort);
+      }
+    }
     for (const port of extraUsedPorts || []) {
       if (Number.isInteger(port) && port > 0) usedPorts.add(port);
     }
@@ -1620,6 +1626,9 @@ export class StateService {
    * 旧记录一直挂在重建出来的项目下（Codex P2）。删除检测靠 id 集，单实体 hint 足够覆盖。
    */
   removeDeploymentRunsForBranch(branchId: string): number {
+    if (Object.values(this.state.deploymentRuns || {}).some(run => run.branchId === branchId && run.candidate && run.candidate.phase !== 'released')) {
+      throw new Error('candidate_reconciliation_required: cannot discard unresolved candidate identities');
+    }
     const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
     for (const id of ids) delete this.state.deploymentRuns?.[id];
     if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
@@ -1660,6 +1669,7 @@ export class StateService {
     for (const run of runs) {
       if (overflow <= 0) break;
       if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
+      if (run.candidate && run.candidate.phase !== 'released') continue;
       delete this.state.deploymentRuns?.[run.id];
       overflow -= 1;
     }

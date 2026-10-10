@@ -1365,6 +1365,20 @@ export interface DeploymentRun {
   finishedAt?: string;
   failure?: DeploymentFailure;
   events: DeploymentRunEvent[];
+  /** Durable candidate/serving identities; contains no runtime env or credentials. */
+  candidate?: DeploymentCandidateRecord;
+}
+
+export interface DeploymentCandidateRecord {
+  operationId: string;
+  targetSha: string;
+  configHash: string;
+  networkName: string;
+  phase: 'prepared' | 'starting' | 'ready' | 'switch-intent' | 'routed' | 'rollback-intent' | 'rollback-verified' | 'reconciling' | 'released';
+  updatedAt: string;
+  /** Both graphs remain capacity reservations until actual reconciliation releases them. */
+  serving: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
+  services: Record<string, Omit<ServiceState, 'buildLog' | 'errorMessage'>>;
 }
 
 export interface DeploymentVersionProfile {

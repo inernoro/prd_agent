@@ -9,6 +9,14 @@ const config = { repoRoot: '/repo', worktreeBase: '/wt', masterPort: 9900, worke
 const container = () => new ContainerService(new MockShellExecutor(), config);
 
 describe('P3-02 readiness cancellation', () => {
+  it('interrupts the initial liveness delay before any Docker inspect', async () => {
+    const abort = new AbortController(); const shell = new MockShellExecutor();
+    const service = new ContainerService(shell, config); const start = Date.now();
+    const waiting = (service as any).waitForContainerAlive('owned-candidate', undefined, abort.signal);
+    setTimeout(() => abort.abort(), 30);
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    expect(Date.now() - start).toBeLessThan(300); expect(shell.commands).toEqual([]);
+  });
   it('stops before opening a probe when the operation is already cancelled', async () => {
     const abort = new AbortController(); abort.abort(); let attempts = 0;
     const start = Date.now();
