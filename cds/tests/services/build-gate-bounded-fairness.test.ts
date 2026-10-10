@@ -70,4 +70,20 @@ describe('source exceptions bounded project queue', () => {
     slot.release(); expect(await pending).toBe('observer failed');
     expect(buildGateStatus().active).toBe(0); expect(buildGateStatus().holders).toEqual([]);
   });
+
+  it('retains the next project turn when the previous project drains its final waiter', async () => {
+    const slots: any[] = [await acquireBuildSlot({ holder: { projectId: 'a' } })];
+    const abort = new AbortController(); const order: string[] = [];
+    const queued = (label: string, projectId: string) => acquireBuildSlot({ holder: { projectId }, signal: abort.signal })
+      .then(slot => { slots.push(slot); order.push(label); return slot; });
+    const jobs = [queued('a1', 'a'), queued('a2', 'a'), queued('a3', 'a'),
+      queued('b1', 'b'), queued('b2', 'b'), queued('c1', 'c'), queued('c2', 'c')];
+    const settled = Promise.allSettled(jobs);
+    try {
+      for (let i = 0; i < 7; i++) { slots[i].release(); await tick(); }
+      expect(order).toEqual(['b1', 'c1', 'a1', 'b2', 'c2', 'a2', 'a3']);
+    } finally { abort.abort(); await settled; for (const slot of slots) slot.release(); }
+    expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+  });
+
 });

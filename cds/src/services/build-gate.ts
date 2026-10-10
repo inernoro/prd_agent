@@ -188,16 +188,36 @@ interface Waiter {
 let active = 0;
 const waiters: Waiter[] = [];
 let lastProject: string | undefined;
+// Keep a cursor over admitted groups, rather than looking up a drained group in rebuilt order.
+const projectRing: string[] = [];
+let nextProjectIndex = 0;
 const projectGroup = (holder?: BuildGateHolder): string => holder?.projectId ? `project:${holder.projectId}` : 'legacy';
 function stopIdleLoadPump(): void {
   if (!waiters.length && loadPumpTimer) { clearInterval(loadPumpTimer); loadPumpTimer = null; }
 }
+function rememberQueuedProject(holder?: BuildGateHolder): void {
+  const group = projectGroup(holder);
+  if (projectRing.includes(group)) return;
+  if (!projectRing.length) nextProjectIndex = group === lastProject ? 1 : 0;
+  projectRing.push(group);
+}
+function forgetDrainedProject(holder?: BuildGateHolder): void {
+  const group = projectGroup(holder);
+  if (waiters.some(w => projectGroup(w.holder) === group)) return;
+  const index = projectRing.indexOf(group);
+  if (index < 0) return;
+  projectRing.splice(index, 1);
+  if (index < nextProjectIndex) nextProjectIndex--;
+  if (!projectRing.length) nextProjectIndex = 0;
+}
 function takeNextWaiter(): Waiter | undefined {
-  const groups = [...new Set(waiters.map(w => projectGroup(w.holder)))];
-  if (!groups.length) return undefined;
-  const group = groups[(groups.indexOf(lastProject || '') + 1) % groups.length];
+  if (!projectRing.length) return undefined;
+  const groupIndex = nextProjectIndex % projectRing.length;
+  const group = projectRing[groupIndex];
   const index = waiters.findIndex(w => projectGroup(w.holder) === group);
   const [next] = waiters.splice(index, 1);
+  nextProjectIndex = groupIndex + 1;
+  forgetDrainedProject(next.holder);
   stopIdleLoadPump();
   return next;
 }
@@ -322,7 +342,7 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
     const remove = (error: Error) => {
       const idx = waiters.indexOf(waiter);
       if (idx < 0) return;
-      waiters.splice(idx, 1); waiter.cleanup?.(); stopIdleLoadPump(); reject(error);
+      waiters.splice(idx, 1); forgetDrainedProject(waiter.holder); waiter.cleanup?.(); stopIdleLoadPump(); reject(error);
     };
     const onAbort = () => remove(new BuildSlotCancelledError('排队等待被中止'));
     const timer = setTimeout(() => remove(new BuildSlotWaitTimeoutError()), Math.max(0, deadline - Date.now()));
@@ -330,6 +350,7 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
     opts?.signal?.addEventListener('abort', onAbort, { once: true });
     waiter.cleanup = () => { clearTimeout(timer); opts?.signal?.removeEventListener('abort', onAbort); };
     waiters.push(waiter);
+    rememberQueuedProject(waiter.holder);
   });
   // 被唤醒 = 槽位已转移给我（或 pumpWaiters 已 active++），不再重复 ++。
   const slot = grantSlot(opts?.holder);
@@ -401,6 +422,8 @@ export function __resetBuildGateForTest(): void {
   waiters.length = 0;
   holders.clear();
   lastProject = undefined;
+  projectRing.length = 0;
+  nextProjectIndex = 0;
   maxProvider = null;
   hostLoadProvider = defaultHostLoad;
   if (loadPumpTimer) {
