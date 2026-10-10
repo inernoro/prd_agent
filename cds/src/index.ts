@@ -135,6 +135,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from './services/branch-operation-coordinator.js';
+import { pendingDeployRoute } from './services/branch-operation-coordinator.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -2251,7 +2252,7 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     });
     return;
   }
-  void fetch(`http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`, {
+  void fetch(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -2332,7 +2333,9 @@ function completeBackgroundBranchOperation(
   error?: string,
 ): void {
   if (!lease) return;
-  dispatchBackgroundPendingWebhookDeploy(branchOperationCoordinator.complete(lease, status, error));
+  for (const pending of branchOperationCoordinator.completeAll(lease, status, error)) {
+    dispatchBackgroundPendingWebhookDeploy(pending);
+  }
 }
 
 async function initAuthStore(): Promise<void> {

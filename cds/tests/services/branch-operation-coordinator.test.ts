@@ -981,14 +981,10 @@ describe('BranchOperationCoordinator', () => {
     expect(force.status).toBe('started');
     coordinator.complete(force.lease!, 'completed');
 
-    // B 完成 → complete() 弹出 pending 交给路由内部重放
+    // B 收尾时仍有续约占用分支，待办继续留在协调器，不提前弹出再入队。
     const pending = coordinator.complete(profileB.lease!, 'completed');
-    expect(pending?.request.kind).toBe('deploy');
-
-    // 重放的整分支 deploy 与 deploy-profile 续约不匹配：修复前这里 rejected，
-    // pending 已被弹出 → 请求静默丢失；现在应重新合并回 pending 等续约消费后派发
-    const replay = coordinator.begin(pending!.request);
-    expect(replay.status).toBe('merged');
+    expect(pending).toBeNull();
+    expect(coordinator.getPendingWebhookDeploy('prd-agent-main')?.request.kind).toBe('deploy');
 
     // force-rebuild 自己的续约 deploy-profile 仍优先接续（不被合并吞掉）
     const continuation = coordinator.begin({
@@ -1001,7 +997,7 @@ describe('BranchOperationCoordinator', () => {
     expect(continuation.status).toBe('started');
     expect(continuation.operationId).toBe(force.operationId);
 
-    // 续约操作完成后，重新合并的 pending 被弹出派发，承诺闭环
+    // 续约操作完成后，保留的 pending 被弹出派发，承诺闭环
     const redispatched = coordinator.complete(continuation.lease!, 'completed');
     expect(redispatched?.request.kind).toBe('deploy');
     expect(redispatched?.request.trigger).toBe('manual');

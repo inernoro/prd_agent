@@ -148,6 +148,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
+import { pendingDeployRoute } from '../services/branch-operation-coordinator.js';
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
@@ -3108,7 +3109,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy`;
+    const url = `http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`;
     void fetch(url, {
       method: 'POST',
       headers: {
@@ -3199,8 +3200,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     error?: string,
   ): void {
     if (!lease || !branchOperationCoordinator) return;
-    const pending = branchOperationCoordinator.complete(lease, status, error);
-    dispatchPendingWebhookDeploy(pending);
+    for (const pending of branchOperationCoordinator.completeAll(lease, status, error)) {
+      dispatchPendingWebhookDeploy(pending);
+    }
   }
 
   function assertBranchOperationCurrent(lease: BranchOperationLease | null | undefined, step: string): void {
@@ -14453,7 +14455,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy-profile',
       profileId,
-      commitSha: entry.githubCommitSha || null,
+      commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
       source: 'api.deploy-profile',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,

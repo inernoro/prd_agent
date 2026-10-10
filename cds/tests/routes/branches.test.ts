@@ -3511,6 +3511,60 @@ describe('Branch Routes', () => {
   });
 
   describe('branch operation fencing', () => {
+    it('实际HTTP路径保留API和Web待办，API更新不覆盖Web且重放走各自服务入口', async () => {
+      for (const id of ['api', 'web']) await request(server, 'POST', '/api/build-profiles', {
+        id, name: id, dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'service-pending', projectId: 'default', branch: 'feature/service-pending',
+        worktreePath: path.join(tmpDir, 'worktrees', 'service-pending'), status: 'idle',
+        createdAt: new Date().toISOString(), services: {}, githubCommitSha: 'a'.repeat(40),
+      });
+      let release!: () => void;
+      const hold = new Promise<void>(resolve => { release = resolve; });
+      let markStarted!: () => void;
+      const started = new Promise<void>(resolve => { markStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-service-pending-api')) {
+          markStarted();
+          await hold;
+          return { stdout: 'cid-service-pending-api', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+      const replays: Array<{ url: string; commitSha: string }> = [];
+      vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+        if (String(url).includes('/api/branches/service-pending/deploy')) {
+          replays.push({ url: String(url), commitSha: JSON.parse(String(init?.body)).commitSha });
+        }
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }));
+      setBuildGateHostLoadProvider(() => ({ cores: 18, load1: 0 }));
+      let active: ReturnType<typeof request> | undefined;
+      try {
+        active = request(server, 'POST', '/api/branches/service-pending/deploy', { commitSha: 'a'.repeat(40) });
+        await started;
+        for (const [profileId, sha] of [['api', 'b'], ['web', 'c'], ['api', 'd']]) {
+          const queued = await request(server, 'POST', `/api/branches/service-pending/deploy/${profileId}`,
+            { commitSha: sha.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+          expect(String(queued.body)).toContain('merged');
+        }
+        release();
+        await active;
+        expect(replays).toEqual([
+          { url: 'http://127.0.0.1:9900/api/branches/service-pending/deploy/api', commitSha: 'd'.repeat(40) },
+          { url: 'http://127.0.0.1:9900/api/branches/service-pending/deploy/web', commitSha: 'c'.repeat(40) },
+        ]);
+        expect(branchOperationCoordinator.getPendingWebhookDeploy('service-pending')).toBeUndefined();
+      } finally {
+        release();
+        await Promise.allSettled([active]);
+        setBuildGateHostLoadProvider(null);
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('实际HTTP路径中较新的手动部署不重放此前排队的旧目标', async () => {
       const shaA = '1111111111111111111111111111111111111111';
       const shaB = '2222222222222222222222222222222222222222';

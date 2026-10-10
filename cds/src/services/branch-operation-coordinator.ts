@@ -124,6 +124,14 @@ export interface PendingWebhookDeploy {
   updatedAt: string;
 }
 
+/** 内部重放保留原请求的部署范围，服务请求不能扩大成整分支部署。 */
+export function pendingDeployRoute(pending: PendingWebhookDeploy): string {
+  const branch = `/api/branches/${encodeURIComponent(pending.branchId)}/deploy`;
+  return pending.request.kind === 'deploy-profile' && pending.request.profileId
+    ? `${branch}/${encodeURIComponent(pending.request.profileId)}`
+    : branch;
+}
+
 export class BranchOperationSupersededError extends Error {
   constructor(
     readonly operationId: string,
@@ -284,10 +292,10 @@ export class BranchOperationCoordinator {
     }
 
     if (isWebhookDeploy(request)) {
-      const existing = this.pendingWebhookDeploys.get(branchId);
+      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
       const generation = this.nextGeneration(branchId);
       const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(branchId, {
+      this.pendingWebhookDeploys.set(this.operationKey(request), {
         operationId,
         branchId,
         generation,
@@ -325,19 +333,20 @@ export class BranchOperationCoordinator {
         });
       }
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-        this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
+        this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`, {}, request);
+        this.cancelReservedContinuations(request, `superseded by ${request.kind}`);
       } else {
         // 新部署取代在途操作时，同一部署范围的旧待办也被取代；否则 C 完成后
         // 会重放此前排队的 B。不同服务的请求不因这次替换而被丢弃。
-        const pending = this.pendingWebhookDeploys.get(branchId);
-        if (pending && request.kind === 'deploy' && pending.request.kind === request.kind
+        const pending = this.pendingWebhookDeploys.get(this.operationKey(request));
+        if (pending && (request.kind === 'deploy' || request.kind === 'deploy-profile') && pending.request.kind === request.kind
           && (request.profileId || null) === (pending.request.profileId || null)
           && (request.projectId || null) === (pending.request.projectId || null)) {
           this.cancelPendingWebhookDeploy(branchId, 'superseded by newer deploy request', {
             supersededByCommitSha: request.commitSha || null,
             supersededByTrigger: request.trigger,
             supersededByRequestId: request.requestId || null,
-          });
+          }, request, true);
         }
       }
       return this.start(request);
@@ -348,10 +357,10 @@ export class BranchOperationCoordinator {
     // 仅限部署类在途操作（stop/reset/delete 在途时维持 409，见
     // MANUAL_MERGE_BEHIND_KINDS 注释）。
     if (isMergeableManualDeploy(request) && MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind)) {
-      const existing = this.pendingWebhookDeploys.get(branchId);
+      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
       const generation = this.nextGeneration(branchId);
       const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(branchId, {
+      this.pendingWebhookDeploys.set(this.operationKey(request), {
         operationId,
         branchId,
         generation,
@@ -394,6 +403,15 @@ export class BranchOperationCoordinator {
   }
 
   complete(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy | null {
+    return this.finishAndDrain(lease, status, error, 1)[0] || null;
+  }
+
+  /** 生产派发器一次领取全部互不冲突的服务待办，避免最后一个操作结束后遗留无人派发的请求。 */
+  completeAll(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy[] {
+    return this.finishAndDrain(lease, status, error, Infinity);
+  }
+
+  private finishAndDrain(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error: string | undefined, limit: number): PendingWebhookDeploy[] {
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
     const sameGeneration = active?.generation === lease.generation;
@@ -415,13 +433,21 @@ export class BranchOperationCoordinator {
       && (lease.request.continueWith === 'deploy' || lease.request.continueWith === 'deploy-profile')
     ) {
       this.reserveContinuation(lease, lease.request.continueWith);
-      return null;
+      // 独立服务仍可派发；与本续约冲突的范围继续等待。
     }
-    const pending = this.pendingWebhookDeploys.get(lease.branchId) || null;
-    // 一个 profile 收尾不代表整分支已空闲；也不能让旧租约收尾抢走新操作的待办。
-    if (pending && this.findBlockingActive(pending.request)) return null;
-    if (pending) this.pendingWebhookDeploys.delete(lease.branchId);
-    return pending;
+    const ready: PendingWebhookDeploy[] = [];
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      if (pending.branchId !== lease.branchId) continue;
+      if (lease.request.projectId && pending.request.projectId && lease.request.projectId !== pending.request.projectId) continue;
+      if (this.findBlockingActive(pending.request) || this.getUsableReservedContinuation(pending.branchId, pending.request)) continue;
+      // 查询续约时可能清理过期范围及其待办，已取消的请求不能被本轮继续派发。
+      if (this.pendingWebhookDeploys.get(key) !== pending) continue;
+      if (ready.some(item => this.operationsConflict(item.request, pending.request))) continue;
+      this.pendingWebhookDeploys.delete(key);
+      ready.push(pending);
+      if (ready.length >= limit) break;
+    }
+    return ready;
   }
 
   cancelBranch(branchId: string, reason: string): void {
@@ -432,14 +458,10 @@ export class BranchOperationCoordinator {
       this.record('branch.operation.cancelled', active.request, active.operationId, active.generation, 'warn', { reason });
       this.active.delete(key);
     }
-    const pending = this.pendingWebhookDeploys.get(branchId);
-    if (pending) {
-      this.pendingWebhookDeploys.delete(branchId);
-      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', { reason, pending: true });
-    }
-    const reserved = this.reservedContinuations.get(branchId);
-    if (reserved) {
-      this.reservedContinuations.delete(branchId);
+    this.cancelPendingWebhookDeploy(branchId, reason);
+    for (const [key, reserved] of this.reservedContinuations) {
+      if (reserved.branchId !== branchId) continue;
+      this.reservedContinuations.delete(key);
       this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', { reason, reserved: true });
     }
   }
@@ -481,7 +503,7 @@ export class BranchOperationCoordinator {
 
   getActive(branchId: string, profileId?: string | null): ActiveOperation | undefined {
     if (profileId) {
-      return this.active.get(this.profileKey(branchId, profileId));
+      return [...this.active.values()].find(item => item.branchId === branchId && item.request.profileId === profileId);
     }
     return [...this.active.values()].find((active) => active.branchId === branchId);
   }
@@ -491,8 +513,9 @@ export class BranchOperationCoordinator {
     return branchId ? active.filter((item) => item.branchId === branchId) : active;
   }
 
-  getPendingWebhookDeploy(branchId: string): PendingWebhookDeploy | undefined {
-    return this.pendingWebhookDeploys.get(branchId);
+  getPendingWebhookDeploy(branchId: string, profileId?: string | null): PendingWebhookDeploy | undefined {
+    return [...this.pendingWebhookDeploys.values()].find(item => item.branchId === branchId
+      && (!profileId || item.request.profileId === profileId));
   }
 
   clearForTest(): void {
@@ -541,10 +564,10 @@ export class BranchOperationCoordinator {
     reserved: ReservedContinuation,
   ): BranchOperationDecision {
     if (isWebhookDeploy(request)) {
-      const existing = this.pendingWebhookDeploys.get(request.branchId);
+      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
       const generation = this.nextGeneration(request.branchId);
       const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(request.branchId, {
+      this.pendingWebhookDeploys.set(this.operationKey(request), {
         operationId,
         branchId: request.branchId,
         generation,
@@ -571,7 +594,7 @@ export class BranchOperationCoordinator {
     }
 
     if (this.requestMatchesContinuation(request, reserved)) {
-      this.reservedContinuations.delete(request.branchId);
+      this.reservedContinuations.delete(this.operationKey(reserved.request));
       const generation = this.nextGeneration(request.branchId);
       this.record('branch.operation.continued', request, reserved.operationId, generation, 'info', {
         reservedAt: reserved.reservedAt,
@@ -588,13 +611,9 @@ export class BranchOperationCoordinator {
     const incomingPriority = priorityOf(request);
     const reservedPriority = priorityOf(reserved.request);
     if (incomingPriority > reservedPriority || TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-      this.reservedContinuations.delete(request.branchId);
-      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
-        reason: `reserved continuation superseded by ${request.kind}`,
-        reserved: true,
-      });
+      this.cancelReservedContinuations(request, `reserved continuation superseded by ${request.kind}`);
       if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-        this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`);
+        this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`, {}, request);
       }
       return this.start(request);
     }
@@ -606,10 +625,10 @@ export class BranchOperationCoordinator {
     // is reserved」）。必须放在 requestMatchesContinuation 之后——force-rebuild
     // 自己的 deploy 续约仍优先接续执行，不能被合并吞掉。
     if (isMergeableManualDeploy(request)) {
-      const existing = this.pendingWebhookDeploys.get(request.branchId);
+      const existing = this.pendingWebhookDeploys.get(this.operationKey(request));
       const generation = this.nextGeneration(request.branchId);
       const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(request.branchId, {
+      this.pendingWebhookDeploys.set(this.operationKey(request), {
         operationId,
         branchId: request.branchId,
         generation,
@@ -662,7 +681,7 @@ export class BranchOperationCoordinator {
 
   private reserveContinuation(lease: BranchOperationLease, continueWith: 'deploy' | 'deploy-profile'): void {
     const expiresAt = Date.now() + 5 * 60 * 1000;
-    this.reservedContinuations.set(lease.branchId, {
+    this.reservedContinuations.set(this.operationKey(lease.request), {
       operationId: lease.operationId,
       branchId: lease.branchId,
       generation: lease.generation,
@@ -678,38 +697,36 @@ export class BranchOperationCoordinator {
     });
   }
 
-  private cancelPendingWebhookDeploy(branchId: string, reason: string, details: Record<string, unknown> = {}): void {
-    const pending = this.pendingWebhookDeploys.get(branchId);
-    if (!pending) return;
-    this.pendingWebhookDeploys.delete(branchId);
-    this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
-      reason,
-      pending: true,
-      mergedCount: pending.mergedCount,
-      updatedAt: pending.updatedAt,
-      ...details,
-    });
+  private cancelPendingWebhookDeploy(branchId: string, reason: string, details: Record<string, unknown> = {}, request?: BranchOperationRequest, exactScope = false): void {
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      if (pending.branchId !== branchId) continue;
+      if (request && (exactScope ? key !== this.operationKey(request) : !this.operationsConflict(request, pending.request))) continue;
+      this.pendingWebhookDeploys.delete(key);
+      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
+        reason, pending: true, mergedCount: pending.mergedCount, updatedAt: pending.updatedAt, ...details,
+      });
+    }
   }
 
   private getUsableReservedContinuation(branchId: string, request?: BranchOperationRequest): ReservedContinuation | null {
-    const reserved = this.reservedContinuations.get(branchId);
-    if (!reserved) return null;
-    if (request && !this.operationsConflict(request, reserved.request)) return null;
-    if (Date.now() <= reserved.expiresAt) return reserved;
-    this.reservedContinuations.delete(branchId);
-    this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
-      reason: 'reserved continuation expired',
-      reserved: true,
-    });
-    const pending = this.pendingWebhookDeploys.get(branchId);
-    if (pending) {
-      this.pendingWebhookDeploys.delete(branchId);
-      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
-        reason: 'reserved continuation expired before manual deploy continuation arrived',
-        pending: true,
+    for (const [key, reserved] of this.reservedContinuations) {
+      if (reserved.branchId !== branchId || (request && !this.operationsConflict(request, reserved.request))) continue;
+      if (Date.now() <= reserved.expiresAt) return reserved;
+      this.reservedContinuations.delete(key);
+      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
+        reason: 'reserved continuation expired', reserved: true,
       });
+      this.cancelPendingWebhookDeploy(branchId, 'reserved continuation expired before manual deploy continuation arrived', {}, reserved.request);
     }
     return null;
+  }
+
+  private cancelReservedContinuations(request: BranchOperationRequest, reason: string): void {
+    for (const [key, reserved] of this.reservedContinuations) {
+      if (!this.operationsConflict(request, reserved.request)) continue;
+      this.reservedContinuations.delete(key);
+      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', { reason, reserved: true });
+    }
   }
 
   private nextGeneration(branchId: string): number {
@@ -739,22 +756,14 @@ export class BranchOperationCoordinator {
 
   private operationsConflict(a: BranchOperationRequest, b: BranchOperationRequest): boolean {
     if (a.branchId !== b.branchId) return false;
+    if (a.projectId && b.projectId && a.projectId !== b.projectId) return false;
     if (this.isBranchWide(a) || this.isBranchWide(b)) return true;
     return (a.profileId || null) === (b.profileId || null);
   }
 
   private operationKey(request: BranchOperationRequest): string {
-    return this.isBranchWide(request)
-      ? this.branchKey(request.branchId)
-      : this.profileKey(request.branchId, request.profileId || '');
-  }
-
-  private branchKey(branchId: string): string {
-    return `${branchId}::*`;
-  }
-
-  private profileKey(branchId: string, profileId: string): string {
-    return `${branchId}::${profileId}`;
+    // JSON 元组避免分隔符碰撞；null 表示整分支范围。
+    return JSON.stringify([request.projectId || null, request.branchId, this.isBranchWide(request) ? null : request.profileId]);
   }
 
   private isBranchWide(request: BranchOperationRequest): boolean {
