@@ -1115,6 +1115,7 @@ async function loginGateway(request: APIRequestContext) {
 
     const exchange = await request.post(`${baseUrl}/gw/auth/stable-smoke-sso`, {
       data: { code: ticketEnvelope.data.code },
+      timeout: 30_000,
     });
     const exchangeEnvelope = await exchange.json() as ApiEnvelope<{ token: string; mustChangePassword: boolean }>;
     expect(exchange.ok(), exchangeEnvelope.error?.message || '模型网关巡检短票据登录失败').toBe(true);
@@ -6650,6 +6651,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           modelId: pool!.code,
           size: '1536x1024',
           responseFormat: 'url',
+          expectedImageRefCount: 0,
           x: 1100,
           y: 0,
           w: 1501,
@@ -6967,6 +6969,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             modelId: pool!.code,
             size: '1024x1024',
             responseFormat: 'url',
+            expectedImageRefCount: 1,
             imageRefs: [
               { refId: 1, assetSha256: 'd'.repeat(64), url: '', label: '不可用参考图', role: 'target' },
             ],
