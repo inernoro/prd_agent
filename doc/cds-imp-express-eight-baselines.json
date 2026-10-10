@@ -1,0 +1,851 @@
+{
+  "schemaVersion": 1,
+  "goalId": "CDS-IMP-EXPRESS-DURABLE-20261010",
+  "observedAt": "2026-10-10T19:03:06.422Z",
+  "stage": "source-baselines-only",
+  "source": "latest fetched origin refs plus sanitized GET /api/branches; reported runtime is not Docker evidence",
+  "plannedSampleCount": 8,
+  "applicationServicesPerSample": 13,
+  "totalApplicationInstances": 104,
+  "excludedActiveCollaboratorBranch": "claude/app01-real-acceptance",
+  "isolatedHost": "N/A-not-proven",
+  "deployedSha": "N/A",
+  "publicationStatus": "not-authorized-in-current-local-baseline",
+  "branchCreationStatus": "not-created",
+  "yellowLightningVerdict": "not-executed",
+  "branches": [
+    {
+      "sample": "A01",
+      "sourceRef": "main",
+      "sourceSha": "2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c",
+      "sourceCommitDate": "2026-10-10T17:55:30+08:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a01-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "ff6882d1e449729d0a76059e5a5cfcee2fbf7f035722a17584f05c28ab20a0e2",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-main",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "2e7bd8c2865c947b851a4af5a3bb34b7545bd133",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A02",
+      "sourceRef": "test",
+      "sourceSha": "e2fd7c8f5ebaed2561229a7864835949d1ce0904",
+      "sourceCommitDate": "2026-10-10T06:06:40-07:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a02-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "ff6882d1e449729d0a76059e5a5cfcee2fbf7f035722a17584f05c28ab20a0e2",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-test",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "511249a37868f8382ba51e64804d7dc391c7d7aa",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A03",
+      "sourceRef": "claude/marketing-consumption-b5",
+      "sourceSha": "50b3db6c26c99dccd3c1d11a796c1e8ab2993e45",
+      "sourceCommitDate": "2026-10-09T21:53:10+08:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a03-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "52b432b9a088132b4360bb35c2e142271454127eed7f4555199543d4588c081e",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-claude-marketing-consumption-b5",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "50b3db6c26c99dccd3c1d11a796c1e8ab2993e45",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A04",
+      "sourceRef": "claude/emergence-volume-archive-202609",
+      "sourceSha": "004a67c4d8fb65c000c1ddea5dda2ccd8b4451e8",
+      "sourceCommitDate": "2026-10-09T21:53:11+08:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a04-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "52b432b9a088132b4360bb35c2e142271454127eed7f4555199543d4588c081e",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-claude-emergence-volume-archive-202609",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "004a67c4d8fb65c000c1ddea5dda2ccd8b4451e8",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A05",
+      "sourceRef": "claude/cl08-real-acceptance-20261008",
+      "sourceSha": "d5201b07a8914aaddb86d96d277c63235060f4fa",
+      "sourceCommitDate": "2026-10-10T05:53:16Z",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a05-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "6bc8a5879f2e53ab09be386216891072dca0fbe2a39ac6702f731cb2eab8c3a8",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [
+        {
+          "profileId": "imp-preview-db-bootstrap",
+          "reportedStatus": "error",
+          "reportedImage": "node:20-bookworm",
+          "reportedCommitSha": null,
+          "lifecycle": "unclassified-requires-own-run-terminal-evidence",
+          "reclamationAllowed": false
+        }
+      ],
+      "reportedBranchId": "mdimp-claude-cl08-real-acceptance-20261008",
+      "reportedBranchStatus": "error",
+      "reportedCachedSha": "d5201b07a8914aaddb86d96d277c63235060f4fa",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A06",
+      "sourceRef": "claude/app04-real-acceptance-20261008",
+      "sourceSha": "a5dae8b25469d03c4563cd669fc84dc4e5bd19ac",
+      "sourceCommitDate": "2026-10-09T21:53:13+08:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a06-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "6bc8a5879f2e53ab09be386216891072dca0fbe2a39ac6702f731cb2eab8c3a8",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-claude-app04-real-acceptance-20261008",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "a5dae8b25469d03c4563cd669fc84dc4e5bd19ac",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A07",
+      "sourceRef": "codex/all-cds-express-20261009",
+      "sourceSha": "917d9bc03e25a9abfc9667b578f04f889795ae1b",
+      "sourceCommitDate": "2026-10-09T21:53:14+08:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a07-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "52b432b9a088132b4360bb35c2e142271454127eed7f4555199543d4588c081e",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-codex-all-cds-express-20261009",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "917d9bc03e25a9abfc9667b578f04f889795ae1b",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    },
+    {
+      "sample": "A08",
+      "sourceRef": "codex/cds-sync-test",
+      "sourceSha": "9de7ccdf0ce7b29a9237e07bb2fdd25caae67598",
+      "sourceCommitDate": "2026-10-09T21:53:15+08:00",
+      "plannedIsolatedGitBranch": "codex/cds-imp-express-a08-20261011",
+      "targetSha": "N/A-unpublished-not-created",
+      "sourceComposeSha256": "6bc8a5879f2e53ab09be386216891072dca0fbe2a39ac6702f731cb2eab8c3a8",
+      "sourceExpressContractSha256": "7a897ce9465144838c2b282ab737d86a4008c4886019dd9e9574bdbe5e2ad977",
+      "applicationProfiles": [
+        {
+          "profileId": "imp-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin-api",
+          "containerPort": 8080,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-vendor-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor-api",
+          "containerPort": 8081,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-open-platform-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform-api",
+          "containerPort": 8082,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-scan-runtime-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-scan-runtime-api",
+          "containerPort": 8083,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-api",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-api",
+          "containerPort": 8091,
+          "kind": "java"
+        },
+        {
+          "profileId": "cloudbridge-web",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-cloudbridge-web",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-admin",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-admin",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-vendor",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-vendor",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-open-platform",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-open-platform",
+          "containerPort": 80,
+          "kind": "web"
+        },
+        {
+          "profileId": "imp-worker-generation",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-code-return",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-product-batch",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        },
+        {
+          "profileId": "imp-worker-common",
+          "imageRepository": "ghcr.io/md-imp/mdimp/mdimp-worker",
+          "containerPort": 9999,
+          "kind": "java"
+        }
+      ],
+      "applicationDenominator": 13,
+      "auxiliaryBaseline": [],
+      "reportedBranchId": "mdimp-codex-cds-sync-test",
+      "reportedBranchStatus": "idle",
+      "reportedCachedSha": "9de7ccdf0ce7b29a9237e07bb2fdd25caae67598",
+      "runtimeEvidence": "not-executed",
+      "originalBranchMutationAllowed": false,
+      "requiresFinalFreeze": [
+        "actual published target SHA",
+        "candidate/current service IDs and OCI image identities",
+        "own isolated host and dependencies",
+        "auxiliary run-scoped lifecycle and terminal evidence"
+      ]
+    }
+  ]
+}
