@@ -17,7 +17,8 @@ export type BranchOperationKind =
   | 'scheduler-cooling'
   | 'auto-lifecycle-redeploy'
   | 'auto-restart'
-  | 'janitor-remove';
+  | 'janitor-remove'
+  | 'candidate-reconcile';
 
 export type BranchOperationTrigger = 'manual' | 'webhook' | 'auto-lifecycle' | 'scheduler' | 'janitor' | 'system';
 
@@ -66,6 +67,8 @@ export interface BranchOperationRequest {
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
+  /** Internal reconciliation is scoped to a terminal unresolved journal, never a new deployment. */
+  reconcileRunId?: string;
 }
 
 export interface BranchOperationLease {
@@ -256,12 +259,25 @@ export class BranchOperationCoordinator {
   private readonly pendingWebhookDeploys = new Map<string, PendingWebhookDeploy>();
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private generations = new Map<string, number>();
+  // Revocation removes route ownership, not the executor's outstanding awaits.
+  private readonly unsettled = new Map<string, { lease: BranchOperationLease; branchId: string }>();
 
   constructor(private readonly events?: ServerEventLogSink | null,
     private readonly admitStart?: (request: BranchOperationRequest) => string | null) {}
 
   begin(request: BranchOperationRequest): BranchOperationDecision {
     const branchId = request.branchId;
+    if (request.kind === 'candidate-reconcile') {
+      const valid = request.trigger === 'system' && request.source === 'candidate-reconciler' && !request.profileId &&
+        typeof request.reconcileRunId === 'string' && /^dr_[a-zA-Z0-9_.-]+$/.test(request.reconcileRunId);
+      const busy = [...this.unsettled.values()].some(execution => execution.branchId === branchId);
+      if (!valid || busy) {
+        const operationId = this.createOperationId(); const generation = this.currentGeneration(branchId);
+        const reason = valid ? 'candidate_executor_unsettled: original branch executor has not completed' : 'candidate_reconciliation_scope: internal whole-run scope required';
+        this.record('branch.operation.rejected', request, operationId, generation, 'warn', { reason });
+        return { status: 'rejected', operationId, generation, reason };
+      }
+    }
     const active = this.findBlockingActive(request);
     if (!active) {
       const rejection = this.admissionRejection(request);
@@ -392,9 +408,12 @@ export class BranchOperationCoordinator {
   }
 
   complete(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy | null {
+    const execution = this.unsettled.get(lease.operationId);
+    if (!execution || execution.lease !== lease) return null;
+    this.unsettled.delete(lease.operationId);
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
-    if (activeEntry && active?.operationId === lease.operationId) {
+    if (activeEntry && active?.operationId === lease.operationId && active.generation === lease.generation && active.branchId === execution.branchId) {
       this.active.delete(activeEntry.key);
     }
     if (status !== 'completed') this.cancellation.get(lease.operationId)?.abort(error || status);
@@ -497,6 +516,7 @@ export class BranchOperationCoordinator {
     this.pendingWebhookDeploys.clear();
     this.reservedContinuations.clear();
     this.generations.clear();
+    this.unsettled.clear();
   }
 
   private admissionRejection(request: BranchOperationRequest): BranchOperationDecision | null {
@@ -538,6 +558,7 @@ export class BranchOperationCoordinator {
         }
       },
     };
+    this.unsettled.set(operationId, { lease, branchId });
     this.record('branch.operation.started', request, operationId, generation, 'info', {
       continuedFromKind: existing?.continuedFrom?.kind || null,
       continuedFromSource: existing?.continuedFrom?.source || null,

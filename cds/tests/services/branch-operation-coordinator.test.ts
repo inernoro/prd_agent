@@ -50,6 +50,66 @@ function eventSink(): {
 }
 
 describe('BranchOperationCoordinator', () => {
+  it('ignores a copied completion without revoking the real active writer', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const old = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'manual' });
+    expect(coordinator.complete({ ...old.lease! }, 'failed')).toBeNull();
+    expect(old.lease!.isCurrent()).toBe(true);
+    coordinator.complete(old.lease!, 'completed');
+  });
+  it('ignores duplicate force-rebuild completion after the same operation ID has continued as a new generation', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const old = coordinator.begin({ branchId: 'branch', kind: 'force-rebuild', trigger: 'manual', continueWith: 'deploy' });
+    coordinator.complete(old.lease!, 'completed');
+    const next = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'manual' });
+    expect(next.operationId).toBe(old.operationId); expect(next.generation).not.toBe(old.generation);
+    coordinator.complete(old.lease!, 'completed');
+    expect(next.lease!.isCurrent()).toBe(true); coordinator.complete(next.lease!, 'completed');
+  });
+
+  it('keeps a cancelled executor unsettled until its original completion, blocking recovery even with no active lease', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const old = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'manual' });
+    coordinator.cancelBranch('branch', 'cancel during Daemon wait');
+    expect(coordinator.getActiveOperations('branch')).toEqual([]);
+    const recovery = { branchId: 'branch', kind: 'candidate-reconcile' as const, trigger: 'system' as const,
+      source: 'candidate-reconciler', reconcileRunId: 'dr_old' };
+    expect(coordinator.begin(recovery).status).toBe('rejected');
+    expect(old.lease!.isCurrent()).toBe(false);
+    coordinator.complete(old.lease!, 'cancelled');
+    expect(coordinator.begin(recovery).status).toBe('started');
+  });
+  it('keeps a superseded executor unsettled after a newer stop completes', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const old = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'webhook' });
+    const stop = coordinator.begin({ branchId: 'branch', kind: 'stop', trigger: 'manual' });
+    coordinator.complete(stop.lease!, 'completed');
+    const request = { branchId: 'branch', kind: 'candidate-reconcile' as const, trigger: 'system' as const,
+      source: 'candidate-reconciler', reconcileRunId: 'dr_old' };
+    expect(coordinator.begin(request).status).toBe('rejected');
+    coordinator.complete(old.lease!, 'cancelled');
+    expect(coordinator.begin(request).status).toBe('started');
+  });
+  it('does not let a copied or foreign completion prove the actual original executor settled', () => {
+    const coordinator = new BranchOperationCoordinator();
+    const old = coordinator.begin({ branchId: 'branch', kind: 'deploy', trigger: 'manual' });
+    coordinator.cancelBranch('branch', 'cancel');
+    coordinator.complete({ ...old.lease! }, 'cancelled');
+    expect(coordinator.begin({ branchId: 'branch', kind: 'candidate-reconcile' as any, trigger: 'system',
+      source: 'candidate-reconciler', reconcileRunId: 'dr_old' } as any).status).toBe('rejected');
+    coordinator.complete(old.lease!, 'cancelled');
+  });
+  it.each(['manual', 'unknown-source', 'profile-scoped', 'missing-run'])('rejects a recovery lease without internal run scope: %s', variant => {
+    const coordinator = new BranchOperationCoordinator();
+    const request: any = { branchId: 'branch', kind: 'candidate-reconcile', trigger: 'system',
+      source: 'candidate-reconciler', reconcileRunId: 'dr_old' };
+    if (variant === 'manual') request.trigger = 'manual';
+    if (variant === 'unknown-source') request.source = 'other';
+    if (variant === 'profile-scoped') request.profileId = 'api';
+    if (variant === 'missing-run') delete request.reconcileRunId;
+    expect(coordinator.begin(request).status).toBe('rejected'); expect(coordinator.getActiveOperations()).toEqual([]);
+  });
+
   it('keeps same-target joining and pending coalescing while admission blocks new writers', () => {
     let blocked = false; const coordinator = new BranchOperationCoordinator(null, () => blocked ? 'candidate_reconciliation_required' : null);
     const identity = { branchId: 'branch', commitSha: SHA_A, commitPinned: true, configHash: 'frozen' };
