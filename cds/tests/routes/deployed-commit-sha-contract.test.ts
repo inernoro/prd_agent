@@ -75,8 +75,8 @@ describe('部署 run / version 记录实际落地的 SHA', () => {
     "advanceDeploymentRun(deploymentRun?.id, 'building', {\n        phase: 'build',\n        message: selectedDeploymentVersion",
     "advanceDeploymentRun(deploymentRun?.id, 'building', {\n        phase: 'build',\n        message: `源码准备完成，开始构建 ${profile.name}`",
     "advanceDeploymentRun(deploymentRun?.id, 'verifying', {\n        phase: 'ready',",
-    "advanceDeploymentRun(deploymentRun?.id, 'running', {\n          phase: 'complete',\n          message: smokeOk",
-    "advanceDeploymentRun(deploymentRun?.id, 'running', {\n          phase: 'complete',\n          message: `${profile.name} 部署完成并通过就绪检查`",
+    "await completeDeploymentRunDurably(deploymentRun?.id, {\n          phase: 'complete', message: smokeOk",
+    "await completeDeploymentRunDurably(deploymentRun?.id, {\n          phase: 'complete', message: `${profile.name} 部署完成并通过就绪检查`",
   ];
 
   it('pull 之后的每个 run 状态流转都用 deployedCommitSha', () => {

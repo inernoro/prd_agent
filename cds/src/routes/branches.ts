@@ -237,6 +237,10 @@ function getDeleteStateFlushTimeoutMs(): number {
   return Math.max(100, Math.min(raw, 30_000));
 }
 
+class BranchTerminalFlushError extends Error {
+  constructor(message: string, readonly result: BoundedFlushResult) { super(message); }
+}
+
 function getBranchStateFlushTimeoutMs(): number {
   const raw = Number(process.env.CDS_BRANCH_STATE_FLUSH_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_BRANCH_STATE_FLUSH_TIMEOUT_MS;
@@ -2730,6 +2734,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return `${successLabel}，但 CDS 状态持久化超时；为避免重启后分支记录丢失，本次不报告成功，请稍后刷新后重试。`;
     }
     return `${successLabel}，但 CDS 状态持久化失败；为避免重启后分支记录丢失，本次不报告成功，请查看系统事件日志。`;
+  }
+
+  async function completeDeploymentRunDurably(runId: string | undefined,
+    input: Parameters<DeploymentRunService['completeDurably']>[1],
+    context: Parameters<typeof flushBranchStateBeforeSuccess>[0],
+    lease: BranchOperationLease | null | undefined): Promise<void> {
+    const flush = async () => {
+      const result = await flushBranchStateBeforeSuccess(context);
+      if (result !== 'flushed') throw new BranchTerminalFlushError(
+        branchStateFlushFailureMessage(result, '部署运行终态尚未确认'), result);
+    };
+    if (deploymentRunService && runId) {
+      advanceDeploymentRun(runId, 'verifying', { phase: 'finalizing', message: '正在持久化最终部署记录' });
+      await deploymentRunService.completeDurably(runId, input, flush,
+        () => assertBranchOperationCurrent(lease, 'deployment-terminal-durable'));
+    } else {
+      await flush(); assertBranchOperationCurrent(lease, 'deployment-terminal-durable');
+    }
   }
 
   // PR_C.3: AI agent / cookie 真人 / 内部组件 三档解析。本地别名指向
@@ -14270,33 +14292,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         trigger: triggerFromRequest(req),
       });
       if (flushResult !== 'flushed') {
-        branchOperationFinalStatus = 'failed';
-        const message = branchStateFlushFailureMessage(flushResult, completeMsg);
-        logEvent({
-          step: 'state-flush',
-          status: 'error',
-          title: message,
-          detail: { result: flushResult },
-          timestamp: new Date().toISOString(),
-        });
-        failDeploymentRun(deploymentRun?.id, message, 'state-flush');
-        sendSSE(res, 'error', { message, stateFlush: flushResult });
-        return;
+        throw new BranchTerminalFlushError(branchStateFlushFailureMessage(flushResult, completeMsg), flushResult);
       }
-      sendSSE(res, 'complete', {
-        // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
-        // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
-        // 直接读 ok，不要再用全量 entry.services 重新推导——否则已删除/
-        // 僵尸 profile 的 stopped/error 服务会被误判成部署失败。
-        ok: !hasError,
-        message: completeMsg,
-        services: entry.services,
-        runId: deploymentRun?.id,
-        versionId: selectedDeploymentVersion?.id,
-      });
 
-      // Phase 4: auto-smoke after a green deploy (best-effort; never
-      // blocks the deploy conclusion, never throws out of the handler).
+      // Auto-smoke runs before the durable terminal response; errors are recorded below.
       // 2026-04-27: 单独 try/catch 让 smoke 的异常落到 opLog.events 里
       // 而不是被外层 catch 吞掉只剩 entry.errorMessage（GitHub Checks 看
       // 到 "Deploy failed" 但 /api/branches/:id/logs 全是 done 的根因）。
@@ -14333,16 +14332,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? `${completeMsg} | 冒烟 ${smokeOk ? '通过' : '失败'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
         : completeMsg;
       if (hasError) {
+        branchOperationFinalStatus = 'failed';
         failDeploymentRun(deploymentRun?.id, entry.errorMessage || completeMsg, 'ready');
       } else {
-        advanceDeploymentRun(deploymentRun?.id, 'running', {
-          phase: 'complete',
-          message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
-          operationId: branchOperationLease?.operationId,
-          commitSha: deployedCommitSha,
-          detail: { smokeOk },
-        });
+        await completeDeploymentRunDurably(deploymentRun?.id, {
+          phase: 'complete', message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
+          operationId: branchOperationLease?.operationId, commitSha: deployedCommitSha, detail: { smokeOk },
+        }, { source: 'branch-deploy', actionPrefix: 'branch.deploy-terminal', branch: entry,
+          requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+          actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req),
+        }, branchOperationLease);
       }
+      if (hasError) {
+        const failureFlush = await flushBranchStateBeforeSuccess({ source: 'branch-deploy', actionPrefix: 'branch.deploy-terminal',
+          branch: entry, requestId: requestId || null, operationId: branchOperationLease?.operationId || null });
+        if (failureFlush !== 'flushed') throw new BranchTerminalFlushError(branchStateFlushFailureMessage(failureFlush, '部署失败终态尚未确认'), failureFlush);
+      }
+      sendSSE(res, 'complete', {
+        // 2026-05-14 Codex review P2：把路由自己基于 activeServices 算出的
+        // 权威结论 (hasError) 一并下发。消费方（auto-lifecycle redeploy）
+        // 直接读 ok，不要再用全量 entry.services 重新推导——否则已删除/
+        // 僵尸 profile 的 stopped/error 服务会被误判成部署失败。
+        ok: !hasError,
+        message: completeMsg,
+        services: entry.services,
+        runId: deploymentRun?.id,
+        versionId: selectedDeploymentVersion?.id,
+      });
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
         const failureDetail = finalConclusion === 'failure'
@@ -14428,7 +14444,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
             timestamp: new Date().toISOString(),
           });
         }
-        sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
+        const cancelFlush = await flushBranchStateBeforeSuccess({ source: 'branch-deploy', actionPrefix: 'branch.deploy-cancelled',
+          branch: entry, operationId: branchOperationLease?.operationId || null });
+        sendSSE(res, 'error', cancelFlush === 'flushed' ? { message: errMsg, operationStatus: 'cancelled' }
+          : { message: errMsg, operationStatus: 'cancelled', stateFlush: cancelFlush,
+            stateMessage: branchStateFlushFailureMessage(cancelFlush, '取消终态尚未确认') });
         return;
       }
       logEvent({
@@ -14466,9 +14486,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: resolveActorFromRequest(req),
         trigger: triggerFromRequest(req),
       });
-      sendSSE(res, 'error', flushResult === 'flushed'
+      const reportedFlush = err instanceof BranchTerminalFlushError ? err.result : flushResult;
+      sendSSE(res, 'error', reportedFlush === 'flushed'
         ? { message: errMsg }
-        : { message: errMsg, stateFlush: flushResult, stateMessage: branchStateFlushFailureMessage(flushResult, '部署失败状态已写入内存') });
+        : { message: errMsg, stateFlush: reportedFlush, stateMessage: branchStateFlushFailureMessage(reportedFlush, '部署失败状态已写入内存') });
       try {
         // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
         // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
@@ -15102,18 +15123,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
         trigger: triggerFromRequest(req),
       });
       if (flushResult !== 'flushed') {
-        branchOperationFinalStatus = 'failed';
-        const flushMessage = branchStateFlushFailureMessage(flushResult, completeMsg);
-        failDeploymentRun(deploymentRun?.id, flushMessage, 'state-flush');
-        // 落盘失败也要推一条结束事件：前面已经推过 starting，不推的话已打开的列表会一直停在「就绪探测」，
-        // 而调用方（如引用面板）并不会回头刷新列表。事件带上 stateFlushFailed，卡片离开部署阶段、显示
-        // 容器的真实状态，但不播「部署成功」——接口这次报的是失败（Codex P2 两条，PR #1646）。
         emitServiceTransition({ stateFlushFailed: true });
-        sendSSE(res, 'error', {
-          message: flushMessage,
-          stateFlush: flushResult,
-        });
-        return;
+        throw new BranchTerminalFlushError(branchStateFlushFailureMessage(flushResult, completeMsg), flushResult);
+      }
+      if (svc.status === 'running') {
+        await completeDeploymentRunDurably(deploymentRun?.id, {
+          phase: 'complete', message: `${profile.name} 部署完成并通过就绪检查`,
+          operationId: branchOperationLease?.operationId, commitSha: deployedCommitSha,
+          detail: { profileId, hostPort: svc.hostPort },
+        }, { source: 'branch-deploy-profile', actionPrefix: 'branch.deploy-profile-terminal', branch: entry,
+          requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+          operationId: branchOperationLease?.operationId || null, actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req),
+        }, branchOperationLease);
+      } else {
+        branchOperationFinalStatus = 'failed';
+        failDeploymentRun(deploymentRun?.id, svc.errorMessage || completeMsg, 'ready');
+        const failureFlush = await flushBranchStateBeforeSuccess({ source: 'branch-deploy-profile',
+          actionPrefix: 'branch.deploy-profile-terminal', branch: entry, operationId: branchOperationLease?.operationId || null });
+        if (failureFlush !== 'flushed') throw new BranchTerminalFlushError(branchStateFlushFailureMessage(failureFlush, '单服务失败终态尚未确认'), failureFlush);
       }
       // 结束事件放在聚合状态重算与状态落盘之后：从停止状态单独起一个服务时分支此前是 idle，先推会让
       // 卡片拿到「服务 running、分支 idle」而被放进未运行；落盘失败时接口不报成功，卡片也不该先播
@@ -15127,17 +15154,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         services: entry.services,
         runId: deploymentRun?.id,
       });
-      if (svc.status === 'running') {
-        advanceDeploymentRun(deploymentRun?.id, 'running', {
-          phase: 'complete',
-          message: `${profile.name} 部署完成并通过就绪检查`,
-          operationId: branchOperationLease?.operationId,
-          commitSha: deployedCommitSha,
-          detail: { profileId, hostPort: svc.hostPort },
-        });
-      } else {
-        failDeploymentRun(deploymentRun?.id, svc.errorMessage || completeMsg, 'ready');
-      }
     } catch (err) {
       branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
       if (err instanceof BranchOperationSupersededError) {
@@ -15162,7 +15178,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         opLog.finishedAt = new Date().toISOString();
         stateService.appendLog(id, opLog);
         stateService.save();
-        sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
+        const cancelFlush = await flushBranchStateBeforeSuccess({ source: 'branch-deploy', actionPrefix: 'branch.deploy-cancelled',
+          branch: entry, operationId: branchOperationLease?.operationId || null });
+        sendSSE(res, 'error', cancelFlush === 'flushed' ? { message: errMsg, operationStatus: 'cancelled' }
+          : { message: errMsg, operationStatus: 'cancelled', stateFlush: cancelFlush,
+            stateMessage: branchStateFlushFailureMessage(cancelFlush, '取消终态尚未确认') });
         return;
       }
       entry.status = 'error';
@@ -15189,12 +15209,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: resolveActorFromRequest(req),
         trigger: triggerFromRequest(req),
       });
-      sendSSE(res, 'error', flushResult === 'flushed'
+      const reportedFlush = err instanceof BranchTerminalFlushError ? err.result : flushResult;
+      sendSSE(res, 'error', reportedFlush === 'flushed'
         ? { message: (err as Error).message }
         : {
             message: (err as Error).message,
-            stateFlush: flushResult,
-            stateMessage: branchStateFlushFailureMessage(flushResult, '单服务部署失败状态已写入内存'),
+            stateFlush: reportedFlush,
+            stateMessage: branchStateFlushFailureMessage(reportedFlush, '单服务部署失败状态已写入内存'),
           });
     } finally {
       const remainingRun = deploymentRunService && deploymentRun

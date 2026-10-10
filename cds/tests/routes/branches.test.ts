@@ -4259,6 +4259,32 @@ describe('Branch Routes', () => {
       expect(String(response.body)).not.toContain('event: complete');
     });
 
+    it.each(['branch', 'profile'] as const)('waits for the real final running snapshot before %s deployment complete', async route => {
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000 });
+      stateService.addBranch({ id: 'terminal-deploy', projectId: 'default', branch: 'feature/terminal-deploy',
+        worktreePath: path.join(tmpDir, 'worktrees', 'terminal-deploy'), status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      await stateService.flush();
+      const backing = stateService.getBackingStore() as any;
+      const originalWrite = backing.writeToDisk.bind(backing);
+      let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+      let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
+      backing.writeToDisk = async (serialized: string) => {
+        const snapshot = JSON.parse(serialized);
+        if (Object.values(snapshot.deploymentRuns || {}).some((run: any) => run.branchId === 'terminal-deploy' && run.status === 'running')) { entered(); await gate; }
+        return originalWrite(serialized);
+      };
+      const pending = request(server, 'POST', '/api/branches/terminal-deploy/deploy' + (route === 'profile' ? '/api' : ''));
+      try {
+        expect(await Promise.race([started.then(() => true), pending.then(() => false)])).toBe(true);
+        const runId = stateService.getBranch('terminal-deploy')!.lastDeploymentRunId!;
+        expect(deploymentRunService.get(runId)?.status).toBe('verifying');
+      } finally { release(); }
+      const response = await pending; await stateService.flush(); backing.writeToDisk = originalWrite;
+      expect(String(response.body)).toContain('event: complete');
+      const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
+      expect(restored.getDeploymentRun(String(response.headers['x-cds-deployment-run-id']))?.status).toBe('running');
+    });
+
     it('records branch delete completion only after state flush succeeds', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
