@@ -85,4 +85,14 @@ describe('bounded pending deployment observations', () => {
       { headers: { 'X-CDS-Deployment-Run-Id': 'also-private-token' } });
     expect(await observePendingDeployDispatch(url, init, { fetch: responseOf(response) })).toEqual({ outcome: 'completed', reason: 'deployment_completed', httpStatus: 200 });
   });
+
+  it.each(['started', 'rejected'])('does not turn an unrecognized or contradictory operation status %s into completion', async operationStatus => {
+    const response = new Response(`event: complete\ndata: ${JSON.stringify({ ok: true, operationStatus, runId: 'dr_' + operationStatus })}\n\n`);
+    expect(await observePendingDeployDispatch(url, init, { fetch: responseOf(response) })).toEqual({ outcome: 'unknown', reason: 'invalid_terminal', httpStatus: 200 });
+  });
+
+  it('preserves an explicit cancellation separately from a deployment failure', async () => {
+    const response = new Response('event: error\ndata: {"operationStatus":"cancelled","runId":"dr_cancelled"}\n\n');
+    expect(await observePendingDeployDispatch(url, init, { fetch: responseOf(response) })).toEqual({ outcome: 'cancelled', reason: 'deployment_cancelled', httpStatus: 200, deploymentRunId: 'dr_cancelled' });
+  });
 });

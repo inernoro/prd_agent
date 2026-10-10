@@ -1,6 +1,6 @@
 export interface PendingDeployDispatchResult {
-  outcome: 'completed' | 'accepted' | 'failed' | 'unknown';
-  reason: 'deployment_completed' | 'deployment_failed' | 'deployment_error' | 'request_accepted'
+  outcome: 'completed' | 'accepted' | 'failed' | 'cancelled' | 'unknown';
+  reason: 'deployment_completed' | 'deployment_failed' | 'deployment_error' | 'deployment_cancelled' | 'request_accepted'
     | 'http_rejected' | 'response_timeout' | 'observation_timeout' | 'transport_error'
     | 'terminal_missing' | 'invalid_terminal' | 'frame_too_large';
   httpStatus?: number;
@@ -49,7 +49,10 @@ export async function observePendingDeployDispatch(
     let buffer = '';
     const classify = (value: unknown, event?: string): PendingDeployDispatchResult => {
       const data = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-      if (event === 'error') return result('failed', 'deployment_error', runId(data.runId));
+      if (event === 'error') return data.operationStatus === 'cancelled'
+        ? result('cancelled', 'deployment_cancelled', runId(data.runId))
+        : result('failed', 'deployment_error', runId(data.runId));
+      if (data.operationStatus != null && data.operationStatus !== 'merged' && data.operationStatus !== 'joined') return result('unknown', 'invalid_terminal');
       if (data.ok === false) return result('failed', 'deployment_failed', runId(data.runId));
       if (data.ok !== true) return result('unknown', 'invalid_terminal');
       if (data.operationStatus === 'merged' || data.operationStatus === 'joined') {

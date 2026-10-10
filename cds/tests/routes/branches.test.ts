@@ -3832,6 +3832,7 @@ describe('Branch Routes', () => {
     it.each([
       ['complete-failure', 'event: complete\ndata: {"ok":false,"runId":"dr_replayed"}\n\n', 200, 'failed', 'deployment_failed'],
       ['event-failure', 'event: error\ndata: {"message":"private-token-do-not-log","runId":"dr_replayed"}\n\n', 200, 'failed', 'deployment_error'],
+      ['event-cancelled', 'event: error\ndata: {"operationStatus":"cancelled","runId":"dr_replayed"}\n\n', 200, 'cancelled', 'deployment_cancelled'],
       ['no-terminal', 'event: log\ndata: {"chunk":"private-token-do-not-log"}\n\n', 200, 'unknown', 'terminal_missing'],
       ['http-failure', 'private-token-do-not-log', 503, 'failed', 'http_rejected'],
       ['complete-success', 'event: complete\ndata: {"ok":true,"runId":"dr_replayed"}\n\n', 200, 'completed', 'deployment_completed'],
