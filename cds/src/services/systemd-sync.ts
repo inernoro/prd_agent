@@ -22,7 +22,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import type { IShellExecutor } from '../types.js';
+import { ShellExecutor } from './shell-executor.js';
+
+const unitsInProgress = new Set<string>();
+const MAX_UNITS_IN_PROGRESS = 32;
+const fallbackShell = new ShellExecutor({ maxConcurrent: 1, maxQueued: 3 });
+const quoteArg = (arg: string): string => "'" + arg.replace(/'/g, "'\"'\"'") + "'";
+async function runCommand(shell: IShellExecutor, command: string, timeout: number): Promise<string> {
+  const result = await shell.exec(command, { timeout, priority: 'diagnostic', schedulingGroup: 'systemd-sync' });
+  if (result.exitCode !== 0) throw new Error(`systemd command failed (exit ${result.exitCode})`);
+  return result.stdout;
+}
 
 export interface SystemdUnitSyncOptions {
   /** repo 中的 unit 模板路径,例 /opt/prd_agent/cds/systemd/cds-master.service */
@@ -70,9 +81,9 @@ export function extractRuntimeWeights(unitText: string): string[] {
   return out;
 }
 
-function whichBin(cmd: string): string {
+async function whichBin(cmd: string, shell: IShellExecutor): Promise<string> {
   try {
-    return execSync(`command -v ${cmd}`, { encoding: 'utf8' }).trim();
+    return (await runCommand(shell, `command -v ${cmd}`, 3_000)).trim();
   } catch {
     return '';
   }
@@ -102,7 +113,18 @@ export function renderDesiredUnit(template: string, opts: {
     );
 }
 
-export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncResult {
+export async function syncSystemdUnit(options: SystemdUnitSyncOptions, shell: IShellExecutor = fallbackShell): Promise<SystemdUnitSyncResult> {
+  // Discovery yields: keep this call bound to its original unit and install intent.
+  const opts = { ...options };
+  const unitKey = path.resolve(opts.installedUnit);
+  if (unitsInProgress.has(unitKey)) return { status: 'error', error: 'unit synchronization already in progress' };
+  if (unitsInProgress.size >= MAX_UNITS_IN_PROGRESS) return { status: 'error', error: 'unit synchronization capacity exceeded' };
+  unitsInProgress.add(unitKey);
+  try { return await syncOwnedSystemdUnit(opts, shell); }
+  finally { unitsInProgress.delete(unitKey); }
+}
+
+async function syncOwnedSystemdUnit(opts: SystemdUnitSyncOptions, shell: IShellExecutor): Promise<SystemdUnitSyncResult> {
   const installedExists = fs.existsSync(opts.installedUnit);
   if (!installedExists && !opts.installIfMissing) {
     return { status: 'skipped', reason: `${opts.installedUnit} not installed (dev env?)` };
@@ -114,9 +136,9 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
   if (!isRoot) {
     return { status: 'skipped', reason: 'not running as root, /etc/systemd/system not writable' };
   }
-  const nodeBin = whichBin('node');
-  const pnpmBin = whichBin('pnpm');
-  const npxBin = whichBin('npx');
+  const nodeBin = await whichBin('node', shell);
+  const pnpmBin = await whichBin('pnpm', shell);
+  const npxBin = await whichBin('npx', shell);
   if (!nodeBin || !pnpmBin || !npxBin) {
     return { status: 'skipped', reason: 'missing node/pnpm/npx in PATH' };
   }
@@ -147,7 +169,7 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
     // slice 这类单元没有进程，daemon-reload 后被首个容器引用时自动生效。
     try {
       fs.writeFileSync(opts.installedUnit, desired);
-      execSync('systemctl daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+      await runCommand(shell, 'systemctl daemon-reload', 10_000);
     } catch (err) {
       try { fs.rmSync(opts.installedUnit, { force: true }); } catch { /* */ }
       return { status: 'error', error: `install/daemon-reload failed: ${(err as Error).message}` };
@@ -163,7 +185,7 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
   }
   try {
     fs.writeFileSync(opts.installedUnit, desired);
-    execSync('systemctl daemon-reload', { stdio: 'pipe', timeout: 10_000 });
+    await runCommand(shell, 'systemctl daemon-reload', 10_000);
   } catch (err) {
     // 回滚
     try { fs.copyFileSync(backupPath, opts.installedUnit); } catch { /* */ }
@@ -179,7 +201,7 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
     if (weights.length > 0) {
       try {
         const unitName = path.basename(opts.installedUnit);
-        execSync(`systemctl set-property --runtime ${unitName} ${weights.join(' ')}`, { stdio: 'pipe', timeout: 10_000 });
+        await runCommand(shell, `systemctl set-property --runtime ${quoteArg(unitName)} ${weights.join(' ')}`, 10_000);
         runtimeWeightsApplied = true;
       } catch (err) {
         console.warn(`  [systemd-sync:${opts.label}] 权重热应用失败(下次重启生效): ${(err as Error).message}`);
@@ -189,7 +211,7 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
   if (opts.restartAfterReload) {
     try {
       const unitName = path.basename(opts.installedUnit); // e.g. cds-forwarder.service
-      execSync(`systemctl restart ${unitName}`, { stdio: 'pipe', timeout: 15_000 });
+      await runCommand(shell, `systemctl restart ${quoteArg(unitName)}`, 15_000);
       restarted = true;
     } catch (err) {
       // 重启失败不算修复失败 — drift 已修,只是没立刻生效。下次手动 / 重启
@@ -205,27 +227,27 @@ export function syncSystemdUnit(opts: SystemdUnitSyncOptions): SystemdUnitSyncRe
  * Convenience entry point: sync both master + forwarder units.
  * Logs a one-line summary per unit.
  */
-export function syncAllSystemdUnits(repoRoot: string): {
+export async function syncAllSystemdUnits(repoRoot: string, shell: IShellExecutor = fallbackShell): Promise<{
   master: SystemdUnitSyncResult;
   forwarder: SystemdUnitSyncResult;
   workloadSlice: SystemdUnitSyncResult;
-} {
+}> {
   const cdsDir = path.resolve(repoRoot, 'cds');
   const masterInstalledUnit = '/etc/systemd/system/cds-master.service';
 
-  const master = syncSystemdUnit({
+  const master = await syncSystemdUnit({
     repoUnit: path.resolve(cdsDir, 'systemd', 'cds-master.service'),
     installedUnit: masterInstalledUnit,
     repoRoot,
     cdsDir,
     label: 'cds-master',
     restartAfterReload: false,
-  });
+  }, shell);
   logResult('cds-master', master);
 
   // 托管容器的低权重 slice（2026-09-08）。只在宿主确实装了 cds-master.service 时
   // 才首次安装——否则 dev 机器上也会往 /etc/systemd 写东西。
-  const workloadSlice = syncSystemdUnit({
+  const workloadSlice = await syncSystemdUnit({
     repoUnit: path.resolve(cdsDir, 'systemd', 'system-cdsworkloads.slice'),
     installedUnit: '/etc/systemd/system/system-cdsworkloads.slice',
     repoRoot,
@@ -233,17 +255,17 @@ export function syncAllSystemdUnits(repoRoot: string): {
     label: 'system-cdsworkloads.slice',
     restartAfterReload: false,
     installIfMissing: fs.existsSync(masterInstalledUnit),
-  });
+  }, shell);
   logResult('system-cdsworkloads.slice', workloadSlice);
 
-  const forwarder = syncSystemdUnit({
+  const forwarder = await syncSystemdUnit({
     repoUnit: path.resolve(cdsDir, 'systemd', 'cds-forwarder.service'),
     installedUnit: '/etc/systemd/system/cds-forwarder.service',
     repoRoot,
     cdsDir,
     label: 'cds-forwarder',
     restartAfterReload: true,
-  });
+  }, shell);
   logResult('cds-forwarder', forwarder);
 
   return { master, forwarder, workloadSlice };

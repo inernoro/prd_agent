@@ -2364,7 +2364,7 @@ if (isPreviewInstance()) {
   console.log('  [systemd-sync] 预览实例模式，跳过 systemd 单元同步');
 } else {
   try {
-    syncAllSystemdUnits(config.repoRoot);
+    await syncAllSystemdUnits(config.repoRoot, shell);
   } catch (err) {
     console.warn(`  [systemd-sync] 自动同步跳过/失败: ${(err as Error).message}`);
   }

@@ -9,6 +9,11 @@ import { extractRuntimeWeights, renderDesiredUnit, syncSystemdUnit } from '../..
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { IShellExecutor } from '../../src/types.js';
+// Even a root-run test must never invoke the host's real systemctl.
+const fakeUnitShell: IShellExecutor = { exec: async command => command.startsWith('command -v ')
+  ? { stdout: '/usr/bin/' + command.split(' ').at(-1), stderr: '', exitCode: 0 }
+  : { stdout: '', stderr: 'controlled reload failure', exitCode: 1 } };
 
 describe('renderDesiredUnit', () => {
   const template = `[Unit]
@@ -121,46 +126,46 @@ describe('systemd unit templates', () => {
 });
 
 describe('syncSystemdUnit branching', () => {
-  it('repoUnit 不存在时 skipped', () => {
+  it('repoUnit 不存在时 skipped', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sysd-sync-'));
     try {
-      const r = syncSystemdUnit({
+      const r = await syncSystemdUnit({
         repoUnit: path.join(tmp, 'does-not-exist.service'),
         installedUnit: path.join(tmp, 'installed.service'),
         repoRoot: '/x',
         cdsDir: '/x/cds',
         label: 't',
         restartAfterReload: false,
-      });
+      }, fakeUnitShell);
       expect(r.status).toBe('skipped');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
-  it('installedUnit 不存在时 skipped(dev 环境)', () => {
+  it('installedUnit 不存在时 skipped(dev 环境)', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sysd-sync-'));
     try {
       fs.writeFileSync(path.join(tmp, 'repo.service'), 'X');
-      const r = syncSystemdUnit({
+      const r = await syncSystemdUnit({
         repoUnit: path.join(tmp, 'repo.service'),
         installedUnit: path.join(tmp, 'no-such.service'),
         repoRoot: '/x',
         cdsDir: '/x/cds',
         label: 't',
         restartAfterReload: false,
-      });
+      }, fakeUnitShell);
       expect(r.status).toBe('skipped');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }
   });
 
-  it('installIfMissing 时「未安装」不再当 dev 环境跳过（只可能卡在非 root）', () => {
+  it('installIfMissing 时「未安装」不再当 dev 环境跳过（只可能卡在非 root）', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sysd-sync-'));
     try {
       fs.writeFileSync(path.join(tmp, 'repo.slice'), '[Slice]\nCPUWeight=100\n');
-      const r = syncSystemdUnit({
+      const r = await syncSystemdUnit({
         repoUnit: path.join(tmp, 'repo.slice'),
         installedUnit: path.join(tmp, 'no-such.slice'),
         repoRoot: '/x',
@@ -168,7 +173,7 @@ describe('syncSystemdUnit branching', () => {
         label: 't',
         restartAfterReload: false,
         installIfMissing: true,
-      });
+      }, fakeUnitShell);
       if (typeof process.getuid === 'function' && process.getuid() !== 0) {
         expect(r.status).toBe('skipped');
         expect((r as { reason: string }).reason).not.toContain('not installed');
@@ -180,19 +185,19 @@ describe('syncSystemdUnit branching', () => {
     }
   });
 
-  it('非 root 时 skipped(测试环境本来就不是 root)', () => {
+  it('非 root 时 skipped(测试环境本来就不是 root)', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sysd-sync-'));
     try {
       fs.writeFileSync(path.join(tmp, 'repo.service'), 'X');
       fs.writeFileSync(path.join(tmp, 'installed.service'), 'Y');
-      const r = syncSystemdUnit({
+      const r = await syncSystemdUnit({
         repoUnit: path.join(tmp, 'repo.service'),
         installedUnit: path.join(tmp, 'installed.service'),
         repoRoot: '/x',
         cdsDir: '/x/cds',
         label: 't',
         restartAfterReload: false,
-      });
+      }, fakeUnitShell);
       // 测试环境通常 !root → skipped。如果以 root 跑测试,函数会尝试写
       // 系统路径,但路径在 tmp 里 + 非 systemd 服务,这条仍然会到 'fixed'
       // 或 'error'(daemon-reload 失败)。两者都不算意外行为,但默认情况

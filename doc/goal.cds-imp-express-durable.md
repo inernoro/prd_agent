@@ -161,6 +161,6 @@ expected result：源例外项目轮转和立即取消不影响在途holder。cu
 
 ## P2-06 systemd 启动子进程迁移合同
 
-现有root/已安装或允许安装/模板存在/完整node-pnpm-npx路径准入保持；备份、daemon-reload失败恢复旧文件、master只热应用权重、Forwarder只在reload成功后重启的顺序保持。把command -v与systemctl命令交给已共享Shell Worker，发现单命令3秒、reload/权重10秒、restart15秒边界；启动装配await完成，不后台无序重启。嵌入调用使用有界共享fallback（1执行/3排队），不直接native execSync，不把未成功命令算已应用。文件读取/备份/小unit写入仍同步，不能称所有文件热点已迁移。
+现有root/已安装或允许安装/模板存在/完整node-pnpm-npx路径准入保持；备份、daemon-reload失败恢复旧文件、master只热应用权重、Forwarder只在reload成功后重启的顺序保持。把command -v与systemctl命令交给已共享Shell Worker，发现单命令3秒、reload/权重10秒、restart15秒边界；启动装配await完成，不后台无序重启。嵌入调用使用有界共享fallback（1执行/3排队），不直接native execSync，不把未成功命令算已应用。文件读取/备份/小unit写入仍同步，不能称所有文件热点已迁移。 异步等待期间同一规范化installedUnit只允许一个写入者，竞态明确返回error而不覆盖在途unit；进程内最多32个不同unit同步，无排队或自动重放，结束才释放。这个内存边界不替代重启后宿主对账。
 
 先红判据：注入共享executor时旧实现仍native调用；reload尚未返回不能报告fixed或重启；reload失败必须恢复原unit并留备份；热权重/重启失败维持既有返回语义。测试只允许自有临时文件与假命令、不调用宿主systemctl，不用局部启动检查代替真实自更新或公网性能。此临时实施合同在P2-06正式报告及自动门禁完整接管后退场。
