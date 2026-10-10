@@ -22,6 +22,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, t
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { IsolatedShellExecutor } from './services/isolated-shell-executor.js';
+import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
@@ -183,11 +184,15 @@ function diagnoseBootDisks(): string | null {
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
 const localShell = new IsolatedShellExecutor(new ShellExecutor());
+const startupStreams = new ObservationStreamExecutor();
 const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
   : localShell;
 if (!isPreviewInstance()) {
-  await localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。'));
+  await Promise.all([
+    localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。')),
+    startupStreams.start().catch(() => console.warn('[observation] 启动日志执行器暂不可用；启动信号不报告就绪。')),
+  ]);
 }
 if (isPreviewInstance()) {
   console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
@@ -2585,7 +2590,7 @@ const containerService = new ContainerService(shell, config, {
   // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
-}, activeServerEventLogStore);
+}, activeServerEventLogStore, startupStreams);
 
 // 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
 // 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
@@ -4747,6 +4752,9 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
+  await startupStreams.close().catch(() => {
+    console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。');
+  });
   await localShell.close().catch(() => {
     console.warn('[shutdown] 观测进程清理尚未确认；继续保存关键状态。');
   });

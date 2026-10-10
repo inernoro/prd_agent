@@ -40,7 +40,7 @@ jobs:
           pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
           pnpm -C cds build
       - name: Real process cancellation and main-thread isolation regressions
-        run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts tests/services/janitor-observation.test.ts
+        run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts tests/services/janitor-observation.test.ts tests/services/observation-stream-executor.test.ts
       - name: Real owned Docker reads through compiled observation processes
         run: pnpm -C cds exec tsx scripts/observation-isolation-drill.ts --compiled
       - name: Preserve observation evidence

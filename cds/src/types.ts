@@ -4965,6 +4965,8 @@ export interface ExecOptions {
   signal?: AbortSignal;
   cwd?: string;
   timeout?: number;
+  /** 独立流式读取可关闭完整输出捕获；回调消费确认后才继续发送。普通操作忽略。 */
+  captureOutput?: boolean;
   onData?: (chunk: string) => void;
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
    *  2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。 */

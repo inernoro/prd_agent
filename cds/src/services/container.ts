@@ -4,6 +4,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import type { ObservationStreamExecutor } from './observation-stream-executor.js';
+import { shellQuoteArg } from './secure-database-cli.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
@@ -703,6 +705,7 @@ export class ContainerService {
      */
     private readonly networkResolver?: ProjectNetworkResolver,
     private readonly serverEventLogStore?: ServerEventLogSink | null,
+    private readonly startupStreams?: ObservationStreamExecutor,
   ) {}
 
   /**
@@ -2082,6 +2085,31 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     timeoutSeconds = 300,
   ): Promise<boolean> {
+    if (isPreviewInstance()) { onOutput?.(`${previewInstanceBlockedMessage('docker')}\n`); return false; }
+    if (this.startupStreams) {
+      // 只保留跨帧匹配所需尾部，不把启动前的大量日志复制到Master。
+      if (!signal || signal.length > 64 * 1024) return false;
+      const ac = new AbortController();
+      let found = false;
+      let confirmed = false;
+      let tail = '';
+      try {
+        await this.startupStreams.exec(['docker', 'logs', '-f', containerName].map(shellQuoteArg).join(' '), {
+          timeout: Math.max(1, timeoutSeconds * 1000), signal: ac.signal,
+          onData: (chunk) => {
+            const text = tail + chunk;
+            if (text.includes(signal)) { found = true; ac.abort(); }
+            tail = signal.length > 1 ? text.slice(-(signal.length - 1)) : '';
+          },
+        });
+        confirmed = true;
+      } catch (error) {
+        // 只有成功匹配触发且进程组已确认取消的回执能报告就绪。
+        confirmed = found && (error as { code?: string }).code === 'cancelled';
+      }
+      onOutput?.(found && confirmed ? `── 检测到启动信号: "${signal}" OK ──\n` : `── 未确认启动信号: "${signal}"，请查看日志后重试 ──\n`);
+      return found && confirmed;
+    }
     return new Promise<boolean>((resolve) => {
       const timeout = setTimeout(() => {
         child.kill();

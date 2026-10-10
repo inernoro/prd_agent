@@ -52,14 +52,14 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       stdoutBytes += Buffer.byteLength(chunk);
-      if (stdoutBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
-      stdout += chunk;
+      if (options?.captureOutput !== false && stdoutBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
+      if (options?.captureOutput !== false) stdout += chunk;
       options?.onData?.(chunk);
     });
     child.stderr?.on('data', (chunk: string) => {
       stderrBytes += Buffer.byteLength(chunk);
-      if (stderrBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
-      stderr += chunk;
+      if (options?.captureOutput !== false && stderrBytes > 10 * 1024 * 1024) { overflow = true; kill(); return; }
+      if (options?.captureOutput !== false) stderr += chunk;
       options?.onData?.(chunk);
     });
     child.on('error', () => { failed = true; });

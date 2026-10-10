@@ -9,10 +9,11 @@ import { IsolatedShellExecutor } from '../src/services/isolated-shell-executor.j
 import { ContainerService } from '../src/services/container.js';
 import { collectContainerDiagnostics } from '../src/services/container-diagnostics.js';
 import { createJanitorDockerAdapters } from '../src/services/janitor.js';
+import { ObservationStreamExecutor } from '../src/services/observation-stream-executor.js';
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -33,7 +34,9 @@ async function main(): Promise<void> {
   delete process.env.DOCKER_CONTEXT;
   process.env.DOCKER_HOST = host;
   const shell = new module.IsolatedShellExecutor(new ShellExecutor(), { concurrency: 2, maxQueued: 16 });
-  const container = new ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig);
+  const streamModule = compiled ? await import(new URL('../dist/services/observation-stream-executor.js', import.meta.url).href) as typeof import('../src/services/observation-stream-executor.js') : { ObservationStreamExecutor };
+  const startupStreams = new streamModule.ObservationStreamExecutor(2);
+  const container = new ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams);
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
@@ -62,7 +65,8 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'independent-process-prewarm';
-    await shell.start();
+    await Promise.all([shell.start(), startupStreams.start()]);
+    report.streamWarmStats = startupStreams.getStats();
     const warmStats = shell.getStats();
     assert.ok(warmStats.factoryPid && warmStats.factoryPid !== process.pid);
     assert.equal(warmStats.actors.length, 2);
@@ -118,6 +122,29 @@ async function main(): Promise<void> {
     report.partialMountReceipt = { ...partialReceipt, returnedUnknown: true, roster: 'owned ID plus absent ID' };
     owned();
     report.checks.push({ name: 'compiled-janitor-real-partial-inspect-protects-unknown-mounts', passed: true });
+    report.stage = 'real-startup-log-stream';
+    assert.equal(await container.waitForStartupSignal(id!, 'owned-observation', undefined, 5), true);
+    assert.equal(startupStreams.getStats().admitted, 0);
+    owned();
+    report.checks.push({ name: 'compiled-real-startup-signal-cleans-independent-stream', passed: true });
+    report.stage = 'uncaptured-large-stream-and-reserved-health-slots';
+    let streamBytes = 0;
+    let prefix = '';
+    const largeStream = await startupStreams.exec(['exec', shellQuoteArg(process.execPath), '-e', shellQuoteArg("process.stdout.write(process.ppid+'\\n');process.stdout.write(Buffer.alloc(12*1024*1024,120));")].join(' '), {
+      timeout: 10_000, onData: chunk => { if (!streamBytes) prefix = chunk; streamBytes += Buffer.byteLength(chunk); },
+    });
+    const streamParent = Number(prefix.split('\n')[0]);
+    assert.ok(startupStreams.getStats().actors.some(actor => actor.pid === streamParent));
+    assert.notEqual(streamParent, process.pid);
+    assert.equal(streamBytes, 12 * 1024 * 1024 + Buffer.byteLength(String(streamParent) + '\n'));
+    assert.deepEqual(largeStream, { stdout: '', stderr: '', exitCode: 0 });
+    const heldStreams = Array.from({ length: 2 }, () => startupStreams.exec('sleep 0.5', { timeout: 5000, onData: () => {} }));
+    await assert.rejects(startupStreams.exec('echo must-not-start', { onData: () => {} }), { code: 'capacity' });
+    assert.equal(await container.isRunning(id!), true);
+    await Promise.all(heldStreams);
+    report.streamReceipt = { bytes: streamBytes, parentPid: streamParent, captureBytes: 0, healthReadableWhileStreamSlotsFull: true, stats: startupStreams.getStats() };
+    report.checks.push({ name: 'compiled-large-stream-no-capture-and-health-capacity-preserved', passed: true });
+
 
     report.stage = 'bounded-read-concurrency';
     const requests = Array.from({ length: 8 }, () => container.isRunning(id!));
@@ -155,9 +182,9 @@ async function main(): Promise<void> {
       ...(error && typeof error === 'object' && 'code' in error ? { code: String(error.code).slice(0, 100) } : {}) };
     process.exitCode = 1;
   } finally {
-    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await shell.close();
+      await Promise.all([shell.close(), startupStreams.close()]);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
         try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }
