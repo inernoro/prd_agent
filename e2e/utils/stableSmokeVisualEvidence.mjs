@@ -270,31 +270,42 @@ export function createStableSmokeVisualEvidence(options = {}) {
         if (!pageMatchesEntry(recordedActual.pathname, slot.entryPath)) {
           throw new Error(`视觉位 ${slotId} 的既有证据路径不属于计划入口：${recordedActual.pathname}`);
         }
-        validateRecord(existingRecord, plan, slot, runtime, recordedActual);
-        await access(existingRecord.path).catch((error) => {
-          throw new Error(`视觉位 ${slotId} 已有 manifest 记录，但证据文件不可读：${error.message}`);
-        });
-        if (recordMatchesRequestedOutcome(
-          existingRecord,
-          status,
-          input.failureEvidence,
-          input.failureReason,
-        )) {
-          if (status === '通过'
-            && (existingRecord.manualStatus !== '通过' || existingRecord.automatedStatus !== '通过')) {
-            throw new Error(`视觉位 ${slotId} 的既有证据未通过，不能在重试时按通过复用。`);
+        const staleCommit = existingRecord.runId === runtime.runId
+          && existingRecord.environment === runtime.environment
+          && existingRecord.commit !== runtime.commit;
+        if (staleCommit) {
+          // 同一调度轮次可能在修复提交部署后继续复测。旧 commit 的截图不能复用，
+          // 但也不能让严格一致性校验把所有真实业务旅程都拦在截图之前；按与
+          // “结论变更”相同的原子替换流程写入新证据，旧文件保留到 manifest
+          // 成功切换之后，避免中断时丢失最后一份可审计记录。
+          recordToReplace = existingRecord;
+        } else {
+          validateRecord(existingRecord, plan, slot, runtime, recordedActual);
+          await access(existingRecord.path).catch((error) => {
+            throw new Error(`视觉位 ${slotId} 已有 manifest 记录，但证据文件不可读：${error.message}`);
+          });
+          if (recordMatchesRequestedOutcome(
+            existingRecord,
+            status,
+            input.failureEvidence,
+            input.failureReason,
+          )) {
+            if (status === '通过'
+              && (existingRecord.manualStatus !== '通过' || existingRecord.automatedStatus !== '通过')) {
+              throw new Error(`视觉位 ${slotId} 的既有证据未通过，不能在重试时按通过复用。`);
+            }
+            if (testInfo?.attach) {
+              await testInfo.attach(slotId, { path: existingRecord.path, contentType: 'image/png' });
+            }
+            return {
+              captured: false,
+              reason: 'slot-already-captured',
+              record: existingRecord,
+              manifestPath,
+            };
           }
-          if (testInfo?.attach) {
-            await testInfo.attach(slotId, { path: existingRecord.path, contentType: 'image/png' });
-          }
-          return {
-            captured: false,
-            reason: 'slot-already-captured',
-            record: existingRecord,
-            manifestPath,
-          };
+          recordToReplace = existingRecord;
         }
-        recordToReplace = existingRecord;
       }
 
       if (input.target) {

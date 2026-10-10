@@ -241,6 +241,58 @@ test('同一槽位的当前结论变更时原子替换旧证据', async () => {
   }
 });
 
+test('同一 runId 切换固定提交时原子替换旧提交证据', async () => {
+  const current = fixture();
+  const nextCommit = 'b'.repeat(40);
+  let shotCount = 0;
+  try {
+    const harness = fakeHarness();
+    const firstCapture = createStableSmokeVisualEvidence({
+      environment: current.environment,
+      harnessLoader: async () => ({
+        ...harness,
+        shot: async (...args) => {
+          shotCount += 1;
+          return harness.shot(...args);
+        },
+      }),
+    });
+    await firstCapture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+    });
+    const [original] = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+
+    const plan = JSON.parse(readFileSync(current.planPath, 'utf8'));
+    writeFileSync(current.planPath, JSON.stringify({ ...plan, commit: nextCommit }));
+    const secondCapture = createStableSmokeVisualEvidence({
+      environment: { ...current.environment, STABLE_SMOKE_COMMIT: nextCommit },
+      harnessLoader: async () => ({
+        ...harness,
+        shot: async (...args) => {
+          shotCount += 1;
+          return harness.shot(...args);
+        },
+      }),
+    });
+    const replaced = await secondCapture(page(), undefined, {
+      slotId: 'CDS-VISUAL-SINGLE-01',
+      target: target(),
+    });
+
+    assert.equal(replaced.captured, true);
+    assert.equal(shotCount, 2);
+    const manifest = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.length, 1);
+    assert.equal(manifest[0].commit, nextCommit);
+    assert.notEqual(manifest[0].path, original.path);
+    assert.equal(existsSync(original.path), true);
+    assert.equal(existsSync(manifest[0].path), true);
+  } finally {
+    rmSync(current.root, { recursive: true, force: true });
+  }
+});
+
 test('自动检查失败的证据不写入 manifest 且同一槽位可以重试', async () => {
   const current = fixture();
   try {
