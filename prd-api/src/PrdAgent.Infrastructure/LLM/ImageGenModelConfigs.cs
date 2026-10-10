@@ -249,7 +249,7 @@ public static class ImageGenModelConfigs
             ModelIdPattern = "gemini-3-pro-image-preview*",
             DisplayName = "Gemini 3 Pro Image Preview",
             Provider = "Google",
-            LastUpdated = "2026-02-11",
+            LastUpdated = "2026-10-10",
             SizeConstraintType = SizeConstraintTypes.Whitelist,
             SizeConstraintDescription = "支持 1K/2K/4K 分辨率档位的固定尺寸",
             SizesByResolution = new Dictionary<string, List<SizeOption>>
@@ -258,7 +258,8 @@ public static class ImageGenModelConfigs
                 {
                     new("1024x1024", "1:1"),
                     new("832x1248", "2:3"),
-                    new("1248x832", "3:2"),
+                    // 现有 preview 线路真实 1K/3:2 输出；不据单个比例推改其他档位。
+                    new("1264x848", "3:2"),
                     new("864x1184", "3:4"),
                     new("1184x864", "4:3"),
                     new("896x1152", "4:5"),
