@@ -10,7 +10,7 @@ import { ContainerService } from '../src/services/container.js';
 import { collectContainerDiagnostics } from '../src/services/container-diagnostics.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/shell-executor-worker.ts', 'src/services/shell-executor.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -35,11 +35,12 @@ async function main(): Promise<void> {
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
-    mode: compiled ? 'compiled' : 'source', scope: 'bounded observation worker and real owned Docker reads; no application deployment or public performance acceptance',
-    actualDockerReadVerified: false, actualDeploymentVerified: false, performanceVerified: false,
+    mode: compiled ? 'compiled' : 'source', scope: 'independent bounded observation processes and real owned Docker reads; no application deployment or public performance acceptance',
+    actualDockerReadVerified: false, actualIndependentProcessesVerified: false, actualDeploymentVerified: false, performanceVerified: false,
     verdict: 'failed', checks: [], ownedContainerRemoved: false, isolatedFilesRemoved: false,
   };
   let id: string | undefined;
+  let masterState: Buffer | undefined;
   const owned = (): void => {
     assert.match(id || '', /^[a-f0-9]{64}$/);
     const view = JSON.parse(docker(['inspect', id!]))[0];
@@ -50,8 +51,28 @@ async function main(): Promise<void> {
     assert.equal(view.HostConfig.NanoCpus, 250000000);
     assert.equal(view.HostConfig.Memory, 67108864);
     assert.equal(view.HostConfig.NetworkMode, 'none');
+    report.containerReceipts ??= [];
+    report.containerReceipts.push({ stage: report.stage, id, name, owner, image: view.Config.Image,
+      nanoCpus: view.HostConfig.NanoCpus, memory: view.HostConfig.Memory, networkMode: view.HostConfig.NetworkMode });
   };
   try {
+    report.stage = 'independent-process-prewarm';
+    await shell.start();
+    const warmStats = shell.getStats();
+    assert.ok(warmStats.factoryPid && warmStats.factoryPid !== process.pid);
+    assert.equal(warmStats.actors.length, 2);
+    assert.ok(warmStats.actors.every(actor => actor.pid !== process.pid && actor.pid !== warmStats.factoryPid));
+    // 仅专用 CI 中持有有界大状态；验证查询执行进程并不共享 Master 地址空间。
+    masterState = Buffer.alloc(256 * 1024 * 1024, 0x31);
+    const parent = await shell.exec(`exec '${process.execPath.replace(/'/g, "'\\''")}' -e 'console.log(process.ppid)'`, { executionLane: 'observation', timeout: 5000 });
+    const parentPid = Number(parent.stdout.trim());
+    assert.ok(shell.getStats().actors.some(actor => actor.pid === parentPid));
+    assert.notEqual(parentPid, process.pid);
+    const masterRss = process.memoryUsage().rss;
+    assert.ok(shell.getStats().actors.every(actor => actor.rss && actor.rss < masterRss && actor.heapLimit && actor.heapLimit <= 192 * 1024 * 1024));
+    report.processIsolation = { masterPid: process.pid, masterRss, retainedStateBytes: masterState.length, warmStats, afterQuery: shell.getStats(), queryParentPid: parentPid };
+    report.actualIndependentProcessesVerified = true;
+    report.checks.push({ name: 'large-master-independent-query-parent-and-bounded-actor-memory', passed: true });
     report.stage = 'create-owned-container';
     docker(['pull', 'alpine:3.20']);
     id = docker(['run', '-d', '--name', name, '--label', `cds.acceptance.owner=${owner}`, '--network', 'none', '--cpus', '0.25', '--memory', '64m', 'alpine:3.20', 'sh', '-c', 'echo owned-observation; sleep 300']);
@@ -87,7 +108,9 @@ async function main(): Promise<void> {
     assert.match(state.stdout.trim(), /^(Z.*)?$/);
     assert.equal(await container.isRunning(id), true);
     report.checks.push({ name: 'timeout-process-tree-cleaned-owned-container-retained', passed: true });
-    report.workerStats = shell.getStats();
+    report.processStats = shell.getStats();
+    assert.equal(masterState.length, 256 * 1024 * 1024);
+    assert.equal(masterState[masterState.length - 1], 0x31);
     report.actualDockerReadVerified = true;
     report.verdict = 'passed';
     report.stage = 'completed';
@@ -96,7 +119,18 @@ async function main(): Promise<void> {
       ...(error && typeof error === 'object' && 'code' in error ? { code: String(error.code).slice(0, 100) } : {}) };
     process.exitCode = 1;
   } finally {
-    await shell.close();
+    const processRoots = [shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    try {
+      await shell.close();
+      report.closedProcessStates = processRoots.map(pid => {
+        let state = '';
+        try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }
+        assert.match(state, /^(Z.*)?$/);
+        return { pid, state };
+      });
+      report.ownedProcessesRemoved = true;
+    } catch { report.verdict = 'failed'; report.ownedProcessesRemoved = false; process.exitCode = 1; }
+    masterState = undefined;
     if (id) {
       try { owned(); docker(['rm', '-f', id]); report.ownedContainerRemoved = true; }
       catch { report.verdict = 'failed'; process.exitCode = 1; }

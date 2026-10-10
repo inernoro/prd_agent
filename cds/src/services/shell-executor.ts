@@ -1,11 +1,14 @@
 import { exec as cpExec, spawn, type ChildProcess } from 'node:child_process';
 import type { IShellExecutor, ExecResult, ExecOptions } from '../types.js';
+import { cleanObservationGroup } from './observation-process-group.js';
 
-/** 仅供内部观测 worker 使用，不暴露 shell RPC 或状态写入能力。 */
+/** 仅供私有观测进程使用，不暴露 shell RPC 或状态写入能力。 */
 export interface OwnedShellControl {
   env: NodeJS.ProcessEnv;
   cancelled: () => boolean;
   onSpawn: (child: ChildProcess) => void;
+  /** 独立 actor 的根进程组；查询子进程继承它，以便 PID 尚未返回时也能清理。 */
+  processGroup?: number;
 }
 
 export function executeShellCommand(command: string, options?: ExecOptions, owned?: OwnedShellControl): Promise<ExecResult> {
@@ -38,10 +41,10 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
     let stdoutBytes = 0;
     let stderrBytes = 0;
     // exec/execFile 不下传 detached；必须用 spawn 创建独立进程组才能回收 shell 的子进程。
-    const child = spawn(command, { shell: true, detached: process.platform !== 'win32', cwd: options?.cwd, env: owned.env });
+    const child = spawn(command, { shell: true, detached: !owned.processGroup && process.platform !== 'win32', cwd: options?.cwd, env: owned.env });
     const kill = (): void => {
       if (!child.pid) return;
-      try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL'); } catch { /* 已退出 */ }
+      try { process.kill(owned.processGroup || process.platform === 'win32' ? child.pid : -child.pid, 'SIGKILL'); } catch { /* 已退出 */ }
     };
     const check = (): void => { if (owned.cancelled()) { cancelled = true; kill(); } };
     const poll = setInterval(check, 20);
@@ -64,8 +67,10 @@ function executeOwnedShellCommand(command: string, options: ExecOptions | undefi
     child.on('close', (code) => {
       clearInterval(poll);
       kill();
-      if (cancelled) reject(new Error('Observation execution cancelled'));
-      else resolve({ stdout, stderr: failed ? 'Process error' : stderr, exitCode: failed || overflow ? 1 : code ?? 1 });
+      void (owned.processGroup ? cleanObservationGroup(owned.processGroup, owned.processGroup) : Promise.resolve()).then(() => {
+        if (cancelled) reject(new Error('Observation execution cancelled'));
+        else resolve({ stdout, stderr: failed ? 'Process error' : stderr, exitCode: failed || overflow ? 1 : code ?? 1 });
+      }, reject);
     });
     owned.onSpawn(child);
     if (options?.stdin !== undefined) child.stdin?.end(options.stdin);

@@ -35,13 +35,13 @@ jobs:
           node-version: "22"
       - name: Install CDS dependencies
         run: pnpm -C cds install --frozen-lockfile
-      - name: Type-check and compile observation worker
+      - name: Type-check and compile observation processes
         run: |
           pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
           pnpm -C cds build
       - name: Real process cancellation and main-thread isolation regressions
         run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts
-      - name: Real owned Docker reads through compiled observation worker
+      - name: Real owned Docker reads through compiled observation processes
         run: pnpm -C cds exec tsx scripts/observation-isolation-drill.ts --compiled
       - name: Preserve observation evidence
         if: always()

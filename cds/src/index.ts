@@ -186,6 +186,9 @@ const localShell = new IsolatedShellExecutor(new ShellExecutor());
 const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
   : localShell;
+if (!isPreviewInstance()) {
+  await localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。'));
+}
 if (isPreviewInstance()) {
   console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
   console.log('[preview-instance] 后台服务(janitor/auto-lifecycle/docker-events/self-update)将跳过启动。');
