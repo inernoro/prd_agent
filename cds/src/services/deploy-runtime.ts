@@ -8,7 +8,43 @@
  * 对"什么算 release"判断不一致。抽到这里，改一处生效全局。
  */
 
-import type { BuildProfile, BranchEntry } from '../types.js';
+import type { BuildProfile, BranchEntry, ServiceState } from '../types.js';
+
+/** 配置意图另行计算；只有正在运行且有实际部署戳/镜像的服务计入已证实极速。 */
+export function summarizeActualPrebuiltRuntime(
+  profileIds: string[],
+  services: Record<string, Pick<ServiceState, 'status' | 'deployedImage' | 'deployedPrebuilt' | 'deployedMode'> | undefined> | undefined,
+): {
+  coverage: 'all' | 'partial' | 'none' | 'unknown';
+  profileIds: string[];
+  prebuiltProfileIds: string[];
+  sourceProfileIds: string[];
+  unknownProfileIds: string[];
+} {
+  const prebuiltProfileIds: string[] = [];
+  const sourceProfileIds: string[] = [];
+  const unknownProfileIds: string[] = [];
+  // 配置清单不是实际容器分母：未被回收的额外/孤儿服务仍须计入。
+  profileIds = [...new Set([...profileIds, ...Object.entries(services || {})
+    .filter(([, service]) => service && !['stopped', 'idle'].includes(service.status))
+    .map(([id]) => id)])];
+  for (const id of profileIds) {
+    const service = services?.[id];
+    if (service?.status !== 'running' || !service.deployedImage || typeof service.deployedPrebuilt !== 'boolean') {
+      unknownProfileIds.push(id);
+    } else if (service.deployedPrebuilt) {
+      if (!service.deployedMode?.trim() || /^(dev|development|source|watch|hot)$/i.test(service.deployedMode.trim())) unknownProfileIds.push(id);
+      else prebuiltProfileIds.push(id);
+    }
+    else sourceProfileIds.push(id);
+  }
+  return {
+    coverage: profileIds.length > 0 && prebuiltProfileIds.length === profileIds.length ? 'all'
+      : prebuiltProfileIds.length > 0 ? 'partial'
+        : unknownProfileIds.length > 0 ? 'unknown' : 'none',
+    profileIds, prebuiltProfileIds, sourceProfileIds, unknownProfileIds,
+  };
+}
 
 /**
  * 解析某 build profile 在某分支上「生效的 deploy mode id」。
@@ -143,4 +179,22 @@ export function computeServiceDrift(
     hasDrift: knownServiceCount > 0
       && (missingProfileIds.length > 0 || unhealthyProfileIds.length > 0),
   };
+}
+
+export function summarizeActualRuntimeVersions(
+  targetSha: string | undefined, profileIds: string[],
+  services: Record<string, { status: string; deployedCommitSha?: string } | undefined>,
+): { status: 'current' | 'outdated' | 'unknown'; targetSha?: string; outdatedProfileIds: string[]; unknownProfileIds: string[] } {
+  const target = targetSha?.trim().toLowerCase();
+  const valid = !!target && /^[a-f0-9]{40}$/.test(target);
+  const outdatedProfileIds: string[] = [];
+  const unknownProfileIds: string[] = [];
+  for (const id of profileIds) {
+    const service = services[id];
+    const actual = service?.deployedCommitSha?.trim().toLowerCase();
+    if (!valid || service?.status !== 'running' || !actual || !/^[a-f0-9]{40}$/.test(actual)) unknownProfileIds.push(id);
+    else if (actual !== target) outdatedProfileIds.push(id);
+  }
+  return { status: outdatedProfileIds.length ? 'outdated' : !valid || !profileIds.length || unknownProfileIds.length ? 'unknown' : 'current',
+    targetSha: valid ? target : undefined, outdatedProfileIds, unknownProfileIds };
 }

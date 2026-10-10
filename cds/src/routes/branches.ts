@@ -24,7 +24,8 @@ import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
-import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { prepareExactPrebuiltArtifacts, resolveExactArtifactTargetSha } from '../services/prebuilt-artifact-gate.js';
+import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode, summarizeActualPrebuiltRuntime, summarizeActualRuntimeVersions } from '../services/deploy-runtime.js';
 import {
   buildPrebuiltGateRejection,
   findNonPrebuiltProfiles,
@@ -332,6 +333,16 @@ type BranchDeployRuntime = {
    * partial = 只有一部分（显示「混合 · 极速 x/y」）；none = 没有。
    */
   prebuiltCoverage: 'all' | 'partial' | 'none';
+  /** 实际运行证据；上面的 prebuiltCoverage 保留为兼容的配置意图。 */
+  actualVersionStatus: 'current' | 'outdated' | 'unknown';
+  targetCommitSha?: string;
+  outdatedVersionProfileIds: string[];
+  unknownVersionProfileIds: string[];
+  actualRuntimeProfiles: number;
+  actualPrebuiltCoverage: 'all' | 'partial' | 'none' | 'unknown';
+  actualPrebuiltProfileIds: string[];
+  actualSourceProfileIds: string[];
+  unknownRuntimeProfileIds: string[];
   /**
    * 2026-09-29 走极速版（预构建镜像）的是哪几个 profile。一条分支可以一部分服务极速版、一部分源码版，
    * 只重部署其中一个源码服务时，卡片阶段条要按「这次动的那个服务」选步骤，不能按上面这个「任一」判
@@ -510,7 +521,7 @@ function summarizeBranchDeployRuntime(
     // 否则卡片会亮"极速版"绿徽章而其实没切过去。无真相的旧数据不误报(沿用上面口径)。
     if (effectiveProfile.prebuiltImage === true) {
       if (!running) pendingPublish = true;
-      else if (hasTruth && svc!.deployedMode !== configMode) pendingPublish = true;
+      else if (hasTruth && configMode && svc!.deployedMode !== configMode) pendingPublish = true;
     }
 
     const suffix = hasTruth && actualMode !== configMode
@@ -531,6 +542,10 @@ function summarizeBranchDeployRuntime(
       ? '混合'
       : '源码';
 
+  const actualPrebuilt = summarizeActualPrebuiltRuntime(profiles.map(profile => profile.id), branch.services);
+  const actualVersions = summarizeActualRuntimeVersions(branch.deploymentTargetSha || branch.githubCommitSha,
+    actualPrebuilt.profileIds, branch.services);
+
   return {
     kind,
     label,
@@ -544,6 +559,15 @@ function summarizeBranchDeployRuntime(
     pendingPublish,
     prebuilt,
     prebuiltProfileIds,
+    actualVersionStatus: actualVersions.status,
+    targetCommitSha: actualVersions.targetSha,
+    outdatedVersionProfileIds: actualVersions.outdatedProfileIds,
+    unknownVersionProfileIds: actualVersions.unknownProfileIds,
+    actualRuntimeProfiles: actualPrebuilt.profileIds.length,
+    actualPrebuiltCoverage: actualPrebuilt.coverage,
+    actualPrebuiltProfileIds: actualPrebuilt.prebuiltProfileIds,
+    actualSourceProfileIds: actualPrebuilt.sourceProfileIds,
+    unknownRuntimeProfileIds: actualPrebuilt.unknownProfileIds,
     prebuiltCoverage: prebuiltProfileIds.length === 0
       ? 'none'
       : prebuiltProfileIds.length === profiles.length ? 'all' : 'partial',
@@ -1721,6 +1745,7 @@ interface RunServiceWithPortRetryOptions {
   isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
   /** 本次部署 pull 到的完整提交：极速版先试它的 CI 镜像（见 container.ts runService 同名字段）。 */
   latestCommitSha?: string;
+  sourceCommitSha?: string;
   /** 用上了最新提交的镜像时回调，调用方改正部署记录里的提交。 */
   onLatestCommitImage?: (commitSha: string) => void;
 }
@@ -1806,6 +1831,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
           latestCommitSha: options.latestCommitSha,
+          sourceCommitSha: options.sourceCommitSha,
           onLatestCommitImage: options.onLatestCommitImage,
         },
       );
@@ -3564,6 +3590,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       deploymentConfigHash?: string;
       deploymentCapabilities?: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
       profiles?: BuildProfile[];
+      exactTargetCommitSha?: string;
     } = {},
   ): Promise<'completed' | 'failed'> {
     // SSE headers on client side — same shape the local deploy uses so the
@@ -3672,6 +3699,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       projectId: entry.projectId || 'default',
       profiles,
       env,
+      exactTargetCommitSha: context.exactTargetCommitSha,
       requestId: context.requestId || null,
       operationId: context.operationId || null,
       deploymentRunId: context.deploymentRunId || null,
@@ -3755,6 +3783,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // complete 或 error 都可能携带权威 services 快照：error 路径（如 pull 失败）此前 executor 端已按
         // payload 拆除孤儿并改了 worker state，若不把这份快照回传给 master 对账，控制面会把已移除的服务一直
         // 标 running/错端口直到下次心跳（Bugbot「Remote deploy error stale services」）。任一事件带 services 就对账。
+        if ((eventName === 'complete' || eventName === 'error') && typeof parsed.deploymentTargetSha === 'string') entry.deploymentTargetSha = parsed.deploymentTargetSha;
         if ((eventName === 'complete' || eventName === 'error') && parsed.services && typeof parsed.services === 'object') {
             // executor 的 complete.services 是远端这条分支部署后的**权威全量** ServiceState 集合
             // （含 profileId/containerName/hostPort/status/deployedMode）。master 进程独立、entry.services
@@ -3776,6 +3805,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 // 持本地旧端口/旧容器名，预览与路由会用错端口直到下次心跳才纠偏。
                 if (typeof s?.deployedMode === 'string' && s.deployedMode.trim() !== '') existing.deployedMode = s.deployedMode.trim();
                 if (typeof s?.deployedImage === 'string' && s.deployedImage.trim() !== '') existing.deployedImage = s.deployedImage.trim();
+                if (typeof s?.deployedArtifactRef === 'string') existing.deployedArtifactRef = s.deployedArtifactRef;
+                else delete existing.deployedArtifactRef;
+                if (typeof s?.deployedPrebuilt === 'boolean') existing.deployedPrebuilt = s.deployedPrebuilt;
+                else delete existing.deployedPrebuilt;
+                if (typeof s?.deployedCommitSha === 'string') existing.deployedCommitSha = s.deployedCommitSha;
+                else delete existing.deployedCommitSha;
                 if (typeof s?.status === 'string') existing.status = s.status as ServiceState['status'];
                 if (typeof s?.containerName === 'string' && s.containerName) existing.containerName = s.containerName;
                 if (typeof s?.hostPort === 'number' && s.hostPort > 0) existing.hostPort = s.hostPort;
@@ -3790,6 +3825,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   status: (typeof s.status === 'string' ? s.status : 'running') as ServiceState['status'],
                   ...(typeof s.deployedMode === 'string' ? { deployedMode: s.deployedMode } : {}),
                   ...(typeof s.deployedImage === 'string' ? { deployedImage: s.deployedImage } : {}),
+                  ...(typeof s.deployedArtifactRef === 'string' ? { deployedArtifactRef: s.deployedArtifactRef } : {}),
+                  ...(typeof s.deployedPrebuilt === 'boolean' ? { deployedPrebuilt: s.deployedPrebuilt } : {}),
+                  ...(typeof s.deployedCommitSha === 'string' ? { deployedCommitSha: s.deployedCommitSha } : {}),
                   ...(typeof s.errorMessage === 'string' && s.errorMessage ? { errorMessage: s.errorMessage } : {}),
                 };
               }
@@ -12984,6 +13022,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
           // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
           // 未门禁时保持原样（版本 / managed 传已物化清单，否则由 proxy 内部自行 resolve）。
+          exactTargetCommitSha: requestCommitSha,
           profiles: agentPrebuiltGated
             ? (selectedDeploymentVersion || managedPlan
                 ? profiles
@@ -13130,7 +13169,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // entry.services 行就留在原地、却没有任何有效 profile 元数据（pathPrefixes 等路由信息消失而旧容器仍跑）。
       // executor 路径已把这步上移到 git pull 之前；本地路径同款前移。profiles 非空已由上方 profiles.length===0
       // 分支保证（空清单走专门的就地清空路径），不会误删全部。fencing-safe：remove 前后各 assertCurrent。
-      {
+      const requiresExactArtifacts = profiles.some(profile => {
+        const effective = selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry);
+        return effective.prebuiltImage && effective.prebuiltCommitPolicy === 'exact';
+      });
+      const preparedExactProfiles = new Map<string, BuildProfile>();
+      const cleanupRemovedProfiles = async () => {
         const desiredIds = new Set(profiles.map((p) => p.id));
         const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
         if (orphans.length > 0) {
@@ -13161,7 +13205,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
           }
         }
-      }
+      };
+      if (!requiresExactArtifacts) await cleanupRemovedProfiles();
 
       // 指定不可变版本时不触碰源码；普通部署仍先 pull，再按 commit + configHash 查找可复用版本。
       logEvent({
@@ -13224,6 +13269,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 冻结在请求 SHA 上会给 reviewer 指错版本（Codex P2「Do not freeze webhook history on the
       // requested SHA」）。极速版/skip 除外（镜像锁 CI 就绪 SHA，opLog 保持 deriveCommitMeta(entry,…) 初值）。
       if (isSourcePull) {
+        entry.deploymentTargetSha = pulledSha;
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
       // run 台账 / 不可变版本记的也必须是**实际落地**的 SHA（Codex PR #1275 四轮 P2）。
@@ -13259,6 +13305,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
         logEvent({ step: 'pull', status: 'done', title: '已取消固定提交，恢复到分支最新', timestamp: new Date().toISOString() });
       }
       stateService.save();
+
+      if (requiresExactArtifacts) {
+        const targetSha = await resolveExactArtifactTargetSha(shell,
+          requestCommitSha || pulledSha || entry.githubCommitSha || '', entry.worktreePath);
+        entry.deploymentTargetSha = targetSha;
+        stateService.save();
+        logEvent({ step: 'artifact-admission', status: 'running', title: '准备完整精确极速制品，保留现有服务', timestamp: new Date().toISOString() });
+        const prepared = await prepareExactPrebuiltArtifacts(shell,
+          profiles.map(profile => selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry)), targetSha, {
+            assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+            onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
+          });
+        for (const profile of prepared) preparedExactProfiles.set(profile.id, profile);
+        deployedCommitSha = targetSha;
+        Object.assign(opLog, deriveCommitMeta(entry, targetSha));
+        advanceDeploymentRun(deploymentRun?.id, 'building', { phase: 'build', commitSha: targetSha, message: '完整精确制品就绪，开始启动服务' });
+        logEvent({ step: 'artifact-admission', status: 'done', title: '完整精确极速制品已核验', timestamp: new Date().toISOString() });
+        await cleanupRemovedProfiles();
+      }
 
       // ── Ensure required infrastructure is running ──
       // A profile can depend on project infra such as mongodb/redis and use
@@ -13530,11 +13595,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
-          const effectiveProfile = selectedDeploymentVersion
+          const effectiveProfile = preparedExactProfiles.get(profile.id) || (selectedDeploymentVersion
             ? profile
             : agentPrebuiltGated
               ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
-              : resolveEffectiveProfile(profile, entry);
+              : resolveEffectiveProfile(profile, entry));
           const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -13731,6 +13796,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
+              sourceCommitSha: pulledSha,
               onSourceCompileFallback: async () => {
                 if (!buildSlot) buildSlot = await acquireGateSlot();
                 // 回退成源码编译 = 这台服务实际跑的是 worktree 当前 HEAD，不再是
@@ -14581,9 +14647,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Resolve baseline → branch override → deploy-mode override
       // 门禁下摘掉源码回退（同整分支部署）。
-      const effectiveProfile = singleDeployGated
+      let effectiveProfile = singleDeployGated
         ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
         : resolveEffectiveProfile(profile, entry);
+      if (effectiveProfile.prebuiltImage && effectiveProfile.prebuiltCommitPolicy === 'exact') {
+        const targetSha = await resolveExactArtifactTargetSha(shell,
+          (typeof req.body?.commitSha === 'string' ? req.body.commitSha : '') || fallbackPulledSha || entry.githubCommitSha || '', entry.worktreePath);
+        entry.deploymentTargetSha = targetSha;
+        stateService.save();
+        [effectiveProfile] = await prepareExactPrebuiltArtifacts(shell, [effectiveProfile], targetSha, {
+          assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+          onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
+        });
+        deployedCommitSha = targetSha;
+        Object.assign(opLog, deriveCommitMeta(entry, targetSha));
+      }
       const branchOverride = entry.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -14761,6 +14839,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
+          sourceCommitSha: fallbackPulledSha,
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
             // 同主路径：回退源码编译后，实际落地的是 pull 到的 HEAD（Codex 六轮 P2）。

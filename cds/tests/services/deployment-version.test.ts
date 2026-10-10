@@ -117,6 +117,19 @@ describe('DeploymentVersionService', () => {
     expect(() => service.materializeProfiles(legacy, [profile()])).toThrow(/legacy compose\/source/);
   });
 
+  it('captures the pullable artifact reference separately from the local immutable execution ID', () => {
+    const service = new DeploymentVersionService(stateService);
+    const ref = `ghcr.io/acme/web@sha256:${'d'.repeat(64)}`;
+    branch.services.web = {
+      profileId: 'web', containerName: 'cds-b1-web', hostPort: 10001, status: 'running',
+      deployedImage: `sha256:${'c'.repeat(64)}`, deployedArtifactRef: ref,
+      deployedPrebuilt: true, deployedCommitSha: 'a'.repeat(40),
+    };
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'a'.repeat(40), configHash: 'e'.repeat(64),
+      profiles: [profile({ prebuiltCommitPolicy: 'exact' })], branch, createdByRunId: 'dr_exact' });
+    expect(version.profiles[0]).toMatchObject({ reusable: true, artifactImage: ref, prebuiltCommitPolicy: 'exact' });
+    expect(service.materializeProfiles(version, [profile()])[0]).toMatchObject({ dockerImage: ref, prebuiltCommitPolicy: 'exact' });
+  });
   it('recognizes only digest and sha-tag image references as immutable', () => {
     expect(isImmutableImageReference(`repo/web@sha256:${'a'.repeat(64)}`)).toBe(true);
     expect(isImmutableImageReference('repo/web:sha-abcdef1')).toBe(true);

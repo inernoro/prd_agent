@@ -111,6 +111,8 @@
        暗色取 Tailwind 的 -400（原来 `dark:text-x-400` 的实际取值），
        soft 对应原来 `bg-x-500/[0.06]` 那层淡底。
        换句话说：token 化保留了，颜色回到你熟悉的那套。 */
+    --express-all: 48 96% 65%;
+    --express-partial: 213 94% 68%;
     --ok: 158 64% 52%;
     --ok-soft: 160 40% 10%;
     --warn: 43 96% 56%;
@@ -226,6 +228,8 @@
     --shadow-chip: 0 1px 2px hsl(24 30% 20% / 0.07);
 
     /* 白天取 Tailwind 的 -600（原来 `text-x-600` 的实际取值），soft 是极淡同色底。 */
+    --express-all: 45 93% 30%;
+    --express-partial: 221 83% 45%;
     --ok: 161 94% 30%;
     --ok-soft: 160 60% 95%;
     --warn: 32 95% 44%;

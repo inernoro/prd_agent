@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { branchRuntimeBadge, isFullyPrebuilt } from '../lib/deploy-runtime-badge';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -265,6 +266,11 @@ interface BranchSummary {
     prebuiltProfileIds?: string[];
     /** 2026-10-08 极速版覆盖程度：只有 all 才显示「极速版」与闪电 */
     prebuiltCoverage?: 'all' | 'partial' | 'none';
+    actualRuntimeProfiles?: number;
+    actualPrebuiltCoverage?: 'all' | 'partial' | 'none' | 'unknown';
+    actualPrebuiltProfileIds?: string[];
+    actualSourceProfileIds?: string[];
+    unknownRuntimeProfileIds?: string[];
     // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
     drift?: {
       expectedCount: number;
@@ -6362,10 +6368,12 @@ const BranchCard = memo(function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
-  const runtimeIconClass = runtime?.kind === 'pending'
-    ? 'text-warn'
-    : runtime?.prebuilt
-    ? 'text-info'
+  const runtimeIconClass = runtime?.lightning === 'yellow'
+    ? 'text-express-all'
+    : runtime?.lightning === 'blue'
+    ? 'text-express-partial'
+    : runtime?.kind === 'pending'
+      ? 'text-muted-foreground'
     : runtime?.kind === 'mixed'
       ? 'text-violet-500'
       : runtime?.kind === 'release'
@@ -7858,86 +7866,6 @@ function BranchMoreMenu({
 }
 
 // BranchFailureHint 已删除：错误提醒并入卡片端口槽位的统一状态行（只一个提醒，2026-06-22 用户要求）。
-
-/**
- * 整条分支是不是极速版（2026-10-08）：所有服务都走预构建镜像才算。
- * deployRuntime.prebuilt 只表示「任一服务」，9 个服务里 1 个极速、8 个在宿主编译时它也是 true，
- * 拿它亮闪电就是把混合分支说成极速版。旧后端没有 prebuiltCoverage 时沿用 prebuilt。
- */
-function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
-  if (!runtime) return false;
-  if (runtime.prebuiltCoverage) return runtime.prebuiltCoverage === 'all';
-  return runtime.prebuilt === true;
-}
-
-function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
-  const runtime = branch.deployRuntime;
-  // 只有一部分服务走极速版：如实显示「混合 · 极速 x/y」，不亮闪电（2026-10-08 用户指出：
-  // 「左上角显示了闪电，意味着这必须是极速版，不然是既设置错了，又显示错了」）。
-  if (runtime?.prebuiltCoverage === 'partial') {
-    const fast = runtime.prebuiltProfileIds?.length ?? 0;
-    const total = runtime.activeProfiles;
-    const ratio = `极速 ${fast}/${total}`;
-    return {
-      kind: runtime.pendingPublish ? 'pending' : 'mixed',
-      label: runtime.pendingPublish ? `混合 · ${ratio} · 待生效` : `混合 · ${ratio}`,
-      title: `${total} 个服务里只有 ${fast} 个走极速版（CI 预构建），其余仍在 CDS 宿主上编译。${runtime.title ? ` ${runtime.title}` : ''}`,
-      className: runtime.pendingPublish
-        ? 'border-warn/40 bg-warn/10 text-warn'
-        : 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300',
-    };
-  }
-  // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
-  // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
-  if (runtime && isFullyPrebuilt(runtime)) {
-    // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
-    // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
-    if (runtime.pendingPublish) {
-      return {
-        kind: 'pending',
-        prebuilt: true,
-        label: '极速版·待生效',
-        title: runtime.title || '已配置极速版（CI 预构建），但容器还没以极速版跑起来（重部署后生效）',
-        className: 'border-warn/40 bg-warn/10 text-warn',
-      };
-    }
-    return {
-      kind: 'release',
-      prebuilt: true,
-      label: '极速版',
-      title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
-      className: 'border-info/35 bg-info/10 text-info',
-    };
-  }
-  if (runtime?.kind === 'release') {
-    return {
-      kind: 'release',
-      label: runtime.label || '发布版',
-      title: runtime.title || '当前分支使用发布版构建模式',
-      className: 'border-ok/35 bg-ok/10 text-ok',
-    };
-  }
-  // 2026-05-14 真实态徽章：配置已切发布版但容器还没真正以发布版跑起来
-  // （重部署中 / 还停着 / 旧源码容器仍在跑）→ 橙色「发布版·待生效」，
-  // 明确区分"配置意图"与"运行现状"，不再设了 override 就亮绿误导。
-  if (runtime?.pendingPublish) {
-    return {
-      kind: 'pending',
-      label: '发布版·待生效',
-      title: runtime.title || '已配置发布版，等待重新部署后真正生效',
-      className: 'border-warn/40 bg-warn/10 text-warn',
-    };
-  }
-  if (runtime?.kind === 'mixed') {
-    return {
-      kind: 'mixed',
-      label: runtime.label || '混合',
-      title: runtime.title || '当前分支同时存在发布版和源码模式服务',
-      className: 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300',
-    };
-  }
-  return null;
-}
 
 function branchOriginBadge(branch: BranchSummary): { label: string; title: string; className: string } {
   if (branch.githubRepoFullName || branch.githubCommitSha) {

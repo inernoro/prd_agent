@@ -361,6 +361,24 @@ describe('Executor /exec/deploy', () => {
     expect(result.events.some(e => e.event === 'error')).toBe(false);
   });
 
+  it('P1 remote exact admission preserves old services and never starts a partial artifact set', async () => {
+    const sha = 'b'.repeat(40); const now = new Date().toISOString();
+    stateService.addBranch({ id: 'exact-b', projectId: 'default', branch: 'feature/exact', worktreePath: path.join(tmpDir, 'worktrees', 'exact-b'), status: 'running', createdAt: now, services: {
+      api: { profileId: 'api', containerName: 'cds-exact-b-api', hostPort: 10001, status: 'running' },
+      orphan: { profileId: 'orphan', containerName: 'cds-exact-b-orphan', hostPort: 10002, status: 'running' },
+    } });
+    mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker pull .*$/, ([command]) => ({ stdout: '', stderr: command.includes('worker:') ? 'manifest unknown' : '', exitCode: command.includes('worker:') ? 1 : 0 }));
+    const result = await postSse(server, '/exec/deploy', { branchId: 'exact-b', branchName: 'feature/exact', projectId: 'default', exactTargetCommitSha: sha,
+      profiles: ['api', 'worker'].map(id => ({ id, name: id, workDir: '.', command: '', dockerImage: `ghcr.io/x/${id}:sha-${sha}`, prebuiltImage: true, prebuiltCommitPolicy: 'exact', containerPort: 8080 })),
+    });
+    expect(result.events.some(event => event.event === 'error' && event.data.message.includes('artifact_pull_failed'))).toBe(true);
+    expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
+    expect(stateService.getBranch('exact-b')!.services.orphan.status).toBe('running');
+    expect(stateService.getBranch('exact-b')!.services.api.status).toBe('running');
+  });
+
   it('emits error WITH the post-teardown services snapshot when pull fails (Bugbot remote-error-stale-services)', async () => {
     // Orphan teardown runs before pull. If pull then fails, the error event must still carry the current
     // services snapshot so the master can reconcile (the removed orphan must not stay running on master).

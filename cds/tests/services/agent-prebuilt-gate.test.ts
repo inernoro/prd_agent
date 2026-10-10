@@ -98,7 +98,9 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(rejection.message).toContain('API（当前 静态部署，可切 express）');
     expect(rejection.message).toContain('cdscli branch set-mode b1 <profileId> <极速版模式>');
     expect(rejection.violations[0].prebuiltModes).toEqual(['express']);
-    expect(rejection.hint).toContain('deployRuntime.prebuilt');
+    expect(rejection.hint).toContain('deployRuntime.actualPrebuiltCoverage');
+    expect(rejection.hint).toContain('actualVersionStatus 为 current');
+    expect(rejection.hint).toContain('不能代替实际运行证据');
 
     const bare = profile({ deployModes: { dev: { label: '开发模式' } } });
     const gap = buildPrebuiltGateRejection(project, [bare], findNonPrebuiltProfiles([bare], branch()), {

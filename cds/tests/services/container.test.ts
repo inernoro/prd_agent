@@ -45,6 +45,42 @@ const makeService = (): ServiceState => ({
   status: 'building',
 });
 
+describe('P2 container streaming uses the execution boundary', () => {
+  it('detects a startup signal split across chunks, cancels the bounded command and never invokes native spawn', async () => {
+    const executor = new MockShellExecutor(); const container = new ContainerService(executor, makeConfig());
+    const exec = vi.spyOn(executor, 'exec').mockImplementation(async (_command, options) => {
+      options?.onData?.('boot Sta'); options?.onData?.('rted application');
+      expect(options?.signal?.aborted).toBe(true);
+      return { stdout: 'Started application', stderr: '', exitCode: 130 };
+    });
+    expect(await container.waitForStartupSignal('cds-owned-signal-test', 'Started application', undefined, 1)).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1); expect(exec.mock.calls[0][1]?.timeout).toBe(1000);
+  });
+  it('calls stream completion once even if the caller completion callback throws', async () => {
+    const executor = new MockShellExecutor(); const container = new ContainerService(executor, makeConfig());
+    vi.spyOn(executor, 'exec').mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+    const close = vi.fn(() => { if (close.mock.calls.length === 1) throw new Error('caller completion failed'); });
+    container.streamLogs('cds-owned-stream-completion-test', () => {}, close);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+  it('cancels log streaming through the same executor and does not call onClose after abort', async () => {
+    const executor = new MockShellExecutor(); const container = new ContainerService(executor, makeConfig());
+    let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
+    const exec = vi.spyOn(executor, 'exec').mockImplementation(async (_command, options) => {
+      options?.onData?.('log'); await wait;
+      expect(options?.signal?.aborted).toBe(true);
+      return { stdout: 'log', stderr: '', exitCode: 130 };
+    });
+    const chunks: string[] = []; const close = vi.fn();
+    const abort = container.streamLogs('cds-owned-stream-test', chunk => chunks.push(chunk), close);
+    expect(exec).toHaveBeenCalledTimes(1); expect(chunks).toEqual(['log']);
+    expect(exec.mock.calls[0][1]?.priority).toBe('diagnostic');
+    abort.abort(); release(); await new Promise(resolve => setTimeout(resolve, 1));
+    expect(close).not.toHaveBeenCalled();
+  });
+});
+
 describe('ContainerService', () => {
   let mock: MockShellExecutor;
   let service: ContainerService;
@@ -242,6 +278,37 @@ describe('ContainerService', () => {
         mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
       };
 
+
+      it('精确极速缺制品：旧容器和别名不动，禁止旧SHA与源码回退', async () => {
+        stubDocker(() => false);
+        mock.addResponsePattern(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+        const runtime = { ...makeService(), status: 'running' as const };
+        let fallback = false;
+        await expect(service.runService({ ...makeEntry(), githubCommitSha: recorded }, {
+          ...expressProfile(), prebuiltCommitPolicy: 'exact',
+        }, runtime, undefined, undefined, {
+          latestCommitSha: latest, onSourceCompileFallback: async () => { fallback = true; },
+        })).rejects.toThrow('artifact_pull_failed');
+        expect(fallback).toBe(false);
+        expect(mock.commands.some(command => /docker (rm|run|create|network disconnect)/.test(command))).toBe(false);
+        expect(mock.commands.filter(command => command.startsWith('docker pull'))).toEqual([`docker pull '${repo}:sha-${latest}'`]);
+        expect(runtime.status).toBe('running');
+      });
+
+      it('精确极速已准入：按已核验不可变ID启动并写入目标元数据', async () => {
+        stubDocker(() => true);
+        const imageId = `sha256:${'c'.repeat(64)}`;
+        mock.addResponsePattern(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+        mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: latest, id: imageId }), stderr: '', exitCode: 0 }));
+        const runtime = makeService();
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, { ...expressProfile(), prebuiltCommitPolicy: 'exact' }, runtime, undefined, undefined, { latestCommitSha: latest });
+        const run = mock.commands.find(command => command.startsWith('docker run -d'));
+        expect(run).toContain(`'${imageId}'`);
+        expect(run).not.toContain(`${repo}:sha-`);
+        expect(runtime.deployedImage).toBe(imageId);
+        expect(runtime.deployedPrebuilt).toBe(true);
+      });
+
       it('最新提交有 CI 镜像：直接用它，不回退编译，容器里的提交号也是最新的', async () => {
         stubDocker((image) => image.endsWith(`sha-${latest}`));
         const writeSpy = vi.spyOn(fs, 'writeFileSync');
@@ -254,6 +321,8 @@ describe('ContainerService', () => {
           onSourceCompileFallback: async () => { fellBack = true; },
         });
         expect(runtime.deployedImage).toBe(`${repo}:sha-${latest}`);
+        expect(runtime.deployedPrebuilt).toBe(true);
+        expect(runtime.deployedMode).toBe('express');
         expect(advanced).toEqual([latest]);
         expect(fellBack).toBe(false);
         expect(mock.commands.some((c) => c.startsWith('docker pull') && c.includes(`sha-${recorded}`))).toBe(false);
@@ -286,6 +355,7 @@ describe('ContainerService', () => {
         });
         expect(fellBack).toBe(true);
         expect(runtime.deployedImage).toBe('maven:3.9');
+        expect(runtime.deployedPrebuilt).toBe(false);
       });
 
       it('调用方没传最新提交（显式点名提交 / 不可变版本）：只拉记录的提交', async () => {

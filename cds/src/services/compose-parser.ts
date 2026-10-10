@@ -89,6 +89,7 @@ interface ComposeFile {
     env?: Record<string, string>;
     /** 2026-06-23 极速版：预构建镜像模式（跳过 source mount,docker pull + run）。 */
     prebuilt?: boolean;
+    commitPolicy?: 'exact';
     /** 2026-06-23 极速版：覆盖容器端口（预构建镜像监听端口常与源码模式不同）。 */
     containerPort?: number;
     /** 2026-06-23 极速版：本 commit 无该组件镜像时的有序回退链（先 :branch-<slug> 再 :branch-main）。 */
@@ -223,6 +224,7 @@ export interface CdsComposeConfig {
     entrypoint?: string;
     /** Phase 7 B17 — 预构建镜像模式(对齐 BuildProfile.prebuiltImage) */
     prebuiltImage?: boolean;
+    prebuiltCommitPolicy?: 'exact';
     /** 基础级镜像回退链(对齐 BuildProfile.fallbackImage);裸预构建站点用,无 express mode 也生效 */
     fallbackImage?: string | string[];
     /** 独立命名子域路由；不等同于用户可见 Web 入口。 */
@@ -600,6 +602,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           // 预构建站点而新 Compose 改回源码模式，省略 false 会让旧 true 永久残留，最终
           // runService 跳过源码挂载，容器以 "can't cd to /repo/..." 退出。
           ...(prebuilt !== undefined ? { prebuiltImage } : {}),
+          ...(labels['cds.prebuilt-commit-policy'] === 'exact' ? { prebuiltCommitPolicy: 'exact' as const } : {}),
           // 基础级 fallbackImage(裸预构建站点):base service 上直接声明的回退链带到 profile,
           // 使无 express deployMode 的站点(如 llmgw-web)也能逐级回退 sha → branch-<slug> → branch-main。
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
@@ -650,6 +653,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           dockerImage: mode.image,
           env: mode.env,
           ...(mode.prebuilt !== undefined ? { prebuilt: mode.prebuilt === true || (mode.prebuilt as unknown) === 'true' } : {}),
+          ...(mode.commitPolicy === 'exact' ? { commitPolicy: 'exact' as const } : {}),
           ...(mode.containerPort !== undefined ? { containerPort: Number(mode.containerPort) } : {}),
           ...(mode.fallbackImage ? { fallbackImage: mode.fallbackImage } : {}),
           // CI 构建输入范围：不是运行时挂载目录（后者常是整仓 `.`，见
@@ -814,6 +818,7 @@ export function toCdsCompose(
     if (p.calls && p.calls.length > 0) {
       entryLabels['cds.calls'] = p.calls.join(',');
     }
+    if (p.prebuiltCommitPolicy === 'exact') entryLabels['cds.prebuilt-commit-policy'] = 'exact';
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {
       entryLabels['cds.prebuilt-image'] = 'true';
@@ -881,7 +886,7 @@ export function toCdsCompose(
   }
 
   // Optional x-cds-deploy-modes
-  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; containerPort?: number; fallbackImage?: string | string[] };
+  type DeployModeYaml = { label: string; command?: string; image?: string; env?: Record<string, string>; prebuilt?: boolean; commitPolicy?: 'exact'; containerPort?: number; fallbackImage?: string | string[] };
   const deployModesOut: Record<string, Record<string, DeployModeYaml>> = {};
   for (const p of profiles) {
     if (p.deployModes && Object.keys(p.deployModes).length > 0) {
@@ -893,6 +898,7 @@ export function toCdsCompose(
           ...(mode.dockerImage ? { image: mode.dockerImage } : {}),
           ...(mode.env ? { env: mode.env } : {}),
           ...(mode.prebuilt ? { prebuilt: true } : {}),
+          ...(mode.commitPolicy === 'exact' ? { commitPolicy: 'exact' as const } : {}),
           ...(mode.containerPort !== undefined ? { containerPort: mode.containerPort } : {}),
           ...(mode.fallbackImage ? { fallbackImage: mode.fallbackImage } : {}),
           // CI 构建输入范围：不是运行时挂载目录（后者常是整仓 `.`，见

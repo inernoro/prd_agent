@@ -3,7 +3,8 @@ import net from 'node:net';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { prepareExactPrebuiltArtifacts } from './prebuilt-artifact-gate.js';
+import { withShellExecutionContext } from './shell-executor.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
@@ -235,6 +236,7 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
         ? { ...profile.env, ...override.env }
         : profile.env,
       ...(override.prebuilt !== undefined ? { prebuiltImage: override.prebuilt } : {}),
+      ...(override.commitPolicy === 'exact' ? { prebuiltCommitPolicy: 'exact' as const } : {}),
       // 用 != null（非 !== undefined）：override.containerPort 为 null 时**不得**覆盖 baseline 真实端口，
       // 否则 docker run 拿到 null → `invalid containerPort: null`。合法端口恒为数字，永不为 null，故安全。
       ...(override.containerPort != null ? { containerPort: override.containerPort } : {}),
@@ -1167,7 +1169,12 @@ export class ContainerService {
    * Mounts the worktree + shared cache volumes into a Docker container.
    * Uses profile.command to run everything in one persistent container.
    */
-  async runService(
+  async runService(...args: Parameters<ContainerService['runServiceInternal']>): Promise<void> {
+    return withShellExecutionContext({ schedulingGroup: args[0].projectId || 'default', priority: 'delivery' },
+      () => this.runServiceInternal(...args));
+  }
+
+  private async runServiceInternal(
     entry: BranchEntry,
     profile: BuildProfile,
     service: ServiceState,
@@ -1199,10 +1206,20 @@ export class ContainerService {
        * 显式点名提交时传入。
        */
       latestCommitSha?: string;
+      sourceCommitSha?: string;
       /** 用上了最新提交的镜像：调用方据此把部署记录改成实际落地的提交。 */
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
+    if (profile.prebuiltImage && profile.prebuiltCommitPolicy === 'exact') {
+      const target = context.latestCommitSha || profile.preparedCommitSha || entry.githubCommitSha || '';
+      [profile] = await prepareExactPrebuiltArtifacts(this.shell, [profile], target, {
+        assertCurrent: context.assertCurrent,
+        onProgress: (_id, stage) => onOutput?.(`── 精确极速制品 ${stage}: ${profile.id} ──\n`),
+      });
+      context.onLatestCommitImage?.(target);
+    }
+    const originallyManagedBuild = Boolean(profile.managedBuild);
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
     const managedArtifactReady = !!profile.managedBuild || profile.localArtifact === true;
@@ -1259,8 +1276,8 @@ export class ContainerService {
     // 而非空白等待。
     // 方案甲：用上了「刚 pull 到的提交」的镜像时，容器里注入的提交号元数据（GIT_COMMIT /
     // CDS_COMMIT_SHA / VITE_BUILD_ID）也要跟着写这个提交，否则应用自报的版本还是旧提交。
-    let runCommitSha: string | undefined;
-    if (profile.prebuiltImage === true && !managedArtifactReady) {
+    let runCommitSha: string | undefined = profile.preparedCommitSha;
+    if (profile.prebuiltImage === true && !managedArtifactReady && !profile.preparedArtifactId) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
       //   ① 本 commit 镜像(dockerImage,:sha-<X>)
@@ -1537,6 +1554,7 @@ export class ContainerService {
           });
           // 切换到源码构建：改写 profile / command / entrypoint，跳出预构建分支后即走源码路径。
           profile = sourceProfile;
+          runCommitSha = context.sourceCommitSha;
           command = sourceProfile.command || '';
           usePrebuiltEntrypoint = false;
         } else {
@@ -1668,7 +1686,7 @@ export class ContainerService {
       // `sh:latest` not found，**掩盖真正根因**（镜像解析成空，多由 branch override 的 null 哨兵
       // 覆盖 baseline 引起——已由 sanitizeProfileOverride 根治）。此处再加一道断言：任何残留路径
       // 都明确失败 + 指出原因，而不是误判成 docker 镜像问题。
-      const runImage = (profile.dockerImage || '').trim();
+      const runImage = (profile.preparedArtifactId || profile.dockerImage || '').trim();
       if (!runImage || runImage.includes('${')) {
         throw new Error(
           `部署中止：构建配置 '${profile.id}' 解析出的镜像为空或未解析（dockerImage=${JSON.stringify(profile.dockerImage)}）。`
@@ -1749,8 +1767,12 @@ export class ContainerService {
       // （极速版镜像缺失自动回退源码时 = static）。否则上层用未变的 effectiveProfile.
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
-      service.deployedMode = profile.activeDeployMode || '';
+      service.deployedMode = profile.activeDeployMode || (profile.prebuiltImage ? 'express' : '');
       service.deployedImage = runImage;
+      if (profile.prebuiltImage && !originallyManagedBuild) service.deployedArtifactRef = profile.preparedArtifactRef || profile.dockerImage;
+      else delete service.deployedArtifactRef;
+      service.deployedPrebuilt = profile.prebuiltImage === true && !originallyManagedBuild;
+      service.deployedCommitSha = runCommitSha || (profile.prebuiltImage ? targetShaOf(profile.dockerImage) || undefined : context.sourceCommitSha || entry.githubCommitSha);
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
@@ -2016,6 +2038,7 @@ export class ContainerService {
 
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
+        { priority: 'health', timeout: 10_000 },
       );
       if (inspect.exitCode !== 0) {
         throw new Error(`容器 "${containerName}" 已消失`);
@@ -2051,39 +2074,22 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     timeoutSeconds = 300,
   ): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      const timeout = setTimeout(() => {
-        child.kill();
-        onOutput?.(`── 启动信号超时 (${timeoutSeconds}s)，未检测到: "${signal}" ──\n`);
-        resolve(false);
-      }, timeoutSeconds * 1000);
-
-      const child = spawn('docker', ['logs', '-f', containerName], {
-        stdio: ['ignore', 'pipe', 'pipe'],
+    const abort = new AbortController(); let found = false; let pending = '';
+    try {
+      const result = await this.shell.exec(`docker logs -f ${this.shellQuote(containerName)}`, {
+        timeout: Math.max(1, timeoutSeconds * 1000), priority: 'delivery', signal: abort.signal,
+        schedulingGroup: containerName,
+        onData: chunk => {
+          pending += chunk;
+          if (pending.includes(signal)) { found = true; abort.abort(); }
+          else pending = pending.slice(-Math.max(1, signal.length - 1));
+        },
       });
-
-      let resolved = false;
-      const checkChunk = (data: Buffer) => {
-        if (resolved) return;
-        const text = data.toString();
-        if (text.includes(signal)) {
-          resolved = true;
-          clearTimeout(timeout);
-          child.kill();
-          onOutput?.(`── 检测到启动信号: "${signal}" OK ──\n`);
-          resolve(true);
-        }
-      };
-
-      child.stdout?.on('data', checkChunk);
-      child.stderr?.on('data', checkChunk);
-      child.on('error', () => {
-        if (!resolved) { clearTimeout(timeout); resolve(false); }
-      });
-      child.on('exit', () => {
-        if (!resolved) { clearTimeout(timeout); resolve(false); }
-      });
-    });
+      found ||= (result.stdout + result.stderr).includes(signal);
+    } catch { /* 明确返回未就绪，不在主线程另起docker兜底 */ }
+    onOutput?.(found ? `── 检测到启动信号: "${signal}" OK ──\n`
+      : `── 启动信号未就绪或超时 (${timeoutSeconds}s): "${signal}" ──\n`);
+    return found;
   }
 
   /**
@@ -2123,6 +2129,7 @@ export class ContainerService {
       if (!containerName || attempt % 5 !== 0) return false;
       const inspect = await this.shell.exec(
         `docker inspect --format="{{.State.Status}}|{{.State.ExitCode}}" ${containerName}`,
+        { priority: 'health', timeout: 10_000 },
       );
       const gone = inspect.exitCode !== 0;
       const [status, exitCode] = gone ? ['missing', ''] : inspect.stdout.trim().split('|');
@@ -2560,6 +2567,7 @@ export class ContainerService {
   async isRunning(containerName: string): Promise<boolean> {
     const result = await this.shell.exec(
       `docker inspect --format="{{.State.Running}}" ${containerName}`,
+      { priority: 'health', timeout: 10_000 },
     );
     return result.exitCode === 0 && result.stdout.trim() === 'true';
   }
@@ -2585,7 +2593,7 @@ export class ContainerService {
    * 健康检查必须区分“确认没有运行”和“根本没读到”，不能把探测失败伪装成空集合。
    */
   async getRunningContainerNamesSnapshot(): Promise<Set<string> | null> {
-    const result = await this.shell.exec(`docker ps --format "{{.Names}}"`);
+    const result = await this.shell.exec(`docker ps --format "{{.Names}}"`, { priority: 'health', timeout: 10_000 });
     if (result.exitCode !== 0) return null;
     return new Set(
       result.stdout
@@ -2676,7 +2684,12 @@ export class ContainerService {
     onClose: () => void,
     tail = 200,
   ): AbortController {
-    const ac = new AbortController();
+    const ac = new AbortController(); let ended = false;
+    const finish = () => {
+      if (ended || ac.signal.aborted) return;
+      ended = true;
+      try { onClose(); } catch { /* 调用方异常不触发第二次终结 */ }
+    };
     // 预览实例守卫（Codex P2，2026-07-15）：本方法绕过 IShellExecutor 直接 spawn docker，
     // 是预览实例里用户唯一可达的裸 spawn 路径（seed 的演示分支点「日志」就会走到）。
     // 返回同一句中文拒绝而不是裸 spawn 失败。getLogs 走 shell.exec 已被
@@ -2685,21 +2698,14 @@ export class ContainerService {
       queueMicrotask(() => {
         if (ac.signal.aborted) return;
         onData(`${previewInstanceBlockedMessage('docker')}\n`);
-        onClose();
+        finish();
       });
       return ac;
     }
-    const child = spawn('docker', ['logs', '--timestamps', '-f', '--tail', String(tail), containerName], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const forward = (data: Buffer) => {
-      if (!ac.signal.aborted) onData(data.toString());
-    };
-    child.stdout.on('data', forward);
-    child.stderr.on('data', forward);
-    child.on('close', () => { if (!ac.signal.aborted) onClose(); });
-    child.on('error', () => onClose());
-    ac.signal.addEventListener('abort', () => { child.kill(); });
+    void this.shell.exec(`docker logs --timestamps -f --tail ${Math.max(1, Math.min(tail, 1000))} ${this.shellQuote(containerName)}`, {
+      timeout: 30 * 60_000, priority: 'diagnostic', schedulingGroup: containerName, signal: ac.signal,
+      onData: chunk => { if (!ac.signal.aborted) onData(chunk); },
+    }).then(finish, finish);
     return ac;
   }
 
@@ -3326,6 +3332,7 @@ export class ContainerService {
   async getInfraHealth(containerName: string): Promise<'healthy' | 'unhealthy' | 'starting' | 'none'> {
     const result = await this.shell.exec(
       `docker inspect --format="{{.State.Health.Status}}" ${containerName} 2>/dev/null || echo none`,
+      { priority: 'health', timeout: 10_000 },
     );
     const status = result.stdout.trim();
     if (['healthy', 'unhealthy', 'starting'].includes(status)) {

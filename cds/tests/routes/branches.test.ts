@@ -811,6 +811,51 @@ describe('Branch Routes', () => {
       expect(none.prebuiltCoverage).toBe('none');
     });
 
+    it('P1 exact branch admission preserves every old service when any artifact is missing', async () => {
+      seedGateProject(false);
+      const sha = 'b'.repeat(40);
+      stateService.updateBuildProfile('api', { prebuiltCommitPolicy: 'exact' });
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.addBuildProfile({ id: 'worker', projectId: 'proj-a', name: 'Worker', workDir: '.', command: '', dockerImage: 'ghcr.io/x/worker:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, prebuiltCommitPolicy: 'exact', containerPort: 8080 });
+      const branch = stateService.getBranch('b1')!;
+      branch.services.api = { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running' };
+      branch.services.orphan = { profileId: 'orphan', containerName: 'cds-b1-orphan', hostPort: 10002, status: 'running' };
+      mock.addResponsePatternFirst(/docker version/, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull .*$/, ([command]) => ({ stdout: '', stderr: command.includes('worker:') ? 'manifest unknown' : '', exitCode: command.includes('worker:') ? 1 : 0 }));
+      const result = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: sha });
+      expect(String(result.body)).toContain('artifact_pull_failed');
+      expect(mock.commands.some(command => /docker (rm|run|create|stop|network disconnect)/.test(command))).toBe(false);
+      expect(branch.services.orphan.status).toBe('running');
+      expect(branch.services.api.status).toBe('running');
+    });
+
+    it('P4 actual runtime evidence is independent from configured coverage and includes extra services', async () => {
+      seedGateProject(false);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const branch = stateService.getBranch('b1')!;
+      branch.status = 'running';
+      branch.extraProfiles = [{ id: 'bootstrap', name: 'Bootstrap', dockerImage: 'node:20', command: 'node initialize.js', containerPort: 9090 }];
+      branch.services = {
+        api: { profileId: 'api', containerName: 'cds-b1-api', hostPort: 10001, status: 'running', deployedMode: 'express', deployedPrebuilt: true, deployedImage: 'ghcr.io/x/api:sha-actual' },
+        bootstrap: { profileId: 'bootstrap', containerName: 'cds-b1-bootstrap', hostPort: 10002, status: 'running', deployedPrebuilt: false, deployedImage: 'node:20' },
+      };
+      mock.addResponsePattern(/docker ps --format/, () => ({ stdout: 'cds-b1-api\ncds-b1-bootstrap\n', stderr: '', exitCode: 0 }));
+      const readRuntime = async () => {
+        const res = await request(server, 'GET', '/api/branches?project=proj-a&live=true');
+        return (res.body as any).branches.find((value: any) => value.id === 'b1').deployRuntime;
+      };
+      const partial = await readRuntime();
+      expect(partial.actualPrebuiltCoverage).toBe('partial');
+      expect(partial.actualPrebuiltProfileIds).toEqual(['api']);
+      expect(partial.actualSourceProfileIds).toEqual(['bootstrap']);
+      expect(partial.activeProfiles).toBe(2);
+      delete branch.services.api.deployedPrebuilt;
+      const legacy = await readRuntime();
+      expect(legacy.actualPrebuiltCoverage).toBe('unknown');
+      expect(legacy.unknownRuntimeProfileIds).toEqual(['api']);
+    });
+
     it('极速版分支：机器凭据部署通过门禁（不再是 409）', async () => {
       seedGateProject(true);
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });

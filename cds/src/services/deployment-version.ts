@@ -139,6 +139,7 @@ export class DeploymentVersionService {
         startupSignal: snapshot.startupSignal,
         activeDeployMode: snapshot.deployedMode,
         prebuiltImage: true,
+        prebuiltCommitPolicy: snapshot.prebuiltCommitPolicy ?? current.prebuiltCommitPolicy,
         localArtifact: snapshot.artifactKind === 'managed-image',
         managedBuild: undefined,
         fallbackImage: undefined,
@@ -149,7 +150,7 @@ export class DeploymentVersionService {
 
   private captureProfile(profile: BuildProfile, branch: BranchEntry): DeploymentVersionProfile {
     const service = branch.services[profile.id];
-    const artifactImage = service?.deployedImage || profile.dockerImage;
+    const artifactImage = service?.deployedArtifactRef || service?.deployedImage || profile.dockerImage;
     const actualMode = service?.deployedMode ?? profile.activeDeployMode ?? '';
     const managedArtifact = !!profile.managedBuild;
     const reusable = (profile.prebuiltImage === true || managedArtifact) && isImmutableImageReference(artifactImage);
@@ -157,6 +158,7 @@ export class DeploymentVersionService {
       profileId: profile.id,
       name: profile.name,
       artifactImage,
+      prebuiltCommitPolicy: profile.prebuiltCommitPolicy,
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable

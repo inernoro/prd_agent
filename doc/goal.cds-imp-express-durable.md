@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.0；日期：2026-10-10；状态：active。
+版本：v1.2；日期：2026-10-10；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -28,20 +28,20 @@ First execution step: 冻结49条任务与独立红绿账本，完成集成基�
 
 ## 验收与真实收口
 
-严格采用计划v1.1公网和48小时门槛；八分支完整服务验收、失败保旧、取消恢复与双主题视觉证据必须同时成立。输出页面、交互、命令、权限、闭环的enumerated/mapped/executed/closed_loop_pass/failed/blocked/uncovered，不传播旧SHA结果。阶段通过不关闭原生目标，尚无线上视觉pass。
+严格采用计划v1.2公网和48小时门槛；八分支完整服务验收、失败保旧、取消恢复与双主题视觉证据必须同时成立。输出页面、交互、命令、权限、闭环的enumerated/mapped/executed/closed_loop_pass/failed/blocked/uncovered，不传播旧SHA结果。阶段通过不关闭原生目标，尚无线上视觉pass。
 
 ## Goal State
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
-- 当前阶段：design-baseline
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:4b2a91ff6a2af8b358bbc995521c02de21ecedff,IMP:e2fd7c8f5ebaed2561229a7864835949d1ce0904；origin/main=CDS:95a64076cdf853815edf869beb175bbd8a5ed6e9,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:41/37(集成待提交),IMP:27/3；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
-- 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本设计基线待验证`
+- 当前阶段：implementation-checkpoint
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:8ddc07c9199e1dcd901ae570212e73134b3ad5a1,IMP:dab8f7a862d8957bdfa0835e5ca6e1da440e4c05；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:43/1相对origin/main(新主干文学生图修复待本地检查点后集成),IMP:1/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,待提交固定SHA`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：已创建两工作树、原生目标和独立验收任务；CDS主干集成冲突已按更强鉴权与保留观测解决,校验进行中；尚未实现永久治理。
-- 证据纪元：`target_sha=CDS:集成候选未提交,IMP:e2fd7c8f5ebaed2561229a7864835949d1ce0904；tested_sha=N/A本轮尚无实现绿证据；deployed_sha=N/A自检20秒超时未证实；environment=本地与共享CDS只读；observed_at=2026-10-10T14:02:20Z`
-- 新鲜验证证据：10-10 fetch完成；CDS自检20秒timeout，source gate active1/queued0/max2，其他任务bootstrap持槽；初次验证cwd错误单独保留，不作为实现红测；正确cwd基线校验进行中。
+- 当前实现事实：两独立工作树与49项双副本计划/TDD账本已建立；继承安全与状态止血基线，完成本地精确制品准入、版本引用/缓存digest校验、执行Worker/supervisor硬中断清理/ACK背压/调度与日志热点迁移、实际覆盖/黄蓝/独立版本状态、IMP13角色exact合同与权威文档校准。所有实现仍未发布；候选就绪替换、增量存储/SSE进一步治理、默认策略、辅助生命周期和完整生产证据未完成。
+- 证据纪元：`target_sha=CDS:本地候选未提交,IMP:本地候选未提交；tested_sha=N/A未在固定提交后重验,本地测试对应本批文件内容；deployed_sha=N/A线上自检20秒超时未证实；environment=本地独立工作树和测试自有无副作用进程,共享CDS只读；observed_at=2026-10-10T15:16:00Z`
+- 新鲜验证证据：CDS全量最新628文件通过/6跳过、9147测试通过/19跳过；backend tsc、web tsc和vite构建通过，IMP35条合同通过。两次全量分别出现不同的HTTP/计时偶发失败并保留，单项复测及最终全量通过，未改判据求绿。独立账本复验制品集合HTTP3项、实际覆盖14项、版本状态8项、硬中断2项且无关进程存活、基本执行契约8项、调度4项、日志热点6项；ACK延迟300ms时256KiB/4条，8MiB输出完整。均为本地有边界证据，非真实OCI/公网/视觉/八分支。仓库外归档77份主进程日志并脱敏，原红另存。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：通过集成基线、提交本地设计checkpoint；建立执行隔离红测并实现；最终按49项与A01–A12逐项收齐证据。
+- 下一动作与完成条件：保存本地实现检查点，集成刚fetch到的CDS主干新修复并核验；继续P1默认/依赖与P3候选就绪替换/取消容量，推进P4存储/SSE和IMP辅助生命周期；具备可审查候选后处理最小发布前置，最终按49项与A01–A12收齐真实证据。
 - 终止/接替结论：active

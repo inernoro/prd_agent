@@ -180,9 +180,10 @@ function diagnoseBootDisks(): string | null {
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
+const localShell = new ShellExecutor();
 const shell = isPreviewInstance()
-  ? new PreviewInstanceShellExecutor(new ShellExecutor())
-  : new ShellExecutor();
+  ? new PreviewInstanceShellExecutor(localShell)
+  : localShell;
 if (isPreviewInstance()) {
   console.log('[preview-instance] CDS 预览实例模式已启用：宿主操作(docker/systemd/nginx)已禁用，');
   console.log('[preview-instance] 后台服务(janitor/auto-lifecycle/docker-events/self-update)将跳过启动。');
@@ -4729,6 +4730,9 @@ async function shutdown(signal: string): Promise<void> {
   } catch (err) {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
+  // 先完成部署排空，再关闭常驻执行线程并收敛其在途命令；预览包装也共享此实例。
+  try { await localShell.close(); }
+  catch (err) { console.warn(`[shutdown] shell executor close failed: ${(err as Error).message}`); }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
   // JSON 存储模式的 save() 是去抖异步落盘（2026-07-09），退出前必须 flush，
   // 否则最后一个 tick 的改动会丢。mongo 系 store 在下方 activeMongoHandle

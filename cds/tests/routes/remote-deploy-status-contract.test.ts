@@ -91,4 +91,10 @@ describe('remote deploy complete: branch status realign contract', () => {
     // return — instead of falling through to the historical `: 'error'` default.
     expect(source).toContain(": activeStatuses.length === 0 ? 'idle'");
   });
+  it('replaces or clears authoritative actual prebuilt facts on patch and upsert', () => {
+    expect(source).toContain("existing.deployedPrebuilt = s.deployedPrebuilt");
+    expect(source).toContain("delete existing.deployedPrebuilt");
+    expect(source).toContain("{ deployedPrebuilt: s.deployedPrebuilt }");
+  });
+
 });

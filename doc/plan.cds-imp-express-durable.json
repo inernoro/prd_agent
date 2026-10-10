@@ -1,28 +1,30 @@
 {
   "goal_id": "CDS-IMP-EXPRESS-DURABLE-20261010",
-  "plan_version": "1.1",
+  "plan_version": "1.2",
   "tasks": [
     {
       "id": "P0-01",
       "task": "核对两仓库远端、线上 CDS 提交、现有部署与在途任务；建立上述独立工作树，记录完整 SHA。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "两独立工作树和最新远端基线已记录；线上self-status超时，运行SHA仍未知；未改在途bootstrap。"
     },
     {
       "id": "P0-02",
       "task": "对照《排查 CDS 持续 500 问题》的现有实现，标出已完成、需继承、仍待修复项，防止重复重构。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "已集成现有状态节流/安全投影/鉴权主干；保留A01–A12强门槛，公网与48小时待执行。"
     },
     {
       "id": "P0-03",
@@ -60,57 +62,62 @@
     {
       "id": "P0-06",
       "task": "核对 RabbitMQ/XXL-JOB/数据库隔离前提，设计无真实业务消费与定时作业副作用的验收环境。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "已盘点共享RabbitMQ、XXL-JOB与数据库风险；无业务消费/定时作业写入；隔离验收宿主未冻结。"
     },
     {
       "id": "P1-01",
       "task": "自动、手动、单服务、整分支及集群执行器共用按精确目标 SHA 的制品检查。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "整分支、单服务、executor复用精确制品模块；固定版本按物化快照，不受当前dev覆盖绕过。自动真实交付待验。"
     },
     {
       "id": "P1-02",
       "task": "校验实际拉取鉴权、manifest、目标架构与镜像集合；CI 成功标志不能替代实际镜像可用。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "实际pull+inspect校验代码已实现；完整SHA/架构/OCI revision/ID/digest归属有局部红绿。实际OCI registry未验。"
     },
     {
       "id": "P1-03",
       "task": "本次整分支所需制品齐备后再允许改变在线容器；单服务部署检查对应服务与必需依赖。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "本地真实HTTP+Docker模拟的整分支/executor/固定版本3项缺镜像均保旧容器；单服务必需依赖集合仍待补。"
     },
     {
       "id": "P1-04",
       "task": "IMP 的极速部署缺制品时进入有超时、可取消的等待或明确失败，禁止隐式源码回退或混用旧镜像冒充新版本。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "IMP13个模式和基线声明exact；缺制品失败、不跨SHA/不源码回退，本地合同绿；生产等待/取消待验。"
     },
     {
       "id": "P1-05",
@@ -126,57 +133,62 @@
     {
       "id": "P1-06",
       "task": "修正空部署模式与模式继承，迁移前先盘点旧覆盖；所有实际部署记录保存运行模式、目标 SHA、实际镜像及摘要。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "实际mode/prebuilt/SHA与可拉取ref分开；版本保留registryref与exact策略，固定digest缓存错配拒绝。存量模式盘点未完成。"
     },
     {
       "id": "P1-07",
       "task": "用缺镜像、错误架构、鉴权失败、显式 SHA、无显式 SHA 与执行器路径做可复现红绿验证。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "纯函数、真实HTTP+模拟Docker和Container→Version局部红绿已收齐；真实鉴权/执行器跨宿主未验。"
     },
     {
       "id": "P2-01",
       "task": "保留 `IShellExecutor` 调用契约，使用常驻执行进程接收命令，Master 不在请求和诊断热路径直接启动每个 Docker 子进程。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "常驻Worker移出native启动；启动信号/实时日志改走执行边界。其他Master直接spawn热点仍待核对，非完整进程隔离通过。"
     },
     {
       "id": "P2-02",
       "task": "保留 cwd、env、stdin、流式输出、退出码、超时和取消语义；凭据不进入日志或普通状态持久化。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "真实stdin/cwd/env/双流/非零/timeout/cancel/close独立8项绿；新增ACK256KiB背压，8MiB双流完整。生产凭据链待验。"
     },
     {
       "id": "P2-03",
       "task": "执行队列设置上限、优先级与公平性，探活和交付不被长日志/编译任务饿死。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "容量上限、health预留、三项目轮转、诊断至多1槽及delivery保护有红绿；调度独立4项绿。实际宿主预算未校准。"
     },
     {
       "id": "P2-04",
@@ -192,24 +204,26 @@
     {
       "id": "P2-05",
       "task": "执行进程崩溃后先核验任务和容器事实，再恢复；不得盲目重放非幂等命令。Master 自更新与执行进程停机有明确收尾顺序。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "POSIX supervisor归属核验补未知PID硬中断，两项独立绿且无关进程存活；正常停机清理绿，Master硬崩溃/容器恢复未验。"
     },
     {
       "id": "P2-06",
       "task": "核对所有仍在 Master 的子进程热点，测量开启前后的事件循环与普通 API 延迟。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "本地边界测试Master child_process调用零；合成心跳只算架构护栏。其他热点/真实API与公网性能仍未验。"
     },
     {
       "id": "P3-01",
@@ -335,90 +349,98 @@
     {
       "id": "P4-04",
       "task": "分开计算配置上的极速意图、已验证制品覆盖和实际运行覆盖；旧记录缺模式时标记未知并核验，不能直接继承配置判通过。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "配置与实际覆盖分开；实际分母含孤儿/额外服务；旧缺戳、空/矛盾模式、非running不继承配置。独立14项局部绿。"
     },
     {
       "id": "P4-05",
       "task": "全部实际服务极速显示黄闪电；部分显示蓝闪电和明确分母/例外。未运行显示配置意图与未运行状态，不冒充实际全部极速。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "实际all黄闪电、partial蓝闪电+分母/例外；停止仅配置。双主题语义色通过现有palette门禁与web构建，真实视觉未验。"
     },
     {
       "id": "P4-06",
       "task": "版本待更新独立显示；全部极速不等于已更新到目标 SHA，最终验收两项均须通过。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "actualVersionStatus与极速覆盖独立；目标/实际缺完整SHA为unknown，outdated不取消真实黄标。独立8项局部绿；部署来源待真验。"
     },
     {
       "id": "P4-07",
       "task": "对实时页面与后端摘要执行一致性检查，覆盖空模式、旧容器、额外服务、停止和失败状态。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "partial-local-verified",
+      "local_evidence_note": "纯逻辑、真实HTTP路由/State与前端摘要局部复验；镜像运行和实时页面一致性仍未验。"
     },
     {
       "id": "P5-01",
       "task": "以 `deploy/cds/express/services.json` 为标准应用制品合同，保持 10 镜像覆盖 13 服务角色；核对八分支实际合同，避免依赖旧分支文件。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "当前IMP合同10镜像/13角色保持；文档已按真实合同校准。八分支合同及合法辅助服务未冻结。"
     },
     {
       "id": "P5-02",
       "task": "CI 从精确提交生成完整镜像集合与可追溯清单，明确制品失败项；新增辅助服务时同步其制品合同。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "继承完整Branch Image矩阵与OCI提交标签，守卫绿；本修订CI产物及新增辅助制品仍未验。"
     },
     {
       "id": "P5-03",
       "task": "保持项目默认与分支覆盖为极速，确保初始化/配置同步脚本不会改回源码模式。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "当前基线13角色保留极速并加exact合同；没有在线覆盖其他协作者/分支，实际defaults传播未验。"
     },
     {
       "id": "P5-04",
       "task": "修正普通运行目标提交绑定，避免旧字面 SHA。正式验收精确 target_sha 守卫保留，不放宽为任意版本。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "继承当前普通部署动态CDS提交与正式SHA守卫；CDS实际镜像元数据同步补强，旧分支字面SHA未逐个核验。"
     },
     {
       "id": "P5-05",
@@ -456,13 +478,14 @@
     {
       "id": "P6-01",
       "task": "各批次先有针对性红绿、类型检查及模块要求的测试；前端改动补构建和真实页面验证。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "针对性红绿/backend tsc/web tsc/vite/IMP35合同通过；两次全量偶发失败原样保留、单项复测通过，最终628文件/9147测试通过(6文件/19测试跳过)。测试尚非正式固定SHA/线上视觉。"
     },
     {
       "id": "P6-02",
@@ -533,13 +556,15 @@
     {
       "id": "P6-08",
       "task": "交付真实证据、剩余缺口与恢复手册；发布后 48 小时与一周复测列为执行任务，到期实际执行后才能勾选，不在本轮擅自创建自动提醒。",
-      "implementation": "todo",
+      "implementation": "partial-local",
       "acceptance": "not-executed",
-      "target_sha": "N/A",
+      "target_sha": "N/A 尚未冻结本批实现提交",
       "red_evidence": "N/A",
-      "green_evidence": "N/A",
+      "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "双副本计划与独立账本已建；原红保留。本轮无真实视觉/48小时/一周通过。"
     }
-  ]
+  ],
+  "status_note": "49项正式验收均未执行；local证据只证明本地输入对应行为，不能继承为线上/视觉/八分支通过。"
 }

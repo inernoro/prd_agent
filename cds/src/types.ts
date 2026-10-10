@@ -215,6 +215,13 @@ export interface BuildProfile {
    *   - 应用所有文件来自 image,workDir/cds-marker 仅给 CDS app 识别用,不影响运行
    */
   prebuiltImage?: boolean;
+  /** 精确制品策略：准备齐备前不改变运行容器，不做源码/旧SHA回退。 */
+  prebuiltCommitPolicy?: 'exact';
+  /** 本次准入生成的不可变本地镜像身份，非外部配置。 */
+  preparedArtifactId?: string;
+  /** 已验明的可跨执行器拉取引用，与本机镜像ID分开保存。 */
+  preparedArtifactRef?: string;
+  preparedCommitSha?: string;
   /** 运行期提示：镜像由当前 CDS 节点的 managed builder 生成，不尝试 registry pull。 */
   localArtifact?: boolean;
   /**
@@ -447,6 +454,8 @@ export interface DeployModeOverride {
    * cds-compose 中通过 `x-cds-deploy-modes.<svc>.<mode>.prebuilt: true` 触发。
    */
   prebuilt?: boolean;
+  /** 缺精确目标镜像时失败，不采用旧提交/源码回退。 */
+  commitPolicy?: 'exact';
   /**
    * 2026-06-23 极速版新增 —— 覆盖容器端口。预构建镜像监听端口通常与源码开发
    * 模式不同（如 prd-api 源码模式 5000,生产镜像 8080;prd-admin dist serve 8080）。
@@ -1073,6 +1082,8 @@ export interface BranchEntry {
    */
   githubRepoFullName?: string;
   githubCommitSha?: string;
+  /** 最近一次交付请求冻结的精确目标，与GitHub事件缓存分开。 */
+  deploymentTargetSha?: string;
   /** Time when CDS last accepted a GitHub push/check metadata update for this branch. */
   lastPushAt?: string;
   /** Time when CDS last accepted/attempted to dispatch a deploy request. */
@@ -1281,6 +1292,12 @@ export interface ServiceState {
   deployedMode?: string;
   /** 当前容器实际使用的镜像引用；用于生成不可变 DeploymentVersion。 */
   deployedImage?: string;
+  /** 实际预构建制品的registry引用；不可用本机bare镜像ID代替。 */
+  deployedArtifactRef?: string;
+  /** 实际容器是否直接运行预构建产物；缺戳的存量记录为未知，不能继承配置。 */
+  deployedPrebuilt?: boolean;
+  /** 实际启动镜像/源码的提交身份；缺失不可从目标配置补猜。 */
+  deployedCommitSha?: string;
 }
 
 /** 分支部署的触发来源。 */
@@ -1355,6 +1372,7 @@ export interface DeploymentVersionProfile {
   name: string;
   artifactImage: string;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
+  prebuiltCommitPolicy?: 'exact';
   reusable: boolean;
   reuseBlockedReason?: string;
   runtimeCommand?: string;
@@ -4960,6 +4978,12 @@ export interface ExecOptions {
    * 只在显式提供时才碰 stdin：不提供就保持原样（否则会改掉所有既有调用方的行为）。
    */
   stdin?: string;
+  /** 取消排队或在途命令；本地执行器同时终止其 POSIX 进程组。 */
+  signal?: AbortSignal;
+  /** 控制面探活独占保留槽；诊断为低优先级，等待30秒后晋升防饿死。 */
+  priority?: 'health' | 'delivery' | 'diagnostic';
+  /** 同优先级按项目轮转；不含凭据或命令原文。 */
+  schedulingGroup?: string;
 }
 
 export interface IShellExecutor {

@@ -2,11 +2,13 @@
  * Executor local API routes — called by the Scheduler to execute operations.
  * These endpoints are the "hands" that do the actual Docker/Git work.
  */
+import { prepareExactPrebuiltArtifacts, resolveExactArtifactTargetSha } from '../services/prebuilt-artifact-gate.js';
+import { parsePulledSha } from '../services/build-log-meta.js';
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
 import { WorktreeService } from '../services/worktree.js';
-import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
+import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 
@@ -63,7 +65,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger, exactTargetCommitSha } = req.body as {
       branchId: string;
       branchName: string;
       // P4 follow-up (2026-04-24): master now passes projectId so the
@@ -72,7 +74,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // `resolveProjectForAutoBuild` fallback below — same shape as the
       // subdomain auto-build path in index.ts.
       projectId?: string;
-      profiles: Array<{ id: string; name: string; dockerImage: string; workDir: string; command: string; containerPort: number; env?: Record<string, string>; cacheMounts?: Array<{ hostPath: string; containerPath: string }>; dependsOn?: string[]; readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number }; pathPrefixes?: string[]; containerWorkDir?: string; buildTimeout?: number }>;
+      profiles: BuildProfile[];
+      exactTargetCommitSha?: string;
       env?: Record<string, string>;
       requestId?: string | null;
       operationId?: string | null;
@@ -167,6 +170,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // （payload 里没有的 service）的容器拆除不依赖最新代码；若放在 pull 之后，分支被上游删除或 git 瞬时失败会
       // 走 catch 直接报错，master 已保存新的（空/缩减）期望清单，而 worker 上被移除的旧容器仍在跑（ghost）。
       // 故先按 payload 收敛掉孤儿容器，再决定是否需要 pull/build。best-effort：remove 失败也删条目。
+      const requiresExactArtifacts = profilesData.some(profile => profile.prebuiltImage && profile.prebuiltCommitPolicy === 'exact');
+      const cleanupRemovedProfiles = async () => {
       const payloadProfileIds = new Set(profilesData.map((p) => p.id));
       for (const [sid, svc] of Object.entries(entry.services)) {
         if (payloadProfileIds.has(sid)) continue;
@@ -188,6 +193,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         sendEvent('step', { step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）` });
       }
       stateService.save();
+      };
+      if (!requiresExactArtifacts) await cleanupRemovedProfiles();
 
       // 期望清单为空 = 纯清空（如清掉最后一个额外服务）：没有要构建的东西，跳过 pull（避免 git 瞬时失败/分支
       // 被上游删除把一次成功的清空翻成 error），直接落 idle + complete 返回。
@@ -211,6 +218,17 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         head: pullResult.head, after: pullResult.after, afterFull: pullResult.afterFull,
       });
 
+      if (requiresExactArtifacts) {
+        const targetSha = await resolveExactArtifactTargetSha(shell,
+          exactTargetCommitSha || parsePulledSha(pullResult) || entry.githubCommitSha || '', entry.worktreePath);
+        entry.deploymentTargetSha = targetSha;
+        stateService.save();
+        profilesData = await prepareExactPrebuiltArtifacts(shell, profilesData, targetSha, {
+          onProgress: (profileId, stage) => sendEvent('log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
+        });
+        entry.githubCommitSha = targetSha;
+        await cleanupRemovedProfiles();
+      }
       entry.status = 'building';
       // 盖本轮构建起点锚点：executor 本地也跑 reconcileStuckDeployStates，其硬超时路径要求
       // lastDeployStartedAt>0 才有超时基准。executor-owned 分支若不盖戳，卡在 building/starting
@@ -285,6 +303,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
               operationId: operationId || null,
               actor: actor || 'executor',
               trigger: trigger || 'executor-deploy',
+              sourceCommitSha: parsePulledSha(pullResult),
             });
 
             svc.status = 'running';
@@ -327,6 +346,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             ? '已清空所有服务'
             : '部分服务失败',
         services: entry.services,
+        deploymentTargetSha: entry.deploymentTargetSha,
       });
     } catch (err) {
       // 失败也回传当前权威 services 快照（Bugbot「Remote deploy error stale services」）：孤儿收敛已上移到
@@ -344,7 +364,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
       sendEvent('error', {
         message: (err as Error).message,
-        ...(failedEntry ? { services: failedEntry.services } : {}),
+        ...(failedEntry ? { services: failedEntry.services, deploymentTargetSha: failedEntry.deploymentTargetSha } : {}),
       });
     } finally {
       res.end();
