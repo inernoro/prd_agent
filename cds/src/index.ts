@@ -64,7 +64,7 @@ import {
 } from './services/external-port-audit.js';
 import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
-import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { JanitorService, defaultDiskUsage, createJanitorDockerAdapters } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
@@ -3471,6 +3471,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     console.log(`  [janitor] applying UI override: worktreeTTLDays=${config.janitor.worktreeTTLDays}`);
   }
 }
+const janitorDocker = createJanitorDockerAdapters(shell);
 const janitorService = new JanitorService(
   stateService,
   // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
@@ -3478,6 +3479,7 @@ const janitorService = new JanitorService(
   // 被 janitor 删掉，两套保护看起来统一实则漏一半（Codex PR #1273 P1）。
   { ...config.janitor, pinnedBranches: config.scheduler?.pinnedBranches ?? [] },
   config.worktreeBase,
+  undefined, undefined, janitorDocker.dockerPrune, janitorDocker.imageDocker, janitorDocker.orphanWorktreeFs,
 );
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。

@@ -8,9 +8,10 @@ import { ShellExecutor } from '../src/services/shell-executor.js';
 import { IsolatedShellExecutor } from '../src/services/isolated-shell-executor.js';
 import { ContainerService } from '../src/services/container.js';
 import { collectContainerDiagnostics } from '../src/services/container-diagnostics.js';
+import { createJanitorDockerAdapters } from '../src/services/janitor.js';
 import type { CdsConfig } from '../src/types.js';
 
-const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/isolated-shell-executor.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -83,6 +84,17 @@ async function main(): Promise<void> {
     assert.equal((diagnostics.inspect?.state as Record<string, unknown>)?.running, true);
     assert.ok(JSON.stringify(diagnostics.logs).includes('owned-observation'));
     report.checks.push({ name: 'real-container-running-and-diagnostics', passed: true });
+    report.stage = 'real-janitor-reads';
+    const janitorModule = compiled ? await import(new URL('../dist/services/janitor.js', import.meta.url).href) as typeof import('../src/services/janitor.js') : { createJanitorDockerAdapters };
+    const janitor = janitorModule.createJanitorDockerAdapters(shell);
+    const [images, inUseImages, mountedPaths] = await Promise.all([
+      janitor.imageDocker.listImages(), janitor.imageDocker.listInUseImages(), janitor.orphanWorktreeFs.listMountedHostPaths(),
+    ]);
+    assert.ok(images.includes('alpine:3.20'));
+    assert.ok(inUseImages.includes('alpine:3.20'));
+    assert.ok(Array.isArray(mountedPaths));
+    owned();
+    report.checks.push({ name: 'compiled-janitor-image-reference-and-mount-observations', passed: true });
     report.stage = 'bounded-read-concurrency';
     const requests = Array.from({ length: 8 }, () => container.isRunning(id!));
     assert.ok(shell.getStats().active <= 2 && shell.getStats().queued >= 6);
