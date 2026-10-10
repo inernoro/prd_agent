@@ -9501,7 +9501,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         aria-label="模型偏好"
                         title={effectiveModel ? `${effectiveModel.name || effectiveModel.modelName || ''} - 点击切换模型` : '选择模型'}
                       >
-                        <Sparkles size={10} className="shrink-0" />
+                        <VisualModelIcon model={effectiveModel} size={14} />
                         <span className="truncate">{effectiveModel?.name || '选择模型'}</span>
                         <span className="text-[8px] ml-0.5" style={{ opacity: 0.6 }}>▾</span>
                       </button>
@@ -9510,10 +9510,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <DropdownMenu.Content
                         side="top"
                         align="end"
-                        sideOffset={10}
-                        className="surface-popover z-50 w-[360px] max-w-[92vw] rounded-[16px] p-3"
+                        sideOffset={6}
+                        className="surface-popover z-50 flex min-h-0 flex-col rounded-[16px] p-1.5"
+                        style={{ width: 360, maxWidth: 'calc(100vw - 16px)', maxHeight: 'var(--radix-dropdown-menu-content-available-height)' }}
                       >
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-token-primary">
                               提示词模式
@@ -9536,25 +9537,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         </div>
 
-                        {/* 分割线 + 选择模型小标题 + 推荐提示 */}
-                        <div className="mt-3 mb-2 flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-token-muted">
-                            选择模型
-                          </span>
-                          {serverDefaultModel && <span
-                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              background: 'rgba(250,204,21,0.12)',
-                              border: '1px solid rgba(250,204,21,0.28)',
-                              color: 'var(--accent-fg-amber)',
-                            }}
-                          >
-                            <Sparkles size={10} />
-                            默认 {serverDefaultModel.name || serverDefaultModel.modelName}
-                          </span>}
-                        </div>
+                        <VisualModelMenuHeading />
 
-                        <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+                        <div className="min-h-0 overflow-auto p-1" style={{ maxHeight: 420, overscrollBehavior: 'contain' }}>
                           {allImageGenModels.length === 0 ? (
                             <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
                               {modelsError ? (
@@ -9578,18 +9563,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <div className="space-y-1.5">
                               {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
-                                  const meta = { subtitle: m.subtitle, description: m.description, recommended: m.isDefault };
                                   return (
                                     <button
                                       key={m.id}
                                       type="button"
                                       disabled={!m.enabled}
-                                      className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
+                                      aria-pressed={picked}
+                                      className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
-                                        background: picked ? 'rgba(250,204,21,0.07)' : 'var(--nested-block-bg)',
-                                        boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
-                                        opacity: m.enabled ? 1 : 0.72,
+                                        border: picked ? '1px solid var(--report-accent-border)' : '1px solid transparent',
+                                        background: picked ? 'var(--report-accent-soft)' : 'transparent',
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -9597,65 +9580,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         setModelPrefOpen(false);
                                       }}
                                     >
-                                      <div className="flex items-center gap-3">
-                                        {/* 选中指示：圆点/勾 */}
-                                        <span
-                                          className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
-                                          style={{
-                                            background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
-                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid var(--border-subtle)',
-                                            color: picked ? '#1a1a1a' : 'transparent',
-                                          }}
-                                          aria-label={picked ? '已选择' : '未选择'}
-                                        >
-                                          <Check size={13} strokeWidth={3} />
-                                        </span>
-
-                                        <div className="min-w-0 flex-1">
-                                          {/* 标题行：名称 + 推荐徽标 */}
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="truncate text-[14px] font-semibold text-token-primary">
-                                              {m.name || m.modelName}
-                                            </span>
-                                            {meta.recommended && (
-                                              <span
-                                                className="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold"
-                                                style={{
-                                                  background: 'rgba(250,204,21,0.16)',
-                                                  border: '1px solid rgba(250,204,21,0.3)',
-                                                  color: 'var(--accent-fg-amber)',
-                                                }}
-                                              >
-                                                <Sparkles size={9} />
-                                                默认
-                                              </span>
-                                            )}
-                                          </div>
-                                          {/* 副标题 */}
-                                          {meta.subtitle && (
-                                            <div className="mt-0.5 truncate text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.55)' }}>
-                                              {meta.subtitle}
-                                            </div>
-                                          )}
-                                          {/* 描述 */}
-                                          {meta.description && (
-                                            <div className="mt-1 text-[11px] leading-relaxed text-token-muted">
-                                              {meta.description}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
+                                      <VisualModelOptionContent model={m} selected={picked} />
                                     </button>
                                   );
                                 })}
                             </div>
                           )}
-                          <div className="mt-2.5 px-1 text-[10px] leading-relaxed text-token-muted-faint">
-                            选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
-                          </div>
                         </div>
-
-                                              </DropdownMenu.Content>
+                        <VisualModelMenuHint />
+                        <div className="shrink-0 px-3 pb-2 text-[10px] leading-relaxed text-token-muted-faint">
+                          选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
+                        </div>
+                      </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
 
