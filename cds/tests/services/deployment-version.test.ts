@@ -75,6 +75,18 @@ describe('DeploymentVersionService', () => {
     expect(restored.cacheMounts).toEqual([{ hostPath: 'data', containerPath: '/data' }]);
   });
 
+  it('freezes new-version absent constraints across reload instead of inheriting later current configuration', async () => {
+    const service = new DeploymentVersionService(stateService);
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'a'.repeat(40), configHash: 'frozen',
+      profiles: [profile()], branch, createdByRunId: 'run' });
+    await stateService.flush();
+    const restoredState = new StateService(path.join(tmpDir, 'state.json')); restoredState.load();
+    const restored = new DeploymentVersionService(restoredState).materializeProfiles(restoredState.getDeploymentVersion(version.id)!,
+      [profile({ role: 'worker', replacementStrategy: 'stop-and-restore', cacheMounts: [{ hostPath: 'new', containerPath: '/new' }], prebuiltCommitPolicy: 'exact' })])[0];
+    expect(restored.role).toBeUndefined(); expect(restored.replacementStrategy).toBeUndefined();
+    expect(restored.cacheMounts).toEqual([]); expect(restored.prebuiltCommitPolicy).toBeUndefined();
+  });
+
   it('creates an immutable content-addressed version and reuses the same identity', () => {
     const service = new DeploymentVersionService(stateService, () => new Date('2026-07-10T01:00:00.000Z'));
     branch.services.web = {

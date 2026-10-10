@@ -1389,6 +1389,8 @@ export interface DeploymentCandidateRecord {
 
 export interface DeploymentVersionProfile {
   profileId: string;
+  /** v1 freezes absence as well as presence; older unversioned rows keep their compatibility fallback. */
+  replacementContractVersion?: 1;
   role?: ServiceRole;
   replacementStrategy?: BuildProfile['replacementStrategy'];
   cacheMounts?: CacheMount[];
