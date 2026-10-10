@@ -924,3 +924,9 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 
 - 有过滤的一侧：`prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` 的 `GetStatsOverview`
 - 无过滤的一侧：`prd-api/src/PrdAgent.Api/Controllers/Api/ExecutiveController.cs` 的 `GetTeamInsights`（`openDefects`）
+
+### 文学 Gemini 恢复复测边界（2026-10-10）
+
+- 额度补足后，正式环境以既有真实客户端完成 Flash 八张生成、六图批量、非法尺寸不入队不扣额、重复提交去重、记忆尺寸与网页历史跨位置放回回归。Pro 的 1K 3:2 实图为 1264×848，本次只修正这个已验真的声明；旧 preview 其余比例尚缺同线路实图或供应商精确尺寸表，不能把最新稳定型号的表直接当成旧 preview 全表。负责人为生图模型契约维护者，关闭条件为补齐对应型号与线路的比例证据，并同步核对控制台覆盖契约及有效能力。
+- 历史放回使用资产已记录的宽高恢复尺寸；很早的资产若宽高缺失或历史元数据与实图不符，本次不批量改写数据，仍需独立核对与可追溯修正。
+- 六图原请求重放已确认不多生成、不多扣额，但去重回执的模型字段仍为空。负责人为文学 MCP 维护者，关闭条件为从原任务返回可核验的实际模型，并覆盖重放回执；不能把空值误判成模型切换。
