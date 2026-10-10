@@ -82,6 +82,28 @@ describe('stuck deploy runtime diff IO budget', () => {
     expect(attempted.filter(id => id === '0').length).toBeLessThan(3);
   });
 
+  it('does not let changing commits on the failed first branch reset its scheduling position', async () => {
+    let now = 0;
+    let failFirst!: (value: ExecResult) => void;
+    const attempted: string[] = [];
+    const exec = vi.fn((_command: string, options: { cwd: string }) => {
+      const id = options.cwd.split('/').at(-1)!;
+      attempted.push(id);
+      return id === '0' ? new Promise<ExecResult>(resolve => { failFirst = resolve; })
+        : Promise.resolve(result('src/api.ts\n'));
+    });
+    const cache = new StuckDeployRuntimeDiff({ exec } as IShellExecutor, () => now);
+    for (let round = 1; round <= 3; round++) {
+      for (let i = 0; i < 100; i++) cache.hasRuntimeChanges(i === 0
+        ? { ...branch('0'), githubCommitSha: String(round).repeat(40) } : branch(String(i)));
+      await tick();
+      if (attempted.at(-1) === '0') { now += 5001; failFirst(result('', 1)); }
+      await tick();
+    }
+    expect(attempted).toContain('1');
+    expect(attempted).toContain('99');
+  });
+
   it('attempts every identity before wrapping when all 100 targets keep timing out', async () => {
     let now = 0;
     let finish!: (value: ExecResult) => void;
