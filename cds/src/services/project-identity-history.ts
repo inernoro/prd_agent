@@ -8,6 +8,10 @@ export interface ProjectIdentityActor {
   slugSource?: 'explicit' | 'repository' | 'name';
 }
 
+export function projectIdentityVersion(project: Project): string {
+  return project.identityHistory?.at(-1)?.id || '';
+}
+
 /** 操作者取自已认证账号或凭据归属；不把调用方自报的 header 当成已验证身份。 */
 export function projectIdentityActorFromRequest(req: unknown): ProjectIdentityActor {
   const request = req as { cdsUser?: { id?: string }; cdsProjectKey?: { keyId?: string }; cdsAccess?: { keyId?: string } };

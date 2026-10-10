@@ -200,6 +200,7 @@ describe('human project grants through the production server', () => {
 
   it('bounds a stalled grant response and restores late writes before releasing the gate', async () => {
     await grant(['project-a']);
+    const previousFlushTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     const stalled = new Promise<void>(resolve => { finish = resolve; });
@@ -211,11 +212,9 @@ describe('human project grants through the production server', () => {
     expect(status.status).toBe(409);
     expect(status.body.update.reconciling).toBe(true);
     expect((await call('GET', '/api/projects', member)).status).toBe(409);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', previousFlushTimeout);
     finish();
-    for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined();
+    await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined(), { timeout: 2000 });
     expect(flush).toHaveBeenCalledTimes(3);
     expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
     fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'late-write-restored.json'));
@@ -1113,6 +1112,7 @@ describe('human project grants through the production server', () => {
     const principalId = humanPrincipalId(memberId);
     const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
     await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    const previousFlushTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
@@ -1121,11 +1121,10 @@ describe('human project grants through the production server', () => {
     expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await grant(['project-b'])).status).toBe(409);
+    // 20ms 只用于上面的受控超时，补偿和正常恢复沿用原有等待预算。
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', previousFlushTimeout);
     finish();
-    for (let attempt = 0; attempt < 40 && humanProjectGrantUpdateStatus(state, principalId); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined();
+    await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 2000 });
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);

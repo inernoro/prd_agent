@@ -38,6 +38,7 @@ import {
   type WebhookNoiseStats,
 } from '../services/github-webhook-noise.js';
 import type { StateService } from '../services/state.js';
+import { projectIdentityVersion } from '../services/project-identity-history.js';
 import type { GithubWebhookDelivery, GithubAppWhitelistSettings } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { IShellExecutor, CdsConfig, OperationLog } from '../types.js';
@@ -1105,7 +1106,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       githubLinkedAt: new Date().toISOString(),
     });
     const updated = stateService.getProject(project.id)!;
-    res.json({ project: updated });
+    res.json({ project: { ...updated, identityVersion: projectIdentityVersion(updated) } });
   });
 
   // ── POST /api/github/webhook/self-test ─────────────────────────────

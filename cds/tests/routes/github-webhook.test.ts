@@ -16,6 +16,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHmac } from 'node:crypto';
 import { StateService } from '../../src/services/state.js';
+import { createProjectsRouter } from '../../src/routes/projects.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -54,6 +55,8 @@ async function request(
           port: addr.port,
           path: urlPath,
           method,
+          // 每例都会重建临时 server，不复用上一例正在关闭的空闲连接。
+          agent: false,
           headers: {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(body),
@@ -734,6 +737,7 @@ describe('POST /api/projects/:id/github/link', () => {
       githubApp: null,
       dispatchDeploy: async () => {},
     }));
+    app.use('/api', createProjectsRouter({ stateService, shell }));
     return app.listen(0);
   }
 
@@ -786,6 +790,24 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(project.githubRepoFullName).toBe('octocat/repo');
     expect(project.githubInstallationId).toBe(42);
     expect(project.githubAutoDeploy).toBe(true);
+  });
+
+  it('绑定返回当前版本，随后旧页面不能覆盖并发修改', async () => {
+    server = startServer();
+    const linked = await request(server, 'POST', '/api/projects/p1/github/link',
+      JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo' }));
+    expect(linked.status).toBe(200);
+    const version = linked.body.project.identityVersion;
+    expect(version).toBe(stateService.getProject('p1')!.identityHistory!.at(-1)!.id);
+    expect(version).toBeTruthy();
+    const concurrent = await request(server, 'PUT', '/api/projects/p1',
+      JSON.stringify({ name: '另一处修改', expectedIdentityVersion: version }));
+    expect(concurrent.status).toBe(200);
+    expect(concurrent.body.project.identityVersion).not.toBe(version);
+    const stale = await request(server, 'PUT', '/api/projects/p1',
+      JSON.stringify({ name: '旧页面覆盖', expectedIdentityVersion: version }));
+    expect(stale.status).toBe(409);
+    expect(stateService.getProject('p1')!.name).toBe('另一处修改');
   });
 
   it('绑一个已被别的项目绑走的仓库：默认拦住，并回兄弟项目名', async () => {

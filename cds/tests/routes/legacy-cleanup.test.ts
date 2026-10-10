@@ -87,6 +87,10 @@ describe('Legacy-Cleanup Routes', () => {
 
     const app = express();
     app.use(express.json());
+    app.use((req, _res, next) => {
+      Object.assign(req, { cdsUser: { id: 'migration-owner' } });
+      next();
+    });
     app.use('/api', createLegacyCleanupRouter({ stateService, shell, worktreeBase }));
 
     await new Promise<void>((resolve) => {
@@ -98,6 +102,42 @@ describe('Legacy-Cleanup Routes', () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  describe('POST /api/legacy-cleanup/rename-default', () => {
+    it('记录实际改名前后值和认证操作者，重启后仍可追溯', async () => {
+      const original = addEmptyLegacyProject(stateService);
+      const version = original.identityHistory!.at(-1)!.id;
+      const res = await request(server, 'POST', '/api/legacy-cleanup/rename-default', {
+        newId: 'migrated-project', newName: '迁移后的项目',
+      });
+      expect(res.status).toBe(200);
+      const migrated = stateService.getProject('migrated-project')!;
+      expect(stateService.getProjects().some(project => project.id === 'default')).toBe(false);
+      expect(migrated.legacyFlag).toBe(false);
+      expect(migrated.slug).toBe(original.slug);
+      const record = migrated.identityHistory!.at(-1)!;
+      expect(record.id).not.toBe(version);
+      expect(record.kind).toBe('changed');
+      expect(record.before?.name).toBe('default');
+      expect(record.after.name).toBe('迁移后的项目');
+      expect(record.actor).toBe('user:migration-owner');
+      expect(record.requestId).toBeTruthy();
+      await stateService.flush();
+      const restarted = new StateService(path.join(tmpDir, 'state.json'));
+      restarted.load();
+      expect(restarted.getProject('migrated-project')!.identityHistory).toEqual(migrated.identityHistory);
+    });
+
+    it('名称不变时保留原记录版本', async () => {
+      const original = addEmptyLegacyProject(stateService);
+      const history = original.identityHistory;
+      const res = await request(server, 'POST', '/api/legacy-cleanup/rename-default', {
+        newId: 'migrated-project', newName: 'default',
+      });
+      expect(res.status).toBe(200);
+      expect(stateService.getProject('migrated-project')!.identityHistory).toEqual(history);
+    });
   });
 
   describe('GET /api/legacy-cleanup/status', () => {

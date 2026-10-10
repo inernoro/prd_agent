@@ -93,6 +93,8 @@ async function request(
         port: addr.port,
         path: urlPath,
         method,
+        // 每例都会重建临时 server，不复用上一例正在关闭的空闲连接。
+        agent: false,
         headers: {
           'Content-Type': 'application/json',
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),

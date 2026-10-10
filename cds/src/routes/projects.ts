@@ -41,7 +41,7 @@ import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef, projectHistoricalSlugs, projectResourceNamespace } from '../services/preview-slug.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { projectIdentityActorFromRequest, publicIdentityRecord } from '../services/project-identity-history.js';
+import { projectIdentityActorFromRequest, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
@@ -565,7 +565,7 @@ function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourc
   // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
   // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
   const { branchGroups: _branchGroups, identityHistory: _identityHistory, ...rest } = project;
-  return { ...rest, ...stats, identityVersion: project.identityHistory?.at(-1)?.id || '', resourceUsage: usage ?? null };
+  return { ...rest, ...stats, identityVersion: projectIdentityVersion(project), resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
