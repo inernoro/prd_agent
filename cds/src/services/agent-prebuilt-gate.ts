@@ -1,13 +1,13 @@
 /**
- * Agent 极速版门禁（agent prebuilt-only gate）—— 「这次由 Agent 发起的部署 / 模式写入，
+ * Agent 预构建策略门禁（agent prebuilt policy gate）—— 「这次由 Agent 发起的部署 / 模式写入，
  * 是否会让 CDS 宿主跑源码编译」的唯一判定处。
  *
  * ## 为什么要有它
  *
  * CDS 宿主的编译算力由全部项目共享。Agent 分支一旦用 dev / static 这类源码模式部署，
  * 就是在宿主上跑 dotnet build / pnpm build 试错，一条分支就能把别人的部署排到队尾。
- * 接入口令已经把「只用极速版」写成硬约束，但口令拦不住不守规矩的 Agent；本模块把它
- * 变成服务端的闸：项目开启 `agentPrebuiltOnly` 后，机器凭据的部署与模式写入在入口被拒。
+ * 提示词本身拦不住不守规矩的 Agent；本模块把项目选择的策略变成服务端闸门：严格模式
+ * 全部拒绝源码构建，优先模式只拒绝「已有预构建能力却仍选源码」的部署与模式写入。
  *
  * ## 判据
  *
@@ -25,11 +25,17 @@
  * 不得另写一份判定。
  */
 
-import type { BranchEntry, BuildProfile, Project } from '../types.js';
+import type { AgentPrebuiltPolicy, BranchEntry, BuildProfile, Project } from '../types.js';
 import { isMachineCaller } from './machine-caller.js';
 import { resolveActiveDeployModeId } from './deploy-runtime.js';
 
 export const AGENT_PREBUILT_ONLY_ERROR = 'agent_prebuilt_only';
+
+const AGENT_PREBUILT_POLICIES = new Set<AgentPrebuiltPolicy>([
+  'prebuilt-only',
+  'prefer-prebuilt',
+  'unrestricted',
+]);
 
 export interface PrebuiltGateViolation {
   profileId: string;
@@ -39,9 +45,24 @@ export interface PrebuiltGateViolation {
   modeLabel: string;
 }
 
-/** 项目是否开启了「Agent 只允许极速版」。缺省关闭：老项目零变化。 */
+/**
+ * 解析项目级 Agent 部署策略。新字段优先；旧状态继续按 agentPrebuiltOnly 解释，
+ * 保证升级后不会把原本的硬门禁静默放松。
+ */
+export function resolveAgentPrebuiltPolicy(project: Project | undefined | null): AgentPrebuiltPolicy {
+  const explicit = project?.agentPrebuiltPolicy;
+  if (explicit && AGENT_PREBUILT_POLICIES.has(explicit)) return explicit;
+  return project?.agentPrebuiltOnly === true ? 'prebuilt-only' : 'unrestricted';
+}
+
+/** 项目是否启用了任一 Agent 预构建约束。 */
+export function isAgentPrebuiltPolicyEnabled(project: Project | undefined | null): boolean {
+  return resolveAgentPrebuiltPolicy(project) !== 'unrestricted';
+}
+
+/** 旧调用方兼容：只在真正的严格模式下返回 true。 */
 export function isAgentPrebuiltOnly(project: Project | undefined | null): boolean {
-  return project?.agentPrebuiltOnly === true;
+  return resolveAgentPrebuiltPolicy(project) === 'prebuilt-only';
 }
 
 /**
@@ -109,6 +130,45 @@ export function listPrebuiltModeIds(profile: BuildProfile): string[] {
   return Object.keys(profile.deployModes || {}).filter((id) => isPrebuiltMode(profile, id));
 }
 
+/** profile 基线或任一具名模式是否具备真正的预构建能力。 */
+export function hasPrebuiltCapability(profile: BuildProfile): boolean {
+  return isPrebuiltMode(profile, undefined) || listPrebuiltModeIds(profile).length > 0;
+}
+
+/**
+ * 把“会走源码构建”的事实按项目策略过滤成真正应阻断的集合。
+ * prefer-prebuilt 只阻断已经具备极速版能力、却仍选择源码模式的服务；尚未接 CI
+ * 预构建的服务允许继续部署。判据集中在这里，所有部署和模式写入口共用。
+ */
+export function enforceAgentPrebuiltPolicy(
+  project: Project | undefined | null,
+  profiles: BuildProfile[],
+  violations: PrebuiltGateViolation[],
+): PrebuiltGateViolation[] {
+  const policy = resolveAgentPrebuiltPolicy(project);
+  if (policy === 'unrestricted') return [];
+  if (policy === 'prebuilt-only') return violations;
+  const byId = new Map(profiles.map((profile) => [profile.id, profile]));
+  return violations.filter((violation) => {
+    const profile = byId.get(violation.profileId);
+    return Boolean(profile && hasPrebuiltCapability(profile));
+  });
+}
+
+/**
+ * 镜像拉取失败时是否必须禁止回退到宿主源码编译。严格模式全部禁止；优先模式
+ * 只对已经拥有极速版能力的服务禁止，未接入预构建的服务仍按原配置运行。
+ */
+export function shouldDisableSourceFallback(
+  project: Project | undefined | null,
+  profile: BuildProfile,
+): boolean {
+  const policy = resolveAgentPrebuiltPolicy(project);
+  if (policy === 'prebuilt-only') return true;
+  if (policy === 'prefer-prebuilt') return hasPrebuiltCapability(profile);
+  return false;
+}
+
 /**
  * 门禁下的部署不许回退源码编译。resolveEffectiveProfile 会给极速版 profile 挂一个
  * sourceFallbackProfile，runService 在镜像拉不到时据此**在宿主上编译**——恰是门禁要禁的事
@@ -167,8 +227,37 @@ export interface PrebuiltGateRejection {
   error: typeof AGENT_PREBUILT_ONLY_ERROR;
   message: string;
   projectId: string;
-  violations: Array<PrebuiltGateViolation & { prebuiltModes: string[] }>;
+  policy: AgentPrebuiltPolicy;
+  settingsPath: string;
+  violations: Array<PrebuiltGateViolation & { prebuiltModes: string[]; prebuiltBaseline: boolean }>;
   hint: string;
+  recovery: {
+    kind: 'switch-to-prebuilt' | 'configure-prebuilt-or-change-policy';
+    requiresHuman: boolean;
+    commands: string[];
+  };
+}
+
+/** 模式定义类写入的统一拒绝体：同样向 Agent 暴露项目策略和真人恢复入口。 */
+export function buildPrebuiltPolicyMutationRejection(
+  project: Project,
+  message: string,
+  hint: string,
+): PrebuiltGateRejection {
+  return {
+    error: AGENT_PREBUILT_ONLY_ERROR,
+    message,
+    projectId: project.id,
+    policy: resolveAgentPrebuiltPolicy(project),
+    settingsPath: `/settings/${encodeURIComponent(project.id)}#general`,
+    violations: [],
+    hint,
+    recovery: {
+      kind: 'configure-prebuilt-or-change-policy',
+      requiresHuman: true,
+      commands: [],
+    },
+  };
 }
 
 /** 统一的 409 响应体。message 面向 Agent：说清被拦的服务、当前模式、该切成什么、用哪条命令。 */
@@ -182,11 +271,25 @@ export function buildPrebuiltGateRejection(
   const detailed = violations.map((v) => ({
     ...v,
     prebuiltModes: listPrebuiltModeIds(byId.get(v.profileId) || ({ deployModes: {} } as BuildProfile)),
+    prebuiltBaseline: isPrebuiltMode(byId.get(v.profileId) || ({ deployModes: {} } as BuildProfile), undefined),
   }));
   const summary = detailed
-    .map((v) => `${v.profileName}（当前 ${v.modeLabel}${v.prebuiltModes.length ? `，可切 ${v.prebuiltModes.join(' / ')}` : '，该服务没有极速版模式'}）`)
+    .map((v) => `${v.profileName}（当前 ${v.modeLabel}${
+      v.prebuiltModes.length
+        ? `，可切 ${v.prebuiltModes.join(' / ')}`
+        : v.prebuiltBaseline
+          ? '，可回到极速版基线'
+          : '，该服务没有极速版模式'
+    }）`)
     .join('；');
   const projectLabel = project.aliasName || project.name || project.id;
+  const policy = resolveAgentPrebuiltPolicy(project);
+  const policyLabel = policy === 'prebuilt-only'
+    ? '仅极速版（CI 预构建）'
+    : policy === 'prefer-prebuilt'
+      ? '优先极速版（有预构建能力时必须使用）'
+      : '不限制';
+  const settingsPath = `/settings/${encodeURIComponent(project.id)}#general`;
   const opLabel = context.operation === 'deploy'
     ? '部署被拦截'
     : context.operation === 'branch-override'
@@ -194,19 +297,33 @@ export function buildPrebuiltGateRejection(
       : context.operation === 'project-default'
         ? '项目默认运行模式（defaultDeployModes）写入被拒绝'
         : '项目默认部署模式修改被拒绝';
+  const exactCommands = context.branchId
+    ? detailed
+      .filter((violation) => violation.prebuiltModes.length > 0 || violation.prebuiltBaseline)
+      .map((violation) => violation.prebuiltModes.length > 0
+        ? `cdscli branch set-mode ${context.branchId} ${violation.profileId} ${violation.prebuiltModes[0]}`
+        : `cdscli branch set-mode ${context.branchId} ${violation.profileId} ""`)
+    : [];
   const fix = context.operation === 'profile-default' || context.operation === 'project-default'
     ? '项目默认只能由真人在项目设置页修改；Agent 请用 cdscli branch set-mode <branchId> <profileId> <极速版模式> 只改自己的分支。'
-    : context.branchId
-      ? `请对每个服务运行 cdscli branch set-mode ${context.branchId} <profileId> <极速版模式> 后重新部署。`
+    : exactCommands.length > 0
+      ? `请运行 ${exactCommands.join('；')} 后重新部署。`
       : '请用 cdscli branch set-mode <branchId> <profileId> <极速版模式> 切到极速版后重新部署。';
-  const noPrebuilt = detailed.some((v) => v.prebuiltModes.length === 0);
+  const noPrebuilt = detailed.some((v) => v.prebuiltModes.length === 0 && !v.prebuiltBaseline);
   return {
     error: AGENT_PREBUILT_ONLY_ERROR,
-    message: `项目「${projectLabel}」要求 Agent 只使用极速版（CI 预构建）部署，${opLabel}：${summary}。${fix}`,
+    message: `项目「${projectLabel}」的 Agent 部署策略为「${policyLabel}」，${opLabel}：${summary}。${fix}`,
     projectId: project.id,
+    policy,
+    settingsPath,
     violations: detailed,
     hint: noPrebuilt
-      ? '有服务没有任何极速版模式：这是项目还没接 CI 预构建的缺口，请如实报告给用户，不要切到源码模式顶替。'
+      ? `有服务没有任何极速版模式：这是项目还没接 CI 预构建的缺口。请准确说明这是项目级策略，不是 CDS 全局限制；真人可在项目设置 ${settingsPath} 改为「优先极速版」或「不限制」，Agent 不得自行修改。`
       : '极速版生效判据：cdscli branch status <branchId> 的 deployRuntime.prebuilt 为 true。',
+    recovery: {
+      kind: noPrebuilt ? 'configure-prebuilt-or-change-policy' : 'switch-to-prebuilt',
+      requiresHuman: noPrebuilt || context.operation === 'profile-default' || context.operation === 'project-default',
+      commands: exactCommands,
+    },
   };
 }
