@@ -1,4 +1,5 @@
 import express from 'express';
+import { loadFactoryReference, probeReplacementBoot, ownedProcessStates } from './factory-reference-runtime.js';
 import { AsyncStuckDeployReconciler } from '../src/services/async-stuck-deploy-reconciler.js';
 import { createReleaseGitRunner } from '../src/services/release-git-reader.js';
 import { resolveArtifactCommitIdentity } from '../src/services/artifact-commit-identity.js';
@@ -28,7 +29,7 @@ import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts', 'scripts/observation-isolation-drill.ts', 'tests/services/isolated-shell-executor.test.ts', 'tests/services/observation-stream-executor.test.ts'];
+const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts', 'scripts/observation-isolation-drill.ts', 'tests/services/isolated-shell-executor.test.ts', 'tests/services/observation-stream-executor.test.ts', 'scripts/factory-reference-runtime.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -44,6 +45,20 @@ async function main(): Promise<void> {
   await fs.chmod(temp, 0o700);
   const compiled = process.argv.includes('--compiled');
   const module = compiled ? await import(new URL('../dist/services/isolated-shell-executor.js', import.meta.url).href) as typeof import('../src/services/isolated-shell-executor.js') : { IsolatedShellExecutor };
+  let factoryReference: Awaited<ReturnType<typeof loadFactoryReference>>;
+  try { factoryReference = await loadFactoryReference(path.join(temp, 'factory-reference-runtime')); }
+  catch (error) {
+    await fs.rm(temp, { recursive: true, force: true });
+    await fs.writeFile(path.join(output, 'report.json'), JSON.stringify({ schema: 1,
+      head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
+      stage: 'original-reference-source-preparation', verdict: 'failed', failure: { name: error instanceof Error ? error.name : 'Error' },
+      actualDockerReadVerified: false, actualIndependentProcessesVerified: false, actualDeploymentVerified: false,
+      performanceVerified: false, checks: [], ownedProcessesRemoved: true, isolatedFilesRemoved: true,
+      scope: 'reference preparation failed before any owned process or Docker startup' }, null, 2), { mode: 0o600 });
+    throw error;
+  }
+  const originalBootShell = new factoryReference.factory.IsolatedShellExecutor(new factoryReference.shell.ShellExecutor(), { concurrency: 1, maxQueued: 4 });
   const previousHost = process.env.DOCKER_HOST;
   const previousContext = process.env.DOCKER_CONTEXT;
   delete process.env.DOCKER_CONTEXT;
@@ -85,6 +100,7 @@ async function main(): Promise<void> {
     compiledFactoryHashes: compiled ? Object.fromEntries(await Promise.all(['isolated-shell-executor', 'observation-supervisor-process', 'observation-executor-process', 'observation-process-launcher', 'observation-process-group', 'observation-process', 'shell-executor'].map(async name => [name, createHash('sha256').update(await fs.readFile(`dist/services/${name}.js`)).digest('hex')]))) : {},
     mode: compiled ? 'compiled' : 'source', scope: 'independent bounded observation processes and real owned Docker reads; no application deployment or public performance acceptance',
     actualDockerReadVerified: false, actualIndependentProcessesVerified: false, actualDeploymentVerified: false, performanceVerified: false,
+    replacementBootReference: { head: factoryReference.head, sourceHashes: factoryReference.sourceHashes, compiledFactoryHashes: factoryReference.compiledFactoryHashes, compilerVersion: factoryReference.compilerVersion },
     verdict: 'failed', checks: [], ownedContainerRemoved: false, isolatedFilesRemoved: false,
   };
   let id: string | undefined;
@@ -123,7 +139,7 @@ async function main(): Promise<void> {
     report.artifactTarget = { scope: 'compiled private snapshot and effective-profile target resolution; no registry admission or application deployment', requested, previous, pinnedImage, unpinnedImage, originalBranchUnchanged: true };
     report.checks.push({ name: 'compiled-explicit-artifact-target-and-unpinned-ci-contract', passed: true });
     report.stage = 'independent-process-prewarm';
-    await Promise.all([operationShell.start(), shell.start(), replacementBootShell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
+    await Promise.all([operationShell.start(), shell.start(), replacementBootShell.start(), originalBootShell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();
     report.eventWarmStats = eventStreams.getStats();
     report.userLogWarmStats = userLogStreams.getStats();
@@ -192,39 +208,19 @@ async function main(): Promise<void> {
     }
     report.checks.push({ name: 'compiled-default-observation-and-operation-factory-recovery-after-confirmed-cleanup', passed: true });
 
+    report.stage = 'compiled-original-replacement-factory-reference';
+    report.replacementBootReference.probe = {};
+    try { await probeReplacementBoot(originalBootShell, temp, 'original-boot', true, report.replacementBootReference.probe); }
+    finally {
+      const original = originalBootShell.getStats();
+      await originalBootShell.close();
+      report.replacementBootReference.closedProcessStates = ownedProcessStates([original.supervisorPid!, original.factoryPid!, ...original.actors.map(actor => actor.pid)]);
+      report.replacementBootReference.closeConfirmed = true;
+    }
+    report.checks.push({ name: 'compiled-original-paused-replacement-remains-unavailable-without-replaying-first-task', passed: true });
     report.stage = 'compiled-replacement-factory-readiness-budget';
-    const bootBefore = replacementBootShell.getStats();
-    const bootChannel = (replacementBootShell as unknown as { factory: import('node:child_process').ChildProcess }).factory;
-    assert.equal(bootChannel.pid, bootBefore.supervisorPid);
-    let pausedFactory = 0; let pauseError: unknown;
-    const pauseCreatedReplacement = (message: any): void => {
-      if (message.type === 'factory-started' && message.pid !== bootBefore.factoryPid && !pausedFactory) {
-        pausedFactory = message.pid; try { process.kill(pausedFactory, 'SIGSTOP'); } catch (error) { pauseError = error; }
-      }
-    };
-    bootChannel.on('message', pauseCreatedReplacement);
-    try {
-      process.kill(-bootBefore.factoryPid!, 'SIGKILL');
-      const creationDeadline = performance.now() + 5000;
-      while (!pausedFactory && performance.now() < creationDeadline) await new Promise(resolve => setTimeout(resolve, 10));
-      assert.ok(pausedFactory > 1); assert.equal(pauseError, undefined); assert.equal(replacementBootShell.getStats().unavailable, true);
-      const pausedState = execFileSync('ps', ['-o', 'stat=', '-p', String(pausedFactory)], { encoding: 'utf8' }).trim();
-      assert.match(pausedState, /^T/);
-      const started = performance.now(), bootDeadline = started + 6500;
-      while (replacementBootShell.getStats().unavailable && performance.now() < bootDeadline) await new Promise(resolve => setTimeout(resolve, 20));
-      const bootAfter = replacementBootShell.getStats();
-      assert.equal(bootAfter.unavailable, false); assert.equal(bootAfter.supervisorPid, bootBefore.supervisorPid);
-      assert.ok(bootAfter.factoryPid && bootAfter.factoryPid !== pausedFactory);
-      let stoppedState = '';
-      try { stoppedState = execFileSync('ps', ['-o', 'stat=', '-p', String(pausedFactory)], { encoding: 'utf8' }).trim(); }
-      catch (error: any) { assert.equal(error.status, 1); assert.equal(String(error.stdout || '').trim(), ''); }
-      assert.match(stoppedState, /^(Z.*)?$/);
-      const resumed = await replacementBootShell.exec('echo after-boot-timeout', { executionLane: 'observation', timeout: 5000 });
-      assert.equal(resumed.stdout.trim(), 'after-boot-timeout');
-      report.replacementBootRecovery = { before: bootBefore, after: bootAfter, pausedFactory, pausedState, stoppedState,
-        elapsedMs: performance.now() - started, deadlineMs: 5000, observedDeadlineMs: 6500,
-        scope: 'actual IPC creation receipt and SIGSTOP of owned replacement; original handler unchanged; dedicated pool prewarmed before large state, no public response acceptance' };
-    } finally { bootChannel.off('message', pauseCreatedReplacement); }
+    report.replacementBootRecovery = { scope: 'same Linux original/candidate probe; actual IPC receipt and owned SIGSTOP, in-flight first task once, default original methods unchanged' };
+    await probeReplacementBoot(replacementBootShell, temp, 'candidate-boot', false, report.replacementBootRecovery);
     report.checks.push({ name: 'compiled-paused-replacement-factory-cleans-and-recovers-with-original-readiness-budget', passed: true });
 
     report.stage = 'compiled-four-continuous-stream-factory-faults';
@@ -787,7 +783,7 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     report.defaultSupervisorPids = [operationShell, shell, startupStreams, eventStreams, userLogStreams, journalStreams].map(pool => pool.getStats().supervisorPid);
     const processRoots = [replacementBootShell.getStats().supervisorPid, replacementBootShell.getStats().factoryPid, ...replacementBootShell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().supervisorPid, eventStreams.getStats().supervisorPid, userLogStreams.getStats().supervisorPid, journalStreams.getStats().supervisorPid, operationShell.getStats().supervisorPid, shell.getStats().supervisorPid, operationShell.getStats().factoryPid, ...operationShell.getStats().actors.map(actor => actor.pid), shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await Promise.all([operationShell.close(), shell.close(), replacementBootShell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
+      await Promise.all([operationShell.close(), shell.close(), replacementBootShell.close(), originalBootShell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
       assert.equal(new Set(report.defaultSupervisorPids).size, 6);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
