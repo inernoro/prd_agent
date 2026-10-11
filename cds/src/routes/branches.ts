@@ -18213,7 +18213,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
-      if (code === 'acceptance_release_reconciliation_required') res.status(409).json({ error: code });
+      if (code === 'acceptance_release_reconciliation_required' || code === 'acceptance_creation_reconciliation_required') res.status(409).json({ error: code });
       else res.status(500).json({ error: 'extra_services_update_failed' });
     }
   });

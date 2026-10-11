@@ -3,6 +3,7 @@ import type { BranchEntry, AcceptanceReportMeta, ServiceState } from '../types.j
 import type { StateService } from './state.js';
 import type { OwnedContainerLifecycle, OwnedContainerReference } from './owned-container-lifecycle.js';
 import type { BranchOperationCoordinator } from './branch-operation-coordinator.js';
+import { acceptanceResourceProfile } from './acceptance-resource-profile.js';
 
 export interface AcceptanceResourceReleaseBindings {
   coordinator: BranchOperationCoordinator;
@@ -34,6 +35,7 @@ export interface AcceptanceResourceRun {
   stage: 'active' | 'registered' | 'finished' | 'released';
   resource?: { configDigest: string; containerId: string; deploymentRunId: string };
   terminal?: { reportId: string; metaDigest: string; bodyDigest: string; verdict: NonNullable<AcceptanceReportMeta['verdict']>; finishedAt: string };
+  creationIntent?: { version: 1; phase: 'configured' | 'deploying'; profileDigest: string; startedAt: string; deploymentRunId?: string };
   releaseIntent?: AcceptanceResourceReleaseIntent;
 }
 /** An uncommitted write intent is retained across restart; it is not a published terminal receipt. */
@@ -115,7 +117,7 @@ export class AcceptanceResourceRunService {
     if (!branch || branch.projectId !== input.projectId) throw new Error('acceptance_scope_mismatch');
     const absent = () => {
       if (this.state.getBranch(input.branchId) !== branch || branchIdentity(branch) !== identity) throw new Error('acceptance_branch_changed');
-      if (branch.extraProfiles?.some(p => p.id === input.profileId) || branch.services[input.profileId]
+      if (branch.extraProfiles?.some(p => p.id === input.profileId) || branch.services[input.profileId] || branch.profileOverrides?.[input.profileId]
         || this.state.getBuildProfile(input.profileId)) throw new Error('acceptance_resource_already_exists');
     };
     const identity = branchIdentity(branch); absent();
@@ -124,6 +126,37 @@ export class AcceptanceResourceRunService {
       branchIdentity: identity, ownerHash: bodyDigest(ownerToken), startedAt: this.now().toISOString(), stage: 'active' };
     await this.state.writeAcceptanceResourceRunDurably(row, undefined, absent);
     return { run: view(row), ownerToken };
+  }
+
+  /** Configuration only. Deployment must later bind its own actual server creation run. */
+  async createProfile(id: string, ownerToken: string, proposal: unknown): Promise<AcceptanceResourceView> {
+    return this.operation(id, async () => {
+      const run = this.owned(id, ownerToken); this.requireResolvedPublication(id);
+      if (run.stage !== 'active' || run.creationIntent) throw new Error('acceptance_run_stage');
+      const branch = this.branch(run), profile = acceptanceResourceProfile(proposal, run, ownerToken);
+      const bindings = this.releaseBindings;
+      if (!bindings || !bindings.canExecute(branch)) throw new Error('acceptance_creation_unavailable');
+      const decision = bindings.coordinator.begin({ projectId: run.projectId, branchId: run.branchId,
+        kind: 'acceptance-create', trigger: 'system', source: 'acceptance-resource-create',
+        acceptanceRunId: id, commitSha: run.targetSha });
+      if (decision.status !== 'started' || !decision.lease) throw new Error('acceptance_creation_busy');
+      const lease = decision.lease; let completed = false;
+      try {
+        const runDigest = digest(run);
+        const fence = () => {
+          if (!lease.isCurrent() || lease.signal?.aborted) throw new Error('acceptance_creation_cancelled');
+          if (!bindings.canExecute(branch) || this.owned(id, ownerToken) !== run || digest(run) !== runDigest
+            || this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+        };
+        fence();
+        const row: AcceptanceResourceRun = { ...run, seq: run.seq + 1,
+          creationIntent: { version: 1, phase: 'configured', profileDigest: digest(profile), startedAt: this.now().toISOString() } };
+        await this.state.writeAcceptanceResourceProfileDurably(row, run.seq, profile, fence);
+        completed = true; return view(row);
+      } finally {
+        bindings.coordinator.complete(lease, completed ? 'completed' : lease.signal?.aborted ? 'cancelled' : 'failed');
+      }
+    });
   }
 
   private owned(id: string, ownerToken: string): AcceptanceResourceRun {
@@ -151,7 +184,8 @@ export class AcceptanceResourceRunService {
     const env = { ...profile?.env, ...b.profileOverrides?.[run.profileId]?.env };
     // Registration binds the successful creation. A later branch deployment can fail
     // without replacing this exact resource or revoking its report/cleanup ownership.
-    const deploymentRunId = run.resource ? run.resource.deploymentRunId : b.lastDeploymentRunId;
+    if (run.creationIntent && (run.creationIntent.phase !== 'deploying' || !run.creationIntent.deploymentRunId)) throw new Error('acceptance_resource_unconfirmed');
+    const deploymentRunId = run.resource ? run.resource.deploymentRunId : run.creationIntent?.deploymentRunId || b.lastDeploymentRunId;
     const deployment = deploymentRunId ? this.state.getDeploymentRun(deploymentRunId) : undefined;
     if (!profile || profile.projectId !== run.projectId || env.IMP_HEALTH_RUN_ID !== run.isolationRunId || env.IMP_TARGET_SHA !== run.targetSha
       || !service || !CONTAINER.test(service.containerId || '') || service.deployedCommitSha !== run.targetSha

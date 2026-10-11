@@ -5,6 +5,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from '../../src/server.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import { acceptanceReleaseOperationAdmission } from '../../src/services/acceptance-release-admission.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -33,7 +35,8 @@ describe('Acceptance resource routes through actual server authentication and pa
     const shell = new MockShellExecutor();
     const config: CdsConfig = { repoRoot: dir, worktreeBase: path.join(dir, 'worktrees'), masterPort: 9900, workerPort: 5500,
       dockerNetwork: 'owned-network', portStart: 10001, sharedEnv: {}, jwt: { secret: 'owned-jwt', issuer: 'fixture' }, mode: 'standalone', executorPort: 9901, rootDomains: ['example.test'] };
-    const app = createServer({ stateService: state, shell, config, worktreeService: new WorktreeService(shell, dir),
+    const coordinator = new BranchOperationCoordinator(undefined, undefined, undefined, request => acceptanceReleaseOperationAdmission(state, request));
+    const app = createServer({ stateService: state, shell, config, branchOperationCoordinator: coordinator, worktreeService: new WorktreeService(shell, dir),
       containerService: {} as any, proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress() {} } as any, bridgeService: {} as any });
     server = http.createServer(app); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   });
@@ -68,6 +71,18 @@ describe('Acceptance resource routes through actual server authentication and pa
     expect((await request('POST', '/api/acceptance-resource-runs/' + owner.run.id + '/release', keys.p1, { ownerToken: owner.ownerToken })).status).toBe(409);
     expect((await request('GET', '/api/acceptance-resource-runs/' + owner.run.id, keys.p1)).body.run.stage).toBe('active');
     expect(JSON.stringify(state.getState())).not.toContain(owner.ownerToken);
+  });
+  it('authorizes conditional creation through the actual server before owner capability', async () => {
+    const begun = await request('POST', '/api/acceptance-resource-runs', keys.p1, input); expect(begun.status).toBe(201);
+    const route = '/api/acceptance-resource-runs/' + begun.body.run.id + '/create-profile';
+    const body = { ownerToken: begun.body.ownerToken, profile: { dockerImage: 'ghcr.io/test/init:sha-' + input.targetSha, containerPort: 8899 } };
+    expect((await request('POST', route, undefined, body)).status).toBe(401);
+    for (const key of [keys.p2, keys.global, keys.create]) expect((await request('POST', route, key, body)).status).toBe(403);
+    expect((await request('POST', route, keys.p1, { ...body, ownerToken: 'f'.repeat(64) })).status).toBe(403);
+    const oversized = await request('POST', route, keys.p1, { ...body, profile: { ...body.profile, env: { SECRET: 'x'.repeat(17000) } } });
+    expect(oversized.status).toBe(413); expect(oversized.raw).not.toContain(begun.body.ownerToken);
+    const created = await request('POST', route, keys.p1, body); expect(created.status).toBe(201);
+    expect(created.body.run.creationIntent.phase).toBe('configured'); expect(created.raw).not.toMatch(/ownerToken|ownerHash|dockerImage/);
   });
   it('uses small bounded parser after auth instead of global rawBody parser', async () => {
     const oversized = await request('POST', '/api/acceptance-resource-runs', keys.p1, { ...input, ownerToken: 'sensitive-capability'.repeat(200) });

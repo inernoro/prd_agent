@@ -11,13 +11,17 @@ function pendingRows(state: Reader): readonly AcceptanceResourceRun[] {
 /** Unknown intent shape is occupied too. Neither a revoked lease nor a terminal report proves release. */
 export function acceptanceReleaseBlockReason(state: Reader, branchId: string): string | null {
   const canonical = Object.values(state.getState().acceptanceResourceRuns || {});
+  if ([...canonical, ...pendingRows(state)].some(row => row.branchId === branchId && row.stage === 'active'
+    && Object.prototype.hasOwnProperty.call(row, 'creationIntent'))) return 'acceptance_creation_reconciliation_required';
   return [...canonical.filter(row => row.stage !== 'released'), ...pendingRows(state)]
     .some(row => row.branchId === branchId && Object.prototype.hasOwnProperty.call(row, 'releaseIntent'))
     ? ACCEPTANCE_RELEASE_BLOCKED : null;
 }
 /** Internal lease scope only; the release caller must separately validate project access, owner and real evidence. */
 export function acceptanceReleaseOperationAdmission(state: Reader, request: BranchOperationRequest): string | null {
-  if (!acceptanceReleaseBlockReason(state, request.branchId)) return null;
+  const blocked = acceptanceReleaseBlockReason(state, request.branchId);
+  if (!blocked) return null;
+  if (blocked === 'acceptance_creation_reconciliation_required') return blocked;
   if (request.kind !== 'acceptance-release') return ACCEPTANCE_RELEASE_BLOCKED;
   const table = state.getState().acceptanceResourceRuns || {};
   const holders = Object.values(table).filter(row => row.branchId === request.branchId && row.stage !== 'released'

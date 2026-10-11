@@ -16,6 +16,9 @@ const ERRORS = new Map<string, number>([
   ['acceptance_report_timeout', 504], ['acceptance_report_mismatch', 409],
   ['acceptance_report_unreadable', 409], ['acceptance_report_changed', 409],
   ['acceptance_terminal_receipt_required', 409],
+  ['acceptance_creation_profile_invalid', 400], ['acceptance_creation_unavailable', 503],
+  ...['acceptance_creation_scope', 'acceptance_creation_profile_collision', 'acceptance_creation_changed', 'acceptance_creation_busy', 'acceptance_creation_cancelled',
+    'acceptance_creation_intent_changed', 'acceptance_creation_reconciliation_required'].map(code => [code, 409] as [string, number]),
   ['acceptance_release_unavailable', 503], ['acceptance_release_busy', 409], ['acceptance_release_cancelled', 409],
   ...['acceptance_release_scope', 'acceptance_release_branch_changed', 'acceptance_release_resource_changed',
     'container_release_scope', 'container_drift', 'container_stop_unconfirmed', 'container_remove_unconfirmed',
@@ -52,6 +55,13 @@ export function createAcceptanceResourceRunsRouter(deps: { stateService: StateSe
         isolationRunId: field(req, 'isolationRunId'), profileId: field(req, 'profileId') });
       res.status(201).json(owner);
     } catch (error) { failure(res, error); }
+  });
+  router.post('/acceptance-resource-runs/:id/create-profile', json({ limit: '16kb' }), async (req, res) => {
+    const id = req.params.id, run = RUN_ID.test(id) ? service.get(id) : undefined;
+    if (!run) { res.status(404).json({ error: 'acceptance_run_not_found' }); return; }
+    if (deny(req, res, run.projectId)) return;
+    try { res.status(201).json({ run: await service.createProfile(id, field(req, 'ownerToken'), req.body?.profile) }); }
+    catch (error) { failure(res, error); }
   });
   router.get('/acceptance-resource-runs/:id', (req, res) => {
     const id = req.params.id;

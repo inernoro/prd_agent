@@ -21,7 +21,8 @@ export type BranchOperationKind =
   | 'auto-restart'
   | 'janitor-remove'
   | 'candidate-reconcile'
-  | 'acceptance-release';
+  | 'acceptance-release'
+  | 'acceptance-create';
 
 export type BranchOperationTrigger = 'manual' | 'webhook' | 'auto-lifecycle' | 'scheduler' | 'janitor' | 'system';
 
@@ -297,22 +298,25 @@ export class BranchOperationCoordinator {
     // Release cannot overtake an executor or an already accepted deployment. Revocation
     // alone does not settle outstanding awaits, so active-map ownership is insufficient.
     const executions = [...this.unsettled.values()].filter(execution => execution.branchId === branchId);
-    if (request.kind === 'acceptance-release') {
+    if (request.kind === 'acceptance-release' || request.kind === 'acceptance-create') {
+      const prefix = request.kind === 'acceptance-create' ? 'acceptance_creation' : 'acceptance_release';
+      const source = request.kind === 'acceptance-create' ? 'acceptance-resource-create' : 'acceptance-resource-release';
       const valid = (request.trigger === 'system' || request.trigger === 'manual')
-        && request.source === 'acceptance-resource-release' && request.profileId == null
+        && request.source === source && request.profileId == null
         && typeof request.projectId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(request.projectId)
         && typeof branchId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(branchId)
         && typeof request.acceptanceRunId === 'string' && /^ar_[a-f0-9]{32}$/.test(request.acceptanceRunId)
         && typeof request.commitSha === 'string' && /^[a-f0-9]{40}$/.test(request.commitSha);
-      if (!valid) return this.pendingRejection(request, 'acceptance_release_scope');
-      if (executions.length) return this.pendingRejection(request, 'acceptance_release_unsettled');
+      if (!valid) return this.pendingRejection(request, prefix + '_scope');
+      if (executions.length) return this.pendingRejection(request, prefix + '_unsettled');
       const journal = this.journal?.snapshot();
       const pending = [...this.pendingWebhookDeploys.values(), ...[...this.pendingDispatches.values()].map(item => item.pending),
         ...(journal?.queued || []), ...(journal?.claims.map(claim => claim.pending) || [])];
       const reserved = [...this.reservedContinuations.values()].some(item => item.branchId === branchId && item.expiresAt >= Date.now());
-      if (pending.some(item => item.branchId === branchId) || reserved) return this.pendingRejection(request, 'acceptance_release_busy');
-    } else if (executions.some(execution => execution.lease.request.kind === 'acceptance-release')) {
-      return this.pendingRejection(request, 'acceptance_release_unsettled');
+      if (pending.some(item => item.branchId === branchId) || reserved) return this.pendingRejection(request, prefix + '_busy');
+    } else if (executions.some(execution => ['acceptance-release', 'acceptance-create'].includes(execution.lease.request.kind))) {
+      return this.pendingRejection(request, executions.some(execution => execution.lease.request.kind === 'acceptance-create')
+        ? 'acceptance_creation_unsettled' : 'acceptance_release_unsettled');
     }
     const pendingToken = request.pendingOperationId != null || request.pendingGeneration != null;
     if (pendingToken) {
