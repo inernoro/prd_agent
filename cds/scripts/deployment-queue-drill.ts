@@ -116,9 +116,15 @@ async function main(): Promise<void> {
     const firstBody = first.text(); firstBody.catch(() => {}); drains.push(firstBody);
     const repeated = await post('/deploy', one, 'manual'); const repeatedBody = await repeated.text(); assert.ok([200, 202].includes(repeated.status), repeatedBody);
     assert.equal(repeated.headers.get('x-cds-deployment-run-id'), originalRunId);
-    const queued = async (role: string, sha: string) => { const response = await post(`/deploy/${role}`, sha); const body = await response.text(); assert.equal(response.status, 202, body);
-      const runId = response.headers.get('x-cds-deployment-run-id'); assert.ok(runId); return runId; };
-    const oldApiRun = await queued('api', two); const sameOld = await queued('api', two); assert.equal(sameOld, oldApiRun);
+    const queued = async (role: string, sha: string, expectedStatus: 'merged' | 'joined' = 'merged') => {
+      const response = await post(`/deploy/${role}`, sha); const body = await response.text();
+      assert.equal(response.status, 200, body); assert.ok(response.headers.get('content-type')?.includes('text/event-stream'));
+      const complete = body.match(/event: complete\r?\ndata: ([^\r\n]+)/); assert.ok(complete, body);
+      const payload = JSON.parse(complete[1]); assert.equal(payload.ok, true); assert.equal(payload.operationStatus, expectedStatus);
+      assert.equal(payload.pendingCommitSha, sha); const runId = response.headers.get('x-cds-deployment-run-id'); assert.ok(runId);
+      assert.equal(payload.deploymentRunId, runId); assert.equal(runs.get(runId)!.commitSha, sha); return runId;
+    };
+    const oldApiRun = await queued('api', two); const sameOld = await queued('api', two, 'joined'); assert.equal(sameOld, oldApiRun);
     const webRun = await queued('web', two); const latestApiRun = await queued('api', three);
     assert.equal(runs.get(oldApiRun)!.status, 'cancelled'); assert.equal(runs.get(latestApiRun)!.status, 'queued'); assert.equal(runs.get(webRun)!.status, 'queued');
     await state.flush(); const queuedDisk = JSON.parse(await fs.readFile(stateFile, 'utf8'));
