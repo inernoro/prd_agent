@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.99 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.100 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -490,3 +490,9 @@ configured 只证明原 Profile 可靠配置，不授予注册、验收结束或
 所有新的 active→registered 必须经原创建意图、原部署来源、可靠保存的实际容器 reference、原 run running 和实际 inspect running 的专用登记事务；没有创建意图时，即使 lastDeploymentRunId 指向同项目/同分支/同完整 SHA 的 running，服务 full ID 与配置字段也一致，仍返回 acceptance_resource_unconfirmed。通用 writer 不得首次发布 registered，不能用内部调用旁路实际检查。未知与旧 active 行不自动迁移、登记或清理，保留待对账。
 
 已存储的 legacy registered/finished/released 行保留原报告回读、原 finish/release 行为，不补造 creationIntent/acceptanceOrigin，不允许重开首次登记。兼容性测试直接装载明确的既有 registered 快照，不通过新 register 生成它们；新部署→登记连续路径仍单独按实际创建协议验证。先红覆盖 kernel、真实 HTTP 和通用 writer 对完整同 SHA 历史成功的拒绝；正控包含新来源连续链及已存 legacy 报告/终结/清理。不扩原 BRC02/03/04/05/24；这段临时说明在完整生产门禁接管后退场。
+
+### 保存身份后的等待复核（P5-05，实施前冻结）
+
+原创建 reference 保存之后，每个网络 connect、start、活性及 readiness 等待前后都须核验同一服务对象的身份字段，而非仅引用相等：profileId、full container ID、容器名、宿主端口、完整提交、实际 image ID 与已保存 serviceDigest/reference 匹配，actual prebuilt/express 事实仍成立。容器 connect/start 使用本次 create 返回的不可变 full ID，不从可能变化的服务对象重新取目标；await 期间字段、权限、配置或原来源变化时失败关闭，不能继续 start 或发布成功。正常 status/log 变化不改变身份，不阻断原资源 finish/release。
+
+先红覆盖实际 owned HTTP→Container 的网络等待内原对象修改 containerId/name/image/hostPort/commit/prebuilt/mode，以及 start 等待和 readiness 等待漂移；旧实现必须实际触达漂移边界且违反零后继 start/零成功判据。修复不得按名称删除未知资源、重建或假定停止，保留原创建占用待对账。此临时实施说明在 P5-05 生产正式门禁完整接管后退场。
