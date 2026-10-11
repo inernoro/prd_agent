@@ -6248,7 +6248,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(m.status).json(m.body);
       return;
     }
-    res.json({ branch: branchForHumanView(req, branch) });
+    res.json({ branch: branchForHumanView(req, branch),
+      pendingDeployments: branchOperationCoordinator?.getPendingDeploymentStatus(branch.projectId || 'default', branch.id),
+    });
   });
 
   router.get('/branches/:id/resources', async (req, res) => {

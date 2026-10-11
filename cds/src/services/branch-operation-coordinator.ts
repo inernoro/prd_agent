@@ -493,6 +493,13 @@ export class BranchOperationCoordinator {
       || this.journal?.queued().find(pending => pending.branchId === branchId);
   }
 
+  getPendingDeploymentStatus(projectId: string, branchId: string) {
+    return this.journal?.getStatus(projectId, branchId) || {
+      availability: 'not-configured' as const, recoveryRequired: false,
+      total: 0, truncated: false, entries: [],
+    };
+  }
+
   async claimPending(pending: PendingWebhookDeploy): Promise<boolean> {
     const key = this.pendingKey(pending.request); const dispatch = this.pendingDispatches.get(key);
     if (!dispatch || dispatch.pending !== pending || dispatch.phase !== 'claiming') return false;

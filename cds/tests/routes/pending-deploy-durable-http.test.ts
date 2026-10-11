@@ -27,6 +27,7 @@ describe('actual own HTTP durable pending acceptance', () => {
     save = vi.fn(async () => {}); journal = new PendingDeployJournal({ load: async () => null, save }); await journal.ready();
     coordinator = new BranchOperationCoordinator(undefined, undefined, journal); coordinator.begin({ branchId: 'owned', projectId: 'default', kind: 'deploy', trigger: 'manual', commitSha: 'a'.repeat(40), commitPinned: true, configHash: '1'.repeat(64) });
     shell = new MockShellExecutor(); const app = express(); app.use(express.json());
+    app.use((req, _res, next) => { if (req.headers['x-owned-test-project']) (req as any).cdsProjectKey = { projectId: req.headers['x-owned-test-project'], keyId: 'owned-test' }; next(); });
     app.use('/api', createBranchRouter({ stateService: state, worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config), shell, config, branchOperationCoordinator: coordinator, deploymentRunService: new DeploymentRunService(state), deploymentVersionService: new DeploymentVersionService(state), registry: { getAll: () => [], getOnline: () => [] } as any }));
     server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
     diskGuard.reset(); diskGuard.setProbe(async () => [{ totalBytes: 100, freeBytes: 80 }]); await diskGuard.refreshNow();
@@ -65,4 +66,24 @@ describe('actual own HTTP durable pending acceptance', () => {
     await post({}, {}, route); expect((journal.snapshot().queued[0].request as any).pendingConfigHash).not.toBe(first.pendingConfigHash);
   });
 
+  function detail(project = 'default') {
+    return new Promise<{ status: number; data: any }>((resolve, reject) => {
+      const q = http.get({ host: '127.0.0.1', port: (server.address() as any).port, path: '/api/branches/owned', agent: false, headers: { 'x-owned-test-project': project } }, res => {
+        let body = ''; res.on('data', c => body += c); res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode!, data: JSON.parse(body) }));
+      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own detail timeout')));
+    });
+  }
+  it('exposes the acknowledged operation through existing detail, preserving project access and isolation', async () => {
+    await post(); const accepted = journal.snapshot().queued[0];
+    const own = await detail(); expect(own.status).toBe(200); expect(own.data.pendingDeployments).toMatchObject({ availability: 'ready', total: 1, entries: [{ operationId: accepted.operationId, generation: accepted.generation, profileId: 'api', phase: 'queued' }] });
+    expect((await detail('foreign')).status).toBe(403);
+    state.getBranch('owned')!.projectId = 'foreign'; const moved = await detail('foreign'); expect(moved.status).toBe(200); expect(moved.data.pendingDeployments.total).toBe(0);
+    expect(shell.commands).toHaveLength(0);
+  });
+  it('detail never publishes a pending record before reliable acceptance ACK', async () => {
+    let finish!: () => void; save.mockImplementationOnce(() => new Promise<void>(r => finish = r)); const response = post();
+    try { await vi.waitFor(() => expect(save).toHaveBeenCalledOnce()); const before = await detail(); expect(before.data.pendingDeployments.total).toBe(0); }
+    finally { finish?.(); await response; }
+    expect((await detail()).data.pendingDeployments.total).toBe(1);
+  });
 });

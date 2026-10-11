@@ -6,6 +6,19 @@ import { ShellExecutor } from './shell-executor.js';
 export interface PendingClaim { pending: PendingWebhookDeploy; phase: 'claimed' | 'unknown' | 'accepted'; claimedAt: string; result?: PendingDeployDispatchResult }
 export interface PendingJournalData { version: 1; queued: PendingWebhookDeploy[]; claims: PendingClaim[] }
 export interface PendingJournalIO { load(): Promise<unknown>; save(data: PendingJournalData): Promise<void> }
+export interface PendingDeploymentStatus {
+  availability: 'ready' | 'loading' | 'unavailable' | 'not-configured';
+  recoveryRequired: boolean;
+  total: number;
+  truncated: boolean;
+  entries: Array<{
+    operationId: string; generation: number; profileId: string | null;
+    trigger: BranchOperationRequest['trigger']; commitSha: string | null;
+    commitPinned: boolean | null; updatedAt: string; mergedCount: number;
+    phase: 'queued' | PendingClaim['phase']; recoveryRequired: boolean;
+    deploymentRunId?: string;
+  }>;
+}
 export const PENDING_JOURNAL_LIMITS = { queued: 512, branchQueued: 64, claims: 512, writes: 128, bytes: 2 * 1024 * 1024, ioMs: 3000, transactionMs: 10000 } as const;
 const key = (p: PendingWebhookDeploy) => JSON.stringify([p.request.projectId, p.branchId, p.request.profileId || null]);
 const id = (p: PendingWebhookDeploy) => `${p.operationId}:${p.generation}`;
@@ -67,6 +80,29 @@ export class PendingDeployJournal {
   isAvailable(): boolean { return this.loaded && !this.unavailable; }
   snapshot(): PendingJournalData { return copy(this.data); }
   queued(): PendingWebhookDeploy[] { return copy(this.data.queued); }
+  /** Read only acknowledged metadata; never copy requests or poll the executor. */
+  getStatus(projectId: string, branchId: string): PendingDeploymentStatus {
+    const scoped = (p: PendingWebhookDeploy) => p.branchId === branchId && p.request.projectId === projectId;
+    const rows = [
+      ...this.data.queued.filter(scoped).map(pending => ({ pending, phase: 'queued' as const })),
+      ...this.data.claims.filter(c => scoped(c.pending)),
+    ];
+    const needsRecovery = (row: typeof rows[number]) => this.recovered.has(id(row.pending)) || row.phase === 'unknown';
+    return {
+      availability: !this.loaded ? 'loading' : this.unavailable ? 'unavailable' : 'ready',
+      recoveryRequired: !this.isAvailable() || rows.some(needsRecovery),
+      total: rows.length, truncated: rows.length > 128,
+      entries: rows.slice(0, 128).map(row => ({
+        operationId: row.pending.operationId, generation: row.pending.generation,
+        profileId: row.pending.request.profileId || null, trigger: row.pending.request.trigger,
+        commitSha: row.pending.request.commitSha || null,
+        commitPinned: typeof row.pending.request.commitPinned === 'boolean' ? row.pending.request.commitPinned : null,
+        updatedAt: row.pending.updatedAt, mergedCount: row.pending.mergedCount,
+        phase: row.phase, recoveryRequired: needsRecovery(row),
+        ...('result' in row && row.result?.deploymentRunId ? { deploymentRunId: row.result.deploymentRunId } : {}),
+      })),
+    };
+  }
   blockReason(request: BranchOperationRequest): string | null {
     // Explicit stop can still stop the published graph; it does not prove unknown claims ended.
     if (request.kind === 'stop' || request.kind === 'candidate-reconcile') return null;

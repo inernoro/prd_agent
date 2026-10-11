@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.66 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.67 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -317,3 +317,10 @@ app级自更新排空首次检查保留；磁盘等待结束后再次检查同�
 已点名的pending凭证不得因排队期间部署模式变化而失去固定资格：原commitPinned=true时，接收端必须仍为true；原有效configHash存在的精确请求还须指纹相同，模式/运行配置/服务图漂移均拒绝旧请求。未点名manual whole的现有configHash包含已展开缓存SHA，不能用其直接阻止合法缓存推进；本补强不声称未点名配置漂移已冻结，SHA无关的意图指纹仍为待补缺口。历史缺原指纹的兼容记录仍保留，不能补猜原配置。临时说明在完整自动意图/配置门禁接管后退场。
 
 新受理的whole/Profile待部署请求另存pendingConfigHash：使用同一有效配置计算器，将仅用于镜像模板展开的ciTargetSha/githubCommitSha固定为40位零占位后计算，原分支身份、模式、运行参数、服务图与合并env不变。字段只存摘要；不得替代版本的configHash。派发凭证兑换时原pendingConfigHash存在就要求相同，故缓存提交推进不改变该摘要，模式/服务图/运行配置漂移会拒绝。字段为schema1已知可选字段，历史缺字段不猜补；重载历史仍需既有恢复对账。此临时说明由实际意图指纹门禁及完整P3报告接管后退场。
+
+
+### 待部署可观测投影（P3-01/P3-08，实施前冻结）
+
+现有GET /api/branches/:id通过原项目权限检查后，额外返回pendingDeployments。只按当前Branch的projectId与id投影可靠journal；同id改属其他项目不能继承原项目记录。不得输出actor/requestId/source/reason、配置摘要、环境或派发凭证内容。投影只含原operationId/generation、Profile、trigger、受理时参考提交及点名资格、更新时间、journal阶段、是否待恢复和已经可靠保存的合法run ID；提交参考不当执行提交，claimed/accepted不当Daemon已启动或完成。
+
+可靠ACK前只显示上一份已确认数据，读不等待磁盘、不复制全部journal或发Docker命令；单分支最多128条并明确total/truncated。health明确ready/loading/unavailable/not-configured，未知不可显示为空队列通过。重载原记录显示待恢复而非自动派发；明确unknown同样待对账。终态移除仅说明pending凭证已结算，历史结果继续在run/事件中读取。此步骤不完成新run关联、执行器/Daemon安全恢复或UI/正式验收；完整P3查询门禁与报告接管后退场临时说明。

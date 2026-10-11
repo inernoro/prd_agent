@@ -124,3 +124,36 @@ describe('durable pending intent journal', () => {
   });
 
 });
+
+
+describe('scoped durable pending observation', () => {
+  it('projects recovered own Worker file records without request details or foreign scopes', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-own-pending-view-')); const file = path.join(root, 'pending.json');
+    try {
+      const j = new PendingDeployJournal(pendingJournalFileIO(file)); await j.ready();
+      const p = { ...intent(), request: { ...intent().request, actor: 'PRIVATE_ACTOR', requestId: 'PRIVATE_REQ', reason: 'PRIVATE_REASON', configHash: 'PRIVATE_DIGEST' } };
+      await j.upsert(p);
+      const restored = new PendingDeployJournal(pendingJournalFileIO(file)); await restored.ready();
+      const status = restored.getStatus('p', 'owned'); expect(status.availability).toBe('ready'); expect(status.recoveryRequired).toBe(true);
+      expect(status.entries).toHaveLength(1); expect(status.entries[0]).toMatchObject({ operationId: 'op_api', generation: 2, profileId: 'api', phase: 'queued', recoveryRequired: true });
+      expect(JSON.stringify(status)).not.toContain('PRIVATE_'); expect(restored.getStatus('foreign', 'owned').total).toBe(0); expect(restored.getStatus('p', 'other').total).toBe(0);
+      status.entries[0].operationId = 'op_changed'; expect(restored.getStatus('p', 'owned').entries[0].operationId).toBe('op_api');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  it('publishes only acknowledged data, then distinguishes unknown and terminal settlement', async () => {
+    const { journal, io } = await memory(); let finish!: () => void;
+    io.save.mockImplementationOnce(() => new Promise<void>(r => finish = r)); const writing = journal.upsert(intent()); await tick();
+    try { expect(journal.getStatus('p', 'owned').total).toBe(0); } finally { finish(); await writing; }
+    expect(journal.getStatus('p', 'owned').entries[0].phase).toBe('queued'); await journal.claim(intent());
+    await journal.settle(intent(), { outcome: 'unknown', reason: 'terminal_missing', deploymentRunId: 'dr_owned' });
+    expect(journal.getStatus('p', 'owned')).toMatchObject({ recoveryRequired: true, entries: [{ phase: 'unknown', deploymentRunId: 'dr_owned' }] });
+    await journal.settle(intent(), { outcome: 'completed', reason: 'deployment_completed' }); expect(journal.getStatus('p', 'owned').total).toBe(0);
+    const bad = new PendingDeployJournal({ load: async () => ({ version: 2 }), save: async () => {} });
+    expect(bad.getStatus('p', 'owned').availability).toBe('loading'); await bad.ready(); expect(bad.getStatus('p', 'owned').availability).toBe('unavailable');
+  });
+  it('bounds projected claims while reporting the full scoped denominator', async () => {
+    const { journal } = await memory();
+    for (let i = 0; i < 129; i++) { const p = intent('scope' + i); await journal.upsert(p); await journal.claim(p); }
+    const status = journal.getStatus('p', 'owned'); expect(status.total).toBe(129); expect(status.entries).toHaveLength(128); expect(status.truncated).toBe(true);
+  });
+});
