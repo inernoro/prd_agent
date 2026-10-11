@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.79；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.80；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -710,3 +710,9 @@ v1.78：IMP实际 archive_report调用方产品d5bbed855b52c4d75feb72f82a78c81dc
 ## v1.79 收尾执行前置条件恢复审计
 
 v1.79：guide2.93/d7ce先冻结BRX20，独立原Worker3/8（5真红同一absence根）后CDS dfad产品两源收紧exit1/空stdout/单一标准诊断+精确ID，timeout/混合stderr/错ID保持未知；内部acceptance-release先严格实际项目/分支/full40/ar32/source/trigger/noProfile，拒绝越过未结算执行、accepted pending/dispatch/journal queued+claims和未过期重建续约，release原租约未真实结算时同分支新操作明确拒绝，异分支旧优先级保留。后继440815仅纠正原route成功夹具裸NoSuch为实际identity，两产品源blob等dfad；主35先29fail/6pass（newkind功能缺失不冒充原HTTP漏洞）后37全绿、相关192/路由269/coretsc0、最终完整684files/10095pass/19skip/1旧obsolete，exit0/66.60s。full-v1的1fail+10094pass和related-v2未claim就settle的1fixture失败完整保留，不放宽守卫；根precommit缺node_modules打印passed不作验证。固定dfad独立原Worker8/8，Coordinator完整回执待返；主新370派生重新编译exact一致，BRX先基线4Git核验。IMP d5bbed最终不可变独立回执主已核1306hash/386Git：原2/2、CLI24/transport20/asset5/缺失receipt8/新OS2/真实60s1/归档后未知2各绿不求和，日期旧红新绿pair保留。创建前begin/实际register、authenticated release/持久intent/原子目标Profile+override+service/released仍未实现；原IMP按名helper真红开放。45partial-local/4todo、formal49全部not-executed/visual N/A；本批无push/PR/共享写/部署，原八push+CI不继承新SHA，registry资格0与隔离准入未变，原八push/selfupdate授权保持，新CDS发布前问待答，goal active。
+
+## v1.80 State释放事务与独立复验
+
+v1.80：guide2.94/e8efd先提交完整释放生命周期权威，独立16条事务子集和旧普通writer实际0/1真红已冻结。CDS516003新增专用State原子发布：普通writer禁止released，必须已有finished/removed意图、精确原容器/所属/配置/服务身份，两个真实持久屏障ACK后才发布released并定向删除原extraProfile/override/service；并发同/异分支及split hints保留，失败撤draft但保留原finished与持久意图。主原14功能红→新增19绿，相关90/coretsc0，完整685files/10114pass/19skip/1旧obsolete，exit0/92.39s。固定516独立原writer0/1→1/1；protocol21/windows16/drift31/真实EISDIR2/永久EACCES2各局部绿、重叠不相加；主核1047hash/374Git/370重新派生，summary18cf09f0f3b39ede70f942f76fea8155c7de8a66dac75d8b2d3db5c789063624。controlled removed夹具不证明Daemon；真实release路由/编排/意图创建/普通入口持久闸门/IMP实际创建链仍缺。dfad最终独立原Worker3/8→8/8、actual Coordinator46/46及模型16/16分列，主818hash/374Git/370派生核验通过；IMP d5bb独立最终仅历史复用。45partial-local/4todo、正式49全部not-executed/视觉N/A；八已push及CI成功未完整部署、未传播新SHA，registry资格0与隔离准入不变。本批仅本地产品/权威/两份目标文档，无push/PR/shared写/selfupdate；既有八push/selfupdate授权有效，新CDS发布前问仍待答，goal active。
+
+expected result：资源物理释放后，终态与三个目标图项同一事务确认，未知收尾仍占用原意图。current evidence：固定516主19/90/full10114/core0、独立原writer1/1与事务局部组，完整源及原件已核。visible result：本修订未部署，正式视觉N/A。gap：真实Daemon停止/普通rm、认证release编排、持久意图普通入口闸门、IMP creator及八完整分支/性能/恢复/双主题/48h未执行。required action：继续原P5生命周期，不把State事务或CI绿当整项目通过。主产品收据：/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/release-publication-v180/main-516003-product-receipt.json SHA be6cd44bb8430a8106aa8f5a1e866b928f614d16747281a39501bf99c4893e95。
