@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.95 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.96 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -464,3 +464,13 @@ released 与目标 extraProfile、该 ID 的 profileOverride、该 ID 的 servic
 configured 只证明原 Profile 可靠配置，不授予注册、验收结束或物理释放资格。下一阶段必须从服务端实际启动的单 Profile 部署冻结原 deployment run，并在登记时核对原项目/分支/Profile/完整 SHA/完整容器 ID 与配置；last 指针、同目标的后继成功或流式受理不得代替。失败或未知创建保持 active 与意图，不能造 registered 或通过新 begin 取代。实际外部创建者与部署绑定尚未接完时，不声明完整创建链可用。
 
 先红覆盖旧全集合追加覆盖并发项、缺能力/跨项目、提案越界与泄漏、第一与第二 ACK 的可见性、新进程待对账与 configured 正控、碰撞/分支或配置漂移、真实磁盘失败和普通入口绕过。使用自有 HTTP/StateJSON 与新进程证明本地边界，不继承真实 Daemon、数据库、八分支或视觉通过。P5-05 完整创建/部署/恢复自动门禁和生产报告接管后可删除本段临时实施细节，原归属、定向追加与未知保留的终态规则继续由对应权威章节承载。
+
+### 原创建部署的可信绑定（P5-05，实施前冻结）
+
+专用 POST `/api/acceptance-resource-runs/:id/deploy` 只接受原能力凭证，项目权限先于凭证；Profile、完整 SHA、配置摘要和部署来源均由服务端从原 configured run 读取，调用者不得指定 deploymentRunId、operationId、目标、版本或一次性选项。生产装配必须复用现有单服务部署的 shared Coordinator、DeploymentRunService、制品准入、磁盘/预览/自更新闸、执行器和就绪检查，不建立 self-HTTP、第二协调器或模拟运行对象。该入口实际接线与外部创建者完成前不声明可用。
+
+容器动作前，服务器取得原 acceptance-create 整分支独占租约，以实际 DeploymentRunService 新建的 pending run 进行专用可靠绑定。原 acceptance run 只能从 active/configured 前向进入 deploying，冻结实际 deployment run ID 与原租约 operationId；实际部署记录同时保存 version1 acceptanceOrigin（原验收 ID、Profile、目标 SHA、配置摘要、operationId）。两次保存边界仍保持原公开配置与 run；第二次 ACK 才原子公开这两项关联，所有等待后检查实际 run 引用/内容、原分支/配置/能力和原租约。不得采用 running/failed 历史 run、普通 deploy 租约或只改一侧的关联；异项目、异分支、异 SHA、异 Profile、pending/publication 不明或资源已存在均拒绝。未知结果保留配置与创建占用，不自动重试或新 begin。
+
+可信部署关联本身仍不授予 register：实际 runService 启动返回后须从执行器 inspect 核原 full container ID、owner、image/config fingerprint、无可写挂载，再可靠记录原创建资源身份；实际 readiness 与原绑定 run 成功终态及原服务配置/身份都匹配后，才允许原 owner 登记。未实现这个 inspect/持久边界的 deploying run 仍不可登记。后续 last 指针、同目标其他成功、SSE完成或客户端填写身份不能替代原来源；旧无创建关联的首次 register 根缺口仍须随生产接线失败关闭，既有 registered 记录不被补造为新创建。
+
+先红包括缺少专用绑定、普通/失效租约、已终态/异目标 run、配置/override/服务碰撞、两 ACK 公开一致性、等待中 run 内容/分支/权限/租约漂移、实际磁盘失败及未知补偿、新进程 pending/committed关联；这是原 BRC02/03/04/05/24 的技术子集，不扩正式分母。真实 BranchRouter/Server 接线、actual runService/Daemon身份、IMP宿主创建者、八全图及视觉必须分层执行，不由内核绿继承。P5-05 完整生产创建/恢复门禁及报告接管后可删除本段临时实施细节。
