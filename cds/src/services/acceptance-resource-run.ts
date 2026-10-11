@@ -1,7 +1,15 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { BranchEntry, AcceptanceReportMeta, ServiceState } from '../types.js';
 import type { StateService } from './state.js';
-import type { OwnedContainerReference } from './owned-container-lifecycle.js';
+import type { OwnedContainerLifecycle, OwnedContainerReference } from './owned-container-lifecycle.js';
+import type { BranchOperationCoordinator } from './branch-operation-coordinator.js';
+
+export interface AcceptanceResourceReleaseBindings {
+  coordinator: BranchOperationCoordinator;
+  lifecycle: OwnedContainerLifecycle;
+  /** Only a bound executor may inspect or mutate this branch's registered resource. */
+  canExecute: (branch: Readonly<BranchEntry>) => boolean;
+}
 
 /** Persist before any stop; phase records confirmed facts, never client/Daemon uncertainty. */
 export interface AcceptanceResourceReleaseIntent {
@@ -61,7 +69,7 @@ const budgets = new WeakMap<StateService, { operations: Set<string>; reads: Set<
 /** Ownership/receipt kernel only: it does not grant HTTP access or remove Docker/filesystem resources. */
 export class AcceptanceResourceRunService {
   constructor(private readonly state: StateService, private readonly now: () => Date = () => new Date(),
-    private readonly reportTimeoutMs = 5000) {
+    private readonly reportTimeoutMs = 5000, private readonly releaseBindings?: AcceptanceResourceReleaseBindings) {
     if (!Number.isFinite(reportTimeoutMs) || reportTimeoutMs <= 0 || reportTimeoutMs > 5000) throw new Error('acceptance_report_budget_invalid');
     if (!budgets.has(state)) budgets.set(state, { operations: new Set(), reads: new Set() });
   }
@@ -254,5 +262,84 @@ export class AcceptanceResourceRunService {
     this.sameResource(run);
     if (digest(this.report(run, meta.id)) !== run.terminal.metaDigest || content === undefined || bodyDigest(content) !== run.terminal.bodyDigest) throw new Error('acceptance_report_changed');
     return { ...view(run), daemonVerificationRequired: true };
+  }
+
+  async release(id: string, ownerToken: string): Promise<AcceptanceResourceView> {
+    return this.operation(id, async () => {
+      let run = this.owned(id, ownerToken);
+      this.requireResolvedPublication(id);
+      if (run.stage === 'released') return view(run);
+      await this.cleanupEvidenceNow(id, ownerToken);
+      const bindings = this.releaseBindings;
+      const branch = this.branch(run);
+      if (!bindings || !bindings.canExecute(branch)) throw new Error('acceptance_release_unavailable');
+      const service = branch.services[run.profileId];
+      const serviceDigest = acceptanceResourceServiceDigest(service);
+      let runDigest = digest(run);
+      const decision = bindings.coordinator.begin({ projectId: run.projectId, branchId: run.branchId,
+        commitSha: run.targetSha, acceptanceRunId: id, kind: 'acceptance-release', trigger: 'system', source: 'acceptance-resource-release' });
+      if (decision.status !== 'started' || !decision.lease) throw new Error('acceptance_release_busy');
+      const lease = decision.lease;
+      let completed = false;
+      const fence = () => {
+        lease.assertCurrent(); lease.signal?.throwIfAborted();
+        if (!bindings.canExecute(branch)) throw new Error('acceptance_release_unavailable');
+        if (this.owned(id, ownerToken) !== run || digest(run) !== runDigest) throw new Error('acceptance_run_conflict');
+        if (this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+        this.requireResolvedPublication(id); this.sameResource(run);
+        if (this.state.getBuildProfile(run.profileId) || acceptanceResourceServiceDigest(branch.services[run.profileId]) !== serviceDigest) throw new Error('acceptance_resource_changed');
+        if (!run.terminal || digest(this.report(run, run.terminal.reportId)) !== run.terminal.metaDigest) throw new Error('acceptance_report_changed');
+      };
+      const reportFence = async () => {
+        fence();
+        const content = await this.readReport(id, run.terminal!.reportId); fence();
+        if (content === undefined || bodyDigest(content) !== run.terminal!.bodyDigest) throw new Error('acceptance_report_changed');
+      };
+      const persist = async (intent: AcceptanceResourceReleaseIntent) => {
+        const row = { ...run, seq: run.seq + 1, releaseIntent: intent };
+        await this.state.writeAcceptanceResourceRunDurably(row, run.seq, fence, reportFence);
+        run = this.owned(id, ownerToken); runDigest = digest(run); fence();
+      };
+      try {
+        await reportFence();
+        if (!run.releaseIntent) {
+          const reference = await bindings.lifecycle.capture({ projectId: run.projectId, branchId: run.branchId, operationId: lease.operationId }, service, fence, lease.signal);
+          fence();
+          if (reference.id !== run.resource!.containerId || reference.writableMounts.length) throw new Error('acceptance_release_scope');
+          await persist({ version: 1, phase: 'prepared', reference, serviceDigest, startedAt: this.now().toISOString() });
+        }
+        const intent = run.releaseIntent!;
+        if (intent.version !== 1 || !['prepared', 'stopped', 'removed'].includes(intent.phase)
+          || intent.reference.id !== run.resource!.containerId || intent.serviceDigest !== serviceDigest
+          || intent.reference.owner.projectId !== run.projectId || intent.reference.owner.branchId !== run.branchId
+          || intent.reference.owner.profileId !== run.profileId || intent.reference.writableMounts.length) throw new Error('acceptance_release_scope');
+        const reference = intent.reference;
+        let actual = await bindings.lifecycle.releaseState(reference, fence, lease.signal); await reportFence();
+        if (run.releaseIntent!.phase === 'prepared' && actual !== 'absent') {
+          if (actual === 'running') { await bindings.lifecycle.stop(reference, fence, lease.signal); await reportFence(); }
+          await persist({ ...intent, phase: 'stopped' });
+          actual = await bindings.lifecycle.releaseState(reference, fence, lease.signal); await reportFence();
+        }
+        if (actual !== 'absent') {
+          if (run.releaseIntent!.phase !== 'stopped' || actual !== 'stopped') throw new Error('container_stop_unconfirmed');
+          await bindings.lifecycle.removeStopped(reference, fence, lease.signal); await reportFence();
+        }
+        if (run.releaseIntent!.phase !== 'removed') await persist({ ...intent, phase: 'removed' });
+        const verifyRemoved = async () => {
+          await reportFence();
+          if (await bindings.lifecycle.releaseState(reference, fence, lease.signal) !== 'absent') throw new Error('container_remove_unconfirmed');
+          await reportFence();
+        };
+        await verifyRemoved();
+        const released = { ...run, seq: run.seq + 1, stage: 'released' as const };
+        await this.state.writeAcceptanceResourceReleaseDurably(released, run.seq, fence, verifyRemoved);
+        completed = true; return view(this.owned(id, ownerToken));
+      } catch (error) {
+        if (!lease.isCurrent() || lease.signal?.aborted) throw new Error('acceptance_release_cancelled');
+        throw error;
+      } finally {
+        bindings.coordinator.complete(lease, completed ? 'completed' : lease.signal?.aborted ? 'cancelled' : 'failed');
+      }
+    });
   }
 }

@@ -58,11 +58,14 @@ describe('Acceptance resource routes through actual server authentication and pa
     expect((await request('POST', '/api/acceptance-resource-runs', undefined, input)).status).toBe(401);
     const begun = await request('POST', '/api/acceptance-resource-runs', keys.p1, input);
     expect(begun.status).toBe(201); const owner = begun.body;
+    expect((await request('POST', '/api/acceptance-resource-runs/' + owner.run.id + '/release', undefined, { ownerToken: owner.ownerToken })).status).toBe(401);
     for (const key of [keys.p2, keys.global, keys.create]) {
       expect((await request('GET', '/api/acceptance-resource-runs/' + owner.run.id, key)).status).toBe(403);
       const rejected = await request('POST', '/api/acceptance-resource-runs/' + owner.run.id + '/register', key, { ownerToken: owner.ownerToken });
       expect(rejected.status).toBe(403); expect(rejected.raw).not.toContain(owner.ownerToken);
+      expect((await request('POST', '/api/acceptance-resource-runs/' + owner.run.id + '/release', key, { ownerToken: owner.ownerToken })).status).toBe(403);
     }
+    expect((await request('POST', '/api/acceptance-resource-runs/' + owner.run.id + '/release', keys.p1, { ownerToken: owner.ownerToken })).status).toBe(409);
     expect((await request('GET', '/api/acceptance-resource-runs/' + owner.run.id, keys.p1)).body.run.stage).toBe('active');
     expect(JSON.stringify(state.getState())).not.toContain(owner.ownerToken);
   });

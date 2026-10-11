@@ -85,6 +85,34 @@ export class OwnedContainerLifecycle {
     return this.mutate(reference, 'remove', assertCurrent, signal);
   }
 
+  /** Acceptance release is separate from candidate retirement: never force or delete volumes. */
+  async releaseState(reference: OwnedContainerReference, assertCurrent: () => void, signal?: AbortSignal): Promise<'running' | 'stopped' | 'absent'> {
+    if (!/^[a-f0-9]{64}$/.test(reference.id) || reference.writableMounts.length) throw new Error('container_release_scope');
+    assertCurrent(); signal?.throwIfAborted();
+    const result = await this.inspect(reference.id, signal);
+    assertCurrent(); signal?.throwIfAborted();
+    if (absent(result, reference.id)) {
+      // An old ID's disappearance never grants authority over a same-name successor.
+      await this.confirmAbsent(reference.name, assertCurrent, signal);
+      return 'absent';
+    }
+    const actual = this.parse(result);
+    if (fingerprint(actual) !== reference.fingerprint || actual.Mounts.some(mount => mount.RW)
+      || actual.Config.Labels['cds.protected'] === 'true') throw new Error('container_drift');
+    return actual.State.Running ? 'running' : 'stopped';
+  }
+
+  async removeStopped(reference: OwnedContainerReference, assertCurrent: () => void, signal?: AbortSignal): Promise<void> {
+    const phase = await this.releaseState(reference, assertCurrent, signal);
+    if (phase === 'absent') return;
+    if (phase !== 'stopped') throw new Error('container_stop_unconfirmed');
+    this.beforeMutation?.(reference, 'remove'); assertCurrent(); signal?.throwIfAborted();
+    const result = await this.shell.exec(`docker rm ${reference.id}`, { priority: 'delivery', timeout: 30_000, signal });
+    assertCurrent(); signal?.throwIfAborted();
+    if (result.exitCode !== 0) throw new Error('container_remove');
+    if (await this.releaseState(reference, assertCurrent, signal) !== 'absent') throw new Error('container_remove_unconfirmed');
+  }
+
   async confirmAbsent(name: string, assertCurrent: () => void, signal?: AbortSignal): Promise<void> {
     assertCurrent(); signal?.throwIfAborted();
     const result = await this.inspect(name, signal);

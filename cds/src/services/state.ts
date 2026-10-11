@@ -1209,6 +1209,7 @@ export class StateService {
       // Only a verified draft may enter the committed table. The first barrier saved intent only.
       this.committingAcceptanceDrafts.add(row.id);
       this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
+      if (releaseTarget && afterFlush) { await afterFlush(); assertCurrent(); }
       assertRow();
       if (releaseTarget) {
         const branch = this.state.branches[releaseTarget.branchId];
