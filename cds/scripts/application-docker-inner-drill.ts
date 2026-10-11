@@ -50,11 +50,27 @@ async function main(): Promise<void> {
       const owner = view.Config.Labels?.['cds.acceptance.owner'] || null;
       assert.ok(!owner || owner === source.owner, '独占空间发现其他归属，不猜测删除');
       rows.push({ id, name: view.Name, image: view.Image, created: view.Created, status: view.State.Status,
-        running: view.State.Running, owner, networkMode: view.HostConfig.NetworkMode,
+        running: view.State.Running, pid: view.State.Pid, owner, networkMode: view.HostConfig.NetworkMode,
         networks: Object.keys(view.NetworkSettings.Networks || {}),
         namespaceOwnership: 'initial-empty-private-daemon-and-volume; unchanged-daemon-id; no-primary-socket' });
     }
-    report.namespaceInventories ||= []; report.namespaceInventories.push({ stage, daemonId: info.ID, rows }); return rows;
+    report.namespaceInventories ||= []; report.namespaceInventories.push({ stage, at: new Date().toISOString(), daemonId: info.ID, rows }); return rows;
+  };
+  const processSnapshot = async (stage: string) => {
+    const text = (await execute('ps', ['-eo', 'pid,ppid,pgid,stat,rss,comm'], { encoding: 'utf8', timeout: 5000, maxBuffer: 512 * 1024 })).stdout;
+    report.processSnapshots ||= []; report.processSnapshots.push({ stage, at: new Date().toISOString(), text });
+  };
+  const eventSnapshot = async (stage: string) => {
+    // 所有事件均来自独占daemon；只保存身份/行为，舍弃任意标签与环境内容。
+    const from = String(Math.floor(new Date(report.startedAt).getTime() / 1000));
+    const to = String(Math.floor(Date.now() / 1000) + 1);
+    const text = await docker(['events', '--since', from, '--until', to, '--format', '{{json .}}'], 10_000);
+    const events = text.split('\n').filter(Boolean).map(line => JSON.parse(line));
+    assert.ok(events.length <= 4096, '独占事件证据超过上限，不静默截断');
+    report.namespaceEventSnapshots ||= []; report.namespaceEventSnapshots.push({ stage, at: new Date().toISOString(), events: events.map(event => ({
+      time: event.time, timeNano: event.timeNano, type: event.Type, action: event.Action, id: event.Actor?.ID,
+      name: event.Actor?.Attributes?.name || null, image: event.Actor?.Attributes?.image || null,
+      owner: event.Actor?.Attributes?.['cds.acceptance.owner'] || null })) });
   };
   const run = async (name: string, args: string[]) => {
     const id = await docker(['run', '-d', '--label', `cds.acceptance.owner=${source.owner}`, '--name', `${source.owner}-${name}`, ...args]);
@@ -179,6 +195,8 @@ async function main(): Promise<void> {
     try {
       // 该守护进程/卷由本批从空空间独占创建；原应用可产生无标签 helper。
       // 先保存身份并复核 daemon，再逐ID清理；这不是共享宿主的无标签容器删除策略。
+      await processSnapshot('after-original-application-shutdown');
+      await eventSnapshot('after-original-application-shutdown');
       const rows = await auditNamespace('after-original-application-shutdown-before-owned-namespace-cleanup');
       report.namespaceCleanup = [];
       for (const row of rows) {
@@ -188,8 +206,16 @@ async function main(): Promise<void> {
         containers.add(row.id); await docker(['rm', '-f', row.id]);
         report.namespaceCleanup.push({ id: row.id, owner: row.owner, removed: true, namespaceOwnership: row.namespaceOwnership });
       }
-      assert.equal(await docker(['ps', '-aq']), ''); report.ownedContainersRemoved = true;
-    } catch (error) { cleanupErrors.push(String(error)); }
+      await processSnapshot('after-owned-container-removal');
+      await eventSnapshot('after-owned-container-removal');
+      const remaining = await auditNamespace('after-owned-container-removal-before-zero-assertion');
+      report.remainingContainersBeforeOwnedDaemonRemoval = remaining;
+      assert.equal(await docker(['ps', '-aq']), ''); assert.equal(remaining.length, 0); report.ownedContainersRemoved = true;
+    } catch (error) {
+      cleanupErrors.push(String(error));
+      try { report.remainingContainersAfterCleanupFailure = await auditNamespace('after-cleanup-failure'); await eventSnapshot('after-cleanup-failure'); }
+      catch (diagnosticError) { report.cleanupDiagnosticError = String(diagnosticError); }
+    }
     try { for (const id of images) { const view = JSON.parse(await docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); await docker(['image', 'rm', '-f', id]); } report.ownedImagesRemoved = true; }
     catch (error) { cleanupErrors.push(String(error)); }
     await fs.rm(root, { recursive: true, force: true }); report.isolatedFilesRemoved = true;
