@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.69 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.70 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -342,5 +342,9 @@ app级自更新排空首次检查保留；磁盘等待结束后再次检查同�
 每run最多512段并明确truncated；观测边界使用有界枚举，不持久化命令、env、原始异常或任意标签。运行记录始终由原run引用及原op控制；测量段以不可变id和开始事实识别，可靠draft替换内部对象后仍能结束原段；回调失效/重复结束/开始事实改变/重复id/终态/新owner不能写后继，计时本身不能改变动作顺序、重放或取消任务，也不增加准入等待。观察器在run绑定本次执行op后创建。开始以save记录，正常终态沿用run可靠落盘屏障；未结束段在终态/重启收敛时只标unknown，不猜实际外部动作结束时间。测量失败或时钟非法显式无测量值，不影响原业务结果。
 
 并行Profile区间使用同纪元单调偏移取并集作为已观测墙钟区间，另列工作时长总和，不能直接相加冒充用户总等待。开放/unknown/truncated段使汇总带incomplete；汇总分别列completed/failed/cancelled，observed不等于动作成功。completedWallMs只是已观测边界的闭合区间，不是九阶段完整端到端耗时或真实性能pass。每段以commitShaAtStart保留开始时记录中的提交（可能尚未解析），并以run最终目标另行读取，不把缓存提交冒充执行目标。
+
+外部CI事实另存可选ciTiming v1，不与本地单调纪元混合。只读取项目已绑定GitHub安装与仓库的branch-image.yml工作流：完整SHA、分支、repository/head_repository、workflow path、event（push或workflow_dispatch）、run id/attempt与每个job id/run id/attempt/SHA均严格匹配；使用attempt-specific jobs，未绑定、fork/其他workflow、缺字段或读取失败保持未观测。job自身created_at→started_at仅称job启动前等待，started_at→completed_at仅称job执行时间（含checkout/test/push），不推导纯runner不足或纯编译；不以run/step时间补job缺失时间。并行job在同provider run/attempt时钟取阶段区间并集及独立work sum；失败/取消有完整时间仍可观测并保留outcome，未知/open/截断使incomplete，不删失败分母冒充成功。
+
+CI采集是旁路观察：每Router最多4在途/16排队、请求从受理起3秒截止、64项30秒缓存、每HTTP响应256KiB、每次最多100 jobs。超时abort；底层未结束仍占原槽，不能靠超时无限放行悬挂任务。回调不阻塞部署、不输出/保存token或原异常。只在whole/Profile实际exact目标已冻结时启动，发布前重核原run引用/id/op/project/branch/SHA、租约和非终态；缓存按安装/仓库/分支/完整SHA隔离且返回副本，晚到/新owner不写。collector缺权限、满额、超时或字段缺失只使计时未观测，不改变制品准入、成功/失败或回退策略。页面和执行器尚未接入，不能据CI旁路或历史workflow宣布正式通过。此临时接入说明在九阶段正式自动门禁完整接管后退场。
 
 接入首先覆盖实际whole/Profile的非skip pull、exact artifact准入、源码槽实际onQueued等待，以及候选容量核验、预构建启动、就绪、路由消费者ACK和回收/失败恢复。边界需明确：capacity-check与source-slot-wait不同，runtime预构建启动与源码编译不混合，route-ack只测实际ACK而非整个切换。尚未接入的执行器路径、普通终态之后的收尾、外部CI及页面展示保持缺口，不据局部记录宣布P0-04完成。该临时实施说明在九阶段实际自动门禁与正式P0/P6报告完整接管后退场。
