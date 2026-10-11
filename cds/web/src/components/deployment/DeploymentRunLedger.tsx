@@ -103,7 +103,7 @@ export function DeploymentRunLedger({
 function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; className: string } {
   if (status === 'running') return { label: '部署成功', className: 'border-ok/30 bg-ok-soft text-ok' };
   if (status === 'failed') return { label: '部署失败', className: 'border-destructive/30 bg-destructive/10 text-destructive' };
-  if (status === 'cancelled') return { label: '已取消', className: 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300' };
+  if (status === 'cancelled') return { label: '已取消', className: 'border-border bg-muted text-muted-foreground' };
   const labels: Record<Exclude<DeploymentRunStatus, 'running' | 'failed' | 'cancelled'>, string> = {
     pending: '已受理',
     queued: '排队中',
