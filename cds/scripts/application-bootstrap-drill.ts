@@ -43,10 +43,11 @@ export interface ApplicationBootstrapContext {
   root: string; repo: string; runtime: string; port: number; configFile: string;
   report: any;
   request: (endpoint: string, method?: string, body?: unknown, authenticated?: boolean) => Promise<BootstrapRequestResult>;
-  requestRaw: (endpoint: string, body?: unknown) => Promise<Response>;
+  requestRaw: (endpoint: string, body?: unknown, trigger?: 'manual' | 'webhook') => Promise<Response>;
   applicationPid: () => number | undefined;
   applicationProcessTree: () => ReturnType<typeof descendants>;
   readProbeEvents: () => Promise<any[]>;
+  readDispatchEvents: (projectId: string, branchId: string) => Promise<any[]>;
   restartForFailureRecovery: () => Promise<void>;
   stopForFailureRecovery: () => Promise<{ code: number | null; signal: string | null }>;
 }
@@ -163,8 +164,8 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       const text = await response.text(); let json: any; try { json = JSON.parse(text); } catch { /* HTML is retained only by MIME assertions. */ }
       return { status: response.status, json, cookie: response.headers.get('set-cookie')?.split(';')[0], mime: response.headers.get('content-type'), elapsedMs: performance.now() - began, text };
     };
-    const requestRaw = (endpoint: string, body?: unknown) => fetch(`http://127.0.0.1:${port}${endpoint}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie, 'X-CDS-Trigger': 'manual' },
+    const requestRaw = (endpoint: string, body?: unknown, trigger: 'manual' | 'webhook' = 'manual') => fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie, 'X-CDS-Trigger': trigger },
       body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual', signal: AbortSignal.timeout(180_000),
     });
     const ready = async () => waitFor(async () => { if (application!.exitCode !== null) throw new Error('完整index在就绪前退出');
@@ -178,12 +179,25 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
     };
     const readProbeEvents = async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: { $in: ['agent-workspace-capability', 'core-image-cache'] } }).sort({ ts: -1 }).limit(512).toArray()).reverse()
       .map(event => ({ at: event.ts, source: event.source, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details }));
+    const readDispatchEvents = async (projectId: string, branchId: string) => {
+      const events = await mongo!.db(dbName).collection('cds_server_events').find({ projectId, branchId,
+        source: { $in: ['branch-operation-coordinator', 'auto-restart'] } }).sort({ ts: 1 }).limit(513).toArray();
+      assert.ok(events.length <= 512, '派发证据超过固定上限，不截断后宣称完整');
+      return events.map(event => ({ at: event.ts, source: event.source, action: event.action,
+        projectId: event.projectId, branchId: event.branchId, profileId: event.profileId,
+        operationId: event.operationId, operationKind: event.operationKind, operationTrigger: event.operationTrigger,
+        operationActor: event.operationActor, operationSource: event.operationSource, commitSha: event.commitSha,
+        details: Object.fromEntries(['operationId', 'generation', 'kind', 'trigger', 'actor', 'commitSha', 'source',
+          'mergedCount', 'activeOperationId', 'activeKind', 'replayOf', 'continuedFromKind', 'continuedFromSource']
+          .filter(key => Object.hasOwn(event.details || {}, key)).map(key => [key, event.details[key]])) }));
+    };
     // 失败仍须先保存真实退出前的收尾回执；不得把外层销毁自有daemon当作应用清理成功。
     captureProbeEvents = readProbeEvents;
     const context: ApplicationBootstrapContext = { root, repo, runtime, port, configFile, report, request, requestRaw,
       applicationPid: () => application?.pid,
       applicationProcessTree: () => application?.pid ? descendants(application.pid) : [],
       readProbeEvents,
+      readDispatchEvents,
       restartForFailureRecovery: async () => {
         assert.equal(application?.exitCode, 1); // A separate recovery after the original failed stop, never a replacement success assertion.
         start(); await ready();

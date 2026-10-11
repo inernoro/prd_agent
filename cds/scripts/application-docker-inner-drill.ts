@@ -82,6 +82,23 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   const settled = new Promise<void>(resolve => { settledResolve = resolve; });
   let captured = false;
   const record = (phase: string, fields: Record<string, unknown> = {}) => { timeline.push({ phase, at: new Date().toISOString(), ...fields }); };
+  type StartReplyGate = { containerName: string; claimed: boolean; released: boolean;
+    caught: Promise<{ at: string; status: number }>; confirm: (value: { at: string; status: number }) => void;
+    release: () => void; expired: boolean; timer?: ReturnType<typeof setTimeout>; send?: () => void };
+  let startGate: StartReplyGate | undefined;
+  const holdNextStart = (containerName: string) => {
+    assert.match(containerName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/); assert.equal(startGate, undefined);
+    let confirm!: (value: { at: string; status: number }) => void;
+    const caught = new Promise<{ at: string; status: number }>(resolve => { confirm = resolve; });
+    const gate: StartReplyGate = { containerName, claimed: false, released: false, caught, confirm,
+      expired: false, release: () => {
+        if (gate.released) return; gate.released = true; if (gate.timer) clearTimeout(gate.timer);
+        record('fixture-start-reply-released', { containerName, expired: gate.expired });
+        gate.send?.(); if (startGate === gate) startGate = undefined;
+      } };
+    startGate = gate;
+    return { caught, release: gate.release, expired: () => gate.expired };
+  };
   const server = http.createServer((request, response) => {
     const observe = trace(request); observe('received');
     const kind = /\/images\/create(?:\?|$)/.test(request.url || '') ? 'image-pull'
@@ -115,10 +132,24 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         }
         const status = String(backend.statusCode || 0); row.replies[status] = (row.replies[status] || 0) + 1;
         if (!delayed) {
-          response.writeHead(backend.statusCode || 502, backend.headers);
-          // Docker wait acknowledges headers before start; buffering them until
-          // the exit body arrives deadlocks the CLI before ContainerStart.
-          response.flushHeaders(); backend.pipe(response);
+          const send = () => {
+            if (response.destroyed) { backend.destroy(); return; }
+            response.writeHead(backend.statusCode || 502, backend.headers);
+            // Docker wait acknowledges headers before start; buffering them until
+            // the exit body arrives deadlocks the CLI before ContainerStart.
+            response.flushHeaders(); backend.pipe(response); backend.resume();
+          };
+          const startTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/start$/)?.[1];
+          const gate = startGate;
+          if (request.method === 'POST' && backend.statusCode === 204 && gate && !gate.claimed
+            && decodeURIComponent(startTarget || '') === gate.containerName) {
+            // The real daemon already started this exact private fixture. Hold
+            // only its real reply, without rewriting or reissuing the request.
+            gate.claimed = true; gate.send = send; backend.pause();
+            const at = new Date().toISOString(); record('original-start-reply-held', { containerName: gate.containerName, status: 204 });
+            gate.timer = setTimeout(() => { gate.expired = true; gate.release(); }, 5000);
+            response.once('close', gate.release); gate.confirm({ at, status: 204 });
+          } else send();
         }
         else {
           let text = ''; backend.on('data', chunk => { text += chunk; });
@@ -187,9 +218,10 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
   return { timeline, requestTimeline, traceOverflow: () => traceOverflow, enableTrace: () => { traceEnabled = true; },
+    holdNextStart,
     traffic: () => [...traffic.values()], arm: () => { armed = true; traceEnabled = true; }, caught,
     settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
-    close: async () => { for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
+    close: async () => { startGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
@@ -686,7 +718,7 @@ async function main(): Promise<void> {
             const content: any = await response.json(); assert.equal(content.source, sha); assert.equal(content.runtime, sha);
             assert.equal(content.service, profiles.find((p: any) => p.id === profileId).env.SERVICE_NAME);
             if (previousIds) assert.equal(view.Id, previousIds[profileId]);
-            result[profileId] = { id: view.Id, image: view.Image, startedAt: view.State.StartedAt, hostPort: service.hostPort, network: view.HostConfig.NetworkMode, content };
+            result[profileId] = { id: view.Id, containerName: view.Name.slice(1), image: view.Image, startedAt: view.State.StartedAt, hostPort: service.hostPort, network: view.HostConfig.NetworkMode, content };
           }
           return result;
         };
@@ -736,6 +768,80 @@ async function main(): Promise<void> {
           const shared = Object.values(report.newServices).filter((s: any) => s.content.service !== 'web') as any[];
           assert.equal(shared.length, 2); assert.equal(shared[0].image, shared[1].image);
           report.checks.push({ name: 'original-watchdog-resumes-confirmed-run-once-and-shared-worker-reuses-api-image', passed: true });
+          const dispatchProof = async (issuer: 'routes' | 'index', sha: string, runId: string) => {
+            return until(async () => {
+              const trace = await context.readDispatchEvents(projectId, branchId);
+              const dispatched = trace.filter(event => event.action === 'branch.operation.pending-dispatch.started' && event.commitSha === sha);
+              if (dispatched.length === 0) return undefined;
+              assert.equal(dispatched.length, 1); const dispatch = dispatched[0];
+              assert.equal(Object.hasOwn(dispatch.details, 'mergedCount'), issuer === 'routes');
+              if (issuer === 'routes') assert.ok(dispatch.details.mergedCount >= 1);
+              const run = (await readRuns()).find(item => item.id === runId); assert.ok(run);
+              assert.equal(run.operationId, dispatch.operationId); assert.equal(run.commitSha, sha);
+              const accepted = trace.filter(event => event.action === 'branch.operation.started'
+                && event.operationId === dispatch.operationId && event.details.replayOf?.operationId === dispatch.operationId);
+              if (accepted.length === 0) return undefined; assert.equal(accepted.length, 1);
+              assert.equal(accepted[0].details.replayOf.generation, run.operationGeneration);
+              assert.equal(accepted[0].projectId, projectId); assert.equal(accepted[0].branchId, branchId);
+              assert.equal(accepted[0].commitSha, sha);
+              const completed = trace.find(event => event.action === 'branch.operation.completed' && event.operationId === dispatch.operationId);
+              if (!completed) return undefined;
+              assert.equal(trace.some(event => event.action === 'branch.operation.pending-dispatch.failed' && event.operationId === dispatch.operationId), false);
+              return { issuer, fixedSourceEventDiscriminator: issuer === 'routes' ? 'mergedCount-present' : 'mergedCount-absent',
+                deploymentRunId: runId, operationId: dispatch.operationId, projectId, branchId, commitSha: sha,
+                dispatch, accepted: accepted[0], completed, originalEvents: trace };
+            }, 10_000);
+          };
+          report.actualPendingDispatchers = { routes: await dispatchProof('routes', newSha, queuedId) };
+          report.stage = 'original-background-restart-queues-next-target';
+          await fs.writeFile(path.join(projectRepo, 'marker.txt'), 'background-dispatch-fixture');
+          await git(['add', 'marker.txt']); await git(['commit', '-m', '隔离后台派发目标']);
+          const backgroundSha = await git(['rev-parse', 'HEAD']); assert.notEqual(backgroundSha, newSha);
+          report.project.sourceBackground = backgroundSha;
+          await build('api', backgroundSha, registry); await build('web', backgroundSha, registry);
+          const worker = Object.values(report.newServices).find((service: any) => service.content.service === 'worker') as any;
+          assert.ok(worker); const beforeRestart = await ownedView(worker.containerName);
+          assert.equal(beforeRestart.Id, worker.id); assert.equal(beforeRestart.State.Running, true);
+          const gate = probeProxy!.holdNextStart(worker.containerName);
+          let queuedBackgroundId: string | null = null;
+          try {
+            await docker(['stop', '--time', '2', worker.id], 5000);
+            report.backgroundRestartDriverFault = { containerId: worker.id, containerName: worker.containerName,
+              scope: 'one exact owned generic fixture only', at: new Date().toISOString() };
+            const held = await until(async () => Promise.race([gate.caught, Promise.resolve(undefined)]), 45_000);
+            assert.equal(held.status, 204); assert.equal((await ownedView(worker.containerName)).State.Running, true);
+            const beforeQueue = await context.readDispatchEvents(projectId, branchId);
+            const restarting = beforeQueue.filter(event => event.action === 'branch.operation.started' && event.operationKind === 'auto-restart'
+              && event.profileId === profiles.find((profile: any) => profile.env.SERVICE_NAME === 'worker').id);
+            assert.equal(restarting.length, 1); assert.equal(restarting[0].operationSource, 'auto-restart.tick');
+            report.backgroundRestartLease = restarting[0];
+            // This is a controlled authenticated trigger, not a real GitHub event.
+            // Only the original dispatcher may create internal replay credentials.
+            const pending = await requestRaw(`${branchPath}/deploy`, { commitSha: backgroundSha }, 'webhook');
+            const pendingText = await pending.text(); assert.ok([200, 202].includes(pending.status), pendingText);
+            const payloads = pendingText.trim().startsWith('{') ? [JSON.parse(pendingText)]
+              : pendingText.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+            const merged = payloads.find(payload => payload.operationStatus === 'merged'); assert.ok(merged, pendingText);
+            assert.equal(merged.activeOperationId, restarting[0].operationId);
+            queuedBackgroundId = pending.headers.get('x-cds-deployment-run-id'); assert.ok(queuedBackgroundId);
+            report.backgroundQueuedDeployment = { id: queuedBackgroundId, status: pending.status, accepted: merged,
+              controlledAuthenticatedTrigger: 'webhook', genuineGitHubEventVerified: false, originalRestartReply: held };
+            assert.equal(gate.expired(), false);
+          } finally { gate.release(); }
+          assert.ok(queuedBackgroundId);
+          await until(async () => { const run = (await readRuns()).find(item => item.id === queuedBackgroundId);
+            if (run?.status === 'failed') throw new Error(`原后台派发部署失败: ${JSON.stringify(run).slice(0, 2000)}`);
+            return run?.status === 'running' ? true : undefined; }, 180_000);
+          report.backgroundServices = await serviceProof(backgroundSha);
+          report.actualPendingDispatchers.index = await dispatchProof('index', backgroundSha, queuedBackgroundId);
+          const restartCompleted = report.actualPendingDispatchers.index.originalEvents.find((event: any) => event.action === 'branch.operation.completed'
+            && event.operationId === report.backgroundRestartLease.operationId);
+          assert.ok(restartCompleted);
+          assert.ok(Date.parse(restartCompleted.at) <= Date.parse(report.actualPendingDispatchers.index.dispatch.at));
+          assert.equal((await readRuns()).filter(item => item.commitSha === backgroundSha).length, 1);
+          report.actualBothPendingDispatchersVerified = true;
+          context.report.actualBothPendingDispatchersVerified = true;
+          report.checks.push({ name: 'two-original-signed-loopback-pending-dispatchers-bound-to-real-replay-lease-and-container-revisions', passed: true });
         } finally { stopReads = true; await sampler; report.readSamples = reads; }
         assert.ok(report.readSamples.length >= 3); assert.equal(report.readSamples.every((r: any) => r.status === 200 && !r.error), true, JSON.stringify(report.readSamples.filter((r: any) => r.status !== 200 || r.error)));
         report.checks.push({ name: 'original-list-task-and-full-health-short-window-requests-returned', passed: true });
