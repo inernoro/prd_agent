@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.98 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.99 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -484,3 +484,9 @@ configured 只证明原 Profile 可靠配置，不授予注册、验收结束或
 先红覆盖原名碰撞、错误或可写实际 inspect、身份 ACK 未确认/等待漂移、不得提前 connect/start、登记前未 running，以及普通部署兼容；本段只细化原 BRC02/03/04/05/24，不扩正式分母。完整生产创建/恢复门禁与报告接管后退场。
 
 已登记原创建资源之后，原报告 finish 和原资源 release 继续使用既有终结回执与清理协议；创建意图、来源、reference 和 serviceDigest 全程冻结。通用 writer 只允许同一 active 行无内容变更，registered 向 finished 增加经服务端验证的 terminal，或 finished 内首次 prepared/后续既定清理阶段推进；不得借终结路径重开登记、改原资源或清空创建意图。先红须包含实际创建、登记、报告、finish、release 的连续路径，不能只验 register 结束。这个临时推进说明与前段一同在完整生产门禁接管后退场。
+
+### 新首次登记关闭旧来源旁路（P5-05，实施前冻结）
+
+所有新的 active→registered 必须经原创建意图、原部署来源、可靠保存的实际容器 reference、原 run running 和实际 inspect running 的专用登记事务；没有创建意图时，即使 lastDeploymentRunId 指向同项目/同分支/同完整 SHA 的 running，服务 full ID 与配置字段也一致，仍返回 acceptance_resource_unconfirmed。通用 writer 不得首次发布 registered，不能用内部调用旁路实际检查。未知与旧 active 行不自动迁移、登记或清理，保留待对账。
+
+已存储的 legacy registered/finished/released 行保留原报告回读、原 finish/release 行为，不补造 creationIntent/acceptanceOrigin，不允许重开首次登记。兼容性测试直接装载明确的既有 registered 快照，不通过新 register 生成它们；新部署→登记连续路径仍单独按实际创建协议验证。先红覆盖 kernel、真实 HTTP 和通用 writer 对完整同 SHA 历史成功的拒绝；正控包含新来源连续链及已存 legacy 报告/终结/清理。不扩原 BRC02/03/04/05/24；这段临时说明在完整生产门禁接管后退场。
