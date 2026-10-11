@@ -282,11 +282,18 @@ export class BranchOperationCoordinator {
 
   constructor(private readonly events?: ServerEventLogSink | null,
     private readonly admitStart?: (request: BranchOperationRequest) => string | null,
-    private readonly journal?: PendingDeployJournal) {}
+    private readonly journal?: PendingDeployJournal,
+    private readonly admitRequest?: (request: BranchOperationRequest) => string | null) {}
 
   begin(request: BranchOperationRequest): BranchOperationDecision {
     request = { ...request };
     const branchId = request.branchId;
+    // Persisted ownership must be checked before join/merge, token redemption or priority cancellation.
+    if (this.admitRequest) {
+      let reason: string | null;
+      try { reason = this.admitRequest(request); } catch { reason = 'branch_operation_admission_unavailable'; }
+      if (reason) return this.pendingRejection(request, reason);
+    }
     // Release cannot overtake an executor or an already accepted deployment. Revocation
     // alone does not settle outstanding awaits, so active-map ownership is insufficient.
     const executions = [...this.unsettled.values()].filter(execution => execution.branchId === branchId);

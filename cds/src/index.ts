@@ -1,3 +1,4 @@
+import { acceptanceReleaseOperationAdmission } from './services/acceptance-release-admission.js';
 import { replayPendingDeploy } from './services/pending-deploy-replay.js';
 import { CandidateReconciler } from './services/candidate-reconciler.js';
 import { recordContainerLifecycleIntent } from './services/container-diagnostics.js';
@@ -2124,7 +2125,8 @@ if (pendingRecovered && (pendingRecovered.queued.length || pendingRecovered.clai
     details: { queued: pendingRecovered.queued.length, claims: pendingRecovered.claims.length } });
 }
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore,
-  request => candidateOperationAdmission(stateService, request), pendingDeployJournal);
+  request => candidateOperationAdmission(stateService, request), pendingDeployJournal,
+  request => acceptanceReleaseOperationAdmission(stateService, request));
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);

@@ -91,7 +91,7 @@ export function createSnapshotsRouter(deps: SnapshotsRouterDeps): Router {
       });
       res.json({ rolledBack: true, snapshot: { id: target.id, label: target.label }, message: `已回滚到「${target.label}」` });
     } catch (err) {
-      res.status(400).json({ error: (err as Error).message });
+      res.status((err as Error).message === 'acceptance_release_reconciliation_required' ? 409 : 400).json({ error: (err as Error).message });
     }
   });
 
@@ -137,7 +137,7 @@ export function createSnapshotsRouter(deps: SnapshotsRouterDeps): Router {
       stateService.markDestructiveOpUndone(op.id);
       res.json({ undone: true, message: `已通过回滚快照撤销「${op.summary}」` });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message === 'acceptance_release_reconciliation_required' ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 

@@ -1,3 +1,4 @@
+import { acceptanceReleaseBlockReason } from '../services/acceptance-release-admission.js';
 /**
  * Projects API router.
  *
@@ -4094,6 +4095,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         message: '默认项目不可删除。',
       });
       return;
+    }
+
+    if (stateService.getAllBranches().some(branch => (branch.projectId || 'default') === project.id
+      && acceptanceReleaseBlockReason(stateService, branch.id))) {
+      res.status(409).json({ error: 'acceptance_release_reconciliation_required' }); return;
     }
 
     // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"

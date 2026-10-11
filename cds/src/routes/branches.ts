@@ -1,3 +1,4 @@
+import { acceptanceReleaseBlockReason, acceptanceResourceCopyExcludedProfiles } from '../services/acceptance-release-admission.js';
 import { CiTimingCollector } from '../services/deployment-ci-timing.js';
 import { measureDeploymentStage } from '../services/deployment-stage-timing.js';
 import { singleServiceArtifactSet } from '../services/single-service-artifact-set.js';
@@ -2376,6 +2377,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+  // Durable release ownership applies before ordinary side effects, including configuration copies.
+  router.use((req, res, next) => {
+    if (!['POST', 'PUT', 'DELETE'].includes(req.method)) { next(); return; }
+    const match = /^\/branches\/([^/]+)(?:\/(.*?))?\/?$/.exec(req.path);
+    if (!match) { next(); return; }
+    const action = match[2] || '';
+    const writes = req.method === 'DELETE' || req.method === 'PUT' ||
+      /^(deploy(?:\/|$)|force-rebuild\/|stop$|restart$|reset$|pull$|checkout\/|unpin$|copy-config-from\/|database-init\/|prebuilt-image\/claim$|container-exec$|resources\/[^/]+\/(inject-connection|credentials\/reset)$)/.test(action);
+    if (!writes) { next(); return; }
+    let id: string;
+    try { id = decodeURIComponent(match[1]); } catch { next(); return; }
+    const branch = stateService.getBranch(id);
+    if (!branch) { next(); return; }
+    const denied = assertProjectAccess(req as any, branch.projectId || 'default');
+    if (denied) { res.status(denied.status).json(denied.body); return; }
+    const blocked = acceptanceReleaseBlockReason(stateService, id);
+    if (blocked) { res.status(409).json({ error: blocked }); return; }
+    next();
+  });
+
   const ciTimingCollector = githubApp && typeof githubApp.getCiTiming === 'function'
     ? new CiTimingCollector((target, signal) => githubApp.getCiTiming(target, signal)) : undefined;
   const captureExactCiTiming = (runId: string | undefined, lease: BranchOperationLease | null | undefined, entry: BranchEntry, headSha: string) => {
@@ -6213,7 +6234,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
       let skippedExtraProfileIds: string[] = [];
       if (sourceBranch) {
-        const copied = copyBranchDeploymentConfig(sourceBranch, entry, new Set(stateService.getBuildProfilesForProject(effectiveProjectId).map(profile => profile.id)));
+        const copied = copyBranchDeploymentConfig(sourceBranch, entry, new Set(stateService.getBuildProfilesForProject(effectiveProjectId).map(profile => profile.id)), acceptanceResourceCopyExcludedProfiles(stateService, sourceBranch));
         skippedExtraProfileIds = copied.skippedExtraProfileIds;
         // 深拷贝:改新分支不得串改来源分支(JSON round-trip 对这两个纯数据字段安全)。
         if (sourceBranch.profileOverrides && Object.keys(sourceBranch.profileOverrides).length > 0) {
@@ -11580,7 +11601,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 深拷贝整体替换(快照拷贝语义:之后各自独立)。getBranch 返回内存权威对象,
     // 直改后统一 save(与 setBranchProfileOverride 等既有写路径同一口径)。
     const target = stateService.getBranch(entry.id)!;
-    const copied = copyBranchDeploymentConfig(source, target, new Set(stateService.getBuildProfilesForProject(projectId).map(profile => profile.id)));
+    const copied = copyBranchDeploymentConfig(source, target, new Set(stateService.getBuildProfilesForProject(projectId).map(profile => profile.id)), acceptanceResourceCopyExcludedProfiles(stateService, source));
     if (copied.profileOverrides) target.profileOverrides = copied.profileOverrides;
     else delete target.profileOverrides;
     stateService.setBranchExtraProfiles(entry.id, copied.extraProfiles);
@@ -21581,6 +21602,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return summary;
   }
 
+  // These legacy import endpoints mutate global configuration. Validate access before exposing occupancy.
+  function rejectAcceptanceReleaseImport(req: Request, res: Response): boolean {
+    for (const branch of stateService.getAllBranches()) {
+      if (!acceptanceReleaseBlockReason(stateService, branch.id)) continue;
+      const denied = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (denied) res.status(denied.status).json(denied.body);
+      else res.status(409).json({ error: 'acceptance_release_reconciliation_required' });
+      return true;
+    }
+    return false;
+  }
+
   // POST /api/import-config — validate, preview, and optionally apply
   //
   // 2026-04-22 升级：
@@ -21663,6 +21696,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         return;
       }
+
+      if (rejectAcceptanceReleaseImport(req, res)) return;
 
       // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
       const snapshotLabel = cleanMode === 'replace-all'
@@ -22005,6 +22040,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   2. Creates a main branch worktree (if not exists)
   //   3. Deploys the main branch (build + run all profiles)
   router.post('/import-and-init', async (req, res) => {
+    if (rejectAcceptanceReleaseImport(req, res)) return;
     const { config: configBlob } = req.body as { config: unknown };
 
     // ── Parse config (same logic as import-config) ──

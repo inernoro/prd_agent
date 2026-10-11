@@ -1,3 +1,4 @@
+import { acceptanceReleaseBlockReason } from './acceptance-release-admission.js';
 import { isPrebuiltMode } from './agent-prebuilt-gate.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -1018,6 +1019,17 @@ export class StateService {
   private committingAcceptanceDrafts = new Set<string>();
   private acceptanceReleaseTargets = new Map<string, { branchId: string; profileId: string }>();
 
+  /** Includes live first-barrier drafts as well as intents recovered from disk. Internal admission only. */
+  getAcceptanceResourcePublicationDrafts(): readonly AcceptanceResourceRun[] {
+    return [...this.durableAcceptanceDrafts.values(), ...Object.values(this.state.acceptanceResourcePublications || {})
+      .flatMap(publication => publication.previous ? [publication.draft, publication.previous] : [publication.draft])];
+  }
+
+  private assertAcceptanceReleaseSettled(branchId: string): void {
+    const blocked = acceptanceReleaseBlockReason(this, branchId);
+    if (blocked) throw new Error(blocked);
+  }
+
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
     this.onSaveListeners.push(fn);
@@ -1102,7 +1114,19 @@ export class StateService {
   /** Durable publication of a bounded acceptance ownership row, including concurrent global writes. */
   async writeAcceptanceResourceRunDurably(row: AcceptanceResourceRun, expectedSeq: number | undefined,
     assertCurrent: () => void, afterFlush?: () => Promise<void>): Promise<void> {
+    row = structuredClone(row);
     if (row.stage === 'released') throw new Error('acceptance_release_transaction_required');
+    const previous = this.state.acceptanceResourceRuns?.[row.id];
+    if (previous && Object.prototype.hasOwnProperty.call(previous, 'releaseIntent')) {
+      const phases = ['prepared', 'stopped', 'removed'];
+      const oldPhase = phases.indexOf(previous.releaseIntent?.phase || '');
+      const newPhase = phases.indexOf(row.releaseIntent?.phase || '');
+      if (oldPhase < 0 || newPhase < oldPhase || previous.stage !== 'finished' || row.stage !== 'finished'
+        || !row.releaseIntent || acceptanceResourceDigest({ ...row, seq: previous.seq,
+          releaseIntent: { ...row.releaseIntent, phase: previous.releaseIntent!.phase } }) !== acceptanceResourceDigest(previous)) {
+        throw new Error('acceptance_release_intent_changed');
+      }
+    }
     return this.publishAcceptanceResourceRun(row, expectedSeq, assertCurrent, afterFlush);
   }
 
@@ -1427,6 +1451,7 @@ export class StateService {
    * remove the entry entirely.
    */
   setBranchProfileOverride(branchId: string, profileId: string, override: BuildProfileOverride): void {
+    this.assertAcceptanceReleaseSettled(branchId);
     const branch = this.state.branches[branchId];
     if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
     if (!branch.profileOverrides) branch.profileOverrides = {};
@@ -1441,6 +1466,7 @@ export class StateService {
 
   /** Remove the override entry for one profile, restoring full inheritance. */
   clearBranchProfileOverride(branchId: string, profileId: string): void {
+    this.assertAcceptanceReleaseSettled(branchId);
     const branch = this.state.branches[branchId];
     if (!branch?.profileOverrides) return;
     delete branch.profileOverrides[profileId];
@@ -1563,6 +1589,7 @@ export class StateService {
    * 那是人明确要盯的东西，不该因为某条分支没了就替他删掉。
    */
   removeBranch(id: string): string[] {
+    this.assertAcceptanceReleaseSettled(id);
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
@@ -2307,6 +2334,9 @@ export class StateService {
   }
 
   removeProject(id: string): ProjectRemovalSummary {
+    for (const branch of Object.values(this.state.branches || {})) {
+      if ((branch.projectId || 'default') === id) this.assertAcceptanceReleaseSettled(branch.id);
+    }
     if (!this.state.projects) {
       return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
@@ -3785,6 +3815,7 @@ export class StateService {
    * 非法 id 的额外项被丢弃。仅改这一条分支,不碰项目 profiles、不碰别的分支。
    */
   setBranchExtraProfiles(branchId: string, extraProfiles: BuildProfile[]): BranchEntry | null {
+    this.assertAcceptanceReleaseSettled(branchId);
     const branch = this.getBranch(branchId);
     if (!branch) return null;
     const sanitized = (extraProfiles || []).filter(
@@ -5487,6 +5518,7 @@ export class StateService {
   rollbackToConfigSnapshot(id: string, triggeredBy?: string): ConfigSnapshot {
     const target = this.getConfigSnapshot(id);
     if (!target) throw new Error(`ConfigSnapshot not found: ${id}`);
+    for (const branch of Object.values(this.state.branches || {})) this.assertAcceptanceReleaseSettled(branch.id);
 
     this.createConfigSnapshot({
       trigger: 'pre-destructive',

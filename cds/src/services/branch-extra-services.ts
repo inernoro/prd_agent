@@ -54,9 +54,9 @@ export function singleServicePlacementProfiles(profiles: readonly BuildProfile[]
   return result;
 }
 /** Snapshot-copy only: do not filter live/effective profiles or modify the source. */
-export function copyBranchDeploymentConfig(source: BranchEntry, target: DeploymentScopeContext, projectProfileIds: ReadonlySet<string>) {
+export function copyBranchDeploymentConfig(source: BranchEntry, target: DeploymentScopeContext, projectProfileIds: ReadonlySet<string>, excludedExtraProfileIds: ReadonlySet<string> = new Set()) {
   const skippedExtraProfileIds = [...new Set((source.extraProfiles || [])
-    .filter(profile => !profileDeploymentScopeMatches(profile, target)).map(profile => profile.id))];
+    .filter(profile => excludedExtraProfileIds.has(profile.id) || !profileDeploymentScopeMatches(profile, target)).map(profile => profile.id))];
   const skipped = new Set(skippedExtraProfileIds);
   const extraProfiles = structuredClone((source.extraProfiles || []).filter(profile => !skipped.has(profile.id)));
   const overrides = structuredClone(source.profileOverrides || {});
