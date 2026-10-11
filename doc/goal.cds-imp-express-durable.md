@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.63；日期：2026-10-11；状态：active。
+版本：v1.64；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,18 +76,18 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:b36b2e6a6d0b9d1c1646f41810905daa4c7ec3df; IMP:2ef9c17b2e255420b216ae41db7e628c7ddccbdc（本检查点前HEAD，随后镜像文档提交另计；CDS产品559c）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；origin/test=IMP:43ec86b5426654e59b149b66b39accbc135952f3；ahead/behind=CDS:220/0相对origin/main,IMP:65/0相对最新origin/test（已集成43ec64新提交）；environment=本地独立worktree/自有HTTP与StateJSON和受控DOM,未共享写；database=N/A共享未写入；tenant=N/A平台基础设施；role=本地主进程；route=N/A本修订未部署；auth=本地合成凭据,本批未用共享鉴权；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:dfc5279d8fd2483caf3a18eedf330661b7194b66; IMP:6a2157531aa7eff08c617a77741a72995e7dbf2d（本检查点前HEAD，随后镜像文档提交另计；CDS产品559c）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；origin/test=IMP:43ec86b5426654e59b149b66b39accbc135952f3；ahead/behind=CDS:221/0相对origin/main,IMP:66/0相对最新origin/test（已集成43ec64新提交）；environment=本地独立worktree/自有HTTP与StateJSON和受控DOM,未共享写；database=N/A共享未写入；tenant=N/A平台基础设施；role=本地主进程；route=N/A本修订未部署；auth=本地合成凭据,本批未用共享鉴权；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：v1.63：IMP无冲突merge最新origin/test43ec的64提交，merge48de；前置辅助合同d98ea，产品2ef9移除四worker八处XXL冗余同名覆盖，校准5Web身份检查并保留微信小程序和unknown kind拒绝。固定6files75/75、actual HEAD stage-aux/离线proposal exit0。原48de74组70绿4红保留：Web两红为错误分母，XXL静态守卫红不是已证明线上故障（CDS既有customEnvSnapshot兜底）；OP Bash3.2不支持语法，Bash5又遇BSD sed差异，两原失败保留，临时Bash5+外部sed兼容adapter同原workflow/fixture13/13，workflow未改，不算线上CI。独立新SHA复验待返。CDS产品559c未改，旧本地Page21/双主题仅原SHA。原八候选未传播新源、未push/deploy；49formal全not-executed/visual N/A、42partial-local/7todo。目标active；真实调度器/main绑定、隔离宿主、八支CI/黄闪电/性能/恢复/48h与周均未闭。
-- 本批实现检查点：CDS产品559c未改；IMP产品2ef9c17b2e255420b216ae41db7e628c7ddccbdc；d98ea前置范围合同；新SHA主75/75与实际stage/proposal，独立待返。
-- 证据纪元：`target_sha=CDS:559c5229d90ac11173f9fc6dbf55d1074249d1cb; IMP:2ef9c17b2e255420b216ae41db7e628c7ddccbdc；tested_sha=CDS:559c5229d90ac11173f9fc6dbf55d1074249d1cb（原58/full9959/Page21与受控双主题历史）；IMP:2ef9c17b2e255420b216ae41db7e628c7ddccbdc（主75/75+stage/proposal，本机Bash/sed适配，不继承远端CI/业务全量通过）；deployed_sha=N/A候选未部署；environment=两个独立worktree/自有Git与原受控页面，临时Bash工具仅本地；observed_at=2026-10-11T08:22:06.796617+00:00`
+- 当前实现事实：v1.64：IMP2ef9独立局部最终回执已主核，固定old/new32选定Git源各一份及CDS559c env5共69检查；原31快照62字节复验，额外2个services.json为实际Git-show输入而非旧快照，49引用原件hash及18主补充冻结副本一致。独立protocol32/32、实际owned workflow steps9/9、boundary8/8分列重叠不求和；20design为15local-executed-bounded/4partial/1not-executed(IR14)，实际构建/CI/Admin仍缺。八owned候选按各自最新fetched source更新，A02/A05推进；传播14个极速相关路径，新增辅助产出链且保十应用镜像/十三角色。A07仅方案文档冲突，保其迁移/runtime资料并补当前exact/aux/黄蓝规则；完整Git tree在14范围外逐blob等同其自己最新source，迁移未改。8支CLI及六文件selected-source组各0：A01/A02/A05各75、其余各70，保源分支原检查差异，不凑同分母、不计实际八CI。八local ref已一次CAS更新且保旧候选父，尚未push/deploy；八push和CDS自更新既有授权持续，CDS新branch push补问待答。隔离宿主未qualified；42partial-local/7todo，formal49全not-executed/visual N/A，目标active。
+- 本批实现检查点：IMP产品2ef9/CDS559c不变；八候选14路径传播与本地ref刷新，精确8SHA见doc/cds-imp-express-eight-candidates.json。本批不是CI/build/deployment/运行验收。
+- 证据纪元：`target_sha=CDS:559c5229d90ac11173f9fc6dbf55d1074249d1cb; IMP:2ef9c17b2e255420b216ae41db7e628c7ddccbdc; candidates=doc/cds-imp-express-eight-candidates.json的八新完整SHA；tested_sha=CDS559c历史58/full9959/Page21与受控双主题；IMP2ef9主75+独立32/9/8分列；八candidate exact tree selected-source CLI及75或70，非全checkout/CI/build；deployed_sha=N/A八候选未部署；environment=两个独立worktree/Git对象和仓库外选定源码快照，本机Bash5/sed适配、假CNB sink；observed_at=2026-10-11T08:40:36.929203+00:00`
 - 历史恢复事实（原SHA，不继承本批通过）：66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
 - 历史恢复与公平性证据（原SHA，不继承本批通过）：59d固定独立59/59局部（重放原17+扩展7+observer24+实际Router失败4/取消4+观察socket外部abort后执行仍受租约控制2+真实默认5秒头budget1）；原66fb两scope红关闭。whole正例旧带Profile与State自动填legacy项目两轮夹具偏差原件保留，未放宽scope。66fb权限清理v2独立6/6：清理ACK未知memory gate/竞态更新409，磁盘若已完成cleanup则重载仅安全old=a、新b无grant，5flush确认后清账。v1要求此时磁盘仍有journal的探索红保留解释，不作越权或500修复结论。 dc2f7d0ce47584656d948e61d048f17696f0da26本地源码例外queue按冻结project轮转/同项目FIFO，匿名兼容组FIFO；默认512等待/30min上限，超量与过期明确失败且不取消运行holder，授予/取消/超时清timer/listener，onStart观察异常释放槽位。whole/profile两路实际传projectId、任何gate失败结束排队episode，日志/UI改等待总量不承诺绝对位置；tracker旧min位置断言退场并保留旧红。主5新反例真红→25 gate绿，5files288相关/core及web tsc0，固定全量655files9560绿/6files19skip/1obsolete snapshot/65.48s。独立固定复验进行中；phase公平队列、durable pending、实际Master/Daemon与公网未验。 原3635全量1红与受控3-vs-5夹具红、66fb9552绿各按固定源保留；所有正式49/视觉/8支仍未执行。
 - 当前阻塞或环境限制：最新只读index已随协作者合并增长至162→162、归档0，仍超过60；历史158仅旧观察，不猜测他人终态。 完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；本机16GiB已大量压缩/交换，不在其上新增压力VM冒充隔离验收宿主；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。 额外只读探测mycds SSH成功（Linux16CPU/约31GiB RAM），sudo -n Docker可读，承载大量他人及IMP/MAP常驻服务；2026-10-11 05:32 CST可用628MiB、swap8191/8191MiB、load2.25/26.60/33.20，不作隔离压力宿主，不停他人服务/启新容器。本机Docker仍不可达；隔离宿主问题待用户回复。 2026-10-11 05:28UTC只读mycds available729MiB/swapfree0，16CPU；05:29共享18CPU available51623MiB但load16.89/17.15/17.58，非独立宿主。无KVM/QEMU；preflight因远端rg缺失exit127，不能解释为Docker挂死；未启VM/DinD/容器/压力或重启。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：独立按冻结判据复验IMP2ef9并核回执；继续原执行器/终态收尾/main网关/bootstrap所属run终结receipt；抽屉轮询并发竞态未闭。隔离宿主尚未qualified；满足准入及远端发布权限后按既有八push/selfupdate授权传播新源执行完整交付、真实黄闪电/目标SHA、双主题、公网/恢复/48h与周，缺证据不关闭。
+- 下一动作与完成条件：独立审计八候选的源码保留/辅助合同和原旧候选缺口，核定回执；继续原执行器/终态收尾、Drawer并发竞态、main网关/bootstrap所属run终结receipt。CDS新branch push问题待用户回复，不重复索取既有八push/selfupdate授权；隔离宿主未qualified，满足准入后执行真实八CI/部署、黄闪电/目标SHA、双主题、公网/恢复/48h与周，缺证据不关闭。
 - 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
@@ -466,3 +466,13 @@ v1.63：IMP无冲突merge最新origin/test43ec的64提交，merge48de；前置�
 主原始日志、临时解释器/adapter hash和新辅助暂存归档：`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/imp-2ef9-local/main-raw-manifest.json`。暂存脚本复用ignored目录，新纪元已独立复制；旧纪元以原归档/精确Git源回查，不把当前暂存当历史原件。
 
 expected result：保协作者最新代码、完整5Web与合法小程序清单、worker无冗余覆盖；current evidence：主上述75/75与stage/proposal，独立待返；visible result：本修订未部署，无新视觉；gap：实际CI/运行绑定/八分支/公网与恢复等原门槛；required action：独立复验新SHA，继续同49计划，不能据本地检查关闭目标。
+
+## v1.64 八候选完整制品链刷新与独立局部回读
+
+v1.64：IMP2ef9独立局部最终回执已主核，固定old/new32选定Git源各一份及CDS559c env5共69检查；原31快照62字节复验，额外2个services.json为实际Git-show输入而非旧快照，49引用原件hash及18主补充冻结副本一致。独立protocol32/32、实际owned workflow steps9/9、boundary8/8分列重叠不求和；20design为15local-executed-bounded/4partial/1not-executed(IR14)，实际构建/CI/Admin仍缺。八owned候选按各自最新fetched source更新，A02/A05推进；传播14个极速相关路径，新增辅助产出链且保十应用镜像/十三角色。A07仅方案文档冲突，保其迁移/runtime资料并补当前exact/aux/黄蓝规则；完整Git tree在14范围外逐blob等同其自己最新source，迁移未改。8支CLI及六文件selected-source组各0：A01/A02/A05各75、其余各70，保源分支原检查差异，不凑同分母、不计实际八CI。八local ref已一次CAS更新且保旧候选父，尚未push/deploy；八push和CDS自更新既有授权持续，CDS新branch push补问待答。隔离宿主未qualified；42partial-local/7todo，formal49全not-executed/visual N/A，目标active。
+
+八新目标：A01=3a9f363855e9fddf3086bc0d941f763bf1cf413a；A02=d039ea2d8ab85ae71d3353b65c5e739392786103；A03=234624262b9055152ce96b1640e324ed1b4ae072；A04=02d4d9090c45349ffc093ec384a25d93e7ecb234；A05=2c1587e05b8cf01534fc9dd4d91eb73265d4c8e3；A06=95f6d46ee3758ff77e00a5f8cd9b306e4247d38d；A07=7a839a3ebb5bde48dd27b9b2217d1954d400bb7d；A08=d7f2badd77d8a7e5eb06d94a58050075c8237a40。
+
+证据：主独立最终回读`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/imp-2ef9-local/main-independent-final-receipt.json`；summary e573f10b0fb847b74cf31fc033d177633f712c1bcb2d9bf8aca2aad294c48a86；source-addendum b2dc683946424bdc2ea0ec596aa5e5bc1e80f6833504d66b3cc86f9db699faca；raw18e46c96/parent6c0d8ef1。主八准备/源快照/初冲突/解决/六文件log在`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-refresh-2ef9`。首次主回读错要求额外Git-show输入必在旧31快照，为读者假设错误，纠正后同原证据核验，不改测试期待。
+
+expected result：最新各支源码保留且完整应用/辅助制品链可产出；current evidence：8个本地完整tree允许范围、selected-source合同组与独立IMP局部回执；visible result：候选未push/deploy，没有新增运行/视觉；gap：八候选独立固定回读、真实CI/build、绑定/隔离/运行/公网/恢复原强门槛；required action：继续同49计划、候选独立核验和发布准入，不能以静态13角色或本地tests关闭。

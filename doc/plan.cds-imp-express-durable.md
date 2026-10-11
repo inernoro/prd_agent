@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.63；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.64；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -581,3 +581,7 @@ expected result：完整详情页能查看同一run的真实摘要，坏行和�
 ## v1.63 IMP集成与局部配套检查
 
 v1.63：IMP无冲突merge最新origin/test43ec的64提交，merge48de；前置辅助合同d98ea，产品2ef9移除四worker八处XXL冗余同名覆盖，校准5Web身份检查并保留微信小程序和unknown kind拒绝。固定6files75/75、actual HEAD stage-aux/离线proposal exit0。原48de74组70绿4红保留：Web两红为错误分母，XXL静态守卫红不是已证明线上故障（CDS既有customEnvSnapshot兜底）；OP Bash3.2不支持语法，Bash5又遇BSD sed差异，两原失败保留，临时Bash5+外部sed兼容adapter同原workflow/fixture13/13，workflow未改，不算线上CI。独立新SHA复验待返。CDS产品559c未改，旧本地Page21/双主题仅原SHA。原八候选未传播新源、未push/deploy；49formal全not-executed/visual N/A、42partial-local/7todo。目标active；真实调度器/main绑定、隔离宿主、八支CI/黄闪电/性能/恢复/48h与周均未闭。
+
+## v1.64 八候选刷新与独立局部回执
+
+v1.64：IMP2ef9独立局部最终回执已主核，固定old/new32选定Git源各一份及CDS559c env5共69检查；原31快照62字节复验，额外2个services.json为实际Git-show输入而非旧快照，49引用原件hash及18主补充冻结副本一致。独立protocol32/32、实际owned workflow steps9/9、boundary8/8分列重叠不求和；20design为15local-executed-bounded/4partial/1not-executed(IR14)，实际构建/CI/Admin仍缺。八owned候选按各自最新fetched source更新，A02/A05推进；传播14个极速相关路径，新增辅助产出链且保十应用镜像/十三角色。A07仅方案文档冲突，保其迁移/runtime资料并补当前exact/aux/黄蓝规则；完整Git tree在14范围外逐blob等同其自己最新source，迁移未改。8支CLI及六文件selected-source组各0：A01/A02/A05各75、其余各70，保源分支原检查差异，不凑同分母、不计实际八CI。八local ref已一次CAS更新且保旧候选父，尚未push/deploy；八push和CDS自更新既有授权持续，CDS新branch push补问待答。隔离宿主未qualified；42partial-local/7todo，formal49全not-executed/visual N/A，目标active。
