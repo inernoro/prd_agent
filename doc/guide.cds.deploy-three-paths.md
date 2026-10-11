@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.100 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.101 | **日期**：2026-10-12 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -496,3 +496,13 @@ configured 只证明原 Profile 可靠配置，不授予注册、验收结束或
 原创建 reference 保存之后，每个网络 connect、start、活性及 readiness 等待前后都须核验同一服务对象的身份字段，而非仅引用相等：profileId、full container ID、容器名、宿主端口、完整提交、实际 image ID 与已保存 serviceDigest/reference 匹配，actual prebuilt/express 事实仍成立。容器 connect/start 使用本次 create 返回的不可变 full ID，不从可能变化的服务对象重新取目标；await 期间字段、权限、配置或原来源变化时失败关闭，不能继续 start 或发布成功。正常 status/log 变化不改变身份，不阻断原资源 finish/release。
 
 先红覆盖实际 owned HTTP→Container 的网络等待内原对象修改 containerId/name/image/hostPort/commit/prebuilt/mode，以及 start 等待和 readiness 等待漂移；旧实现必须实际触达漂移边界且违反零后继 start/零成功判据。修复不得按名称删除未知资源、重建或假定停止，保留原创建占用待对账。此临时实施说明在 P5-05 生产正式门禁完整接管后退场。
+
+### 原创建失败后的显式登记与失败收尾合同（设计基线）
+
+正常 active→registered 仍只接受原创建来源、完整精确身份及实际 running/readiness。失败创建不能伪造成正常 registered、业务验收通过或黄色闪电。另设原 owner 的显式 register-failed 操作：仅原创建 reference 已可靠确认、来源 deploymentRun 已可靠 failed/cancelled 且原执行真正结算后，才在独占整分支内复核原完整容器身份、指纹、精确镜像与无可写挂载。实际 stopped 或 running 均可接受为待清理的失败资源；缺创建 reference、来源仍在执行、未决 publication、实际 missing/未知、身份/配置/原报告漂移均保留待对账，不据名称收编或自动重试。
+
+失败登记使用独立 failed-registered 阶段与 resource.creationFailure：保存原来源终态和不可逆摘要，不覆盖原 creationIntent/reference/serviceDigest，不保存原异常/凭据。专用保存事务同样经 branch 身份 ACK 和原两道发布 ACK；通用 writer 不得首次发布 failed-registered。失败持有者在 registered 与 finished 阶段都继续占用原分支，阻断普通部署、配置或借新 begin 替代。显式原失败登记和原 finished release 可在既有独占内部 lease 下续接，不能越过已撤销但尚未结算的原执行、pending 或续约；进程重启缺执行结束对账证明仍须保留。
+
+报告仍由既有 producer 产生并绑定原 run/project/branch/SHA；失败资源只能归档 verdict=fail，finish 前后验报告正文、元信息、原 resource/config 与失败来源摘要。正常 finished/release 接续现有不可变 ID inspect→stop（如实际 running）→removeStopped→确认原 ID 消失→可靠 released/目标图定向移除链。不能删除数据库、已有项目网络或其他服务，也不因失败报告授予 by-name 删除。该阶段只覆盖已确认原 reference 的进程内失败资源；未确认 create、缺原能力、重启后未结算或实际缺失的资源不伪造闭合，另留对账缺口。
+
+先红：实际 HTTP 使原 create 后 start/readiness 失败，正常 register 保持拒绝，显式失败登记→绑定 fail 报告→finish→原 ID release 连续链；原未结算执行、错能力/项目/来源/身份、缺 reference、未知 inspect、两 ACK 等待漂移、非 fail 报告、通用 writer、newOS 未决边界仍失败关闭。受控 CLI 与文件磁盘证据不得替代真实 Daemon/八完整分支/公网/正式视觉。此局部实施说明在 P5-05/06 完整生产对账门禁接管后退场，正常与失败事实不得互相替代的终态规则继续保留。
