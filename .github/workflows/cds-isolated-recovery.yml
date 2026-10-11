@@ -10,6 +10,7 @@ on:
       - cds/scripts/deployment-recovery-drill.ts
       - cds/scripts/replica-confirmation-drill.ts
       - cds/scripts/actual-stop-drill.ts
+      - cds/scripts/json-write-overlap-drill.ts
       - cds/scripts/observation-isolation-drill.ts
       - cds/scripts/artifact-admission-drill.ts
       - cds/scripts/tsconfig.acceptance.json
@@ -158,6 +159,12 @@ jobs:
         run: pnpm -C cds install --frozen-lockfile
       - name: Type-check isolated drills
         run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Compile CDS for native JSON overlap verification
+        run: pnpm -C cds build
+      - name: Native JSON ownership confirmation and cold recovery
+        run: pnpm -C cds exec tsx scripts/json-write-overlap-drill.ts
+      - name: Native JSON source regressions
+        run: pnpm -C cds exec vitest run tests/infra/json-backing-store-overlap.test.ts tests/infra/json-backing-store.test.ts
       - name: Real containers demonstrate old false stop confirmation
         run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts --reference
       - name: Record original overlapping cold-load lifecycle diagnosis
@@ -169,6 +176,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cds-actual-stop-${{ github.sha }}
-          path: cds/stop-output/
+          path: |
+            cds/stop-output/
+            cds/json-write-output/
           if-no-files-found: warn
           retention-days: 14

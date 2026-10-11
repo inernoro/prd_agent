@@ -14,6 +14,7 @@ import { WorktreeService } from '../src/services/worktree.js';
 import { BranchOperationCoordinator } from '../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../src/services/deployment-run.js';
 import { captureDeploymentInput } from '../src/services/deployment-input.js';
+import { JsonStateBackingStore, type JsonStateWriteEvent } from '../src/infra/state-store/json-backing-store.js';
 import { createBranchRouter } from '../src/routes/branches.js';
 import type { CdsConfig, IShellExecutor, ExecOptions } from '../src/types.js';
 
@@ -79,12 +80,17 @@ export async function main(parallelColdLoad = false): Promise<void> {
   const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const owner = `cds_stop_${randomBytes(8).toString('hex')}`;
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-stop-ci-')); await fs.chmod(temp, 0o700);
-  const file = path.join(temp, 'state.json'); const state = new StateService(file); state.load();
+  const writeReceipts: JsonStateWriteEvent[] = []; let writeReceiptsDropped = 0;
+  const observeWrite = (event: JsonStateWriteEvent) => { if (writeReceipts.length < 256) writeReceipts.push(event); else writeReceiptsDropped++; };
+  const file = path.join(temp, 'state.json');
+  const state = new StateService(file, undefined, new JsonStateBackingStore(file, { onWrite: observeWrite })); state.load();
   const config: CdsConfig = { repoRoot: temp, worktreeBase: path.join(temp, 'worktrees'), masterPort: 0, workerPort: 5500,
     dockerNetwork: 'bridge', mode: 'standalone', executorPort: 5501, portStart: 10001, rootDomains: ['invalid'], previewDomain: 'invalid', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated-drill' } };
   const members: Array<{ id: string; name: string; role: string; port: number }> = [];
   const report: any = { schema: 1, startedAt: new Date().toISOString(), head, stopReferenceRevision: reference || null,
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async (name) => [name, hash(await fs.readFile(name))]))),
+    currentDiagnosticSourceHashes: Object.fromEntries(await Promise.all(['src/infra/state-store/json-backing-store.ts', 'src/services/state.ts', 'scripts/actual-stop-drill.ts'].map(async name => [name, hash(await fs.readFile(name))]))),
+    writeReceipts,
     verdict: 'failed', scope: 'isolated real branch stop HTTP and container state; no build/deploy/storm acceptance',
     actualStopVerified: false, actualDeploymentVerified: false, performanceVerified: false, coldLoadLifecycle: parallelColdLoad ? 'parallel' : 'sequential',
     runner: { host: os.hostname(), cpus: os.cpus().length, totalMemoryBytes: os.totalmem(), githubRunId: process.env.GITHUB_RUN_ID },
@@ -169,7 +175,7 @@ export async function main(parallelColdLoad = false): Promise<void> {
     report.checks.push(first); assert.equal(failed.status, 503); assert.equal(first.apiRunning, true); assert.equal(first.webRunning, false); assert.equal(first.unrelatedRunning, true);
     assert.equal(branch.status, 'error'); assert.equal(branch.services.api.status, 'running'); assert.equal(branch.lastStoppedAt, undefined); assert.equal(branch.stopCount || 0, 0);
     const disk = JSON.parse(await fs.readFile(file, 'utf8')); assert.equal(disk.branches.b.services.api.status, 'running');
-    reopened = new StateService(file); reopened.load();
+    reopened = new StateService(file, undefined, new JsonStateBackingStore(file, { onWrite: observeWrite })); reopened.load();
     // load 可能触发迁移保存；冷读取先等完自己的写入，随后原 HTTP 实例才继续。
     // 此演练验证顺序冷加载，不把两个独立 JSON 写入器并行当作实例恢复协议。
     if (!parallelColdLoad) await reopened.flush();
@@ -195,6 +201,7 @@ export async function main(parallelColdLoad = false): Promise<void> {
     if (server) { server.closeAllConnections(); await new Promise<void>((resolve) => server!.close(() => resolve())); }
     try { await state.flush(); } catch { report.cleanupFailed = true; report.verdict = 'failed'; }
     try { await reopened?.flush(); } catch { report.coldLoadWriteFailed = true; report.verdict = 'failed'; }
+    report.writeReceiptsDropped = writeReceiptsDropped;
     let removed = 0;
     for (const member of members) { try { inspect(member); docker(['rm', '-fv', member.id]); removed++; } catch { report.cleanupFailed = true; report.verdict = 'failed'; } }
     report.containersRemoved = removed === members.length;
