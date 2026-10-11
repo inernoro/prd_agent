@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { BuildProfile } from '../types.js';
 import type { AcceptanceResourceRun } from './acceptance-resource-run.js';
 
@@ -34,4 +35,10 @@ export function acceptanceResourceProfile(value: unknown, run: AcceptanceResourc
   // Check every final string/key, including image paths and derived scope, before any persistence.
   if (JSON.stringify(profile).includes(ownerToken)) return bad();
   return profile;
+}
+
+/** Server-only name: full run identity plus a digest of its branch/profile scope. */
+export function acceptanceCreationContainerName(branchId: string, profileId: string, runId: string): string {
+  if (!/^ar_[a-f0-9]{32}$/.test(runId)) throw new Error('acceptance_creation_scope');
+  return `cds-${runId}-${createHash('sha256').update(JSON.stringify([branchId, profileId])).digest('hex').slice(0, 24)}`;
 }

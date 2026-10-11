@@ -54,7 +54,7 @@ export class OwnedContainerLifecycle {
   constructor(private readonly shell: IShellExecutor, private readonly instanceId: string,
     private readonly beforeMutation?: (reference: OwnedContainerReference, action: 'stop' | 'start' | 'remove') => void) {}
 
-  async capture(owner: { projectId: string; branchId: string; candidateOperationId?: string; operationId?: string }, service: Readonly<ServiceState>,
+  async capture(owner: { projectId: string; branchId: string; candidateOperationId?: string; operationId?: string; acceptanceRunId?: string }, service: Readonly<ServiceState>,
     assertCurrent: () => void, signal?: AbortSignal): Promise<OwnedContainerReference> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(service.containerName)) throw new Error('container_identity: invalid name');
     assertCurrent(); signal?.throwIfAborted();
@@ -66,6 +66,11 @@ export class OwnedContainerLifecycle {
       'cds.project.id': owner.projectId, 'cds.branch.id': owner.branchId, 'cds.profile.id': service.profileId };
     if (owner.candidateOperationId) {
       expected['cds.deployment.operation'] = owner.candidateOperationId; expected['cds.deployment.kind'] = 'candidate';
+    }
+    if (owner.acceptanceRunId) {
+      if (!/^ar_[a-f0-9]{32}$/.test(owner.acceptanceRunId) || !owner.operationId) throw new Error('container_owner: original creation identity required');
+      expected['cds.acceptance.run'] = owner.acceptanceRunId;
+      expected['cds.deployment.operation'] = owner.operationId;
     }
     if (info.Config.Labels['cds.protected'] === 'true' || !Object.entries(expected).every(([key, value]) => info.Config.Labels[key] === value)) throw new Error('container_owner: actual ownership unconfirmed or protected');
     if (info.Name !== '/' + service.containerName || !Object.values(info.HostConfig.PortBindings).some(bindings =>

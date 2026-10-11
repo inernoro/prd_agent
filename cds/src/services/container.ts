@@ -1,3 +1,5 @@
+import { acceptanceCreationContainerName } from './acceptance-resource-profile.js';
+import { OwnedContainerLifecycle } from './owned-container-lifecycle.js';
 import fs from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
@@ -1188,6 +1190,8 @@ export class ContainerService {
       signal?: AbortSignal;
       /** Private run-owned instance; caller must persist its ledger before creation and handle commit/cleanup. */
       candidateRunId?: string;
+      ownedCreationRunId?: string;
+      onOwnedCreationCreated?: (id: string, imageId: string) => Promise<void>;
       /** Awaited write-ahead boundaries for private candidate creation. */
       onCandidateCreateIntent?: () => Promise<void>;
       onCandidateCreated?: (id: string) => Promise<void>;
@@ -1227,6 +1231,16 @@ export class ContainerService {
     const originalFence = context.assertCurrent;
     context = { ...context, assertCurrent: step => { assertProfileDeploymentScopes([placement], entry); originalFence?.(step); } };
     const candidate = context.candidateRunId ? candidateRuntimeIdentity(entry.id, profile.id, context.candidateRunId) : undefined;
+    const ownedCreation = context.ownedCreationRunId;
+    if (ownedCreation) {
+      const target = entry.deploymentTargetSha || entry.githubCommitSha || '';
+      if (candidate || !context.onOwnedCreationCreated || !context.operationId || !context.assertCurrent || !context.signal
+        || service.containerName !== acceptanceCreationContainerName(entry.id, profile.id, ownedCreation)
+        || service.profileId !== profile.id || service.containerId || service.deployedImage || service.status === 'running'
+        || !/^[a-f0-9]{40}$/.test(target) || !profile.prebuiltImage || profile.prebuiltCommitPolicy !== 'exact'
+        || profile.managedBuild || profile.localArtifact || profile.command || profile.cacheMounts?.length || profile.sourceFallbackProfile) throw new Error('acceptance_creation_scope');
+      context.assertCurrent('owned-create-admission'); context.signal.throwIfAborted();
+    }
     if (candidate) {
       if (service.containerName !== candidate.containerName || service.profileId !== profile.id || service.status === 'running' || service.deployedImage ||
           !Number.isInteger(service.hostPort) || service.hostPort < 1 || service.hostPort > 65535 ||
@@ -1296,7 +1310,7 @@ export class ContainerService {
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
-    if (!candidate) await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
+    if (!candidate && !ownedCreation) await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
     // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
     // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
@@ -1626,44 +1640,49 @@ export class ContainerService {
     // 旧预览会在整个排队 + 构建期间白宕机。移到这里，拉取/排队期间旧容器持续
     // 服务，真正要 docker run 前才替换。
     context.assertCurrent?.(`runService before pre-run-rm ${profile.id}`);
-    this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
-      projectId: entry.projectId,
-      branchId: entry.id,
-      profileId: profile.id,
-      requestId: context.requestId ?? null,
-      operationId: context.operationId ?? null,
-      actor: context.actor ?? null,
-      trigger: context.trigger ?? null,
-      operation: 'deploy-pre-run-replace',
-      source: 'container.runService',
-    });
-    const preRunRemove = candidate
-      ? await this.removeStoppedCandidate(service.containerName, entry, profile.id, context.candidateRunId!)
-      : await this.shell.exec(`docker rm -f ${service.containerName}`);
-    this.recordContainerEvent({
-      severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
-      source: 'cds-container-service',
-      action: 'app.pre-run-rm',
-      message: `pre-run cleanup for ${service.containerName}`,
-      projectId: entry.projectId,
-      branchId: entry.id,
-      profileId: profile.id,
-      requestId: context.requestId ?? undefined,
-      operationId: context.operationId ?? undefined,
-      containerName: service.containerName,
-      command: {
-        name: 'docker rm -f',
-        exitCode: preRunRemove.exitCode,
-        stdoutPreview: preRunRemove.stdout,
-        stderrPreview: preRunRemove.stderr,
-      },
-      details: {
-        operation: 'deploy-pre-run-replace',
-        reason: '部署前替换同名旧容器',
+    if (ownedCreation) {
+      await new OwnedContainerLifecycle(this.shell, computeCdsInstanceId(this.config.repoRoot)).confirmAbsent(service.containerName,
+        () => { context.assertCurrent?.('owned-create-name-absence'); context.signal?.throwIfAborted(); }, context.signal);
+    } else {
+      this.noteLifecycleIntent(service.containerName, 'cds-pre-run-replace', '部署前替换同名旧容器', {
+        projectId: entry.projectId,
+        branchId: entry.id,
+        profileId: profile.id,
+        requestId: context.requestId ?? null,
+        operationId: context.operationId ?? null,
         actor: context.actor ?? null,
         trigger: context.trigger ?? null,
-      },
-    });
+        operation: 'deploy-pre-run-replace',
+        source: 'container.runService',
+      });
+      const preRunRemove = candidate
+        ? await this.removeStoppedCandidate(service.containerName, entry, profile.id, context.candidateRunId!)
+        : await this.shell.exec(`docker rm -f ${service.containerName}`);
+      this.recordContainerEvent({
+        severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
+        source: 'cds-container-service',
+        action: 'app.pre-run-rm',
+        message: `pre-run cleanup for ${service.containerName}`,
+        projectId: entry.projectId,
+        branchId: entry.id,
+        profileId: profile.id,
+        requestId: context.requestId ?? undefined,
+        operationId: context.operationId ?? undefined,
+        containerName: service.containerName,
+        command: {
+          name: 'docker rm -f',
+          exitCode: preRunRemove.exitCode,
+          stdoutPreview: preRunRemove.stdout,
+          stderrPreview: preRunRemove.stderr,
+        },
+        details: {
+          operation: 'deploy-pre-run-replace',
+          reason: '部署前替换同名旧容器',
+          actor: context.actor ?? null,
+          trigger: context.trigger ?? null,
+        },
+      });
+    }
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(
       runCommitSha ? { ...entry, pinnedCommit: undefined, githubCommitSha: runCommitSha } : entry,
@@ -1742,7 +1761,7 @@ export class ContainerService {
       // 修复:隔离时改用 create → connect(infra) → start 时序 —— 进程启动前两张网都已就位,等价于
       // 旧路径下「容器进程开始前就在项目网上」。未隔离(connectNetworks 为空)仍走原 `docker run -d`,零回归。
       const attachSharedBeforeStart = netPlan.connectNetworks.length > 0;
-      const dockerCreateVerb = attachSharedBeforeStart ? 'docker create' : 'docker run -d';
+      const dockerCreateVerb = attachSharedBeforeStart || ownedCreation ? 'docker create' : 'docker run -d';
       const runCmd = [
         dockerCreateVerb,
         `--name ${service.containerName}`,
@@ -1760,12 +1779,13 @@ export class ContainerService {
         // 直接让镜像 ENTRYPOINT/CMD 启动。
         ...(usePrebuiltEntrypoint ? [] : [`-w ${this.shellQuote(containerWorkDir)}`]),
         envFlag,
-        '--tmpfs /tmp',
+        ...(ownedCreation ? [] : ['--tmpfs /tmp']),
         // cds.network 标签保持「共享/项目网」语义（用于按项目归属/孤儿容器清理的 projectIdForDockerNetwork
         // 解析），不跟随实际 run 主网（分支网）。真正的隔离是上面的 `--network <分支网>` + 启动前 connect 共享网，
         // 与标签无关。若把标签写成 cds-br-<id>，孤儿容器(分支已不在 state)将无法按网络名归属到项目。
         this.appLabels(entry.projectId, entry.id, profile.id, network),
         ...(candidate ? [`--label cds.deployment.operation=${this.shellQuote(context.candidateRunId!)}`, '--label cds.deployment.kind=candidate'] : []),
+        ...(ownedCreation ? [`--label cds.acceptance.run=${this.shellQuote(ownedCreation)}`, `--label cds.deployment.operation=${this.shellQuote(context.operationId!)}`] : []),
         // host-shell 安全（Codex P1「Validate shell-interpolated extra service fields」）：镜像引用与
         // command 都来自用户可控的 BuildProfile（含分支级额外服务），必须对**宿主机 shell** 单引号转义，
         // 否则 dockerImage=`x;rm -rf /` 或 command=`$(...)` 会在 CDS 宿主机上执行（而非仅容器内）。
@@ -1823,23 +1843,32 @@ export class ContainerService {
         await context.onCandidateCreated?.(createdId);
         context.assertCurrent?.('candidate-created-durable');
       }
+      if (ownedCreation) {
+        const createdId = result.stdout.trim();
+        if (!/^[a-f0-9]{64}$/.test(createdId) || !/^sha256:[a-f0-9]{64}$/.test(runImage)) throw new Error('acceptance_creation_identity');
+        service.containerId = createdId;
+        await context.onOwnedCreationCreated!(createdId, runImage);
+        context.assertCurrent?.('owned-created-identity-durable'); context.signal?.throwIfAborted();
+      }
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
       // 分支无法在共享网上按 app 别名解析到本容器，杜绝串流。未隔离时 connectNetworks 为空，跳过。
       for (const sharedNet of netPlan.connectNetworks) {
-        await this.connectContainerToSharedNetwork(candidate ? service.containerId! : service.containerName, sharedNet, {
+        context.assertCurrent?.('before-shared-network-connect'); context.signal?.throwIfAborted();
+        await this.connectContainerToSharedNetwork(candidate || ownedCreation ? service.containerId! : service.containerName, sharedNet, {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
           requestId: context.requestId ?? undefined,
           operationId: context.operationId ?? undefined,
         });
+        context.assertCurrent?.('after-shared-network-connect'); context.signal?.throwIfAborted();
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
-      if (attachSharedBeforeStart) {
+      if (attachSharedBeforeStart || ownedCreation) {
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
-        const startRes = await this.shell.exec(`docker start ${candidate ? service.containerId! : service.containerName}`);
+        const startRes = await this.shell.exec(`docker start ${candidate || ownedCreation ? service.containerId! : service.containerName}`);
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',

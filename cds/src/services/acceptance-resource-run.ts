@@ -159,15 +159,40 @@ export class AcceptanceResourceRunService {
     });
   }
 
+  /** Internal deployment admission/fence. Never accepts a client-supplied origin or grants project access. */
+  validateCreationDeployment(id: string, ownerToken: string, lease?: BranchOperationLease): AcceptanceResourceView {
+    const run = this.owned(id, ownerToken); this.requireResolvedPublication(id);
+    const branch = this.branch(run), intent = run.creationIntent, bindings = this.releaseBindings;
+    if (!bindings || !bindings.canExecute(branch)) throw new Error('acceptance_creation_unavailable');
+    if (run.stage !== 'active' || intent?.version !== 1 || run.resource || run.terminal || run.releaseIntent) throw new Error('acceptance_run_stage');
+    const profiles = branch.extraProfiles?.filter(profile => profile.id === run.profileId) || [];
+    if (profiles.length !== 1 || profiles[0].projectId !== run.projectId || digest(profiles[0]) !== intent.profileDigest
+      || Object.prototype.hasOwnProperty.call(branch.profileOverrides || {}, run.profileId) || this.state.getBuildProfile(run.profileId)) throw new Error('acceptance_creation_profile_changed');
+    if (!lease) {
+      if (intent.phase !== 'configured' || branch.services[run.profileId]) throw new Error('acceptance_run_stage');
+    } else {
+      const request = lease.request, deployment = intent.deploymentRunId && this.state.getDeploymentRun(intent.deploymentRunId);
+      if (!bindings.coordinator.ownsLease(lease) || request.kind !== 'acceptance-create' || request.source !== 'acceptance-resource-deploy'
+        || request.acceptanceRunId !== run.id || request.projectId !== run.projectId || request.branchId !== run.branchId
+        || request.profileId != null || request.commitSha !== run.targetSha || intent.phase !== 'deploying' || intent.operationId !== lease.operationId
+        || !deployment || deployment.projectId !== run.projectId || deployment.branchId !== run.branchId || deployment.commitSha !== run.targetSha
+        || deployment.operationId !== lease.operationId || ['failed','cancelled'].includes(deployment.status)
+        || digest(deployment.acceptanceOrigin) !== digest({ version: 1, acceptanceRunId: id, profileId: run.profileId,
+          targetSha: run.targetSha, profileDigest: intent.profileDigest, operationId: lease.operationId })) throw new Error('acceptance_creation_lease');
+    }
+    return view(run);
+  }
+
   /** Bind the original pending server run; this is not container inspection or registration. */
   async bindCreationDeployment(id: string, ownerToken: string, deploymentRunId: string,
-    lease: BranchOperationLease): Promise<AcceptanceResourceView> {
+    lease: BranchOperationLease, assertExternal: () => void = () => {}): Promise<AcceptanceResourceView> {
     return this.operation(id, async () => {
       const run = this.owned(id, ownerToken); this.requireResolvedPublication(id);
       if (run.stage !== 'active' || run.creationIntent?.version !== 1 || run.creationIntent.phase !== 'configured') throw new Error('acceptance_run_stage');
       const branch = this.branch(run), bindings = this.releaseBindings, runDigest = digest(run);
       const request = lease?.request;
       const fence = () => {
+        assertExternal();
         if (!bindings || !lease || !bindings.coordinator.ownsLease(lease) || !bindings.canExecute(branch)
           || request?.kind !== 'acceptance-create' || request.source !== 'acceptance-resource-deploy' || request.profileId != null
           || request.acceptanceRunId !== id || request.projectId !== run.projectId || request.branchId !== run.branchId
@@ -179,6 +204,32 @@ export class AcceptanceResourceRunService {
       const row: AcceptanceResourceRun = { ...run, seq: run.seq + 1, creationIntent: { ...run.creationIntent,
         phase: 'deploying', deploymentRunId, operationId: lease.operationId } };
       await this.state.writeAcceptanceResourceDeploymentDurably(row, run.seq, deploymentRunId, lease.operationId, fence);
+      return view(row);
+    });
+  }
+
+  /** Persist inspected original create identity before connecting networks or starting the process. */
+  async captureCreationDeployment(id: string, ownerToken: string, lease: BranchOperationLease,
+    createdId: string, imageId: string, assertExternal: () => void): Promise<AcceptanceResourceView> {
+    return this.operation(id, async () => {
+      this.validateCreationDeployment(id, ownerToken, lease);
+      const run = this.owned(id, ownerToken), branch = this.branch(run), bindings = this.releaseBindings!;
+      const service = branch.services[run.profileId], serviceDigest = service && acceptanceResourceServiceDigest(service), runDigest = digest(run);
+      if (run.creationIntent!.reference || this.state.getDeploymentRun(run.creationIntent!.deploymentRunId!)?.status !== 'building' || !service || service.containerId !== createdId || !CONTAINER.test(createdId)
+        || !/^sha256:[a-f0-9]{64}$/.test(imageId) || service.deployedImage !== imageId) throw new Error('acceptance_resource_unconfirmed');
+      const fence = () => {
+        assertExternal(); this.validateCreationDeployment(id, ownerToken, lease);
+        if (this.owned(id, ownerToken) !== run || digest(run) !== runDigest || this.branch(run) !== branch
+          || branch.services[run.profileId] !== service || acceptanceResourceServiceDigest(service) !== serviceDigest) throw new Error('acceptance_creation_changed');
+      };
+      const reference = await bindings.lifecycle.capture({ projectId: run.projectId, branchId: run.branchId,
+        acceptanceRunId: id, operationId: lease.operationId }, service, fence, lease.signal);
+      if (reference.id !== createdId || reference.image !== imageId || reference.wasRunning || reference.writableMounts.length) throw new Error('acceptance_resource_unconfirmed');
+      const verifyActual = async () => {
+        if (await bindings.lifecycle.releaseState(reference, fence, lease.signal) !== 'stopped') throw new Error('acceptance_resource_unconfirmed');
+      };
+      const row = { ...run, seq: run.seq + 1, creationIntent: { ...run.creationIntent!, reference, serviceDigest } };
+      await this.state.writeAcceptanceResourceCreationProgressDurably(row, run.seq, fence, verifyActual);
       return view(row);
     });
   }
@@ -215,6 +266,17 @@ export class AcceptanceResourceRunService {
       || !service || !CONTAINER.test(service.containerId || '') || service.deployedCommitSha !== run.targetSha
       || !deployment || deployment.projectId !== run.projectId || deployment.branchId !== run.branchId
       || deployment.commitSha !== run.targetSha || deployment.status !== 'running' || deployment.startedAt < run.startedAt) throw new Error('acceptance_resource_unconfirmed');
+    if (run.creationIntent) {
+      const intent = run.creationIntent, reference = intent.reference!;
+      if (digest(profile) !== intent.profileDigest || b.extraProfiles?.filter(p => p.id === run.profileId).length !== 1
+        || this.state.getBuildProfile(run.profileId) || Object.prototype.hasOwnProperty.call(b.profileOverrides || {}, run.profileId)
+        || service.containerId !== reference.id || service.containerName !== reference.name || service.deployedImage !== reference.image
+        || acceptanceResourceServiceDigest(service) !== intent.serviceDigest || service.deployedPrebuilt !== true || service.deployedMode !== 'express'
+        || reference.writableMounts.length || reference.owner.operationId !== intent.operationId
+        || deployment.operationId !== intent.operationId || digest(deployment.acceptanceOrigin) !== digest({ version: 1,
+          acceptanceRunId: run.id, profileId: run.profileId, targetSha: run.targetSha, profileDigest: intent.profileDigest, operationId: intent.operationId })
+        || (run.stage === 'active' && service.status !== 'running')) throw new Error('acceptance_resource_unconfirmed');
+    }
     return { configDigest: digest([profile, b.profileOverrides?.[run.profileId] || null]), containerId: service.containerId!, deploymentRunId: deployment.id };
   }
 
@@ -232,11 +294,23 @@ export class AcceptanceResourceRunService {
     const branch = this.branch(run);
     const resource = this.resource(run);
     const row = { ...run, seq: run.seq + 1, stage: 'registered' as const, resource };
-    await this.state.writeAcceptanceResourceRunDurably(row, run.seq, () => {
-      this.owned(id, ownerToken);
-      if (this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+    const runDigest = digest(run);
+    const fence = () => {
+      this.requireResolvedPublication(id);
+      if (run.creationIntent && !this.releaseBindings?.canExecute(branch)) throw new Error('acceptance_creation_unavailable');
+      if (this.owned(id, ownerToken) !== run || digest(run) !== runDigest || this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
       if (digest(this.resource(run)) !== digest(resource)) throw new Error('acceptance_resource_changed');
-    });
+    };
+    if (run.creationIntent) {
+      const bindings = this.releaseBindings;
+      if (!bindings || !bindings.canExecute(branch)) throw new Error('acceptance_creation_unavailable');
+      const verifyActual = async () => {
+        fence();
+        if (!bindings.canExecute(branch) || await bindings.lifecycle.releaseState(run.creationIntent!.reference!, fence, AbortSignal.timeout(10_000)) !== 'running') throw new Error('acceptance_resource_unconfirmed');
+      };
+      await verifyActual();
+      await this.state.writeAcceptanceResourceCreationProgressDurably(row, run.seq, fence, verifyActual);
+    } else await this.state.writeAcceptanceResourceRunDurably(row, run.seq, fence);
     return view(row);
   }
 

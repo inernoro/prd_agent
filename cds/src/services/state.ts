@@ -1137,9 +1137,15 @@ export class StateService {
     row = structuredClone(row);
     if (row.stage === 'released') throw new Error('acceptance_release_transaction_required');
     const previous = this.state.acceptanceResourceRuns?.[row.id];
-    if (previous?.creationIntent && (row.stage !== previous.stage
-      || acceptanceResourceDigest({ ...row, seq: previous.seq }) !== acceptanceResourceDigest(previous))) {
-      throw new Error('acceptance_creation_intent_changed');
+    if (previous?.creationIntent) {
+      const identical = acceptanceResourceDigest({ ...row, seq: previous.seq }) === acceptanceResourceDigest(previous);
+      const finish = previous.stage === 'registered' && row.stage === 'finished' && !!row.terminal
+        && !!previous.creationIntent.reference && !!previous.resource && !row.releaseIntent
+        && acceptanceResourceDigest({ ...row, seq: previous.seq, stage: previous.stage, terminal: previous.terminal }) === acceptanceResourceDigest(previous);
+      const releaseProgress = previous.stage === 'finished' && row.stage === 'finished' && !!row.releaseIntent
+        && (previous.releaseIntent || row.releaseIntent.phase === 'prepared')
+        && acceptanceResourceDigest({ ...row, seq: previous.seq, releaseIntent: previous.releaseIntent }) === acceptanceResourceDigest(previous);
+      if (!identical && !finish && !releaseProgress) throw new Error('acceptance_creation_intent_changed');
     }
     if (previous && Object.prototype.hasOwnProperty.call(previous, 'releaseIntent')) {
       const phases = ['prepared', 'stopped', 'removed'];
@@ -1226,6 +1232,54 @@ export class StateService {
     return this.publishAcceptanceResourceRun(row, expectedSeq, fence, undefined, undefined, undefined, { previous: deployment, draft });
   }
 
+  /** Only the original creation may publish its inspected identity or later register it. */
+  async writeAcceptanceResourceCreationProgressDurably(row: AcceptanceResourceRun, expectedSeq: number,
+    assertCurrent: () => void, verifyActual: () => Promise<void>): Promise<void> {
+    row = structuredClone(row);
+    const previous = this.state.acceptanceResourceRuns?.[row.id], intent = previous?.creationIntent;
+    const branch = this.state.branches[row.branchId], next = row.creationIntent;
+    const capturing = previous?.stage === 'active' && row.stage === 'active' && !intent?.reference && !intent?.serviceDigest;
+    const registering = previous?.stage === 'active' && row.stage === 'registered' && !!intent?.reference;
+    const original = { ...row, seq: previous?.seq, stage: previous?.stage, creationIntent: intent, resource: previous?.resource };
+    const reference = next?.reference;
+    if (!previous || previous.seq !== expectedSeq || row.seq !== expectedSeq + 1 || previous.resource || previous.terminal || previous.releaseIntent
+      || intent?.version !== 1 || intent.phase !== 'deploying' || !intent.deploymentRunId || !intent.operationId
+      || (!capturing && !registering) || !next || acceptanceResourceDigest(original) !== acceptanceResourceDigest(previous)
+      || (capturing ? acceptanceResourceDigest({ ...next, reference: undefined, serviceDigest: undefined }) !== acceptanceResourceDigest(intent) || !!row.resource
+        : acceptanceResourceDigest(next) !== acceptanceResourceDigest(intent))
+      || !reference || !/^[a-f0-9]{64}$/.test(reference.id) || !/^sha256:[a-f0-9]{64}$/.test(reference.image)
+      || !/^sha256:[a-f0-9]{64}$/.test(reference.fingerprint) || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(reference.name)
+      || typeof reference.wasRunning !== 'boolean' || (capturing && reference.wasRunning) || !Array.isArray(reference.writableMounts) || reference.writableMounts.length
+      || reference.owner?.projectId !== previous.projectId || reference.owner?.branchId !== previous.branchId
+      || reference.owner?.profileId !== previous.profileId || reference.owner?.operationId !== intent.operationId
+      || !/^[a-f0-9]{64}$/.test(next.serviceDigest || '') || !branch) throw new Error('acceptance_creation_scope');
+    const service = branch.services[previous.profileId], deployment = this.state.deploymentRuns?.[intent.deploymentRunId];
+    const fence = () => {
+      assertCurrent();
+      const profiles = branch.extraProfiles?.filter(profile => profile.id === previous.profileId) || [];
+      if (this.state.acceptanceResourceRuns?.[row.id] !== previous || this.state.branches[row.branchId] !== branch
+        || acceptanceResourceDigest([branch.id, branch.projectId, branch.branch, branch.createdAt, branch.worktreePath]) !== previous.branchIdentity
+        || profiles.length !== 1 || profiles[0].projectId !== previous.projectId || acceptanceResourceDigest(profiles[0]) !== intent.profileDigest
+        || Object.prototype.hasOwnProperty.call(branch.profileOverrides || {}, previous.profileId) || this.getBuildProfile(previous.profileId)
+        || !service || branch.services[previous.profileId] !== service || acceptanceResourceServiceDigest(service) !== next.serviceDigest
+        || service.containerId !== reference.id || service.containerName !== reference.name || service.deployedImage !== reference.image
+        || service.deployedCommitSha !== previous.targetSha || service.deployedPrebuilt !== true || service.deployedMode !== 'express'
+        || !deployment || this.state.deploymentRuns?.[intent.deploymentRunId!] !== deployment
+        || deployment.projectId !== previous.projectId || deployment.branchId !== previous.branchId || deployment.commitSha !== previous.targetSha
+        || deployment.operationId !== intent.operationId || ['failed','cancelled'].includes(deployment.status)
+        || acceptanceResourceDigest(deployment.acceptanceOrigin) !== acceptanceResourceDigest({ version: 1, acceptanceRunId: previous.id,
+          profileId: previous.profileId, targetSha: previous.targetSha, profileDigest: intent.profileDigest, operationId: intent.operationId })
+        || (capturing && deployment.status !== 'building')
+        || (registering && (deployment.status !== 'running' || service.status !== 'running'
+          || row.resource?.containerId !== reference.id || row.resource?.deploymentRunId !== deployment.id
+          || row.resource?.configDigest !== acceptanceResourceDigest([profiles[0], null])))) throw new Error('acceptance_creation_changed');
+    };
+    fence();
+    // Split backends must ACK the actual service identity as well as the global acceptance row.
+    this.save([{ kind: 'branches', id: branch.id }]); await this.flush(); fence();
+    return this.publishAcceptanceResourceRun(row, expectedSeq, fence, verifyActual, undefined, undefined, undefined, true);
+  }
+
   private acceptanceCreatedGraph(branch: BranchEntry, profile: BuildProfile): BranchEntry {
     if (branch.extraProfiles?.some(item => item.id === profile.id) || branch.services[profile.id]
       || Object.prototype.hasOwnProperty.call(branch.profileOverrides || {}, profile.id)
@@ -1285,7 +1339,7 @@ export class StateService {
   private async publishAcceptanceResourceRun(row: AcceptanceResourceRun, expectedSeq: number | undefined,
     assertCurrent: () => void, afterFlush?: () => Promise<void>, releaseTarget?: { branchId: string; profileId: string },
     creationTarget?: { branchId: string; profile: BuildProfile },
-    deploymentTarget?: { previous: DeploymentRun; draft: DeploymentRun }): Promise<void> {
+    deploymentTarget?: { previous: DeploymentRun; draft: DeploymentRun }, verifyAfterCommit = false): Promise<void> {
     row = structuredClone(row);
     const table = this.state.acceptanceResourceRuns || {};
     const previous = table[row.id];
@@ -1316,7 +1370,7 @@ export class StateService {
       // Only a verified draft may enter the committed table. The first barrier saved intent only.
       this.committingAcceptanceDrafts.add(row.id);
       this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
-      if (releaseTarget && afterFlush) { await afterFlush(); assertCurrent(); }
+      if ((releaseTarget || verifyAfterCommit) && afterFlush) { await afterFlush(); assertCurrent(); }
       assertRow();
       if (releaseTarget) {
         const branch = this.state.branches[releaseTarget.branchId];

@@ -229,6 +229,8 @@ export function selfUpdateDrainBlockReason(nowMs: number): string | null {
  */
 export function isDrainBlockedPath(method: string, pathname: string): boolean {
   if (method !== 'POST') return false;
+  // 原验收任务的单服务部署同样进入应用级排空闸。
+  if (/^\/acceptance-resource-runs\/[^/]+\/deploy\/?$/i.test(pathname)) return true;
   // 分支构建/部署
   if (/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(pathname)) return true;
   // 生产发布：发起 / 回滚 / 重试 —— 三个都会真的往目标机器跑 SSH

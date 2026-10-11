@@ -1,3 +1,5 @@
+import { acceptanceCreationContainerName } from '../services/acceptance-resource-profile.js';
+import { AcceptanceResourceRunService, acceptanceResourceDigest, type AcceptanceResourceRun } from '../services/acceptance-resource-run.js';
 import { acceptanceReleaseBlockReason, acceptanceResourceCopyExcludedProfiles } from '../services/acceptance-release-admission.js';
 import { CiTimingCollector } from '../services/deployment-ci-timing.js';
 import { measureDeploymentStage } from '../services/deployment-stage-timing.js';
@@ -5,7 +7,7 @@ import { singleServiceArtifactSet } from '../services/single-service-artifact-se
 import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
 import { unresolvedCandidateRun } from '../services/candidate-operation-admission.js';
 import type { OwnedCandidateNetworkLifecycle } from '../services/owned-candidate-network.js';
-import type { OwnedContainerLifecycle } from '../services/owned-container-lifecycle.js';
+import { OwnedContainerLifecycle } from '../services/owned-container-lifecycle.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -18,7 +20,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
-import { Router, type Request, type Response } from 'express';
+import { Router, json, type Request, type Response, type NextFunction } from 'express';
 import { StateService } from '../services/state.js';
 import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -1746,6 +1748,8 @@ interface RunServiceWithPortRetryOptions {
   assertCurrent?: (step: string) => void;
   signal?: AbortSignal;
   onOutput?: (chunk: string) => void;
+  ownedCreationRunId?: string;
+  onOwnedCreationCreated?: (id: string, imageId: string) => Promise<void>;
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
@@ -1844,11 +1848,13 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           latestCommitSha: options.latestCommitSha,
           sourceCommitSha: options.sourceCommitSha,
           onLatestCommitImage: options.onLatestCommitImage,
+          ownedCreationRunId: options.ownedCreationRunId,
+          onOwnedCreationCreated: options.onOwnedCreationCreated,
         },
       );
       return;
     } catch (err) {
-      if (!isPortConflictError(err) || attempt === maxAttempts) throw err;
+      if (options.ownedCreationRunId || !isPortConflictError(err) || attempt === maxAttempts) throw err;
       const oldPort = options.service.hostPort;
       const listeningPorts = await collectListeningPorts(options.shell);
       listeningPorts.add(oldPort);
@@ -2377,6 +2383,58 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+  const creationKernel = new AcceptanceResourceRunService(stateService, undefined, undefined, branchOperationCoordinator ? {
+    coordinator: branchOperationCoordinator, lifecycle: new OwnedContainerLifecycle(shell, computeCdsInstanceId(config.repoRoot)),
+    canExecute: branch => !isRemoteExecutorOwned(branch.executorId),
+  } : undefined);
+  type CreationRequest = { id: string; ownerToken: string; branch: BranchEntry; profileId: string; targetSha: string;
+    row: AcceptanceResourceRun; profileDigest: string; lease?: BranchOperationLease; service?: ServiceState; assertCurrent(): void };
+  const creationRequests = new WeakMap<Request, CreationRequest>();
+  const creationOperations = new Map<string, CreationRequest>();
+  const creationFailure = (res: Response, error: unknown) => {
+    const code = error instanceof Error ? error.message.split(':', 1)[0] : '';
+    const allowed = /^(acceptance_(owner_required|run_(stage|busy|conflict|recovery_required)|creation_(scope|lease|changed|cancelled|profile_changed|unavailable|busy)|branch_changed)|creation_project_access_changed)$/;
+    res.status(code === 'acceptance_owner_required' || code === 'creation_project_access_changed' ? 403
+      : code === 'acceptance_creation_unavailable' ? 503 : allowed.test(code) ? 409 : 503).json({ error: allowed.test(code) ? code : 'acceptance_creation_unavailable' });
+  };
+  router.post('/acceptance-resource-runs/:acceptanceRunId/deploy', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const run = /^ar_[a-f0-9]{32}$/.test(req.params.acceptanceRunId) ? creationKernel.get(req.params.acceptanceRunId) : undefined;
+    if (!run) { res.status(404).json({ error: 'acceptance_run_not_found' }); return; }
+    const denied = assertProjectAccess(req as any, run.projectId);
+    if (denied) { res.status(denied.status).json(denied.body); return; }
+    next();
+  }, json({ limit: '2kb' }), (req, res, next) => {
+    const id = req.params.acceptanceRunId, ownerToken = req.body?.ownerToken;
+    if (!req.body || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== 'ownerToken')
+      || typeof ownerToken !== 'string' || !/^[a-f0-9]{64}$/.test(ownerToken) || Object.keys(req.query).length
+      || req.headers['x-cds-pending-operation-id'] != null || req.headers['x-cds-pending-generation'] != null
+      || (req.headers['x-cds-trigger'] != null && !['manual','system'].includes(String(req.headers['x-cds-trigger'])))) {
+      res.status(400).json({ error: 'acceptance_deployment_input_invalid' }); return;
+    }
+    try {
+      const run = creationKernel.validateCreationDeployment(id, ownerToken), branch = stateService.getBranch(run.branchId)!;
+      if (!deploymentRunService) throw new Error('acceptance_creation_unavailable');
+      const context: CreationRequest = { id, ownerToken, branch, profileId: run.profileId, targetSha: run.targetSha,
+        row: stateService.getState().acceptanceResourceRuns![id], profileDigest: run.creationIntent!.profileDigest,
+        assertCurrent() {
+          if (assertProjectAccess(req as any, run.projectId)) throw new Error('creation_project_access_changed');
+          const current = creationKernel.validateCreationDeployment(id, ownerToken, context.lease);
+          if (stateService.getBranch(branch.id) !== branch || stateService.getState().acceptanceResourceRuns?.[id] !== context.row
+            || current.creationIntent?.profileDigest !== context.profileDigest || current.targetSha !== context.targetSha
+            || (context.service ? branch.services[context.profileId] !== context.service : Boolean(branch.services[context.profileId]))) throw new Error('acceptance_creation_changed');
+        } };
+      context.assertCurrent(); creationRequests.set(req, context);
+      // The capability stays in the private context; the shared handler receives only the frozen server target.
+      req.body = { commitSha: run.targetSha }; next();
+    } catch (error) { creationFailure(res, error); }
+  });
+  router.use('/acceptance-resource-runs', (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const type = (error as { type?: unknown })?.type;
+    if (type === 'entity.too.large') res.status(413).json({ error: 'acceptance_payload_too_large' });
+    else if (type === 'entity.parse.failed') res.status(400).json({ error: 'acceptance_payload_invalid' });
+    else creationFailure(res, error);
+  });
   // Durable release ownership applies before ordinary side effects, including configuration copies.
   router.use((req, res, next) => {
     if (!['POST', 'PUT', 'DELETE'].includes(req.method)) { next(); return; }
@@ -2424,7 +2482,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 不吸收尾斜杠的话守卫会被绕过（Codex P2）。
     // force-rebuild/:profileId 也是容器动作（会 docker stop + find rm -rf worktree），
     // 必须同罩（Codex P2）。
-    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+|stop|restart|pull)\/?$/.test(req.path)) {
+    if (!creationRequests.has(req) && !/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+|stop|restart|pull)\/?$/.test(req.path)) {
       next();
       return;
     }
@@ -2447,9 +2505,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.use(async (req, res, next) => {
     if (req.method !== 'POST') { next(); return; }
     const match = /^\/branches\/([^/]+)\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.exec(req.path);
-    if (!match) { next(); return; }
+    const creation = creationRequests.get(req);
+    if (!match && !creation) { next(); return; }
     let branchId: string;
-    try { branchId = decodeURIComponent(match[1]); } catch { next(); return; }
+    try { branchId = creation?.branch.id || decodeURIComponent(match![1]); } catch { next(); return; }
     const original = stateService.getBranch(branchId);
     // No asynchronous gap before the existing handler's missing-target response.
     if (!original) { next(); return; }
@@ -2472,6 +2531,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(409).json({ error: 'disk_admission_target_changed', message: '磁盘检查期间部署目标已改变，请核对当前分支后重新发起。' }); return;
       }
       // Existing handlers still check current permissions and effective configuration.
+      if (creation) { try { creation.assertCurrent(); } catch (error) { creationFailure(res, error); return; } }
       next();
     } catch (error) { next(error); }
   });
@@ -3107,6 +3167,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       continueWith?: 'deploy' | 'deploy-profile' | null;
       /** 外层在拿租约前就建好的占位 run；并入在途部署时用来排除自己。 */
       deploymentRunId?: string | null;
+      acceptanceRunId?: string;
     },
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
@@ -3128,6 +3189,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
+      ...(input.acceptanceRunId ? { acceptanceRunId: input.acceptanceRunId } : {}),
       ...(req.headers['x-cds-internal'] === '1' && (req.headers['x-cds-pending-operation-id'] != null || req.headers['x-cds-pending-generation'] != null)
         ? { pendingOperationId: String(req.headers['x-cds-pending-operation-id'] || ''), pendingGeneration: Number(req.headers['x-cds-pending-generation']) } : {}),
     });
@@ -3264,6 +3326,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function assertBranchOperationCurrent(lease: BranchOperationLease | null | undefined, step: string): void {
     lease?.assertCurrent(step);
+    if (lease) creationOperations.get(lease.operationId)?.assertCurrent();
   }
 
   async function waitForRestartSafeBranchOperationsForRoute(
@@ -14690,8 +14753,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Redeploy a single service (SSE stream) ──
 
-  router.post('/branches/:id/deploy/:profileId', async (req, res) => {
-    const { id, profileId } = req.params;
+  router.post(['/branches/:id/deploy/:profileId', '/acceptance-resource-runs/:acceptanceRunId/deploy'], async (req, res) => {
+    const creation = creationRequests.get(req);
+    const id = creation?.branch.id || req.params.id, profileId = creation?.profileId || req.params.profileId;
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
@@ -14760,15 +14824,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
 
     const branchOperationLease = beginBranchOperation(req, res, entry, {
-      kind: 'deploy-profile',
-      profileId,
+      kind: creation ? 'acceptance-create' : 'deploy-profile',
+      profileId: creation ? null : profileId,
+      acceptanceRunId: creation?.id,
       commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
       commitPinned: profileCommitPinned,
       configHash: profileConfigHash || null,
       pendingConfigHash: pendingConfigHash || null,
       versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
       hasOneShotOptions: req.query.force === '1' || req.query.ignoreRequired === '1' || Boolean(req.body?.targetExecutorId),
-      source: 'api.deploy-profile',
+      source: creation ? 'acceptance-resource-deploy' : 'api.deploy-profile',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook single profile deploy' : 'manual single profile deploy',
       sse: true,
       deploymentRunId: deploymentRun?.id || null,
@@ -14778,6 +14843,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       cancelDeploymentRun(deploymentRun?.id, joinedRunId
         ? `已并入在途部署 ${joinedRunId}，本次不重复拆装容器` : '单服务部署请求未取得分支操作租约');
       return;
+    }
+    if (creation) {
+      try {
+        creation.assertCurrent();
+        if (!branchOperationLease || !deploymentRun) throw new Error('acceptance_creation_unavailable');
+        await creationKernel.bindCreationDeployment(creation.id, creation.ownerToken, deploymentRun.id, branchOperationLease, () => creation.assertCurrent());
+        creation.row = stateService.getState().acceptanceResourceRuns![creation.id]; creation.lease = branchOperationLease;
+        creationOperations.set(branchOperationLease.operationId, creation); creation.assertCurrent();
+      } catch (error) {
+        failDeploymentRun(deploymentRun?.id, '原创建部署关联未可靠确认', 'acceptance-bind');
+        completeBranchOperation(branchOperationLease, 'failed');
+        creationFailure(res, error); return;
+      }
     }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     let profileRuntimeAttempted = false;
@@ -14937,10 +15015,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
-        const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
+        const occupiedPorts = await collectListeningPorts(shell);
+        assertBranchOperationCurrent(branchOperationLease, 'after-profile-port-admission');
+        const hostPort = stateService.allocatePort(config.portStart, occupiedPorts);
         entry.services[profile.id] = {
           profileId: profile.id,
-          containerName: `cds-${id}-${profile.id}`,
+          containerName: creation ? acceptanceCreationContainerName(id, profile.id, creation.id) : `cds-${id}-${profile.id}`,
           hostPort,
           status: 'building',
         };
@@ -14948,6 +15028,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       const svc = entry.services[profile.id];
+      if (creation) creation.service = svc;
       svc.status = 'building';
       // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
       // 否则卡片只能从服务状态去猜：分支 idle 却有服务在探测、分支 error 却有服务在重建，
@@ -15104,6 +15185,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
           entry,
           profile: effectiveProfile,
           service: svc,
+          ownedCreationRunId: creation?.id,
+          onOwnedCreationCreated: creation ? async (createdId, imageId) => {
+            await creationKernel.captureCreationDeployment(creation.id, creation.ownerToken, branchOperationLease!, createdId, imageId, () => creation.assertCurrent());
+            creation.row = stateService.getState().acceptanceResourceRuns![creation.id];
+            creation.assertCurrent();
+          } : undefined,
           customEnv: mergedEnv,
           requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
           operationId: branchOperationLease?.operationId || null,
@@ -15370,7 +15457,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (err instanceof BranchOperationSupersededError) {
         const errMsg = (err as Error).message;
         cancelDeploymentRun(deploymentRun?.id, '单服务部署被更高优先级操作取代');
-        if (profileRuntimeAttempted) await cleanupFencedDeployContainers(
+        // Owned creation with an unknown identity/ACK remains occupied for explicit reconciliation.
+        if (profileRuntimeAttempted && !creation) await cleanupFencedDeployContainers(
           entry,
           new Set([profile.id]),
           String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined,
@@ -15439,6 +15527,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           failDeploymentRun(deploymentRun?.id, entry.errorMessage || '单服务部署未能完成', remainingRun.phase);
         }
       }
+      if (branchOperationLease) creationOperations.delete(branchOperationLease.operationId);
       completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
       res.end();
     }
