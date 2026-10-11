@@ -31,15 +31,24 @@ async function availablePort(): Promise<number> {
 // not a claim that the daemon naturally reproduced the delay in this run.
 async function createProbeDaemonProxy(socketPath: string) {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
+  const traffic = new Map<string, { kind: string; method: string; requests: number; replies: Record<string, number>; transportErrors: number }>();
   let armed = false; let caughtResolve!: () => void; let settledResolve!: () => void;
   const caught = new Promise<void>(resolve => { caughtResolve = resolve; });
   const settled = new Promise<void>(resolve => { settledResolve = resolve; });
   let captured = false;
   const record = (phase: string, fields: Record<string, unknown> = {}) => { timeline.push({ phase, at: new Date().toISOString(), ...fields }); };
   const server = http.createServer((request, response) => {
+    const kind = /\/images\/create(?:\?|$)/.test(request.url || '') ? 'image-pull'
+      : /\/images\/.+\/json(?:\?|$)/.test(request.url || '') ? 'image-inspect'
+        : /\/containers\/create(?:\?|$)/.test(request.url || '') ? 'container-create'
+          : /\/(?:version|info|_ping)(?:\?|$)/.test(request.url || '') ? 'daemon-read' : 'other';
+    const key = `${request.method}:${kind}`;
+    const row = traffic.get(key) || { kind, method: request.method || '', requests: 0, replies: {}, transportErrors: 0 };
+    row.requests++; traffic.set(key, row);
     const forward = (body?: Buffer, delayed = false) => {
       const upstream = http.request({ socketPath: '/var/run/owned.sock', path: request.url, method: request.method,
         headers: request.headers, timeout: 30_000 }, backend => {
+        const status = String(backend.statusCode || 0); row.replies[status] = (row.replies[status] || 0) + 1;
         if (!delayed) { response.writeHead(backend.statusCode || 502, backend.headers); backend.pipe(response); }
         else {
           let text = ''; backend.on('data', chunk => { text += chunk; });
@@ -53,7 +62,7 @@ async function createProbeDaemonProxy(socketPath: string) {
       requests.add(upstream); upstream.once('close', () => requests.delete(upstream));
       if (!delayed) { response.once('close', () => upstream.destroy()); response.once('error', () => upstream.destroy()); }
       upstream.once('timeout', () => upstream.destroy(new Error('owned proxy timeout')));
-      upstream.once('error', () => { if (delayed) { record('backend-create-transport-error'); settledResolve(); }
+      upstream.once('error', () => { row.transportErrors++; if (delayed) { record('backend-create-transport-error'); settledResolve(); }
         else if (!response.destroyed) { if (!response.headersSent) response.statusCode = 502; response.end(); } });
       if (body) upstream.end(body); else request.pipe(upstream);
     };
@@ -86,7 +95,7 @@ async function createProbeDaemonProxy(socketPath: string) {
     backend.on('error', () => client.destroy()); client.on('error', () => backend.destroy()); client.on('close', () => backend.destroy());
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
-  return { timeline, arm: () => { armed = true; }, caught,
+  return { timeline, traffic: () => [...traffic.values()], arm: () => { armed = true; }, caught,
     settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
     close: async () => { for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
@@ -197,6 +206,14 @@ async function main(): Promise<void> {
       catch { return undefined; } finally { await probe.close(); } });
     await docker(['pull', capabilityImage], 600_000);
     probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'));
+    // Check the exact pinned image through the same socket used by the original
+    // app before fault injection. This does not replace its own safety probe.
+    const proxyHost = `unix://${path.join(root, 'probe-daemon-proxy.sock')}`;
+    const directImageId = await docker(['image', 'inspect', capabilityImage, '--format', '{{.Id}}']);
+    const proxyImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
+      { encoding: 'utf8', timeout: 10_000 })).stdout.trim();
+    assert.equal(proxyImageId, directImageId); assert.match(proxyImageId, /^sha256:[a-f0-9]{64}$/);
+    report.proxyPinnedImagePreflight = { daemonId: info.ID, imageReference: capabilityImage, imageId: proxyImageId, matchedDirectBackend: true };
     let capabilityProjectId: string | undefined;
     await runApplicationBootstrap({ sourceHead: source.sourceHead, mongoUri: `mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, dockerHost: host, output: '/owned/output',
       dockerRequestProxy: { socketPath: path.join(root, 'probe-daemon-proxy.sock'), daemonId: info.ID, owner: source.owner },
@@ -354,7 +371,7 @@ async function main(): Promise<void> {
   finally {
     const cleanupErrors: string[] = [];
     if (probeProxy) {
-      try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; }
+      try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; report.proxyTraffic = probeProxy.traffic(); }
       catch (error) { cleanupErrors.push(String(error)); }
       await probeProxy.close();
     }
