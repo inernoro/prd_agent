@@ -38,6 +38,8 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
 import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
 import { buildReportsOverview, effectiveVerdict } from '../services/acceptance-overview.js';
+import { AcceptanceResourceRunService } from '../services/acceptance-resource-run.js';
+import { assertProjectAccess } from './projects.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -219,6 +221,8 @@ interface ParsedUpload {
   branch?: string;
   prNumber?: string;
   deployMode?: string;
+  acceptanceRunId?: string;
+  acceptanceOwnerToken?: string;
 }
 
 const VERDICTS = ['pass', 'conditional', 'fail'] as const;
@@ -315,6 +319,10 @@ function parseMultipart(buf: Buffer, contentType: string): ParsedUpload {
       out.prNumber = value;
     } else if (fieldName === 'deployMode') {
       out.deployMode = value;
+    } else if (fieldName === 'acceptanceRunId') {
+      out.acceptanceRunId = value;
+    } else if (fieldName === 'acceptanceOwnerToken') {
+      out.acceptanceOwnerToken = value;
     } else if (fieldName === 'content' && out.content === undefined) {
       out.content = value;
     }
@@ -398,6 +406,7 @@ function sendReportContent(res: Response, format: ReportFormat, content: string)
 export function createReportsRouter(deps: ReportsRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
+  const resourceRuns = new AcceptanceResourceRunService(stateService);
 
   // Body parsers scoped to this router so the global express.json 100kb limit
   // does not clip large report uploads. JSON for the paste path, text for
@@ -455,6 +464,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
   // 2026-07-09：报告正文/资产 IO 全部异步化（Express 4 不接管 async handler
   // 的 rejection，末尾 catch 统一兜 500，保持原有错误语义）。
   router.post('/reports', rawParser, jsonParser, textParser, async (req: Request, res: Response) => {
+    let boundRequest = false;
     try {
     const contentType = String(req.headers['content-type'] || '');
     let title: string | undefined;
@@ -473,6 +483,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     let rawBranch: unknown;
     let rawPrNumber: unknown;
     let rawDeployMode: unknown;
+    let rawRunId: unknown;
+    let rawOwnerToken: unknown;
 
     if (contentType.includes('multipart/form-data')) {
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
@@ -492,6 +504,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = parsed.branch;
       rawPrNumber = parsed.prNumber;
       rawDeployMode = parsed.deployMode;
+      boundRequest = parsed.acceptanceRunId !== undefined || parsed.acceptanceOwnerToken !== undefined;
+      rawRunId = parsed.acceptanceRunId; rawOwnerToken = parsed.acceptanceOwnerToken;
     } else if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
       const body = req.body as Record<string, unknown>;
       title = typeof body.title === 'string' ? body.title : undefined;
@@ -508,8 +522,23 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       rawBranch = body.branch;
       rawPrNumber = body.prNumber;
       rawDeployMode = body.deployMode;
+      boundRequest = Object.hasOwn(body, 'acceptanceRunId') || Object.hasOwn(body, 'acceptanceOwnerToken');
+      rawRunId = body.acceptanceRunId; rawOwnerToken = body.acceptanceOwnerToken;
     } else if (typeof req.body === 'string') {
       content = req.body;
+    }
+
+    if (boundRequest) {
+      res.setHeader('Cache-Control', 'no-store');
+      if (projectId) {
+        const denied = assertProjectAccess(req as unknown as Parameters<typeof assertProjectAccess>[0], projectId);
+        if (denied) return res.status(denied.status).json(denied.body);
+      }
+      if (typeof rawRunId !== 'string' || !/^ar_[a-f0-9]{32}$/.test(rawRunId)
+        || typeof rawOwnerToken !== 'string' || !/^[a-f0-9]{64}$/.test(rawOwnerToken)
+        || !projectId || !branchId || typeof rawCommitSha !== 'string' || !/^[a-f0-9]{40}$/.test(rawCommitSha)
+        || !VERDICTS.includes(rawVerdict as typeof VERDICTS[number])) return res.status(400).json({ error: 'acceptance_scope_invalid' });
+      if (stateService.getProject(projectId)?.id !== projectId) return res.status(409).json({ error: 'acceptance_report_mismatch' });
     }
 
     const cleanTitle = (title || '').trim();
@@ -537,7 +566,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const key = projectKeyOf(req);
     let resolvedProjectId =
       projectId && stateService.getProject(projectId) ? stateService.getProject(projectId)!.id : null;
-    if (key) {
+    if (key && !boundRequest) {
       // 项目级 key 一律把报告归到自己的项目：杜绝建出本 key 之后列不出来的全局/孤儿
       // 报告，也不许挂到别的项目（PR #865 Bugbot「orphan creates」+「read global」）。
       resolvedProjectId = key.projectId;
@@ -552,70 +581,74 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
     }
 
-    // 文件夹归属（硬性要求 2026-06-26：项目 = 根目录，技能自取子文件夹路径）：
-    //   1) 显式 folderId 优先（必须同项目）；
-    //   2) 否则 folderPath（"/"分隔，如「视觉创作/2026-06-22」）→ 在该项目下 find-or-create
-    //      多层嵌套文件夹链，报告落到叶子。技能(cdscli/visual-test)用项目 key 提交时，只要带
-    //      一个功能名/路径，报告就自动归到「项目 → 功能 → …」下，不再全堆在项目顶层。
-    //   3) 都没有 → 未归类（旧报告/无路径报告留在未归类，不迁移）。
-    let resolvedFolderId: string | null = null;
-    if (folderId) {
-      const folder = stateService.getReportFolder(folderId);
-      if (folder && (folder.projectId ?? null) === resolvedProjectId) resolvedFolderId = folder.id;
-    } else if (folderPath && folderPath.trim()) {
-      resolvedFolderId = stateService.findOrCreateFolderPath(resolvedProjectId, folderPath);
-    }
-
-    // E1：分支已解析时，若调用方未显式给 branch/commitSha/deployMode，从分支状态补全，
-    // 让「这份验收对应哪次部署」即使调用方偷懒也尽量可追溯。
-    let resolvedBranch = normShort(rawBranch);
-    let resolvedCommitSha = normShort(rawCommitSha, 64);
-    let resolvedDeployMode = normShort(rawDeployMode, 40);
-    if (resolvedBranchId) {
-      const br = stateService.getBranch(resolvedBranchId);
-      if (br) {
-        if (!resolvedBranch) resolvedBranch = normShort(br.branch);
-        if (!resolvedCommitSha) resolvedCommitSha = normShort(br.ciTargetSha || br.githubCommitSha, 64);
-      }
-    }
-
+    if (boundRequest) { resolvedProjectId = projectId!; resolvedBranchId = branchId!; }
     const verdict = normVerdict(rawVerdict);
     const tier = normShort(rawTier, 80);
-    const templateGate = validateAcceptanceHtmlTemplate({
-      title: cleanTitle,
-      format,
-      content,
-      verdict,
-      tier,
-    });
-    if (!templateGate.ok) {
-      return res.status(422).json({
-        error: 'acceptance_html_template_required',
-        message: templateGate.message,
-      });
-    }
-    // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
-    // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
-    const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
+    const templateGate = validateAcceptanceHtmlTemplate({ title: cleanTitle, format, content, verdict, tier });
+    if (!templateGate.ok) return res.status(422).json({ error: 'acceptance_html_template_required', message: templateGate.message });
+    const createReport = async (assertCurrent: () => void = () => {}) => {
+      // 文件夹归属（硬性要求 2026-06-26：项目 = 根目录，技能自取子文件夹路径）：
+      //   1) 显式 folderId 优先（必须同项目）；
+      //   2) 否则 folderPath（"/"分隔，如「视觉创作/2026-06-22」）→ 在该项目下 find-or-create
+      //      多层嵌套文件夹链，报告落到叶子。技能(cdscli/visual-test)用项目 key 提交时，只要带
+      //      一个功能名/路径，报告就自动归到「项目 → 功能 → …」下，不再全堆在项目顶层。
+      //   3) 都没有 → 未归类（旧报告/无路径报告留在未归类，不迁移）。
+      let resolvedFolderId: string | null = null;
+      if (folderId) {
+        const folder = stateService.getReportFolder(folderId);
+        if (folder && (folder.projectId ?? null) === resolvedProjectId) resolvedFolderId = folder.id;
+      } else if (folderPath && folderPath.trim()) {
+        resolvedFolderId = stateService.findOrCreateFolderPath(resolvedProjectId, folderPath);
+      }
 
-    const meta = await stateService.createAcceptanceReportAsync({
-      title: cleanTitle,
-      format,
-      content: normalizedContent,
-      projectId: resolvedProjectId,
-      branchId: resolvedBranchId,
-      folderId: resolvedFolderId,
-      verdict,
-      tier,
-      defectCounts: normDefectCounts(rawDefectCounts),
-      commitSha: resolvedCommitSha,
-      branch: resolvedBranch,
-      prNumber: normPrNumber(rawPrNumber),
-      deployMode: resolvedDeployMode,
-      createdBy: resolveActorFromRequest(req),
-    });
+      // E1：分支已解析时，若调用方未显式给 branch/commitSha/deployMode，从分支状态补全，
+      // 让「这份验收对应哪次部署」即使调用方偷懒也尽量可追溯。
+      let resolvedBranch = normShort(rawBranch);
+      let resolvedCommitSha = normShort(rawCommitSha, 64);
+      let resolvedDeployMode = normShort(rawDeployMode, 40);
+      if (resolvedBranchId) {
+        const br = stateService.getBranch(resolvedBranchId);
+        if (br) {
+          if (!resolvedBranch) resolvedBranch = normShort(br.branch);
+          if (!resolvedCommitSha) resolvedCommitSha = normShort(br.ciTargetSha || br.githubCommitSha, 64);
+        }
+      }
+
+      // 入库前归一化：把内联 base64 图片抽出、内容寻址存盘、正文改写为 HTTPS 资源链接，
+      // 让 CDS 报告正文永不再携带 base64（下游知识库拉取时也就不会出现 base64）。
+      const { content: normalizedContent } = await normalizeInlineImages(content, publicBaseFromReq(req), stateService);
+
+      assertCurrent();
+      return stateService.createAcceptanceReportAsync({
+        title: cleanTitle,
+        ...(boundRequest ? { acceptanceRunId: rawRunId as string } : {}),
+        format,
+        content: normalizedContent,
+        projectId: resolvedProjectId,
+        branchId: resolvedBranchId,
+        folderId: resolvedFolderId,
+        verdict,
+        tier,
+        defectCounts: normDefectCounts(rawDefectCounts),
+        commitSha: resolvedCommitSha,
+        branch: resolvedBranch,
+        prNumber: normPrNumber(rawPrNumber),
+        deployMode: resolvedDeployMode,
+        createdBy: resolveActorFromRequest(req),
+      });
+    };
+    const meta = boundRequest ? await resourceRuns.createBoundReport({ id: rawRunId as string, ownerToken: rawOwnerToken as string,
+      projectId: projectId!, branchId: branchId!, commitSha: rawCommitSha as string }, createReport) : await createReport();
     return res.status(201).json({ report: meta });
     } catch (err) {
+      if (boundRequest) {
+        const code = err instanceof Error ? err.message : '';
+        const statuses: Record<string, number> = { acceptance_owner_required: 403, acceptance_run_stage: 409,
+          acceptance_run_recovery_required: 409, acceptance_report_mismatch: 409, acceptance_run_conflict: 409,
+          acceptance_branch_changed: 409, acceptance_resource_unconfirmed: 409, acceptance_resource_changed: 409,
+          acceptance_run_busy: 409, acceptance_operation_capacity: 429, acceptance_report_changed: 409 };
+        return res.status(Object.hasOwn(statuses, code) ? statuses[code] : 500).json({ error: Object.hasOwn(statuses, code) ? code : 'internal' });
+      }
       return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }
   });

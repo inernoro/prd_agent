@@ -162,6 +162,33 @@ export class AcceptanceResourceRunService {
     return meta;
   }
 
+  /** Bind an existing report producer; archiving does not publish a terminal receipt. */
+  async createBoundReport(input: { id: string; ownerToken: string; projectId: string; branchId: string; commitSha: string },
+    create: (assertCurrent: () => void) => Promise<AcceptanceReportMeta>): Promise<AcceptanceReportMeta> {
+    return this.operation(input.id, async () => {
+      const run = this.owned(input.id, input.ownerToken);
+      this.requireResolvedPublication(input.id);
+      if (run.stage !== 'registered') throw new Error('acceptance_run_stage');
+      if (run.projectId !== input.projectId || run.branchId !== input.branchId || run.targetSha !== input.commitSha) throw new Error('acceptance_report_mismatch');
+      const branch = this.branch(run);
+      const assertCurrent = () => {
+        if (this.state.getState().acceptanceResourceRuns?.[input.id] !== run) throw new Error('acceptance_run_conflict');
+        this.owned(input.id, input.ownerToken);
+        this.requireResolvedPublication(input.id);
+        if (this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+        this.sameResource(run);
+      };
+      assertCurrent();
+      const meta = await create(assertCurrent);
+      assertCurrent();
+      const metaDigest = digest(this.report(run, meta.id));
+      await this.state.flush();
+      assertCurrent();
+      if (digest(this.report(run, meta.id)) !== metaDigest) throw new Error('acceptance_report_changed');
+      return meta;
+    });
+  }
+
   async finish(id: string, ownerToken: string, reportId: string): Promise<AcceptanceResourceView> {
     return this.operation(id, () => this.finishNow(id, ownerToken, reportId));
   }
