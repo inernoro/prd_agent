@@ -117,6 +117,8 @@ export interface SelfStatusSnapshot {
 interface StoreState {
   /** 当前 EventSource 连接状态(基础态:idle/connecting/connected/disconnected/error) */
   connection: ConnectionState;
+  /** Successful connection generation; observers re-read authoritative state on change. */
+  connectionEpoch: number;
   /** snapshot — 永远是后端权威数据。degraded 不清空它,UI 用 degraded 标志决定渲染色 */
   snapshot: SelfStatusSnapshot | null;
   /** 最近一次成功 snapshot(degraded 时回退展示) */
@@ -165,6 +167,7 @@ interface StoreState {
 
 const INITIAL_STATE: StoreState = {
   connection: 'idle',
+  connectionEpoch: 0,
   snapshot: null,
   lastKnownGood: null,
   refreshing: null,
@@ -232,9 +235,13 @@ function openConnection(): void {
   eventSource = es;
 
   const onOpen = (): void => {
+    if (eventSource !== es) return;
     connectAttempt = 0;
     setState({
       connection: 'connected',
+      connectionEpoch: state.connectionEpoch + 1,
+      refreshing: null,
+      updating: null,
       consecutiveErrors: 0,
       lastError: null,
       disconnectedAt: null,
@@ -243,6 +250,7 @@ function openConnection(): void {
   };
 
   const handleEvent = (type: CdsEventType, raw: MessageEvent): void => {
+    if (eventSource !== es) return;
     let envelope: CdsEventEnvelope;
     try {
       envelope = JSON.parse(raw.data) as CdsEventEnvelope;
@@ -253,7 +261,7 @@ function openConnection(): void {
   };
 
   es.onopen = onOpen;
-  es.onerror = onError;
+  es.onerror = () => { if (eventSource === es) onError(); };
 
   // 注册所有事件类型
   const types: CdsEventType[] = [
@@ -298,6 +306,13 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
     case 'self.status': {
       const snapshot = envelope.data as SelfStatusSnapshot;
       const next: Partial<StoreState> = { snapshot };
+      if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'activeSelfUpdate')) {
+        const active = snapshot.activeSelfUpdate as { startedAt?: unknown; branch?: unknown; step?: unknown; interrupted?: unknown } | null;
+        next.updating = active && !active.interrupted && typeof active.startedAt === 'string'
+          ? { startedAt: active.startedAt, ...(typeof active.branch === 'string' ? { branch: active.branch } : {}),
+            ...(typeof active.step === 'string' ? { step: active.step } : {}) }
+          : null;
+      }
       if (snapshot && !snapshot.degraded) {
         next.lastKnownGood = snapshot;
       }

@@ -13,7 +13,7 @@
  * 安全:操作员永远看不到授权密钥明文(批准后由发起方凭 pollToken 轮询取走一次)。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
@@ -50,16 +50,22 @@ export function AccessRequestInbox({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     try {
       const data = await apiRequest<AccessRequestsResponse>('/api/access-requests');
+      if (seq !== refreshSeq.current) return;
       setPending((data.requests || []).filter((r) => r.status === 'pending'));
     } catch {
       // 静默 — degraded / 401 不该让这个组件爆错
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => { refreshSeq.current++; };
+  }, [refresh, events.connectionEpoch]);
 
   // 事件驱动:agent 发起新申请 / 批准 / 拒绝后立即 refresh
   useEffect(() => {

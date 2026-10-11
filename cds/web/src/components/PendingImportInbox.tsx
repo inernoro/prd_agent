@@ -16,7 +16,7 @@
  *   - 挂在 AppShell,任何页面可见(同 OperatorApprovalModal / GlobalUpdateBadge)
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Bot, Inbox, Loader2, X } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -61,9 +61,12 @@ export function PendingImportInbox({
   const [busy, setBusy] = useState<string | null>(null);
   const [flapDismissedAt, setFlapDismissedAt] = useState<string | null>(null);
 
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     try {
       const data = await apiRequest<PendingImportsResponse>('/api/pending-imports');
+      if (seq !== refreshSeq.current) return;
       const list = (data.imports || []).filter((i) => i.status === 'pending');
       // Codex review(PR #684, P2):/api/pending-imports 列表端点刻意 strip 掉
       // composeYaml(防列表行过大),导致 item.composeYaml 永远 undefined、抽屉里
@@ -81,14 +84,17 @@ export function PendingImportInbox({
           return it;
         }
       }));
-      setPending(enriched);
+      if (seq === refreshSeq.current) setPending(enriched);
     } catch {
       // 静默 — degraded / 401 之类不该让这个组件爆错
     }
   }, []);
 
   // 初始拉一次
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => { refreshSeq.current++; };
+  }, [refresh, events.connectionEpoch]);
 
   // 事件驱动:agent 提交新 import / approve / reject 后立即 refresh
   useEffect(() => {

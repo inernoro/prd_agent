@@ -116,7 +116,7 @@ export function SiteNoticeInbox(): JSX.Element {
     import: 0,
     update: 0,
   });
-  const { lastNoticeEvent } = useCdsEvents();
+  const { lastNoticeEvent, connectionEpoch } = useCdsEvents();
   const noticeEventTs = lastNoticeEvent?.ts ?? null;
 
   const updateSourceCount = useCallback((source: keyof typeof sourceCounts, count: number): void => {
@@ -184,9 +184,12 @@ export function SiteNoticeInbox(): JSX.Element {
     };
   }, [open]);
 
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async (): Promise<void> => {
+    const seq = ++refreshSeq.current;
     try {
       const res = await apiRequest<NoticesResponse>('/api/notices');
+      if (seq !== refreshSeq.current) return;
       setNotices(Array.isArray(res?.notices) ? res.notices : []);
       if (res?.outbound) setOutbound(res.outbound);
     } catch {
@@ -194,7 +197,10 @@ export function SiteNoticeInbox(): JSX.Element {
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => { refreshSeq.current++; };
+  }, [refresh, connectionEpoch]);
 
   // 服务端记了新通知 → 实时增量刷新（不轮询）。
   useEffect(() => {

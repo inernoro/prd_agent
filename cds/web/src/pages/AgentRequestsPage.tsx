@@ -85,7 +85,7 @@ export function AgentRequestsPage(): JSX.Element {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [eventsBySession, setEventsBySession] = useState<Record<string, AgentEvent[] | 'loading' | 'error'>>({});
   const fetchSeqRef = useRef(0);
-  const { lastAgentActivityEvent, effectiveConnection } = useCdsEvents();
+  const { lastAgentActivityEvent, effectiveConnection, connectionEpoch } = useCdsEvents();
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!projectId) return;
@@ -112,7 +112,10 @@ export function AgentRequestsPage(): JSX.Element {
     }
   }, [projectId, fUser, fApp, fStatus, fQ]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { fetchSeqRef.current++; };
+  }, [load, connectionEpoch]);
 
   // 兜底轮询 5s（SSE 丢事件时列表仍然活着）
   useEffect(() => {

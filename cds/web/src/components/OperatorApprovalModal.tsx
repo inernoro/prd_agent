@@ -12,7 +12,7 @@
  *   - 显示 caller 来源 / op danger 等级 / args / 估时
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Bot, ShieldCheck, ShieldX, Wrench } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -46,9 +46,12 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const [busy, setBusy] = useState(false);
 
   // 拿当前所有 pending request,选最新一条展示
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     try {
       const data = await apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests');
+      if (seq !== refreshSeq.current) return;
       const list = (data.pending || []).filter((r) => r.status === 'pending');
       if (list.length > 0) setPending(list[0]);
       else setPending(null);
@@ -58,7 +61,10 @@ export function OperatorApprovalModal(): JSX.Element | null {
   }, []);
 
   // 初始进页面拉一次
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => { refreshSeq.current++; };
+  }, [refresh, events.connectionEpoch]);
 
   // 订阅 cds-events 总线:operator.request.* 事件一来立即 refresh(实时弹窗)。
   // Codex review(PR #684, P2):此前只盯 lastHeartbeatAt → 新审批请求最多隐身 25s。

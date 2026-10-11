@@ -8,11 +8,20 @@
 //   - POST /api/self-refresh 立刻 202 返回 jobId,git fetch 在后台跑,进度走事件流
 
 import { Router, type Request, type Response } from 'express';
+import { OrderedSseWriter } from '../services/ordered-sse-writer.js';
 import { selfStatusCache, type RefreshTrigger } from '../services/self-status-cache.js';
 import { cdsEventsBus, type CdsEventEnvelope } from '../services/cds-events-bus.js';
 
 export function createCdsEventsRouter(): Router {
   const router = Router();
+  const serialized = new WeakMap<CdsEventEnvelope, string>();
+  const frame = (envelope: CdsEventEnvelope): string => {
+    const cached = serialized.get(envelope);
+    if (cached !== undefined) return cached;
+    const value = `event: ${envelope.type}\ndata: ${JSON.stringify(envelope)}\n\n`;
+    serialized.set(envelope, value);
+    return value;
+  };
 
   /**
    * GET /api/cds-events — 单一 SSE 通道
@@ -24,7 +33,7 @@ export function createCdsEventsRouter(): Router {
    *   4. 首个客户端连上 + 缓存未跑过完整 refresh → 入队一次"启动 refresh"
    *
    * 鉴权:复用 server.ts 顶层的 auth middleware(本路由挂在 /api 之下)
-   * 出错:永不返回 4xx/5xx,即使 snapshot 抛错也只是不发 self.status 而已
+   * 出错:观察流失败不取消任务；过大帧/积压/阻塞越界清理并断开，不伪报任务终态
    */
   router.get('/cds-events', (req: Request, res: Response) => {
     res.writeHead(200, {
@@ -59,16 +68,20 @@ export function createCdsEventsRouter(): Router {
     };
 
     let alive = true;
-    const write = (envelope: CdsEventEnvelope): boolean => {
-      if (!alive) return false;
-      try {
-        res.write(`event: ${envelope.type}\ndata: ${JSON.stringify(envelope)}\n\n`);
-        return true;
-      } catch {
-        alive = false;
-        return false;
-      }
-    };
+    let unsubscribe: (() => void) | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const onRequestClose = (): void => writer.close();
+    const writer = new OrderedSseWriter(res, () => {
+      alive = false;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe?.();
+      req.off('close', onRequestClose);
+    });
+    req.once('close', onRequestClose);
+    const write = (envelope: CdsEventEnvelope): boolean => writer.send(
+      () => frame(envelope),
+      envelope.type === 'heartbeat',
+    );
 
     // 1) 立即发当前 snapshot(self.status)。snapshot 可能是空的 EMPTY,无碍。
     //    project-scoped key 不发 —— self.status 是全局 CDS 健康,不属于单项目。
@@ -88,12 +101,21 @@ export function createCdsEventsRouter(): Router {
     }
 
     // 2) 订阅 bus(project-scoped key 只放行命中自己项目的事件)
-    const unsubscribe = cdsEventsBus.subscribe((envelope) => {
+    if (!alive) return;
+    unsubscribe = cdsEventsBus.subscribe((envelope) => {
       if (envelopeAllowed(envelope)) write(envelope);
     });
 
+    // Restore an active refresh observation for a reconnect that missed its started event.
+    if (!projectScope) {
+      const job = selfStatusCache.getActiveJob();
+      if (job?.status === 'running') write({ type: 'self.refresh.started', ts: job.startedAt,
+        jobId: job.jobId, data: { jobId: job.jobId, trigger: job.trigger } });
+    }
+    if (!alive) return;
+
     // 3) heartbeat — 每 25s 一条,带服务端 ts。前端用它做 SSE 连接健康判断。
-    const heartbeat = setInterval(() => {
+    heartbeat = setInterval(() => {
       if (!alive) {
         clearInterval(heartbeat);
         return;
@@ -108,17 +130,9 @@ export function createCdsEventsRouter(): Router {
       });
       if (!ok) {
         clearInterval(heartbeat);
-        unsubscribe();
+        writer.close();
       }
     }, 25_000);
-
-    // 4) 客户端断开清理
-    req.on('close', () => {
-      alive = false;
-      clearInterval(heartbeat);
-      unsubscribe();
-      try { res.end(); } catch { /* tolerate */ }
-    });
 
     // 5) 首个客户端连上 + cache 未跑过完整 refresh → 触发一次。
     //    多客户端连上时由 cache 内部 dedupe(同 trigger 5s 内不重跑),无害。
