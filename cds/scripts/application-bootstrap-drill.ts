@@ -77,6 +77,7 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
     ownedProcessesRemoved: false, ownedDatabaseRemoved: false, isolatedFilesRemoved: false };
   const env: NodeJS.ProcessEnv = {}; for (const key of ['PATH', 'LANG', 'LC_ALL', 'TZ']) if (process.env[key]) env[key] = process.env[key];
   let mongod: ChildProcess | undefined, application: ChildProcess | undefined, mongo: MongoClient | undefined;
+  let captureProbeEvents: (() => Promise<any[]>) | undefined;
   const knownPids = new Set<number>(), appLogs: string[] = []; let exitApp: Promise<{ code: number | null; signal: string | null }> | undefined;
   const dbName = `${owner}_state`, authDb = `${owner}_auth`, password = randomBytes(24).toString('hex');
   const secretValues = [password];
@@ -166,14 +167,19 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       try { const r = await request('/api/auth/bootstrap-status', 'GET', undefined, false); return r.status === 200 ? r : undefined; } catch { return undefined; } }, 45_000);
     const stop = async () => {
       assert.ok(application?.pid); for (const row of descendants(application.pid)) knownPids.add(row.pid);
+      const began = performance.now(); const requestedAt = new Date().toISOString();
       application.kill('SIGTERM'); const ended = await Promise.race([exitApp!, sleep(15_000).then(() => { throw new Error('完整index正常停机未确认'); })]);
+      (report.shutdownAttempts ??= []).push({ requestedAt, exitedAt: new Date().toISOString(), elapsedMs: performance.now() - began, ...ended });
       assert.equal(ended.code, 0); return ended;
     };
+    const readProbeEvents = async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: 'agent-workspace-capability' }).sort({ ts: 1 }).limit(128).toArray())
+      .map(event => ({ at: event.ts, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details }));
+    // 失败仍须先保存真实退出前的收尾回执；不得把外层销毁自有daemon当作应用清理成功。
+    captureProbeEvents = readProbeEvents;
     const context: ApplicationBootstrapContext = { root, repo, runtime, port, configFile, report, request, requestRaw,
       applicationPid: () => application?.pid,
       applicationProcessTree: () => application?.pid ? descendants(application.pid) : [],
-      readProbeEvents: async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: 'agent-workspace-capability' }).sort({ ts: 1 }).limit(128).toArray())
-        .map(event => ({ at: event.ts, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details })),
+      readProbeEvents,
     };
     report.stage = 'original-index-first-boot'; start(); const initial = await ready(); assert.equal(initial.json.needsBootstrap, true);
     const tree = descendants(application!.pid!); for (const row of tree) knownPids.add(row.pid);
@@ -229,7 +235,10 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
         if (command.includes(root + path.sep)) process.kill(pid, 'SIGKILL');
       } catch { /* 已退出或身份不符，绝不杀其他进程。 */ }
     }
-    if (mongo) { await mongo.db(dbName).dropDatabase(); await mongo.db(authDb).dropDatabase();
+    if (mongo) {
+      try { if (captureProbeEvents) { report.probeEventsBeforeOwnedDatabaseRemoval = await captureProbeEvents(); report.probeEventsCapturedAt = new Date().toISOString(); } }
+      catch { report.probeEventCaptureFailed = true; }
+      await mongo.db(dbName).dropDatabase(); await mongo.db(authDb).dropDatabase();
       assert.deepEqual(await mongo.db(dbName).listCollections().toArray(), []); assert.deepEqual(await mongo.db(authDb).listCollections().toArray(), []); await mongo.close(); report.ownedDatabaseRemoved = true; }
     if (mongod?.pid && mongod.exitCode === null) { mongod.kill('SIGTERM'); await waitFor(async () => mongod!.exitCode !== null ? true : undefined, 10_000); }
     await sleep(100); report.remainingPids = [...knownPids].filter(pid => { try { process.kill(pid, 0); return true; } catch { return false; } });
