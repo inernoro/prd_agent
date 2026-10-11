@@ -88,6 +88,8 @@ class FaultMatrixShell implements IShellExecutor {
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.calls.push({ command, options });
+    const probeCidFile = command.match(/--cidfile '([^']+)'/)?.[1];
+    if (probeCidFile) fs.writeFileSync(probeCidFile, digest(command));
     if (command.startsWith('docker version')) return execResult('27.0.0\n');
     if (command.startsWith('docker image inspect')) return execResult('sha256:fault-matrix-image\n');
     if (command.includes('/cds-storage-probe') && command.startsWith('docker run --rm')) {

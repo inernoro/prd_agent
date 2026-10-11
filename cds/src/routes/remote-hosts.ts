@@ -74,6 +74,7 @@ export interface RemoteHostsRouterDeps {
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   serverEventLogStore?: ServerEventLogSink | null;
 }
 
@@ -97,9 +98,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell, {
       // systemd PrivateTmp 下的 /tmp 只对 CDS 可见，不能作为宿主 Docker 的 bind 源。
       // 复用构建缓存所在的数据根，保持宿主路径一致且不依赖启动工作目录。
+      serverEventLogStore: deps.serverEventLogStore,
       rootDir: process.env.CDS_AGENT_WORKSPACE_ROOT
         || path.join(path.dirname(deps.stateService.getCacheBase()), 'agent-workspaces'),
     }) : undefined);
+  if (agentWorkspaceSessionRuntime && typeof agentWorkspaceSessionRuntime.closeCapabilityProbes === 'function') {
+    deps.registerResourceShutdown?.(() => agentWorkspaceSessionRuntime.closeCapabilityProbes());
+  }
   const persistedRecoverableReservations = deps.stateService.listAgentSessionReservations()
     .filter((reservation) => reservation.item.resourceCleanupPending === true
       || (reservation.item.status !== 'stopped' && reservation.item.status !== 'failed'));

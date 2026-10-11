@@ -1058,6 +1058,9 @@ describe('Agent requests observability routes', () => {
     const releaseRecovery = deferred<void>();
     const runtimeShell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const probeCidFile = command.match(/--cidfile '([^']+)'/)?.[1];
+        if (probeCidFile) fs.writeFileSync(probeCidFile, 'a'.repeat(64));
+        if (/^docker rm -f '[a-f0-9]{64}'$/.test(command)) return { stdout: 'removed', stderr: '', exitCode: 0 };
         if (command.startsWith('docker ps -aq')) {
           recoveryStarted.resolve();
           await releaseRecovery.promise;

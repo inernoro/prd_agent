@@ -564,6 +564,8 @@ export interface ServerDeps {
    * worker abort 完成后再退出。
    */
   gracefulShutdown?: GracefulShutdownController;
+  /** Resources must settle before the shared execution pools close. */
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -4627,6 +4629,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    registerResourceShutdown: deps.registerResourceShutdown,
     serverEventLogStore: deps.serverEventLogStore,
   }));
   // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。

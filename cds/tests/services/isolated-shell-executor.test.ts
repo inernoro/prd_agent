@@ -11,7 +11,7 @@ import { launchObservationProcess } from '../../src/services/observation-process
 import { ContainerService } from '../../src/services/container.js';
 import { collectContainerDiagnostics } from '../../src/services/container-diagnostics.js';
 import { readReadyFixturePid } from '../helpers/process-pid-fixture.js';
-import type { CdsConfig } from '../../src/types.js';
+import type { CdsConfig, ExecAssignment } from '../../src/types.js';
 
 vi.mock('node:child_process', async (original) => {
   const actual = await original<typeof import('node:child_process')>();
@@ -47,6 +47,32 @@ afterEach(async () => {
 });
 
 describe('IsolatedShellExecutor 真实进程', () => {
+  it('在操作授权前回传真实actor、工厂代次和任务身份，取消队列不伪造身份', async () => {
+    const e = executor({ isolatedLane: 'operation', concurrency: 2, reservedCleanup: 1 });
+    await e.start();
+    let assignment: ExecAssignment | undefined;
+    const result = await e.exec('printf assigned-operation', { beforeStart: () => {}, onAssigned: value => { assignment = value; } });
+    expect(result.stdout).toBe('assigned-operation');
+    expect(assignment).toMatchObject({ lane: 'operation', factoryPid: e.getStats().factoryPid });
+    expect(assignment!.factoryGeneration).toBeGreaterThan(0);
+    expect(assignment!.jobId).toBeGreaterThan(0);
+    expect(e.getStats().actors.some(actor => actor.pid === assignment!.actorPid)).toBe(true);
+    const activeCancellation = new AbortController();
+    let signalStarted!: () => void;
+    const started = new Promise<void>(resolve => { signalStarted = resolve; });
+    const active = e.exec('printf queue-blocker; sleep 30', { signal: activeCancellation.signal, beforeStart: () => {}, onData: () => { signalStarted(); } });
+    const activeRejected = expect(active).rejects.toMatchObject({ code: 'cancelled' });
+    await started;
+    const cancellation = new AbortController();
+    const queuedAssignment = vi.fn();
+    const queued = e.exec('printf must-not-start', { signal: cancellation.signal, beforeStart: () => {}, onAssigned: queuedAssignment });
+    expect(e.getStats().queued).toBe(1);
+    const queuedRejected = expect(queued).rejects.toMatchObject({ code: 'cancelled' });
+    cancellation.abort(); await queuedRejected;
+    activeCancellation.abort(); await activeRejected;
+    expect(queuedAssignment).not.toHaveBeenCalled();
+  });
+
   it('观测进程创建不进入主线程，即使主线程执行器的 fork 卡顿', async () => {
     const spy = vi.mocked(childProcess.exec);
     const original = spy.getMockImplementation()!;

@@ -27,6 +27,7 @@ interface Job {
   options: { cwd?: string; stdin?: string; env: NodeJS.ProcessEnv; stream: boolean; captureOutput: boolean };
   onData?: ExecOptions['onData'];
   beforeStart?: ExecOptions['beforeStart'];
+  onAssigned?: ExecOptions['onAssigned'];
   startError?: unknown;
   startRejected?: boolean;
   cleanup: boolean;
@@ -171,7 +172,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : this.defaultTimeoutMs;
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
-      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, cleanup, bytes, dataTail: Promise.resolve(), active: false,
+      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, onAssigned: options.onAssigned, cleanup, bytes, dataTail: Promise.resolve(), active: false,
         deadline: performance.now() + timeout, timer: continuous ? undefined : setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
       if (job.signal) { job.abort = () => this.cancel(id, 'cancelled'); job.signal.addEventListener('abort', job.abort, { once: true }); }
       this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes; if (cleanup) this.cleanupBytes += bytes;
@@ -229,7 +230,13 @@ export class IsolatedShellExecutor implements IShellExecutor {
       if (this.isolatedLane !== 'operation' && !job.beforeStart) return;
       if (job.failure) return;
       if (job.deadline <= performance.now() || job.signal?.aborted) { this.cancel(job.id, job.signal?.aborted ? 'cancelled' : 'deadline'); return; }
-      try { job.beforeStart?.(); }
+      try {
+        const registeredActor = [...this.actors.values()].some(actor => actor.pid === message.pid);
+        job.onAssigned?.({ jobId: job.id, factoryGeneration: this.supervised ? this.factoryGeneration : null,
+          factoryPid: this.supervised ? this.factoryProcessPid ?? null : this.factory?.pid ?? null,
+          actorPid: registeredActor ? message.pid : null, lane: this.isolatedLane });
+        job.beforeStart?.();
+      }
       catch (error) { job.startRejected = true; job.startError = error; this.cancel(job.id, 'cancelled'); return; }
       if (job.failure) return;
       if (job.deadline <= performance.now() || job.signal?.aborted) { this.cancel(job.id, job.signal?.aborted ? 'cancelled' : 'deadline'); return; }

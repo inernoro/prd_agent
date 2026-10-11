@@ -6,6 +6,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import net from 'node:net';
 import { MongoClient } from 'mongodb';
 import { runApplicationBootstrap, type ApplicationBootstrapContext } from './application-bootstrap-drill.js';
 
@@ -24,6 +25,74 @@ async function availablePort(): Promise<number> {
   const server = http.createServer(); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return port;
 }
+// Controlled failure boundary: the original CLI sends its real create body to
+// this private Unix proxy. After client cancellation the same body is forwarded
+// to the real, initially-empty owned daemon. It is an injected delayed request,
+// not a claim that the daemon naturally reproduced the delay in this run.
+async function createProbeDaemonProxy(socketPath: string) {
+  const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
+  let armed = false; let caughtResolve!: () => void; let settledResolve!: () => void;
+  const caught = new Promise<void>(resolve => { caughtResolve = resolve; });
+  const settled = new Promise<void>(resolve => { settledResolve = resolve; });
+  let captured = false;
+  const record = (phase: string, fields: Record<string, unknown> = {}) => { timeline.push({ phase, at: new Date().toISOString(), ...fields }); };
+  const server = http.createServer((request, response) => {
+    const forward = (body?: Buffer, delayed = false) => {
+      const upstream = http.request({ socketPath: '/var/run/owned.sock', path: request.url, method: request.method,
+        headers: request.headers, timeout: 30_000 }, backend => {
+        if (!delayed) { response.writeHead(backend.statusCode || 502, backend.headers); backend.pipe(response); }
+        else {
+          let text = ''; backend.on('data', chunk => { text += chunk; });
+          backend.on('end', () => {
+            try { const view = JSON.parse(text); record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null }); }
+            catch { record('backend-create-invalid-reply', { status: backend.statusCode }); }
+            settledResolve();
+          });
+        }
+      });
+      requests.add(upstream); upstream.once('close', () => requests.delete(upstream));
+      if (!delayed) { response.once('close', () => upstream.destroy()); response.once('error', () => upstream.destroy()); }
+      upstream.once('timeout', () => upstream.destroy(new Error('owned proxy timeout')));
+      upstream.once('error', () => { if (delayed) { record('backend-create-transport-error'); settledResolve(); }
+        else if (!response.destroyed) { if (!response.headersSent) response.statusCode = 502; response.end(); } });
+      if (body) upstream.end(body); else request.pipe(upstream);
+    };
+    if (!armed || !/\/containers\/create(?:\?|$)/.test(request.url || '')) { forward(); return; }
+    const chunks: Buffer[] = []; let bytes = 0;
+    request.on('data', chunk => { bytes += chunk.length; if (bytes > 256 * 1024) request.destroy(); else chunks.push(chunk); });
+    request.on('end', () => {
+      const body = Buffer.concat(chunks); let config: any;
+      try { config = JSON.parse(body.toString('utf8')); } catch { response.statusCode = 400; response.end(); return; }
+      if (config.Labels?.['cds.agent.probe'] !== 'runtime-validation') { forward(body); return; }
+      armed = false; captured = true;
+      record('original-create-received', { name: new URL(request.url!, 'http://owned').searchParams.get('name'),
+        operationId: config.Labels['cds.agent.probe.operation'], instanceId: config.Labels['cds.instance'], image: config.Image,
+        cmdHash: createHash('sha256').update(JSON.stringify(config.Cmd)).digest('hex'),
+        entrypointHash: createHash('sha256').update(JSON.stringify(config.Entrypoint)).digest('hex'),
+        memoryBytes: config.HostConfig.Memory, nanoCpus: config.HostConfig.NanoCpus, pidsLimit: config.HostConfig.PidsLimit,
+        readonlyRootfs: config.HostConfig.ReadonlyRootfs, autoRemove: config.HostConfig.AutoRemove, networkMode: config.HostConfig.NetworkMode });
+      response.once('close', () => { record('original-client-disconnected'); setTimeout(() => {
+        record('forward-after-client-disconnect'); forward(body, true);
+      }, 250); });
+      caughtResolve();
+    });
+  });
+  server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  server.on('upgrade', (request, client, head) => {
+    const backend = net.connect('/var/run/owned.sock'); sockets.add(backend); backend.once('close', () => sockets.delete(backend));
+    backend.once('connect', () => { backend.write(`${request.method} ${request.url} HTTP/${request.httpVersion}\r\n`
+      + request.rawHeaders.reduce((text, value, index, list) => index % 2 ? text : text + `${value}: ${list[index + 1]}\r\n`, '') + '\r\n');
+      if (head.length) backend.write(head); client.pipe(backend).pipe(client); });
+    backend.on('error', () => client.destroy()); client.on('error', () => backend.destroy()); client.on('close', () => backend.destroy());
+  });
+  await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
+  return { timeline, arm: () => { armed = true; }, caught,
+    settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
+    close: async () => { for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve())); },
+  };
+}
+
 async function main(): Promise<void> {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.equal(path.resolve('.'), '/owned/source');
   const source = JSON.parse(await fs.readFile('owned-source.json', 'utf8')); assert.match(source.sourceHead, /^[a-f0-9]{40}$/); assert.match(source.owner, /^cds_app_[a-f0-9]{16}$/);
@@ -55,6 +124,7 @@ async function main(): Promise<void> {
     firstStageVerified: false, performanceVerified: false, abnormalRestartVerified: false, infrastructureRecoveryVerified: false,
     branchNetworkIsolationDisabled: false, noPrimaryDockerSocket: true, ownedContainersRemoved: false };
   const containers = new Set<string>(); const images = new Set<string>();
+  let probeProxy: Awaited<ReturnType<typeof createProbeDaemonProxy>> | undefined;
   const ownedView = async (id: string) => {
     const view = JSON.parse(await docker(['inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); return view;
   };
@@ -94,7 +164,11 @@ async function main(): Promise<void> {
     report.namespaceEventSnapshots ||= []; report.namespaceEventSnapshots.push({ stage, at: new Date().toISOString(), events: events.map(event => ({
       time: event.time, timeNano: event.timeNano, type: event.Type, action: event.Action, id: event.Actor?.ID,
       name: event.Actor?.Attributes?.name || null, image: event.Actor?.Attributes?.image || null,
-      owner: event.Actor?.Attributes?.['cds.acceptance.owner'] || null })) });
+      owner: event.Actor?.Attributes?.['cds.acceptance.owner'] || null,
+      probeOperationId: event.Actor?.Attributes?.['cds.agent.probe.operation'] || null,
+      probeKind: event.Actor?.Attributes?.['cds.agent.probe'] || null,
+      instanceId: event.Actor?.Attributes?.['cds.instance'] || null })) });
+    return report.namespaceEventSnapshots.at(-1).events as any[];
   };
   const run = async (name: string, args: string[]) => {
     const id = await docker(['run', '-d', '--label', `cds.acceptance.owner=${source.owner}`, '--name', `${source.owner}-${name}`, ...args]);
@@ -121,14 +195,63 @@ async function main(): Promise<void> {
     await until(async () => { const probe = new MongoClient(`mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, { serverSelectionTimeoutMS: 500 });
       try { await probe.connect(); return (await probe.db('admin').command({ hello: 1 })).isWritablePrimary ? true : undefined; }
       catch { return undefined; } finally { await probe.close(); } });
+    await docker(['pull', capabilityImage], 600_000);
+    probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'));
+    let capabilityProjectId: string | undefined;
     await runApplicationBootstrap({ sourceHead: source.sourceHead, mongoUri: `mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, dockerHost: host, output: '/owned/output',
+      dockerRequestProxy: { socketPath: path.join(root, 'probe-daemon-proxy.sock'), daemonId: info.ID, owner: source.owner },
+      beforeShutdown: async context => {
+        assert.ok(capabilityProjectId); probeProxy!.arm();
+        const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
+        assert.equal(response.status, 200); assert.equal(response.json.items.find((item: any) => item.id === 'open-design').healthy, false);
+        await Promise.race([probeProxy!.caught, sleep(40_000).then(() => { throw new Error('实际能力请求没有到达创建边界'); })]);
+        report.probeApplicationPid = context.applicationPid(); assert.ok(report.probeApplicationPid);
+        report.probeApplicationProcessTree = context.applicationProcessTree();
+        report.probeFaultInjection = 'unchanged original create body accepted by private Unix proxy; delayed forwarding to real owned daemon after original CLI disconnect';
+      },
+      afterFirstShutdown: async context => {
+        await probeProxy!.settle(); report.probeRequestTimeline = probeProxy!.timeline;
+        const request = probeProxy!.timeline.find(event => event.phase === 'original-create-received');
+        const reply = probeProxy!.timeline.find(event => event.phase === 'backend-create-replied');
+        assert.ok(request && reply); assert.equal(reply.status, 201); assert.match(reply.containerId, /^[a-f0-9]{64}$/);
+        for (const key of ['imageReference', 'cmdHash', 'entrypointHash', 'memoryBytes', 'nanoCpus', 'pidsLimit', 'readonlyRootfs', 'autoRemove', 'networkMode']) {
+          assert.equal(request[key === 'imageReference' ? 'image' : key], (expectedCapabilityProbe as any)[key], key);
+        }
+        const rows = await auditNamespace('after-first-shutdown-before-restart'); assert.equal(rows.some(row => row.id === reply.containerId), false);
+        const events = (await context.readProbeEvents()).filter(event => event.operationId === request.operationId);
+        const assigned = events.find(event => event.action === 'agent.probe.execution.assigned');
+        const acknowledged = events.find(event => event.action === 'agent.probe.creation.acknowledged');
+        const cleaned = events.find(event => event.action === 'agent.probe.cleanup.confirmed');
+        assert.ok(assigned && acknowledged && cleaned); assert.equal(acknowledged.details.containerId, reply.containerId);
+        assert.equal(acknowledged.details.receipt, 'owned-inspect');
+        assert.equal(cleaned.details.containerId, reply.containerId);
+        assert.equal(assigned.details.executorAssignment.lane, 'operation');
+        assert.ok(assigned.details.executorAssignment.factoryGeneration > 0 && assigned.details.executorAssignment.actorPid > 1);
+        assert.ok(report.probeApplicationProcessTree.some((row: any) => row.pid === assigned.details.executorAssignment.actorPid));
+        assert.ok(report.probeApplicationProcessTree.some((row: any) => row.pid === assigned.details.executorAssignment.factoryPid));
+        const daemonEvents = await eventSnapshot('probe-cancel-confirmed-before-restart');
+        for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === reply.containerId
+          && event.action === action && event.probeOperationId === request.operationId && event.instanceId === request.instanceId));
+        report.probeCancellationEvents = events;
+        report.checks.push({ name: 'original-on-demand-probe-cancel-late-real-create-exact-ID-reconciled-before-restart', passed: true });
+      },
+      afterRestart: async context => {
+        await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
+          assert.equal(response.status, 200); const item = response.json.items.find((item: any) => item.id === 'open-design');
+          return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000);
+        const rows = await auditNamespace('after-real-normal-capability-validation');
+        assert.equal(rows.some(row => row.matchesDefaultRuntimeValidation), false);
+        report.normalCapabilityEvents = (await context.readProbeEvents()).filter(event => event.action === 'agent.probe.cleanup.confirmed');
+        assert.ok(report.normalCapabilityEvents.some((event: any) => event.details.probeKind === 'storage-validation'));
+        report.checks.push({ name: 'actual-pinned-runtime-CLI-skill-and-hard-storage-validation-remain-available-after-restart', passed: true });
+      },
       exercise: async (context: ApplicationBootstrapContext) => {
         const { request, requestRaw } = context;
         report.stage = 'real-project-create';
         const compose = 'services:\n' + ['api', 'web', 'worker'].map(role => `  ${role}:\n    image: "${registry}/owned-${role === 'web' ? 'web' : 'api'}:sha-\${CDS_COMMIT_SHA}"\n    ports: ["8080"]\n    environment:\n      SERVICE_NAME: "${role}"\n    labels:\n      cds.prebuilt-image: "true"\n      cds.subdomain: "${role}"\n      cds.readiness-path: "/"\n      cds.readiness-timeout: "30"\n`).join('');
         const created = await request('/api/projects', 'POST', { name: '完整应用隔离部署前提', slug: source.owner.replaceAll('_', '-'), composeYaml: compose,
           projectFiles: [{ relativePath: 'marker.txt', content: 'old-fixture' }] });
-        assert.equal(created.status, 201, created.text); assert.equal(created.json.sandbox, true); const projectId = created.json.project.id; assert.ok(projectId);
+        assert.equal(created.status, 201, created.text); assert.equal(created.json.sandbox, true); const projectId = created.json.project.id; assert.ok(projectId); capabilityProjectId = projectId;
         const projectRepo = path.join(context.root, 'repos', projectId); assert.ok((await fs.stat(projectRepo)).isDirectory());
         const git = async (args: string[]) => (await execute('/usr/bin/git', ['-C', projectRepo, ...args], { encoding: 'utf8', timeout: 5000 })).stdout.trim();
         const oldSha = await git(['rev-parse', 'HEAD']); assert.match(oldSha, /^[a-f0-9]{40}$/);
@@ -216,6 +339,11 @@ async function main(): Promise<void> {
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }
   finally {
     const cleanupErrors: string[] = [];
+    if (probeProxy) {
+      try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; }
+      catch (error) { cleanupErrors.push(String(error)); }
+      await probeProxy.close();
+    }
     try {
       // 该守护进程/卷由本批从空空间独占创建；原应用可产生无标签 helper。
       // 先保存身份并复核 daemon，再逐ID清理；这不是共享宿主的无标签容器删除策略。

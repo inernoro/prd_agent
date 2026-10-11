@@ -4958,6 +4958,14 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
   return [result.stdout, result.stderr].filter(Boolean).join('\n');
 }
 
+export interface ExecAssignment {
+  jobId: number;
+  factoryGeneration: number | null;
+  factoryPid: number | null;
+  actorPid: number | null;
+  lane: 'observation' | 'operation';
+}
+
 export interface ExecOptions {
   /** 明确标记只读观测；生产主装配将普通操作与观测分配到独立进程池。 */
   executionLane?: 'observation' | 'operation';
@@ -4965,6 +4973,8 @@ export interface ExecOptions {
   signal?: AbortSignal;
   /** 独立执行槽就绪后在控制面重新检查资格；抛错保留原异常且不启动命令，不经IPC传输此函数。 */
   beforeStart?: () => void;
+  /** Qualified private executor assignment; callback remains in the control process. Unknown identities stay null. */
+  onAssigned?: (assignment: ExecAssignment) => void;
   /** 仅用于已确认创建且按本次调用独立命名的临时容器回收，占用保留清理槽。 */
   executionPurpose?: 'temporary-cleanup';
   cwd?: string;

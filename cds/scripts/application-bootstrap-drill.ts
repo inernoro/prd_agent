@@ -44,10 +44,17 @@ export interface ApplicationBootstrapContext {
   report: any;
   request: (endpoint: string, method?: string, body?: unknown, authenticated?: boolean) => Promise<BootstrapRequestResult>;
   requestRaw: (endpoint: string, body?: unknown) => Promise<Response>;
+  applicationPid: () => number | undefined;
+  applicationProcessTree: () => ReturnType<typeof descendants>;
+  readProbeEvents: () => Promise<any[]>;
 }
 export interface ApplicationBootstrapOptions {
   sourceHead?: string; mongoUri?: string; dockerHost?: string; output?: string;
   exercise?: (context: ApplicationBootstrapContext) => Promise<void>;
+  beforeShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
+  afterFirstShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
+  afterRestart?: (context: ApplicationBootstrapContext) => Promise<void>;
+  dockerRequestProxy?: { socketPath: string; daemonId: string; owner: string };
 }
 export async function runApplicationBootstrap(options: ApplicationBootstrapOptions = {}): Promise<void> {
   const native = process.argv.includes('--native');
@@ -76,6 +83,20 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
   const scrub = (s: string) => secretValues.reduce((v, secret) => v.replaceAll(secret, '[private]'), s).slice(-65536);
   let uri = options.mongoUri || option('--mongo-uri');
   if (options.dockerHost) assert.equal(options.dockerHost, 'unix:///var/run/owned.sock');
+  if (options.dockerRequestProxy) {
+    assert.ok(options.dockerHost);
+    assert.match(options.dockerRequestProxy.owner, /^cds_app_[a-f0-9]{16}$/);
+    assert.equal(path.basename(options.dockerRequestProxy.socketPath), 'probe-daemon-proxy.sock');
+    assert.equal((await fs.stat(options.dockerRequestProxy.socketPath)).isSocket(), true);
+    assert.equal((await fs.stat(options.dockerRequestProxy.socketPath)).mode & 0o777, 0o600);
+    const info = await new Promise<any>((resolve, reject) => {
+      http.get({ socketPath: options.dockerRequestProxy!.socketPath, path: '/info' }, response => {
+        let text = ''; response.on('data', chunk => { text += chunk; }); response.on('end', () => { try { resolve(JSON.parse(text)); } catch (error) { reject(error); } });
+      }).on('error', reject);
+    });
+    assert.equal(info.ID, options.dockerRequestProxy.daemonId);
+    report.dockerRequestProxy = { owner: options.dockerRequestProxy.owner, daemonId: info.ID, faultInjection: 'delay one original capability create until its client disconnects; forward unchanged to the owned daemon' };
+  }
   try {
     report.stage = 'private-runtime-copy';
     const runtime = path.join(root, 'runtime'); await fs.mkdir(runtime);
@@ -120,7 +141,7 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       CDS_AUTH_BACKEND: 'mongo', CDS_STORAGE_MODE: 'mongo-split', CDS_STATE_BOOTSTRAP_MODE: 'fresh', CDS_AUTH_MODE: 'github', CDS_GITHUB_CLIENT_ID: 'private-unused-oauth', CDS_GITHUB_CLIENT_SECRET: randomBytes(32).toString('hex'),
       CDS_USERNAME: 'private-legacy-disabled', CDS_PASSWORD: randomBytes(32).toString('hex'), CDS_SECRET_KEY: randomBytes(32).toString('hex'),
       CDS_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, CDS_UPTIME_ENABLED: '0', CDS_PREVIEW_AUTOWAKE: '0',
-      DOCKER_HOST: options.dockerHost || `unix://${root}/unavailable.sock` };
+      DOCKER_HOST: options.dockerRequestProxy ? `unix://${options.dockerRequestProxy.socketPath}` : options.dockerHost || `unix://${root}/unavailable.sock` };
     secretValues.push(appEnv.CDS_PASSWORD, appEnv.CDS_SECRET_KEY, appEnv.CDS_GITHUB_CLIENT_SECRET);
     const start = () => {
       application = spawn(process.execPath, [path.join(runtime, 'dist', 'index.js'), configFile], { cwd: runtime, env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -147,6 +168,12 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       assert.ok(application?.pid); for (const row of descendants(application.pid)) knownPids.add(row.pid);
       application.kill('SIGTERM'); const ended = await Promise.race([exitApp!, sleep(15_000).then(() => { throw new Error('完整index正常停机未确认'); })]);
       assert.equal(ended.code, 0); return ended;
+    };
+    const context: ApplicationBootstrapContext = { root, repo, runtime, port, configFile, report, request, requestRaw,
+      applicationPid: () => application?.pid,
+      applicationProcessTree: () => application?.pid ? descendants(application.pid) : [],
+      readProbeEvents: async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: 'agent-workspace-capability' }).sort({ ts: 1 }).limit(128).toArray())
+        .map(event => ({ at: event.ts, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details })),
     };
     report.stage = 'original-index-first-boot'; start(); const initial = await ready(); assert.equal(initial.json.needsBootstrap, true);
     const tree = descendants(application!.pid!); for (const row of tree) knownPids.add(row.pid);
@@ -176,15 +203,19 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
     if (options.exercise) {
       report.scope = 'original compiled full index/auth/server with all default pools and owned Docker application exercise; generic fixture only, no representative business CI/public/browser/performance acceptance';
       report.stage = 'owned-docker-application-exercise';
-      await options.exercise({ root, repo, runtime, port, configFile, report, request, requestRaw });
+      await options.exercise(context);
     }
-    report.stage = 'graceful-shutdown-restart'; report.firstShutdown = await stop(); start();
+    if (options.beforeShutdown) await options.beforeShutdown(context);
+    report.stage = 'graceful-shutdown-restart'; report.firstShutdown = await stop();
+    if (options.afterFirstShutdown) await options.afterFirstShutdown(context);
+    start();
     const restarted = await ready(); assert.equal(restarted.json.needsBootstrap, false);
     assert.equal((await request('/api/projects')).status, 200); // 原 cookie，而非重铸会话。
     assert.equal((await request('/api/projects', 'GET', undefined, false)).status, 401);
     const wrong = await request('/api/auth/login', 'POST', { username: 'private-owner', password: 'wrong-private-password' }, false); assert.equal(wrong.status, 401);
     const login = await request('/api/auth/login', 'POST', { username: 'private-owner', password }, false); assert.equal(login.status, 200); assert.equal(login.json.user.id, userId);
     report.actualAuthRestartVerified = true; report.checks.push({ name: 'original-index-restart-retains-owner-and-original-session', passed: true });
+    if (options.afterRestart) await options.afterRestart(context);
     report.finalShutdown = await stop(); application = undefined; report.verdict = 'passed';
   } catch (error) { report.failure = { stage: report.stage, message: scrub(error instanceof Error ? error.message : String(error)) }; throw error; }
   finally {

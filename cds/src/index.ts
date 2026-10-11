@@ -2806,6 +2806,7 @@ if (config.mode !== 'executor' && !isPreviewInstance()) {
 // ── Graceful shutdown controller ──
 // SIGTERM/self-update 触发 master 退出前,drain SSE / abort worker run / flush mongo。
 const gracefulShutdownController = createGracefulShutdownController();
+const resourceShutdownTasks = new Set<() => Promise<void>>();
 let dashboardHttpServer: http.Server | null = null;
 let workerHttpServer: http.Server | null = null;
 let shutdownInProgress = false;
@@ -4694,6 +4695,9 @@ async function shutdown(signal: string): Promise<void> {
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
+  // Stop capability producers immediately, while observation and reserved cleanup
+  // slots remain available; cancelling a CLI alone cannot revoke daemon creation.
+  const resourceShutdown = Promise.allSettled([...resourceShutdownTasks].map(close => close()));
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
@@ -4735,6 +4739,9 @@ async function shutdown(signal: string): Promise<void> {
   await startupStreams.close().catch(() => {
     console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。');
   });
+  const resourceShutdownResults = await resourceShutdown;
+  const resourceCleanupUnconfirmed = resourceShutdownResults.some(result => result.status === 'rejected');
+  if (resourceCleanupUnconfirmed) console.warn('[shutdown] 能力探针资源收尾未确认；本次退出不会报告成功。');
   await localShell.close().catch(() => {
     console.warn('[shutdown] 观测进程清理尚未确认；继续保存关键状态。');
   });
@@ -4793,7 +4800,7 @@ async function shutdown(signal: string): Promise<void> {
       console.warn(`[shutdown] server event log store teardown failed: ${(err as Error).message}`);
     }
   }
-  process.exit(signal === 'SIGINT' ? 130 : 0);
+  process.exit(signal === 'SIGINT' ? 130 : resourceCleanupUnconfirmed ? 1 : 0);
 }
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
 process.on('SIGINT', () => { void shutdown('SIGINT'); });
@@ -5433,6 +5440,7 @@ const serverDeps: ServerDeps = {
   stateFile,
   authStore: activeAuthStore,
   gracefulShutdown: gracefulShutdownController,
+  registerResourceShutdown: close => resourceShutdownTasks.add(close),
   httpLogStore: activeHttpLogStore,
   serverEventLogStore: activeServerEventLogStore,
   branchOperationCoordinator,

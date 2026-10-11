@@ -155,16 +155,23 @@ describe('source-backed measured fact preservation', () => {
   });
 });
 
+function probeContainerResult(command: string, value = result()): ExecResult {
+  const file = command.match(/--cidfile '([^']+)'/)?.[1];
+  if (file) fs.writeFileSync(file, digest(command) + '\n');
+  return value;
+}
+
 function storageCapabilityResult(command: string): ExecResult | null {
   if (command.startsWith('docker volume create') && command.includes('storage-probe')) {
     return result('probe-volume\n');
   }
   if (command.startsWith('docker run --rm') && command.includes('/cds-storage-probe')) {
-    return result('hard-limit-enforced\n');
+    return probeContainerResult(command, result('hard-limit-enforced\n'));
   }
   if (command.startsWith('docker volume rm ') && command.includes('storage-probe')) {
     return result('removed\n');
   }
+  if (/^docker rm -f '[a-f0-9]{64}'$/.test(command)) return result('removed');
   return null;
 }
 
@@ -212,10 +219,10 @@ class RecordingShell implements IShellExecutor {
     if (command.startsWith('docker version')) return result('27.0.0\n');
     if (command.startsWith('docker image inspect')) return result('sha256:image\n');
     if (command.includes('/cds-storage-probe') && this.failStorageCapability) {
-      return result('', 'storage limit was not enforced', 1);
+      return probeContainerResult(command, result('', 'storage limit was not enforced', 1));
     }
     if (command.includes('--entrypoint /bin/sh') && !command.includes('--cap-add CHOWN')) {
-      return result('');
+      return probeContainerResult(command, result(''));
     }
     if (command.startsWith('docker network create')) return result('network-id\n');
     if (command.startsWith('docker volume create')) return result('volume-id\n');
@@ -3182,6 +3189,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           if (name && owner) containers.set(name, owner);
           throw new Error('CLI timed out after daemon accepted allocation');
         }
+        if (command.startsWith('docker inspect')) return result('', 'No such object', 1);
         if (command.startsWith('docker ps -aq')) {
           expect(command).toContain("--filter 'label=cds.instance=probe-owner'");
           expect(command).toContain("--filter 'label=cds.type=agent-session'");
@@ -3196,7 +3204,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         throw new Error(`unexpected command: ${command}`);
       },
     };
-    const options = { instanceId: 'probe-owner', autoPullImage: false };
+    const options = { instanceId: 'probe-owner', autoPullImage: false, probeCleanupTimeoutMs: 5, probeCleanupPollMs: 1 };
     await expect(new AgentWorkspaceSessionRuntime(shell, options).capability(true)).resolves.toMatchObject({ available: false });
     const probe = calls.find(command => command.startsWith('docker run --rm'))!;
     expect(probe).toContain("--label 'cds.agent.probe=runtime-validation'");
@@ -3217,7 +3225,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return dockerVersion.promise;
         }
         if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3251,7 +3259,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return dockerVersion.promise;
         }
         if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3281,7 +3289,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return result('27.0.0\n');
         }
         if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3326,9 +3334,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (command.startsWith('docker image inspect')) return result(`${imageIds.shift()}\n`);
         if (command.includes('--entrypoint /bin/sh')) {
           cliProbeCount += 1;
-          return cliProbeCount === 1
+          return probeContainerResult(command, cliProbeCount === 1
             ? result()
-            : result('', 'required Codex version missing', 1);
+            : result('', 'required Codex version missing', 1));
         }
         throw new Error(`unexpected command: ${command}`);
       },
@@ -3408,7 +3416,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           installed = true;
           return result('pulled\n');
         }
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3450,9 +3458,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
   it('keeps OpenDesign unavailable when the image lacks its Agent CLI or web prototype resources', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cleanup = storageCapabilityResult(command); if (cleanup) return cleanup;
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('', 'required Codex version missing', 1);
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command, result('', 'required Codex version missing', 1));
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3552,7 +3561,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (command.startsWith('docker volume ls -q')) return result('');
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
