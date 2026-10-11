@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.49；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.50；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -19,7 +19,7 @@
 | P0-01 | 本地部分实现 | 正式未执行 | 核对两仓库远端、线上 CDS 提交、现有部署与在途任务；建立上述独立工作树，记录完整 SHA。 |
 | P0-02 | 本地部分实现 | 正式未执行 | 对照《排查 CDS 持续 500 问题》的现有实现，标出已完成、需继承、仍待修复项，防止重复重构。 |
 | P0-03 | 本地部分实现 | 正式未执行 | 冻结至少八个验收分支及各自完整服务图；标准应用、常驻辅助服务、一次性初始化任务分别登记其实际生命周期。 |
-| P0-04 | 待办 | 正式未执行 | 建立阶段耗时：CI runner 等待、CI 构建、制品等待、容量等待、拉取、启动、就绪、切换、失败收尾。 |
+| P0-04 | 本地部分实现 | 正式未执行 | 建立阶段耗时：CI runner 等待、CI 构建、制品等待、容量等待、拉取、启动、就绪、切换、失败收尾。 |
 | P0-05 | 待办 | 正式未执行 | 保存模式覆盖、自动部署开关、路由、运行镜像与当前资源配置的可恢复快照。 |
 | P0-06 | 本地部分实现 | 正式未执行 | 核对 RabbitMQ/XXL-JOB/数据库隔离前提，设计无真实业务消费与定时作业副作用的验收环境。 |
 | P1-01 | 本地部分实现 | 正式未执行 | 自动、手动、单服务、整分支及集群执行器共用按精确目标 SHA 的制品检查。 |
@@ -475,3 +475,9 @@ guide2.68先冻结原pending请求到实际run的关联合同；342c36在实际w
 expected result：排队受理能追溯到实际执行，关联可靠确认前不执行且不提前公开，失效等待不误操作旧容器。current evidence：主上述红绿/305/core0/full9789，独立待返。visible result：未部署、visual N/A。gap：实际Master/Daemon安全恢复、其余热点/阶段公平/P4/IMPaux、正式49/八支/双主题/公网/48h/周仍未完成。required action：末尾固定源按原判据复验，真红继续修，主继续原计划；39partial-local/10todo、49formal全部not-executed，目标active。
 
 末尾固定回执：固定342c36独立定稿：同v2 fixture/原期待旧8152/22→34222/22；expanded-v3 32/32包含22，不相加54，未发现新有界产品真红。actual whole/Profile Router/Coordinator一次token/StateJSON首次runtime前磁盘关联、新执行op、ACK/失败/80ms及默认5s(5008ms)/lateACK/取消/后继/引用身份/config/权限、history过滤先limit/旧op不猜/非法参数/不可换代/reload局部通过。21固定Git源及3原结果hash均由主回读匹配；13/16旧815源同字节的查询组仅历史复用。扩展v1外项目run无匹配branch被State正确拒绝为夹具探索，正确建分支后的原期待32/32； 本地seam鉴权与故意缺制品的runtime命令边界不升级为实际Master/Daemon、正式49、视觉、八支或安全恢复。source manifest f89b507b9a296de6c4df37b3cf395efd611f33aafef7966ee98926c5ce45b6f0；八维summary 4d77b7d6dd575d932dd076eb1c22a6897870712e8b49bf48cc580642ae3c7631，均在仓库外。下一步继续安全恢复与P0-04真实阶段耗时合同；仅只读盘点已完成，不给P0-04实施或验收通过。
+
+## v1.50 实际分阶段耗时检查点
+
+guide2.69先冻结P0-04九阶段事实合同；cc7fae7f在实际whole/Profile拉取、精确制品、源码槽onQueued/onStart以及候选容量、启动、信号/应用就绪、路由消费者ACK、归属回收/失败恢复测量。timing v1按原run/op/scope/同进程epoch与不可变段id/开始事实保存，可靠draft替换后仍闭合原段；512限量及截断、未观测null、终态未结束unknown、并行墙钟并集与work sum分列，汇总completed/failed/cancelled，observed不等于动作成功。列表/SSE snapshot只返回九阶段汇总，detail保留有界事实，复用原权限。主发现持旧nested对象引用的durable draft真红（单测与候选编排同根）后修复；收紧原op守卫后单服务factory提前创建造成四条实际路由红，同根已移至preparing/op绑定后。mutation union1红/开始Profile事实1红/source queue结束接线2红全部恢复。最新7files397相关/core tsc0，全量671files9815green/6files19skip/1旧obsolete/64.32s。第一次full5红中另有旧bug-report ECONNRESET，相关与full复跑绿，根因未确认，不称已解决500/socket。中间cwd/缺const/错误变量/fixture recordEvent与错缩进分别记录，非独立产品根因；root precommit缺依赖仍报假绿不作验证。独立末尾固定cc7fae7f复验进行中，不继承342绿。CI runner/build、executor、普通终态后cleanup、UI及真实Master/Daemon/公网/八支/视觉仍缺，P0-04只能partial-local。
+
+expected result：真实等待原因可追溯且未知不伪装零；current evidence：主397相关/显式core0/full9815，固定末尾待返；visible result：候选未部署、视觉N/A；gap：外部CI/执行器/普通终态后收尾/UI/隔离完整链；required action：固定源独立逐条复验，真红继续修，隔离准入后按原49条实际交付及视觉/公网/恢复/长期门槛。
