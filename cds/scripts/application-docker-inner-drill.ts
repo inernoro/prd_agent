@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import net from 'node:net';
+import { pathToFileURL } from 'node:url';
 import { MongoClient } from 'mongodb';
 import { runApplicationBootstrap, type ApplicationBootstrapContext } from './application-bootstrap-drill.js';
 
@@ -29,8 +30,28 @@ async function availablePort(): Promise<number> {
 // this private Unix proxy. After client cancellation the same body is forwarded
 // to the real, initially-empty owned daemon. It is an injected delayed request,
 // not a claim that the daemon naturally reproduced the delay in this run.
-async function createProbeDaemonProxy(socketPath: string) {
+export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock') {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
+  const requestTimeline: any[] = []; let requestSequence = 0, traceEnabled = false, traceOverflow = 0;
+  const classify = (url = '', method = '') => {
+    const pathname = new URL(url, 'http://owned').pathname;
+    const container = pathname.match(/\/containers\/([^/]+)\/(attach|start|wait|json)$/);
+    const kind = container ? `container-${container[2] === 'json' ? 'inspect' : container[2]}`
+      : /\/containers\/create$/.test(pathname) ? 'container-create'
+        : method === 'DELETE' && /\/containers\/[^/]+$/.test(pathname) ? 'container-remove' : undefined;
+    const target = container?.[1] || (kind === 'container-remove' ? pathname.split('/').at(-1) : undefined);
+    return { kind, containerId: target && /^[a-f0-9]{64}$/.test(target) ? target : null };
+  };
+  const trace = (request: http.IncomingMessage) => {
+    const identity = classify(request.url, request.method), requestId = ++requestSequence;
+    const active = traceEnabled && Boolean(identity.kind);
+    return (phase: string, fields: Record<string, unknown> = {}) => {
+      if (!active) return;
+      if (requestTimeline.length >= 1024) { traceOverflow++; return; }
+      requestTimeline.push({ requestId, at: new Date().toISOString(), kind: identity.kind,
+        method: request.method, containerId: identity.containerId, phase, ...fields });
+    };
+  };
   const traffic = new Map<string, { kind: string; method: string; requests: number; replies: Record<string, number>; transportErrors: number }>();
   let armed = false; let caughtResolve!: () => void; let settledResolve!: () => void;
   const caught = new Promise<void>(resolve => { caughtResolve = resolve; });
@@ -38,6 +59,7 @@ async function createProbeDaemonProxy(socketPath: string) {
   let captured = false;
   const record = (phase: string, fields: Record<string, unknown> = {}) => { timeline.push({ phase, at: new Date().toISOString(), ...fields }); };
   const server = http.createServer((request, response) => {
+    const observe = trace(request); observe('received');
     const kind = /\/images\/create(?:\?|$)/.test(request.url || '') ? 'image-pull'
       : /\/images\/.+\/json(?:\?|$)/.test(request.url || '') ? 'image-inspect'
         : /\/containers\/create(?:\?|$)/.test(request.url || '') ? 'container-create'
@@ -46,10 +68,18 @@ async function createProbeDaemonProxy(socketPath: string) {
     const row = traffic.get(key) || { kind, method: request.method || '', requests: 0, replies: {}, transportErrors: 0 };
     row.requests++; traffic.set(key, row);
     const forward = (body?: Buffer, delayed = false) => {
-      const upstream = http.request({ socketPath: '/var/run/owned.sock', path: request.url, method: request.method,
+      observe('forwarded', { delayed });
+      const upstream = http.request({ socketPath: daemonSocketPath, path: request.url, method: request.method,
         headers: request.headers, timeout: 30_000 }, backend => {
+        observe('response-headers', { status: backend.statusCode });
+        backend.once('end', () => observe('response-ended'));
         const status = String(backend.statusCode || 0); row.replies[status] = (row.replies[status] || 0) + 1;
-        if (!delayed) { response.writeHead(backend.statusCode || 502, backend.headers); backend.pipe(response); }
+        if (!delayed) {
+          response.writeHead(backend.statusCode || 502, backend.headers);
+          // Docker wait acknowledges headers before start; buffering them until
+          // the exit body arrives deadlocks the CLI before ContainerStart.
+          response.flushHeaders(); backend.pipe(response);
+        }
         else {
           let text = ''; backend.on('data', chunk => { text += chunk; });
           backend.on('end', () => {
@@ -61,8 +91,8 @@ async function createProbeDaemonProxy(socketPath: string) {
       });
       requests.add(upstream); upstream.once('close', () => requests.delete(upstream));
       if (!delayed) { response.once('close', () => upstream.destroy()); response.once('error', () => upstream.destroy()); }
-      upstream.once('timeout', () => upstream.destroy(new Error('owned proxy timeout')));
-      upstream.once('error', () => { row.transportErrors++; if (delayed) { record('backend-create-transport-error'); settledResolve(); }
+      upstream.once('timeout', () => { observe('transport-timeout'); upstream.destroy(new Error('owned proxy timeout')); });
+      upstream.once('error', () => { observe('transport-error'); row.transportErrors++; if (delayed) { record('backend-create-transport-error'); settledResolve(); }
         else if (!response.destroyed) { if (!response.headersSent) response.statusCode = 502; response.end(); } });
       if (body) upstream.end(body); else request.pipe(upstream);
     };
@@ -88,14 +118,33 @@ async function createProbeDaemonProxy(socketPath: string) {
   });
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   server.on('upgrade', (request, client, head) => {
-    const backend = net.connect('/var/run/owned.sock'); sockets.add(backend); backend.once('close', () => sockets.delete(backend));
-    backend.once('connect', () => { backend.write(`${request.method} ${request.url} HTTP/${request.httpVersion}\r\n`
+    const observe = trace(request); observe('received-upgrade');
+    const backend = net.connect(daemonSocketPath); sockets.add(backend); backend.once('close', () => sockets.delete(backend));
+    let handshake = Buffer.alloc(0), statusRecorded = false, upstreamBytes = 0, downstreamBytes = head.length;
+    backend.on('data', chunk => {
+      upstreamBytes += chunk.length;
+      if (!statusRecorded) {
+        if (handshake.length + chunk.length > 4096) { statusRecorded = true; observe('upgrade-header-limit'); }
+        else { handshake = Buffer.concat([handshake, chunk]); if (handshake.includes('\r\n\r\n')) {
+          statusRecorded = true; const status = handshake.toString('latin1').match(/^HTTP\/1\.[01] (\d{3})/);
+          observe('upgrade-response', { status: status ? Number(status[1]) : null }); handshake = Buffer.alloc(0);
+        } }
+      }
+    });
+    client.on('data', chunk => { downstreamBytes += chunk.length; });
+    backend.once('end', () => observe('backend-ended', { upstreamBytes, downstreamBytes }));
+    client.once('end', () => observe('client-input-ended', { upstreamBytes, downstreamBytes }));
+    backend.once('close', () => observe('backend-closed', { upstreamBytes, downstreamBytes }));
+    client.once('close', () => observe('client-closed', { upstreamBytes, downstreamBytes }));
+    backend.once('connect', () => { observe('connected-upgrade'); backend.write(`${request.method} ${request.url} HTTP/${request.httpVersion}\r\n`
       + request.rawHeaders.reduce((text, value, index, list) => index % 2 ? text : text + `${value}: ${list[index + 1]}\r\n`, '') + '\r\n');
       if (head.length) backend.write(head); client.pipe(backend).pipe(client); });
-    backend.on('error', () => client.destroy()); client.on('error', () => backend.destroy()); client.on('close', () => backend.destroy());
+    backend.on('error', () => { observe('backend-error'); client.destroy(); });
+    client.on('error', () => { observe('client-error'); backend.destroy(); }); client.on('close', () => backend.destroy());
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
-  return { timeline, traffic: () => [...traffic.values()], arm: () => { armed = true; }, caught,
+  return { timeline, requestTimeline, traceOverflow: () => traceOverflow, enableTrace: () => { traceEnabled = true; },
+    traffic: () => [...traffic.values()], arm: () => { armed = true; traceEnabled = true; }, caught,
     settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
     close: async () => { for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
@@ -182,6 +231,46 @@ async function main(): Promise<void> {
   const run = async (name: string, args: string[]) => {
     const id = await docker(['run', '-d', '--label', `cds.acceptance.owner=${source.owner}`, '--name', `${source.owner}-${name}`, ...args]);
     assert.match(id, /^[a-f0-9]{64}$/); containers.add(id); await ownedView(id); return id;
+  };
+  const comparePinnedProbe = async (route: 'direct' | 'proxy', proxyHost: string) => {
+    const name = `${source.owner}-protocol-${route}`, instanceId = `${source.owner}-protocol`;
+    const operationId = createHash('sha256').update(name).digest('hex').slice(0, 32);
+    const cidFile = path.join(root, `${route}.cid`), started = performance.now();
+    const result: any = { route, name, instanceId, operationId, startedAt: new Date().toISOString(),
+      originalProbeSpec: expectedCapabilityProbe, timeoutMs: 30_000, driverOwnedComparison: true,
+      originalApplicationCapabilityVerified: false };
+    (report.probeProtocolComparisons ??= []).push(result);
+    try { result.imageIdBefore = await docker(['image', 'inspect', capabilityImage, '--format', '{{.Id}}'], 5000); }
+    catch { result.imageIdBefore = null; }
+    try {
+      await execute('docker', ['--host', route === 'direct' ? host : proxyHost, 'run', '--rm', '--name', name, '--cidfile', cidFile,
+        '--label', `cds.acceptance.owner=${source.owner}`, '--label', 'cds.managed=true', '--label', 'cds.type=agent-session',
+        '--label', `cds.instance=${instanceId}`, '--label', 'cds.agent.probe=runtime-validation', '--label', `cds.agent.probe.operation=${operationId}`,
+        '--pull', 'never', '--read-only', '--network', 'none', '--security-opt', 'no-new-privileges:true', '--cap-drop', 'ALL',
+        '--pids-limit', '64', '--memory', '128m', '--cpus', '0.25', '--entrypoint', '/bin/sh', capabilityImage, '-lc', validationScript],
+      { encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 });
+      result.exitCode = 0; result.originalRuntimeVersionAndSkillProbePassed = true;
+    } catch (error) {
+      result.exitCode = typeof (error as any).code === 'number' ? (error as any).code : null;
+      result.interrupted = Boolean((error as any).killed); result.originalRuntimeVersionAndSkillProbePassed = false;
+    }
+    result.endedAt = new Date().toISOString(); result.elapsedMs = performance.now() - started;
+    try {
+      const descriptor = await fs.open(cidFile, 'r');
+      try { const data = Buffer.alloc(129), read = await descriptor.read(data, 0, data.length, 0);
+        const id = data.subarray(0, read.bytesRead).toString('utf8').trim();
+        if (/^[a-f0-9]{64}$/.test(id)) result.containerId = id;
+      } finally { await descriptor.close(); }
+    } catch { /* No CID is unknown, not proof that a timed-out create was revoked. */ }
+    try {
+      const view = JSON.parse(await docker(['inspect', '--format', '{{json .}}', name], 5000));
+      assert.match(view.Id, /^[a-f0-9]{64}$/); assert.equal(view.Name, '/' + name);
+      assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner);
+      assert.equal(view.Config.Labels['cds.instance'], instanceId); assert.equal(view.Config.Labels['cds.agent.probe.operation'], operationId);
+      result.containerId = view.Id; result.stateBeforeDriverCleanup = view.State.Status;
+      await docker(['rm', '-f', view.Id], 30_000); result.driverCleanupConfirmed = true;
+    } catch { result.driverCleanupConfirmed = false; }
+    await eventSnapshot(`protocol-comparison-${route}-after-original-recovery-failure`);
   };
   const build = async (role: string, sha: string, registry: string) => {
     const context = path.join(root, `${role}-${sha}`); await fs.mkdir(context);
@@ -303,9 +392,16 @@ async function main(): Promise<void> {
         report.probeEventsAtFailedShutdown = await context.readProbeEvents();
         await context.restartForFailureRecovery();
         const recoveryTree = context.applicationProcessTree(); report.failureRecovery.processTree = recoveryTree;
-        await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
+        try { await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
           assert.equal(response.status, 200); const item = response.json.items.find((item: any) => item.id === 'open-design');
-          return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000);
+          return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000); }
+        catch (error) {
+          // Run only after the original joint recovery failed; this driver-owned
+          // comparison and its cleanup cannot satisfy any original application check.
+          probeProxy!.enableTrace();
+          await comparePinnedProbe('direct', proxyHost); await comparePinnedProbe('proxy', proxyHost);
+          throw error;
+        }
         await probeProxy!.settle();
         const reply = probeProxy!.timeline.find(event => event.phase === 'backend-create-replied');
         assert.equal(reply?.status, 201); assert.match(reply!.containerId, /^[a-f0-9]{64}$/);
@@ -428,6 +524,7 @@ async function main(): Promise<void> {
       try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; report.proxyTraffic = probeProxy.traffic(); }
       catch (error) { cleanupErrors.push(String(error)); }
       await probeProxy.close();
+      report.probeProxyRequestTimeline = probeProxy.requestTimeline; report.probeProxyTraceOverflow = probeProxy.traceOverflow();
     }
     try {
       // 该守护进程/卷由本批从空空间独占创建；原应用可产生无标签 helper。
@@ -464,4 +561,4 @@ async function main(): Promise<void> {
   }
   assert.equal(report.ownedContainersRemoved, true);
 }
-await main().catch(error => { console.error(error instanceof Error ? error.message : '原应用Docker部署前提演练失败'); process.exitCode = 1; });
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main().catch(error => { console.error(error instanceof Error ? error.message : '原应用Docker部署前提演练失败'); process.exitCode = 1; });

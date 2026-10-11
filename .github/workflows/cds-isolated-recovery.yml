@@ -66,6 +66,10 @@ jobs:
           pnpm -C cds exec vitest run tests/services/internal-pending-replay-auth.test.ts
           tests/routes/pending-replay-server-auth.test.ts tests/services/branch-operation-replay.test.ts
           tests/middleware/github-auth.test.ts
+      - name: Verify private Docker wait and attach wire conformance
+        run: |
+          docker --version
+          pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
       - name: Original full application in owned Docker network namespace
         run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts
       - name: Preserve original application Docker prerequisite evidence
