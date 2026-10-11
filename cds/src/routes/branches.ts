@@ -42,7 +42,7 @@ import {
   PREBUILT_DEFINITION_FIELDS,
   withoutSourceFallback,
 } from '../services/agent-prebuilt-gate.js';
-import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles, parseExtraDeploymentMetadata, copyBranchDeploymentConfig, assertProfileDeploymentScopes, profileDeploymentScopeMatches } from '../services/branch-extra-services.js';
+import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles, parseExtraDeploymentMetadata, copyBranchDeploymentConfig, assertProfileDeploymentScopes, profileDeploymentScopeMatches, singleServicePlacementProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
 import { resolveInfraForDb } from '../services/replica-db-clone.js';
@@ -545,16 +545,21 @@ function summarizeBranchDeployRuntime(
       : '源码';
 
   const invalidScopeIds = profiles.filter(profile => !profileDeploymentScopeMatches(profile, branch)).map(profile => profile.id);
-  const actualPrebuilt = summarizeActualPrebuiltRuntime(profiles.map(profile => profile.id), branch.services, invalidScopeIds);
+  const configuredIds = new Set(profiles.map(profile => profile.id));
+  const unverifiedOrphanIds = Object.entries(branch.services || {})
+    .filter(([id, service]) => !configuredIds.has(id) && service && !['stopped', 'idle'].includes(service.status))
+    .map(([id]) => id);
+  const actualPrebuilt = summarizeActualPrebuiltRuntime([...configuredIds], branch.services, [...invalidScopeIds, ...unverifiedOrphanIds]);
   const actualVersions = summarizeActualRuntimeVersions(branch.deploymentTargetSha || branch.githubCommitSha,
     actualPrebuilt.profileIds, branch.services);
 
   return {
     kind,
     label,
-    title: modeLabels.length > 0
+    title: (modeLabels.length > 0
       ? `实际运行模式: ${modeLabels.join(' / ')}${pendingPublish ? '（发布版配置已设，等待重新部署生效）' : ''}${invalidScopeIds.length ? '（服务放置约束不匹配，待核对）' : ''}`
-      : '当前没有构建配置，按源码默认模式显示',
+      : '当前没有构建配置，按源码默认模式显示')
+      + (unverifiedOrphanIds.length ? '（运行服务缺少配置，待核验）' : ''),
     activeProfiles,
     releaseProfiles,
     sourceProfiles,
@@ -14692,7 +14697,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
     }
-    try { assertProfileDeploymentScopes(profiles, entry); }
+    try { assertProfileDeploymentScopes(singleServicePlacementProfiles(profiles, profile.id), entry); }
     catch { res.status(409).json({ error: 'deployment_scope_mismatch', message: '服务放置约束与当前分支不匹配，未执行部署' }); return; }
     // Agent 极速版门禁：单服务部署与整分支部署同一道闸（Codex PR #1513 P1：此端点绕过了整分支入口）。
     const singleDeployProject = stateService.getProject(entry.projectId || 'default');

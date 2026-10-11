@@ -35,6 +35,24 @@ export function profileDeploymentScopeMatches(profile: Pick<BuildProfile, 'deplo
 export function assertProfileDeploymentScopes(profiles: ReadonlyArray<Pick<BuildProfile, 'deploymentScope'>>, branch?: DeploymentScopeContext): void {
   if (profiles.some(profile => !profileDeploymentScopeMatches(profile, branch))) throw new Error('deployment_scope_mismatch');
 }
+/** Placement preflight for one service; missing/infra dependencies keep their existing admission contracts. */
+export function singleServicePlacementProfiles(profiles: readonly BuildProfile[], profileId: string): BuildProfile[] {
+  const byId = new Map(profiles.map(profile => [profile.id, profile]));
+  const pending = [profileId];
+  const visited = new Set<string>(pending);
+  const result: BuildProfile[] = [];
+  for (let index = 0; index < pending.length; index++) {
+    const id = pending[index];
+    const profile = byId.get(id);
+    if (!profile) continue;
+    result.push(profile);
+    for (const dependency of profile.dependsOn || []) {
+      if (visited.has(dependency)) continue;
+      visited.add(dependency); pending.push(dependency);
+    }
+  }
+  return result;
+}
 /** Snapshot-copy only: do not filter live/effective profiles or modify the source. */
 export function copyBranchDeploymentConfig(source: BranchEntry, target: DeploymentScopeContext, projectProfileIds: ReadonlySet<string>) {
   const skippedExtraProfileIds = [...new Set((source.extraProfiles || [])

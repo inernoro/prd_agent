@@ -2375,6 +2375,59 @@ describe('Branch Routes', () => {
         expect(response.body.skippedExtraProfileIds).toEqual(['rpc-extra']);
         expect(stateService.getBranch('src-branch')!.extraProfiles).toHaveLength(2);
       });
+      it.each(['copy', 'clear'])('does not qualify an unverified surviving runtime when its Profile is removed by %s', async action => {
+        seedBranch('target'); seedBranch('src-branch');
+        stateService.addBuildProfile({ id: 'api', name: 'API', projectId: 'default', dockerImage: 'owned-api',
+          workDir: '.', command: '', containerPort: 8080, prebuiltImage: true });
+        stateService.setBranchExtraProfiles('src-branch', [scoped()] as any);
+        stateService.setBranchExtraProfiles('target', [scoped()] as any);
+        const entry = stateService.getBranch('target')!;
+        for (const id of ['api', 'rpc-extra']) entry.services[id] = { profileId: id, containerName: `owned-${id}`,
+          hostPort: id === 'api' ? 10001 : 10002, status: 'running', deployedImage: 'sha256:' + 'a'.repeat(64),
+          deployedMode: 'express', deployedPrebuilt: true };
+        stateService.save();
+        const listRuntime = async () => (await request(server, 'GET', '/api/branches?project=default')).body.branches
+          .find((branch: any) => branch.id === 'target').deployRuntime;
+        expect((await listRuntime()).unknownRuntimeProfileIds).toContain('rpc-extra');
+        const originalServices = JSON.stringify(entry.services);
+        const response = action === 'copy' ? await request(server, 'POST', '/api/branches/target/copy-config-from/src-branch')
+          : await request(server, 'PUT', '/api/branches/target/extra-services', { extraProfiles: [] });
+        expect(response.status).toBe(200);
+        expect(entry.extraProfiles).toBeUndefined();
+        expect(JSON.stringify(entry.services)).toBe(originalServices);
+        const runtime = await listRuntime();
+        expect(runtime.actualRuntimeProfiles).toBe(2);
+        expect(runtime.actualPrebuiltCoverage).toBe('partial');
+        expect(runtime.unknownRuntimeProfileIds).toContain('rpc-extra');
+        expect(runtime.title).toContain('待核验');
+      });
+      it.each(['none', 'direct', 'transitive'])('checks only the selected service placement dependency closure: %s', async dependency => {
+        seedBranch('target');
+        stateService.addBuildProfile({ id: 'api', name: 'API', projectId: 'default', dockerImage: 'owned-api',
+          workDir: '.', command: '', containerPort: 8080, prebuiltImage: true,
+          dependsOn: dependency === 'none' ? [] : [dependency === 'direct' ? 'rpc-extra' : 'bridge'], calls: ['rpc-extra'] });
+        if (dependency === 'transitive') stateService.addBuildProfile({ id: 'bridge', name: 'Bridge', projectId: 'default',
+          dockerImage: 'owned-bridge', workDir: '.', command: '', containerPort: 8081, dependsOn: ['rpc-extra'] });
+        stateService.setBranchExtraProfiles('target', [scoped()] as any);
+        const before = JSON.stringify(stateService.getBranch('target'));
+        const commands = mock.commands.length;
+        // Admission observer only: no container is created, and no deployment success is claimed.
+        const runtime = vi.spyOn(containerService, 'runService').mockRejectedValue(new Error('owned admission observer'));
+        try {
+          const response = await request(server, 'POST', '/api/branches/target/deploy/api', {});
+          if (dependency === 'none') {
+            expect(runtime).toHaveBeenCalledTimes(1);
+            expect(response.body.error).not.toBe('deployment_scope_mismatch');
+            expect(stateService.getBranch('target')!.extraProfiles).toHaveLength(1);
+          } else {
+            expect(response.status).toBe(409);
+            expect(response.body.error).toBe('deployment_scope_mismatch');
+            expect(runtime).not.toHaveBeenCalled();
+            expect(mock.commands.length).toBe(commands);
+            expect(JSON.stringify(stateService.getBranch('target'))).toBe(before);
+          }
+        } finally { runtime.mockRestore(); }
+      });
       it.each(['', '/rpc-extra'])('refuses direct stale bound deployment before shell or container mutation %s', async suffix => {
         seedBranch('target');
         stateService.setBranchExtraProfiles('target', [scoped()] as any);
