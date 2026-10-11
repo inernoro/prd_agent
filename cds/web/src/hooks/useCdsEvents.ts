@@ -308,7 +308,7 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
       const next: Partial<StoreState> = { snapshot };
       if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'activeSelfUpdate')) {
         const active = snapshot.activeSelfUpdate as { startedAt?: unknown; branch?: unknown; step?: unknown; interrupted?: unknown } | null;
-        next.updating = active && !active.interrupted && typeof active.startedAt === 'string'
+        next.updating = active && !active.interrupted && typeof active.startedAt === 'string' && Number.isFinite(Date.parse(active.startedAt))
           ? { startedAt: active.startedAt, ...(typeof active.branch === 'string' ? { branch: active.branch } : {}),
             ...(typeof active.step === 'string' ? { step: active.step } : {}) }
           : null;

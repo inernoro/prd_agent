@@ -62,6 +62,15 @@ export function PendingImportInbox({
   const [flapDismissedAt, setFlapDismissedAt] = useState<string | null>(null);
 
   const refreshSeq = useRef(0);
+  // A POST may complete after unmount; its receipt must not revive this observer.
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current++;
+    return () => {
+      lifetime.current++;
+      refreshSeq.current++;
+    };
+  }, []);
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
     try {
@@ -105,28 +114,34 @@ export function PendingImportInbox({
 
   const approve = useCallback(async (importId: string) => {
     if (busy) return;
+    const generation = lifetime.current;
     setBusy(importId);
     try {
       await apiRequest(`/api/pending-imports/${encodeURIComponent(importId)}/approve`, {
         method: 'POST',
       });
+      if (generation !== lifetime.current) return;
+      refreshSeq.current++;
       setPending((prev) => prev.filter((i) => i.id !== importId));
     } finally {
-      setBusy(null);
+      if (generation === lifetime.current) setBusy(null);
     }
   }, [busy]);
 
   const reject = useCallback(async (importId: string) => {
     if (busy) return;
+    const generation = lifetime.current;
     setBusy(importId);
     try {
       await apiRequest(`/api/pending-imports/${encodeURIComponent(importId)}/reject`, {
         method: 'POST',
         body: {},
       });
+      if (generation !== lifetime.current) return;
+      refreshSeq.current++;
       setPending((prev) => prev.filter((i) => i.id !== importId));
     } finally {
-      setBusy(null);
+      if (generation === lifetime.current) setBusy(null);
     }
   }, [busy]);
 

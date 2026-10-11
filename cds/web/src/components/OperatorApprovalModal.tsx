@@ -47,6 +47,18 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
   // 拿当前所有 pending request,选最新一条展示
   const refreshSeq = useRef(0);
+  // A POST may complete after unmount; its receipt must not revive this observer.
+  const lifetime = useRef(0);
+  const refreshTimer = useRef<number | null>(null);
+  useEffect(() => {
+    lifetime.current++;
+    return () => {
+      lifetime.current++;
+      refreshSeq.current++;
+      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    };
+  }, []);
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
     try {
@@ -76,30 +88,40 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
   const approve = useCallback(async (scope: 'once' | 'session') => {
     if (!pending || busy) return;
+    const generation = lifetime.current;
     setBusy(true);
     try {
       await apiRequest(`/api/cds-system/operator/requests/${encodeURIComponent(pending.id)}/approve`, {
         method: 'POST',
         body: { scope },
       });
+      if (generation !== lifetime.current) return;
+      refreshSeq.current++;
       setPending(null);
       // 给后端一点时间 publish completed,再 refresh
-      window.setTimeout(() => void refresh(), 500);
+      if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+      refreshTimer.current = window.setTimeout(() => {
+        refreshTimer.current = null;
+        if (generation === lifetime.current) void refresh();
+      }, 500);
     } finally {
-      setBusy(false);
+      if (generation === lifetime.current) setBusy(false);
     }
   }, [pending, busy, refresh]);
 
   const reject = useCallback(async () => {
     if (!pending || busy) return;
+    const generation = lifetime.current;
     setBusy(true);
     try {
       await apiRequest(`/api/cds-system/operator/requests/${encodeURIComponent(pending.id)}/reject`, {
         method: 'POST',
       });
+      if (generation !== lifetime.current) return;
+      refreshSeq.current++;
       setPending(null);
     } finally {
-      setBusy(false);
+      if (generation === lifetime.current) setBusy(false);
     }
   }, [pending, busy]);
 

@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.56 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.57 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -266,6 +266,6 @@ JSON序列化、最多500条结果的归一与指标聚合仍在Master；这仅�
 
 /api/cds-events按原scope先过滤，再通过OrderedSseWriter发送。混合过程/审批/完成观察不能被纯状态snapshot替代：write=false后保留FIFO，最多64等待帧、单帧256KiB、等待+socket512KiB；drain有进展才继续发送并刷新5秒阻塞截止，越界或异常即时清订阅/timer/listeners并断开观察，不取消任务。阻塞心跳不序列化、不占队列。相同总线envelope通过WeakMap共享一次序列化，无持久事件cache、无scope放宽。
 
-重连只恢复观察。首次snapshot保留实际activeSelfUpdate，当前running refresh补已有started观察。React单例每次成功连接递增connectionEpoch，忽略已替换source的迟到open/消息/error；不靠onopen制造任务成功。审批、授权、导入、通知和请求观测对新epoch重新GET权威状态，读取序号防迟到覆盖/卸载写回；旧busy观察由新snapshot/实际started恢复，缺证据不造终态。历史与命令结果仍以服务端台账为准，不承诺流中事件永久回放。
+重连只恢复观察。首次snapshot保留实际activeSelfUpdate，当前running refresh补已有started观察。React单例每次成功连接递增connectionEpoch，忽略已替换source的迟到open/消息/error；不靠onopen制造任务成功。审批、授权、导入、通知和请求观测对新epoch重新GET权威状态，读取序号防迟到覆盖/卸载写回；旧busy观察由新snapshot/实际started恢复，缺证据不造终态。历史与命令结果仍以服务端台账为准，不承诺流中事件永久回放。 批准/拒绝成功回执使此前权威GET失效，避免已决定条目被旧读取重新插回；POST卸载后完成不写观察状态，延迟刷新timer卸载时取消且已排队回调另验组件生命周期。activeSelfUpdate.startedAt必须为可解析的有效时间，空/非法值不生成更新忙态。
 
 这些是自有HTTP/受控组件行为和类型/构建证据，未替代实际Master/Daemon/public的100连接故障压力或双主题视觉。事件驱动GET去重/合并、其他命令流与持久恢复仍须另验；P4-03正式报告及自动门禁完整接管后退场本临时说明。

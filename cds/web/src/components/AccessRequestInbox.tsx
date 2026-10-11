@@ -51,6 +51,15 @@ export function AccessRequestInbox({
   const [busy, setBusy] = useState<string | null>(null);
 
   const refreshSeq = useRef(0);
+  // A POST may complete after unmount; its receipt must not revive this observer.
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current++;
+    return () => {
+      lifetime.current++;
+      refreshSeq.current++;
+    };
+  }, []);
   const refresh = useCallback(async () => {
     const seq = ++refreshSeq.current;
     try {
@@ -74,23 +83,29 @@ export function AccessRequestInbox({
 
   const approve = useCallback(async (reqId: string) => {
     if (busy) return;
+    const generation = lifetime.current;
     setBusy(reqId);
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST' });
+      if (generation !== lifetime.current) return;
+      refreshSeq.current++;
       setPending((prev) => prev.filter((r) => r.id !== reqId));
     } finally {
-      setBusy(null);
+      if (generation === lifetime.current) setBusy(null);
     }
   }, [busy]);
 
   const reject = useCallback(async (reqId: string) => {
     if (busy) return;
+    const generation = lifetime.current;
     setBusy(reqId);
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/reject`, { method: 'POST', body: {} });
+      if (generation !== lifetime.current) return;
+      refreshSeq.current++;
       setPending((prev) => prev.filter((r) => r.id !== reqId));
     } finally {
-      setBusy(null);
+      if (generation === lifetime.current) setBusy(null);
     }
   }, [busy]);
 

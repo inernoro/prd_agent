@@ -42,3 +42,8 @@ it('ignores late open, terminal and error callbacks from a replaced source', () 
   expect(harness.latest.updating).toMatchObject({ branch: 'current' });
   expect(harness.latest.connectionEpoch).toBe(2); expect(next.close).not.toHaveBeenCalled();
 });
+
+it.each(['', 'not-a-time'])('does not manufacture updating from malformed active startedAt %s', startedAt => {
+  Source.all[0].onopen!(); Source.all[0].emit('self.status', { activeSelfUpdate: { startedAt, branch: 'owned', interrupted: false } });
+  expect(harness.latest.updating).toBeNull();
+});
