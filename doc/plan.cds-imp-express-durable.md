@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.76；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.77；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -698,3 +698,7 @@ v1.75当前产品c309a204238f30112f6ad19fa36f229a91ec5f2b：guide2.90/b382与2.9
 ## v1.76 有限报告解析与真实鉴权别名恢复审计
 
 v1.76当前CDS产品79d937035eb5b3285ab2d105e34bf18d5be5783a：在guide2.91/302c原鉴权及有限错误合同下，主发现c309 report parser默认HTML而非有限JSON两反例同root，补POST同route error handler400/413/no-store/internal，不回原body/stack；实际Server /api/Reports未登录malformed应401却400为另一个root，已有reports bypass改有限case-insensitive exact-prefix，授权malformed有限JSON且200KiB合法report仍201。主27bound report/4actualServer/相关7files124绿/core0；默认full683files10058pass/6files19skip/1旧obsolete/69.45s exit0。中间parser-full10057在新增alias测试前采集，只历史，不算alias或最终SHA。旧c309 full1failed+10054pass的bug-report retention ECONNRESET及历史ECONNRESET/POST404根因未明；focused34与新full绿不关闭。末尾已在固定c309 actualServer独立确认default parser0/2（stack/source泄露）、production0/2（HTML仍不合格）以及alias400-vs401，同原期待；邻prefix ReportsElse探索另保原件，不扩大本报告闭合分母。c309原producer2/protocol31/await42/budget9均局部组待最终回执，不求和，不继承79正式通过。固定79独立原BRP24 v2复验进行中。生产IMP报告调用方/创建前run/实际register、独占Daemon/实际消失/Profile/released及原IMP按名清理红仍缺；无本SHA部署或视觉。45partial-local/4todo、formal49全not-executed/visual N/A，goal active；八原push/CI成功是原八SHA，registry资格0，无八全图/CDS push/PR/shared/selfupdate。新CDS发布与隔离宿主前问待答，既有八push/selfupdate授权有效。
+
+## v1.77 固定独立回读与实际调用方 TDD
+
+v1.77：CDS产品79d937035eb5b3285ab2d105e34bf18d5be5783a固定独立最终回执已回读；主核1613绝对哈希引用、373Git源和370派生重算完全一致。默认/production解析原0/2各→2/2，支持报告别名原1/2→2/2；邻ReportsElse探索原2/3保留、不缩写原断言。producer2/protocol31/await42/budget9/auth10/newOS10分别实际重跑、不求和；主full10058仅本地，旧ECONNRESET根因未闭。P5-05继续实际IMP archive_report调用方，guide2.92/cff9先冻结严格显式归属/ENV凭证/单次POST/有限错误合同；独立BPC24设计及原05f39 actualcaller→固定CDS79受控Router/StateJSON原2期待0/2，missingENV仍POST和完整scope不绑定同一featureabsence。主caller旧源7tests42失败（含subtests）/ordinary控制绿；首asset mock返回值不正确导致15errors原件保留，v2修fixture后无errors。生产资源creator/register/独占Daemon停止删除消失/Profile与override/released仍缺，原IMP按名清理红开放。45partial-local/4todo、formal49全not-executed/visual N/A/nativegoal active；无本修订部署或远端写。
