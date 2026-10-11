@@ -82,21 +82,21 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   const settled = new Promise<void>(resolve => { settledResolve = resolve; });
   let captured = false;
   const record = (phase: string, fields: Record<string, unknown> = {}) => { timeline.push({ phase, at: new Date().toISOString(), ...fields }); };
-  type StartReplyGate = { containerName: string; claimed: boolean; released: boolean;
+  type StopReplyGate = { containerName: string; claimed: boolean; released: boolean;
     caught: Promise<{ at: string; status: number }>; confirm: (value: { at: string; status: number }) => void;
     release: () => void; expired: boolean; timer?: ReturnType<typeof setTimeout>; send?: () => void };
-  let startGate: StartReplyGate | undefined;
-  const holdNextStart = (containerName: string) => {
-    assert.match(containerName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/); assert.equal(startGate, undefined);
+  let stopGate: StopReplyGate | undefined;
+  const holdNextStop = (containerName: string) => {
+    assert.match(containerName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/); assert.equal(stopGate, undefined);
     let confirm!: (value: { at: string; status: number }) => void;
     const caught = new Promise<{ at: string; status: number }>(resolve => { confirm = resolve; });
-    const gate: StartReplyGate = { containerName, claimed: false, released: false, caught, confirm,
+    const gate: StopReplyGate = { containerName, claimed: false, released: false, caught, confirm,
       expired: false, release: () => {
         if (gate.released) return; gate.released = true; if (gate.timer) clearTimeout(gate.timer);
-        record('fixture-start-reply-released', { containerName, expired: gate.expired });
-        gate.send?.(); if (startGate === gate) startGate = undefined;
+        record('fixture-stop-reply-released', { containerName, expired: gate.expired });
+        gate.send?.(); if (stopGate === gate) stopGate = undefined;
       } };
-    startGate = gate;
+    stopGate = gate;
     return { caught, release: gate.release, expired: () => gate.expired };
   };
   const server = http.createServer((request, response) => {
@@ -139,14 +139,14 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
             // the exit body arrives deadlocks the CLI before ContainerStart.
             response.flushHeaders(); backend.pipe(response); backend.resume();
           };
-          const startTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/start$/)?.[1];
-          const gate = startGate;
+          const stopTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/stop$/)?.[1];
+          const gate = stopGate;
           if (request.method === 'POST' && backend.statusCode === 204 && gate && !gate.claimed
-            && decodeURIComponent(startTarget || '') === gate.containerName) {
-            // The real daemon already started this exact private fixture. Hold
+            && decodeURIComponent(stopTarget || '') === gate.containerName) {
+            // The real daemon already stopped this exact private fixture. Hold
             // only its real reply, without rewriting or reissuing the request.
             gate.claimed = true; gate.send = send; backend.pause();
-            const at = new Date().toISOString(); record('original-start-reply-held', { containerName: gate.containerName, status: 204 });
+            const at = new Date().toISOString(); record('original-stop-reply-held', { containerName: gate.containerName, status: 204 });
             gate.timer = setTimeout(() => { gate.expired = true; gate.release(); }, 5000);
             response.once('close', gate.release); gate.confirm({ at, status: 204 });
           } else send();
@@ -218,10 +218,10 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
   return { timeline, requestTimeline, traceOverflow: () => traceOverflow, enableTrace: () => { traceEnabled = true; },
-    holdNextStart,
+    holdNextStop,
     traffic: () => [...traffic.values()], arm: () => { armed = true; traceEnabled = true; }, caught,
     settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
-    close: async () => { startGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
+    close: async () => { stopGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
@@ -694,16 +694,18 @@ async function main(): Promise<void> {
         assert.equal(created.status, 201, created.text); assert.equal(created.json.sandbox, true); const projectId = created.json.project.id; assert.ok(projectId); capabilityProjectId = projectId;
         const projectRepo = path.join(context.root, 'repos', projectId); assert.ok((await fs.stat(projectRepo)).isDirectory());
         const git = async (args: string[]) => (await execute('/usr/bin/git', ['-C', projectRepo, ...args], { encoding: 'utf8', timeout: 5000 })).stdout.trim();
+        const fixtureBranch = 'pending-proof'; const fixtureDefaultBranch = await git(['symbolic-ref', '--short', 'HEAD']);
+        assert.notEqual(fixtureDefaultBranch, fixtureBranch); await git(['branch', fixtureBranch]);
         const oldSha = await git(['rev-parse', 'HEAD']); assert.match(oldSha, /^[a-f0-9]{40}$/);
         const profilesResponse = await request(`/api/build-profiles?project=${encodeURIComponent(projectId)}`); assert.equal(profilesResponse.status, 200);
         const profiles = profilesResponse.json.profiles; assert.equal(profiles.length, 3);
         assert.equal(profiles.every((p: any) => p.prebuiltImage === true && !p.localArtifact && !p.managedBuild), true);
-        const branchResponse = await request('/api/branches', 'POST', { projectId, branch: 'main' }); assert.equal(branchResponse.status, 201, branchResponse.text);
+        const branchResponse = await request('/api/branches', 'POST', { projectId, branch: fixtureBranch }); assert.equal(branchResponse.status, 201, branchResponse.text);
         const branchId = branchResponse.json.branch.id; assert.ok(branchId); const branchPath = `/api/branches/${encodeURIComponent(branchId)}`;
         const runsPath = `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}`;
         const readRuns = async () => { const response = await request(runsPath); assert.equal(response.status, 200, response.text); report.lastRunsResponse = { status: response.status, runs: response.json.runs }; return response.json.runs as any[]; };
         const branch = async () => { const response = await request(branchPath); assert.equal(response.status, 200, response.text); return response.json.branch; };
-        report.project = { projectId, branchId, profiles: profiles.map((p: any) => ({ id: p.id, prebuiltImage: p.prebuiltImage, dockerImage: p.dockerImage })), sourceOld: oldSha };
+        report.project = { projectId, branchId, profiles: profiles.map((p: any) => ({ id: p.id, prebuiltImage: p.prebuiltImage, dockerImage: p.dockerImage })), sourceOld: oldSha, fixtureBranch, fixtureDefaultBranch };
         report.checks.push({ name: 'original-authenticated-project-compose-and-branch-worktree-entry', passed: true });
         const began = Math.floor(Date.now() / 1000) - 1;
         await build('api', oldSha, registry); await build('web', oldSha, registry);
@@ -733,6 +735,8 @@ async function main(): Promise<void> {
         const oldIds = Object.fromEntries(Object.entries(oldServices).map(([id, value]: [string, any]) => [id, value.id]));
         await fs.writeFile(path.join(projectRepo, 'marker.txt'), 'new-fixture'); await git(['add', 'marker.txt']); await git(['commit', '-m', '隔离部署新目标']);
         const newSha = await git(['rev-parse', 'HEAD']); assert.notEqual(newSha, oldSha); assert.match(newSha, /^[a-f0-9]{40}$/); report.project.sourceNew = newSha;
+        await git(['branch', '-f', fixtureBranch, newSha]); assert.equal(await git(['rev-parse', fixtureBranch]), newSha);
+        assert.equal(await git(['symbolic-ref', '--short', 'HEAD']), fixtureDefaultBranch);
         report.stage = 'missing-required-artifact-wait';
         // 原只读 API 短时样本；它不是30分钟性能窗口，全部错误原样计入。
         const reads: any[] = []; let stopReads = false;
@@ -793,51 +797,78 @@ async function main(): Promise<void> {
             }, 10_000);
           };
           report.actualPendingDispatchers = { routes: await dispatchProof('routes', newSha, queuedId) };
-          report.stage = 'original-background-restart-queues-next-target';
+          report.stage = 'original-scheduler-cooling-queues-next-target';
           await fs.writeFile(path.join(projectRepo, 'marker.txt'), 'background-dispatch-fixture');
           await git(['add', 'marker.txt']); await git(['commit', '-m', '隔离后台派发目标']);
           const backgroundSha = await git(['rev-parse', 'HEAD']); assert.notEqual(backgroundSha, newSha);
           report.project.sourceBackground = backgroundSha;
+          await git(['branch', '-f', fixtureBranch, backgroundSha]); assert.equal(await git(['rev-parse', fixtureBranch]), backgroundSha);
+          assert.equal(await git(['symbolic-ref', '--short', 'HEAD']), fixtureDefaultBranch);
           await build('api', backgroundSha, registry); await build('web', backgroundSha, registry);
-          const worker = Object.values(report.newServices).find((service: any) => service.content.service === 'worker') as any;
-          assert.ok(worker); const beforeRestart = await ownedView(worker.containerName);
-          assert.equal(beforeRestart.Id, worker.id); assert.equal(beforeRestart.State.Running, true);
-          const gate = probeProxy!.holdNextStart(worker.containerName);
-          let queuedBackgroundId: string | null = null;
+          const current = await branch();
+          const firstService = Object.values(current.services).find((service: any) => service.status === 'running') as any;
+          assert.ok(firstService); const view = await ownedView(firstService.containerName);
+          assert.equal(view.State.Running, true);
+          const initialScheduler = await request('/api/scheduler/state'); assert.equal(initialScheduler.status, 200);
+          assert.equal(initialScheduler.json.enabled, false);
+          const gate = probeProxy!.holdNextStop(firstService.containerName);
+          let cooling: Promise<Response> | undefined, queuedBackgroundId: string | null = null;
           try {
-            await docker(['stop', '--time', '2', worker.id], 5000);
-            report.backgroundRestartDriverFault = { containerId: worker.id, containerName: worker.containerName,
-              scope: 'one exact owned generic fixture only', at: new Date().toISOString() };
+            const enabled = await request('/api/scheduler/enabled', 'PUT', { enabled: true }); assert.equal(enabled.status, 200);
+            const state = await request('/api/scheduler/state'); assert.equal(state.status, 200);
+            const selected = [...state.json.hot, ...state.json.cold].find((item: any) => item.slug === branchId);
+            assert.ok(selected); assert.equal(selected.pinned, false);
+            report.backgroundCoolingRequest = { path: `/api/scheduler/cool/${encodeURIComponent(branchId)}`,
+              at: new Date().toISOString(), controlledAuthenticatedUserRequest: true, genuineIdleTickVerified: false,
+              exactContainerId: view.Id, exactContainerName: firstService.containerName, branchName: fixtureBranch };
+            cooling = requestRaw(report.backgroundCoolingRequest.path); void cooling.catch(() => {});
             const held = await until(async () => Promise.race([gate.caught, Promise.resolve(undefined)]), 45_000);
-            assert.equal(held.status, 204); assert.equal((await ownedView(worker.containerName)).State.Running, true);
+            assert.equal(held.status, 204); assert.equal((await ownedView(firstService.containerName)).State.Running, false);
             const beforeQueue = await context.readDispatchEvents(projectId, branchId);
-            const restarting = beforeQueue.filter(event => event.action === 'branch.operation.started' && event.operationKind === 'auto-restart'
-              && event.profileId === profiles.find((profile: any) => profile.env.SERVICE_NAME === 'worker').id);
-            assert.equal(restarting.length, 1); assert.equal(restarting[0].operationSource, 'auto-restart.tick');
-            report.backgroundRestartLease = restarting[0];
-            // This is a controlled authenticated trigger, not a real GitHub event.
-            // Only the original dispatcher may create internal replay credentials.
+            const active = beforeQueue.filter(event => event.action === 'branch.operation.started' && event.operationKind === 'scheduler-cooling');
+            assert.equal(active.length, 1); assert.equal(active[0].operationSource, 'schedulerService.setCoolFn');
+            report.backgroundCoolingLease = active[0];
+            // Controlled authenticated trigger, never a real GitHub event or a
+            // forged internal replay. The original index signs the later replay.
             const pending = await requestRaw(`${branchPath}/deploy`, { commitSha: backgroundSha }, 'webhook');
             const pendingText = await pending.text(); assert.ok([200, 202].includes(pending.status), pendingText);
             const payloads = pendingText.trim().startsWith('{') ? [JSON.parse(pendingText)]
               : pendingText.split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
             const merged = payloads.find(payload => payload.operationStatus === 'merged'); assert.ok(merged, pendingText);
-            assert.equal(merged.activeOperationId, restarting[0].operationId);
+            assert.equal(merged.activeOperationId, active[0].operationId);
             queuedBackgroundId = pending.headers.get('x-cds-deployment-run-id'); assert.ok(queuedBackgroundId);
             report.backgroundQueuedDeployment = { id: queuedBackgroundId, status: pending.status, accepted: merged,
-              controlledAuthenticatedTrigger: 'webhook', genuineGitHubEventVerified: false, originalRestartReply: held };
+              controlledAuthenticatedTrigger: 'webhook', genuineGitHubEventVerified: false, originalCoolingReply: held };
             assert.equal(gate.expired(), false);
-          } finally { gate.release(); }
+          } catch (error) {
+            try { const observed = await branch();
+              report.backgroundFailureDiagnostics = { at: new Date().toISOString(), branchId, status: observed.status,
+                heatState: observed.heatState, services: Object.values(observed.services).map((service: any) => ({
+                  profileId: service.profileId, status: service.status, containerName: service.containerName })),
+                events: await context.readDispatchEvents(projectId, branchId) };
+            } catch (diagnosticsError) { report.backgroundFailureDiagnostics = { captureError: String(diagnosticsError).slice(0, 2000) }; }
+            throw error;
+          } finally {
+            gate.release();
+            try { if (cooling) { const response = await cooling; const text = await response.text();
+              report.backgroundCoolingResponse = { status: response.status, at: new Date().toISOString(), body: JSON.parse(text) };
+              assert.equal(response.status, 200, text); assert.equal(report.backgroundCoolingResponse.body.heatState, 'cold');
+            } } finally {
+              const restored = await request('/api/scheduler/enabled', 'PUT', { enabled: initialScheduler.json.enabled });
+              report.schedulerPrivateToggleRestored = { status: restored.status, enabled: restored.json.enabled };
+              assert.equal(restored.status, 200); assert.equal(restored.json.enabled, false);
+            }
+          }
           assert.ok(queuedBackgroundId);
           await until(async () => { const run = (await readRuns()).find(item => item.id === queuedBackgroundId);
             if (run?.status === 'failed') throw new Error(`原后台派发部署失败: ${JSON.stringify(run).slice(0, 2000)}`);
             return run?.status === 'running' ? true : undefined; }, 180_000);
           report.backgroundServices = await serviceProof(backgroundSha);
           report.actualPendingDispatchers.index = await dispatchProof('index', backgroundSha, queuedBackgroundId);
-          const restartCompleted = report.actualPendingDispatchers.index.originalEvents.find((event: any) => event.action === 'branch.operation.completed'
-            && event.operationId === report.backgroundRestartLease.operationId);
-          assert.ok(restartCompleted);
-          assert.ok(Date.parse(restartCompleted.at) <= Date.parse(report.actualPendingDispatchers.index.dispatch.at));
+          const coolingCompleted = report.actualPendingDispatchers.index.originalEvents.find((event: any) => event.action === 'branch.operation.completed'
+            && event.operationId === report.backgroundCoolingLease.operationId);
+          assert.ok(coolingCompleted);
+          assert.ok(Date.parse(coolingCompleted.at) <= Date.parse(report.actualPendingDispatchers.index.dispatch.at));
           assert.equal((await readRuns()).filter(item => item.commitSha === backgroundSha).length, 1);
           report.actualBothPendingDispatchersVerified = true;
           context.report.actualBothPendingDispatchersVerified = true;
