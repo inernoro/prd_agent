@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.72；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.73；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -678,3 +678,7 @@ expected result：同scalar的新Branch不能接替原await，ACK等待正文变
 
 
 固定23521独立最终v2：`acceptance-bootstrap-23521-evidence-summary-v2.json` SHA=7e863233fef0f3d96aa3ea4fe0c837b2a35db837ddc2a7901ea35c3e6f304bc6；source372Git=676b2c88b266becefa091a8ee571b7f92e4ab686dfb9ce03a487dc6097e4565a，derived369=67ae4645b38c602c94a9b121a7114dd1cf63c6d488c52ea91abe8c7d8eadddd1，raw21=894c1d5e2d47839dbb1f2492db93b41bc9067bf631e3c7b8592c9fcd41a8c77b。主已核v1递归1596hash/744Git（包含旧2917），逐字重算新369JS；v2与中间态限制原件另回读 `main-independent-23521-final-v2-receipt.json`，不改任何独立原件。原三root同期待局部关闭，second-read持久draft窗口重启接管仍未执行，不以已返回ACK的newOS2替代。正式49/visual N/A、goal active保持。
+
+## v1.73 两阶段发布检查点
+
+v1.73：guide2.88/f40ca先冻结两阶段终态发布及重启未知意图保留。旧23521在ACK后第二正文read未完成窗口，实际新Node从磁盘取得finished与收尾前置为一个真红；独立v1/v2同1/2保留。v1 child拒绝响应缺stage另存v2仅补字段，registered拒绝正控1/1，不计产品root。主旧34中32绿2红（提前磁盘终态、无第二提交屏障），新产品e99f9d15103f1264ce3453d683f1fba91a8a7f79先落盘intent保留旧公开阶段，复核正文/原Branch引用/资源/metadata后另行可靠commit；重启未提交intent保留归属并拒绝修改/收尾，无自动重放。主36内核、4files75相关（含36）、core/web tsc0；默认full680files10018绿/6files19skip/1历史obsolete/69.73s。此前默认full的ECONNRESET与POST404两失败根因仍未知，本次绿不关闭旧债务。主初期待recovery_required过细，改为原独立terminal_receipt_required并另验register/finish拒未对账；原log保留。固定e99f独立原v2真实newOS2/2：第二read held为registered+terminal_receipt_required，可靠commit正控finished但仅Daemon前置；扩展两阶段控制待返。主回读372Git并重算369JS一致，原24/新增14设计均非全排列执行。新源尚无生产HTTP鉴权/创建/报告绑定/实际Daemon删除和消失/Profile收尾/released；原IMP名称清理红仍开放。八IMP实际push与CI成功仅原八SHA，registry88tag鉴权0资格，无八全图部署、CDSpush/PR/共享写、自更新或本SHA视觉。45partial-local/4todo、49formal全not-executed/visual N/A，native goal active；既有八push/selfupdate授权保持，新CDS branch发布和隔离宿主前问仍待答。
