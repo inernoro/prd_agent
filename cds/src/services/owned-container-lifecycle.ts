@@ -18,7 +18,13 @@ interface ContainerFacts {
   Mounts: { Type: string; Source: string; Destination: string; RW: boolean; Mode: string; Propagation: string }[];
 }
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
-const absent = (result: ExecResult) => result.exitCode !== 0 && /no such (?:object|container)/i.test(result.stdout + result.stderr);
+function absent(result: ExecResult, identity: string): boolean {
+  if (result.exitCode !== 1 || result.stdout !== '') return false;
+  const diagnostic = result.stderr.replace(/\r?\n$/, '');
+  return ['No such object: ', 'Error: No such object: ', 'Error response from daemon: No such object: ',
+    'No such container: ', 'Error: No such container: ', 'Error response from daemon: No such container: ']
+    .some(prefix => diagnostic === prefix + identity);
+}
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, val]) => [key, stable(val)]));
@@ -54,7 +60,7 @@ export class OwnedContainerLifecycle {
     assertCurrent(); signal?.throwIfAborted();
     const result = await this.inspect(service.containerName, signal);
     assertCurrent(); signal?.throwIfAborted();
-    if (absent(result)) throw new Error('container_missing: actual name is absent');
+    if (absent(result, service.containerName)) throw new Error('container_missing: actual name is absent');
     const info = this.parse(result);
     const expected: Record<string, string> = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.instance': this.instanceId,
       'cds.project.id': owner.projectId, 'cds.branch.id': owner.branchId, 'cds.profile.id': service.profileId };
@@ -83,7 +89,7 @@ export class OwnedContainerLifecycle {
     assertCurrent(); signal?.throwIfAborted();
     const result = await this.inspect(name, signal);
     assertCurrent(); signal?.throwIfAborted();
-    if (!absent(result)) throw new Error('container_absence_unconfirmed: no mutation permitted');
+    if (!absent(result, name)) throw new Error('container_absence_unconfirmed: no mutation permitted');
   }
 
   private async mutate(reference: OwnedContainerReference, action: 'stop' | 'start' | 'remove', assertCurrent: () => void, signal?: AbortSignal): Promise<void> {
@@ -92,7 +98,7 @@ export class OwnedContainerLifecycle {
     const before = await this.inspect(reference.id, signal);
     // The operation may have been superseded while Docker inspect was outstanding.
     assertCurrent(); signal?.throwIfAborted();
-    if (action === 'remove' && absent(before)) return; // Only the captured immutable ID can be idempotently absent.
+    if (action === 'remove' && absent(before, reference.id)) return; // Only the captured immutable ID can be idempotently absent.
     if (fingerprint(this.parse(before)) !== reference.fingerprint) throw new Error('container_drift: captured runtime facts changed');
     const command = action === 'remove' ? `docker rm -f ${reference.id}`
       : action === 'stop' ? `docker stop -t 10 ${reference.id}` : `docker start ${reference.id}`;
@@ -104,7 +110,7 @@ export class OwnedContainerLifecycle {
     const after = await this.inspect(reference.id, signal);
     assertCurrent(); signal?.throwIfAborted();
     if (action === 'remove') {
-      if (!absent(after)) throw new Error('container_remove_unconfirmed: immutable ID still exists or inspection failed');
+      if (!absent(after, reference.id)) throw new Error('container_remove_unconfirmed: immutable ID still exists or inspection failed');
       return;
     }
     const actual = this.parse(after);

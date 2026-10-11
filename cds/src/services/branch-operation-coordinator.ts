@@ -20,7 +20,8 @@ export type BranchOperationKind =
   | 'auto-lifecycle-redeploy'
   | 'auto-restart'
   | 'janitor-remove'
-  | 'candidate-reconcile';
+  | 'candidate-reconcile'
+  | 'acceptance-release';
 
 export type BranchOperationTrigger = 'manual' | 'webhook' | 'auto-lifecycle' | 'scheduler' | 'janitor' | 'system';
 
@@ -73,6 +74,8 @@ export interface BranchOperationRequest {
   continueWith?: 'deploy' | 'deploy-profile' | null;
   /** Internal reconciliation is scoped to a terminal unresolved journal, never a new deployment. */
   reconcileRunId?: string;
+  /** Internal whole-branch release; ownership authorization belongs to its caller. */
+  acceptanceRunId?: string;
   /** Only a current internal pending dispatch can redeem this one-use token. */
   pendingOperationId?: string;
   pendingGeneration?: number;
@@ -284,6 +287,26 @@ export class BranchOperationCoordinator {
   begin(request: BranchOperationRequest): BranchOperationDecision {
     request = { ...request };
     const branchId = request.branchId;
+    // Release cannot overtake an executor or an already accepted deployment. Revocation
+    // alone does not settle outstanding awaits, so active-map ownership is insufficient.
+    const executions = [...this.unsettled.values()].filter(execution => execution.branchId === branchId);
+    if (request.kind === 'acceptance-release') {
+      const valid = (request.trigger === 'system' || request.trigger === 'manual')
+        && request.source === 'acceptance-resource-release' && request.profileId == null
+        && typeof request.projectId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(request.projectId)
+        && typeof branchId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(branchId)
+        && typeof request.acceptanceRunId === 'string' && /^ar_[a-f0-9]{32}$/.test(request.acceptanceRunId)
+        && typeof request.commitSha === 'string' && /^[a-f0-9]{40}$/.test(request.commitSha);
+      if (!valid) return this.pendingRejection(request, 'acceptance_release_scope');
+      if (executions.length) return this.pendingRejection(request, 'acceptance_release_unsettled');
+      const journal = this.journal?.snapshot();
+      const pending = [...this.pendingWebhookDeploys.values(), ...[...this.pendingDispatches.values()].map(item => item.pending),
+        ...(journal?.queued || []), ...(journal?.claims.map(claim => claim.pending) || [])];
+      const reserved = [...this.reservedContinuations.values()].some(item => item.branchId === branchId && item.expiresAt >= Date.now());
+      if (pending.some(item => item.branchId === branchId) || reserved) return this.pendingRejection(request, 'acceptance_release_busy');
+    } else if (executions.some(execution => execution.lease.request.kind === 'acceptance-release')) {
+      return this.pendingRejection(request, 'acceptance_release_unsettled');
+    }
     const pendingToken = request.pendingOperationId != null || request.pendingGeneration != null;
     if (pendingToken) {
       const dispatch = this.pendingDispatches.get(this.pendingKey(request));
