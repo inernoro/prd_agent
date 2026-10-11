@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.59；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.60；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -545,3 +545,10 @@ expected result：合法辅助服务按精确SHA生产并保持API、制品来�
 固定局部回执：`/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/acceptance-p5-main-rpc-aux-e8-evidence-summary.json`；主全量补充另存，不修改独立冻结summary中“当时全量进行中”的历史事实。
 
 追加固定v2回执仅补充30行原判据执行映射及主全量归档，不覆盖原summary；v2 hash8f51e27128ddb1f3238b2d562127a24af8b9702d139e47d77221325ea81cdd91，30raw已主回读，原AUX30均partial-local/正式执行0。主全量原件与末尾归档SHA256同为378c2650b1a336c6e9f4f9c4702ea1d804ed588efcb61e3ff72eb8cd8794c62f；此为主补充，非独立分母或线上500闭因。
+
+
+## v1.60 声明式放置与实际分母本地检查点
+
+guide2.77/d80与IMP auxiliary-contract v1.1/c50先冻结完整projectId/branchId/repoBranch声明；CDS dad3新增API保存/严格匹配、copy/derive过滤附加配置并保底座同IDoverride、merge不缩分母、hash/JSON版本存在缺省冻结，以及whole/Profile/Executor/gate/Container/候选恢复/Replica/托管runtime/import的放置准入接线；IMP cd96由SSOT activation深拷贝离线Profile范围。主初始同旧e8反例9红→绿，11files484相关/core0；dad3固定full676files9943绿/19skip。独立dad3原HTTP23/24、expanded30/32发现两个真红：无关bad-scope服务扩大单服务阻断范围；copy过滤配置使未改旧runtime从unknown变all。guide2.78/505先明确单服务dependsOn闭包及活跃无配置服务未知；857只三代码/测试路径修正，不删services、不改whole/exact制品闭包。主同dad3正确fixture3红/2控制（两个根因）→4files297/core0；固定857首次full9947绿/ECONNRESET1红，聚焦29绿，同源full-v2 676files9948绿、6files19skip、1旧obsolete/63.57s，连接重置根因未闭，不称线上500解决。独立857原expanded32/32（含原HTTP24）、另原HTTP24/24实际重跑、protocol41/41、compat/CLI7/7分列重叠不相加，两个原红关闭；其余候选恢复/Replica/托管runtime/异步drift动作仍补证中，不以接线判通过。主已核391Git源/快照及dad3的21raw，原manifest933ff0e43e713bc1137b38e5ecb70b30d693be0a4a552d84ef3444fcac22da03、summary7b14c523ef681a5783defb123a34e766dbd39e3f1387d6f584d0903b70f87589；857源manifest40c9ebbb800790c6b371a1f8d61868699fd5f36cbda096f25262b37ce41f8319已核391源。主新raw v2清单70eb3052ca1adf833d84ba528c06bf592f88bba049f169be453832d272670fb6，初orphan fixture把合法undefined错当[]、import getBranches类型错误、stage误传CLI参数及回执缺gitBlob键均原件保留并更正，不算产品根因。IMP固定46相关与实际stage/proposal绿；扩大53组51绿/2旧前端身份红，旧5dea六文件同字节且同缺文件3tests1绿2红：部署清单实际六条（五Web+小程序），旧测试期待五条且小程序缺build-identity.ts，不能删小程序凑绿；此前XXL env自引用/OP发布两红仍保留。未执行实际CI/Docker/nginx/DNS/XXL/token/主网关迁移/bootstrap终结/八支/公网/双主题正式视觉/48h与周；旧八候选未传播cd96且未push/deploy，无PR/shared写/selfupdate。42partial-local/7todo，formal49全not-executed/visual N/A，既有八push/selfupdate授权继续有效，目标active。
+
+expected result：单服务检查必要依赖，复制配置不能改变未核验旧运行的资格；current evidence：主297/core0/full-v2 9948及独立32/24/41/7分组；visible result：本修订未部署，正式视觉N/A；gap：上述实际CI/宿主/八支/视觉及剩余本地边界；required action：继续独立scope剩余有界动作；main网关实际迁移、bootstrap所属run终结receipt、继承XXL/OP与小程序身份缺口、独立详情页/执行器/终态收尾仍归原条目。隔离宿主未qualified；满足准入及远端发布权限后按既有八push/selfupdate授权传播新源并执行完整交付、实际黄闪电/目标SHA、双主题、公网/恢复/48h与周，缺证据不关闭。
