@@ -92,4 +92,14 @@ describe('durable pending intent journal', () => {
     for (const delta of [{ projectId: 'other' }, { profileId: 'worker' }, { commitSha: 'b'.repeat(40) }, { trigger: 'manual' as const }, { pendingGeneration: p.generation + 1 }]) expect(c.begin({ ...r, ...delta }).reason).toBe('pending_dispatch_stale');
     expect(c.begin(r).status).toBe('started'); expect(c.begin(r).reason).toBe('pending_dispatch_stale');
   });
+  it('redeems an unpinned manual whole intent after the cached SHA advances, while refusing an explicit pin', async () => {
+    const { journal } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const request = { projectId: 'p', branchId: 'owned', kind: 'deploy' as const, trigger: 'manual' as const, commitSha: 'a'.repeat(40), commitPinned: false };
+    const active = c.begin(request); await c.begin(request).persistence;
+    const p = c.complete(active.lease!, 'completed')!; expect(await c.claimPending(p)).toBe(true); expect(c.markPendingSent(p)).toBe(true);
+    const replay = { ...request, commitSha: 'b'.repeat(40), pendingOperationId: p.operationId, pendingGeneration: p.generation };
+    expect(c.begin({ ...replay, commitSha: 'a'.repeat(40), commitPinned: true }).reason).toBe('pending_dispatch_stale');
+    expect(c.begin(replay).status).toBe('started');
+  });
+
 });

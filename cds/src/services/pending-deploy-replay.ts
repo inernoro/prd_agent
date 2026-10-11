@@ -84,7 +84,9 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
       ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
       'X-CDS-Source-Branch-Id': pending.branchId,
     },
-    body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
+    // An unpinned manual whole request means the branch HEAD at execution time.
+    body: JSON.stringify({ commitSha: pending.request.kind === 'deploy' && pending.request.trigger === 'manual'
+      && pending.request.commitPinned !== true ? undefined : pending.request.commitSha || undefined }),
   }, { fetch: deps.fetch, ...deps.observation }).then(async (result) => {
     await deps.coordinator?.settlePending(pending, result);
     serverEventLogStore?.record({

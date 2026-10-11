@@ -286,10 +286,11 @@ export class BranchOperationCoordinator {
     if (pendingToken) {
       const dispatch = this.pendingDispatches.get(this.pendingKey(request));
       const original = dispatch?.pending;
+      const unpinnedWhole = original?.request.kind === 'deploy' && original.request.trigger === 'manual' && original.request.commitPinned !== true;
       const matches = original && dispatch.phase === 'sent' && original.operationId === request.pendingOperationId
         && original.generation === request.pendingGeneration && original.request.trigger === request.trigger
         && original.request.kind === request.kind
-        && (original.request.commitSha || null) === (request.commitSha || null);
+        && (unpinnedWhole ? request.commitPinned !== true : (original.request.commitSha || null) === (request.commitSha || null));
       if (!matches) return this.pendingRejection(request, 'pending_dispatch_stale');
       dispatch.phase = 'accepted';
     }

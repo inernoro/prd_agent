@@ -105,4 +105,11 @@ describe('shared pending replay from background and route completions', () => {
     }
   });
 
+  it('keeps an unpinned manual whole intent unpinned rather than sending the old cached SHA', async () => {
+    const fetcher = vi.fn(async () => new Response('event: complete\ndata: {"ok":true,"runId":"dr_latest"}\n\n'));
+    const { deps } = fixture(fetcher as typeof fetch);
+    replayPendingDeploy({ ...pending, request: { ...pending.request, kind: 'deploy', profileId: null, commitPinned: false } }, deps);
+    await settle(); expect(fetcher).toHaveBeenCalledOnce(); expect(JSON.parse((fetcher.mock.calls[0] as any)[1].body)).toEqual({});
+  });
+
 });
