@@ -1,3 +1,4 @@
+import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
@@ -2020,6 +2021,13 @@ export function createServer(deps: ServerDeps): express.Express {
     return globalJsonParser(req, res, next);
   });
 
+  const pendingReplayGate = internalPendingReplayAuth.middleware({
+    coordinator: deps.branchOperationCoordinator,
+    projectForBranch: (id) => { const branch = deps.stateService.getBranch(id); return branch ? branch.projectId || 'default' : undefined; },
+  });
+  // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
+  app.use(pendingReplayGate.gate);
+
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
   //   1. Dockerfile HEALTHCHECK
@@ -2713,6 +2721,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      isPendingReplay: pendingReplayGate.isTrusted,
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -2763,6 +2772,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
+      if (pendingReplayGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();

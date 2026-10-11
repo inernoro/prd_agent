@@ -1,3 +1,4 @@
+import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
 import { serveContainerLogStream } from '../services/container-log-stream-response.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
@@ -3333,20 +3334,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const url = `http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`;
-    void fetch(url, {
+    void Promise.resolve().then(() => fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CDS-Internal': '1',
-        // 透传原始 trigger：合并进 pending 的 manual deploy 重发时仍以 manual
-        // 身份进入（保持优先级 80 语义与 run 账本归因），webhook 照旧。
-        'X-CDS-Trigger': pending.request.trigger,
-        'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
-        ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
-        'X-CDS-Source-Branch-Id': pending.branchId,
-      },
+      headers: internalPendingReplayAuth.headersFor(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, pending, branch.projectId || 'default'),
       body: JSON.stringify(pendingDeployBody(pending)),
-    }).then((response) => {
+    })).then((response) => {
       if (!response.ok) {
         return response.text().then((body) => {
           throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);

@@ -1,3 +1,4 @@
+import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
@@ -2252,20 +2253,11 @@ function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | 
     });
     return;
   }
-  void fetch(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, {
+  void Promise.resolve().then(() => fetch(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CDS-Internal': '1',
-      // 透传原始 trigger：manual deploy 合并进 pending 后重发仍以 manual 身份
-      // 进入（优先级/账本归因不漂移），webhook 照旧（同 branches.ts 派发器）。
-      'X-CDS-Trigger': pending.request.trigger,
-      'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
-      ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
-      'X-CDS-Source-Branch-Id': pending.branchId,
-    },
+    headers: internalPendingReplayAuth.headersFor(`http://127.0.0.1:${config.masterPort}${pendingDeployRoute(pending)}`, pending, branch.projectId || 'default'),
     body: JSON.stringify(pendingDeployBody(pending)),
-  }).then(async (response) => {
+  })).then(async (response) => {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`);
     }

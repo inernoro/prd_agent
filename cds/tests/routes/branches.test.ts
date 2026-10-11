@@ -3630,9 +3630,7 @@ describe('Branch Routes', () => {
         fetchCalls.push({
           url: String(input),
           body: init?.body ? JSON.parse(String(init.body)) : undefined,
-          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
-            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
-            : undefined,
+          requestId: new Headers(init?.headers).get('X-CDS-Request-Id') || undefined,
         });
         return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       }) as typeof fetch;
@@ -4560,9 +4558,7 @@ describe('Branch Routes', () => {
         fetchCalls.push({
           url: String(input),
           body: init?.body ? JSON.parse(String(init.body)) : undefined,
-          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
-            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
-            : undefined,
+          requestId: new Headers(init?.headers).get('X-CDS-Request-Id') || undefined,
         });
         return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       }) as typeof fetch;
@@ -4765,9 +4761,7 @@ describe('Branch Routes', () => {
         fetchCalls.push({
           url: String(input),
           body: init?.body ? JSON.parse(String(init.body)) : undefined,
-          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
-            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
-            : undefined,
+          requestId: new Headers(init?.headers).get('X-CDS-Request-Id') || undefined,
         });
         return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       }) as typeof fetch;

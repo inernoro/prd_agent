@@ -369,6 +369,14 @@ export class BranchOperationCoordinator {
     if (!this.deploymentInputs.has(key)) this.deploymentInputs.set(key, structuredClone(input));
   }
 
+  /** HTTP 鉴权只读当前领取的公开身份；不暴露私有配置，begin 仍原子消费并复核。 */
+  getClaimedPendingReplay(input: BranchOperationRequest['pendingReplay']): PendingWebhookDeploy | undefined {
+    this.prunePendingReplayClaims();
+    const identity = replayIdentity(input);
+    const pending = identity ? this.pendingReplayClaims.get(this.replayKey(identity))?.pending : undefined;
+    return pending ? { ...pending, request: { ...pending.request } } : undefined;
+  }
+
   /** 只对有效领取、同项目/分支/服务及原目标返回输入；begin 仍须再次消费凭据。 */
   getDeploymentInputForReplay(request: BranchOperationRequest): DeploymentInputSnapshot | undefined {
     this.prunePendingReplayClaims();

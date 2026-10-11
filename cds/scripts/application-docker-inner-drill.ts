@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const build = async (role: string, sha: string, registry: string) => {
     const context = path.join(root, `${role}-${sha}`); await fs.mkdir(context);
     await fs.writeFile(path.join(context, 'server.cjs'), `require('node:http').createServer((_q,r)=>{r.setHeader('Content-Type','application/json');r.end(JSON.stringify({service:process.env.SERVICE_NAME,source:'${sha}',runtime:process.env.CDS_COMMIT_SHA}));}).listen(8080,'0.0.0.0');`);
-    await fs.writeFile(path.join(context, 'Dockerfile'), `FROM node:22-alpine\nLABEL cds.acceptance.owner="${source.owner}" org.opencontainers.image.revision="${sha}"\nCOPY server.cjs /app/server.cjs\nEXPOSE 8080\nCMD ["node","/app/server.cjs"]\n`);
+    await fs.writeFile(path.join(context, 'Dockerfile'), `FROM node:22-alpine\nLABEL cds.acceptance.owner="${source.owner}" org.opencontainers.image.revision="${sha}" cds.acceptance.role="${role}"\nCOPY server.cjs /app/server.cjs\nEXPOSE 8080\nCMD ["node","/app/server.cjs"]\n`);
     const reference = `${registry}/owned-${role}:sha-${sha}`; await docker(['build', '--network', 'none', '--quiet', '-t', reference, context]);
     const view = JSON.parse(await docker(['image', 'inspect', reference]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner);
     assert.equal(view.Config.Labels['org.opencontainers.image.revision'], sha); images.add(view.Id); await docker(['push', reference]);
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
         const branchResponse = await request('/api/branches', 'POST', { projectId, branch: 'main' }); assert.equal(branchResponse.status, 201, branchResponse.text);
         const branchId = branchResponse.json.branch.id; assert.ok(branchId); const branchPath = `/api/branches/${encodeURIComponent(branchId)}`;
         const runsPath = `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}`;
-        const readRuns = async () => { const response = await request(runsPath); assert.equal(response.status, 200, response.text); return response.json.runs as any[]; };
+        const readRuns = async () => { const response = await request(runsPath); assert.equal(response.status, 200, response.text); report.lastRunsResponse = { status: response.status, runs: response.json.runs }; return response.json.runs as any[]; };
         const branch = async () => { const response = await request(branchPath); assert.equal(response.status, 200, response.text); return response.json.branch; };
         report.project = { projectId, branchId, profiles: profiles.map((p: any) => ({ id: p.id, prebuiltImage: p.prebuiltImage, dockerImage: p.dockerImage })), sourceOld: oldSha };
         report.checks.push({ name: 'original-authenticated-project-compose-and-branch-worktree-entry', passed: true });
@@ -110,6 +110,9 @@ async function main(): Promise<void> {
         const initialId = initial.headers.get('x-cds-deployment-run-id'); assert.ok(initialId); report.initialDeployment = { id: initialId, status: initial.status, stream: (await initial.text()).slice(-32768) };
         await until(async () => { const run = (await readRuns()).find(r => r.id === initialId); if (run?.status === 'failed') throw new Error(`原应用首次部署失败: ${JSON.stringify(run).slice(0, 2000)}`); return run?.status === 'running' ? true : undefined; });
         const oldServices = await serviceProof(oldSha); report.oldServices = oldServices;
+        const oldImages = Object.values(oldServices) as any[];
+        const webImage = oldImages.find(s => s.content.service === 'web').image;
+        assert.equal(oldImages.filter(s => s.content.service !== 'web').every(s => s.image !== webImage), true);
         const oldIds = Object.fromEntries(Object.entries(oldServices).map(([id, value]: [string, any]) => [id, value.id]));
         await fs.writeFile(path.join(projectRepo, 'marker.txt'), 'new-fixture'); await git(['add', 'marker.txt']); await git(['commit', '-m', '隔离部署新目标']);
         const newSha = await git(['rev-parse', 'HEAD']); assert.notEqual(newSha, oldSha); assert.match(newSha, /^[a-f0-9]{40}$/); report.project.sourceNew = newSha;
