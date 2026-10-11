@@ -16,7 +16,8 @@ import {
   ReleaseTargetHistoryStore,
   recordReleaseTargetUpsert,
 } from '../services/release-target-history.js';
-import { ReleaseCommitClock, shellCommitMetaReader } from '../services/release-commit-clock.js';
+import { ReleaseCommitClock, shellCommitMetaReader, MAX_COMMIT_TIME_ENTRIES } from '../services/release-commit-clock.js';
+import { commitClockFileIO } from '../services/release-commit-file.js';
 import {
   ReleaseCommitRailReader,
   shellGitRunner,
@@ -69,6 +70,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   });
   const commitClock = new ReleaseCommitClock({
     ...(deps.shell ? { reader: shellCommitMetaReader(deps.shell) } : {}),
+    ...(stateRoot ? { fileIO: commitClockFileIO(path.join(stateRoot, '.cds', 'release-commit-times.json'), MAX_COMMIT_TIME_ENTRIES, deps.shell) } : {}),
     storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-commit-times.json') : undefined,
     logger: { warn: (m) => console.warn(m) },
   });
@@ -780,13 +782,14 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     // 恰好所有目标同属一个项目，仍然可以画——否则如实给不可用原因，不硬凑。
     const railProjectId = projectId || singleProjectIdOf(targets);
     const historyDeadline = AbortSignal.timeout(3000);
-    const rail = await commitRail.read({
+    const railRead = commitRail.read({
       projectId: railProjectId || '',
       branch: railProjectId ? deps.stateService.getProject(railProjectId)?.gitDefaultBranch : undefined,
       targets: targets
         .filter((target) => !railProjectId || target.projectId === railProjectId)
         .map((target) => ({ targetId: target.id, commitSha: currentCommitByTarget.get(target.id) || '' })),
     }, historyDeadline);
+    const [rail] = await Promise.all([railRead, commitClock.ready()]);
 
     const rows = await Promise.all(targets.map(async (target) => {
       const targetRuns = runs.filter((run) => run.targetId === target.id);

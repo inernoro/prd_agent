@@ -37,7 +37,7 @@ describe('台账文件版本兼容', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('v1 的裸 ISO 条目照常读得回来——升级不许清零已有前置时间样本', () => {
+  it('v1 的裸 ISO 条目照常读得回来——升级不许清零已有前置时间样本', async () => {
     const sha = 'a'.repeat(40);
     fs.writeFileSync(storePath, JSON.stringify({
       version: 1,
@@ -46,13 +46,14 @@ describe('台账文件版本兼容', () => {
     }));
 
     const clock = new ReleaseCommitClock({ storePath, reader: () => undefined });
+    await clock.ready();
 
     expect(clock.get('p1', sha)).toBe('2026-06-30T10:00:00.000Z');
     // v1 条目只有时间，没有说明——如实缺省，不编一个出来。
     expect(clock.getMeta('p1', sha)?.subject).toBeUndefined();
   });
 
-  it('v2 的对象条目带回说明与作者', () => {
+  it('v2 的对象条目带回说明与作者', async () => {
     const sha = 'b'.repeat(40);
     fs.writeFileSync(storePath, JSON.stringify({
       version: 2,
@@ -65,6 +66,7 @@ describe('台账文件版本兼容', () => {
     }));
 
     const clock = new ReleaseCommitClock({ storePath, reader: () => undefined });
+    await clock.ready();
 
     expect(clock.getMeta('p1', sha)).toEqual({
       at: '2026-06-30T10:00:00.000Z',
@@ -85,12 +87,13 @@ describe('台账文件版本兼容', () => {
     expect(saved.version).toBe(2);
 
     const second = new ReleaseCommitClock({ storePath, reader: () => undefined });
+    await second.ready();
     expect(second.getMeta('p1', sha)?.subject).toBe('feat: 新东西');
     // get() 的形状不变，DORA 那边一行都不用改。
     expect(second.get('p1', sha)).toBe('2026-06-30T10:00:00.000Z');
   });
 
-  it('损坏的条目被跳过，其余照常加载', () => {
+  it('损坏的条目被跳过，其余照常加载', async () => {
     const good = 'd'.repeat(40);
     fs.writeFileSync(storePath, JSON.stringify({
       version: 2,
@@ -103,6 +106,7 @@ describe('台账文件版本兼容', () => {
     }));
 
     const clock = new ReleaseCommitClock({ storePath, reader: () => undefined });
+    await clock.ready();
 
     expect(clock.get('p1', good)).toBe('2026-06-30T10:00:00.000Z');
     expect(clock.get('p1', 'e'.repeat(40))).toBeUndefined();

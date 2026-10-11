@@ -176,16 +176,18 @@ describe('台账行为', () => {
     await first.remember('p1', 'f'.repeat(40), '/w');
 
     const second = new ReleaseCommitClock({ storePath, reader: () => undefined });
+    await second.ready();
 
     expect(second.get('p1', 'f'.repeat(40))).toBe('2026-03-03T03:03:03.000Z');
   });
 
-  it('台账文件损坏时从空开始并留痕，不炸', () => {
+  it('台账文件损坏时从空开始并留痕，不炸', async () => {
     const storePath = path.join(dir, '.cds', 'release-commit-times.json');
     fs.mkdirSync(path.dirname(storePath), { recursive: true });
     fs.writeFileSync(storePath, '{ 这不是 JSON');
     const warnings: string[] = [];
     const clock = new ReleaseCommitClock({ storePath, reader: () => undefined, logger: { warn: (m) => warnings.push(m) } });
+    await clock.ready();
 
     expect(clock.get('p1', 'a'.repeat(40))).toBeUndefined();
     expect(warnings.some((w) => w.includes('[release-commit-clock]'))).toBe(true);

@@ -20,8 +20,7 @@
  * leadTime.sampleCount / eligibleCount 如实暴露，不做任何回填式猜测。
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
+import { commitClockFileIO, type CommitClockFileIO } from './release-commit-file.js';
 import type { IShellExecutor } from '../types.js';
 import { RELEASE_GIT_TIMEOUT_MS, shellGitRunner, workerGitRunner, type GitRunner } from './release-git-reader.js';
 
@@ -155,6 +154,11 @@ interface CommitClockFile {
 export class ReleaseCommitClock {
   private entries = new Map<string, ReleaseCommitMetaRead>();
   private loaded = false;
+  private loading?: Promise<void>;
+  private canPersist = false;
+  private readonly fileIO?: CommitClockFileIO;
+  private writing = false;
+  private nextWrite?: { serialized: string; done: Array<() => void> };
   private pending = new Map<string, Promise<string | undefined>>();
 
   constructor(
@@ -162,52 +166,71 @@ export class ReleaseCommitClock {
       storePath?: string;
       maxEntries?: number;
       reader?: CommitTimeReader;
+      fileIO?: CommitClockFileIO;
       timeoutMs?: number;
       logger?: { warn?: (m: string) => void };
     } = {},
-  ) {}
+  ) {
+    this.options = { ...options };
+    this.fileIO = options.fileIO ?? (options.storePath ? commitClockFileIO(options.storePath, this.maxEntries) : undefined);
+    this.loaded = !this.fileIO;
+  }
 
   private get maxEntries(): number {
     return this.options.maxEntries ?? MAX_COMMIT_TIME_ENTRIES;
   }
 
-  private ensureLoaded(): void {
-    if (this.loaded) return;
-    this.loaded = true;
-    const fp = this.options.storePath;
-    if (!fp) return;
+  /** Call once before synchronous cache reads; concurrent callers share the same load. */
+  ready(): Promise<void> {
+    if (this.loaded) return Promise.resolve();
+    if (this.loading) return this.loading;
+    this.loading = this.load().finally(() => { this.loaded = true; });
+    return this.loading;
+  }
+
+  private warn(message: string): void {
+    try { this.options.logger?.warn?.(message); } catch { /* Statistics never block delivery. */ }
+  }
+
+  private async load(): Promise<void> {
     try {
-      if (!fs.existsSync(fp)) return;
-      const parsed = JSON.parse(fs.readFileSync(fp, 'utf8')) as CommitClockFile;
-      if (!parsed || !Array.isArray(parsed.entries)) return;
-      for (const pair of parsed.entries.slice(-this.maxEntries)) {
+      const parsed = await this.fileIO!.load() as CommitClockFile | null;
+      if (parsed !== null && (!parsed || !Array.isArray(parsed.entries))) throw new Error('invalid commit clock file');
+      for (const pair of (parsed?.entries ?? []).slice(-this.maxEntries)) {
         if (!Array.isArray(pair) || typeof pair[0] !== 'string') continue;
-        // v1 条目是裸 ISO 字符串，v2 是对象——normalizeMetaRead 同时收两种。
         const meta = normalizeMetaRead(pair[1] as string | ReleaseCommitMetaRead | undefined);
-        if (!meta) continue;
-        this.entries.set(pair[0], meta);
+        if (meta) this.entries.set(pair[0], meta);
       }
-    } catch (err) {
-      this.options.logger?.warn?.(`[release-commit-clock] 读取失败，从空台账开始: ${(err as Error).message}`);
+      this.canPersist = true;
+    } catch {
+      this.warn('[release-commit-clock] 读取失败，仅内存保留，原文件不覆盖');
     }
   }
 
-  private persist(): void {
-    const fp = this.options.storePath;
-    if (!fp) return;
-    const payload: CommitClockFile = {
-      version: 2,
-      savedAt: new Date().toISOString(),
-      entries: [...this.entries.entries()],
-    };
-    try {
-      fs.mkdirSync(path.dirname(fp), { recursive: true });
-      const tmp = `${fp}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(payload));
-      fs.renameSync(tmp, fp);
-    } catch (err) {
-      this.options.logger?.warn?.(`[release-commit-clock] 落盘失败（仅内存保留）: ${(err as Error).message}`);
-    }
+  private persist(): Promise<void> {
+    if (!this.fileIO || !this.canPersist) return Promise.resolve();
+    const payload: CommitClockFile = { version: 2, savedAt: new Date().toISOString(), entries: [...this.entries.entries()] };
+    const serialized = JSON.stringify(payload);
+    return new Promise(resolve => {
+      if (this.nextWrite) { this.nextWrite.serialized = serialized; this.nextWrite.done.push(resolve); }
+      else this.nextWrite = { serialized, done: [resolve] };
+      this.drainWrites();
+    });
+  }
+
+  private drainWrites(): void {
+    if (this.writing || !this.nextWrite) return;
+    this.writing = true;
+    void (async () => {
+      try {
+        while (this.nextWrite) {
+          const snapshot = this.nextWrite; this.nextWrite = undefined;
+          try { await this.fileIO!.save(snapshot.serialized); }
+          catch { this.warn('[release-commit-clock] 落盘失败，仅内存保留'); }
+          finally { for (const done of snapshot.done) done(); }
+        }
+      } finally { this.writing = false; }
+    })();
   }
 
   /** 只要提交时刻（DORA 的原始用途）。形状保持 v1 的 ISO 字符串，调用方不用改。 */
@@ -215,10 +238,9 @@ export class ReleaseCommitClock {
     return this.getMeta(projectId, commitSha)?.at;
   }
 
-  /** 完整元信息。取不到就是 undefined —— 前端据此退化成只显示 short sha。 */
+  /** Cache-only: call ready() before cold reads; missing metadata remains undefined. */
   getMeta(projectId: string, commitSha: string): ReleaseCommitMetaRead | undefined {
     if (!projectId || !commitSha) return undefined;
-    this.ensureLoaded();
     return this.entries.get(releaseCommitKey(projectId, commitSha));
   }
 
@@ -231,7 +253,6 @@ export class ReleaseCommitClock {
    */
   async remember(projectId: string, commitSha: string, ...worktreePaths: Array<string | undefined>): Promise<string | undefined> {
     if (!projectId || !isCommitShaLike(commitSha)) return undefined;
-    this.ensureLoaded();
     const key = releaseCommitKey(projectId, commitSha);
     const cached = this.entries.get(key);
     if (cached) return cached.at;
@@ -242,7 +263,11 @@ export class ReleaseCommitClock {
     if (pending) return pending;
     if (this.pending.size >= 32) return undefined;
     const signal = AbortSignal.timeout(this.options.timeoutMs ?? RELEASE_GIT_TIMEOUT_MS);
-    const task = this.rememberAtRoots(key, commitSha, roots, signal).finally(() => this.pending.delete(pendingKey));
+    const task = (async () => {
+      if (!this.loaded) await this.ready();
+      const loaded = this.entries.get(key);
+      return loaded ? loaded.at : this.rememberAtRoots(key, commitSha, roots, signal);
+    })().finally(() => this.pending.delete(pendingKey));
     this.pending.set(pendingKey, task);
     return task;
   }
@@ -266,7 +291,7 @@ export class ReleaseCommitClock {
       if (oldest.done) break;
       this.entries.delete(oldest.value);
     }
-    this.persist();
+    await this.persist();
     return meta.at;
   }
 }

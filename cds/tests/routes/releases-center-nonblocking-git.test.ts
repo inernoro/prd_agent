@@ -38,6 +38,13 @@ describe('P2 release center HTTP history isolation', () => {
       observedOptions = options; await held;
       return { stdout: '2026-01-02T03:04:05Z\x1f真实元信息\x1f实际提交者\n', stderr: '', exitCode: 0 };
     });
+    shell.addResponsePattern(/release-commit-file-read/, async () => ({ stdout: 'null', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/release-commit-file-write/, async (_match, options) => {
+      const file = path.join(tmp, '.cds', 'release-commit-times.json');
+      await fs.promises.mkdir(path.dirname(file), { recursive: true });
+      await fs.promises.writeFile(file, options!.stdin!);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
     const app = express(); app.get('/probe', (_req, res) => res.json({ ok: true }));
     app.use('/api', createReleasesRouter({ stateService: state, shell, releaseService: service,
       config: { repoRoot: tmp, worktreeBase: path.join(tmp, 'wt') } }));
@@ -46,9 +53,9 @@ describe('P2 release center HTTP history isolation', () => {
     try {
       const run = { projectId: 'p', commitSha: sha, branchId: 'missing' } as any;
       expect(hook(run)).toBeUndefined(); hook(run);
-      for (let i = 0; i < 50 && !shell.commands.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
-      expect(shell.commands).toHaveLength(1);
-      expect(shell.commands[0]).toContain("'show'"); expect(shell.commands[0]).toContain(sha);
+      for (let i = 0; i < 50 && !shell.commands.some(command => command.startsWith('git ')); i++) await new Promise(resolve => setTimeout(resolve, 5));
+      expect(shell.commands.filter(command => command.startsWith('git '))).toHaveLength(1);
+      expect(shell.commands.find(command => command.startsWith('git '))!).toContain("'show'"); expect(shell.commands.find(command => command.startsWith('git '))!).toContain(sha);
       expect(observedOptions).toMatchObject({ timeout: 3_000, priority: 'diagnostic', schedulingGroup: 'release-meta' });
       expect(observedOptions.signal.aborted).toBe(false);
       expect(await get(server, '/probe')).toEqual({ status: 200, body: { ok: true } });
@@ -76,6 +83,13 @@ describe('P2 release center HTTP history isolation', () => {
       return { stdout: command.includes('rev-parse') ? sha + '\n'
         : sha + '\x1f2026-10-11T00:00:00Z\x1f本地提交\n', stderr: '', exitCode: 0 };
     });
+    shell.addResponsePattern(/release-commit-file-read/, async () => ({ stdout: 'null', stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/release-commit-file-write/, async (_match, options) => {
+      const file = path.join(tmp, '.cds', 'release-commit-times.json');
+      await fs.promises.mkdir(path.dirname(file), { recursive: true });
+      await fs.promises.writeFile(file, options!.stdin!);
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
     const app = express(); app.get('/probe', (_req, res) => res.json({ ok: true }));
     app.use('/api', createReleasesRouter({ stateService: state, shell,
       config: { repoRoot: tmp, worktreeBase: path.join(tmp, 'wt') } }));
@@ -83,10 +97,10 @@ describe('P2 release center HTTP history isolation', () => {
     try {
       const first = get(server, '/api/releases/center?project=p');
       const second = get(server, '/api/releases/center?project=p');
-      for (let attempt = 0; attempt < 50 && !shell.commands.length; attempt++) {
+      for (let attempt = 0; attempt < 50 && !shell.commands.some(command => command.startsWith('git ')); attempt++) {
         await new Promise(resolve => setTimeout(resolve, 5));
       }
-      expect(shell.commands).toHaveLength(1);
+      expect(shell.commands.filter(command => command.startsWith('git '))).toHaveLength(1);
       expect(await get(server, '/probe')).toEqual({ status: 200, body: { ok: true } });
       release();
       const responses = await Promise.all([first, second]);
@@ -94,7 +108,7 @@ describe('P2 release center HTTP history isolation', () => {
         expect(response.status).toBe(200); expect(response.body.commitRail.nodes[0].sha).toBe(sha);
         expect(response.body.rows).toBeDefined(); expect(response.body.dora).toBeDefined();
       }
-      expect(shell.commands).toHaveLength(2);
+      expect(shell.commands.filter(command => command.startsWith('git '))).toHaveLength(2);
       const historyCommand = shell.commands.find(command => command.includes("'log'"))!;
       expect(historyCommand).toContain(sha); expect(historyCommand).not.toContain('origin/main');
     } finally {
@@ -102,4 +116,37 @@ describe('P2 release center HTTP history isolation', () => {
       await flushAllJsonStateStores(); fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+});
+
+it('awaits one shared cold clock load before returning persisted metadata while probes stay responsive', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-clock-cold-http-'));
+  const state = new StateService(path.join(tmp, 'state.json')); state.load();
+  const sha = 'c'.repeat(40), at = '2026-01-02T03:04:05.000Z';
+  const now = new Date().toISOString(); state.addProject({ id: 'p', name: 'P', slug: 'p', kind: 'git', repoPath: tmp, gitDefaultBranch: 'main', createdAt: now, updatedAt: now });
+  state.getReleaseRuns = (() => [{ id: 'r', releaseId: 'r', projectId: 'p', targetId: 't', planId: 'plan', branchId: 'b', commitSha: sha, status: 'succeeded', startedAt: now, finishedAt: now, seq: 1, logs: [] }]) as any;
+  const shell = new MockShellExecutor(); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  shell.addResponsePattern(/^git .*$/, async ([command]) => ({ stdout: command.includes('rev-parse') ? sha + '\n' : sha + '\x1f' + at + '\x1f实际提交\n', stderr: '', exitCode: 0 }));
+  let loadOptions: any;
+  shell.addResponsePattern(/release-commit-file-read/, async (_match, options) => {
+    loadOptions = options; await held; return { stdout: JSON.stringify({ version: 1, entries: [['p::' + sha, at]] }), stderr: '', exitCode: 0 };
+  });
+  const app = express(); app.get('/probe', (_req, res) => res.json({ ok: true }));
+  app.use('/api', createReleasesRouter({ stateService: state, shell, config: { repoRoot: tmp } }));
+  const server = await new Promise<http.Server>(resolve => { const owned = app.listen(0, '127.0.0.1', () => resolve(owned)); });
+  let responses: Promise<any>[] = [];
+  try {
+    let completed = 0;
+    responses = Array.from({ length: 2 }, () => get(server, '/api/releases/center?project=p').then(value => { completed++; return value; }));
+    for (let i = 0; i < 50 && !shell.commands.some(command => command.includes('release-commit-file-read')); i++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(shell.commands.filter(command => command.includes('release-commit-file-read'))).toHaveLength(1);
+    expect(loadOptions).toMatchObject({ timeout: 3000, priority: 'diagnostic', schedulingGroup: 'release-meta-file' });
+    expect(await get(server, '/probe')).toEqual({ status: 200, body: { ok: true } }); expect(completed).toBe(0);
+    release();
+    for (const result of await Promise.all(responses)) {
+      expect(result.status).toBe(200); expect(result.body.commitMeta[sha]).toEqual({ sha, committedAt: at });
+    }
+  } finally {
+    release(); await Promise.allSettled(responses); await new Promise<void>(resolve => server.close(() => resolve()));
+    await flushAllJsonStateStores(); fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
