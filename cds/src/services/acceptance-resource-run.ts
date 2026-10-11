@@ -1,6 +1,16 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { BranchEntry, AcceptanceReportMeta } from '../types.js';
+import type { BranchEntry, AcceptanceReportMeta, ServiceState } from '../types.js';
 import type { StateService } from './state.js';
+import type { OwnedContainerReference } from './owned-container-lifecycle.js';
+
+/** Persist before any stop; phase records confirmed facts, never client/Daemon uncertainty. */
+export interface AcceptanceResourceReleaseIntent {
+  version: 1;
+  phase: 'prepared' | 'stopped' | 'removed';
+  startedAt: string;
+  reference: OwnedContainerReference;
+  serviceDigest: string;
+}
 
 export interface AcceptanceResourceRun {
   id: string;
@@ -16,6 +26,7 @@ export interface AcceptanceResourceRun {
   stage: 'active' | 'registered' | 'finished' | 'released';
   resource?: { configDigest: string; containerId: string; deploymentRunId: string };
   terminal?: { reportId: string; metaDigest: string; bodyDigest: string; verdict: NonNullable<AcceptanceReportMeta['verdict']>; finishedAt: string };
+  releaseIntent?: AcceptanceResourceReleaseIntent;
 }
 /** An uncommitted write intent is retained across restart; it is not a published terminal receipt. */
 export interface AcceptanceResourcePublication {
@@ -32,7 +43,13 @@ function stable(value: unknown): unknown {
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => [k, stable(v)]));
   return value;
 }
-const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
+export const acceptanceResourceDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
+const digest = acceptanceResourceDigest;
+/** Monitor status/logs may change after stop, but cannot change the captured service identity. */
+export const acceptanceResourceServiceDigest = (service: Readonly<ServiceState>) => digest([
+  service.profileId, service.containerId, service.containerName, service.hostPort,
+  service.deployedCommitSha, service.deployedImage || null,
+]);
 const bodyDigest = (value: string) => createHash('sha256').update(value).digest('hex');
 const branchIdentity = (b: BranchEntry) => digest([b.id, b.projectId, b.branch, b.createdAt, b.worktreePath]);
 function view(run: AcceptanceResourceRun): AcceptanceResourceView {

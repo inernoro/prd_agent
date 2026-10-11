@@ -58,6 +58,7 @@ import type {
 } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { AcceptanceResourceRun } from './acceptance-resource-run.js';
+import { acceptanceResourceDigest, acceptanceResourceServiceDigest } from './acceptance-resource-run.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -1015,6 +1016,7 @@ export class StateService {
   private durableRunDrafts = new Map<string, DeploymentRun>();
   private durableAcceptanceDrafts = new Map<string, AcceptanceResourceRun>();
   private committingAcceptanceDrafts = new Set<string>();
+  private acceptanceReleaseTargets = new Map<string, { branchId: string; profileId: string }>();
 
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
@@ -1058,10 +1060,22 @@ export class StateService {
       }
       snapshot = { ...snapshot, acceptanceResourceRuns: runs, acceptanceResourcePublications: publications };
     }
+    const releaseTargets = [...this.acceptanceReleaseTargets].filter(([id]) => this.committingAcceptanceDrafts.has(id));
+    if (releaseTargets.length) {
+      const branches = { ...snapshot.branches };
+      for (const [, target] of releaseTargets) {
+        const branch = branches[target.branchId];
+        if (!branch) throw new Error('acceptance_release_branch_changed');
+        branches[target.branchId] = this.acceptanceReleasedGraph(branch, target.profileId);
+      }
+      snapshot = { ...snapshot, branches };
+    }
     // Concurrent entity writes must preserve the staged terminal rows, including split-store hints.
     let effectiveHints = hints && drafts.length
       ? [...hints, ...drafts.map(([id]) => ({ kind: 'deploymentRuns' as const, id }))] : hints;
     if (effectiveHints && this.durableAcceptanceDrafts.size) effectiveHints = [...effectiveHints, { kind: 'global' }];
+    if (effectiveHints && releaseTargets.length) effectiveHints = [...effectiveHints,
+      ...releaseTargets.map(([, target]) => ({ kind: 'branches' as const, id: target.branchId }))];
     this.backingStore.save(snapshot, effectiveHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
@@ -1088,8 +1102,69 @@ export class StateService {
   /** Durable publication of a bounded acceptance ownership row, including concurrent global writes. */
   async writeAcceptanceResourceRunDurably(row: AcceptanceResourceRun, expectedSeq: number | undefined,
     assertCurrent: () => void, afterFlush?: () => Promise<void>): Promise<void> {
+    if (row.stage === 'released') throw new Error('acceptance_release_transaction_required');
+    return this.publishAcceptanceResourceRun(row, expectedSeq, assertCurrent, afterFlush);
+  }
+
+  /** Internal persistence boundary only; its caller must prove ownership, report and actual ID absence. */
+  async writeAcceptanceResourceReleaseDurably(row: AcceptanceResourceRun, expectedSeq: number,
+    assertCurrent: () => void, afterFlush?: () => Promise<void>): Promise<void> {
+    row = structuredClone(row);
+    const previous = this.state.acceptanceResourceRuns?.[row.id];
+    const branch = this.state.branches[row.branchId];
+    const intent = previous?.releaseIntent;
+    const reference = intent?.reference;
+    if (!previous || previous.stage !== 'finished' || row.stage !== 'released' || previous.seq !== expectedSeq
+      || row.seq !== expectedSeq + 1 || !previous.resource || !previous.terminal || !intent || intent.version !== 1
+      || intent.phase !== 'removed' || !Number.isFinite(Date.parse(intent.startedAt))
+      || !reference || !/^[a-f0-9]{64}$/.test(reference.id) || reference.id !== previous.resource.containerId
+      || !/^sha256:[a-f0-9]{64}$/.test(reference.image) || !/^sha256:[a-f0-9]{64}$/.test(reference.fingerprint)
+      || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(reference.name) || typeof reference.wasRunning !== 'boolean'
+      || !Array.isArray(reference.writableMounts) || reference.writableMounts.length !== 0
+      || reference.owner?.projectId !== previous.projectId || reference.owner?.branchId !== previous.branchId
+      || reference.owner?.profileId !== previous.profileId || !/^[a-f0-9]{64}$/.test(intent.serviceDigest)
+      || !branch || branch.projectId !== previous.projectId
+      || acceptanceResourceDigest({ ...row, seq: previous.seq, stage: previous.stage }) !== acceptanceResourceDigest(previous)) {
+      throw new Error('acceptance_release_scope');
+    }
+    const identity = acceptanceResourceDigest([branch.id, branch.projectId, branch.branch, branch.createdAt, branch.worktreePath]);
+    const fence = () => {
+      assertCurrent();
+      if (this.state.acceptanceResourceRuns?.[row.id] !== previous || this.state.branches[row.branchId] !== branch
+        || identity !== previous.branchIdentity
+        || acceptanceResourceDigest([branch.id, branch.projectId, branch.branch, branch.createdAt, branch.worktreePath]) !== identity) {
+        throw new Error('acceptance_release_branch_changed');
+      }
+      const profiles = branch.extraProfiles?.filter(profile => profile.id === previous.profileId) || [];
+      const service = branch.services[previous.profileId];
+      if (profiles.length !== 1 || profiles[0].projectId !== previous.projectId || !service
+        || acceptanceResourceDigest([profiles[0], branch.profileOverrides?.[previous.profileId] || null]) !== previous.resource!.configDigest
+        || acceptanceResourceServiceDigest(service) !== intent.serviceDigest
+        || service.containerId !== reference.id || service.containerName !== reference.name
+        || service.deployedCommitSha !== previous.targetSha) throw new Error('acceptance_release_resource_changed');
+    };
+    fence();
+    return this.publishAcceptanceResourceRun(row, expectedSeq, fence, afterFlush,
+      { branchId: previous.branchId, profileId: previous.profileId });
+  }
+
+  private acceptanceReleasedGraph(branch: BranchEntry, profileId: string): BranchEntry {
+    const services = { ...branch.services }; delete services[profileId];
+    const profileOverrides = { ...branch.profileOverrides }; delete profileOverrides[profileId];
+    return { ...branch, extraProfiles: branch.extraProfiles?.filter(profile => profile.id !== profileId),
+      services, profileOverrides: Object.keys(profileOverrides).length ? profileOverrides : undefined };
+  }
+
+  private async publishAcceptanceResourceRun(row: AcceptanceResourceRun, expectedSeq: number | undefined,
+    assertCurrent: () => void, afterFlush?: () => Promise<void>, releaseTarget?: { branchId: string; profileId: string }): Promise<void> {
+    row = structuredClone(row);
     const table = this.state.acceptanceResourceRuns || {};
     const previous = table[row.id];
+    const previousDigest = previous ? acceptanceResourceDigest(previous) : undefined;
+    const assertRow = () => {
+      if (this.state.acceptanceResourceRuns?.[row.id] !== previous
+        || (previous && acceptanceResourceDigest(previous) !== previousDigest)) throw new Error('acceptance_run_conflict');
+    };
     if (this.state.acceptanceResourcePublications?.[row.id]) throw new Error('acceptance_run_recovery_required');
     if (previous?.seq !== expectedSeq || this.durableAcceptanceDrafts.has(row.id)) throw new Error('acceptance_run_conflict');
     if (!previous) {
@@ -1102,22 +1177,32 @@ export class StateService {
     }
     const draft = structuredClone(row);
     this.durableAcceptanceDrafts.set(row.id, draft);
+    if (releaseTarget) this.acceptanceReleaseTargets.set(row.id, releaseTarget);
     try {
       this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
       if (afterFlush) { await afterFlush(); assertCurrent(); }
-      if (this.state.acceptanceResourceRuns?.[row.id] !== previous) throw new Error('acceptance_run_conflict');
+      assertRow();
       // Only a verified draft may enter the committed table. The first barrier saved intent only.
       this.committingAcceptanceDrafts.add(row.id);
       this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
-      if (this.state.acceptanceResourceRuns?.[row.id] !== previous) throw new Error('acceptance_run_conflict');
+      assertRow();
+      if (releaseTarget) {
+        const branch = this.state.branches[releaseTarget.branchId];
+        const graph = this.acceptanceReleasedGraph(branch, releaseTarget.profileId);
+        branch.extraProfiles = graph.extraProfiles;
+        branch.services = graph.services;
+        branch.profileOverrides = graph.profileOverrides;
+      }
       this.state.acceptanceResourceRuns ??= {};
       this.state.acceptanceResourceRuns[row.id] = draft;
       this.committingAcceptanceDrafts.delete(row.id);
       this.durableAcceptanceDrafts.delete(row.id);
+      this.acceptanceReleaseTargets.delete(row.id);
       for (const fn of this.onSaveListeners) { try { fn(); } catch { /* observers cannot roll back durable publication */ } }
     } catch (error) {
       this.committingAcceptanceDrafts.delete(row.id);
       this.durableAcceptanceDrafts.delete(row.id);
+      this.acceptanceReleaseTargets.delete(row.id);
       this.save(HINT_GLOBAL);
       // A rejected post-ACK fence must also retract the disk draft before returning.
       await this.flush();
