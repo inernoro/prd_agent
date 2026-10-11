@@ -268,17 +268,44 @@ def getter(base, headers, request_timeout=5, total_timeout=60):
     return get
 
 
-def save_new(path, value):
-    data = canonical(value)+b'\n'
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
-    with os.fdopen(fd, 'wb') as output: output.write(data)
-
-
 def external_output(path):
     # Resolve parent links before testing Git ancestry; the final leaf stays exclusive.
     parent = path.absolute().parent.resolve(strict=True)
     if any((root/'.git').exists() for root in (parent, *parent.parents)): raise ValueError('output_in_git')
     return parent/path.name
+
+
+def verify_output_parent(path, parent_fd):
+    # Both the physical directory and its approved path must still match.
+    if external_output(path) != path: raise ValueError('output_parent_changed')
+    actual = os.stat(path.parent, follow_symlinks=False)
+    pinned = os.fstat(parent_fd)
+    if (actual.st_dev, actual.st_ino) != (pinned.st_dev, pinned.st_ino): raise ValueError('output_parent_changed')
+
+
+@contextlib.contextmanager
+def pinned_output(path):
+    path = external_output(path)
+    before = os.stat(path.parent, follow_symlinks=False)
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        pinned = os.fstat(fd)
+        if (before.st_dev, before.st_ino) != (pinned.st_dev, pinned.st_ino): raise ValueError('output_parent_changed')
+        verify_output_parent(path, fd)
+        yield path, fd
+    finally: os.close(fd)
+
+
+def save_new(path, value, parent_fd=None):
+    if parent_fd is None:
+        with pinned_output(path) as (approved, fd): return save_new(approved, value, fd)
+    data = canonical(value)+b'\n'
+    verify_output_parent(path, parent_fd)
+    fd = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent_fd)
+    with os.fdopen(fd, 'wb') as output: output.write(data)
+    # A late path change may leave our finite file in the original directory;
+    # do not unlink by a mutable name or report the rebound path as success.
+    verify_output_parent(path, parent_fd)
 
 
 def main():
@@ -287,24 +314,26 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     try:
-        args.output = external_output(args.output)
-        if not identifier(args.project): raise ValueError('invalid_project')
-        if args.output.exists() or args.output.is_symlink(): raise FileExistsError('output_exists')
-        cli_path = Path(__file__).resolve().parents[2]/'.claude/skills/cds/cli/cdscli.py'
-        spec = importlib.util.spec_from_file_location('cdscli', cli_path)
-        cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
-        with cli._nested_call():
-            try: cli.cmd_auth_inspect(argparse.Namespace(strict=True))
-            except SystemExit as exit_status:
-                if exit_status.code != 0: raise ValueError('credentials_invalid') from None
-        if not cli._NESTED_PAYLOAD or cli._NESTED_PAYLOAD.get('ok') is not True: raise ValueError('credentials_invalid')
-        if os.environ.get('CDS_PROJECT_ID') and os.environ['CDS_PROJECT_ID'] != args.project: raise ValueError('credential_scope_mismatch')
-        headers = cli._auth_headers()
-        if not headers.get('X-AI-Access-Key'): raise ValueError('credentials_missing')
-        result = collect(args.project, getter(cli._cds_base(), headers))
-        save_new(args.output, result)
-        print(json.dumps({'status': result['status'], 'projectId': args.project, 'gaps': result['gaps'], 'output': str(args.output)}))
-        return 0 if result['status'] == 'observed-stable' else 2
+        with pinned_output(args.output) as (args.output, parent_fd):
+            if not identifier(args.project): raise ValueError('invalid_project')
+            try: os.stat(args.output.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError: pass
+            else: raise FileExistsError('output_exists')
+            cli_path = Path(__file__).resolve().parents[2]/'.claude/skills/cds/cli/cdscli.py'
+            spec = importlib.util.spec_from_file_location('cdscli', cli_path)
+            cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+            with cli._nested_call():
+                try: cli.cmd_auth_inspect(argparse.Namespace(strict=True))
+                except SystemExit as exit_status:
+                    if exit_status.code != 0: raise ValueError('credentials_invalid') from None
+            if not cli._NESTED_PAYLOAD or cli._NESTED_PAYLOAD.get('ok') is not True: raise ValueError('credentials_invalid')
+            if os.environ.get('CDS_PROJECT_ID') and os.environ['CDS_PROJECT_ID'] != args.project: raise ValueError('credential_scope_mismatch')
+            headers = cli._auth_headers()
+            if not headers.get('X-AI-Access-Key'): raise ValueError('credentials_missing')
+            result = collect(args.project, getter(cli._cds_base(), headers))
+            save_new(args.output, result, parent_fd)
+            print(json.dumps({'status': result['status'], 'projectId': args.project, 'gaps': result['gaps'], 'output': str(args.output)}))
+            return 0 if result['status'] == 'observed-stable' else 2
     except (Exception, SystemExit):
         # Neither provider error text nor authentication helper payload escapes.
         print(json.dumps({'status': 'failed', 'code': 'snapshot_not_saved'}))

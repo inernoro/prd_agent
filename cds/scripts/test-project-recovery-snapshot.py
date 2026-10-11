@@ -169,6 +169,23 @@ class SnapshotTest(unittest.TestCase):
             with self.assertRaises(OSError): m.save_new(p, {})
             self.assertEqual(target.read_text(), 'owned-original')
 
+    def test_late_parent_rebind_cannot_redirect_write_or_claim_success(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root)/'approved'; parent.mkdir()
+            original = Path(root)/'original'
+            foreign = Path(root)/'foreign'; foreign.mkdir(); (foreign/'.git').mkdir()
+            real_open = os.open
+            def rebind_at_create(path, flags, *args, **kwargs):
+                if flags & os.O_CREAT:
+                    parent.rename(original); parent.symlink_to(foreign, target_is_directory=True)
+                return real_open(path, flags, *args, **kwargs)
+            with m.pinned_output(parent/'snapshot.json') as (approved, fd):
+                with patch.object(m.os, 'open', side_effect=rebind_at_create):
+                    with self.assertRaises(ValueError): m.save_new(approved, {'finite': True}, fd)
+            self.assertFalse((foreign/'snapshot.json').exists())
+            self.assertEqual(json.loads((original/'snapshot.json').read_text()), {'finite': True})
+            self.assertEqual(os.stat(original/'snapshot.json').st_mode & 0o777, 0o600)
+
     def test_output_parent_links_cannot_place_observation_in_git(self):
         with tempfile.TemporaryDirectory() as root:
             repo = Path(root)/'repo'; repo.mkdir(); (repo/'.git').mkdir(); link = Path(root)/'link'; link.symlink_to(repo)
@@ -225,6 +242,35 @@ class SnapshotTest(unittest.TestCase):
                 self.assertFalse(any('live=' in path for _, path, _ in received))
         finally:
             os.chdir(previous); server.shutdown(); server.server_close(); thread.join()
+
+    def test_actual_cli_parent_rebind_during_get_cannot_export_into_git(self):
+        data = fixture(); received = []
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root)/'approved'; parent.mkdir()
+            original = Path(root)/'original'
+            foreign = Path(root)/'foreign'; foreign.mkdir(); (foreign/'.git').mkdir()
+            class Handler(BaseHTTPRequestHandler):
+                def log_message(self, *_): pass
+                def do_GET(self):
+                    if not received:
+                        parent.rename(original); parent.symlink_to(foreign, target_is_directory=True)
+                    received.append(self.path)
+                    body = json.dumps(data[self.path]).encode()
+                    self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+            server = HTTPServer(('127.0.0.1', 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+            previous = os.getcwd()
+            try:
+                os.chdir(root); std = io.StringIO()
+                env = {'CDS_HOST': 'http://127.0.0.1:'+str(server.server_port), 'CDS_PROJECT_KEY': 'cdsp_PRIVATE_SENTINEL', 'CDS_PROJECT_ID': 'p'}
+                with patch.dict(os.environ, env, clear=True), patch('sys.argv', ['snapshot', '--project', 'p', '--output', str(parent/'snapshot.json')]), contextlib.redirect_stdout(std):
+                    self.assertEqual(m.main(), 2)
+                self.assertEqual(json.loads(std.getvalue()), {'status': 'failed', 'code': 'snapshot_not_saved'})
+                self.assertFalse((foreign/'snapshot.json').exists())
+                self.assertFalse((original/'snapshot.json').exists())
+                self.assertTrue(received)
+            finally:
+                os.chdir(previous); server.shutdown(); server.server_close(); thread.join()
 
     def test_trickle_response_and_total_deadline_are_bounded(self):
         class Handler(BaseHTTPRequestHandler):
