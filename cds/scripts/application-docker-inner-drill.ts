@@ -748,10 +748,11 @@ async function main(): Promise<void> {
         report.checks.push({ name: 'original-authenticated-project-compose-and-branch-worktree-entry', passed: true });
         const began = Math.floor(Date.now() / 1000) - 1;
         await build('api', oldSha, registry); await build('web', oldSha, registry);
-        const serviceProof = async (sha: string, previousIds?: Record<string, string>) => {
+        const serviceProof = async (expected: string | Record<string, string>, previousIds?: Record<string, string>) => {
           const current = await branch(); const services = Object.entries(current.services) as Array<[string, any]>; assert.equal(services.length, 3);
           const result: Record<string, any> = {};
           for (const [profileId, service] of services) {
+            const sha = typeof expected === 'string' ? expected : expected[profileId]; assert.match(sha, /^[a-f0-9]{40}$/);
             assert.equal(service.status, 'running'); const view = await ownedView(service.containerName); containers.add(view.Id);
             assert.equal(view.State.Running, true); assert.notEqual(view.HostConfig.NetworkMode, 'host'); assert.notEqual(view.HostConfig.NetworkMode, 'bridge');
             assert.equal(view.Config.Labels['org.opencontainers.image.revision'], sha);
@@ -915,6 +916,142 @@ async function main(): Promise<void> {
         } finally { stopReads = true; await sampler; report.readSamples = reads; }
         assert.ok(report.readSamples.length >= 3); assert.equal(report.readSamples.every((r: any) => r.status === 200 && !r.error), true, JSON.stringify(report.readSamples.filter((r: any) => r.status !== 200 || r.error)));
         report.checks.push({ name: 'original-list-task-and-full-health-short-window-requests-returned', passed: true });
+        report.stage = 'full-application-service-target-replacement-and-inflight-stop';
+        const scopeProof: any = report.serviceTargetReplacement = { genericFixtureOnly: true,
+          representativeBusinessCiVerified: false, controlledAuthenticatedUserRequests: true,
+          manualStopIntentionallyStopsAllServices: true, originalEvents: [], verdict: 'failed' };
+        try {
+          const apiProfile = profiles.find((profile: any) => profile.env.SERVICE_NAME === 'api');
+          const webProfile = profiles.find((profile: any) => profile.env.SERVICE_NAME === 'web');
+          const workerProfile = profiles.find((profile: any) => profile.env.SERVICE_NAME === 'worker');
+          assert.ok(apiProfile && webProfile && workerProfile);
+          const baseline = await serviceProof(report.project.sourceBackground);
+          const targets: Record<string, string> = {};
+          for (const label of ['active', 'obsolete', 'latest', 'cancelled']) {
+            await fs.writeFile(path.join(projectRepo, 'marker.txt'), `service-target-${label}`);
+            await git(['add', 'marker.txt']); await git(['commit', '-m', `隔离服务范围目标${label}`]);
+            const sha = await git(['rev-parse', 'HEAD']); assert.match(sha, /^[a-f0-9]{40}$/);
+            await git(['branch', '-f', fixtureBranch, sha]); assert.equal(await git(['rev-parse', fixtureBranch]), sha);
+            assert.equal(await git(['symbolic-ref', '--short', 'HEAD']), fixtureDefaultBranch);
+            targets[label] = sha; await build('api', sha, registry); await build('web', sha, registry);
+          }
+          assert.equal(new Set(Object.values(targets)).size, 4); scopeProof.targets = targets;
+          const profilePath = (id: string) => `${branchPath}/deploy/${encodeURIComponent(id)}`;
+          const queued = async (profileId: string, sha: string, status: 'merged' | 'joined') => {
+            const response = await requestRaw(profilePath(profileId), { commitSha: sha }, 'webhook');
+            const body = await response.text(); assert.equal(response.status, 200, body);
+            const complete = body.match(/event: complete\r?\ndata: ([^\r\n]+)/); assert.ok(complete, body);
+            const payload = JSON.parse(complete[1]); assert.equal(payload.ok, true);
+            assert.equal(payload.operationStatus, status); assert.equal(payload.pendingCommitSha, sha);
+            const id = response.headers.get('x-cds-deployment-run-id'); assert.ok(id);
+            assert.equal(payload.deploymentRunId, id); return { id, profileId, sha, status: response.status, payload };
+          };
+          const gate = probeProxy!.holdNextStop(baseline[apiProfile.id].containerName);
+          let active: Response | undefined, activeId: string | null = null;
+          try {
+            active = await requestRaw(profilePath(apiProfile.id), { commitSha: targets.active });
+            assert.equal(active.status, 200); activeId = active.headers.get('x-cds-deployment-run-id'); assert.ok(activeId);
+            const held = await until(async () => Promise.race([gate.caught, Promise.resolve(undefined)]), 45_000);
+            assert.equal(held.status, 204);
+            const oldApi = await queued(apiProfile.id, targets.obsolete, 'merged');
+            const duplicate = await queued(apiProfile.id, targets.obsolete, 'joined'); assert.equal(duplicate.id, oldApi.id);
+            const web = await queued(webProfile.id, targets.obsolete, 'merged');
+            const latestApi = await queued(apiProfile.id, targets.latest, 'merged');
+            assert.notEqual(web.id, oldApi.id); assert.notEqual(latestApi.id, oldApi.id);
+            const runs = await readRuns();
+            assert.equal(runs.find(run => run.id === oldApi.id)?.status, 'cancelled');
+            for (const item of [web, latestApi]) {
+              const run = runs.find(row => row.id === item.id); assert.equal(run?.status, 'queued');
+              assert.equal(run.commitSha, item.sha); assert.equal(run.profileId, item.profileId);
+            }
+            scopeProof.accepted = { activeId, oldApi, duplicate, web, latestApi, held, runs };
+            assert.equal(gate.expired(), false);
+          } finally { gate.release(); }
+          assert.ok(active); scopeProof.activeStream = (await active.text()).slice(-32768);
+          const { web, latestApi, oldApi } = scopeProof.accepted;
+          await until(async () => {
+            const runs = await readRuns();
+            for (const id of [activeId, web.id, latestApi.id]) {
+              const run = runs.find(row => row.id === id);
+              if (run?.status === 'failed' || run?.status === 'cancelled') throw new Error(`原服务范围部署失败: ${JSON.stringify(run).slice(0, 2000)}`);
+            }
+            return [activeId, web.id, latestApi.id].every(id => runs.find(row => row.id === id)?.status === 'running') ? true : undefined;
+          }, 180_000);
+          const mixed = await serviceProof({ [apiProfile.id]: targets.latest, [webProfile.id]: targets.obsolete,
+            [workerProfile.id]: report.project.sourceBackground });
+          assert.equal(mixed[workerProfile.id].id, baseline[workerProfile.id].id);
+          const runs = await readRuns(); assert.equal(runs.find(row => row.id === oldApi.id)?.status, 'cancelled');
+          assert.equal(runs.filter(row => row.commitSha === targets.obsolete && row.profileId === apiProfile.id).length, 1);
+          const daemonEvents = await eventSnapshot('full-original-application-service-target-replacement');
+          const apiObsolete = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.obsolete);
+          const webObsolete = report.publishedImages.find((image: any) => image.role === 'web' && image.sha === targets.obsolete);
+          const apiLatest = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.latest);
+          assert.ok(apiObsolete && webObsolete && apiLatest);
+          const creations = daemonEvents.filter(event => event.action === 'create');
+          const registryDigest = (image: any): string => {
+            const references = image.repoDigests.filter((reference: string) => reference.startsWith(`${registry}/owned-`));
+            assert.equal(references.length, 1); assert.match(references[0], /@sha256:[a-f0-9]{64}$/); return references[0];
+          };
+          assert.equal(creations.filter(event => event.image === registryDigest(apiObsolete)).length, 0);
+          const apiActive = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.active); assert.ok(apiActive);
+          // Docker retains a finite event history. The first executing target
+          // must still be present, so absence of the later queued target is
+          // not inferred from a window whose beginning has already rolled off.
+          for (const image of [apiActive, webObsolete, apiLatest]) assert.equal(creations.filter(event => event.image === registryDigest(image)).length, 1);
+          scopeProof.mixedServices = mixed; scopeProof.replacementRuns = runs; scopeProof.creationEvents = creations;
+          report.checks.push({ name: 'full-original-authenticated-application-replaces-only-obsolete-service-target-and-retains-distinct-service-and-worker', passed: true });
+
+          // Explicit user stop is the original higher-priority intent; it may
+          // stop the whole branch. This is not a failed-build old-service test.
+          const cancelGate = probeProxy!.holdNextStop(mixed[apiProfile.id].containerName);
+          let cancelled: Response | undefined, cancelId: string | null = null;
+          let stop: Promise<Response> | undefined;
+          try {
+            cancelled = await requestRaw(profilePath(apiProfile.id), { commitSha: targets.cancelled });
+            assert.equal(cancelled.status, 200); cancelId = cancelled.headers.get('x-cds-deployment-run-id'); assert.ok(cancelId);
+            const held = await until(async () => Promise.race([cancelGate.caught, Promise.resolve(undefined)]), 45_000);
+            assert.equal(held.status, 204);
+            const activeRun = (await readRuns()).find(row => row.id === cancelId);
+            assert.equal(activeRun.commitSha, targets.cancelled); assert.equal(activeRun.profileId, apiProfile.id);
+            assert.ok(['preparing', 'building', 'starting', 'verifying'].includes(activeRun.status));
+            const started = (await context.readDispatchEvents(projectId, branchId)).filter(event => event.action === 'branch.operation.started'
+              && event.operationKind === 'deploy-profile' && event.operationId === activeRun.operationId
+              && event.details.generation === activeRun.operationGeneration && event.commitSha === targets.cancelled);
+            assert.equal(started.length, 1); scopeProof.activeCancellationStarted = started[0];
+            stop = requestRaw(`${branchPath}/stop`); void stop.catch(() => {});
+            await until(async () => (await readRuns()).find(row => row.id === cancelId)?.status === 'cancelled' ? true : undefined, 5000);
+            assert.equal(cancelGate.expired(), false);
+            scopeProof.activeCancellation = { id: cancelId, profileId: apiProfile.id, sha: targets.cancelled, held, activeRun };
+          } finally { cancelGate.release(); }
+          assert.ok(cancelled);
+          const stopped = await stop; const stopText = await stopped.text(); assert.equal(stopped.status, 200, stopText);
+          scopeProof.activeCancellation.stop = { status: stopped.status, body: JSON.parse(stopText) };
+          scopeProof.activeCancellation.stream = (await cancelled.text()).slice(-32768);
+          const cancelledRun = (await readRuns()).find(row => row.id === cancelId); assert.equal(cancelledRun?.status, 'cancelled');
+          scopeProof.activeCancellation.finalRun = cancelledRun;
+          const cancellationEvents = await eventSnapshot('full-original-authenticated-application-active-stop');
+          assert.ok(cancellationEvents.some(event => event.type === 'container' && event.action === 'stop'
+            && event.id === mixed[apiProfile.id].id), '取消前的真实旧容器stop必须仍在daemon事件窗口，不能靠截断窗口证明无新create');
+          const cancelledImage = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.cancelled);
+          assert.ok(cancelledImage); assert.equal(cancellationEvents.filter(event => event.action === 'create' && event.image === registryDigest(cancelledImage)).length, 0);
+          scopeProof.originalEvents = await context.readDispatchEvents(projectId, branchId);
+          assert.ok(scopeProof.originalEvents.some((event: any) => event.action === 'branch.operation.started'
+            && event.operationKind === 'stop' && event.operationSource === 'api.stop-branch'));
+          // Restore the preceding complete target via the original authenticated
+          // entry, so later infra/core experiments keep their original inputs.
+          const restore = await requestRaw(`${branchPath}/deploy`, { commitSha: report.project.sourceBackground });
+          const restoreId = restore.headers.get('x-cds-deployment-run-id'); assert.ok(restoreId); assert.equal(restore.status, 200);
+          scopeProof.restoration = { id: restoreId, stream: (await restore.text()).slice(-32768) };
+          await until(async () => (await readRuns()).find(row => row.id === restoreId)?.status === 'running' ? true : undefined, 180_000);
+          scopeProof.restoration.services = await serviceProof(report.project.sourceBackground);
+          scopeProof.verdict = 'passed'; scopeProof.finishedAt = new Date().toISOString();
+          report.checks.push({ name: 'full-original-authenticated-higher-priority-stop-cancels-active-service-before-new-container-and-original-deploy-restores', passed: true });
+        } catch (error) {
+          scopeProof.failure = { at: new Date().toISOString(), message: String((error as Error).message).slice(0, 2000) };
+          try { scopeProof.originalEvents = await context.readDispatchEvents(projectId, branchId); scopeProof.failureRuns = await readRuns(); }
+          catch (captureError) { scopeProof.captureError = String(captureError).slice(0, 2000); }
+          throw error;
+        }
         report.stage = 'original-infra-observation-and-recovery';
         const loopbackAddresses = Object.values(os.networkInterfaces()).flat().filter(address => address?.internal
           && address.family === 'IPv4').map(address => address!.address);
