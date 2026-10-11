@@ -157,14 +157,14 @@ const quoteArg = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 
 async function execDockerDetailed(
   args: string[], timeoutMs = 120_000, shell: IShellExecutor = fallbackShell,
-): Promise<{ ok: boolean; stdout: string; error: string }> {
+): Promise<{ ok: boolean; stdout: string; error: string; exitCode: number | null }> {
   try {
-    const result = await shell.exec(['docker', ...args].map(quoteArg).join(' '), {
+    const result = await shell.exec('docker ' + args.map(quoteArg).join(' '), {
       timeout: timeoutMs, priority: 'diagnostic', schedulingGroup: 'janitor',
     });
-    return { ok: result.exitCode === 0, stdout: result.stdout.trim(), error: result.stderr.trim() };
+    return { ok: result.exitCode === 0, stdout: result.stdout.trim(), error: result.stderr.trim(), exitCode: result.exitCode };
   } catch (error) {
-    return { ok: false, stdout: '', error: (error as Error).message || 'Docker execution failed' };
+    return { ok: false, stdout: '', error: (error as Error).message || 'Docker execution failed', exitCode: null };
   }
 }
 
@@ -463,6 +463,14 @@ function branchExpiryAnchorMs(branch: BranchEntry): number {
   return latest;
 }
 
+function onlyMissingObjects(stderr: string, requested: string[]): boolean {
+  const lines = stderr.trim().split('\n');
+  return lines.length > 0 && lines.every(line => {
+    const match = /^Error(?: response from daemon)?: No such (?:object|container): ([a-zA-Z0-9_.-]+)$/.exec(line.trim());
+    return Boolean(match && requested.includes(match[1]));
+  });
+}
+
 async function listMountedHostPaths(shell: IShellExecutor): Promise<string[] | null> {
   // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
   // `docker ps --format` 里的 .Mounts 是**逗号分隔的字符串**，对它 `{{range}}`
@@ -485,11 +493,14 @@ async function listMountedHostPaths(shell: IShellExecutor): Promise<string[] | n
       ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000, shell,
     );
     // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
-    // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
-    // 忽略它完全安全。真正危险的是「一条都没查到却当成没人挂载」——那种情况下
+    // 整体非零，但找得到的那些照样打了出来。只对下面核验的标准缺失错误保留输出；
+    // 超时/取消/未知失败的部分输出不能证明枚举完整。另一种危险是完全无输出——那种情况下
     // stdout 为空，下面按失败处理返回 null，调用方整轮只报不删。
     //（生产实测：容器持续增删，此前恒定走 null 分支，孤儿回收一直停在 0/66。）
     if (!r.ok && !r.stdout) return null;
+    // Only the known enumeration race can retain partial mounts. A timed out,
+    // cancelled or otherwise failed inspect is not a complete mount inventory.
+    if (!r.ok && (r.exitCode !== 1 || !onlyMissingObjects(r.error, batch))) return null;
     for (const line of r.stdout.split('\n')) {
       const t = line.trim();
       if (t) paths.push(t);

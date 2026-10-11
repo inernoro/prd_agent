@@ -13,6 +13,7 @@ vi.mock('node:child_process', async importOriginal => {
   return { ...wrapped, default: wrapped };
 });
 import { ShellExecutor } from '../../src/services/shell-executor.js';
+import { PreviewInstanceShellExecutor } from '../../src/services/preview-instance.js';
 import { StateService } from '../../src/services/state.js';
 import type { ExecOptions, IShellExecutor } from '../../src/types.js';
 
@@ -25,8 +26,8 @@ beforeAll(async () => {
   await writeFile(executable, `#!/bin/sh
 case "$1" in
   images) printf 'owned/image:sha-example\\n';;
-  ps) if [ "$2" = '-aq' ]; then printf 'owned-container\\n'; fi;;
-  inspect) printf '/owned/mounted-path\\n'; printf 'one container disappeared\\n' >&2; exit 1;;
+  ps) if [ "$2" = '-aq' ]; then printf 'owned-container\\nvanished\\n'; fi;;
+  inspect) printf '/owned/mounted-path\\n'; printf 'Error: No such object: vanished\\n' >&2; exit 1;;
   image|builder) printf 'Total reclaimed space: 1B\\n';;
   rmi) if [ -n "$CDS_JANITOR_ARG_FILE" ]; then printf '%s' "$2" > "$CDS_JANITOR_ARG_FILE"; fi; exit 0;;
   *) printf 'unexpected fixture command\\n' >&2; exit 1;;
@@ -131,6 +132,54 @@ describe('shared scheduling and unchanged Janitor safety', () => {
     expect((await janitor.sweep()).dockerPrune?.reclaimed).toEqual(['悬空镜像: Total reclaimed space: owned-shared', '构建缓存: Total reclaimed space: owned-shared']);
     expect(shared.exec).toHaveBeenCalledTimes(2);
     expect(shared.exec.mock.calls.every(call => call[1].schedulingGroup === 'janitor')).toBe(true);
+  });
+
+  it('preserves the actual preview-instance host-operation blocker for all Docker defaults', async () => {
+    const underlying = { exec: vi.fn().mockResolvedValue({ stdout: 'would execute', stderr: '', exitCode: 0 }) };
+    const preview = new PreviewInstanceShellExecutor(underlying);
+    const prune = await createDockerPrune(preview)();
+    expect(prune.reclaimed).toEqual([]);
+    expect(prune.errors).toHaveLength(2);
+    expect(prune.errors.every(error => error.includes('[preview-instance]'))).toBe(true);
+    expect(await createImageDocker(preview).listImages()).toEqual([]);
+    expect(await createImageDocker(preview).removeImage('owned/image')).toContain('[preview-instance]');
+    expect(underlying.exec).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when partial mount output is followed by a real Worker timeout', async () => {
+    const ownedDir = await mkdtemp(path.join(fixture, 'timeout-'));
+    const executable = path.join(ownedDir, 'docker');
+    await writeFile(executable, '#!/bin/sh\nif [ "$1" = ps ]; then printf "owned-a\\nowned-b\\n"; else printf "/owned/mounted-path\\n"; sleep 10; fi\n');
+    await chmod(executable, 0o700);
+    const shell = new ShellExecutor({ maxConcurrent: 1 });
+    expect((await shell.exec('printf warm', { timeout: 5000 })).exitCode).toBe(0);
+    const observed: Array<{ command: string; result: Awaited<ReturnType<IShellExecutor['exec']>> }> = [];
+    const adapter: IShellExecutor = { exec: async (command, options) => {
+      const result = await shell.exec(command, { ...options, timeout: command.includes("'inspect'") ? 1000 : 5000, env: { ...process.env, PATH: `${ownedDir}:${originalPath || ''}` } });
+      observed.push({ command, result }); return result;
+    } };
+    const state = new StateService(path.join(ownedDir, 'state.json')); state.load();
+    const janitor = new JanitorService(state, { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600 }, fixture, undefined, async () => null, undefined, undefined, undefined, adapter);
+    try {
+      // Use the exact bound callback used by sweep, without deleting any filesystem entries.
+      const paths = await (janitor as unknown as { orphanWorktreeFs: typeof defaultOrphanWorktreeFs }).orphanWorktreeFs.listMountedHostPaths();
+      expect(observed).toHaveLength(2);
+      expect(observed[0].result.exitCode).toBe(0);
+      expect(observed[1].result).toMatchObject({ exitCode: 124, stdout: '/owned/mounted-path\n' });
+      expect(paths).toBe(null);
+    } finally { await shell.close(); }
+  });
+
+  it.each([
+    [124, 'Command timed out'], [130, 'Command cancelled'], [75, 'Shell execution capacity exhausted'],
+    [1, 'permission denied'], [1, 'Error: No such object: foreign'],
+    [1, 'Error: No such object: owned-b\npermission denied'], [1, ''],
+  ])('keeps mount inventory unknown for partial failure %s/%s', async (exitCode, stderr) => {
+    const exec = vi.fn().mockResolvedValueOnce({ stdout: 'owned-a\nowned-b\n', stderr: '', exitCode: 0 })
+      .mockResolvedValueOnce({ stdout: '/owned/mounted-path\n', stderr, exitCode });
+    const state = new StateService(path.join(fixture, 'unknown-state.json')); state.load();
+    const janitor = new JanitorService(state, { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600 }, fixture, undefined, async () => null, undefined, undefined, undefined, { exec });
+    expect(await (janitor as unknown as { orphanWorktreeFs: typeof defaultOrphanWorktreeFs }).orphanWorktreeFs.listMountedHostPaths()).toBe(null);
   });
 
 });
