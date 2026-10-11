@@ -237,7 +237,10 @@ async function main(): Promise<void> {
     const peerService = peerEntry.services.web; assert.match(peerService.deployedImage!, /@sha256:[0-9a-f]{64}$/);
     const peerId = docker(['inspect', '--format', '{{.Id}}', peerService.containerName]); ownedView(peerId); ownedIds.push(peerId);
     const peerRuntime = ownedView(peerId); assert.equal(peerRuntime.Config.Labels['org.opencontainers.image.revision'], head);
-    assert.ok(peerRuntime.HostConfig.NanoCpus > 0);
+    // 当前应用运行时明确不把resources调度提示下发为cgroup限制；本组件不签容量/硬限额验收。
+    assert.equal(peerRuntime.HostConfig.NanoCpus, 0);
+    report.executorResourceScope = { schedulingHintsOnly: true, runtimeNanoCpus: peerRuntime.HostConfig.NanoCpus,
+      hardResourceLimitsVerified: false };
     await waitHttp(`http://127.0.0.1:${peerService.hostPort}/`); assert.equal(await read(`http://127.0.0.1:${peerService.hostPort}/`), `web:${head}`);
     assert.equal(peerCommands.slice(beforePeer).some(command => /^git |^mkdir /.test(command)), false);
     assert.equal((await read(oldUrl)).trim(), 'old-ready');
@@ -252,7 +255,7 @@ async function main(): Promise<void> {
     if (peerServer) await new Promise<void>(resolve => peerServer!.close(error => { if (error) cleanupErrors.push(String(error)); resolve(); }));
     // 即使路由在返回前失败也按自有标签发现并收尾其已创建容器。
     try {
-      for (const id of docker(['ps', '-aq', '--filter', `label=cds.acceptance.owner=${owner}`]).split('\n').filter(Boolean)) if (!ownedIds.includes(id)) { ownedView(id); ownedIds.push(id); }
+      for (const id of docker(['ps', '-aq', '--no-trunc', '--filter', `label=cds.acceptance.owner=${owner}`]).split('\n').filter(Boolean)) if (!ownedIds.includes(id)) { ownedView(id); ownedIds.push(id); }
     } catch (error) { cleanupErrors.push(String(error)); }
     await shell.close().catch(error => cleanupErrors.push(String(error)));
     for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
