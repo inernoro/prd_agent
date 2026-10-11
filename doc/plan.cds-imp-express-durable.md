@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.78；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.79；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -706,3 +706,7 @@ v1.77：CDS产品79d937035eb5b3285ab2d105e34bf18d5be5783a固定独立最终回�
 ## v1.78 实际报告调用方恢复审计
 
 v1.78：IMP实际 archive_report调用方产品d5bbed855b52c4d75feb72f82a78c81dc4806e37（3文件）；CDS产品仍79d937035eb5b3285ab2d105e34bf18d5be5783a，guide2.92/cff9先基线、BPC24先冻结独立原05f39→CDS79两期待0/2。四显式CLI输入严格前置（含显式空/部分/错ENV/短SHA/原verdict）、actualproject/branch不借slug/name、ENV能力只内存stdin传输；独立子进程单次POST/noRedirect/绝对default60s parent kill+wait、64KiB回包、201精确run/project/branch/fullSHA/verdict/合法reportID和folder投影，不创建payload临时文件。boundasset保原内容寻址语义但抑制原RAW/有限错误/不打印服务器name或URL、capURI拒绝；不自动finish或cleanup。旧CLI日期默认空字符串被argparse type拒绝已实际先红，默认None恢复文档日期推导，显式空/非法日期仍拒绝。主最终scripts90测试全绿（含13新caller/77原verdict），独立repoLinks5绿；主中途assetmock不完整/header名大小写假红与wrongcwd读log原件保留，不算产品缺陷，后两条entry默认date/asset错误先红是真实现问题。固定独立原2反例已2/2实际再跑，CLI/transport最终完整回执待返，部分探索fixture修正另保原件不扩为产品root。主已核BPC设计/原回执16绝对hash/10Git源；79独立1613hash/373Git/370派生核验保持其原SHA。生产bootstrap创建前begin/实际register、独占Daemon stop-delete/消失、原子Profile+override+service/released尚缺，原IMP按名helper真红开放。BRC24仅候选，未新权威/编码/正式pass。45partial-local/4todo、formal49全not-executed/visual N/A，goal active；八原push/CI仅原八SHA，registry资格0/本修订无部署或远端写；既有八push/selfupdate授权保持，新CDS branch发布与隔离宿主前问待答。
+
+## v1.79 收尾执行前置条件恢复审计
+
+v1.79：guide2.93/d7ce先冻结BRX20，独立原Worker3/8（5真红同一absence根）后CDS dfad产品两源收紧exit1/空stdout/单一标准诊断+精确ID，timeout/混合stderr/错ID保持未知；内部acceptance-release先严格实际项目/分支/full40/ar32/source/trigger/noProfile，拒绝越过未结算执行、accepted pending/dispatch/journal queued+claims和未过期重建续约，release原租约未真实结算时同分支新操作明确拒绝，异分支旧优先级保留。后继440815仅纠正原route成功夹具裸NoSuch为实际identity，两产品源blob等dfad；主35先29fail/6pass（newkind功能缺失不冒充原HTTP漏洞）后37全绿、相关192/路由269/coretsc0、最终完整684files/10095pass/19skip/1旧obsolete，exit0/66.60s。full-v1的1fail+10094pass和related-v2未claim就settle的1fixture失败完整保留，不放宽守卫；根precommit缺node_modules打印passed不作验证。固定dfad独立原Worker8/8，Coordinator完整回执待返；主新370派生重新编译exact一致，BRX先基线4Git核验。IMP d5bbed最终不可变独立回执主已核1306hash/386Git：原2/2、CLI24/transport20/asset5/缺失receipt8/新OS2/真实60s1/归档后未知2各绿不求和，日期旧红新绿pair保留。创建前begin/实际register、authenticated release/持久intent/原子目标Profile+override+service/released仍未实现；原IMP按名helper真红开放。45partial-local/4todo、formal49全部not-executed/visual N/A；本批无push/PR/共享写/部署，原八push+CI不继承新SHA，registry资格0与隔离准入未变，原八push/selfupdate授权保持，新CDS发布前问待答，goal active。
