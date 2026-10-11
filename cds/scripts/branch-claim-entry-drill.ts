@@ -27,7 +27,7 @@ const closure = (pid: number) => {
   return { pid, state };
 };
 
-async function exercise(runtime: string, root: string, duplicateStatus: number, native: boolean) {
+async function exercise(runtime: string, root: string, duplicateStatus: number, native: boolean, record: (result: Record<string, any>) => void) {
   const module = (name: string) => import(pathToFileURL(path.join(runtime, `${name}.js`)).href);
   const { StateService } = await module('services/state') as typeof import('../src/services/state.js');
   const { WorktreeService } = await module('services/worktree') as typeof import('../src/services/worktree.js');
@@ -46,6 +46,7 @@ async function exercise(runtime: string, root: string, duplicateStatus: number, 
   const result: Record<string, any> = { duplicateExpected: duplicateStatus, mountTableVerified: false,
     scope: 'actual manual branch HTTP router, compiled worktree/State/Janitor, owned processes and private Git/FS',
     ownedProcessesRemoved: false, privateFilesRemoved: false, checks: [] };
+  record(result);
   try {
     const source = path.join(root, 'source'), repo = path.join(root, 'repo'); await fs.mkdir(source, { recursive: true });
     git(['init', '--initial-branch=main'], source); git(['config', 'user.name', 'private-test'], source);
@@ -124,18 +125,31 @@ async function exercise(runtime: string, root: string, duplicateStatus: number, 
     // 用另一个受管实际Node进程冷读原State，避免同进程共享存储缓存被误称持久化验证。
     const reader = path.join(root, 'cold-reader.mjs');
     await fs.writeFile(reader, `import {StateService} from ${JSON.stringify(pathToFileURL(path.join(runtime, 'services/state.js')).href)};
-import fs from 'node:fs';const state=new StateService(${JSON.stringify(stateFile)});state.load();
+import fs from 'node:fs';import {execFileSync} from 'node:child_process';const ancestors=[];let parent=process.ppid;for(let i=0;i<4&&parent>1;i++){ancestors.push(parent);try{parent=Number(execFileSync('/bin/ps',['-o','ppid=','-p',String(parent)],{encoding:'utf8'}).trim());}catch{break;}}const state=new StateService(${JSON.stringify(stateFile)});state.load();
 const b=state.findBranchByProjectAndName('proj',${JSON.stringify(branch)});
-console.log('CDS_COLD_RECEIPT '+JSON.stringify({pid:process.pid,ppid:process.ppid,id:b?.id,branch:b?.branch,marker:b&&fs.readFileSync(b.worktreePath+'/marker','utf8'),branches:state.getAllBranches().length}));`);
+console.log('CDS_COLD_RECEIPT '+JSON.stringify({pid:process.pid,ppid:process.ppid,ancestors,id:b?.id,branch:b?.branch,marker:b&&fs.readFileSync(b.worktreePath+'/marker','utf8'),branches:state.getAllBranches().length}));`);
     const quote = (arg: string) => `'${arg.replace(/'/g, `'"'"'`)}'`;
-    const cold = await op.execOwnedOperation(`${quote(process.execPath)} --max-old-space-size=128 ${quote(reader)}`,
+    const originalCold = await op.execOwnedOperation(`${quote(process.execPath)} --max-old-space-size=128 ${quote(reader)}`,
+      { executionLane: 'operation', cwd: root, timeout: 5000, beforeStart: () => { assert.equal(state.getAllBranches().length, 1); } });
+    assert.equal(originalCold.exitCode, 0);
+    const originalLine = originalCold.stdout.split('\n').find(line => line.startsWith('CDS_COLD_RECEIPT ')); assert.ok(originalLine);
+    const originalReceipt = JSON.parse(originalLine.slice('CDS_COLD_RECEIPT '.length));
+    result.originalColdReceipt = originalReceipt;
+    result.originalImmediateParentMatchesActor = op.getStats().actors.some(actor => actor.pid === originalReceipt.ppid);
+    assert.ok(op.getStats().actors.some(actor => originalReceipt.ancestors.includes(actor.pid)));
+    assert.equal(originalReceipt.id, entry.id); assert.equal(originalReceipt.branches, 1);
+    assert.equal(originalReceipt.marker, 'actual-private-api-git');
+    pids.push(originalReceipt.pid);
+    if (!pids.includes(originalReceipt.ppid)) pids.push(originalReceipt.ppid);
+    const cold = await op.execOwnedOperation(`exec ${quote(process.execPath)} --max-old-space-size=128 ${quote(reader)}`,
       { executionLane: 'operation', cwd: root, timeout: 5000, beforeStart: () => { assert.equal(state.getAllBranches().length, 1); } });
     assert.equal(cold.exitCode, 0);
     const line = cold.stdout.split('\n').find(line => line.startsWith('CDS_COLD_RECEIPT ')); assert.ok(line);
     const receipt = JSON.parse(line.slice('CDS_COLD_RECEIPT '.length));
+    result.coldReceipt = receipt; pids.push(receipt.pid);
     assert.notEqual(receipt.pid, process.pid); assert.ok(op.getStats().actors.some(actor => actor.pid === receipt.ppid));
     assert.equal(receipt.id, entry.id); assert.equal(receipt.branch, branch); assert.equal(receipt.branches, 1);
-    assert.equal(receipt.marker, 'actual-private-api-git'); pids.push(receipt.pid);
+    assert.equal(receipt.marker, 'actual-private-api-git');
     result.coldReceipt = receipt; result.accepted = { status: accepted.status, branchId: entry.id };
     result.readWhileInFlight = { status: read.status }; result.existingConflictStatus = existing.status;
     result.actualGitFailureStatus = failed.status; result.createCalls = createCalls; result.rawFallbackCalls = rawFallbackCalls;
@@ -191,8 +205,8 @@ async function main() {
     });
     report.compilerVersion = ts.version;
     report.compiledRuntimeHashes = Object.fromEntries(await Promise.all(runtimeFiles.map(async name => [name, digest(await fs.readFile(path.join('dist', name)))])));
-    report.stage = 'actual-fixed-reference-HTTP'; report.reference = await exercise(old, path.join(temp, 'reference-case'), 500, native);
-    report.stage = 'actual-candidate-HTTP'; report.candidate = await exercise(path.resolve('dist'), path.join(temp, 'candidate-case'), 409, native);
+    report.stage = 'actual-fixed-reference-HTTP'; report.reference = await exercise(old, path.join(temp, 'reference-case'), 500, native, result => { report.reference = result; });
+    report.stage = 'actual-candidate-HTTP'; report.candidate = await exercise(path.resolve('dist'), path.join(temp, 'candidate-case'), 409, native, result => { report.candidate = result; });
     report.checks = [...report.reference.checks.map((row: any) => ({ ...row, name: `reference:${row.name}` })),
       ...report.candidate.checks.map((row: any) => ({ ...row, name: `candidate:${row.name}` }))];
     report.actualManualBranchHttpHandoffVerified = true; report.verdict = 'passed';
