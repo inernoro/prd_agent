@@ -1,6 +1,6 @@
 {
   "goal_id": "CDS-IMP-EXPRESS-DURABLE-20261010",
-  "plan_version": "1.65",
+  "plan_version": "1.66",
   "tasks": [
     {
       "id": "P0-01",
@@ -12,7 +12,7 @@
       "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "无冲突集成origin/test43ec的64新提交，merge48de；IMP2ef9固定75/75及actual stage/proposal。业务改动仅保留协作者，未声称全仓业务验收。CDS origin/main45533，产品559c未改。"
+      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
     },
     {
       "id": "P0-02",
@@ -36,7 +36,7 @@
       "green_evidence": "doc/cds-imp-express-eight-candidates.json（8本地合同，非运行pass）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实根因：A03/A04/A07的公开CloudBridge参考密钥覆盖项目provided、分支override且在missing时伪造值。主先保新guard原用例红，IMP产品3fe769575dd0a2af12b42c91df928928ecb8349c检查实际服务绑定及其锚点，拒绝字面/default覆盖，允许外部引用或不覆盖；主38/38契约、六文件78/78。本地八候选增guard，两文件all8同步，仅三支另改公开anchor为外部注入；其他OP/private-network/通知/业务/SQL及A07历史方案保持，完整tree仍限定14路径。八CLI绿；A01/A02/A05各78、其余各73，组重叠不求和。一次CAS保上一候选父，无push/CI/deploy，新24原fixture独立复验待返。旧八独立契约每支18/18、来源semantic5/5与真红15/24分列；错误whole-compose字节期待及两夹具误读保留，不能消去实际密钥红。正式49全not-executed/visual N/A、42partial-local/7todo、目标active；CDS新branch push授权问题及隔离宿主仍待答，八IMP push与共享CDS自更新已有授权保持。"
+      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
     },
     {
       "id": "P0-04",
@@ -77,7 +77,7 @@
       "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "额外只读探测mycds SSH成功（Linux16CPU/约31GiB RAM），sudo -n Docker可读，承载大量他人及IMP/MAP常驻服务；2026-10-11 05:32 CST可用628MiB、swap8191/8191MiB、load2.25/26.60/33.20，不作隔离压力宿主，不停他人服务/启新容器。本机Docker仍不可达；隔离宿主问题待用户回复。 已盘点共享RabbitMQ、XXL-JOB与数据库风险；无业务消费/定时作业写入；隔离验收宿主未冻结。 本批v1.55：1d固定独立定稿：native原68827/31→1d31/31、实际Router v2原6886/7→1d7/7，两组重叠不相加；expanded1d6/7发现请求期间输出父目录重绑Git后仍成功且写入foreign目录，属第三个实际产品根因，原件保留。主实际HTTP/官方helper原反例旧0!=2复红；529677在请求前持有物理父目录FD/devino，保存仅dir_fd独占leaf，写前/后复核路径/Git/身份，晚漂移失败并仅保留原物理目录有限0600产物，不按名字猜删新owner。主27 Python局部、AST/diffcheck通过；首次unittest discover未收集0tests命令错误原件保留、不计红绿。529固定独立按原expanded同fixture/期待复验7/7（旧1d6/7保留），另FD/FS控制10/10，两组重叠不合计；正常600/既有目标及scope拒绝、normal/error/leaf冲突FD关闭、写前重绑、verify→open及写后竞态、初始父alias、HTTP期间leaf竞争均为有界控制，无新真红。1d native31/Router7只历史引用，不称529重跑。1d原30设计未全部执行，全redirect/60秒默认/UTF8早断/完整边界矩阵仍未覆盖；本批不重试共享API，旧draft incomplete不能继承为529新运行证据。mycds最新只读16CPU/约31GiB RAM，load0.68/1.37/1.64但可用约908MiB及swap近全用，不作隔离压力宿主；本机Docker不可达。P0-05仍partial-local，受保护配置与真实恢复缺失；41partial-local/8todo、49formal not-executed、visual N/A，八支push/selfupdate授权有效但未执行，active。"
+      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
     },
     {
       "id": "P1-01",
@@ -497,7 +497,7 @@
       "green_evidence": "doc/cds-imp-express-eight-candidates.json（8本地合同，非运行pass）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实根因：A03/A04/A07的公开CloudBridge参考密钥覆盖项目provided、分支override且在missing时伪造值。主先保新guard原用例红，IMP产品3fe769575dd0a2af12b42c91df928928ecb8349c检查实际服务绑定及其锚点，拒绝字面/default覆盖，允许外部引用或不覆盖；主38/38契约、六文件78/78。本地八候选增guard，两文件all8同步，仅三支另改公开anchor为外部注入；其他OP/private-network/通知/业务/SQL及A07历史方案保持，完整tree仍限定14路径。八CLI绿；A01/A02/A05各78、其余各73，组重叠不求和。一次CAS保上一候选父，无push/CI/deploy，新24原fixture独立复验待返。旧八独立契约每支18/18、来源semantic5/5与真红15/24分列；错误whole-compose字节期待及两夹具误读保留，不能消去实际密钥红。正式49全not-executed/visual N/A、42partial-local/7todo、目标active；CDS新branch push授权问题及隔离宿主仍待答，八IMP push与共享CDS自更新已有授权保持。"
+      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
     },
     {
       "id": "P6-01",
@@ -509,7 +509,7 @@
       "green_evidence": "/tmp/cds-pending-status-related.log；/tmp/cds-pending-status-tsc.log；/tmp/cds-pending-status-full.log（主本地；815独立局部25/25含原17）",
       "visual_evidence": "N/A",
       "independent_verdict": "partial-local",
-      "local_evidence_note": "v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实根因：A03/A04/A07的公开CloudBridge参考密钥覆盖项目provided、分支override且在missing时伪造值。主先保新guard原用例红，IMP产品3fe769575dd0a2af12b42c91df928928ecb8349c检查实际服务绑定及其锚点，拒绝字面/default覆盖，允许外部引用或不覆盖；主38/38契约、六文件78/78。本地八候选增guard，两文件all8同步，仅三支另改公开anchor为外部注入；其他OP/private-network/通知/业务/SQL及A07历史方案保持，完整tree仍限定14路径。八CLI绿；A01/A02/A05各78、其余各73，组重叠不求和。一次CAS保上一候选父，无push/CI/deploy，新24原fixture独立复验待返。旧八独立契约每支18/18、来源semantic5/5与真红15/24分列；错误whole-compose字节期待及两夹具误读保留，不能消去实际密钥红。正式49全not-executed/visual N/A、42partial-local/7todo、目标active；CDS新branch push授权问题及隔离宿主仍待答，八IMP push与共享CDS自更新已有授权保持。"
+      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
     },
     {
       "id": "P6-02",
@@ -588,8 +588,8 @@
       "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实根因：A03/A04/A07的公开CloudBridge参考密钥覆盖项目provided、分支override且在missing时伪造值。主先保新guard原用例红，IMP产品3fe769575dd0a2af12b42c91df928928ecb8349c检查实际服务绑定及其锚点，拒绝字面/default覆盖，允许外部引用或不覆盖；主38/38契约、六文件78/78。本地八候选增guard，两文件all8同步，仅三支另改公开anchor为外部注入；其他OP/private-network/通知/业务/SQL及A07历史方案保持，完整tree仍限定14路径。八CLI绿；A01/A02/A05各78、其余各73，组重叠不求和。一次CAS保上一候选父，无push/CI/deploy，新24原fixture独立复验待返。旧八独立契约每支18/18、来源semantic5/5与真红15/24分列；错误whole-compose字节期待及两夹具误读保留，不能消去实际密钥红。正式49全not-executed/visual N/A、42partial-local/7todo、目标active；CDS新branch push授权问题及隔离宿主仍待答，八IMP push与共享CDS自更新已有授权保持。"
+      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
     }
   ],
-  "status_note": "v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实根因：A03/A04/A07的公开CloudBridge参考密钥覆盖项目provided、分支override且在missing时伪造值。主先保新guard原用例红，IMP产品3fe769575dd0a2af12b42c91df928928ecb8349c检查实际服务绑定及其锚点，拒绝字面/default覆盖，允许外部引用或不覆盖；主38/38契约、六文件78/78。本地八候选增guard，两文件all8同步，仅三支另改公开anchor为外部注入；其他OP/private-network/通知/业务/SQL及A07历史方案保持，完整tree仍限定14路径。八CLI绿；A01/A02/A05各78、其余各73，组重叠不求和。一次CAS保上一候选父，无push/CI/deploy，新24原fixture独立复验待返。旧八独立契约每支18/18、来源semantic5/5与真红15/24分列；错误whole-compose字节期待及两夹具误读保留，不能消去实际密钥红。正式49全not-executed/visual N/A、42partial-local/7todo、目标active；CDS新branch push授权问题及隔离宿主仍待答，八IMP push与共享CDS自更新已有授权保持。"
+  "status_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
 }

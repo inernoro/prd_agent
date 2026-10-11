@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.65；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.66；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -595,3 +595,13 @@ v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实�
 证据：主准备、固定源快照与原始log位于`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-refresh-cloudbridge-3fe7695`；原guard红`/tmp/imp-cloudbridge-secret-verifier-red.log`，新38绿与相关78绿原log保留。八旧独立summary SHA256=abeda1eaba4995dcf2bc9763a8e410e157f6e23ec9a65c6471faaa8cbd03468e，actual resolver 15/24真红按原期待复验。准备脚本首次Git非-z中文路径读者错误，未更新refs，改-z后重跑；原错误/script保留，不算产品红。
 
 expected result：外部项目及分支凭据准确消费，missing不伪造；current evidence：主guard红绿和八固定selected-source绿，独立原fixture待返；visible result：未部署，无新视觉；gap：独立密钥复验、八次真实CI/部署、隔离/黄闪电/公网/恢复/48h及周；required action：先独立复验修复，再继续同49正式计划，不由静态守卫推导Spring启动/线上通过。
+
+## v1.66 发布门禁与角色分母前置
+
+v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。
+
+固定候选：A01=1937e394958ff44a28e007459b5596a3b99ec345；A02=14e014536fed716242d64dd66dd0edffb6576085；A03=3c25ddeab082708e7d4e688c759063a21390c3d0；A04=ceebe5140b8d031334da94e3c80468286b86f6f7；A05=2eb35428968cc86f5a26e5d980d9b2b2002ad1ec；A06=fae30e55432e3abf7a1d51751c44510e93eaeeba；A07=15b7c1e5abf8e5e5920fa2da1e3ee40603f80388；A08=6367dd72fe53e97227fc51ef4e8f61b0187565f2。
+
+证据：准备/新固定全Git源/旧13期待红/16治理命令原件位于`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-runtime-roles-3fe7695`。密钥最终summary 5e5f4e30160a0845cf3e53a65a20c212dde5149c8e4270ed89f5aca45f0ef41c；source858309dd/raw4676a963/parent29dc8a56，主回读`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-refresh-cloudbridge-3fe7695/main-independent-secret-final-receipt.json`。只读线上/资源投影均在/tmp/cds-imp-v165-*，不打印凭据。
+
+expected result：每支同一提交验收映射保四worker，原CI治理门禁通过再推送；current evidence：新六本地CLI/tests/治理绿，独立role复验待返；visible result：未push/deploy，无新视觉；gap：真实CI、隔离完整部署、主分支依赖就绪、黄闪电/公网/恢复/48h与周；required action：完成adapter/独立role前置，执行已授权八推送并核真实CI，继续原正式49计划。
