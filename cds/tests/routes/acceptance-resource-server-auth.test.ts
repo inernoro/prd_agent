@@ -73,4 +73,12 @@ describe('Acceptance resource routes through actual server authentication and pa
     expect(malformed.status).toBe(400); expect(malformed.body).toEqual({ error: 'acceptance_payload_invalid' });
     expect(oversized.raw + malformed.raw).not.toMatch(/sensitive-capability|SyntaxError/);
   });
+  it('preserves the small authenticated parser on Express case-insensitive route aliases', async () => {
+    const oversized = await request('POST', '/api/Acceptance-Resource-Runs', keys.p1,
+      { ...input, ownerToken: 'sensitive-capability'.repeat(200) });
+    expect(oversized.status).toBe(413); expect(oversized.body).toEqual({ error: 'acceptance_payload_too_large' });
+    const unauthenticated = await request('POST', '/api/Acceptance-Resource-Runs', undefined, '{"ownerToken":"sensitive-capability"');
+    expect(unauthenticated.status).toBe(401);
+    expect(state.getState().acceptanceResourceRuns).toBeUndefined();
+  });
 });

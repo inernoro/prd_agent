@@ -2009,7 +2009,7 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     // Capability bodies are parsed after authentication with a small cap and bounded JSON errors.
-    if (req.path === '/api/acceptance-resource-runs' || req.path.startsWith('/api/acceptance-resource-runs/')) return next();
+    if (/^\/api\/acceptance-resource-runs(?:\/|$)/i.test(req.path)) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     //   - 分组保存（PUT /api/projects/:id/branch-groups）：整份分组整体重发，上限内的合法配置
     //     可达数百 KB，路由自带更大上限的解析器（routes/projects.ts BRANCH_GROUPS_BODY_LIMIT）。
