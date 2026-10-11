@@ -17,7 +17,7 @@ import { IsolatedShellExecutor } from '../src/services/isolated-shell-executor.j
 import { ContainerService } from '../src/services/container.js';
 import { collectContainerDiagnostics, DockerEventMonitor } from '../src/services/container-diagnostics.js';
 import { createJanitorDockerAdapters } from '../src/services/janitor.js';
-import { InfraLifecycleWatcher } from '../src/services/infra-lifecycle-watcher.js';
+import { InfraLifecycleWatcher, setReplicaMemberDeathListener } from '../src/services/infra-lifecycle-watcher.js';
 import { ObservationStreamExecutor } from '../src/services/observation-stream-executor.js';
 import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import { SystemLogMonitor } from '../src/services/system-log-monitor.js';
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   const logRequests: http.ClientRequest[] = [];
   const archivedLogBytes: number[] = [];
   const diagnosticsModule = compiled ? await import(new URL('../dist/services/container-diagnostics.js', import.meta.url).href) as typeof import('../src/services/container-diagnostics.js') : { collectContainerDiagnostics, DockerEventMonitor };
-  const infraModule = compiled ? await import(new URL('../dist/services/infra-lifecycle-watcher.js', import.meta.url).href) as typeof import('../src/services/infra-lifecycle-watcher.js') : { InfraLifecycleWatcher };
+  const infraModule = compiled ? await import(new URL('../dist/services/infra-lifecycle-watcher.js', import.meta.url).href) as typeof import('../src/services/infra-lifecycle-watcher.js') : { InfraLifecycleWatcher, setReplicaMemberDeathListener };
   const managedActions: string[] = [];
   const eventWarnings: string[] = [];
   const eventStore = { record: (record: { action?: string; message?: string }) => { if (record.action?.includes('warning') && eventWarnings.length < 10) eventWarnings.push((record.message || '').slice(0, 200)); } };
@@ -352,14 +352,43 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 25));
       }
     }
-    report.eventReceipt = { managedOwnedActions: managedActions, infraOwnedEvents: infraEvents.getEvents(name).map(event => ({ event: event.event, exitCode: event.exitCode })), warnings: eventWarnings, observed };
+    report.eventReceipt = { managedOwnedActions: managedActions, infraOwnedEvents: infraEvents.getEvents(name).map(event => ({ event: event.event, exitCode: event.exitCode, containerId: event.containerId })), warnings: eventWarnings, observed };
     assert.ok(observed);
+    assert.ok(infraEvents.getEvents(name).some(event => event.event === 'die' && event.containerId === id), 'actual Docker die must retain its container identity');
     assert.equal(await container.isRunning(id!), true);
     await Promise.all([dockerEvents.stop(), infraEvents.stop()]);
     assert.equal(eventStreams.getStats().admitted, 0);
     report.eventReceipt.drainedStats = eventStreams.getStats();
     report.checks.push({ name: 'compiled-owned-docker-events-independent-streams-and-drain', passed: true });
 
+    report.stage = 'compiled-controlled-oom-correlation-capacity-and-identity';
+    let lastDeath = '';
+    const correlation = new infraModule.InfraLifecycleWatcher({ serverEventLogStore: { record: row => {
+      if (row.action === 'infra.lifecycle.die') lastDeath = row.message ?? '';
+    } } });
+    const controlled = correlation as unknown as { ingest(line: string): void; recentOom: Map<string, number> };
+    const emitOwned = (action: string, containerId: string | undefined, containerName = 'cds-infra-controlled', time = 100) => controlled.ingest(JSON.stringify({ Action: action, time, Actor: { ID: containerId, Attributes: { name: containerName, exitCode: '137' } } }));
+    for (let n = 0; n < 600; n++) emitOwned('oom', `owned-${n}`, `cds-infra-owned-${n}`);
+    report.oomCorrelation = { scope: 'controlled JSON through compiled watcher; no kernel OOM injection', remembered: controlled.recentOom.size, ring: correlation.getEvents().length };
+    assert.equal(controlled.recentOom.size, 400); assert.equal(correlation.getEvents().length, 400);
+    emitOwned('die', 'owned-0', 'cds-infra-owned-0', 101); assert.match(lastDeath, /原因待核实/);
+    emitOwned('die', 'owned-599', 'cds-infra-owned-599', 101); assert.match(lastDeath, /cgroup OOM kill/);
+    emitOwned('oom', 'old-id'); emitOwned('die', 'new-id', undefined, 101); assert.match(lastDeath, /原因待核实/);
+    for (const action of ['start', 'restart']) {
+      emitOwned('oom', 'restarted'); emitOwned(action, 'restarted', undefined, 101); emitOwned('die', 'restarted', undefined, 102);
+      assert.match(lastDeath, /原因待核实/);
+    }
+    emitOwned('oom', undefined); emitOwned('die', undefined, undefined, 101); assert.match(lastDeath, /原因待核实/);
+    const deaths: string[] = [];
+    infraModule.setReplicaMemberDeathListener((_name, verdict) => deaths.push(verdict));
+    try {
+      emitOwned('oom', 'replica', 'cds-owned-web-res-1'); emitOwned('die', 'replica', 'cds-owned-web-res-1', 101);
+      emitOwned('oom', 'expired', 'cds-owned-web-res-1'); emitOwned('die', 'expired', 'cds-owned-web-res-1', 111);
+      assert.equal(deaths.length, 2); assert.match(deaths[0], /cgroup OOM kill/); assert.match(deaths[1], /原因待核实/);
+      assert.equal(controlled.recentOom.size, 0);
+    } finally { infraModule.setReplicaMemberDeathListener(null); }
+    report.oomCorrelation = { ...report.oomCorrelation, unknownOnEvictionOrMissingIdentity: true, sameNameDifferentIdUnknown: true, restartClearsGeneration: true, replicaDeathNotifications: deaths, finalRemembered: controlled.recentOom.size };
+    report.checks.push({ name: 'compiled-controlled-oom-correlation-capacity-identity-and-unknown', passed: true });
 
 
     report.stage = 'compiled-owned-container-log-http-streams';
