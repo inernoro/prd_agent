@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
 import { StateService } from '../../src/services/state.js';
 
 describe('DeploymentRunService', () => {
@@ -227,4 +228,35 @@ describe('DeploymentRunService', () => {
       trigger: 'manual',
     })).rejects.toThrow(/project mismatch/);
   });
+  async function dispatchedLease() {
+    const c = new BranchOperationCoordinator();
+    const first = c.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'manual', commitSha: 'a'.repeat(40) });
+    c.begin({ projectId: 'p1', branchId: 'b1', profileId: 'api', kind: 'deploy-profile', trigger: 'webhook', commitSha: 'b'.repeat(40), commitPinned: true });
+    const p = c.complete(first.lease!, 'completed')!; expect(await c.claimPending(p)).toBe(true); expect(c.markPendingSent(p)).toBe(true);
+    const next = c.begin({ ...p.request, pendingOperationId: p.operationId, pendingGeneration: p.generation });
+    expect(next.status).toBe('started'); return { c, lease: next.lease!, origin: p };
+  }
+  it('durably preserves immutable pending origin and rejects a wrong run scope', async () => {
+    const service = createService(); await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
+    const { lease, origin } = await dispatchedLease(); await service.bindPendingOrigin('dr_test', lease, () => {});
+    const reloaded = new StateService(stateFile); reloaded.load(); expect(reloaded.getDeploymentRun('dr_test')?.pendingOrigin).toEqual({ version: 1, operationId: origin.operationId, generation: origin.generation, profileId: 'api' });
+    await expect(service.bindPendingOrigin('dr_test', { ...lease, request: { ...lease.request, projectId: 'foreign' } }, () => {})).rejects.toThrow('pending_origin_scope');
+    await expect(service.bindPendingOrigin('dr_test', { ...lease, request: { ...lease.request, pendingGeneration: origin.generation + 1 } }, () => {})).rejects.toThrow('pending_origin_scope');
+    expect(service.get('dr_test')?.pendingOrigin?.generation).toBe(origin.generation);
+  });
+  it('binding deadline does not publish a draft even if the flush later resolves', async () => {
+    const service = new DeploymentRunService(stateService, { idFactory: () => 'dr_test', pendingOriginTimeoutMs: 20 });
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' }); const { lease } = await dispatchedLease();
+    let finish!: () => void; vi.spyOn(stateService, 'flush').mockImplementationOnce(() => new Promise<void>(r => finish = r));
+    const binding = service.bindPendingOrigin('dr_test', lease, () => {}); await expect(binding).rejects.toThrow('pending_origin_unavailable');
+    expect(service.get('dr_test')?.pendingOrigin).toBeUndefined(); finish(); await new Promise(r => setImmediate(r)); expect(service.get('dr_test')?.pendingOrigin).toBeUndefined();
+  });
+  it('cancellation ends binding before an unanswered flush and retains no published origin', async () => {
+    const service = createService(); await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' }); const { c, lease } = await dispatchedLease();
+    let finish!: () => void; let entered = false; vi.spyOn(stateService, 'flush').mockImplementationOnce(() => new Promise<void>(r => { entered = true; finish = r; }));
+    const binding = service.bindPendingOrigin('dr_test', lease, () => {}); const rejection = expect(binding).rejects.toBeInstanceOf(BranchOperationSupersededError);
+    await vi.waitFor(() => expect(entered).toBe(true)); c.cancelBranch('b1', 'owned cancel');
+    try { await rejection; expect(service.get('dr_test')?.pendingOrigin).toBeUndefined(); } finally { finish(); }
+  });
+
 });

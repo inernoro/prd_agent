@@ -46,12 +46,22 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
     }
 
     const branchId = cleanQuery(req.query.branch) || cleanQuery(req.query.branchId);
+    const pendingOperationId = cleanQuery(req.query.pendingOperationId);
+    const generationText = cleanQuery(req.query.pendingGeneration);
+    const pendingGeneration = generationText ? Number(generationText) : undefined;
+    const originQuery = req.query.pendingOperationId !== undefined || req.query.pendingGeneration !== undefined;
+    if (originQuery && (!projectId || !branchId || !pendingOperationId || !/^op_[a-zA-Z0-9_.-]{1,120}$/.test(pendingOperationId)
+      || !generationText || !/^[1-9][0-9]*$/.test(generationText) || !Number.isSafeInteger(pendingGeneration))) {
+      res.status(400).json({ error: 'pending_origin_query_invalid', message: '查询原请求须提供项目、分支、合法请求编号及代次' }); return;
+    }
     const limit = clampInt(req.query.limit, 50, 1, 200);
     const runs = deps.deploymentRunService.list({
       projectId,
       branchId,
       status: statusValue as DeploymentRunStatus | undefined,
-    }).slice(0, limit).map(toRunSummary);
+    }).filter(run => !originQuery || (run.pendingOrigin?.version === 1
+      && run.pendingOrigin.operationId === pendingOperationId && run.pendingOrigin.generation === pendingGeneration))
+      .slice(0, limit).map(toRunSummary);
 
     res.json(logPayloadForHumanView(req, { runs, total: runs.length }));
   });

@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.67 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.68 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -324,3 +324,12 @@ app级自更新排空首次检查保留；磁盘等待结束后再次检查同�
 现有GET /api/branches/:id通过原项目权限检查后，额外返回pendingDeployments。只按当前Branch的projectId与id投影可靠journal；同id改属其他项目不能继承原项目记录。不得输出actor/requestId/source/reason、配置摘要、环境或派发凭证内容。投影只含原operationId/generation、Profile、trigger、受理时参考提交及点名资格、更新时间、journal阶段、是否待恢复和已经可靠保存的合法run ID；提交参考不当执行提交，claimed/accepted不当Daemon已启动或完成。
 
 可靠ACK前只显示上一份已确认数据，读不等待磁盘、不复制全部journal或发Docker命令；单分支最多128条并明确total/truncated。health明确ready/loading/unavailable/not-configured，未知不可显示为空队列通过。重载原记录显示待恢复而非自动派发；明确unknown同样待对账。终态移除仅说明pending凭证已结算，历史结果继续在run/事件中读取。此步骤不完成新run关联、执行器/Daemon安全恢复或UI/正式验收；完整P3查询门禁与报告接管后退场临时说明。
+
+
+### 原待部署请求与实际run关联（P3-01/P3-08，实施前冻结）
+
+经过协调器一次凭证核验并取得当前租约的whole/Profile重放，在任何pull/派发/容器动作前将pendingOrigin v1写入本次实际DeploymentRun：原operationId/generation/Profile与原project/branch范围相配，执行operationId保持新执行编号，不挪用旧编号。不从未核验HTTP header写关联；普通或joined/merged占位run没有该字段。字段不可改绑，历史无字段不猜补；query中字段存在只证明原请求与run关联，执行结果仍以实际run终态及运行证据判定。
+
+关联复用既有run独立draft持久化屏障，最多5秒，可靠ACK后才公开字段并放行；失败/未知/超时不执行外部动作。新await前后核原Branch引用与id/project/branch/worktree/createdAt、当前租约、有效配置SHA中性指纹及原项目权限；cacheSHA/notes变化不拒绝。缺追踪依赖失败关闭。关联阶段失败/取消必须终结本次租约并记录本次run结果，不能漏掉cleanup，也不能清理旧容器；不使用旧active为空、进程消失或HTTP200证明Daemon闭合。
+
+沿用GET /api/deployment-runs，用pendingOperationId+pendingGeneration查询；二者必须同时合法，并指定project与branch（项目凭据可提供项目范围）。先按项目/分支/原op/gen筛选再应用既有limit，不能先裁剪最近run再漏掉原请求。返回仍使用现有run summary/权限与敏感信息投影，不新增路由、不输出派发凭据。旧generation、新项目或其他分支不能继承结果；多条实际匹配按现有历史保留规则如实返回，不猜唯一或完成。此为本地关联实施，不是Master/Daemon安全重放、历史永久保存、UI或正式验收；完整P3历史关联自动门禁接管后退场临时说明。

@@ -2904,6 +2904,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
     deploymentRunService.cancel(runId, message, 'cancelled');
   }
 
+  async function bindPendingRunBeforeDeploy(req: Request, res: Response, entry: BranchEntry,
+    lease: BranchOperationLease | null, runId: string | undefined, profiles: () => BuildProfile[]): Promise<boolean> {
+    if (lease?.request.pendingOperationId == null && lease?.request.pendingGeneration == null) return true;
+    const identity = () => JSON.stringify([entry.id, entry.projectId, entry.branch, entry.worktreePath, entry.createdAt]);
+    const originalIdentity = identity();
+    let configuration: string | undefined;
+    let stale = false;
+    let permissionDenied = false;
+    const check = () => {
+      lease?.assertCurrent('pending-origin');
+      if (stateService.getBranch(lease!.branchId) !== entry || identity() !== originalIdentity) {
+        stale = true; throw new Error('pending_origin_stale');
+      }
+      if (assertProjectAccess(req as any, entry.projectId || 'default')) {
+        permissionDenied = true; throw new Error('pending_origin_stale');
+      }
+      if (pendingConfigurationHash(entry, profiles()) !== configuration) {
+        stale = true; throw new Error('pending_origin_stale');
+      }
+    };
+    try {
+      if (!lease || !runId || !deploymentRunService || !deploymentVersionService) throw new Error('pending_origin_unavailable');
+      configuration = pendingConfigurationHash(entry, profiles()); check();
+      await deploymentRunService.bindPendingOrigin(runId, lease, check);
+      return true;
+    } catch (error) {
+      const cancelled = error instanceof BranchOperationSupersededError;
+      const code = cancelled || stale || permissionDenied ? 'pending_origin_stale' : 'pending_origin_unavailable';
+      try {
+        if (cancelled) cancelDeploymentRun(runId, '待部署关联被取消，未开始执行');
+        else failDeploymentRun(runId, code, 'pending-origin');
+      } finally { completeBranchOperation(lease, cancelled ? 'cancelled' : 'failed', code); }
+      if (!res.destroyed && !res.writableEnded) res.status(permissionDenied ? 403 : code === 'pending_origin_stale' ? 409 : 503).json({
+        ok: false, operationStatus: cancelled ? 'cancelled' : 'rejected', error: code,
+        message: '待部署请求尚未与实际部署记录可靠关联，本次未开始执行',
+      });
+      return false;
+    }
+  }
+
   /**
    * 分支停止的施动者来源 -> 生命周期意图种类。
    *
@@ -12978,6 +13018,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    if (branchOperationLease?.request.pendingOperationId != null || branchOperationLease?.request.pendingGeneration != null) {
+      if (!await bindPendingRunBeforeDeploy(req, res, entry, branchOperationLease, deploymentRun?.id,
+        () => managedProjectService?.planForBranch(entry, requestedCommitForPlan)?.profiles || stateService.getEffectiveProfilesForBranch(entry))) return;
+    }
+
     // 记一次构建活动。**必须在拿到分支操作租约之后**——这个账本同时喂着资源面板的
     // 构建频次和 assessDeployLoop 的空转熔断计数。
     //
@@ -14670,6 +14715,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     let profileRuntimeAttempted = false;
+    if (branchOperationLease?.request.pendingOperationId != null || branchOperationLease?.request.pendingGeneration != null) {
+      if (!await bindPendingRunBeforeDeploy(req, res, entry, branchOperationLease, deploymentRun?.id,
+        () => stateService.getEffectiveProfilesForBranch(entry))) return;
+    }
     advanceDeploymentRun(deploymentRun?.id, 'preparing', {
       phase: 'prepare',
       message: `单服务部署上下文已准备完成: ${profile.name}`,

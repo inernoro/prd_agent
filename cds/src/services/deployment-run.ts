@@ -7,6 +7,7 @@ import type {
   DeploymentRunTrigger,
 } from '../types.js';
 import type { StateService } from './state.js';
+import { BranchOperationSupersededError, type BranchOperationLease } from './branch-operation-coordinator.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -58,6 +59,7 @@ export interface DeploymentRunServiceOptions {
   now?: () => Date;
   idFactory?: () => string;
   maxEvents?: number;
+  pendingOriginTimeoutMs?: number;
 }
 
 export interface DeploymentRunEventsAfter {
@@ -70,6 +72,7 @@ export class DeploymentRunService {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly maxEvents: number;
+  private readonly pendingOriginTimeoutMs: number;
 
   constructor(
     private readonly stateService: StateService,
@@ -78,6 +81,7 @@ export class DeploymentRunService {
     this.now = options.now || (() => new Date());
     this.idFactory = options.idFactory || (() => `dr_${crypto.randomBytes(12).toString('hex')}`);
     this.maxEvents = Math.max(1, options.maxEvents || 500);
+    this.pendingOriginTimeoutMs = Math.min(5000, Math.max(1, options.pendingOriginTimeoutMs || 5000));
   }
 
   async begin(input: BeginDeploymentRunInput): Promise<DeploymentRun> {
@@ -116,6 +120,41 @@ export class DeploymentRunService {
 
   get(id: string): DeploymentRun | undefined {
     return this.stateService.getDeploymentRun(id);
+  }
+
+  async bindPendingOrigin(id: string, lease: BranchOperationLease, assertCurrent: () => void): Promise<DeploymentRun> {
+    const request = lease.request;
+    const origin: NonNullable<DeploymentRun['pendingOrigin']> = {
+      version: 1, operationId: request.pendingOperationId || '',
+      generation: request.pendingGeneration || 0, profileId: request.profileId || null,
+    };
+    if (!/^op_[a-zA-Z0-9_.-]{1,120}$/.test(origin.operationId) || !Number.isSafeInteger(origin.generation) || origin.generation < 1
+      || !['deploy', 'deploy-profile'].includes(request.kind)
+      || (request.kind === 'deploy-profile' ? !origin.profileId : Boolean(origin.profileId))) throw new Error('pending_origin_invalid');
+    const check = () => { lease.assertCurrent('pending-origin'); assertCurrent(); };
+    check();
+    return this.stateService.updateDeploymentRunDurably(id, draft => {
+      if (draft.projectId !== (request.projectId || 'default') || draft.branchId !== lease.branchId || request.branchId !== lease.branchId
+        || draft.status !== 'pending' || (draft.operationId && draft.operationId !== lease.operationId)
+        || (draft.pendingOrigin && JSON.stringify(draft.pendingOrigin) !== JSON.stringify(origin))) throw new Error('pending_origin_scope');
+      draft.pendingOrigin = origin; draft.operationId = lease.operationId;
+    }, async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let abort: (() => void) | undefined;
+      try {
+        await Promise.race([
+          Promise.resolve().then(() => this.stateService.flush()),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('pending_origin_unavailable')), this.pendingOriginTimeoutMs); }),
+          new Promise<never>((_, reject) => {
+            abort = () => reject(new BranchOperationSupersededError(lease.operationId, lease.branchId, 'pending-origin'));
+            if (lease.signal?.aborted) abort(); else lease.signal?.addEventListener('abort', abort, { once: true });
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (abort) lease.signal?.removeEventListener('abort', abort);
+      }
+    }, check);
   }
 
   list(filters: { projectId?: string; branchId?: string; status?: DeploymentRunStatus } = {}): DeploymentRun[] {

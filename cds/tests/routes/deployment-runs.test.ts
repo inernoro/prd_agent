@@ -91,6 +91,20 @@ describe('Deployment runs router', () => {
     expect(response.body.runs[0]).not.toHaveProperty('events');
   });
 
+  it('filters original pending scope before the existing result limit', async () => {
+    const target = await runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    stateService.updateDeploymentRun(target.id, run => { run.startedAt = '2026-07-09T00:00:00.000Z'; (run as any).pendingOrigin = { version: 1, operationId: 'op_original', generation: 2, profileId: 'api' }; });
+    await runService.begin({ projectId: 'p1', branchId: 'b-p1', trigger: 'manual' });
+    const url = '/api/deployment-runs?project=p1&branch=b-p1&pendingOperationId=op_original&pendingGeneration=2&limit=1';
+    const result = await request(server, 'GET', url); expect(result.body.runs.map((run: any) => run.id)).toEqual([target.id]);
+    const wrong = await request(server, 'GET', url.replace('pendingGeneration=2', 'pendingGeneration=3')); expect(wrong.body.runs).toHaveLength(0);
+  });
+  it('requires complete valid project/branch/origin query scope', async () => {
+    for (const q of ['pendingOperationId=op_a', 'pendingGeneration=2', 'pendingOperationId=op_a&pendingGeneration=2', 'project=p1&pendingOperationId=op_a&pendingGeneration=2', 'project=p1&branch=b-p1&pendingOperationId=op_a&pendingGeneration=0']) {
+      expect((await request(server, 'GET', '/api/deployment-runs?' + q)).status).toBe(400);
+    }
+  });
+
   it('rejects an invalid status filter', async () => {
     const response = await request(server, 'GET', '/api/deployment-runs?status=unknown');
     expect(response.status).toBe(400);

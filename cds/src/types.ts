@@ -1363,6 +1363,8 @@ export interface DeploymentRun {
   operationId?: string;
   executorId?: string;
   configHash?: string;
+  /** Original queued intent; present only after validated lease and durable binding. */
+  pendingOrigin?: { version: 1; operationId: string; generation: number; profileId: string | null };
   startedAt: string;
   updatedAt: string;
   heartbeatAt?: string;
