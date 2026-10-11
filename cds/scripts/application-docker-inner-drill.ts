@@ -372,13 +372,28 @@ async function main(): Promise<void> {
       const acquired = evidence.events.find((event: any) => event.action === 'agent.core-image-cache.acquired');
       assert.ok(acquired); evidence.ownedReference = acquired.details.cacheReference;
       await docker(['image', 'rm', '--no-prune', active.reference]);
-      await docker(['image', 'rm', '--no-prune', unused.reference]);
+      // Replacing a build tag leaves the old image genuinely dangling. Removing
+      // its sole tag with image rm would already delete it before prune.
+      const unusedContext = path.join(root, 'finite-cache-unused');
+      await fs.writeFile(path.join(unusedContext, 'marker'), `${source.owner}:unused:replacement`);
+      await docker(['build', '--network', 'none', '--quiet', '-t', unused.reference, unusedContext]);
+      const replacement = JSON.parse(await docker(['image', 'inspect', unused.reference]))[0];
+      assert.equal(replacement.Config.Labels['cds.acceptance.owner'], source.owner);
+      assert.notEqual(replacement.Id, unused.id);
+      evidence.unusedReplacement = { reference: unused.reference, id: replacement.Id, size: replacement.Size };
+      const dangling = JSON.parse(await docker(['image', 'inspect', unused.id]))[0];
+      assert.equal(dangling.Id, unused.id); assert.deepEqual(dangling.RepoTags || [], []);
+      assert.deepEqual(dangling.RepoDigests || [], []);
+      assert.equal(await docker(['ps', '-aq', '--filter', `ancestor=${unused.id}`]), '');
+      evidence.unusedBeforePrune = { at: new Date().toISOString(), imageId: dangling.Id,
+        repoTags: dangling.RepoTags || [], repoDigests: dangling.RepoDigests || [], referencedContainers: 0 };
       const prune = createJanitorDockerAdapters(shell).dockerPrune;
       const absentImage = async (reference: string) => {
         try { await docker(['image', 'inspect', reference, '--format', '{{.Id}}']); return false; }
         catch (error) { assert.match(String((error as any).stderr || ''), /No such (?:image|object)/i); return true; }
       };
       evidence.activePrune = await prune(); assert.deepEqual(evidence.activePrune.errors, []);
+      evidence.pruneFinishedAt = new Date().toISOString();
       assert.equal(await docker(['image', 'inspect', active.id, '--format', '{{.Id}}']), active.id);
       assert.equal(await absentImage(unused.id), true); evidence.unusedReclaimedWhileActiveProtected = true;
       const waitStarted = performance.now();
