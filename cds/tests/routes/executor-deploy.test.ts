@@ -191,6 +191,13 @@ describe('Executor /exec/deploy', () => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('rejects scoped executor placement before worktree, orphan cleanup, or state mutation', async () => {
+    const entry: BranchEntry = { id: 'feature', projectId: 'default', branch: 'feature', worktreePath: '/owned/feature', services: {}, status: 'running', createdAt: new Date().toISOString() };
+    stateService.addBranch(entry); const before = JSON.stringify(entry);
+    const result = await postSse(server, '/exec/deploy', { branchId: 'feature', branchName: 'feature', projectId: 'default', profiles: [{ id: 'rpc', dockerImage: 'nginx:stable', containerPort: 80, deploymentScope: { projectId: 'default', branchId: 'main', repoBranch: 'main' } }] });
+    expect(JSON.stringify(result)).toContain('deployment_scope_mismatch');
+    expect(mock.commands).toEqual([]); expect(JSON.stringify(stateService.getBranch('feature'))).toBe(before);
+  });
   it('stamps the master-supplied projectId on the new entry + scopes worktree dir by it', async () => {
     // Pre-create the project locally so resolveProjectForAutoBuild has
     // something to match if needed (but the explicit body.projectId

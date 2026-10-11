@@ -16,7 +16,37 @@ export function isValidExtraProfileId(id: string): boolean {
   return typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(id);
 }
 
-type ExtraDeploymentMetadata = Pick<BuildProfile, 'prebuiltImage' | 'prebuiltCommitPolicy' | 'artifactSource' | 'activeDeployMode' | 'deployModes' | 'buildScope' | 'calls' | 'role'>;
+/** Match actual logical branch identity; malformed declarations never qualify. */
+export type DeploymentScopeContext = Pick<BranchEntry, 'id' | 'projectId' | 'branch'>;
+export function isValidDeploymentScope(value: unknown): value is NonNullable<BuildProfile['deploymentScope']> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const scope = value as Record<string, unknown>;
+  return Object.keys(scope).length === 3 && ['projectId', 'branchId'].every(key =>
+    typeof scope[key] === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(scope[key] as string))
+    && typeof scope.repoBranch === 'string' && scope.repoBranch.length > 0 && scope.repoBranch.length <= 256
+    && !/[\s\x00-\x1f\x7f]/.test(scope.repoBranch);
+}
+export function profileDeploymentScopeMatches(profile: Pick<BuildProfile, 'deploymentScope'>, branch?: DeploymentScopeContext): boolean {
+  if (profile.deploymentScope === undefined) return true;
+  const scope = profile.deploymentScope;
+  return isValidDeploymentScope(scope) && !!branch && scope.projectId === (branch.projectId || 'default')
+    && scope.branchId === branch.id && scope.repoBranch === branch.branch;
+}
+export function assertProfileDeploymentScopes(profiles: ReadonlyArray<Pick<BuildProfile, 'deploymentScope'>>, branch?: DeploymentScopeContext): void {
+  if (profiles.some(profile => !profileDeploymentScopeMatches(profile, branch))) throw new Error('deployment_scope_mismatch');
+}
+/** Snapshot-copy only: do not filter live/effective profiles or modify the source. */
+export function copyBranchDeploymentConfig(source: BranchEntry, target: DeploymentScopeContext, projectProfileIds: ReadonlySet<string>) {
+  const skippedExtraProfileIds = [...new Set((source.extraProfiles || [])
+    .filter(profile => !profileDeploymentScopeMatches(profile, target)).map(profile => profile.id))];
+  const skipped = new Set(skippedExtraProfileIds);
+  const extraProfiles = structuredClone((source.extraProfiles || []).filter(profile => !skipped.has(profile.id)));
+  const overrides = structuredClone(source.profileOverrides || {});
+  for (const id of skipped) if (!projectProfileIds.has(id)) delete overrides[id];
+  return { extraProfiles, profileOverrides: Object.keys(overrides).length ? overrides : undefined, skippedExtraProfileIds };
+}
+
+type ExtraDeploymentMetadata = Pick<BuildProfile, 'prebuiltImage' | 'prebuiltCommitPolicy' | 'artifactSource' | 'deploymentScope' | 'activeDeployMode' | 'deployModes' | 'buildScope' | 'calls' | 'role'>;
 /** Bounded metadata projection for the existing extra-services API. No runtime-owned IDs. */
 export function parseExtraDeploymentMetadata(raw: Record<string, unknown>, previous?: BuildProfile): ExtraDeploymentMetadata {
   const out: ExtraDeploymentMetadata = {};
@@ -44,6 +74,11 @@ export function parseExtraDeploymentMetadata(raw: Record<string, unknown>, previ
   if (policy !== undefined && policy !== null) {
     if (policy !== 'exact' || prebuilt !== true) return invalid();
     out.prebuiltCommitPolicy = policy;
+  }
+  const scope = value('deploymentScope');
+  if (scope !== undefined && scope !== null) {
+    if (!isValidDeploymentScope(scope)) return invalid();
+    out.deploymentScope = { ...scope };
   }
   const source = value('artifactSource');
   if (source !== undefined && source !== null) {

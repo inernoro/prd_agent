@@ -2321,6 +2321,73 @@ describe('Branch Routes', () => {
       });
     });
 
+    describe('declared auxiliary placement boundaries', () => {
+      const scoped = (owner = 'src-branch') => ({ ...extraSvc('rpc-extra'), deploymentScope: { projectId: 'default', branchId: owner, repoBranch: owner } });
+      it('persists a matching placement and rejects foreign placement atomically', async () => {
+        seedBranch('src-branch');
+        expect((await request(server, 'PUT', '/api/branches/src-branch/extra-services', { extraProfiles: [scoped()] })).status).toBe(200);
+        expect((await request(server, 'GET', '/api/branches/src-branch/extra-services')).body.extraProfiles[0].deploymentScope).toEqual(scoped().deploymentScope);
+        const before = JSON.stringify(stateService.getBranch('src-branch')!.extraProfiles);
+        expect((await request(server, 'PUT', '/api/branches/src-branch/extra-services', { extraProfiles: [scoped('other')] })).status).toBe(400);
+        expect(JSON.stringify(stateService.getBranch('src-branch')!.extraProfiles)).toBe(before);
+      });
+      it('keeps a misplaced live auxiliary visible and disqualifies all-express without a list500', async () => {
+        seedBranch('target'); stateService.setBranchExtraProfiles('target', [scoped()] as any);
+        const entry = stateService.getBranch('target')!;
+        for (const id of ['api', 'rpc-extra']) entry.services[id] = { profileId: id, containerName: `owned-${id}`, hostPort: id === 'api' ? 10001 : 10002,
+          status: 'running', deployedImage: 'sha256:' + 'a'.repeat(64), deployedMode: 'express', deployedPrebuilt: true };
+        stateService.save();
+        const result = await request(server, 'GET', '/api/branches?project=default');
+        expect(result.status).toBe(200);
+        const runtime = result.body.branches.find((branch: any) => branch.id === 'target').deployRuntime;
+        expect(runtime.actualRuntimeProfiles).toBe(2);
+        expect(runtime.actualPrebuiltCoverage).not.toBe('all');
+        expect(runtime.unknownRuntimeProfileIds).toContain('rpc-extra');
+        expect(runtime.title).toContain('放置约束不匹配');
+      });
+      it('refuses scoped import before config/infra writes while allowing only bounded target lookup', async () => {
+        const before = JSON.stringify(stateService.getBuildProfiles());
+        const result = await request(server, 'POST', '/api/import-and-init', { config: { buildProfiles: [scoped('other')], infraServices: [{ id: 'unsafe-import-infra', name: 'Owned', dockerImage: 'redis:7', containerPort: 6379 }] } });
+        expect(result.status).toBe(409); expect(result.body.error).toBe('deployment_scope_mismatch');
+        expect(JSON.stringify(stateService.getBuildProfiles())).toBe(before);
+        expect(stateService.getInfraService('unsafe-import-infra')).toBeUndefined();
+        expect(mock.commands.some(command => /docker|mkdir|git worktree/.test(command))).toBe(false);
+      });
+      it('checks existing scoped extras before initialization even when the new import declares no scope', async () => {
+        seedBranch('main'); stateService.setBranchExtraProfiles('main', [scoped('other')] as any);
+        const before = JSON.stringify(stateService.getBranch('main'));
+        const result = await request(server, 'POST', '/api/import-and-init', { config: { buildProfiles: [] } });
+        expect(result.status).toBe(409); expect(result.body.error).toBe('deployment_scope_mismatch');
+        expect(JSON.stringify(stateService.getBranch('main'))).toBe(before);
+        expect(mock.commands.some(command => /docker|mkdir|git worktree/.test(command))).toBe(false);
+      });
+      it.each(['copy', 'derive'])('does not accidentally propagate a bound auxiliary or its override via %s', async kind => {
+        seedBranch('src-branch'); seedBranch('target');
+        stateService.setBranchExtraProfiles('src-branch', [scoped(), extraSvc('ordinary')] as any);
+        stateService.getBranch('src-branch')!.profileOverrides = { 'rpc-extra': { env: { KEY: 'bound' } } };
+        const response = kind === 'copy'
+          ? await request(server, 'POST', '/api/branches/target/copy-config-from/src-branch')
+          : await request(server, 'POST', '/api/branches', { branch: 'derived-scope', sourceBranchId: 'src-branch' });
+        expect(response.status).toBe(kind === 'copy' ? 200 : 201);
+        const target = stateService.getBranch(kind === 'copy' ? 'target' : 'derived-scope')!;
+        expect(target.extraProfiles?.map(profile => profile.id)).toEqual(['ordinary']);
+        expect(target.profileOverrides?.['rpc-extra']).toBeUndefined();
+        expect(response.body.skippedExtraProfileIds).toEqual(['rpc-extra']);
+        expect(stateService.getBranch('src-branch')!.extraProfiles).toHaveLength(2);
+      });
+      it.each(['', '/rpc-extra'])('refuses direct stale bound deployment before shell or container mutation %s', async suffix => {
+        seedBranch('target');
+        stateService.setBranchExtraProfiles('target', [scoped()] as any);
+        const before = JSON.stringify(stateService.getBranch('target'));
+        const commands = mock.commands.length;
+        const response = await request(server, 'POST', '/api/branches/target/deploy' + suffix, {});
+        expect(response.status).toBe(409);
+        expect(response.body.error).toBe('deployment_scope_mismatch');
+        expect(mock.commands.length).toBe(commands);
+        expect(JSON.stringify(stateService.getBranch('target'))).toBe(before);
+      });
+    });
+
     describe('分支派生快照拷贝(波3 配置树)', () => {
       const seedSourceWithConfig = async (id: string) => {
         seedBranch(id);

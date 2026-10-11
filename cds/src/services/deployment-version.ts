@@ -45,6 +45,7 @@ export class DeploymentVersionService {
       prebuiltImage: profile.prebuiltImage === true,
       prebuiltCommitPolicy: profile.prebuiltCommitPolicy || null,
       ...(profile.artifactSource ? { artifactSource: profile.artifactSource } : {}),
+      ...(profile.deploymentScope !== undefined ? { deploymentScope: profile.deploymentScope } : {}),
       role: profile.role || null,
       replacementStrategy: profile.replacementStrategy || null,
       cacheMounts: profile.cacheMounts || [],
@@ -149,6 +150,7 @@ export class DeploymentVersionService {
         prebuiltImage: true,
         prebuiltCommitPolicy: snapshot.replacementContractVersion === 1 ? snapshot.prebuiltCommitPolicy : snapshot.prebuiltCommitPolicy ?? current.prebuiltCommitPolicy,
         artifactSource: snapshot.replacementContractVersion === 1 ? snapshot.artifactSource : snapshot.artifactSource ?? current.artifactSource,
+        deploymentScope: structuredClone(snapshot.replacementContractVersion === 1 ? snapshot.deploymentScope : snapshot.deploymentScope ?? current.deploymentScope),
         role: snapshot.replacementContractVersion === 1 ? snapshot.role : snapshot.role ?? current.role,
         replacementStrategy: snapshot.replacementContractVersion === 1 ? snapshot.replacementStrategy : snapshot.replacementStrategy ?? current.replacementStrategy,
         cacheMounts: snapshot.replacementContractVersion === 1 ? structuredClone(snapshot.cacheMounts || []) : snapshot.cacheMounts ?? current.cacheMounts,
@@ -176,6 +178,7 @@ export class DeploymentVersionService {
       artifactImage,
       prebuiltCommitPolicy: profile.prebuiltCommitPolicy,
       artifactSource: profile.artifactSource,
+      deploymentScope: structuredClone(profile.deploymentScope),
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable

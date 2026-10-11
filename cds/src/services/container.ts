@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { assertProfileDeploymentScopes } from './branch-extra-services.js';
 import { prepareExactPrebuiltArtifacts } from './prebuilt-artifact-gate.js';
 import { withShellExecutionContext } from './shell-executor.js';
 import { candidateRuntimeIdentity } from './service-candidate.js';
@@ -1221,6 +1222,10 @@ export class ContainerService {
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
   ): Promise<void> {
+    const placement = { deploymentScope: structuredClone(profile.deploymentScope) };
+    assertProfileDeploymentScopes([placement], entry);
+    const originalFence = context.assertCurrent;
+    context = { ...context, assertCurrent: step => { assertProfileDeploymentScopes([placement], entry); originalFence?.(step); } };
     const candidate = context.candidateRunId ? candidateRuntimeIdentity(entry.id, profile.id, context.candidateRunId) : undefined;
     if (candidate) {
       if (service.containerName !== candidate.containerName || service.profileId !== profile.id || service.status === 'running' || service.deployedImage ||
@@ -1241,6 +1246,7 @@ export class ContainerService {
       const target = candidate ? entry.deploymentTargetSha || entry.githubCommitSha || ''
         : context.latestCommitSha || profile.preparedCommitSha || entry.githubCommitSha || '';
       [profile] = await prepareExactPrebuiltArtifacts(this.shell, [profile], target, {
+        branch: entry,
         assertCurrent: context.assertCurrent,
         signal: context.signal,
         onProgress: (_id, stage) => onOutput?.(`── 精确极速制品 ${stage}: ${profile.id} ──\n`),

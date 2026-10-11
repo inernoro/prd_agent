@@ -14,6 +14,7 @@ import type { BuildProfile, BranchEntry, ServiceState } from '../types.js';
 export function summarizeActualPrebuiltRuntime(
   profileIds: string[],
   services: Record<string, Pick<ServiceState, 'status' | 'deployedImage' | 'deployedPrebuilt' | 'deployedMode'> | undefined> | undefined,
+  unqualifiedProfileIds: string[] = [],
 ): {
   coverage: 'all' | 'partial' | 'none' | 'unknown';
   profileIds: string[];
@@ -30,7 +31,7 @@ export function summarizeActualPrebuiltRuntime(
     .map(([id]) => id)])];
   for (const id of profileIds) {
     const service = services?.[id];
-    if (service?.status !== 'running' || !service.deployedImage || typeof service.deployedPrebuilt !== 'boolean') {
+    if (unqualifiedProfileIds.includes(id) || service?.status !== 'running' || !service.deployedImage || typeof service.deployedPrebuilt !== 'boolean') {
       unknownProfileIds.push(id);
     } else if (service.deployedPrebuilt) {
       if (!service.deployedMode?.trim() || /^(dev|development|source|watch|hot)$/i.test(service.deployedMode.trim())) unknownProfileIds.push(id);

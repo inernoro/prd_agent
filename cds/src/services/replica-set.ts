@@ -11,6 +11,7 @@
  * 流量分配在数据面：forwarder-route-publisher 发 replicaGroup 组路由，
  * route-resolver 按权重/粘性选择。本服务只管配置与成员容器生命周期。
  */
+import { assertProfileDeploymentScopes } from './branch-extra-services.js';
 import type {
   BranchEntry,
   BuildProfile,
@@ -857,6 +858,9 @@ export class ReplicaSetService {
       id: memberProfileId,
       name: `${baseProfile.name} · ${memberId}`,
       dockerImage: snapshot.artifactImage,
+      prebuiltCommitPolicy: snapshot.replacementContractVersion === 1 ? snapshot.prebuiltCommitPolicy : snapshot.prebuiltCommitPolicy ?? baseProfile.prebuiltCommitPolicy,
+      artifactSource: snapshot.replacementContractVersion === 1 ? snapshot.artifactSource : snapshot.artifactSource ?? baseProfile.artifactSource,
+      deploymentScope: structuredClone(snapshot.replacementContractVersion === 1 ? snapshot.deploymentScope : snapshot.deploymentScope ?? baseProfile.deploymentScope),
       command: snapshot.runtimeCommand,
       containerPort: snapshot.containerPort,
       containerWorkDir: snapshot.containerWorkDir,
@@ -883,6 +887,7 @@ export class ReplicaSetService {
       },
     };
 
+    assertProfileDeploymentScopes([memberProfile], branch);
     const usedPorts = await this.collectListeningPorts();
     const hostPort = this.opts.state.allocatePort(this.opts.portStart, usedPorts);
     const containerName = `cds-${branch.id}-${profileId}-${memberId}`;

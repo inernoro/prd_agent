@@ -27,6 +27,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { assertProfileDeploymentScopes } from '../services/branch-extra-services.js';
 import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
 import type { BranchEntry, BuildProfile, Project, ServiceDeployment, ServiceState } from '../types.js';
@@ -2463,6 +2464,9 @@ async function reconcileCdsManagedRuntimeCapacity(
   const profile = buildCdsManagedRuntimeProfile(project.id);
   const worktreePath = resolveCdsManagedRuntimeWorktreePath();
   const existingProfile = stateService.getBuildProfile(profileId);
+  if (existingProfile?.deploymentScope !== undefined) profile.deploymentScope = structuredClone(existingProfile.deploymentScope);
+  assertProfileDeploymentScopes([profile], stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME)
+    || { id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`, projectId: project.id, branch: CDS_MANAGED_RUNTIME_BRANCH_NAME });
   let profileChange: 'created' | 'updated' | 'unchanged' = 'created';
   if (existingProfile) {
     if (existingProfile.projectId !== project.id) {

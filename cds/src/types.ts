@@ -221,6 +221,8 @@ export interface BuildProfile {
   prebuiltCommitPolicy?: 'exact';
   /** Optional expected OCI source; admission checks the actual inspected label. */
   artifactSource?: string;
+  /** Declarative placement, not authorization; absent preserves legacy behavior. */
+  deploymentScope?: { projectId: string; branchId: string; repoBranch: string };
   /** 本次准入生成的不可变本地镜像身份，非外部配置。 */
   preparedArtifactId?: string;
   /** 已验明的可跨执行器拉取引用，与本机镜像ID分开保存。 */
@@ -1429,6 +1431,8 @@ export interface DeploymentVersionProfile {
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   prebuiltCommitPolicy?: 'exact';
   artifactSource?: string;
+  /** Declarative placement, not authorization; absent preserves legacy behavior. */
+  deploymentScope?: { projectId: string; branchId: string; repoBranch: string };
   reusable: boolean;
   reuseBlockedReason?: string;
   runtimeCommand?: string;

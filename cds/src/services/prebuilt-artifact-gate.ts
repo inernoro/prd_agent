@@ -1,6 +1,8 @@
+import { assertProfileDeploymentScopes, type DeploymentScopeContext } from './branch-extra-services.js';
 import type { BuildProfile, IShellExecutor } from '../types.js';
 
 export interface ArtifactAdmissionOptions {
+  branch?: DeploymentScopeContext;
   signal?: AbortSignal;
   assertCurrent?: (stage: string) => void;
   onProgress?: (profileId: string, stage: string) => void;
@@ -15,10 +17,12 @@ export async function prepareExactPrebuiltArtifacts(
 ): Promise<BuildProfile[]> {
   if (!/^[a-f0-9]{40}$/i.test(commitSha)) throw new Error('artifact_target_invalid: 需要完整40位目标提交');
   const assertCurrent = (stage: string) => {
+    assertProfileDeploymentScopes(profiles, options.branch);
     if (options.signal?.aborted) throw new Error('artifact_cancelled');
     options.assertCurrent?.(stage);
   };
   assertCurrent('artifact-admission');
+  assertProfileDeploymentScopes(profiles, options.branch);
   const needed = profiles.filter(profile => profile.prebuiltImage && !profile.localArtifact);
   if (!needed.length) return profiles.map(profile => ({ ...profile }));
   const host = await shell.exec("docker version --format '{{.Server.Arch}}'", { priority: 'health', timeout: 10_000, signal: options.signal });

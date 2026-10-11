@@ -42,7 +42,7 @@ import {
   PREBUILT_DEFINITION_FIELDS,
   withoutSourceFallback,
 } from '../services/agent-prebuilt-gate.js';
-import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles, parseExtraDeploymentMetadata } from '../services/branch-extra-services.js';
+import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles, parseExtraDeploymentMetadata, copyBranchDeploymentConfig, assertProfileDeploymentScopes, profileDeploymentScopeMatches } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
 import { resolveInfraForDb } from '../services/replica-db-clone.js';
@@ -544,7 +544,8 @@ function summarizeBranchDeployRuntime(
       ? '混合'
       : '源码';
 
-  const actualPrebuilt = summarizeActualPrebuiltRuntime(profiles.map(profile => profile.id), branch.services);
+  const invalidScopeIds = profiles.filter(profile => !profileDeploymentScopeMatches(profile, branch)).map(profile => profile.id);
+  const actualPrebuilt = summarizeActualPrebuiltRuntime(profiles.map(profile => profile.id), branch.services, invalidScopeIds);
   const actualVersions = summarizeActualRuntimeVersions(branch.deploymentTargetSha || branch.githubCommitSha,
     actualPrebuilt.profileIds, branch.services);
 
@@ -552,7 +553,7 @@ function summarizeBranchDeployRuntime(
     kind,
     label,
     title: modeLabels.length > 0
-      ? `实际运行模式: ${modeLabels.join(' / ')}${pendingPublish ? '（发布版配置已设，等待重新部署生效）' : ''}`
+      ? `实际运行模式: ${modeLabels.join(' / ')}${pendingPublish ? '（发布版配置已设，等待重新部署生效）' : ''}${invalidScopeIds.length ? '（服务放置约束不匹配，待核对）' : ''}`
       : '当前没有构建配置，按源码默认模式显示',
     activeProfiles,
     releaseProfiles,
@@ -6205,18 +6206,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         targetProject.defaultDeployModes,
         stateService.getBuildProfilesForProject(effectiveProjectId),
       );
+      let skippedExtraProfileIds: string[] = [];
       if (sourceBranch) {
+        const copied = copyBranchDeploymentConfig(sourceBranch, entry, new Set(stateService.getBuildProfilesForProject(effectiveProjectId).map(profile => profile.id)));
+        skippedExtraProfileIds = copied.skippedExtraProfileIds;
         // 深拷贝:改新分支不得串改来源分支(JSON round-trip 对这两个纯数据字段安全)。
         if (sourceBranch.profileOverrides && Object.keys(sourceBranch.profileOverrides).length > 0) {
           entry.profileOverrides = {
             ...(entry.profileOverrides || {}),
-            ...JSON.parse(JSON.stringify(sourceBranch.profileOverrides)),
+            ...(copied.profileOverrides || {}),
           };
         }
         if (sourceBranch.extraProfiles && sourceBranch.extraProfiles.length > 0) {
           // extraProfiles 的 subdomain 是分支内约束(命名 URL 按各自 previewSlug 拼),
           // 原样拷贝跨分支不撞车,无需改写。
-          entry.extraProfiles = JSON.parse(JSON.stringify(sourceBranch.extraProfiles));
+          entry.extraProfiles = copied.extraProfiles;
         }
         entry.derivedFromBranchId = sourceBranch.id;
         entry.derivedFromBranchName = sourceBranch.branch;
@@ -6267,7 +6271,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         payload: { branch: entry, source: 'manual', ts: nowIso() },
       });
 
-      res.status(201).json({ branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry });
+      res.status(201).json({ branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry, ...(skippedExtraProfileIds.length ? { skippedExtraProfileIds } : {}) });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -11571,12 +11575,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 深拷贝整体替换(快照拷贝语义:之后各自独立)。getBranch 返回内存权威对象,
     // 直改后统一 save(与 setBranchProfileOverride 等既有写路径同一口径)。
     const target = stateService.getBranch(entry.id)!;
-    if (source.profileOverrides && Object.keys(source.profileOverrides).length > 0) {
-      target.profileOverrides = JSON.parse(JSON.stringify(source.profileOverrides));
-    } else {
-      delete target.profileOverrides;
-    }
-    stateService.setBranchExtraProfiles(entry.id, JSON.parse(JSON.stringify(source.extraProfiles || [])));
+    const copied = copyBranchDeploymentConfig(source, target, new Set(stateService.getBuildProfilesForProject(projectId).map(profile => profile.id)));
+    if (copied.profileOverrides) target.profileOverrides = copied.profileOverrides;
+    else delete target.profileOverrides;
+    stateService.setBranchExtraProfiles(entry.id, copied.extraProfiles);
     target.derivedFromBranchId = source.id;
     target.derivedFromBranchName = source.branch;
     target.derivedAt = new Date().toISOString();
@@ -11617,6 +11619,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const refreshed = stateService.getBranch(entry.id)!;
     res.json({
       copied: true,
+      ...(copied.skippedExtraProfileIds.length ? { skippedExtraProfileIds: copied.skippedExtraProfileIds } : {}),
       sourceBranchId: source.id,
       sourceBranchName: source.branch,
       snapshotId: snapshot.id,
@@ -12660,6 +12663,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
+    try { assertProfileDeploymentScopes(profiles, entry); }
+    catch { res.status(409).json({ error: 'deployment_scope_mismatch', message: '服务放置约束与当前分支不匹配，未执行部署' }); return; }
     const configTargetContext = requestedCommitForPlan && /^[0-9a-f]{40}$/i.test(requestedCommitForPlan)
       ? { ...entry, ciTargetSha: requestedCommitForPlan, githubCommitSha: requestedCommitForPlan } : entry;
     const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, configTargetContext));
@@ -13097,6 +13102,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
+    try { assertProfileDeploymentScopes(profiles, entry); }
+    catch {
+      completeBranchOperation(branchOperationLease, 'failed');
+      failDeploymentRun(deploymentRun?.id, 'deployment_scope_mismatch', 'admission');
+      res.status(409).json({ error: 'deployment_scope_mismatch', message: '冻结服务放置约束不匹配，未派发部署' }); return;
+    }
     // ── Cluster dispatch decision ──
     //
     // Before touching the local deploy path, decide whether this branch
@@ -13431,6 +13442,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         logEvent({ step: 'artifact-admission', status: 'running', title: '准备完整精确极速制品，保留现有服务', timestamp: new Date().toISOString() });
         const prepared = await measureDeploymentStage(deploymentTiming, 'artifact', 'exact-artifact', null, () => prepareExactPrebuiltArtifacts(shell,
           profiles.map(profile => selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry)), targetSha, {
+            branch: entry,
             assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
             signal: branchOperationLease?.signal,
             onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
@@ -14680,6 +14692,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
     }
+    try { assertProfileDeploymentScopes(profiles, entry); }
+    catch { res.status(409).json({ error: 'deployment_scope_mismatch', message: '服务放置约束与当前分支不匹配，未执行部署' }); return; }
     // Agent 极速版门禁：单服务部署与整分支部署同一道闸（Codex PR #1513 P1：此端点绕过了整分支入口）。
     const singleDeployProject = stateService.getProject(entry.projectId || 'default');
     const singleDeployGated = Boolean(singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && isAgentGatedRequest(req));
@@ -14875,6 +14889,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           new Set(stateService.getInfraServicesForProject(entry.projectId || 'default')
             .filter(infra => infra.status === 'running').map(infra => infra.id)));
         const prepared = await measureDeploymentStage(deploymentTiming, 'artifact', 'exact-artifact', profile.id, () => prepareExactPrebuiltArtifacts(shell, artifactProfiles, targetSha, {
+          branch: entry,
           assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
             signal: branchOperationLease?.signal,
           onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
@@ -18029,6 +18044,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let deploymentMetadata: ReturnType<typeof parseExtraDeploymentMetadata>;
       try {
         deploymentMetadata = parseExtraDeploymentMetadata(raw, entry.extraProfiles?.find(profile => profile.id === id));
+        if (!profileDeploymentScopeMatches(deploymentMetadata, entry)) throw new Error('deployment_scope_mismatch');
       } catch {
         res.status(400).json({ error: '额外服务部署元数据非法：须为有界预构建 exact 模式、合法 scope/calls/role/source' });
         return;
@@ -22017,6 +22033,37 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
 
+    // A bound import must prove its actual default-branch target before applying config/infra.
+    let scopedImportMainName: string | undefined;
+    const proposedProfiles = new Map(stateService.getBuildProfiles().map(profile => [profile.id, { ...profile }]));
+    for (const profile of (Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles : []) as BuildProfile[]) {
+      proposedProfiles.set(profile.id, { ...(proposedProfiles.get(profile.id) || {}), ...profile });
+    }
+    const scopedImportOwner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+    const hasPlacement = [...proposedProfiles.values()].some(profile => profile.deploymentScope !== undefined
+      && (!scopedImportOwner || (profile.projectId || scopedImportOwner.id) === scopedImportOwner.id))
+      || stateService.getAllBranches().some(branch => (branch.projectId || 'default') === scopedImportOwner?.id
+        && branch.extraProfiles?.some(profile => profile.deploymentScope !== undefined));
+    if (hasPlacement) {
+      const owner = scopedImportOwner;
+      if (!owner) { res.status(409).json({ error: 'deployment_scope_mismatch', message: '绑定服务缺少可核对的初始化目标' }); return; }
+      let name = 'main';
+      try {
+        const result = await shell.exec('git symbolic-ref refs/remotes/origin/HEAD', { cwd: config.repoRoot, timeout: 5000 });
+        if (result.stdout.trim()) name = result.stdout.trim().replace('refs/remotes/origin/', '');
+      } catch {
+        try { await shell.exec('git rev-parse --verify origin/main', { cwd: config.repoRoot, timeout: 5000 }); }
+        catch { name = 'master'; }
+      }
+      const id = owner.legacyFlag ? StateService.slugify(name) : `${owner.slug}-${StateService.slugify(name)}`;
+      const target = stateService.getBranch(id) || stateService.findBranchByProjectAndName(owner.id, name)
+        || { id, projectId: owner.id, branch: name };
+      const projected = [...proposedProfiles.values()].filter(profile => (profile.projectId || owner.id) === owner.id);
+      try { assertProfileDeploymentScopes(mergeBranchProfiles(projected, stateService.getBranch(target.id)), target); }
+      catch { res.status(409).json({ error: 'deployment_scope_mismatch', message: '绑定服务与初始化分支不匹配，未写配置或启动基础设施' }); return; }
+      scopedImportMainName = name;
+    }
+
     // ── Start SSE stream ──
     initSSE(res);
     const send = (step: string, status: string, title: string) => {
@@ -22106,8 +22153,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // ── Phase 3: Create main branch worktree ──
       // Detect default branch name
-      let mainBranch = 'main';
-      try {
+      let mainBranch = scopedImportMainName || 'main';
+      if (!scopedImportMainName) try {
         const result = await shell.exec('git symbolic-ref refs/remotes/origin/HEAD', { cwd: config.repoRoot, timeout: 5000 });
         const ref = result.stdout.trim(); // e.g., refs/remotes/origin/main
         if (ref) mainBranch = ref.replace('refs/remotes/origin/', '');

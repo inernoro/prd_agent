@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeBranchProfiles, isValidExtraProfileId, parseExtraDeploymentMetadata } from '../../src/services/branch-extra-services.js';
+import { mergeBranchProfiles, isValidExtraProfileId, parseExtraDeploymentMetadata, assertProfileDeploymentScopes, copyBranchDeploymentConfig } from '../../src/services/branch-extra-services.js';
 import type { BuildProfile, BranchEntry } from '../../src/types.js';
 
 const p = (id: string, extra: Partial<BuildProfile> = {}): BuildProfile => ({
@@ -94,5 +94,32 @@ describe('mergeBranchProfiles', () => {
     const b = mergeBranchProfiles(project, branch([])); // sibling without extras
     expect(a.map((x) => x.id)).toEqual(['api', 'admin', 'dbg']);
     expect(b.map((x) => x.id)).toEqual(['api', 'admin']); // sibling unaffected
+  });
+});
+
+describe('declarative placement controls', () => {
+  const scope = { projectId: 'default', branchId: 'main', repoBranch: 'main' };
+  it('matches the logical owner only, preserves omission, permits explicit null, and keeps malformed input bounded', () => {
+    const profile = p('rpc', { deploymentScope: scope });
+    expect(parseExtraDeploymentMetadata({}, profile).deploymentScope).toEqual(scope);
+    expect(parseExtraDeploymentMetadata({ deploymentScope: null }, profile).deploymentScope).toBeUndefined();
+    expect(() => assertProfileDeploymentScopes([profile], { id: 'main', branch: 'main' })).not.toThrow();
+    for (const bad of [null, [], {}, { ...scope, alias: 'main' }, { ...scope, branchId: 'x'.repeat(129) }, { ...scope, projectId: 'bad/' }, { ...scope, repoBranch: 'main\n' }, { ...scope, repoBranch: 1 }]) {
+      if (bad !== null) expect(() => parseExtraDeploymentMetadata({ deploymentScope: bad })).toThrow('extra_deployment_metadata_invalid');
+      expect(() => assertProfileDeploymentScopes([p('rpc', { deploymentScope: bad as any })], { id: 'main', branch: 'main' })).toThrow('deployment_scope_mismatch');
+    }
+    for (const target of [{ id: 'same-name', branch: 'main' }, { id: 'main', projectId: 'other', branch: 'main' }, { id: 'main', branch: 'feature' }]) {
+      expect(() => assertProfileDeploymentScopes([profile], target)).toThrow('deployment_scope_mismatch');
+    }
+  });
+  it('never removes the stable project override when a rejected extra collides with its id', () => {
+    const source = { extraProfiles: [p('api', { deploymentScope: scope })], profileOverrides: { api: { env: { KEY: 'stable' } } } } as any;
+    const copied = copyBranchDeploymentConfig(source, { id: 'feature', branch: 'feature' }, new Set(['api']));
+    expect(copied.extraProfiles).toEqual([]); expect(copied.profileOverrides?.api.env?.KEY).toBe('stable');
+    expect(source.extraProfiles).toHaveLength(1);
+  });
+  it('keeps a misplaced live declaration in the effective service denominator', () => {
+    const rpc = p('rpc', { deploymentScope: scope });
+    expect(mergeBranchProfiles([p('api')], branch([rpc])).map(profile => profile.id)).toEqual(['api', 'rpc']);
   });
 });

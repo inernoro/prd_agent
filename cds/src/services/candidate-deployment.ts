@@ -1,4 +1,5 @@
 import { measureDeploymentStage, type DeploymentTimingObserver } from './deployment-stage-timing.js';
+import { assertProfileDeploymentScopes } from './branch-extra-services.js';
 import type { BranchEntry, BuildProfile, DeploymentCandidateRecord } from '../types.js';
 import type { ContainerService } from './container.js';
 import type { StateService } from './state.js';
@@ -51,6 +52,7 @@ export class CandidateDeploymentService {
 
   private async execute(options: CandidateDeploymentOptions): Promise<void> {
     const { entry, runId } = options;
+    assertProfileDeploymentScopes(options.profiles, entry);
     if (unresolvedCandidateRun(this.state, entry.id, runId)) throw new Error('candidate_reconciliation_required: previous graph is unresolved');
     const run = this.state.getDeploymentRun(runId);
     const targetSha = entry.deploymentTargetSha;
@@ -60,6 +62,7 @@ export class CandidateDeploymentService {
     const frozen = { operationId: run.operationId, configHash: run.configHash, targetSha, branchId: entry.id, projectId: run.projectId };
     const fence = (step = 'candidate-deployment') => {
       options.assertCurrent(step);
+      assertProfileDeploymentScopes(options.profiles, entry);
       if (servingVersion) assertServingVersion(this.state, entry, servingVersion.proof);
       const current = this.state.getDeploymentRun(runId);
       if (current !== run || current.operationId !== frozen.operationId || current.configHash !== frozen.configHash ||

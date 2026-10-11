@@ -3,6 +3,7 @@
  * These endpoints are the "hands" that do the actual Docker/Git work.
  */
 import { prepareExactPrebuiltArtifacts, resolveExactArtifactTargetSha } from '../services/prebuilt-artifact-gate.js';
+import { assertProfileDeploymentScopes } from '../services/branch-extra-services.js';
 import { parsePulledSha } from '../services/build-log-meta.js';
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
@@ -129,6 +130,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         resolvedProjectId = owner.id;
       }
 
+      try { assertProfileDeploymentScopes(profilesData, stateService.getBranch(branchId) || { id: branchId, projectId: resolvedProjectId, branch: branchName }); }
+      catch { sendEvent('error', { message: 'deployment_scope_mismatch' }); res.end(); return; }
       // 新 master 会在派发前完成归一化；这里再做一次兼容，覆盖旧 master、
       // 手工调用和 executor 已同步项目元数据的场景。后续拓扑排序只消费
       // 归一化后的依赖，避免 Web 先于 Console/Serving 启动。
@@ -224,6 +227,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         entry.deploymentTargetSha = targetSha;
         stateService.save();
         profilesData = await prepareExactPrebuiltArtifacts(shell, profilesData, targetSha, {
+          branch: entry,
           onProgress: (profileId, stage) => sendEvent('log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
         });
         entry.githubCommitSha = targetSha;

@@ -101,6 +101,12 @@ describe('ContainerService', () => {
   });
 
   describe('runService', () => {
+    it('rejects a bound auxiliary before network, source build, or candidate actions', async () => {
+      const input = makeProfile({ deploymentScope: { projectId: 'default', branchId: 'main', repoBranch: 'main' } } as any);
+      await expect(service.runService(makeEntry(), input, makeService())).rejects.toThrow('deployment_scope_mismatch');
+      expect(mock.commands).toEqual([]);
+    });
+
     // waitForContainerAlive polls with real setTimeout delays (5×3s).
     // Stub it out for tests that don't specifically test health-check behavior.
     let aliveStub: ReturnType<typeof vi.spyOn>;

@@ -12,6 +12,14 @@ function shell() {
   return mock;
 }
 describe('P1 exact artifact admission', () => {
+  it('rejects a bound artifact with missing or foreign context before any shell command', async () => {
+    for (const branch of [undefined, { projectId: 'foreign', id: 'main', branch: 'main' }, { projectId: 'default', id: 'feature', branch: 'main' }]) {
+      const mock = shell();
+      await expect(prepareExactPrebuiltArtifacts(mock, [{ ...profile('rpc'), deploymentScope: { projectId: 'default', branchId: 'main', repoBranch: 'main' } } as any], sha, { branch } as any)).rejects.toThrow('deployment_scope_mismatch');
+      expect(mock.commands).toEqual([]);
+    }
+  });
+
   it('declared artifact source requires actual matching OCI source even for a shared prepared image', async () => {
     for (const source of [undefined, 'https://github.com/foreign/repo', 'https://github.com/md-imp/mdimp']) {
       const mock = shell();

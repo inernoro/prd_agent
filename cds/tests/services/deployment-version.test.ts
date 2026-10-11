@@ -44,6 +44,19 @@ describe('DeploymentVersionService', () => {
     };
   }
 
+
+  it.each([undefined, { projectId: 'p1', branchId: 'b1', repoBranch: 'feat/version' }])('freezes placement presence or absence across real JSON restore %j', async expected => {
+    const svc = new DeploymentVersionService(stateService);
+    const p = profile({ deploymentScope: expected } as any);
+    const ordinaryHash = svc.computeConfigHash([profile()], {});
+    if (expected) expect(svc.computeConfigHash([p], {})).not.toBe(ordinaryHash);
+    const version = svc.create({ projectId: 'p1', branchId: 'b1', commitSha: 'a'.repeat(40), configHash: 'scope-' + JSON.stringify(expected), profiles: [p], branch, createdByRunId: 'scope-run' });
+    if (expected) expected.repoBranch = 'mutated-after-capture';
+    await stateService.flush(); const reloaded = new StateService(path.join(tmpDir, 'state.json')); reloaded.load();
+    const restored = new DeploymentVersionService(reloaded).materializeProfiles(reloaded.getDeploymentVersion(version.id)!, [profile({ deploymentScope: { projectId: 'foreign', branchId: 'foreign', repoBranch: 'foreign' } } as any)])[0] as any;
+    expect(restored.deploymentScope).toEqual(expected ? { projectId: 'p1', branchId: 'b1', repoBranch: 'feat/version' } : undefined);
+  });
+
   it('computes a stable config hash without persisting environment values', () => {
     const service = new DeploymentVersionService(stateService);
     const a = service.computeConfigHash([profile()], { TOKEN: 'secret-a', PORT: '3000' });

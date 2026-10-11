@@ -1,3 +1,4 @@
+import { assertProfileDeploymentScopes } from './branch-extra-services.js';
 import type { BranchEntry, CandidateRecoveryProof, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from './state.js';
 import { deploymentVersionFingerprint } from './deployment-version.js';
@@ -24,6 +25,7 @@ export function captureServingVersion(state: Pick<StateService, 'getDeploymentVe
     new Set(version.profiles.map(profile => profile.profileId)).size !== version.profiles.length) {
     throw new Error('candidate_serving_version: complete original version required before stopping');
   }
+  assertProfileDeploymentScopes(version.profiles, branch);
   const profiles = new Map<string, DeploymentVersionProfile>();
   for (const id of profileIds) {
     const profile = version.profiles.find(profile => profile.profileId === id); const service = branch.services[id];
