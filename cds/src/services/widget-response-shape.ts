@@ -8,3 +8,8 @@ export function hasWidgetMarkupPrefix(body: Buffer): boolean {
   // HTML tags. Unknown/whitespace-only prefixes conservatively skip injection.
   return body.subarray(0, 4 * 1024).toString('utf8').trimStart().startsWith('<');
 }
+
+// Representation headers on bodyless responses are metadata, not bytes to decode.
+export function hasWidgetResponseBody(method: string | undefined, status: number): boolean {
+  return method?.toUpperCase() !== 'HEAD' && status >= 200 && status < 300 && status !== 204 && status !== 205;
+}

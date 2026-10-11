@@ -31,11 +31,12 @@ const codecs = {
   br: zlib.brotliCompressSync,
   deflate: zlib.deflateSync,
 };
-async function actualResponse(kind: 'master' | 'forwarder', body: Buffer, encoding: keyof typeof codecs = 'identity', contentType = 'text/html;charset=UTF-8', status = 200, declaredEncoding = encoding === 'identity' ? '' : encoding as string, reset = false) {
+async function actualResponse(kind: 'master' | 'forwarder', body: Buffer, encoding: keyof typeof codecs = 'identity', contentType = 'text/html;charset=UTF-8', status = 200, declaredEncoding = encoding === 'identity' ? '' : encoding as string, reset = false, method = 'POST') {
   const wire = codecs[encoding](body);
   const upstream = await listen((req, res) => {
     req.resume();
-    res.writeHead(status, { 'content-type': contentType, ...(reset ? {} : { 'content-length': String(wire.length) }), ...(declaredEncoding ? { 'content-encoding': declaredEncoding } : {}) });
+    res.writeHead(status, { 'content-type': contentType, ...(reset || status === 204 || status === 205 ? {} : { 'content-length': String(wire.length) }), ...(declaredEncoding ? { 'content-encoding': declaredEncoding } : {}) });
+    if (req.method === 'HEAD' || status === 204 || status === 205) { res.end(); return; }
     if (reset) {
       res.write(wire.subarray(0, 12)); setTimeout(() => res.destroy(), 20); return;
     }
@@ -53,12 +54,12 @@ async function actualResponse(kind: 'master' | 'forwarder', body: Buffer, encodi
     entry = await listen((req, res) => proxy.proxyRequest(req, res, 'http://127.0.0.1:'+upstream, { branchId: 'b', branchName: 'main' }));
   }
   return await new Promise<{ body: Buffer; headers: http.IncomingHttpHeaders; status: number }>((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: entry, path: '/beat', method: 'POST', headers: { host: 'owned.example', 'content-type': 'application/json' } }, res => {
+    const req = http.request({ host: '127.0.0.1', port: entry, path: '/beat', method, headers: { host: 'owned.example', 'content-type': 'application/json' } }, res => {
       const chunks: Buffer[] = [];
       res.on('data', chunk => chunks.push(chunk)); res.on('error', reject);
       res.on('end', () => resolve({ body: Buffer.concat(chunks), headers: res.headers, status: res.statusCode ?? 0 }));
     });
-    req.on('error', reject); req.setTimeout(3000, () => req.destroy(new Error('owned probe timeout'))); req.end('{}');
+    req.on('error', reject); req.setTimeout(3000, () => req.destroy(new Error('owned probe timeout'))); req.end(method === 'HEAD' ? undefined : '{}');
   });
 }
 for (const kind of ['master', 'forwarder'] as const) describe(kind+' widget body integrity (actual HTTP producer, no runtime or auth claim)', () => {
@@ -88,6 +89,22 @@ for (const kind of ['master', 'forwarder'] as const) describe(kind+' widget body
     const response = await actualResponse(kind, body, 'identity', 'text/html', 403);
     expect(response.status).toBe(403); expect(response.body).toEqual(body);
   });
+  for (const encoding of ['gzip', 'br', 'deflate'] as const) {
+    it('preserves compressed representation metadata for bodyless HEAD '+encoding, async () => {
+      const body = Buffer.from('<html><body>HEAD representation</body></html>');
+      const response = await actualResponse(kind, body, encoding, 'text/html', 200, encoding, false, 'HEAD');
+      expect(response.status).toBe(200); expect(response.body.length).toBe(0);
+      expect(response.headers['content-encoding']).toBe(encoding);
+      expect(Number(response.headers['content-length'])).toBe(codecs[encoding](body).length);
+    });
+  }
+  for (const status of [204, 205]) {
+    it('preserves no-content status without trying to decode '+status, async () => {
+      const response = await actualResponse(kind, Buffer.alloc(0), 'identity', 'text/html', status, 'gzip');
+      expect(response.status).toBe(status); expect(response.body.length).toBe(0);
+      expect(response.headers['content-encoding']).toBe('gzip');
+    });
+  }
   it('returns a real failure for malformed supported compression', async () => {
     for (const encoding of ['gzip', 'br', 'deflate']) {
       const response = await actualResponse(kind, Buffer.from('not-compressed'), 'identity', 'text/html', 200, encoding);

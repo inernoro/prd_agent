@@ -25,7 +25,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
-import { hasWidgetMarkupPrefix, isSupportedWidgetEncoding } from '../services/widget-response-shape.js';
+import { hasWidgetMarkupPrefix, hasWidgetResponseBody, isSupportedWidgetEncoding } from '../services/widget-response-shape.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import {
@@ -543,7 +543,7 @@ export class ProxyHandler {
             !!route.branchName &&
             contentType.includes('text/html') &&
             isSupportedWidgetEncoding(String(upstreamRes.headers['content-encoding'] || '')) &&
-            status >= 200 && status < 300;
+            hasWidgetResponseBody(req.method, status);
 
           if (shouldInjectWidget) {
             this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders, suppressPreviewBody);
