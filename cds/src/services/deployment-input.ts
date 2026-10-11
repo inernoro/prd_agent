@@ -1,5 +1,6 @@
 import type { BranchEntry, BuildProfile } from '../types.js';
 import type { ManagedProjectPlan } from './managed-project.js';
+import type { ArtifactAdmission } from './artifact-admission.js';
 
 /** 私有执行输入，禁止放入公开操作、run、事件或重放 HTTP body。 */
 export interface DeploymentInputSnapshot {
@@ -13,6 +14,7 @@ export interface DeploymentInputSnapshot {
   configHash?: string;
   agentRequest?: boolean;
   agentPrebuiltGated?: boolean;
+  artifactAdmission?: ArtifactAdmission;
 }
 
 export function captureDeploymentInput(

@@ -1,3 +1,4 @@
+import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
@@ -1492,13 +1493,13 @@ function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): No
 }
 
 function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
-  if (!store) return null;
   let lastSeverity: ServerEventSeverity | null = null;
   let lastRecordedAt = 0;
 
   const sample = () => {
     try {
       if (config.mode !== 'executor' && !isSelfUpdateDraining(Date.now())) {
+        void requestArtifactWaitRefresh(branchOperationCoordinator);
         for (const pending of branchOperationCoordinator.drainReady()) dispatchBackgroundPendingWebhookDeploy(pending);
       }
       const health = evaluateBuildGateHealth(buildGateStatus(), state.getDeploymentRuns(), new Date());
@@ -1506,7 +1507,7 @@ function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateSe
       if (health.ok) {
         if (lastSeverity) {
           // 从退化恢复：记一条 info 让事件流有始有终。
-          store.record({
+          store?.record({
             category: 'system',
             severity: 'info',
             source: 'build-gate-watchdog',
@@ -1524,7 +1525,7 @@ function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateSe
       lastSeverity = severity;
       lastRecordedAt = now;
       const message = `构建队列健康退化：${health.reasons.map((r) => r.message).join('；')}`;
-      store.record({
+      store?.record({
         category: 'system',
         severity,
         source: 'build-gate-watchdog',

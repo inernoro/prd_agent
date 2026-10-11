@@ -26,7 +26,7 @@ import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -306,6 +306,15 @@ async function main(): Promise<void> {
     assert.equal((diagnostics.inspect?.state as Record<string, unknown>)?.running, true);
     assert.ok(JSON.stringify(diagnostics.logs).includes('owned-observation'));
     report.checks.push({ name: 'real-container-running-and-diagnostics', passed: true });
+    report.stage = 'actual-unlabelled-artifact-rejection';
+    const unlabelled = await container.inspectDeploymentArtifacts([{ id: 'owned-app', projectId: 'owned', name: 'Owned app', dockerImage: 'alpine:3.20',
+      prebuiltImage: true, command: '', workDir: '.', containerPort: 8080 }], report.head, () => assert.ok(id));
+    assert.equal(unlabelled.state, 'waiting'); assert.equal(unlabelled.reason, 'revision-mismatch');
+    assert.equal(await container.isRunning(id), true);
+    report.artifactAdmissionNegative = { scope: 'compiled checker with real daemon/pull/image inspect; image lacks target OCI revision',
+      targetCommitSha: report.head, state: unlabelled.state, reason: unlabelled.reason, ownedContainerRetained: true,
+      actualRegistryPublishResumeVerified: false, actualApplicationDeploymentVerified: false };
+    report.checks.push({ name: 'compiled-real-unlabelled-artifact-rejected-owned-container-retained', passed: true });
     report.stage = 'real-janitor-reads';
     const janitorModule = compiled ? await import(new URL('../dist/services/janitor.js', import.meta.url).href) as typeof import('../src/services/janitor.js') : { createJanitorDockerAdapters };
     const janitor = janitorModule.createJanitorDockerAdapters(shell);

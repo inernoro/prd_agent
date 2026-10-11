@@ -11,6 +11,7 @@ on:
       - cds/scripts/replica-confirmation-drill.ts
       - cds/scripts/actual-stop-drill.ts
       - cds/scripts/observation-isolation-drill.ts
+      - cds/scripts/artifact-admission-drill.ts
       - cds/scripts/tsconfig.acceptance.json
       - .github/workflows/cds-isolated-recovery.yml
 
@@ -22,6 +23,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  artifact-admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check and compile artifact admission
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real owned registry missing publish and durable wait recovery
+        run: pnpm -C cds exec tsx scripts/artifact-admission-drill.ts
+      - name: Preserve artifact admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-artifact-admission-${{ github.sha }}
+          path: cds/artifact-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
   observation-isolation:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -40,7 +69,7 @@ jobs:
           pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
           pnpm -C cds build
       - name: Real process cancellation and main-thread isolation regressions
-        run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts tests/services/janitor-observation.test.ts tests/services/observation-stream-executor.test.ts tests/services/docker-observation-event-stream.test.ts tests/services/container-log-stream.test.ts tests/services/self-status-cache.test.ts tests/services/system-log-monitor.test.ts tests/services/system-log-monitor-process.test.ts tests/services/operation-process-isolation.test.ts tests/services/container-operation-qualification.test.ts tests/services/release-git-isolation.test.ts tests/services/release-commit-clock.test.ts tests/services/release-commit-meta.test.ts tests/services/release-commit-rail.test.ts tests/services/release-promotion-ancestor.test.ts tests/routes/cds-system-diagnostics.test.ts tests/services/nonurgent-git-process.test.ts tests/services/preview-instance.test.ts tests/services/async-stuck-deploy-reconciler.test.ts tests/services/async-stuck-deploy-process.test.ts tests/services/deploy-stuck-reconciler.test.ts tests/services/infra-oom-correlation.test.ts tests/routes/branches.test.ts
+        run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts tests/services/janitor-observation.test.ts tests/services/observation-stream-executor.test.ts tests/services/docker-observation-event-stream.test.ts tests/services/container-log-stream.test.ts tests/services/self-status-cache.test.ts tests/services/system-log-monitor.test.ts tests/services/system-log-monitor-process.test.ts tests/services/operation-process-isolation.test.ts tests/services/container-operation-qualification.test.ts tests/services/release-git-isolation.test.ts tests/services/release-commit-clock.test.ts tests/services/release-commit-meta.test.ts tests/services/release-commit-rail.test.ts tests/services/release-promotion-ancestor.test.ts tests/routes/cds-system-diagnostics.test.ts tests/services/nonurgent-git-process.test.ts tests/services/preview-instance.test.ts tests/services/async-stuck-deploy-reconciler.test.ts tests/services/async-stuck-deploy-process.test.ts tests/services/deploy-stuck-reconciler.test.ts tests/services/infra-oom-correlation.test.ts tests/routes/branches.test.ts tests/routes/executor-deploy.test.ts tests/services/artifact-admission.test.ts tests/services/artifact-admission-wait.test.ts tests/services/deployment-run.test.ts
       - name: Real owned Docker reads through compiled observation processes
         run: pnpm -C cds exec tsx scripts/observation-isolation-drill.ts --compiled
       - name: Preserve observation evidence

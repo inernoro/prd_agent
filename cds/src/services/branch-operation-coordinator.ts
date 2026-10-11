@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import type { DeploymentInputSnapshot } from './deployment-input.js';
+import type { ArtifactAdmission } from './artifact-admission.js';
 
 export type BranchOperationKind =
   | 'deploy'
@@ -350,7 +351,26 @@ export class BranchOperationCoordinator {
   }
 
 
-  begin(request: BranchOperationRequest): BranchOperationDecision {
+  begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean } = {}): BranchOperationDecision {
+    if (options.waitForArtifacts && (request.versionId || request.hasOneShotOptions)) {
+      return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
+        reason: '本次指定版本或一次性选项不能作为产物等待恢复，请在产物齐备后重试' };
+    }
+    const decision = this.beginExecution(request);
+    if (!options.waitForArtifacts || decision.status !== 'started' || !decision.lease) return decision;
+    const lease = decision.lease;
+    const active = this.active.get(this.operationKey(lease.request));
+    if (!active || active.operationId !== lease.operationId || active.generation !== lease.generation) return decision;
+    // 尚未开始执行。直接保存原身份为pending，不用complete制造失败或新建另一个任务。
+    this.active.delete(this.operationKey(lease.request));
+    this.pendingWebhookDeploys.set(this.operationKey(lease.request), { operationId: lease.operationId,
+      generation: lease.generation, branchId: lease.branchId, request: lease.request, mergedCount: 1, updatedAt: nowIso() });
+    this.record('branch.operation.queued', lease.request, lease.operationId, lease.generation, 'info', { artifactWaiting: true });
+    return { status: 'merged', operationId: lease.operationId, generation: lease.generation,
+      pendingCommitSha: lease.request.commitSha, reason: 'waiting for required deployment artifacts' };
+  }
+
+  private beginExecution(request: BranchOperationRequest): BranchOperationDecision {
     this.prunePendingReplayClaims();
     let replay: PendingWebhookDeploy | undefined;
     if (request.pendingReplay) {
@@ -540,6 +560,7 @@ export class BranchOperationCoordinator {
     for (const [key, pending] of ordered) {
       if (branchId && pending.branchId !== branchId) continue;
       if (projectId && pending.request.projectId && projectId !== pending.request.projectId) continue;
+      if (this.deploymentInputs.get(this.replayKey(pending))?.artifactAdmission?.state === 'waiting') continue;
       if (this.findBlockingActive(pending.request) || this.getUsableReservedContinuation(pending.branchId, pending.request)) continue;
       // 查询续约时可能清理过期范围及其待办，已取消的请求不能被本轮继续派发。
       if (this.pendingWebhookDeploys.get(key) !== pending) continue;
@@ -628,6 +649,37 @@ export class BranchOperationCoordinator {
   getPendingWebhookDeploy(branchId: string, profileId?: string | null): PendingWebhookDeploy | undefined {
     return [...this.pendingWebhookDeploys.values()].find(item => item.branchId === branchId
       && (!profileId || item.request.profileId === profileId));
+  }
+
+  getArtifactWaiterKeys(): string[] {
+    return [...this.pendingWebhookDeploys.values()].filter(pending =>
+      this.deploymentInputs.get(this.replayKey(pending))?.artifactAdmission?.state === 'waiting').map(pending => this.replayKey(pending));
+  }
+
+  getArtifactWaiters(limit = 16, offset = 0): Array<{ pending: PendingWebhookDeploy; input: DeploymentInputSnapshot }> {
+    const pending = [...this.pendingWebhookDeploys.values()].filter(item =>
+      this.deploymentInputs.get(this.replayKey(item))?.artifactAdmission?.state === 'waiting');
+    const selected = [];
+    for (let index = 0; index < Math.min(16, limit, pending.length); index++) {
+      const item = pending[(offset + index) % pending.length];
+      selected.push({ pending: structuredClone(item), input: structuredClone(this.deploymentInputs.get(this.replayKey(item))!) });
+    }
+    return selected;
+  }
+
+  isArtifactWaiterCurrent(pending: PendingWebhookDeploy): boolean {
+    const current = this.pendingWebhookDeploys.get(this.operationKey(pending.request));
+    return current?.operationId === pending.operationId && current.generation === pending.generation
+      && this.deploymentInputs.get(this.replayKey(pending))?.artifactAdmission?.state === 'waiting';
+  }
+
+  updateArtifactWaiter(pending: PendingWebhookDeploy, admission: ArtifactAdmission): boolean {
+    if (!this.isArtifactWaiterCurrent(pending)) return false;
+    const original = this.deploymentInputs.get(this.replayKey(pending))!;
+    if (admission.targetCommitSha.toLowerCase() !== original.artifactAdmission!.targetCommitSha.toLowerCase()) return false;
+    // 复核只能更新产物事实，不能换掉已受理的配置、私有值或目标。
+    this.deploymentInputs.set(this.replayKey(pending), { ...original, artifactAdmission: structuredClone(admission) });
+    return true;
   }
 
   clearForTest(): void {

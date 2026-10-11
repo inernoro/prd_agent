@@ -17,6 +17,8 @@ import { recordContainerSample, queryContainerSeries } from '../services/contain
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
+import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
@@ -1725,6 +1727,7 @@ interface RunServiceWithPortRetryOptions {
   isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
   /** 本次部署 pull 到的完整提交：极速版先试它的 CI 镜像（见 container.ts runService 同名字段）。 */
   latestCommitSha?: string;
+  artifactCommitSha?: string;
   /** 用上了最新提交的镜像时回调，调用方改正部署记录里的提交。 */
   onLatestCommitImage?: (commitSha: string) => void;
 }
@@ -1812,6 +1815,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           isComponentUnchangedSince: options.isComponentUnchangedSince,
           latestCommitSha: options.latestCommitSha,
           onLatestCommitImage: options.onLatestCommitImage,
+          artifactCommitSha: options.artifactCommitSha,
         },
       );
       return;
@@ -2955,13 +2959,109 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  async function inspectArtifactInput(entry: BranchEntry, input: DeploymentInputSnapshot, profileId: string | null | undefined,
+    assertCurrent: () => void, explicitTarget?: string): Promise<ArtifactAdmission> {
+    const profiles = input.profiles.filter(profile => !profileId || profile.id === profileId)
+      .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)));
+    const target = input.artifactAdmission!.targetCommitSha;
+    // 当前单服务入口执行于本机；整分支按其实际派发执行器核验，不借Master架构冒充。
+    const executor = profileId ? null : resolveDeployTarget(entry, explicitTarget);
+    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertCurrent), executorId: 'local' };
+    assertCurrent();
+    const response = await fetch(`http://${executor.host}:${executor.port}/exec/artifact-preflight`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': config.executorToken || '' },
+      body: JSON.stringify({ profiles, commitSha: target }), signal: AbortSignal.timeout(120_000),
+    });
+    assertCurrent();
+    if (!response.ok) return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+      reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
+    const reader = response.body?.getReader();
+    const chunks: Buffer[] = []; let bytes = 0;
+    if (!reader) throw new Error('执行器未返回产物核验结果');
+    try {
+      for (;;) {
+        const { value, done } = await reader.read(); if (done) break;
+        bytes += value.byteLength;
+        if (bytes > 1024 * 1024) throw new Error('执行器产物核验结果超过读取预算');
+        chunks.push(Buffer.from(value));
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+    const result = JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')) as ArtifactAdmission;
+    assertCurrent();
+    if (!result || result.targetCommitSha !== target || !['ready', 'waiting'].includes(result.state) || !Array.isArray(result.artifacts)) {
+      return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+        reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
+    }
+    if (result.state === 'ready') for (const profile of profiles) {
+      if (!profile.prebuiltImage || profile.managedBuild || profile.localArtifact) continue;
+      const artifact = result.artifacts.find(item => item.profileIds?.includes(profile.id) && item.requestedImage === profile.dockerImage);
+      if (!artifact || artifact.revision !== target || !/^.+@sha256:[0-9a-f]{64}$/.test(artifact.image) || !artifact.platform?.startsWith('linux/')) {
+        return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+          reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
+      }
+    }
+    return { ...result, executorId: executor.id };
+  }
+
+  if (branchOperationCoordinator) registerArtifactWaitRefresher(branchOperationCoordinator, async () => {
+    const ready = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService,
+      getBranch: id => stateService.getBranch(id), inspect: (pending, input, entry, assertCurrent) =>
+        inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent),
+      onChecked: (pending, previous, result) => {
+        if (previous.state === result.state && previous.reason === result.reason
+          && previous.profileIds?.join(',') === result.profileIds?.join(',')) return;
+        const run = deploymentRunService?.getForOperation(pending.operationId, pending.generation);
+        if (!run || run.status !== 'queued') return;
+        const messages: Partial<Record<NonNullable<ArtifactAdmission['reason']>, string>> = {
+          missing: '必需镜像尚未发布，等待CI产物；旧服务继续保留',
+          'access-denied': '执行器无法访问必需镜像，请检查镜像访问权限；旧服务继续保留',
+          'revision-mismatch': '镜像内容与目标提交不一致，等待正确产物；旧服务继续保留',
+          'platform-mismatch': '镜像平台与执行器不匹配，等待适用产物；旧服务继续保留',
+          'target-unresolved': '目标提交的完整身份尚未确认，暂不部署；旧服务继续保留',
+          'image-unresolved': '必需镜像引用尚未确认，暂不部署；旧服务继续保留',
+        };
+        const phase = result.state === 'ready' ? 'artifact-ready' : 'artifact-wait';
+        deploymentRunService!.heartbeat(run.id, phase);
+        deploymentRunService!.append(run.id, { phase, status: 'queued', level: 'info',
+          message: result.state === 'ready' ? '全部必需产物核验通过，等待部署资格与执行槽'
+            : messages[result.reason!] || '产物核验暂不可用，等待重试；旧服务继续保留',
+          detail: { reason: result.reason, profileIds: result.profileIds, targetCommitSha: result.targetCommitSha } });
+      } });
+    for (const pending of ready) dispatchPendingWebhookDeploy(pending);
+  });
+
   async function admitBranchDeployment(
     req: Request, res: Response, entry: BranchEntry, input: Parameters<typeof beginBranchOperation>[3],
     runInput: Omit<BeginDeploymentRunInput, 'projectId' | 'branchId' | 'operationId' | 'operationGeneration' | 'initialStatus'>,
     deploymentInput?: DeploymentInputSnapshot,
   ): Promise<{ started: boolean; lease: BranchOperationLease | null; run: DeploymentRun | undefined }> {
+    const artifactProfiles = deploymentInput?.profiles.filter(profile => !input.profileId || profile.id === input.profileId)
+      .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(deploymentInput!, entry))) || [];
+    const requiresArtifacts = artifactProfiles.some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
+    if (deploymentInput && requiresArtifacts && !deploymentInput.artifactAdmission) {
+      const target = deploymentInput.targetCommitSha || (input.commitPinned ? input.commitSha : deploymentInput.ciTargetSha || entry.githubCommitSha) || '';
+      deploymentInput.artifactAdmission = { state: 'waiting', targetCommitSha: target, checkedAt: '', reason: 'verification-unavailable', artifacts: [] };
+      if (/^[0-9a-f]{40}$/i.test(target)) {
+        deploymentInput.targetCommitSha = target.toLowerCase();
+        input = { ...input, commitSha: target.toLowerCase(), commitPinned: true };
+        runInput = { ...runInput, commitSha: target.toLowerCase() };
+      }
+      // 带版本/一次性选项沿用既有不能持久重放的契约：先核验，缺产物时拒绝而非丢选项排队。
+      if (input.versionId || input.hasOneShotOptions) {
+        try {
+          deploymentInput.artifactAdmission = await inspectArtifactInput(entry, deploymentInput, input.profileId, () => {}, req.body?.targetExecutorId);
+        } catch {
+          deploymentInput.artifactAdmission = { ...deploymentInput.artifactAdmission, state: 'waiting', reason: 'verification-unavailable', artifacts: [] };
+        }
+      }
+    }
+    const waitForArtifacts = deploymentInput?.artifactAdmission?.state === 'waiting';
+    if (waitForArtifacts && (!branchOperationCoordinator || !deploymentRunService)) {
+      res.status(503).json({ error: 'artifact_wait_unavailable', message: '产物尚未确认齐备，可靠排队能力不可用，请稍后重试；尚未开始部署' });
+      return { started: false, lease: null, run: undefined };
+    }
     // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
-    const decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input));
+    const decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), { waitForArtifacts });
     if (decision?.status === 'rejected') {
       beginBranchOperation(req, res, entry, input, decision);
       return { started: false, lease: null, run: undefined };
@@ -2996,8 +3096,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         run = await deploymentRunService?.begin({ ...runInput, executionInput, operationAdmissionGeneration, projectId: entry.projectId || 'default', branchId: entry.id,
           profileId: input.profileId || undefined, operationId: decision?.operationId, operationGeneration: decision?.generation,
           initialStatus: decision?.status === 'merged' ? 'queued' : 'pending',
-          phase: decision?.status === 'merged' ? 'operation-queue' : runInput.phase,
-          message: decision?.status === 'merged' ? '目标部署已排队，等待当前操作释放' : runInput.message });
+          phase: decision?.status === 'merged' ? (waitForArtifacts ? 'artifact-wait' : 'operation-queue') : runInput.phase,
+          message: decision?.status === 'merged' ? (waitForArtifacts ? '目标部署已可靠排队，等待全部必需产物核验' : '目标部署已排队，等待当前操作释放') : runInput.message });
       }
       if (run?.status === 'cancelled' || run?.status === 'failed') throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '受理期间原部署已结束');
       decision?.lease?.assertCurrent('after-admission-persistence');
@@ -3016,6 +3116,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (decision && decision.status !== 'started') {
       beginBranchOperation(req, res, entry, input, decision);
+      if (waitForArtifacts && branchOperationCoordinator) void requestArtifactWaitRefresh(branchOperationCoordinator);
       return { started: false, lease: null, run };
     }
     return { started: true, lease: decision?.lease || null, run };
@@ -3071,7 +3172,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
       deploymentRunId: acceptedRunId || joinedRunId || undefined,
-      message: decision.status === 'joined'
+      message: decision.reason === 'waiting for required deployment artifacts' ? '目标部署已可靠排队，等待全部必需产物；旧服务继续保留'
+        : decision.status === 'joined'
         ? (decision.joinedPending ? '同一目标部署已在队列，本次请求沿用原排队任务'
           : `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`)
         : decision.status === 'merged'
@@ -12657,7 +12759,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
-    const effectiveProfilesForHash = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
+    const effectiveProfilesForHash = currentProfiles.map((profile) => { const effective = resolveEffectiveProfile(profile, inputBranch()); return effective.prebuiltImage ? withoutSourceFallback(effective) : effective; });
     let deploymentConfigHash = deploymentInput.configHash || selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
         effectiveProfilesForHash,
@@ -13040,7 +13142,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // the dispatcher picks based on current load. Returns null for the local
     // path (embedded master or no cluster), which is the previous behavior.
     const explicitTarget = (req.body?.targetExecutorId as string | undefined) || undefined;
-    const remoteTarget = resolveDeployTarget(entry, explicitTarget);
+    const checkedExecutor = deploymentInput.artifactAdmission?.executorId;
+    const remoteTarget = checkedExecutor === 'local' ? null : resolveDeployTarget(entry, checkedExecutor || explicitTarget);
     if (remoteTarget) {
       // Clear any stale error + clear the local services map since we're
       // handing this branch off to the remote — the master isn't running
@@ -13061,12 +13164,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
           // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
           // 未门禁时保持原样（版本 / managed 传已物化清单，否则由 proxy 内部自行 resolve）。
-          profiles: agentPrebuiltGated
+          profiles: (agentPrebuiltGated
             ? (selectedDeploymentVersion || managedPlan
                 ? profiles
                 : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))
               ).map((p) => withoutSourceFallback(p))
-            : (selectedDeploymentVersion || managedPlan ? profiles : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))),
+            : (selectedDeploymentVersion || managedPlan ? profiles : currentProfiles.map((p) => resolveEffectiveProfile(p, inputBranch()))))
+            .map(profile => admittedArtifactProfile(profile, deploymentInput.artifactAdmission)),
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
@@ -13595,11 +13699,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
-          const effectiveProfile = selectedDeploymentVersion
+          const effectiveProfile = admittedArtifactProfile(selectedDeploymentVersion
             ? profile
             : agentPrebuiltGated
               ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
-              : resolveEffectiveProfile(profile, inputBranch());
+              : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission);
           const branchOverride = selectedDeploymentVersion ? undefined : deploymentInput.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -13788,6 +13892,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               entry,
               sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
               profile: effectiveProfile,
+              artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha,
               service: svc,
               customEnv: mergedEnv,
               requestId: requestId || null,
@@ -14533,7 +14638,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
-    const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([singleDeployGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch())], getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
+    const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, inputBranch())].map(effective => effective.prebuiltImage ? withoutSourceFallback(effective) : effective), getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
     deploymentInput.configHash = profileDeploymentConfigHash;
     const admission = await admitBranchDeployment(req, res, entry, {
       kind: 'deploy-profile',
@@ -14664,9 +14769,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Resolve baseline → branch override → deploy-mode override
       // 门禁下摘掉源码回退（同整分支部署）。
-      const effectiveProfile = singleDeployGated
+      const effectiveProfile = admittedArtifactProfile(singleDeployGated
         ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
-        : resolveEffectiveProfile(profile, inputBranch());
+        : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission);
       const branchOverride = deploymentInput.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -14837,6 +14942,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           entry,
           sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
           profile: effectiveProfile,
+          artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha,
           service: svc,
           customEnv: mergedEnv,
           requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,

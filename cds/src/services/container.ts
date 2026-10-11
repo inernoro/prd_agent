@@ -25,6 +25,7 @@ import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkP
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
+import { inspectDeploymentArtifacts } from './artifact-admission.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -711,6 +712,10 @@ export class ContainerService {
     private readonly logStreams?: ContainerLogStreamHub,
   ) {}
 
+  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void) {
+    return inspectDeploymentArtifacts(this.qualifiedShell(assertCurrent), profiles, targetCommitSha, assertCurrent);
+  }
+
   /**
    * infra 端口的绑定地址。适配器给不出时退到 process.env 的同一份判定——
    * 两条路径都走 infra-publish.ts，不存在「适配器一套、兜底另一套」的分裂。
@@ -1244,6 +1249,8 @@ export class ContainerService {
        * 显式点名提交时传入。
        */
       latestCommitSha?: string;
+      /** 已准入CI产物的完整提交，源码挂载更新不能改写实际镜像版本。 */
+      artifactCommitSha?: string;
       /** 用上了最新提交的镜像：调用方据此把部署记录改成实际落地的提交。 */
       onLatestCommitImage?: (commitSha: string) => void;
     } = {},
@@ -1323,7 +1330,7 @@ export class ContainerService {
     // 而非空白等待。
     // 方案甲：用上了「刚 pull 到的提交」的镜像时，容器里注入的提交号元数据（GIT_COMMIT /
     // CDS_COMMIT_SHA / VITE_BUILD_ID）也要跟着写这个提交，否则应用自报的版本还是旧提交。
-    let runCommitSha: string | undefined;
+    let runCommitSha: string | undefined = context.artifactCommitSha;
     if (profile.prebuiltImage === true && !managedArtifactReady) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:

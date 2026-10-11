@@ -3,6 +3,7 @@
  * These endpoints are the "hands" that do the actual Docker/Git work.
  */
 import { Router } from 'express';
+import type { BuildProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
 import { WorktreeService } from '../services/worktree.js';
@@ -59,6 +60,22 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       branchStatus[b.id] = { status: b.status, services: b.services };
     }
     res.json({ branches: branchStatus });
+  });
+
+  // 只核验产物，不创建worktree、容器或修改项目/分支状态；使用本执行器daemon及registry访问。
+  router.post('/artifact-preflight', async (req, res) => {
+    const { profiles, commitSha } = req.body || {};
+    if (!Array.isArray(profiles) || profiles.length > 256 || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha)
+      || !profiles.every(profile => profile && typeof profile.id === 'string' && profile.id.length <= 256
+        && typeof profile.dockerImage === 'string' && profile.dockerImage.length <= 4096)) {
+      res.status(400).json({ error: '产物核验输入无效' }); return;
+    }
+    try {
+      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, () => {});
+      res.json(result);
+    } catch {
+      res.status(503).json({ error: '产物核验暂不可用，尚未开始部署' });
+    }
   });
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──

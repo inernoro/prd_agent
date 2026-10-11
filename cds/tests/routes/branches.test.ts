@@ -16,6 +16,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
+import { requestArtifactWaitRefresh } from '../../src/services/artifact-admission-wait.js';
 import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import { ManagedProjectService } from '../../src/services/managed-project.js';
 import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
@@ -285,6 +286,7 @@ describe('Branch Routes', () => {
     await new Promise<void>((resolve) => {
       server = app.listen(0, '127.0.0.1', resolve);
     });
+    config.masterPort = (server.address() as { port: number }).port;
   });
 
   afterEach(async () => {
@@ -295,6 +297,28 @@ describe('Branch Routes', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
+
+  function readyArtifactFixture() {
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'available', stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker image inspect (.+)/, match => {
+      const reference = match[1].replace(/'/g, ''); const sha = /:sha-([a-f0-9]{40})/.exec(reference)?.[1];
+      const content = `sha256:${(sha || 'c'.repeat(40)) + (sha || 'c'.repeat(40)).slice(0, 24)}`;
+      return { stdout: JSON.stringify([{ Id: content, RepoDigests: [reference.replace(/:sha-[a-f0-9]{40}$/, '') + '@' + content],
+        Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': sha } } }]), stderr: '', exitCode: 0 };
+    });
+  }
+
+  async function waitForAcceptedRun(response: { headers: http.IncomingHttpHeaders }) {
+    const id = String(response.headers['x-cds-deployment-run-id']);
+    const until = Date.now() + 3_000;
+    while (Date.now() < until) {
+      const run = deploymentRunService.get(id);
+      if (run && ['running', 'failed', 'cancelled'].includes(run.status)) return run;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    throw new Error(`原受理任务未结束: ${deploymentRunService.get(id)?.status}`);
+  }
 
   describe('真实Git部署目标与运行源码隔离', () => {
     async function sourceFixture(withMigration = false) {
@@ -714,6 +738,7 @@ describe('Branch Routes', () => {
 
     it('机器凭据排队重放仍保留极速版限制，不因内部派发失去身份而允许源码回退', async () => {
       seedGateProject(true); stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      readyArtifactFixture();
       let release!: () => void, started!: () => void, replayed!: () => void;
       const hold = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
       const done = new Promise<void>((resolve) => { replayed = resolve; });
@@ -725,7 +750,7 @@ describe('Branch Routes', () => {
       let replayStatus = 0;
       vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input)); const response = await request(server, 'POST', url.pathname, JSON.parse(String(init?.body)), init?.headers as Record<string, string>);
-        replayStatus = response.status; replayed(); return new Response(String(response.body), { status: response.status });
+        replayStatus = response.status; if (JSON.parse(String(init?.body)).commitSha === 'b'.repeat(40)) replayed(); return new Response(String(response.body), { status: response.status });
       });
       const first = request(server, 'POST', '/api/branches/b1/deploy', { commitSha: 'a'.repeat(40) }, { 'X-Test-Key': 'A' });
       try {
@@ -1015,31 +1040,21 @@ describe('Branch Routes', () => {
       expect(human.status).toBe(200);
     });
 
-    /*
-     * 极速版镜像拉不到时 runService 会按 sourceFallbackProfile 在宿主上编译源码——
-     * 正是门禁要禁的事。差分断言：同一条 express 分支、同样拉不到镜像，内部派发的部署
-     * 回退源码并起了带源码命令的容器；Agent 的部署不回退，分支以失败收场。
-     */
-    it('门禁下镜像拉不到不回退源码编译：Agent 部署失败等 CI，内部派发（不带机器凭据）仍回退（Codex P1）', async () => {
-      seedGateProject(true);
-      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
-      stateService.save();
+    it('预构建缺产物时内部与机器请求都保存等待，不能静默回退宿主源码构建', async () => {
+      seedGateProject(true); stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const target = 'a'.repeat(40); stateService.getBranch('b1')!.githubCommitSha = target;
+      readyArtifactFixture();
       mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
-      mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      const sourceRuns = () => mock.commands.filter((c) => c.includes('docker run') && c.includes('pnpm build')).length;
-
-      const exempt = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'webhook' });
-      expect(exempt.status).toBe(200);
-      expect(String(exempt.body)).toContain('自动回退源码编译');
-      expect(sourceRuns()).toBe(1);
-
-      const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
-      expect(gated.status).toBe(200);
-      expect(String(gated.body)).toContain('极速版门禁：镜像缺失不回退源码编译');
-      expect(String(gated.body)).not.toContain('自动回退源码编译');
-      expect(sourceRuns()).toBe(1);
-      expect(stateService.getBranch('b1')?.status).toBe('error');
+      const sourceRuns = () => mock.commands.filter(command => command.includes('docker run') && command.includes('pnpm build')).length;
+      const exempt = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: target }, { 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'webhook' });
+      await requestArtifactWaitRefresh(branchOperationCoordinator);
+      expect(exempt.status).toBe(200); expect(String(exempt.body)).toContain('等待全部必需产物');
+      expect(deploymentRunService.get(String(exempt.headers['x-cds-deployment-run-id']))?.status).toBe('queued');
+      const gated = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: target }, { 'X-Test-Key': 'A' });
+      await requestArtifactWaitRefresh(branchOperationCoordinator);
+      expect(gated.status).toBe(200); expect(sourceRuns()).toBe(0);
+      expect(deploymentRunService.get(String(gated.headers['x-cds-deployment-run-id']))?.status).toBe('queued');
+      expect(stateService.getBranch('b1')?.status).toBe('idle');
     });
 
     it('机器 set-mode 传显式空串：即便 profile 基线是 express，空串覆盖等于源码基线，409（Codex 第四轮 P1）', async () => {
@@ -1051,10 +1066,11 @@ describe('Branch Routes', () => {
       expect(stateService.getBranchProfileOverride('b1', 'api')).toBeUndefined();
     });
 
-    it('远端执行器派发：门禁下发给执行器的 profile 不带 sourceFallbackProfile，真人派发保留（Codex 第三轮 P1）', async () => {
+    it('远端执行器实际产物确认后，真人与机器派发都使用固定digest且不带源码回退', async () => {
       seedGateProject(true);
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
       const b1 = stateService.getBranch('b1')!;
+      b1.githubCommitSha = 'a'.repeat(40);
       b1.executorId = 'exec-gate';
       stateService.save();
       const now = new Date().toISOString();
@@ -1066,18 +1082,27 @@ describe('Branch Routes', () => {
       const fetchCalls: Array<{ url: string; body: any }> = [];
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        fetchCalls.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        fetchCalls.push({ url: String(input), body });
+        if (String(input).includes('/exec/artifact-preflight')) return new Response(JSON.stringify({ state: 'ready', targetCommitSha: body.commitSha,
+          checkedAt: new Date().toISOString(), artifacts: body.profiles.map((profile: any) => ({ profileIds: [profile.id], requestedImage: profile.dockerImage,
+            image: `ghcr.io/x/api@sha256:${'c'.repeat(64)}`, revision: body.commitSha, platform: 'linux/amd64' })) }), { status: 200 });
+        if (String(input).includes('/api/branches/')) {
+          const response = await request(server, 'POST', new URL(String(input)).pathname, body, init?.headers as Record<string, string>);
+          return new Response(String(response.body), { status: response.status });
+        }
         return new Response('event: done\ndata: {}\n\n', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
       }) as typeof fetch;
       try {
         const human = await request(server, 'POST', '/api/branches/b1/deploy', {});
-        expect(human.status).toBe(200);
+        expect(human.status).toBe(200); await waitForAcceptedRun(human);
         const humanDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
-        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.sourceFallbackProfile).toBeDefined();
+        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.dockerImage).toBe(`ghcr.io/x/api@sha256:${'c'.repeat(64)}`);
+        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.sourceFallbackProfile).toBeUndefined();
 
         fetchCalls.length = 0;
         const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
-        expect(gated.status).toBe(200);
+        expect(gated.status).toBe(200); await waitForAcceptedRun(gated);
         const gatedDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
         expect(gatedDeploy).toBeDefined();
         const api = gatedDeploy!.body.profiles.find((p: any) => p.id === 'api');
@@ -3386,21 +3411,23 @@ describe('Branch Routes', () => {
       mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
+      readyArtifactFixture();
       const first = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
       expect(first.status).toBe(200);
-      expect(String(first.body)).toContain('version-create');
+      const firstRun = await waitForAcceptedRun(first);
+      expect(firstRun.status).toBe('running');
       const branchAfterFirst = stateService.getBranch('version-reuse');
       const versionId = branchAfterFirst?.currentVersionId;
       expect(versionId).toMatch(/^dv_/);
       expect(deploymentVersionService.get(versionId!)).toMatchObject({
         commitSha,
-        profiles: [expect.objectContaining({ artifactImage: image, reusable: true })],
+        profiles: [expect.objectContaining({ artifactImage: image.replace(/:sha-[a-f0-9]{40}$/, '') + `@sha256:${commitSha + commitSha.slice(0, 24)}`, reusable: true })],
       });
       const sourcePullCount = mock.commands.filter((command) => command.includes('git fetch')).length;
 
       const second = await request(server, 'POST', '/api/branches/version-reuse/deploy', { commitSha });
       expect(second.status).toBe(200);
-      expect(String(second.body)).toContain('已锁定版本');
+      await waitForAcceptedRun(second);
       expect(mock.commands.filter((command) => command.includes('git fetch'))).toHaveLength(sourcePullCount);
       const secondRunId = String(second.headers['x-cds-deployment-run-id']);
       expect(deploymentRunService.get(secondRunId)).toMatchObject({
@@ -3797,8 +3824,8 @@ describe('Branch Routes', () => {
         await active;
         expect(replays).toHaveLength(2);
         expect(replays).toEqual(expect.arrayContaining([
-          { url: 'http://127.0.0.1:9900/api/branches/service-pending/deploy/api', commitSha: 'd'.repeat(40) },
-          { url: 'http://127.0.0.1:9900/api/branches/service-pending/deploy/web', commitSha: 'c'.repeat(40) },
+          { url: `http://127.0.0.1:${config.masterPort}/api/branches/service-pending/deploy/api`, commitSha: 'd'.repeat(40) },
+          { url: `http://127.0.0.1:${config.masterPort}/api/branches/service-pending/deploy/web`, commitSha: 'c'.repeat(40) },
         ]));
         expect(branchOperationCoordinator.getPendingWebhookDeploy('service-pending')).toBeUndefined();
       } finally {
@@ -4122,21 +4149,67 @@ describe('Branch Routes', () => {
       } finally { release(); await first; setBuildGateHostLoadProvider(null); }
     });
 
+    it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {
+      const target = 'b'.repeat(40); const imageId = `sha256:${'c'.repeat(64)}`;
+      for (const role of ['api', 'web']) await request(server, 'POST', '/api/build-profiles', { id: role, name: role,
+        dockerImage: `ghcr.io/owned/${role}:sha-${target}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      const id = 'artifact-all-required';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-all-required', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'running', createdAt: new Date().toISOString(), githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40), services: {
+          api: { profileId: 'api', containerName: 'old-api', hostPort: 10031, status: 'running' },
+          legacy: { profileId: 'legacy', containerName: 'old-legacy', hostPort: 10032, status: 'running' },
+        } });
+      mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: imageId, RepoDigests: [`ghcr.io/owned/api@${imageId}`],
+        Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull (.+)/, match => ({ stdout: match[1].includes('/web:') ? '' : 'available',
+        stderr: match[1].includes('/web:') ? 'manifest unknown' : '', exitCode: match[1].includes('/web:') ? 1 : 0 }));
+      const commandsBefore = mock.commands.length;
+      const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target });
+      const { requestArtifactWaitRefresh } = await import('../../src/services/artifact-admission-wait.js');
+      await requestArtifactWaitRefresh(branchOperationCoordinator);
+      expect(response.status).toBe(200);
+      const run = deploymentRunService.get(String(response.headers['x-cds-deployment-run-id']))!;
+      expect(run.status).toBe('queued'); expect(run.phase).toBe('artifact-wait');
+      expect(String(response.body)).toContain('等待全部必需产物');
+      expect(stateService.getBranch(id)).toMatchObject({ status: 'running', githubCommitSha: 'a'.repeat(40), services: {
+        api: { containerName: 'old-api', status: 'running' }, legacy: { containerName: 'old-legacy', status: 'running' } } });
+      expect(mock.commands.slice(commandsBefore).some(command => /docker (rm|run)|git fetch|network create|database-init/.test(command))).toBe(false);
+      expect(branchOperationCoordinator.getActiveOperations(id)).toHaveLength(0);
+      expect(branchOperationCoordinator.getArtifactWaiters()[0]).toMatchObject({ pending: { operationId: run.operationId, generation: run.operationGeneration },
+        input: { targetCommitSha: target, artifactAdmission: { state: 'waiting', reason: 'missing', profileIds: ['web'] } } });
+      expect(run.events.some(event => event.detail?.reason === 'missing')).toBe(true);
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'now published', stderr: '', exitCode: 0 }));
+      const { refreshArtifactWaiters } = await import('../../src/services/artifact-admission-wait.js');
+      const [pending] = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService, getBranch: id => stateService.getBranch(id), recheckMs: 0 });
+      expect(pending).toMatchObject({ operationId: run.operationId, generation: run.operationGeneration });
+      const resumed = await request(server, 'POST', `/api/branches/${id}/deploy`, pendingDeployBody(pending), { 'X-CDS-Internal': '1', 'X-CDS-Trigger': pending.request.trigger });
+      expect(resumed.status).toBe(200); expect(resumed.headers['x-cds-deployment-run-id']).toBe(run.id);
+      expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
+      expect(deploymentRunService.get(run.id)?.status).toBe('running');
+      const executions = mock.commands.filter(command => command.startsWith('docker run -d')).length;
+      expect(executions).toBe(2);
+      expect(await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService, getBranch: id => stateService.getBranch(id), recheckMs: 0 })).toEqual([]);
+      expect(mock.commands.filter(command => command.startsWith('docker run -d'))).toHaveLength(executions);
+    });
+
     it.each(['/deploy', '/deploy/api'])('显式产物目标%s缺失时不能用旧CI提交的镜像冒充', async (endpoint) => {
       const requested = 'b'.repeat(40), previous = 'a'.repeat(40);
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
         workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      readyArtifactFixture();
       const id = 'artifact-target';
       stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-target', worktreePath: path.join(tmpDir, 'worktrees', id),
         status: 'idle', createdAt: new Date().toISOString(), githubCommitSha: previous, ciTargetSha: previous, services: {} });
       mock.addResponsePatternFirst(/docker pull (.+)/, (match) => ({ stdout: match[1].includes(previous) ? 'old CI image available' : '',
         stderr: match[1].includes(previous) ? '' : 'manifest unknown', exitCode: match[1].includes(previous) ? 0 : 1 }));
       const response = await request(server, 'POST', `/api/branches/${id}${endpoint}`, { commitSha: requested });
-      expect(response.status).toBe(200); // 实际部署接口通过SSE报告执行失败。
+      expect(response.status).toBe(200); // 受理原任务，缺产物停在可靠等待。
+      await requestArtifactWaitRefresh(branchOperationCoordinator);
       expect(mock.commands.some(c => c.startsWith('docker pull ') && c.includes(requested))).toBe(true);
       expect(mock.commands.some(c => c.startsWith('docker pull ') && c.includes(previous))).toBe(false);
       expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
-      expect(deploymentRunService.list({ branchId: id })[0].status).toBe('failed');
+      expect(deploymentRunService.list({ branchId: id })[0].status).toBe('queued');
     });
 
     it('显式产物目标远端派发使用请求提交，不发送旧CI提交模板', async () => {
@@ -4148,13 +4221,20 @@ describe('Branch Routes', () => {
         status: 'idle', createdAt: now, githubCommitSha: previous, ciTargetSha: previous, services: {} });
       registryNodes.push({ id: 'exec-artifact', host: '127.0.0.1', port: 9102, status: 'online', role: 'remote', labels: [], branches: [],
         capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
-      let dispatched: any;
+      let dispatched: any, preflight: any;
+      const digest = `ghcr.io/owned/api@sha256:${'d'.repeat(64)}`;
       vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
-        dispatched = JSON.parse(String(init?.body)); return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+        const body = JSON.parse(String(init?.body));
+        if (String(_input).includes('/artifact-preflight')) {
+          preflight = body; return new Response(JSON.stringify({ state: 'ready', targetCommitSha: requested, checkedAt: new Date().toISOString(),
+            artifacts: [{ profileIds: ['api'], requestedImage: body.profiles[0].dockerImage, image: digest, revision: requested, platform: 'linux/amd64' }] }), { status: 200 });
+        }
+        dispatched = body; return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       });
       try {
         expect((await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: requested, targetExecutorId: 'exec-artifact' })).status).toBe(200);
-        expect(dispatched.profiles[0].dockerImage).toBe(`ghcr.io/owned/api:sha-${requested}`);
+        expect(preflight.profiles[0].dockerImage).toBe(`ghcr.io/owned/api:sha-${requested}`);
+        expect(dispatched.profiles[0].dockerImage).toBe(digest);
         expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
       } finally { vi.unstubAllGlobals(); }
     });
@@ -4163,13 +4243,15 @@ describe('Branch Routes', () => {
       const previous = 'a'.repeat(40), docsOnly = 'c'.repeat(40);
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
         workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      readyArtifactFixture();
       const id = 'artifact-unpinned';
       stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-unpinned', worktreePath: path.join(tmpDir, 'worktrees', id),
         status: 'idle', createdAt: new Date().toISOString(), githubCommitSha: docsOnly, ciTargetSha: previous, services: {} });
       mock.addResponsePatternFirst(/docker pull (.+)/, (match) => ({ stdout: match[1].includes(previous) ? 'old CI image available' : '',
         stderr: match[1].includes(previous) ? '' : 'manifest unknown', exitCode: match[1].includes(previous) ? 0 : 1 }));
-      expect((await request(server, 'POST', `/api/branches/${id}/deploy`)).status).toBe(200);
-      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api:sha-${previous}`);
+      const response = await request(server, 'POST', `/api/branches/${id}/deploy`);
+      expect(response.status).toBe(200); await waitForAcceptedRun(response);
+      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api@sha256:${previous + previous.slice(0, 24)}`);
       expect(deploymentRunService.list({ branchId: id })[0].status).toBe('running');
     });
 

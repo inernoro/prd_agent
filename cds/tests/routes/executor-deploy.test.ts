@@ -134,11 +134,12 @@ describe('Executor /exec/deploy', () => {
   let stateService: StateService;
   let server: http.Server;
   let mock: MockShellExecutor;
+  let config: CdsConfig;
   let containerEvents: Array<{ action: string; operationId?: string | null; requestId?: string | null; details?: Record<string, unknown> }>;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-exec-'));
-    const config = makeConfig(tmpDir);
+    config = makeConfig(tmpDir);
     fs.mkdirSync(config.worktreeBase, { recursive: true });
 
     const stateFile = path.join(tmpDir, 'state.json');
@@ -194,6 +195,49 @@ describe('Executor /exec/deploy', () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  async function artifactPost(body: unknown, token?: string) {
+    const data = JSON.stringify(body); const port = (server.address() as { port: number }).port;
+    return new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const req = http.request({ hostname: '127.0.0.1', port, path: '/exec/artifact-preflight', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), Connection: 'close',
+          ...(token ? { 'X-Executor-Token': token } : {}) } }, response => {
+        let output = ''; response.on('data', chunk => { output += chunk; });
+        response.on('end', () => resolve({ status: response.statusCode || 0, body: JSON.parse(output) }));
+      }); req.on('error', reject); req.end(data);
+    });
+  }
+
+  it('远端产物预检继承执行器认证，拒绝请求不调用Docker或创建分支', async () => {
+    config.executorToken = 'artifact-test-token';
+    const result = await artifactPost({ profiles: [], commitSha: 'a'.repeat(40) });
+    expect(result.status).toBe(401); expect(mock.commands).toEqual([]); expect(stateService.getAllBranches()).toEqual([]);
+  });
+
+  it('远端产物预检使用本机daemon平台和OCI提交，共用镜像只核验一次且不创建运行实例', async () => {
+    const target = 'b'.repeat(40); const image = `ghcr.io/owned/worker:sha-${target}`; const content = `sha256:${'c'.repeat(64)}`;
+    config.executorToken = 'artifact-test-token';
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'x86_64' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: content, RepoDigests: [`ghcr.io/owned/worker@${content}`],
+      Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+    const profiles = ['generation', 'code-return', 'product-batch', 'common'].map(id => ({ id, name: id, dockerImage: image, prebuiltImage: true, command: '', workDir: '.', containerPort: 8080 }));
+    const result = await artifactPost({ profiles, commitSha: target }, 'artifact-test-token');
+    expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'ready', targetCommitSha: target,
+      artifacts: [{ profileIds: profiles.map(profile => profile.id), image: `ghcr.io/owned/worker@${content}`, platform: 'linux/amd64', revision: target }] });
+    expect(mock.commands.filter(command => command.startsWith('docker pull'))).toHaveLength(1);
+    expect(mock.commands.some(command => /docker (run|rm)|git fetch|network create/.test(command))).toBe(false);
+    expect(stateService.getAllBranches()).toEqual([]);
+  });
+
+  it('远端产物预检对无效输入返回明确拒绝，对未发布镜像保留缺失原因', async () => {
+    expect((await artifactPost({ profiles: [], commitSha: 'abc1234' })).status).toBe(400);
+    expect(mock.commands).toEqual([]);
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+    const result = await artifactPost({ commitSha: 'b'.repeat(40), profiles: [{ id: 'api', dockerImage: 'ghcr.io/owned/api:sha-' + 'b'.repeat(40), prebuiltImage: true }] });
+    expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'waiting', reason: 'missing', profileIds: ['api'] });
+    expect(mock.commands.some(command => /docker (run|rm)/.test(command))).toBe(false);
   });
 
   it('远端执行器点名A时实际挂载A且不改原目录B', async () => {
