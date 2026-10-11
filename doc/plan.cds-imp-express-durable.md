@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.43；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.44；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -430,3 +430,11 @@ v1.41独立ff fixture机制旧3/6→新6/6，原28语义文本一致/独立modul
 633 full实际9736green+1project-detect missing-repo用例socket hang up失败/19skip/1obsolete/64.41s，原无socket轨迹，root未知。主actual该helper同owned port六轮回归旧1真fixture-red；470b239deaad252b817e00327de1cf5c6e08a79d仅测试1路径15+/3-：agent:false、await server.close、保留原6业务断言、附reusedSocket错误标记，不retry；新7/7green。此机制不逆推原full同因、不修生产500。470固定full666files9738green/6files19skip/1obsolete/64.55s；生产与633字节一致，显式复用633局部证据，独立470实际helper机制旧3/6→新6/6，每轮真实新连接；原6语义it正文相同、无retry，固定模块7/7仅补充。14源633→470相同显式复用。
 
 仍未push/PR/merge/selfupdate，原生goal active；正式49 not-executed、visual N/A。旧3真红与严格403谓词原件不抹除、不假称实际生产权限或Daemon闭合。
+
+## v1.44 普通部署磁盘等待后的身份与排空恢复审计
+
+固定633普通部署窗口独立21=9绿12红（原6包含）：三个入口同ID后继、同对象branch/worktree漂移、fresh期间drain仍200并触发pull/受控remove/find；Worktree记录后throw、Container计数/MockShell，不声称实际删除。guide2.62实施前冻结原Branch ref及id/project/branch/worktree/createdAt、missing404、漂移409、fresh后共享drain503+Retry-After60，纯notes/lastAccessed继续。6a6dd55产品补该守卫和Express错误转交；主6旧红→117相关/core0、去ref检查byte-equivalent真红1→恢复；独立原21保持原期望21/21，12旧红关闭；扩展33/33分列不与原21求和，同fixture旧633参考0/6→新6a6 6/6含于33。同身份新对象、project/createdAt/id漂移、encoded id/slash/尾斜杠、drain结束/到期及507优先全部局部绿；初始missing404/probe0。default→undefined人工raw对象写违背BranchEntry string和State归一，未发现受支持置空路径，探索崩溃原件单列不进扩展分母。
+
+6a6 full实际665files9751green+1codex-r39-p1 static禁止router调用drain谓词失败/19skip/1obsolete/66.39s，原件/tmp/cds-disk-deploy-window-full.log保留。事先guide2.62要求fresh后复用同权威，f0a034仅test1路径将旧禁止调用谓词退场，保留app位置/路径断言并要求fresh后仅1次调用、无router自有gate；不称改期待是旧predicate红绿。focused57green，生产与6a6逐字节相同；固定f0full666files9752green/6files19skip/1obsolete/64.31s（/tmp/cds-disk-deploy-window-contract-full.log）。根precommit忽略pnpm失败假绿不用作证据，显式core0才是验证。
+
+38partial-local/11todo仍是实施状态；49formal not-executed、visualN/A，nativegoal active，未push/PR/merge/selfupdate/shared mutation；既有八支push与selfupdate授权持续。
