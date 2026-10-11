@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.58；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.59；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -55,7 +55,7 @@
 | P5-03 | 本地部分实现 | 正式未执行 | 保持项目默认与分支覆盖为极速，确保初始化/配置同步脚本不会改回源码模式。 |
 | P5-04 | 本地部分实现 | 正式未执行 | 修正普通运行目标提交绑定，避免旧字面 SHA。正式验收精确 target_sha 守卫保留，不放宽为任意版本。 |
 | P5-05 | 待办 | 正式未执行 | 对每个遗留 bootstrap 检查所属验收 run 的终结证据，再使用正确收尾流程回收容器/Profile，保留数据库与授权证据。 |
-| P5-06 | 待办 | 正式未执行 | 合法常驻 RPC/辅助服务使用可追溯预构建镜像并纳入分母；一次性初始化须有明确完成和回收证据。 |
+| P5-06 | 本地部分实现 | 正式未执行 | 合法常驻 RPC/辅助服务使用可追溯预构建镜像并纳入分母；一次性初始化须有明确完成和回收证据。 |
 | P5-07 | 本地部分实现 | 正式未执行 | 只在受影响分支传播必要的 IMP 补丁，不把 CDS 平台代码复制进业务分支；不覆盖协作者新增提交。 |
 | P6-01 | 本地部分实现 | 正式未执行 | 各批次先有针对性红绿、类型检查及模块要求的测试；前端改动补构建和真实页面验证。 |
 | P6-02 | 待办 | 正式未执行 | 在独立/隔离宿主完成失败注入、执行进程崩溃、队列恢复及多 SSE 压测，再灰度一分支、两分支、八分支。 |
@@ -534,3 +534,14 @@ expected result：损坏压缩与源中断明确失败，客户端断开只释�
 guide2.75先于实现提交557e87bd0冻结页面显示合同；2efc实际BranchList详情抽屉部署账本消费原列表timingSummary，主体CI job启动前等待/执行、制品/容量，另五阶段native details。GitHub provider与CDS本地分列，闭合并集与work累计分列；缺测/非法值不补0，合法0、失败/取消/open/unknown/截断可见，不造总耗时或自行推开放段。CI完整SHA、当前repo/branch、clock/meaning/workflow/event与safe run/attempt匹配才给固定HTTPS来源和测量，不接rawurl；无新增fetch/timer/权限/命令。主旧77 ledger body加export-only seam实际8SSR全红（一个featureabsence），新fixture另提供当前repo/branch上下文后8绿；4files70相关/core0/web0/vite0；固定full676files9915green/6files19skip/1旧obsolete/135.79s。root hook缺node_modules假绿不计，初编辑脚本substring mismatch已按实际目标修正，非产品红。独立原STUI-L01..24保持期待映射；actual ownedHTTP Router/StateJSON到actual Ledger与Drawer局部44/44，稳定主题复跑46/46包含44及原39，不合计。旧77同summary/context两个显示谓词红为同一featureabsence；只在仓外bundle删Drawer context透传43/44精准红，主源未改。18选定Git源及612完整后端/前端runtime blob/SHA256、42原件hash已主回读一致。前三夹具loader/CSS/周边API结构错误原件保留，非产品红；原light截图捕获150ms过渡，保原图，350ms后三次100mscomputed颜色稳定再拍v2，两主题主尾均实际查看，只有local controlled视觉。无新bounded产品红，但不是24判据全部排列执行；完整BranchList打开手势、/branch-panel、线上登录/令牌/public/真实CI/deploy未执行。仅抽屉，独立/branch-panel未接；旧轮询慢响应并发/竞态未修，执行器/普通终态后cleanup/selfupdateCI仍缺。41partial-local/8todo，正式49未执行，正式视觉N/A，八支未push/deploy，无共享写或自更新。
 
 末尾固定回执：source manifest34bc35057241b83a6fcb90768b9c74eb8a2632ff3e7b6d10e393b35939876a8c；evidence summarydf42cc0af2745ca76c06d647f905095e158b87499e8b6fd06224ac716bff9f0f。主已验证18选定/612 runtime Git源和42独立原件；39/44/46包含关系分列，old77两个谓词与context负控制不新增bug数量。STUI24为映射分母，局部44/46为执行组；正式49仍未执行。稳定v2两主题截图为实际受控Drawer/自有API合成阶段事实，不是完整BranchList/线上视觉或性能。
+
+
+## v1.59 主分支 RPC 辅助制品与冻结来源本地检查点
+
+IMP辅助合同先于实现提交，5dea新增独立辅助制品生产链：services.json维持10应用镜像/13角色，auxiliaryServices另列main-only imp-worker-rpc；每SHA CI job独立Bake，不把main激活约束误当CI条件。配置/Dockerfile由精确HEAD的regular Git blob读取，拒绝tracked symlink/dirty/不同SHA；基础镜像pin digest，四worker用当前Profile DNS alias，SOURCE从SSOT经BakeARG到DockerLABEL及离线Profile。离线提案仅匹配主项目/分支，不调用API、不替换列表；generic derive/config-copy可能复制extras的全局激活资格尚缺。guide2.76前置c06/477冻结已有extra-services API的有界metadata/OCI source及版本合同；CDS d0保留prebuilt exact/modes/buildScope/calls/role与可选artifactSource，省略按同ID继承、null清可选、非法400不改State；镜像共享prepare Promise后逐Profile核声明来源。e8把声明来源纳入configHash/capture/materialize v1存在与缺省语义，真实JSON重载保留；未声明旧hash对照不变。原745 symlink实际同HEAD两次外部字节漂移、CDS2efc六字段丢弃、声明OCI来源资格缺口及d0版本0/6均保留；四局部根因修后原反例闭合。主IMP固定55相关/CLI stage及proposal绿，CDS298相关/core0；固定e8全量676files/9927green、6files/19skip、1旧obsolete/64.01s。首d0全量bug-report两超时/断连，聚焦34绿未闭根因；第二d0 full release夹具写未完读取空JSON，e8仅改owned fixture await实际write完成，未改runtime或Vitest timeout。更宽IMP76组有继承OP手动发布与四worker XXL env自引用2红，精确旧4a57的19同字节文件复跑仍2红，保留下一动作，不称IMP全绿。独立AUX30映射为设计分母，固定e8原HTTP/gate23/23、expanded37/37、closure10/10、原source-version0/6→6/6、legacy hash1/1分列重叠；IMP原CLI28/31差异保留：2历史subvalidator探索由actual full CLI collision3/3补证，1硬编码LABEL静态谓词不适用于SSOT→ARG链，actual链单独证明，不改原期待凑31绿。主回读23选定+369runtime Git源及29raw hash一致，manifest ff2eba459c198b74eebdc224437eba6941375e91740d132da96af6c289ac0890、summary31de7d12ac9133e895d7b393e27bd70f99dbd2bb49f07f32368f492a6dbba32f。仍未执行actual CI/Docker/nginx image/DNS/XXL/token/回调、main网关迁移退场、全局复制资格和bootstrap所属run终结receipt；不改compose/Admin/worker地址、不激活真实消费。P5-06现在partial-local而非完成；42partial-local/7todo，正式49全not-executed/visual N/A。8旧候选尚未传播5dea且未push/deploy，未PR/shared写/selfupdate；既有八push与selfupdate授权继续有效，目标active。
+
+expected result：合法辅助服务按精确SHA生产并保持API、制品来源和冻结版本一致；current evidence：主55/298/core0/full9927，独立上述分组及源/raw回读；visible result：未部署，正式visual N/A，历史2efc受控双主题Drawer不能替代本批黄闪电；gap：main激活复制资格、bootstrap receipt、继承XXL/OP两红、实际CI/Docker/八支/黄闪电/双主题/公网/恢复/48h与周；required action：继续同编号剩余本地实现，隔离准入后按已有授权实际交付，缺证据不关闭。
+
+固定局部回执：`/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/acceptance-p5-main-rpc-aux-e8-evidence-summary.json`；主全量补充另存，不修改独立冻结summary中“当时全量进行中”的历史事实。
+
+追加固定v2回执仅补充30行原判据执行映射及主全量归档，不覆盖原summary；v2 hash8f51e27128ddb1f3238b2d562127a24af8b9702d139e47d77221325ea81cdd91，30raw已主回读，原AUX30均partial-local/正式执行0。主全量原件与末尾归档SHA256同为378c2650b1a336c6e9f4f9c4702ea1d804ed588efcb61e3ff72eb8cd8794c62f；此为主补充，非独立分母或线上500闭因。
