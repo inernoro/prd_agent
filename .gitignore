@@ -116,6 +116,7 @@ cds/nginx/www/
 # Agent development workspace (per-developer progress tracking)
 .agent-workspace/
 cds/default-regression-output/
+cds/branch-claim-entry-output/
 
 # Local Codex/agent skill mirrors (machine-specific, generated locally)
 .agents/skills/*

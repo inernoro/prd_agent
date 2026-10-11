@@ -17,6 +17,7 @@ on:
       - cds/scripts/orphan-worktree-recheck-drill.ts
       - cds/scripts/filesystem-removal-drill.ts
       - cds/scripts/default-regression-drill.ts
+      - cds/scripts/branch-claim-entry-drill.ts
       - cds/tests/helpers/**
       - cds/tests/routes/topology.test.ts
       - cds/tests/services/isolated-shell-executor.test.ts
@@ -116,6 +117,16 @@ jobs:
         run: pnpm -C cds exec tsx scripts/filesystem-removal-drill.ts
       - name: Default regression fixtures with original assertions and native process evidence
         run: pnpm -C cds exec vitest run tests/routes/topology.test.ts && pnpm -C cds exec tsx scripts/default-regression-drill.ts --native
+      - name: Real manual branch HTTP handoff and typed conflict
+        run: pnpm -C cds exec tsx scripts/branch-claim-entry-drill.ts --native
+      - name: Preserve manual branch HTTP evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-branch-claim-entry-${{ github.sha }}
+          path: cds/branch-claim-entry-output/report.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve default regression fixture evidence
         if: always()
         uses: actions/upload-artifact@v4

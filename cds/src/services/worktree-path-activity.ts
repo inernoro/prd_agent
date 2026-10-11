@@ -98,11 +98,11 @@ export class WorktreePathActivity {
   private async execute<T>(paths: readonly string[], operation: () => Promise<T>, shared: boolean,
     purpose: 'operation' | 'claim'): Promise<T> {
     const lease = this.acquire(paths, shared, purpose, purpose === 'operation' ? this.claimOwner.getStore() : undefined);
-    if (!lease) throw new Error('工作目录正在创建或回收，请稍后重试。');
+    if (!lease) throw new WorktreeClaimHeldError('工作目录正在创建或回收，请稍后重试。');
     let cleanupUnknown = false;
     try {
       const canonical = await Promise.all(paths.map(p => canonicalPath(normalized(p))));
-      if (!lease.extend(canonical)) throw new Error('工作目录的实际归属正在处理中，请稍后重试。');
+      if (!lease.extend(canonical)) throw new WorktreeClaimHeldError('工作目录的实际归属正在处理中，请稍后重试。');
       return await (purpose === 'claim' ? this.claimOwner.run(lease.owner, operation) : operation());
     } catch (error) {
       // 独立执行器只有归属清理确认后才给普通失败；cleanup表示旧进程可能仍写目录。
@@ -119,7 +119,7 @@ export class WorktreePathActivity {
 
 export class WorktreeClaimHeldError extends Error {
   readonly code = 'worktree-held';
-  constructor() { super('源码目录正在回收或清理尚未确认，请等待完成后重试。'); }
+  constructor(message = '源码目录正在回收或清理尚未确认，请等待完成后重试。') { super(message); }
 }
 
 export const worktreePathActivity = new WorktreePathActivity();

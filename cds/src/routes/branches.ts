@@ -16,7 +16,7 @@ import { StateService } from '../services/state.js';
 import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
-import { worktreePathActivity } from '../services/worktree-path-activity.js';
+import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
@@ -6403,6 +6403,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       res.status(201).json({ branch: entry });
     } catch (err) {
+      if (err instanceof WorktreeClaimHeldError) {
+        res.status(409).json({ error: err.message, code: err.code });
+        return;
+      }
       res.status(500).json({ error: (err as Error).message });
     }
   });

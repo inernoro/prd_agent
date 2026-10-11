@@ -15,6 +15,7 @@
     "deployment-queue-drill.ts",
     "orphan-worktree-recheck-drill.ts",
     "filesystem-removal-drill.ts",
-    "default-regression-drill.ts"
+    "default-regression-drill.ts",
+    "branch-claim-entry-drill.ts"
   ]
 }
