@@ -2071,9 +2071,13 @@ export class AgentWorkspaceSessionRuntime {
     if (!lease.issued && lease.guarded) { lease.cleaned = true; return; }
     if (lease.cidFile && fs.existsSync(lease.cidFile)) {
       const id = fs.readFileSync(lease.cidFile, 'utf8').trim();
-      if (!/^[a-f0-9]{64}$/.test(id)) throw this.probeCleanupError();
-      lease.containerId = id; lease.creationAcknowledged = true;
-      this.probeEvent(generation, lease, 'agent.probe.creation.acknowledged', { receipt: 'cidfile' });
+      // Docker CLI reserves an empty CID file before ContainerCreate replies.
+      // Cancellation can leave that reservation: it is not a creation receipt.
+      if (id) {
+        if (!/^[a-f0-9]{64}$/.test(id)) throw this.probeCleanupError();
+        lease.containerId = id; lease.creationAcknowledged = true;
+        this.probeEvent(generation, lease, 'agent.probe.creation.acknowledged', { receipt: 'cidfile' });
+      } else this.probeEvent(generation, lease, 'agent.probe.cidfile.pending');
     }
     const options = () => { const remaining = deadline - Date.now(); if (remaining <= 0) throw this.probeCleanupError();
       return { timeout: remaining, signal: AbortSignal.timeout(remaining), beforeStart: () => { if (Date.now() >= deadline) throw this.probeCleanupError(); } }; };

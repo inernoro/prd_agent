@@ -7,7 +7,7 @@ import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js
 const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout, stderr, exitCode });
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
-function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string } = {}) {
+function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean } = {}) {
   const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = '';
   const containerId = 'a'.repeat(64); let aborted = false;
@@ -20,6 +20,7 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
       if (command.startsWith('docker run --rm')) {
         pendingName = command.match(/--name '([^']+)'/)![1];
         operationId = command.match(/cds.agent.probe.operation=([a-f0-9]{32})/)![1];
+        if (config.emptyCidFile) fs.writeFileSync(command.match(/--cidfile '([^']+)'/)![1], '');
         if (!config.queued) options?.beforeStart?.(); accepted.resolve();
         return new Promise<ExecResult>((_resolve, reject) => {
           options?.signal?.addEventListener('abort', () => {
@@ -45,6 +46,17 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it('reconciles an empty CLI-reserved CID file through owned inspection after cancellation', async () => {
+    const f = fixture(true, { emptyCidFile: true });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await f.runtime.closeCapabilityProbes(); await expect(probe).resolves.toMatchObject({ available: false });
+      expect(f.aborted).toBe(true); expect(f.visible).toBe(false);
+      expect(f.calls.filter(x => x.command.startsWith('docker rm -f')).map(x => x.command)).toEqual([`docker rm -f '${f.containerId}'`]);
+      expect(f.events.find(x => x.action === 'agent.probe.creation.acknowledged')?.details.receipt).toBe('owned-inspect');
+      expect(f.events.some(x => x.action === 'agent.probe.cleanup.confirmed')).toBe(true);
+    } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
   it('records a classified pre-create image failure without copying the diagnostic into persistent events', async () => {
     const f = fixture(false, { imageFailure: 'No such image: private-diagnostic-secret' });
     try {
