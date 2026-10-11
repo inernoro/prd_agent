@@ -11,8 +11,8 @@
  * 部署审计挂在一份**从未被部署过**的代码上；更糟的是 `findReusable` 也按这个 sha
  * 查，可能把 A 的构建产物复用给 B。
  *
- * 这条链路在 route handler 深处、依赖 worktree/docker/多服务编排，单测无法真实驱动，
- * 因此这里退而做**结构契约守卫**：凡是在 pull 之后写 run / version 的地方，一律不得
+ * branches.test.ts 已通过真实HTTP验证单服务固定目标，原生队列演练核对实际Git/Docker/HTTP。
+ * 本文件仍做结构契约守卫：凡是在 pull 之后写 run / version 的地方，一律不得
  * 再引用 `entry.githubCommitSha`。回归时若有人把它改回去，这条测试会红。
  */
 import { describe, it, expect } from 'vitest';
@@ -32,8 +32,8 @@ describe('部署 run / version 记录实际落地的 SHA', () => {
     // 必须是 let：极速版拉不到镜像时 runService 会自动回退源码编译，那一刻落地的
     // commit 从「镜像锁定的 sha」变成 pull 到的 HEAD，只能事后由回调修正（六轮 P2）。
     expect(src).toContain('let deployedCommitSha = selectedDeploymentVersion?.commitSha');
-    expect(src).toContain('deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;');
-    expect(src).toContain('let deployedCommitSha: string | undefined = entry.githubCommitSha;');
+    expect(src).toContain('deployedCommitSha = isSourcePull ? pulledSha : inputBranch().githubCommitSha;');
+    expect(src).toContain('let deployedCommitSha: string | undefined = inputBranch().githubCommitSha;');
   });
 
   it('自动回退源码编译时，两条路径都会把 deployedCommitSha 改口径（六轮 P2）', () => {

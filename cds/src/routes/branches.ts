@@ -14717,7 +14717,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       phase: 'prepare',
       message: `单服务部署上下文已准备完成: ${profile.name}`,
       operationId: branchOperationLease?.operationId,
-      commitSha: entry.githubCommitSha,
+      commitSha: inputBranch().githubCommitSha,
       detail: { profileId },
     });
 
@@ -14779,7 +14779,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 单服务同样区分请求提交与已解析的源码提交;
       // 用本 profile 的 prebuiltImage 判定是否极速版。
       // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
-      let deployedCommitSha: string | undefined = entry.githubCommitSha;
+      let deployedCommitSha: string | undefined = inputBranch().githubCommitSha;
       // pull 到的裸 SHA 也提到块外：极速版回退源码编译时要用它改口径（见下方钩子）。
       let fallbackPulledSha: string | undefined;
       {
@@ -14798,7 +14798,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         // 同主路径：run/version 记实际落地的 SHA，不照抄可能被 body.commitSha 冻住的
         // entry.githubCommitSha（Codex PR #1275 四轮 P2）。
-        deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;
+        deployedCommitSha = isSourcePull ? pulledSha : inputBranch().githubCommitSha;
         if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) fallbackPulledSha = pulledSha;
       }
       // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是

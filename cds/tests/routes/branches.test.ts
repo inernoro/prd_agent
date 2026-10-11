@@ -4306,6 +4306,23 @@ describe('Branch Routes', () => {
       expect(mock.commands.filter(command => command.startsWith('docker run -d'))).toHaveLength(executions);
     });
 
+    it('单服务预构建原记录和版本必须记录本次目标而非分支旧缓存', async () => {
+      const previous = 'a'.repeat(40), requested = 'b'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      readyArtifactFixture();
+      const id = 'artifact-service-ledger';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-service-ledger', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: new Date().toISOString(), githubCommitSha: previous, ciTargetSha: previous, services: {} });
+      const response = await request(server, 'POST', `/api/branches/${id}/deploy/api`, { commitSha: requested });
+      expect(response.status).toBe(200);
+      const run = await waitForAcceptedRun(response);
+      expect(run.status).toBe('running');
+      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api@sha256:${requested + requested.slice(0, 24)}`);
+      expect(run.commitSha).toBe(requested);
+      expect(deploymentVersionService.get(run.versionId!)?.commitSha).toBe(requested);
+    });
+
     it.each(['/deploy', '/deploy/api'])('显式产物目标%s缺失时不能用旧CI提交的镜像冒充', async (endpoint) => {
       const requested = 'b'.repeat(40), previous = 'a'.repeat(40);
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
