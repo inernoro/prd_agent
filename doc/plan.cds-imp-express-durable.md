@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.34；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.36；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -372,3 +372,22 @@ d1a56固定独立37/37局部：原14协议、3actual ShellWorker/fake systemctl/
 P2后续直接把janitor rmSync/stat改fs.promises的草案已否决：初始6files97/core0后，ownFS held rm→同path重建→释放清理会误删新owner，1可复现真红。草案/测试/hash和/tmp/cds-janitor-async-removal-replacement-draft-red.log保存在仓库外janitor-async-removal-rejected-draft.*；跟踪janitor精确还原d1a56，草案未提交/发布。此是被否定局部设计，不是d1a56新增产品红，也不能把草案97绿计入固定源。后续先设计独占path/实际身份与可恢复回收，再迁移递归删除；主负责，同编号P2-06，不为异步API丢掉安全护栏。
 
 expected result：systemd本地身份漂移不伪报成功；后台回收不删新worktree。current evidence：前者37固定独立、66相关/core0/full9589；后者否决草案1真红，未采用。visible result：本候选未部署/视觉N/A。gap：49正式全部not-executed，八支完整交付、隔离宿主、实际Daemon/公网/双主题、durable pending/阶段公平、P4其余流、IMP辅助terminal receipt仍待完成。required action：主继续安全回收设计及其他计划实施，末尾按新固定源逐项复验；准入后依既有push/selfupdate授权运行完整验收。38partial-local/11todo保持，active，不宣称全部黄闪电或不卡。
+
+## v1.35 发布台账文件迁移固定检查点
+
+e1a5e022e0aded24d62454942caa9d3666a2b224将clock冷load/persist文件操作移共享Shell Worker（3s、diagnostic/release-meta-file；fallback1/32）；冷ready去重、getter仅cache、实际center与Git历史并行等ready；记提交在load前占原32槽并冻结roots/options。v1/v2和真实committer/projectSHA/500条不变；读取未知或损坏不覆盖原文件，一在途+一最新待写快照串行，每次写尝试结束后remember返回，失败仅内存且logger坏不影响发布。临时文件按Node PID唯一、写完rename；payload通过stdin、不进argv，超时可能遗tmp，未声称fsync或跨进程合并。
+
+主固定旧d1四file反例真红、删除Router ready接线1真红→9files100相关/core tsc0（/tmp/cds-release-clock-files-final-{green,tsc}.log）；actual自有Worker v1/v2回读、quote安全、写失败保旧、FIFO阻塞3s在3011ms截止、tick>100，本地无Master fs native/spawn/execSync。元信息原test仅更新冷ready入口且保留值断言，HTTP只将Git命令计数与新增文件命令分开。ReferenceError及ESM不可spy/未配fake write三夹具错误原log保留，不算产品红。新全量及固定独立进行中；d1独立37/full9589只历史，不传播本源pass。
+
+expected result：台账慢IO不在Master同步执行，旧样本不丢、并发写不反序。current evidence：5主真红演练/100相关/core0，独立和新full待返。visible result：未部署/visual N/A。gap：49formal/八支完整/Daemon/公网/双主题/48h未执行；Master JSON序列化与归一、statfs/其他文件热点、安全目录回收、durable pending/阶段公平、P4其余流、IMPaux terminal receipt仍未完成。required action：末尾固定源原判据独立复验，有红修复；主继续同编号实施，隔离准入后依既有授权完整八支交付与真实视觉。38partial-local/11todo/49not-executed保持，目标active。
+
+
+## v1.36 未知schema与缓存ACK恢复审计
+
+原e1a5固定独立28/32局部，四真红：version=3、字符串2、null台账被接收并覆盖为v2（丢扩展），相同identity第二次remember在首次save ACK前返回。原证据/期望冻结，主全量657files9600绿/1socket红、6files19skip/1旧obsolete snapshot/63.87s；focused bug-reports34/34重跑绿。原ECONNRESET仅见client-connect后63ms、无server-connection记录，根因未闭合，不把重跑通过当修复。日志/tmp/cds-express-e1a5e-{full,bug-reports-recheck}.log与独立补充保留。
+
+1dc7c59dfebe66f4160fc558a495b83ee8401786在实际Worker读侧和clock注入边界仅接收数字v1/v2；未知版本不导入缓存、不启用覆写，新增真实提交可仅内存。缓存remember等待该project::SHA在途写尝试ACK，覆盖same roots/different roots/no roots；同步get可见内存，失败仍为统计旁路，不声称fsync。主旧e1八反例真红→9files108相关/core tsc0；本固定源全量658files9609绿/6files19skip/1旧obsolete snapshot/64.43s。日志/tmp/cds-clock-schema-ack-{red,final-green,tsc}.log与/tmp/cds-express-1dc7c-full.log。pre-commit根目录缺node_modules仍误报通过，不作类型检查证据，显式cds tsc日志才是证据。
+
+末尾同原32夹具/原期望32/32局部绿，旧四红关闭；新ACK/直接adapter扩展9/9（含与原32重叠的same roots控制，不合成唯一41条）。扩展旧e1原件3/9绿6红→当前9/9；保留真实v1/v2/32/500/FIFO3s及实际Router coldready/http控制，无新真红。组件/ownFS/nativeHTTP/实际ShellWorker证据不等于共享Master、Daemon、公网、视觉或八分支交付通过。
+
+expected result：未知版本原件不丢，所有缓存remember观察者不越过在途写尝试。current evidence：上述固定局部独立及主108/core0/full9609；旧full socket根因仍未关闭。visible result：候选未部署、visual N/A。gap：49formal全部not-executed，八分支完整推送/交付、隔离宿主、双主题视觉、公网压力/恢复、48小时/一周仍未执行；其他Master热点、安全回收、durable pending/阶段公平、P4其余流、IMPaux terminal receipt未完成。required action：主继续同编号有界修复，末尾依新固定源验收；隔离准入后依既有push/selfupdate授权完整交付并取真实视觉。38partial-local/11todo保持，目标active。
