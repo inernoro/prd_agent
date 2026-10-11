@@ -17,14 +17,28 @@ vi.mock('node:child_process', async original => {
 const pools: Array<{ close(): Promise<void> }> = [];
 const listeners: Array<{ stop(): Promise<void> | void }> = [];
 const dirs: string[] = []; const originalPath = process.env.PATH;
-async function fixture(count = 2) {
+async function fixture(count = 2, mode = 'normal') {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-event-stream-')); dirs.push(dir);
   const traceFile = path.join(dir, 'trace.jsonl');
   const script = `#!${process.execPath}
 const fs=require('node:fs');const args=process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(traceFile)},JSON.stringify({pid:process.pid,ppid:process.ppid,args})+'\\n');
 const emit=(action,name,exitCode,time=101)=>JSON.stringify({Action:action,Type:'container',Actor:{ID:'owned-fixture',Attributes:{name,'cds.branch.id':'fixture','cds.profile.id':'api',exitCode}},time});
-if(args.includes('overflow')) {process.stdout.write('x'.repeat(128*1024)+'\\n'+emit('start','valid-after-oversize','0')+'\\n');}
+const mode=${JSON.stringify(mode)};
+const owned=(action,time)=>emit(action,'cds-infra-fixture','137',time)+'\\n';
+if(mode.startsWith('infra-')) {
+ const starts=fs.readFileSync(${JSON.stringify(traceFile)},'utf8').trim().split('\\n').length;
+ if(mode==='infra-gap'||mode==='infra-stop') {
+  if(starts===1) {process.stdout.write(owned('oom',100));if(mode==='infra-gap')setTimeout(()=>process.exit(1),20);}
+  else process.stdout.write(owned('die',106)+owned('oom',107)+owned('die',108));
+ } else {
+  process.stdout.write(owned('oom',100));
+  if(mode==='infra-overflow')process.stdout.write('x'.repeat(128*1024)+'\\n');
+  if(mode==='infra-malformed')process.stdout.write('{incomplete-json}\\n');
+  process.stdout.write(owned('die',106)+owned('oom',107)+owned('die',108));
+ }
+}
+else if(args.includes('overflow')) {process.stdout.write('x'.repeat(128*1024)+'\\n'+emit('start','valid-after-oversize','0')+'\\n');}
 else if(args.includes('flap')) {process.stdout.write(emit('start','flap','0')+'\\n');setTimeout(()=>process.exit(0),20);}
 else if(args.includes('label=cds.managed=true')) {
  process.stderr.write(emit('start','stderr-is-not-an-event','0')+'\\n');
@@ -38,8 +52,8 @@ setInterval(()=>{},1000);setTimeout(()=>process.exit(0),60000);
   const trace = async () => (await readFile(traceFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   return { streams, trace };
 }
-async function until(predicate: () => boolean): Promise<void> {
-  for(let i=0;i<400;i++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}
+async function until(predicate: () => boolean, attempts = 400): Promise<void> {
+  for(let i=0;i<attempts;i++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}
   throw new Error('Event fixture did not become ready');
 }
 afterEach(async () => {
@@ -80,6 +94,29 @@ describe('Docker事件独立读取真实进程',()=>{
     expect(stream.getStats().overflowLines).toBe(1);expect(stream.getStats().bufferedBytes).toBeLessThanOrEqual(65536);
     expect(warnings.some(x=>x.includes('64KiB'))).toBe(true);await stream.stop();expect(f.streams.getStats().admitted).toBe(0);
   });
+  it.each(['infra-gap', 'infra-stop', 'infra-overflow', 'infra-handler', 'infra-malformed'])('OOM证据连续性 %s：真实事件读取缺口撤销旧事实，新连续OOM仍确认', async mode => {
+    const f = await fixture(1, mode); const records: Array<{ action?: string; message?: string }> = []; let failedHandler = false;
+    const watcher = new InfraLifecycleWatcher({ streams: f.streams, serverEventLogStore: { record: row => {
+      records.push(row);
+      if (mode === 'infra-handler' && row.action === 'infra.lifecycle.oom' && !failedHandler) { failedHandler = true; throw new Error('owned handler unconfirmed'); }
+    } } });
+    listeners.push(watcher); watcher.start();
+    if (mode === 'infra-stop') {
+      await until(() => records.some(row => row.action === 'infra.lifecycle.oom'));
+      await watcher.stop(); watcher.start();
+    }
+    const deaths = () => records.filter(row => row.action === 'infra.lifecycle.die');
+    await until(() => deaths().length === 2, 800);
+    const trace = await f.trace();
+    if (process.env.CDS_OOM_REFERENCE === '1') console.info(JSON.stringify({ mode, trace, deaths: deaths().map(row => row.message) }));
+    expect(deaths()[0].message).toContain('原因待核实');
+    expect(deaths()[0].message).not.toContain('cgroup OOM kill');
+    expect(deaths()[1].message).toContain('cgroup OOM kill');
+    expect(trace).toHaveLength(mode === 'infra-gap' || mode === 'infra-stop' ? 2 : 1);
+    expect(trace.every((row: { ppid: number }) => row.ppid !== process.pid)).toBe(true);
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    await watcher.stop(); expect(f.streams.getStats().admitted).toBe(0);
+  }, 15000);
   it('实际流断开只重连一个，反复start与stop/start不叠加或留下定时器',async()=>{
     const f=await fixture(1);let seen=0;
     const stream=new DockerObservationEventStream(f.streams,['events','flap'],()=>{seen++;},()=>{},10);listeners.push(stream);

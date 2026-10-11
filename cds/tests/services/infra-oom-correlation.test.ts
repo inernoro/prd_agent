@@ -62,4 +62,13 @@ describe('OOM关联的容量与证据', () => {
     const f = fixture(); f.send('oom', 'owned-id', undefined, 102); f.send('die', 'owned-id', undefined, 101);
     expect(f.last()).toContain('原因待核实'); expect(f.recent()).toBe(0);
   });
+  it('监听已启动时重复start不丢弃连续OOM事实', () => {
+    const f = fixture(); f.watcher.start(); f.send('oom', 'owned-id'); f.watcher.start(); f.send('die', 'owned-id', undefined, 101);
+    expect(f.last()).toContain('cgroup OOM kill');
+  });
+  it('停止撤销关联但保留历史事件取证', async () => {
+    const f = fixture(); f.send('oom', 'owned-id'); await f.watcher.stop();
+    expect(f.recent()).toBe(0); expect(f.watcher.getEvents()).toHaveLength(1);
+    f.send('die', 'owned-id', undefined, 101); expect(f.last()).toContain('原因待核实');
+  });
 });

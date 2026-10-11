@@ -390,6 +390,35 @@ async function main(): Promise<void> {
     report.oomCorrelation = { ...report.oomCorrelation, unknownOnEvictionOrMissingIdentity: true, sameNameDifferentIdUnknown: true, restartClearsGeneration: true, replicaDeathNotifications: deaths, finalRemembered: controlled.recentOom.size };
     report.checks.push({ name: 'compiled-controlled-oom-correlation-capacity-identity-and-unknown', passed: true });
 
+    report.stage = 'compiled-owned-oom-continuity-processes';
+    const continuityBin = path.join(temp, 'continuity-bin'); await fs.mkdir(continuityBin, { mode: 0o700 });
+    await fs.writeFile(path.join(continuityBin, 'docker'), `#!${process.execPath}\nconst fs=require('fs');const mode=process.env.CDS_OWNED_EVENT_MODE;const trace=${JSON.stringify(continuityBin)}+'/'+mode+'.jsonl';const stat=fs.readFileSync('/proc/self/stat','utf8').split(') ')[1].split(' ');fs.appendFileSync(trace,JSON.stringify({pid:process.pid,ppid:process.ppid,pgid:Number(stat[2])})+'\\n');const count=fs.readFileSync(trace,'utf8').trim().split('\\n').length;const emit=(Action,time)=>JSON.stringify({Action,time,Actor:{ID:'owned-continuity',Attributes:{name:'cds-infra-owned-continuity',exitCode:'137'}}})+'\\n';if((mode==='disconnect'||mode==='stop')&&count===1){process.stdout.write(emit('oom',100));if(mode==='disconnect')setTimeout(()=>process.exit(1),20);}else{if(mode!=='disconnect'&&mode!=='stop'){process.stdout.write(emit('oom',100));if(mode==='overflow')process.stdout.write('x'.repeat(128*1024)+'\\n');if(mode==='malformed')process.stdout.write('{incomplete-json}\\n');}process.stdout.write(emit('die',106)+emit('oom',107)+emit('die',108));}setInterval(()=>{},1000);\n`, { mode: 0o700 });
+    report.oomContinuity = { scope: 'compiled watcher and real owned event producers through original stream/IPC; controlled JSON, no kernel OOM injection', modes: [] };
+    for (const mode of ['disconnect', 'stop', 'overflow', 'handler', 'malformed']) {
+      const records: Array<{ action?: string; message?: string }> = []; const actorPids = new Set<number>(); let failedHandler = false;
+      const wrappedStreams = { exec: (command: string, options: Parameters<ObservationStreamExecutor['exec']>[1]) => eventStreams.exec(command, {
+        ...options, env: { ...options.env, PATH: `${continuityBin}${path.delimiter}${process.env.PATH}`, CDS_OWNED_EVENT_MODE: mode },
+        onData: async (chunk, channel) => { for (const actor of eventStreams.getStats().actors) if (actor.pid) actorPids.add(actor.pid); await options.onData?.(chunk, channel); },
+      }) } as ObservationStreamExecutor;
+      const watcher = new infraModule.InfraLifecycleWatcher({ streams: wrappedStreams, serverEventLogStore: { record: row => {
+        records.push(row);
+        if (mode === 'handler' && row.action === 'infra.lifecycle.oom' && !failedHandler) { failedHandler = true; throw new Error('owned OOM handler unconfirmed'); }
+      } } });
+      const waitFor = async (predicate: () => boolean) => { for (let n = 0; n < 800; n++) { if (predicate()) return; await new Promise(r => setTimeout(r,25)); } throw new Error(`owned OOM continuity ${mode} not observed`); };
+      try {
+        watcher.start();
+        if (mode === 'stop') { await waitFor(() => records.some(r => r.action === 'infra.lifecycle.oom')); await watcher.stop(); watcher.start(); }
+        await waitFor(() => records.filter(r => r.action === 'infra.lifecycle.die').length === 2);
+        const deaths = records.filter(r => r.action === 'infra.lifecycle.die').map(r => r.message ?? '');
+        assert.match(deaths[0], /原因待核实/); assert.doesNotMatch(deaths[0], /cgroup OOM kill/); assert.match(deaths[1], /cgroup OOM kill/);
+        await watcher.stop(); assert.equal(eventStreams.getStats().admitted, 0);
+        const producers = (await fs.readFile(path.join(continuityBin, `${mode}.jsonl`), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+        assert.equal(producers.length, mode === 'disconnect' || mode === 'stop' ? 2 : 1);
+        assert.ok(producers.every(p => p.ppid !== process.pid && actorPids.has(p.pgid)));
+        report.oomContinuity.modes.push({ mode, deaths, producers, actorPids: [...actorPids], drained: true });
+      } finally { await watcher.stop(); }
+    }
+    report.checks.push({ name: 'compiled-owned-oom-gap-stop-overflow-handler-and-malformed-continuity', passed: true });
 
     report.stage = 'compiled-owned-container-log-http-streams';
     logServer = http.createServer((req, res) => {

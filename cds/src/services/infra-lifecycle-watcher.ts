@@ -57,6 +57,7 @@ export function setReplicaMemberDeathListener(fn: ReplicaMemberDeathListener | n
 
 export class InfraLifecycleWatcher {
   private readonly eventStream?: DockerObservationEventStream;
+  private started = false;
   private events: InfraLifecycleEvent[] = [];
   /** 实际容器 ID → 本次进程代次最近的 OOM；严格受 RING_LIMIT 约束。 */
   private recentOom = new Map<string, number>();
@@ -64,17 +65,29 @@ export class InfraLifecycleWatcher {
     if (deps.streams) this.eventStream = new DockerObservationEventStream(deps.streams,
       ['events', '--format', '{{json .}}', '--filter', 'type=container', ...['oom', 'die', 'kill', 'start', 'restart'].flatMap(event => ['--filter', `event=${event}`])],
       line => this.ingest(line),
-      reason => this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.warning', message: reason }));
+      reason => {
+        // 断流、丢行或处理未确认后，缺口中可能发生过同 ID 重启。
+        // 没有连续观测证据，不能沿用缺口前的 OOM 归因。
+        this.recentOom.clear();
+        this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.warning', message: reason });
+      });
   }
   start(): void {
     activeWatcher = this;
+    if (this.started) return;
+    this.started = true;
+    this.recentOom.clear();
     if (!this.eventStream) {
       this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.unavailable', message: '事件读取执行器未配置，无法确认基础设施事件。' });
       return;
     }
     this.eventStream.start();
   }
-  stop(): Promise<void> { return this.eventStream?.stop() ?? Promise.resolve(); }
+  stop(): Promise<void> {
+    this.started = false;
+    this.recentOom.clear();
+    return this.eventStream?.stop() ?? Promise.resolve();
+  }
 
   /** 指定容器（或全部 infra）的近期生命周期事件，新→旧。 */
   getEvents(containerName?: string): InfraLifecycleEvent[] {
@@ -89,6 +102,7 @@ export class InfraLifecycleWatcher {
     try {
       parsed = JSON.parse(line);
     } catch {
+      this.recentOom.clear();
       return;
     }
     const name = parsed.Actor?.Attributes?.name || '';
