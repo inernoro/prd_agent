@@ -43,6 +43,14 @@ describe('provider CI facts independent of local timing epoch', () => {
     expect(summary).toMatchObject({ incomplete: true, truncated: true });
     expect(summary.build).toMatchObject({ failed: 1, open: 1, completed: 0, completedWallMs: 30000 });
   });
+  it('keeps contradictory queued/in-progress jobs open even when stale complete timestamps are present', () => {
+    for (const status of ['queued', 'in_progress']) {
+      const value = projectCiTiming(target, run(), { total_count: 1, jobs: [{ ...job(), status }] });
+      const summary = summarizeCiTiming(value);
+      expect(value!.jobs[0].outcome).toBe('open');
+      expect(summary).toMatchObject({ incomplete: true, build: { status: 'incomplete', open: 1, completed: 0, completedWallMs: null, workMs: null } });
+    }
+  });
   it('rejects invalid dates/order and raw numeric coercions; never fabricates zero', () => {
     const raw = { ...job(), created_at: null, started_at: 'not-a-date', completed_at: at(0) };
     const summary = summarizeCiTiming(projectCiTiming(target, run(), { total_count: 1, jobs: [raw] }));

@@ -74,9 +74,9 @@ export function summarizeCiTiming(record: CiTimingRecord | null | undefined) {
   const a: [number, number][] = [], b: [number, number][] = [];
   function measure(summary: DeploymentStageSummary, ranges: [number, number][], start: string | null, end: string | null, outcome: CiTimingJob['outcome']) {
     summary.intervals++;
-    if (outcome === 'open' && end === null) { summary.open++; return; }
+    if (outcome === 'open') { summary.open++; return; }
     if (!start || !end || outcome === 'unknown' || Date.parse(end) < Date.parse(start)) { summary.unknown++; return; }
-    if (outcome === 'open') { summary.completed++; } else summary[outcome]++;
+    summary[outcome]++;
     const s = Date.parse(start), e = Date.parse(end); ranges.push([s, e]); summary.workMs = (summary.workMs ?? 0) + e - s;
   }
   for (const job of value?.jobs || []) {
