@@ -7,10 +7,11 @@ import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js
 const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout, stderr, exitCode });
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
-function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean } = {}) {
+function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
+  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean } = {}) {
   const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = ''; let journalAtAdmission: any;
-  const containerId = 'a'.repeat(64); let aborted = false;
+  const containerId = 'a'.repeat(64); let aborted = false, removalAttempts = 0;
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-probe-cancel-'));
   const shell: IShellExecutor = {
     async exec(command, options) {
@@ -41,7 +42,14 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
       if (command.startsWith('docker ps -aq')) return result(visible ? containerId : '');
       if (command.startsWith('docker network ls -q') || command.startsWith('docker volume ls -q')) return result();
       if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
-      if (command.startsWith('docker rm -f')) { visible = false; return result('removed'); }
+      if (command.startsWith('docker rm -f')) {
+        removalAttempts++;
+        if (config.removeFailure) return result('', 'permission denied', 1);
+        if (config.neverCompletesRemoval || removalAttempts <= (config.removingReplies ?? 0))
+          return result('', `Error response from daemon: removal of container ${containerId} is already in progress`, 1);
+        visible = false;
+        return config.removingReplies ? result('', 'No such container: ' + containerId, 1) : result('removed');
+      }
       throw new Error('unexpected command: ' + command);
     },
   };
@@ -53,6 +61,45 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it('confirms a daemon deletion that is still in progress without failing shutdown before its original deadline', async () => {
+    const f = fixture(true, { emptyCidFile: true, removingReplies: 2 });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await f.runtime.closeCapabilityProbes(); await expect(probe).resolves.toMatchObject({ available: false });
+      expect(f.visible).toBe(false);
+      const removals = f.calls.filter(x => x.command.startsWith('docker rm -f'));
+      expect(removals).toHaveLength(3); expect(removals.every(x => x.command === `docker rm -f '${f.containerId}'`)).toBe(true);
+      expect(removals.every(x => x.options?.executionPurpose === 'temporary-cleanup')).toBe(true);
+      const finished = f.events.filter(x => x.action === 'agent.probe.cleanup.step.finished' && x.details.cleanupStep === 'remove');
+      expect(finished.map(x => x.details.outcome)).toEqual(['removing', 'removing', 'absent']);
+      expect(new Set(finished.map(x => x.details.deadline)).size).toBe(1);
+      expect(f.events.some(x => x.action === 'agent.probe.cleanup.confirmed')).toBe(true);
+    } finally { await f.runtime.closeCapabilityProbes().catch(() => undefined); fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
+  it('retains the owned receipt when daemon removal never completes within the unchanged finite budget', async () => {
+    const f = fixture(true, { neverCompletesRemoval: true });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).rejects.toMatchObject({ code: 'workspace_probe_cleanup_unconfirmed' }); await probe;
+      expect(f.visible).toBe(true); expect(f.events.some(x => x.action === 'agent.probe.cleanup.confirmed')).toBe(false);
+      const removals = f.calls.filter(x => x.command.startsWith('docker rm -f'));
+      expect(removals.length).toBeGreaterThan(2); expect(removals.length).toBeLessThan(40);
+      expect(removals.every(x => x.command === `docker rm -f '${f.containerId}'` && x.options?.timeout! <= 60)).toBe(true);
+      const journals = fs.readdirSync(f.rootDir, { recursive: true }).filter(name => String(name).endsWith('probe.json'));
+      expect(journals.length).toBeGreaterThan(0);
+      const receipt = JSON.parse(fs.readFileSync(path.join(f.rootDir, String(journals[0])), 'utf8'));
+      expect(receipt.leases.some((lease: any) => lease.containerId === f.containerId && lease.cleaned === false)).toBe(true);
+    } finally { await f.runtime.closeCapabilityProbes().catch(() => undefined); fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
+  it('does not keep retrying a real removal failure or mark it as confirmed', async () => {
+    const f = fixture(true, { removeFailure: true });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).rejects.toMatchObject({ code: 'workspace_probe_cleanup_unconfirmed' }); await probe;
+      expect(f.visible).toBe(true); expect(f.calls.filter(x => x.command.startsWith('docker rm -f')).length).toBeLessThanOrEqual(2);
+      expect(f.events.some(x => x.action === 'agent.probe.cleanup.confirmed')).toBe(false);
+    } finally { await f.runtime.closeCapabilityProbes().catch(() => undefined); fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
   it('retains an issued but unacknowledged generation across restart and later removes only the owned ID', async () => {
     const f = fixture(false, { emptyCidFile: true });
     const restarted = new AgentWorkspaceSessionRuntime(f.shell, { rootDir: f.rootDir, instanceId: 'cancel-owner', autoPullImage: false,

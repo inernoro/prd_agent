@@ -2212,12 +2212,26 @@ export class AgentWorkspaceSessionRuntime {
         await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
       }
     }
-    const removed = await this.execProbeCleanup(generation, lease, 'remove', lease.kind === 'storage-volume'
-      ? `docker volume rm ${shellQuote(lease.name)}` : `docker rm -f ${shellQuote(lease.containerId!)}`, deadline);
-    if (removed.exitCode !== 0 && !/No such (?:container|volume|object)/i.test(`${removed.stderr}\n${removed.stdout}`)) throw this.probeCleanupError();
+    for (;;) {
+      const removed = await this.execProbeCleanup(generation, lease, 'remove', lease.kind === 'storage-volume'
+        ? `docker volume rm ${shellQuote(lease.name)}` : `docker rm -f ${shellQuote(lease.containerId!)}`, deadline);
+      const outcome = this.probeCleanupOutcome(removed);
+      if (outcome === 'ok' || outcome === 'absent') break;
+      // The daemon can finish an already accepted removal after the original
+      // CLI has been cancelled. Keep the same owned ID and original deadline;
+      // a conflict during that removal is neither success nor a final failure.
+      if (lease.kind === 'storage-volume' || outcome !== 'removing') throw this.probeCleanupError();
+      await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
+    }
     lease.cleaned = true;
     await this.persistProbeGeneration(generation);
     this.probeEvent(generation, lease, 'agent.probe.cleanup.confirmed');
+  }
+
+  private probeCleanupOutcome(result: ExecResult): 'ok' | 'absent' | 'removing' | 'failed' {
+    const diagnostic = `${result.stderr}\n${result.stdout}`;
+    return result.exitCode === 0 ? 'ok' : /No such (?:container|volume|object)/i.test(diagnostic) ? 'absent'
+      : /already in progress/i.test(diagnostic) ? 'removing' : 'failed';
   }
 
   private async execProbeCleanup(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, step: 'inspect' | 'remove', command: string, deadline: number): Promise<ExecResult> {
@@ -2232,9 +2246,7 @@ export class AgentWorkspaceSessionRuntime {
         onAssigned: value => { assignment = value; this.probeEvent(generation, lease, 'agent.probe.cleanup.step.assigned', detail()); },
         beforeStart: () => { if (Date.now() >= deadline) throw this.probeCleanupError();
           this.probeEvent(generation, lease, 'agent.probe.cleanup.step.qualified', { ...detail(), startedAt: Date.now() }); } });
-      const diagnostic = `${result.stderr}\n${result.stdout}`;
-      const outcome = result.exitCode === 0 ? 'ok' : /No such (?:container|volume|object)/i.test(diagnostic) ? 'absent'
-        : /already in progress/i.test(diagnostic) ? 'removing' : 'failed';
+      const outcome = this.probeCleanupOutcome(result);
       this.probeEvent(generation, lease, 'agent.probe.cleanup.step.finished', { ...detail(), finishedAt: Date.now(), exitCode: result.exitCode, outcome });
       return result;
     } catch (error) {
