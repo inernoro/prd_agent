@@ -13,6 +13,7 @@ on:
       - cds/scripts/json-write-overlap-drill.ts
       - cds/scripts/observation-isolation-drill.ts
       - cds/scripts/artifact-admission-drill.ts
+      - cds/scripts/deployment-queue-drill.ts
       - cds/scripts/tsconfig.acceptance.json
       - .github/workflows/cds-isolated-recovery.yml
 
@@ -49,6 +50,34 @@ jobs:
         with:
           name: cds-artifact-admission-${{ github.sha }}
           path: cds/artifact-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  deployment-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check and compile branch deployment
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real owned branch deployment dedup and service queue
+        run: pnpm -C cds exec tsx scripts/deployment-queue-drill.ts
+      - name: Preserve deployment queue evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-deployment-queue-${{ github.sha }}
+          path: cds/queue-output/report.json
           if-no-files-found: error
           retention-days: 14
 
