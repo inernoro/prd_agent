@@ -27,6 +27,8 @@ async function request(
     const req = http.request(
       {
         hostname: '127.0.0.1',
+        // Each test owns a short-lived server; never reuse a socket from a closed predecessor.
+        agent: false,
         port: addr.port,
         path: urlPath,
         method,
@@ -44,7 +46,10 @@ async function request(
         });
       },
     );
-    req.on('error', reject);
+    req.on('error', error => {
+      error.message += ` [owned HTTP fixture ${method} ${urlPath}, reusedSocket=${req.reusedSocket}]`;
+      reject(error);
+    });
     if (payload) req.write(payload);
     req.end();
   });
@@ -102,6 +107,19 @@ describe('项目分支自定义分组', () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('HTTP fixture isolates each request from a closed server when its owned port is reused', async () => {
+    let port: number | undefined;
+    for (let round = 0; round < 6; round++) {
+      const owned = http.createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ round })); });
+      await new Promise<void>((resolve, reject) => {
+        owned.once('error', reject); owned.listen(port ?? 0, '127.0.0.1', resolve);
+      });
+      port = (owned.address() as { port: number }).port;
+      try { expect(await request(owned, 'GET', '/owned-fixture')).toEqual({ status: 200, body: { round } }); }
+      finally { await new Promise<void>(resolve => owned.close(() => resolve())); }
+    }
   });
 
   const claudeGroup = {
