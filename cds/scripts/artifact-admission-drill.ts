@@ -72,6 +72,7 @@ async function main(): Promise<void> {
   const container = new m.container.ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge',
     sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'owned' } } as CdsConfig);
   const ownedIds: string[] = [], imageIds = new Set<string>();
+  const fixtureImage = 'node:22-alpine';
   const ownedView = (id: string): any => {
     assert.match(id, /^[a-f0-9]{64}$/); const view = JSON.parse(docker(['inspect', id]))[0];
     assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); return view;
@@ -87,21 +88,38 @@ async function main(): Promise<void> {
     const until = performance.now() + 30_000;
     for (;;) { try { await read(url); return; } catch (error) { if (performance.now() > until) throw error; await new Promise(resolve => setTimeout(resolve, 250)); } }
   };
+  const publishedPort = async (id: string, containerPort: string): Promise<string> => {
+    const until = performance.now() + 5000;
+    for (;;) {
+      const view = ownedView(id);
+      if (!view.State.Running) {
+        report.fixtureFailure = { image: view.Config.Image, status: view.State.Status, exitCode: view.State.ExitCode,
+          error: view.State.Error, logs: docker(['logs', '--tail', '20', id]).slice(-4096) };
+        throw new Error('Owned HTTP fixture exited before ready');
+      }
+      const binding = view.NetworkSettings.Ports?.[containerPort]?.[0];
+      if (binding) { assert.equal(binding.HostIp, '127.0.0.1'); return binding.HostPort; }
+      if (performance.now() > until) throw new Error('Owned HTTP fixture port was not published within 5 seconds');
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
   const build = async (role: string, ref: string): Promise<void> => {
     const context = path.join(temp, role); await fs.mkdir(context); await fs.writeFile(path.join(context, 'index.html'), `${role}:${head}`);
-    await fs.writeFile(path.join(context, 'Dockerfile'), `FROM alpine:3.20\nLABEL cds.acceptance.owner="${owner}" org.opencontainers.image.revision="${head}"\nCOPY index.html /www/index.html\nCMD ["httpd", "-f", "-p", "8080", "-h", "/www"]\n`);
+    await fs.writeFile(path.join(context, 'server.cjs'), "const http=require('node:http'),fs=require('node:fs');http.createServer((_req,res)=>{res.setHeader('Content-Type','text/plain');res.end(fs.readFileSync('/www/index.html','utf8'));}).listen(8080,'0.0.0.0');");
+    await fs.writeFile(path.join(context, 'Dockerfile'), `FROM ${fixtureImage}\nLABEL cds.acceptance.owner="${owner}" org.opencontainers.image.revision="${head}"\nCOPY index.html /www/index.html\nCOPY server.cjs /server.cjs\nCMD ["node", "/server.cjs"]\n`);
     docker(['build', '--network', 'none', '-t', ref, context]);
     const image = JSON.parse(docker(['image', 'inspect', ref]))[0]; assert.equal(image.Config.Labels['cds.acceptance.owner'], owner);
     imageIds.add(image.Id); docker(['push', ref]);
   };
   try {
-    await shell.start(); report.stage = 'registry-ready'; docker(['pull', 'registry:2']); docker(['pull', 'alpine:3.20']);
+    await shell.start(); report.stage = 'registry-ready'; docker(['pull', 'registry:2']); docker(['pull', fixtureImage]);
     const registryId = start('registry', ['--cpus', '0.5', '--memory', '128m', '-p', '127.0.0.1::5000', 'registry:2']);
-    const port = ownedView(registryId).NetworkSettings.Ports['5000/tcp'][0].HostPort;
+    const port = await publishedPort(registryId, '5000/tcp');
     const registry = `127.0.0.1:${port}`; await waitHttp(`http://${registry}/v2/`);
-    const oldId = start('old', ['--cpus', '0.25', '--memory', '64m', '-p', '127.0.0.1::8080', 'alpine:3.20', 'sh', '-c',
-      'mkdir /www; echo old-ready > /www/index.html; exec httpd -f -p 8080 -h /www']);
-    const oldPort = ownedView(oldId).NetworkSettings.Ports['8080/tcp'][0].HostPort;
+    report.stage = 'old-http-fixture-ready';
+    const oldId = start('old', ['--cpus', '0.25', '--memory', '128m', '-p', '127.0.0.1::8080', fixtureImage, 'node', '-e',
+      "require('node:http').createServer((_req,res)=>res.end('old-ready')).listen(8080,'0.0.0.0')"]);
+    const oldPort = await publishedPort(oldId, '8080/tcp');
     const oldUrl = `http://127.0.0.1:${oldPort}/`; await waitHttp(oldUrl); assert.equal((await read(oldUrl)).trim(), 'old-ready');
     const apiRef = `${registry}/owned-api:sha-${head}`, webRef = `${registry}/owned-web:sha-${head}`;
     await build('api', apiRef);
@@ -153,8 +171,8 @@ async function main(): Promise<void> {
     assert.equal(runs.list().length, 1); assert.equal((await read(oldUrl)).trim(), 'old-ready');
     const fixed = m.artifacts.admittedArtifactProfile(profiles[2], admitted.artifactAdmission);
     assert.match(fixed.dockerImage!, /@sha256:[0-9a-f]{64}$/); assert.equal(fixed.localArtifact, true); assert.equal(fixed.sourceFallbackProfile, undefined);
-    const newId = start('new', ['--cpus', '0.25', '--memory', '64m', '-p', '127.0.0.1::8080', fixed.dockerImage!]);
-    const newPort = ownedView(newId).NetworkSettings.Ports['8080/tcp'][0].HostPort;
+    const newId = start('new', ['--cpus', '0.25', '--memory', '128m', '-p', '127.0.0.1::8080', fixed.dockerImage!]);
+    const newPort = await publishedPort(newId, '8080/tcp');
     await waitHttp(`http://127.0.0.1:${newPort}/`); assert.equal(await read(`http://127.0.0.1:${newPort}/`), `web:${head}`);
     assert.equal(ownedView(newId).Config.Labels['org.opencontainers.image.revision'], head);
     const cold = new m.state.StateService(stateFile); cold.load();
