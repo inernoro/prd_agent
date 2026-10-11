@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.76 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.77 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -393,4 +393,17 @@ artifactSource 是操作者声明的预期 OCI source，只接受固定 HTTPS Gi
 
 声明的source须进入配置指纹并冻结到部署版本，恢复沿用已冻结source或其明确缺省，不能借用后来当前Profile值。未声明source的配置指纹保持原口径，不为这次可选字段让全部旧项目产生配置漂移；沿用既有replacement v1冻结presence/absence与旧未版本化兼容，不新造schema。
 
-本次 IMP auxiliary 提案只在离线生成器校验主分支三元组；CDS通用复制/派生仍可复制extraProfiles，本修复不宣称平台全局main-only激活隔离。旧网关切换、真实网络/XXL、辅助运行分母和bootstrap终结receipt仍单独验收。平台完整自动元数据门禁及P5-06实际验收接管后退场本临时说明。
+IMP auxiliary 提案的主分支三元组由下述可选放置约束声明；不等同平台鉴权或不可修改的main-only全局策略。旧网关切换、真实网络/XXL、辅助运行分母和bootstrap终结receipt仍单独验收。平台完整自动元数据门禁及P5-06实际验收接管后退场本临时说明。
+
+
+## 辅助服务的声明式放置约束（P5-06/P5-03，实施前冻结）
+
+可选 deploymentScope 为完整 {projectId, branchId, repoBranch} 三元组：projectId/branchId 接受1..128安全标识，repoBranch 接受1..256非空且无空白/控制字符的原样Git分支身份。必须只包含这三个字符串，不接受数组、缺键、别名或部分范围。匹配实际 BranchEntry.projectId（历史缺省归default）、id 和 branch，不从previewSlug、名称、SHA或其他项目同名main推断。未声明的历史Profile保持原行为。此为操作者声明的放置限制，不替代项目权限；已有授权编辑者可显式null清除，再按新配置部署，不能声称平台禁止一切非main激活。
+
+已有 extra-services PUT/GET 校验保存该字段：省略保留同ID原值，null显式清除，声明不匹配当前分支时400且整列表不变。非法历史声明视为不合格，不强制转换。普通部署覆盖与deployModes不允许注入或改写范围。源配置hash在声明时纳入完整scope；版本capture深拷贝且v1冻结存在或缺省，旧未版本化沿兼容口径，恢复不能借当前范围。
+
+创建派生分支和显式copy-config-from在拷贝时按目标Entry过滤不匹配或非法scoped额外服务，返回有界skippedExtraProfileIds；无scope普通extras继续原样深拷贝。对应额外ID的分支override同时移除，但不能误删该项目底座Profile同ID的override。源分支不改，既有目标拷贝前快照及列表替换/权限语义不变；响应记录跳过项不能冒充运行已回收或已部署。
+
+merge与有效Profile查询不得静默剔除scope错误项：错误的存量配置或正在运行的服务仍保留完整预期/实际分母。运行摘要将其列为unknown，并明确scope不合格，不能亮全部极速；展示非法配置不得使列表500。整分支、单服务、执行器在外部派发、创建/停止/清理前核对所有将执行Profile；精确制品gate在任何shell前核对scope，声明scope但无实际Branch上下文同样拒绝；Container实际runService再核对。失败不新拉镜像、不启源码fallback、不停旧服务，不以错误分母变小获得黄闪电。回滚/导入/直接执行不能仅靠复制时过滤获得运行资格。
+
+IMP auxiliary提案从SSOT activation深拷贝deploymentScope，生成每SHA制品规则不变。实际主网关迁移、跨分支默认共享地址、Daemon/DNS/XXL及正式黄闪电仍单独验收，不由本地放置约束推导已跑通。自动放置准入/复制与覆盖率门禁及P5-06真实报告完整接管后退场本临时实施说明。
