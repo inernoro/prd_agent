@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.68 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.69 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -333,3 +333,14 @@ app级自更新排空首次检查保留；磁盘等待结束后再次检查同�
 关联复用既有run独立draft持久化屏障，最多5秒，可靠ACK后才公开字段并放行；失败/未知/超时不执行外部动作。新await前后核原Branch引用与id/project/branch/worktree/createdAt、当前租约、有效配置SHA中性指纹及原项目权限；cacheSHA/notes变化不拒绝。缺追踪依赖失败关闭。关联阶段失败/取消必须终结本次租约并记录本次run结果，不能漏掉cleanup，也不能清理旧容器；不使用旧active为空、进程消失或HTTP200证明Daemon闭合。
 
 沿用GET /api/deployment-runs，用pendingOperationId+pendingGeneration查询；二者必须同时合法，并指定project与branch（项目凭据可提供项目范围）。先按项目/分支/原op/gen筛选再应用既有limit，不能先裁剪最近run再漏掉原请求。返回仍使用现有run summary/权限与敏感信息投影，不新增路由、不输出派发凭据。旧generation、新项目或其他分支不能继承结果；多条实际匹配按现有历史保留规则如实返回，不猜唯一或完成。此为本地关联实施，不是Master/Daemon安全重放、历史永久保存、UI或正式验收；完整P3历史关联自动门禁接管后退场临时说明。
+
+
+### 分阶段耗时事实合同（P0-04，实施前冻结）
+
+部署run新增可选timing v1，记录原run/op、同进程测量纪元、阶段、实际观测边界、Profile范围、开始/结束及单调时钟耗时。冻结九阶段：CI runner、CI build、artifact、capacity、pull、startup、readiness、switch、cleanup；不得用可裁剪日志或Branch可变累计反推历史。旧run无字段和未接入阶段均为not-observed/null，不能以0或相邻日志替代。CI排队与构建须有精确provider run/attempt/job证据，推送接收至completed不能直接当runner排队；本地阶段测量不伪造外部CI记录。
+
+每run最多512段并明确truncated；观测边界使用有界枚举，不持久化命令、env、原始异常或任意标签。运行记录始终由原run引用及原op控制；测量段以不可变id和开始事实识别，可靠draft替换内部对象后仍能结束原段；回调失效/重复结束/开始事实改变/重复id/终态/新owner不能写后继，计时本身不能改变动作顺序、重放或取消任务，也不增加准入等待。观察器在run绑定本次执行op后创建。开始以save记录，正常终态沿用run可靠落盘屏障；未结束段在终态/重启收敛时只标unknown，不猜实际外部动作结束时间。测量失败或时钟非法显式无测量值，不影响原业务结果。
+
+并行Profile区间使用同纪元单调偏移取并集作为已观测墙钟区间，另列工作时长总和，不能直接相加冒充用户总等待。开放/unknown/truncated段使汇总带incomplete；汇总分别列completed/failed/cancelled，observed不等于动作成功。completedWallMs只是已观测边界的闭合区间，不是九阶段完整端到端耗时或真实性能pass。每段以commitShaAtStart保留开始时记录中的提交（可能尚未解析），并以run最终目标另行读取，不把缓存提交冒充执行目标。
+
+接入首先覆盖实际whole/Profile的非skip pull、exact artifact准入、源码槽实际onQueued等待，以及候选容量核验、预构建启动、就绪、路由消费者ACK和回收/失败恢复。边界需明确：capacity-check与source-slot-wait不同，runtime预构建启动与源码编译不混合，route-ack只测实际ACK而非整个切换。尚未接入的执行器路径、普通终态之后的收尾、外部CI及页面展示保持缺口，不据局部记录宣布P0-04完成。该临时实施说明在九阶段实际自动门禁与正式P0/P6报告完整接管后退场。

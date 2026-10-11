@@ -1,3 +1,4 @@
+import { measureDeploymentStage } from '../services/deployment-stage-timing.js';
 import { singleServiceArtifactSet } from '../services/single-service-artifact-set.js';
 import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
 import { unresolvedCandidateRun } from '../services/candidate-operation-admission.js';
@@ -13126,6 +13127,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const deploymentTiming = deploymentRun && branchOperationLease
+      ? deploymentRunService?.createTimingObserver(deploymentRun.id, branchOperationLease.operationId, () => branchOperationLease.isCurrent()) : undefined;
+
     // Local path: if we were previously dispatched to a remote executor,
     // clear the sticky ownership so GET /api/branches stops reporting the
     // wrong placement.
@@ -13322,7 +13326,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal);
+        : await measureDeploymentStage(deploymentTiming, 'pull', 'git-pull', null, () => worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal));
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
         status: 'done',
@@ -13408,12 +13412,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.deploymentTargetSha = targetSha;
         stateService.save();
         logEvent({ step: 'artifact-admission', status: 'running', title: '准备完整精确极速制品，保留现有服务', timestamp: new Date().toISOString() });
-        const prepared = await prepareExactPrebuiltArtifacts(shell,
+        const prepared = await measureDeploymentStage(deploymentTiming, 'artifact', 'exact-artifact', null, () => prepareExactPrebuiltArtifacts(shell,
           profiles.map(profile => selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry)), targetSha, {
             assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
             signal: branchOperationLease?.signal,
             onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
-          });
+          }));
         for (const profile of prepared) preparedExactProfiles.set(profile.id, profile);
         deployedCommitSha = targetSha;
         Object.assign(opLog, deriveCommitMeta(entry, targetSha));
@@ -13678,7 +13682,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           },
           assertCurrent: assertCandidateCurrent, signal: branchOperationLease!.signal,
           context: { requestId, actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req) },
-          admit: bindings.admit,
+          admit: bindings.admit, timing: deploymentTiming,
           acknowledge: branch => bindings.acknowledge(branch, branchOperationLease!.signal),
           onRecoveryFailure: stage => logEvent({ step: 'candidate-recovery', status: 'error',
             title: `旧实例恢复尚未确认，等待对账: ${stage}`, detail: { recoveryStage: stage }, timestamp: nowIso() }),
@@ -13773,6 +13777,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           const gateSignal = AbortSignal.any([gateAbort.signal, deploymentSignal]);
           const leaseCancelled = () => !!branchOperationLease && !branchOperationLease.isCurrent();
           const acquireGateSlot = async (): Promise<BuildSlot> => {
+            let finishQueueTiming: ReturnType<NonNullable<typeof deploymentTiming>['begin']> | undefined;
             try {
               const slot = await acquireBuildSlot({
                 holder: {
@@ -13786,6 +13791,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 signal: gateSignal,
                 isCancelled: leaseCancelled,
                 onQueued: ({ ahead, active, max }) => {
+                  finishQueueTiming ||= deploymentTiming?.begin('capacity', 'source-slot-wait', profile.id);
                   logEvent({
                     step: `queue-${profile.id}`,
                     status: 'info',
@@ -13817,6 +13823,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
                 },
                 onStart: ({ waitedMs }) => {
+                  finishQueueTiming?.('completed');
                   clearQueueTimer();
                   logEvent({
                     step: `queue-${profile.id}`,
@@ -13831,6 +13838,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               clearQueueTimer();
               return slot;
             } catch (err) {
+              finishQueueTiming?.(leaseCancelled() ? 'cancelled' : 'failed');
               clearQueueTimer();
               deployQueueTracker.onStart(profile.id);
               if (err instanceof BuildSlotCancelledError) {
@@ -13919,7 +13927,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               timestamp: new Date().toISOString(),
             });
 
-            await runServiceWithPortRetry({
+            await measureDeploymentStage(effectiveProfile.prebuiltImage === true && effectiveProfile.prebuiltCommitPolicy === 'exact' ? deploymentTiming : undefined, 'startup', 'prebuilt-start', profile.id, () => runServiceWithPortRetry({
               stateService,
               shell,
               config,
@@ -13986,7 +13994,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   }
                 }
               },
-            });
+            }));
 
             assertBranchOperationCurrent(branchOperationLease, `after-run-${profile.id}`);
             // Phase 1 passed (container alive). Enter 'starting' and gate the
@@ -14006,6 +14014,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
             let ready = false;
             if (profile.startupSignal) {
+              const startupSignal = profile.startupSignal;
               const elapsed = Date.now() - serviceStartTime;
               logEvent({
                 step: `build-${profile.id}`,
@@ -14015,12 +14024,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
 
-              ready = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+              ready = await measureDeploymentStage(deploymentTiming, 'readiness', 'startup-signal', profile.id, () => containerService.waitForStartupSignal(svc.containerName, startupSignal, (chunk) => {
                 heartbeatDeploymentRun(deploymentRun?.id);
                 for (const line of chunk.split('\n')) {
                   if (line.trim()) logDeploy(id, line);
                 }
-              }, 300, deploymentSignal);
+              }, 300, deploymentSignal), ok => ok);
             }
 
             // Always run the port-level readiness probe (even after a
@@ -14028,7 +14037,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // while its host-port binding is still racing. Default TCP
             // probe when no `readinessProbe` is configured.
             if (!profile.startupSignal || ready) {
-              const probeReady = await containerService.waitForReadiness(
+              const probeReady = await measureDeploymentStage(deploymentTiming, 'readiness', 'application-ready', profile.id, () => containerService.waitForReadiness(
                 svc.hostPort,
                 // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
                 applyDeployReadinessFloor(
@@ -14058,7 +14067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 // 容器活性早退：崩溃容器不再让持有的构建槽白等满就绪下限。
                 svc.containerName,
                 deploymentSignal,
-              );
+              ), ok => ok);
               ready = ready ? probeReady : probeReady;
             }
 
@@ -14726,6 +14735,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: profileCommitPinned ? profileRequestCommitSha : entry.githubCommitSha,
       detail: { profileId },
     });
+    const deploymentTiming = deploymentRun && branchOperationLease
+      ? deploymentRunService?.createTimingObserver(deploymentRun.id, branchOperationLease.operationId, () => branchOperationLease.isCurrent()) : undefined;
 
     initSSE(res);
     if (deploymentRun) {
@@ -14774,7 +14785,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal);
+        : await measureDeploymentStage(deploymentTiming, 'pull', 'git-pull', profile.id, () => worktreeService.pull(entry.branch, entry.worktreePath, branchOperationLease?.signal));
       assertBranchOperationCurrent(branchOperationLease, 'after-profile-pull');
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
@@ -14845,11 +14856,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const artifactProfiles = singleServiceArtifactSet(profiles.map(item => resolveEffectiveProfile(item, exactContext)), profile.id,
           new Set(stateService.getInfraServicesForProject(entry.projectId || 'default')
             .filter(infra => infra.status === 'running').map(infra => infra.id)));
-        const prepared = await prepareExactPrebuiltArtifacts(shell, artifactProfiles, targetSha, {
+        const prepared = await measureDeploymentStage(deploymentTiming, 'artifact', 'exact-artifact', profile.id, () => prepareExactPrebuiltArtifacts(shell, artifactProfiles, targetSha, {
           assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
             signal: branchOperationLease?.signal,
           onProgress: (profileId, stage) => sendSSE(res, 'log', { profileId, chunk: `[artifact] ${stage} ${targetSha}\n` }),
-        });
+        }));
         effectiveProfile = prepared.find(item => item.id === profile.id)!;
         if (!effectiveProfile) throw new Error('artifact_dependency_graph: admitted target is missing');
       } else {
@@ -14921,6 +14932,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       };
       const acquireGateSlot = async (): Promise<BuildSlot> => {
+        let finishQueueTiming: ReturnType<NonNullable<typeof deploymentTiming>['begin']> | undefined;
         try {
           const slot = await acquireBuildSlot({
             holder: {
@@ -14934,6 +14946,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             signal: gateSignal,
             isCancelled: leaseCancelled,
             onQueued: ({ ahead, active, max }) => {
+              finishQueueTiming ||= deploymentTiming?.begin('capacity', 'source-slot-wait', profile.id);
               logEvent({
                 step: `queue-${profile.id}`,
                 status: 'info',
@@ -14961,6 +14974,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               if (typeof queueRefreshTimer.unref === 'function') queueRefreshTimer.unref();
             },
             onStart: ({ waitedMs }) => {
+              finishQueueTiming?.('completed');
               clearQueueTimer();
               logEvent({
                 step: `queue-${profile.id}`,
@@ -14975,6 +14989,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           clearQueueTimer();
           return slot;
         } catch (err) {
+          finishQueueTiming?.(leaseCancelled() ? 'cancelled' : 'failed');
           clearQueueTimer();
           deployQueueTracker.onStart(profile.id);
           if (err instanceof BuildSlotCancelledError) {
@@ -15021,7 +15036,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         assertBranchOperationCurrent(branchOperationLease, `before-profile-runtime-${profile.id}`);
         profileRuntimeAttempted = true;
-        await runServiceWithPortRetry({
+        await measureDeploymentStage(effectiveProfile.prebuiltImage === true && effectiveProfile.prebuiltCommitPolicy === 'exact' ? deploymentTiming : undefined, 'startup', 'prebuilt-start', profile.id, () => runServiceWithPortRetry({
           stateService,
           shell,
           config,
@@ -15071,7 +15086,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               if (line.trim()) logDeploy(id, line);
             }
           },
-        });
+        }));
 
         assertBranchOperationCurrent(branchOperationLease, `after-run-${profile.id}`);
         // Enter 'starting' and gate transition on startup signal + readiness
@@ -15091,12 +15106,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         let ready = false;
         if (profile.startupSignal) {
-          const signalReady = await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal, (chunk) => {
+          const startupSignal = profile.startupSignal;
+          const signalReady = await measureDeploymentStage(deploymentTiming, 'readiness', 'startup-signal', profile.id, () => containerService.waitForStartupSignal(svc.containerName, startupSignal, (chunk) => {
             heartbeatDeploymentRun(deploymentRun?.id);
             for (const line of chunk.split('\n')) {
               if (line.trim()) logDeploy(id, line);
             }
-          }, 300, branchOperationLease?.signal);
+          }, 300, branchOperationLease?.signal), ok => ok);
           ready = signalReady;
         }
         if (!profile.startupSignal || ready) {
@@ -15106,7 +15122,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             operationId: branchOperationLease?.operationId,
             detail: { profileId, hostPort: svc.hostPort },
           });
-          ready = await containerService.waitForReadiness(
+          ready = await measureDeploymentStage(deploymentTiming, 'readiness', 'application-ready', profile.id, () => containerService.waitForReadiness(
             svc.hostPort,
             // 发布阶段就绪探测：抬到部署下限(默认 1200s)，避免慢首启被误杀。运行期重启/唤醒不走这里。
             applyDeployReadinessFloor(
@@ -15129,7 +15145,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // 容器活性早退：崩溃容器立即结束就绪等待，不空转到超时。
             svc.containerName,
             branchOperationLease?.signal,
-          );
+          ), ok => ok);
         }
         assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
         if (ready) {

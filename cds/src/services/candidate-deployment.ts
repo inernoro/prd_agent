@@ -1,3 +1,4 @@
+import { measureDeploymentStage, type DeploymentTimingObserver } from './deployment-stage-timing.js';
 import type { BranchEntry, BuildProfile, DeploymentCandidateRecord } from '../types.js';
 import type { ContainerService } from './container.js';
 import type { StateService } from './state.js';
@@ -15,6 +16,7 @@ import { unresolvedCandidateRun } from './candidate-operation-admission.js';
 
 export interface CandidateDeploymentOptions {
   runId: string;
+  timing?: DeploymentTimingObserver;
   entry: BranchEntry;
   profiles: BuildProfile[];
   allocatePort(reserved: ReadonlySet<number>): number;
@@ -129,7 +131,7 @@ export class CandidateDeploymentService {
     const attempted = new Set<string>();
     const stopped = new Set<string>();
     try {
-      await options.admit(graph, stopBeforeStart, { assertCurrent: active, signal: options.signal }); active();
+      await measureDeploymentStage(options.timing, 'capacity', 'capacity-check', null, () => options.admit(graph, stopBeforeStart, { assertCurrent: active, signal: options.signal })); active();
       await journal.advance(runId, 'prepared', 'starting'); active();
       for (const id of stopBeforeStart) {
         ownedStops.add(id);
@@ -155,7 +157,7 @@ export class CandidateDeploymentService {
           const output = (chunk: string) => options.onOutput?.(profile.id, chunk);
           await journal.recordCreateIntent(runId, profile.id, current); current();
           attempted.add(profile.id);
-          await this.containers.runService(graph, profile, service, output, customEnv, {
+          await measureDeploymentStage(options.timing, 'startup', 'prebuilt-start', profile.id, () => this.containers.runService(graph, profile, service, output, customEnv, {
             ...options.context, operationId: frozen.operationId, candidateRunId: frozen.operationId,
             assertCurrent: current, signal,
             ...(this.networks ? {
@@ -173,7 +175,7 @@ export class CandidateDeploymentService {
               await journal.recordCreated(runId, profile.id, reference, service, current); current();
               captured.set(profile.id, reference);
             },
-          });
+          }));
           current();
           if (this.networks && !capturedNetwork) throw new Error('candidate_network_identity: durable actual network result required');
           const reference = await this.lifecycle.capture({ ...owner, candidateOperationId: frozen.operationId }, service, current, signal);
@@ -182,12 +184,13 @@ export class CandidateDeploymentService {
           if (reference.image !== profile.preparedArtifactId || !reference.wasRunning || service.deployedPrebuilt !== true ||
             service.deployedCommitSha !== targetSha) throw new Error('candidate_artifact: inspected exact runtime required');
           if (profile.startupSignal) {
-            const started = await this.containers.waitForStartupSignal(service.containerName, profile.startupSignal,
-              output, profile.readinessProbe?.timeoutSeconds || 300, signal);
+            const startupSignal = profile.startupSignal;
+            const started = await measureDeploymentStage(options.timing, 'readiness', 'startup-signal', profile.id, () => this.containers.waitForStartupSignal(service.containerName, startupSignal,
+              output, profile.readinessProbe?.timeoutSeconds || 300, signal), ok => ok);
             current();
             if (!started) throw new Error('candidate_readiness: startup signal missing');
           }
-          const ready = await this.containers.waitForReadiness(service.hostPort, profile.readinessProbe, undefined, output, service.containerName, signal);
+          const ready = await measureDeploymentStage(options.timing, 'readiness', 'application-ready', profile.id, () => this.containers.waitForReadiness(service.hostPort, profile.readinessProbe, undefined, output, service.containerName, signal), ok => ok);
           current();
           if (!ready) throw new Error('candidate_readiness: application is not ready');
           service.status = 'running';
@@ -199,16 +202,17 @@ export class CandidateDeploymentService {
       switched = true;
       await new CandidateSwitchCoordinator(this.state).commit(runId, graph, {
         assertCurrent: active,
-        acknowledge: options.acknowledge,
+        acknowledge: branch => measureDeploymentStage(options.timing, 'switch', 'route-ack', null, () => options.acknowledge(branch), ok => ok),
         remove: async (service, kind, switchFence) => {
           const reference = (kind === 'serving' ? oldReferences : captured).get(service.profileId);
           if (!reference || service.containerId !== reference.id || service.containerName !== reference.name) {
             throw new Error('candidate_recycle_identity: captured immutable ID required');
           }
-          await this.lifecycle.remove(reference, switchFence, options.signal);
+          await measureDeploymentStage(options.timing, 'cleanup', 'owned-recycle', service.profileId, () => this.lifecycle.remove(reference, switchFence, options.signal));
         },
       });
     } catch (error) {
+      const finishRecoveryTiming = options.timing?.begin('cleanup', 'candidate-recovery');
       // Normalize raw abort reasons only when the operation lease was actually revoked.
       // A sibling's shared abort must retain the original application/Daemon failure.
       try { options.assertCurrent('candidate-deployment-error'); } catch (leaseError) {
@@ -271,6 +275,7 @@ export class CandidateDeploymentService {
       try { options.assertCurrent('candidate-recovery-result'); } catch (leaseError) {
         if (leaseError instanceof BranchOperationSupersededError) error = leaseError;
       }
+      finishRecoveryTiming?.(this.state.getDeploymentRun(runId)?.candidate?.phase === 'released' ? 'completed' : 'failed');
       throw error;
     }
   }

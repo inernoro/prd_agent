@@ -115,4 +115,51 @@ describe('actual own HTTP pending-to-run durable binding', () => {
       expect(runs.list().some((run: any) => run.pendingOrigin)).toBe(false); expect(coordinator.getActive('owned')).toBeUndefined();
     });
   }
+  for (const route of ['/api/branches/owned/deploy', '/api/branches/owned/deploy/api']) {
+    it('records actual pull boundary with open/failed facts and no guessed CI duration: ' + route, async () => {
+      const p = await pending(route); let entered = false; let release!: () => void;
+      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockImplementationOnce(() => new Promise((_resolve, reject) => {
+        entered = true; release = () => reject(Error('OWNED_PULL_ERROR_NO_SECRETS'));
+      }));
+      const response = post(token(p), { commitSha: 'b'.repeat(40) }, route);
+      let runId = '';
+      try {
+        await vi.waitFor(() => expect(entered).toBe(true));
+        const list = await get('/api/deployment-runs?project=default&branch=owned');
+        const actual = list.data.runs.find((run: any) => run.pendingOrigin?.operationId === p.operationId); runId = actual.id;
+        expect(actual.timingSummary.stages.pull).toMatchObject({ status: 'incomplete', open: 1, completedWallMs: null });
+        expect(actual.timing).toBeUndefined();
+        expect(actual.timingSummary.stages['ci-runner'].completedWallMs).toBeNull();
+        expect((await get('/api/deployment-runs/' + runId, 'foreign')).status).toBe(403);
+      } finally { release(); await response; pull.mockRestore(); }
+      const result = await get('/api/deployment-runs/' + runId); const run = result.data.run;
+      expect(run.timing.intervals.find((x: any) => x.boundary === 'git-pull')).toMatchObject({ stage: 'pull', outcome: 'failed' });
+      expect(run.timingSummary.stages.pull).toMatchObject({ status: 'observed', open: 0, unknown: 0 });
+      expect(run.timingSummary.stages.pull.completedWallMs).toBeGreaterThanOrEqual(0);
+      expect(JSON.stringify(run.timing)).not.toContain('OWNED_PULL_ERROR_NO_SECRETS');
+      await state.flush(); const reload = new StateService(path.join(root, 'state.json')); reload.load();
+      expect(reload.getDeploymentRun(runId)?.timing).toEqual(run.timing);
+    });
+    it('records exact artifact admission at its actual held Docker query: ' + route, async () => {
+      const p = await pending(route); let entered = false; let release!: () => void;
+      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7) } as any);
+      const original = shell.exec.bind(shell);
+      const exec = vi.spyOn(shell, 'exec').mockImplementation((command, opts) => command.startsWith('docker version')
+        ? new Promise(resolve => { entered = true; release = () => resolve({ stdout: '', stderr: 'OWNED_DOCKER_ERROR', exitCode: 1 }); })
+        : original(command, opts));
+      const response = post(token(p), { commitSha: 'b'.repeat(40) }, route); let runId = '';
+      try {
+        await vi.waitFor(() => expect(entered).toBe(true));
+        const actual = runs.list().find(run => run.pendingOrigin?.operationId === p.operationId)!; runId = actual.id;
+        const query = await get('/api/deployment-runs/' + runId);
+        expect(query.data.run.timingSummary.stages.artifact).toMatchObject({ open: 1, completedWallMs: null });
+        expect(exec.mock.calls.some(([command]) => /^docker (create|run|rm) /.test(command))).toBe(false);
+      } finally { release(); await response; pull.mockRestore(); exec.mockRestore(); }
+      const run = (await get('/api/deployment-runs/' + runId)).data.run;
+      expect(run.timing.intervals.find((x: any) => x.boundary === 'exact-artifact')).toMatchObject({ stage: 'artifact', outcome: 'failed', commitShaAtStart: 'b'.repeat(40) });
+      expect(run.timingSummary.stages.artifact.completedWallMs).toBeGreaterThanOrEqual(0);
+      expect(run.timingSummary.stages.startup.completedWallMs).toBeNull();
+    });
+  }
+
 });

@@ -1365,6 +1365,8 @@ export interface DeploymentRun {
   configHash?: string;
   /** Original queued intent; present only after validated lease and durable binding. */
   pendingOrigin?: { version: 1; operationId: string; generation: number; profileId: string | null };
+  /** Explicit stage boundary observations; absent legacy data is not measured zero. */
+  timing?: import('./services/deployment-stage-timing.js').DeploymentTimingRecord;
   startedAt: string;
   updatedAt: string;
   heartbeatAt?: string;

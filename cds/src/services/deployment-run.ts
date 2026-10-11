@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+import { isTimingBoundary, TIMING_INTERVAL_LIMIT, type DeploymentTimingObserver, type DeploymentTimingInterval } from './deployment-stage-timing.js';
 import type {
   DeploymentFailure,
   DeploymentRun,
@@ -60,6 +62,7 @@ export interface DeploymentRunServiceOptions {
   idFactory?: () => string;
   maxEvents?: number;
   pendingOriginTimeoutMs?: number;
+  timingClock?: () => number;
 }
 
 export interface DeploymentRunEventsAfter {
@@ -73,6 +76,9 @@ export class DeploymentRunService {
   private readonly idFactory: () => string;
   private readonly maxEvents: number;
   private readonly pendingOriginTimeoutMs: number;
+  private readonly timingClock: () => number;
+  private readonly timingBase: number;
+  private readonly timingEpochId = `pt_${crypto.randomBytes(12).toString('hex')}`;
 
   constructor(
     private readonly stateService: StateService,
@@ -81,6 +87,8 @@ export class DeploymentRunService {
     this.now = options.now || (() => new Date());
     this.idFactory = options.idFactory || (() => `dr_${crypto.randomBytes(12).toString('hex')}`);
     this.maxEvents = Math.max(1, options.maxEvents || 500);
+    this.timingClock = options.timingClock || (() => performance.now());
+    this.timingBase = this.timingClock();
     this.pendingOriginTimeoutMs = Math.min(5000, Math.max(1, options.pendingOriginTimeoutMs || 5000));
   }
 
@@ -157,6 +165,70 @@ export class DeploymentRunService {
     }, check);
   }
 
+  createTimingObserver(id: string, operationId: string, isCurrent: () => boolean): DeploymentTimingObserver {
+    const original = this.get(id);
+    const originScope = original && { projectId: original.projectId, branchId: original.branchId, operationId: original.operationId };
+    const active = () => {
+      try { return Boolean(original && this.get(id) === original && original.id === id && original.projectId === originScope?.projectId && original.branchId === originScope.branchId && original.operationId === originScope.operationId && (!original.operationId || original.operationId === operationId)
+        && !TERMINAL_STATUSES.has(original.status) && isCurrent()); } catch { return false; }
+    };
+    const offset = () => { const value = this.timingClock() - this.timingBase; return Number.isFinite(value) && value >= 0 ? value : null; };
+    const observer: DeploymentTimingObserver = {
+      begin: (stage, boundary, profileId = null) => {
+        const nothing = () => {};
+        if (!active() || !/^op_[a-zA-Z0-9_.-]{1,120}$/.test(operationId) || !isTimingBoundary(stage, boundary)
+          || (profileId !== null && (typeof profileId !== 'string' || !/^[a-zA-Z0-9_.-]{1,128}$/.test(profileId)))) return nothing;
+        let interval: DeploymentTimingInterval | undefined;
+        try {
+          this.stateService.updateDeploymentRun(id, run => {
+            if (run.timing && (run.timing.version !== 1 || run.timing.operationId !== operationId || run.timing.epochId !== this.timingEpochId || !Array.isArray(run.timing.intervals))) return;
+            const timing = run.timing ||= { version: 1, operationId, epochId: this.timingEpochId, intervals: [], truncated: false };
+            if (timing.intervals.length >= TIMING_INTERVAL_LIMIT) { timing.truncated = true; return; }
+            interval = { id: `ti_${crypto.randomBytes(12).toString('hex')}`, stage, boundary, profileId, commitShaAtStart: /^[a-f0-9]{40}$/i.test(run.commitSha || '') ? run.commitSha! : null,
+              startedAt: this.nowIso(), startOffsetMs: offset(), durationMs: null, outcome: 'open' };
+            timing.intervals.push(interval);
+            this.appendEvent(run, { phase: 'timing', level: 'info', status: run.status, message: '部署阶段开始', detail: { stage, boundary, profileId } });
+          });
+        } catch { return nothing; }
+        if (!interval) return nothing;
+        let finished = false; const started = { ...interval };
+        return outcome => {
+          if (finished) return; finished = true;
+          if (!active() || !['completed', 'failed', 'cancelled'].includes(outcome)) return;
+          try {
+            this.stateService.updateDeploymentRun(id, run => {
+              if (run.timing?.version !== 1 || run.timing.epochId !== this.timingEpochId || run.timing.operationId !== operationId
+                || !Array.isArray(run.timing.intervals)) return;
+              // Durable publication replaces nested objects. Match the original measurement,
+              // not its old object reference, without adopting altered start facts.
+              const matches = run.timing.intervals.slice(0, TIMING_INTERVAL_LIMIT).filter(item => item?.id === started.id);
+              const ownInterval = matches.length === 1 ? matches[0] : undefined;
+              if (!ownInterval || ownInterval.outcome !== 'open' || ownInterval.stage !== started.stage || ownInterval.boundary !== started.boundary
+                || ownInterval.profileId !== started.profileId || ownInterval.commitShaAtStart !== started.commitShaAtStart
+                || ownInterval.startedAt !== started.startedAt || ownInterval.startOffsetMs !== started.startOffsetMs) return;
+              const end = offset(), start = ownInterval.startOffsetMs;
+              ownInterval.endOffsetMs = end; ownInterval.endedAt = this.nowIso(); ownInterval.outcome = outcome;
+              ownInterval.durationMs = start !== null && end !== null && end >= start ? end - start : null;
+              this.appendEvent(run, { phase: 'timing', level: 'info', status: run.status, message: '部署阶段结束', detail: { stage, boundary, profileId, outcome } });
+            });
+          } catch { /* Missing measurement cannot change the original work result. */ }
+        };
+      },
+      measure: (stage, boundary, profileId, work, successful) => {
+        const finish = observer.begin(stage, boundary, profileId);
+        try { return work().then(value => {
+          try { finish(successful && !successful(value) ? 'failed' : 'completed'); } catch { /* Observer cannot replace work result. */ }
+          return value;
+        }, error => {
+          let cancelled = false; try { cancelled = !isCurrent(); } catch { cancelled = true; }
+          finish(cancelled ? 'cancelled' : 'failed'); throw error;
+        }); }
+        catch (error) { finish('failed'); throw error; }
+      },
+    };
+    return observer;
+  }
+
   list(filters: { projectId?: string; branchId?: string; status?: DeploymentRunStatus } = {}): DeploymentRun[] {
     return this.stateService.getDeploymentRuns(filters);
   }
@@ -194,7 +266,12 @@ export class DeploymentRunService {
     if (input.operationId !== undefined) run.operationId = input.operationId;
     if (input.executorId !== undefined) run.executorId = input.executorId;
     if (input.failure !== undefined) run.failure = input.failure;
-    if (TERMINAL_STATUSES.has(nextStatus)) run.finishedAt = at;
+    if (TERMINAL_STATUSES.has(nextStatus)) {
+      run.finishedAt = at;
+      for (const interval of Array.isArray(run.timing?.intervals) ? run.timing.intervals.slice(0, TIMING_INTERVAL_LIMIT) : []) if (interval?.outcome === 'open') {
+        interval.outcome = 'unknown'; interval.durationMs = null;
+      }
+    }
     this.appendEvent(run, {
       at,
       phase: input.phase,

@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import type { DeploymentRun, DeploymentRunStatus } from '../types.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
 import type { DeploymentDiagnosisService } from '../services/deployment-diagnosis.js';
+import { summarizeDeploymentTiming } from '../services/deployment-stage-timing.js';
 import { logPayloadForHumanView } from '../services/human-project-access.js';
 
 const DEPLOYMENT_RUN_STATUSES = new Set<DeploymentRunStatus>([
@@ -199,7 +200,7 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
       res.status(access.status).json(access.body);
       return;
     }
-    res.json(logPayloadForHumanView(req, { run }));
+    res.json(logPayloadForHumanView(req, { run: { ...run, timingSummary: summarizeDeploymentTiming(run.timing) } }));
   });
 
   return router;
@@ -222,12 +223,13 @@ function resolveProjectFilter(
   return projectId;
 }
 
-function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events'> & {
+function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events' | 'timing'> & {
+  timingSummary: ReturnType<typeof summarizeDeploymentTiming>;
   eventCount: number;
   latestEvent?: DeploymentRun['events'][number];
 } {
-  const { events, ...summary } = run;
-  return { ...summary, eventCount: events.length, latestEvent: events.at(-1) };
+  const { events, timing, ...summary } = run;
+  return { ...summary, timingSummary: summarizeDeploymentTiming(timing), eventCount: events.length, latestEvent: events.at(-1) };
 }
 
 function writeSse(res: Response, eventName: string, data: unknown, id?: number): void {

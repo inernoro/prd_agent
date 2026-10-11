@@ -1,3 +1,4 @@
+import { summarizeDeploymentTiming } from '../../src/services/deployment-stage-timing.js';
 import { CandidateReconciler } from '../../src/services/candidate-reconciler.js';
 import { candidateOperationAdmission } from '../../src/services/candidate-operation-admission.js';
 import { candidateSettlementFingerprint } from '../../src/services/candidate-recovery-evidence.js';
@@ -31,14 +32,14 @@ beforeEach(async () => {
     commitSha: sha, operationId: 'operation', configHash: 'frozen' })).id;
 });
 afterEach(async () => { await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
-function fixture(role: 'api' | 'worker' = 'api', withNetwork = false) {
+function fixture(role: 'api' | 'worker' = 'api', withNetwork = false, operationId = 'operation') {
   const events: string[] = []; const objects = new Map<string, any>();
   const add = (name: string, port: number, candidate = false) => {
     const id = createHash('sha256').update(name).digest('hex');
     const info = { Id: id, Name: '/' + name, Image: candidate ? image : entry.services.api.deployedImage,
       State: { Running: true }, Config: { Labels: { 'cds.managed': 'true', 'cds.type': 'app', 'cds.instance': 'instance',
         'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.profile.id': 'api',
-        ...(candidate ? { 'cds.deployment.operation': 'operation', 'cds.deployment.kind': 'candidate' } : {}) } },
+        ...(candidate ? { 'cds.deployment.operation': operationId, 'cds.deployment.kind': 'candidate' } : {}) } },
       HostConfig: { PortBindings: { '8080/tcp': [{ HostPort: String(port) }] } }, Mounts: [] };
     objects.set(id, info); return info;
   };
@@ -75,13 +76,13 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false) {
     prebuiltImage: true, prebuiltCommitPolicy: 'exact', preparedCommitSha: sha, preparedArtifactId: image } as BuildProfile;
   let ready = true; let oldReady = true; let createFails = false; let wait: (() => Promise<boolean>) | undefined;
   const containers = { runService: async (graph: BranchEntry, p: BuildProfile, service: any, _output: any, _env: any, context: any) => {
-    expect(graph).not.toBe(entry); expect(context.candidateRunId).toBe('operation');
+    expect(graph).not.toBe(entry); expect(context.candidateRunId).toBe(operationId);
     if (withNetwork) {
       await context.onCandidateNetworkIntent();
       network = { Id: '9'.repeat(64), Name: state.getDeploymentRun(runId)!.candidate!.networkName, Driver: 'bridge', Scope: 'local',
         Internal: false, Attachable: false, Ingress: false, EnableIPv6: false, Options: {}, IPAM: { Driver: 'default', Config: [] },
         Containers: {}, Labels: { 'cds.managed': 'true', 'cds.type': 'candidate-network', 'cds.instance': 'instance',
-          'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.deployment.operation': 'operation' } };
+          'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.deployment.operation': operationId } };
       networkExists = true; await context.onCandidateNetworkPrepared(network.Name);
     }
     events.push('create-candidate'); if (createFails) throw new Error('create-unknown');
@@ -96,6 +97,22 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false) {
     setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('measures actual candidate admission/start/readiness/route ACK/recycle boundaries in its own run', async () => {
+    state.getDeploymentRun(runId)!.operationId = 'op_timing';
+    const f = fixture('api', true, 'op_timing'); f.options.profiles[0].startupSignal = 'ready';
+    const observer = new DeploymentRunService(state).createTimingObserver(runId, 'op_timing', () => true);
+    await f.service.deploy({ ...f.options, timing: observer });
+    const run = state.getDeploymentRun(runId)!; const result = summarizeDeploymentTiming(run.timing);
+    for (const stage of ['capacity', 'startup', 'readiness', 'switch', 'cleanup'] as const) {
+      expect(result.stages[stage].status).toBe('observed'); expect(result.stages[stage].completedWallMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(run.timing?.intervals.map(x => x.boundary)).toEqual(['capacity-check', 'prebuilt-start', 'startup-signal', 'application-ready', 'route-ack', 'owned-recycle']);
+    expect(run.candidate!.phase).toBe('released');
+    await state.flush(); const reload = new StateService(path.join(dir, 'state.json')); reload.load();
+    expect(reload.getDeploymentRun(runId)?.timing).toEqual(run.timing);
+    expect(result.stages['ci-build'].status).toBe('not-observed'); expect(result.incomplete).toBe(true);
+  });
+
   it('persists an executor settlement bound to the frozen journal after cancellation during readiness', async () => {
     const f = fixture('worker', true); const coordinator = new BranchOperationCoordinator();
     const lease = coordinator.begin({ branchId: entry.id, kind: 'deploy', trigger: 'manual' }).lease!;

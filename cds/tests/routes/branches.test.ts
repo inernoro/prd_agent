@@ -902,6 +902,8 @@ describe('Branch Routes', () => {
       try {
         await vi.waitFor(() => expect(buildGateStatus().queued).toBe(1));
         expect(branch.buildQueue?.serviceIds).toContain('api');
+        const queuedRun = stateService.getDeploymentRuns({ branchId: 'b1' })[0];
+        expect(queuedRun.timing?.intervals.find(item => item.boundary === 'source-slot-wait')).toMatchObject({ profileId: 'api', outcome: 'open', durationMs: null });
         branchOperationCoordinator.cancelBranch('b1', 'user cancelled');
         await vi.waitFor(() => {
           expect(buildGateStatus()).toMatchObject({ active: 1, queued: 0 });
@@ -915,9 +917,42 @@ describe('Branch Routes', () => {
         const runId = String(result.headers['x-cds-deployment-run-id']);
         const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
         expect(restored.getDeploymentRun(runId)).toMatchObject({ status: 'cancelled', commitSha: sha });
+        expect(restored.getDeploymentRun(runId)?.timing?.intervals.find(item => item.boundary === 'source-slot-wait')).toMatchObject({ outcome: 'unknown', durationMs: null });
       } finally {
         holder.release(); await pending;
         pull.mockRestore(); run.mockRestore(); __resetBuildGateForTest();
+        if (previousLimit === undefined) delete process.env.CDS_MAX_CONCURRENT_BUILDS;
+        else process.env.CDS_MAX_CONCURRENT_BUILDS = previousLimit;
+      }
+    });
+
+    it.each(['deploy', 'deploy/api'])('records a real source-slot wait until admission without counting source compilation as prebuilt startup: %s', async action => {
+      __resetBuildGateForTest();
+      const previousLimit = process.env.CDS_MAX_CONCURRENT_BUILDS;
+      process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 8 }));
+      seedGateProject(false);
+      const sha = 'c'.repeat(40);
+      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockResolvedValue({ head: sha, afterFull: sha } as any);
+      const run = vi.spyOn(containerService, 'runService').mockRejectedValueOnce(Error('owned source runtime boundary'));
+      const holder = await acquireBuildSlot({ holder: { projectId: 'other', branchId: 'held-other' } });
+      const pending = request(server, 'POST', '/api/branches/b1/' + action, { commitSha: sha });
+      try {
+        await vi.waitFor(() => expect(buildGateStatus().queued).toBe(1));
+        const activeRun = stateService.getDeploymentRuns({ branchId: 'b1' })[0];
+        expect(activeRun.timing?.intervals.find(item => item.boundary === 'source-slot-wait')).toMatchObject({ profileId: 'api', outcome: 'open', durationMs: null });
+        expect(run).not.toHaveBeenCalled(); holder.release();
+        const result = await pending; const runId = String(result.headers['x-cds-deployment-run-id']);
+        expect(run).toHaveBeenCalledOnce(); expect(buildGateStatus()).toMatchObject({ active: 0, queued: 0 });
+        const finished = deploymentRunService.get(runId)!;
+        const measured = finished.timing!.intervals.find(item => item.boundary === 'source-slot-wait')!;
+        expect(measured).toMatchObject({ profileId: 'api', outcome: 'completed' });
+        expect(measured.durationMs).toBeGreaterThan(0);
+        expect(finished.timing!.intervals.some(item => item.boundary === 'prebuilt-start')).toBe(false);
+        const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
+        expect(restored.getDeploymentRun(runId)?.timing).toEqual(finished.timing);
+      } finally {
+        holder.release(); await pending; pull.mockRestore(); run.mockRestore(); __resetBuildGateForTest();
         if (previousLimit === undefined) delete process.env.CDS_MAX_CONCURRENT_BUILDS;
         else process.env.CDS_MAX_CONCURRENT_BUILDS = previousLimit;
       }
