@@ -251,8 +251,7 @@ export class ReplicaSetService {
         '该分支已钉在项目级模式：副本必须按「整组副本」齐增齐减，不能只给单个服务加。请在画布用整组操作，或先把现有副本清零再切模式',
       );
     }
-    const rs = this.enable(branchId, profileId);
-    if (rs.members.length >= REPLICA_MEMBER_LIMIT) {
+    if ((branch.replicaSets?.[profileId]?.members.length || 0) >= REPLICA_MEMBER_LIMIT) {
       throw new ReplicaSetError(409, `成员数已达上限 ${REPLICA_MEMBER_LIMIT}，请先下线一个成员`);
     }
     if (input.dbMode === 'isolated') {
@@ -281,6 +280,13 @@ export class ReplicaSetService {
     if (!snapshot.reusable) {
       throw new ReplicaSetError(409, `该版本的 ${profileId} 产物不可复用（${snapshot.reuseBlockedReason || '非不可变镜像'}），无法秒起为成员`);
     }
+    // Reject known placement failures before enabling or recording a provisioning member.
+    // Use the same frozen v1/legacy rule as actual materialization below.
+    try {
+      assertProfileDeploymentScopes([{ deploymentScope: snapshot.replacementContractVersion === 1
+        ? snapshot.deploymentScope : snapshot.deploymentScope ?? profile.deploymentScope }], branch);
+    } catch { throw new ReplicaSetError(409, 'deployment_scope_mismatch'); }
+    const rs = this.enable(branchId, profileId);
     // 同版本查重只拦「显式选历史版本」的误点；快速副本（+ 号）天然就是同版本多实例
     if (!isQuickReplica && rs.members.some((m) => m.versionId === version.id && m.status !== 'error')) {
       throw new ReplicaSetError(409, '该版本已是复制集成员');

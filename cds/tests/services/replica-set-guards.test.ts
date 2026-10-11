@@ -8,12 +8,13 @@
  * P2 —— 项目级计划必须是整组动作：只覆盖部分服务的 add-replica 计划跑完会得到
  * 残缺组，画布显示「整组 x1」，实际另一半服务流量仍全打主实例，实验结论失真。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 import { ReplicaSetService } from '../../src/services/replica-set.js';
+import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
@@ -76,6 +77,58 @@ beforeEach(() => {
 afterEach(async () => {
   await flushAllJsonStateStores();
   if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+});
+
+describe('冻结副本放置约束准入', () => {
+  it.each(['matching', 'v1-absent'])('keeps frozen placement semantics for valid admission: %s', async kind => {
+    const branch = state.getBranch('proj-main')!;
+    const profile = state.getBuildProfiles().find(profile => profile.id === 'api')!;
+    Object.assign(profile, { dockerImage: 'owned/api@sha256:' + 'a'.repeat(64), prebuiltImage: true,
+      deploymentScope: { projectId: 'proj', branchId: branch.id, repoBranch: branch.branch } });
+    const versions = new DeploymentVersionService(state);
+    const version = versions.create({ projectId: 'proj', branchId: branch.id, branch,
+      commitSha: 'b'.repeat(40), configHash: kind, profiles: [{ ...profile,
+        deploymentScope: kind === 'v1-absent' ? undefined : profile.deploymentScope }], createdByRunId: 'owned' });
+    if (kind === 'v1-absent') profile.deploymentScope!.branchId = 'foreign';
+    branch.currentVersionId = version.id;
+    const runtime = vi.fn(async (_branch: BranchEntry, _profile: BuildProfile) => { throw new Error('owned admission observer'); });
+    const service = new ReplicaSetService({ state, versions,
+      shell: { exec: async () => ({ stdout: '', stderr: '', exitCode: 0 }) } as never,
+      container: { runService: runtime } as never, portStart: 10000 });
+    const member = service.addMember(branch.id, 'api', {});
+    expect(member.status).toBe('provisioning');
+    await vi.waitFor(() => expect(runtime).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(member.status).toBe('error'));
+    const runtimeProfile = runtime.mock.calls[0][1];
+    expect(runtimeProfile.deploymentScope).toEqual(kind === 'v1-absent' ? undefined : version.profiles[0].deploymentScope);
+    // The controlled error is a finished observer, never evidence of real container success.
+  });
+  it.each(['quick', 'explicit'])('rejects foreign frozen placement before member admission: %s', async kind => {
+    const branch = state.getBranch('proj-main')!;
+    const profile = state.getBuildProfiles().find(profile => profile.id === 'api')!;
+    Object.assign(profile, { dockerImage: 'owned/api@sha256:' + 'a'.repeat(64), prebuiltImage: true,
+      deploymentScope: { projectId: 'proj', branchId: branch.id, repoBranch: branch.branch } });
+    const versions = new DeploymentVersionService(state);
+    const frozen = { ...profile, deploymentScope: { ...profile.deploymentScope!, branchId: 'foreign' } };
+    const version = versions.create({ projectId: 'proj', branchId: branch.id, branch,
+      commitSha: 'b'.repeat(40), configHash: 'owned-invalid-placement', profiles: [frozen], createdByRunId: 'owned' });
+    expect(version.profiles[0].reusable).toBe(true);
+    branch.currentVersionId = version.id;
+    state.save();
+    const before = JSON.stringify(branch);
+    const shell = { exec: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })) };
+    const runtime = vi.fn(async () => undefined);
+    const service = new ReplicaSetService({ state, versions, shell: shell as never,
+      container: { runService: runtime } as never, portStart: 10000 });
+    expect(() => service.addMember(branch.id, 'api', kind === 'quick' ? {} : { versionId: version.id }))
+      .toThrow('deployment_scope_mismatch');
+    expect(JSON.stringify(branch)).toBe(before);
+    expect(shell.exec).not.toHaveBeenCalled();
+    expect(runtime).not.toHaveBeenCalled();
+    await flushAllJsonStateStores();
+    const restored = new StateService(path.join(tmpDir, 'state.json')); restored.load();
+    expect(JSON.stringify(restored.getBranch(branch.id))).toBe(before);
+  });
 });
 
 describe('成员容器移除必须复核（P1）', () => {
