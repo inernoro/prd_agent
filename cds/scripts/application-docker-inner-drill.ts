@@ -42,6 +42,20 @@ async function main(): Promise<void> {
   const ownedView = async (id: string) => {
     const view = JSON.parse(await docker(['inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); return view;
   };
+  const auditNamespace = async (stage: string) => {
+    assert.equal(JSON.parse(await docker(['info', '--format', '{{json .}}'])).ID, info.ID);
+    const rows: any[] = [];
+    for (const id of (await docker(['ps', '-aq', '--no-trunc'])).split('\n').filter(Boolean)) {
+      const view = JSON.parse(await docker(['inspect', id]))[0]; assert.equal(view.Id, id);
+      const owner = view.Config.Labels?.['cds.acceptance.owner'] || null;
+      assert.ok(!owner || owner === source.owner, '独占空间发现其他归属，不猜测删除');
+      rows.push({ id, name: view.Name, image: view.Image, created: view.Created, status: view.State.Status,
+        running: view.State.Running, owner, networkMode: view.HostConfig.NetworkMode,
+        networks: Object.keys(view.NetworkSettings.Networks || {}),
+        namespaceOwnership: 'initial-empty-private-daemon-and-volume; unchanged-daemon-id; no-primary-socket' });
+    }
+    report.namespaceInventories ||= []; report.namespaceInventories.push({ stage, daemonId: info.ID, rows }); return rows;
+  };
   const run = async (name: string, args: string[]) => {
     const id = await docker(['run', '-d', '--label', `cds.acceptance.owner=${source.owner}`, '--name', `${source.owner}-${name}`, ...args]);
     assert.match(id, /^[a-f0-9]{64}$/); containers.add(id); await ownedView(id); return id;
@@ -109,7 +123,7 @@ async function main(): Promise<void> {
         const initial = await requestRaw(`${branchPath}/deploy`, { commitSha: oldSha }); assert.equal(initial.status, 200);
         const initialId = initial.headers.get('x-cds-deployment-run-id'); assert.ok(initialId); report.initialDeployment = { id: initialId, status: initial.status, stream: (await initial.text()).slice(-32768) };
         await until(async () => { const run = (await readRuns()).find(r => r.id === initialId); if (run?.status === 'failed') throw new Error(`原应用首次部署失败: ${JSON.stringify(run).slice(0, 2000)}`); return run?.status === 'running' ? true : undefined; });
-        const oldServices = await serviceProof(oldSha); report.oldServices = oldServices;
+        const oldServices = await serviceProof(oldSha); report.oldServices = oldServices; await auditNamespace('original-old-services-ready');
         const oldImages = Object.values(oldServices) as any[];
         const webImage = oldImages.find(s => s.content.service === 'web').image;
         assert.equal(oldImages.filter(s => s.content.service !== 'web').every(s => s.image !== webImage), true);
@@ -141,7 +155,7 @@ async function main(): Promise<void> {
             if (run?.status === 'failed') throw new Error(`原应用发布后恢复失败: ${JSON.stringify(run).slice(0, 2000)}`);
             return run?.status === 'running' ? run : undefined;
           }, 180_000);
-          report.newServices = await serviceProof(newSha); report.finalRuns = await readRuns();
+          report.newServices = await serviceProof(newSha); report.finalRuns = await readRuns(); await auditNamespace('original-new-services-ready');
           assert.equal(report.finalRuns.filter((r: any) => r.commitSha === newSha).length, 1);
           const events = (await docker(['events', '--since', String(began), '--until', String(Math.ceil(Date.now() / 1000)), '--format', '{{json .}}']))
             .split('\n').filter(Boolean).map(line => JSON.parse(line));
@@ -163,8 +177,16 @@ async function main(): Promise<void> {
   finally {
     const cleanupErrors: string[] = [];
     try {
-      for (const id of (await docker(['ps', '-aq', '--no-trunc', '--filter', `label=cds.acceptance.owner=${source.owner}`])).split('\n').filter(Boolean)) {
-        await ownedView(id); containers.add(id); await docker(['rm', '-f', id]);
+      // 该守护进程/卷由本批从空空间独占创建；原应用可产生无标签 helper。
+      // 先保存身份并复核 daemon，再逐ID清理；这不是共享宿主的无标签容器删除策略。
+      const rows = await auditNamespace('after-original-application-shutdown-before-owned-namespace-cleanup');
+      report.namespaceCleanup = [];
+      for (const row of rows) {
+        assert.equal(JSON.parse(await docker(['info', '--format', '{{json .}}'])).ID, info.ID);
+        const view = JSON.parse(await docker(['inspect', row.id]))[0]; assert.equal(view.Id, row.id);
+        assert.equal(view.Config.Labels?.['cds.acceptance.owner'] || null, row.owner);
+        containers.add(row.id); await docker(['rm', '-f', row.id]);
+        report.namespaceCleanup.push({ id: row.id, owner: row.owner, removed: true, namespaceOwnership: row.namespaceOwnership });
       }
       assert.equal(await docker(['ps', '-aq']), ''); report.ownedContainersRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); }

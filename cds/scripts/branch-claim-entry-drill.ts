@@ -11,6 +11,8 @@ import ts from 'typescript';
 import type { CdsConfig } from '../src/types.js';
 
 const referenceHead = 'b81cfe70f6b7602e882668cd8d9e43c19d5e1592';
+const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
+const currentSourceChanges = ['src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/branches.ts', 'src/server.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/internal-pending-replay-auth.ts'];
 const changedSources = ['src/routes/branches.ts', 'src/services/worktree-path-activity.ts'];
 const sources = [...changedSources, 'src/services/worktree.ts', 'src/services/janitor.ts', 'src/services/state.ts',
   'src/services/container.ts', 'src/services/isolated-shell-executor.ts', 'src/services/secure-database-cli.ts',
@@ -182,9 +184,12 @@ async function main() {
     otherCreationEntrypointsVerified: false, crossProcessClaimVerified: false, restartFencingVerified: false,
     fullResourceBudgetVerified: false, privateFilesRemoved: false };
   try {
-    if (native) git(['fetch', '--depth', '1', 'origin', referenceHead]);
-    report.changedProductionSources = git(['diff', '--name-only', referenceHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
-    assert.deepEqual(report.changedProductionSources, changedSources.map(name => `cds/${name}`).sort());
+    if (native) git(['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead]);
+    report.inheritedCandidateHead = inheritedCandidateHead;
+    report.inheritedProductionSources = git(['diff', '--name-only', referenceHead, inheritedCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
+    assert.deepEqual(report.inheritedProductionSources, changedSources.map(name => `cds/${name}`).sort());
+    report.changedProductionSources = git(['diff', '--name-only', inheritedCandidateHead, '--', ':(top)cds/src']).split('\n').filter(Boolean).sort();
+    assert.deepEqual(report.changedProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
     assert.equal(git(['diff', '--name-only', referenceHead, '--', ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml']), '');
     const old = path.join(temp, 'reference-runtime'); await fs.cp(path.resolve('dist'), old, { recursive: true });
     await fs.writeFile(path.join(old, 'package.json'), '{"type":"module"}\n'); await fs.symlink(path.resolve('node_modules'), path.join(old, 'node_modules'), 'dir');

@@ -10,6 +10,8 @@ import { runOrphanRecheckProbe, probeEnumerationYield, type RecheckCase } from '
 import { runOrphanOwnershipProbe, type OwnershipCase } from './orphan-worktree-ownership-probe.js';
 
 const referenceHead = 'a64d9b2494c8a0e140dd678c9c4bd9b90e1935c4';
+const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
+const currentSourceChanges = ['src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/branches.ts', 'src/server.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/internal-pending-replay-auth.ts'];
 const ownershipReferenceHead = '766a259d8383da5e60e426819a97a110bfedf275';
 const sources = ['src/services/janitor.ts', 'src/services/state.ts', 'src/services/orphan-worktree.ts',
   'src/services/worktree.ts', 'src/infra/state-store/json-backing-store.ts', 'scripts/orphan-worktree-recheck-drill.ts',
@@ -31,16 +33,20 @@ async function main() {
     checks: [], isolatedFilesRemoved: false };
   try {
     report.stage = 'fixed-original-source-preparation';
-    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead], { stdio: 'pipe', timeout: 120000 });
-    const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--', ':(top)cds/src'],
+    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead], { stdio: 'pipe', timeout: 120000 });
+    const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, inheritedCandidateHead, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-    report.changedProductionSources = changed;
+    report.inheritedCandidateHead = inheritedCandidateHead;
+    report.inheritedProductionSources = changed;
     assert.deepEqual(changed, ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts',
       'cds/src/routes/legacy-cleanup.ts', 'cds/src/routes/remote-hosts.ts', 'cds/src/services/container.ts',
       'cds/src/services/github-webhook-dispatcher.ts', 'cds/src/services/isolated-shell-executor.ts',
       'cds/src/services/janitor.ts', 'cds/src/services/orphan-worktree.ts', 'cds/src/services/state.ts',
       'cds/src/services/worktree-directory-removal-process.ts', 'cds/src/services/worktree-path-activity.ts',
       'cds/src/services/worktree.ts', 'cds/src/types.ts']);
+    report.changedProductionSources = execFileSync('/usr/bin/git', ['diff', '--name-only', inheritedCandidateHead, report.head, '--', ':(top)cds/src'],
+      { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+    assert.deepEqual(report.changedProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
     const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
       ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
     report.referenceDependencyManifestsChanged = manifestsChanged;
