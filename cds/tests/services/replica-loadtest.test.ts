@@ -267,6 +267,36 @@ describe('压测并发闸与生命周期', () => {
     await expect(result).rejects.toMatchObject({ status: 404 }); expect(svc.activeHolders()).toHaveLength(0);
   });
 
+  it.each(['branch-name', 'same-id-replacement', 'container-id', 'profile-route'])('异步等待后%s意图变化拒绝409，不产生流量', async change => {
+    let finish!: (value: string | null) => void; let requests = 0;
+    const svc = mkService({ diskAdmission: () => new Promise(r => { finish = r; }), requestFn: async () => { requests++; return { status: 200 }; } });
+    const result = svc.startWithDiskAdmission('proj-main', 'api', { durationSec: 3, maxRequests: 1 });
+    const branch = state.getBranch('proj-main')!;
+    if (change === 'branch-name') branch.branch = 'successor';
+    if (change === 'same-id-replacement') { state.removeBranch(branch.id); state.addBranch({ ...branch }); }
+    if (change === 'container-id') branch.services!.api.containerId = 'new-container';
+    if (change === 'profile-route') state.getEffectiveProfilesForBranch(branch).find(p => p.id === 'api')!.pathPrefixes = ['/changed'];
+    finish(null); await expect(result).rejects.toMatchObject({ status: 409 });
+    expect(requests).toBe(0); expect(svc.activeHolders()).toHaveLength(0); expect(svc.list('proj-main')).toHaveLength(0);
+  });
+
+  it('有效目标在测量后再鉴权，撤销权限不创建任务', async () => {
+    let finish!: (value: string | null) => void; let checks = 0; let requests = 0;
+    const svc = mkService({ diskAdmission: () => new Promise(r => { finish = r; }), requestFn: async () => { requests++; return { status: 200 }; } });
+    const result = svc.startWithDiskAdmission('proj-main', 'api', { durationSec: 3 }, () => { checks++; throw new LoadTestError(403, 'revoked'); });
+    expect(checks).toBe(0); finish(null); await expect(result).rejects.toMatchObject({ status: 403 });
+    expect(checks).toBe(1); expect(requests).toBe(0); expect(svc.list('proj-main')).toHaveLength(0);
+  });
+
+  it('纯观测/备注变化不误拦原目标，原意图仍可启动一次', async () => {
+    let finish!: (value: string | null) => void; let checks = 0; let requests = 0;
+    const svc = mkService({ diskAdmission: () => new Promise(r => { finish = r; }), requestFn: async () => { requests++; return { status: 200 }; } });
+    const result = svc.startWithDiskAdmission('proj-main', 'api', { durationSec: 3, maxRequests: 1 }, () => { checks++; });
+    const branch = state.getBranch('proj-main')!; branch.lastAccessedAt = new Date().toISOString(); branch.notes = 'observation';
+    finish(null); const run = await result; expect(run.status).toBe('running'); expect(checks).toBe(1);
+    expect(requests).toBe(1); svc.cancel('proj-main', run.id);
+  });
+
   it('磁盘冻结档拒绝发起（507），理由带原始档位说明', () => {
     const svc = mkService({ diskBlockReason: () => '宿主磁盘已用 97%，已冻结新的构建与部署派发' });
     try {

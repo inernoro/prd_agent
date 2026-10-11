@@ -881,15 +881,51 @@ export class ReplicaLoadTestService {
 
   /* ── 发起 / 查询 / 取消 ── */
 
-  async startWithDiskAdmission(branchId: string, profileId: string, input: LoadTestInput | undefined): Promise<LoadTestReport> {
+  private admissionIdentity(branch: BranchEntry, profileId: string): string {
+    const base = this.opts.state.getEffectiveProfilesForBranch(branch).find(p => p.id === profileId);
+    const effective = base ? resolveEffectiveProfile(base, branch) : undefined;
+    const service = branch.services?.[profileId];
+    const allow = this.buildAllowlist(branch);
+    const rs = branch.replicaSets?.[profileId];
+    return JSON.stringify({
+      id: branch.id, projectId: branch.projectId, branch: branch.branch,
+      worktreePath: branch.worktreePath, createdAt: branch.createdAt, executorId: branch.executorId, currentVersionId: branch.currentVersionId,
+      host: this.defaultHost(branch), path: this.defaultPath(branch, profileId),
+      allow: { labels: [...allow.labels].sort(), customDomains: [...allow.customDomains].sort(), roots: [...allow.roots].sort() },
+      profile: effective ? { id: effective.id, projectId: effective.projectId,
+        subdomain: effective.subdomain, pathPrefixes: effective.pathPrefixes, containerPort: effective.containerPort } : null,
+      service: service ? { status: service.status, containerName: service.containerName,
+        hostPort: service.hostPort, containerId: service.containerId, image: service.deployedImage,
+        commitSha: service.deployedCommitSha, mode: service.deployedMode } : null,
+      replicaSet: rs ? { enabled: rs.enabled, primaryWeight: rs.primaryWeight, isolated: rs.isolated, members: rs.members.map(m => ({
+        id: m.id, versionId: m.versionId, status: m.status, containerName: m.containerName,
+        hostPort: m.hostPort, image: m.image, weight: m.weight, dbMode: m.dbMode, isolatedDbName: m.isolatedDbName,
+      })) } : null,
+    });
+  }
+
+  async startWithDiskAdmission(
+    branchId: string, profileId: string, input: LoadTestInput | undefined, authorize?: () => void,
+  ): Promise<LoadTestReport> {
     const branch = this.requireBranch(branchId);
     if (!this.opts.state.getEffectiveProfilesForBranch(branch).some(p => p.id === profileId)) {
       throw new LoadTestError(404, `服务不存在: ${profileId}`);
     }
+    const identity = this.admissionIdentity(branch, profileId);
     const frozen = input ? { ...input, memberIds: input.memberIds ? [...input.memberIds] : undefined,
       headers: input.headers ? { ...input.headers } : undefined } : undefined;
     const blocked = await this.opts.diskAdmission?.();
     if (blocked) throw new LoadTestError(507, `磁盘压力过大，暂不接受压测：${blocked}`);
+    const check = () => {
+      const current = this.requireBranch(branchId);
+      if (!this.opts.state.getEffectiveProfilesForBranch(current).some(p => p.id === profileId)) {
+        throw new LoadTestError(404, `服务不存在: ${profileId}`);
+      }
+      if (current !== branch || this.admissionIdentity(current, profileId) !== identity) {
+        throw new LoadTestError(409, '压测目标在磁盘检查期间已改变，请重新确认后发起');
+      }
+    };
+    check(); authorize?.(); check();
     return this.start(branchId, profileId, frozen);
   }
 

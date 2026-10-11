@@ -17,17 +17,17 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import type { CdsConfig } from '../../src/types.js';
 const tick = () => new Promise(r => setImmediate(r));
 describe('owned HTTP waits for fresh disk admission', () => {
-  let root: string; let server: http.Server; let state: StateService; let shell: MockShellExecutor; let janitor: JanitorService; let failSnapshot: boolean;
+  let root: string; let server: http.Server; let state: StateService; let shell: MockShellExecutor; let janitor: JanitorService; let failSnapshot: boolean; let accessAllowed: boolean; let permissionChecks: number;
   beforeEach(async () => {
     diskGuard.reset(); root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-owned-disk-http-'));
     state = new StateService(path.join(root, 'state.json')); state.load();
     state.addBranch({ id: 'owned', projectId: 'default', branch: 'main', worktreePath: root, status: 'stopped', createdAt: new Date().toISOString() } as any);
     state.addBuildProfile({ id: 'api', projectId: 'default', name: 'api', runtime: 'docker', containerPort: 8080 } as any);
     const config = { repoRoot: root, worktreeBase: root, masterPort: 9900, workerPort: 5500, dockerNetwork: 'owned', portStart: 10001, sharedEnv: {}, jwt: { secret: 'owned', issuer: 'owned' }, mode: 'standalone', executorPort: 9901 } as CdsConfig;
-    shell = new MockShellExecutor(); failSnapshot = false;
+    shell = new MockShellExecutor(); failSnapshot = false; accessAllowed = true; permissionChecks = 0;
     janitor = new JanitorService(state, { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80 } as any, root, undefined, () => { if (failSnapshot) throw new Error('owned disk read failed'); return { totalBytes: 100, freeBytes: 80 }; });
     const app = express(); app.use(express.json());
-    app.use('/api', createReplicaSetsRouter({ stateService: state, replicaSetService: {} as any, deploymentVersionService: {} as any, assertProjectAccess: () => null, dispatchVersion: async () => ({} as any), getDeploymentRunStatus: () => undefined }));
+    app.use('/api', createReplicaSetsRouter({ stateService: state, replicaSetService: {} as any, deploymentVersionService: {} as any, assertProjectAccess: () => { permissionChecks++; return accessAllowed ? null : { status: 403, body: { error: 'owned permission revoked' } }; }, dispatchVersion: async () => ({} as any), getDeploymentRunStatus: () => undefined }));
     app.use('/api', createBranchRouter({ stateService: state, worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config), shell, config, janitorService: janitor }));
     app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => res.status(500).json({ error: err.message }));
     server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
@@ -49,6 +49,17 @@ describe('owned HTTP waits for fresh disk admission', () => {
     failSnapshot = true;
     const response = await request(method === 'GET' ? '/janitor/state' : '/janitor/config', method === 'PUT' ? { enabled: false } : undefined, method);
     expect(response.status).toBe(500); expect(response.body.error).toBe('owned disk read failed');
+  });
+  it('rechecks HTTP authorization after held fresh disk admission before creating a loadtest', async () => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request('/branches/owned/replica-loadtests', { profileId: 'api', durationSec: 3, maxRequests: 1 });
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick();
+      expect(calls).toBe(1); expect(permissionChecks).toBe(1); accessAllowed = false;
+      finish([{ totalBytes: 100, freeBytes: 80 }]);
+      expect((await result).status).toBe(403); expect(permissionChecks).toBe(2); expect(shell.commands).toHaveLength(0);
+    } finally { finish?.(null); await result; }
   });
   it.each(['/branches/owned/deploy', '/branches/owned/deploy/api', '/branches/owned/force-rebuild/api', '/branches/owned/db-guard', '/branches/owned/replica-sets/api/isolate', '/branches/owned/replica-loadtests'])('holds %s while unrelated GET remains responsive, then returns actual 507', async route => {
     let finish!: (value: any) => void; let calls = 0; let completed = false;

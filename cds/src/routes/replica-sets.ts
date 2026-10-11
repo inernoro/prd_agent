@@ -446,6 +446,9 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
         headers: req.body?.headers && typeof req.body.headers === 'object' ? req.body.headers : undefined,
         body: typeof req.body?.body === 'string' ? req.body.body : undefined,
         maxRequests: req.body?.maxRequests,
+      }, () => {
+        const currentAccess = guard(req, req.params.branchId);
+        if (currentAccess) throw new LoadTestError(currentAccess.status, '当前权限不允许发起压测，请重新确认权限');
       }));
       res.status(202).json({ run });
     } catch (err) { respondError(res, err); }
