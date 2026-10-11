@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.71；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.72；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -54,7 +54,7 @@
 | P5-02 | 本地部分实现 | 正式未执行 | CI 从精确提交生成完整镜像集合与可追溯清单，明确制品失败项；新增辅助服务时同步其制品合同。 |
 | P5-03 | 本地部分实现 | 正式未执行 | 保持项目默认与分支覆盖为极速，确保初始化/配置同步脚本不会改回源码模式。 |
 | P5-04 | 本地部分实现 | 正式未执行 | 修正普通运行目标提交绑定，避免旧字面 SHA。正式验收精确 target_sha 守卫保留，不放宽为任意版本。 |
-| P5-05 | 待办 | 正式未执行 | 对每个遗留 bootstrap 检查所属验收 run 的终结证据，再使用正确收尾流程回收容器/Profile，保留数据库与授权证据。 |
+| P5-05 | 本地部分实现 | 正式未执行 | 对每个遗留 bootstrap 检查所属验收 run 的终结证据，再使用正确收尾流程回收容器/Profile，保留数据库与授权证据。 |
 | P5-06 | 本地部分实现 | 正式未执行 | 合法常驻 RPC/辅助服务使用可追溯预构建镜像并纳入分母；一次性初始化须有明确完成和回收证据。 |
 | P5-07 | 本地部分实现 | 正式未执行 | 只在受影响分支传播必要的 IMP 补丁，不把 CDS 平台代码复制进业务分支；不覆盖协作者新增提交。 |
 | P6-01 | 本地部分实现 | 正式未执行 | 各批次先有针对性红绿、类型检查及模块要求的测试；前端改动补构建和真实页面验证。 |
@@ -657,3 +657,24 @@ expected result：未知挂载枚举不允许回收，预览包装器不被引�
 
 
 49ae最终独立定稿：summary `acceptance-janitor-49ae-evidence-summary.json` SHA256=9e250ac220665a65632dbc6b4559df58d8f05f544016f7b26b0015347a6c2696；source371Git=09fd6ef7ca088f6ff4bee19aac094e1213d406544184b2944acdb3d552606e60；derived368=29d0c8d0d00d146fc2a12481990f49c1d344b7558741221e1c8dfbabe40505e7；raw13=80c25e4939883f5a1295f9e85af9c127f28dcd77caca975f573a23a90d47b102；parent补充=caf112478378542c513306d5994e28d92b9053d2d6cc8db42b8d4d322c320482。主最终递归回读 `janitor-boundary-v171/main-independent-49ae-final-receipt.json`，另逐字重算368JS `main-independent-49ae-derived-receipt.json`，均不修改独立原件。原native旧15/16→16/16、expanded旧15/18→18/18（包含16）、原actualWorker queue/lock7/7保持；新分类seam10/10不是实际Docker。两个旧root局部关闭、原19设计未全排列，真实Master启动/Daemon/30-60-120s负载及跨进程回收锁未验。独立首followup读错cwd只ENOENT没有test，原件保留，不算产品根因。正式49与线上视觉仍未执行，goal active。
+
+
+## v1.72 P5-05创建归属与可靠终态内核
+
+v1.72：P5-05先提交guide2.86/2.87归属、终态和IO预算基线，随后CDS产品2917f25d7b4dc892b855f66247b162f82d75e6ca实现验收资源run内核；创建前可靠登记独立run，随机owner capability只保存hash，实际Profile/env/fullSHA/不可变containerID/部署run确认后登记，归档报告须绑定acceptanceRunId/project/branch/fullSHA且正文可读，可靠落盘后才公开finished，cleanup仅回读证明并要求Daemon核验。512条含隐藏草稿，8操作无队列、8实际未完成读取无队列，默认5秒观察截止后底层仍占位至真实结束。主27内核/4files66相关（含27不相加）、正确cds cwd full680files10009绿/6files19skip/1历史obsolete/65.86s，core及web tsc0；去报告run绑定与提前公开draft两mutation真红且逐字还原。首reload夹具晚ENOENT原件保留，不计产品红。原IMP按名称清理foreign bootstrap真实红仍开放，本内核未接HTTP鉴权、生产创建/报告producer、独占Daemon删除/Profile收尾/released，不自动认领遗留资源。末尾24条独立判据冻结后按固定2917执行中，未继承主绿。历史49ae Janitor两个root已局部闭合，f9受控双主题仅原SHA历史；八实际IMP push及CI success保持，88registry403/DENIED仍0资格，未八entry/完整部署/共享写/CDSpush/PR/merge。45partial-local/4todo，49formal全部not-executed、official visual N/A；原生goal active/verification。既有八push/selfupdate授权保持；新CDSbranch发布与隔离宿主前问待答。
+
+主不可变回执：`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/bootstrap-receipt-v172/main-product-test-receipt.json`，SHA256=934fe0b84c35fca777b837aa6b90ffdd275ddb4e02a0164b7e288c38493876d0；固定四Git源码及guide2.87、原name-only红、mutation红与所有主日志。独立设计24条summary SHA=d88f2c3d40b67108d5ec04aca21096fde89fe90cada7054fe008ab24590f386a；设计冻结不等于执行。
+
+expected result：创建前归属可靠登记，报告终态绑定当前真实资源，未知遗留资源保持不动；current evidence：主27/66/full10009/core+web0，独立固定源执行中；visible result：内核仅本地，当前产品未部署，formal visual N/A；gap：原IMP名称删除红尚未修复、生产端到端收尾和正式49/八支/公网/恢复/48h/周未执行；required action：收独立原判据，有红修同目标；继续既有鉴权与创建/报告/Daemon独占收尾接线，不用局部测试继承正式pass。
+
+
+### v1.72固定23521按原判据修复复验
+
+v1.72：guide2.86/2.87先冻结P5-05创建归属、报告终态及512/8操作/8实际读取/5s观察合同；2917内核主27/66/full10009/core+web0，但固定末尾发现原Branch引用未核、ACK等待正文改写仍finished、begin遗漏全局op8三root：minimal1/3、budget5/6，原29/29、durable12/12（含真实5s FIFO/512草稿）及newOS2/2重叠分列。主同真实ACK两红/第九queued一红后，CDS产品23521e0536e02f38812d5654ab63bb123c7b5469修原引用、ACK后正文再读取并最终同步复核、失败撤草稿await落盘、begin共享op8；主32/4files71（含32）及core+web0绿。默认full两轮各1failed/10013passed/19skip，项目unknown-id PUT ECONNRESET、bugreports POST404分别焦点90/34绿但根因未确认，不能称默认full绿；fixed4worker受控full680files10014绿/6files19skip/1历史obsolete/88.24s不关闭这两债务。首wrongcwd、ninth夹具等待自身gate、related误选遗漏7均保原件，不计产品根因。固定23521独立原minimal3/3、budget6/6、normal29/29、durable12/12、newOS2/2已复跑，postACK控制9/9，组不求和，最终源包主回读进行中。主已核2917独立798hash/372Git并重算369JS；原3root只局部闭合，24设计未全排列/BR22未验；第二read窗口磁盘draft仍finished但公开registered，中间态重启未验，newOS2不能替代。原IMP按名清理真红仍开放；未HTTP鉴权/生产创建/报告producer/独占Daemon删除和消失/Profile收尾/released。八实际IMP push与CI success保持，88registry403/DENIED仍0资格，无八entry/完整部署/共享写/CDSpush/PR/merge；旧f9双主题仅原SHA历史，不继承当前正式视觉。45partial-local/4todo、49formal全not-executed、official visual N/A；goal active/verification。既有八push/selfupdate授权保持；新CDSbranch发布及隔离宿主前问待答。
+
+主固定新源回执 `bootstrap-receipt-v172/main-fixed-product-test-receipt.json` SHA=ba82b82f4f83b455efcdb14b3d5a803c33229e507757f0e96e8805b3f2a43127；4worker对照回执 `main-fixed-controlled-full-receipt.json` SHA=bcf79257c9d5e2917d3aa11db3ad4cc11ea7c2902633483511571690f1a2e84c。旧2917独立summary SHA=4f9af0b2519864171f153e66c2822439c035270af66590275e305596f1243139；主递归回读798hash/372Git `main-independent-2917-final-red-receipt.json` SHA=9a8f3f4560644be41608bf4cc535dca7b512a7297ae6194e4fd60f1e3995555c，并逐字重算369派生JS。原错误日志和predicate不改。
+
+expected result：同scalar的新Branch不能接替原await，ACK等待正文变化拒绝并撤回磁盘，所有创建也受8限额；current evidence：上述固定局部原判据及主32/71/types，4workerfull10014；visible result：无新线上视觉，内核仅本地；gap：默认全量两失败根因、生产端到端清理、second-read中间态重启、正式49与真实运行门槛；required action：先回读新独立源包，继续同P5-05生产接线与恢复、默认full故障归因，不声明全部完成。
+
+
+固定23521独立最终v2：`acceptance-bootstrap-23521-evidence-summary-v2.json` SHA=7e863233fef0f3d96aa3ea4fe0c837b2a35db837ddc2a7901ea35c3e6f304bc6；source372Git=676b2c88b266becefa091a8ee571b7f92e4ab686dfb9ce03a487dc6097e4565a，derived369=67ae4645b38c602c94a9b121a7114dd1cf63c6d488c52ea91abe8c7d8eadddd1，raw21=894c1d5e2d47839dbb1f2492db93b41bc9067bf631e3c7b8592c9fcd41a8c77b。主已核v1递归1596hash/744Git（包含旧2917），逐字重算新369JS；v2与中间态限制原件另回读 `main-independent-23521-final-v2-receipt.json`，不改任何独立原件。原三root同期待局部关闭，second-read持久draft窗口重启接管仍未执行，不以已返回ACK的newOS2替代。正式49/visual N/A、goal active保持。
