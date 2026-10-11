@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.62；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.63；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -577,3 +577,7 @@ cf0独立最终回执已主逐字核对20CDS+3IMP选定与369runtime共392Git源
 expected result：完整详情页能查看同一run的真实摘要，坏行和旧响应不使页面失真或崩溃；current evidence：主58/full9959、独立实际Page21与受控双主题，最终回执已主核；visible result：本地页面可显示，未部署；gap：当前远端IMP集成、原IMP发布/XXL/身份红、执行器/终态收尾、隔离准入、八支实际交付、真实黄闪电/公网/恢复/48h与周；required action：核定局部回执后继续同编号任务，正式收口不降门槛。
 
 末尾559c定稿已主核：debaa/559c两固定版本各18selected+369runtime+244web为631校验行/615唯一源，Git blob及执行快照全匹配；54独立原件及20父补充逐字/hash匹配。source136b7bb0d75e46e4c35dc709fa78a060e8b1c17a9ac6b88f31f20919866d38ff，raw38192e35128ef81936bb8f5a037b77c24015706ca22c43284946e2e87d850bd4，summary46fd7ba1015f03294ae4441791d2b9b1990fd04840e226abb7803d40de9be2fb，父final-v2回读a8df0d7e43a83a56e9e4a6122499732d8f63f835d57992a462e9de4944eb0a42。原STUI559c共享46/46（包含44/39）与Page21重叠分列，不求和；原cf0 2/3一缺接线root、debaa19/21两false一坏行root与e011palette父来源均保留。主尾实际查看固定稳定两主题fullPage与ledger，仅受控局部视觉，正式49/visual N/A不变。首四代夹具的CSS bundler/heading selector/非法阶段enum/合法lastgood提示匹配及旧cf0依赖link错误全部保留并更正，不算产品根因；顶栏遮挡一段空卡与其他响应尺寸未作全量布局认证，无本批新有界产品红。
+
+## v1.63 IMP集成与局部配套检查
+
+v1.63：IMP无冲突merge最新origin/test43ec的64提交，merge48de；前置辅助合同d98ea，产品2ef9移除四worker八处XXL冗余同名覆盖，校准5Web身份检查并保留微信小程序和unknown kind拒绝。固定6files75/75、actual HEAD stage-aux/离线proposal exit0。原48de74组70绿4红保留：Web两红为错误分母，XXL静态守卫红不是已证明线上故障（CDS既有customEnvSnapshot兜底）；OP Bash3.2不支持语法，Bash5又遇BSD sed差异，两原失败保留，临时Bash5+外部sed兼容adapter同原workflow/fixture13/13，workflow未改，不算线上CI。独立新SHA复验待返。CDS产品559c未改，旧本地Page21/双主题仅原SHA。原八候选未传播新源、未push/deploy；49formal全not-executed/visual N/A、42partial-local/7todo。目标active；真实调度器/main绑定、隔离宿主、八支CI/黄闪电/性能/恢复/48h与周均未闭。
