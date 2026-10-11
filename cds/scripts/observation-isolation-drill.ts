@@ -99,7 +99,8 @@ async function main(): Promise<void> {
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
     compiledFactoryHashes: compiled ? Object.fromEntries(await Promise.all(['isolated-shell-executor', 'observation-supervisor-process', 'observation-executor-process', 'observation-process-launcher', 'observation-process-group', 'observation-process', 'shell-executor'].map(async name => [name, createHash('sha256').update(await fs.readFile(`dist/services/${name}.js`)).digest('hex')]))) : {},
     mode: compiled ? 'compiled' : 'source', scope: 'independent bounded observation processes and real owned Docker reads; no application deployment or public performance acceptance',
-    actualDockerReadVerified: false, actualIndependentProcessesVerified: false, actualDeploymentVerified: false, performanceVerified: false,
+    actualDockerReadVerified: false, actualIndependentProcessesVerified: false, actualDeploymentVerified: false, performanceVerified: false, actualConsumerRecoveryVerified: false,
+    actualBrowserReconnectVerified: false, fullResourceBudgetVerified: false, consumerRecoveries: {},
     replacementBootReference: { head: factoryReference.head, sourceHashes: factoryReference.sourceHashes, compiledFactoryHashes: factoryReference.compiledFactoryHashes, compilerVersion: factoryReference.compilerVersion },
     verdict: 'failed', checks: [], ownedContainerRemoved: false, isolatedFilesRemoved: false,
   };
@@ -121,6 +122,37 @@ async function main(): Promise<void> {
     report.containerReceipts ??= [];
     report.containerReceipts.push({ stage: report.stage, id, name, owner, image: view.Config.Image,
       nanoCpus: view.HostConfig.NanoCpus, memory: view.HostConfig.Memory, networkMode: view.HostConfig.NetworkMode });
+  };
+  const waitConsumer = async (predicate: () => boolean, description: string, milliseconds = 10_000): Promise<void> => {
+    const deadline = performance.now() + milliseconds;
+    while (!predicate() && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(predicate(), description);
+  };
+  const faultConsumerFactory = async (role: string, pool: ObservationStreamExecutor): Promise<void> => {
+    const before = pool.getStats(); assert.ok(before.factoryPid && before.supervisorPid && before.admitted > 0);
+    assert.notEqual(before.factoryPid, process.pid);
+    assert.equal(Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(before.factoryPid)], { encoding: 'utf8' }).trim()), before.supervisorPid);
+    const groups = new Set([before.factoryPid, ...before.actors.map(actor => actor.pid)]);
+    const readMembers = () => execFileSync('ps', ['-eo', 'pid=,ppid=,pgid=,stat='], { encoding: 'utf8', maxBuffer: 1024 * 1024 })
+      .trim().split('\n').map(line => { const [pid, ppid, pgid, state] = line.trim().split(/\s+/); return { pid: Number(pid), ppid: Number(ppid), pgid: Number(pgid), state }; })
+      .filter(row => groups.has(row.pgid));
+    let members = readMembers();
+    const producerDeadline = performance.now() + 5000;
+    while (!members.some(row => !groups.has(row.pid)) && performance.now() < producerDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 20)); members = readMembers();
+    }
+    assert.ok(members.some(row => !groups.has(row.pid)), 'actual private consumer producer must be running');
+    report.consumerRecoveries[role] = { before, members, scope: 'original compiled consumers through private owned IPC/processes; no deployment replay or public acceptance' };
+    process.kill(-before.factoryPid, 'SIGKILL');
+    const healthStarted = performance.now();
+    const healthDuringFault = await container.isRunning(id!); assert.equal(healthDuringFault, true);
+    Object.assign(report.consumerRecoveries[role], { healthDuringFault, healthElapsedMs: performance.now() - healthStarted });
+    // 保留既有工厂恢复观察五秒；消费者原五秒重连另有十秒观察窗口，不改生产计时器。
+    await waitConsumer(() => { const after = pool.getStats(); return !after.unavailable && !!after.factoryPid && after.factoryPid !== before.factoryPid; }, `${role} factory recovery`, 5000);
+    const after = pool.getStats(); assert.equal(after.supervisorPid, before.supervisorPid);
+    assert.equal(Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(after.factoryPid)], { encoding: 'utf8' }).trim()), before.supervisorPid);
+    const cleaned = ownedProcessStates([...new Set([...groups, ...members.map(row => row.pid)])]);
+    Object.assign(report.consumerRecoveries[role], { after, cleaned, oldOwnedGroupsRemoved: true });
   };
   try {
     report.stage = 'compiled-explicit-artifact-target-snapshot';
@@ -500,6 +532,19 @@ async function main(): Promise<void> {
     assert.equal(startupStreams.getStats().admitted, 0);
     owned();
     report.checks.push({ name: 'compiled-real-startup-signal-cleans-independent-stream', passed: true });
+    report.stage = 'compiled-real-startup-consumer-factory-failure';
+    const startupStateBefore = JSON.parse(docker(['inspect', id!]))[0].State.StartedAt;
+    let startupFailureText = '';
+    const failedSignal = container.waitForStartupSignal(id!, 'owned-signal-absent-before-recovery', chunk => { startupFailureText += chunk; }, 5);
+    await waitConsumer(() => startupStreams.getStats().active > 0, 'actual startup reader must be in flight', 5000);
+    await faultConsumerFactory('startup', startupStreams);
+    assert.equal(await failedSignal, false); assert.match(startupFailureText, /未确认启动信号/);
+    assert.equal(await container.waitForStartupSignal(id!, 'owned-observation', undefined, 5), true);
+    assert.equal(JSON.parse(docker(['inspect', id!]))[0].State.StartedAt, startupStateBefore);
+    assert.equal(startupStreams.getStats().admitted, 0); assert.equal(await container.isRunning(id!), true); owned();
+    Object.assign(report.consumerRecoveries.startup, { originalReadReturnedReady: false, explicitReadRetryReady: true, originalReadBudgetSeconds: 5, containerRestarted: false, deploymentReplayed: false });
+    report.checks.push({ name: 'compiled-actual-startup-fault-rejects-false-ready-and-explicit-read-recovers', passed: true });
+
     report.stage = 'uncaptured-large-stream-and-reserved-health-slots';
     let streamBytes = 0;
     let prefix = '';
@@ -533,6 +578,26 @@ async function main(): Promise<void> {
     assert.ok(observed);
     assert.ok(infraEvents.getEvents(name).some(event => event.event === 'die' && event.containerId === id), 'actual Docker die must retain its container identity');
     assert.equal(await container.isRunning(id!), true);
+    report.stage = 'compiled-real-event-consumers-factory-reconnect';
+    const dieCountBefore = managedActions.filter(action => action === 'die').length;
+    const infraDieBefore = infraEvents.getEvents(name).filter(event => event.event === 'die' && event.containerId === id).length;
+    await faultConsumerFactory('events', eventStreams);
+    await waitConsumer(() => eventStreams.getStats().admitted === 2, 'both original event consumers reconnect');
+    let recoveredEvent = false;
+    for (let attempt = 0; attempt < 3 && !recoveredEvent; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      owned(); docker(['stop', '-t', '1', id!]); owned(); docker(['start', id!]); owned();
+      for (let wait = 0; wait < 200; wait++) {
+        recoveredEvent = managedActions.filter(action => action === 'die').length > dieCountBefore &&
+          infraEvents.getEvents(name).filter(event => event.event === 'die' && event.containerId === id).length > infraDieBefore;
+        if (recoveredEvent) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    }
+    assert.ok(recoveredEvent, 'both original consumers must receive new owned Docker event after recovery');
+    Object.assign(report.consumerRecoveries.events, { actualConsumers: 2, newOwnedDieObserved: true, managedDieBefore: dieCountBefore,
+      managedDieAfter: managedActions.filter(action => action === 'die').length, infraDieBefore, infraDieAfter: infraEvents.getEvents(name).filter(event => event.event === 'die' && event.containerId === id).length, actualContainerId: id, streamStats: eventStreams.getStats() });
+    report.checks.push({ name: 'compiled-both-actual-event-consumers-reconnect-after-factory-failure', passed: true });
     await Promise.all([dockerEvents.stop(), infraEvents.stop()]);
     assert.equal(eventStreams.getStats().admitted, 0);
     report.eventReceipt.drainedStats = eventStreams.getStats();
@@ -611,11 +676,12 @@ async function main(): Promise<void> {
     await new Promise<void>(resolve => logServer!.listen(0, '127.0.0.1', resolve));
     const logPort = (logServer.address() as { port: number }).port;
     const logReceived = Array.from({ length: 100 }, () => false);
+    const logEnded = Array.from({ length: 100 }, () => false);
     await Promise.all(logReceived.map((_, index) => new Promise<void>((resolve, reject) => {
       const request = http.get(`http://127.0.0.1:${logPort}/owned-log-stream`, response => {
         try { assert.equal(response.statusCode, 200); assert.ok(response.headers['content-type']?.startsWith('text/event-stream')); }
         catch (error) { response.destroy(); reject(error); return; }
-        response.on('error', () => {});
+        response.on('error', () => {}); response.on('end', () => { logEnded[index] = true; });
         response.on('data', (chunk: Buffer) => { if (chunk.toString().includes('owned-observation')) logReceived[index] = true; });
         resolve();
       });
@@ -627,11 +693,31 @@ async function main(): Promise<void> {
     assert.equal(await container.isRunning(id!), true); owned();
     report.userLogReceipt = { receivedConnections: logReceived.filter(Boolean).length, sharedReaderCount: userLogHub.getStats().readers, healthReadable: true,
       pendingBytes: logWriterModule.ssePendingBudget.bytes, streamStats: userLogStreams.getStats(), scope: 'owned loopback compiled helper; not public browser or 30-minute load acceptance' };
+    report.stage = 'compiled-real-log-http-factory-close-and-resubscribe';
+    await faultConsumerFactory('user-logs', userLogStreams);
+    await waitConsumer(() => logEnded.every(Boolean) && userLogHub.getStats().subscribers === 0 && userLogHub.getStats().readers === 0, 'all original HTTP consumers close explicitly');
+    assert.equal(archivedLogBytes.length, 100);
+    assert.ok(archivedLogBytes.every(bytes => bytes <= 256 * 1024 + 128));
+    let resumedLog = false;
+    await new Promise<void>((resolve, reject) => {
+      const request = http.get(`http://127.0.0.1:${logPort}/owned-log-stream`, response => {
+        try { assert.equal(response.statusCode, 200); assert.ok(response.headers['content-type']?.startsWith('text/event-stream')); }
+        catch (error) { response.destroy(); reject(error); return; }
+        response.on('error', () => {});
+        response.on('data', (chunk: Buffer) => { if (chunk.toString().includes('owned-observation')) resumedLog = true; }); resolve();
+      }); request.on('error', reject); logRequests.push(request);
+    });
+    await waitConsumer(() => resumedLog, 'explicit original HTTP resubscription receives real logs', 5000);
+    assert.equal(userLogHub.getStats().subscribers, 1); assert.equal(userLogHub.getStats().readers, 1);
+    assert.equal(userLogStreams.getStats().admitted, 1);
+    Object.assign(report.consumerRecoveries['user-logs'], { originalHttpClosed: logEnded.filter(Boolean).length, originalArchives: 100,
+      explicitHttpResubscription: true, receivedActualContainerContent: resumedLog, browserReconnectVerified: false });
+    report.checks.push({ name: 'compiled-actual-log-http-closes-100-and-explicit-resubscription-recovers', passed: true });
     logRequests.splice(0).forEach(request => request.destroy());
     await new Promise<void>(resolve => logServer!.close(() => resolve())); logServer = undefined;
     await userLogHub.close();
     assert.equal(userLogStreams.getStats().admitted, 0); assert.equal(userLogHub.getStats().subscribers, 0);
-    assert.equal(logWriterModule.ssePendingBudget.bytes, 0); assert.equal(archivedLogBytes.length, 100);
+    assert.equal(logWriterModule.ssePendingBudget.bytes, 0); assert.equal(archivedLogBytes.length, 101);
     assert.ok(archivedLogBytes.every(bytes => bytes <= 256 * 1024 + 128));
     report.userLogReceipt.drained = { ...userLogHub.getStats(), pendingBytes: logWriterModule.ssePendingBudget.bytes, archiveCount: archivedLogBytes.length, maximumArchiveBytes: Math.max(...archivedLogBytes) };
     report.checks.push({ name: 'compiled-owned-shared-log-http-readers-and-health-capacity', passed: true });
@@ -653,7 +739,7 @@ const pgid=Number(execFileSync('ps',['-o','pgid=','-p',String(process.pid)],{enc
 fs.appendFileSync(${JSON.stringify(journalTrace)},JSON.stringify({pid:process.pid,ppid:process.ppid,pgid,args})+'\n');
 const emit=(cursor,message)=>process.stdout.write(JSON.stringify({__CURSOR:cursor,PRIORITY:'4',MESSAGE:message})+'\n');
 emit('owned-shared-cursor','warning owned backfill');
-if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('owned-tail-cursor','warning owned tail');setInterval(()=>{},1000);}
+if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('owned-tail-cursor','warning owned tail');if(fs.readFileSync(${JSON.stringify(journalTrace)},'utf8').trim().split('\n').length>=3)emit('owned-recovered-tail-cursor','warning owned recovered tail');setInterval(()=>{},1000);}
 `, { mode: 0o700 });
     const realJournalExec = journalStreams.exec.bind(journalStreams);
     journalStreams.exec = (command, options) => realJournalExec(command, { ...options, env: { ...options.env, PATH: `${journalBin}:${process.env.PATH || ''}` } });
@@ -673,6 +759,19 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     // /bin/sh可保留中间Shell；独立actor的进程组才是执行与取消归属，不要求生产者是直接子进程。
     assert.ok(journalCommands.every(command => Number.isSafeInteger(command.pgid) && command.pgid > 1 &&
       command.ppid !== process.pid && journalStreams.getStats().actors.some(actor => actor.pid === command.pgid)));
+    report.stage = 'compiled-real-journal-consumer-factory-reconnect';
+    await faultConsumerFactory('journal', journalStreams);
+    await waitConsumer(() => journalRecords.some(record => record.action === 'journal.tail' && record.message === 'warning owned recovered tail'), 'original journal consumer reconnects and reads new cursor');
+    const recoveredCommands = (await fs.readFile(journalTrace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(recoveredCommands.length, 3); assert.ok(recoveredCommands[2].args.includes('-f'));
+    assert.equal(journalRecords.filter(record => record.message === 'warning owned backfill').length, 1);
+    assert.equal(journalRecords.filter(record => record.message === 'warning owned tail').length, 1);
+    assert.equal(journalRecords.filter(record => record.message === 'warning owned recovered tail').length, 1);
+    assert.equal(journalMonitor.getStats().seenCursors, 3);
+    Object.assign(report.consumerRecoveries.journal, { originalCommands: 2, recoveredCommands, backfillReplayed: false,
+      duplicateCursorsRecorded: false, newTailCursorRecorded: true, stats: journalMonitor.getStats() });
+    report.checks.push({ name: 'compiled-actual-journal-reconnects-without-replaying-backfill-or-cursors', passed: true });
+    report.actualConsumerRecoveryVerified = true;
     report.stage = 'compiled-journal-health-and-drain';
     assert.equal(await container.isRunning(id!), true); owned();
     report.journalReceipt.healthReadable = true;
