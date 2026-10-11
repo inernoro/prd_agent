@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.90 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.91 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -430,7 +430,7 @@ IMP auxiliary提案从SSOT activation深拷贝deploymentScope，生成每SHA制�
 
 HTTP 接入先复用服务器既有登录/Agent 鉴权，在鉴权之后挂载 `/api/acceptance-resource-runs`。POST 根入口登记精确项目/分支/SHA/isolationRun/Profile；GET `/:id` 只回归属及阶段脱敏视图；POST `/:id/register`、`/:id/finish`、`/:id/cleanup-evidence` 的修改和核验都先以现存 run 项目执行既有项目访问控制，再检查 body 中的 ownerToken。项目级、范围全局以及 create-only key 都不可凭能力凭证越项目；伪造 actor/project 名字不能授权。begin 只允许现存项目及同项目分支，拒绝历史资源，不隐式创建 Profile 或部署；finish 只接已有真实归档报告的 reportId，不接客户端 terminal 状态。cleanup-evidence 只提供 `daemonVerificationRequired=true`，不删除资源、不写 released。新增响应禁缓存，不返回 hash、token（首次 begin 响应除外）或底层文件/凭据错误正文；已知有界错误按 400/403/404/409/429/504 分类，未知存储故障只给 500 internal。接口不自动绑定报告、创建资源或补造历史归属，生产创建者/报告 producer/Daemon 收尾须继续同条任务实现。先红覆盖真实本地 HTTP 链、项目及全局 key 越权、能力凭证陌生/错阶段、短 SHA、缺资源/报告、可回读磁盘终态与能力不落盘；服务器认证与实际 Daemon、生产视觉仍须独立正式执行。此临时接线说明在 P5-05 正式生产报告和自动门禁接管后退场。
 
-报告 producer 在既有 POST `/api/reports` 增加显式绑定：JSON 或 multipart 同时提供 `acceptanceRunId`、`acceptanceOwnerToken`、实际 projectId/branchId、完整 commitSha 和原枚举 verdict。任何绑定字段出现即进入严格分支；字段缺失、类型非法、短 SHA 或未知/跨项目关联不得降级成普通报告、自动补 SHA、改挂 key 所属项目或忽略未知 ID。先校验既有项目访问权限，再核 owner 能力、registered 阶段、未对账意图、原 Branch 引用、原记录和实际资源。普通无绑定报告保持原兼容语义。绑定归档复用同 run 操作独占和全局八项无排队额度；图像归一化与正文/元数据归档前后都复核原引用和资源，能力凭证只用于校验，不存报告/状态/日志。归档中身份漂移或未知 IO 错误不得返回 201，不自动 finish/released；已写出的孤立报告可保留为诊断材料，不能因此获得终结资格，后续 finish 仍须重新回读核验。绑定响应 no-store，已知错误有限分类，未知错误仅 internal；不改变原报告内容大小、归档格式或成员权限。先红覆盖既有实际 HTTP 报告缺 run 绑定、错 owner/阶段/项目/分支/SHA、全局范围和 create-only 拒绝、正常归档回读及随后 finish、归一化/归档等待中的替换、并发额度与能力无泄漏。此临时 producer 说明在 P5-05 正式全链验收和自动门禁接管后退场。
+报告 producer 在既有 POST `/api/reports` 增加显式绑定：JSON 或 multipart 同时提供 `acceptanceRunId`、`acceptanceOwnerToken`、实际 projectId/branchId、完整 commitSha 和原枚举 verdict。任何绑定字段出现即进入严格分支；字段缺失、类型非法、短 SHA 或未知/跨项目关联不得降级成普通报告、自动补 SHA、改挂 key 所属项目或忽略未知 ID。先校验既有项目访问权限，再核 owner 能力、registered 阶段、未对账意图、原 Branch 引用、原记录和实际资源。普通无绑定报告保持原兼容语义。绑定归档复用同 run 操作独占和全局八项无排队额度；图像归一化与正文/元数据归档前后都复核原引用和资源，能力凭证只用于校验，不存报告/状态/日志。归档中身份漂移或未知 IO 错误不得返回 201，不自动 finish/released；已写出的孤立报告可保留为诊断材料，不能因此获得终结资格，后续 finish 仍须重新回读核验。绑定归档 201 还须等待元数据现有 backing store flush 确认，并在等待结束重新核对原记录、分支、资源及归档元数据摘要；只写完正文不等于可靠完成，flush 失败不给 201。普通无绑定报告保持既有保存语义，未提交或孤立材料不自动终结；可靠返回后的自有新进程须能加载同一报告元数据和正文。绑定响应 no-store，已知错误有限分类，未知错误仅 internal；不改变原报告内容大小、归档格式或成员权限。先红覆盖既有实际 HTTP 报告缺 run 绑定、错 owner/阶段/项目/分支/SHA、全局范围和 create-only 拒绝、正常归档回读及随后 finish、归一化/归档等待中的替换、并发额度与能力无泄漏。此临时 producer 说明在 P5-05 正式全链验收和自动门禁接管后退场。
 
 收尾前再次核同一资源、运行身份和报告，之后仍须独占分支并实际 inspect/停止/删除原容器、核对消失、移除原 Profile 与 override，最后可靠保存 released。不能用 metadata running、终态部署或客户端声明替代这条链；删除数据库、停止其他服务或整分支冷启动不属于本收尾。缺历史创建归属的 bootstrap 保留待核对，不补造回执。本批先实现持久归属与终结核验内核，HTTP 鉴权/生产创建者接线及实际 Daemon 收尾仍须后续同条任务完成，不能把内核检查算 P5-05 完成。
 
