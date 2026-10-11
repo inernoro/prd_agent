@@ -17,6 +17,8 @@
     "filesystem-removal-drill.ts",
     "default-regression-drill.ts",
     "branch-claim-entry-drill.ts",
-    "application-bootstrap-drill.ts"
+    "application-bootstrap-drill.ts",
+    "application-docker-host-drill.ts",
+    "application-docker-inner-drill.ts"
   ]
 }

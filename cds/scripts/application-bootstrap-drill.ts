@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { MongoClient } from 'mongodb';
+import { fileURLToPath } from 'node:url';
 
 // 完整原 index 的隔离启动/鉴权前提；不以禁用 Docker 的预备路径代替 T09。
 const option = (key: string) => { const n = process.argv.indexOf(key); return n < 0 ? '' : process.argv[n + 1] || ''; };
@@ -35,20 +36,35 @@ function descendants(pid: number): Array<{ pid: number; ppid: number; rssKiB: nu
   while (changed) { changed = false; for (const row of rows) if (owned.has(row.ppid) && !owned.has(row.pid)) { owned.add(row.pid); changed = true; } }
   return rows.filter(row => owned.has(row.pid));
 }
-async function main(): Promise<void> {
+export interface BootstrapRequestResult {
+  status: number; json: any; cookie?: string; mime: string | null; elapsedMs: number; text: string;
+}
+export interface ApplicationBootstrapContext {
+  root: string; repo: string; runtime: string; port: number; configFile: string;
+  report: any;
+  request: (endpoint: string, method?: string, body?: unknown, authenticated?: boolean) => Promise<BootstrapRequestResult>;
+  requestRaw: (endpoint: string, body?: unknown) => Promise<Response>;
+}
+export interface ApplicationBootstrapOptions {
+  sourceHead?: string; mongoUri?: string; dockerHost?: string; output?: string;
+  exercise?: (context: ApplicationBootstrapContext) => Promise<void>;
+}
+export async function runApplicationBootstrap(options: ApplicationBootstrapOptions = {}): Promise<void> {
   const native = process.argv.includes('--native');
   if (native) { assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.match(process.env.GITHUB_RUN_ID || '', /^\d+$/); }
   const owner = `cds_boot_${randomBytes(8).toString('hex')}`;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-application-ci-')); await fs.chmod(root, 0o700);
-  const output = path.resolve(option('--output') || 'application-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
-  const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const output = path.resolve(options.output || option('--output') || 'application-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
+  const head = options.sourceHead || execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); assert.match(head, /^[0-9a-f]{40}$/);
   const compiledHashes = await fileHashes(path.resolve('dist'));
   const webHashes = await fileHashes(path.resolve('web/dist'), '', /./); assert.ok(webHashes['index.html']);
   const sourceHashes = await fileHashes(path.resolve('src'), '', /\.(?:ts|json)$/);
   const scriptHash = createHash('sha256').update(await fs.readFile('scripts/application-bootstrap-drill.ts')).digest('hex'); assert.ok(Object.keys(compiledHashes).length > 200);
   const report: any = { schema: 1, head, platform: os.platform(), native, startedAt: new Date().toISOString(), verdict: 'failed', checks: [],
-    scope: 'original compiled index startup with all default execution pools, real private mongo-split and durable local-user bootstrap/login/restart; Docker endpoint deliberately unavailable; no whole first-stage deployment or public/browser/performance acceptance',
-    sourceHashes, scriptHash, webHashes,
+    scope: options.dockerHost
+      ? 'original compiled index startup with all default pools, private mongo-split/auth and owned Docker; application exercise pending; no whole first-stage/public/browser/performance acceptance'
+      : 'original compiled index startup with all default execution pools, real private mongo-split and durable local-user bootstrap/login/restart; Docker endpoint deliberately unavailable; no whole first-stage deployment or public/browser/performance acceptance',
+    sourceHashes, scriptHash, webHashes, sourceHeadOrigin: options.sourceHead ? 'outer-owner-verified-source-snapshot' : 'checkout-git', dockerAvailableFixture: Boolean(options.dockerHost),
     compiledHashes, actualFullIndexBootstrapVerified: false, actualAuthRestartVerified: false,
     actualWholeFirstStageVerified: false, browserVerified: false, publicPerformanceVerified: false, formalAcceptancePassed: false,
     ownedProcessesRemoved: false, ownedDatabaseRemoved: false, isolatedFilesRemoved: false };
@@ -58,7 +74,8 @@ async function main(): Promise<void> {
   const dbName = `${owner}_state`, authDb = `${owner}_auth`, password = randomBytes(24).toString('hex');
   const secretValues = [password];
   const scrub = (s: string) => secretValues.reduce((v, secret) => v.replaceAll(secret, '[private]'), s).slice(-65536);
-  let uri = option('--mongo-uri');
+  let uri = options.mongoUri || option('--mongo-uri');
+  if (options.dockerHost) assert.equal(options.dockerHost, 'unix:///var/run/owned.sock');
   try {
     report.stage = 'private-runtime-copy';
     const runtime = path.join(root, 'runtime'); await fs.mkdir(runtime);
@@ -103,7 +120,7 @@ async function main(): Promise<void> {
       CDS_AUTH_BACKEND: 'mongo', CDS_STORAGE_MODE: 'mongo-split', CDS_STATE_BOOTSTRAP_MODE: 'fresh', CDS_AUTH_MODE: 'github', CDS_GITHUB_CLIENT_ID: 'private-unused-oauth', CDS_GITHUB_CLIENT_SECRET: randomBytes(32).toString('hex'),
       CDS_USERNAME: 'private-legacy-disabled', CDS_PASSWORD: randomBytes(32).toString('hex'), CDS_SECRET_KEY: randomBytes(32).toString('hex'),
       CDS_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, CDS_UPTIME_ENABLED: '0', CDS_PREVIEW_AUTOWAKE: '0',
-      DOCKER_HOST: `unix://${root}/unavailable.sock` };
+      DOCKER_HOST: options.dockerHost || `unix://${root}/unavailable.sock` };
     secretValues.push(appEnv.CDS_PASSWORD, appEnv.CDS_SECRET_KEY, appEnv.CDS_GITHUB_CLIENT_SECRET);
     const start = () => {
       application = spawn(process.execPath, [path.join(runtime, 'dist', 'index.js'), configFile], { cwd: runtime, env: appEnv, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -120,6 +137,10 @@ async function main(): Promise<void> {
       const text = await response.text(); let json: any; try { json = JSON.parse(text); } catch { /* HTML is retained only by MIME assertions. */ }
       return { status: response.status, json, cookie: response.headers.get('set-cookie')?.split(';')[0], mime: response.headers.get('content-type'), elapsedMs: performance.now() - began, text };
     };
+    const requestRaw = (endpoint: string, body?: unknown) => fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie, 'X-CDS-Trigger': 'manual' },
+      body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual', signal: AbortSignal.timeout(180_000),
+    });
     const ready = async () => waitFor(async () => { if (application!.exitCode !== null) throw new Error('完整index在就绪前退出');
       try { const r = await request('/api/auth/bootstrap-status', 'GET', undefined, false); return r.status === 200 ? r : undefined; } catch { return undefined; } }, 45_000);
     const stop = async () => {
@@ -152,6 +173,11 @@ async function main(): Promise<void> {
     const projects = await request('/api/projects'); assert.equal(projects.status, 200); assert.ok(projects.json);
     report.checks.push({ name: 'real-durable-bootstrap-cookie-and-unauthorized-gate', passed: true, duplicateStatus: duplicate.status, userId });
     report.actualFullIndexBootstrapVerified = true;
+    if (options.exercise) {
+      report.scope = 'original compiled full index/auth/server with all default pools and owned Docker application exercise; generic fixture only, no representative business CI/public/browser/performance acceptance';
+      report.stage = 'owned-docker-application-exercise';
+      await options.exercise({ root, repo, runtime, port, configFile, report, request, requestRaw });
+    }
     report.stage = 'graceful-shutdown-restart'; report.firstShutdown = await stop(); start();
     const restarted = await ready(); assert.equal(restarted.json.needsBootstrap, false);
     assert.equal((await request('/api/projects')).status, 200); // 原 cookie，而非重铸会话。
@@ -183,4 +209,6 @@ async function main(): Promise<void> {
   }
   assert.equal(report.ownedProcessesRemoved, true); assert.equal(report.ownedDatabaseRemoved, true);
 }
-main().catch(error => { console.error(error instanceof Error ? error.message : '完整启动演练失败'); process.exitCode = 1; });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runApplicationBootstrap().catch(error => { console.error(error instanceof Error ? error.message : '完整启动演练失败'); process.exitCode = 1; });
+}

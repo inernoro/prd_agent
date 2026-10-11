@@ -19,6 +19,8 @@ on:
       - cds/scripts/default-regression-drill.ts
       - cds/scripts/branch-claim-entry-drill.ts
       - cds/scripts/application-bootstrap-drill.ts
+      - cds/scripts/application-docker-host-drill.ts
+      - cds/scripts/application-docker-inner-drill.ts
       - cds/tests/helpers/**
       - cds/tests/routes/topology.test.ts
       - cds/tests/services/isolated-shell-executor.test.ts
@@ -35,6 +37,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  application-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install original application and web dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Compile original full application and web
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+          pnpm -C cds/web build
+      - name: Original full application in owned Docker network namespace
+        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts
+      - name: Preserve original application Docker prerequisite evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-application-docker-${{ github.sha }}
+          path: cds/application-docker-output/
+          if-no-files-found: error
+          retention-days: 14
+
   application-bootstrap:
     runs-on: ubuntu-latest
     timeout-minutes: 10
