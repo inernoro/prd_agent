@@ -202,9 +202,23 @@ async function main(): Promise<void> {
       dockerRequestProxy: { socketPath: path.join(root, 'probe-daemon-proxy.sock'), daemonId: info.ID, owner: source.owner },
       beforeShutdown: async context => {
         assert.ok(capabilityProjectId); probeProxy!.arm();
-        const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
-        assert.equal(response.status, 200); assert.equal(response.json.items.find((item: any) => item.id === 'open-design').healthy, false);
-        await Promise.race([probeProxy!.caught, sleep(40_000).then(() => { throw new Error('实际能力请求没有到达创建边界'); })]);
+        let caught = false; void probeProxy!.caught.then(() => { caught = true; });
+        report.capabilityProviderSnapshots = [];
+        try {
+          // The first read may observe the original startup recovery barrier;
+          // keep reading the same public capability entry within the existing
+          // 40-second bound, without forcing a refresh or bypassing that barrier.
+          await until(async () => {
+            const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
+            assert.equal(response.status, 200);
+            const item = response.json.items.find((item: any) => item.id === 'open-design');
+            assert.ok(item); assert.equal(item.healthy, false);
+            report.capabilityProviderSnapshots.push({ at: new Date().toISOString(), healthy: item.healthy,
+              resourcePolicyEnforcedPerSession: item.resourcePolicyEnforcedPerSession, verificationPending: item.verificationPending,
+              reason: item.reason });
+            return caught ? true : undefined;
+          }, 40_000);
+        } finally { report.probeEventsAtCreationBoundary = await context.readProbeEvents(); }
         report.probeApplicationPid = context.applicationPid(); assert.ok(report.probeApplicationPid);
         report.probeApplicationProcessTree = context.applicationProcessTree();
         report.probeFaultInjection = 'unchanged original create body accepted by private Unix proxy; delayed forwarding to real owned daemon after original CLI disconnect';
