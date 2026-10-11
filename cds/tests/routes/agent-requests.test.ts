@@ -1,3 +1,6 @@
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
 /*
  * Agent 请求观测台（2026-06-11）路由测试：
  * - 会话创建接受 title/clientUser/clientApp 标签并在视图中返回
@@ -1058,6 +1061,7 @@ describe('Agent requests observability routes', () => {
     const releaseRecovery = deferred<void>();
     const runtimeShell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         const probeCidFile = command.match(/--cidfile '([^']+)'/)?.[1];
         if (probeCidFile) fs.writeFileSync(probeCidFile, 'a'.repeat(64));
         if (/^docker rm -f '[a-f0-9]{64}'$/.test(command)) return { stdout: 'removed', stderr: '', exitCode: 0 };
@@ -1070,7 +1074,7 @@ describe('Agent requests observability routes', () => {
           return { stdout: '', stderr: '', exitCode: 0 };
         }
         if (command.startsWith('docker version')) return { stdout: '27.0.0\n', stderr: '', exitCode: 0 };
-        if (command.startsWith('docker image inspect')) return { stdout: 'sha256:image\n', stderr: '', exitCode: 0 };
+        if (command.startsWith('docker image inspect')) return { stdout: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n', stderr: '', exitCode: 0 };
         if (command.includes('--entrypoint /bin/sh') && !command.includes('/cds-storage-probe')) {
           return { stdout: '/usr/local/bin/opencode\n', stderr: '', exitCode: 0 };
         }

@@ -8,6 +8,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import { maskSecrets } from './secret-masker.js';
 import { EGRESS_HEALTH_EXEC_TIMEOUT_MS, EGRESS_HEALTH_PROBE_SCRIPT, EGRESS_PROXY_PORT } from './agent-egress-health.js';
+import { CoreImageCache } from './core-image-cache.js';
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2';
@@ -1604,6 +1605,7 @@ export class AgentWorkspaceSessionRuntime {
   private readonly probeCleanupTimeoutMs: number;
   private readonly probeCleanupPollMs: number;
   private readonly probeEventLog?: ServerEventLogSink | null;
+  private readonly coreImageCache: CoreImageCache;
   private closing: Promise<void> | null = null;
 
   constructor(
@@ -1634,6 +1636,10 @@ export class AgentWorkspaceSessionRuntime {
     this.probeCleanupTimeoutMs = Math.max(1, Math.min(5000, options.probeCleanupTimeoutMs ?? 5000));
     this.probeCleanupPollMs = Math.max(1, Math.min(250, options.probeCleanupPollMs ?? 250));
     this.probeEventLog = options.serverEventLogStore;
+    this.coreImageCache = new CoreImageCache(this.shell,
+      path.join(path.dirname(this.rootDir), `${path.basename(this.rootDir)}-core-image-cache`, this.instanceNameScope),
+      this.instanceId, () => !this.bootstrapPreparation && !this.bootstrapError && !this.capabilityRefresh
+        && this.probeGenerations.size === 0 && this.handles.size === 0, this.probeEventLog);
     this.cleanupRetryBaseMs = Math.max(1, options.cleanupRetryBaseMs ?? DEFAULT_CLEANUP_RETRY_BASE_MS);
     this.cleanupRetryMaxMs = Math.max(
       this.cleanupRetryBaseMs,
@@ -1654,6 +1660,7 @@ export class AgentWorkspaceSessionRuntime {
     if (this.bootstrapPreparation) return this.bootstrapPreparation;
     this.bootstrapAttempted = true;
     const preparation = (async () => {
+      await this.coreImageCache.resume();
       await this.recoverOrphans();
     })()
       .then(() => { this.bootstrapError = null; })
@@ -1912,7 +1919,9 @@ export class AgentWorkspaceSessionRuntime {
     // this instance's recovery and bounded cleanup; absence alone cannot revoke creation.
     const generation = await this.allocateProbeGeneration();
     const probeOperationId = generation.id;
+    let releaseImage: (() => void) | undefined;
     try {
+      releaseImage = await this.coreImageCache.acquire(imageId, this.probeAbort.signal);
       let runtimeAvailable = this.runtimeValidationByImageId.get(imageId);
       if (runtimeAvailable === undefined) {
         const runtimeValidation = await this.executeCapabilityProbe(generation, 'runtime-validation', [
@@ -1963,7 +1972,7 @@ export class AgentWorkspaceSessionRuntime {
               },
       };
     } finally {
-      await this.cleanupProbeGeneration(generation);
+      try { await this.cleanupProbeGeneration(generation); } finally { releaseImage?.(); }
     }
   }
 
@@ -1995,6 +2004,7 @@ export class AgentWorkspaceSessionRuntime {
 
   async closeCapabilityProbes(): Promise<void> {
     if (this.closing) return this.closing;
+    this.coreImageCache.stop();
     this.probeAbort.abort();
     clearTimeout(this.probeRecoveryTimer); this.probeRecoveryTimer = undefined;
     this.closing = (async () => {

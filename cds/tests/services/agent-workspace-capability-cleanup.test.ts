@@ -1,3 +1,6 @@
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,9 +18,10 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-probe-cancel-'));
   const shell: IShellExecutor = {
     async exec(command, options) {
+        const cached = coreCacheShell(command); if (cached) return cached;
       calls.push({ command, options });
       if (command.startsWith('docker version')) return result('27.0.0');
-      if (command.startsWith('docker image inspect')) return config.imageFailure ? result('', config.imageFailure, 1) : result('sha256:actual-fixture-image');
+      if (command.startsWith('docker image inspect')) return config.imageFailure ? result('', config.imageFailure, 1) : result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
       if (command.startsWith('docker run --rm')) {
         pendingName = command.match(/--name '([^']+)'/)![1];
         operationId = command.match(/cds.agent.probe.operation=([a-f0-9]{32})/)![1];

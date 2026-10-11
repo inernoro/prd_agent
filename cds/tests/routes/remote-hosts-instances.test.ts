@@ -1,3 +1,6 @@
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import crypto from 'node:crypto';
 import express from 'express';
@@ -526,6 +529,7 @@ describe('Remote hosts project instances route', () => {
   it('keeps OpenDesign unselectable when its configured image is absent', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         if (command.startsWith('docker version')) {
           return { stdout: '27.0.0\n', stderr: '', exitCode: 0 };
         }

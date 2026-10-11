@@ -10,6 +10,9 @@ import net from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { MongoClient } from 'mongodb';
 import { runApplicationBootstrap, type ApplicationBootstrapContext } from './application-bootstrap-drill.js';
+import { CoreImageCache, CORE_IMAGE_CACHE_IDLE_MS } from '../src/services/core-image-cache.js';
+import { createJanitorDockerAdapters } from '../src/services/janitor.js';
+import type { IShellExecutor } from '../src/types.js';
 
 // 在外层自有容器里运行；原 index 与 Docker 发布端口在同一个网络空间，保留原分支网络隔离。
 const execute = promisify(execFile);
@@ -324,6 +327,79 @@ async function main(): Promise<void> {
     report.publishedImages ||= []; report.publishedImages.push({ role, sha, reference, id: view.Id, repoDigests: JSON.parse(await docker(['image', 'inspect', reference]))[0].RepoDigests,
       os: view.Os, architecture: view.Architecture });
   };
+  const exerciseFiniteCoreCache = async () => {
+    // Separate component evidence only after original application assertions.
+    // The fixture cannot keep the original application's core image alive.
+    const evidence: any = { startedAt: new Date().toISOString(), verdict: 'failed',
+      genericFixtureOnly: true, originalApplicationCapabilityVerified: false,
+      originalPruneEnabled: true, originalIdleMs: CORE_IMAGE_CACHE_IDLE_MS, events: [] };
+    report.coreImageCacheRepresentative = evidence;
+    const shell: IShellExecutor = { exec: async (command, options) => {
+      options?.beforeStart?.();
+      try { const output = await execute('/bin/sh', ['-c', command], { encoding: 'utf8',
+        timeout: options?.timeout, signal: options?.signal, maxBuffer: 2 * 1024 * 1024,
+        env: { ...process.env, DOCKER_HOST: host } });
+        return { stdout: output.stdout, stderr: output.stderr, exitCode: 0 }; }
+      catch (error) { return { stdout: String((error as any).stdout || ''), stderr: String((error as any).stderr || (error as Error).message),
+        exitCode: typeof (error as any).code === 'number' ? (error as any).code : 1 }; }
+    } };
+    const cacheRoot = path.join(root, 'finite-core-cache');
+    const cache = new CoreImageCache(shell, cacheRoot, `${source.owner}-finite-cache`, () => true,
+      { record: (event: any) => { evidence.events.push(event); } });
+    try {
+      await cache.resume(); assert.equal(evidence.events.length, 0);
+      evidence.foreignReferencesBefore = {};
+      for (const reference of ['mongo:7.0', 'registry:2', 'node:22-alpine'])
+        evidence.foreignReferencesBefore[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
+      const makeFixture = async (role: string) => {
+        const context = path.join(root, `finite-cache-${role}`); await fs.mkdir(context);
+        await fs.writeFile(path.join(context, 'marker'), `${source.owner}:${role}`);
+        await fs.writeFile(path.join(context, 'Dockerfile'), `FROM scratch\nLABEL cds.acceptance.owner="${source.owner}"\nCOPY marker /marker\n`);
+        const reference = `${source.owner}-finite-cache:${role}`;
+        await docker(['build', '--network', 'none', '--quiet', '-t', reference, context]);
+        const view = JSON.parse(await docker(['image', 'inspect', reference]))[0];
+        assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner);
+        return { reference, id: view.Id, size: view.Size };
+      };
+      const active = await makeFixture('active'), unused = await makeFixture('unused');
+      assert.notEqual(active.id, unused.id); evidence.fixtureImages = { active, unused };
+      const release = await cache.acquire(active.id, new AbortController().signal);
+      const receipt = JSON.parse(await fs.readFile(path.join(cacheRoot, 'cache.json'), 'utf8'));
+      assert.equal(receipt.daemonId, info.ID); assert.equal(receipt.entries.length, 1);
+      assert.equal(receipt.entries[0].imageId, active.id); assert.equal(receipt.entries[0].size, active.size);
+      assert.ok((await fs.stat(path.join(cacheRoot, 'cache.json'))).size <= 8192);
+      evidence.receiptAtAcquisition = receipt;
+      const acquired = evidence.events.find((event: any) => event.action === 'agent.core-image-cache.acquired');
+      assert.ok(acquired); evidence.ownedReference = acquired.details.cacheReference;
+      await docker(['image', 'rm', '--no-prune', active.reference]);
+      await docker(['image', 'rm', '--no-prune', unused.reference]);
+      const prune = createJanitorDockerAdapters(shell).dockerPrune;
+      const absentImage = async (reference: string) => {
+        try { await docker(['image', 'inspect', reference, '--format', '{{.Id}}']); return false; }
+        catch (error) { assert.match(String((error as any).stderr || ''), /No such (?:image|object)/i); return true; }
+      };
+      evidence.activePrune = await prune(); assert.deepEqual(evidence.activePrune.errors, []);
+      assert.equal(await docker(['image', 'inspect', active.id, '--format', '{{.Id}}']), active.id);
+      assert.equal(await absentImage(unused.id), true); evidence.unusedReclaimedWhileActiveProtected = true;
+      const waitStarted = performance.now();
+      await sleep(Math.max(0, receipt.entries[0].expiresAt - Date.now()) + 25);
+      evidence.expiryWaitMs = performance.now() - waitStarted; evidence.expiredAt = new Date().toISOString();
+      assert.ok(Date.now() >= receipt.entries[0].expiresAt);
+      await cache.reclaimExpired();
+      assert.equal(await docker(['image', 'inspect', evidence.ownedReference, '--format', '{{.Id}}']), active.id);
+      evidence.activeUserProtectedPastExpiry = true;
+      release(); await cache.reclaimExpired();
+      assert.equal(await absentImage(evidence.ownedReference), true);
+      await assert.rejects(fs.stat(cacheRoot), (error: any) => error.code === 'ENOENT');
+      evidence.afterReleasePrune = await prune(); assert.deepEqual(evidence.afterReleasePrune.errors, []);
+      assert.equal(await absentImage(active.id), true);
+      evidence.foreignReferencesAfter = {};
+      for (const reference of Object.keys(evidence.foreignReferencesBefore))
+        evidence.foreignReferencesAfter[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
+      assert.deepEqual(evidence.foreignReferencesAfter, evidence.foreignReferencesBefore);
+      evidence.ownedReferenceAndReceiptRemoved = true; evidence.verdict = 'passed';
+    } finally { cache.stop(); evidence.finishedAt = new Date().toISOString(); }
+  };
   try {
     report.stage = 'owned-fixtures-ready';
     for (const image of ['mongo:7.0', 'registry:2', 'node:22-alpine']) await docker(['pull', image]);
@@ -504,7 +580,15 @@ async function main(): Promise<void> {
           return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000);
         const rows = await auditNamespace('after-real-normal-capability-validation');
         assert.equal(rows.some(row => row.matchesDefaultRuntimeValidation), false);
-        report.normalCapabilityEvents = (await context.readProbeEvents()).filter(event => event.action === 'agent.probe.cleanup.confirmed');
+        const events = await context.readProbeEvents();
+        report.normalCapabilityEvents = events.filter(event => event.action === 'agent.probe.cleanup.confirmed');
+        report.coreImageCacheEvents = events.filter(event => event.source === 'core-image-cache');
+        const acquired = report.coreImageCacheEvents.filter((event: any) => event.action === 'agent.core-image-cache.acquired');
+        assert.ok(acquired.length > 0);
+        assert.ok(acquired.every((event: any) => event.details.imageId === directImageId));
+        const reference = acquired.at(-1).details.cacheReference;
+        assert.equal(await docker(['image', 'inspect', reference, '--format', '{{.Id}}']), directImageId);
+        report.originalCoreReferenceConfirmedAfterRestart = { reference, imageId: directImageId, at: new Date().toISOString() };
         assert.ok(report.normalCapabilityEvents.some((event: any) => event.details.probeKind === 'storage-validation'));
         report.checks.push({ name: 'actual-pinned-runtime-CLI-skill-and-hard-storage-validation-remain-available-after-restart', passed: true });
       },
@@ -644,6 +728,7 @@ async function main(): Promise<void> {
         context.report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.dockerExerciseReport = { file: 'docker-report.json', genericFixtureOnly: true, representativeBusinessCiVerified: false, shortReadSamples: report.readSamples.length };
       } });
+    await exerciseFiniteCoreCache();
     report.verdict = 'passed';
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }
   finally {

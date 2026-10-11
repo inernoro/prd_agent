@@ -176,8 +176,8 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       (report.shutdownAttempts ??= []).push({ requestedAt, exitedAt: new Date().toISOString(), elapsedMs: performance.now() - began, ...ended });
       assert.equal(ended.code, 0); return ended;
     };
-    const readProbeEvents = async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: 'agent-workspace-capability' }).sort({ ts: -1 }).limit(512).toArray()).reverse()
-      .map(event => ({ at: event.ts, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details }));
+    const readProbeEvents = async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: { $in: ['agent-workspace-capability', 'core-image-cache'] } }).sort({ ts: -1 }).limit(512).toArray()).reverse()
+      .map(event => ({ at: event.ts, source: event.source, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details }));
     // 失败仍须先保存真实退出前的收尾回执；不得把外层销毁自有daemon当作应用清理成功。
     captureProbeEvents = readProbeEvents;
     const context: ApplicationBootstrapContext = { root, repo, runtime, port, configFile, report, request, requestRaw,
