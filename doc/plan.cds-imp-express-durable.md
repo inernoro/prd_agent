@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.44；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.45；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -42,7 +42,7 @@
 | P3-05 | 本地部分实现 | 正式未执行 | 对固定端口、独占卷、不能双实例运行的服务声明替换约束，不承诺不具备条件的无中断切换。 |
 | P3-06 | 本地部分实现 | 正式未执行 | 分别限制拉取、启动、就绪等待与诊断的并发；按实际容器与资源记账，不能漏掉 error 状态但仍运行的实例。 |
 | P3-07 | 本地部分实现 | 正式未执行 | 提供项目公平性、等待原因、最长等待与超时机制。并发参数按宿主余量和单服务峰值校准，不以盲目加名额解决排队。 |
-| P3-08 | 待办 | 正式未执行 | 验证重复推送、旧任务取消、启动失败、执行进程重启以及高负载场景。 |
+| P3-08 | 本地部分实现 | 正式未执行 | 验证重复推送、旧任务取消、启动失败、执行进程重启以及高负载场景。 |
 | P4-01 | 本地部分实现 | 正式未执行 | 沿用并核对现有保存节流修复，将高频状态更新转为增量，避免每次在 Master 深拷贝整份状态。 |
 | P4-02 | 本地部分实现 | 正式未执行 | 关键终态可靠落盘；重启后由真实容器与运行记录对账，完成记录不可丢失或倒退。 |
 | P4-03 | 本地部分实现 | 正式未执行 | SSE 按项目/分支发送必要变化，合并重复事件并限制慢客户端积压；慢客户端恢复使用一致快照。 |
@@ -438,3 +438,9 @@ v1.41独立ff fixture机制旧3/6→新6/6，原28语义文本一致/独立modul
 6a6 full实际665files9751green+1codex-r39-p1 static禁止router调用drain谓词失败/19skip/1obsolete/66.39s，原件/tmp/cds-disk-deploy-window-full.log保留。事先guide2.62要求fresh后复用同权威，f0a034仅test1路径将旧禁止调用谓词退场，保留app位置/路径断言并要求fresh后仅1次调用、无router自有gate；不称改期待是旧predicate红绿。focused57green，生产与6a6逐字节相同；固定f0full666files9752green/6files19skip/1obsolete/64.31s（/tmp/cds-disk-deploy-window-contract-full.log）。根precommit忽略pnpm失败假绿不用作证据，显式core0才是验证。
 
 38partial-local/11todo仍是实施状态；49formal not-executed、visualN/A，nativegoal active，未push/PR/merge/selfupdate/shared mutation；既有八支push与selfupdate授权持续。
+
+## v1.45 待部署持久受理基础检查点
+
+guide2.63先于实现冻结P3持久受理/认领/unknown合同。9530750产品：schema1独立pending journal； shared Shell Worker中有界读写，临时0600文件fsync/rename/目录fsync后ACK，3秒IO/10秒事务/128队列；merged真实HTTP待ACK，失败503，移除取消占位run头，返回op/gen；complete不删可靠queued，claim先保存再一次POST，project/branch/Profile/kind/SHA/trigger/gen一次凭证，stop/新writer使旧凭证失效。claim等待后原Branch ref及id/project/branch/worktree/createdAt再查；unknown不重试，boot读取保留记录并阻止冲突写，不宣称已安全续跑。主旧行为2真红→绿，去掉Router ACK实际HTTP1真红后恢复；7files111相关/core tsc0，全量669files9766green/6files19skip/1旧obsolete/68.67s。独立953固定源正在复验，原30fe 2/6（4负谓词重叠根因）/协调19/观察3不求和、不抹红。真实文件/新OS读取是局部证据，非实际Master/Daemon重启。实际pending查询/可用run绑定及执行器恢复对账尚未完成；legacy未点名整分支缓存SHA重放语义需独立核查。
+
+39partial-local/10todo；49正式not-executed、visual N/A；不改变A01–A12和八分支完整交付门槛，目标active。
