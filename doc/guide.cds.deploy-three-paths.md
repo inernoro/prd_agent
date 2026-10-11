@@ -391,4 +391,6 @@ CI 只有 version1、github-provider 时钟及既定两项 meaning、精确完�
 
 artifactSource 是操作者声明的预期 OCI source，只接受固定 HTTPS GitHub 仓库路径；声明后精确制品 gate 的实际 inspect 必须匹配 org.opencontainers.image.source，否则拒绝，不以真实SHA格式代替源身份。未声明的历史 Profile 沿用原 revision/架构/ID 判据。source label本身不能证明由某次可信CI产出，不扩大为签名或远端registry证明；实际制品和准入仍须真实 Docker/CI 验证。
 
+声明的source须进入配置指纹并冻结到部署版本，恢复沿用已冻结source或其明确缺省，不能借用后来当前Profile值。未声明source的配置指纹保持原口径，不为这次可选字段让全部旧项目产生配置漂移；沿用既有replacement v1冻结presence/absence与旧未版本化兼容，不新造schema。
+
 本次 IMP auxiliary 提案只在离线生成器校验主分支三元组；CDS通用复制/派生仍可复制extraProfiles，本修复不宣称平台全局main-only激活隔离。旧网关切换、真实网络/XXL、辅助运行分母和bootstrap终结receipt仍单独验收。平台完整自动元数据门禁及P5-06实际验收接管后退场本临时说明。
