@@ -19,7 +19,7 @@ function validPending(value: unknown): value is PendingWebhookDeploy {
       || r.branchId !== p.branchId || !string(r.projectId) || !['manual', 'webhook'].includes(r.trigger)
       || !((r.kind === 'deploy' && !r.profileId) || (r.kind === 'deploy-profile' && string(r.profileId)))
       || r.versionId || r.hasOneShotOptions || (r.commitSha != null && !/^[0-9a-f]{7,40}$/i.test(r.commitSha))) return false;
-  const allowed = new Set(['branchId', 'projectId', 'profileId', 'kind', 'trigger', 'actor', 'requestId', 'commitSha', 'versionId', 'hasOneShotOptions', 'commitPinned', 'configHash', 'source', 'reason', 'continueWith']);
+  const allowed = new Set(['branchId', 'projectId', 'profileId', 'kind', 'trigger', 'actor', 'requestId', 'commitSha', 'versionId', 'hasOneShotOptions', 'commitPinned', 'configHash', 'pendingConfigHash', 'source', 'reason', 'continueWith']);
   if (Object.keys(r).some(k => !allowed.has(k)) || Object.keys(p).some(k => !['operationId', 'branchId', 'generation', 'request', 'mergedCount', 'updatedAt'].includes(k))) return false;
   return Object.entries(r).every(([k, v]) => v == null || (k === 'commitPinned' || k === 'hasOneShotOptions' ? typeof v === 'boolean' : string(v, k === 'reason' ? 2048 : 256)));
 }

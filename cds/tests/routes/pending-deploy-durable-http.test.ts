@@ -21,7 +21,7 @@ describe('actual own HTTP durable pending acceptance', () => {
   let journal: PendingDeployJournal; let coordinator: BranchOperationCoordinator; let save: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-owned-pending-http-')); state = new StateService(path.join(root, 'state.json')); state.load();
-    state.addBranch({ id: 'owned', projectId: 'default', branch: 'main', worktreePath: root, status: 'running', githubCommitSha: 'a'.repeat(40), createdAt: new Date().toISOString() } as any);
+    state.addBranch({ id: 'owned', projectId: 'default', branch: 'main', worktreePath: root, status: 'running', services: {}, githubCommitSha: 'a'.repeat(40), createdAt: new Date().toISOString() } as any);
     state.addBuildProfile({ id: 'api', projectId: 'default', name: 'api', workDir: '.', dockerImage: 'registry/own/api:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, prebuiltCommitPolicy: 'exact', containerPort: 8080, command: '', activeDeployMode: 'express', deployModes: { express: { label: '极速', prebuilt: true, dockerImage: 'registry/own/api:sha-${CDS_COMMIT_SHA}' } } } as any);
     const config = { repoRoot: root, worktreeBase: root, masterPort: 9900, workerPort: 5500, dockerNetwork: 'owned', portStart: 10001, sharedEnv: {}, mode: 'standalone' } as any;
     save = vi.fn(async () => {}); journal = new PendingDeployJournal({ load: async () => null, save }); await journal.ready();
@@ -32,11 +32,11 @@ describe('actual own HTTP durable pending acceptance', () => {
     diskGuard.reset(); diskGuard.setProbe(async () => [{ totalBytes: 100, freeBytes: 80 }]); await diskGuard.refreshNow();
   });
   afterEach(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); coordinator.clearForTest(); diskGuard.reset(); selfStatusCache._resetForTests(); await flushAllJsonStateStores(); fs.rmSync(root, { recursive: true, force: true }); });
-  function post(headers: Record<string, string> = {}) {
+  function post(headers: Record<string, string> = {}, body: Record<string, unknown> = { commitSha: 'b'.repeat(40) }, route = '/api/branches/owned/deploy/api') {
     return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
-      const q = http.request({ host: '127.0.0.1', port: (server.address() as any).port, path: '/api/branches/owned/deploy/api', method: 'POST', agent: false, headers: { 'content-type': 'application/json', ...headers } }, res => {
+      const q = http.request({ host: '127.0.0.1', port: (server.address() as any).port, path: route, method: 'POST', agent: false, headers: { 'content-type': 'application/json', ...headers } }, res => {
         let body = ''; res.on('data', c => body += c); res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
-      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own request timeout'))); q.end(JSON.stringify({ commitSha: 'b'.repeat(40) }));
+      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own request timeout'))); q.end(JSON.stringify(body));
     });
   }
   it('sends no successful response until the journal ACK; removes cancelled placeholder run header', async () => {
@@ -55,4 +55,14 @@ describe('actual own HTTP durable pending acceptance', () => {
     const result = await post({ 'x-cds-internal': '1', 'x-cds-pending-operation-id': 'op_old', 'x-cds-pending-generation': '2' });
     expect(result.body).toContain('pending_dispatch_stale'); expect(result.body).toContain('"ok":false'); expect(shell.commands).toHaveLength(0); expect(save).not.toHaveBeenCalled();
   });
+  it('durably captures a SHA-neutral configuration digest on actual unpinned whole acceptance', async () => {
+    const route = '/api/branches/owned/deploy'; await post({}, {}, route);
+    const first = journal.snapshot().queued[0].request as any; expect(first.commitPinned).toBe(false); expect(first.pendingConfigHash).toMatch(/^[0-9a-f]{64}$/);
+    state.getBranch('owned')!.githubCommitSha = 'c'.repeat(40); state.getBranch('owned')!.ciTargetSha = 'c'.repeat(40);
+    await post({}, {}, route); const advanced = journal.snapshot().queued[0].request as any;
+    expect(advanced.configHash).not.toBe(first.configHash); expect(advanced.pendingConfigHash).toBe(first.pendingConfigHash);
+    state.getBuildProfile('api')!.containerPort = 8081;
+    await post({}, {}, route); expect((journal.snapshot().queued[0].request as any).pendingConfigHash).not.toBe(first.pendingConfigHash);
+  });
+
 });

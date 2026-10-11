@@ -113,4 +113,14 @@ describe('durable pending intent journal', () => {
     expect(c.begin(token).status).toBe('started');
   });
 
+  it('keeps cache advancement but rejects SHA-neutral intent config drift without consuming the token', async () => {
+    const { journal } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const r: any = { projectId: 'p', branchId: 'owned', kind: 'deploy', trigger: 'manual', commitSha: 'a'.repeat(40), commitPinned: false, configHash: 'imageA', pendingConfigHash: 'semantic' };
+    const active = c.begin(r); await c.begin(r).persistence;
+    const p = c.complete(active.lease!, 'completed')!; expect(await c.claimPending(p)).toBe(true); expect(c.markPendingSent(p)).toBe(true);
+    const token = { ...r, commitSha: 'b'.repeat(40), configHash: 'imageB', pendingOperationId: p.operationId, pendingGeneration: p.generation };
+    expect(c.begin({ ...token, pendingConfigHash: 'source-mode' }).reason).toBe('pending_dispatch_stale');
+    expect(c.begin(token).status).toBe('started');
+  });
+
 });

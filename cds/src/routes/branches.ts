@@ -2996,6 +2996,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return live.length === 1 ? live[0].id : null;
   }
 
+  // Version hashes keep actual image identities. Queued intent admission must
+  // compare configuration independently of the branch's changing cached SHA.
+  function pendingConfigurationHash(entry: BranchEntry, profiles: BuildProfile[]): string | undefined {
+    const neutral = { ...entry, ciTargetSha: '0'.repeat(40), githubCommitSha: '0'.repeat(40) };
+    return deploymentVersionService?.computeConfigHash(profiles.map(profile => resolveEffectiveProfile(profile, neutral)),
+      getMergedEnv(entry.projectId || 'default', entry.id));
+  }
+
   function beginBranchOperation(
     req: Request,
     res: Response,
@@ -3010,6 +3018,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitPinned?: boolean;
       /** 本次部署将要落地的有效配置指纹，用于同 commit 并入判定。 */
       configHash?: string | null;
+      pendingConfigHash?: string | null;
       source: string;
       reason?: string | null;
       sse?: boolean;
@@ -3033,6 +3042,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       hasOneShotOptions: input.hasOneShotOptions || false,
       commitPinned: input.commitPinned || false,
       configHash: input.configHash || null,
+      pendingConfigHash: input.pendingConfigHash || null,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
@@ -12601,6 +12611,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         effectiveProfilesForHash,
         getMergedEnv(entry.projectId || 'default', entry.id),
       );
+    const pendingConfigHash = pendingConfigurationHash(entry, currentProfiles);
     // 归属远端执行器但无法确认其在线时，凡「新期望清单要拆掉现有服务」一律拒绝（Codex P2「Block offline
     // executor removals」+ Bugbot「Missing executor skips offline guard」）：round-17/27 只在「注册表里查到该
     // executor 且离线」时挡，漏了「executorId 指向远端但注册表查不到（已注销/陈旧归属）或 registry 不可用」——
@@ -12948,6 +12959,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
       // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
       configHash: deploymentConfigHash || null,
+      pendingConfigHash: pendingConfigHash || null,
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
@@ -14623,6 +14635,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       profiles.map(item => resolveEffectiveProfile(item, profileTargetContext)),
       getMergedEnv(entry.projectId || 'default', entry.id),
     );
+    const pendingConfigHash = pendingConfigurationHash(entry, profiles);
     const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
       branchId: entry.id,
@@ -14639,6 +14652,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: profileRequestCommitSha || entry.githubCommitSha || null,
       commitPinned: profileCommitPinned,
       configHash: profileConfigHash || null,
+      pendingConfigHash: pendingConfigHash || null,
       versionId: typeof req.body?.versionId === 'string' ? req.body.versionId : null,
       hasOneShotOptions: req.query.force === '1' || req.query.ignoreRequired === '1' || Boolean(req.body?.targetExecutorId),
       source: 'api.deploy-profile',

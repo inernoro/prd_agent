@@ -66,6 +66,8 @@ export interface BranchOperationRequest {
    * 配置变更悄悄吞掉——既不生效也不排队（Codex PR #1516 四轮 P1）。
    */
   configHash?: string | null;
+  /** SHA-neutral effective configuration frozen for queued replay admission. */
+  pendingConfigHash?: string | null;
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
@@ -290,6 +292,7 @@ export class BranchOperationCoordinator {
       const matches = original && dispatch.phase === 'sent' && original.operationId === request.pendingOperationId
         && original.generation === request.pendingGeneration && original.request.trigger === request.trigger
         && original.request.kind === request.kind
+        && (!original.request.pendingConfigHash || original.request.pendingConfigHash === request.pendingConfigHash)
         && (original.request.commitPinned !== true || request.commitPinned === true)
         && (unpinnedWhole || !original.request.configHash || original.request.configHash === request.configHash)
         && (unpinnedWhole ? request.commitPinned !== true : (original.request.commitSha || null) === (request.commitSha || null));
