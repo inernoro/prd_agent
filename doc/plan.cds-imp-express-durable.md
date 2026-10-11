@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.82；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.83；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -729,3 +729,10 @@ expected result：持久意图在重启、大小写合法路由、第一ACK窗�
 v1.82：e981固定独立各局部绿，主核3077hash/两epoch各373Git+371fresh派生。独立lastRun3在e981为1/3两红同一根；f0bf登记后核resource.deploymentRunId原创建证明，初次仍须当前创建成功；主2红→kernel43/相关70及另binding64/core0、完整687files10184pass/19skip/1旧obsolete，exit0/69.07s。f0bf独立原3/3、State守卫12/12、实际Router/JSON/正文/newOS6/6分列不求和，主核3949hash/373Git/371fresh派生；摘要32d04a1754a4c8d70030c06961a6868ba06726cf978f29cbe31708d89b1919b4，合法failed successor last指针不改。BRC24原ID/期待按guide2.94先冻结，主核设计14Git。CDS68e七文件接实际release/生产共享Coordinator+Shell+instance；remote/缺绑定503无fallback，项目权限先cap；同run/global8、原report/resource→lease→prepared ACK→原ID stop/确认→stopped ACK→普通rm/no-f/no-v与原ID+name严格消失→removed ACK→专用原子released+目标三项删除。每await后fence、第二最终ACK后再次核实际正文/Daemon、同owner released幂等零外部命令。主原route404为一项feature absence；ACK等待无法进缺route的timeout是夹具限制。去最后ACK检查后正文漂移HTTP200真红→还原绿；HTTP16受控CLI与实际server auth扩展，相关10files243/core0，固定完整688files10200pass/19skip/1旧obsolete，exit0/68.94s。主收据b532c205737ab73a4853ebef643a27301d0c9b30863835d287ee0973577eb39e，68e固定独立最终摘要3322ed842abdf8eb8552a65468ae05bee6c14b1dbbe562733fd0e3828203fbfe，actual Router/State/Lifecycle/Worker受控CLI9/9、ACK/故障窗口3/3、停止后中断2/2、真实新OS2/2分列局部绿、不求和；主递归hash/373Git/371fresh派生复核一致，完整BRC/Daemon/creator不继承。IMP产品仍d5bb；创建后容器脚本不能补认领，实际外部creator/归档收尾和旧按名extra PUT+冷重部署真红仍缺。formal49全not-executed/visual N/A、45partial-local/4todo；八原push+CI不继承新SHA，无八全图/真实Daemon/公网/双主题/48h。本批仅本地产品及镜像文档，无push/PR/shared写/selfupdate；原八push/selfupdate授权有效，新CDS发布及隔离宿主前问待答，goal active。
 
 expected result：原创建证明不受后继失败遮蔽，实际release核原ID/报告与可靠屏障。current evidence：f0bf固定独立局部通过；68e主243/core0/full10200及固定独立9/3/2/2分列局部已核。visible result：未部署，正式视觉N/A。gap：完整BRC/IMP实际creator/真实Daemon/八全图/性能/恢复/48h。required action：当前独立局部已核，然后接实际创建链，满足发布及隔离准入后按原49条实测。
+
+
+## v1.83 旧收尾拒绝与极速校验一致性
+
+v1.83：IMP957e六文件封闭旧按名称删除/仅redeploy flag判终结；authorizer/configurator实际入口在DB/HTTP前拒CDS_FINALIZE_RUNTIME=true，正常初始化保留。主原5红→35相关绿；scanner旧spawnSync哨兵随删除过期的夹具失败保原日志。独立creator18局部case映射原BRC01..08/24，设计89e34f7d先冻结，主41hash/16Git已核。固定957e独立同fixture旧d5bb6/10→10/10；包含helper2、actualCLI2、normal spawn4、normal CLI2，不相加。旧authorizer HTTP1/mysql1与configurator HTTP1→各HTTP0/mysql0有限拒绝，正常CLI仍触自有HTTP而非全禁；不证明实际DB成功。独立摘要65b3c90d已主核794hash/两epoch390Git各字节及blob一致。主全CDS命名脚本初162/163，固定d5bb open-platform9/10同一旧dev/static/node22检查与现有express合同冲突。IMP f0ae两文件读取现有SSOT/parseDeployModes/sha模板，检查唯一express/精确image/exact/prebuilt/port、拒command/fallback/source mode，保留域名/readiness/Vite/API/CI输入；主本文件19、相关68、完整CDS命名脚本172/172绿，独立固定f0ae最终摘要22ec89ec已核834hash/786Git；旧957e同validator17/20三false一旧合同root→f0ae20/20，legacy10/10实际重跑，分列不求和；v2无引号对象key SyntaxError是夹具，v3仅补引号，原件保留。主不可变收据33cfea9882a1cec988b539c2ded9fc44abbeaf9fae1521e1896448f88f9a3a71。CDS产品68e未改，前full10200与独立9/3/2/2是其固定历史。实际server条件创建/外部creator/bound report→finish→release整链仍缺；全列表PUT没有CAS不能冒充并发安全。正式49全部not-executed/visual N/A、45partial-local/4todo；八push+CI不继承新IMP修订，无八完整部署/Daemon/性能/双主题/48h。本批仅本地commit，无push/PR/shared写/selfupdate，目标active。
+
+expected result：容器初始化不能补认领/自删，既有开放平台检查与极速SSOT一致。current evidence：主172脚本绿；独立957e固定10/10，f0ae固定20/20及legacy10/10局部已核，分列不求和。visible result：未部署，正式视觉N/A。gap：条件创建与实际外部生命周期、真实Daemon、八全图/性能/恢复/48h。required action：回读固定独立字节与原件，然后先冻结server条件创建边界并实施；保留原正式门槛。
