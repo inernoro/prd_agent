@@ -288,7 +288,7 @@ export class BranchOperationCoordinator {
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private readonly pendingReplayClaims = new Map<string, { pending: PendingWebhookDeploy; expiresAt: number }>();
   private readonly deploymentInputs = new Map<string, DeploymentInputSnapshot>();
-  private readonly artifactTargetReads = new Map<string, { request: BranchOperationRequest; readers: Set<object> }>();
+  private readonly artifactTargetReads = new Map<string, { request: BranchOperationRequest; readers: Map<object, BranchOperationRequest>; requestedSha: string; resolvedSha?: string }>();
   private generations = new Map<string, number>();
 
   private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
@@ -296,34 +296,48 @@ export class BranchOperationCoordinator {
   constructor(private readonly events?: ServerEventLogSink | null) {}
 
   /** 受理前的只读身份解析有资格围栏，不持有执行lease或创建部署run。 */
-  beginArtifactTargetRead(request: BranchOperationRequest): { assertCurrent: () => void; release: () => void } {
+  beginArtifactTargetRead(request: BranchOperationRequest): { assertCurrent: () => void; confirmIdentity: (fullSha: string) => void; release: () => void } {
     if (!['deploy', 'deploy-profile'].includes(request.kind) || !/^[0-9a-f]{7,39}$/i.test(request.commitSha || '')) {
       throw new Error('短提交解析仅支持明确的部署提交');
     }
     const key = this.operationKey(request);
     const same = this.artifactTargetReads.get(key);
-    const equivalent = same?.request.commitSha?.toLowerCase() === request.commitSha?.toLowerCase();
+    const equivalent = same?.requestedSha === request.commitSha?.toLowerCase();
     for (const item of this.artifactTargetReads.values()) {
       if (this.operationsConflict(request, item.request) && priorityOf(item.request) > priorityOf(request)
-        && !this.sameArtifactTarget(request, item.request)) {
+        && !(equivalent && item === same) && !this.sameArtifactTarget(request, item.request)) {
         throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-priority');
       }
     }
     if ([...this.artifactTargetReads.values()].reduce((sum, item) => sum + item.readers.size, 0) >= 64) {
       throw new Error('短提交解析请求已达容量上限');
     }
-    const item = equivalent ? same! : { request: { ...request }, readers: new Set<object>() };
+    const item = equivalent ? same! : { request: { ...request }, readers: new Map<object, BranchOperationRequest>(), requestedSha: request.commitSha!.toLowerCase(), resolvedSha: undefined as string | undefined };
     if (!equivalent) this.invalidateArtifactTargetReads(request);
-    const reader = {}; item.readers.add(reader); this.artifactTargetReads.set(key, item);
+    const reader = {}; item.readers.set(reader, { ...request });
+    const updatePriority = () => {
+      const highest = [...item.readers.values()].reduce((a, b) => priorityOf(a) >= priorityOf(b) ? a : b);
+      item.request = { ...highest, commitSha: item.resolvedSha || item.requestedSha };
+    };
+    updatePriority(); this.artifactTargetReads.set(key, item);
+    const assertCurrent = () => {
+      if (this.artifactTargetReads.get(key) !== item || !item.readers.has(reader)) {
+        throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-resolution');
+      }
+    };
     return {
-      assertCurrent: () => {
-        if (this.artifactTargetReads.get(key) !== item || !item.readers.has(reader)) {
-          throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-resolution');
-        }
+      assertCurrent,
+      confirmIdentity: (fullSha) => {
+        assertCurrent();
+        const full = fullSha.toLowerCase();
+        if (!/^[0-9a-f]{40}$/.test(full) || !full.startsWith(item.requestedSha)
+          || (item.resolvedSha && item.resolvedSha !== full)) throw new Error('短提交的完整身份确认不一致');
+        item.resolvedSha = full; updatePriority();
       },
       release: () => {
         item.readers.delete(reader);
         if (!item.readers.size && this.artifactTargetReads.get(key) === item) this.artifactTargetReads.delete(key);
+        else if (item.readers.size) updatePriority();
       },
     };
   }
@@ -331,7 +345,7 @@ export class BranchOperationCoordinator {
   private sameArtifactTarget(a: BranchOperationRequest, b: BranchOperationRequest): boolean {
     if (!a.commitSha || !b.commitSha) return false;
     const left = a.commitSha.toLowerCase(), right = b.commitSha.toLowerCase();
-    return left.startsWith(right) || right.startsWith(left);
+    return left === right;
   }
 
   private invalidateArtifactTargetReads(request: BranchOperationRequest): void {

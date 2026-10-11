@@ -2984,6 +2984,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         kind: profileId ? 'deploy-profile' : 'deploy', profileId, commitSha: requested, commitPinned: true, source: 'artifact-target-resolution',
       }));
       const full = await resolveArtifactCommitIdentity(shell, repoRoot, requested, assertCurrent);
+      ticket.confirmIdentity(full);
       assertCurrent();
       const access = assertProjectAccess(req as any, projectId);
       if (access) { res.status(access.status).json(access.body); return false; }

@@ -59,7 +59,7 @@ describe('短提交的实际完整身份与受理前资格', () => {
     const c = new BranchOperationCoordinator(); const old = c.beginArtifactTargetRead(request);
     const newer = c.beginArtifactTargetRead({ ...request, commitSha: 'b'.repeat(7) });
     expect(() => old.assertCurrent()).toThrow(); newer.release(); old.release();
-    const same = c.beginArtifactTargetRead(request); const accepted = c.begin({ ...request, commitSha: full });
+    const same = c.beginArtifactTargetRead(request); same.confirmIdentity(full); const accepted = c.begin({ ...request, commitSha: full });
     expect(accepted.status).toBe('started'); expect(() => same.assertCurrent()).not.toThrow(); same.release(); c.completeAll(accepted.lease!, 'completed');
     const late = c.beginArtifactTargetRead(request); c.begin({ ...request, commitSha: 'b'.repeat(40) }); expect(() => late.assertCurrent()).toThrow(); late.release();
     c.clearForTest(); const stop = c.beginArtifactTargetRead(request); c.cancelBranch(request.branchId, '停止'); expect(() => stop.assertCurrent()).toThrow(); stop.release();
@@ -70,6 +70,24 @@ describe('短提交的实际完整身份与受理前资格', () => {
     expect(() => c.beginArtifactTargetRead({ ...request, trigger: 'webhook', commitSha: 'b'.repeat(7) })).toThrow();
     expect(c.begin({ ...request, trigger: 'webhook', commitSha: 'b'.repeat(40) }).status).toBe('rejected');
     expect(() => manual.assertCurrent()).not.toThrow(); manual.release();
+  });
+  it('同目标webhook先到再加入手动读票，手动仍有优先级且释放后恢复原优先级', () => {
+    const c = new BranchOperationCoordinator();
+    const webhook = c.beginArtifactTargetRead({ ...request, trigger: 'webhook' });
+    const manual = c.beginArtifactTargetRead(request);
+    expect(() => c.beginArtifactTargetRead({ ...request, trigger: 'webhook', commitSha: 'b'.repeat(7) })).toThrow();
+    expect(c.begin({ ...request, trigger: 'webhook', commitSha: 'b'.repeat(40) }).status).toBe('rejected');
+    expect(() => webhook.assertCurrent()).not.toThrow(); expect(() => manual.assertCurrent()).not.toThrow();
+    manual.release();
+    expect(c.begin({ ...request, trigger: 'webhook', commitSha: 'b'.repeat(40) }).status).toBe('started');
+    expect(() => webhook.assertCurrent()).toThrow(); webhook.release();
+  });
+  it('未经唯一Git确认的短前缀不能使低优先级完整请求获得资格或保留旧读票', () => {
+    const c = new BranchOperationCoordinator(); const manual = c.beginArtifactTargetRead(request);
+    expect(c.begin({ ...request, trigger: 'webhook', commitSha: full }).status).toBe('rejected');
+    expect(() => manual.assertCurrent()).not.toThrow();
+    expect(c.begin({ ...request, commitSha: full }).status).toBe('started');
+    expect(() => manual.assertCurrent()).toThrow(); manual.release();
   });
   it('排队的Git读取在开始前重新确认资格，已经失效的请求不会启动读取', async () => {
     let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; }); const starts: string[] = [];

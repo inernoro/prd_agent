@@ -4193,8 +4193,9 @@ describe('Branch Routes', () => {
       expect(mock.commands.slice(before)).toEqual([]); expect(stateService.getBranch(id)?.status).toBe('running');
     });
 
-    it.each(['new-target', 'stop', 'owner', 'pause'])('短SHA解析期间%s变化使旧请求不能迟到受理或覆盖新目标', async (change) => {
-      const target = 'abcdef1234567890abcdef1234567890abcdef12', newer = 'b'.repeat(40);
+    it.each(['new-target', 'shared-prefix', 'stop', 'owner', 'pause'])('短SHA解析期间%s变化使旧请求不能迟到受理或覆盖新目标', async (change) => {
+      const target = change === 'shared-prefix' ? '28261299422b4388c244cc4c847dc9254ef16a7d' : 'abcdef1234567890abcdef1234567890abcdef12';
+      const newer = change === 'shared-prefix' ? '2826129b5eeb46aab2818d635d5853a08c67a8cb' : 'b'.repeat(40);
       stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
         prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
       const id = 'identity-inflight'; stateService.addBranch({ id, projectId: 'default', branch: 'owned-target', status: 'running', services: {},
@@ -4208,7 +4209,7 @@ describe('Branch Routes', () => {
       const pendingResponse = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target.slice(0, 7) });
       await started;
       let newestRun: string | undefined;
-      if (change === 'new-target') {
+      if (change === 'new-target' || change === 'shared-prefix') {
         const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: newer });
         expect(response.status).toBe(200); newestRun = String(response.headers['x-cds-deployment-run-id']);
       } else if (change === 'stop') {
@@ -4219,9 +4220,39 @@ describe('Branch Routes', () => {
       release(); const rejected = await pendingResponse;
       expect(rejected.status).toBe(change === 'pause' ? 423 : 409);
       const runs = deploymentRunService.list({ branchId: id });
-      expect(runs).toHaveLength(change === 'new-target' ? 1 : 0);
+      expect(runs).toHaveLength(['new-target', 'shared-prefix'].includes(change) ? 1 : 0);
       if (newestRun) expect(deploymentRunService.get(newestRun)).toMatchObject({ commitSha: newer, status: 'queued' });
       expect(mock.commands.some(command => /^docker run|git fetch|worktree add/.test(command))).toBe(false);
+    });
+
+    it.each([['webhook', 'manual'], ['manual', 'webhook']])('短SHA原HTTP共享读票%s先/%s后保留所有有效手动资格', async (firstTrigger, secondTrigger) => {
+      const target = 'abcdef1234567890abcdef1234567890abcdef12';
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
+      const id = 'identity-priority'; stateService.addBranch({ id, projectId: 'default', branch: 'owned-target', status: 'running', services: {},
+        worktreePath: tmpDir, createdAt: new Date().toISOString(), githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40) });
+      let release!: () => void, joined!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; }), registered = new Promise<void>(resolve => { joined = resolve; });
+      const originalBegin = branchOperationCoordinator.beginArtifactTargetRead.bind(branchOperationCoordinator); let tickets = 0;
+      const registration = vi.spyOn(branchOperationCoordinator, 'beginArtifactTargetRead').mockImplementation(input => {
+        const ticket = originalBegin(input); if (++tickets === 2) joined(); return ticket;
+      });
+      Object.assign(mock, { execBackgroundObservation: async (_command: string, options: any) => {
+        options?.beforeStart?.(); await gate; options?.onData?.(target, 'stdout'); return { stdout: '', stderr: '', exitCode: 0 };
+      } });
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      const first = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target.slice(0, 7) }, { 'X-CDS-Trigger': firstTrigger });
+      const second = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target.slice(0, 7) }, { 'X-CDS-Trigger': secondTrigger });
+      try {
+        await registered;
+        const rejected = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: 'b'.repeat(40) }, { 'X-CDS-Trigger': 'webhook' });
+        expect(String(rejected.body)).toContain('"operationStatus":"rejected"');
+        expect(deploymentRunService.list({ branchId: id })).toHaveLength(0);
+        release(); const responses = await Promise.all([first, second]); expect(responses.map(r => r.status)).toEqual([200, 200]);
+        expect(responses[0].headers['x-cds-deployment-run-id']).toBe(responses[1].headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
+        expect(branchOperationCoordinator.getArtifactWaiters()[0].pending.request.commitSha).toBe(target);
+      } finally { release(); await Promise.all([first, second]); registration.mockRestore(); }
     });
 
     it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {

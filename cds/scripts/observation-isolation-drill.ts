@@ -192,14 +192,26 @@ async function main(): Promise<void> {
       commitSha: firstCommit.slice(0, 7), commitPinned: true };
     const targetRead = targetCoordinator.beginArtifactTargetRead(targetRequest);
     const resolvedTarget = await identityModule.resolveArtifactCommitIdentity(shell, releaseRepo, targetRequest.commitSha.toUpperCase(), targetRead.assertCurrent);
+    targetRead.confirmIdentity(resolvedTarget);
     assert.equal(resolvedTarget, firstCommit); assert.equal(await setupGit('rev-parse', 'HEAD'), latestCommit);
-    assert.equal(await setupGit('status', '--porcelain'), ''); targetRead.release();
+    assert.equal(await setupGit('status', '--porcelain'), '');
+    const sameTarget = targetCoordinator.begin({ ...targetRequest, commitSha: resolvedTarget });
+    assert.equal(sameTarget.status, 'started'); targetRead.assertCurrent(); targetRead.release();
+    targetCoordinator.completeAll(sameTarget.lease!, 'completed');
+    const webhookRead = targetCoordinator.beginArtifactTargetRead({ ...targetRequest, trigger: 'webhook' });
+    const manualRead = targetCoordinator.beginArtifactTargetRead(targetRequest);
+    assert.throws(() => targetCoordinator.beginArtifactTargetRead({ ...targetRequest, trigger: 'webhook', commitSha: latestCommit.slice(0, 7) }));
+    assert.equal(targetCoordinator.begin({ ...targetRequest, trigger: 'webhook', commitSha: latestCommit }).status, 'rejected');
+    webhookRead.assertCurrent(); manualRead.assertCurrent(); manualRead.release();
+    const afterManualRelease = targetCoordinator.begin({ ...targetRequest, trigger: 'webhook', commitSha: latestCommit });
+    assert.equal(afterManualRelease.status, 'started'); assert.throws(webhookRead.assertCurrent); webhookRead.release();
+    targetCoordinator.completeAll(afterManualRelease.lease!, 'completed');
     const cancelledRead = targetCoordinator.beginArtifactTargetRead(targetRequest);
     targetCoordinator.cancelBranch(targetRequest.branchId, '自有停止');
     await assert.rejects(identityModule.resolveArtifactCommitIdentity(shell, releaseRepo, targetRequest.commitSha, cancelledRead.assertCurrent)); cancelledRead.release();
     assert.equal(targetCoordinator.getActiveOperations().length, 0); assert.equal(operationShell.getStats().active, 0);
     report.artifactShortIdentity = { requestedShort: targetRequest.commitSha, resolvedTarget, currentSourceHead: latestCommit,
-      sourceHeadUnchanged: true, cancelledReadRejected: true, scope: 'compiled helper and qualification with real owned Git through nonurgent process pool; full application deployment not verified' };
+      sourceHeadUnchanged: true, cancelledReadRejected: true, confirmedSameFullTargetPreserved: true, sharedManualPriorityPreserved: true, releasedManualPriorityRestored: true, scope: 'compiled helper and qualification with real owned Git through nonurgent process pool; full application deployment not verified' };
     report.checks.push({ name: 'compiled-real-short-commit-identity-and-cancelled-read', passed: true });
 
     report.stage = 'compiled-owned-nonurgent-git-health-reservation';
