@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.48；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.49；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -466,3 +466,10 @@ c60a固定独立原eligibility v2 6/6（旧6cfa5/6原期待不改）、新intent
 guide2.67先冻结只读投影合同；815fe在原GET分支详情权限检查后返回pendingDeployments，project+branch双scope、ACK前旧可靠数据、ready/loading/unavailable/not-configured、recovered/unknown待对账；最多128条并给total/truncated，不复制request actor/env/source/reason/configHash或整journal、不发Docker命令。主5新增行为case在旧c60a因新能力缺失变红（非5个独立根因）；去项目守卫两路径真红为同一隔离缺口，恢复后7files369相关/core0，全量669files9776green/6files19skip/1旧obsolete/66.72s。815固定独立定稿：同fixture/原期待旧c60a4/17→81517/17，13红主要同一新增投影缺失前件，非13独立根因；扩展25/25包含原17，不相加42。actualRouter/自有nativeHTTP、真实sharedWorker文件与新OS读取；ACK/loading/claim/unknown/权限seam/移属/敏感字段/128截断/损坏health局部通过，无新有界真红。16源manifest与8维summary已回读hash；9/13旧根同字节的c60a意图组明确历史复用。首版--input-type=module污染evalWorker和旧接口clone undefined探索错误原件保留，不作产品红。项目权限为既有cdsProjectKey seam，不称真实线上认证；接口投影不证明新run历史关联、UI展示或Daemon恢复。
 
 expected result：已受理请求可按原operation/gen从现有分支详情查询，可靠确认前不冒充已保存，移属不泄露。current evidence：c60a固定独立定稿；815主上述红绿、369/core0/full9776，815独立局部25/25含原17。visible result：未部署/visual N/A。gap：实际run关联历史、安全恢复、其余Master热点/阶段公平/P4流/IMPaux、正式49/八支/双主题/公网/48h/周未完成。required action：固定815独立复验真红继续修，然后继续原计划；39partial-local/10todo、49formal全部not-executed，目标active。
+
+
+## v1.49 原请求与实际部署记录关联检查点
+
+guide2.68先冻结原pending请求到实际run的关联合同；342c36在实际whole/Profile入口、任何pull/dispatch/runtime之前以State草稿可靠ACK绑定pendingOrigin v1（原op/gen/Profile），执行operationId保持新租约编号。ACK前不公开，最多5秒，失败/取消/原Branch引用或身份替换/配置漂移/当前项目权限变化时终结自己的租约且无runtime命令。普通请求不新增该await。现有GET deployment-runs按project+branch+原op/gen过滤再limit，旧历史不猜关联。主旧815有效对照10failed/5skip，主要为缺新方法/投影的同一能力前件，不算10独立根因；提前canonical公开1真红、去分支引用身份守卫1真红，均恢复。边界测试错误期待字串修为真实异常class，属于夹具修正；误用不存在tsconfig.core.json属于命令错误。6files305相关通过，正确显式core tsc0，全量670files9789green/6files19skip/1旧obsolete/65.88s。固定342c36末尾独立验收已启动，尚未返回；自有HTTP/实际StateJSON与权限seam不证明线上鉴权、实际Master/Daemon恢复或完整交付。
+
+expected result：排队受理能追溯到实际执行，关联可靠确认前不执行且不提前公开，失效等待不误操作旧容器。current evidence：主上述红绿/305/core0/full9789，独立待返。visible result：未部署、visual N/A。gap：实际Master/Daemon安全恢复、其余热点/阶段公平/P4/IMPaux、正式49/八支/双主题/公网/48h/周仍未完成。required action：末尾固定源按原判据复验，真红继续修，主继续原计划；39partial-local/10todo、49formal全部not-executed，目标active。
