@@ -180,6 +180,13 @@ export class AcceptanceResourceRunService {
         || digest(deployment.acceptanceOrigin) !== digest({ version: 1, acceptanceRunId: id, profileId: run.profileId,
           targetSha: run.targetSha, profileDigest: intent.profileDigest, operationId: lease.operationId })) throw new Error('acceptance_creation_lease');
     }
+    if (intent.reference) {
+      const reference = intent.reference, service = branch.services[run.profileId];
+      if (!service || acceptanceResourceServiceDigest(service) !== intent.serviceDigest
+        || service.profileId !== run.profileId || service.containerId !== reference.id || service.containerName !== reference.name
+        || service.deployedImage !== reference.image || service.deployedCommitSha !== run.targetSha
+        || service.deployedPrebuilt !== true || service.deployedMode !== 'express') throw new Error('acceptance_creation_changed');
+    }
     return view(run);
   }
 

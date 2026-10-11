@@ -1843,9 +1843,11 @@ export class ContainerService {
         await context.onCandidateCreated?.(createdId);
         context.assertCurrent?.('candidate-created-durable');
       }
+      let ownedCreatedId: string | undefined;
       if (ownedCreation) {
         const createdId = result.stdout.trim();
         if (!/^[a-f0-9]{64}$/.test(createdId) || !/^sha256:[a-f0-9]{64}$/.test(runImage)) throw new Error('acceptance_creation_identity');
+        ownedCreatedId = createdId;
         service.containerId = createdId;
         await context.onOwnedCreationCreated!(createdId, runImage);
         context.assertCurrent?.('owned-created-identity-durable'); context.signal?.throwIfAborted();
@@ -1856,7 +1858,7 @@ export class ContainerService {
       // 分支无法在共享网上按 app 别名解析到本容器，杜绝串流。未隔离时 connectNetworks 为空，跳过。
       for (const sharedNet of netPlan.connectNetworks) {
         context.assertCurrent?.('before-shared-network-connect'); context.signal?.throwIfAborted();
-        await this.connectContainerToSharedNetwork(candidate || ownedCreation ? service.containerId! : service.containerName, sharedNet, {
+        await this.connectContainerToSharedNetwork(ownedCreatedId || (candidate ? service.containerId! : service.containerName), sharedNet, {
           projectId: entry.projectId,
           branchId: entry.id,
           profileId: profile.id,
@@ -1868,7 +1870,8 @@ export class ContainerService {
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (attachSharedBeforeStart || ownedCreation) {
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
-        const startRes = await this.shell.exec(`docker start ${candidate || ownedCreation ? service.containerId! : service.containerName}`);
+        const startRes = await this.shell.exec(`docker start ${ownedCreatedId || (candidate ? service.containerId! : service.containerName)}`);
+        if (ownedCreation) { context.assertCurrent!('owned-after-start'); context.signal!.throwIfAborted(); }
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',
@@ -1927,6 +1930,7 @@ export class ContainerService {
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
       try {
         await this.waitForContainerAlive(service.containerName, onOutput, context.signal);
+        if (ownedCreation) { context.assertCurrent!('owned-after-liveness'); context.signal!.throwIfAborted(); }
       } catch (err) {
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 300);
         const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;

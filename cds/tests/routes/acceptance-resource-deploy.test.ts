@@ -134,6 +134,39 @@ describe('guide2.98 original owned single-service HTTP deployment', () => {
     expect(shell.commands.some(c => /docker (?:start|network connect|rm)/.test(c))).toBe(false);
     expect(kernel.get(owner.run.id)!.creationIntent!.reference).toBeUndefined(); expect(coordinator.getActiveOperations()).toHaveLength(0);
   });
+  it.each(['containerId','containerName','deployedImage','hostPort','deployedCommitSha','deployedPrebuilt','deployedMode'])('holds captured original identity on network await %s drift', async field => {
+    const phase = actualCli(); let drifted = false;
+    vi.spyOn(container, 'waitForContainerAlive').mockResolvedValue(undefined);
+    shell.addResponsePatternFirst(/^docker network connect /, () => {
+      const svc = state.getBranch('b1')!.services.init;
+      const row = kernel.get(owner.run.id)!;
+      expect(row.creationIntent!.reference!.id).toBe(cid);
+      drifted = true;
+      (svc as any)[field] = field === 'hostPort' ? svc.hostPort + 1 : field === 'deployedPrebuilt' ? false
+        : field === 'containerId' ? 'd'.repeat(64) : field === 'containerName' ? 'foreign'
+        : field === 'deployedImage' ? 'sha256:' + 'd'.repeat(64) : field === 'deployedCommitSha' ? 'd'.repeat(40) : 'static';
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    const result = await post(); expect(drifted).toBe(true);
+    expect(phase()).toEqual({ created: true, started: false });
+    expect(shell.commands.some(c => c.startsWith('docker start '))).toBe(false);
+    expect(result.raw).not.toContain('"ok":true');
+    expect(kernel.get(owner.run.id)!.creationIntent!.reference!.id).toBe(cid);
+    expect(shell.commands.some(c => c.startsWith('docker rm '))).toBe(false);
+    expect((await post(undefined, {}, '', 'register')).status).toBe(409);
+  });
+  it.each(['start','readiness'])('does not publish success after %s identity drift', async boundary => {
+    const phase = actualCli(); let drifted = false;
+    vi.spyOn(container, 'waitForContainerAlive').mockResolvedValue(undefined);
+    const change = () => { state.getBranch('b1')!.services.init.deployedImage = 'sha256:' + 'd'.repeat(64); drifted = true; };
+    if (boundary === 'start') shell.addResponsePatternFirst(/^docker start /, () => { change(); return { stdout: cid, stderr: '', exitCode: 0 }; });
+    else vi.spyOn(container, 'waitForReadiness').mockImplementationOnce(async () => { change(); return true; });
+    const result = await post(); expect(drifted).toBe(true); expect(phase().created).toBe(true);
+    expect(result.raw).not.toContain('"ok":true');
+    expect(runs.get(kernel.get(owner.run.id)!.creationIntent!.deploymentRunId!)!.status).toBe('failed');
+    expect((await post(undefined, {}, '', 'register')).status).toBe(409);
+    expect(shell.commands.some(c => c.startsWith('docker rm '))).toBe(false);
+  });
   it('preserves occupancy on unknown identity publication and compensation ACK', async () => {
     const phase = actualCli(); const flush = state.flush.bind(state); let triggered = false, remaining = 0;
     vi.spyOn(state,'flush').mockImplementation(async () => {
