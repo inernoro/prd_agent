@@ -290,6 +290,8 @@ export class BranchOperationCoordinator {
       const matches = original && dispatch.phase === 'sent' && original.operationId === request.pendingOperationId
         && original.generation === request.pendingGeneration && original.request.trigger === request.trigger
         && original.request.kind === request.kind
+        && (original.request.commitPinned !== true || request.commitPinned === true)
+        && (unpinnedWhole || !original.request.configHash || original.request.configHash === request.configHash)
         && (unpinnedWhole ? request.commitPinned !== true : (original.request.commitSha || null) === (request.commitSha || null));
       if (!matches) return this.pendingRejection(request, 'pending_dispatch_stale');
       dispatch.phase = 'accepted';
