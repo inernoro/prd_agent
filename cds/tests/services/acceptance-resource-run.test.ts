@@ -123,6 +123,58 @@ describe('P5-05 creation ownership and terminal receipt kernel', () => {
     expect(new AcceptanceResourceRunService(restored).get(owner.run.id)?.stage).toBe('finished');
     expect(restored.getBranch('b1')?.errorMessage).toBe('other entity changed');
   });
+  it.each(['branch-ref', 'body'])('rejects actual %s replacement while returned durable ACK is held', async mode => {
+    const owner = await registered(); const meta = await report(owner.run.id);
+    const branch = state.getBranch('b1')!;
+    const original = state.flush.bind(state);
+    let entered!: () => void, release!: () => void;
+    const began = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(state, 'flush').mockImplementationOnce(async () => { await original(); entered(); await gate; });
+    const finishing = ledger.finish(owner.run.id, owner.ownerToken, meta.id).catch(error => error as Error);
+    let before: string | undefined;
+    try {
+      await began; before = ledger.get(owner.run.id)?.stage;
+      if (mode === 'branch-ref') state.getState().branches.b1 = structuredClone(branch);
+      else fs.writeFileSync(path.join(state.getReportsBase(), meta.id + '.md'), 'different actual archived body');
+    } finally { release(); }
+    const result = await finishing;
+    await original();
+    expect(before).toBe('registered');
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toContain(mode === 'branch-ref' ? 'branch_changed' : 'report_changed');
+    expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+    const restored = await reload();
+    expect(new AcceptanceResourceRunService(restored).get(owner.run.id)?.stage).toBe('registered');
+  });
+  it('rechecks the original branch after the post-ACK body read, before public publication', async () => {
+    const owner = await registered(); const meta = await report(owner.run.id);
+    const read = state.readAcceptanceReportContentAsync.bind(state); let reads = 0;
+    vi.spyOn(state, 'readAcceptanceReportContentAsync').mockImplementation(async id => {
+      const body = await read(id);
+      if (++reads === 2) state.getState().branches.b1 = structuredClone(state.getBranch('b1')!);
+      return body;
+    });
+    await expect(ledger.finish(owner.run.id, owner.ownerToken, meta.id)).rejects.toThrow('branch_changed');
+    expect(reads).toBe(2);
+    expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).acceptanceResourceRuns[owner.run.id].stage).toBe('registered');
+  });
+  it('retracts a post-ACK draft on body timeout while the real read still occupies its permit', async () => {
+    const owner = await registered(); const meta = await report(owner.run.id);
+    let release!: (content: string) => void; const pending = new Promise<string>(resolve => { release = resolve; });
+    const read = state.readAcceptanceReportContentAsync.bind(state);
+    vi.spyOn(state, 'readAcceptanceReportContentAsync').mockImplementationOnce(read).mockReturnValueOnce(pending);
+    const bounded = new AcceptanceResourceRunService(state, () => new Date(), 50);
+    try {
+      await expect(bounded.finish(owner.run.id, owner.ownerToken, meta.id)).rejects.toThrow('report_timeout');
+      expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).acceptanceResourceRuns[owner.run.id].stage).toBe('registered');
+      await expect(ledger.finish(owner.run.id, owner.ownerToken, meta.id)).rejects.toThrow('report_pending');
+    } finally { release('late body cannot publish'); await pending; }
+    await Promise.resolve();
+    expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+  });
   it('retains the registered row after a real state file write failure', async () => {
     const owner = await registered(); const meta = await report(owner.run.id); await state.flush();
     fs.unlinkSync(file); fs.mkdirSync(file);
@@ -170,7 +222,27 @@ describe('P5-05 creation ownership and terminal receipt kernel', () => {
     await Promise.resolve();
     expect(ledger.get(owner.run.id)?.stage).toBe('registered');
     await ledger.finish(owner.run.id, owner.ownerToken, meta.id);
-    expect(ledger.get(owner.run.id)?.stage).toBe('finished'); expect(read).toHaveBeenCalledTimes(2);
+    expect(ledger.get(owner.run.id)?.stage).toBe('finished'); expect(read).toHaveBeenCalledTimes(3);
+  });
+  it('includes creation in the eight-operation budget across service instances without queuing', async () => {
+    const original = state.flush.bind(state);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    vi.spyOn(state, 'flush').mockImplementation(async () => { calls++; await gate; await original(); });
+    const creates = Array.from({ length: 8 }, (_, i) => ledger.begin({ ...input, profileId: 'bootstrap_' + i }));
+    const other = new AcceptanceResourceRunService(state);
+    const ninth = other.begin({ ...input, profileId: 'bootstrap_ninth' }).catch(error => error as Error);
+    let outcome: unknown, held: number;
+    try {
+      outcome = await Promise.race([ninth, new Promise(resolve => setTimeout(() => resolve('unexpectedly queued'), 50))]);
+      held = calls;
+    } finally { release(); }
+    await Promise.all([...creates, ninth]);
+    expect((outcome as Error)?.message).toContain('operation_capacity');
+    expect(held).toBe(8);
+    expect(Object.keys(state.getState().acceptanceResourceRuns!)).toHaveLength(8);
+    await other.begin({ ...input, profileId: 'bootstrap_after_real_settle' });
+    expect(Object.keys(state.getState().acceptanceResourceRuns!)).toHaveLength(9);
   });
   it('caps shared operation and unfinished read counts at eight without queuing a ninth', async () => {
     const owners: Array<{ id: string; token: string; reportId: string }> = [];

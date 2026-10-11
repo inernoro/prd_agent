@@ -74,6 +74,11 @@ export class AcceptanceResourceRunService {
   }
 
   async begin(input: { projectId: string; branchId: string; targetSha: string; isolationRunId: string; profileId: string }): Promise<{ run: AcceptanceResourceView; ownerToken: string }> {
+    const id = `ar_${randomBytes(16).toString('hex')}`;
+    return this.operation(id, () => this.beginNow(input, id));
+  }
+
+  private async beginNow(input: { projectId: string; branchId: string; targetSha: string; isolationRunId: string; profileId: string }, id: string): Promise<{ run: AcceptanceResourceView; ownerToken: string }> {
     if (!ID.test(input.projectId) || !ID.test(input.branchId) || !ID.test(input.profileId)
       || !SHA.test(input.targetSha) || !/^[a-z0-9][a-z0-9_]{2,23}$/.test(input.isolationRunId)) throw new Error('acceptance_scope_invalid');
     const branch = this.state.getBranch(input.branchId);
@@ -85,7 +90,7 @@ export class AcceptanceResourceRunService {
     };
     const identity = branchIdentity(branch); absent();
     const ownerToken = randomBytes(32).toString('hex');
-    const row: AcceptanceResourceRun = { ...input, id: `ar_${randomBytes(16).toString('hex')}`, seq: 1,
+    const row: AcceptanceResourceRun = { ...input, id, seq: 1,
       branchIdentity: identity, ownerHash: bodyDigest(ownerToken), startedAt: this.now().toISOString(), stage: 'active' };
     await this.state.writeAcceptanceResourceRunDurably(row, undefined, absent);
     return { run: view(row), ownerToken };
@@ -129,10 +134,12 @@ export class AcceptanceResourceRunService {
   private async registerNow(id: string, ownerToken: string): Promise<AcceptanceResourceView> {
     const run = this.owned(id, ownerToken);
     if (run.stage !== 'active') throw new Error('acceptance_run_stage');
+    const branch = this.branch(run);
     const resource = this.resource(run);
     const row = { ...run, seq: run.seq + 1, stage: 'registered' as const, resource };
     await this.state.writeAcceptanceResourceRunDurably(row, run.seq, () => {
       this.owned(id, ownerToken);
+      if (this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
       if (digest(this.resource(run)) !== digest(resource)) throw new Error('acceptance_resource_changed');
     });
     return view(row);
@@ -151,18 +158,24 @@ export class AcceptanceResourceRunService {
   private async finishNow(id: string, ownerToken: string, reportId: string): Promise<AcceptanceResourceView> {
     const run = this.owned(id, ownerToken);
     if (run.stage !== 'registered') throw new Error('acceptance_run_stage');
+    const branch = this.branch(run);
     this.sameResource(run);
     const meta = this.report(run, reportId); const metaDigest = digest(meta);
     const content = await this.readReport(id, reportId);
     if (!content?.trim()) throw new Error('acceptance_report_unreadable');
     const assertCurrent = () => {
-      this.owned(id, ownerToken); this.sameResource(run);
+      this.owned(id, ownerToken);
+      if (this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+      this.sameResource(run);
       if (digest(this.report(run, reportId)) !== metaDigest) throw new Error('acceptance_report_changed');
     };
     assertCurrent();
     const row: AcceptanceResourceRun = { ...run, seq: run.seq + 1, stage: 'finished', terminal: {
       reportId, metaDigest, bodyDigest: bodyDigest(content), verdict: meta.verdict!, finishedAt: this.now().toISOString() } };
-    await this.state.writeAcceptanceResourceRunDurably(row, run.seq, assertCurrent);
+    await this.state.writeAcceptanceResourceRunDurably(row, run.seq, assertCurrent, async () => {
+      const currentContent = await this.readReport(id, reportId);
+      if (currentContent === undefined || bodyDigest(currentContent) !== row.terminal!.bodyDigest) throw new Error('acceptance_report_changed');
+    });
     return view(row);
   }
 
@@ -173,11 +186,14 @@ export class AcceptanceResourceRunService {
   private async cleanupEvidenceNow(id: string, ownerToken: string): Promise<AcceptanceResourceView & { daemonVerificationRequired: true }> {
     const run = this.owned(id, ownerToken);
     if (run.stage !== 'finished' || !run.terminal) throw new Error('acceptance_terminal_receipt_required');
+    const branch = this.branch(run);
     this.sameResource(run);
     const meta = this.report(run, run.terminal.reportId);
     if (digest(meta) !== run.terminal.metaDigest) throw new Error('acceptance_report_changed');
     const content = await this.readReport(id, meta.id);
-    this.owned(id, ownerToken); this.sameResource(run);
+    this.owned(id, ownerToken);
+    if (this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+    this.sameResource(run);
     if (digest(this.report(run, meta.id)) !== run.terminal.metaDigest || content === undefined || bodyDigest(content) !== run.terminal.bodyDigest) throw new Error('acceptance_report_changed');
     return { ...view(run), daemonVerificationRequired: true };
   }

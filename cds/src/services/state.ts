@@ -1072,7 +1072,7 @@ export class StateService {
 
   /** Durable publication of a bounded acceptance ownership row, including concurrent global writes. */
   async writeAcceptanceResourceRunDurably(row: AcceptanceResourceRun, expectedSeq: number | undefined,
-    assertCurrent: () => void): Promise<void> {
+    assertCurrent: () => void, afterFlush?: () => Promise<void>): Promise<void> {
     const table = this.state.acceptanceResourceRuns || {};
     const previous = table[row.id];
     if (previous?.seq !== expectedSeq || this.durableAcceptanceDrafts.has(row.id)) throw new Error('acceptance_run_conflict');
@@ -1087,6 +1087,7 @@ export class StateService {
     this.durableAcceptanceDrafts.set(row.id, draft);
     try {
       this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
+      if (afterFlush) { await afterFlush(); assertCurrent(); }
       if (this.state.acceptanceResourceRuns?.[row.id] !== previous) throw new Error('acceptance_run_conflict');
       this.state.acceptanceResourceRuns ??= {};
       this.state.acceptanceResourceRuns[row.id] = draft;
@@ -1095,6 +1096,8 @@ export class StateService {
     } catch (error) {
       this.durableAcceptanceDrafts.delete(row.id);
       this.save(HINT_GLOBAL);
+      // A rejected post-ACK fence must also retract the disk draft before returning.
+      await this.flush();
       throw error;
     }
   }
