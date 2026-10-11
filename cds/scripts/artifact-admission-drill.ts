@@ -76,6 +76,7 @@ async function main(): Promise<void> {
   let peerServer: http.Server | undefined, masterServer: http.Server | undefined, peerNetwork: string | undefined;
   let flushMaster: (() => Promise<void>) | undefined;
   let secondaryDaemon: string | undefined, secondaryVolume: string | undefined, secondaryRuntime: string | undefined;
+  const ownedVolumes: string[] = [];
   const secondary = (args: string[]) => { assert.ok(secondaryDaemon); ownedView(secondaryDaemon); return docker(['exec', secondaryDaemon, 'docker', '--host', 'unix:///var/run/owned.sock', ...args]); };
   process.env.DOCKER_HOST = host; delete process.env.DOCKER_CONTEXT;
   const shell = new m.isolated.IsolatedShellExecutor(new m.shell.ShellExecutor(), { isolatedLane: 'operation', concurrency: 2,
@@ -124,9 +125,14 @@ async function main(): Promise<void> {
   };
   try {
     await shell.start(); report.stage = 'registry-ready'; docker(['pull', 'registry:2']); docker(['pull', fixtureImage]);
-    const registryId = start('registry', ['--cpus', '0.5', '--memory', '128m', '-p', '127.0.0.1::5000', 'registry:2']);
-    const port = await publishedPort(registryId, '5000/tcp');
+    const registryReservation = http.createServer(); await new Promise<void>(resolve => registryReservation.listen(0, '127.0.0.1', resolve));
+    const port = (registryReservation.address() as { port: number }).port; await new Promise<void>(resolve => registryReservation.close(() => resolve()));
+    const registryVolume = `${owner}-registry-data`;
+    docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, registryVolume]); ownedVolumes.push(registryVolume);
+    const registryId = start('registry', ['--cpus', '0.5', '--memory', '128m', '--network', 'host',
+      '-e', `REGISTRY_HTTP_ADDR=127.0.0.1:${port}`, '-v', `${registryVolume}:/var/lib/registry`, 'registry:2']);
     const registry = `127.0.0.1:${port}`; await waitHttp(`http://${registry}/v2/`);
+    report.registryEndpoint = { directHostLoopback: true, port, containerId: registryId, dataVolume: registryVolume };
     report.stage = 'old-http-fixture-ready';
     const oldId = start('old', ['--cpus', '0.25', '--memory', '128m', '-p', '127.0.0.1::8080', fixtureImage, 'node', '-e',
       "require('node:http').createServer((_req,res)=>res.end('old-ready')).listen(8080,'0.0.0.0')"]);
@@ -323,7 +329,7 @@ async function main(): Promise<void> {
     docker(['pull', 'docker:29-dind']);
     const daemonImage = JSON.parse(docker(['image', 'inspect', 'docker:29-dind']))[0];
     secondaryVolume = `${owner}-secondary-data`;
-    docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, secondaryVolume]);
+    docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, secondaryVolume]); ownedVolumes.push(secondaryVolume);
     assert.equal(JSON.parse(docker(['volume', 'inspect', secondaryVolume]))[0].Labels['cds.acceptance.owner'], owner);
     secondaryDaemon = start('secondary-daemon', ['--privileged', '--network', 'host', '--cpus', '1', '--memory', '1g',
       '-v', `${secondaryVolume}:/var/lib/docker`, '-e', 'DOCKER_TLS_CERTDIR=', 'docker:29-dind',
@@ -342,6 +348,12 @@ async function main(): Promise<void> {
     const primaryInfo = JSON.parse(docker(['info', '--format', '{{json .}}']));
     assert.notEqual(secondaryInfo.ID, primaryInfo.ID); assert.equal(secondaryInfo.Driver, 'vfs');
     assert.equal(secondary(['image', 'ls', '-aq']), ''); assert.equal(secondary(['ps', '-aq']), '');
+    report.secondDaemonEndpoint = { runnerNamespace: await fs.readlink('/proc/self/ns/net'),
+      daemonNamespace: docker(['exec', secondaryDaemon, 'readlink', '/proc/self/ns/net']), primaryEndpointHttpReady: false, secondaryEndpointHttpReady: false };
+    await waitHttp(`http://${registry}/v2/`); report.secondDaemonEndpoint.primaryEndpointHttpReady = true;
+    assert.equal(docker(['exec', secondaryDaemon, 'wget', '-qO-', '-T', '5', `http://${registry}/v2/`]), '{}');
+    report.secondDaemonEndpoint.secondaryEndpointHttpReady = true;
+
     const recoveredProfile = masterVersions.materializeProfiles(masterVersion, [localPeerProfile])[0];
     assert.equal(recoveredProfile.localArtifact, false);
     assert.equal(recoveredProfile.dockerImage, repositoryDigest);
@@ -470,11 +482,12 @@ async function main(): Promise<void> {
     for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedContainersRemoved = cleanupErrors.length === 0;
     if (secondaryDaemon) { try { report.secondaryDaemonRemoved = docker(['ps', '-aq', '--no-trunc', '--filter', `id=${secondaryDaemon}`]) === ''; assert.equal(report.secondaryDaemonRemoved, true); } catch (error) { cleanupErrors.push(String(error)); } }
-    if (secondaryVolume) { try {
-      assert.equal(JSON.parse(docker(['volume', 'inspect', secondaryVolume]))[0].Labels['cds.acceptance.owner'], owner);
-      docker(['volume', 'rm', secondaryVolume]);
-      assert.equal(docker(['volume', 'ls', '-q', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.secondaryDataRemoved = true;
-    } catch (error) { cleanupErrors.push(String(error)); report.secondaryDataRemoved = false; } }
+    for (const volume of ownedVolumes.reverse()) { try {
+      assert.equal(JSON.parse(docker(['volume', 'inspect', volume]))[0].Labels['cds.acceptance.owner'], owner); docker(['volume', 'rm', volume]);
+      if (volume === secondaryVolume) report.secondaryDataRemoved = true;
+    } catch (error) { cleanupErrors.push(String(error)); if (volume === secondaryVolume) report.secondaryDataRemoved = false; } }
+    try { assert.equal(docker(['volume', 'ls', '-q', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.ownedVolumesRemoved = true; }
+    catch (error) { cleanupErrors.push(String(error)); report.ownedVolumesRemoved = false; }
 
     if (peerNetwork) { try { const view = JSON.parse(docker(['network', 'inspect', peerNetwork]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner); docker(['network', 'rm', peerNetwork]); report.ownedNetworkRemoved = true; } catch (error) { cleanupErrors.push(String(error)); report.ownedNetworkRemoved = false; } }
     // managed commit may succeed before later verification fails: discover inherited owner labels too.
