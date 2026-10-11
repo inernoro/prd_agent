@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.84；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.85；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -740,3 +740,7 @@ expected result：容器初始化不能补认领/自删，既有开放平台检�
 ## v1.84 条件配置创建局部检查点
 
 v1.84：guide2.95先提交4ad0b32；CDS805a86e7a776c1e42c1fb57fc5074cb743d9045d九文件新增原run条件配置追加（不是实际部署）。受限POST create-profile、原cap/project检查、acceptance-create独占，精确SHA唯一express；State first ACK只意图、second ACK profile+configured原子发布，目标冲突拒绝、当前其他配置保留，未知补偿publication hold禁止重试，普通写入/部署拒绝。主缺路由1红→24新用例绿；实际serverauth与相关11files310绿，显式core0；整表覆盖与丢未知hold变异各1红已还原。全量689files10226绿/6files19skip/1旧obsolete73.67s；root hook缺node_modules仍称通过不作验证。原件替换失误/ACK2一次超时/fixture缺sharedcoordinator503保留，最终固定产品全量绿。独立68e条件创建前件两nativeHTTP组各2/3（不相加）：全PUT并发覆盖及首次register last来源不足；主核410hash/376Git，summary cddb612b。固定805a独立子集已派发，尚未结论。configured拒绝登记不能关闭旧无intent initial-register来源根缺口；实际owned deployment可信绑定、IMP外部creator及archive→finish→release全链仍待。主固定源/日志receipt5d5690902f63b9c501d0cfa54ce78e9ed3748de4ef314b27e264d0a9599bab53。IMP产品f0ae未改，其172及独立20/10仅历史。正式49全not-executed/visual N/A，45partial-local/4todo；八push/CI不是八全图极速。无push/PR/shared写/selfupdate，active。
+
+## v1.85 独立真红与提案能力隔离修复
+
+v1.85 恢复审计：末尾固定805a actual ResourceRouter/nativeHTTP发现owner capability可经合法镜像路径或healthPath落到Profile/StateJSON，env同token拒绝正控正常，组1/3两false同一全提案字段隔离缺口，未运行Docker。主同判据image/path2红、envkey/value2绿，CDS3fddf35f2113b5ddb0689aeabeaa3b0acccc38e0两文件对最终有界Profile全部字符串/键包括派生scope检查原cap，27创建+5actualserverauth共32绿/core0；固定3fdd独立原fixture已请求仍待，不把主绿当独立关闭。未再跑全量，805a689files10226及310相关仅历史；各旧group不相加。主固定cap收据4d96ed28a889741e7c181e6d7bc4fd7705a5919ca7d69959f55a5c0b1a1279f9。条件配置仍只configured，old无intent initial-register last来源、实际owned deployment和IMP外部creator/full archive→finish→release仍待。IMP产品f0ae未改；正式49全not-executed/visual N/A，45partial-local/4todo，八push/CI不是完整实际交付。仅本地commit，未push/PR/shared写/selfupdate，active。
