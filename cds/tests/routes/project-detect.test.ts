@@ -19,14 +19,15 @@ function request(server: http.Server, method: string, urlPath: string, body?: un
     const addr = server.address() as { port: number };
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
     const req = http.request(
-      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers: { 'Content-Type': 'application/json', ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}) } },
+      { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, agent: false, headers: { 'Content-Type': 'application/json', ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}) } },
       (res) => {
         let raw = '';
+        res.on('error', reject);
         res.on('data', (c: Buffer) => (raw += c.toString()));
         res.on('end', () => { try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); } catch { resolve({ status: res.statusCode!, body: raw }); } });
       },
     );
-    req.on('error', reject);
+    req.on('error', error => { error.message = `[owned HTTP fixture ${method} ${urlPath} reusedSocket=${req.reusedSocket}] ${error.message}`; reject(error); });
     if (payload) req.write(payload);
     req.end();
   });
@@ -61,7 +62,7 @@ describe('波5 detect-preview / detect-apply', () => {
 
   afterEach(async () => {
     await flushAllJsonStateStores();
-    server.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     fs.rmSync(repoDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
@@ -115,4 +116,15 @@ describe('波5 detect-preview / detect-apply', () => {
     // afterEach 再删一次 repoDir 会因不存在报错,提前建回空目录避免 afterEach 抛
     fs.mkdirSync(repoDir, { recursive: true });
   });
+  it('owned HTTP fixture closes and restarts the same port without reusing the prior server socket', async () => {
+    let port = 0;
+    for (let generation = 0; generation < 6; generation++) {
+      const owned = http.createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ generation })); });
+      await new Promise<void>(resolve => owned.listen(port, '127.0.0.1', resolve));
+      port = (owned.address() as { port: number }).port;
+      try { expect((await request(owned, 'GET', '/')).body).toEqual({ generation }); }
+      finally { await new Promise<void>(resolve => owned.close(() => resolve())); }
+    }
+  });
+
 });
