@@ -604,6 +604,30 @@ describe('Branch Routes', () => {
       });
     }
 
+    it('profile override advertises conditional writes and confirms the exact project/SHA', async () => {
+      seedGateProject(false);
+      stateService.getBranch('b1')!.githubCommitSha = 'a'.repeat(40);
+      const capability = await request(server, 'GET', '/api/branches/b1/profile-overrides');
+      expect((capability.body as any).writePreconditionVersion).toBe(1);
+      const result = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api?expectedProjectId=proj-a&expectedCommitSha='+'a'.repeat(40), { env: { OWNED: 'same-target' } });
+      expect(result.status).toBe(200);
+      expect((result.body as any).writePrecondition).toEqual({ projectId: 'proj-a', commitSha: 'a'.repeat(40) });
+      expect(stateService.getBranch('b1')!.profileOverrides?.api?.env).toEqual({ OWNED: 'same-target' });
+    });
+
+    it.each(['sha', 'project', 'missing', 'malformed', 'duplicate'])('profile override rejects %s preconditions without saving', async kind => {
+      seedGateProject(false);
+      stateService.getBranch('b1')!.githubCommitSha = 'a'.repeat(40);
+      stateService.getBranch('b1')!.profileOverrides = { api: { env: { KEEP: 'original' } } };
+      const before = structuredClone(stateService.getBranch('b1')!.profileOverrides);
+      const query = kind === 'missing' ? 'expectedProjectId=proj-a'
+        : 'expectedProjectId='+(kind === 'project' ? 'proj-other' : 'proj-a')+'&expectedCommitSha='+(kind === 'sha' ? 'b'.repeat(40) : kind === 'malformed' ? 'short' : 'a'.repeat(40))
+          +(kind === 'duplicate' ? '&expectedCommitSha='+'a'.repeat(40) : '');
+      const result = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api?'+query, { env: { REPLACE: 'wrong-target' } });
+      expect(result.status).toBe(['sha', 'project'].includes(kind) ? 409 : 400);
+      expect(stateService.getBranch('b1')!.profileOverrides).toEqual(before);
+    });
+
     it('机器凭据部署源码模式分支被 409 拒绝，响应说清被拦服务与可切模式', async () => {
       seedGateProject(true);
       const res = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });

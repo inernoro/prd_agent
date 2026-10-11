@@ -16384,7 +16384,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
       };
     });
-    res.json({ branchId: id, profiles: payload });
+    res.json({ branchId: id, profiles: payload, writePreconditionVersion: 1 });
   });
 
   router.put('/branches/:id/profile-overrides/:profileId', (req, res) => {
@@ -16393,6 +16393,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    let writePrecondition: { projectId: string; commitSha: string } | undefined;
+    if (req.query.expectedProjectId !== undefined || req.query.expectedCommitSha !== undefined) {
+      const projectId = req.query.expectedProjectId, commitSha = req.query.expectedCommitSha;
+      if (typeof projectId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(projectId)
+        || typeof commitSha !== 'string' || !/^[a-f0-9]{40}$/.test(commitSha)) {
+        res.status(400).json({ error: 'profile_override_precondition_invalid' });
+        return;
+      }
+      if ((entry.projectId || 'default') !== projectId || entry.githubCommitSha !== commitSha) {
+        res.status(409).json({ error: 'profile_override_precondition_mismatch' });
+        return;
+      }
+      // This handler has no await between this comparison and the existing write.
+      writePrecondition = { projectId, commitSha };
     }
     // 用分支**有效** profiles 解析目标（项目 profiles + 分支额外服务），与 GET /profile-overrides 一致
     // （Bugbot「Extra profile overrides PUT fails」）：原仅用项目级 getBuildProfile，分支级 extra-only 的
@@ -16561,6 +16576,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.json({
         message: '已保存分支覆盖',
         profileId,
+        ...(writePrecondition ? { writePrecondition } : {}),
         override: isExtra && savedOverride?.env ? { ...savedOverride, env: maskSecrets(savedOverride.env) } : savedOverride,
         effective: isExtra && effective.env ? { ...effective, env: maskSecrets(effective.env) } : effective,
         needsRedeploy: true,
