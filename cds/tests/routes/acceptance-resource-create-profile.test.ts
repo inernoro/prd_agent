@@ -62,6 +62,14 @@ describe('P5-05 conditional owned profile creation', () => {
   it.each([{ dockerImage: 'ghcr.io/test/init:branch-main' }, { command: 'pnpm dev' }, { cacheMounts: [] }, { entrypoint: 'sh' }, { containerPort: 0 }, { env: { CDS_FINALIZE_RUNTIME: 'true' } }, { env: { IMP_TARGET_SHA: 'b'.repeat(40) } }])('refuses unsafe proposal %j', async invalid => {
     expect((await request(proposal(invalid))).status).toBe(400); expect(state.getBranch('b1')!.extraProfiles!.map(p => p.id)).toEqual(['seed']);
   });
+  it.each(['image', 'healthPath', 'envKey'])('rejects owner capability in %s before persisting a proposal', async field => {
+    const invalid = field === 'image' ? { dockerImage: 'ghcr.io/' + owner.ownerToken + '/init:sha-' + sha }
+      : field === 'healthPath' ? { healthPath: '/health/' + owner.ownerToken }
+      : { env: { ['SECRET_' + owner.ownerToken]: 'value' } };
+    expect((await request(proposal(invalid))).status).toBe(400);
+    expect(state.getBranch('b1')!.extraProfiles!.map(p => p.id)).toEqual(['seed']);
+    expect(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).not.toContain(owner.ownerToken);
+  });
   it('never places the owner capability in a profile', async () => { expect((await request(proposal({ env: { ANY: owner.ownerToken } }))).status).toBe(400); expect(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).not.toContain(owner.ownerToken) });
   it.each([1, 2])('keeps the profile unpublished until ACK %i and blocks ordinary writes', async barrier => {
     const flush = state.flush.bind(state); let count = 0, enter!: () => void, resume!: () => void;

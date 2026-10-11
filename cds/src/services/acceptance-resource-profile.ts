@@ -26,9 +26,12 @@ export function acceptanceResourceProfile(value: unknown, run: AcceptanceResourc
     || (env.IMP_HEALTH_RUN_ID !== undefined && env.IMP_HEALTH_RUN_ID !== run.isolationRunId)
     || env.CDS_FINALIZE_RUNTIME === 'true') return bad();
   env.IMP_TARGET_SHA = run.targetSha; env.IMP_HEALTH_RUN_ID = run.isolationRunId;
-  return { id: run.profileId, projectId: run.projectId, name: run.profileId, workDir: '', command: '',
+  const profile: BuildProfile = { id: run.profileId, projectId: run.projectId, name: run.profileId, workDir: '', command: '',
     dockerImage: image, containerPort: port as number, env, role: 'worker', prebuiltImage: true,
     prebuiltCommitPolicy: 'exact', activeDeployMode: 'express',
     deployModes: { express: { label: '极速版（验收初始化）', dockerImage: image, containerPort: port as number, prebuilt: true, commitPolicy: 'exact' } },
     readinessProbe: { path: healthPath, timeoutSeconds: 1200, intervalSeconds: 5 } };
+  // Check every final string/key, including image paths and derived scope, before any persistence.
+  if (JSON.stringify(profile).includes(ownerToken)) return bad();
+  return profile;
 }
