@@ -12,6 +12,8 @@ import {
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
+import { worktreePathActivity, readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity,
+  type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
 import {
   resolveBranchProtection,
   describeBranchProtectionReason,
@@ -293,6 +295,7 @@ export interface OrphanWorktreeFs {
    * 陈旧的计划去删，删掉的就是刚 checkout 出来的新工作树。
    */
   statDirMtimeMs: (dir: string) => Promise<number | null>;
+  readDirectoryIdentity?: (dir: string, followTarget?: boolean) => Promise<WorktreeDirectoryIdentity | null>;
 }
 
 export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
@@ -377,7 +380,9 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
           // lstat兜底：断链按链接自身年龄；逐条异步读，避免整轮占住控制面。
           let mtimeMs: number;
           try { mtimeMs = (await fs.promises.stat(full)).mtimeMs; } catch { mtimeMs = (await fs.promises.lstat(full)).mtimeMs; }
-          out.push({ path: full, mtimeMs, ...(realPath ? { realPath } : {}) });
+          const identity = await readWorktreeDirectoryIdentity(full);
+          if (!identity) { unreadable.push(full); mtimeMs = Number.NaN; }
+          out.push({ path: full, mtimeMs, ...(realPath ? { realPath } : {}), ...(identity ? { identity } : {}) });
         } catch {
           // 连 lstat 都失败 → 给 NaN，纯函数据此判为过新并跳过
           out.push({ path: full, mtimeMs: Number.NaN, ...(realPath ? { realPath } : {}) });
@@ -387,6 +392,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     return { dirs: out, unreadable };
   },
   listMountedHostPaths: () => listMountedHostPaths(execDockerDetailed),
+  readDirectoryIdentity: readWorktreeDirectoryIdentity,
   removeDir: async (dir) => {
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -630,57 +636,80 @@ export class JanitorService {
           || claimed.startsWith(`${candidate}/`) || candidate.startsWith(`${claimed}/`)));
     };
     const plannedMtime = new Map(diskDirs.map((d) => [normalizeWorktreePath(d.path), d.mtimeMs]));
+    const plannedIdentity = new Map(diskDirs.map(d => [normalizeWorktreePath(d.path), d.identity]));
     const skippedByRecheck: string[] = [];
     for (const dir of plan.remove) {
       const real = realPathOf.get(dir);
-      if (isClaimedNow(dir, real)) {
-        // 台账在本轮期间认领了它 —— 分支重建已完成
-        plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
-        skippedByRecheck.push(dir);
-        continue;
+      const activity = worktreePathActivity.tryAcquire([dir, ...(real ? [real] : [])]);
+      if (!activity) {
+        plan.keptReasons[dir] = '临删复核：目录或关联路径正在创建、准备或回收';
+        skippedByRecheck.push(dir); continue;
       }
-      const nowMtime = await this.orphanWorktreeFs.statDirMtimeMs(dir);
-      if (isClaimedNow(dir, real)) {
-        plan.keptReasons[dir] = '临删复核：磁盘检查期间台账已认领该目录或真身';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      if (nowMtime === null) {
-        plan.keptReasons[dir] = '临删复核：目录已消失（无需回收）';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      const planned = plannedMtime.get(dir);
-      if (planned === undefined || !Number.isFinite(planned) || nowMtime !== planned) {
-        // mtime 变了 = 判定之后有人动过它（重建的 checkout 会刷新 mtime），
-        // 而台账可能还没跟上。宁可漏删一轮，也不删别人正在建的东西。
-        plan.keptReasons[dir] = '临删复核：目录在本轮期间被改动过（可能正在重建），留到下轮';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      // 顺序要紧：**先真身、后别名**（Codex PR #1275 八轮 P2）。
-      // 别名是真身唯一的可发现入口 —— 真身住在顶层，而顶层被项目桶白名单刻意排除在
-      // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
-      // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
-      // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
-      if (real) {
-        // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
-        const realErr = await this.orphanWorktreeFs.removeDir(real);
-        if (realErr) {
-          failed.push({ path: real, error: realErr });
-          plan.keptReasons[dir] = `真身回收失败，保留别名以便下轮重试（${real}）`;
-          continue; // 别名必须留着，否则真身再也找不回来
+      try {
+        const identity = plannedIdentity.get(dir);
+        if (identity && !activity.extend([identity.entryPath, ...(identity.target ? [identity.target.path] : [])])) {
+          plan.keptReasons[dir] = '临删复核：规范目录或关联真身正在创建、准备或回收';
+          skippedByRecheck.push(dir); continue;
         }
-        removed.push(real);
-      }
-      if (isClaimedNow(dir, real)) {
-        plan.keptReasons[dir] = '临删复核：真身回收期间台账已认领，保留别名';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      const err = await this.orphanWorktreeFs.removeDir(dir);
-      if (err) { failed.push({ path: dir, error: err }); continue; }
-      removed.push(dir);
+        if (isClaimedNow(dir, real)) {
+          // 台账在本轮期间认领了它 —— 分支重建已完成
+          plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        const nowMtime = await this.orphanWorktreeFs.statDirMtimeMs(dir);
+        if (isClaimedNow(dir, real)) {
+          plan.keptReasons[dir] = '临删复核：磁盘检查期间台账已认领该目录或真身';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        if (nowMtime === null) {
+          plan.keptReasons[dir] = '临删复核：目录已消失（无需回收）';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        const planned = plannedMtime.get(dir);
+        if (planned === undefined || !Number.isFinite(planned) || nowMtime !== planned) {
+          // mtime 变了 = 判定之后有人动过它（重建的 checkout 会刷新 mtime），
+          // 而台账可能还没跟上。宁可漏删一轮，也不删别人正在建的东西。
+          plan.keptReasons[dir] = '临删复核：目录在本轮期间被改动过（可能正在重建），留到下轮';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        if (identity) {
+          const current = await this.orphanWorktreeFs.readDirectoryIdentity?.(dir);
+          if (!current || !sameWorktreeDirectoryIdentity(identity, current) || isClaimedNow(dir, real)) {
+            plan.keptReasons[dir] = '临删复核：目录对象、链接目标或归属已变化，留到下轮';
+            skippedByRecheck.push(dir); continue;
+          }
+        }
+        // 顺序要紧：**先真身、后别名**（Codex PR #1275 八轮 P2）。
+        // 别名是真身唯一的可发现入口 —— 真身住在顶层，而顶层被项目桶白名单刻意排除在
+        // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
+        // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
+        // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
+        if (real) {
+          // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
+          const realErr = await this.orphanWorktreeFs.removeDir(real);
+          if (realErr) {
+            failed.push({ path: real, error: realErr });
+            plan.keptReasons[dir] = `真身回收失败，保留别名以便下轮重试（${real}）`;
+            continue; // 别名必须留着，否则真身再也找不回来
+          }
+          removed.push(real);
+        }
+        // 真身移除期间，别名可能改指向；此时只比较别名自身，不要求已删真身仍存在。
+        const aliasCurrent = real && identity ? await this.orphanWorktreeFs.readDirectoryIdentity?.(dir, false) : undefined;
+        if ((real && identity && (!aliasCurrent || !sameWorktreeDirectoryIdentity(identity, aliasCurrent, true)))
+          || isClaimedNow(dir, real)) {
+          plan.keptReasons[dir] = '临删复核：真身回收期间台账已认领，保留别名';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        const err = await this.orphanWorktreeFs.removeDir(dir);
+        if (err) { failed.push({ path: dir, error: err }); continue; }
+        removed.push(dir);
+      } finally { activity.release(); }
     }
     if (skippedByRecheck.length) {
       console.warn(`[janitor] 孤儿 worktree 临删复核拦下 ${skippedByRecheck.length} 个目录（疑似并发重建）`);
