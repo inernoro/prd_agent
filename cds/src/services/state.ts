@@ -466,6 +466,13 @@ export class StateService {
     const loaded = this.backingStore.load();
     if (loaded) {
       this.state = loaded;
+      // A preparation on disk does not prove that its post-ACK verification completed.
+      // Keep previous public facts and an ownership hold; never replay the pending action.
+      for (const [id, pending] of Object.entries(this.state.acceptanceResourcePublications || {})) {
+        if (!pending?.draft || pending.draft.id !== id) continue;
+        this.state.acceptanceResourceRuns ??= {};
+        this.state.acceptanceResourceRuns[id] ??= structuredClone(pending.previous || pending.draft);
+      }
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
       if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
@@ -1007,6 +1014,7 @@ export class StateService {
   /** A terminal snapshot is written while API readers still see the active run. */
   private durableRunDrafts = new Map<string, DeploymentRun>();
   private durableAcceptanceDrafts = new Map<string, AcceptanceResourceRun>();
+  private committingAcceptanceDrafts = new Set<string>();
 
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
@@ -1041,8 +1049,15 @@ export class StateService {
     const drafts = [...this.durableRunDrafts];
     let snapshot = drafts.length ? { ...this.state,
       deploymentRuns: { ...this.state.deploymentRuns, ...Object.fromEntries(drafts) } } : this.state;
-    if (this.durableAcceptanceDrafts.size) snapshot = { ...snapshot,
-      acceptanceResourceRuns: { ...snapshot.acceptanceResourceRuns, ...Object.fromEntries(this.durableAcceptanceDrafts) } };
+    if (this.durableAcceptanceDrafts.size) {
+      const runs = { ...snapshot.acceptanceResourceRuns };
+      const publications = { ...snapshot.acceptanceResourcePublications };
+      for (const [id, draft] of this.durableAcceptanceDrafts) {
+        if (this.committingAcceptanceDrafts.has(id)) { runs[id] = draft; delete publications[id]; }
+        else publications[id] = { draft, previous: this.state.acceptanceResourceRuns?.[id] };
+      }
+      snapshot = { ...snapshot, acceptanceResourceRuns: runs, acceptanceResourcePublications: publications };
+    }
     // Concurrent entity writes must preserve the staged terminal rows, including split-store hints.
     let effectiveHints = hints && drafts.length
       ? [...hints, ...drafts.map(([id]) => ({ kind: 'deploymentRuns' as const, id }))] : hints;
@@ -1075,9 +1090,11 @@ export class StateService {
     assertCurrent: () => void, afterFlush?: () => Promise<void>): Promise<void> {
     const table = this.state.acceptanceResourceRuns || {};
     const previous = table[row.id];
+    if (this.state.acceptanceResourcePublications?.[row.id]) throw new Error('acceptance_run_recovery_required');
     if (previous?.seq !== expectedSeq || this.durableAcceptanceDrafts.has(row.id)) throw new Error('acceptance_run_conflict');
     if (!previous) {
-      const all = { ...table, ...Object.fromEntries(this.durableAcceptanceDrafts) };
+      const recovered = Object.fromEntries(Object.entries(this.state.acceptanceResourcePublications || {}).map(([id, pending]) => [id, pending.draft]));
+      const all = { ...table, ...recovered, ...Object.fromEntries(this.durableAcceptanceDrafts) };
       if (Object.keys(all).length >= 512) throw new Error('acceptance_run_capacity');
       if (Object.values(all).some(run => run.stage !== 'released' && run.branchId === row.branchId && run.profileId === row.profileId)) {
         throw new Error('acceptance_resource_owned');
@@ -1089,11 +1106,17 @@ export class StateService {
       this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
       if (afterFlush) { await afterFlush(); assertCurrent(); }
       if (this.state.acceptanceResourceRuns?.[row.id] !== previous) throw new Error('acceptance_run_conflict');
+      // Only a verified draft may enter the committed table. The first barrier saved intent only.
+      this.committingAcceptanceDrafts.add(row.id);
+      this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
+      if (this.state.acceptanceResourceRuns?.[row.id] !== previous) throw new Error('acceptance_run_conflict');
       this.state.acceptanceResourceRuns ??= {};
       this.state.acceptanceResourceRuns[row.id] = draft;
+      this.committingAcceptanceDrafts.delete(row.id);
       this.durableAcceptanceDrafts.delete(row.id);
       for (const fn of this.onSaveListeners) { try { fn(); } catch { /* observers cannot roll back durable publication */ } }
     } catch (error) {
+      this.committingAcceptanceDrafts.delete(row.id);
       this.durableAcceptanceDrafts.delete(row.id);
       this.save(HINT_GLOBAL);
       // A rejected post-ACK fence must also retract the disk draft before returning.

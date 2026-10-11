@@ -17,6 +17,11 @@ export interface AcceptanceResourceRun {
   resource?: { configDigest: string; containerId: string; deploymentRunId: string };
   terminal?: { reportId: string; metaDigest: string; bodyDigest: string; verdict: NonNullable<AcceptanceReportMeta['verdict']>; finishedAt: string };
 }
+/** An uncommitted write intent is retained across restart; it is not a published terminal receipt. */
+export interface AcceptanceResourcePublication {
+  draft: AcceptanceResourceRun;
+  previous?: AcceptanceResourceRun;
+}
 export type AcceptanceResourceView = Omit<AcceptanceResourceRun, 'ownerHash'>;
 const SHA = /^[a-f0-9]{40}$/;
 const ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
@@ -104,6 +109,10 @@ export class AcceptanceResourceRunService {
     return run;
   }
 
+  private requireResolvedPublication(id: string): void {
+    if (this.state.getState().acceptanceResourcePublications?.[id]) throw new Error('acceptance_run_recovery_required');
+  }
+
   private branch(run: AcceptanceResourceRun): BranchEntry {
     const b = this.state.getBranch(run.branchId);
     if (!b || branchIdentity(b) !== run.branchIdentity) throw new Error('acceptance_branch_changed');
@@ -133,6 +142,7 @@ export class AcceptanceResourceRunService {
   }
   private async registerNow(id: string, ownerToken: string): Promise<AcceptanceResourceView> {
     const run = this.owned(id, ownerToken);
+    this.requireResolvedPublication(id);
     if (run.stage !== 'active') throw new Error('acceptance_run_stage');
     const branch = this.branch(run);
     const resource = this.resource(run);
@@ -157,6 +167,7 @@ export class AcceptanceResourceRunService {
   }
   private async finishNow(id: string, ownerToken: string, reportId: string): Promise<AcceptanceResourceView> {
     const run = this.owned(id, ownerToken);
+    this.requireResolvedPublication(id);
     if (run.stage !== 'registered') throw new Error('acceptance_run_stage');
     const branch = this.branch(run);
     this.sameResource(run);
@@ -186,6 +197,7 @@ export class AcceptanceResourceRunService {
   private async cleanupEvidenceNow(id: string, ownerToken: string): Promise<AcceptanceResourceView & { daemonVerificationRequired: true }> {
     const run = this.owned(id, ownerToken);
     if (run.stage !== 'finished' || !run.terminal) throw new Error('acceptance_terminal_receipt_required');
+    this.requireResolvedPublication(id);
     const branch = this.branch(run);
     this.sameResource(run);
     const meta = this.report(run, run.terminal.reportId);

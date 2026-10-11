@@ -175,6 +175,79 @@ describe('P5-05 creation ownership and terminal receipt kernel', () => {
     await Promise.resolve();
     expect(ledger.get(owner.run.id)?.stage).toBe('registered');
   });
+  it('a new State loader during the post-ACK body read cannot grant premature terminal cleanup', async () => {
+    const owner = await registered(); const meta = await report(owner.run.id);
+    const read = state.readAcceptanceReportContentAsync.bind(state); let reads = 0;
+    let entered!: () => void, release!: () => void;
+    const began = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(state, 'readAcceptanceReportContentAsync').mockImplementation(async id => {
+      if (++reads === 2) { entered(); await gate; }
+      return read(id);
+    });
+    const finishing = ledger.finish(owner.run.id, owner.ownerToken, meta.id);
+    let recoveredStage: string | undefined, recoveryError: unknown;
+    try {
+      await began;
+      const restored = await reload(); const recovery = new AcceptanceResourceRunService(restored);
+      recoveredStage = recovery.get(owner.run.id)?.stage;
+      try { await recovery.requireCleanupEvidence(owner.run.id, owner.ownerToken); } catch (error) { recoveryError = error; }
+      await expect(recovery.register(owner.run.id, owner.ownerToken)).rejects.toThrow('recovery_required');
+      await expect(recovery.finish(owner.run.id, owner.ownerToken, meta.id)).rejects.toThrow('recovery_required');
+      await restored.flush();
+    } finally { release(); }
+    await finishing;
+    expect(recoveredStage).toBe('registered');
+    expect((recoveryError as Error)?.message).toBe('acceptance_terminal_receipt_required');
+    const complete = await reload();
+    expect(new AcceptanceResourceRunService(complete).get(owner.run.id)?.stage).toBe('finished');
+  });
+  it('does not publish finished if the second physical commit fails after report verification', async () => {
+    const owner = await registered(); const meta = await report(owner.run.id); await state.flush();
+    const original = state.flush.bind(state); let calls = 0, faulted = false;
+    vi.spyOn(state, 'flush').mockImplementation(async () => {
+      const failThisWrite = ++calls === 2;
+      if (failThisWrite) { fs.unlinkSync(file); fs.mkdirSync(file); faulted = true; }
+      try { await original(); } finally { if (failThisWrite) fs.rmdirSync(file); }
+    });
+    const result = await ledger.finish(owner.run.id, owner.ownerToken, meta.id).catch(error => error as Error);
+    expect(result).toBeInstanceOf(Error); expect(faulted).toBe(true);
+    expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+    const restored = await reload();
+    expect(new AcceptanceResourceRunService(restored).get(owner.run.id)?.stage).toBe('registered');
+  });
+  it('retains a new unacknowledged allocation as an ownership hold after load', async () => {
+    const original = state.flush.bind(state);
+    let entered!: () => void, release!: () => void;
+    const began = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(state, 'flush').mockImplementationOnce(async () => { await original(); entered(); await gate; });
+    const creating = ledger.begin(input);
+    let count: number, duplicate: unknown, profileCount: number;
+    try {
+      await began;
+      const restored = await reload(); const recovery = new AcceptanceResourceRunService(restored);
+      count = Object.keys(restored.getState().acceptanceResourceRuns || {}).length;
+      profileCount = restored.getBranch('b1')!.extraProfiles?.length || 0;
+      try { await recovery.begin(input); } catch (error) { duplicate = error; }
+      expect(Object.values(restored.getState().acceptanceResourcePublications!)).toHaveLength(1);
+      await restored.flush();
+    } finally { release(); }
+    await creating;
+    expect(count).toBe(1); expect(profileCount).toBe(0);
+    expect((duplicate as Error)?.message).toContain('resource_owned');
+  });
+  it('fences the original branch again after the final commit ACK and retracts rejected disk state', async () => {
+    const owner = await registered(); const meta = await report(owner.run.id);
+    const original = state.flush.bind(state); let calls = 0;
+    vi.spyOn(state, 'flush').mockImplementation(async () => {
+      await original();
+      if (++calls === 2) state.getState().branches.b1 = structuredClone(state.getBranch('b1')!);
+    });
+    await expect(ledger.finish(owner.run.id, owner.ownerToken, meta.id)).rejects.toThrow('branch_changed');
+    expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).acceptanceResourceRuns[owner.run.id].stage).toBe('registered');
+  });
   it('retains the registered row after a real state file write failure', async () => {
     const owner = await registered(); const meta = await report(owner.run.id); await state.flush();
     fs.unlinkSync(file); fs.mkdirSync(file);

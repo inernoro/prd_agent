@@ -2623,6 +2623,8 @@ export interface CdsState {
   acceptanceReports?: AcceptanceReportMeta[];
   /** Creation-time ownership of temporary acceptance resources; never inferred for legacy profiles. */
   acceptanceResourceRuns?: Record<string, import('./services/acceptance-resource-run.js').AcceptanceResourceRun>;
+  /** Uncommitted ownership publications retained for explicit reconciliation after restart. */
+  acceptanceResourcePublications?: Record<string, import('./services/acceptance-resource-run.js').AcceptanceResourcePublication>;
   /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
   reportFolders?: ReportFolder[];
   /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
