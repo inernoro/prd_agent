@@ -58,6 +58,20 @@ class SnapshotTest(unittest.TestCase):
         x = self.collect(data)
         self.assertNotIn('activeDeployMode', x['frames'][0]['branches'][0]['profileOverrides']['api'])
 
+    def test_absent_override_map_is_not_materialized_as_empty(self):
+        data = fixture(); del data['/api/branches/b']['branch']['profileOverrides']
+        x = self.collect(data)
+        self.assertEqual(x['status'], 'observed-stable')
+        self.assertNotIn('profileOverrides', x['frames'][0]['branches'][0])
+
+    def test_nested_cap_boundary_is_incomplete(self):
+        for kind in ('mode-map', 'path-list', 'default-mode-map'):
+            data = fixture(); p = data['/api/build-profiles?project=p']['profiles'][0]
+            if kind == 'mode-map': p['deployModes'] = {str(i): {'prebuilt': True} for i in range(500)}
+            if kind == 'path-list': p['pathPrefixes'] = ['/p']*500
+            if kind == 'default-mode-map': data['/api/projects/p']['defaultDeployModes'] = {str(i): 'express' for i in range(500)}
+            with self.subTest(kind=kind): self.assertEqual(self.collect(data)['status'], 'incomplete', kind)
+
     def test_actual_api_materialized_optional_nulls_are_preserved(self):
         data = fixture(); p = data['/api/build-profiles?project=p']['profiles'][0]
         p.update({'resources': None, 'dependsOn': None, 'pathPrefixes': None})

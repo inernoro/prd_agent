@@ -61,11 +61,11 @@ def project_fields(source, fields):
 
 
 def strings(value):
-    return isinstance(value, list) and len(value) <= 500 and all(text(x) for x in value)
+    return isinstance(value, list) and len(value) < 500 and all(text(x) for x in value)
 
 
 def modes(value):
-    return isinstance(value, dict) and len(value) <= 500 and all(identifier(k) and (v == '' or identifier(v)) for k, v in value.items())
+    return isinstance(value, dict) and len(value) < 500 and all(identifier(k) and (v == '' or identifier(v)) for k, v in value.items())
 
 
 def resources(value):
@@ -85,7 +85,7 @@ def profile(source, scoped=True):
         value = source['deployModes']
         if value is None: result['deployModes'] = None
         else:
-            if not isinstance(value, dict) or len(value) > 500: raise ValueError('invalid_modes')
+            if not isinstance(value, dict) or len(value) >= 500: raise ValueError('invalid_modes')
             result['deployModes'] = {}
             for key, mode in value.items():
                 if not identifier(key): raise ValueError('invalid_identity')
@@ -120,7 +120,8 @@ def branch(source, project_id, branch_id):
     for key in ('subdomainAliases', 'customDomains'):
         if key in source: result[key] = project_fields(source, {key: strings})[key]
     for key in ('profileOverrides', 'services'):
-        values = source.get(key, {}) if key != 'services' else source.get(key)
+        if key == 'profileOverrides' and key not in source: continue
+        values = source.get(key)
         if key == 'profileOverrides' and values is None:
             result[key] = None; continue
         if not isinstance(values, dict) or len(values) >= 500: raise ValueError('missing_collection')
