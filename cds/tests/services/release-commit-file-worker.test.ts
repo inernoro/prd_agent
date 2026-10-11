@@ -61,3 +61,14 @@ it('times out a real blocked FIFO read outside Master while the local event loop
     expect(ticks).toBeGreaterThan(100); expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
   } finally { clearInterval(timer); }
 }, 6000);
+
+
+it.each([3, '2', null])('preserves a real unknown-schema %s file through ready and remember', async version => {
+  const file = path.join(dir, 'unknown.json');
+  const original = JSON.stringify({ version, entries: [['p::' + SHA, AT]], extension: 'never discard' });
+  fs.writeFileSync(file, original);
+  const clock = new ReleaseCommitClock({ fileIO: commitClockFileIO(file, 500, shell), reader: () => AT });
+  await clock.ready(); expect(clock.get('p', SHA)).toBeUndefined();
+  expect(await clock.remember('new', SHA, '/repo')).toBe(AT);
+  expect(fs.readFileSync(file, 'utf8')).toBe(original);
+});

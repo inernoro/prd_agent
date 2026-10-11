@@ -14,7 +14,7 @@ let raw;
 try { raw = fs.readFileSync(process.argv[1], 'utf8'); }
 catch (error) { if (error.code === 'ENOENT') { process.stdout.write('null'); process.exit(0); } throw error; }
 const data = JSON.parse(raw);
-if (!data || !Array.isArray(data.entries)) throw new Error('invalid commit clock file');
+if (!data || (data.version !== 1 && data.version !== 2) || !Array.isArray(data.entries)) throw new Error('invalid commit clock file');
 process.stdout.write(JSON.stringify({ version: data.version, entries: data.entries.slice(-Number(process.argv[2])) }));`;
 const WRITE = `// release-commit-file-write
 const fs = require('node:fs'), path = require('node:path');

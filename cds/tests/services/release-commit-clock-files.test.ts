@@ -87,3 +87,25 @@ it('keeps failed loading and writing ancillary even if the diagnostic logger thr
   expect(await failedWrite.remember('p', SHA, '/repo')).toBe(AT);
   expect(await failedWrite.remember('second', SHA, '/repo')).toBe(AT);
 });
+
+
+it.each([3, '2', null, undefined])('rejects unknown schema %s without importing entries or enabling writes', async version => {
+  const fileIO = { load: vi.fn(async () => ({ version, entries: [['p::' + SHA, AT]], extension: 'preserve' })), save: vi.fn(async () => {}) };
+  const clock = new ReleaseCommitClock({ fileIO, reader: () => AT });
+  await clock.ready(); expect(clock.get('p', SHA)).toBeUndefined();
+  expect(await clock.remember('new', SHA, '/repo')).toBe(AT);
+  expect(fileIO.save).not.toHaveBeenCalled();
+});
+
+it('makes cached remember callers share the outstanding write acknowledgement across roots', async () => {
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  const fileIO = { load: async () => null, save: vi.fn(async () => { await held; }) };
+  const reader = vi.fn(() => AT); const clock = new ReleaseCommitClock({ fileIO, reader });
+  let done = 0; const first = clock.remember('p', SHA, '/repo'); let observers: Promise<string | undefined>[] = [];
+  try {
+    await tick(); expect(fileIO.save).toHaveBeenCalledTimes(1); expect(clock.get('p', SHA)).toBe(AT);
+    observers = [['/repo'], ['/other'], []].map(roots => clock.remember('p', SHA, ...roots).then(value => { done++; return value; }));
+    await tick(); expect(done).toBe(0); expect(reader).toHaveBeenCalledTimes(1);
+  } finally { release(); await Promise.all([first, ...observers]); }
+  expect(await Promise.all(observers)).toEqual([AT, AT, AT]);
+});

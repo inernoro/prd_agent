@@ -158,6 +158,7 @@ export class ReleaseCommitClock {
   private canPersist = false;
   private readonly fileIO?: CommitClockFileIO;
   private writing = false;
+  private acknowledgements = new Map<string, Promise<void>>();
   private nextWrite?: { serialized: string; done: Array<() => void> };
   private pending = new Map<string, Promise<string | undefined>>();
 
@@ -195,7 +196,7 @@ export class ReleaseCommitClock {
   private async load(): Promise<void> {
     try {
       const parsed = await this.fileIO!.load() as CommitClockFile | null;
-      if (parsed !== null && (!parsed || !Array.isArray(parsed.entries))) throw new Error('invalid commit clock file');
+      if (parsed !== null && (!parsed || (parsed.version !== 1 && parsed.version !== 2) || !Array.isArray(parsed.entries))) throw new Error('invalid commit clock file');
       for (const pair of (parsed?.entries ?? []).slice(-this.maxEntries)) {
         if (!Array.isArray(pair) || typeof pair[0] !== 'string') continue;
         const meta = normalizeMetaRead(pair[1] as string | ReleaseCommitMetaRead | undefined);
@@ -255,7 +256,11 @@ export class ReleaseCommitClock {
     if (!projectId || !isCommitShaLike(commitSha)) return undefined;
     const key = releaseCommitKey(projectId, commitSha);
     const cached = this.entries.get(key);
-    if (cached) return cached.at;
+    if (cached) {
+      // Cache reads may expose memory immediately; remember joins the outstanding write attempt.
+      await this.acknowledgements.get(key);
+      return cached.at;
+    }
     const roots = [...new Set(worktreePaths.filter((root): root is string => !!root))];
     if (!roots.length) return undefined;
     const pendingKey = JSON.stringify([key, roots]);
@@ -291,7 +296,12 @@ export class ReleaseCommitClock {
       if (oldest.done) break;
       this.entries.delete(oldest.value);
     }
-    await this.persist();
+    const acknowledgement = this.persist();
+    this.acknowledgements.set(key, acknowledgement);
+    try { await acknowledgement; }
+    finally {
+      if (this.acknowledgements.get(key) === acknowledgement) this.acknowledgements.delete(key);
+    }
     return meta.at;
   }
 }
