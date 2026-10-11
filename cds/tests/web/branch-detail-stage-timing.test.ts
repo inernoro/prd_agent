@@ -78,9 +78,21 @@ describe('branch list packet qualification', () => {
     }
     expect(branchScopedDeploymentRuns({ runs: [] }, 'p', 'b')).toEqual([]);
   });
+  it('rejects matching-scope rows that cannot be safely rendered rather than accepting a crashing ledger', () => {
+    const rows = branchScopedDeploymentRuns({ runs: [{ projectId: 'p', branchId: 'b' }] }, 'p', 'b');
+    expect(render(rows ?? [], rows === null)).toContain('部署事实账本暂不可读');
+    for (const row of [{ projectId: 'p', branchId: 'b' }, run(undefined, { id: null }),
+      run(undefined, { id: 37 }), run(undefined, { status: 'other' }), run(undefined, { eventCount: -1 }),
+      run(undefined, { commitSha: {} }), run(undefined, { failure: { summary: {} } }),
+      run(undefined, { latestEvent: { message: {} } })]) {
+      expect(branchScopedDeploymentRuns({ runs: [row] }, 'p', 'b')).toBeNull();
+    }
+  });
   it('keeps valid failure facts and the list bounded without mutating the received packet', () => {
     const runs = Array.from({ length: 12 }, (_, i) => run(undefined, { id: `dr_${i}`, status: 'failed' }));
     const accepted = branchScopedDeploymentRuns({ runs }, 'p', 'b');
     expect(accepted).toHaveLength(10); expect(accepted?.[0].status).toBe('failed'); expect(runs).toHaveLength(12);
+    const legacy = run() as any; delete legacy.seq; delete legacy.startedAt; delete legacy.timingSummary;
+    expect(branchScopedDeploymentRuns({ runs: [legacy] }, 'p', 'b')).toEqual([legacy]);
   });
 });
