@@ -7,6 +7,8 @@ import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
 import { createLatestWinsGate } from '@/lib/latest-wins';
+import { createLatestOnly } from '@/lib/latest-only';
+import { createDeploymentRunReader, type DeploymentRunSnapshot } from '@/lib/deployment-run-reader';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -898,7 +900,24 @@ export function BranchDetailDrawer({
     [branch?.previewUrl, canOpenPreview, entryAliases, previewMode, previewUrl],
   );
   const [logs, setLogs] = useState<OperationLog[]>([]);
-  const [deploymentRuns, setDeploymentRuns] = useState<DeploymentRunSummary[]>([]);
+  const ledgerScope = JSON.stringify([open, projectId, branchId]);
+  const scopeRef = useRef(ledgerScope);
+  scopeRef.current = ledgerScope;
+  const loadGate = useMemo(() => createLatestOnly(), [ledgerScope]);
+  useEffect(() => () => { loadGate.begin(); }, [loadGate]);
+  const [ledgerSnapshot, setLedgerSnapshot] = useState<DeploymentRunSnapshot & { scope: string }>({ scope: '', runs: [], unavailable: false });
+  const deploymentRuns = ledgerSnapshot.scope === ledgerScope ? ledgerSnapshot.runs : [];
+  const deploymentRunsUnavailable = ledgerSnapshot.scope === ledgerScope && ledgerSnapshot.unavailable;
+  const ledgerReaderRef = useRef<ReturnType<typeof createDeploymentRunReader> | null>(null);
+  useEffect(() => {
+    if (!open || !branchId || !projectId) return;
+    const reader = createDeploymentRunReader({ projectId, branchId,
+      request: signal => apiRequest<unknown>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`, { signal }),
+      onChange: snapshot => setLedgerSnapshot({ ...snapshot, scope: ledgerScope }),
+    });
+    ledgerReaderRef.current = reader;
+    return () => { reader.dispose(); if (ledgerReaderRef.current === reader) ledgerReaderRef.current = null; };
+  }, [open, projectId, branchId, ledgerScope]);
   const [deploymentVersions, setDeploymentVersions] = useState<DeploymentVersionSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
@@ -1064,22 +1083,23 @@ export function BranchDetailDrawer({
   const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
   const load = useCallback(async () => {
-    if (!branchId) return;
+    if (!open || !branchId || !projectId || scopeRef.current !== ledgerScope) return;
+    const isLatest = loadGate.begin();
+    const isCurrent = () => scopeRef.current === ledgerScope && isLatest();
     setLoading(true);
     setError('');
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes, runsRes, versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
+      const [branchesRes, logsRes, , versionsRes, profilesRes, infraRes, resourcesRes, aliasesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
-        apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
-          .catch(() => ({ runs: [] })),
+        ledgerReaderRef.current?.refresh(),
         canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`)
           .catch(() => ({ versions: [] })) : Promise.resolve({ versions: [] }),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
           .catch((err) => {
-            setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+            if (isCurrent()) setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
             return { profiles: [] };
           }),
         canManageConsole ? apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
@@ -1089,7 +1109,8 @@ export function BranchDetailDrawer({
         apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
           .catch((): { primaryEntry?: WebEntryUrl; webEntries: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] } => ({ webEntries: [] })),
       ]);
-      const found = (branchesRes.branches || []).find((b) => b.id === branchId);
+      if (!isCurrent()) return;
+      const found = (branchesRes.branches || []).find((b) => b.id === branchId && b.projectId === projectId);
       if (!found) {
         setError('branch_not_found');
         setBranch(null);
@@ -1097,18 +1118,17 @@ export function BranchDetailDrawer({
         setBranch(found);
       }
       setLogs(logsRes.logs || []);
-      setDeploymentRuns(runsRes.runs || []);
       setDeploymentVersions(versionsRes.versions || []);
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
       setEntryAliases(aliasesRes);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      if (isCurrent()) setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [branchId, projectId, canManageConsole]);
+  }, [branchId, projectId, canManageConsole, open, ledgerScope, loadGate]);
 
   const loadTriggerLogs = useCallback(async () => {
     if (!canManageConsole || !branchId) return;
@@ -1261,7 +1281,7 @@ export function BranchDetailDrawer({
     setServiceLogs({ status: 'idle' });
     setLogQuery('');
     setShowAllHistory(false);
-    setDeploymentRuns([]);
+    setLedgerSnapshot({ scope: ledgerScope, runs: [], unavailable: false });
     setDeploymentVersions([]);
     setVersionBusyId(null);
     setEnvState({ status: 'idle' });
@@ -1290,19 +1310,9 @@ export function BranchDetailDrawer({
   }, [open, branchId, load]);
 
   useEffect(() => {
-    if (!open || activeTab !== 'deployments' || !branchId || !projectId) return;
-    const refreshRuns = async (): Promise<void> => {
-      try {
-        const response = await apiRequest<{ runs: DeploymentRunSummary[] }>(
-          `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`,
-        );
-        if (branchIdRef.current === branchId) setDeploymentRuns(response.runs || []);
-      } catch {
-        // 保留最近一次成功快照，短暂控制面抖动不清空事实账本。
-      }
-    };
-    const timer = window.setInterval(() => void refreshRuns(), 2_000);
-    return () => window.clearInterval(timer);
+    const reader = ledgerReaderRef.current;
+    reader?.setPolling(open && activeTab === 'deployments');
+    return () => reader?.setPolling(false);
   }, [activeTab, branchId, open, projectId]);
 
   useEffect(() => {
@@ -2552,6 +2562,9 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
+                    {deploymentRunsUnavailable ? <p className="px-1 text-sm text-warn">
+                      部署事实账本暂不可读。{deploymentRuns.length > 0 ? '下方保留上次成功记录，尚未刷新。' : '请稍后刷新。'}
+                    </p> : deploymentRuns.length === 0 ? <p className="px-1 text-sm text-muted-foreground">暂无部署事实记录。</p> : null}
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId}
                       expectedRepository={branch.githubRepoFullName} expectedBranch={branch.branch}
                       renderDiagnosis={(runId) => <DeploymentRunDiagnosis runId={runId} />} />
