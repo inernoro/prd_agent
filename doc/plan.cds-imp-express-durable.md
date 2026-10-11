@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.36；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.39；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -391,3 +391,20 @@ expected result：台账慢IO不在Master同步执行，旧样本不丢、并发
 末尾同原32夹具/原期望32/32局部绿，旧四红关闭；新ACK/直接adapter扩展9/9（含与原32重叠的same roots控制，不合成唯一41条）。扩展旧e1原件3/9绿6红→当前9/9；保留真实v1/v2/32/500/FIFO3s及实际Router coldready/http控制，无新真红。组件/ownFS/nativeHTTP/实际ShellWorker证据不等于共享Master、Daemon、公网、视觉或八分支交付通过。
 
 expected result：未知版本原件不丢，所有缓存remember观察者不越过在途写尝试。current evidence：上述固定局部独立及主108/core0/full9609；旧full socket根因仍未关闭。visible result：候选未部署、visual N/A。gap：49formal全部not-executed，八分支完整推送/交付、隔离宿主、双主题视觉、公网压力/恢复、48小时/一周仍未执行；其他Master热点、安全回收、durable pending/阶段公平、P4其余流、IMPaux terminal receipt未完成。required action：主继续同编号有界修复，末尾依新固定源验收；隔离准入后依既有push/selfupdate授权完整交付并取真实视觉。38partial-local/11todo保持，目标active。
+
+
+## v1.37 统一混合事件流固定检查点（独立待验）
+
+9f44065a19f2b241c9f1565a28cbc9517a6a8ab2新增OrderedSseWriter与actual/api/cds-events接线：write=false保留FIFO64等待帧、单帧256KiB、socket+待写512KiB；drain保持顺序，5秒无进展/越界/序列化与写错即时dispose。阻塞heartbeat省略，scope先过滤再序列化，WeakMap每总线envelope共享1次字符串，不持久留事件cache、不取消publisher。初始过大帧不订阅，latejoin补实际running refresh的已有started；仍非事件审计回放。
+
+React实际hook每次onopen递增connectionEpoch，旧source open/message/error无效；重连清观察busy，再从snapshot.activeSelfUpdate/current started恢复，未造任务成功。5个原权威观察组件new epoch GET审批/授权/导入/通知/项目agent-requests；4新增读序号守卫，AgentRequests保原守卫，卸载/epoch切换失效旧回调。未合并事件驱动GET风暴，其他命令流/实际浏览器和持久恢复仍须另验。
+
+主原actualHTTP route5真红、actualhook3真红、actual component body/effects9真红（原AgentRequests迟到守卫1已有绿）、中间实现共享frame1真红→7files60相关绿、core/web tsc0、Vite build3.49s成功。日志/tmp/cds-unified-events-{red-v2,hook-red,consumers-red-v2,shared-frame-red,final-green,final-core-tsc,final-web-tsc,final-web-build}.log。红1原afterEach未等socket close、消费者初版2路由context Invalid hook call、首命令cwd错误均原件保留，夹具错不计产品红；v2先修夹具后确认原真红。组件检查使用React hook harness+controlled API，执行真实组件逻辑但非真实DOM/服务端API/视觉。
+
+本固定full662files9649绿/6files19skip/1旧obsolete snapshot/63.39s（/tmp/cds-express-9f440-full.log），独立固定复验进行中。1dc7原32与扩展9/108/full9609只历史不传播至9f；旧e1 full socket根因仍未证明关闭。两仓库本轮再fetch，CDS origin/main45533b419e1cfc54b145a545a716563617659d01、IMP origin/test e2fd7c8f5ebaed2561229a7864835949d1ce0904与origin/main2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c未变。
+
+expected result：混合观察积压有界且不丢live顺序，重连不能让漏掉的终态使组件永久busy或迟到读盖新状态。current evidence：主上述有界红绿/60/core+web0/build/full9649，独立待返。visible result：未部署/visual N/A。gap：49formal/八分支完整/隔离宿主/Master/Daemon/public/双主题/48h/一周未执行；durable pending、阶段公平、其他热点与流、GET合并、IMPaux terminal receipt仍待。required action：末尾固定源找边界、红则修；主继续同编号实施，隔离准入后按既有授权实际八支交付与正式视觉。38partial-local/11todo、49not-executed保持，目标active。
+
+历史v1.38：61a785修9f440独立5真红，新增15反例红→33相关绿、core/web tsc0及webbuild；固定全量和独立待返。102GET风暴仍有缺口，正式49ID未执行、visual N/A，未发布，目标active。
+
+当前v1.39：61a785原5红已固定独立关闭（原49local绿，decision12/timestamp9有重叠），full9664仅历史；7400ccc五GET读取预算已本地接线，5storm真红→87相关/core+web0/build，fixed full663files9687green/62.70s，独立待返；全部正式49未执行、视觉N/A、未发布，active。

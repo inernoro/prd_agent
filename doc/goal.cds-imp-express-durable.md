@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.36；日期：2026-10-11；状态：active。
+版本：v1.39；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,18 +76,18 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:1dc7c59dfebe66f4160fc558a495b83ee8401786,IMP:338f6a2c7bf506f4d88fc9b70c11364813517b39（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:144/0相对origin/main,IMP:28/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:7400ccc64fba15e6e6a27af2552855ad6a0b0520,IMP:3c8357f15bbf586a32d66de2cd965cd0552424bb（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:148/0相对origin/main,IMP:29/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。 systemd命令共享Worker、实际path/inode唯一writer、回滚归属与最终结果fence已固定本地实现，独立37/37；直接异步递归回收草案因新owner误删真红已否决并还原，不作完成。 release clock同步文件load/persist移共享Worker、并行ready及两快照串行写已本地实现，原e1独立四真红已在1dc7关闭；主108/core0/full9609，原32独立全绿及扩展9绿（有控制重叠），仍只本地。
+- 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。 systemd命令共享Worker、实际path/inode唯一writer、回滚归属与最终结果fence已固定本地实现，独立37/37；直接异步递归回收草案因新owner误删真红已否决并还原，不作完成。 release clock同步文件load/persist移共享Worker、并行ready及两快照串行写已本地实现，原e1独立四真红已在1dc7关闭；主108/core0/full9609，原32独立全绿及扩展9绿（有控制重叠），仍只本地。 混合统一SSE9f固定独立本地49check=44绿5红（非正式49ID），已在61a785修审批迟到GET/POST卸载/延迟timer与无效active时间；61固定独立原49local全绿、decision12/timestamp9单列重叠/full9664；740五观察GET预算/详情4并发已接，五storm旧101/102红→87相关绿/core+web0/build，新full663files9687绿/62.70s，独立待返，其他流未完成。
 - 本批实现检查点：2ea固定独立44项41绿3红（未消费续约时pending提前出队）；ec939原44及新增3共47/47局部复绿，删除Map存在守卫1真红。原3红保留；相关313/core tsc绿。 efcdaf0dc21687fbcecb6af0b0fafaaa953fdfc0重放观察：5秒响应头、30分钟观察、256KiB帧/16KiB解码片；非2xx不读正文，complete.ok/错误/mergedjoined/unknown分别记录，只记有界枚举及合法run ID；不重试或取消实际执行。实际入站HTTP＋fake出站/Docker5旧红→5绿，观察器13及协调/路由共331局部绿、core tsc绿；efcd固定独立实际自有HTTP/native fetch23项21绿2真红（complete.ok=true却带started/rejected被误判完成）；明确cancelled被记失败也已发现。12ad新增有限状态及取消归因，主3旧红→绿，相关335/core tsc绿，固定独立待返。未改实际run，不把观察取消当Daemon闭合。 仍未实现durable pending队列，不证明实际Master/Daemon或线上通过。 八候选固定清单未变，独立8/8与280合同局部绿，104角色仅静态枚举，未push/未部署。
-- 证据纪元：`target_sha=CDS:1dc7c59dfebe66f4160fc558a495b83ee8401786,IMP:338f6a2c7bf506f4d88fc9b70c11364813517b39；tested_sha=CDS:1dc7主108/core0/full9609,独立原32及扩展9局部绿(控制重叠不相加)；e1独立28/32与full1socket红只历史,根因未闭合；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-11T00:11:26.608415+00:00`
+- 证据纪元：`target_sha=CDS:7400ccc64fba15e6e6a27af2552855ad6a0b0520,IMP:3c8357f15bbf586a32d66de2cd965cd0552424bb；tested_sha=CDS:7400ccc主87/core+web0/build/full9687,独立待返；61a785原49local+decision12/timestamp9（控制重叠）/full9664仅历史；9f440独立49localchecks=44绿5红/full9649仅历史；1dc7原32扩展9与e1四红/full1socket只历史,旧断连原因未闭合；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-11T00:44:06Z`
 - 本批新增恢复事实：66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
 - 新鲜验证证据：59d固定独立59/59局部（重放原17+扩展7+observer24+实际Router失败4/取消4+观察socket外部abort后执行仍受租约控制2+真实默认5秒头budget1）；原66fb两scope红关闭。whole正例旧带Profile与State自动填legacy项目两轮夹具偏差原件保留，未放宽scope。66fb权限清理v2独立6/6：清理ACK未知memory gate/竞态更新409，磁盘若已完成cleanup则重载仅安全old=a、新b无grant，5flush确认后清账。v1要求此时磁盘仍有journal的探索红保留解释，不作越权或500修复结论。 dc2f7d0ce47584656d948e61d048f17696f0da26本地源码例外queue按冻结project轮转/同项目FIFO，匿名兼容组FIFO；默认512等待/30min上限，超量与过期明确失败且不取消运行holder，授予/取消/超时清timer/listener，onStart观察异常释放槽位。whole/profile两路实际传projectId、任何gate失败结束排队episode，日志/UI改等待总量不承诺绝对位置；tracker旧min位置断言退场并保留旧红。主5新反例真红→25 gate绿，5files288相关/core及web tsc0，固定全量655files9560绿/6files19skip/1obsolete snapshot/65.48s。独立固定复验进行中；phase公平队列、durable pending、实际Master/Daemon与公网未验。 原3635全量1红与受控3-vs-5夹具红、66fb9552绿各按固定源保留；所有正式49/视觉/8支仍未执行。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；本机16GiB已大量压缩/交换，不在其上新增压力VM冒充隔离验收宿主；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。 额外只读探测mycds SSH成功（Linux16CPU/约31GiB RAM），sudo -n Docker可读，承载大量他人及IMP/MAP常驻服务；2026-10-11 05:32 CST可用628MiB、swap8191/8191MiB、load2.25/26.60/33.20，不作隔离压力宿主，不停他人服务/启新容器。本机Docker仍不可达；隔离宿主问题待用户回复。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：固定1dc7台账原四独立反例已复绿，其他有红继续修；其他Master JSON/文件/磁盘热点、安全回收身份设计、durable pending/阶段公平、P4其余流、IMP aux terminal receipt继续同编号实施。隔离宿主问题仍待答，未在共享宿主注入故障；依既有授权和准入完成八支真实完整交付、双主题视觉、公网/恢复及48小时/一周门槛。
+- 下一动作与完成条件：固定7400ccc权威GET合并独立复验，有红继续修；其他Master JSON/文件/磁盘热点、安全回收身份设计、durable pending/阶段公平、P4其余流、IMP aux terminal receipt继续同编号实施。隔离宿主问题仍待答，未在共享宿主注入故障；依既有授权和准入完成八支真实完整交付、双主题视觉、公网/恢复及48小时/一周门槛。
 - 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
@@ -225,3 +225,55 @@ expected result：台账慢IO不在Master同步执行，旧样本不丢、并发
 末尾同原32夹具/原期望32/32局部绿，旧四红关闭；新ACK/直接adapter扩展9/9（含与原32重叠的same roots控制，不合成唯一41条）。扩展旧e1原件3/9绿6红→当前9/9；保留真实v1/v2/32/500/FIFO3s及实际Router coldready/http控制，无新真红。组件/ownFS/nativeHTTP/实际ShellWorker证据不等于共享Master、Daemon、公网、视觉或八分支交付通过。
 
 expected result：未知版本原件不丢，所有缓存remember观察者不越过在途写尝试。current evidence：上述固定局部独立及主108/core0/full9609；旧full socket根因仍未关闭。visible result：候选未部署、visual N/A。gap：49formal全部not-executed，八分支完整推送/交付、隔离宿主、双主题视觉、公网压力/恢复、48小时/一周仍未执行；其他Master热点、安全回收、durable pending/阶段公平、P4其余流、IMPaux terminal receipt未完成。required action：主继续同编号有界修复，末尾依新固定源验收；隔离准入后依既有push/selfupdate授权完整交付并取真实视觉。38partial-local/11todo保持，目标active。
+
+
+## P4-03 统一混合事件流合同（本地实施准入）
+
+/api/cds-events含状态、过程、审批与完成观察，不能沿用纯状态流的丢弃后继事件+状态快照。连接write=false后只保留有界串行帧队列：至多64帧、单帧256KiB、待写与socket合计512KiB；保持接收顺序和实际帧内容，drain再写，不用snapshot替代审批/终态。心跳在阻塞时省略，不进关键帧队列；阻塞5秒、越界、序列化/写失败即清理订阅/timer/listeners并断开观察连接，不取消服务端命令。scope过滤发生在序列化/入队之前，不能向项目密钥泄漏别项目或全局数据。
+
+重连不是事件回放承诺。浏览器每次成功连接递增恢复纪元，审批/导入/授权/通知/请求观测重新GET对应权威状态，旧请求不得盖新纪元结果；不从丢失的过程事件推断成功。全局更新/刷新忙状态必须从重连snapshot的实际active记录恢复，不把onopen当任务已完成；若快照缺active证据，只能清观察busy、保留既有结果/未知，不能造终态。首次连接亦可取一次权威数据，不按心跳放大轮询。
+
+先红判据：真实自有HTTP response注入write=false后旧路由继续写；FIFO/64帧与512KiB上限/5s/初始越界、scope与断开不取消；实际hook onopen不产生恢复纪元、缺终态断线后busy滞留；实际组件的恢复触发必须GET权威端点。此本地合同不替代100连接实际Master/Daemon/public或最终双主题视觉；正式报告和自动门禁接管后退场临时合同。
+
+
+## v1.37 统一混合事件流历史检查点（独立5红保留）
+
+9f44065a19f2b241c9f1565a28cbc9517a6a8ab2新增OrderedSseWriter与actual/api/cds-events接线：write=false保留FIFO64等待帧、单帧256KiB、socket+待写512KiB；drain保持顺序，5秒无进展/越界/序列化与写错即时dispose。阻塞heartbeat省略，scope先过滤再序列化，WeakMap每总线envelope共享1次字符串，不持久留事件cache、不取消publisher。初始过大帧不订阅，latejoin补实际running refresh的已有started；仍非事件审计回放。
+
+React实际hook每次onopen递增connectionEpoch，旧source open/message/error无效；重连清观察busy，再从snapshot.activeSelfUpdate/current started恢复，未造任务成功。5个原权威观察组件new epoch GET审批/授权/导入/通知/项目agent-requests；4新增读序号守卫，AgentRequests保原守卫，卸载/epoch切换失效旧回调。未合并事件驱动GET风暴，其他命令流/实际浏览器和持久恢复仍须另验。
+
+主原actualHTTP route5真红、actualhook3真红、actual component body/effects9真红（原AgentRequests迟到守卫1已有绿）、中间实现共享frame1真红→7files60相关绿、core/web tsc0、Vite build3.49s成功。日志/tmp/cds-unified-events-{red-v2,hook-red,consumers-red-v2,shared-frame-red,final-green,final-core-tsc,final-web-tsc,final-web-build}.log。红1原afterEach未等socket close、消费者初版2路由context Invalid hook call、首命令cwd错误均原件保留，夹具错不计产品红；v2先修夹具后确认原真红。组件检查使用React hook harness+controlled API，执行真实组件逻辑但非真实DOM/服务端API/视觉。
+
+本固定full662files9649绿/6files19skip/1旧obsolete snapshot/63.39s（/tmp/cds-express-9f440-full.log），独立固定复验进行中。1dc7原32与扩展9/108/full9609只历史不传播至9f；旧e1 full socket根因仍未证明关闭。两仓库本轮再fetch，CDS origin/main45533b419e1cfc54b145a545a716563617659d01、IMP origin/test e2fd7c8f5ebaed2561229a7864835949d1ce0904与origin/main2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c未变。
+
+expected result：混合观察积压有界且不丢live顺序，重连不能让漏掉的终态使组件永久busy或迟到读盖新状态。current evidence：主上述有界红绿/60/core+web0/build/full9649，独立待返。visible result：未部署/visual N/A。gap：49formal/八分支完整/隔离宿主/Master/Daemon/public/双主题/48h/一周未执行；durable pending、阶段公平、其他热点与流、GET合并、IMPaux terminal receipt仍待。required action：末尾固定源找边界、红则修；主继续同编号实施，隔离准入后按既有授权实际八支交付与正式视觉。38partial-local/11todo、49not-executed保持，目标active。
+
+## v1.38 审批生命周期历史检查点（原五红独立关闭）
+
+9f440独立固定11文件Git逐字节核验：writer11/11、actualHTTP10/10、hook8/10、consumer15/18，共49个本地checks=44绿5红；数字49不等于正式49计划ID。原件acceptance-p4-unified-9f440-{source-manifest,evidence-summary}.json保留，5红均纳入修复，不改期望。受控组件/API并非DOM/真实鉴权/视觉。另主102GET/100事件风暴是真红剩余，未计独立分母。
+
+61a785dbae32d43983cc2bc2f602a292a81e9e3a在批准/拒绝实际POST成功后推进读取代次，旧GET不能把决定条目重新插回；POST迟到完成以组件lifetime约束，不在卸载后setPending/setBusy。Operator的500ms观察刷新timer卸载清理，已排队回调另验lifetime后才能启动GET。activeSelfUpdate.startedAt空/非法不可解析时间不生成更新忙态，合法记录与interrupted/null清态仍保留。导入compose审查及服务端审批命令不变；本地读取守卫不宣称业务命令取消。
+
+主TDD扩展：6条approve/reject旧GET竞态、6条POST卸载后完成、1条延迟timer、2条非法时间，原9f共15失败/18已有通过；同fixture修后33/33，通过core+web tsc及Vite构建（/tmp/cds-decision-lifecycle-{red,green,core-tsc,web-tsc,web-build}.log）。根precommit忽略pnpm失败仍不是类型证据，采用显式检查。固定61全量和独立原期望复验进行中，未继承9f full绿至新版本。
+
+expected result：旧读不能复活已决定审批、卸载不发延迟GET/不写状态、unknown时间不伪造busy。current evidence：15红→33绿/core+web0/build；独立待返。visible result：未部署/visual N/A。gap：102GET风暴、其余同编号实施与完整八支/Master/Daemon/public/双主题/48h/一周仍未执行。required action：原件独立复验，有红修；随后合并观察GET，隔离准入后按持续有效发布授权完成真实八支交付。38partial-local/11todo、49formal not-executed、目标active不变。
+
+## P4-03 权威GET观察合并合同（实施前冻结）
+
+统一事件总线的五个观察组件读取保留原鉴权/API与权威数据。普通事件/兜底轮询只保留1在途GET和1待刷新标记；在途期间新信号推进观察修订，不为每个事件建立promise链。已过时的响应不回填，旧读取结束后最多补1次最新GET。每次实际读取最多5秒（包含body/重试），超时abort本组件读取、保留最后有效数据，不制造任务成功/空列表，不取消服务端POST或部署。
+
+重连、项目或筛选变化开启新观察纪元，使旧GET及待刷新失效并启动本纪元读取；即便测试reader忽略abort，其迟到回复仍不能写状态，读取等待必须可释放。组件卸载清timer/abort/待刷新，回调不可新发GET或写状态。审批成功回执同样失效此前读取，失败POST保持原条目。导入详情保留真实compose读取与审批可见性，不以聚合预算删掉配置审查。
+
+先红：固定61a785五个实际component/effects受控API持有期间100事件各发101次（Operator102）而非1在途+1补读；重连/筛选应强制新纪元，普通信号不能无界并发；5秒/忽略abort晚回复/卸载不启动补读/失败保最后数据另验。该局部合同不替代真实API性能、Master/Daemon/public、100SSE与最终双主题视觉；正式门禁完整接管后退场临时实施说明。
+
+## v1.39 权威观察GET预算固定检查点（独立待验）
+
+61a785已由末尾固定11源Git逐字节核验，原writer11/HTTP10/hook10/consumer18共49localchecks全绿（非正式49ID）；decision扩展12/12（旧9f同fixture3/12九红）与timestamp9/9单列、有重叠控制不说唯一70。主61full662文件9664绿、6文件19skip、1obsolete、63.39s；仅61历史，不传播740。原9f五真红均关闭，未改变原期望；独立归档acceptance-p4-unified-61a78-{source-manifest,evidence-summary}.json。
+
+7400ccc64fba15e6e6a27af2552855ad6a0b0520新增真实BoundedAuthorityReader及5组件接线，1在途列表/详情组+1dirty标记、5秒包括body/重试、epoch/filter abort旧等待读；忽略abort仍释放等待，旧响应无写回。成功POST invalidate读及dirty，卸载dispose，合法timestamp/实际scope不变。Operator无信号不重复首次GET；导入YAML9条详情保持齐全，最多4并发，共用观察截止，abort后不发余项。不自动重放业务命令/不改变权限或服务端终态。
+
+主先红5组件100held事件分别101/101/102/101/101GET，/tmp/cds-authority-five-consumer-storm-red.log=5真红28绿；修改后1在途+1补读。6文件87绿（component40/helper11/hook5/route9/writer22）、core+web tsc0、Vitebuild0。原5个event测试即时新并发期待与预算冲突，first-green日志5旧期待红保留；改为held期间无新GET、old不回填、结束后1freshGET，未放宽权威新鲜/重连守卫。helper首轮8失败为Vitest2不支持ExactlyOnceWith，改同义once+with断言后绿，非产品红；guide相对cwd脚本失败后已定点补写，实际guide2.58。固定full及独立进行中。
+
+expected result：普通事件无界并发改为有界读取且保真实新数据，慢body不永久占观察，YAML不丢。current evidence：5storm真红→87绿/core+web0/build；独立待返。visible result：未部署/visual N/A。gap：其余P1/P2/P3/P4/IMPaux与实际8branch/Master/Daemon/public/双主题/48h/一周未执行。required action：末尾按固定740原件及新增边界复验，主继续同编号缺口，不改其他任务。正式49not-executed，38partial-local/11todo，目标active。
+
+v1.39固定740全量已结束：663files9687green、6files19skip、1obsolete snapshot、62.70s，/tmp/cds-express-7400ccc-full.log；独立进行中。双GoalState审计通过，索引158→158归档0，不猜关其他目标。
