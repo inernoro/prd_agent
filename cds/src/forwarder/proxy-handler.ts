@@ -921,7 +921,7 @@ export class ProxyHandler {
           headers['content-length'] = String(decoded.length);
           if (!res.headersSent) res.writeHead(status, headers as http.OutgoingHttpHeaders);
           res.end(decoded);
-          logHttp(status, { bodyPreview: suppressPreviewBody ? undefined : decoded.subarray(0, 8 * 1024).toString('utf8'), bodyBytes: decoded.length });
+          logHttp(status, { bodyBytes: decoded.length });
           finish(status);
           return;
         }

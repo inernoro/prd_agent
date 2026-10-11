@@ -31,11 +31,14 @@ const codecs = {
   br: zlib.brotliCompressSync,
   deflate: zlib.deflateSync,
 };
-async function actualResponse(kind: 'master' | 'forwarder', body: Buffer, encoding: keyof typeof codecs = 'identity', contentType = 'text/html;charset=UTF-8', status = 200, declaredEncoding = encoding === 'identity' ? '' : encoding as string) {
+async function actualResponse(kind: 'master' | 'forwarder', body: Buffer, encoding: keyof typeof codecs = 'identity', contentType = 'text/html;charset=UTF-8', status = 200, declaredEncoding = encoding === 'identity' ? '' : encoding as string, reset = false) {
   const wire = codecs[encoding](body);
   const upstream = await listen((req, res) => {
     req.resume();
-    res.writeHead(status, { 'content-type': contentType, 'content-length': String(wire.length), ...(declaredEncoding ? { 'content-encoding': declaredEncoding } : {}) });
+    res.writeHead(status, { 'content-type': contentType, ...(reset ? {} : { 'content-length': String(wire.length) }), ...(declaredEncoding ? { 'content-encoding': declaredEncoding } : {}) });
+    if (reset) {
+      res.write(wire.subarray(0, 12)); setTimeout(() => res.destroy(), 20); return;
+    }
     // Split across network writes; classification must not depend on the first chunk.
     res.write(wire.subarray(0, 1)); res.end(wire.subarray(1));
   });
@@ -84,6 +87,18 @@ for (const kind of ['master', 'forwarder'] as const) describe(kind+' widget body
     expect((await actualResponse(kind, body, 'identity', 'application/json')).body).toEqual(body);
     const response = await actualResponse(kind, body, 'identity', 'text/html', 403);
     expect(response.status).toBe(403); expect(response.body).toEqual(body);
+  });
+  it('returns a real failure for malformed supported compression', async () => {
+    for (const encoding of ['gzip', 'br', 'deflate']) {
+      const response = await actualResponse(kind, Buffer.from('not-compressed'), 'identity', 'text/html', 200, encoding);
+      expect(response.status).toBe(502); expect(response.headers['content-encoding']).toBeUndefined();
+      expect(response.body.toString('utf8')).not.toContain('data-cds-widget');
+    }
+  });
+  it('returns a real failure when the compressed upstream resets mid-body', async () => {
+    const response = await actualResponse(kind, Buffer.from('{"code":200,"padding":"'+ 'x'.repeat(100) +'"}'), 'gzip', 'text/html', 200, 'gzip', true);
+    expect(response.status).toBe(502); expect(response.headers['content-encoding']).toBeUndefined();
+    expect(response.body.toString('utf8')).not.toContain('data-cds-widget');
   });
   it('retains explicit identity encoding for markup and JSON', async () => {
     for (const body of [Buffer.from('{"code":200}'), Buffer.from('<html><body>identity</body></html>')]) {

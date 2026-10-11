@@ -1,4 +1,5 @@
 import http from 'node:http';
+import type { Readable } from 'node:stream';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
@@ -2587,6 +2588,7 @@ ${shouldAutoRefresh ? `;(function(){
       });
     }
 
+    let widgetResponseSettled = false;
     const proxyReq = http.request(options, (proxyRes) => {
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
@@ -2607,7 +2609,33 @@ ${shouldAutoRefresh ? `;(function(){
       if (isHtml) {
         // Buffer the HTML response, decompress if needed, inject widget before </body>
         const encoding = (proxyRes.headers['content-encoding'] || '').trim().toLowerCase();
-        let stream: NodeJS.ReadableStream = proxyRes;
+        let stream: Readable = proxyRes;
+        const chunks: Buffer[] = [];
+        const stopReading = () => {
+          chunks.length = 0;
+          if (stream !== proxyRes) { proxyRes.unpipe(); stream.destroy(); }
+          proxyRes.destroy();
+        };
+        const failResponse = (code: string) => {
+          if (widgetResponseSettled) return;
+          widgetResponseSettled = true;
+          stopReading();
+          if (!clientRes.destroyed && !clientRes.writableEnded) {
+            if (!clientRes.headersSent) {
+              clientRes.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+              clientRes.end(JSON.stringify({ error: 'Upstream response failed', code: 'UPSTREAM_RESPONSE_FAILED' }));
+            } else clientRes.destroy();
+          }
+          logHttp(502, {}, 'upstream-error', { code, message: 'upstream response failed' });
+        };
+        proxyRes.on('aborted', () => failResponse('UPSTREAM_RESPONSE_INCOMPLETE'));
+        proxyRes.on('error', () => failResponse('UPSTREAM_RESPONSE_INCOMPLETE'));
+        clientRes.once('close', () => {
+          if (widgetResponseSettled || clientRes.writableFinished) return;
+          widgetResponseSettled = true;
+          stopReading();
+          logHttp(499, {}, 'client-error', { code: 'CLIENT_DISCONNECTED', message: 'client disconnected' });
+        });
 
         // Decompress if upstream sent compressed HTML
         if (encoding === 'gzip') {
@@ -2618,84 +2646,85 @@ ${shouldAutoRefresh ? `;(function(){
           stream = proxyRes.pipe(zlib.createInflate());
         }
 
-        const chunks: Buffer[] = [];
-        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('data', (chunk: Buffer) => { if (!widgetResponseSettled) chunks.push(chunk); });
         stream.on('end', () => {
-          const decoded = Buffer.concat(chunks);
-          if (!hasWidgetMarkupPrefix(decoded)) {
+          if (widgetResponseSettled) return;
+          try {
+            const decoded = Buffer.concat(chunks);
+            chunks.length = 0;
+            if (!hasWidgetMarkupPrefix(decoded)) {
+              if (encoding && encoding !== 'identity') delete headers['content-encoding'];
+              delete headers['transfer-encoding'];
+              headers['content-length'] = String(decoded.length);
+              clientRes.writeHead(statusCode, headers);
+              clientRes.end(decoded);
+              widgetResponseSettled = true;
+              logHttp(statusCode, { bodyBytes: decoded.length });
+              return;
+            }
+            let body = decoded.toString('utf-8');
+            const responseForLog = {
+              bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
+              bodyBytes: Buffer.byteLength(body, 'utf8'),
+            };
+            // 版本信息（sha + 极速/源码）并入既有 CDS widget（左下角那个），不再单开角标——
+            // 一处足矣（用户 2026-06-24 反馈「两个为何不合并」）。sha 取 githubCommitSha，
+            // 模式取该 profile 容器实际钉的 deployedMode（回退到源码时如实显示「源码」）。
+            const entry = this.stateService.getState().branches[branchCtx.branchId];
+            const svcMode = branchCtx.profileId
+              ? entry?.services?.[branchCtx.profileId]?.deployedMode
+              : undefined;
+            const anyMode = svcMode
+              ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
+            // 部署类型只分两类给用户看：极速（CI 预构建镜像）/ 发布（源码编译产出的发布版）。
+            const modeLabel = anyMode
+              ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
+              : '';
+            // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
+            //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
+            //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
+            //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
+            //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
+            const badgeSha = (modeLabel === '极速'
+              ? (entry?.ciTargetSha || entry?.githubCommitSha)
+              : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+            // 托管态：这条分支起的是 CDS 预览实例（CDS 托管 CDS），徽章换成深绿的
+            // 「CDS 托管 CDS」变体，子实例侦测到它就不再画自己的橙 pill。判据看 profile.env
+            // 里 compose 声明的 CDS_PREVIEW_INSTANCE（cds-compose.selfhost.yml），
+            // 与子实例自己的判定同源（preview-instance.ts）。
+            const hostedCds = this.stateService.getBuildProfiles()
+              .filter((p) => p.projectId === entry?.projectId)
+              .some((p) => profileHostsPreviewInstance(p, this.stateService.getCustomEnv(entry?.projectId)));
+            const widget = buildWidgetScript(
+              branchCtx.branchId,
+              branchCtx.branchName,
+              badgeSha,
+              modeLabel,
+              hostedCds,
+            );
+
+            // Inject before </body> if present, otherwise append
+            const idx = body.lastIndexOf('</body>');
+            if (idx !== -1) {
+              body = body.slice(0, idx) + widget + body.slice(idx);
+            } else {
+              body += widget;
+            }
+
+            // Remove encoding headers (we decoded), recalculate content-length
             if (encoding && encoding !== 'identity') delete headers['content-encoding'];
             delete headers['transfer-encoding'];
-            headers['content-length'] = String(decoded.length);
+            headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
             clientRes.writeHead(statusCode, headers);
-            clientRes.end(decoded);
-            logHttp(statusCode, { bodyPreview: suppressPreviewBody ? undefined : decoded.subarray(0, 8 * 1024).toString('utf8'), bodyBytes: decoded.length });
-            return;
+            clientRes.end(body);
+            widgetResponseSettled = true;
+            logHttp(statusCode, responseForLog);
+          } catch {
+            // No provider body or exception text is copied into the error response.
+            failResponse('WIDGET_TRANSFORM_FAILED');
           }
-          let body = decoded.toString('utf-8');
-          const responseForLog = {
-            bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
-            bodyBytes: Buffer.byteLength(body, 'utf8'),
-          };
-          // 版本信息（sha + 极速/源码）并入既有 CDS widget（左下角那个），不再单开角标——
-          // 一处足矣（用户 2026-06-24 反馈「两个为何不合并」）。sha 取 githubCommitSha，
-          // 模式取该 profile 容器实际钉的 deployedMode（回退到源码时如实显示「源码」）。
-          const entry = this.stateService.getState().branches[branchCtx.branchId];
-          const svcMode = branchCtx.profileId
-            ? entry?.services?.[branchCtx.profileId]?.deployedMode
-            : undefined;
-          const anyMode = svcMode
-            ?? Object.values(entry?.services ?? {}).find((s) => s?.deployedMode)?.deployedMode;
-          // 部署类型只分两类给用户看：极速（CI 预构建镜像）/ 发布（源码编译产出的发布版）。
-          const modeLabel = anyMode
-            ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
-            : '';
-          // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
-          //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
-          //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
-          //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
-          //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
-          const badgeSha = (modeLabel === '极速'
-            ? (entry?.ciTargetSha || entry?.githubCommitSha)
-            : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
-          // 托管态：这条分支起的是 CDS 预览实例（CDS 托管 CDS），徽章换成深绿的
-          // 「CDS 托管 CDS」变体，子实例侦测到它就不再画自己的橙 pill。判据看 profile.env
-          // 里 compose 声明的 CDS_PREVIEW_INSTANCE（cds-compose.selfhost.yml），
-          // 与子实例自己的判定同源（preview-instance.ts）。
-          const hostedCds = this.stateService.getBuildProfiles()
-            .filter((p) => p.projectId === entry?.projectId)
-            .some((p) => profileHostsPreviewInstance(p, this.stateService.getCustomEnv(entry?.projectId)));
-          const widget = buildWidgetScript(
-            branchCtx.branchId,
-            branchCtx.branchName,
-            badgeSha,
-            modeLabel,
-            hostedCds,
-          );
-
-          // Inject before </body> if present, otherwise append
-          const idx = body.lastIndexOf('</body>');
-          if (idx !== -1) {
-            body = body.slice(0, idx) + widget + body.slice(idx);
-          } else {
-            body += widget;
-          }
-
-          // Remove encoding headers (we decoded), recalculate content-length
-          if (encoding && encoding !== 'identity') delete headers['content-encoding'];
-          delete headers['transfer-encoding'];
-          headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
-          clientRes.writeHead(statusCode, headers);
-          clientRes.end(body);
-          logHttp(statusCode, responseForLog);
         });
-        stream.on('error', () => {
-          // Decompression failed — passthrough original response without injection
-          if (!clientRes.headersSent) {
-            clientRes.writeHead(statusCode, proxyRes.headers);
-            clientRes.end();
-          }
-          logHttp(statusCode, {}, 'upstream-error', { message: 'html decompression failed' });
-        });
+        stream.on('error', () => failResponse('HTML_DECODE_FAILED'));
       } else {
         // Non-HTML or non-2xx: passthrough as-is (compressed, chunked, etc.)
         clientRes.writeHead(statusCode, headers);
@@ -2725,6 +2754,7 @@ ${shouldAutoRefresh ? `;(function(){
     });
 
     proxyReq.on('error', (err: NodeJS.ErrnoException) => {
+      if (widgetResponseSettled) return;
       console.error(`[proxy] upstream error: ${suppressPreviewBody ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(err.message)} → ${upstream}`);
       logHttp(502, {}, err.code === 'ETIMEDOUT' ? 'timeout' : 'upstream-error', {
         code: err.code,
