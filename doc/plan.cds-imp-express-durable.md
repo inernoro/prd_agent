@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.51；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.53；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -485,3 +485,13 @@ expected result：真实等待原因可追溯且未知不伪装零；current evi
 ## v1.51 非法计时值独立反例修复
 
 cc7固定末尾protocol30/31发现非法provider null时钟被隐式换算为0并显示observed；受控timingClock seam的有界数据真红，不归因production performance.now。主sample/base × null/数字字符串4条旧cc7红，属同一强制转换根因。a6b69c42在相减前检查raw current与base的typeof number/finite，非法值保持null/incomplete，原work结果7不变；7files401相关/显式core tsc0，全量671files9819green/6files19skip/1旧obsolete/64.23s。原cc7 30/31及主四红保留；固定a6末尾原protocol同期待31/31；clock扩展24/24与原组重叠，同一raw clock根因，不相加；actual HTTP24/24、candidate v5阶段12/12在a6实际重跑。candidate v4错误released期待两源11/12原样保留，v5依既有保守reconciling合同，非红绿修复或P3恢复通过。主已逐字核对26个Git源文件和38独立原件hash；source manifest ba306d6e7da4191bed9aea3113e8797c9f651e257a2d5ccc3028897af3ac9548，summary d3ac79f17bb1e49e4e5caf3190bbea2903dce709c7b330f52c18b04fe3dece57。局部结果不继承真实Master/Daemon、公网、八支或视觉通过。只两代码/测试路径17新增1删除，guide2.69既有非法时钟合同不改。CI Jobs #1974只读响应发现created_at/started_at/completed_at，可作后续精确job证据来源；尚未接入九阶段，不将historical job或created→started时间推导为全部纯runner等待或本修订部署证据。P0-04仍partial-local，49formal未执行/visual N/A。
+
+## v1.52 CI精确来源本地检查点
+
+guide2.70在e7a02316c/f16b1190f先冻结CI精确来源与预算；affc4b743新增ciTiming v1独立GitHub provider时钟，branch-image最多20精确匹配候选选max数值runId/冲突重复拒绝，再固定attempt读取最多100jobs。repo/headrepo/branch/fullSHA/path/event/run/attempt/job严格归属，job缺created不借run/steps；等待为job启动前等待、构建为job执行（非纯runner/编译/制品证明），并行union与work分列，未知/open/truncated保留缺测。请求禁止redirect、token及GET共享全轮3秒、每response256KiB，4物理在途/16队列，超时未结束底层继续占槽；64完成cache/30秒，副本与scope隔离，不实现pending合并/ joined Promise协议。actual whole/Profile exact目标冻结后旁路capture，原run引用/id/op/project/branch/SHA/lease/终态与项目安装绑定守卫，列表省raw CI只给汇总，detail复用原权限；不新增部署等待/源码回退。主8files353相关/core tsc0，固定全量674files9865green/6files19skip/1旧obsolete；wire mutation两路径2红、job attempt mutation1红均恢复。firstHTTP6 failures为新夹具未建project/teardown，首次core nullable lease为实现类型错误，已修但保原件；first未检查前曾过早说HTTP完成，已向用户更正。root precommit缺依赖假绿不计证据。末尾固定affc独立原设计28场景复验进行中，当前不继承a6局部绿。CI设计pending合并/joined caller为未实现差异保留，不调整原期待当pass；CDS自更新工作流、执行器、普通终态收尾、页面、actualMaster/Daemon、公网/八支/视觉/48h仍缺。P0-04仍partial-local，formal49 not-executed/visual N/A。
+
+expected result：CI与部署阶段可归因且不拖慢交付，未知不伪造0；current evidence：固定affc主353/core0/full9865、实际HTTP6与两类变异红绿，独立待返；visible result：未部署/visual N/A；gap：上述正式与路径缺口；required action：按原独立期待复验，有真红继续修，继续原49条，不判完成。
+
+## v1.53 CI开放状态真红修复检查点
+
+独立固定affc provider actual nativeHTTP 27/28发现queued job含旧完整started/completed时，outcome=open却汇总completed/observed且incomplete=false；主queued/in_progress两控制同1用例反例复红，属同一个开放状态根因。d48c9c15在汇总中任何open均保持open/incomplete，不计为已结束build，原业务/provider facts不改；8files354相关/显式core tsc0，固定full674files9866green/6files19skip/1旧obsolete，原affc9865与独立27/28留历史。末尾固定d48同原provider与实际Router/预算边界复验进行中，不继承affc通过。CI-L18/20 pending合并/joined caller原设计差异保留，不以N/A当pass；49正式全未执行，视觉N/A，目标active。
