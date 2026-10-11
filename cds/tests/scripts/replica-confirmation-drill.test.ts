@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { assertOwnedReplicaMember } from '../../scripts/replica-confirmation-drill.js';
+import { describe, expect, it, vi } from 'vitest';
+import { assertOwnedReplicaMember, readReplicaReadiness } from '../../scripts/replica-confirmation-drill.js';
 
 const owner = 'cds_acceptance_0123456789abcdef';
 const member = () => ({
@@ -7,6 +7,23 @@ const member = () => ({
   Config: { Image: 'mongo:7.0', Labels: { 'cds.acceptance.owner': owner },
     Cmd: ['mongod', '--replSet', owner, '--bind_ip', '127.0.0.1', '--port', '27901'] },
   HostConfig: { NetworkMode: 'host', NanoCpus: 1_000_000_000, Memory: 1_073_741_824 },
+});
+
+describe('隔离副本演练实际可写前提', () => {
+  it('拓扑已选主但直连成员仍不可写时继续等待，下一次实际读取可写才就绪', async () => {
+    const command = vi.fn().mockResolvedValueOnce({ members: [{ state: 1 }, { state: 2 }, { state: 2 }] })
+      .mockResolvedValueOnce({ isWritablePrimary: false })
+      .mockResolvedValueOnce({ members: [{ state: 1 }, { state: 2 }, { state: 2 }] })
+      .mockResolvedValueOnce({ isWritablePrimary: true });
+    expect(await readReplicaReadiness({ command })).toEqual({ primaries: 1, secondaries: 2, writablePrimary: false, ready: false });
+    expect(await readReplicaReadiness({ command })).toEqual({ primaries: 1, secondaries: 2, writablePrimary: true, ready: true });
+    expect(command.mock.calls).toEqual([[{ replSetGetStatus: 1 }], [{ hello: 1 }], [{ replSetGetStatus: 1 }], [{ hello: 1 }]]);
+  });
+  it('直连可写但两个副本还未就绪时不能开始暂停多数故障', async () => {
+    const command = vi.fn().mockResolvedValueOnce({ members: [{ state: 1 }, { state: 2 }, { state: 0 }] })
+      .mockResolvedValueOnce({ isWritablePrimary: true });
+    expect((await readReplicaReadiness({ command })).ready).toBe(false);
+  });
 });
 
 describe('隔离副本演练暂停与删除的归属保护', () => {

@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { MongoClient } from 'mongodb';
+import { MongoClient, type Db } from 'mongodb';
 import { RealMongoSplitHandle } from '../src/infra/state-store/mongo-split-handle.js';
 import { MongoSplitStateBackingStore } from '../src/infra/state-store/mongo-split-store.js';
 import { StateService } from '../src/services/state.js';
@@ -32,6 +32,17 @@ function docker(args: string[]): string {
   return execFileSync('docker', ['--host', 'unix:///var/run/docker.sock', ...args], { encoding: 'utf8', timeout: 120000 }).trim();
 }
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+/** 拓扑中的 PRIMARY 不等于这个直连成员已经完成可写准备，两份实际响应都要满足。 */
+export async function readReplicaReadiness(admin: Pick<Db, 'command'>): Promise<{
+  primaries: number; secondaries: number; writablePrimary: boolean; ready: boolean;
+}> {
+  const status = await admin.command({ replSetGetStatus: 1 });
+  const hello = await admin.command({ hello: 1 });
+  const primaries = status.members.filter((member: { state: number }) => member.state === 1).length;
+  const secondaries = status.members.filter((member: { state: number }) => member.state === 2).length;
+  const writablePrimary = hello.isWritablePrimary === true;
+  return { primaries, secondaries, writablePrimary, ready: primaries === 1 && secondaries === 2 && writablePrimary };
+}
 async function until(check: () => Promise<boolean>, label: string): Promise<void> {
   const deadline = performance.now() + 90000;
   while (performance.now() < deadline) { try { if (await check()) return; } catch { /* startup/election */ } await sleep(500); }
@@ -86,10 +97,14 @@ export async function main(): Promise<void> {
     await raw.connect();
     await raw.db('admin').command({ replSetInitiate: { _id: owner, members: ports.map((port, i) => ({ _id: i, host: `localhost:${port}`, priority: i === 0 ? 2 : 0 })),
       settings: { electionTimeoutMillis: 60000 } } });
-    await until(async () => { const status = await raw.db('admin').command({ replSetGetStatus: 1 });
-      return status.members.filter((member: any) => member.state === 1).length === 1 && status.members.filter((member: any) => member.state === 2).length === 2;
-    }, 'replica election');
-    assert.equal((await raw.db('admin').command({ hello: 1 })).isWritablePrimary, true);
+    report.electionSamples = [];
+    await until(async () => {
+      const sample = await readReplicaReadiness(raw.db('admin'));
+      report.electionSamples.push({ ...sample, at: new Date().toISOString() });
+      if (report.electionSamples.length > 8) report.electionSamples.shift();
+      return sample.ready;
+    }, 'writable replica election');
+    assert.equal(report.electionSamples.at(-1).ready, true);
     assert.equal((await raw.db(database).listCollections().toArray()).length, 0); ownsDatabase = true;
     report.mongoVersion = (await raw.db('admin').command({ buildInfo: 1 })).version;
     handle = new RealMongoSplitHandle({ uri, databaseName: database }); const store = new MongoSplitStateBackingStore(handle); await store.init();

@@ -101,6 +101,8 @@ jobs:
         run: pnpm -C cds install --frozen-lockfile
       - name: Type-check isolated drills
         run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Replica readiness and ownership regressions
+        run: pnpm -C cds exec vitest run tests/scripts/replica-confirmation-drill.test.ts
       - name: Real replica quorum loss and confirmation retry
         run: pnpm -C cds exec tsx scripts/replica-confirmation-drill.ts
       - name: Preserve replica evidence
