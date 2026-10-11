@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.86；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.87；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -750,3 +750,9 @@ v1.85 恢复审计：末尾固定805a actual ResourceRouter/nativeHTTP发现owne
 v1.86 恢复审计：固定3fdd独立原能力字段3/3及HTTP25、ACK8、fence10、admission19、capacity2、append1均真实再执行，各组重叠不相加；主递归1645hash/752Git对象匹配。guide2.96@50061ab先冻结原创建可信部署绑定，末尾18候选映射原BRC；CDS产品a7c62c98208a3f89a7b727f3052dd7142267abfa六文件实际内核State/DRService/Coordinator，唯一原configured的acceptance-resource-deploy内部续接、canonical lease及cap检查，原AR与新pending DR两ACK原子关联，每await后身份/配置/DR/lease复核，未知补偿占用，补偿显式deploymentRuns/branch hints。主旧源一缺前件红、23新绿、336相关/core0/full690files10252绿，6files19skip/1旧obsolete；移除origin overlay的原ACK2断言红，恢复23绿。独立a7c新18候选已请求待返，主绿不替代。仅可信绑定内核，actualHTTP部署/inspect/创建持久身份/注册与IMP外部creator未接；old无intent首次register last来源仍未闭。正式49全not-executed/visual N/A，45partial-local/4todo，八push/CI不是完整实际交付；仅本地commit，无push/PR/shared写/selfupdate，active。
 
 原49条acceptance/red/green/visual五字段原样冻结；新23内核用例不增加正式分母，不把pending公开前态当错误。主收据：/Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/trusted-binding-v186/main-a7c-product-receipt.json SHA256=9b9d0a9eed877b10c074268b1097e71abe067e129ee28b65d9a28f116ccf20e1。
+
+## v1.87 实际原创建到终结链恢复审计
+
+v1.87 恢复审计：末尾固定289原身份反例0/2→2/2、扩展2/12→12/12，其余fresh组32/8/19/3/7/1分列不相加；主回读1654hash/1624unique及748Git源零失败。289冻结原DR身份，guide2.97@65905f4ce、2.98@59a2d148e先冻结实际创建保存和原终结推进；新CDS产品06791bc7eea8960997ca841dbc73d55719012415接真实BranchRouter专用cap入口、同一单服务/Coordinator/DR/磁盘/preview/drain/exactgate。run-scoped新容器strict absence，无旧名/别名清理/默认tmpfs，actual create完整ID＋真实inspect owner/op/AR/image/fingerprint/noRW，服务branch ACK和AR两ACK后才connect/start；原run running及inspect running才登记，合法原报告finish/release仍保创建身份。未知/取消不端口重试或强删。主原alias404、连续finish409、取消误rm真红留存；HTTP31当前绿，相关265为末次building/executor fence前补充，actual core0、full691files10293绿/6files19skip/1旧obsolete/70.37s，full后仅fixture加reload.flush，最终HTTP31重跑。末尾067独立已请求待返，不继承主绿。仅受控CLI真实HTTP/State，不是Daemon/公网；旧无intent首次register根仍开放、IMP宿主creator未接。正式49全not-executed/visual N/A，45partial-local/4todo；八旧push/CI不等于完整交付；仅本地commit，无CDS push/PR/shared写/selfupdate，goal active。
+
+主固定收据：`/Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/owned-http-v187/main-067-product-receipt.json`，SHA256 `3ec007ea493ed03a50a70071172b9d887ca52dc43dc098bdd099bf2a40418a8c`；末尾289最终回执SHA256 `6a3a0c4f7cae3db1c6f6160cf8431723adba0694a254af969ba6e514405cd7c6`，主回读文件`/Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/owned-http-v187/verify-tail-289.json`。工具cwd错误及缺jwt夹具错误单独保留，不计产品红；原finish409和取消误删属于生产链缺口，修后连续路径及取消守卫通过。
