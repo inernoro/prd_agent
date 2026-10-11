@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.75 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.76 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -382,3 +382,13 @@ GitHub provider 与 CDS 本地单调时钟分别统计，不能相加或画共�
 CI 只有 version1、github-provider 时钟及既定两项 meaning、精确完整提交、当前仓库与分支、branch-image 工作流、push/workflow_dispatch、正 safe integer run/attempt 与合法仓库路径全部匹配才显示来源链接与 CI 测量；缺失或不匹配标来源待核对，不能复用本地阶段值冒充 CI。来源显示完整 SHA、分支、工作流和 attempt，通过前端 GitHub URL 唯一模块构造固定 HTTPS Actions 路径。只投影摘要白名单，不显示 raw intervals、provider body、环境或命令。未知数据只影响观察，不改变原失败建议、权限、部署命令或闪电资格。
 
 本批验收为实际 Router 摘要到实际抽屉消费者的有界检查，SSR/受控 DOM 不替代真实双主题视觉、当前部署 SHA、公网、Master/Daemon 或八分支压力验收。原生查询/页面自动门禁及 P0-04 实际验收完整接管后，可退场本临时实施说明。
+
+## 额外服务精确制品元数据（P5-06，实施前冻结）
+
+现有 PUT/GET extra-services 沿用项目权限和全列表语义，不新增激活接口。必须校验并持久化 prebuiltCommitPolicy、activeDeployMode、deployModes、buildScope、calls、role 和可选 artifactSource，不能返回200却静默丢掉 exact/express 资格。省略这些已有字段及 prebuiltImage 时沿用同 ID 已保存值；显式 null 清除可选元数据，空数组表示有意清空范围/调用关系，移除 Profile 仍按原列表与破坏性移除合同。
+
+新支持的 deployModes 限定最多16个有界命名的预构建 exact 模式，只接收 label/dockerImage/prebuilt/commitPolicy/buildScope/containerPort；未知字段、源码模式、fallback/managed/localArtifact 等运行资格不能从该模式入口注入。镜像引用按既有字符规则，只允许两种已支持 CDS 模板；scope最多128条、每条256字符的相对 glob，拒绝 ..、绝对路径及非法类型；calls最多128个合法Profile ID，role只接受web/api/worker。非法输入400且不改变已存配置；模式与active身份不匹配、exact基线未prebuilt同样拒绝。历史未声明这些字段的额外服务保持原行为。
+
+artifactSource 是操作者声明的预期 OCI source，只接受固定 HTTPS GitHub 仓库路径；声明后精确制品 gate 的实际 inspect 必须匹配 org.opencontainers.image.source，否则拒绝，不以真实SHA格式代替源身份。未声明的历史 Profile 沿用原 revision/架构/ID 判据。source label本身不能证明由某次可信CI产出，不扩大为签名或远端registry证明；实际制品和准入仍须真实 Docker/CI 验证。
+
+本次 IMP auxiliary 提案只在离线生成器校验主分支三元组；CDS通用复制/派生仍可复制extraProfiles，本修复不宣称平台全局main-only激活隔离。旧网关切换、真实网络/XXL、辅助运行分母和bootstrap终结receipt仍单独验收。平台完整自动元数据门禁及P5-06实际验收接管后退场本临时说明。
