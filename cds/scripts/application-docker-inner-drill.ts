@@ -1141,7 +1141,22 @@ async function main(): Promise<void> {
             const started = (await context.readDispatchEvents(projectId, branchId)).filter(event => event.action === 'branch.operation.started'
               && event.operationKind === 'deploy-profile' && event.operationId === activeRun.operationId
               && event.details.generation === activeRun.operationGeneration && event.commitSha === targets.cancelled);
-            assert.equal(started.length, 1); scopeProof.activeCancellationStarted = started[0];
+            // The original authenticated entry admits a logical operation,
+            // then its signed dispatch resumes the same lease. Both markers
+            // must remain visible; neither is a second deployment execution.
+            assert.equal(started.length, 2);
+            const admitted = started.filter(event => event.details.replayOf === null);
+            const resumed = started.filter(event => event.details.replayOf?.operationId === activeRun.operationId
+              && event.details.replayOf?.generation === activeRun.operationGeneration);
+            assert.equal(admitted.length, 1); assert.equal(resumed.length, 1);
+            for (const event of started) {
+              assert.equal(event.profileId, apiProfile.id); assert.equal(event.projectId, projectId);
+              assert.equal(event.branchId, branchId); assert.equal(event.operationSource, 'api.deploy-profile');
+              assert.equal(event.operationTrigger, 'manual');
+            }
+            assert.ok(Date.parse(admitted[0].at) <= Date.parse(resumed[0].at));
+            assert.equal((await readRuns()).filter(row => row.commitSha === targets.cancelled && row.profileId === apiProfile.id).length, 1);
+            scopeProof.activeCancellationStarted = { admitted: admitted[0], resumed: resumed[0] };
             stop = requestRaw(`${branchPath}/stop`); void stop.catch(() => {});
             await until(async () => (await readRuns()).find(row => row.id === cancelId)?.status === 'cancelled' ? true : undefined, 5000);
             assert.equal(cancelGate.expired(), false);
