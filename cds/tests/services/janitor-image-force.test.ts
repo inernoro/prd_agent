@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 /**
  * 「must be forced」镜像的受控强删（2026-07-27 生产实测）。
@@ -13,20 +13,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const execCalls: string[][] = [];
 let execResults: Record<string, string> = {};
 
-vi.mock('node:child_process', () => ({
-  execFile: (_cmd: string, args: string[], _opts: unknown, cb: (e: Error | null, out: string, err: string) => void) => {
+const { createImageDocker, IMAGE_HELD_PREFIX } = await import('../../src/services/janitor.js');
+// The finite Docker boundary now accepts IShellExecutor. Keep the original seven
+// removal predicates and fixture values; do not mock native processes or invoke Docker.
+const defaultImageDocker = createImageDocker({
+  exec: async command => {
+    // These existing fixture arguments contain no embedded spaces or quote characters.
+    const args = command.split(' ').map(word => word.replace(/^'|'$/g, '')).slice(1);
     execCalls.push(args);
     const key = args.join(' ');
     const hit = Object.entries(execResults).find(([k]) => key.includes(k));
     const val = hit ? hit[1] : '';
-    if (val.startsWith('ERR:')) cb(new Error('x'), '', val.slice(4));
-    else cb(null, val, '');
+    return val.startsWith('ERR:')
+      ? { exitCode: 1, stdout: '', stderr: val.slice(4) }
+      : { exitCode: 0, stdout: val, stderr: '' };
   },
-  execSync: () => '',
-  spawn: () => ({ stdout: { on: () => undefined }, on: () => undefined, kill: () => undefined }),
-}));
-
-const { defaultImageDocker, IMAGE_HELD_PREFIX } = await import('../../src/services/janitor.js');
+});
 
 describe('镜像强删的安全边界', () => {
   beforeEach(() => { execCalls.length = 0; execResults = {}; });

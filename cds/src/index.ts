@@ -3360,6 +3360,8 @@ const janitorService = new JanitorService(
   config.worktreeBase,
   undefined,
   async target => (await readDiskUsage([target], shell))[0],
+  undefined, undefined, undefined,
+  shell,
 );
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。

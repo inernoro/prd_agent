@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import { readDiskUsage } from './disk-usage-worker.js';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import type { BranchEntry } from '../types.js';
+import { ShellExecutor } from './shell-executor.js';
+import type { BranchEntry, IShellExecutor } from '../types.js';
 import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
 import {
@@ -115,63 +115,62 @@ export interface ImageDockerFns {
   removeImage: (image: string) => Promise<string | null>;
 }
 
-export const defaultImageDocker: ImageDockerFns = {
-  listImages: async () => {
-    const out = await execDocker(['images', '--format', '{{.Repository}}:{{.Tag}}'], 60_000);
-    return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
-  },
-  listInUseImages: async () => {
-    const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000);
-    return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
-  },
-  removeImage: async (image) => {
-    const out = await execDocker(['rmi', image], 60_000);
-    if (!out.startsWith('__ERR__')) return null;
-    const err = out.replace('__ERR__ ', '');
-    // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
-    // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
-    // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
-    // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
-    // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
-    if (!/must be forced/i.test(err)) return err;
-    const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000);
-    if (refs.startsWith('__ERR__') || refs.trim() !== '') {
-      // 「有容器引用」是**正常的保留**，不是失败（2026-07-28 生产实测：每轮固定
-      // 一个 admin 镜像因停止容器引用而卡住，于是 /api/janitor/state 里 failed
-      // 恒为 1、errors 恒为 1——一个永远亮着的红灯，真出新故障时反而看不出来）。
-      // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
-      return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
-    }
-    const forced = await execDocker(['rmi', '-f', image], 60_000);
-    return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
-  },
-};
+const fallbackShell = new ShellExecutor({ maxConcurrent: 1, maxQueued: 32 });
 
-function execDocker(args: string[], timeoutMs = 120_000): Promise<string> {
-  return new Promise((resolve) => {
-    execFile('docker', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
-      if (err) resolve(`__ERR__ ${(stderr || err.message || '').trim()}`);
-      else resolve((stdout || '').trim());
-    });
-  });
+export function createImageDocker(shell: IShellExecutor): ImageDockerFns {
+  return {
+    listImages: async () => {
+      const out = await execDocker(['images', '--format', '{{.Repository}}:{{.Tag}}'], 60_000, shell);
+      return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
+    },
+    listInUseImages: async () => {
+      const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000, shell);
+      return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
+    },
+    removeImage: async (image) => {
+      const out = await execDocker(['rmi', image], 60_000, shell);
+      if (!out.startsWith('__ERR__')) return null;
+      const err = out.replace('__ERR__ ', '');
+      // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
+      // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
+      // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
+      // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
+      // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
+      if (!/must be forced/i.test(err)) return err;
+      const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, shell);
+      if (refs.startsWith('__ERR__') || refs.trim() !== '') {
+        // 「有容器引用」是**正常的保留**，不是失败（2026-07-28 生产实测：每轮固定
+        // 一个 admin 镜像因停止容器引用而卡住，于是 /api/janitor/state 里 failed
+        // 恒为 1、errors 恒为 1——一个永远亮着的红灯，真出新故障时反而看不出来）。
+        // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
+        return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
+      }
+      const forced = await execDocker(['rmi', '-f', image], 60_000, shell);
+      return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
+    },
+  };
 }
 
-/**
- * 同 execDocker，但**同时**返回退出状态与已产出的 stdout。
- *
- * `docker inspect a b c` 里只要有一个 id 已经消失就整体非零退出，可它照样把找得到的
- * 那些打了出来。丢掉这份 stdout 会让调用方误以为「什么都没查到」——生产实测正是
- * 如此：容器在 ps 与 inspect 之间不断增删，挂载枚举恒定失败，孤儿回收永远停在
- * 「找到 66 个、一个不删」。
- */
-function execDockerDetailed(
-  args: string[], timeoutMs = 120_000,
+export const defaultImageDocker = createImageDocker(fallbackShell);
+
+const quoteArg = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+
+async function execDockerDetailed(
+  args: string[], timeoutMs = 120_000, shell: IShellExecutor = fallbackShell,
 ): Promise<{ ok: boolean; stdout: string; error: string }> {
-  return new Promise((resolve) => {
-    execFile('docker', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
-      resolve({ ok: !err, stdout: (stdout || '').trim(), error: (stderr || (err as Error | null)?.message || '').trim() });
+  try {
+    const result = await shell.exec(['docker', ...args].map(quoteArg).join(' '), {
+      timeout: timeoutMs, priority: 'diagnostic', schedulingGroup: 'janitor',
     });
-  });
+    return { ok: result.exitCode === 0, stdout: result.stdout.trim(), error: result.stderr.trim() };
+  } catch (error) {
+    return { ok: false, stdout: '', error: (error as Error).message || 'Docker execution failed' };
+  }
+}
+
+async function execDocker(args: string[], timeoutMs = 120_000, shell: IShellExecutor = fallbackShell): Promise<string> {
+  const result = await execDockerDetailed(args, timeoutMs, shell);
+  return result.ok ? result.stdout : `__ERR__ ${result.error || 'Docker execution failed'}`;
 }
 
 /**
@@ -181,22 +180,26 @@ function execDockerDetailed(
  * 刻意**不**带 `-a`(会删有 tag 的基础镜像→下次构建重新 pull 反而更慢)、
  * **不** `container prune`(会删停止的分支容器)、**不** `--volumes`(数据)。
  */
-export const defaultDockerPrune: DockerPruneFn = async () => {
-  const result: DockerPruneResult = { ran: true, reclaimed: [], errors: [] };
-  for (const [label, args] of [
-    ['悬空镜像', ['image', 'prune', '-f']],
-    ['构建缓存', ['builder', 'prune', '-f', '--keep-storage', '10GB']],
-  ] as Array<[string, string[]]>) {
-    const out = await execDocker(args);
-    if (out.startsWith('__ERR__')) {
-      result.errors.push(`${label}: ${out.replace('__ERR__ ', '')}`);
-    } else {
-      const reclaimedLine = out.split('\n').find((l) => /reclaimed/i.test(l)) || out.split('\n').pop() || '';
-      result.reclaimed.push(`${label}: ${reclaimedLine.trim() || '无可回收'}`);
+export function createDockerPrune(shell: IShellExecutor): DockerPruneFn {
+  return async () => {
+    const result: DockerPruneResult = { ran: true, reclaimed: [], errors: [] };
+    for (const [label, args] of [
+      ['悬空镜像', ['image', 'prune', '-f']],
+      ['构建缓存', ['builder', 'prune', '-f', '--keep-storage', '10GB']],
+    ] as Array<[string, string[]]>) {
+      const out = await execDocker(args, 120_000, shell);
+      if (out.startsWith('__ERR__')) {
+        result.errors.push(`${label}: ${out.replace('__ERR__ ', '')}`);
+      } else {
+        const reclaimedLine = out.split('\n').find((l) => /reclaimed/i.test(l)) || out.split('\n').pop() || '';
+        result.reclaimed.push(`${label}: ${reclaimedLine.trim() || '无可回收'}`);
+      }
     }
-  }
-  return result;
-};
+    return result;
+  };
+}
+
+export const defaultDockerPrune = createDockerPrune(fallbackShell);
 
 /** Report returned by a single sweep pass. */
 export interface JanitorSweepReport {
@@ -368,40 +371,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     }
     return { dirs: out, unreadable };
   },
-  listMountedHostPaths: async () => {
-    // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
-    // `docker ps --format` 里的 .Mounts 是**逗号分隔的字符串**，对它 `{{range}}`
-    // 会让 Go 模板报错 → 整条命令非零退出 → 这里返回 null → 对账降级成只报不删。
-    // 生产第一轮就是这样：找到 66 个孤儿目录、一个都没敢删（护栏起作用了，
-    // 但功能等于没生效）。inspect 的 .Mounts 才是真正的数组。
-    const ids = await execDocker(['ps', '-aq'], 60_000);
-    if (ids.startsWith('__ERR__')) return null;
-    const idList = ids.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (idList.length === 0) return [];
-    const paths: string[] = [];
-    // 分批，避免容器多时超出单条命令的参数长度上限
-    for (let i = 0; i < idList.length; i += 100) {
-      const batch = idList.slice(i, i + 100);
-      const r = await execDockerDetailed(
-        // 用 {{println}} 而不是 {{"\\n"}}：后者在 TS 单引号串里 \\n 会被转义成**真正的
-        // 换行**塞进 Go 模板的引号内，模板解析直接失败（unterminated quoted string），
-        // docker 非零退出且**无任何输出** —— 生产上挂载枚举一直返回 null 的真凶。
-        // println 不需要引号，从根上避开这一类转义坑。
-        ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000,
-      );
-      // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
-      // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
-      // 忽略它完全安全。真正危险的是「一条都没查到却当成没人挂载」——那种情况下
-      // stdout 为空，下面按失败处理返回 null，调用方整轮只报不删。
-      //（生产实测：容器持续增删，此前恒定走 null 分支，孤儿回收一直停在 0/66。）
-      if (!r.ok && !r.stdout) return null;
-      for (const line of r.stdout.split('\n')) {
-        const t = line.trim();
-        if (t) paths.push(t);
-      }
-    }
-    return paths;
-  },
+  listMountedHostPaths: () => listMountedHostPaths(fallbackShell),
   removeDir: async (dir) => {
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -493,6 +463,42 @@ function branchExpiryAnchorMs(branch: BranchEntry): number {
   return latest;
 }
 
+async function listMountedHostPaths(shell: IShellExecutor): Promise<string[] | null> {
+  // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
+  // `docker ps --format` 里的 .Mounts 是**逗号分隔的字符串**，对它 `{{range}}`
+  // 会让 Go 模板报错 → 整条命令非零退出 → 这里返回 null → 对账降级成只报不删。
+  // 生产第一轮就是这样：找到 66 个孤儿目录、一个都没敢删（护栏起作用了，
+  // 但功能等于没生效）。inspect 的 .Mounts 才是真正的数组。
+  const ids = await execDocker(['ps', '-aq'], 60_000, shell);
+  if (ids.startsWith('__ERR__')) return null;
+  const idList = ids.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (idList.length === 0) return [];
+  const paths: string[] = [];
+  // 分批，避免容器多时超出单条命令的参数长度上限
+  for (let i = 0; i < idList.length; i += 100) {
+    const batch = idList.slice(i, i + 100);
+    const r = await execDockerDetailed(
+      // 用 {{println}} 而不是 {{"\\n"}}：后者在 TS 单引号串里 \\n 会被转义成**真正的
+      // 换行**塞进 Go 模板的引号内，模板解析直接失败（unterminated quoted string），
+      // docker 非零退出且**无任何输出** —— 生产上挂载枚举一直返回 null 的真凶。
+      // println 不需要引号，从根上避开这一类转义坑。
+      ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000, shell,
+    );
+    // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
+    // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
+    // 忽略它完全安全。真正危险的是「一条都没查到却当成没人挂载」——那种情况下
+    // stdout 为空，下面按失败处理返回 null，调用方整轮只报不删。
+    //（生产实测：容器持续增删，此前恒定走 null 分支，孤儿回收一直停在 0/66。）
+    if (!r.ok && !r.stdout) return null;
+    for (const line of r.stdout.split('\n')) {
+      const t = line.trim();
+      if (t) paths.push(t);
+    }
+  }
+  return paths;
+
+}
+
 export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
@@ -523,7 +529,17 @@ export class JanitorService {
     private readonly imageDocker: ImageDockerFns = defaultImageDocker,
     /** 孤儿 worktree 对账所需的磁盘读写（可注入以便测试，不真的碰磁盘）。 */
     private readonly orphanWorktreeFs: OrphanWorktreeFs = defaultOrphanWorktreeFs,
-  ) {}
+    shell?: IShellExecutor,
+  ) {
+    // Keep explicit injected callbacks; only the embedded defaults use this runtime.
+    if (shell) {
+      if (dockerPrune === defaultDockerPrune) this.dockerPrune = createDockerPrune(shell);
+      if (imageDocker === defaultImageDocker) this.imageDocker = createImageDocker(shell);
+      if (orphanWorktreeFs === defaultOrphanWorktreeFs) this.orphanWorktreeFs = {
+        ...defaultOrphanWorktreeFs, listMountedHostPaths: () => listMountedHostPaths(shell),
+      };
+    }
+  }
 
   /**
    * 孤儿 worktree 对账：磁盘上的 `<base>/<项目>/<分支>` 目录 vs 台账里分支声明的
