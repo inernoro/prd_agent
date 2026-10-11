@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.42；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.43；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -422,3 +422,11 @@ v1.41独立ff fixture机制旧3/6→新6/6，原28语义文本一致/独立modul
 981708f2e02d3819cfacc5aff016562b3986752a将statfs交共享Shell Worker，最多两个目标/stdin/diagnostic disk-usage/3秒整队列执行，Master不再同步statfs。diskGuard cold/60秒过期await、同probe合并、epoch与超时晚写防护；partial不能以较低单盘解除已知压力，更高可升级，failed保留旧tier/cold既有fail-open。部署/复制集写入口await；压测HTTP新异步准入，完成前不占位/发请求，完成后再核branch/profile及容量。Janitor sweep/snapshot、boot诊断、watchdog与selfcheck均接async/shared executor；snapshot async异常转Express，递归删除未迁移。指南v2.60先冻结合同。主guard旧5红/2绿→7绿，HTTP拔接线6红→恢复6绿，snapshot GET曾1红+1unhandled，修后GET/PUT8绿；worker10、压测2、自检2补充。相关12files249及另2files52（有重叠，不求和）；core tsc0，最终full666files9730green/6files19skip/1obsolete/63.13s，阶段full9726仅历史。固定独立复验待返；本地红绿不替代真实Master/Daemon、公网、49formal或视觉。
 
 最新fetch两仓库基线未变：CDS origin/main45533b4，IMP origin/teste2fd7c8、origin/main2bf49bf；只本地commit，未push/PR/merge/selfupdate。原生goal active，49项formal全部not-executed，视觉N/A；八分支push既有授权仍有效，平台/隔离准入未满足。root precommit仍pnpm失败后假称通过，验证仅使用明确cds tsc和测试日志。早期commit-msg格式拒绝已用fix(cds)中文格式修正，不是实现或测试失败。
+
+## v1.43 磁盘等待后的压测身份与权限恢复审计
+
+981708固定独立21/21 guard、14/14 Worker、11/11 routes、4/6 loadtest、1/2 scope/capacity、3/3 index（重叠不求和），新增3危险派发真红：fresh等待期间project a→b、同ID后继对象、同项目权限predicate撤销，仍202/outbound1。权限为controlled seam、outbound为counter，不称生产auth/Forwarder。原件acceptance-p2-disk-981708-{source-manifest,evidence-summary}.json保留。guide2.61先冻结原对象/运行意图及post-await权限规则后，63324ff9c5b6172beb19317cf39601d0b9c5c508增加原Branch引用与身份/主服务/RS/host-path/route-profile/allowlist fingerprint，缺失404、替换/漂移409；fresh结束后check→同步authorize→check→同步start，无新await、无重冻结后继；纯lastAccessed/notes放行。主移除intent fence4真红、移除HTTP权限拒绝1真红→恢复相关7files132green/core0。独立原3危险派发在633全部已消失：后继409、权限撤销403/两检查/0派发；项目漂移409/0派发，原严格403 predicate的5/6原件保留，不把改变期望称原expect红绿；另按事先guide2.61合同验状态，扩展固定633独立38/38（原26包含，不相加）通过；原strict403 fixture5/6保留，预先guide2.61状态合同6/6另列，scope/capacity2/2。14源manifest SHA256=990fae80ae8fc68842162c5e7d3f909d97e2372238074168986f34de19b663ec；summary SHA256=788ab521d5a030eb69895a943283febebdffc46649a82c0bac18f23d3641c9d4，epoch=checkpoint-63324-disk-intent-local-3dangerous-dispatch-closed，无新增真红。
+
+633 full实际9736green+1project-detect missing-repo用例socket hang up失败/19skip/1obsolete/64.41s，原无socket轨迹，root未知。主actual该helper同owned port六轮回归旧1真fixture-red；470b239deaad252b817e00327de1cf5c6e08a79d仅测试1路径15+/3-：agent:false、await server.close、保留原6业务断言、附reusedSocket错误标记，不retry；新7/7green。此机制不逆推原full同因、不修生产500。470固定full666files9738green/6files19skip/1obsolete/64.55s；生产与633字节一致，显式复用633局部证据，独立470实际helper机制旧3/6→新6/6，每轮真实新连接；原6语义it正文相同、无retry，固定模块7/7仅补充。14源633→470相同显式复用。
+
+仍未push/PR/merge/selfupdate，原生goal active；正式49 not-executed、visual N/A。旧3真红与严格403谓词原件不抹除、不假称实际生产权限或Daemon闭合。
