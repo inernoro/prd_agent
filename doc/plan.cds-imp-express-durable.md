@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.41；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.42；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -416,3 +416,9 @@ expected result：混合观察积压有界且不丢live顺序，重连不能让�
 v1.41固定ff full663files9700green/6files19skip/1obsolete/63.40s；原0d full1reset红原件保留、root未逆推。独立fixture待返，正式49未执行。
 
 v1.41独立ff fixture机制旧3/6→新6/6，原28语义文本一致/独立module29绿补充；13生产源与0d相同显式复用局部结果，未声称新API再验。原0d full一reset原件/root未知不变，正式49未执行、goal active。
+
+## v1.42 磁盘异步准入本地检查点（独立待验）
+
+981708f2e02d3819cfacc5aff016562b3986752a将statfs交共享Shell Worker，最多两个目标/stdin/diagnostic disk-usage/3秒整队列执行，Master不再同步statfs。diskGuard cold/60秒过期await、同probe合并、epoch与超时晚写防护；partial不能以较低单盘解除已知压力，更高可升级，failed保留旧tier/cold既有fail-open。部署/复制集写入口await；压测HTTP新异步准入，完成前不占位/发请求，完成后再核branch/profile及容量。Janitor sweep/snapshot、boot诊断、watchdog与selfcheck均接async/shared executor；snapshot async异常转Express，递归删除未迁移。指南v2.60先冻结合同。主guard旧5红/2绿→7绿，HTTP拔接线6红→恢复6绿，snapshot GET曾1红+1unhandled，修后GET/PUT8绿；worker10、压测2、自检2补充。相关12files249及另2files52（有重叠，不求和）；core tsc0，最终full666files9730green/6files19skip/1obsolete/63.13s，阶段full9726仅历史。固定独立复验待返；本地红绿不替代真实Master/Daemon、公网、49formal或视觉。
+
+最新fetch两仓库基线未变：CDS origin/main45533b4，IMP origin/teste2fd7c8、origin/main2bf49bf；只本地commit，未push/PR/merge/selfupdate。原生goal active，49项formal全部not-executed，视觉N/A；八分支push既有授权仍有效，平台/隔离准入未满足。root precommit仍pnpm失败后假称通过，验证仅使用明确cds tsc和测试日志。早期commit-msg格式拒绝已用fix(cds)中文格式修正，不是实现或测试失败。
