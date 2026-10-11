@@ -136,11 +136,15 @@ async function main(): Promise<void> {
     await setupGit('init', '-q');
     await setupGit('config', 'user.email', 'owned@example.test');
     await setupGit('config', 'user.name', 'Owned Git Probe');
+    await fs.mkdir(path.join(releaseRepo, 'cds/web/src'), { recursive: true });
+    const ownedRuntimeFile = path.join(releaseRepo, 'cds/web/src/owned.tsx');
+    await fs.writeFile(ownedRuntimeFile, 'export const ownedVersion = 1;');
     await fs.writeFile(path.join(releaseRepo, 'owned.txt'), 'first');
-    await setupGit('add', 'owned.txt'); await setupGit('commit', '-qm', '自有第一版');
+    await setupGit('add', '.'); await setupGit('commit', '-qm', '自有第一版');
     const firstCommit = await setupGit('rev-parse', 'HEAD');
+    await fs.writeFile(ownedRuntimeFile, 'export const ownedVersion = 2;');
     await fs.writeFile(path.join(releaseRepo, 'owned.txt'), 'second');
-    await setupGit('add', 'owned.txt'); await setupGit('commit', '-qm', '自有第二版');
+    await setupGit('add', '.'); await setupGit('commit', '-qm', '自有第二版');
     const latestCommit = await setupGit('rev-parse', 'HEAD');
     await setupGit('update-ref', 'refs/remotes/origin/main', latestCommit);
     const commitClock = new commitClockModule.ReleaseCommitClock({ shell });
@@ -156,7 +160,7 @@ async function main(): Promise<void> {
     assert.equal(await commitRail.countCommitsBetween(owner, firstCommit, latestCommit), 1);
     assert.equal(await commitRail.countCommitsBetween(owner, 'HEAD', latestCommit), null);
     assert.equal(shell.getStats().active, 0);
-    report.releaseGit = { firstCommit, latestCommit, observedCommit: railRead.rail.nodes[0].sha,
+    report.releaseGit = { firstCommit, latestCommit, changedPaths: (await setupGit('diff', '--name-only', `${firstCommit}..${latestCommit}`, '--')).split('\n'), observedCommit: railRead.rail.nodes[0].sha,
       behindCount: railRead.positions.owned.behindCount, aheadCount: railRead.positions.owned.aheadCount,
       sharedRead: railRead === sharedRead, afterReads: shell.getStats(),
       scope: 'owned real local Git repository through compiled readers and existing process pool; not public release HTTP or complete synchronous filesystem removal' };
@@ -263,8 +267,12 @@ async function main(): Promise<void> {
     } finally {
       await fs.writeFile(gitGate, 'release'); await watchdogRun; await new Promise<void>(resolve => diagnosticServer.close(() => resolve()));
     }
+    report.stage = 'compiled-owned-async-stuck-deploy-fresh-state';
     assert.equal(oldBranch.ciImageError, undefined); assert.equal(currentBranch.ciImageError, undefined);
-    currentBranch.githubCommitSha = latestCommit; await reconciler.run(); assert.ok(currentAlarm()?.includes('镜像落后'));
+    currentBranch.githubCommitSha = latestCommit; await reconciler.run();
+    report.stage = 'compiled-owned-async-stuck-deploy-cached-current-alarm';
+    report.watchdogGit.cachedCurrentAlarm = currentAlarm() ?? null;
+    assert.ok(currentAlarm()?.includes('镜像落后'));
     assert.equal(JSON.parse(await fs.readFile(gitMarker, 'utf8')).pid, watchdogProducer!.pid);
     assert.equal(oldBranch.ciImageError, undefined); assert.equal(operationShell.getStats().active, 0); assert.equal(operationShell.getStats().bytes, 0);
     report.watchdogGit.freshStateRespected = true; report.watchdogGit.cachedEvidenceAppliedToCurrentObject = true; report.watchdogGit.noDuplicateGitForCachedPair = true; report.watchdogGit.afterReads = operationShell.getStats();
