@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.39；日期：2026-10-11；状态：active。
+版本：v1.41；日期：2026-10-11；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,18 +76,18 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:7400ccc64fba15e6e6a27af2552855ad6a0b0520,IMP:3c8357f15bbf586a32d66de2cd965cd0552424bb（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:148/0相对origin/main,IMP:29/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:ff06d5d3f1750ee7269e90a62a7eeb55a5770c48,IMP:eaf49a44772f63c6a32f80bb07473cf5a851f296（计划文档）（实施检查点，后续计划文档提交另计）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；ahead/behind=CDS:151/0相对origin/main,IMP:30/0相对origin/test；environment=本地独立工作树,线上只读探测；database=N/A本轮未写入；tenant=N/A平台基础设施；role=本地主进程,线上机器只读；route=https://cds.miduo.org/branches/defd4695ab5f；auth=本地无登录要求,线上现有CLI项目凭据不输出；external_ids=bootstrap dr_23b50418a7954b2a41e6f2b4(其他任务活动,不操作)`
 - 写入所有权：`owner=本任务/root仅两新工作树；other_tabs=原任务工作树read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=本地P1/P2/P4与IMP exact合同部分实现,已保存固定本地SHA,未发布`
 - 范围账本：`goal-core=49条计划与完整极速/控制面治理；required-prerequisite=集成已有CDS修复及隔离验收依赖；environment-recovery=仅基线盘点,不重建持久数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,其他任务目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标,不扩大IMP业务分母或改CL合同。
-- 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。 systemd命令共享Worker、实际path/inode唯一writer、回滚归属与最终结果fence已固定本地实现，独立37/37；直接异步递归回收草案因新owner误删真红已否决并还原，不作完成。 release clock同步文件load/persist移共享Worker、并行ready及两快照串行写已本地实现，原e1独立四真红已在1dc7关闭；主108/core0/full9609，原32独立全绿及扩展9绿（有控制重叠），仍只本地。 混合统一SSE9f固定独立本地49check=44绿5红（非正式49ID），已在61a785修审批迟到GET/POST卸载/延迟timer与无效active时间；61固定独立原49local全绿、decision12/timestamp9单列重叠/full9664；740五观察GET预算/详情4并发已接，五storm旧101/102红→87相关绿/core+web0/build，新full663files9687绿/62.70s，独立待返，其他流未完成。
+- 当前实现事实：两独立工作树与49项双副本计划/TDD已建立。P1精确制品/版本引用/cache digest及新发现真实prebuilt缺省默认部分实现；P2执行Worker/supervisor硬中断、ACK背压/调度和日志热点迁移部分实现；P3取消贯穿租约、Shell、pull、run、启动信号、TCP/HTTP/retry/日志，私有候选身份/网络/账本、全部运行事实冻结、实际Forwarder ACK、切换/失败回滚、worker/可写卷停止恢复约束、版本字段冻结和整分支受控入口已接本地代码。P4真实JSON多等待屏障、durable run暂存及空清单/整分支/单服务可靠终态，实际覆盖/黄蓝/独立版本状态部分实现；普通删除失败保留身份、版本与端口。IMP13角色exact合同及权威文档已校准。本地取消终态归类修复已独立13/13；启动/自动重启按canonical身份扫描，通用reaper保护未released两图与candidate/protected；canonical-name未知归属不报告missing；未released新写入准入已接coordinator/index与直接候选编排，stop显式待对账。所有改动仍未发布；P3其他入口、Daemon取消/重启/网络回收与恢复协调、P1旧默认迁移/依赖、P4增量/SSE与Mongo、IMP辅助生命周期及完整生产证据未完成。 systemd命令共享Worker、实际path/inode唯一writer、回滚归属与最终结果fence已固定本地实现，独立37/37；直接异步递归回收草案因新owner误删真红已否决并还原，不作完成。 release clock同步文件load/persist移共享Worker、并行ready及两快照串行写已本地实现，原e1独立四真红已在1dc7关闭；主108/core0/full9609，原32独立全绿及扩展9绿（有控制重叠），仍只本地。 混合统一SSE9f固定独立本地49check=44绿5红（非正式49ID），已在61a785修审批迟到GET/POST卸载/延迟timer与无效active时间；61固定独立原49local全绿、decision12/timestamp9单列重叠/full9664；740五观察预算独立3POST漏刷新+5持续空真红保留，风暴1active+1dirty及YAML4并发/5s已局部成立。0d成功回执立即新权威GET、同纪元完成快照可见并补读，主12新红→99相关/core+web0/build；固定0d原八独立红关闭，full9698green+1HTTPreset红/28focused绿，原根因未知。ff只隔离HTTP测试helper连接、1fixture先红→29绿，fixedfull663files9700green/63.40s，独立fixture机制旧3/6→新6/6复绿、原业务文本一致，生产与0d同源，其他流未完成。
 - 本批实现检查点：2ea固定独立44项41绿3红（未消费续约时pending提前出队）；ec939原44及新增3共47/47局部复绿，删除Map存在守卫1真红。原3红保留；相关313/core tsc绿。 efcdaf0dc21687fbcecb6af0b0fafaaa953fdfc0重放观察：5秒响应头、30分钟观察、256KiB帧/16KiB解码片；非2xx不读正文，complete.ok/错误/mergedjoined/unknown分别记录，只记有界枚举及合法run ID；不重试或取消实际执行。实际入站HTTP＋fake出站/Docker5旧红→5绿，观察器13及协调/路由共331局部绿、core tsc绿；efcd固定独立实际自有HTTP/native fetch23项21绿2真红（complete.ok=true却带started/rejected被误判完成）；明确cancelled被记失败也已发现。12ad新增有限状态及取消归因，主3旧红→绿，相关335/core tsc绿，固定独立待返。未改实际run，不把观察取消当Daemon闭合。 仍未实现durable pending队列，不证明实际Master/Daemon或线上通过。 八候选固定清单未变，独立8/8与280合同局部绿，104角色仅静态枚举，未push/未部署。
-- 证据纪元：`target_sha=CDS:7400ccc64fba15e6e6a27af2552855ad6a0b0520,IMP:3c8357f15bbf586a32d66de2cd965cd0552424bb；tested_sha=CDS:7400ccc主87/core+web0/build/full9687,独立待返；61a785原49local+decision12/timestamp9（控制重叠）/full9664仅历史；9f440独立49localchecks=44绿5红/full9649仅历史；1dc7原32扩展9与e1四红/full1socket只历史,旧断连原因未闭合；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-11T00:44:06Z`
+- 证据纪元：`target_sha=CDS:ff06d5d3f1750ee7269e90a62a7eeb55a5770c48,IMP:eaf49a44772f63c6a32f80bb07473cf5a851f296；tested_sha=CDS:ff06d5d测试fixture29绿/full9700green,生产与0d同源；0d05460主99/core+web0/build/独立八红关闭/full9698green+1HTTPreset红（原root未知）；7400ccc主full9687/独立8活性红仅历史；61a785原49local+decision12/timestamp9（控制重叠）/full9664仅历史；9f440独立49localchecks=44绿5红/full9649仅历史；1dc7原32扩展9与e1四红/full1socket只历史,旧断连原因未闭合；IMP:八候选280静态见清单；deployed_sha=N/A候选未部署；environment=本地独立工作树/自有进程,共享CDS与mycds只读；observed_at=2026-10-11T00:57:05Z`
 - 本批新增恢复事实：66fb固定独立自有nativeHTTP/StateJSON及实际index/route摘录17场景15绿2红：原项目p的branch被new-project替换仍派旧SHA、deploy-profile缺Profile扩大whole；第二仅helper合法类型允许的边界，不声称Router能产生。59d8736036cb6faa699fe73c506c5cce867eef39在派发前核原project/branch/范围，未知或漂移、缺Profile/矛盾或非部署kinddrop，日志归原来源；主3反例红→344相关绿/core tsc0。固定独立进行中，本SHA未再跑全量；66fb全量9552仅历史。
 - 新鲜验证证据：59d固定独立59/59局部（重放原17+扩展7+observer24+实际Router失败4/取消4+观察socket外部abort后执行仍受租约控制2+真实默认5秒头budget1）；原66fb两scope红关闭。whole正例旧带Profile与State自动填legacy项目两轮夹具偏差原件保留，未放宽scope。66fb权限清理v2独立6/6：清理ACK未知memory gate/竞态更新409，磁盘若已完成cleanup则重载仅安全old=a、新b无grant，5flush确认后清账。v1要求此时磁盘仍有journal的探索红保留解释，不作越权或500修复结论。 dc2f7d0ce47584656d948e61d048f17696f0da26本地源码例外queue按冻结project轮转/同项目FIFO，匿名兼容组FIFO；默认512等待/30min上限，超量与过期明确失败且不取消运行holder，授予/取消/超时清timer/listener，onStart观察异常释放槽位。whole/profile两路实际传projectId、任何gate失败结束排队episode，日志/UI改等待总量不承诺绝对位置；tracker旧min位置断言退场并保留旧红。主5新反例真红→25 gate绿，5files288相关/core及web tsc0，固定全量655files9560绿/6files19skip/1obsolete snapshot/65.48s。独立固定复验进行中；phase公平队列、durable pending、实际Master/Daemon与公网未验。 原3635全量1红与受控3-vs-5夹具红、66fb9552绿各按固定源保留；所有正式49/视觉/8支仍未执行。
 - 当前阻塞或环境限制：完整线上版本未证实、隔离压力宿主尚未核定；本机Docker CLI存在但守护进程无法连接，Colima状态不一致,未重启其他VM；本机16GiB已大量压缩/交换，不在其上新增压力VM冒充隔离验收宿主；原IMP索引158条超过60上限,只读reconcile无可归档终态,不猜测其他目标完成；本目标直接brief续接,索引登记待治理协调。 额外只读探测mycds SSH成功（Linux16CPU/约31GiB RAM），sudo -n Docker可读，承载大量他人及IMP/MAP常驻服务；2026-10-11 05:32 CST可用628MiB、swap8191/8191MiB、load2.25/26.60/33.20，不作隔离压力宿主，不停他人服务/启新容器。本机Docker仍不可达；隔离宿主问题待用户回复。
 - 涌现决定：N/A尚无需登记的新终态机制；保留强门槛不以服务端指标替代公网。
-- 下一动作与完成条件：固定7400ccc权威GET合并独立复验，有红继续修；其他Master JSON/文件/磁盘热点、安全回收身份设计、durable pending/阶段公平、P4其余流、IMP aux terminal receipt继续同编号实施。隔离宿主问题仍待答，未在共享宿主注入故障；依既有授权和准入完成八支真实完整交付、双主题视觉、公网/恢复及48小时/一周门槛。
+- 下一动作与完成条件：固定ff06d5d HTTP测试生命周期独立复验及full核对，有红继续修；下一有界步骤先冻结diskGuard冷/过期fresh探测、未知与超时合同，避免异步迁移导致空间闸门放宽；其他Master JSON/文件/磁盘热点、安全回收身份设计、durable pending/阶段公平、P4其余流、IMP aux terminal receipt继续同编号实施。隔离宿主问题仍待答，未在共享宿主注入故障；依既有授权和准入完成八支真实完整交付、双主题视觉、公网/恢复及48小时/一周门槛。
 - 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
@@ -266,7 +266,7 @@ expected result：旧读不能复活已决定审批、卸载不发延迟GET/不�
 
 先红：固定61a785五个实际component/effects受控API持有期间100事件各发101次（Operator102）而非1在途+1补读；重连/筛选应强制新纪元，普通信号不能无界并发；5秒/忽略abort晚回复/卸载不启动补读/失败保最后数据另验。该局部合同不替代真实API性能、Master/Daemon/public、100SSE与最终双主题视觉；正式门禁完整接管后退场临时实施说明。
 
-## v1.39 权威观察GET预算固定检查点（独立待验）
+## v1.39 权威观察GET预算历史检查点（独立八活性红保留）
 
 61a785已由末尾固定11源Git逐字节核验，原writer11/HTTP10/hook10/consumer18共49localchecks全绿（非正式49ID）；decision扩展12/12（旧9f同fixture3/12九红）与timestamp9/9单列、有重叠控制不说唯一70。主61full662文件9664绿、6文件19skip、1obsolete、63.39s；仅61历史，不传播740。原9f五真红均关闭，未改变原期望；独立归档acceptance-p4-unified-61a78-{source-manifest,evidence-summary}.json。
 
@@ -277,3 +277,35 @@ expected result：旧读不能复活已决定审批、卸载不发延迟GET/不�
 expected result：普通事件无界并发改为有界读取且保真实新数据，慢body不永久占观察，YAML不丢。current evidence：5storm真红→87绿/core+web0/build；独立待返。visible result：未部署/visual N/A。gap：其余P1/P2/P3/P4/IMPaux与实际8branch/Master/Daemon/public/双主题/48h/一周未执行。required action：末尾按固定740原件及新增边界复验，主继续同编号缺口，不改其他任务。正式49not-executed，38partial-local/11todo，目标active。
 
 v1.39固定740全量已结束：663files9687green、6files19skip、1obsolete snapshot、62.70s，/tmp/cds-express-7400ccc-full.log；独立进行中。双GoalState审计通过，索引158→158归档0，不猜关其他目标。
+
+## P4-03 观察活性与成功回执补读合同细化（修复前冻结）
+
+740原观察合同将dirty之前完成的同纪元GET一概丢弃，已被实际持续事件反例否定：五组件每轮GET已完成但仍一直空/Agent loading，且POST成功清掉dirty导致漏看新增pending。此处明确替代上述“普通dirty即使GET过时不得回填”谓词；原版本证据不删、不静默改期望，不由修改断言产生通过。
+
+同一项目/筛选/连接纪元内串行完成的GET是真实权威快照，可展示为最后有效数据，再按dirty补一次最新GET。事件到达只证明需要补读，不能证明正在返回的真实快照应丢弃；持续事件不得让观察一直空或busy。新epoch/filter/成功命令回执/dispose使原active task身份失效，原请求迟到回复仍不得覆盖，审批已决定条目不得回插。成功approve/reject必须先使旧观察失效，再立即GET权威pending（不依赖下一事件）；失败POST保原条目，卸载后回执仍不发GET/不写状态。1在途组+1dirty、5秒读取组、YAML4并发、scope/服务端命令不变。
+
+新先红：主6条成功回执漏补读、5actualcomponent持续事件无数据、1helper连续burst无apply（12fail/51pass）；独立740三reject漏补读、五持续空红单列含重叠。旧并发/dirty predicate变更必须明示并保原件，独立新纪元同时验补读最终最新值、同纪元连续可见、跨纪元/命令/卸载无回插，不降低这些安全边界。正式P4真实门禁完整接管后退场临时实施说明。
+
+## v1.40 观察活性历史检查点（八局部真红独立关闭，full一reset失败保留）
+
+固定740独立13源Git逐字节一致：writer11/11、nativeOwnHTTP10/10、hook10/10、原component18/18、POST原护栏12/12、actualreader/api13/13、storm28/31、持续观察1/6，八分组含重叠不加唯一总分。三POST漏补读+五持续空共八独立真红保留；YAML11条4并发与真实5秒组截止局部通过。summary acceptance-p4-authority-7400-evidence-summary.json，主61/740 full仅父补充，非实际Master/公网/DOM/视觉。
+
+0d05460a0f496e380bcf49eb06b82abd5d879b17七文件48+/20-：成功approve/reject reader.start立即失效旧task并发起新权威GET，不依赖下一event；POST卸载/失败护栏保持。同纪元串行GET完成先展示last-valid，再按dirty补一最新读取；只有被epoch/filter/command/dispose取代的active task失效。五组件持续事件期间不再一直空/Agent loading。旧普通dirty丢弃谓词已由上节修正合同明确替代，原expect/日志留历史，安全边界与最终最新读取不放宽。
+
+主先红12fail/51pass：6成功回执漏GET、5实际component持续空、1helper连续burst无apply；修后6files99green/core+web tsc0/Vitebuild0，/tmp/cds-authority-receipt-liveness-{red,green,core-tsc,web-tsc,web-build}.log。固定0d full与独立八旧红/扩展检查进行中，未继承740full到新源。8支实际交付/双主题视觉/public/Daemon/100SSE/48h/一周未执行，所有49formal notexecuted、38partial-local/11todo、目标active。
+
+expected result：成功命令不丢下一权威pending，持续事件不让有界GET永远无结果，跨身份旧响应仍无写回。current evidence：12真红→99相关绿/core+web0/build，独立待返。visible result：未部署/visual N/A。gap：正式完整运行分母与其他本地计划条目仍待。required action：原件独立复验、有红继续修；主继续diskGuard等Master热点设计/安全回收/durable pending公平/其他SSE和IMPaux receipt，隔离准入后按持续授权八支真交付，不改他人目标。
+
+## v1.41 HTTP测试生命周期有界修复检查点（独立待验）
+
+0d固定13源Git一致，原740八局部真红按原期望复绿；分组writer11/11、ownHTTP10/10、hook10/10、consumer18/18、POST12/12、新合同storm31/31、reader13/13、原continuous6/6、六动作扩展12/12，含重叠不相加。旧dirty禁展示谓词原样执行仍storm26/31及reader11/13，明确5+2 retired-contract差异历史原件，不当新产品红，也不以改期待宣称修复。acceptance-p4-authority-0d054-evidence-summary.json固定归档。
+
+0d full退出1：662files9698green+1file1case readECONNRESET、6files19skip、1obsolete、63.00s。失败为project-branch-groups同内容重试test；原focused28/28绿（1.44s）。独立核相关test/route/branchgroups/state/JSON五源与740完全相同，原日志没有哪个PUT/socket.reused/close轨迹，不能逆推原失败root或生产500；原件及parent-full-supplement.json保留，未称全绿。
+
+主自有Node22.21.1 loopback机制probe：server.close后同自有端口新server，defaultAgent100轮50ECONNRESET，全部reusedSocket=true/newserver connections0；agent:false100/100。该条件可复现机制，不能证明原full临时端口那次同因。将同端口6轮regression加到actual测试helper：原helper1truefixture-red；ff06d5d3f1750ee7269e90a62a7eeb55a5770c48仅1测试路径19+/1-，请求agent:false并给错误增加reusedSocket诊断，原28业务权限/版本/flush断言不改，不加HTTPretry。新29/29局部绿，/tmp/cds-branch-groups-fixture-close-reuse-{red,green}.log。生产代码未变，与0d13源显式核对后只复用其已执行局部结论，不假称重跑全新API；ff full和独立fixture复验待返。
+
+expected result：短生命周期测试连接不复用已关闭前任socket，原业务断言仍成立，不隐瞒原full失败。current evidence：1fixture红→29绿/自有机制对照，0d八产品局部红独立已关闭；ff full及独立待返。visible result：未部署/visual N/A。gap：原0d reset root缺trace、生产500/OAuth/其他socket roots不闭；其余本地计划与正式8支/Master/Daemon/public/双主题/48h/一周仍待。required action：核fixed ff full及独立，主继续fresh/unknown安全的diskGuard等热点/回收/durable pending/其他流/IMPaux，既有授权与隔离准入满足后真实交付。49formal notexecuted、38partial-local/11todo、目标active。
+
+v1.41固定ff全量已结束exit0：663files9700green、6files19skip、1obsolete、63.40s，/tmp/cds-express-ff06d5d-full.log。原0d full一reset红及focused绿保留，原root无socket轨迹仍未确证；新fixture有界回归复验独立待返，正式49未执行。
+
+v1.41固定ff独立定稿：14Git源逐字节冻结，13生产源与0d相同，明确复用已固定局部产品证据、不假称新API再验。实际request helper提取同ownedport机制六轮：旧0d3/6三reset/newserver conn0→ff6/6每轮conn1；一机制不是6个uniquecontracts。剥helper与新增case后原28语义test文本完全相同，独立快照原module no-cache/worker1 29/29（1.42s）为补充，不计29新独立判据。fffull尾已回读脱敏hash，仅父补充。acceptance-p4-authority-ff06d-{source-manifest,evidence-summary}.json；原0d reset root未逆推，生产500未闭合；正式49未执行，目标active。

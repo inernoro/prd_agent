@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.39；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.41；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -407,4 +407,12 @@ expected result：混合观察积压有界且不丢live顺序，重连不能让�
 
 历史v1.38：61a785修9f440独立5真红，新增15反例红→33相关绿、core/web tsc0及webbuild；固定全量和独立待返。102GET风暴仍有缺口，正式49ID未执行、visual N/A，未发布，目标active。
 
-当前v1.39：61a785原5红已固定独立关闭（原49local绿，decision12/timestamp9有重叠），full9664仅历史；7400ccc五GET读取预算已本地接线，5storm真红→87相关/core+web0/build，fixed full663files9687green/62.70s，独立待返；全部正式49未执行、视觉N/A、未发布，active。
+历史v1.39：61a785原5红已固定独立关闭（原49local绿，decision12/timestamp9有重叠），full9664仅历史；7400ccc五GET读取预算已本地接线，5storm真红→87相关/core+web0/build，fixed full663files9687green/62.70s，独立待返；全部正式49未执行、视觉N/A、未发布，active。
+
+历史v1.40：740独立3POST漏补读+5持续空红保留；0d05460同纪元快照可见且成功回执立即new GET，主12红→99相关/core+web0/build。旧dirty禁回填谓词按技术合同细化留历史，新epoch/filter/command/unmount安全边界不放宽；fixed full及独立待返。正式49未执行、visual N/A，目标active。
+
+当前v1.41：0d八产品局部红固定独立关闭，full9698green+1ECONNRESET失败及focused28绿保留，原root未知。ff06d5d仅测试连接隔离，实际同端口回归1红→29绿，无业务断言/retry变更；ff full及独立待返。49formal未执行、视觉N/A，目标active。
+
+v1.41固定ff full663files9700green/6files19skip/1obsolete/63.40s；原0d full1reset红原件保留、root未逆推。独立fixture待返，正式49未执行。
+
+v1.41独立ff fixture机制旧3/6→新6/6，原28语义文本一致/独立module29绿补充；13生产源与0d相同显式复用局部结果，未声称新API再验。原0d full一reset原件/root未知不变，正式49未执行、goal active。
