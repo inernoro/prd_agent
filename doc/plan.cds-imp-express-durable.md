@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.69；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.71；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -634,3 +634,26 @@ expected result：只有补充账本慢时当前分支主体先可用，账本�
 
 
 本批独立最终：f9e3 summary `acceptance-drawer-ledger-f9e3-evidence-summary.json` SHA256=cb5a588b4d4811f23d1dac9cb29fb5723b30707f85d9715aa2f303fae9afc54a；source263 manifest=ced814f74630336dd5df54f6a2b91d115233782bcf38bdbc17b9a0607b3b84ee、guide addendum=db4bc63942ea7e1a56a2143ef2038000ecdb056a9ac030f7282eab5a2e360284；raw15=030ff9466859d1ebe7329d7a1279d9f121bf02cf3ba707cfb8a933da02c551b4；visual=5b735f89af8d8db73843701baa565337f3eccd79b22f559b8b4abecca6694a41；parent=67ed027ba6cbd9dde59f17d7b411e544f561a7ed6293bb336e974228b4f2dec3（仓库外独立根目录）。主递归核643hash路径/535Git引用，receipt `drawer-firstpaint-v169/main-independent-f9e3-receipt.json`。原firstpaint4期待4/4、原v4 7/8唯一两flight前件消失false保留、完整actualDOM/nativeHTTP13/13与受控pending两主题4/4各自分列；真实30.304s正文deadline/socket abort成立但不当公网SLA；helper10同Git字节仅旧74db历史复用。主已查看当前受控两图；无新有界真红，仍有整Drawer卸载、全部阶段/CI链接矩阵、真实权限/诊断/操作与全部正式运行验证未覆盖。目标仍active，49正式/线上视觉均不通过。
+
+
+## v1.70 Janitor共享执行边界与追加独立Drawer核验
+
+v1.70：八真实IMP固定push与CI成功保持，实际88registry manifest403/DENIED仍0/88未验证，八CDS entry未创建且push=false；无共享写/平台push/PR/merge。CDS产品ed91ed817727a398df821015adc0c6ad1944d200按guide2.84将Janitor有限Docker接共享Shell Worker，diagnostic/janitor，显式回调不覆盖；默认1/32，参数字面量，30/60/120s含容量等待，引用保护/部分inspect/回收锁保持。主旧三个native实际调用1/2/2真红→新0绿（一个边界root），新8有界、原force7行为期待保持、exact index去shared参数1红并逐字恢复；正确cds cwd全679files9972green/6files19skip/1历史obsolete/80.24s、core tsc0。初次late spy假绿、旧force native夹具失效7红及wrongcwd失败均保原件、不计产品根因或绿；根hook pnpm失败假pass不作证据。ed91固定独立验收进行中。旧f9实际卸载8/8、去dispose7/8真红→原源8/8，STUI46/46包含44/39；完整Drawer矩阵v1 18/19文本探索false保留，v2新语义19/19分列不称原expect红绿；原f9受控双主题由主尾查看，仅本地合成事实。主核新增1053hash refs/634Git refs、另重算368派生JS，旧独立证据不冒ed91新UI执行。静态AST仅368源中direct imported child_process边界，还有11文件28调用，未覆盖动态import/require/promisify和实际热路径，不声称全迁移/性能通过。44partial-local/5todo，49formal全not-executed、official visual N/A，goal active/verification。既有八push/selfupdate授权持续；CDS新branch发布问题及隔离宿主前问待答。
+
+本批主回执：`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/janitor-boundary-v170/main-product-test-receipt.json` 固定五Git源与所有主红/绿/误操作日志。原三个行为的输出在旧版本也正确，真正红为Master直接execFile；原force七行为断言未放宽，只将夹具注入改为IShellExecutor，不调用真实Docker。真实自有假Docker/Worker测试与exact index构造不启动Master或实际Daemon。当前局部全量含新八测试，不与相关89或旧web1782相加。
+
+新增f9独立summary=87df338bb2507fea968d800d23dc2489a6926ed00e96d5262eae04a6c2667b47；source632=82ec23b343727b9a145c3cf2e234e29a6517184232f5ff4578ed99b0239728af；derived368=e8d0e00444682bcbe0f863bb55271787f604e90e12924f8777b0068ee546ac5e；raw32=4e396aac9b1bef12da5cd2ae8ee35e945a830848fd69d5e6b275701ed39dd50c；visual4=2a07400d3fef14b1a86b658d33aeab123b82805129548ec6787bf3ab49973e7e（原仓库外独立根目录）。主回读 `main-independent-f9e3-additional-receipt.json`：1053 hash引用/1048唯一路径、634Git引用/633唯一；另逐字重算368派生JS且未改独立原件。原四图尾已查看，主已查看v2双主题图；CI123/attempt2与耗时仅合成事实，未调用GitHub或实际部署。
+
+expected result：周期命令不在Master直接启动、不绕过共享容量；页面会话卸载清观察、阶段/CI来源显示诚实。current evidence：主ed91八有界/9972全量/core0，独立ed91待返；f9卸载8、STUI46、矩阵v1 18/19与v2 19/19分列。visible result：f9受控视觉已查看，线上当前产品未部署、official visual N/A。gap：其他native热点、持久恢复与实际权限/操作、CI-bearing旧packet跨卸载、自动diagnosis迟到和全部正式运行证据仍缺。required action：末尾精确ed91独立复验，有红继续修；继续范围内热点/持久pending/收尾及真实registry/隔离宿主/八支交付，不降低原49门槛。
+
+
+## v1.71 超时部分挂载与预览拦截的原判据修复
+
+v1.71：CDS产品49aeecba59e6cbaa9edd3cfb2683d6b36e84bf69按guide2.85修复固定ed91独立两root：actualWorker inspect超时残留stdout被当完整挂载清单并实际删除own orphan；quoted Docker binary绕过actual Preview包装器。保留旧native15/16、expanded15/18（包含16）、queue/lock7/7，不求和，红summary0136505e主核407hash/371Git。新constant docker保持wrapper识别，只有exit1/非空stdout/每行标准批次内NoSuch容许已知枚举race；124/130/75/未知失败关闭。主preview及实际Worker前件PS0/inspect124+partial真红、去guard同前件mutation1红且逐字restore；新17有界/6files121绿、正确cds cwd full679files9981绿/6files19skip/1历史obsolete/65.25s，core tsc0。首短PS180ms fixture前件缺失及wrongcwd日志均保留，不计产品红或全绿；hook缺依赖假pass不用作验证。新固定49ae原native16/16、expanded18/18（包含16）和actualWorker queue/lock7/7同期待复验；分类seam10/10独立分列，旧两root局部闭合，无当前新增真红。主最终递归source/raw/Git及368派生JS回读已核，不将设计19当全排列或正式49通过。八真实IMP push及CI success保持；88registry manifest403/DENIED仍0/88验证，八entry不存在，未部署/共享写/CDSpush/PR/merge。旧f9受控浅深视觉、卸载8/STUI46/矩阵v2语义19仅原SHA局部，不继承新源正式通过。44partial-local/5todo、49formal全not-executed、official visual N/A，goal active/verification。既有八push/selfupdate授权保持；新CDSbranch发布及隔离宿主前问待答。
+
+本批主固定源、原红/绿/fixture错误、完整检查：`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/janitor-boundary-v171/main-product-test-receipt.json`。主已逐字核旧独立包407hash/371Git，`main-independent-ed91-red-receipt.json`；旧独立summary0136505e37078e0ea1c8b847a3bacd547cefb3a44f6a900f82d71774a7d3618a，source371=2f7860c916c05d4ce760313448d064cbcc6a1c4c247889e38d0dfd3c14a809d4，raw=3a6de9abe5924fa846f179c9d0c2c59ea5097c3c67ead00f42992795b56f041e。未知错误补强收紧旧一般nonzero+stdout规则，不能声称旧任意stderr正控未改期待；标准批次NoSuch正控保留。实际Worker主只查询，不删文件；独立旧expanded仅删owned临时orphan，没有访问真实Daemon。
+
+expected result：未知挂载枚举不允许回收，预览包装器不被引用方式绕过；current evidence：旧独立两root及主反例/17有界/121相关/full9981/core0，新独立原16/18/7局部通过，最终源/原件主回读已核；visible result：新产品本地，旧f9视觉受控，线上未发布；gap：新原判据独立闭合、其他热点/恢复/权限操作及registry/隔离/八支完整运行/黄闪电/公网/48h与周；required action：先收独立新固定SHA同fixture verdict，有红继续本目标；继续原49，不将本地全量当正式通过。
+
+
+49ae最终独立定稿：summary `acceptance-janitor-49ae-evidence-summary.json` SHA256=9e250ac220665a65632dbc6b4559df58d8f05f544016f7b26b0015347a6c2696；source371Git=09fd6ef7ca088f6ff4bee19aac094e1213d406544184b2944acdb3d552606e60；derived368=29d0c8d0d00d146fc2a12481990f49c1d344b7558741221e1c8dfbabe40505e7；raw13=80c25e4939883f5a1295f9e85af9c127f28dcd77caca975f573a23a90d47b102；parent补充=caf112478378542c513306d5994e28d92b9053d2d6cc8db42b8d4d322c320482。主最终递归回读 `janitor-boundary-v171/main-independent-49ae-final-receipt.json`，另逐字重算368JS `main-independent-49ae-derived-receipt.json`，均不修改独立原件。原native旧15/16→16/16、expanded旧15/18→18/18（包含16）、原actualWorker queue/lock7/7保持；新分类seam10/10不是实际Docker。两个旧root局部关闭、原19设计未全排列，真实Master启动/Daemon/30-60-120s负载及跨进程回收锁未验。独立首followup读错cwd只ENOENT没有test，原件保留，不算产品根因。正式49与线上视觉仍未执行，goal active。
