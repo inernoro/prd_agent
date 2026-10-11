@@ -291,6 +291,7 @@ export class AcceptanceResourceRunService {
     const run = this.owned(id, ownerToken);
     this.requireResolvedPublication(id);
     if (run.stage !== 'active') throw new Error('acceptance_run_stage');
+    if (!run.creationIntent) throw new Error('acceptance_resource_unconfirmed');
     const branch = this.branch(run);
     const resource = this.resource(run);
     const row = { ...run, seq: run.seq + 1, stage: 'registered' as const, resource };
@@ -310,7 +311,7 @@ export class AcceptanceResourceRunService {
       };
       await verifyActual();
       await this.state.writeAcceptanceResourceCreationProgressDurably(row, run.seq, fence, verifyActual);
-    } else await this.state.writeAcceptanceResourceRunDurably(row, run.seq, fence);
+    }
     return view(row);
   }
 

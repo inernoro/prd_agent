@@ -1,3 +1,4 @@
+import { seedPersistedLegacyRegistered } from '../helpers/legacy-acceptance-fixture.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -32,7 +33,7 @@ describe('P5-05 actual release HTTP orchestration', () => {
     branch.services[scope.profileId] = { profileId: scope.profileId, containerId: id, containerName: name, hostPort: 10000, status: 'running', deployedCommitSha: sha };
     branch.services.other = { profileId: 'other', containerName: 'other', hostPort: 10001, status: 'running' };
     state.addDeploymentRun({ id: 'dr_create', projectId: 'p1', branchId: 'b1', commitSha: sha, status: 'running', startedAt: new Date(Date.parse(owner.run.startedAt) + 1000).toISOString(), seq: 1, events: [] } as any);
-    await kernel.register(owner.run.id, owner.ownerToken);
+    await seedPersistedLegacyRegistered(state, owner.run.id);
     const report = await state.createAcceptanceReportAsync({ projectId: 'p1', branchId: 'b1', commitSha: sha, acceptanceRunId: owner.run.id, verdict: 'fail', title: 'own', format: 'md', content: 'own report body' });
     await kernel.finish(owner.run.id, owner.ownerToken, report.id);
     facts = { Id: id, Name: '/' + name, Image: 'sha256:' + 'c'.repeat(64), State: { Running: true }, Config: { Labels: {

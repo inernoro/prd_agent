@@ -1147,6 +1147,7 @@ export class StateService {
         && acceptanceResourceDigest({ ...row, seq: previous.seq, releaseIntent: previous.releaseIntent }) === acceptanceResourceDigest(previous);
       if (!identical && !finish && !releaseProgress) throw new Error('acceptance_creation_intent_changed');
     }
+    if (row.stage === 'registered' && previous?.stage !== 'registered') throw new Error('acceptance_creation_transaction_required');
     if (previous && Object.prototype.hasOwnProperty.call(previous, 'releaseIntent')) {
       const phases = ['prepared', 'stopped', 'removed'];
       const oldPhase = phases.indexOf(previous.releaseIntent?.phase || '');

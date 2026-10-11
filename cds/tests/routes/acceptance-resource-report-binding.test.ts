@@ -1,3 +1,4 @@
+import { seedPersistedLegacyRegistered } from '../helpers/legacy-acceptance-fixture.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -51,7 +52,7 @@ describe('P5-05 real report producer binds registered resource ownership', () =>
     b.extraProfiles = [{ id: profileId, projectId: 'p1', env: { IMP_HEALTH_RUN_ID: isolationRunId, IMP_TARGET_SHA: sha } } as any];
     b.services[profileId] = { profileId, containerId: index.toString(16).padStart(64, '0'), containerName: profileId, hostPort: 10000 + index, status: 'running', deployedCommitSha: sha };
     state.addDeploymentRun({ id: 'dr_' + index, projectId: 'p1', branchId, commitSha: sha, status: 'running', startedAt: new Date(Date.parse(o.run.startedAt) + 1000).toISOString(), seq: 1, events: [] } as any);
-    if (register) await ledger.register(o.run.id, o.ownerToken);
+    if (register) await seedPersistedLegacyRegistered(state, o.run.id);
     return { ...o, body: { title: 'owned producer', format: 'md', content: '# actual report body', verdict: 'fail', projectId: 'p1', branchId,
       commitSha: sha, acceptanceRunId: o.run.id, acceptanceOwnerToken: o.ownerToken } };
   }

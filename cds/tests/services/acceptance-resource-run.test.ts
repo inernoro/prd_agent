@@ -1,3 +1,4 @@
+import { seedPersistedLegacyRegistered } from '../helpers/legacy-acceptance-fixture.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,7 +24,7 @@ describe('P5-05 creation ownership and terminal receipt kernel', () => {
     b.extraProfiles = [{ id: input.profileId, projectId: 'p1', env: { IMP_HEALTH_RUN_ID: input.isolationRunId, IMP_TARGET_SHA: sha, PRIVATE_VALUE: 'not-a-public-value' } } as any];
     b.services[input.profileId] = { profileId: input.profileId, containerId: container, containerName: 'owned-container', hostPort: 10000, status: 'running', deployedCommitSha: sha };
     state.addDeploymentRun({ id: 'dr_owned', projectId: 'p1', branchId: 'b1', commitSha: sha, status: 'running', startedAt: '2026-10-11T00:00:01.000Z', events: [], seq: 1 } as any);
-    await ledger.register(owner.run.id, owner.ownerToken);
+    await seedPersistedLegacyRegistered(state, owner.run.id);
     return owner;
   }
   async function report(acceptanceRunId: string, overrides: Record<string, unknown> = {}) {
@@ -362,7 +363,7 @@ describe('P5-05 creation ownership and terminal receipt kernel', () => {
       b.extraProfiles = [{ id: input.profileId, projectId: 'p1', env: { IMP_HEALTH_RUN_ID: input.isolationRunId, IMP_TARGET_SHA: sha } } as any];
       b.services[input.profileId] = { profileId: input.profileId, containerId: i.toString(16).padStart(64, '0'), containerName: branchId, hostPort: 10000 + i, status: 'running', deployedCommitSha: sha };
       state.addDeploymentRun({ id: 'dr_' + i, projectId: 'p1', branchId, commitSha: sha, status: 'running', startedAt: '2026-10-11T00:00:01.000Z', events: [], seq: 1 } as any);
-      await ledger.register(owner.run.id, owner.ownerToken);
+      await seedPersistedLegacyRegistered(state, owner.run.id);
       const meta = await report(owner.run.id, { branchId });
       owners.push({ id: owner.run.id, token: owner.ownerToken, reportId: meta.id });
     }

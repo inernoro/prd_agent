@@ -1,3 +1,4 @@
+import { seedPersistedLegacyRegistered } from '../helpers/legacy-acceptance-fixture.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,7 +28,7 @@ describe('guide2.94 dedicated resource release publication (no Daemon evidence)'
     state.addBranch({ id: 'other', projectId: 'p', branch: 'other', status: 'idle', createdAt: '2026-10-11', worktreePath: dir, services: {} });
     state.addDeploymentRun({ id: 'dr_owned', projectId: 'p', branchId: 'b', commitSha: sha, status: 'running',
       startedAt: '2026-10-11T00:02:00Z', events: [], seq: 1 } as any);
-    await kernel.register(id, owner.ownerToken);
+    await seedPersistedLegacyRegistered(state, id);
     const report = await state.createAcceptanceReportAsync({ title: 'owned', format: 'md', content: 'real owned report',
       projectId: 'p', branchId: 'b', commitSha: sha, acceptanceRunId: id, verdict: 'fail' });
     await kernel.finish(id, owner.ownerToken, report.id);

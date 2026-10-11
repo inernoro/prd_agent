@@ -1,3 +1,4 @@
+import { seedPersistedLegacyRegistered } from '../helpers/legacy-acceptance-fixture.js';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -49,7 +50,7 @@ describe('P5-05 owned HTTP project authorization and receipt chain', () => {
       req.setTimeout(5000, () => req.destroy(new Error('owned HTTP deadline'))); req.on('error', reject); if (data) req.write(data); req.end();
     });
   }
-  it('executes begin/register/real report/finish/readback/cleanup prerequisite over HTTP', async () => {
+  it('reads and finishes an explicitly persisted legacy registered snapshot over HTTP', async () => {
     const begun = await request('POST', '/acceptance-resource-runs', input, { 'x-test-project': 'p1' });
     expect(begun.status).toBe(201); expect(begun.headers['cache-control']).toBe('no-store');
     const owner = begun.body; expect(owner.ownerToken).toMatch(/^[a-f0-9]{64}$/);
@@ -58,7 +59,9 @@ describe('P5-05 owned HTTP project authorization and receipt chain', () => {
     b.extraProfiles = [{ id: input.profileId, projectId: 'p1', env: { IMP_HEALTH_RUN_ID: input.isolationRunId, IMP_TARGET_SHA: targetSha, SECRET: 'private-env' } } as any];
     b.services[input.profileId] = { profileId: input.profileId, containerId: 'b'.repeat(64), containerName: 'owned-container', hostPort: 10000, status: 'running', deployedCommitSha: targetSha };
     state.addDeploymentRun({ id: 'dr_owned', projectId: 'p1', branchId: 'b1', commitSha: targetSha, status: 'running', startedAt: new Date(Date.parse(owner.run.startedAt) + 1000).toISOString(), events: [], seq: 1 } as any);
-    expect((await request('POST', `/acceptance-resource-runs/${owner.run.id}/register`, { ownerToken: owner.ownerToken })).status).toBe(200);
+    // Compatibility fixture only; original creation must use the separate real owned deploy tests.
+    await seedPersistedLegacyRegistered(state, owner.run.id);
+    expect((await request('POST', `/acceptance-resource-runs/${owner.run.id}/register`, { ownerToken: owner.ownerToken })).status).toBe(409);
     const meta = await state.createAcceptanceReportAsync({ title: 'owned report', format: 'md', content: 'actual report file', projectId: 'p1', branchId: 'b1', commitSha: targetSha, acceptanceRunId: owner.run.id, verdict: 'fail' });
     expect((await request('POST', `/acceptance-resource-runs/${owner.run.id}/finish`, { ownerToken: owner.ownerToken, reportId: meta.id })).body.run.stage).toBe('finished');
     const read = await request('GET', `/acceptance-resource-runs/${owner.run.id}`);
