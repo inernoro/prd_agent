@@ -18,6 +18,7 @@ on:
       - cds/scripts/filesystem-removal-drill.ts
       - cds/scripts/default-regression-drill.ts
       - cds/scripts/branch-claim-entry-drill.ts
+      - cds/scripts/application-bootstrap-drill.ts
       - cds/tests/helpers/**
       - cds/tests/routes/topology.test.ts
       - cds/tests/services/isolated-shell-executor.test.ts
@@ -34,6 +35,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  application-bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ["127.0.0.1:27017:27017"]
+        options: >-
+          --cpus 1 --memory 1g
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install original application and web dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Compile original full application and web
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+          pnpm -C cds/web build
+      - name: Original index durable bootstrap login and restart in private runtime
+        run: pnpm -C cds exec tsx scripts/application-bootstrap-drill.ts --native --mongo-uri 'mongodb://127.0.0.1:27017/?directConnection=true'
+      - name: Preserve full application bootstrap prerequisite evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-application-bootstrap-${{ github.sha }}
+          path: cds/application-output/
+          if-no-files-found: error
+          retention-days: 14
+
   artifact-admission:
     runs-on: ubuntu-latest
     timeout-minutes: 10
