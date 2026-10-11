@@ -31,11 +31,27 @@ async function main(): Promise<void> {
     assert.ok(!path.isAbsolute(name) && !name.split(path.sep).includes('..'));
     assert.equal(createHash('sha256').update(await fs.readFile(name)).digest('hex'), hash);
   }
+  // 只读固定源码中两项常量；为真实inspect建立精确命令摘要，不记录任何容器env或任意argv。
+  const capabilitySource = await fs.readFile('src/services/agent-workspace-session-runtime.ts', 'utf8');
+  const codeVersion = capabilitySource.match(/export const OPEN_DESIGN_CODEX_VERSION = '([^']+)';/)?.[1];
+  const prototypeSource = capabilitySource.match(/const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '([^']+)';/)?.[1];
+  const capabilityImage = capabilitySource.match(/export const OPEN_DESIGN_IMAGE = '([^']+)';/)?.[1];
+  assert.ok(codeVersion && prototypeSource && capabilityImage);
+  const validationScript = [
+    `test "$(codex --version)" = "codex-cli ${codeVersion}"`,
+    ...['SKILL.md', 'assets/template.html', 'references/layouts.md', 'references/checklist.md']
+      .map(name => `test -f ${prototypeSource}/${name}`),
+  ].join(' && ');
+  const jsonHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const expectedCapabilityProbe = { sourceHash: createHash('sha256').update(capabilitySource).digest('hex'),
+    imageReference: capabilityImage, entrypointHash: jsonHash(['/bin/sh']), cmdHash: jsonHash(['-lc', validationScript]),
+    autoRemove: true, readonlyRootfs: true, networkMode: 'none', memoryBytes: 128 * 1024 * 1024,
+    nanoCpus: 250_000_000, pidsLimit: 64 };
   const info = JSON.parse(await docker(['info', '--format', '{{json .}}'])); assert.ok(info.ID);
   assert.equal(await docker(['ps', '-aq']), ''); // 外层刚建的空守护进程，不接共享 socket。
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'owned-app-fixtures-')); await fs.chmod(root, 0o700);
   const report: any = { schema: 1, sourceHead: source.sourceHead, owner: source.owner, daemonId: info.ID, checks: [],
-    startedAt: new Date().toISOString(), verdict: 'failed', genericFixtureOnly: true, representativeBusinessCiVerified: false,
+    expectedCapabilityProbe, startedAt: new Date().toISOString(), verdict: 'failed', genericFixtureOnly: true, representativeBusinessCiVerified: false,
     firstStageVerified: false, performanceVerified: false, abnormalRestartVerified: false, infrastructureRecoveryVerified: false,
     branchNetworkIsolationDisabled: false, noPrimaryDockerSocket: true, ownedContainersRemoved: false };
   const containers = new Set<string>(); const images = new Set<string>();
@@ -49,8 +65,16 @@ async function main(): Promise<void> {
       const view = JSON.parse(await docker(['inspect', id]))[0]; assert.equal(view.Id, id);
       const owner = view.Config.Labels?.['cds.acceptance.owner'] || null;
       assert.ok(!owner || owner === source.owner, '独占空间发现其他归属，不猜测删除');
+      const capabilityProbeIdentity = { imageReference: view.Config.Image,
+        entrypointHash: jsonHash(view.Config.Entrypoint), cmdHash: jsonHash(view.Config.Cmd),
+        autoRemove: view.HostConfig.AutoRemove, readonlyRootfs: view.HostConfig.ReadonlyRootfs,
+        networkMode: view.HostConfig.NetworkMode, memoryBytes: view.HostConfig.Memory,
+        nanoCpus: view.HostConfig.NanoCpus, pidsLimit: view.HostConfig.PidsLimit };
+      const matchesDefaultRuntimeValidation = Object.entries(expectedCapabilityProbe)
+        .filter(([key]) => key !== 'sourceHash')
+        .every(([key, value]) => (capabilityProbeIdentity as Record<string, unknown>)[key] === value);
       rows.push({ id, name: view.Name, image: view.Image, created: view.Created, status: view.State.Status,
-        running: view.State.Running, pid: view.State.Pid, owner, networkMode: view.HostConfig.NetworkMode,
+        running: view.State.Running, pid: view.State.Pid, owner, capabilityProbeIdentity, matchesDefaultRuntimeValidation, networkMode: view.HostConfig.NetworkMode,
         networks: Object.keys(view.NetworkSettings.Networks || {}),
         namespaceOwnership: 'initial-empty-private-daemon-and-volume; unchanged-daemon-id; no-primary-socket' });
     }
