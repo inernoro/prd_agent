@@ -28,7 +28,7 @@ import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts', 'scripts/observation-isolation-drill.ts'];
+const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts', 'scripts/observation-isolation-drill.ts', 'tests/services/isolated-shell-executor.test.ts', 'tests/services/observation-stream-executor.test.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -53,6 +53,7 @@ async function main(): Promise<void> {
     reservedCleanupBytes: 64 * 1024, defaultTimeoutMs: 15_000,
   });
   const shell = new module.IsolatedShellExecutor(operationShell, { concurrency: 2, maxQueued: 16 });
+  const replacementBootShell = new module.IsolatedShellExecutor(new ShellExecutor(), { concurrency: 1, maxQueued: 4 });
   const streamModule = compiled ? await import(new URL('../dist/services/observation-stream-executor.js', import.meta.url).href) as typeof import('../src/services/observation-stream-executor.js') : { ObservationStreamExecutor };
   const startupStreams = new streamModule.ObservationStreamExecutor(2);
   const eventStreams = new streamModule.ObservationStreamExecutor(2);
@@ -122,7 +123,7 @@ async function main(): Promise<void> {
     report.artifactTarget = { scope: 'compiled private snapshot and effective-profile target resolution; no registry admission or application deployment', requested, previous, pinnedImage, unpinnedImage, originalBranchUnchanged: true };
     report.checks.push({ name: 'compiled-explicit-artifact-target-and-unpinned-ci-contract', passed: true });
     report.stage = 'independent-process-prewarm';
-    await Promise.all([operationShell.start(), shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
+    await Promise.all([operationShell.start(), shell.start(), replacementBootShell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();
     report.eventWarmStats = eventStreams.getStats();
     report.userLogWarmStats = userLogStreams.getStats();
@@ -190,6 +191,80 @@ async function main(): Promise<void> {
         recoveryElapsedMs: performance.now() - faultAt, scope: 'actual compiled default pool; factory replacement from unchanged private supervisor, no replay or full RSS hard-limit acceptance' });
     }
     report.checks.push({ name: 'compiled-default-observation-and-operation-factory-recovery-after-confirmed-cleanup', passed: true });
+
+    report.stage = 'compiled-replacement-factory-readiness-budget';
+    const bootBefore = replacementBootShell.getStats();
+    const bootChannel = (replacementBootShell as unknown as { factory: import('node:child_process').ChildProcess }).factory;
+    assert.equal(bootChannel.pid, bootBefore.supervisorPid);
+    let pausedFactory = 0; let pauseError: unknown;
+    const pauseCreatedReplacement = (message: any): void => {
+      if (message.type === 'factory-started' && message.pid !== bootBefore.factoryPid && !pausedFactory) {
+        pausedFactory = message.pid; try { process.kill(pausedFactory, 'SIGSTOP'); } catch (error) { pauseError = error; }
+      }
+    };
+    bootChannel.on('message', pauseCreatedReplacement);
+    try {
+      process.kill(-bootBefore.factoryPid!, 'SIGKILL');
+      const creationDeadline = performance.now() + 5000;
+      while (!pausedFactory && performance.now() < creationDeadline) await new Promise(resolve => setTimeout(resolve, 10));
+      assert.ok(pausedFactory > 1); assert.equal(pauseError, undefined); assert.equal(replacementBootShell.getStats().unavailable, true);
+      const pausedState = execFileSync('ps', ['-o', 'stat=', '-p', String(pausedFactory)], { encoding: 'utf8' }).trim();
+      assert.match(pausedState, /^T/);
+      const started = performance.now(), bootDeadline = started + 6500;
+      while (replacementBootShell.getStats().unavailable && performance.now() < bootDeadline) await new Promise(resolve => setTimeout(resolve, 20));
+      const bootAfter = replacementBootShell.getStats();
+      assert.equal(bootAfter.unavailable, false); assert.equal(bootAfter.supervisorPid, bootBefore.supervisorPid);
+      assert.ok(bootAfter.factoryPid && bootAfter.factoryPid !== pausedFactory);
+      let stoppedState = '';
+      try { stoppedState = execFileSync('ps', ['-o', 'stat=', '-p', String(pausedFactory)], { encoding: 'utf8' }).trim(); }
+      catch (error: any) { assert.equal(error.status, 1); assert.equal(String(error.stdout || '').trim(), ''); }
+      assert.match(stoppedState, /^(Z.*)?$/);
+      const resumed = await replacementBootShell.exec('echo after-boot-timeout', { executionLane: 'observation', timeout: 5000 });
+      assert.equal(resumed.stdout.trim(), 'after-boot-timeout');
+      report.replacementBootRecovery = { before: bootBefore, after: bootAfter, pausedFactory, pausedState, stoppedState,
+        elapsedMs: performance.now() - started, deadlineMs: 5000, observedDeadlineMs: 6500,
+        scope: 'actual IPC creation receipt and SIGSTOP of owned replacement; original handler unchanged; dedicated pool prewarmed before large state, no public response acceptance' };
+    } finally { bootChannel.off('message', pauseCreatedReplacement); }
+    report.checks.push({ name: 'compiled-paused-replacement-factory-cleans-and-recovers-with-original-readiness-budget', passed: true });
+
+    report.stage = 'compiled-four-continuous-stream-factory-faults';
+    report.streamFactoryRecoveries = [];
+    for (const [role, pool] of [['startup', startupStreams], ['events', eventStreams], ['user-logs', userLogStreams], ['journal', journalStreams]] as const) {
+      const before = pool.getStats(); assert.ok(before.factoryPid && before.supervisorPid);
+      const executions = path.join(temp, `stream-${role}-once`), childFile = path.join(temp, `stream-${role}-child`);
+      let failure: string | undefined;
+      const reading = pool.exec(`echo once >> ${shellQuoteArg(executions)}; sleep 30 & echo $! > ${shellQuoteArg(childFile)}; wait`,
+        { timeout: 0, signal: new AbortController().signal, onData: () => {} }).catch(error => { failure = error.code; });
+      const creationDeadline = performance.now() + 5000; let childPid = 0;
+      while (performance.now() < creationDeadline) {
+        try { childPid = Number(await fs.readFile(childFile, 'utf8')); if (childPid > 1) break; } catch { /* 本次自有流生产者 */ }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.ok(childPid > 1); assert.equal(pool.getStats().admitted, 1);
+      const started = performance.now(); process.kill(-before.factoryPid, 'SIGKILL');
+      await reading; assert.equal(failure, 'unavailable'); assert.equal(pool.getStats().admitted, 0);
+      const cleaned = [before.factoryPid, ...before.actors.map(actor => actor.pid), childPid].map(pid => {
+        let state = '';
+        try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); }
+        catch (error: any) { assert.equal(error.status, 1); assert.equal(String(error.stdout || '').trim(), ''); }
+        assert.match(state, /^(Z.*)?$/); return { pid, state };
+      });
+      const recoveryDeadline = performance.now() + 5000;
+      while ((pool.getStats().unavailable || !pool.getStats().factoryPid || pool.getStats().factoryPid === before.factoryPid) && performance.now() < recoveryDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      const after = pool.getStats(); assert.equal(after.unavailable, false); assert.equal(after.supervisorPid, before.supervisorPid);
+      assert.ok(after.factoryPid && after.factoryPid !== before.factoryPid);
+      assert.equal(Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(after.factoryPid)], { encoding: 'utf8' }).trim()), before.supervisorPid);
+      let observed = '';
+      const resumed = await pool.exec('echo new-stream', { timeout: 5000, onData: chunk => { observed += chunk; } });
+      assert.equal(resumed.exitCode, 0); assert.equal(observed.trim(), 'new-stream'); assert.equal(pool.getStats().admitted, 0);
+      assert.equal((await fs.readFile(executions, 'utf8')).trim(), 'once');
+      report.streamFactoryRecoveries.push({ role, before, after, cleaned, releasedAdmission: true, oldProducerExecutions: 1,
+        observedNewStream: observed.trim(), elapsedMs: performance.now() - started,
+        scope: 'actual continuous stream executor and owned producer; new read recovery, not consumer automatic reconnect or full RSS budget acceptance' });
+    }
+    report.checks.push({ name: 'compiled-four-stream-pools-release-and-recover-without-replaying-old-producer', passed: true });
 
     report.stage = 'compiled-owned-release-git-read';
     const commitClockModule = compiled ? await import(new URL('../dist/services/release-commit-clock.js', import.meta.url).href) as typeof import('../src/services/release-commit-clock.js') : { ReleaseCommitClock };
@@ -709,9 +784,11 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     if (logServer) { logServer.closeAllConnections(); await new Promise<void>(resolve => logServer!.close(() => resolve())); }
     try { await Promise.all([dockerEvents.stop(), infraEvents.stop(), userLogHub.close(), journalMonitor?.stop()]); }
     catch { report.verdict = 'failed'; process.exitCode = 1; }
-    const processRoots = [operationShell.getStats().supervisorPid, shell.getStats().supervisorPid, operationShell.getStats().factoryPid, ...operationShell.getStats().actors.map(actor => actor.pid), shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    report.defaultSupervisorPids = [operationShell, shell, startupStreams, eventStreams, userLogStreams, journalStreams].map(pool => pool.getStats().supervisorPid);
+    const processRoots = [replacementBootShell.getStats().supervisorPid, replacementBootShell.getStats().factoryPid, ...replacementBootShell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().supervisorPid, eventStreams.getStats().supervisorPid, userLogStreams.getStats().supervisorPid, journalStreams.getStats().supervisorPid, operationShell.getStats().supervisorPid, shell.getStats().supervisorPid, operationShell.getStats().factoryPid, ...operationShell.getStats().actors.map(actor => actor.pid), shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
-      await Promise.all([operationShell.close(), shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
+      await Promise.all([operationShell.close(), shell.close(), replacementBootShell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
+      assert.equal(new Set(report.defaultSupervisorPids).size, 6);
       report.closedProcessStates = processRoots.map(pid => {
         let state = '';
         try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); } catch { /* 不存在退出1 */ }

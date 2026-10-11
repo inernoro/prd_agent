@@ -264,6 +264,33 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect((await readFile(executions, 'utf8')).trim()).toBe('once');
   });
 
+  it('替换工厂暂停而不就绪时仍按原5秒预算清理并再次恢复', async () => {
+    const e = executor({ concurrency: 1 }); await e.start();
+    const initial = e.getStats();
+    const channel = (e as unknown as { factory: childProcess.ChildProcess }).factory;
+    expect(channel.pid).toBe(initial.supervisorPid);
+    let paused = 0; let pauseError: unknown;
+    const listener = (message: any): void => {
+      if (message.type === 'factory-started' && message.pid !== initial.factoryPid && !paused) {
+        paused = message.pid; try { process.kill(paused, 'SIGSTOP'); } catch (error) { pauseError = error; }
+      }
+    };
+    channel.on('message', listener);
+    try {
+      process.kill(-initial.factoryPid!, 'SIGKILL'); await waitFor(() => paused > 1);
+      expect(pauseError).toBeUndefined(); expect(e.getStats().unavailable).toBe(true);
+      const pausedState = await new ShellExecutor().exec(`ps -o stat= -p ${paused}`);
+      expect(pausedState.stdout.trim()).toMatch(/^T/);
+      const end = performance.now() + 6500;
+      while (e.getStats().unavailable && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 20));
+      const after = e.getStats(); expect(after.unavailable).toBe(false);
+      expect(after.supervisorPid).toBe(initial.supervisorPid); expect(after.factoryPid).not.toBe(paused);
+      const oldState = await new ShellExecutor().exec(`ps -o stat= -p ${paused}`);
+      expect(oldState.stdout.trim()).toMatch(/^(Z.*)?$/);
+      expect((await e.exec('echo recovered-after-boot-timeout', observation)).stdout.trim()).toBe('recovered-after-boot-timeout');
+    } finally { channel.off('message', listener); }
+  }, 12_000);
+
   it('默认工厂连续故障在原30秒窗口内最多创建三次，窗口后恢复', async () => {
     const e = executor({ concurrency: 1 }); await e.start();
     const supervisor = e.getStats().supervisorPid!;

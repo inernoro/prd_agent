@@ -54,6 +54,29 @@ describe('独立启动日志执行槽真实进程', () => {
     expect(pool.getStats().admitted).toBe(0);
   }, 25_000);
 
+  it('持续流工厂整体故障释放原占用，清理后新读取恢复且不重放旧生产者', async () => {
+    const pool = await streams(2); const dir = await directory();
+    const marker = path.join(dir, 'started'), executions = path.join(dir, 'once');
+    const before = pool.getStats();
+    const failed = expect(pool.exec(`echo once >> ${shellQuoteArg(executions)}; touch ${shellQuoteArg(marker)}; sleep 30`, {
+      timeout: 0, signal: new AbortController().signal, onData: () => {},
+    })).rejects.toMatchObject({ code: 'unavailable' });
+    for (let i = 0; i < 300; i++) { try { await access(marker); break; } catch { await new Promise(r => setTimeout(r, 10)); } }
+    await access(marker); expect(pool.getStats().admitted).toBe(1);
+    process.kill(-before.factoryPid!, 'SIGKILL'); await failed;
+    expect(pool.getStats().admitted).toBe(0);
+    await until(() => !pool.getStats().unavailable && !!pool.getStats().factoryPid && pool.getStats().factoryPid !== before.factoryPid);
+    expect(pool.getStats().supervisorPid).toBe(before.supervisorPid);
+    let observed = '';
+    expect((await pool.exec('echo new-stream', { timeout: 5000, onData: chunk => { observed += chunk; } })).exitCode).toBe(0);
+    expect(observed.trim()).toBe('new-stream'); expect(pool.getStats().admitted).toBe(0);
+    expect((await readFile(executions, 'utf8')).trim()).toBe('once');
+    for (const pid of [before.factoryPid!, ...before.actors.map(actor => actor.pid)]) {
+      const state = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);
+      expect(state.stdout.trim()).toMatch(/^(Z.*)?$/);
+    }
+  });
+
   it('实际慢消费暂停上游，满流槽不启动新命令且不占健康查询槽', async () => {
     const dir = await directory(); const marker = path.join(dir, 'producer-finished');
     const sentinel = path.join(dir, 'must-not-start');
@@ -95,7 +118,11 @@ describe('独立启动日志执行槽真实进程', () => {
     process.env.PATH = `${dir}:${originalPath || ''}`;
     const pool = await streams(); vi.clearAllMocks();
     const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, pool);
-    expect(await container.waitForStartupSignal('owned-fixture', 'startup-ready', undefined, 2)).toBe(true);
+    const progress: string[] = [];
+    const ready = await container.waitForStartupSignal('owned-fixture', 'startup-ready', chunk => { progress.push(chunk); }, 2);
+    if (!ready) console.error(JSON.stringify({ scope: 'owned-startup-signal-fixture', progress, stats: pool.getStats(),
+      producer: await readFile(trace, 'utf8').catch(() => 'not-started') }));
+    expect(ready).toBe(true);
     const view = JSON.parse(await readFile(trace, 'utf8'));
     expect(view.ppid).not.toBe(process.pid); expect(view.args).toEqual(['logs', '-f', 'owned-fixture']);
     expect(childProcess.spawn).not.toHaveBeenCalled(); expect(pool.getStats().admitted).toBe(0);

@@ -13,12 +13,13 @@ function startSupervisor(): void {
   let recovering = false;
   let closing = false;
   let retry: NodeJS.Timeout | undefined;
+  let bootTimer: NodeJS.Timeout | undefined;
   const actors = new Set<number>();
   const attempts: number[] = [];
   const send = (message: object): void => { if (process.connected) process.send!(message); };
   const metrics = (): object => ({ rss: process.memoryUsage().rss, heapLimit: getHeapStatistics().heap_size_limit });
   const kill = (pid: number): void => { try { process.kill(-pid, 'SIGKILL'); } catch { /* 后续确认归属 */ } };
-  const fail = (): void => { closing = true; clearTimeout(retry); send({ type: 'fatal', generation }); };
+  const fail = (): void => { closing = true; clearTimeout(retry); clearTimeout(bootTimer); send({ type: 'fatal', generation }); };
   const launch = (): void => {
     if (closing || concurrency === undefined) return;
     const now = Date.now(); while (attempts.length && attempts[0] <= now - 30_000) attempts.shift();
@@ -26,9 +27,12 @@ function startSupervisor(): void {
     attempts.push(now); generation++;
     const current = launchObservationProcess('observation-executor-process', owner); child = current; actors.clear();
     const currentGeneration = generation;
+    // 每一代均沿用原5秒就绪预算；进程仍活着不能使替换永久悬挂。
+    bootTimer = setTimeout(() => { void recover(current); }, 5000);
     send({ type: 'factory-started', generation, pid: current.pid, supervisorMetrics: metrics() });
     current.on('message', (message: any) => {
       if (closing || recovering || child !== current) return;
+      if (message.type === 'ready') clearTimeout(bootTimer);
       if (message.type === 'fatal') { void recover(current); return; }
       if (message.type === 'actor' && Number.isSafeInteger(message.pid) && message.pid > 1 && message.pid !== process.pid) actors.add(message.pid);
       if (message.type === 'actor-exited') actors.delete(message.pid);
@@ -40,7 +44,7 @@ function startSupervisor(): void {
   };
   const recover = async (current: ChildProcess): Promise<void> => {
     if (closing || recovering || child !== current) return;
-    recovering = true; const failedGeneration = generation;
+    recovering = true; clearTimeout(bootTimer); const failedGeneration = generation;
     send({ type: 'factory-resetting', generation: failedGeneration });
     try {
       const groups = new Set(actors); if (current.pid) groups.add(current.pid);
@@ -73,7 +77,7 @@ function startSupervisor(): void {
     child.send(message, error => { if (error && child) void recover(child); });
   });
   process.on('disconnect', () => {
-    closing = true; clearTimeout(retry);
+    closing = true; clearTimeout(retry); clearTimeout(bootTimer);
     if (child?.pid) kill(child.pid);
     for (const pid of actors) kill(pid);
     process.exit(0);
