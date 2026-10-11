@@ -3,7 +3,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StateService } from '../../src/services/state.js';
 import { createProjectsRouter } from '../../src/routes/projects.js';
 import { createSnapshotsRouter } from '../../src/routes/snapshots.js';
@@ -46,7 +46,7 @@ describe('guide2.94 persisted acceptance intent blocks ordinary writers', () => 
     app.use('/api', createSnapshotsRouter({ stateService: state }));
     server = app.listen(0); await new Promise<void>(r => server.once('listening', r));
   }
-  afterEach(async () => { await new Promise<void>(r => server.close(() => r())); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
+  afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllGlobals(); await new Promise<void>(r => server.close(() => r())); await state.flush(); fs.rmSync(dir, { recursive: true, force: true }); });
   async function request(method: string, url: string, body?: unknown, project = 'p') {
     return new Promise<{ status: number; body: any; raw: string }>((resolve, reject) => {
       const data = body === undefined ? '' : JSON.stringify(body);
@@ -68,6 +68,12 @@ describe('guide2.94 persisted acceptance intent blocks ordinary writers', () => 
     ['POST', '/branches/b/stop/', {}], ['POST', '/branches/b/deploy', {}],
     ['POST', '/branches/b/deploy/owned-init', {}], ['POST', '/branches/b/restart', {}],
     ['POST', '/branches/b/reset', {}], ['DELETE', '/branches/b', undefined],
+    ['PUT', '/Branches/b/ExTrA-Services', { extraProfiles: [] }],
+    ['POST', '/BrAnChEs/b/SToP/', {}], ['POST', '/BRANCHES/b/DePlOy', {}],
+    ['POST', '/branches/b/DePlOy/owned-init', {}],
+    ['POST', '/Branches/b/CoPy-CoNfIg-FrOm/other', {}],
+    ['PUT', '/Branches/b/PrOfIlE-OvErRiDeS/owned-init', { env: {} }],
+    ['DELETE', '/BrAnChEs/b', undefined],
     ['DELETE', '/projects/p', undefined], ['POST', '/import-config', { config: { buildProfiles: [] } }],
     ['POST', '/import-and-init', { config: { buildProfiles: [] } }],
   ])('returns finite 409 before mutation: %s %s', async (method, url, body) => {
@@ -78,6 +84,8 @@ describe('guide2.94 persisted acceptance intent blocks ordinary writers', () => 
   });
   it('keeps reads/notes and another branch writable; project access precedes gate', async () => {
     expect((await request('PUT', '/branches/b/extra-services', { extraProfiles: [] }, 'foreign')).status).toBe(403);
+    expect((await request('PUT', '/Branches/b/ExTrA-Services', { extraProfiles: [] }, 'foreign')).status).toBe(403);
+    expect((await request('PUT', '/Branches/B/extra-services', { extraProfiles: [] })).status).toBe(404);
     expect((await request('GET', '/branches/b/extra-services')).status).toBe(200);
     expect((await request('PATCH', '/branches/b', { notes: 'safe metadata' })).status).toBe(200);
     expect((await request('PUT', '/branches/other/extra-services', { extraProfiles: [] })).status).toBe(200);
@@ -131,6 +139,28 @@ describe('guide2.94 persisted acceptance intent blocks ordinary writers', () => 
     await expect(state.writeAcceptanceResourceRunDurably(next, before.seq, () => {}))
       .rejects.toThrow('acceptance_release_intent_changed');
     expect(intents()).toEqual(before);
+  });
+  it('an intent established while self-redeploy awaits prevents late rollback/override cleanup', async () => {
+    const intent = structuredClone(intents().releaseIntent); delete intents().releaseIntent;
+    const b = state.getBranch('b')!;
+    b.extraProfiles!.push({ id: 'remove-other', projectId: 'p', name: 'other', dockerImage: 'owned:fixed', containerPort: 81 } as any);
+    b.services['remove-other'] = { profileId: 'remove-other', containerName: 'other', hostPort: 10002, status: 'running' };
+    b.profileOverrides!['remove-other'] = { notes: 'retain during later occupancy' };
+    let entered!: () => void, release!: () => void;
+    const entry = new Promise<void>(r => entered = r), held = new Promise<void>(r => release = r);
+    vi.stubGlobal('fetch', vi.fn(async () => { entered(); await held; return { ok: false, status: 409, text: async () => '{}' }; }));
+    const writing = request('PUT', '/branches/b/extra-services?redeploy=1', { extraProfiles: [b.extraProfiles![0]] });
+    await entry; intents().releaseIntent = intent;
+    const before = graph(); release(); const result = await writing;
+    expect(result.status).toBe(409); expect(result.body.error).toBe('acceptance_release_reconciliation_required');
+    expect(graph()).toBe(before); expect(b.profileOverrides!['remove-other']).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+  it('a defensive State rejection is converted to finite HTTP rather than an unhandled promise', async () => {
+    delete intents().releaseIntent;
+    vi.spyOn(state, 'setBranchExtraProfiles').mockImplementationOnce(() => { throw new Error('acceptance_release_reconciliation_required'); });
+    expect((await request('PUT', '/branches/b/extra-services', { extraProfiles: [] })).status).toBe(409);
+    expect((await request('GET', '/branches/b/extra-services')).status).toBe(200);
   });
   it('acknowledged release permits a legitimate successor configuration', async () => {
     intents().stage = 'released';

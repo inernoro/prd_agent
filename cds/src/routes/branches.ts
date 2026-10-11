@@ -2380,11 +2380,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // Durable release ownership applies before ordinary side effects, including configuration copies.
   router.use((req, res, next) => {
     if (!['POST', 'PUT', 'DELETE'].includes(req.method)) { next(); return; }
-    const match = /^\/branches\/([^/]+)(?:\/(.*?))?\/?$/.exec(req.path);
+    const match = /^\/branches\/([^/]+)(?:\/(.*?))?\/?$/i.exec(req.path);
     if (!match) { next(); return; }
     const action = match[2] || '';
     const writes = req.method === 'DELETE' || req.method === 'PUT' ||
-      /^(deploy(?:\/|$)|force-rebuild\/|stop$|restart$|reset$|pull$|checkout\/|unpin$|copy-config-from\/|database-init\/|prebuilt-image\/claim$|container-exec$|resources\/[^/]+\/(inject-connection|credentials\/reset)$)/.test(action);
+      /^(deploy(?:\/|$)|force-rebuild\/|stop$|restart$|reset$|pull$|checkout\/|unpin$|copy-config-from\/|database-init\/|prebuilt-image\/claim$|container-exec$|resources\/[^/]+\/(inject-connection|credentials\/reset)$)/i.test(action);
     if (!writes) { next(); return; }
     let id: string;
     try { id = decodeURIComponent(match[1]); } catch { next(); return; }
@@ -17880,6 +17880,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   router.put('/branches/:id/extra-services', async (req, res) => {
+    try {
     const entry = stateService.getBranch(req.params.id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
@@ -18158,6 +18159,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         redeployRejected = { status: 0, message: (err as Error).message };
         console.warn(`[extra-services] redeploy 自调失败 ${entry.id}: ${(err as Error).message}`);
       }
+      const blocked = acceptanceReleaseBlockReason(stateService, entry.id);
+      if (blocked) { res.status(409).json({ error: blocked }); return; }
+      if (stateService.getBranch(entry.id) !== entry) {
+        res.status(409).json({ error: 'acceptance_branch_changed' }); return;
+      }
       // 破坏性移除 + 重部署被拒 → 回滚到旧额外服务,让 master 元数据与仍在跑的 worker 容器保持一致,
       // 不留幽灵服务(Codex P2)。新增/纯改不回滚(deploy 被拒也保留已声明配置,用户可处理后重发)。
       if (redeployRejected && hasDestructiveRemoval) {
@@ -18205,6 +18211,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
             ? `额外服务已声明,但触发重部署未成功${redeployRejected ? `(HTTP ${redeployRejected.status}: ${redeployRejected.message})` : ''};请处理后手动部署(或重发本请求带 ?redeploy=1)`
             : '额外服务已声明;需触发一次分支部署才会真正起容器(或重发本请求带 ?redeploy=1)',
     });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'acceptance_release_reconciliation_required') res.status(409).json({ error: code });
+      else res.status(500).json({ error: 'extra_services_update_failed' });
+    }
   });
 
   // ── Container exec (run command inside container) ──
