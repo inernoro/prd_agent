@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.46；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.47；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -452,3 +452,9 @@ guide2.63先于实现冻结P3持久受理/认领/unknown合同。9530750产品�
 真实8支、全部实际黄闪电、镜像/目标SHA、排队/公网/视觉/恢复与48h/周正式门槛未执行；既有授权有效，目标active。
 
 末尾初步回执：f576保持原native实际HTTP期待5/5（953原4/5的一真红关闭）；953其余原协议19/19、原nativeunknown3/3、新journal14/14分别固定、不相加；f576其余边界和定稿仍待返。
+
+## v1.47 精确资格与未点名配置指纹恢复审计
+
+f576独立原native5/5、boundary16/16、extension6/7：未点名语义真红关闭，另发现显式whole排队期间express→source仍兑现凭证。guide2.65先冻结精确资格与配置；6cfa保持commitPinned与精确configHash，主1旧红→114/core0/full9769。固定6cfa原extension7/7，eligibility v2旧f5760/6→6cfa5/6：剩余真红为未点名whole配置漂移。v1改base.command但express解析覆盖的两个探索期待无hash变化前提，不算产品红，原件保留。guide2.66先冻结SHA中性的pendingConfigHash；c60a在实际whole/Profile受理计算、schema1保存、一次token核对，允许缓存SHA推进，拒绝运行配置变化。主有效旧6cfa实际HTTP缺digest1红、去新guard1红后恢复；7files116相关/core0，全量669files9771green/6files19skip/1旧obsolete/64.49s。固定c60a末尾正在按原未点名配置漂移期待复验；不继承6cfa绿。初始缺services夹具和重复-t CLI错误原件保留，不算产品红。历史缺digest及非Router旧调用兼容，未证明全部producer、实际Master/Daemon恢复或可用run追踪。
+
+expected result：原未点名SHA推进仍合法，实际运行配置变化不兑现旧claim；精确请求保持精确且不被降级。current evidence：6cfa固定原期待5/6及其真实剩余红，c60a主有效旧HTTP1红/guard mutation1红→116/core0/full9771；c60a独立待返。visible result：未部署、visual N/A。gap：pending实际追踪/安全恢复、legacy producer与实际Master/Daemon、49formal/八支/双主题/公网/48h/周未完成。required action：完成固定独立复验，真红继续修，补追踪与恢复及其余计划；39partial-local/10todo、49formal全部not-executed、目标active。
