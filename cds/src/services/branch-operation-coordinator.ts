@@ -300,9 +300,16 @@ export class BranchOperationCoordinator {
     if (!['deploy', 'deploy-profile'].includes(request.kind) || !/^[0-9a-f]{7,39}$/i.test(request.commitSha || '')) {
       throw new Error('短提交解析仅支持明确的部署提交');
     }
+    return this.beginDeploymentPreparation(request);
+  }
+
+  /** 执行器准备阶段沿用同一有界资格集合；未点名源码目标不参与同目标共用。 */
+  beginDeploymentPreparation(request: BranchOperationRequest): { assertCurrent: () => void; confirmIdentity: (fullSha: string) => void; release: () => void } {
+    if (!['deploy', 'deploy-profile'].includes(request.kind)
+      || (request.commitSha != null && !/^[0-9a-f]{7,40}$/i.test(request.commitSha))) throw new Error('部署准备目标无效');
     const key = this.operationKey(request);
     const same = this.artifactTargetReads.get(key);
-    const equivalent = same?.requestedSha === request.commitSha?.toLowerCase();
+    const equivalent = Boolean(request.commitSha) && same?.requestedSha === request.commitSha?.toLowerCase();
     for (const item of this.artifactTargetReads.values()) {
       if (this.operationsConflict(request, item.request) && priorityOf(item.request) > priorityOf(request)
         && !(equivalent && item === same) && !this.sameArtifactTarget(request, item.request)) {
@@ -312,7 +319,7 @@ export class BranchOperationCoordinator {
     if ([...this.artifactTargetReads.values()].reduce((sum, item) => sum + item.readers.size, 0) >= 64) {
       throw new Error('短提交解析请求已达容量上限');
     }
-    const item = equivalent ? same! : { request: { ...request }, readers: new Map<object, BranchOperationRequest>(), requestedSha: request.commitSha!.toLowerCase(), resolvedSha: undefined as string | undefined };
+    const item = equivalent ? same! : { request: { ...request }, readers: new Map<object, BranchOperationRequest>(), requestedSha: request.commitSha?.toLowerCase() || '', resolvedSha: undefined as string | undefined };
     if (!equivalent) this.invalidateArtifactTargetReads(request);
     const reader = {}; item.readers.set(reader, { ...request });
     const updatePriority = () => {
@@ -330,7 +337,7 @@ export class BranchOperationCoordinator {
       confirmIdentity: (fullSha) => {
         assertCurrent();
         const full = fullSha.toLowerCase();
-        if (!/^[0-9a-f]{40}$/.test(full) || !full.startsWith(item.requestedSha)
+        if (!item.requestedSha || !/^[0-9a-f]{40}$/.test(full) || !full.startsWith(item.requestedSha)
           || (item.resolvedSha && item.resolvedSha !== full)) throw new Error('短提交的完整身份确认不一致');
         item.resolvedSha = full; updatePriority();
       },

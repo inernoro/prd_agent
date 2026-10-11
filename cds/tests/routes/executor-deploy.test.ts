@@ -240,6 +240,125 @@ describe('Executor /exec/deploy', () => {
     expect(mock.commands.some(command => /docker (run|rm)/.test(command))).toBe(false);
   });
 
+  function artifactFixture() {
+    const target = 'b'.repeat(40), imageId = `sha256:${'c'.repeat(64)}`;
+    const profiles = ['api', 'web'].map(id => ({ id, name: id, dockerImage: `ghcr.io/owned/${id}:sha-${target}`,
+      prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 }));
+    const entry: BranchEntry = { id: 'protected', projectId: 'default', branch: 'owned', worktreePath: tmpDir,
+      status: 'running', createdAt: new Date().toISOString(), services: {
+        api: { profileId: 'api', containerName: 'old-api', hostPort: 10011, status: 'running' },
+        legacy: { profileId: 'legacy', containerName: 'old-legacy', hostPort: 10012, status: 'running' },
+      } };
+    stateService.addBranch(entry);
+    mock.addResponsePatternFirst(/git rev-parse HEAD/, () => ({ stdout: target, stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: imageId,
+      RepoDigests: [`ghcr.io/owned/shared@${imageId}`], Os: 'linux', Architecture: 'amd64',
+      Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+    return { target, imageId, profiles, entry, payload: { branchId: entry.id, branchName: entry.branch, projectId: 'default', commitSha: target, profiles } };
+  }
+
+  it.each(['missing', 'local-unverified', 'unknown-target'])('旧Master直调%s在全部副作用前拒绝，保留旧服务/孤儿和分支运行态', async (failure) => {
+    const f = artifactFixture(); const before = structuredClone(f.entry);
+    if (failure === 'missing') mock.addResponsePatternFirst(/docker pull .*web/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+    if (failure === 'local-unverified') {
+      Object.assign(f.profiles[0], { localArtifact: true });
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: f.imageId, Os: 'linux', Architecture: 'amd64', Config: { Labels: {} } }]), stderr: '', exitCode: 0 }));
+    }
+    const result = await postSse(server, '/exec/deploy', { ...f.payload, commitSha: failure === 'unknown-target' ? undefined : f.target });
+    expect(stateService.getBranch(f.entry.id)).toEqual(before);
+    const error = result.events.find(e => e.event === 'error'); expect(error?.data.accepted).toBe(false);
+    expect(result.events.some(e => e.event === 'complete')).toBe(false);
+    expect(mock.commands.some(cmd => /docker (run|create|rm|stop|network create)|git |mkdir /.test(cmd))).toBe(false);
+  });
+
+  it('旧Master全部角色准入后运行固定digest，清除隐式fallback并标记实际镜像目标', async () => {
+    const f = artifactFixture(); Object.assign(f.profiles[0], { fallbackImage: 'old:tag', sourceFallbackProfile: { ...f.profiles[0], prebuiltImage: false, command: 'compile-unexpected' } });
+    const result = await postSse(server, '/exec/deploy', f.payload);
+    expect(result.events.filter(e => e.event === 'error' || e.data?.status === 'error')).toEqual([]);
+    expect(result.events.some(e => e.event === 'complete')).toBe(true);
+    const pullIndices = mock.commands.map((cmd, i) => cmd.startsWith('docker pull ') ? i : -1).filter(i => i >= 0);
+    const firstMutation = mock.commands.findIndex(cmd => /^docker (stop|rm)|^git /.test(cmd));
+    expect(pullIndices).toHaveLength(2); expect(Math.max(...pullIndices)).toBeLessThan(firstMutation);
+    const runs = mock.commands.filter(cmd => /^docker (run|create) /.test(cmd));
+    expect(runs).toHaveLength(2); expect(runs.every(cmd => cmd.includes(`ghcr.io/owned/shared@${f.imageId}`))).toBe(true);
+    expect(result.events.find(e => e.data?.step === 'artifact-target')?.data.artifactCommitSha).toBe(f.target);
+    expect(mock.commands.some(cmd => /^git |^mkdir /.test(cmd))).toBe(false);
+    expect(mock.commands.some(cmd => cmd.includes('compile-unexpected') || cmd.includes('old:tag'))).toBe(false);
+  });
+
+  it('新Master的本地digest不能只凭local标记跳过OCI核验，通过后固定本机内容ID而不拉取', async () => {
+    const f = artifactFixture(); const profile = { ...f.profiles[0], dockerImage: `ghcr.io/owned/api@${f.imageId}`, localArtifact: true };
+    const result = await postSse(server, '/exec/deploy', { ...f.payload, profiles: [profile], artifactCommitSha: f.target });
+    expect(result.events.filter(e => e.event === 'error' || e.data?.status === 'error')).toEqual([]);
+    expect(mock.commands.filter(cmd => cmd.startsWith('docker pull '))).toEqual([]);
+    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(f.imageId);
+  });
+
+  it.each(['stop', 'delete', 'new-target', 'owner'])('执行器预检等待中%s后，旧请求不得迟到拆服务或写旧状态', async (change) => {
+    const f = artifactFixture(); let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+    const original = mock.exec.bind(mock); let pulls = 0;
+    mock.exec = async (command, options) => {
+      if (command.startsWith('docker pull ') && pulls++ === 0) { entered(); await gate; }
+      return original(command, options);
+    };
+    const pending = postSse(server, '/exec/deploy', f.payload); await started;
+    try {
+      if (change === 'stop' || change === 'delete') await postJson(server, `/exec/${change}`, { branchId: f.entry.id });
+      else if (change === 'owner') f.entry.projectId = 'other-owner';
+      else {
+        const next = await postSse(server, '/exec/deploy', { ...f.payload, commitSha: 'd'.repeat(40) });
+        expect(next.events.find(e => e.event === 'error')?.data.reason).toBe('revision-mismatch');
+      }
+      const afterNewer = structuredClone(stateService.getBranch(f.entry.id)), commands = mock.commands.length;
+      release(); const result = await pending;
+      expect(result.events.find(e => e.event === 'error')?.data.code).toBe('target_request_superseded');
+      expect(result.events.some(e => e.event === 'complete')).toBe(false);
+      expect(stateService.getBranch(f.entry.id)).toEqual(afterNewer);
+      expect(mock.commands.slice(commands).some(cmd => /docker (run|create|rm|stop)|git |mkdir /.test(cmd))).toBe(false);
+    } finally { release(); await pending; }
+  });
+
+  it.each([undefined, 'bbbbbbb'])('未确认目标%s的拒绝不取消已经有效的产物核验', async (invalidTarget) => {
+    const f = artifactFixture(); let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+    const original = mock.exec.bind(mock); let pulls = 0;
+    mock.exec = async (command, options) => {
+      if (command.startsWith('docker pull ') && pulls++ === 0) { entered(); await gate; }
+      return original(command, options);
+    };
+    const pending = postSse(server, '/exec/deploy', f.payload); await started;
+    try {
+      const rejected = await postSse(server, '/exec/deploy', { ...f.payload, commitSha: invalidTarget });
+      expect(rejected.events.find(e => e.event === 'error')?.data).toMatchObject({ code: 'artifact_target_unresolved', accepted: false });
+      expect(stateService.getBranch(f.entry.id)?.status).toBe('running');
+      release(); const accepted = await pending;
+      expect(accepted.events.filter(e => e.event === 'error' || e.data?.status === 'error')).toEqual([]);
+      expect(accepted.events.some(e => e.event === 'complete')).toBe(true);
+      expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))).toHaveLength(2);
+    } finally { release(); await pending; }
+  });
+
+  it.each(['stop', 'delete'])('尚未创建分支时%s返回404也撤销原预检，不能迟到创建分支', async (action) => {
+    const f = artifactFixture(); const newId = 'not-created-yet'; let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+    const original = mock.exec.bind(mock); let pulls = 0;
+    mock.exec = async (command, options) => {
+      if (command.startsWith('docker pull ') && pulls++ === 0) { entered(); await gate; }
+      return original(command, options);
+    };
+    const pending = postSse(server, '/exec/deploy', { ...f.payload, branchId: newId }); await started;
+    try {
+      const cancelled = await postJson(server, `/exec/${action}`, { branchId: newId });
+      expect(cancelled.status).toBe(404);
+      release(); const result = await pending;
+      expect(result.events.find(e => e.event === 'error')?.data.code).toBe('target_request_superseded');
+      expect(stateService.getBranch(newId)).toBeUndefined();
+      expect(mock.commands.some(cmd => /docker (run|create|rm|stop)|git |mkdir /.test(cmd))).toBe(false);
+    } finally { release(); await pending; }
+  });
+
   it('远端执行器点名A时实际挂载A且不改原目录B', async () => {
     const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     const repo = path.join(tmpDir, 'remote-source-repo'); fs.mkdirSync(repo);

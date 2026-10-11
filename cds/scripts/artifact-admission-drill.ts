@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import express from 'express';
+import http from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +12,8 @@ import type { ArtifactAdmission } from '../src/services/artifact-admission.js';
 
 const value = (name: string): string => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] || '' : ''; };
 const modules = async () => ({
+  executor: await import(new URL('../dist/executor/routes.js', import.meta.url).href) as typeof import('../src/executor/routes.js'),
+  worktree: await import(new URL('../dist/services/worktree.js', import.meta.url).href) as typeof import('../src/services/worktree.js'),
   state: await import(new URL('../dist/services/state.js', import.meta.url).href) as typeof import('../src/services/state.js'),
   runs: await import(new URL('../dist/services/deployment-run.js', import.meta.url).href) as typeof import('../src/services/deployment-run.js'),
   coordinator: await import(new URL('../dist/services/branch-operation-coordinator.js', import.meta.url).href) as typeof import('../src/services/branch-operation-coordinator.js'),
@@ -23,7 +27,7 @@ const modules = async () => ({
 const sourcePaths = ['src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts',
   'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/deployment-intent.ts',
   'src/services/deployment-run.ts', 'src/services/state.ts', 'src/services/container.ts', 'src/services/isolated-shell-executor.ts',
-  'src/services/shell-executor.ts', 'scripts/artifact-admission-drill.ts'];
+  'src/services/shell-executor.ts', 'src/executor/routes.ts', 'src/services/worktree.ts', 'scripts/artifact-admission-drill.ts'];
 
 async function acceptWorker(): Promise<void> {
   assert.ok(process.connected && process.send);
@@ -60,12 +64,13 @@ async function main(): Promise<void> {
   const output = path.resolve('artifact-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); assert.match(head, /^[0-9a-f]{40}$/);
   const report: Record<string, any> = { schema: 1, head, startedAt: new Date().toISOString(), verdict: 'failed', checks: [],
-    scope: 'compiled artifact checker and durable queue; real owned loopback registry, HTTP old fixture and SIGKILL; no full application deployment or public performance acceptance',
+    scope: 'compiled artifact checker, durable queue and executor HTTP route; owned loopback registry, Docker runtime and SIGKILL; no Master/public cutover, managed-source or public performance acceptance',
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
-    actualRegistryPublishResumeVerified: false, actualApplicationDeploymentVerified: false, performanceVerified: false,
+    actualRegistryPublishResumeVerified: false, actualExecutorArtifactDeploymentVerified: false, actualApplicationDeploymentVerified: false, performanceVerified: false,
     ownedContainersRemoved: false, ownedImagesRemoved: false, isolatedFilesRemoved: false };
   const m = await modules();
-  const previousHost = process.env.DOCKER_HOST, previousContext = process.env.DOCKER_CONTEXT;
+  const previousHost = process.env.DOCKER_HOST, previousContext = process.env.DOCKER_CONTEXT, previousIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
+  let peerServer: http.Server | undefined, peerNetwork: string | undefined;
   process.env.DOCKER_HOST = host; delete process.env.DOCKER_CONTEXT;
   const shell = new m.isolated.IsolatedShellExecutor(new m.shell.ShellExecutor(), { isolatedLane: 'operation', concurrency: 2,
     reservedCleanup: 1, maxQueued: 8, maxBytes: 1024 * 1024, reservedCleanupBytes: 64 * 1024 });
@@ -159,6 +164,45 @@ async function main(): Promise<void> {
     assert.deepEqual(await m.wait.refreshArtifactWaiters({ coordinator, containerService: container, getBranch: id => state.getBranch(id), recheckMs: 0 }), []);
     assert.equal(runs.get(accepted.runId)?.status, 'queued'); assert.equal((await read(oldUrl)).trim(), 'old-ready');
     report.checks.push({ name: 'sigkill-after-confirmed-wait-restores-original-identity-and-private-input', passed: true });
+    // 原编译执行器HTTP入口，接实际Docker；仓库目录故意无Git，证明预构建不依赖源码。
+    report.stage = 'executor-http-missing-all-required';
+    const peerState = new m.state.StateService(path.join(temp, 'peer-state.json')); peerState.load();
+    peerState.addProject({ id: 'owned', slug: 'owned', name: '隔离执行器' } as any);
+    const protectedId = `${owner}-protected`;
+    const protectedEntry: BranchEntry = { id: protectedId, projectId: 'owned', branch: 'owned-artifact', worktreePath: path.join(temp, 'no-git'),
+      status: 'running', createdAt: new Date().toISOString(), services: { legacy: { profileId: 'legacy', containerName: ownedView(oldId).Name.slice(1),
+        hostPort: Number(oldPort), status: 'running' } } };
+    peerState.addBranch(protectedEntry);
+    const peerCommands: string[] = [];
+    const peerShell = new Proxy(shell, { get(target, property) {
+      if (property === 'exec') return (command: string, options: any) => { peerCommands.push(command); return target.exec(command, options); };
+      const item = Reflect.get(target, property); return typeof item === 'function' ? item.bind(target) : item;
+    } });
+    const reserve = http.createServer(); await new Promise<void>(resolve => reserve.listen(0, '127.0.0.1', resolve));
+    const peerPortStart = (reserve.address() as { port: number }).port; await new Promise<void>(resolve => reserve.close(() => resolve()));
+    peerNetwork = `${owner}-network`; docker(['network', 'create', '--label', `cds.acceptance.owner=${owner}`, peerNetwork]);
+    process.env.CDS_BRANCH_NETWORK_ISOLATION = '0'; // 仅本隔离进程使用自有user-defined网络，非生产隔离验收。
+    const peerConfig = { repoRoot: temp, worktreeBase: path.join(temp, 'peer-worktrees'), dockerNetwork: peerNetwork,
+      portStart: peerPortStart, sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'owned' }, executorToken: randomBytes(32).toString('hex') } as CdsConfig;
+    const peerContainer = new m.container.ContainerService(peerShell, peerConfig);
+    const app = express(); app.use(express.json()); app.use('/exec', m.executor.createExecutorRouter({ stateService: peerState,
+      worktreeService: new m.worktree.WorktreeService(peerShell), containerService: peerContainer, shell: peerShell, config: peerConfig }));
+    peerServer = await new Promise<http.Server>(resolve => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
+    const peerUrl = `http://127.0.0.1:${(peerServer.address() as { port: number }).port}`;
+    const peerPost = async (body: unknown) => {
+      const response = await fetch(`${peerUrl}/exec/deploy`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': peerConfig.executorToken! },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) }); assert.equal(response.status, 200);
+      const text = await response.text();
+      return text.split('\n\n').filter(Boolean).map(block => ({ event: block.match(/^event: (.+)$/m)?.[1], data: JSON.parse(block.match(/^data: (.+)$/m)![1]) }));
+    };
+    const beforeProtected = structuredClone(protectedEntry), beforeCommands = peerCommands.length;
+    const refused = await peerPost({ branchId: protectedId, branchName: protectedEntry.branch, projectId: 'owned', commitSha: head, profiles });
+    assert.equal(refused.find(event => event.event === 'error')?.data.accepted, false);
+    assert.equal(refused.find(event => event.event === 'error')?.data.reason, 'missing');
+    assert.deepEqual(peerState.getBranch(protectedId), beforeProtected); assert.equal((await read(oldUrl)).trim(), 'old-ready');
+    assert.equal(peerCommands.slice(beforeCommands).some(command => /^git |^mkdir |^docker (run|create|stop|rm)/.test(command)), false);
+    report.checks.push({ name: 'compiled-executor-http-rejects-missing-last-role-before-mutation', passed: true });
+
     report.stage = 'publish-final-required'; await build('web', webRef);
     const ready = await m.wait.refreshArtifactWaiters({ coordinator, containerService: container, getBranch: id => state.getBranch(id), recheckMs: 0 });
     assert.equal(ready.length, 1); assert.equal(ready[0].operationId, accepted.operationId); assert.equal(ready[0].generation, accepted.generation);
@@ -182,16 +226,43 @@ async function main(): Promise<void> {
     report.artifacts = admitted.artifactAdmission.artifacts; report.oldHttpRetained = true; report.newFixture = { image: fixed.dockerImage, revision: head, httpReady: true };
     report.actualRegistryPublishResumeVerified = true;
     report.checks.push({ name: 'real-all-required-publish-claims-original-once-and-runs-fixed-digest-fixture', passed: true });
+    report.stage = 'executor-http-runs-verified-artifact-without-git';
+    const peerBranchId = `${owner}-ready`;
+    const peerProfile = { ...profiles[2], resources: { cpus: 0.25, memoryMB: 128 }, readinessProbe: { path: '/', intervalSeconds: 1, timeoutSeconds: 20 } };
+    const beforePeer = peerCommands.length;
+    const peerEvents = await peerPost({ branchId: peerBranchId, branchName: 'owned-artifact-only', projectId: 'owned', artifactCommitSha: head, profiles: [peerProfile] });
+    assert.deepEqual(peerEvents.filter(event => event.event === 'error' || event.data?.status === 'error'), []);
+    assert.ok(peerEvents.some(event => event.event === 'complete'));
+    const peerEntry = peerState.getBranch(peerBranchId)!; assert.equal(peerEntry.status, 'running');
+    const peerService = peerEntry.services.web; assert.match(peerService.deployedImage!, /@sha256:[0-9a-f]{64}$/);
+    const peerId = docker(['inspect', '--format', '{{.Id}}', peerService.containerName]); ownedView(peerId); ownedIds.push(peerId);
+    const peerRuntime = ownedView(peerId); assert.equal(peerRuntime.Config.Labels['org.opencontainers.image.revision'], head);
+    assert.ok(peerRuntime.HostConfig.NanoCpus > 0);
+    await waitHttp(`http://127.0.0.1:${peerService.hostPort}/`); assert.equal(await read(`http://127.0.0.1:${peerService.hostPort}/`), `web:${head}`);
+    assert.equal(peerCommands.slice(beforePeer).some(command => /^git |^mkdir /.test(command)), false);
+    assert.equal((await read(oldUrl)).trim(), 'old-ready');
+    report.actualExecutorArtifactDeploymentVerified = true;
+    report.executorArtifact = { revision: head, image: peerService.deployedImage, httpReady: true, noSourcePreparation: true,
+      missingAllRolesPreservedOldHttp: true, scope: 'actual compiled executor HTTP route through original process pool and Docker; owned user-defined network; no Master/public cutover or managed-source policy acceptance' };
+    report.checks.push({ name: 'compiled-executor-http-runs-fixed-digest-real-version-without-source', passed: true });
     report.verdict = 'passed';
   } catch (error) { report.error = { name: (error as Error).name, message: String((error as Error).message).slice(0, 1500) }; throw error;
   } finally {
     const cleanupErrors: string[] = [];
+    if (peerServer) await new Promise<void>(resolve => peerServer!.close(error => { if (error) cleanupErrors.push(String(error)); resolve(); }));
+    // 即使路由在返回前失败也按自有标签发现并收尾其已创建容器。
+    try {
+      for (const id of docker(['ps', '-aq', '--filter', `label=cds.acceptance.owner=${owner}`]).split('\n').filter(Boolean)) if (!ownedIds.includes(id)) { ownedView(id); ownedIds.push(id); }
+    } catch (error) { cleanupErrors.push(String(error)); }
     await shell.close().catch(error => cleanupErrors.push(String(error)));
     for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedContainersRemoved = cleanupErrors.length === 0;
+    if (peerNetwork) { try { const view = JSON.parse(docker(['network', 'inspect', peerNetwork]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner); docker(['network', 'rm', peerNetwork]); report.ownedNetworkRemoved = true; } catch (error) { cleanupErrors.push(String(error)); report.ownedNetworkRemoved = false; } }
     for (const id of imageIds) { try { const view = JSON.parse(docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); docker(['image', 'rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedImagesRemoved = cleanupErrors.length === 0;
-    await fs.rm(temp, { recursive: true, force: true }); report.isolatedFilesRemoved = true;
+    try { await fs.rm(temp, { recursive: true, force: true }); report.isolatedFilesRemoved = true; }
+    catch (error) { cleanupErrors.push(String(error)); }
+    if (previousIsolation === undefined) delete process.env.CDS_BRANCH_NETWORK_ISOLATION; else process.env.CDS_BRANCH_NETWORK_ISOLATION = previousIsolation;
     if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
     if (previousContext !== undefined) process.env.DOCKER_CONTEXT = previousContext;
     if (cleanupErrors.length) { report.cleanupErrors = cleanupErrors; report.verdict = 'failed'; process.exitCode = 1; }

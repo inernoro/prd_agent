@@ -57,6 +57,14 @@ describe('完整预构建产物准入', () => {
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], target)).toMatchObject({ state: 'waiting', reason });
   });
 
+  it('执行器本地产物策略也核验提交、平台和内容ID，不依赖RepoDigest或local标记猜版本', async () => {
+    const shell = fixture(); shell.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: id, Os: 'linux', Architecture: 'amd64',
+      Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+    const result = await inspectDeploymentArtifacts(shell, [{ ...profile('api'), localArtifact: true }], target, () => {}, { inspectLocalArtifacts: true });
+    expect(result).toMatchObject({ state: 'ready', artifacts: [{ image: id, revision: target, platform: 'linux/amd64' }] });
+    expect(shell.commands.filter(cmd => cmd.startsWith('docker pull '))).toEqual([]);
+  });
+
   it('短提交或未展开镜像保持未知，不去拉旧目标镜像', async () => {
     const shell = fixture();
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], 'abc1234')).toMatchObject({ state: 'waiting', reason: 'target-unresolved' });

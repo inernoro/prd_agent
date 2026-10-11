@@ -89,6 +89,7 @@ export interface ProjectNetworkResolver {
 }
 
 export interface ContainerRemoveContext {
+  assertCurrent?: (step: string) => void;
   kind?: ContainerLifecycleIntentKind;
   reason?: string;
   projectId?: string | null;
@@ -712,8 +713,8 @@ export class ContainerService {
     private readonly logStreams?: ContainerLogStreamHub,
   ) {}
 
-  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void) {
-    return inspectDeploymentArtifacts(this.qualifiedShell(assertCurrent), profiles, targetCommitSha, assertCurrent);
+  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: { inspectLocalArtifacts?: boolean } = {}) {
+    return inspectDeploymentArtifacts(this.qualifiedShell(assertCurrent), profiles, targetCommitSha, assertCurrent, options);
   }
 
   /**
@@ -2602,9 +2603,12 @@ export class ContainerService {
    * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
    */
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
+    const shell = this.qualifiedShell(context.assertCurrent);
+    context.assertCurrent?.('before-remove-diagnostics');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
     const kind = context.kind || 'cds-remove';
     const before = await this.captureContainerDiagnostics(containerName, 300);
+    context.assertCurrent?.('after-remove-diagnostics');
     this.recordContainerEvent({
       severity: 'warn',
       source: 'cds-container-service',
@@ -2630,8 +2634,8 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const stopResult = await this.shell.exec(`docker stop ${containerName}`);
-    const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    const stopResult = await shell.exec(`docker stop ${containerName}`);
+    const rmResult = await shell.exec(`docker rm ${containerName}`);
     const completion = classifyRemoveCompletion(rmResult);
     this.recordContainerEvent({
       severity: completion.severity,

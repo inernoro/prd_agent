@@ -3789,6 +3789,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       trigger?: string | null;
       deploymentRunId?: string;
       requestedCommitSha?: string;
+      artifactCommitSha?: string;
       deploymentVersionId?: string;
       deploymentConfigHash?: string;
       deploymentCapabilities?: Array<{ kind: string; bindingId: string; fingerprint?: string }>;
@@ -3895,7 +3896,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const payload = {
       branchId: entry.id,
       branchName: entry.branch,
-      commitSha: context.requestedCommitSha,
+      commitSha: context.artifactCommitSha || context.requestedCommitSha,
+      artifactCommitSha: context.artifactCommitSha,
       // 2026-04-24: thread the master's project attribution so the
       // executor stamps it on its local entry instead of falling back
       // to a hardcoded 'default'. Older executors that ignore this
@@ -13204,6 +13206,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           trigger: triggerFromRequest(req),
           deploymentRunId: deploymentRun?.id,
           requestedCommitSha: requestCommitSha,
+          artifactCommitSha: deploymentInput.artifactAdmission?.state === 'ready' ? deploymentInput.artifactAdmission.targetCommitSha : undefined,
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
           env: getDeploymentEnv(deploymentInput, entry.projectId || 'default'),

@@ -46,20 +46,21 @@ function pullFailureReason(stdout: string, stderr: string): ArtifactWaitReason {
 export async function inspectDeploymentArtifacts(
   shell: IShellExecutor, profiles: readonly BuildProfile[], targetCommitSha: string,
   assertCurrent: () => void = () => {},
+  options: { inspectLocalArtifacts?: boolean } = {},
 ): Promise<ArtifactAdmission> {
   const target = targetCommitSha.toLowerCase();
   const checkedAt = new Date().toISOString();
-  const required = profiles.filter(profile => profile.prebuiltImage && !profile.managedBuild && !profile.localArtifact);
+  const required = profiles.filter(profile => profile.prebuiltImage && !profile.managedBuild && (options.inspectLocalArtifacts || !profile.localArtifact));
   const waiting = (reason: ArtifactWaitReason, profileIds?: string[]): ArtifactAdmission => ({
     state: 'waiting', targetCommitSha: target, checkedAt, reason, profileIds, artifacts: [],
   });
   if (!/^[0-9a-f]{40}$/.test(target)) return waiting('target-unresolved');
-  const images = new Map<string, string[]>();
+  const images = new Map<string, { profileIds: string[]; needsPull: boolean }>();
   for (const profile of required) {
     const image = profile.dockerImage?.trim();
     if (!image || image.includes('${')) return waiting('image-unresolved', [profile.id]);
-    const ids = images.get(image) || [];
-    ids.push(profile.id); images.set(image, ids);
+    const item = images.get(image) || { profileIds: [], needsPull: false };
+    item.profileIds.push(profile.id); item.needsPull ||= !profile.localArtifact; images.set(image, item);
   }
   if (!required.length) return { state: 'ready', targetCommitSha: target, checkedAt, artifacts: [] };
   const exec = async (command: string, timeout = 30_000) => {
@@ -76,9 +77,9 @@ export async function inspectDeploymentArtifacts(
   const system = info?.OSType;
   if (!arch || typeof system !== 'string' || !system) return waiting('verification-unavailable');
   const artifacts: VerifiedDeploymentArtifact[] = [];
-  for (const [image, profileIds] of images) {
+  for (const [image, { profileIds, needsPull }] of images) {
     assertCurrent();
-    const pull = await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined);
+    const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
     if (!pull) { assertCurrent(); return waiting('verification-unavailable', profileIds); }
     if (pull.exitCode) return waiting(pullFailureReason(pull.stdout, pull.stderr), profileIds);
     const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
@@ -92,7 +93,7 @@ export async function inspectDeploymentArtifacts(
     // 核验本地内容ID，并保存OCI固定digest用于运行及版本台账；不保存可变tag。
     const immutable = metadata?.Id;
     if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return waiting('verification-unavailable', profileIds);
-    const digest = Array.isArray(metadata.RepoDigests)
+    const digest = !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
       ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)) : undefined;
     if (!digest) return waiting('verification-unavailable', profileIds);
     artifacts.push({ profileIds, requestedImage: image, image: digest, revision: target, platform: `${system}/${arch}` });

@@ -4318,8 +4318,8 @@ describe('Branch Routes', () => {
       expect(deploymentRunService.list({ branchId: id })[0].status).toBe('queued');
     });
 
-    it('显式产物目标远端派发使用请求提交，不发送旧CI提交模板', async () => {
-      const requested = 'b'.repeat(40), previous = 'a'.repeat(40);
+    it.each([true, false])('远端派发显式目标%s或CI默认目标携带已核验完整身份，不让执行器改取HEAD', async (explicit) => {
+      const previous = 'a'.repeat(40), requested = explicit ? 'b'.repeat(40) : previous;
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
         workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
       const id = 'artifact-remote'; const now = new Date().toISOString();
@@ -4338,9 +4338,10 @@ describe('Branch Routes', () => {
         dispatched = body; return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
       });
       try {
-        expect((await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: requested, targetExecutorId: 'exec-artifact' })).status).toBe(200);
+        expect((await request(server, 'POST', `/api/branches/${id}/deploy`, { ...(explicit ? { commitSha: requested } : {}), targetExecutorId: 'exec-artifact' })).status).toBe(200);
         expect(preflight.profiles[0].dockerImage).toBe(`ghcr.io/owned/api:sha-${requested}`);
         expect(dispatched.profiles[0].dockerImage).toBe(digest);
+        expect(dispatched.commitSha).toBe(requested); expect(dispatched.artifactCommitSha).toBe(requested);
         expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
       } finally { vi.unstubAllGlobals(); }
     });
