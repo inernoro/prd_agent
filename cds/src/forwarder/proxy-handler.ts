@@ -25,6 +25,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { hasWidgetMarkupPrefix, isSupportedWidgetEncoding } from '../services/widget-response-shape.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import {
@@ -541,6 +542,7 @@ export class ProxyHandler {
             !!route.branchId &&
             !!route.branchName &&
             contentType.includes('text/html') &&
+            isSupportedWidgetEncoding(String(upstreamRes.headers['content-encoding'] || '')) &&
             status >= 200 && status < 300;
 
           if (shouldInjectWidget) {
@@ -872,7 +874,7 @@ export class ProxyHandler {
     const headers: Record<string, string | string[] | undefined> = overrideHeaders
       ? { ...overrideHeaders }
       : { ...upstreamRes.headers };
-    const encoding = String(headers['content-encoding'] || '').toLowerCase();
+    const encoding = String(headers['content-encoding'] || '').trim().toLowerCase();
     let stream: NodeJS.ReadableStream = upstreamRes;
     let aborted = false;
     // Cursor Bugbot Medium (PR #541):upstreamRes 自身的 'error' 事件必须挂监听,
@@ -912,7 +914,18 @@ export class ProxyHandler {
     stream.on('end', () => {
       if (aborted) return; // upstreamRes 已 errored,不应再 inject 残缺 body
       try {
-        let body = Buffer.concat(chunks).toString('utf-8');
+        const decoded = Buffer.concat(chunks);
+        if (!hasWidgetMarkupPrefix(decoded)) {
+          if (encoding && encoding !== 'identity') delete headers['content-encoding'];
+          delete headers['transfer-encoding'];
+          headers['content-length'] = String(decoded.length);
+          if (!res.headersSent) res.writeHead(status, headers as http.OutgoingHttpHeaders);
+          res.end(decoded);
+          logHttp(status, { bodyPreview: suppressPreviewBody ? undefined : decoded.subarray(0, 8 * 1024).toString('utf8'), bodyBytes: decoded.length });
+          finish(status);
+          return;
+        }
+        let body = decoded.toString('utf-8');
         const responseForLog = {
           bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
           bodyBytes: Buffer.byteLength(body, 'utf8'),
@@ -924,7 +937,7 @@ export class ProxyHandler {
         } else {
           body += widget;
         }
-        delete headers['content-encoding'];
+        if (encoding && encoding !== 'identity') delete headers['content-encoding'];
         delete headers['transfer-encoding'];
         headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
         if (!res.headersSent) {

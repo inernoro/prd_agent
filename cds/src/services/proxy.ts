@@ -6,6 +6,7 @@ import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { hasWidgetMarkupPrefix, isSupportedWidgetEncoding } from './widget-response-shape.js';
 import { profileHostsPreviewInstance } from './preview-instance.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
@@ -2601,11 +2602,11 @@ ${shouldAutoRefresh ? `;(function(){
       // ── Widget injection: only for HTML 200 responses with branch context ──
       const contentType = proxyRes.headers['content-type'] || '';
       const statusCode = proxyRes.statusCode || 200;
-      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300;
+      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300 && isSupportedWidgetEncoding(String(proxyRes.headers['content-encoding'] || ''));
 
       if (isHtml) {
         // Buffer the HTML response, decompress if needed, inject widget before </body>
-        const encoding = (proxyRes.headers['content-encoding'] || '').toLowerCase();
+        const encoding = (proxyRes.headers['content-encoding'] || '').trim().toLowerCase();
         let stream: NodeJS.ReadableStream = proxyRes;
 
         // Decompress if upstream sent compressed HTML
@@ -2620,7 +2621,17 @@ ${shouldAutoRefresh ? `;(function(){
         const chunks: Buffer[] = [];
         stream.on('data', (chunk: Buffer) => chunks.push(chunk));
         stream.on('end', () => {
-          let body = Buffer.concat(chunks).toString('utf-8');
+          const decoded = Buffer.concat(chunks);
+          if (!hasWidgetMarkupPrefix(decoded)) {
+            if (encoding && encoding !== 'identity') delete headers['content-encoding'];
+            delete headers['transfer-encoding'];
+            headers['content-length'] = String(decoded.length);
+            clientRes.writeHead(statusCode, headers);
+            clientRes.end(decoded);
+            logHttp(statusCode, { bodyPreview: suppressPreviewBody ? undefined : decoded.subarray(0, 8 * 1024).toString('utf8'), bodyBytes: decoded.length });
+            return;
+          }
+          let body = decoded.toString('utf-8');
           const responseForLog = {
             bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
             bodyBytes: Buffer.byteLength(body, 'utf8'),
@@ -2670,7 +2681,7 @@ ${shouldAutoRefresh ? `;(function(){
           }
 
           // Remove encoding headers (we decoded), recalculate content-length
-          delete headers['content-encoding'];
+          if (encoding && encoding !== 'identity') delete headers['content-encoding'];
           delete headers['transfer-encoding'];
           headers['content-length'] = String(Buffer.byteLength(body, 'utf-8'));
           clientRes.writeHead(statusCode, headers);
