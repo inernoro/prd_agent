@@ -82,6 +82,10 @@ jobs:
           retention-days: 14
 
   application-probe-cancel:
+    # Both full cases previously shared a four-CPU primary daemon. Keep each
+    # original workload and budget, but do not overlap these two platforms.
+    needs: application-docker
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

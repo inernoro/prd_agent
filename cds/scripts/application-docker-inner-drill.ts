@@ -393,6 +393,18 @@ async function main(): Promise<void> {
     expectedCapabilityProbe, startedAt: new Date().toISOString(), verdict: 'failed', genericFixtureOnly: true, representativeBusinessCiVerified: false,
     firstStageVerified: false, performanceVerified: false, abnormalRestartVerified: false, infrastructureRecoveryVerified: false,
     branchNetworkIsolationDisabled: false, noPrimaryDockerSocket: true, ownedContainersRemoved: false };
+  // A completed application phase must survive an unrelated later failure.
+  // This atomic partial report never replaces the final report or its verdict.
+  const checkpoint = async (stage: string) => {
+    report.evidenceCheckpoints ||= [];
+    assert.ok(report.evidenceCheckpoints.length < 12);
+    report.evidenceCheckpoints.push({ stage, at: new Date().toISOString() });
+    const filename = '/owned/output/docker-report.checkpoint.json';
+    await fs.writeFile(`${filename}.tmp`, JSON.stringify({ ...report,
+      partialCheckpointOnly: true, finalReportPresent: false,
+      wholeCaseVerified: false, formalAcceptancePassed: false }, null, 2) + '\n');
+    await fs.rename(`${filename}.tmp`, filename);
+  };
   const containers = new Set<string>(); const images = new Set<string>();
   let probeProxy: Awaited<ReturnType<typeof createProbeDaemonProxy>> | undefined;
   const ownedView = async (id: string) => {
@@ -537,6 +549,7 @@ async function main(): Promise<void> {
       assert.equal(receipt.entries[0].imageId, active.id); assert.equal(receipt.entries[0].size, active.size);
       assert.ok((await fs.stat(path.join(cacheRoot, 'cache.json'))).size <= 8192);
       evidence.receiptAtAcquisition = receipt;
+      await checkpoint('finite-core-cache-acquired');
       const acquired = evidence.events.find((event: any) => event.action === 'agent.core-image-cache.acquired');
       assert.ok(acquired); evidence.ownedReference = acquired.details.cacheReference;
       await docker(['image', 'rm', '--no-prune', active.reference]);
@@ -564,6 +577,7 @@ async function main(): Promise<void> {
       evidence.pruneFinishedAt = new Date().toISOString();
       assert.equal(await docker(['image', 'inspect', active.id, '--format', '{{.Id}}']), active.id);
       assert.equal(await absentImage(unused.id), true); evidence.unusedReclaimedWhileActiveProtected = true;
+      await checkpoint('finite-core-cache-original-active-prune-complete');
       const waitStarted = performance.now();
       await sleep(Math.max(0, receipt.entries[0].expiresAt - Date.now()) + 25);
       evidence.expiryWaitMs = performance.now() - waitStarted; evidence.expiredAt = new Date().toISOString();
@@ -571,6 +585,7 @@ async function main(): Promise<void> {
       await cache.reclaimExpired();
       assert.equal(await docker(['image', 'inspect', evidence.ownedReference, '--format', '{{.Id}}']), active.id);
       evidence.activeUserProtectedPastExpiry = true;
+      await checkpoint('finite-core-cache-original-idle-expiry-reached');
       release(); await cache.reclaimExpired();
       assert.equal(await absentImage(evidence.ownedReference), true);
       await assert.rejects(fs.stat(cacheRoot), (error: any) => error.code === 'ENOENT');
@@ -581,6 +596,7 @@ async function main(): Promise<void> {
         evidence.foreignReferencesAfter[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
       assert.deepEqual(evidence.foreignReferencesAfter, evidence.foreignReferencesBefore);
       evidence.ownedReferenceAndReceiptRemoved = true; evidence.verdict = 'passed';
+      await checkpoint('finite-core-cache-release-and-foreign-reference-checks-complete');
     } finally { cache.stop(); evidence.finishedAt = new Date().toISOString(); }
   };
   try {
@@ -679,6 +695,8 @@ async function main(): Promise<void> {
     await runApplicationBootstrap({ sourceHead: source.sourceHead, mongoUri: `mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, dockerHost: host, output: '/owned/output',
       dockerRequestProxy: { socketPath: path.join(root, 'probe-daemon-proxy.sock'), daemonId: info.ID, owner: source.owner },
       beforeShutdown: async context => {
+        report.stage = 'original-application-shutdown-and-restart';
+        await checkpoint('before-original-runtime-capability-inflight-cancellation');
         assert.ok(capabilityProjectId);
         // Original periodic reclaim remains enabled. Digest-only unused images
         // can be pruned during the earlier deployment exercise; establish the
@@ -752,10 +770,12 @@ async function main(): Promise<void> {
           report.actualBudgetProbeCancellationVerified = true;
           context.report.actualBudgetProbeCancellationVerified = true;
         }
+        report.originalFirstShutdown = context.report.shutdownAttempts[0];
         report.probeCancellationEvents = events;
         report.checks.push({ name: cancelBoundary === 'daemon-created'
           ? 'original-on-demand-probe-cancel-after-daemon-create-before-CLI-ack-exact-ID-reconciled-before-restart'
           : 'original-on-demand-probe-cancel-late-real-create-exact-ID-reconciled-before-restart', passed: true });
+        await checkpoint('original-first-shutdown-and-exact-probe-cleanup-complete');
       },
       afterRestart: async context => {
         await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
@@ -785,6 +805,7 @@ async function main(): Promise<void> {
         report.failureRecovery = { verdict: 'failed', originalStop, originalNormalStopPassed: false,
           operationId: originalRequest.operationId, instanceId: originalRequest.instanceId, restartRequestedAt: new Date().toISOString() };
         report.probeEventsAtFailedShutdown = await context.readProbeEvents();
+        await checkpoint('original-first-shutdown-failed-before-responsibility-recovery');
         await context.restartForFailureRecovery();
         const recoveryTree = context.applicationProcessTree(); report.failureRecovery.processTree = recoveryTree;
         try { await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
@@ -1208,6 +1229,7 @@ async function main(): Promise<void> {
           scopeProof.restoration.services = await serviceProof(report.project.sourceBackground);
           scopeProof.verdict = 'passed'; scopeProof.finishedAt = new Date().toISOString();
           report.checks.push({ name: 'full-original-authenticated-higher-priority-stop-cancels-daemon-started-service-and-original-deploy-restores', passed: true });
+          await checkpoint('original-authenticated-service-scope-cancel-and-restoration-complete');
         } catch (error) {
           scopeProof.failure = { at: new Date().toISOString(), message: String((error as Error).message).slice(0, 2000) };
           try { scopeProof.originalEvents = await context.readDispatchEvents(projectId, branchId); scopeProof.failureRuns = await readRuns(); }
@@ -1314,7 +1336,10 @@ async function main(): Promise<void> {
         report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.dockerExerciseReport = { file: 'docker-report.json', genericFixtureOnly: true, representativeBusinessCiVerified: false, shortReadSamples: report.readSamples.length };
+        await checkpoint('original-infra-observation-and-recovery-complete');
       } });
+    report.stage = 'finite-core-image-cache';
+    await checkpoint('original-application-shutdown-and-restart-complete');
     await exerciseFiniteCoreCache();
     report.verdict = 'passed';
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }

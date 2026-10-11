@@ -95,12 +95,26 @@ async function main(): Promise<void> {
     }
     report.stage = 'original-application-owned-docker';
     let result: { stdout: string; stderr: string };
+    const commandStartedAt = new Date().toISOString(), commandStarted = performance.now();
+    const commandEvidence = (failed?: Error & { code?: unknown; signal?: unknown; killed?: unknown; stdout?: string; stderr?: string }) => ({
+      boundary: 'outer-docker-exec-client', configuredTimeoutMs: 600_000,
+      startedAt: commandStartedAt, finishedAt: new Date().toISOString(), elapsedMs: performance.now() - commandStarted,
+      exitCode: failed ? typeof failed.code === 'number' ? failed.code : null : 0,
+      errorCode: failed && typeof failed.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(failed.code) ? failed.code : null,
+      signal: failed && typeof failed.signal === 'string' && /^SIG[A-Z0-9]{1,16}$/.test(failed.signal) ? failed.signal : null,
+      killed: failed ? typeof failed.killed === 'boolean' ? failed.killed : null : false,
+      stdoutBytes: failed ? Buffer.byteLength(failed.stdout || '') : Buffer.byteLength(result.stdout),
+      stderrBytes: failed ? Buffer.byteLength(failed.stderr || '') : Buffer.byteLength(result.stderr),
+      nativeProcessDispositionVerified: false,
+    });
     try { result = await execute('docker', ['--host', primaryHost, 'exec', '-w', '/owned/source', containerId,
       'node', '--import', 'tsx', 'scripts/application-docker-inner-drill.ts', '--native',
       ...(cancelAfterDaemonCreate ? ['--cancel-after-daemon-create'] : [])],
     { encoding: 'utf8', timeout: 600_000, maxBuffer: 2 * 1024 * 1024 }); }
-    catch (error) { const failed = error as Error & { stdout?: string; stderr?: string };
+    catch (error) { const failed = error as Error & { code?: unknown; signal?: unknown; killed?: unknown; stdout?: string; stderr?: string };
+      report.innerCommand = commandEvidence(failed);
       await fs.writeFile(path.join(output, 'inner-driver.log'), ((failed.stdout || '') + (failed.stderr || '')).slice(-65536)); throw error; }
+    report.innerCommand = commandEvidence();
     await fs.writeFile(path.join(output, 'inner-driver.log'), (result.stdout + result.stderr).slice(-65536));
     const application = JSON.parse(await fs.readFile(path.join(output, 'report.json'), 'utf8')); assert.equal(application.verdict, 'passed');
     assert.equal(application.actualFullIndexBootstrapVerified, true); assert.equal(application.actualOwnedDockerApplicationPreflightVerified, true);
