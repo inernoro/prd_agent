@@ -198,8 +198,8 @@ export function buildWidgetScript(
   // ── State ──
   var expanded=false;
   // 手机上整条徽章压在业务内容上（2026-09-14 稳定冒烟：移动首页底部被分支状态条遮挡）。
-  // 窄屏进入 4 秒后收成 36px 的圆形小钮，只在用户点它时展开；桌面端不受影响。
-  var compact=false;
+  // 窄屏首次渲染就收成 36px 的圆形小钮，只在用户点它时展开；桌面端不受影响。
+  var compact=isMobileViewport();
   var compactTimer=null;
   var deploying=false;
   var deployProfileId=null;
@@ -581,7 +581,7 @@ export function buildWidgetScript(
   document.addEventListener('mouseup',function(){dragState=null;});
   window.addEventListener('resize',function(){
     if(!isMobileViewport()&&compact){compact=false;render();}
-    else if(isMobileViewport()&&!compact&&!compactTimer)scheduleMobileCompact(4000);
+    else if(isMobileViewport()&&!compact&&!expanded){compact=true;render();}
     if(widgetWasDragged){
       setWidgetPosition(pos.x,pos.y);
       return;
@@ -1934,7 +1934,6 @@ export function buildWidgetScript(
 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
-  scheduleMobileCompact(4000);
   fetchBranchInfo();
   initBranchStream();
   initAiStream();
