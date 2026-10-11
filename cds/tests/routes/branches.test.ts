@@ -1049,7 +1049,7 @@ describe('Branch Routes', () => {
         const identity = command.split(' ').at(-1)!.replaceAll("'", '');
         if (phase === 'capture-cancel') { cancel(); throw 'user cancelled'; }
         const info = objects.get(identity) || [...objects.values()].find(object => object.Name === '/' + identity);
-        return { stdout: info ? JSON.stringify(info) : '', stderr: info ? '' : 'No such object', exitCode: info ? 0 : 1 };
+        return { stdout: info ? JSON.stringify(info) : '', stderr: info ? '' : 'No such object: ' + identity, exitCode: info ? 0 : 1 };
       });
       mock.addResponsePatternFirst(/docker rm -f [a-f0-9]{64}/, ([command]) => {
         events.push(command); objects.delete(command.split(' ').at(-1)!); return { stdout: '', stderr: '', exitCode: 0 };
