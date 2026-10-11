@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.45；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.46；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -444,3 +444,11 @@ v1.41独立ff fixture机制旧3/6→新6/6，原28语义文本一致/独立modul
 guide2.63先于实现冻结P3持久受理/认领/unknown合同。9530750产品：schema1独立pending journal； shared Shell Worker中有界读写，临时0600文件fsync/rename/目录fsync后ACK，3秒IO/10秒事务/128队列；merged真实HTTP待ACK，失败503，移除取消占位run头，返回op/gen；complete不删可靠queued，claim先保存再一次POST，project/branch/Profile/kind/SHA/trigger/gen一次凭证，stop/新writer使旧凭证失效。claim等待后原Branch ref及id/project/branch/worktree/createdAt再查；unknown不重试，boot读取保留记录并阻止冲突写，不宣称已安全续跑。主旧行为2真红→绿，去掉Router ACK实际HTTP1真红后恢复；7files111相关/core tsc0，全量669files9766green/6files19skip/1旧obsolete/68.67s。独立953固定源正在复验，原30fe 2/6（4负谓词重叠根因）/协调19/观察3不求和、不抹红。真实文件/新OS读取是局部证据，非实际Master/Daemon重启。实际pending查询/可用run绑定及执行器恢复对账尚未完成；legacy未点名整分支缓存SHA重放语义需独立核查。
 
 39partial-local/10todo；49正式not-executed、visual N/A；不改变A01–A12和八分支完整交付门槛，目标active。
+
+## v1.46 未点名整分支重放意图修复
+
+953固定独立boundary15/16及native实际Router recipient4/5发现同一真红（两组不求和）：原manual whole body={}、durable commitPinned=false/cacheA，重放把body写成{commitSha:A}，实际recipient接收commitPinned=true并兑现token为started。主保持原件，guide2.64先冻结兼容；f57696产品仅Coordinator/replay两生产路径修复，未点名manual whole不发送缓存SHA，凭证仍核原scope/kind/trigger/op/gen且不得改为pin；允许cache推进，显式whole/Profile/webhook精确SHA不放宽。主2真红→113相关/core0；全量669files9768green/6files19skip/1旧obsolete/65.84s。固定f576末尾独立复验正在进行，不继承953绿；953的其它局部与30fe旧4/6 adapter边界分列，原queued-run期待仍历史红，可靠ledger保留两scope另列，不作为actualMaster/Daemon恢复或可用追踪证明。
+
+真实8支、全部实际黄闪电、镜像/目标SHA、排队/公网/视觉/恢复与48h/周正式门槛未执行；既有授权有效，目标active。
+
+末尾初步回执：f576保持原native实际HTTP期待5/5（953原4/5的一真红关闭）；953其余原协议19/19、原nativeunknown3/3、新journal14/14分别固定、不相加；f576其余边界和定稿仍待返。
