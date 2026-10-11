@@ -23,11 +23,12 @@ const modules = async () => ({
   container: await import(new URL('../dist/services/container.js', import.meta.url).href) as typeof import('../src/services/container.js'),
   shell: await import(new URL('../dist/services/shell-executor.js', import.meta.url).href) as typeof import('../src/services/shell-executor.js'),
   isolated: await import(new URL('../dist/services/isolated-shell-executor.js', import.meta.url).href) as typeof import('../src/services/isolated-shell-executor.js'),
+  versions: await import(new URL('../dist/services/deployment-version.js', import.meta.url).href) as typeof import('../src/services/deployment-version.js'),
 });
 const sourcePaths = ['src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts',
   'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/deployment-intent.ts',
   'src/services/deployment-run.ts', 'src/services/state.ts', 'src/services/container.ts', 'src/services/isolated-shell-executor.ts',
-  'src/services/shell-executor.ts', 'src/executor/routes.ts', 'src/services/worktree.ts', 'scripts/artifact-admission-drill.ts'];
+  'src/services/shell-executor.ts', 'src/executor/routes.ts', 'src/services/worktree.ts', 'src/services/deployment-version.ts', 'src/services/env-provenance.ts', 'scripts/artifact-admission-drill.ts'];
 
 async function acceptWorker(): Promise<void> {
   assert.ok(process.connected && process.send);
@@ -64,9 +65,9 @@ async function main(): Promise<void> {
   const output = path.resolve('artifact-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); assert.match(head, /^[0-9a-f]{40}$/);
   const report: Record<string, any> = { schema: 1, head, startedAt: new Date().toISOString(), verdict: 'failed', checks: [],
-    scope: 'compiled artifact checker, durable queue and executor HTTP route; owned loopback registry, Docker runtime and SIGKILL; no Master/public cutover, managed-source or public performance acceptance',
+    scope: 'compiled artifact checker, durable queue, executor HTTP route and managed producer/version content policy; owned registry, Git and Docker; no full Master/public cutover, full configuration rollback or performance acceptance',
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
-    actualRegistryPublishResumeVerified: false, actualExecutorArtifactDeploymentVerified: false, actualApplicationDeploymentVerified: false, performanceVerified: false,
+    actualRegistryPublishResumeVerified: false, actualExecutorArtifactDeploymentVerified: false, actualManagedProducerPolicyVerified: false, actualLocalVersionContentRestoreVerified: false, actualApplicationDeploymentVerified: false, performanceVerified: false,
     ownedContainersRemoved: false, ownedImagesRemoved: false, isolatedFilesRemoved: false };
   const m = await modules();
   const previousHost = process.env.DOCKER_HOST, previousContext = process.env.DOCKER_CONTEXT, previousIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
@@ -248,6 +249,90 @@ async function main(): Promise<void> {
     report.executorArtifact = { revision: head, image: peerService.deployedImage, httpReady: true, noSourcePreparation: true,
       missingAllRolesPreservedOldHttp: true, scope: 'actual compiled executor HTTP route through original process pool and Docker; owned user-defined network; no Master/public cutover or managed-source policy acceptance' };
     report.checks.push({ name: 'compiled-executor-http-runs-fixed-digest-real-version-without-source', passed: true });
+
+    report.stage = 'managed-source-and-environment-identity';
+    const sourceDir = path.join(temp, 'managed-source'); await fs.mkdir(sourceDir);
+    const git = (args: string[]) => execFileSync('/usr/bin/git', ['-C', sourceDir, ...args], { encoding: 'utf8', timeout: 10_000 }).trim();
+    git(['init', '--quiet']);
+    await fs.writeFile(path.join(sourceDir, 'version.txt'), 'source-one');
+    await fs.writeFile(path.join(sourceDir, 'server.cjs'), "const http=require('node:http'),fs=require('node:fs');http.createServer((_req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({source:fs.readFileSync('/app/version.txt','utf8').trim(),built:fs.readFileSync('/app/build-sha.txt','utf8').trim(),runtime:process.env.CDS_COMMIT_SHA,flavor:process.env.OWNED_FLAVOR}));}).listen(8080,'0.0.0.0');");
+    const commit = (subject: string) => { git(['add', '.']); git(['-c', 'user.name=CDS隔离验收', '-c', 'user.email=owned@example.invalid', 'commit', '--quiet', '-m', subject]); return git(['rev-parse', 'HEAD']); };
+    const sourceOne = commit('隔离源码第一版'); assert.match(sourceOne, /^[0-9a-f]{40}$/);
+    const managedPortListener = http.createServer(); await new Promise<void>(resolve => managedPortListener.listen(0, '127.0.0.1', resolve));
+    const managedPort = (managedPortListener.address() as { port: number }).port; await new Promise<void>(resolve => managedPortListener.close(() => resolve()));
+    const managedEntry: BranchEntry = { id: `${owner}-managed`, projectId: 'owned', branch: 'owned-managed', status: 'idle', worktreePath: sourceDir,
+      createdAt: new Date().toISOString(), githubCommitSha: 'a'.repeat(40), pinnedCommit: 'e'.repeat(40), ciTargetSha: head,
+      services: { managed: { profileId: 'managed', containerName: `${owner}-managed`, hostPort: managedPort, status: 'idle' } } };
+    peerState.addBranch(managedEntry); const managedRuntime = managedEntry.services.managed;
+    const artifactTag = `owned-${owner}:managed`;
+    const managedProfile: BuildProfile = { id: 'managed', projectId: 'owned', name: '隔离受管程序', dockerImage: apiRef, workDir: '.', containerWorkDir: '/app',
+      command: 'unused-source-command', containerPort: 8080, env: { OWNED_FLAVOR: 'first' }, managedBuild: { stack: 'node', artifactImage: artifactTag,
+        installCommand: 'true', buildCommand: `node -e 'require("node:fs").writeFileSync("/app/build-sha.txt",process.env.CDS_COMMIT_SHA)'`, startCommand: 'node /app/server.cjs' } };
+    const managedUrl = `http://127.0.0.1:${managedPort}/`;
+    const managedBody = async () => { await waitHttp(managedUrl); return JSON.parse(await read(managedUrl)); };
+    const ownImage = (image: string) => { const view = JSON.parse(docker(['image', 'inspect', image]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); imageIds.add(view.Id); return view; };
+    const verifiedManagedImage = (image: string, source: string) => { const view = ownImage(image); assert.equal(view.Os, 'linux');
+      const platform = JSON.parse(docker(['info', '--format', '{{json .}}'])); assert.equal(view.Architecture, platform.Architecture === 'x86_64' ? 'amd64' : platform.Architecture);
+      assert.equal(view.Config.Labels['org.opencontainers.image.revision'], source); assert.match(view.Config.Labels['cds.managed.contract'], /^[a-f0-9]{64}$/); return view; };
+    const firstCommands = peerCommands.length;
+    await peerContainer.runService(managedEntry, managedProfile, managedRuntime);
+    const imageOne = managedRuntime.deployedImage!; assert.match(imageOne, /^sha256:[a-f0-9]{64}$/);
+    verifiedManagedImage(imageOne, sourceOne); assert.deepEqual(await managedBody(), { source: 'source-one', built: sourceOne, runtime: sourceOne, flavor: 'first' });
+    assert.equal(peerCommands.slice(firstCommands).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    const versions = new m.versions.DeploymentVersionService(peerState);
+    const versionOne = versions.create({ projectId: 'owned', branchId: managedEntry.id, commitSha: sourceOne, configHash: ownImage(imageOne).Config.Labels['cds.managed.contract'],
+      profiles: [managedProfile], branch: managedEntry, createdByRunId: 'owned-managed-one' });
+    assert.equal(versionOne.profiles[0].artifactImage, imageOne); assert.equal(versionOne.profiles[0].reusable, true);
+    report.checks.push({ name: 'compiled-managed-producer-source-build-runtime-and-oci-identities-match', passed: true });
+
+    report.stage = 'managed-cache-reuse'; const beforeReuse = peerCommands.length;
+    managedEntry.lastDeployDispatchAt = new Date().toISOString();
+    await peerContainer.runService(managedEntry, managedProfile, managedRuntime);
+    assert.equal(managedRuntime.deployedImage, imageOne); assert.equal(peerCommands.slice(beforeReuse).some(command => /^docker (cp|exec|commit)/.test(command) || command.includes('-managed-build-')), false);
+    assert.deepEqual(await managedBody(), { source: 'source-one', built: sourceOne, runtime: sourceOne, flavor: 'first' });
+    report.checks.push({ name: 'compiled-managed-same-source-platform-and-contract-reuses-fixed-content', passed: true });
+
+    report.stage = 'managed-source-change'; await fs.writeFile(path.join(sourceDir, 'version.txt'), 'source-two');
+    const sourceTwo = commit('隔离源码第二版'); assert.notEqual(sourceTwo, sourceOne); const beforeSourceChange = peerCommands.length;
+    await peerContainer.runService(managedEntry, managedProfile, managedRuntime); const imageTwo = managedRuntime.deployedImage!;
+    assert.notEqual(imageTwo, imageOne); verifiedManagedImage(imageTwo, sourceTwo);
+    assert.deepEqual(await managedBody(), { source: 'source-two', built: sourceTwo, runtime: sourceTwo, flavor: 'first' });
+    assert.equal(peerCommands.slice(beforeSourceChange).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    report.checks.push({ name: 'compiled-managed-new-source-rebuilds-retargeted-cache-tag', passed: true });
+
+    report.stage = 'managed-configuration-change'; const changedProfile = { ...managedProfile, env: { OWNED_FLAVOR: 'second' } }; const beforeConfig = peerCommands.length;
+    await peerContainer.runService(managedEntry, changedProfile, managedRuntime); const imageThree = managedRuntime.deployedImage!;
+    assert.notEqual(imageThree, imageTwo); const changedImage = verifiedManagedImage(imageThree, sourceTwo);
+    assert.notEqual(changedImage.Config.Labels['cds.managed.contract'], ownImage(imageTwo).Config.Labels['cds.managed.contract']);
+    assert.deepEqual(await managedBody(), { source: 'source-two', built: sourceTwo, runtime: sourceTwo, flavor: 'second' });
+    assert.equal(peerCommands.slice(beforeConfig).filter(command => command.startsWith('docker exec') && command.includes('-managed-build-')).length, 1);
+    report.checks.push({ name: 'compiled-managed-changed-contract-rebuilds-instead-of-reusing-tag', passed: true });
+
+    report.stage = 'managed-build-failure'; const beforeFailedBuild = await managedBody(); const protectedManagedId = docker(['inspect', '--format', '{{.Id}}', managedRuntime.containerName]);
+    await assert.rejects(peerContainer.runService(managedEntry, { ...changedProfile, managedBuild: { ...changedProfile.managedBuild!, buildCommand: 'exit 17' } }, managedRuntime), /managed 构建失败/);
+    assert.equal(docker(['inspect', '--format', '{{.Id}}', managedRuntime.containerName]), protectedManagedId); assert.deepEqual(await managedBody(), beforeFailedBuild);
+    assert.equal(docker(['ps', '-aq', '--filter', `name=${owner}-managed-managed-build-`]), '');
+    report.checks.push({ name: 'compiled-managed-build-failure-preserves-current-http-and-cleans-owned-builder', passed: true });
+
+    report.stage = 'explicit-source-policy'; const beforeMissing = peerCommands.length; let sourceFallbackCalls = 0;
+    const missingProfile = { ...changedProfile, managedBuild: undefined, localArtifact: false, prebuiltImage: true, command: '', dockerImage: `${registry}/owned-unpublished:sha-${sourceTwo}`, sourceFallbackProfile: changedProfile };
+    await assert.rejects(peerContainer.runService(managedEntry, missingProfile, managedRuntime, undefined, undefined,
+      { artifactCommitSha: sourceTwo, onSourceCompileFallback: async () => { sourceFallbackCalls++; } }), /部署未转为源码编译/);
+    assert.equal(sourceFallbackCalls, 0); assert.equal(peerCommands.slice(beforeMissing).some(command => /^git |^docker (cp|exec|commit|create|run)/.test(command)), false);
+    assert.equal(docker(['inspect', '--format', '{{.Id}}', managedRuntime.containerName]), protectedManagedId); assert.deepEqual(await managedBody(), beforeFailedBuild);
+    report.checks.push({ name: 'compiled-missing-prebuilt-does-not-start-hidden-source-or-remove-old-http', passed: true });
+
+    report.stage = 'local-version-content-restore'; const restoredProfile = versions.materializeProfiles(versionOne, [changedProfile])[0];
+    assert.equal(restoredProfile.localArtifact, true); assert.equal(restoredProfile.dockerImage, imageOne);
+    const beforeRestore = peerCommands.length; await peerContainer.runService(managedEntry, restoredProfile, managedRuntime, undefined, undefined, { artifactCommitSha: sourceOne });
+    assert.equal(managedRuntime.deployedImage, imageOne); assert.equal(ownImage(artifactTag).Id, imageThree);
+    assert.equal(peerCommands.slice(beforeRestore).some(command => /^git |^docker (cp|exec|commit)/.test(command)), false);
+    assert.deepEqual(await managedBody(), { source: 'source-one', built: sourceOne, runtime: sourceOne, flavor: 'second' });
+    report.checks.push({ name: 'compiled-local-version-restores-old-fixed-content-with-current-runtime-environment-without-source', passed: true });
+    report.actualManagedProducerPolicyVerified = true; report.actualLocalVersionContentRestoreVerified = true;
+    report.managedPolicy = { toolRevision: head, sourceOne, sourceTwo, imageOne, imageTwo, imageThree, reusableVersionId: versionOne.id,
+      explicitSourceOnly: true, sourceBuildRuntimeIdentitiesMatch: true, originalCacheTagNowPointsToImageThree: true,
+      currentRuntimeEnvironmentRetainedOnContentRestore: true, fullConfigurationRollbackVerified: false, readyBeforeOldCutVerified: false, stageFairnessAndHardLimitsVerified: false };
     report.verdict = 'passed';
   } catch (error) { report.error = { name: (error as Error).name, message: String((error as Error).message).slice(0, 1500) }; throw error;
   } finally {
@@ -261,7 +346,11 @@ async function main(): Promise<void> {
     for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedContainersRemoved = cleanupErrors.length === 0;
     if (peerNetwork) { try { const view = JSON.parse(docker(['network', 'inspect', peerNetwork]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner); docker(['network', 'rm', peerNetwork]); report.ownedNetworkRemoved = true; } catch (error) { cleanupErrors.push(String(error)); report.ownedNetworkRemoved = false; } }
-    for (const id of imageIds) { try { const view = JSON.parse(docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); docker(['image', 'rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
+    // managed commit may succeed before later verification fails: discover inherited owner labels too.
+    try { for (const id of docker(['image', 'ls', '-aq', '--no-trunc', '--filter', `label=cds.acceptance.owner=${owner}`]).split('\n').filter(Boolean)) {
+      const view = JSON.parse(docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); imageIds.add(view.Id);
+    } } catch (error) { cleanupErrors.push(String(error)); }
+    for (const id of [...imageIds].reverse()) { try { const view = JSON.parse(docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); docker(['image', 'rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedImagesRemoved = cleanupErrors.length === 0;
     try { await fs.rm(temp, { recursive: true, force: true }); report.isolatedFilesRemoved = true; }
     catch (error) { cleanupErrors.push(String(error)); }

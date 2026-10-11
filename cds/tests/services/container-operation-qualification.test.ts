@@ -59,7 +59,7 @@ describe('容器操作在实际派发时保留资格及私有收尾', () => {
     } };
     const { service, entry, profile, state } = await fixture(shell);
     profile.managedBuild = { stack: 'node', installCommand: 'true', buildCommand: 'true', startCommand: 'true', artifactImage: 'owned/artifact:fixed' };
-    const running = (service as any).buildManagedArtifact(entry, profile, state, 'fixture-shared', undefined, undefined, () => { if (!current) throw original; });
+    const running = (service as any).buildManagedArtifact(entry, profile, state, 'a'.repeat(40), 'fixture-shared', undefined, undefined, () => { if (!current) throw original; });
     const outcome = running.then(() => undefined, (error: unknown) => error);
     await admitted.promise; current = false; dispatch.release(); expect(await outcome).toBe(original);
     expect(started.some(c => c.startsWith('docker create') || c.startsWith('docker cp') || c.startsWith('docker exec'))).toBe(false);

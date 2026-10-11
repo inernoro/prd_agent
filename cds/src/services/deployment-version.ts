@@ -26,40 +26,7 @@ export class DeploymentVersionService {
   ) {}
 
   computeConfigHash(profiles: BuildProfile[], effectiveEnv: Record<string, string>): string {
-    const normalizedProfiles = profiles.map((profile) => ({
-      id: profile.id,
-      name: profile.name,
-      dockerImage: profile.dockerImage,
-      command: profile.command || '',
-      workDir: profile.workDir,
-      containerWorkDir: profile.containerWorkDir || '',
-      containerPort: profile.containerPort,
-      env: profile.env || {},
-      pathPrefixes: profile.pathPrefixes || [],
-      subdomain: profile.subdomain || '',
-      webEntry: profile.webEntry || null,
-      dependsOn: profile.dependsOn || [],
-      readinessProbe: profile.readinessProbe || null,
-      startupSignal: profile.startupSignal || '',
-      activeDeployMode: profile.activeDeployMode || '',
-      prebuiltImage: profile.prebuiltImage === true,
-      entrypoint: profile.entrypoint,
-      resources: profile.resources || null,
-      managedBuild: profile.managedBuild || null,
-      buildScope: profile.buildScope,
-      cacheMounts: profile.cacheMounts,
-      buildTimeout: profile.buildTimeout,
-      role: profile.role,
-      calls: profile.calls,
-      hotReload: profile.hotReload,
-      localArtifact: profile.localArtifact,
-      fallbackImage: profile.fallbackImage,
-      sourceFallbackProfile: profile.sourceFallbackProfile,
-      dbScope: profile.dbScope,
-      dbInit: profile.dbInit,
-      deployModes: profile.deployModes,
-    })).sort((left, right) => left.id.localeCompare(right.id));
-    return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
+    return computeDeploymentConfigHash(profiles, effectiveEnv);
   }
 
   create(input: CreateDeploymentVersionInput): DeploymentVersion {
@@ -163,7 +130,7 @@ export class DeploymentVersionService {
     const service = branch.services[profile.id];
     const artifactImage = service?.deployedImage || profile.dockerImage;
     const actualMode = service?.deployedMode ?? profile.activeDeployMode ?? '';
-    const managedArtifact = !!profile.managedBuild;
+    const managedArtifact = !!profile.managedBuild || (profile.prebuiltImage === true && /^sha256:[0-9a-f]{64}$/i.test(artifactImage));
     const reusable = (profile.prebuiltImage === true || managedArtifact) && isImmutableImageReference(artifactImage);
     return {
       profileId: profile.id,
@@ -190,9 +157,48 @@ export class DeploymentVersionService {
   }
 }
 
+/** 部署输入与本地产物共用配置身份，敏感环境值只进入摘要。 */
+export function computeDeploymentConfigHash(profiles: BuildProfile[], effectiveEnv: Record<string, string>): string {
+  const normalizedProfiles = profiles.map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    dockerImage: profile.dockerImage,
+    command: profile.command || '',
+    workDir: profile.workDir,
+    containerWorkDir: profile.containerWorkDir || '',
+    containerPort: profile.containerPort,
+    env: profile.env || {},
+    pathPrefixes: profile.pathPrefixes || [],
+    subdomain: profile.subdomain || '',
+    webEntry: profile.webEntry || null,
+    dependsOn: profile.dependsOn || [],
+    readinessProbe: profile.readinessProbe || null,
+    startupSignal: profile.startupSignal || '',
+    activeDeployMode: profile.activeDeployMode || '',
+    prebuiltImage: profile.prebuiltImage === true,
+    entrypoint: profile.entrypoint,
+    resources: profile.resources || null,
+    managedBuild: profile.managedBuild || null,
+    buildScope: profile.buildScope,
+    cacheMounts: profile.cacheMounts,
+    buildTimeout: profile.buildTimeout,
+    role: profile.role,
+    calls: profile.calls,
+    hotReload: profile.hotReload,
+    localArtifact: profile.localArtifact,
+    fallbackImage: profile.fallbackImage,
+    sourceFallbackProfile: profile.sourceFallbackProfile,
+    dbScope: profile.dbScope,
+    dbInit: profile.dbInit,
+    deployModes: profile.deployModes,
+  })).sort((left, right) => left.id.localeCompare(right.id));
+  return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
+}
+
 export function isImmutableImageReference(image: string): boolean {
   const normalized = image.trim();
-  return /@sha256:[0-9a-f]{64}$/i.test(normalized)
+  return /^sha256:[0-9a-f]{64}$/i.test(normalized)
+    || /@sha256:[0-9a-f]{64}$/i.test(normalized)
     || /:sha-[0-9a-f]{7,40}$/i.test(normalized);
 }
 

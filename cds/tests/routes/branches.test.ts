@@ -300,13 +300,18 @@ describe('Branch Routes', () => {
   });
 
   function readyArtifactFixture() {
+    const images = new Map<string, unknown>();
     mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
     mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'available', stderr: '', exitCode: 0 }));
     mock.addResponsePatternFirst(/docker image inspect (.+)/, match => {
       const reference = match[1].replace(/'/g, ''); const sha = /:sha-([a-f0-9]{40})/.exec(reference)?.[1];
-      const content = `sha256:${(sha || 'c'.repeat(40)) + (sha || 'c'.repeat(40)).slice(0, 24)}`;
-      return { stdout: JSON.stringify([{ Id: content, RepoDigests: [reference.replace(/:sha-[a-f0-9]{40}$/, '') + '@' + content],
-        Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': sha } } }]), stderr: '', exitCode: 0 };
+      if (!images.has(reference) && sha) {
+        const content = `sha256:${sha + sha.slice(0, 24)}`, digest = reference.replace(/:sha-[a-f0-9]{40}$/, '') + '@' + content;
+        const metadata = { Id: content, RepoDigests: [digest], Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': sha } } };
+        for (const name of [reference, content, digest]) images.set(name, metadata);
+      }
+      return images.has(reference) ? { stdout: JSON.stringify([images.get(reference)]), stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: 'No such image in owned fixture', exitCode: 1 };
     });
   }
 
@@ -3469,22 +3474,24 @@ describe('Branch Routes', () => {
       // 把 fixture 对齐到现实，否则测的是一个现实中不存在的错位场景。
       mock.addResponsePatternFirst(/git log --oneline/, () => ({ stdout: `${commitSha} some commit`, stderr: '', exitCode: 0 }));
       mock.addResponsePatternFirst(/git rev-parse/, () => ({ stdout: commitSha, stderr: '', exitCode: 0 }));
-      let artifactInspectCount = 0;
-      mock.addResponsePattern(/docker image inspect .*cds-managed/, () => ({
-        stdout: artifactInspectCount++ === 0 ? '' : 'artifact',
-        stderr: artifactInspectCount === 1 ? 'missing' : '',
-        exitCode: artifactInspectCount === 1 ? 1 : 0,
-      }));
+      const contentId = `sha256:${'9'.repeat(64)}`; let built = false, contractHash = '';
+      mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker image inspect (.*)/, match => {
+        if (!built) return { stdout: '', stderr: 'No such image', exitCode: 1 };
+        const labels = { 'org.opencontainers.image.revision': commitSha, 'cds.managed.contract': contractHash };
+        return { stdout: JSON.stringify(match[1].includes('--format') ? labels : [{ Id: contentId, Os: 'linux', Architecture: 'amd64', Config: { Labels: labels } }]), stderr: '', exitCode: 0 };
+      });
       mock.addResponsePattern(/docker create .*managed-build/, () => ({ stdout: 'builder', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker exec .*managed-build/, () => ({ stdout: 'built', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact', stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker commit (.*)/, match => { built = true; contractHash = match[1].match(/LABEL cds\.managed\.contract=([a-f0-9]{64})/)?.[1] || ''; return { stdout: contentId, stderr: '', exitCode: 0 }; });
       mock.addResponsePattern(/docker start .*managed-build/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
       expect(stateService.getBuildProfilesForProject('default')).toEqual([]);
       const first = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
       expect(first.status).toBe(200);
-      expect(String(first.body)).toContain('managed 产物已固化');
+      expect((await waitForAcceptedRun(first)).status).toBe('running');
+      expect(stateService.getBranch('managed-auto')?.services.web.deployedImage).toBe(contentId);
       expect(stateService.getBuildProfilesForProject('default')[0]).toMatchObject({
         id: 'web',
         managedBuild: { artifactImage: expect.stringMatching(/^cds-managed\//) },

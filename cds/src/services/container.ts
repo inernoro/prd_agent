@@ -26,6 +26,7 @@ import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts 
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
 import { inspectDeploymentArtifacts } from './artifact-admission.js';
+import { computeDeploymentConfigHash } from './deployment-version.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -800,6 +801,7 @@ export class ContainerService {
     entry: BranchEntry,
     profile: BuildProfile,
     service: ServiceState,
+    sourceCommitSha: string,
     network: string,
     customEnv?: Record<string, string>,
     onOutput?: (chunk: string) => void,
@@ -808,25 +810,44 @@ export class ContainerService {
     const shell = this.qualifiedShell(assertCurrent);
     const contract = profile.managedBuild;
     if (!contract) return profile;
+    if (!/^[0-9a-f]{40}$/i.test(sourceCommitSha)) throw new Error('受管源码目标尚未确认，请准备完整源码提交后重试');
     const artifactImage = contract.artifactImage.trim();
-    const inspect = await shell.exec(`docker image inspect ${this.shellQuote(artifactImage)}`);
+    const resolvedEnv = this.resolveProfileRuntimeEnv(
+      { ...entry, pinnedCommit: undefined, githubCommitSha: sourceCommitSha, ciTargetSha: undefined }, profile, customEnv,
+    );
+    // 派发时间为平台生成元信息；普通再次部署不能因此让同源码/配置重新编译。
+    // 其他实际配置及已展开的用户模板仍参与指纹。
+    const contractEnv = { ...resolvedEnv }; delete contractEnv.CDS_BUILD_TIME;
+    const contractHash = computeDeploymentConfigHash([profile], contractEnv);
+    const artifactProfile = (image: string): BuildProfile => ({ ...profile, dockerImage: image,
+      command: contract.startCommand, prebuiltImage: true, localArtifact: true, managedBuild: undefined,
+      fallbackImage: undefined, sourceFallbackProfile: undefined });
+    const verifyArtifact = async (image: string): Promise<BuildProfile | undefined> => {
+      const candidate = artifactProfile(image);
+      const admitted = await this.inspectDeploymentArtifacts([candidate], sourceCommitSha,
+        () => assertCurrent?.(`managed artifact identity ${profile.id}`), { inspectLocalArtifacts: true });
+      if (admitted.state !== 'ready') {
+        if (admitted.reason === 'revision-mismatch' || admitted.reason === 'platform-mismatch') return undefined;
+        throw new Error('本地产物的实际身份或平台无法确认，请检查执行器后重试');
+      }
+      const fixed = admitted.artifacts[0].image;
+      const labels = await shell.exec(`docker image inspect ${this.shellQuote(fixed)} --format '{{json .Config.Labels}}'`, { timeout: 30_000 });
+      assertCurrent?.(`managed artifact contract ${profile.id}`);
+      if (labels.exitCode !== 0) throw new Error('本地产物配置身份无法读取，请检查执行器后重试');
+      let metadata: Record<string, string>; try { metadata = JSON.parse(labels.stdout); } catch { throw new Error('本地产物配置身份无法确认'); }
+      if (metadata?.['cds.managed.contract'] !== contractHash) return undefined;
+      return artifactProfile(fixed);
+    };
+    const inspect = await shell.exec(`docker image inspect ${this.shellQuote(artifactImage)}`, { timeout: 30_000 });
     if (inspect.exitCode === 0) {
-      onOutput?.(`── managed 产物已存在，跳过构建: ${artifactImage} ──\n`);
-      return {
-        ...profile,
-        dockerImage: artifactImage,
-        command: contract.startCommand,
-        prebuiltImage: true,
-        localArtifact: true,
-        managedBuild: undefined,
-        sourceFallbackProfile: undefined,
-      };
+      const verified = await verifyArtifact(artifactImage);
+      if (verified) { onOutput?.('── 本地产物提交、平台与配置已核验，直接复用固定内容 ──\n'); return verified; }
+      onOutput?.('── 旧本地产物与目标或配置不一致，按已选择的源码模式重新构建 ──\n');
     }
 
     const sourcePath = path.resolve(entry.worktreePath, profile.workDir || '.');
     if (!fs.existsSync(sourcePath)) throw new Error(`managed 构建目录不存在: ${sourcePath}`);
     const builderName = `${service.containerName}-managed-build-${randomBytes(6).toString('hex')}`;
-    const resolvedEnv = this.resolveProfileRuntimeEnv(entry, profile, customEnv);
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
     onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);
@@ -858,18 +879,14 @@ export class ContainerService {
       const build = await shell.exec(`docker exec ${this.shellQuote(builderName)} sh -c ${this.shellQuote(buildCommand)}`);
       if (build.stdout) onOutput?.(`${build.stdout}\n`);
       if (build.exitCode !== 0) throw new Error(`managed 构建失败:\n${combinedOutput(build)}`);
-      const commit = await shell.exec(`docker commit ${this.shellQuote(builderName)} ${this.shellQuote(artifactImage)}`);
+      const commit = await shell.exec(`docker commit --change ${this.shellQuote(`LABEL org.opencontainers.image.revision=${sourceCommitSha.toLowerCase()}`)} --change ${this.shellQuote(`LABEL cds.managed.contract=${contractHash}`)} ${this.shellQuote(builderName)} ${this.shellQuote(artifactImage)}`);
       if (commit.exitCode !== 0) throw new Error(`managed 产物固化失败:\n${combinedOutput(commit)}`);
-      onOutput?.(`── managed 产物已固化: ${artifactImage} ──\n`);
-      return {
-        ...profile,
-        dockerImage: artifactImage,
-        command: contract.startCommand,
-        prebuiltImage: true,
-        localArtifact: true,
-        managedBuild: undefined,
-        sourceFallbackProfile: undefined,
-      };
+      const fixed = commit.stdout.trim();
+      if (!/^sha256:[0-9a-f]{64}$/i.test(fixed)) throw new Error('受管构建未返回可确认的镜像内容身份');
+      const verified = await verifyArtifact(fixed);
+      if (!verified) throw new Error('新构建产物与实际源码或配置不一致，未运行该产物');
+      onOutput?.('── 受管产物提交、平台和配置已确认，使用固定内容运行 ──\n');
+      return verified;
     } finally {
       try { if (created) await this.cleanupTemporaryContainer(builderName, entry, profile.id); }
       finally { try { fs.unlinkSync(envFilePath); } catch { /* best-effort */ } }
@@ -1275,24 +1292,40 @@ export class ContainerService {
       entry = { ...entry, worktreePath: sourceCheckout.path };
       if (!profile.prebuiltImage) entry = { ...entry, githubCommitSha: sourceCheckout.commitSha, ciTargetSha: undefined };
     }
+    let managedCommitSha: string | undefined;
+    if (profile.managedBuild) {
+      managedCommitSha = sourceCheckout?.commitSha;
+      if (!managedCommitSha) {
+        const head = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath, timeout: 3000 });
+        context.assertCurrent?.(`managed source identity ${profile.id}`);
+        if (head.exitCode === 0 && /^[0-9a-f]{40}$/i.test(head.stdout.trim())) managedCommitSha = head.stdout.trim().toLowerCase();
+      }
+      if (!managedCommitSha || !/^[0-9a-f]{40}$/i.test(managedCommitSha)) throw new Error('受管源码目标尚未确认，请准备项目源码后重试');
+    }
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
     const managedArtifactReady = !!profile.managedBuild || profile.localArtifact === true;
+    let localArtifactCommitSha: string | undefined;
     if (profile.managedBuild) {
       profile = await this.buildManagedArtifact(
         entry,
         profile,
         service,
+        managedCommitSha!,
         network,
         customEnv,
         onOutput,
         context.assertCurrent,
       );
     } else if (profile.localArtifact) {
-      const localInspect = await shell.exec(`docker image inspect ${this.shellQuote(profile.dockerImage)}`);
-      if (localInspect.exitCode !== 0) {
-        throw new Error(`managed 本地产物不存在: ${profile.dockerImage}。请重新执行源码构建生成该版本。`);
-      }
+      const target = context.artifactCommitSha || sourceCheckout?.commitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
+      if (!target || !/^[0-9a-f]{40}$/i.test(target)) throw new Error('本地产物目标尚未确认，请选择完整部署版本后重试');
+      const admitted = await this.inspectDeploymentArtifacts([profile], target,
+        () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true });
+      if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
+      // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。
+      profile = { ...profile, dockerImage: /@sha256:[0-9a-f]{64}$/i.test(profile.dockerImage || '') ? profile.dockerImage : admitted.artifacts[0].image };
+      localArtifactCommitSha = admitted.targetCommitSha;
     }
     const profileAliases = computeProfileAliases(
       profile.id,
@@ -1312,15 +1345,13 @@ export class ContainerService {
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
-    await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
-    // 2026-06-24：command / usePrebuiltEntrypoint 改 let —— 极速版镜像拉取失败时会
-    // 自动回退到源码编译模式,届时需要把它们改写成源码构建的命令（见下方 fallback）。
+    // 部署模式在进入运行前保持明确；预构建产物缺失时不改变为源码命令。
     let command = profile.command || '';
     // 2026-06-23 极速版：预构建镜像自带 ENTRYPOINT（api=`dotnet PrdAgent.Api.dll`,
     // admin=`serve -s dist`）,允许 command 为空 —— 此时不 `sh -c` 包装,直接用
     // 镜像默认 ENTRYPOINT/CMD 启动。非预构建模式仍强制要求 command。
-    let usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
+    const usePrebuiltEntrypoint = profile.prebuiltImage === true && !command;
     if (!command && !usePrebuiltEntrypoint) {
       throw new Error(`构建配置 "${profile.id}" 缺少 command 字段`);
     }
@@ -1331,7 +1362,7 @@ export class ContainerService {
     // 而非空白等待。
     // 方案甲：用上了「刚 pull 到的提交」的镜像时，容器里注入的提交号元数据（GIT_COMMIT /
     // CDS_COMMIT_SHA / VITE_BUILD_ID）也要跟着写这个提交，否则应用自报的版本还是旧提交。
-    let runCommitSha: string | undefined = context.artifactCommitSha;
+    let runCommitSha: string | undefined = context.artifactCommitSha || managedCommitSha || localArtifactCommitSha;
     if (profile.prebuiltImage === true && !managedArtifactReady) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:
@@ -1581,59 +1612,24 @@ export class ContainerService {
       }
 
       if (!pulledImage) {
-        // 极速版镜像全部拉取失败（path-filter 跳过本组件构建 → sha 镜像不存在,且回退链也没命中）。
-        // 用户 2026-06-24 决策：**不再硬失败**,自动回退到源码编译模式,宁慢必成,根治
-        // 「极速版永远不极速 / 部署出现异常打不开」。仅当该 profile 确实没有任何源码模式时才硬失败。
-        // 用 resolveEffectiveProfile 预先从 baseline 解析好的源码 profile（dockerImage=源码
-        // 基础镜像、command=源码构建、端口正确）。不在此处原地 re-resolve，避免误继承极速版
-        // 的 sha 镜像 / 8080 端口。
-        const sourceProfile = profile.sourceFallbackProfile;
-        if (sourceProfile && sourceProfile.command && sourceProfile.command.trim()) {
-          // 回退源码编译 = 真实 CPU 构建。极速版部署没占构建槽，这里先把槽
-          // 补上（可能排队），再继续走源码路径。
-          await context.onSourceCompileFallback?.();
-          context.assertCurrent?.(`runService source-fallback slot acquired ${profile.id}`);
-          onOutput?.(`── 极速版镜像缺失/拉取失败,自动回退源码编译 [${sourceProfile.activeDeployMode ?? 'source'}]（较慢但必成功，无需手动切回）──\n`);
-          this.recordContainerEvent({
-            severity: 'warn',
-            source: 'cds-container-service',
-            action: 'app.pull.fallback-to-source',
-            message: `prebuilt image missing, auto fallback to source-build mode '${sourceProfile.activeDeployMode}': ${candidates.map((c) => c.image).join(', ')}`,
-            projectId: entry.projectId,
-            branchId: entry.id,
-            profileId: profile.id,
-            requestId: context.requestId ?? undefined,
-            operationId: context.operationId ?? undefined,
-            command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
-            details: { images: candidates.map((c) => c.image), fallbackMode: sourceProfile.activeDeployMode, sourceImage: sourceProfile.dockerImage, reason: '极速版镜像缺失→自动回退源码编译' },
-          });
-          // 切换到源码构建：改写 profile / command / entrypoint，跳出预构建分支后即走源码路径。
-          profile = sourceProfile;
-          command = sourceProfile.command || '';
-          usePrebuiltEntrypoint = false;
-        } else {
-          onOutput?.(`── 极速版镜像拉取失败(含回退),且无可用源码模式可回退 ──\n`);
-          this.recordContainerEvent({
-            severity: 'error',
-            source: 'cds-container-service',
-            action: 'app.pull.failed',
-            message: `docker pull failed for prebuilt image(s): ${candidates.map((c) => c.image).join(', ')}`,
-            projectId: entry.projectId,
-            branchId: entry.id,
-            profileId: profile.id,
-            requestId: context.requestId ?? undefined,
-            operationId: context.operationId ?? undefined,
-            command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
-            details: { images: candidates.map((c) => c.image), reason: '极速版预构建镜像(含回退)拉取失败,且无源码模式可回退' },
-          });
-          throw new Error(`极速版镜像拉取失败(含回退): ${candidates.map((c) => c.image).join(' / ')}\n${lastDetail}\n（CI 镜像可能尚未就绪或未设为 public,且该构建配置没有可回退的源码编译模式）`);
-        }
+        // 冻结长期蓝本要求显式选择源码模式；预构建缺失不能改变已受理的部署模式。
+        onOutput?.('── 必需预构建产物未就绪，保留旧服务；等待CI或明确选择源码模式后重试 ──\n');
+        this.recordContainerEvent({ severity: 'warn', source: 'cds-container-service', action: 'app.pull.source-fallback-blocked',
+          message: 'Prebuilt artifact unavailable; source mode was not explicitly selected', projectId: entry.projectId,
+          branchId: entry.id, profileId: profile.id, requestId: context.requestId ?? undefined, operationId: context.operationId ?? undefined,
+          command: { name: 'docker pull', exitCode: 1, stdoutPreview: '', stderrPreview: lastDetail },
+          details: { images: candidates.map(candidate => candidate.image), implicitSourceBuildBlocked: true } });
+        throw new Error('必需预构建产物未就绪，部署未转为源码编译；请等待正确CI产物，或明确选择源码模式后重试');
       } else {
         // 用实际拉到的镜像(可能是回退主分支镜像)跑容器:下游 docker run 读 profile.dockerImage。
         if (pulledImage !== profile.dockerImage) profile.dockerImage = pulledImage;
         onOutput?.(`── 镜像就绪: ${pulledImage} ──\n`);
       }
     }
+
+    // 全部镜像/本地产物核验结束后才清理旧别名；失败不会在拉取前拆掉可用服务。
+    context.assertCurrent?.(`runService before alias cleanup ${profile.id}`);
+    await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
 
     // 旧容器移除放在极速版拉取/回退闸**之后**（Codex P2「Queue fallback builds
     // before removing live containers」）：镜像拉取失败回退源码编译时，回退钩子
