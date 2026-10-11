@@ -27,11 +27,14 @@ async function main() {
   try {
     report.stage = 'fixed-original-source-preparation';
     execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead], { stdio: 'pipe', timeout: 120000 });
-    const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--', 'cds/src'],
+    const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-    assert.deepEqual(changed, ['cds/src/services/janitor.ts']); report.changedProductionSources = changed;
-    assert.equal(execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
-      'cds/package.json', 'cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim(), '');
+    report.changedProductionSources = changed;
+    assert.deepEqual(changed, ['cds/src/services/janitor.ts']);
+    const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
+      ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
+    report.referenceDependencyManifestsChanged = manifestsChanged;
+    assert.equal(manifestsChanged, '');
     const original = execFileSync('/usr/bin/git', ['show', `${referenceHead}:cds/src/services/janitor.ts`]);
     report.referenceSourceHash = digest(original);
     const compiled = ts.transpileModule(original.toString('utf8'), { fileName: 'janitor.ts', reportDiagnostics: true,
