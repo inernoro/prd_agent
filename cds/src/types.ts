@@ -1369,6 +1369,8 @@ export interface DeploymentRun {
   configHash?: string;
   /** Original queued intent; present only after validated lease and durable binding. */
   pendingOrigin?: { version: 1; operationId: string; generation: number; profileId: string | null };
+  /** Original acceptance creation, atomically persisted with its owner run before execution. */
+  acceptanceOrigin?: { version: 1; acceptanceRunId: string; profileId: string; targetSha: string; profileDigest: string; operationId: string };
   /** Explicit stage boundary observations; absent legacy data is not measured zero. */
   timing?: import('./services/deployment-stage-timing.js').DeploymentTimingRecord;
   ciTiming?: import('./services/deployment-ci-timing.js').CiTimingRecord;

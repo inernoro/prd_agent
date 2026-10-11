@@ -21,7 +21,19 @@ export function acceptanceReleaseBlockReason(state: Reader, branchId: string): s
 export function acceptanceReleaseOperationAdmission(state: Reader, request: BranchOperationRequest): string | null {
   const blocked = acceptanceReleaseBlockReason(state, request.branchId);
   if (!blocked) return null;
-  if (blocked === 'acceptance_creation_reconciliation_required') return blocked;
+  if (blocked === 'acceptance_creation_reconciliation_required') {
+    const holders = Object.values(state.getState().acceptanceResourceRuns || {}).filter(row => row.branchId === request.branchId
+      && row.stage === 'active' && Object.prototype.hasOwnProperty.call(row, 'creationIntent'));
+    const row = holders[0];
+    // Internal continuation only. The caller must still prove the original capability and actual lease.
+    if (request.kind !== 'acceptance-create' || request.source !== 'acceptance-resource-deploy' || request.profileId != null
+      || holders.length !== 1 || pendingRows(state).some(draft => draft.branchId === request.branchId)
+      || !row || row.id !== request.acceptanceRunId || row.projectId !== request.projectId || row.targetSha !== request.commitSha
+      || !/^[a-f0-9]{40}$/.test(row.targetSha) || row.resource || row.terminal || row.releaseIntent
+      || row.creationIntent?.version !== 1 || row.creationIntent.phase !== 'configured'
+      || !/^[a-f0-9]{64}$/.test(row.creationIntent.profileDigest) || !Number.isFinite(Date.parse(row.creationIntent.startedAt))) return blocked;
+    return null;
+  }
   if (request.kind !== 'acceptance-release') return ACCEPTANCE_RELEASE_BLOCKED;
   const table = state.getState().acceptanceResourceRuns || {};
   const holders = Object.values(table).filter(row => row.branchId === request.branchId && row.stage !== 'released'

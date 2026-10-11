@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { BranchEntry, AcceptanceReportMeta, ServiceState } from '../types.js';
 import type { StateService } from './state.js';
 import type { OwnedContainerLifecycle, OwnedContainerReference } from './owned-container-lifecycle.js';
-import type { BranchOperationCoordinator } from './branch-operation-coordinator.js';
+import type { BranchOperationCoordinator, BranchOperationLease } from './branch-operation-coordinator.js';
 import { acceptanceResourceProfile } from './acceptance-resource-profile.js';
 
 export interface AcceptanceResourceReleaseBindings {
@@ -35,7 +35,7 @@ export interface AcceptanceResourceRun {
   stage: 'active' | 'registered' | 'finished' | 'released';
   resource?: { configDigest: string; containerId: string; deploymentRunId: string };
   terminal?: { reportId: string; metaDigest: string; bodyDigest: string; verdict: NonNullable<AcceptanceReportMeta['verdict']>; finishedAt: string };
-  creationIntent?: { version: 1; phase: 'configured' | 'deploying'; profileDigest: string; startedAt: string; deploymentRunId?: string };
+  creationIntent?: { version: 1; phase: 'configured' | 'deploying'; profileDigest: string; startedAt: string; deploymentRunId?: string; operationId?: string; reference?: OwnedContainerReference; serviceDigest?: string };
   releaseIntent?: AcceptanceResourceReleaseIntent;
 }
 /** An uncommitted write intent is retained across restart; it is not a published terminal receipt. */
@@ -159,6 +159,30 @@ export class AcceptanceResourceRunService {
     });
   }
 
+  /** Bind the original pending server run; this is not container inspection or registration. */
+  async bindCreationDeployment(id: string, ownerToken: string, deploymentRunId: string,
+    lease: BranchOperationLease): Promise<AcceptanceResourceView> {
+    return this.operation(id, async () => {
+      const run = this.owned(id, ownerToken); this.requireResolvedPublication(id);
+      if (run.stage !== 'active' || run.creationIntent?.version !== 1 || run.creationIntent.phase !== 'configured') throw new Error('acceptance_run_stage');
+      const branch = this.branch(run), bindings = this.releaseBindings, runDigest = digest(run);
+      const request = lease?.request;
+      const fence = () => {
+        if (!bindings || !lease || !bindings.coordinator.ownsLease(lease) || !bindings.canExecute(branch)
+          || request?.kind !== 'acceptance-create' || request.source !== 'acceptance-resource-deploy' || request.profileId != null
+          || request.acceptanceRunId !== id || request.projectId !== run.projectId || request.branchId !== run.branchId
+          || request.commitSha !== run.targetSha) throw new Error('acceptance_creation_lease');
+        this.requireResolvedPublication(id);
+        if (this.owned(id, ownerToken) !== run || digest(run) !== runDigest || this.branch(run) !== branch) throw new Error('acceptance_branch_changed');
+      };
+      fence();
+      const row: AcceptanceResourceRun = { ...run, seq: run.seq + 1, creationIntent: { ...run.creationIntent,
+        phase: 'deploying', deploymentRunId, operationId: lease.operationId } };
+      await this.state.writeAcceptanceResourceDeploymentDurably(row, run.seq, deploymentRunId, lease.operationId, fence);
+      return view(row);
+    });
+  }
+
   private owned(id: string, ownerToken: string): AcceptanceResourceRun {
     const run = this.state.getState().acceptanceResourceRuns?.[id];
     if (!run || !/^[a-f0-9]{64}$/.test(ownerToken) || !/^[a-f0-9]{64}$/.test(run.ownerHash)
@@ -184,7 +208,7 @@ export class AcceptanceResourceRunService {
     const env = { ...profile?.env, ...b.profileOverrides?.[run.profileId]?.env };
     // Registration binds the successful creation. A later branch deployment can fail
     // without replacing this exact resource or revoking its report/cleanup ownership.
-    if (run.creationIntent && (run.creationIntent.phase !== 'deploying' || !run.creationIntent.deploymentRunId)) throw new Error('acceptance_resource_unconfirmed');
+    if (run.creationIntent && (run.creationIntent.phase !== 'deploying' || !run.creationIntent.deploymentRunId || !run.creationIntent.reference)) throw new Error('acceptance_resource_unconfirmed');
     const deploymentRunId = run.resource ? run.resource.deploymentRunId : run.creationIntent?.deploymentRunId || b.lastDeploymentRunId;
     const deployment = deploymentRunId ? this.state.getDeploymentRun(deploymentRunId) : undefined;
     if (!profile || profile.projectId !== run.projectId || env.IMP_HEALTH_RUN_ID !== run.isolationRunId || env.IMP_TARGET_SHA !== run.targetSha

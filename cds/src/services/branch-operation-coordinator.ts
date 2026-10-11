@@ -302,7 +302,7 @@ export class BranchOperationCoordinator {
       const prefix = request.kind === 'acceptance-create' ? 'acceptance_creation' : 'acceptance_release';
       const source = request.kind === 'acceptance-create' ? 'acceptance-resource-create' : 'acceptance-resource-release';
       const valid = (request.trigger === 'system' || request.trigger === 'manual')
-        && request.source === source && request.profileId == null
+        && (request.source === source || (request.kind === 'acceptance-create' && request.source === 'acceptance-resource-deploy')) && request.profileId == null
         && typeof request.projectId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(request.projectId)
         && typeof branchId === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/.test(branchId)
         && typeof request.acceptanceRunId === 'string' && /^ar_[a-f0-9]{32}$/.test(request.acceptanceRunId)
@@ -508,6 +508,11 @@ export class BranchOperationCoordinator {
   isCurrent(branchId: string, operationId: string, generation: number): boolean {
     const active = [...this.active.values()].find((item) => item.branchId === branchId && item.operationId === operationId);
     return Boolean(active && active.operationId === operationId && active.generation === generation && !active.cancelled);
+  }
+
+  /** A copied lease or a revoked execution cannot authorize an acceptance binding. */
+  ownsLease(lease: BranchOperationLease): boolean {
+    return this.unsettled.get(lease.operationId)?.lease === lease && lease.isCurrent() && !lease.signal?.aborted;
   }
 
   getActive(branchId: string, profileId?: string | null): ActiveOperation | undefined {
