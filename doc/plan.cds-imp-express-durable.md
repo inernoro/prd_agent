@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.67；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.69；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -60,8 +60,8 @@
 | P6-01 | 本地部分实现 | 正式未执行 | 各批次先有针对性红绿、类型检查及模块要求的测试；前端改动补构建和真实页面验证。 |
 | P6-02 | 待办 | 正式未执行 | 在独立/隔离宿主完成失败注入、执行进程崩溃、队列恢复及多 SSE 压测，再灰度一分支、两分支、八分支。 |
 | P6-03 | 待办 | 正式未执行 | 每次更新共享 CDS 先核验已上线修复、在途任务、预构建产物、版本与回滚点；失败自动回滚并保存 run。 |
-| P6-04 | 待办 | 正式未执行 | 在隔离验收范围恢复真实自动交付链，实际推送至少八个分支；完整服务部署包含 API、前端、worker 与合法常驻辅助服务。 |
-| P6-05 | 待办 | 正式未执行 | 对协作者推进的分支以最新确认目标重新冻结，不回退到旧验收提交。每个目标保留 CI、制品和部署 run ID。 |
+| P6-04 | 部分实施（未部署） | 正式未执行 | 在隔离验收范围恢复真实自动交付链，实际推送至少八个分支；完整服务部署包含 API、前端、worker 与合法常驻辅助服务。 |
+| P6-05 | 部分实施（未部署） | 正式未执行 | 对协作者推进的分支以最新确认目标重新冻结，不回退到旧验收提交。每个目标保留 CI、制品和部署 run ID。 |
 | P6-06 | 待办 | 正式未执行 | 采集至少 30 分钟混合部署、缺镜像、启动失败、重复目标、多 SSE 场景，并与同负载基线对比。 |
 | P6-07 | 待办 | 正式未执行 | 对原来停止的验收分支按登记状态收尾；未完成时不能宣布整体通过。 |
 | P6-08 | 本地部分实现 | 正式未执行 | 交付真实证据、剩余缺口与恢复手册；发布后 48 小时与一周复测列为执行任务，到期实际执行后才能勾选，不在本轮擅自创建自动提醒。 |
@@ -613,3 +613,24 @@ v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease�
 固定run IDs：A01=38127424815；A02=38127425233；A03=38127424500；A04=38127424165；A05=38127424700；A06=38127424078；A07=38127424878；A08=38127424125。终态未齐，下一轮只查这些run，不重新push/re-run/建PR。实际CI观察原件在`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-runtime-roles-3fe7695`的ci-observation-01/02/03.json，真实push-receipt/push-raw与远端SHA投影已冻结；完整readonly原件按hash移入readonly-preflight。角色独立summary f585fcb3d0263c08c40cd7aa0eda1c46c3144a0cfbc47ae9f99afc1cd1374675，source12d24ebc/raw23392d5b/parentebaf9bd2；主最终回读main-independent-role-final-receipt.json。
 
 expected result：八push确实触发各精确SHA的完整镜像CI，分别判CI等待/构建/制品与CDS实际交付；current evidence：8remote refs已核、8实际run、2success/6pending且曾见runner排队；visible result：真实CI存在，CDS未部署，无本修订正式视觉；gap：其余CI终态、真实manifest与架构、隔离全图部署、黄闪电/公网/恢复/48h及周；required action：下轮先查记录CI IDs，再继续同49原计划，不将2CI成功或本地13roles称全部极速完成。
+
+
+## v1.68 八次 CI 终态与抽屉账本 TDD
+
+v1.68：八已推送固定SHA的真实Branch Image于2026-10-11T09:21:00.933131+00:00全部completed/success，各8job成功；保留原runner queued证据，不声称零等待。实际GHCR探测88镜像（每支10应用镜像覆盖13角色+1辅助产物），匿名token401，既有gh凭据token200后manifest全403；单次有界error code DENIED，token opaque，0/88验证，不能判镜像不存在。未下载layers/启Docker/部署。新只读CDS共12entries/八候选0matches，IMP有效push=false、4running branches/47services，共享self-status及UI仍e4e旧修订，非74db。CDS本地产品74db2a56cd56f4ce49d8358e619b843e55a83f65按guide2.82先冻结：Drawer初始/manual与poll单flight、settle后2s、30s截止、scope/session失效、错误保留lastgood可见、共用Page行资格；全量678files9964green/6files19skip/1旧obsolete，相关17/webtypes/build0，去coalescing/资格两mutation真红后原字节恢复。旧559c实际Drawer独立DOM v4原8谓词1绿7false（根因重叠），新固定74db原fixture复验中，不能称视觉通过。八角色/secret/mini旧固定源报告仍历史，不继承新SHA全量通过。CDS新branch push问题仍待答，原八push/selfupdate授权持续，无PR/merge/平台push/共享部署。42partial-local/7todo，正式49全not-executed、official visual N/A，目标active/verification。
+
+证据：真实CI终态 `/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-runtime-roles-3fe7695/ci-resume-by-id-04.json`；实际注册表原探测/鉴权探测及有界诊断 `/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-registry-3fe7695`；本地固定源/原红绿/全量及构建 `/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/drawer-reader-v168/main-product-test-receipt.json`。独立原559c完整Drawer DOM、16项设计与CI/registry审计总件 `acceptance-ci-registry-drawer-559c-evidence-summary.json` SHA256=2da9e29f075480cdc2b7014a1e261f4d81f096180a977d1b548905cba2128877（仓库外独立根目录）；新74db固定复验中。
+
+expected result：实际镜像可拉且精准架构/SHA，抽屉慢响应/换scope/关闭均不覆盖当前事实；current evidence：真实八CI成功、registry DENIED、主修复9964局部本地全量；visible result：本修订尚未部署，原控制Drawer有7负谓词；gap：注册表真实读取、新74db独立组件、隔离全图部署、黄闪电/公网/恢复/48h及周；required action：按原红复验修复版，补齐有权限的实际制品读取并在qualified宿主执行原49，不把CI成功当完整极速。
+
+
+## v1.69 首次账本不阻塞主体与原反例复验
+
+v1.69：八真实固定SHA push与CI全部成功；工作流创建到全部记录job结束221–284秒，不能当runner排队时钟。88实际镜像manifest仍403/DENIED未验证，0/88不能推断缺镜像；八CDS entry未创建，push=false，未部署。CDS74db独立原v4 7/8（剩余false=原两并发前件被单flight消除，原assert不改）；actualDOM13/13、module10/10、受控themes4/4分列不相加；主核342hashrefs/274Git refs。旧74db首次账本held又暴露首屏两同根因false，原4谓词2/4；f9e3e5a46e3d981a98806c27d0416d4ada78b98d按guide2.83将初读独立，并pending显示正在读取，原同fixture已4/4，原v4仍7/8（唯一false的两flight前件消失，原期待保留）；完整actualDOM/nativeHTTP13/13与新pending受控双主题4/4已独立定稿，主回读643hash路径/535Git引用。主新SHA136webfiles1782green/1skip、webtypes/build0，旧74db678files9964只是历史后端全量，不声称新全后端重跑或正式通过。P6-04/05的实际推送/CI及固定freeze准备已部分实施，仍未隔离全图交付；44partial-local/5todo，49formal全not-executed、official visual N/A，目标active/verification。CDS新branch发布问题待答，既有八push/selfupdate授权持续，无PR/merge/平台push/共享写。
+
+新本地主检查点 `/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/drawer-firstpaint-v169/main-product-test-receipt.json`；74db独立最终summary SHA256=ec453a4b437178392193d8105bc187b36ae63a67b37da97040deb1ccecc78f08，原首屏红summary SHA256=421ada11f5f0c6a0251261ab30fc714b8eb99fdc678d4b3ad1c6e6cf330d923a。主核独立的receipt分别在 `drawer-reader-v168/main-independent-74db-receipt.json` / `drawer-firstpaint-v169/main-independent-firstpaint-red-receipt.json`（上述主外部根目录）；新产品独立定稿回执待核。
+
+expected result：只有补充账本慢时当前分支主体先可用，账本显示初读且不冒充空/成功；current evidence：主1782/webtype/build绿，固定原实际Drawer四谓词2→4；visible result：受控独立浏览器已复绿，当前产品未线上发布；gap：当前局部回执已核；注册表真实pull及隔离全图、公网/恢复/黄闪电/48h与周；required action：主核新固定源与原日志后继续原49，不把本地1.4秒检查冒充公网2秒SLA。
+
+
+本批独立最终：f9e3 summary `acceptance-drawer-ledger-f9e3-evidence-summary.json` SHA256=cb5a588b4d4811f23d1dac9cb29fb5723b30707f85d9715aa2f303fae9afc54a；source263 manifest=ced814f74630336dd5df54f6a2b91d115233782bcf38bdbc17b9a0607b3b84ee、guide addendum=db4bc63942ea7e1a56a2143ef2038000ecdb056a9ac030f7282eab5a2e360284；raw15=030ff9466859d1ebe7329d7a1279d9f121bf02cf3ba707cfb8a933da02c551b4；visual=5b735f89af8d8db73843701baa565337f3eccd79b22f559b8b4abecca6694a41；parent=67ed027ba6cbd9dde59f17d7b411e544f561a7ed6293bb336e974228b4f2dec3（仓库外独立根目录）。主递归核643hash路径/535Git引用，receipt `drawer-firstpaint-v169/main-independent-f9e3-receipt.json`。原firstpaint4期待4/4、原v4 7/8唯一两flight前件消失false保留、完整actualDOM/nativeHTTP13/13与受控pending两主题4/4各自分列；真实30.304s正文deadline/socket abort成立但不当公网SLA；helper10同Git字节仅旧74db历史复用。主已查看当前受控两图；无新有界真红，仍有整Drawer卸载、全部阶段/CI链接矩阵、真实权限/诊断/操作与全部正式运行验证未覆盖。目标仍active，49正式/线上视觉均不通过。
