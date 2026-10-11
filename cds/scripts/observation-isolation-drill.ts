@@ -14,7 +14,8 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { ShellExecutor } from '../src/services/shell-executor.js';
 import { IsolatedShellExecutor } from '../src/services/isolated-shell-executor.js';
-import { ContainerService } from '../src/services/container.js';
+import { ContainerService, resolveEffectiveProfile } from '../src/services/container.js';
+import { captureDeploymentInput, deploymentInputBranch } from '../src/services/deployment-input.js';
 import { collectContainerDiagnostics, DockerEventMonitor } from '../src/services/container-diagnostics.js';
 import { createJanitorDockerAdapters } from '../src/services/janitor.js';
 import { InfraLifecycleWatcher, setReplicaMemberDeathListener } from '../src/services/infra-lifecycle-watcher.js';
@@ -25,7 +26,7 @@ import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -73,7 +74,7 @@ async function main(): Promise<void> {
     if (event.containerName === name && event.attrs['cds.acceptance.owner'] === owner && managedActions.length < 20) managedActions.push(event.action);
   }, eventStreams);
   const infraEvents = new infraModule.InfraLifecycleWatcher({ streams: eventStreams, serverEventLogStore: eventStore });
-  const containerModule = compiled ? await import(new URL('../dist/services/container.js', import.meta.url).href) as typeof import('../src/services/container.js') : { ContainerService };
+  const containerModule = compiled ? await import(new URL('../dist/services/container.js', import.meta.url).href) as typeof import('../src/services/container.js') : { ContainerService, resolveEffectiveProfile };
   const container = new containerModule.ContainerService(shell, { repoRoot: temp, worktreeBase: temp, dockerNetwork: 'bridge', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'isolated' } } as CdsConfig, undefined, undefined, startupStreams, userLogHub);
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -102,6 +103,21 @@ async function main(): Promise<void> {
       nanoCpus: view.HostConfig.NanoCpus, memory: view.HostConfig.Memory, networkMode: view.HostConfig.NetworkMode });
   };
   try {
+    report.stage = 'compiled-explicit-artifact-target-snapshot';
+    const inputModule = compiled ? await import(new URL('../dist/services/deployment-input.js', import.meta.url).href) as typeof import('../src/services/deployment-input.js') : { captureDeploymentInput, deploymentInputBranch };
+    const previous = 'a'.repeat(40), requested = 'b'.repeat(40);
+    const artifactBranch: BranchEntry = { id: 'owned-artifact-target', projectId: 'owned', branch: 'owned-artifact-target', status: 'running', services: {}, worktreePath: temp,
+      createdAt: new Date().toISOString(), githubCommitSha: previous, ciTargetSha: previous };
+    const artifactProfile: BuildProfile = { id: 'owned-api', projectId: 'owned', name: 'Owned API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, containerPort: 8080, workDir: '.', command: '' };
+    const pinned = inputModule.captureDeploymentInput(artifactBranch, [artifactProfile], {}, undefined, requested);
+    const pinnedImage = containerModule.resolveEffectiveProfile(artifactProfile, inputModule.deploymentInputBranch(pinned, artifactBranch)).dockerImage;
+    const unpinned = inputModule.captureDeploymentInput({ ...artifactBranch, githubCommitSha: 'c'.repeat(40) }, [artifactProfile], {});
+    const unpinnedImage = containerModule.resolveEffectiveProfile(artifactProfile, inputModule.deploymentInputBranch(unpinned, artifactBranch)).dockerImage;
+    assert.equal(pinnedImage, `ghcr.io/owned/api:sha-${requested}`);
+    assert.equal(unpinnedImage, `ghcr.io/owned/api:sha-${previous}`);
+    assert.equal(artifactBranch.ciTargetSha, previous);
+    report.artifactTarget = { scope: 'compiled private snapshot and effective-profile target resolution; no registry admission or application deployment', requested, previous, pinnedImage, unpinnedImage, originalBranchUnchanged: true };
+    report.checks.push({ name: 'compiled-explicit-artifact-target-and-unpinned-ci-contract', passed: true });
     report.stage = 'independent-process-prewarm';
     await Promise.all([operationShell.start(), shell.start(), startupStreams.start(), eventStreams.start(), userLogStreams.start(), journalStreams.start()]);
     report.streamWarmStats = startupStreams.getStats();

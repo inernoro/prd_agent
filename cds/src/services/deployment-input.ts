@@ -24,6 +24,6 @@ export function captureDeploymentInput(
 
 /** 保留当前实际源码提交/运行身份，只使用受理时的配置覆盖及 CI 产物目标。 */
 export function deploymentInputBranch(input: DeploymentInputSnapshot, branch: BranchEntry): BranchEntry {
-  return { ...branch, profileOverrides: input.profileOverrides, ciTargetSha: input.ciTargetSha,
+  return { ...branch, profileOverrides: input.profileOverrides, ciTargetSha: input.targetCommitSha || input.ciTargetSha,
     githubCommitSha: input.targetCommitSha || branch.githubCommitSha };
 }

@@ -4122,6 +4122,57 @@ describe('Branch Routes', () => {
       } finally { release(); await first; setBuildGateHostLoadProvider(null); }
     });
 
+    it.each(['/deploy', '/deploy/api'])('显式产物目标%s缺失时不能用旧CI提交的镜像冒充', async (endpoint) => {
+      const requested = 'b'.repeat(40), previous = 'a'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      const id = 'artifact-target';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-target', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: new Date().toISOString(), githubCommitSha: previous, ciTargetSha: previous, services: {} });
+      mock.addResponsePatternFirst(/docker pull (.+)/, (match) => ({ stdout: match[1].includes(previous) ? 'old CI image available' : '',
+        stderr: match[1].includes(previous) ? '' : 'manifest unknown', exitCode: match[1].includes(previous) ? 0 : 1 }));
+      const response = await request(server, 'POST', `/api/branches/${id}${endpoint}`, { commitSha: requested });
+      expect(response.status).toBe(200); // 实际部署接口通过SSE报告执行失败。
+      expect(mock.commands.some(c => c.startsWith('docker pull ') && c.includes(requested))).toBe(true);
+      expect(mock.commands.some(c => c.startsWith('docker pull ') && c.includes(previous))).toBe(false);
+      expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
+      expect(deploymentRunService.list({ branchId: id })[0].status).toBe('failed');
+    });
+
+    it('显式产物目标远端派发使用请求提交，不发送旧CI提交模板', async () => {
+      const requested = 'b'.repeat(40), previous = 'a'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      const id = 'artifact-remote'; const now = new Date().toISOString();
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-remote', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: now, githubCommitSha: previous, ciTargetSha: previous, services: {} });
+      registryNodes.push({ id: 'exec-artifact', host: '127.0.0.1', port: 9102, status: 'online', role: 'remote', labels: [], branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 }, load: { memoryUsedMB: 0, cpuPercent: 0 }, registeredAt: now, lastHeartbeat: now });
+      let dispatched: any;
+      vi.stubGlobal('fetch', async (_input: RequestInfo | URL, init?: RequestInit) => {
+        dispatched = JSON.parse(String(init?.body)); return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      });
+      try {
+        expect((await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: requested, targetExecutorId: 'exec-artifact' })).status).toBe(200);
+        expect(dispatched.profiles[0].dockerImage).toBe(`ghcr.io/owned/api:sha-${requested}`);
+        expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
+      } finally { vi.unstubAllGlobals(); }
+    });
+
+    it('显式产物目标修正保留未点名部署的docs-only旧CI镜像约定', async () => {
+      const previous = 'a'.repeat(40), docsOnly = 'c'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      const id = 'artifact-unpinned';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-unpinned', worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'idle', createdAt: new Date().toISOString(), githubCommitSha: docsOnly, ciTargetSha: previous, services: {} });
+      mock.addResponsePatternFirst(/docker pull (.+)/, (match) => ({ stdout: match[1].includes(previous) ? 'old CI image available' : '',
+        stderr: match[1].includes(previous) ? '' : 'manifest unknown', exitCode: match[1].includes(previous) ? 0 : 1 }));
+      expect((await request(server, 'POST', `/api/branches/${id}/deploy`)).status).toBe(200);
+      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api:sha-${previous}`);
+      expect(deploymentRunService.list({ branchId: id })[0].status).toBe('running');
+    });
+
     it('同目标并入等待原受理落盘，不创建占位run、不启动第二次部署', async () => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
       stateService.addBranch({ id: 'acceptance-wait', projectId: 'default', branch: 'feature/acceptance-wait', worktreePath: path.join(tmpDir, 'worktrees', 'acceptance-wait'),
