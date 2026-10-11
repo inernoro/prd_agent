@@ -130,4 +130,33 @@ describe('guide2.96 original creation deployment binding', () => {
     expect(coordinator.begin(request).status).toBe('rejected'); expect(shell.commands).toHaveLength(0);
   });
 
+  it.each(['operationId','commitSha'])('refuses an ordinary legal transition changing bound %s', async field => {
+    acquire(); await bind(); const before = structuredClone(runs.get(deploymentId)!);
+    expect(() => runs.transition(deploymentId, 'preparing', { phase: 'prepare', message: 'own state transition',
+      [field]: field === 'operationId' ? 'op_owned_foreign' : 'b'.repeat(40) })).toThrow('acceptance_deployment_identity_changed');
+    expect(runs.get(deploymentId)).toEqual(before); await state.flush();
+    const restored = new StateService(path.join(root, 'state.json')); restored.load(); await restored.flush();
+    expect(restored.getDeploymentRun(deploymentId)).toEqual(before);
+  });
+
+  it.each(['id','projectId','branchId','startedAt','originRemoval','originRewrite'])('rejects a bound %s mutation without publishing partial state', async field => {
+    acquire(); await bind(); const before = structuredClone(runs.get(deploymentId)!);
+    expect(() => state.updateDeploymentRun(deploymentId, draft => {
+      if (field === 'originRemoval') delete draft.acceptanceOrigin;
+      else if (field === 'originRewrite') draft.acceptanceOrigin!.profileId = 'other';
+      else (draft as any)[field] = 'foreign';
+    })).toThrow('acceptance_deployment_identity_changed'); expect(runs.get(deploymentId)).toEqual(before);
+  });
+  it.each(['operationId','commitSha'])('rejects a durable terminal changing original %s before flush', async field => {
+    acquire(); await bind(); runs.transition(deploymentId, 'preparing', { phase: 'prepare', message: 'own' });
+    runs.transition(deploymentId, 'building', { phase: 'build', message: 'own' }); runs.transition(deploymentId, 'starting', { phase: 'start', message: 'own' });
+    runs.transition(deploymentId, 'verifying', { phase: 'ready', message: 'own' });
+    const before = structuredClone(runs.get(deploymentId)!), flush = vi.fn(async () => {});
+    await expect(runs.completeDurably(deploymentId, { phase: 'complete', message: 'own',
+      [field]: field === 'operationId' ? 'op_owned_foreign' : 'b'.repeat(40) }, flush, () => {})).rejects.toThrow('acceptance_deployment_identity_changed');
+    expect(flush).not.toHaveBeenCalled(); expect(runs.get(deploymentId)).toEqual(before);
+    await runs.completeDurably(deploymentId, { phase: 'complete', message: 'own', operationId: lease.operationId, commitSha: sha }, () => state.flush(), () => lease.assertCurrent());
+    expect(runs.get(deploymentId)!.status).toBe('running'); expect(runs.get(deploymentId)!.operationId).toBe(lease.operationId);
+  });
+
 });

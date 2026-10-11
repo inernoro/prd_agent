@@ -1959,11 +1959,29 @@ export class StateService {
    * 是 mongo-split 存储层最高频的写路径。契约：mutate 回调**只允许**改这个
    * run 自身 —— save 带的实体级 hint 依赖这一点做增量持久化。
    */
+  private acceptanceDeploymentIdentity(run: DeploymentRun): string {
+    const origin = run.acceptanceOrigin;
+    if (!origin || origin.version !== 1 || !/^ar_[a-f0-9]{32}$/.test(origin.acceptanceRunId)
+      || !/^[a-f0-9]{40}$/.test(origin.targetSha) || !/^[a-f0-9]{64}$/.test(origin.profileDigest)
+      || !/^op_[a-zA-Z0-9_.-]{1,120}$/.test(origin.operationId)
+      || run.commitSha !== origin.targetSha || run.operationId !== origin.operationId) throw new Error('acceptance_deployment_identity_changed');
+    return acceptanceResourceDigest([run.id, run.projectId, run.branchId, run.startedAt, run.operationId, run.commitSha, origin]);
+  }
+
+  private assertAcceptanceDeploymentIdentity(previous: DeploymentRun, next: DeploymentRun): void {
+    if (this.acceptanceDeploymentIdentity(previous) !== this.acceptanceDeploymentIdentity(next)) throw new Error('acceptance_deployment_identity_changed');
+  }
+
   updateDeploymentRun(id: string, mutate: (run: DeploymentRun) => void): DeploymentRun {
     if (this.durableRunDrafts.has(id)) throw new Error(`DeploymentRun ${id} is finalizing`);
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
-    mutate(run);
+    if (Object.prototype.hasOwnProperty.call(run, 'acceptanceOrigin')) {
+      const draft = structuredClone(run); mutate(draft);
+      this.assertAcceptanceDeploymentIdentity(run, draft);
+      for (const key of Object.keys(run)) if (!Object.prototype.hasOwnProperty.call(draft, key)) delete (run as unknown as Record<string, unknown>)[key];
+      Object.assign(run, draft);
+    } else mutate(run);
     this.save([{ kind: 'deploymentRuns', id }]);
     return run;
   }
@@ -1974,10 +1992,13 @@ export class StateService {
     const run = this.state.deploymentRuns?.[id];
     if (!run || this.durableRunDrafts.has(id)) throw new Error(`DeploymentRun ${id} missing or finalizing`);
     const seq = run.seq; const draft = structuredClone(run); mutate(draft);
+    const ownedIdentity = Object.prototype.hasOwnProperty.call(run, 'acceptanceOrigin') ? this.acceptanceDeploymentIdentity(run) : undefined;
+    if (ownedIdentity) this.assertAcceptanceDeploymentIdentity(run, draft);
     this.durableRunDrafts.set(id, draft);
     try {
       this.save([{ kind: 'deploymentRuns', id }]); await flush(); assertCurrent();
       if (this.state.deploymentRuns?.[id] !== run || run.seq !== seq) throw new Error(`DeploymentRun ${id} changed during finalization`);
+      if (ownedIdentity && this.acceptanceDeploymentIdentity(run) !== ownedIdentity) throw new Error('acceptance_deployment_identity_changed');
       Object.assign(run, draft); this.durableRunDrafts.delete(id);
       // The canonical row now equals the already durable snapshot; no second unconfirmed write.
       for (const fn of this.onSaveListeners) { try { fn(); } catch { /* ignore */ } }
