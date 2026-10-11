@@ -93,7 +93,9 @@ export async function inspectDeploymentArtifacts(
     // 核验本地内容ID，并保存OCI固定digest用于运行及版本台账；不保存可变tag。
     const immutable = metadata?.Id;
     if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return waiting('verification-unavailable', profileIds);
-    const digest = !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
+    // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
+    const digest = /^.+@sha256:[0-9a-f]{64}$/.test(image) ? image
+      : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
       ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)) : undefined;
     if (!digest) return waiting('verification-unavailable', profileIds);
     artifacts.push({ profileIds, requestedImage: image, image: digest, revision: target, platform: `${system}/${arch}` });

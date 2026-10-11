@@ -23,6 +23,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { StateService } from '../../src/services/state.js';
+import { DeploymentVersionService } from '../../src/services/deployment-version.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -287,12 +288,21 @@ describe('Executor /exec/deploy', () => {
     expect(mock.commands.some(cmd => cmd.includes('compile-unexpected') || cmd.includes('old:tag'))).toBe(false);
   });
 
-  it('新Master的本地digest不能只凭local标记跳过OCI核验，通过后固定本机内容ID而不拉取', async () => {
-    const f = artifactFixture(); const profile = { ...f.profiles[0], dockerImage: `ghcr.io/owned/api@${f.imageId}`, localArtifact: true };
+  it('新Master已固定仓库digest仍核验OCI，远端运行及版本台账保留可移植引用而不拉取', async () => {
+    const f = artifactFixture(); const repositoryDigest = `ghcr.io/owned/api@sha256:${'d'.repeat(64)}`;
+    const profile = { ...f.profiles[0], dockerImage: repositoryDigest, localArtifact: true };
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: f.imageId,
+      RepoDigests: [repositoryDigest], Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': f.target } } }]), stderr: '', exitCode: 0 }));
     const result = await postSse(server, '/exec/deploy', { ...f.payload, profiles: [profile], artifactCommitSha: f.target });
     expect(result.events.filter(e => e.event === 'error' || e.data?.status === 'error')).toEqual([]);
     expect(mock.commands.filter(cmd => cmd.startsWith('docker pull '))).toEqual([]);
-    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(f.imageId);
+    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(repositoryDigest);
+    expect(stateService.getBranch(f.entry.id)?.services.api.deployedImage).toBe(repositoryDigest);
+    const versions = new DeploymentVersionService(stateService);
+    const version = versions.create({ projectId: 'default', branchId: f.entry.id, commitSha: f.target, configHash: 'c'.repeat(64),
+      profiles: [profile], branch: stateService.getBranch(f.entry.id)!, createdByRunId: 'owned-portable-reference' });
+    expect(version.profiles[0]).toMatchObject({ artifactKind: 'prebuilt-image', artifactImage: repositoryDigest, reusable: true });
+    expect(versions.materializeProfiles(version, [profile])[0].dockerImage).toBe(repositoryDigest);
   });
 
   it.each(['stop', 'delete', 'new-target', 'owner'])('执行器预检等待中%s后，旧请求不得迟到拆服务或写旧状态', async (change) => {

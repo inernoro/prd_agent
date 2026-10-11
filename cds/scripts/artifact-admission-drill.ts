@@ -12,6 +12,8 @@ import type { ArtifactAdmission } from '../src/services/artifact-admission.js';
 
 const value = (name: string): string => { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] || '' : ''; };
 const modules = async () => ({
+  branches: await import(new URL('../dist/routes/branches.js', import.meta.url).href) as typeof import('../src/routes/branches.js'),
+  registry: await import(new URL('../dist/scheduler/executor-registry.js', import.meta.url).href) as typeof import('../src/scheduler/executor-registry.js'),
   executor: await import(new URL('../dist/executor/routes.js', import.meta.url).href) as typeof import('../src/executor/routes.js'),
   worktree: await import(new URL('../dist/services/worktree.js', import.meta.url).href) as typeof import('../src/services/worktree.js'),
   state: await import(new URL('../dist/services/state.js', import.meta.url).href) as typeof import('../src/services/state.js'),
@@ -25,7 +27,7 @@ const modules = async () => ({
   isolated: await import(new URL('../dist/services/isolated-shell-executor.js', import.meta.url).href) as typeof import('../src/services/isolated-shell-executor.js'),
   versions: await import(new URL('../dist/services/deployment-version.js', import.meta.url).href) as typeof import('../src/services/deployment-version.js'),
 });
-const sourcePaths = ['src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts',
+const sourcePaths = ['src/routes/branches.ts', 'src/scheduler/executor-registry.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts',
   'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/deployment-intent.ts',
   'src/services/deployment-run.ts', 'src/services/state.ts', 'src/services/container.ts', 'src/services/isolated-shell-executor.ts',
   'src/services/shell-executor.ts', 'src/executor/routes.ts', 'src/services/worktree.ts', 'src/services/deployment-version.ts', 'src/services/env-provenance.ts', 'scripts/artifact-admission-drill.ts'];
@@ -65,13 +67,16 @@ async function main(): Promise<void> {
   const output = path.resolve('artifact-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); assert.match(head, /^[0-9a-f]{40}$/);
   const report: Record<string, any> = { schema: 1, head, startedAt: new Date().toISOString(), verdict: 'failed', checks: [],
-    scope: 'compiled artifact checker, durable queue, executor HTTP route and managed producer/version content policy; owned registry, Git and Docker; no full Master/public cutover, full configuration rollback or performance acceptance',
+    scope: 'compiled artifact checker, durable queue, original Master remote dispatch and executor HTTP routes, second empty Docker daemon and managed producer/version content policy; owned registry, Git and Docker; no full application/public cutover, full configuration rollback or performance acceptance',
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
-    actualRegistryPublishResumeVerified: false, actualExecutorArtifactDeploymentVerified: false, actualManagedProducerPolicyVerified: false, actualLocalVersionContentRestoreVerified: false, actualApplicationDeploymentVerified: false, performanceVerified: false,
+    actualRegistryPublishResumeVerified: false, actualExecutorArtifactDeploymentVerified: false, actualManagedProducerPolicyVerified: false, actualLocalVersionContentRestoreVerified: false, actualExecutorRepositoryDigestReuseVerified: false, actualSecondDaemonDigestRecoveryVerified: false, actualMasterRemoteRepositoryDigestVerified: false, actualApplicationDeploymentVerified: false, performanceVerified: false,
     ownedContainersRemoved: false, ownedImagesRemoved: false, isolatedFilesRemoved: false };
   const m = await modules();
   const previousHost = process.env.DOCKER_HOST, previousContext = process.env.DOCKER_CONTEXT, previousIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
-  let peerServer: http.Server | undefined, peerNetwork: string | undefined;
+  let peerServer: http.Server | undefined, masterServer: http.Server | undefined, peerNetwork: string | undefined;
+  let flushMaster: (() => Promise<void>) | undefined;
+  let secondaryDaemon: string | undefined, secondaryVolume: string | undefined, secondaryRuntime: string | undefined;
+  const secondary = (args: string[]) => { assert.ok(secondaryDaemon); ownedView(secondaryDaemon); return docker(['exec', secondaryDaemon, 'docker', '--host', 'unix:///var/run/owned.sock', ...args]); };
   process.env.DOCKER_HOST = host; delete process.env.DOCKER_CONTEXT;
   const shell = new m.isolated.IsolatedShellExecutor(new m.shell.ShellExecutor(), { isolatedLane: 'operation', concurrency: 2,
     reservedCleanup: 1, maxQueued: 8, maxBytes: 1024 * 1024, reservedCleanupBytes: 64 * 1024 });
@@ -111,7 +116,7 @@ async function main(): Promise<void> {
   };
   const build = async (role: string, ref: string): Promise<void> => {
     const context = path.join(temp, role); await fs.mkdir(context); await fs.writeFile(path.join(context, 'index.html'), `${role}:${head}`);
-    await fs.writeFile(path.join(context, 'server.cjs'), "const http=require('node:http'),fs=require('node:fs');http.createServer((_req,res)=>{res.setHeader('Content-Type','text/plain');res.end(fs.readFileSync('/www/index.html','utf8'));}).listen(8080,'0.0.0.0');");
+    await fs.writeFile(path.join(context, 'server.cjs'), "const http=require('node:http'),fs=require('node:fs');http.createServer((_req,res)=>{res.setHeader('Content-Type','text/plain');res.end(fs.readFileSync('/www/index.html','utf8'));}).listen(Number(process.env.PORT||8080),'0.0.0.0');");
     await fs.writeFile(path.join(context, 'Dockerfile'), `FROM ${fixtureImage}\nLABEL cds.acceptance.owner="${owner}" org.opencontainers.image.revision="${head}"\nCOPY index.html /www/index.html\nCOPY server.cjs /server.cjs\nCMD ["node", "/server.cjs"]\n`);
     docker(['build', '--network', 'none', '-t', ref, context]);
     const image = JSON.parse(docker(['image', 'inspect', ref]))[0]; assert.equal(image.Config.Labels['cds.acceptance.owner'], owner);
@@ -186,7 +191,8 @@ async function main(): Promise<void> {
     const peerConfig = { repoRoot: temp, worktreeBase: path.join(temp, 'peer-worktrees'), dockerNetwork: peerNetwork,
       portStart: peerPortStart, sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'owned' }, executorToken: randomBytes(32).toString('hex') } as CdsConfig;
     const peerContainer = new m.container.ContainerService(peerShell, peerConfig);
-    const app = express(); app.use(express.json()); app.use('/exec', m.executor.createExecutorRouter({ stateService: peerState,
+    const peerRequests: any[] = [];
+    const app = express(); app.use(express.json()); app.use((req, _res, next) => { if (req.method === 'POST' && req.path === '/exec/deploy') peerRequests.push(structuredClone(req.body)); next(); }); app.use('/exec', m.executor.createExecutorRouter({ stateService: peerState,
       worktreeService: new m.worktree.WorktreeService(peerShell), containerService: peerContainer, shell: peerShell, config: peerConfig }));
     peerServer = await new Promise<http.Server>(resolve => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
     const peerUrl = `http://127.0.0.1:${(peerServer.address() as { port: number }).port}`;
@@ -249,6 +255,118 @@ async function main(): Promise<void> {
     report.executorArtifact = { revision: head, image: peerService.deployedImage, httpReady: true, noSourcePreparation: true,
       missingAllRolesPreservedOldHttp: true, scope: 'actual compiled executor HTTP route through original process pool and Docker; owned user-defined network; no Master/public cutover or managed-source policy acceptance' };
     report.checks.push({ name: 'compiled-executor-http-runs-fixed-digest-real-version-without-source', passed: true });
+
+    report.stage = 'executor-retains-verified-local-repository-digest';
+    const repositoryDigest = peerService.deployedImage!;
+    const localPeerProfile = { ...peerProfile, dockerImage: repositoryDigest, localArtifact: true };
+    const beforeLocalPeer = peerCommands.length;
+    const masterState = new m.state.StateService(path.join(temp, 'master-state.json')); masterState.load();
+    masterState.addProject({ id: 'owned', slug: 'owned', name: '隔离派发', kind: 'git', legacyFlag: true, dockerNetwork: peerNetwork, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    masterState.addBuildProfile({ ...localPeerProfile, localArtifact: false });
+    masterState.addBranch({ ...structuredClone(peerEntry), githubCommitSha: head });
+    const masterRegistry = new m.registry.ExecutorRegistry(masterState);
+    const remote = masterRegistry.register({ id: `${owner}-executor`, host: '127.0.0.1', port: (peerServer.address() as { port: number }).port,
+      role: 'remote', capacity: { maxBranches: 10, memoryMB: 2048, cpuCores: 2 } });
+    const masterCoordinator = new m.coordinator.BranchOperationCoordinator(); const masterRuns = new m.runs.DeploymentRunService(masterState);
+    const masterVersions = new m.versions.DeploymentVersionService(masterState);
+    const masterConfig = { ...peerConfig, mode: 'standalone', masterPort: 0, workerPort: 5500, executorPort: 5501,
+      rootDomains: ['invalid'], previewDomain: 'invalid' } as CdsConfig;
+    const masterApp = express(); masterApp.use(express.json()); masterApp.use('/api', m.branches.createBranchRouter({ stateService: masterState,
+      worktreeService: new m.worktree.WorktreeService(peerShell), containerService: peerContainer, shell: peerShell, config: masterConfig,
+      registry: masterRegistry, branchOperationCoordinator: masterCoordinator, deploymentRunService: masterRuns, deploymentVersionService: masterVersions }));
+    masterServer = await new Promise<http.Server>(resolve => { const server = masterApp.listen(0, '127.0.0.1', () => resolve(server)); });
+    masterConfig.masterPort = (masterServer.address() as { port: number }).port;
+    flushMaster = async () => { masterCoordinator.interruptAll('owned cleanup', 'isolated-drill'); await masterState.flush(); };
+    const beforeMasterRequests = peerRequests.length;
+    const masterResponse = await fetch(`http://127.0.0.1:${masterConfig.masterPort}/api/branches/${peerBranchId}/deploy`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commitSha: head, targetExecutorId: remote.id }), signal: AbortSignal.timeout(90_000) });
+    assert.equal(masterResponse.status, 200); const masterText = await masterResponse.text();
+    const localPeerEvents = masterText.split('\n\n').filter(Boolean).filter(block => /^data: /m.test(block)).map(block => ({ event: block.match(/^event: (.+)$/m)?.[1], data: JSON.parse(block.match(/^data: (.+)$/m)![1]) }));
+    const dispatched = peerRequests.slice(beforeMasterRequests); assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0].profiles[0].dockerImage, repositoryDigest); assert.equal(dispatched[0].artifactCommitSha, head);
+    const masterEntry = masterState.getBranch(peerBranchId)!; assert.equal(masterEntry.status, 'running');
+    assert.equal(masterEntry.services.web.deployedImage, repositoryDigest); assert.ok(masterEntry.currentVersionId);
+    const masterVersion = masterVersions.get(masterEntry.currentVersionId!)!;
+    assert.equal(masterVersion.profiles[0].artifactImage, repositoryDigest); assert.equal(masterVersion.profiles[0].artifactKind, 'prebuilt-image');
+    assert.equal(masterVersions.materializeProfiles(masterVersion, [localPeerProfile])[0].localArtifact, false);
+    report.masterRepositoryDigest = { dispatchedImage: dispatched[0].profiles[0].dockerImage, versionId: masterVersion.id,
+      originalMasterRoute: true, originalExecutorHttp: true, versionRepositoryReferencePreserved: true };
+    report.actualMasterRemoteRepositoryDigestVerified = true;
+
+    assert.deepEqual(localPeerEvents.filter(event => event.event === 'error' || event.data?.status === 'error'), []);
+    assert.ok(localPeerEvents.some(event => event.event === 'complete'));
+    const localPeerEntry = peerState.getBranch(peerBranchId)!; const localPeerService = localPeerEntry.services.web;
+    assert.equal(localPeerService.deployedImage, repositoryDigest);
+    const localPeerId = docker(['inspect', '--format', '{{.Id}}', localPeerService.containerName]);
+    const localPeerRuntime = ownedView(localPeerId); assert.notEqual(localPeerId, peerId);
+    assert.equal(localPeerRuntime.Config.Image, repositoryDigest);
+    assert.equal(localPeerRuntime.Config.Labels['org.opencontainers.image.revision'], head);
+    assert.equal(docker(['ps', '-aq', '--no-trunc', '--filter', `id=${peerId}`]), '');
+    ownedIds.splice(ownedIds.indexOf(peerId), 1); ownedIds.push(localPeerId);
+    await waitHttp(`http://127.0.0.1:${localPeerService.hostPort}/`); assert.equal(await read(`http://127.0.0.1:${localPeerService.hostPort}/`), `web:${head}`);
+    assert.equal(peerCommands.slice(beforeLocalPeer).some(command => /^git |^mkdir /.test(command)), false);
+    const fixedPulls = peerCommands.slice(beforeLocalPeer).filter(command => /^docker pull /.test(command));
+    assert.equal(fixedPulls.length, 1); assert.ok(fixedPulls[0].includes(repositoryDigest));
+    const localPeerVersions = new m.versions.DeploymentVersionService(peerState);
+    const portableVersion = localPeerVersions.create({ projectId: 'owned', branchId: peerBranchId, commitSha: head,
+      configHash: localPeerVersions.computeConfigHash([localPeerProfile], {}), profiles: [localPeerProfile], branch: localPeerEntry, createdByRunId: 'owned-executor-portable-reference' });
+    assert.equal(portableVersion.profiles[0].artifactKind, 'prebuilt-image'); assert.equal(portableVersion.profiles[0].artifactImage, repositoryDigest);
+    assert.equal(localPeerVersions.materializeProfiles(portableVersion, [localPeerProfile])[0].dockerImage, repositoryDigest);
+    report.executorRepositoryDigest = { repositoryDigest, localContentId: localPeerRuntime.Image, portableVersionId: portableVersion.id,
+      runtimeReferencePreserved: true, versionReferencePreserved: true, masterFixedUriPreflightPulls: fixedPulls.length, executorLocalRecheckWithoutAdditionalPull: true, noSourcePreparation: true };
+    report.actualExecutorRepositoryDigestReuseVerified = true;
+    report.checks.push({ name: 'compiled-master-remote-preflight-and-executor-preserve-fixed-repository-digest-and-version-reference', passed: true });
+
+    // 第二个自有daemon无主daemon socket或缓存挂载，只从版本记录保留的仓库URI拉取。
+    // 仅CI临时runner内的特权容器；禁用bridge、iptables与转发修改，数据卷有独立归属。
+    report.stage = 'second-daemon-fixed-repository-recovery';
+    docker(['pull', 'docker:29-dind']);
+    const daemonImage = JSON.parse(docker(['image', 'inspect', 'docker:29-dind']))[0];
+    secondaryVolume = `${owner}-secondary-data`;
+    docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, secondaryVolume]);
+    assert.equal(JSON.parse(docker(['volume', 'inspect', secondaryVolume]))[0].Labels['cds.acceptance.owner'], owner);
+    secondaryDaemon = start('secondary-daemon', ['--privileged', '--network', 'host', '--cpus', '1', '--memory', '1g',
+      '-v', `${secondaryVolume}:/var/lib/docker`, '-e', 'DOCKER_TLS_CERTDIR=', 'docker:29-dind',
+      'dockerd', '--host=unix:///var/run/owned.sock', '--storage-driver=vfs', '--feature=containerd-snapshotter=false',
+      '--bridge=none', '--iptables=false', '--ip6tables=false', '--ip-forward=false', '--ip-masq=false']);
+    const daemonMounts = ownedView(secondaryDaemon).Mounts;
+    assert.equal(daemonMounts.length, 1); assert.equal(daemonMounts[0].Type, 'volume'); assert.equal(daemonMounts[0].Name, secondaryVolume);
+    assert.equal(daemonMounts[0].Destination, '/var/lib/docker');
+    const daemonDeadline = performance.now() + 30_000;
+    for (;;) { try { secondary(['info', '--format', '{{.ID}}']); break; } catch (error) {
+      if (!ownedView(secondaryDaemon).State.Running || performance.now() > daemonDeadline) {
+        report.secondaryDaemonFailure = { logs: docker(['logs', '--tail', '30', secondaryDaemon]).slice(-4096) }; throw error;
+      } await new Promise(resolve => setTimeout(resolve, 250));
+    } }
+    const secondaryInfo = JSON.parse(secondary(['info', '--format', '{{json .}}']));
+    const primaryInfo = JSON.parse(docker(['info', '--format', '{{json .}}']));
+    assert.notEqual(secondaryInfo.ID, primaryInfo.ID); assert.equal(secondaryInfo.Driver, 'vfs');
+    assert.equal(secondary(['image', 'ls', '-aq']), ''); assert.equal(secondary(['ps', '-aq']), '');
+    const recoveredProfile = masterVersions.materializeProfiles(masterVersion, [localPeerProfile])[0];
+    assert.equal(recoveredProfile.localArtifact, false);
+    assert.equal(recoveredProfile.dockerImage, repositoryDigest);
+    secondary(['pull', recoveredProfile.dockerImage!]);
+    const recoveredImage = JSON.parse(secondary(['image', 'inspect', repositoryDigest]))[0];
+    assert.equal(recoveredImage.Id, localPeerRuntime.Image); assert.ok(recoveredImage.RepoDigests.includes(repositoryDigest));
+    assert.equal(recoveredImage.Config.Labels['cds.acceptance.owner'], owner);
+    assert.equal(recoveredImage.Config.Labels['org.opencontainers.image.revision'], head);
+    assert.equal(recoveredImage.Os, 'linux'); assert.equal(recoveredImage.Architecture, JSON.parse(docker(['image', 'inspect', repositoryDigest]))[0].Architecture);
+    assert.equal(recoveredImage.Architecture, secondaryInfo.Architecture === 'x86_64' ? 'amd64' : secondaryInfo.Architecture);
+    assert.deepEqual(recoveredImage.Config.Cmd, ['node', '/server.cjs']);
+    const secondPortReservation = http.createServer(); await new Promise<void>(resolve => secondPortReservation.listen(0, '127.0.0.1', resolve));
+    const secondPort = (secondPortReservation.address() as { port: number }).port; await new Promise<void>(resolve => secondPortReservation.close(() => resolve()));
+    secondaryRuntime = secondary(['run', '-d', '--name', `${owner}-recovered`, '--label', `cds.acceptance.owner=${owner}`,
+      '--network', 'host', '--cpus', '0.25', '--memory', '128m', '-e', `PORT=${secondPort}`, repositoryDigest]);
+    const recoveredRuntime = JSON.parse(secondary(['inspect', secondaryRuntime]))[0];
+    assert.equal(recoveredRuntime.Config.Labels['cds.acceptance.owner'], owner); assert.equal(recoveredRuntime.Config.Image, repositoryDigest);
+    assert.equal(recoveredRuntime.Image, recoveredImage.Id); assert.deepEqual(recoveredRuntime.Config.Cmd, recoveredImage.Config.Cmd);
+    await waitHttp(`http://127.0.0.1:${secondPort}/`); assert.equal(await read(`http://127.0.0.1:${secondPort}/`), `web:${head}`);
+    report.secondDaemonRecovery = { primaryDaemonId: primaryInfo.ID, secondaryDaemonId: secondaryInfo.ID,
+      daemonImage: daemonImage.RepoDigests, initiallyEmpty: true, volume: secondaryVolume, repositoryDigest,
+      imageId: recoveredImage.Id, revision: head, platform: `${recoveredImage.Os}/${recoveredImage.Architecture}`,
+      defaultCommandPreserved: true, actualHttpContentVerified: true, noPrimaryCacheOrSocketMounted: true };
+    report.actualSecondDaemonDigestRecoveryVerified = true;
+    report.checks.push({ name: 'second-owned-empty-daemon-pulls-version-repository-digest-and-runs-original-image-content', passed: true });
 
     report.stage = 'managed-source-and-environment-identity';
     const sourceDir = path.join(temp, 'managed-source'); await fs.mkdir(sourceDir);
@@ -337,14 +455,27 @@ async function main(): Promise<void> {
   } catch (error) { report.error = { name: (error as Error).name, message: String((error as Error).message).slice(0, 1500) }; throw error;
   } finally {
     const cleanupErrors: string[] = [];
+    if (masterServer) await new Promise<void>(resolve => masterServer!.close(error => { if (error) cleanupErrors.push(String(error)); resolve(); }));
+    if (flushMaster) await flushMaster().catch(error => cleanupErrors.push(String(error)));
     if (peerServer) await new Promise<void>(resolve => peerServer!.close(error => { if (error) cleanupErrors.push(String(error)); resolve(); }));
     // 即使路由在返回前失败也按自有标签发现并收尾其已创建容器。
     try {
       for (const id of docker(['ps', '-aq', '--no-trunc', '--filter', `label=cds.acceptance.owner=${owner}`]).split('\n').filter(Boolean)) if (!ownedIds.includes(id)) { ownedView(id); ownedIds.push(id); }
     } catch (error) { cleanupErrors.push(String(error)); }
+    if (secondaryDaemon && secondaryRuntime) { try {
+      const view = JSON.parse(secondary(['inspect', secondaryRuntime]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner);
+      secondary(['rm', '-f', secondaryRuntime]); assert.equal(secondary(['ps', '-aq']), ''); report.secondaryRuntimeRemoved = true;
+    } catch (error) { cleanupErrors.push(String(error)); report.secondaryRuntimeRemoved = false; } }
     await shell.close().catch(error => cleanupErrors.push(String(error)));
     for (const id of ownedIds.reverse()) { try { ownedView(id); docker(['rm', '-f', id]); } catch (error) { cleanupErrors.push(String(error)); } }
     report.ownedContainersRemoved = cleanupErrors.length === 0;
+    if (secondaryDaemon) { try { report.secondaryDaemonRemoved = docker(['ps', '-aq', '--no-trunc', '--filter', `id=${secondaryDaemon}`]) === ''; assert.equal(report.secondaryDaemonRemoved, true); } catch (error) { cleanupErrors.push(String(error)); } }
+    if (secondaryVolume) { try {
+      assert.equal(JSON.parse(docker(['volume', 'inspect', secondaryVolume]))[0].Labels['cds.acceptance.owner'], owner);
+      docker(['volume', 'rm', secondaryVolume]);
+      assert.equal(docker(['volume', 'ls', '-q', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.secondaryDataRemoved = true;
+    } catch (error) { cleanupErrors.push(String(error)); report.secondaryDataRemoved = false; } }
+
     if (peerNetwork) { try { const view = JSON.parse(docker(['network', 'inspect', peerNetwork]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner); docker(['network', 'rm', peerNetwork]); report.ownedNetworkRemoved = true; } catch (error) { cleanupErrors.push(String(error)); report.ownedNetworkRemoved = false; } }
     // managed commit may succeed before later verification fails: discover inherited owner labels too.
     try { for (const id of docker(['image', 'ls', '-aq', '--no-trunc', '--filter', `label=cds.acceptance.owner=${owner}`]).split('\n').filter(Boolean)) {

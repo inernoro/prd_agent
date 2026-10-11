@@ -65,6 +65,15 @@ describe('完整预构建产物准入', () => {
     expect(shell.commands.filter(cmd => cmd.startsWith('docker pull '))).toEqual([]);
   });
 
+  it('已固定仓库digest在本地准入后保持仓库引用，不能改为不同的本机配置ID', async () => {
+    const shell = fixture(); const repositoryDigest = `ghcr.io/owned/worker@sha256:${'d'.repeat(64)}`;
+    shell.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: id, RepoDigests: [repositoryDigest], Os: 'linux', Architecture: 'amd64',
+      Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+    const result = await inspectDeploymentArtifacts(shell, [{ ...profile('api'), dockerImage: repositoryDigest, localArtifact: true }], target, () => {}, { inspectLocalArtifacts: true });
+    expect(result).toMatchObject({ state: 'ready', artifacts: [{ requestedImage: repositoryDigest, image: repositoryDigest, revision: target, platform: 'linux/amd64' }] });
+    expect(shell.commands.filter(command => command.startsWith('docker pull '))).toEqual([]);
+  });
+
   it('短提交或未展开镜像保持未知，不去拉旧目标镜像', async () => {
     const shell = fixture();
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], 'abc1234')).toMatchObject({ state: 'waiting', reason: 'target-unresolved' });
