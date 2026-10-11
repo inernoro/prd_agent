@@ -36,6 +36,8 @@ import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, Metric
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { createLatestOnly } from '@/lib/latest-only';
+import { DeploymentRunLedger, type DeploymentRunSummary } from '@/components/deployment/DeploymentRunLedger';
 
 interface ProjectSummary {
   id: string;
@@ -73,6 +75,7 @@ interface BranchSummary {
   pinnedCommit?: string;
   githubCommitSha?: string;
   githubRepoFullName?: string;
+  lastDeploymentRunId?: string;
 }
 
 interface BranchesResponse {
@@ -249,6 +252,8 @@ type LoadState =
       project?: ProjectSummary;
       branch: BranchSummary;
       operationLogs: OperationLog[];
+      deploymentRuns: DeploymentRunSummary[];
+      deploymentRunsUnavailable: boolean;
       commits: GitCommit[];
       profiles: ProfileRow[];
       aliases: AliasResponse;
@@ -271,6 +276,13 @@ type ContainerLogState =
   | { status: 'loading'; profileId: string }
   | { status: 'error'; profileId: string; message: string }
   | { status: 'ok'; profileId: string; logs: string };
+
+/** Reject foreign or malformed list packets rather than displaying them in this branch. */
+export function branchScopedDeploymentRuns(value: unknown, projectId: string, branchId: string): DeploymentRunSummary[] | null {
+  if (!value || typeof value !== 'object' || !('runs' in value) || !Array.isArray(value.runs)) return null;
+  if (value.runs.some(run => !run || typeof run !== 'object' || run.projectId !== projectId || run.branchId !== branchId)) return null;
+  return value.runs.slice(0, 10) as DeploymentRunSummary[];
+}
 
 function queryValue(name: string): string {
   return new URLSearchParams(window.location.search).get(name) || '';
@@ -571,6 +583,7 @@ export function BranchDetailPage(): JSX.Element {
   const [commitQuery, setCommitQuery] = useState('');
   const [proxyLogQuery, setProxyLogQuery] = useState('');
   const actionRef = useRef<ActionState | null>(null);
+  const latestLoad = useRef(createLatestOnly());
 
   const updateAction = useCallback((next: ActionState | null) => {
     actionRef.current = next;
@@ -586,6 +599,7 @@ export function BranchDetailPage(): JSX.Element {
   }, [updateAction]);
 
   const load = useCallback(async (showLoading = false, forceLive = false) => {
+    const isCurrent = latestLoad.current.begin();
     if (showLoading) setState({ status: 'loading' });
     try {
       if (!branchId) {
@@ -597,6 +611,7 @@ export function BranchDetailPage(): JSX.Element {
           apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
           apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         ]);
+        if (!isCurrent()) return;
         setState({ status: 'select', project, branches: branchesRes.branches || [] });
         return;
       }
@@ -605,6 +620,7 @@ export function BranchDetailPage(): JSX.Element {
         ? `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`
         : `/api/branches?live=${forceLive ? 'true' : 'false'}`;
       const branchesRes = await apiRequest<BranchesResponse>(branchesPath);
+      if (!isCurrent()) return;
       const branch = (branchesRes.branches || []).find((item) => item.id === branchId);
       if (!branch) {
         setState({ status: 'error', message: 'branch_not_found', projectId });
@@ -612,7 +628,8 @@ export function BranchDetailPage(): JSX.Element {
       }
 
       const realProjectId = branch.projectId || projectId;
-      const [project, operationLogs, commits, profiles, aliases, proxyLogs, previewMode, config] = await Promise.all([
+      const deploymentProjectId = branch.projectId || projectId || 'default';
+      const [project, operationLogs, commits, profiles, aliases, proxyLogs, previewMode, config, deploymentRuns] = await Promise.all([
         realProjectId
           ? apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(realProjectId)}`).catch(() => undefined)
           : Promise.resolve(undefined),
@@ -625,12 +642,18 @@ export function BranchDetailPage(): JSX.Element {
           ? apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(realProjectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const }))
           : Promise.resolve({ mode: 'multi' as const }),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
+        apiRequest<unknown>(`/api/deployment-runs?project=${encodeURIComponent(deploymentProjectId)}&branch=${encodeURIComponent(branch.id)}&limit=10`)
+          .then(response => branchScopedDeploymentRuns(response, deploymentProjectId, branch.id)).catch(() => null),
       ]);
-      setState({
+      if (!isCurrent()) return;
+      setState(current => ({
         status: 'ok',
         project,
         branch,
         operationLogs: operationLogs.logs || [],
+        deploymentRuns: deploymentRuns ?? (current.status === 'ok' && current.branch.id === branch.id
+          && (current.branch.projectId || projectId || 'default') === deploymentProjectId ? current.deploymentRuns : []),
+        deploymentRunsUnavailable: deploymentRuns === null,
         commits: commits.commits || [],
         profiles: profiles.profiles || [],
         aliases,
@@ -639,10 +662,11 @@ export function BranchDetailPage(): JSX.Element {
         bridgeConnection: undefined,
         previewMode: previewMode.mode || 'multi',
         config,
-      });
+      }));
       const firstService = Object.keys(branch.services || {})[0] || profiles.profiles?.[0]?.profileId || '';
       setSelectedProfileId((current) => current || firstService);
     } catch (err) {
+      if (!isCurrent()) return;
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message, projectId });
     }
@@ -650,6 +674,7 @@ export function BranchDetailPage(): JSX.Element {
 
   useEffect(() => {
     void load(true);
+    return () => { latestLoad.current.begin(); };
   }, [load]);
 
   const branchStreamProjectId = state.status === 'ok' ? state.branch.projectId : '';
@@ -1555,6 +1580,14 @@ export function BranchDetailPage(): JSX.Element {
                   })}
                 </CardContent>
               </Card>
+
+              <div aria-label="分支部署事实">
+                {state.deploymentRunsUnavailable ? <p className="mb-3 text-sm text-warn">
+                  部署事实账本暂不可读。{state.deploymentRuns.length > 0 ? '下方保留上次成功记录，尚未刷新。' : '请稍后刷新。'}
+                </p> : state.deploymentRuns.length === 0 ? <p className="text-sm text-muted-foreground">暂无部署事实记录。</p> : null}
+                <DeploymentRunLedger runs={state.deploymentRuns} activeRunId={state.branch.lastDeploymentRunId}
+                  expectedRepository={state.branch.githubRepoFullName} expectedBranch={state.branch.branch} />
+              </div>
 
               {/* 波1 W1b:分支级临时额外服务(只作用于本分支的实验容器,如 Nacos)。 */}
               <ExtraServicesPanel
