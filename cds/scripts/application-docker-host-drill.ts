@@ -25,13 +25,15 @@ async function hashes(root: string, prefix = ''): Promise<Record<string, string>
 }
 async function main(): Promise<void> {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.match(process.env.GITHUB_RUN_ID || '', /^\d+$/);
+  const cancelAfterDaemonCreate = process.argv.includes('--cancel-after-daemon-create');
   const sourceHead = (await execute('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })).stdout.trim(); assert.match(sourceHead, /^[a-f0-9]{40}$/);
   const owner = `cds_app_${randomBytes(8).toString('hex')}`;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-application-docker-ci-')); await fs.chmod(root, 0o700);
-  const output = path.resolve('application-docker-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
+  const output = path.resolve(cancelAfterDaemonCreate ? 'application-probe-cancel-output' : 'application-docker-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const report: any = { schema: 1, sourceHead, owner, startedAt: new Date().toISOString(), verdict: 'failed',
     scope: 'owned network namespace with original full application and separate real Docker daemon; generic fixtures; prerequisite only, not STG-03 business coverage or STG-04/public acceptance',
     actualWholeFirstStageVerified: false, formalAcceptancePassed: false, productionChanged: false,
+    cancellationBoundary: cancelAfterDaemonCreate ? 'daemon-created' : 'client-disconnect',
     ownedContainerRemoved: false, ownedVolumeRemoved: false, ownedImageRemoved: false };
   let containerId: string | undefined, volume: string | undefined, imageId: string | undefined;
   const tag = `${owner}:fixture`;
@@ -94,13 +96,15 @@ async function main(): Promise<void> {
     report.stage = 'original-application-owned-docker';
     let result: { stdout: string; stderr: string };
     try { result = await execute('docker', ['--host', primaryHost, 'exec', '-w', '/owned/source', containerId,
-      'node', '--import', 'tsx', 'scripts/application-docker-inner-drill.ts', '--native'],
+      'node', '--import', 'tsx', 'scripts/application-docker-inner-drill.ts', '--native',
+      ...(cancelAfterDaemonCreate ? ['--cancel-after-daemon-create'] : [])],
     { encoding: 'utf8', timeout: 600_000, maxBuffer: 2 * 1024 * 1024 }); }
     catch (error) { const failed = error as Error & { stdout?: string; stderr?: string };
       await fs.writeFile(path.join(output, 'inner-driver.log'), ((failed.stdout || '') + (failed.stderr || '')).slice(-65536)); throw error; }
     await fs.writeFile(path.join(output, 'inner-driver.log'), (result.stdout + result.stderr).slice(-65536));
     const application = JSON.parse(await fs.readFile(path.join(output, 'report.json'), 'utf8')); assert.equal(application.verdict, 'passed');
     assert.equal(application.actualFullIndexBootstrapVerified, true); assert.equal(application.actualOwnedDockerApplicationPreflightVerified, true);
+    if (cancelAfterDaemonCreate) assert.equal(application.actualBudgetProbeCancellationVerified, true);
     assert.equal(application.actualWholeFirstStageVerified, false); assert.equal(application.formalAcceptancePassed, false);
     report.applicationReportSha256 = createHash('sha256').update(await fs.readFile(path.join(output, 'report.json'))).digest('hex');
     report.verdict = 'passed';

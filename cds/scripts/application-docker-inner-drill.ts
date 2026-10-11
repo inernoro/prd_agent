@@ -30,7 +30,8 @@ async function availablePort(): Promise<number> {
 // this private Unix proxy. After client cancellation the same body is forwarded
 // to the real, initially-empty owned daemon. It is an injected delayed request,
 // not a claim that the daemon naturally reproduced the delay in this run.
-export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock') {
+export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock',
+  cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect') {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
   const requestTimeline: any[] = []; let requestSequence = 0, traceEnabled = false, traceOverflow = 0;
   const classify = (url = '', method = '') => {
@@ -83,7 +84,8 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         else {
           let text = ''; backend.on('data', chunk => { text += chunk; });
           backend.on('end', () => {
-            try { const view = JSON.parse(text); record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null }); }
+            try { const view = JSON.parse(text); record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null });
+              if (cancelBoundary === 'daemon-created' && backend.statusCode === 201 && typeof view.Id === 'string' && /^[a-f0-9]{64}$/.test(view.Id)) caughtResolve(); }
             catch { record('backend-create-invalid-reply', { status: backend.statusCode }); }
             settledResolve();
           });
@@ -110,10 +112,12 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         entrypointHash: createHash('sha256').update(JSON.stringify(config.Entrypoint)).digest('hex'),
         memoryBytes: config.HostConfig.Memory, nanoCpus: config.HostConfig.NanoCpus, pidsLimit: config.HostConfig.PidsLimit,
         readonlyRootfs: config.HostConfig.ReadonlyRootfs, autoRemove: config.HostConfig.AutoRemove, networkMode: config.HostConfig.NetworkMode });
-      response.once('close', () => { record('original-client-disconnected'); setTimeout(() => {
-        record('forward-after-client-disconnect'); forward(body, true);
-      }, 250); });
-      caughtResolve();
+      response.once('close', () => { record('original-client-disconnected');
+        if (cancelBoundary === 'client-disconnect') setTimeout(() => {
+          record('forward-after-client-disconnect'); forward(body, true);
+        }, 250); });
+      if (cancelBoundary === 'daemon-created') { record('forward-before-client-disconnect'); forward(body, true); }
+      else caughtResolve();
     });
   });
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
@@ -153,6 +157,7 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
 
 async function main(): Promise<void> {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.equal(path.resolve('.'), '/owned/source');
+  const cancelBoundary = process.argv.includes('--cancel-after-daemon-create') ? 'daemon-created' : 'client-disconnect';
   const source = JSON.parse(await fs.readFile('owned-source.json', 'utf8')); assert.match(source.sourceHead, /^[a-f0-9]{40}$/); assert.match(source.owner, /^cds_app_[a-f0-9]{16}$/);
   for (const [name, hash] of Object.entries(source.hashes)) {
     assert.ok(!path.isAbsolute(name) && !name.split(path.sep).includes('..'));
@@ -294,7 +299,8 @@ async function main(): Promise<void> {
       try { await probe.connect(); return (await probe.db('admin').command({ hello: 1 })).isWritablePrimary ? true : undefined; }
       catch { return undefined; } finally { await probe.close(); } });
     await docker(['pull', capabilityImage], 600_000);
-    probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'));
+    probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'), '/var/run/owned.sock', cancelBoundary);
+    report.cancellationBoundary = cancelBoundary;
     // Check the exact pinned image through the same socket used by the original
     // app before fault injection. This does not replace its own safety probe.
     const proxyHost = `unix://${path.join(root, 'probe-daemon-proxy.sock')}`;
@@ -342,13 +348,22 @@ async function main(): Promise<void> {
         } finally { report.probeEventsAtCreationBoundary = await context.readProbeEvents(); }
         report.probeApplicationPid = context.applicationPid(); assert.ok(report.probeApplicationPid);
         report.probeApplicationProcessTree = context.applicationProcessTree();
-        report.probeFaultInjection = 'unchanged original create body accepted by private Unix proxy; delayed forwarding to real owned daemon after original CLI disconnect';
+        report.probeFaultInjection = cancelBoundary === 'daemon-created'
+          ? 'unchanged original create body forwarded to real owned daemon; original CLI create acknowledgement held until application cancellation after daemon 201'
+          : 'unchanged original create body accepted by private Unix proxy; delayed forwarding to real owned daemon after original CLI disconnect';
       },
       afterFirstShutdown: async context => {
         await probeProxy!.settle(); report.probeRequestTimeline = probeProxy!.timeline;
         const request = probeProxy!.timeline.find(event => event.phase === 'original-create-received');
         const reply = probeProxy!.timeline.find(event => event.phase === 'backend-create-replied');
         assert.ok(request && reply); assert.equal(reply.status, 201); assert.match(reply.containerId, /^[a-f0-9]{64}$/);
+        if (cancelBoundary === 'daemon-created') {
+          const stopped = context.report.shutdownAttempts[0];
+          const disconnected = probeProxy!.timeline.find(event => event.phase === 'original-client-disconnected');
+          assert.ok(disconnected); assert.ok(reply.at <= stopped.requestedAt && stopped.requestedAt <= disconnected.at);
+          assert.equal(stopped.code, 0); assert.ok(stopped.elapsedMs <= 15_000);
+          assert.equal(probeProxy!.timeline.some(event => event.phase === 'forward-after-client-disconnect'), false);
+        }
         for (const key of ['imageReference', 'cmdHash', 'entrypointHash', 'memoryBytes', 'nanoCpus', 'pidsLimit', 'readonlyRootfs', 'autoRemove', 'networkMode']) {
           assert.equal(request[key === 'imageReference' ? 'image' : key], (expectedCapabilityProbe as any)[key], key);
         }
@@ -367,8 +382,19 @@ async function main(): Promise<void> {
         const daemonEvents = await eventSnapshot('probe-cancel-confirmed-before-restart');
         for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === reply.containerId
           && event.action === action && event.probeOperationId === request.operationId && event.instanceId === request.instanceId));
+        if (cancelBoundary === 'daemon-created') {
+          const stopAt = Date.parse(context.report.shutdownAttempts[0].requestedAt);
+          assert.ok(Date.parse(cleaned.at) - stopAt >= 0 && Date.parse(cleaned.at) - stopAt <= 10_000);
+          const steps = events.filter(event => event.action === 'agent.probe.cleanup.step.requested'); assert.ok(steps.length);
+          for (const event of steps) assert.ok(event.details.deadline - event.details.requestedAt > 0
+            && event.details.deadline - event.details.requestedAt <= 5000);
+          report.actualBudgetProbeCancellationVerified = true;
+          context.report.actualBudgetProbeCancellationVerified = true;
+        }
         report.probeCancellationEvents = events;
-        report.checks.push({ name: 'original-on-demand-probe-cancel-late-real-create-exact-ID-reconciled-before-restart', passed: true });
+        report.checks.push({ name: cancelBoundary === 'daemon-created'
+          ? 'original-on-demand-probe-cancel-after-daemon-create-before-CLI-ack-exact-ID-reconciled-before-restart'
+          : 'original-on-demand-probe-cancel-late-real-create-exact-ID-reconciled-before-restart', passed: true });
       },
       afterRestart: async context => {
         await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);

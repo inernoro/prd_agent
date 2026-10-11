@@ -81,6 +81,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  application-probe-cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install original application and web dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Compile original full application and web
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+          pnpm -C cds/web build
+      - name: Verify separate cancellation boundaries and original wire protocol
+        run: |
+          docker --version
+          pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
+      - name: Original application cancels after daemon create before CLI acknowledgement
+        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --cancel-after-daemon-create
+      - name: Preserve separate budget cancellation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-application-probe-cancel-${{ github.sha }}
+          path: cds/application-probe-cancel-output/
+          if-no-files-found: error
+          retention-days: 14
+
   application-bootstrap:
     runs-on: ubuntu-latest
     timeout-minutes: 10

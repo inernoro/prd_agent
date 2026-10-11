@@ -38,6 +38,55 @@ async function attach(socketPath: string) {
 }
 
 describe('owned Docker probe proxy wire conformance', () => {
+  it.each(['client-disconnect', 'daemon-created'] as const)('retains the original create body and cancellation order at %s boundary', async boundary => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-create-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const id = 'c'.repeat(64), bodies: string[] = [], sockets = new Set<net.Socket>();
+    let received!: () => void, reply!: () => void;
+    const backendReceived = new Promise<void>(resolve => { received = resolve; });
+    const backend = http.createServer((request, response) => {
+      let body = ''; request.on('data', chunk => { body += chunk; });
+      request.once('end', () => {
+        bodies.push(body); reply = () => { response.writeHead(201, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ Id: id })); };
+        received();
+      });
+    });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const proxy = await createProbeDaemonProxy(proxyPath, backendPath, boundary); proxy.arm();
+    const body = JSON.stringify({ Image: 'owned-create-fixture', Cmd: ['true'], Entrypoint: [],
+      Labels: { 'cds.agent.probe': 'runtime-validation', 'cds.agent.probe.operation': 'd'.repeat(32), 'cds.instance': 'e'.repeat(12) },
+      HostConfig: { Memory: 134217728, NanoCpus: 250000000, PidsLimit: 64, ReadonlyRootfs: true, AutoRemove: true, NetworkMode: 'none' } });
+    let clientReceivedHeaders = false, caught = false;
+    void proxy.caught.then(() => { caught = true; });
+    const client = http.request({ socketPath: proxyPath, method: 'POST', path: '/v1.53/containers/create?name=owned-create-fixture' },
+      response => { clientReceivedHeaders = true; response.resume(); });
+    client.on('error', () => {});
+    try {
+      client.end(body);
+      if (boundary === 'client-disconnect') {
+        await proxy.caught; expect(bodies).toHaveLength(0); client.destroy();
+        await backendReceived; reply();
+      } else {
+        await backendReceived; expect(caught).toBe(false); reply(); await proxy.caught;
+        expect(clientReceivedHeaders).toBe(false); client.destroy();
+      }
+      await proxy.settle();
+      const deadline = performance.now() + 1000;
+      while (!proxy.timeline.some(event => event.phase === 'original-client-disconnected')) {
+        if (performance.now() >= deadline) throw new Error('original create client did not disconnect');
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      expect(bodies).toEqual([body]); expect(clientReceivedHeaders).toBe(false);
+      const phases = proxy.timeline.map(event => event.phase);
+      const disconnected = phases.indexOf('original-client-disconnected'), replied = phases.indexOf('backend-create-replied');
+      if (boundary === 'daemon-created') { expect(replied).toBeLessThan(disconnected); expect(phases).not.toContain('forward-after-client-disconnect'); }
+      else { expect(disconnected).toBeLessThan(phases.indexOf('forward-after-client-disconnect')); expect(disconnected).toBeLessThan(replied); }
+      expect(proxy.timeline.find(event => event.phase === 'backend-create-replied')).toMatchObject({ status: 201, containerId: id });
+    } finally { client.destroy(); await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  });
+
   it('retains stdout after the client closes only the upgraded input side, matching the direct backend', async () => {
     const f = await fixture();
     try {
