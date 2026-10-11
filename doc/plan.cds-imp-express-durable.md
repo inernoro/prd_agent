@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.88；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.89；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -760,3 +760,9 @@ v1.87 恢复审计：末尾固定289原身份反例0/2→2/2、扩展2/12→12/1
 ## v1.88 原来源、等待身份与宿主创建者恢复审计
 
 v1.88 恢复审计：067固定末尾真实HTTP/共享Worker受控CLI连续13/13、负控17/17、ACK/newOS6/6，发现post-connect原Service字段漂移0/4（同一身份冻结根）。主guide2.99@01daee7先冻结旧首次登记拒绝与历史已登记兼容，9ebd7118fe55ccbaaf81e5b9760d2d93983a538e封无intent新register与genericwriter，原3红→180相关/core0；历史测试显式装载已registered快照，不伪造新成功。guide2.100@129c153先冻结等待复核；CDS产品ff0cacddaaa11b63f85c99bb1c3d841792614f97核saved serviceDigest/reference及fullSHA/express/prebuilt，connect/start固定实际create fullID，start/liveness等待后再fence。主9漂移真红→HTTP40/core0；固定full692files10305绿/6files19skip/1旧obsolete69.18s，首full有旧fanout5s超时未归因，聚焦4与同字节完整重跑绿，保原日志不改timeout。固定ff末尾同原漂移4/4、链13/13、控制17/17、ACK6/6、扩展10/10；旧无intent内核+writer0/2→2/2、实际HTTP0/1→1/1（同根重叠），旧067真正已registered磁盘在新源read/finish/evidence/release/newOS6/6，分列不求和；主回读2356hash/2079paths、374Git、372fresh派生当前零错，保旧067v1自身在途finalizer log历史hash差异1条，不当产品红。独立ff回执5be21221fd24a45e5704d7c89ab427fd6c47d4d082cf560fc3ed59f5b55480ee。IMP owned-preview-contract v1.0@3caa034先提交；产品79ecd28afcd92471bd5ef89ce09266ebadcb4f35接宿主stdin/内存原cap的begin→限定profile→原DR SSE→captured GET→register→既有报告生产回调→bound201→finish→release→原GET。未知不重试/自删/整表PUT，cap不传容器/回调/argv/文件/输出，有绝对期限/上限/no redirect；合法release新operation/运行意图变化不改原身份。主缺模块1feature红、实际legacy-finalize调用红→零HTTP、去原DR匹配guard红恢复；当前43host/215全部CDS命名脚本绿，实际两仓Router/Container/Reports/State受控CLI原链1绿。新IMP固定独立已请求待返，不继承主绿；未执行正式业务三技能链。主16Git文件收据ea757afcf686adc4f73b9321cae6f853e206c1fa3df980509b7ba4a0c8e0df96。失败/未知创建终结、丢cap后生产对账、真实Daemon/八全图/黄闪电/公网/双主题/48h及周仍待。formal49全not-executed/visual N/A、45partial-local/4todo；八旧push+CI不能继承新SHA；仅本地提交，无push/PR/共享写/selfupdate，目标active。
+
+## v1.89 宿主凭据隔离恢复审计
+
+v1.89 恢复审计：固定IMP79ec末尾实际nativeHTTP提案含宿主accessKey的CDS_PROJECT_KEY/AI_ACCESS_KEY原0/2，报告含accessKey原1/2（ownerToken正控拒绝），同一凭据隔离根；跨仓原HTTP/实际Router/Container/Reports/State/共享Worker受控CLI链10/10与provider34/34分列重叠，完整固定79ec最终packet待返。IMP合同v1.2先提交aa9dd3e900bd1d3773f2c7ad985905761faf4e61；产品0078e872da8031879f090c052d3e7f9aa1f9e7fb在任何begin前检查冻结scope/profile全部JSON字段，报告在archive前检查所有字段已知accessKey；按JSON编码比较兼顾引号/反斜杠。原cap仍仅宿主内存/必要原请求，错误不含凭据，未知不重试或自删。主原13隔离真红/1独立凭据正控与转义2真红；当前231全部CDS命名脚本含59host绿，actual跨仓原链1绿（受控CLI，不是真Daemon）。主收据key-local-receipt.json hash3c670ddf53904e682f0c3aa3f8c7c710691e8361c59dc54bf15bbd82f3996507。新0078固定末尾复验已请求，不继承主绿。CDS仍ff0cacddaaa11b63f85c99bb1c3d841792614f97，先前full10305/core0与ff固定局部仅该runtime证据。独立初始化授权、失败/未知创建终结与生产恢复、真实Daemon/八完整分支/实际黄闪电/公网/双主题/48h与周仍待；八旧push+CI不继承新SHA。formal49全not-executed/visual N/A、45partial-local/4todo；仅本地commit，无push/PR/shared写/selfupdate，目标active。
+
+expected result：宿主鉴权key不成为提案或归档内容，原独立初始化凭据正常；current evidence：主13+2真红演练，当前231局部绿/actual跨仓链1；visible result：未部署，visual N/A；gap：新固定独立复验、独立初始化授权、失败创建恢复与全部原正式生产门槛；required action：按原编号继续修复，不以局部通过关闭目标。
