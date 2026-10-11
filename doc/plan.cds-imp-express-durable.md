@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.50；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.51；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -481,3 +481,7 @@ expected result：排队受理能追溯到实际执行，关联可靠确认前�
 guide2.69先冻结P0-04九阶段事实合同；cc7fae7f在实际whole/Profile拉取、精确制品、源码槽onQueued/onStart以及候选容量、启动、信号/应用就绪、路由消费者ACK、归属回收/失败恢复测量。timing v1按原run/op/scope/同进程epoch与不可变段id/开始事实保存，可靠draft替换后仍闭合原段；512限量及截断、未观测null、终态未结束unknown、并行墙钟并集与work sum分列，汇总completed/failed/cancelled，observed不等于动作成功。列表/SSE snapshot只返回九阶段汇总，detail保留有界事实，复用原权限。主发现持旧nested对象引用的durable draft真红（单测与候选编排同根）后修复；收紧原op守卫后单服务factory提前创建造成四条实际路由红，同根已移至preparing/op绑定后。mutation union1红/开始Profile事实1红/source queue结束接线2红全部恢复。最新7files397相关/core tsc0，全量671files9815green/6files19skip/1旧obsolete/64.32s。第一次full5红中另有旧bug-report ECONNRESET，相关与full复跑绿，根因未确认，不称已解决500/socket。中间cwd/缺const/错误变量/fixture recordEvent与错缩进分别记录，非独立产品根因；root precommit缺依赖仍报假绿不作验证。独立末尾固定cc7fae7f复验进行中，不继承342绿。CI runner/build、executor、普通终态后cleanup、UI及真实Master/Daemon/公网/八支/视觉仍缺，P0-04只能partial-local。
 
 expected result：真实等待原因可追溯且未知不伪装零；current evidence：主397相关/显式core0/full9815，固定末尾待返；visible result：候选未部署、视觉N/A；gap：外部CI/执行器/普通终态后收尾/UI/隔离完整链；required action：固定源独立逐条复验，真红继续修，隔离准入后按原49条实际交付及视觉/公网/恢复/长期门槛。
+
+## v1.51 非法计时值独立反例修复
+
+cc7固定末尾protocol30/31发现非法provider null时钟被隐式换算为0并显示observed；受控timingClock seam的有界数据真红，不归因production performance.now。主sample/base × null/数字字符串4条旧cc7红，属同一强制转换根因。a6b69c42在相减前检查raw current与base的typeof number/finite，非法值保持null/incomplete，原work结果7不变；7files401相关/显式core tsc0，全量671files9819green/6files19skip/1旧obsolete/64.23s。原cc7 30/31及主四红保留；固定a6末尾原protocol与actual Router/queue/candidate复验进行中，不改原期待、不继承旧边界pass。只两代码/测试路径17新增1删除，guide2.69既有非法时钟合同不改。CI Jobs #1974只读响应发现created_at/started_at/completed_at，可作后续精确job证据来源；尚未接入九阶段，不将historical job或created→started时间推导为全部纯runner等待或本修订部署证据。P0-04仍partial-local，49formal未执行/visual N/A。
