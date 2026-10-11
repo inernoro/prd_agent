@@ -146,6 +146,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from './services/branch-operation-coordinator.js';
+import { PendingDeployJournal, pendingJournalFileIO } from './services/pending-deploy-journal.js';
 
 // .cds.env 注入 process.env 的逻辑搬到 ./load-env.js，并被 ./config.js 顶部
 // side-effect import。这里保留 side-effect import 是为了即便有人未来调整
@@ -2109,8 +2110,21 @@ const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
 // 而今天崩的恰恰就是启动期。
 installProcessFuse({ store: activeServerEventLogStore, processName: 'cds-master' });
 
+const pendingDeployJournal = config.mode === 'executor' || isPreviewInstance() ? undefined
+  : new PendingDeployJournal(pendingJournalFileIO(path.join(config.repoRoot, '.cds', 'pending-deploy.json'), shell));
+await pendingDeployJournal?.ready();
+const pendingRecovered = pendingDeployJournal?.snapshot();
+if (pendingDeployJournal && !pendingDeployJournal.isAvailable()) {
+  activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'branch-operation-coordinator',
+    action: 'branch.operation.pending-journal.unavailable', message: 'Pending journal unreadable; new branch writes fail closed, original file retained' });
+}
+if (pendingRecovered && (pendingRecovered.queued.length || pendingRecovered.claims.length)) {
+  activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'branch-operation-coordinator',
+    action: 'branch.operation.pending-recovery.required', message: 'Recovered pending intents retained; conflicting deployments require executor reconciliation',
+    details: { queued: pendingRecovered.queued.length, claims: pendingRecovered.claims.length } });
+}
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore,
-  request => candidateOperationAdmission(stateService, request));
+  request => candidateOperationAdmission(stateService, request), pendingDeployJournal);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);
@@ -2203,7 +2217,7 @@ function beginBackgroundBranchOperation(input: {
 }
 
 function dispatchBackgroundPendingWebhookDeploy(pending: PendingWebhookDeploy | null): void {
-  replayPendingDeploy(pending, { stateService, config, activeServerEventLogStore });
+  replayPendingDeploy(pending, { stateService, config, activeServerEventLogStore, coordinator: branchOperationCoordinator });
 }
 
 function completeBackgroundBranchOperation(

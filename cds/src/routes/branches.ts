@@ -3036,6 +3036,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
+      ...(req.headers['x-cds-internal'] === '1' && (req.headers['x-cds-pending-operation-id'] != null || req.headers['x-cds-pending-generation'] != null)
+        ? { pendingOperationId: String(req.headers['x-cds-pending-operation-id'] || ''), pendingGeneration: Number(req.headers['x-cds-pending-generation']) } : {}),
     });
     if (decision.status === 'started') return decision.lease || null;
 
@@ -3052,7 +3054,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const joinedRunId = decision.status === 'joined'
       ? findLiveDeploymentRunId(entry.id, decision.activeOperationId || null, input.deploymentRunId || null)
       : null;
-    if (decision.status === 'joined' && !res.headersSent) {
+    if ((decision.status === 'joined' || decision.status === 'merged') && !res.headersSent) {
       if (joinedRunId) res.setHeader('X-CDS-Deployment-Run-Id', joinedRunId);
       else res.removeHeader('X-CDS-Deployment-Run-Id');
     }
@@ -3062,6 +3064,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ok: accepted,
       operationStatus: decision.status,
       operationId: decision.operationId,
+      generation: decision.generation,
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
@@ -3074,15 +3077,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
             : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
           : decision.reason || '同分支已有写操作正在运行',
     };
-    if (input.sse) {
-      initSSE(res);
-      sendSSE(res, accepted ? 'complete' : 'error', payload);
-      res.end();
-    } else if (accepted) {
-      res.status(202).json(payload);
-    } else {
-      res.status(409).json({ ...payload, ok: false });
-    }
+    const respond = () => {
+      if (res.destroyed || res.writableEnded) return;
+      if (input.sse) { initSSE(res); sendSSE(res, accepted ? 'complete' : 'error', payload); res.end(); }
+      else res.status(accepted ? 202 : 409).json(payload);
+    };
+    if (decision.persistence) {
+      void decision.persistence.then(respond, () => {
+        if (!res.destroyed && !res.writableEnded && !res.headersSent) res.status(503).json({
+          ok: false, operationStatus: 'rejected', operationId: decision.operationId,
+          generation: decision.generation, error: 'pending_journal_unavailable',
+          message: '待部署请求尚未可靠保存，请先查看部署记录，勿重复触发部署',
+        });
+      });
+    } else respond();
     return null;
   }
 
@@ -3149,7 +3157,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function dispatchPendingWebhookDeploy(pending: PendingWebhookDeploy | null): void {
-    replayPendingDeploy(pending, { stateService, config, activeServerEventLogStore: serverEventLogStore });
+    replayPendingDeploy(pending, { stateService, config, activeServerEventLogStore: serverEventLogStore, coordinator: branchOperationCoordinator });
   }
 
   function completeBranchOperation(

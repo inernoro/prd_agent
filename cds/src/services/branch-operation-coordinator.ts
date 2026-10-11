@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import type { PendingDeployJournal } from './pending-deploy-journal.js';
+import type { PendingDeployDispatchResult } from './pending-deploy-dispatch.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export type BranchOperationKind =
@@ -69,6 +71,9 @@ export interface BranchOperationRequest {
   continueWith?: 'deploy' | 'deploy-profile' | null;
   /** Internal reconciliation is scoped to a terminal unresolved journal, never a new deployment. */
   reconcileRunId?: string;
+  /** Only a current internal pending dispatch can redeem this one-use token. */
+  pendingOperationId?: string;
+  pendingGeneration?: number;
 }
 
 export interface BranchOperationLease {
@@ -98,6 +103,8 @@ export interface BranchOperationDecision {
   activeKind?: BranchOperationKind;
   pendingCommitSha?: string | null;
   lease?: BranchOperationLease;
+  /** A merged acceptance must not be sent before this durable write acknowledges. */
+  persistence?: Promise<void>;
 }
 
 export interface ActiveOperation {
@@ -264,15 +271,30 @@ export class BranchOperationCoordinator {
   private readonly pendingWebhookDeploys = new Map<string, PendingWebhookDeploy>();
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private generations = new Map<string, number>();
+  private readonly pendingDispatches = new Map<string, { pending: PendingWebhookDeploy; phase: 'claiming' | 'ready' | 'sent' | 'accepted' }>();
   // Revocation removes route ownership, not the executor's outstanding awaits.
   private readonly unsettled = new Map<string, { lease: BranchOperationLease; branchId: string }>();
 
   constructor(private readonly events?: ServerEventLogSink | null,
-    private readonly admitStart?: (request: BranchOperationRequest) => string | null) {}
+    private readonly admitStart?: (request: BranchOperationRequest) => string | null,
+    private readonly journal?: PendingDeployJournal) {}
 
   begin(request: BranchOperationRequest): BranchOperationDecision {
     request = { ...request };
     const branchId = request.branchId;
+    const pendingToken = request.pendingOperationId != null || request.pendingGeneration != null;
+    if (pendingToken) {
+      const dispatch = this.pendingDispatches.get(this.pendingKey(request));
+      const original = dispatch?.pending;
+      const matches = original && dispatch.phase === 'sent' && original.operationId === request.pendingOperationId
+        && original.generation === request.pendingGeneration && original.request.trigger === request.trigger
+        && original.request.kind === request.kind
+        && (original.request.commitSha || null) === (request.commitSha || null);
+      if (!matches) return this.pendingRejection(request, 'pending_dispatch_stale');
+      dispatch.phase = 'accepted';
+    }
+    const durableBlock = this.journal?.blockReason(request);
+    if (durableBlock) return this.pendingRejection(request, durableBlock);
     if (request.kind === 'candidate-reconcile') {
       const valid = request.trigger === 'system' && request.source === 'candidate-reconciler' && !request.profileId &&
         typeof request.reconcileRunId === 'string' && /^dr_[a-zA-Z0-9_.-]+$/.test(request.reconcileRunId);
@@ -393,6 +415,7 @@ export class BranchOperationCoordinator {
       // Expiry may cancel this scope while checking reservations.
       if (!this.pendingWebhookDeploys.has(key)) continue;
       this.pendingWebhookDeploys.delete(key);
+      this.pendingDispatches.set(key, { pending, phase: 'claiming' });
       return pending;
     }
     return null;
@@ -460,7 +483,42 @@ export class BranchOperationCoordinator {
   }
 
   getPendingWebhookDeploy(branchId: string): PendingWebhookDeploy | undefined {
-    return [...this.pendingWebhookDeploys.values()].find(pending => pending.branchId === branchId);
+    return [...this.pendingWebhookDeploys.values()].find(pending => pending.branchId === branchId)
+      || this.journal?.queued().find(pending => pending.branchId === branchId);
+  }
+
+  async claimPending(pending: PendingWebhookDeploy): Promise<boolean> {
+    const key = this.pendingKey(pending.request); const dispatch = this.pendingDispatches.get(key);
+    if (!dispatch || dispatch.pending !== pending || dispatch.phase !== 'claiming') return false;
+    const claimed = this.journal ? await this.journal.claim(pending) : true;
+    if (!claimed || this.pendingDispatches.get(key) !== dispatch) return false;
+    dispatch.phase = 'ready'; return true;
+  }
+
+  markPendingSent(pending: PendingWebhookDeploy): boolean {
+    const dispatch = this.pendingDispatches.get(this.pendingKey(pending.request));
+    if (!dispatch || dispatch.pending !== pending || dispatch.phase !== 'ready') return false;
+    dispatch.phase = 'sent'; return true;
+  }
+
+  async settlePending(pending: PendingWebhookDeploy, result: PendingDeployDispatchResult): Promise<void> {
+    await this.journal?.settle(pending, result);
+    const key = this.pendingKey(pending.request);
+    if (this.pendingDispatches.get(key)?.pending === pending) this.pendingDispatches.delete(key);
+  }
+
+  async discardPending(pending: PendingWebhookDeploy): Promise<void> {
+    const key = this.pendingKey(pending.request);
+    const dispatch = this.pendingDispatches.get(key);
+    if (!dispatch || dispatch.pending !== pending || dispatch.phase === 'sent' || dispatch.phase === 'accepted') return;
+    await this.journal?.cancel(pending);
+    if (this.pendingDispatches.get(key) === dispatch) this.pendingDispatches.delete(key);
+  }
+
+  private pendingRejection(request: BranchOperationRequest, reason: string): BranchOperationDecision {
+    const operationId = this.createOperationId(); const generation = this.currentGeneration(request.branchId);
+    this.record('branch.operation.rejected', request, operationId, generation, 'warn', { reason });
+    return { status: 'rejected', operationId, generation, reason };
   }
 
   clearForTest(): void {
@@ -468,6 +526,7 @@ export class BranchOperationCoordinator {
     this.cancellation.clear();
     this.active.clear();
     this.pendingWebhookDeploys.clear();
+    this.pendingDispatches.clear();
     this.reservedContinuations.clear();
     this.generations.clear();
     this.unsettled.clear();
@@ -484,6 +543,13 @@ export class BranchOperationCoordinator {
 
   private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
     const branchId = request.branchId;
+    // A newer writer invalidates late replay tokens before any external action.
+    for (const [pendingKey, dispatch] of this.pendingDispatches) {
+      if (!this.operationsConflict(request, dispatch.pending.request)
+          || (request.pendingOperationId === dispatch.pending.operationId && request.pendingGeneration === dispatch.pending.generation)) continue;
+      this.pendingDispatches.delete(pendingKey);
+      void this.journal?.cancel(dispatch.pending, dispatch.phase === 'sent' || dispatch.phase === 'accepted').catch(() => {});
+    }
     const key = this.operationKey(request);
     const generation = existing?.generation ?? this.nextGeneration(branchId);
     const operationId = existing?.operationId ?? this.createOperationId();
@@ -633,23 +699,38 @@ export class BranchOperationCoordinator {
     const generation = this.nextGeneration(request.branchId);
     const operationId = existing?.operationId || this.createOperationId();
     const mergedCount = (existing?.mergedCount || 0) + 1;
-    this.pendingWebhookDeploys.set(key, { operationId, branchId: request.branchId, generation,
-      request: { ...request }, mergedCount, updatedAt: nowIso() });
+    const { pendingOperationId: _token, pendingGeneration: _generation, ...originalRequest } = request;
+    const pending = { operationId, branchId: request.branchId, generation,
+      request: originalRequest, mergedCount, updatedAt: nowIso() };
+    this.pendingWebhookDeploys.set(key, pending);
+    const persistence = this.journal?.upsert(pending);
+    // Even embedded callers which do not expose a response must observe failed writes.
+    void persistence?.catch(() => {
+      if (this.pendingWebhookDeploys.get(key) === pending) {
+        if (existing) this.pendingWebhookDeploys.set(key, existing); else this.pendingWebhookDeploys.delete(key);
+      }
+    });
     this.record('branch.operation.merged', request, operationId, generation, 'info', {
       activeOperationId: blocker.operationId, activeKind: blocker.request.kind, mergedCount,
       commitSha: request.commitSha || null,
       ...(reservedContinuation ? { reservedContinuation: true } : {}),
       ...(request.trigger === 'manual' ? { manualMerge: true } : {}),
     });
-    return { status: 'merged', operationId, generation, activeOperationId: blocker.operationId,
+    return { status: 'merged', operationId, generation, ...(persistence ? { persistence } : {}), activeOperationId: blocker.operationId,
       activeKind: blocker.request.kind, pendingCommitSha: request.commitSha || null,
       reason: `${request.trigger} deploy merged into latest pending operation${reservedContinuation ? ' while force-rebuild waits for its deploy continuation' : ''}` };
   }
 
   private cancelPendingWebhookDeploy(branchId: string, reason: string, scope?: BranchOperationRequest): void {
+    for (const [key, dispatch] of this.pendingDispatches) {
+      if (dispatch.pending.branchId !== branchId || (scope && !this.operationsConflict(scope, dispatch.pending.request))) continue;
+      this.pendingDispatches.delete(key);
+      void this.journal?.cancel(dispatch.pending, dispatch.phase === 'sent' || dispatch.phase === 'accepted').catch(() => {});
+    }
     for (const [key, pending] of this.pendingWebhookDeploys) {
       if (pending.branchId !== branchId || (scope && !this.operationsConflict(scope, pending.request))) continue;
       this.pendingWebhookDeploys.delete(key);
+      void this.journal?.cancel(pending).catch(() => {});
       this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
         reason, pending: true, mergedCount: pending.mergedCount, updatedAt: pending.updatedAt,
       });

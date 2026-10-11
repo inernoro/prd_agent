@@ -1,6 +1,6 @@
 import { observePendingDeployDispatch } from './pending-deploy-dispatch.js';
 import type { StateService } from './state.js';
-import type { PendingWebhookDeploy } from './branch-operation-coordinator.js';
+import type { BranchOperationCoordinator, PendingWebhookDeploy } from './branch-operation-coordinator.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import type { CdsConfig } from '../types.js';
 
@@ -8,6 +8,7 @@ export interface PendingDeployReplayDeps {
   stateService: Pick<StateService, 'getBranch'>;
   config: Pick<CdsConfig, 'masterPort'>;
   activeServerEventLogStore?: ServerEventLogSink | null;
+  coordinator?: Pick<BranchOperationCoordinator, 'claimPending' | 'markPendingSent' | 'settlePending' | 'discardPending'>;
   fetch?: typeof fetch;
   observation?: { headersTimeoutMs?: number; observationTimeoutMs?: number };
 }
@@ -53,17 +54,29 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
         mergedCount: pending.mergedCount,
       },
     });
+    void deps.coordinator?.discardPending(pending).catch(() => {});
     return;
   }
   if (!branch) return;
   const profilePath = pending.request.kind === 'deploy-profile' && pending.request.profileId
     ? `/${encodeURIComponent(pending.request.profileId)}` : '';
   const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(pending.branchId)}/deploy${profilePath}`;
+  const originalIdentity = JSON.stringify([branch.id, branch.projectId || null, branch.branch, branch.worktreePath, branch.createdAt]);
+  const dispatch = async () => {
+    if (deps.coordinator) {
+      if (!await deps.coordinator.claimPending(pending)) return;
+      const current = stateService.getBranch(pending.branchId);
+      if (current !== branch || JSON.stringify([current?.id, current?.projectId || null, current?.branch, current?.worktreePath, current?.createdAt]) !== originalIdentity) {
+        await deps.coordinator.discardPending(pending); return;
+      }
+      if (!deps.coordinator.markPendingSent(pending)) return;
+    }
   void observePendingDeployDispatch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-CDS-Internal': '1',
+      ...(deps.coordinator ? { 'X-CDS-Pending-Operation-Id': pending.operationId, 'X-CDS-Pending-Generation': String(pending.generation) } : {}),
       // 透传原始 trigger：合并进 pending 的 manual deploy 重发时仍以 manual
       // 身份进入（保持优先级 80 语义与 run 账本归因），webhook 照旧。
       'X-CDS-Trigger': pending.request.trigger,
@@ -72,7 +85,8 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
       'X-CDS-Source-Branch-Id': pending.branchId,
     },
     body: JSON.stringify({ commitSha: pending.request.commitSha || undefined }),
-  }, { fetch: deps.fetch, ...deps.observation }).then((result) => {
+  }, { fetch: deps.fetch, ...deps.observation }).then(async (result) => {
+    await deps.coordinator?.settlePending(pending, result);
     serverEventLogStore?.record({
       category: 'system',
       severity: result.outcome === 'failed' ? 'error' : result.outcome === 'unknown' ? 'warn' : 'info',
@@ -99,7 +113,7 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
         mergedCount: pending.mergedCount,
       },
     });
-  });
+  }).catch(() => recordPersistenceFailure());
   serverEventLogStore?.record({
     category: 'system',
     severity: 'info',
@@ -125,5 +139,10 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
       mergedCount: pending.mergedCount,
     },
   });
+  };
+  const recordPersistenceFailure = () => serverEventLogStore?.record({ category: 'system', severity: 'error',
+    source: 'branch-operation-coordinator', action: 'branch.operation.pending-persistence.failed',
+    message: 'pending deployment durable transition failed; no retry authorized', branchId: pending.branchId,
+    projectId: pending.request.projectId || undefined, operationId: pending.operationId });
+  void dispatch().catch(recordPersistenceFailure);
 }
-
