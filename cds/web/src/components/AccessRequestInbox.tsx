@@ -81,7 +81,7 @@ export function AccessRequestInbox({
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST' });
       if (generation !== lifetime.current) return;
-      reader.invalidate();
+      reader.start();
       setPending((prev) => prev.filter((r) => r.id !== reqId));
     } finally {
       if (generation === lifetime.current) setBusy(null);
@@ -95,7 +95,7 @@ export function AccessRequestInbox({
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/reject`, { method: 'POST', body: {} });
       if (generation !== lifetime.current) return;
-      reader.invalidate();
+      reader.start();
       setPending((prev) => prev.filter((r) => r.id !== reqId));
     } finally {
       if (generation === lifetime.current) setBusy(null);

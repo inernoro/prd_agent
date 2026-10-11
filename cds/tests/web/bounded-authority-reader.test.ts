@@ -7,16 +7,16 @@ beforeEach(() => {
   reader = new BoundedAuthorityReader(signal => new Promise((resolve, reject) => reads.push({ signal, resolve, reject })), apply, error);
 });
 afterEach(() => { reader.dispose(); vi.useRealTimers(); });
-it('keeps one read and one demand for a hundred events, without applying superseded data', async () => {
+it('keeps one read and one demand for a hundred events, while showing completed same-generation snapshots', async () => {
   reader.start(); for (let n = 0; n < 100; n++) reader.refresh(); expect(reads).toHaveLength(1);
-  reads[0].resolve('stale'); await tick(); expect(apply).not.toHaveBeenCalled(); expect(reads).toHaveLength(2);
-  reads[1].resolve('current'); await tick(); expect(apply).toHaveBeenCalledOnce(); expect(apply).toHaveBeenCalledWith('current'); expect(vi.getTimerCount()).toBe(0);
+  reads[0].resolve('stale'); await tick(); expect(apply).toHaveBeenCalledWith('stale'); expect(reads).toHaveLength(2);
+  reads[1].resolve('current'); await tick(); expect(apply).toHaveBeenCalledTimes(2); expect(apply).toHaveBeenLastCalledWith('current'); expect(vi.getTimerCount()).toBe(0);
 });
 it('each subsequent burst adds at most one followup', async () => {
   reader.start(); reader.refresh(); reads[0].resolve('old'); await tick();
   for (let n = 0; n < 100; n++) reader.refresh(); expect(reads).toHaveLength(2);
   reads[1].resolve('also-old'); await tick(); expect(reads).toHaveLength(3); reads[2].resolve('latest'); await tick();
-  expect(apply).toHaveBeenCalledOnce(); expect(apply).toHaveBeenCalledWith('latest');
+  expect(apply).toHaveBeenCalledTimes(3); expect(apply).toHaveBeenLastCalledWith('latest');
 });
 it('reconnect aborts and replaces the old generation even if the reader ignores abort', async () => {
   reader.start(); reader.refresh(); reader.start(); expect(reads).toHaveLength(2); expect(reads[0].signal.aborted).toBe(true);
@@ -58,4 +58,13 @@ it('contains synchronous reader and observer callback failures', async () => {
 it('late rejection of an abandoned read is consumed', async () => {
   reader.start(); reader.start(); reads[1].resolve('new'); await tick(); reads[0].reject(new Error('late rejection')); await tick();
   expect(error).not.toHaveBeenCalled(); expect(apply).toHaveBeenCalledOnce(); expect(apply).toHaveBeenCalledWith('new');
+});
+it('continuous event traffic still publishes each completed same-generation authoritative snapshot', async () => {
+  reader.start();
+  for (let n = 0; n < 10; n++) {
+    for (let event = 0; event < 100; event++) reader.refresh();
+    reads[n].resolve('snapshot-' + n); await tick();
+    expect(apply).toHaveBeenLastCalledWith('snapshot-' + n); expect(reads).toHaveLength(n + 2);
+  }
+  expect(apply).toHaveBeenCalledTimes(10);
 });

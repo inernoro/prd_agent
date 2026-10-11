@@ -53,15 +53,15 @@ it.each(cases)('%s rereads its authoritative API on a new connection generation 
   initial.forEach(call => call.resolve(data('late-old'))); await tick();
   expect(JSON.stringify(runner.values)).toContain('new-current'); expect(JSON.stringify(runner.values)).not.toContain('late-old');
 });
-it.each(cases)('%s drops a superseded response and then executes one authoritative followup', async (_name, Component, endpoint) => {
+it.each(cases)('%s shows a same-generation snapshot and then executes one latest authoritative followup', async (_name, Component, endpoint) => {
   render(Component); const initial = h.calls.filter(call => call.url.startsWith(endpoint)); const before = h.calls.length;
   h.events = { lastPendingImportEvent: { ts: 'new' }, lastAccessRequestEvent: { ts: 'new' }, lastOperatorRequestEvent: { ts: 'new' }, lastNoticeEvent: { ts: 'new' }, lastAgentActivityEvent: { ts: 'new', projectId: 'owned-project' } };
   render(Component); expect(h.calls).toHaveLength(before);
   initial.forEach(call => call.resolve(data('late-old'))); await tick();
-  expect(JSON.stringify(runner.values)).not.toContain('late-old');
+  expect(JSON.stringify(runner.values)).toContain('late-old');
   const next = h.calls.slice(before).filter(call => call.url.startsWith(endpoint)); expect(next).toHaveLength(1);
   next.forEach(call => call.resolve(data('new-current'))); await tick();
-  expect(JSON.stringify(runner.values)).toContain('new-current');
+  expect(JSON.stringify(runner.values)).toContain('new-current'); expect(JSON.stringify(runner.values)).not.toContain('late-old');
 });
 it.each(cases)('%s invalidates outstanding reads on unmount without manufacturing a terminal state', async (_name, Component, endpoint) => {
   render(Component); const requests = h.calls.filter(call => call.url.startsWith(endpoint));
@@ -111,7 +111,7 @@ it.each(cases)('%s coalesces 100 held event reads into one active and one author
   const active = h.calls.filter(call => call.url.startsWith(endpoint)); expect(active).toHaveLength(1);
   active.forEach(call => call.resolve(data('superseded-read'))); await tick();
   const followup = h.calls.filter(call => call.url.startsWith(endpoint)).slice(1); expect(followup).toHaveLength(1);
-  expect(JSON.stringify(runner.values)).not.toContain('superseded-read');
+  expect(JSON.stringify(runner.values)).toContain('superseded-read');
   followup.forEach(call => call.resolve(data('current-authority'))); await tick();
   expect(JSON.stringify(runner.values)).toContain('current-authority');
   expect(h.calls.filter(call => call.url.startsWith(endpoint))).toHaveLength(2);
@@ -146,4 +146,23 @@ it('unmount aborts import hydration and starts no remaining details or state wri
   const before = h.calls.length, details = h.calls.slice(1); expect(details).toHaveLength(4); unmount();
   details.forEach(call => call.resolve({ import: { composeYaml: 'after-unmount' } })); await tick();
   expect(h.calls).toHaveLength(before); expect(details.every(call => call.options.signal.aborted)).toBe(true); expect(runner.afterUnmount).toBe(0);
+});
+it.each(decisions)('%s successful decision rereads authoritative pending even if no later event arrives (%#)', async (_name, Component, endpoint, action) => {
+  await showPending(Component, endpoint);
+  h.events = { lastPendingImportEvent: { ts: 'first' }, lastAccessRequestEvent: { ts: 'first' }, lastOperatorRequestEvent: { ts: 'first' } };
+  render(Component); const old = h.calls.filter(call => call.url === endpoint).at(-1)!;
+  h.events = { lastPendingImportEvent: { ts: 'dirty' }, lastAccessRequestEvent: { ts: 'dirty' }, lastOperatorRequestEvent: { ts: 'dirty' } }; render(Component);
+  const job = command(action)(_name === 'operator' ? 'once' : 'decided-item'); const before = h.calls.length;
+  h.calls.filter(call => call.options?.method === 'POST').forEach(call => call.resolve({ ok: true })); await job;
+  const fresh = h.calls.slice(before).filter(call => call.url === endpoint); expect(fresh).toHaveLength(1);
+  fresh[0].resolve(data('another-pending')); await tick(); old.resolve(data('decided-item')); await tick();
+  expect(JSON.stringify(runner.values)).toContain('another-pending'); expect(JSON.stringify(runner.values)).not.toContain('decided-item');
+});
+it.each(cases)('%s remains observable during continuous signals while keeping one read and one demand', async (_name, Component, endpoint) => {
+  render(Component);
+  for (let round = 0; round < 5; round++) {
+    h.events = { lastPendingImportEvent: { ts: String(round) }, lastAccessRequestEvent: { ts: String(round) }, lastOperatorRequestEvent: { ts: String(round) }, lastNoticeEvent: { ts: String(round) }, lastAgentActivityEvent: { ts: String(round), projectId: 'owned-project' } };
+    render(Component); const read = h.calls.filter(call => call.url.startsWith(endpoint))[round]; read.resolve(data('visible-' + round)); await tick();
+    expect(JSON.stringify(runner.values)).toContain('visible-' + round); expect(h.calls.filter(call => call.url.startsWith(endpoint))).toHaveLength(round + 2);
+  }
 });

@@ -119,7 +119,7 @@ export function PendingImportInbox({
         method: 'POST',
       });
       if (generation !== lifetime.current) return;
-      reader.invalidate();
+      reader.start();
       setPending((prev) => prev.filter((i) => i.id !== importId));
     } finally {
       if (generation === lifetime.current) setBusy(null);
@@ -136,7 +136,7 @@ export function PendingImportInbox({
         body: {},
       });
       if (generation !== lifetime.current) return;
-      reader.invalidate();
+      reader.start();
       setPending((prev) => prev.filter((i) => i.id !== importId));
     } finally {
       if (generation === lifetime.current) setBusy(null);

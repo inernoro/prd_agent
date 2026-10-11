@@ -1,6 +1,5 @@
 /** Observation-only GET budget. It never retries or cancels a business command. */
 export class BoundedAuthorityReader<T> {
-  private revision = 0;
   private dirty = false;
   private disposed = false;
   private active?: { cancel: () => void };
@@ -22,14 +21,12 @@ export class BoundedAuthorityReader<T> {
   /** Event bursts retain one latest demand, not one promise per event. */
   refresh(): void {
     if (this.disposed) return;
-    this.revision++;
     if (this.active) { this.dirty = true; return; }
     this.begin();
   }
 
   /** A successful command receipt supersedes reads issued before the receipt. */
   invalidate(): void {
-    this.revision++;
     this.dirty = false;
     const active = this.active;
     this.active = undefined;
@@ -42,7 +39,6 @@ export class BoundedAuthorityReader<T> {
   }
 
   private begin(): void {
-    const revision = this.revision;
     this.dirty = false;
     const controller = new AbortController();
     let rejectWait!: (error: Error) => void;
@@ -62,7 +58,7 @@ export class BoundedAuthorityReader<T> {
     try { result = this.read(controller.signal); }
     catch (error) { result = Promise.reject(error); }
     void Promise.race([result, cancelled]).then(value => {
-      if (this.active === task && !this.disposed && revision === this.revision) this.apply(value);
+      if (this.active === task && !this.disposed) this.apply(value);
     }, error => {
       if (this.active === task && !this.disposed) this.onError(error);
     }).finally(() => {

@@ -86,7 +86,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
         body: { scope },
       });
       if (generation !== lifetime.current) return;
-      reader.invalidate();
+      reader.start();
       setPending(null);
       // 给后端一点时间 publish completed,再 refresh
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
@@ -108,7 +108,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
         method: 'POST',
       });
       if (generation !== lifetime.current) return;
-      reader.invalidate();
+      reader.start();
       setPending(null);
     } finally {
       if (generation === lifetime.current) setBusy(false);
