@@ -113,7 +113,7 @@ describe('主线程诊断接线', () => {
       "'sse.branches.event'",
     ]],
     ['services/uptime-monitor.ts', ["'uptime.persist'"]],
-    ['index.ts', ["'git.sync.stuck-deploy-diff'", 'startMainThreadDiagnostics();']],
+    ['index.ts', ['startMainThreadDiagnostics();']],
     ['server.ts', [
       "'sse.state.broadcast'",
       'app.use(sseConnectionTrackerMiddleware);',

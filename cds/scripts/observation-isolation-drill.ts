@@ -1,3 +1,7 @@
+import express from 'express';
+import { AsyncStuckDeployReconciler } from '../src/services/async-stuck-deploy-reconciler.js';
+import { createReleaseGitRunner } from '../src/services/release-git-reader.js';
+import { createCdsSystemDiagnosticsRouter } from '../src/routes/cds-system-diagnostics.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -19,9 +23,9 @@ import { shellQuoteArg } from '../src/services/secure-database-cli.js';
 import { SystemLogMonitor } from '../src/services/system-log-monitor.js';
 import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
-import type { CdsConfig, IShellExecutor } from '../src/types.js';
+import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -225,6 +229,46 @@ async function main(): Promise<void> {
     }
     report.checks.push({ name: 'compiled-owned-nonurgent-git-health-and-cleanup-reservation', passed: true });
 
+
+    report.stage = 'compiled-owned-async-stuck-deploy';
+    const stuckModule = compiled ? await import(new URL('../dist/services/async-stuck-deploy-reconciler.js', import.meta.url).href) as typeof import('../src/services/async-stuck-deploy-reconciler.js') : { AsyncStuckDeployReconciler };
+    const gitRunnerModule = compiled ? await import(new URL('../dist/services/release-git-reader.js', import.meta.url).href) as typeof import('../src/services/release-git-reader.js') : { createReleaseGitRunner };
+    const routerModule = compiled ? await import(new URL('../dist/routes/cds-system-diagnostics.js', import.meta.url).href) as typeof import('../src/routes/cds-system-diagnostics.js') : { createCdsSystemDiagnosticsRouter };
+    await fs.rm(gitGate); await fs.rm(gitMarker);
+    const oldBranch = { id: owner + '-watchdog', projectId: owner, branch: owner, worktreePath: releaseRepo, services: {}, status: 'running', createdAt: new Date().toISOString(), ciImageStatus: 'ready', ciTargetSha: firstCommit, githubCommitSha: latestCommit } as BranchEntry;
+    let currentBranch = oldBranch;
+    const currentAlarm = (): string | undefined => currentBranch.ciImageError;
+    const life = { ...oldBranch, id: owner + '-lifecycle', ciImageStatus: undefined, status: 'starting', lastDeployStartedAt: '2026-06-27T00:18:00.000Z', lastReadyAt: '2026-06-27T01:01:00.000Z' } as BranchEntry;
+    const profiles = [{ id: 'web', activeDeployMode: 'express', deployModes: { express: { prebuilt: true } } }] as unknown as BuildProfile[];
+    const reconciler = new stuckModule.AsyncStuckDeployReconciler({ getBranches: () => [currentBranch, life], getOptions: () => ({ getBuildProfiles: () => profiles }), git: gitRunnerModule.createReleaseGitRunner(gitExecutor) });
+    const diagnosticApp = express(); diagnosticApp.use('/api', routerModule.createCdsSystemDiagnosticsRouter());
+    const diagnosticServer = diagnosticApp.listen(0, '127.0.0.1'); await new Promise<void>(resolve => diagnosticServer.once('listening', resolve));
+    let watchdogDone = false; const watchdogRun = reconciler.run().then(() => { watchdogDone = true; });
+    let watchdogProducer: { pid: number; ppid: number } | undefined;
+    try {
+      assert.equal(life.status, 'running');
+      watchdogProducer = await waitProducer(gitMarker);
+      assert.equal(operationShell.getStats().active, 1); assert.equal(shell.getStats().active, 0);
+      const group = await shell.exec(`ps -p ${watchdogProducer.pid} -o pgid=`, { executionLane: 'observation' });
+      const pgid = Number(group.stdout.trim()); assert.ok(operationShell.getStats().actors.some(actor => actor.pid === pgid));
+      const diagnosticResponse = await new Promise<{ status: number; body: Record<string, unknown> }>((resolve, reject) => {
+        const req = http.get({ host: '127.0.0.1', port: (diagnosticServer.address() as { port: number }).port, path: '/api/cds-system/diagnostics/main-thread' }, response => {
+          let data = ''; response.on('data', chunk => { data += chunk; }); response.on('end', () => { try { resolve({ status: response.statusCode!, body: JSON.parse(data) }); } catch (error) { reject(error); } });
+        }); req.on('error', reject); req.setTimeout(5000, () => req.destroy(new Error('Owned watchdog diagnostic timed out')));
+      });
+      assert.equal(diagnosticResponse.status, 200); assert.ok(diagnosticResponse.body.eventLoop); assert.equal(watchdogDone, false);
+      currentBranch = { ...oldBranch, services: {}, githubCommitSha: 'c'.repeat(40) };
+      report.watchdogGit = { producer: { ...watchdogProducer, pgid }, diagnosticStatus: diagnosticResponse.status, lifecycleWhileGitHeld: true, diagnosticWhileGitHeld: true, fixtureTimeoutMs: 10000,
+        scope: 'compiled watchdog coordinator, real owned Git producer and loopback diagnostic route; fresh branch HEAD applied after read; not whole CDS deployment or public performance acceptance' };
+    } finally {
+      await fs.writeFile(gitGate, 'release'); await watchdogRun; await new Promise<void>(resolve => diagnosticServer.close(() => resolve()));
+    }
+    assert.equal(oldBranch.ciImageError, undefined); assert.equal(currentBranch.ciImageError, undefined);
+    currentBranch.githubCommitSha = latestCommit; await reconciler.run(); assert.ok(currentAlarm()?.includes('镜像落后'));
+    assert.equal(JSON.parse(await fs.readFile(gitMarker, 'utf8')).pid, watchdogProducer!.pid);
+    assert.equal(oldBranch.ciImageError, undefined); assert.equal(operationShell.getStats().active, 0); assert.equal(operationShell.getStats().bytes, 0);
+    report.watchdogGit.freshStateRespected = true; report.watchdogGit.cachedEvidenceAppliedToCurrentObject = true; report.watchdogGit.noDuplicateGitForCachedPair = true; report.watchdogGit.afterReads = operationShell.getStats();
+    report.checks.push({ name: 'compiled-owned-async-watchdog-lifecycle-diagnostics-and-fresh-state', passed: true });
 
     report.stage = 'create-owned-container';
     const mountedDir = path.join(temp, 'mounted');
