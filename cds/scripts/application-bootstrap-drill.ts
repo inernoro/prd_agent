@@ -148,6 +148,9 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       CDS_AUTH_BACKEND: 'mongo', CDS_STORAGE_MODE: 'mongo-split', CDS_STATE_BOOTSTRAP_MODE: 'fresh', CDS_AUTH_MODE: 'github', CDS_GITHUB_CLIENT_ID: 'private-unused-oauth', CDS_GITHUB_CLIENT_SECRET: randomBytes(32).toString('hex'),
       CDS_USERNAME: 'private-legacy-disabled', CDS_PASSWORD: randomBytes(32).toString('hex'), CDS_SECRET_KEY: randomBytes(32).toString('hex'),
       CDS_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`, CDS_UPTIME_ENABLED: '0', CDS_PREVIEW_AUTOWAKE: '0',
+      // 此私有夹具的应用与daemon共用自有网络空间，验收端口只供回环HTTP取证。
+      // 不依赖嵌套daemon的默认网桥地址；原发布地址保护和共享配置不变。
+      CDS_INFRA_PUBLISH_HOST: '127.0.0.1',
       DOCKER_HOST: options.dockerRequestProxy ? `unix://${options.dockerRequestProxy.socketPath}` : options.dockerHost || `unix://${root}/unavailable.sock` };
     secretValues.push(appEnv.CDS_PASSWORD, appEnv.CDS_SECRET_KEY, appEnv.CDS_GITHUB_CLIENT_SECRET);
     const start = () => {

@@ -916,6 +916,11 @@ async function main(): Promise<void> {
         assert.ok(report.readSamples.length >= 3); assert.equal(report.readSamples.every((r: any) => r.status === 200 && !r.error), true, JSON.stringify(report.readSamples.filter((r: any) => r.status !== 200 || r.error)));
         report.checks.push({ name: 'original-list-task-and-full-health-short-window-requests-returned', passed: true });
         report.stage = 'original-infra-observation-and-recovery';
+        const loopbackAddresses = Object.values(os.networkInterfaces()).flat().filter(address => address?.internal
+          && address.family === 'IPv4').map(address => address!.address);
+        assert.ok(loopbackAddresses.includes('127.0.0.1'));
+        report.infraPublishFixtureInput = { origin: 'private-application-process', key: 'CDS_INFRA_PUBLISH_HOST',
+          value: '127.0.0.1', actualLoopbackVerified: true, sharedConfigurationChanged: false, applicationConsumerConnectivityVerified: false };
         const infraId = 'owned-observation', infraSha = report.project.sourceBackground;
         const infraHealthPath = `/api/infra/${infraId}/health?project=${encodeURIComponent(projectId)}`;
         let infraCreated = false; let infraScenarioFailure: unknown;
@@ -928,6 +933,7 @@ async function main(): Promise<void> {
           assert.equal(startedInfra.status, 200, startedInfra.text); const infra = startedInfra.json.service;
           assert.equal(infra.projectId, projectId); assert.equal(infra.status, 'running');
           const originalInfra = await ownedView(infra.containerName); assert.equal(originalInfra.State.Running, true);
+          assert.deepEqual(originalInfra.HostConfig.PortBindings['8080/tcp'], [{ HostIp: '127.0.0.1', HostPort: String(infra.hostPort) }]);
           assert.equal(originalInfra.Config.Labels['org.opencontainers.image.revision'], infraSha);
           assert.equal(originalInfra.HostConfig.RestartPolicy.Name, 'no');
           const readInfra = async () => { const res = await request(`/api/infra?project=${encodeURIComponent(projectId)}`);
