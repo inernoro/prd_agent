@@ -99,6 +99,27 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     stopGate = gate;
     return { caught, release: gate.release, expired: () => gate.expired };
   };
+  type AppStartReply = { at: string; status: number; containerId: string; containerName: string; imageReference: string };
+  type AppStartTarget = { projectId: string; branchId: string; profileId: string; imageReference: string };
+  type StartReplyGate = { target: AppStartTarget; creationClaimed: boolean; containerId?: string; containerName?: string;
+    claimed: boolean; released: boolean; caught: Promise<AppStartReply>; confirm: (reply: AppStartReply) => void;
+    expired: boolean; timer?: ReturnType<typeof setTimeout>; send?: () => void; release: () => void };
+  let startGate: StartReplyGate | undefined;
+  const holdNextAppStart = (target: AppStartTarget) => {
+    for (const value of [target.projectId, target.branchId, target.profileId]) assert.match(value, /^[a-zA-Z0-9_.-]{1,128}$/);
+    assert.match(target.imageReference, /^127\.0\.0\.1:\d{1,5}\/owned-(?:api|web)@sha256:[a-f0-9]{64}$/);
+    assert.equal(startGate, undefined);
+    let confirm!: (reply: AppStartReply) => void;
+    const caught = new Promise<AppStartReply>(resolve => { confirm = resolve; });
+    const gate: StartReplyGate = { target: { ...target }, creationClaimed: false, claimed: false, released: false, caught, confirm,
+      expired: false, release: () => {
+        if (gate.released) return; gate.released = true; if (gate.timer) clearTimeout(gate.timer);
+        record('fixture-app-start-reply-released', { containerId: gate.containerId, expired: gate.expired });
+        gate.send?.(); if (startGate === gate) startGate = undefined;
+      } };
+    startGate = gate;
+    return { caught, release: gate.release, expired: () => gate.expired };
+  };
   type InfraInspectGate = { containerName: string; count: 1 | 2; mode: 'hold' | 'disconnect' | 'unavailable';
     replies: Array<{ at: string; status: number; ordinal: number }>; sends: Array<() => void>; released: boolean; expired: boolean;
     confirm: (values: Array<{ at: string; status: number; ordinal: number }>) => void;
@@ -127,7 +148,7 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     const key = `${request.method}:${kind}`;
     const row = traffic.get(key) || { kind, method: request.method || '', requests: 0, replies: {}, transportErrors: 0 };
     row.requests++; traffic.set(key, row);
-    const forward = (body?: Buffer, delayed = false) => {
+    const forward = (body?: Buffer, delayed = false, appCreation?: StartReplyGate) => {
       observe('forwarded', { delayed });
       const upstream = http.request({ socketPath: daemonSocketPath, path: request.url, method: request.method,
         headers: request.headers, timeout: 30_000 }, backend => {
@@ -151,6 +172,20 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         }
         const status = String(backend.statusCode || 0); row.replies[status] = (row.replies[status] || 0) + 1;
         if (!delayed) {
+          if (appCreation && backend.statusCode === 201) {
+            let bytes = 0; const chunks: Buffer[] = [];
+            backend.on('data', chunk => { bytes += chunk.length; if (bytes <= 4096) chunks.push(chunk); });
+            backend.once('end', () => {
+              try {
+                const parsed = bytes <= 4096 ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+                if (typeof parsed?.Id === 'string' && /^[a-f0-9]{64}$/.test(parsed.Id)) {
+                  appCreation.containerId = parsed.Id;
+                  record('original-app-create-replied', { status: 201, containerId: parsed.Id,
+                    containerName: appCreation.containerName, ...appCreation.target });
+                } else record('original-app-create-id-unconfirmed');
+              } catch { record('original-app-create-id-unconfirmed'); }
+            });
+          }
           const send = () => {
             if (response.destroyed) { backend.destroy(); return; }
             response.writeHead(backend.statusCode || 502, backend.headers);
@@ -177,6 +212,17 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
             response.once('close', observation.release);
             if (observation.replies.length === observation.count) observation.confirm([...observation.replies]);
             return;
+          }
+          const startedId = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/start$/)?.[1];
+          const appGate = startGate;
+          if (request.method === 'POST' && backend.statusCode === 204 && appGate && !appGate.released && !appGate.claimed
+            && appGate.containerId && decodeURIComponent(startedId || '') === appGate.containerId) {
+            appGate.claimed = true; appGate.send = send; backend.pause();
+            const reply = { at: new Date().toISOString(), status: 204, containerId: appGate.containerId,
+              containerName: appGate.containerName!, imageReference: appGate.target.imageReference };
+            record('original-app-start-reply-held', reply);
+            appGate.timer = setTimeout(() => { appGate.expired = true; appGate.release(); }, 5000);
+            response.once('close', appGate.release); appGate.confirm(reply); return;
           }
           const stopTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/stop$/)?.[1];
           const gate = stopGate;
@@ -207,13 +253,24 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         else if (!response.destroyed) { if (!response.headersSent) response.statusCode = 502; response.end(); } });
       if (body) upstream.end(body); else request.pipe(upstream);
     };
-    if (!armed || !/\/containers\/create(?:\?|$)/.test(request.url || '')) { forward(); return; }
+    if ((!armed && !startGate) || !/\/containers\/create(?:\?|$)/.test(request.url || '')) { forward(); return; }
     const chunks: Buffer[] = []; let bytes = 0;
     request.on('data', chunk => { bytes += chunk.length; if (bytes > 256 * 1024) request.destroy(); else chunks.push(chunk); });
     request.on('end', () => {
       const body = Buffer.concat(chunks); let config: any;
       try { config = JSON.parse(body.toString('utf8')); } catch { response.statusCode = 400; response.end(); return; }
-      if (config.Labels?.['cds.agent.probe'] !== 'runtime-validation') { forward(body); return; }
+      const appGate = startGate;
+      if (appGate && !appGate.released && !appGate.creationClaimed && config.Labels?.['cds.managed'] === 'true'
+        && config.Labels?.['cds.type'] === 'app' && config.Labels?.['cds.project.id'] === appGate.target.projectId
+        && config.Labels?.['cds.branch.id'] === appGate.target.branchId && config.Labels?.['cds.profile.id'] === appGate.target.profileId
+        && config.Image === appGate.target.imageReference) {
+        const name = new URL(request.url!, 'http://owned').searchParams.get('name');
+        if (!name || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name)) { record('original-app-create-name-unconfirmed'); forward(body); return; }
+        appGate.creationClaimed = true; appGate.containerName = name;
+        record('original-app-create-matched', { containerName: appGate.containerName, ...appGate.target });
+        forward(body, false, appGate); return;
+      }
+      if (!armed || config.Labels?.['cds.agent.probe'] !== 'runtime-validation') { forward(body); return; }
       armed = false; captured = true;
       record('original-create-received', { name: new URL(request.url!, 'http://owned').searchParams.get('name'),
         operationId: config.Labels['cds.agent.probe.operation'], instanceId: config.Labels['cds.instance'], image: config.Image,
@@ -257,10 +314,10 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
   return { timeline, requestTimeline, traceOverflow: () => traceOverflow, enableTrace: () => { traceEnabled = true; },
-    holdNextStop, holdInfraInspects,
+    holdNextStop, holdNextAppStart, holdInfraInspects,
     traffic: () => [...traffic.values()], arm: () => { armed = true; traceEnabled = true; }, caught,
     settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
-    close: async () => { infraGate?.release(); stopGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
+    close: async () => { infraGate?.release(); stopGate?.release(); startGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
@@ -936,6 +993,29 @@ async function main(): Promise<void> {
             targets[label] = sha; await build('api', sha, registry); await build('web', sha, registry);
           }
           assert.equal(new Set(Object.values(targets)).size, 4); scopeProof.targets = targets;
+          const registryDigest = (image: any): string => {
+            const references = image.repoDigests.filter((reference: string) => reference.startsWith(`${registry}/owned-`));
+            assert.equal(references.length, 1); assert.match(references[0], /@sha256:[a-f0-9]{64}$/); return references[0];
+          };
+          const apiImage = (sha: string) => {
+            const image = report.publishedImages.find((item: any) => item.role === 'api' && item.sha === sha); assert.ok(image); return image;
+          };
+          const startTarget = (sha: string) => ({ projectId, branchId, profileId: apiProfile.id, imageReference: registryDigest(apiImage(sha)) });
+          const heldStartProof = async (held: Awaited<ReturnType<NonNullable<typeof probeProxy>['holdNextAppStart']>['caught']>, sha: string) => {
+            assert.equal(held.status, 204); assert.equal(held.imageReference, registryDigest(apiImage(sha)));
+            const view = await ownedView(held.containerId); containers.add(view.Id);
+            assert.equal(view.Id, held.containerId); assert.equal(view.Name.slice(1), held.containerName); assert.equal(view.State.Running, true);
+            for (const [key, value] of Object.entries({ 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': projectId,
+              'cds.branch.id': branchId, 'cds.profile.id': apiProfile.id, 'org.opencontainers.image.revision': sha })) assert.equal(view.Config.Labels[key], value);
+            assert.equal(view.Image, apiImage(sha).id); assert.equal(view.Config.Image, held.imageReference);
+            assert.equal(view.Config.Env.filter((value: string) => value.startsWith('CDS_COMMIT_SHA=')).join(''), `CDS_COMMIT_SHA=${sha}`);
+            assert.ok(Date.parse(view.State.StartedAt) <= Date.parse(held.at));
+            const created = probeProxy!.timeline.filter(event => event.phase === 'original-app-create-replied' && event.containerId === view.Id);
+            assert.equal(created.length, 1); assert.equal(created[0].projectId, projectId); assert.equal(created[0].branchId, branchId);
+            assert.equal(created[0].profileId, apiProfile.id); assert.equal(created[0].imageReference, held.imageReference);
+            return { held, originalCreate: created[0], containerId: view.Id, imageId: view.Image, startedAt: view.State.StartedAt,
+              actualRunningBeforeOriginalCliAcknowledgment: true };
+          };
           const profilePath = (id: string) => `${branchPath}/deploy/${encodeURIComponent(id)}`;
           const queued = async (profileId: string, sha: string, status: 'merged' | 'joined') => {
             const response = await requestRaw(profilePath(profileId), { commitSha: sha }, 'webhook');
@@ -946,13 +1026,13 @@ async function main(): Promise<void> {
             const id = response.headers.get('x-cds-deployment-run-id'); assert.ok(id);
             assert.equal(payload.deploymentRunId, id); return { id, profileId, sha, status: response.status, payload };
           };
-          const gate = probeProxy!.holdNextStop(baseline[apiProfile.id].containerName);
+          const gate = probeProxy!.holdNextAppStart(startTarget(targets.active));
           let active: Response | undefined, activeId: string | null = null;
           try {
             active = await requestRaw(profilePath(apiProfile.id), { commitSha: targets.active });
             assert.equal(active.status, 200); activeId = active.headers.get('x-cds-deployment-run-id'); assert.ok(activeId);
             const held = await until(async () => Promise.race([gate.caught, Promise.resolve(undefined)]), 45_000);
-            assert.equal(held.status, 204);
+            scopeProof.activeStart = await heldStartProof(held, targets.active);
             const oldApi = await queued(apiProfile.id, targets.obsolete, 'merged');
             const duplicate = await queued(apiProfile.id, targets.obsolete, 'joined'); assert.equal(duplicate.id, oldApi.id);
             const web = await queued(webProfile.id, targets.obsolete, 'merged');
@@ -988,10 +1068,6 @@ async function main(): Promise<void> {
           const apiLatest = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.latest);
           assert.ok(apiObsolete && webObsolete && apiLatest);
           const creations = daemonEvents.filter(event => event.action === 'create');
-          const registryDigest = (image: any): string => {
-            const references = image.repoDigests.filter((reference: string) => reference.startsWith(`${registry}/owned-`));
-            assert.equal(references.length, 1); assert.match(references[0], /@sha256:[a-f0-9]{64}$/); return references[0];
-          };
           assert.equal(creations.filter(event => event.image === registryDigest(apiObsolete)).length, 0);
           const apiActive = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.active); assert.ok(apiActive);
           // Docker retains a finite event history. The first executing target
@@ -1003,14 +1079,14 @@ async function main(): Promise<void> {
 
           // Explicit user stop is the original higher-priority intent; it may
           // stop the whole branch. This is not a failed-build old-service test.
-          const cancelGate = probeProxy!.holdNextStop(mixed[apiProfile.id].containerName);
+          const cancelGate = probeProxy!.holdNextAppStart(startTarget(targets.cancelled));
           let cancelled: Response | undefined, cancelId: string | null = null;
           let stop: Promise<Response> | undefined;
           try {
             cancelled = await requestRaw(profilePath(apiProfile.id), { commitSha: targets.cancelled });
             assert.equal(cancelled.status, 200); cancelId = cancelled.headers.get('x-cds-deployment-run-id'); assert.ok(cancelId);
             const held = await until(async () => Promise.race([cancelGate.caught, Promise.resolve(undefined)]), 45_000);
-            assert.equal(held.status, 204);
+            scopeProof.cancelStart = await heldStartProof(held, targets.cancelled);
             const activeRun = (await readRuns()).find(row => row.id === cancelId);
             assert.equal(activeRun.commitSha, targets.cancelled); assert.equal(activeRun.profileId, apiProfile.id);
             assert.ok(['preparing', 'building', 'starting', 'verifying'].includes(activeRun.status));
@@ -1030,10 +1106,33 @@ async function main(): Promise<void> {
           const cancelledRun = (await readRuns()).find(row => row.id === cancelId); assert.equal(cancelledRun?.status, 'cancelled');
           scopeProof.activeCancellation.finalRun = cancelledRun;
           const cancellationEvents = await eventSnapshot('full-original-authenticated-application-active-stop');
-          assert.ok(cancellationEvents.some(event => event.type === 'container' && event.action === 'stop'
-            && event.id === mixed[apiProfile.id].id), '取消前的真实旧容器stop必须仍在daemon事件窗口，不能靠截断窗口证明无新create');
-          const cancelledImage = report.publishedImages.find((image: any) => image.role === 'api' && image.sha === targets.cancelled);
-          assert.ok(cancelledImage); assert.equal(cancellationEvents.filter(event => event.action === 'create' && event.image === registryDigest(cancelledImage)).length, 0);
+          const cancelCid = scopeProof.cancelStart.containerId;
+          const cancelledImage = apiImage(targets.cancelled);
+          const createdTarget = cancellationEvents.filter(event => event.type === 'container' && event.action === 'create'
+            && event.id === cancelCid && event.image === registryDigest(cancelledImage));
+          assert.equal(createdTarget.length, 1);
+          assert.equal(cancellationEvents.filter(event => event.type === 'container' && event.action === 'start' && event.id === cancelCid).length, 1);
+          const actualCancelled = await daemonRead(`/containers/${cancelCid}/json`, 256 * 1024);
+          let disposition: 'removed' | 'stopped-retained-by-user-stop';
+          if (actualCancelled.status === 404) {
+            const missing = JSON.parse(actualCancelled.text); assert.match(String(missing.message), /No such container:/);
+            assert.ok(String(missing.message).includes(cancelCid)); disposition = 'removed';
+            assert.ok(cancellationEvents.some(event => event.type === 'container' && event.action === 'destroy' && event.id === cancelCid));
+          } else {
+            assert.equal(actualCancelled.status, 200); const view = JSON.parse(actualCancelled.text);
+            assert.equal(view.Id, cancelCid); assert.equal(view.Config.Labels['cds.project.id'], projectId);
+            assert.equal(view.Config.Labels['cds.branch.id'], branchId); assert.equal(view.Config.Labels['cds.profile.id'], apiProfile.id);
+            assert.equal(view.Config.Labels['org.opencontainers.image.revision'], targets.cancelled);
+            assert.equal(view.State.Running, false); assert.equal(view.State.Status, 'exited');
+            assert.ok(cancellationEvents.some(event => event.type === 'container' && event.action === 'stop' && event.id === cancelCid));
+            disposition = 'stopped-retained-by-user-stop';
+          }
+          const stoppedBranch = await branch(); assert.equal(stoppedBranch.status, 'idle');
+          assert.equal(Object.values(stoppedBranch.services).every((service: any) => service.status === 'stopped'), true);
+          scopeProof.activeCancellation.actualDaemonDisposition = { containerId: cancelCid, status: actualCancelled.status, disposition,
+            noRunningCancelledContainer: true, sourceSha: targets.cancelled };
+          scopeProof.activeCancellation.finalBranch = { status: stoppedBranch.status, services: Object.values(stoppedBranch.services)
+            .map((service: any) => ({ profileId: service.profileId, status: service.status, containerName: service.containerName })) };
           scopeProof.originalEvents = await context.readDispatchEvents(projectId, branchId);
           assert.ok(scopeProof.originalEvents.some((event: any) => event.action === 'branch.operation.started'
             && event.operationKind === 'stop' && event.operationSource === 'api.stop-branch'));
@@ -1045,7 +1144,7 @@ async function main(): Promise<void> {
           await until(async () => (await readRuns()).find(row => row.id === restoreId)?.status === 'running' ? true : undefined, 180_000);
           scopeProof.restoration.services = await serviceProof(report.project.sourceBackground);
           scopeProof.verdict = 'passed'; scopeProof.finishedAt = new Date().toISOString();
-          report.checks.push({ name: 'full-original-authenticated-higher-priority-stop-cancels-active-service-before-new-container-and-original-deploy-restores', passed: true });
+          report.checks.push({ name: 'full-original-authenticated-higher-priority-stop-cancels-daemon-started-service-and-original-deploy-restores', passed: true });
         } catch (error) {
           scopeProof.failure = { at: new Date().toISOString(), message: String((error as Error).message).slice(0, 2000) };
           try { scopeProof.originalEvents = await context.readDispatchEvents(projectId, branchId); scopeProof.failureRuns = await readRuns(); }

@@ -74,6 +74,64 @@ describe('owned Docker probe proxy wire conformance', () => {
     } finally { await proxy.close(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
   }, 10_000);
+  it.each(['release', 'deadline', 'close'] as const)('binds an original app create ID to only its start response until %s', async mode => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-app-start-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const id = 'c'.repeat(64), otherId = 'd'.repeat(64), imageReference = `127.0.0.1:43210/owned-api@sha256:${'e'.repeat(64)}`;
+    const target = { projectId: 'owned-project', branchId: 'owned-project-branch', profileId: 'api-owned', imageReference };
+    const labels = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': target.projectId,
+      'cds.branch.id': target.branchId, 'cds.profile.id': target.profileId };
+    const rows: Array<{ url: string; body: string }> = [], sockets = new Set<net.Socket>();
+    const originalReply = JSON.stringify({ Id: id, Warnings: ['original-warning'] });
+    const backend = http.createServer((request, response) => {
+      let body = ''; request.on('data', chunk => { body += chunk; }); request.once('end', () => {
+        rows.push({ url: request.url!, body });
+        if (request.url!.includes('/create')) {
+          const config = JSON.parse(body), exact = config.Image === imageReference && Object.entries(labels).every(([key, value]) => config.Labels[key] === value);
+          response.writeHead(201, { 'Content-Type': 'application/json', 'X-Original-Receipt': 'created' });
+          response.end(exact ? originalReply : JSON.stringify({ Id: otherId, Warnings: [] }));
+        } else { response.writeHead(204, { 'X-Original-Receipt': 'started' }); response.end(); }
+      });
+    });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const proxy = await createProbeDaemonProxy(proxyPath, backendPath); const gate = proxy.holdNextAppStart(target);
+    const post = (url: string, body: string) => new Promise<{ status: number | null; body: string; receipt?: string }>(resolve => {
+      const request = http.request({ socketPath: proxyPath, method: 'POST', path: url }, response => {
+        let result = ''; response.on('data', chunk => { result += chunk; });
+        response.once('end', () => resolve({ status: response.statusCode || null, body: result, receipt: String(response.headers['x-original-receipt'] || '') }));
+        response.once('error', () => resolve({ status: null, body: '' }));
+      }); request.once('error', () => resolve({ status: null, body: '' })); request.end(body);
+    });
+    try {
+      // Same name is insufficient; project, branch, profile, type and digest are
+      // checked on the original request before learning a daemon-issued ID.
+      for (const [key, value] of Object.entries(labels)) {
+        const wrong = JSON.stringify({ Image: imageReference, Labels: { ...labels, [key]: value + '-foreign' }, Cmd: ['same-original-command'] });
+        expect((await post('/v1.53/containers/create?name=owned-app-api', wrong)).status).toBe(201);
+        expect(rows.at(-1)?.body).toBe(wrong);
+      }
+      const wrongImage = JSON.stringify({ Image: imageReference.replace('e'.repeat(64), 'f'.repeat(64)), Labels: labels });
+      await post('/v1.53/containers/create?name=owned-app-api', wrongImage); expect(rows.at(-1)?.body).toBe(wrongImage);
+      const originalBody = JSON.stringify({ Image: imageReference, Labels: labels, Cmd: ['exact-original-command'], HostConfig: { NetworkMode: 'owned-network' } });
+      expect(await post('/v1.53/containers/create?name=owned-app-api', originalBody)).toEqual({ status: 201, body: originalReply, receipt: 'created' });
+      expect(rows.at(-1)?.body).toBe(originalBody);
+      expect((await post(`/v1.53/containers/${otherId}/start`, 'foreign-start-body')).status).toBe(204);
+      let completed = false;
+      const original = post(`/v1.53/containers/${id}/start`, 'original-start-body').then(value => { completed = true; return value; });
+      expect(await gate.caught).toMatchObject({ status: 204, containerId: id, containerName: 'owned-app-api', imageReference });
+      expect(completed).toBe(false); expect(rows.at(-1)?.body).toBe('original-start-body');
+      if (mode === 'release') { gate.release(); gate.release(); } else if (mode === 'close') await proxy.close();
+      const result = await original; if (mode !== 'close') expect(result).toEqual({ status: 204, body: '', receipt: 'started' });
+      expect(gate.expired()).toBe(mode === 'deadline');
+      expect(proxy.timeline.filter(event => event.phase === 'original-app-create-replied')).toHaveLength(1);
+      expect(proxy.timeline.filter(event => event.phase === 'original-app-start-reply-held')).toHaveLength(1);
+      expect(proxy.timeline.filter(event => event.phase === 'fixture-app-start-reply-released')).toHaveLength(1);
+      expect(rows).toHaveLength(9);
+    } finally { await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  }, 10_000);
+
   it.each(['release', 'deadline', 'close'] as const)('holds two exact original infra inspect bodies and releases on %s', async mode => {
     const f = await fixture();
     f.proxy.enableTrace();
@@ -206,6 +264,43 @@ describe('owned Docker probe proxy wire conformance', () => {
     } finally { await f.close(); }
   });
   const cliAvailable = (() => { try { execFileSync('docker', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+  it.runIf(cliAvailable)('holds the actual detached Docker CLI only after its original daemon create and start', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-app-cli-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock'), id = 'f'.repeat(64);
+    const imageReference = `127.0.0.1:43210/owned-api@sha256:${'e'.repeat(64)}`;
+    const target = { projectId: 'owned-project', branchId: 'owned-branch', profileId: 'owned-api', imageReference };
+    const labels = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': target.projectId,
+      'cds.branch.id': target.branchId, 'cds.profile.id': target.profileId };
+    const sockets = new Set<net.Socket>(), rows: Array<{ url: string; body: string }> = [];
+    const backend = http.createServer((request, response) => {
+      let body = ''; request.on('data', chunk => { body += chunk; }); request.once('end', () => {
+        rows.push({ url: request.url!, body });
+        if (request.url!.endsWith('/_ping')) { response.writeHead(200, { 'API-Version': '1.53', OSType: 'linux' }); response.end('OK'); }
+        else if (request.url!.includes('/containers/create')) { response.writeHead(201, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ Id: id, Warnings: [] })); }
+        else if (request.url!.endsWith('/start')) { response.writeHead(204); response.end(); }
+        else { response.writeHead(404, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ message: 'unsupported fixture request' })); }
+      });
+    });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const proxy = await createProbeDaemonProxy(proxyPath, backendPath), gate = proxy.holdNextAppStart(target);
+    const args = ['--host', `unix://${proxyPath}`, 'run', '-d', '--pull', 'never', '--name', 'owned-app-api',
+      ...Object.entries(labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]), imageReference];
+    let completed = false;
+    const command = promisify(execFile)('docker', args, { timeout: 8000, encoding: 'utf8' }).then(result => { completed = true; return result; });
+    void command.catch(() => {});
+    try {
+      const held = await Promise.race([gate.caught, command.then(() => { throw new Error('actual CLI completed without start gate'); })]);
+      expect(held.containerId).toBe(id); expect(completed).toBe(false);
+      const creation = rows.find(row => row.url.includes('/containers/create')); expect(creation).toBeDefined();
+      expect(JSON.parse(creation!.body)).toMatchObject({ Image: imageReference, Labels: labels });
+      expect(rows.filter(row => row.url.endsWith(`/${id}/start`))).toHaveLength(1);
+      gate.release(); const result = await command; expect(result.stdout.trim()).toBe(id);
+      expect(gate.expired()).toBe(false); expect(proxy.timeline.filter(event => event.phase === 'original-app-create-replied')).toHaveLength(1);
+    } finally { gate.release(); await command.catch(() => {}); await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  }, 12_000);
+
   it.runIf(cliAvailable)('lets the actual Docker CLI finish attach and send start through either socket without stdin', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-cli-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock'), id = 'b'.repeat(64);
