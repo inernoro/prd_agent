@@ -1612,14 +1612,14 @@ export class AgentWorkspaceSessionRuntime {
    * agent-session and this CDS instance label are reclaimed before the provider
    * becomes selectable. Legacy unlabeled resources are deliberately left for
    * operator reconciliation because shared-host ownership cannot be proven.
+   * Image preparation and capability containers belong to an actual provider
+   * request. Starting CDS alone must not allocate an otherwise unused runtime.
    */
   async bootstrap(): Promise<void> {
     if (this.bootstrapPreparation) return this.bootstrapPreparation;
     this.bootstrapAttempted = true;
     const preparation = (async () => {
       await this.recoverOrphans();
-      await this.prepareImage();
-      await this.refreshCapability().catch(() => undefined);
     })()
       .then(() => { this.bootstrapError = null; })
       .catch((error) => {

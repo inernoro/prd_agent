@@ -12,7 +12,8 @@ import type { CdsConfig } from '../src/types.js';
 
 const referenceHead = 'b81cfe70f6b7602e882668cd8d9e43c19d5e1592';
 const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
-const currentSourceChanges = ['src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/branches.ts', 'src/server.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/internal-pending-replay-auth.ts'];
+// 保留旧历史范围/编译黄金；本批仅新增按需能力准备这一源，不能抵扣旧路径语义。
+const currentSourceChanges = ['src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/branches.ts', 'src/server.ts', 'src/services/agent-workspace-session-runtime.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/internal-pending-replay-auth.ts'];
 const changedSources = ['src/routes/branches.ts', 'src/services/worktree-path-activity.ts'];
 const sources = [...changedSources, 'src/services/worktree.ts', 'src/services/janitor.ts', 'src/services/state.ts',
   'src/services/container.ts', 'src/services/isolated-shell-executor.ts', 'src/services/secure-database-cli.ts',

@@ -3277,22 +3277,36 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(cliProbeCount).toBe(2);
   });
 
-  it('warms the capability snapshot during bootstrap', async () => {
+  it('does not allocate an unused runtime during bootstrap and validates capability on demand', async () => {
     const shell = new RecordingShell();
-    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+    const runtime = new AgentWorkspaceSessionRuntime(shell);
 
-    await runtime.bootstrap();
+    await runtime.bootstrapAndVerify();
     const callsAfterBootstrap = shell.calls.length;
+    expect(shell.calls.every((call) => (
+      call.command.startsWith('docker ps -aq')
+      || call.command.startsWith('docker network ls -q')
+      || call.command.startsWith('docker volume ls -q')
+    ))).toBe(true);
 
     await expect(runtime.capability()).resolves.toEqual({
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      verificationPending: true,
+      reason: 'OpenDesign capability verification is running on this CDS node',
+    });
+    await expect(runtime.capability(true)).resolves.toEqual({
       available: true,
       resourcePolicyEnforcedPerSession: true,
       reason: null,
     });
-    expect(shell.calls).toHaveLength(callsAfterBootstrap);
+    expect(shell.calls.length).toBeGreaterThan(callsAfterBootstrap);
     expect(shell.calls.filter((call) => (
       call.command.includes('--entrypoint /bin/sh') && !call.command.includes('/cds-storage-probe')
     ))).toHaveLength(1);
+    expect(shell.calls.some((call) => (
+      call.command.startsWith('docker run --rm') && call.command.includes('/cds-storage-probe')
+    ))).toBe(true);
   });
 
   it('keeps OpenDesign unavailable when the configured image is not installed', async () => {
