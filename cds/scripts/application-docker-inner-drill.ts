@@ -213,12 +213,27 @@ async function main(): Promise<void> {
     const proxyImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
       { encoding: 'utf8', timeout: 10_000 })).stdout.trim();
     assert.equal(proxyImageId, directImageId); assert.match(proxyImageId, /^sha256:[a-f0-9]{64}$/);
+    const minimalEnv: NodeJS.ProcessEnv = { DOCKER_HOST: proxyHost };
+    for (const key of ['PATH', 'LANG', 'LC_ALL', 'TZ']) if (process.env[key]) minimalEnv[key] = process.env[key];
+    const minimalImageId = (await execute('docker', ['image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
+      { encoding: 'utf8', timeout: 10_000, env: minimalEnv })).stdout.trim();
+    assert.equal(minimalImageId, directImageId);
     report.proxyPinnedImagePreflight = { daemonId: info.ID, imageReference: capabilityImage, imageId: proxyImageId, matchedDirectBackend: true };
     let capabilityProjectId: string | undefined;
     await runApplicationBootstrap({ sourceHead: source.sourceHead, mongoUri: `mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, dockerHost: host, output: '/owned/output',
       dockerRequestProxy: { socketPath: path.join(root, 'probe-daemon-proxy.sock'), daemonId: info.ID, owner: source.owner },
       beforeShutdown: async context => {
-        assert.ok(capabilityProjectId); probeProxy!.arm();
+        assert.ok(capabilityProjectId);
+        // Original periodic reclaim remains enabled. Digest-only unused images
+        // can be pruned during the earlier deployment exercise; establish the
+        // required image again immediately before this bounded cancellation
+        // fault, without replacing the app's own capability safety checks.
+        await docker(['pull', capabilityImage], 600_000);
+        const preparedImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
+          { encoding: 'utf8', timeout: 10_000 })).stdout.trim();
+        assert.equal(preparedImageId, directImageId);
+        report.probeImageReadyAtFault = { at: new Date().toISOString(), imageId: preparedImageId, originalReclaimEnabled: true };
+        probeProxy!.arm();
         let caught = false; void probeProxy!.caught.then(() => { caught = true; });
         report.capabilityProviderSnapshots = [];
         try {

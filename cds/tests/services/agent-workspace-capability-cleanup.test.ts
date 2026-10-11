@@ -7,7 +7,7 @@ import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js
 const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout, stderr, exitCode });
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
-function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean } = {}) {
+function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string } = {}) {
   const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = '';
   const containerId = 'a'.repeat(64); let aborted = false;
@@ -16,7 +16,7 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
     async exec(command, options) {
       calls.push({ command, options });
       if (command.startsWith('docker version')) return result('27.0.0');
-      if (command.startsWith('docker image inspect')) return result('sha256:actual-fixture-image');
+      if (command.startsWith('docker image inspect')) return config.imageFailure ? result('', config.imageFailure, 1) : result('sha256:actual-fixture-image');
       if (command.startsWith('docker run --rm')) {
         pendingName = command.match(/--name '([^']+)'/)![1];
         operationId = command.match(/cds.agent.probe.operation=([a-f0-9]{32})/)![1];
@@ -45,6 +45,17 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it('records a classified pre-create image failure without copying the diagnostic into persistent events', async () => {
+    const f = fixture(false, { imageFailure: 'No such image: private-diagnostic-secret' });
+    try {
+      await expect(f.runtime.capability(true)).resolves.toMatchObject({ available: false });
+      const event = f.events.find(x => x.action === 'agent.capability.image-inspect.finished');
+      expect(event.details).toMatchObject({ phase: 'capability', exitCode: 1, imageIdPresent: false, category: 'not-found', executorAssignment: null });
+      expect(JSON.stringify(f.events)).not.toContain('private-diagnostic-secret');
+      expect(f.calls.some(x => x.command.startsWith('docker run --rm'))).toBe(false);
+      await f.runtime.closeCapabilityProbes();
+    } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
   it('does not remove a late resource whose instance label is foreign', async () => {
     const f = fixture(true, { foreignOwner: true });
     try {

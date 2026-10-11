@@ -1760,17 +1760,11 @@ export class AgentWorkspaceSessionRuntime {
       if (docker.exitCode !== 0 || !docker.stdout.trim()) {
         throw new Error('Docker daemon is unavailable');
       }
-      const installed = await this.shell.exec(
-        `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
-        { timeout: 10_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() },
-      );
+      const installed = await this.inspectCapabilityImage('prepare-installed');
       if (installed.exitCode === 0 && installed.stdout.trim()) return;
       const pulled = await this.shell.exec(`docker pull ${shellQuote(this.image)}`, { timeout: 600_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() });
       if (pulled.exitCode !== 0) throw new Error(classifyImagePullFailure(pulled.stdout, pulled.stderr));
-      const verified = await this.shell.exec(
-        `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
-        { timeout: 10_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() },
-      );
+      const verified = await this.inspectCapabilityImage('prepare-verified');
       if (verified.exitCode !== 0 || !verified.stdout.trim()) {
         throw new Error('runtime image is still unavailable after pull');
       }
@@ -1882,10 +1876,7 @@ export class AgentWorkspaceSessionRuntime {
       };
     }
 
-    const image = await this.shell.exec(
-      `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
-      { timeout: 10_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen() },
-    );
+    const image = await this.inspectCapabilityImage('capability');
     const imageId = image.exitCode === 0 ? image.stdout.trim() : '';
     if (!imageId) {
       if (this.autoPullImage) {
@@ -1969,6 +1960,28 @@ export class AgentWorkspaceSessionRuntime {
 
   private assertProbeOpen(): void {
     if (this.probeAbort.signal.aborted) throw new AgentWorkspaceRuntimeError('workspace_runtime_closing', 'Agent runtime is shutting down', true);
+  }
+
+  private async inspectCapabilityImage(phase: 'capability' | 'prepare-installed' | 'prepare-verified'): Promise<ExecResult> {
+    const operationId = crypto.randomUUID().replace(/-/g, '');
+    let assignment: ExecAssignment | null = null;
+    const result = await this.shell.exec(
+      `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+      { timeout: 10_000, signal: this.probeAbort.signal, beforeStart: () => this.assertProbeOpen(), onAssigned: value => { assignment = value; } },
+    );
+    const diagnostic = `${result.stderr}\n${result.stdout}`.toLowerCase();
+    const category = result.exitCode === 0 ? 'ok'
+      : /no such image|not found/.test(diagnostic) ? 'not-found'
+        : /template|format/.test(diagnostic) ? 'format'
+          : /permission denied|access denied/.test(diagnostic) ? 'permission'
+            : /cannot connect|connection refused|dial unix/.test(diagnostic) ? 'connection'
+              : diagnostic.trim() ? 'other' : 'no-diagnostic';
+    try { this.probeEventLog?.record({ category: 'container', severity: result.exitCode === 0 ? 'info' : 'warn',
+      source: 'agent-workspace-capability', action: 'agent.capability.image-inspect.finished', operationId,
+      details: { phase, exitCode: result.exitCode,
+        imageIdPresent: Boolean(result.stdout.trim()), category, executorAssignment: assignment } }); }
+    catch { console.warn('[agent-capability] 镜像读取事件记录未确认。'); }
+    return result;
   }
 
   async closeCapabilityProbes(): Promise<void> {
