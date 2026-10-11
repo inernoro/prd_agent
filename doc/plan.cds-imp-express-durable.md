@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.54；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.55；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -501,3 +501,12 @@ expected result：CI与部署阶段可归因且不拖慢交付，未知不伪造
 guide2.71先冻结P0-05有限恢复观察；688a0d新增Unix独立只读脚本，只复用official auth/host helper，GET明确项目并禁止redirect/live/写请求，5秒绝对HTTP/两轮60秒/4MiB、配置500/分支20/各run200触顶拒绝。两轮白名单含模式覆盖、自动策略、资源、路由、服务实际记录和终态未released候选双图及创建/网络身份；API缺省/null/显式空分开，不猜实际极速，输出仓库外新文件0600独占且拒Git父目录。stable仅有限API观察，不是事务/Daemon/全备份/回滚；secret/commands/infra/DB/Version/复制集/pending完整性等省略。主feature缺模块一个前件，初次actual CLI误处理官方ok的SystemExit0修正，真实API发现合法null被拒修正，原件保留；23 Python局部、privacy/reservation各1 mutation红。688固定独立nativeHTTP发现缺省override物化{}并吞掉absent→{}漂移同一根因，主另确认nested500仍stable第二根因（三variant同根）；原两反例及独立旧红保留。1d1156只保原字段存在性及严格nested<500，主25 Python局部绿，独立30设计分母复验进行中，非25/30或formal49通过。旧draft共享IMP只读v2在46.94秒20GET里branches及preparing API失败，13Profile/9Branch有限事实，status=incomplete/0600；不归因已证明500或超时，不是新fixed运行证据，未重试/改shared。P0-05只能partial-local，完整保护配置与实际恢复仍缺；既有八push/selfupdate授权有效，未执行；formal49均not-executed/visual N/A，目标active。
 
 expected result：更新前有不泄密、不跨项目的恢复参考，缺失与漂移不能绿；current evidence：固定1d1156主25 Python局部、两个根因旧红，独立复验待返；visible result：线上只读采集incomplete/候选未部署/visual N/A；gap：完整保护配置、实际Daemon/Forwarder与回滚及原49条运行门槛；required action：固定源按原30设计复验，真红继续修，隔离准入后实际交付与视觉。
+
+
+## v1.55 输出物理目录绑定反例修复
+
+1d固定独立定稿：native原68827/31→1d31/31、实际Router v2原6886/7→1d7/7，两组重叠不相加；expanded1d6/7发现请求期间输出父目录重绑Git后仍成功且写入foreign目录，属第三个实际产品根因，原件保留。主实际HTTP/官方helper原反例旧0!=2复红；529677在请求前持有物理父目录FD/devino，保存仅dir_fd独占leaf，写前/后复核路径/Git/身份，晚漂移失败并仅保留原物理目录有限0600产物，不按名字猜删新owner。主27 Python局部、AST/diffcheck通过；首次unittest discover未收集0tests命令错误原件保留、不计红绿。529固定独立按原expanded同fixture/期待复验7/7（旧1d6/7保留），另FD/FS控制10/10，两组重叠不合计；正常600/既有目标及scope拒绝、normal/error/leaf冲突FD关闭、写前重绑、verify→open及写后竞态、初始父alias、HTTP期间leaf竞争均为有界控制，无新真红。1d native31/Router7只历史引用，不称529重跑。1d原30设计未全部执行，全redirect/60秒默认/UTF8早断/完整边界矩阵仍未覆盖；本批不重试共享API，旧draft incomplete不能继承为529新运行证据。mycds最新只读16CPU/约31GiB RAM，load0.68/1.37/1.64但可用约908MiB及swap近全用，不作隔离压力宿主；本机Docker不可达。P0-05仍partial-local，受保护配置与真实恢复缺失；41partial-local/8todo、49formal not-executed、visual N/A，八支push/selfupdate授权有效但未执行，active。
+
+expected result：父路径变更不得转写Git/新owner目录或伪报成功；current evidence：1d expanded真实6/7红，主同实际CLI红→529局部27绿，固定新源独立expanded7/7及FD/FS10/10（分列重叠）；visible result：未部署/visual N/A；gap：原30设计剩余、完整配置恢复及49条正式运行/八支/黄闪电/双主题/公网/48h/周门槛；required action：原目录反例已闭合，原30设计未覆盖项仍待验；按同编号继续实现，隔离准入后执行原已授权实际交付。
+
+末尾最终固定回执：529源manifest e3abfc0827f43194361e3d29dbdce6babb1306c4afd02e1f9344b8d0dd710ddf；summary a8010359f1e5d0cf0c7244adc404f2279f272ec8450e8b2aae1c395b4191844d，主回读9个固定Git源及全部原件hash一致。原expanded1d6/7→5297/7同期待闭合；另10 FD/FS控制重叠分列。旧1d native31/Router7仅历史，20个不变函数exact字节比较不是新重跑。完整配置/实际恢复与原30未覆盖项保留，正式49与visual/八分支未执行，目标active。
