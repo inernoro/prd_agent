@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.73；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.74；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -682,3 +682,11 @@ expected result：同scalar的新Branch不能接替原await，ACK等待正文变
 ## v1.73 两阶段发布检查点
 
 v1.73：guide2.88/f40ca先冻结两阶段终态发布及重启未知意图保留。旧23521在ACK后第二正文read未完成窗口，实际新Node从磁盘取得finished与收尾前置为一个真红；独立v1/v2同1/2保留。v1 child拒绝响应缺stage另存v2仅补字段，registered拒绝正控1/1，不计产品root。主旧34中32绿2红（提前磁盘终态、无第二提交屏障），新产品e99f9d15103f1264ce3453d683f1fba91a8a7f79先落盘intent保留旧公开阶段，复核正文/原Branch引用/资源/metadata后另行可靠commit；重启未提交intent保留归属并拒绝修改/收尾，无自动重放。主36内核、4files75相关（含36）、core/web tsc0；默认full680files10018绿/6files19skip/1历史obsolete/69.73s。此前默认full的ECONNRESET与POST404两失败根因仍未知，本次绿不关闭旧债务。主初期待recovery_required过细，改为原独立terminal_receipt_required并另验register/finish拒未对账；原log保留。固定e99f独立原v2真实newOS2/2：第二read held为registered+terminal_receipt_required，可靠commit正控finished但仅Daemon前置；扩展两阶段控制待返。主回读372Git并重算369JS一致，原24/新增14设计均非全排列执行。新源尚无生产HTTP鉴权/创建/报告绑定/实际Daemon删除和消失/Profile收尾/released；原IMP名称清理红仍开放。八IMP实际push与CI成功仅原八SHA，registry88tag鉴权0资格，无八全图部署、CDSpush/PR/共享写、自更新或本SHA视觉。45partial-local/4todo、49formal全not-executed/visual N/A，native goal active；既有八push/selfupdate授权保持，新CDS branch发布和隔离宿主前问仍待答。
+
+## v1.74 HTTP项目权限检查点
+
+v1.74：先冻结guide2.89/8ac6dcb713396c2591df68f17b27d824d9068e03 HTTP权限合同，末尾独立BRH24先设计。新产品f7a5f266f83294743f73e63050b681c225f7c725接入五个验收资源HTTP入口及服务器认证后mount，existing项目/精确SHA与现存run项目权限先于owner能力，project/global/create-only不能越项目；首次begin单次token，get隐藏hash，既有human未知路径默认拒绝、不扩大成员权限。局部真实HTTP缺入口7红（同一缺接线）→Router8绿；actual createServer本地basic与真实项目/global key 2绿；移除mount2红、移除全局parser bypass1红/1控制后逐字还原。parser另1红/7绿后小2KiB认证后解析及有限JSON错误绿，不复制global rawBody或回传secret/storage/stack。全量发现漏Agent能力登记，补project/write/guided且不伪造CLI删除命令；新catalog期待错把省略CLI写空串为夹具错，原件保留并修期待。主6files100相关（含36内核/8Router/2Server）、core+web tsc0；最终默认full682files10029绿/6files19skip/1旧obsolete/66.64s。初wrongcwd no-tests-found、相对Gitpath误当当前文件哈希仅命令/回执错误，不算产品根因。e99f前批独立最终原newOS2/minimal3/budget6/normal29/completedOS2、phase32/FIFOunknown3均实际局部复跑，重叠分列不相加；主核372Git/369派生及2476绝对hash引用，summary af64dbbe7c5c18976db8604652ceb26b445410568e9d38f8fea178ad32b715de。原新OS真红局部关闭；f7a HTTP独立固定复验待返，不继承e99f为f7a正式通过。仍未生产报告producer绑定/资源creator/实际Daemon stop-delete消失核对/Profile收尾/released；原IMP按名清理真红开放。默认full历史ECONNRESET/报告POST404根因未知，本次绿不关闭历史债务。八IMP实际push/CI成功保持其原八SHA，registry资格0，无八全图部署/CDSpush/PR/共享写/selfupdate或当前SHA正式视觉。45partial-local/4todo，formal49全not-executed/visual N/A，native active；八push/selfupdate既有授权保持，新CDS branch发布/隔离宿主前问待答。
+
+### v1.74 大小写解析续记
+
+v1.74当前产品d17655f69060b4659785a2cb80700ed98c2d3f53：主进一步发现f7a默认Express大小写别名绕过2KiB解析上限，真实 /api/Acceptance-Resource-Runs 大正文应413却201创建run，1红/2控制保留。d176仅server有限case-insensitive exact-prefix匹配与actualServer反例两文件修复；同期待actualServer3绿，相关6files101绿/core0，web产品字节与同本批已测类型不变；一次默认full682files10030绿/6files19skip/1旧obsolete/67.55s。f7a原Router8/Server2/100/full10029不覆盖此别名root；d176固定独立原HTTP/别名复验进行中，不称BRH24全排列或正式通过。e99f两阶段独立原2/3/6/29/2和phase32/FIFOunknown3已最终核源372Git/369JS及2476绝对hash，重叠分列。缺生产报告producer/资源creator/Daemon删除消失/Profile收尾/released，原IMP按名清理红保持；历史defaultfull ECONNRESET/POST404根因未知。八IMP实际push与CI成功是原八SHA，registry资格0；无八全图运行、CDSpush/PR/共享写/selfupdate或当前正式视觉。45partial-local/4todo、formal49 all not-executed/visual N/A，goal active；既有八push/selfupdate授权保持，新CDS分支发布及隔离宿主前问待答。
