@@ -614,9 +614,17 @@ describe('第四十三轮 P1：排空闸必须罩住所有写入口，不能只�
     expect(gateAt).toBeGreaterThan(-1);
     expect(gateAt).toBeLessThan(releasesAt);
     expect(gateAt).toBeLessThan(branchesAt);
-    // 路由器级那份必须撤掉，避免两处判定漂移
+    // guide2.62: the fresh disk await creates a new window after the app gate.
+    // Recheck the same authority after that await; do not restore a router-owned gate.
+    // The former prohibition is retained at 6a6dd55/full failure for provenance.
     const branches = fs.readFileSync(path.join(REPO, 'src/routes/branches.ts'), 'utf-8');
-    expect(branches).not.toContain('selfUpdateDrainBlockReason(Date.now())');
+    const diskStart = branches.indexOf('// 磁盘刹车统一守卫');
+    const freshAt = branches.indexOf('await diskGuard.blockReasonForDeploy()', diskStart);
+    const recheckAt = branches.indexOf('selfUpdateDrainBlockReason(Date.now())', diskStart);
+    expect(freshAt).toBeGreaterThan(diskStart);
+    expect(recheckAt).toBeGreaterThan(freshAt);
+    expect(branches.match(/selfUpdateDrainBlockReason\(Date\.now\(\)\)/g)).toHaveLength(1);
+    expect(branches).not.toContain('drainGateUntilMs');
   });
 });
 
