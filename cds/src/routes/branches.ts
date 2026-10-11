@@ -26,7 +26,7 @@ import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
 import { isCommitShaLike } from '../services/release-commit-clock.js';
 import {
-  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
+  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns, selfUpdateDrainBlockReason,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { prepareExactPrebuiltArtifacts, resolveExactArtifactTargetSha } from '../services/prebuilt-artifact-gate.js';
@@ -2404,19 +2404,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 空间的自救动作，磁盘满时必须还能用。
   router.use(async (req, res, next) => {
     if (req.method !== 'POST') { next(); return; }
-    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(req.path)) {
+    const match = /^\/branches\/([^/]+)\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.exec(req.path);
+    if (!match) { next(); return; }
+    let branchId: string;
+    try { branchId = decodeURIComponent(match[1]); } catch { next(); return; }
+    const original = stateService.getBranch(branchId);
+    // No asynchronous gap before the existing handler's missing-target response.
+    if (!original) { next(); return; }
+    const identity = (entry: BranchEntry) => JSON.stringify([
+      entry.id, entry.projectId || 'default', entry.branch, entry.worktreePath, entry.createdAt,
+    ]);
+    const originalIdentity = identity(original);
+    try {
+      const blocked = await diskGuard.blockReasonForDeploy();
+      if (blocked) { res.status(507).json({ error: 'disk_low', message: blocked }); return; }
+      // The app gate may have opened its drain window while this request awaited IO.
+      const draining = selfUpdateDrainBlockReason(Date.now());
+      if (draining) {
+        res.setHeader('Retry-After', '60');
+        res.status(503).json({ error: 'self_update_draining', message: draining }); return;
+      }
+      const current = stateService.getBranch(branchId);
+      if (!current) { res.status(404).json({ error: `分支 "${branchId}" 不存在` }); return; }
+      if (current !== original || identity(current) !== originalIdentity) {
+        res.status(409).json({ error: 'disk_admission_target_changed', message: '磁盘检查期间部署目标已改变，请核对当前分支后重新发起。' }); return;
+      }
+      // Existing handlers still check current permissions and effective configuration.
       next();
-      return;
-    }
-    const blocked = await diskGuard.blockReasonForDeploy();
-    if (blocked) {
-      res.status(507).json({ error: 'disk_low', message: blocked });
-      return;
-    }
-    // 自更新排空窗口闸已上移到 app 级中间件（server.ts + deploy-drain 的
-    // isDrainBlockedPath）：它同时罩住分支部署与生产发布两个路由器，路由器级只罩
-    // 得住自己那一半（Codex PR #1273 P1）。这里只留磁盘刹车。
-    next();
+    } catch (error) { next(error); }
   });
 
   /**

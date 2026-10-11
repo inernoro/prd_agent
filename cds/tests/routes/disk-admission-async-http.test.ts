@@ -12,6 +12,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { JanitorService } from '../../src/services/janitor.js';
 import { diskGuard } from '../../src/services/disk-guard.js';
+import { beginSelfUpdateDrain, endSelfUpdateDrain } from '../../src/services/deploy-drain.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import type { CdsConfig } from '../../src/types.js';
@@ -19,7 +20,7 @@ const tick = () => new Promise(r => setImmediate(r));
 describe('owned HTTP waits for fresh disk admission', () => {
   let root: string; let server: http.Server; let state: StateService; let shell: MockShellExecutor; let janitor: JanitorService; let failSnapshot: boolean; let accessAllowed: boolean; let permissionChecks: number;
   beforeEach(async () => {
-    diskGuard.reset(); root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-owned-disk-http-'));
+    endSelfUpdateDrain(); diskGuard.reset(); root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-owned-disk-http-'));
     state = new StateService(path.join(root, 'state.json')); state.load();
     state.addBranch({ id: 'owned', projectId: 'default', branch: 'main', worktreePath: root, status: 'stopped', createdAt: new Date().toISOString() } as any);
     state.addBuildProfile({ id: 'api', projectId: 'default', name: 'api', runtime: 'docker', containerPort: 8080 } as any);
@@ -33,18 +34,89 @@ describe('owned HTTP waits for fresh disk admission', () => {
     server = await new Promise(r => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   });
   afterEach(async () => {
-    await new Promise<void>(r => server.close(() => r())); janitor.stop(); diskGuard.reset(); selfStatusCache._resetForTests();
+    await new Promise<void>(r => server.close(() => r())); janitor.stop(); endSelfUpdateDrain(); diskGuard.reset(); selfStatusCache._resetForTests();
     await flushAllJsonStateStores(); fs.rmSync(root, { recursive: true, force: true });
   });
-  function request(route: string, body?: unknown, method?: string): Promise<{ status: number; body: any }> {
+  function request(route: string, body?: unknown, method?: string): Promise<{ status: number; body: any; headers: http.IncomingHttpHeaders }> {
     return new Promise((resolve, reject) => {
       const data = body === undefined ? undefined : JSON.stringify(body);
       const req = http.request({ host: '127.0.0.1', port: (server.address() as any).port, path: '/api' + route, method: method ?? (data ? 'POST' : 'GET'), agent: false, headers: data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : undefined }, res => {
         let raw = ''; res.on('data', b => { raw += b; }); res.on('error', reject);
-        res.on('end', () => resolve({ status: res.statusCode!, body: JSON.parse(raw) }));
+        res.on('end', () => { let body: any; try { body = JSON.parse(raw); } catch { body = raw; } resolve({ status: res.statusCode!, body, headers: res.headers }); });
       }); req.setTimeout(4500, () => req.destroy(new Error('owned request timeout'))); req.on('error', reject); req.end(data);
     });
   }
+  const deployPaths = ['/branches/owned/deploy', '/branches/owned/deploy/api', '/branches/owned/force-rebuild/api'];
+  it.each(deployPaths)('refuses %s when the original branch is replaced during disk admission', async route => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request(route, {});
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick(); expect(calls).toBe(1);
+      state.removeBranch('owned');
+      // Deliberately invalid successor: old code selects this object and responds 400.
+      state.addBranch({ id: 'owned', projectId: 'default', branch: '#successor', worktreePath: '', status: 'stopped', createdAt: new Date().toISOString() } as any);
+      finish([{ totalBytes: 100, freeBytes: 80 }]);
+      const response = await result; expect(response.status).toBe(409); expect(response.body.error).toBe('disk_admission_target_changed');
+      expect(shell.commands).toHaveLength(0); expect(state.getDeploymentRuns()).toHaveLength(0);
+    } finally { finish?.(null); await result; }
+  });
+  it.each(deployPaths)('refuses %s if self-update drain begins while disk admission waits', async route => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request(route, {});
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick(); expect(calls).toBe(1);
+      beginSelfUpdateDrain(Date.now());
+      // If the drain recheck is missing, the handler exposes this 400 instead of 503.
+      state.getBranch('owned')!.branch = '#same-object'; state.getBranch('owned')!.worktreePath = '';
+      finish([{ totalBytes: 100, freeBytes: 80 }]);
+      const response = await result; expect(response.status).toBe(503); expect(response.body.error).toBe('self_update_draining'); expect(response.headers['retry-after']).toBe('60');
+      expect(shell.commands).toHaveLength(0); expect(state.getDeploymentRuns()).toHaveLength(0);
+    } finally { finish?.(null); await result; }
+  });
+  it.each(['id', 'projectId', 'branch', 'worktreePath', 'createdAt'])('refuses same-object %s drift during disk admission', async key => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request('/branches/owned/force-rebuild/api', {});
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick(); expect(calls).toBe(1);
+      (state.getBranch('owned')! as any)[key] = 'changed-owned-value'; finish([{ totalBytes: 100, freeBytes: 80 }]);
+      expect((await result).status).toBe(409); expect(shell.commands).toHaveLength(0);
+    } finally { finish?.(null); await result; }
+  });
+  it('refuses a byte-equivalent same-ID successor rather than refreezing it', async () => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request('/branches/owned/force-rebuild/api', {});
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick(); expect(calls).toBe(1);
+      const successor = structuredClone(state.getBranch('owned')!); state.removeBranch('owned'); state.addBranch(successor);
+      finish([{ totalBytes: 100, freeBytes: 80 }]);
+      expect((await result).status).toBe(409); expect(shell.commands).toHaveLength(0);
+    } finally { finish?.(null); await result; }
+  });
+  it('returns missing after the original branch is removed during disk admission', async () => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request('/branches/owned/force-rebuild/api', {});
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick(); expect(calls).toBe(1);
+      state.removeBranch('owned'); finish([{ totalBytes: 100, freeBytes: 80 }]);
+      expect((await result).status).toBe(404); expect(shell.commands).toHaveLength(0);
+    } finally { finish?.(null); await result; }
+  });
+  it('allows notes and lastAccessed changes to continue the original force-rebuild', async () => {
+    let finish!: (value: any) => void; let calls = 0;
+    diskGuard.setProbe(() => { calls++; return new Promise(r => { finish = r; }); });
+    const result = request('/branches/owned/force-rebuild/api', {});
+    try {
+      for (let i = 0; i < 50 && !calls; i++) await tick(); expect(calls).toBe(1);
+      (state.getBranch('owned')! as any).notes = 'owned note'; state.getBranch('owned')!.lastAccessed = new Date().toISOString();
+      finish([{ totalBytes: 100, freeBytes: 80 }]);
+      expect((await result).status).toBe(200); expect(shell.commands.some(command => command.includes('find'))).toBe(true);
+    } finally { finish?.(null); await result; }
+  });
   it.each(['GET', 'PUT'])('forwards %s async snapshot errors to Express instead of hanging HTTP', async method => {
     failSnapshot = true;
     const response = await request(method === 'GET' ? '/janitor/state' : '/janitor/config', method === 'PUT' ? { enabled: false } : undefined, method);
