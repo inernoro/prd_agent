@@ -99,11 +99,11 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     stopGate = gate;
     return { caught, release: gate.release, expired: () => gate.expired };
   };
-  type AppStartReply = { at: string; status: number; containerId: string; containerName: string; imageReference: string };
+  type AppStartReply = { at: string; status: number; containerId: string; containerName: string; imageReference: string; startReference: string; namedIdentityConfirmed: boolean };
   type AppStartTarget = { projectId: string; branchId: string; profileId: string; imageReference: string };
   type StartReplyGate = { target: AppStartTarget; creationClaimed: boolean; containerId?: string; containerName?: string;
     claimed: boolean; released: boolean; caught: Promise<AppStartReply>; confirm: (reply: AppStartReply) => void;
-    expired: boolean; timer?: ReturnType<typeof setTimeout>; send?: () => void; release: () => void };
+    expired: boolean; timer?: ReturnType<typeof setTimeout>; identityRequest?: http.ClientRequest; send?: () => void; release: () => void };
   let startGate: StartReplyGate | undefined;
   const holdNextAppStart = (target: AppStartTarget) => {
     for (const value of [target.projectId, target.branchId, target.profileId]) assert.match(value, /^[a-zA-Z0-9_.-]{1,128}$/);
@@ -114,6 +114,7 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     const gate: StartReplyGate = { target: { ...target }, creationClaimed: false, claimed: false, released: false, caught, confirm,
       expired: false, release: () => {
         if (gate.released) return; gate.released = true; if (gate.timer) clearTimeout(gate.timer);
+        gate.identityRequest?.destroy(); gate.identityRequest = undefined;
         record('fixture-app-start-reply-released', { containerId: gate.containerId, expired: gate.expired });
         gate.send?.(); if (startGate === gate) startGate = undefined;
       } };
@@ -213,16 +214,55 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
             if (observation.replies.length === observation.count) observation.confirm([...observation.replies]);
             return;
           }
-          const startedId = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/start$/)?.[1];
+          const startPath = new URL(request.url || '/', 'http://owned').pathname;
+          const startReference = decodeURIComponent(startPath.match(/\/containers\/([^/]+)\/start$/)?.[1] || '');
           const appGate = startGate;
           if (request.method === 'POST' && backend.statusCode === 204 && appGate && !appGate.released && !appGate.claimed
-            && appGate.containerId && decodeURIComponent(startedId || '') === appGate.containerId) {
+            && appGate.containerId && (startReference === appGate.containerId || startReference === appGate.containerName)) {
             appGate.claimed = true; appGate.send = send; backend.pause();
             const reply = { at: new Date().toISOString(), status: 204, containerId: appGate.containerId,
-              containerName: appGate.containerName!, imageReference: appGate.target.imageReference };
-            record('original-app-start-reply-held', reply);
+              containerName: appGate.containerName!, imageReference: appGate.target.imageReference, startReference,
+              namedIdentityConfirmed: false };
+            // Identity discovery consumes the same original five-second reply
+            // budget. A name alone cannot establish ownership of the new CID.
             appGate.timer = setTimeout(() => { appGate.expired = true; appGate.release(); }, 5000);
-            response.once('close', appGate.release); appGate.confirm(reply); return;
+            response.once('close', appGate.release);
+            const confirm = () => {
+              if (appGate.released) return;
+              record('original-app-start-reply-held', reply); appGate.confirm(reply);
+            };
+            if (startReference === appGate.containerId) { confirm(); return; }
+            const unknown = (reason: string) => {
+              if (appGate.released) return;
+              record('original-app-named-start-identity-unconfirmed', { containerId: appGate.containerId, reason }); appGate.release();
+            };
+            const identity = http.request({ socketPath: daemonSocketPath, method: 'GET',
+              path: startPath.replace(/\/start$/, '/json'), timeout: 5000 }, inspected => {
+              let bytes = 0; const chunks: Buffer[] = [];
+              inspected.on('data', chunk => { bytes += chunk.length;
+                if (bytes > 256 * 1024) { unknown('oversize'); identity.destroy(); } else chunks.push(chunk); });
+              inspected.once('error', () => unknown('transport'));
+              inspected.once('end', () => {
+                if (appGate.released) return;
+                try {
+                  const view = inspected.statusCode === 200 ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+                  const expected = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': appGate.target.projectId,
+                    'cds.branch.id': appGate.target.branchId, 'cds.profile.id': appGate.target.profileId };
+                  if (view?.Id !== appGate.containerId || view?.Name !== `/${appGate.containerName}`
+                    || view?.Config?.Image !== appGate.target.imageReference || view?.State?.Running !== true
+                    || !Object.entries(expected).every(([key, value]) => view?.Config?.Labels?.[key] === value)) {
+                    unknown('identity-or-status'); return;
+                  }
+                  appGate.identityRequest = undefined; reply.namedIdentityConfirmed = true;
+                  record('original-app-named-start-identity-confirmed', { containerId: view.Id,
+                    containerName: appGate.containerName, startReference, status: inspected.statusCode }); confirm();
+                } catch { unknown('invalid-body'); }
+              });
+            });
+            appGate.identityRequest = identity; requests.add(identity);
+            identity.once('close', () => requests.delete(identity));
+            identity.once('timeout', () => { unknown('timeout'); identity.destroy(); });
+            identity.once('error', () => unknown('transport')); identity.end(); return;
           }
           const stopTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/stop$/)?.[1];
           const gate = stopGate;
@@ -973,6 +1013,7 @@ async function main(): Promise<void> {
         } finally { stopReads = true; await sampler; report.readSamples = reads; }
         assert.ok(report.readSamples.length >= 3); assert.equal(report.readSamples.every((r: any) => r.status === 200 && !r.error), true, JSON.stringify(report.readSamples.filter((r: any) => r.status !== 200 || r.error)));
         report.checks.push({ name: 'original-list-task-and-full-health-short-window-requests-returned', passed: true });
+        probeProxy!.enableTrace();
         report.stage = 'full-application-service-target-replacement-and-inflight-stop';
         const scopeProof: any = report.serviceTargetReplacement = { genericFixtureOnly: true,
           representativeBusinessCiVerified: false, controlledAuthenticatedUserRequests: true,
@@ -1008,6 +1049,13 @@ async function main(): Promise<void> {
             for (const [key, value] of Object.entries({ 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': projectId,
               'cds.branch.id': branchId, 'cds.profile.id': apiProfile.id, 'org.opencontainers.image.revision': sha })) assert.equal(view.Config.Labels[key], value);
             assert.equal(view.Image, apiImage(sha).id); assert.equal(view.Config.Image, held.imageReference);
+            assert.ok(held.startReference === view.Id || held.startReference === held.containerName);
+            if (held.startReference === held.containerName) {
+              assert.equal(held.namedIdentityConfirmed, true);
+              const identity = probeProxy!.timeline.filter(event => event.phase === 'original-app-named-start-identity-confirmed'
+                && event.containerId === view.Id && event.startReference === held.containerName);
+              assert.equal(identity.length, 1); assert.equal(identity[0].status, 200);
+            }
             assert.equal(view.Config.Env.filter((value: string) => value.startsWith('CDS_COMMIT_SHA=')).join(''), `CDS_COMMIT_SHA=${sha}`);
             assert.ok(Date.parse(view.State.StartedAt) <= Date.parse(held.at));
             const created = probeProxy!.timeline.filter(event => event.phase === 'original-app-create-replied' && event.containerId === view.Id);
