@@ -107,6 +107,17 @@ describe('actual run stage timing facts', () => {
     expect(run().timing!.intervals[0]).toMatchObject({ outcome: 'completed', durationMs: null });
     expect(summarizeDeploymentTiming(run().timing).stages.pull.status).toBe('incomplete');
   });
+  it.each([
+    ['sample', null], ['sample', '100'], ['base', null], ['base', '100'],
+  ] as const)('does not coerce an illegal %s clock %s into a measured number', async (phase, invalid) => {
+    let value: unknown = phase === 'base' ? invalid : 0;
+    const ownService = new DeploymentRunService(state, { timingClock: () => value as number });
+    const t = ownService.createTimingObserver(run().id, 'op_own', () => current);
+    value = phase === 'sample' ? invalid : 100;
+    expect(await t.measure('pull', 'git-pull', null, async () => { value = 110; return 7; })).toBe(7);
+    expect(run().timing!.intervals[0].durationMs).toBeNull();
+    expect(summarizeDeploymentTiming(run().timing).stages.pull).toMatchObject({ status: 'incomplete', completedWallMs: null, unknown: 1 });
+  });
   it('does not mutate detached summaries or guess legacy measurements', () => {
     const empty = summarizeDeploymentTiming(undefined); expect(Object.values(empty.stages)).toHaveLength(9);
     expect(Object.values(empty.stages).every(s => s.completedWallMs === null)).toBe(true);

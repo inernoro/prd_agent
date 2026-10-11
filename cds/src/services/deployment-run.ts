@@ -172,7 +172,12 @@ export class DeploymentRunService {
       try { return Boolean(original && this.get(id) === original && original.id === id && original.projectId === originScope?.projectId && original.branchId === originScope.branchId && original.operationId === originScope.operationId && (!original.operationId || original.operationId === operationId)
         && !TERMINAL_STATUSES.has(original.status) && isCurrent()); } catch { return false; }
     };
-    const offset = () => { const value = this.timingClock() - this.timingBase; return Number.isFinite(value) && value >= 0 ? value : null; };
+    const offset = () => {
+      const sample = this.timingClock(), base = this.timingBase;
+      if (typeof sample !== 'number' || typeof base !== 'number' || !Number.isFinite(sample) || !Number.isFinite(base)) return null;
+      const value = sample - base;
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    };
     const observer: DeploymentTimingObserver = {
       begin: (stage, boundary, profileId = null) => {
         const nothing = () => {};
