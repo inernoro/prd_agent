@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.92；日期：2026-10-12；状态：active。
+版本：v1.92；日期：2026-10-12；状态：blocked。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -75,7 +75,7 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 ## Goal State
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
-- 当前阶段：external-wait（当前八分支真实推送及 CI 通过；本地实现完成部分检查，实际部署验收未完成）
+- 当前阶段：blocked（连续三轮生产准入条件未满足；八分支 CI 通过，真实部署及视觉未验）
 - 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:7e4b5247447f6bdc539f44f003b4dffec8544d3d,IMP:d53ffc36d2649c38a9431ad6dd897259fbf1aa32（此次文档同步前快照）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；origin/test=IMP:49fa978bf35625116c98339f22b278578f8181e8；ahead/behind=CDS对origin/main:297/0,IMP对origin/test:122/0；environment=自有固定Git/HTTP/SQLite控制和真实GitHubCI，目标未部署；database=N/A共享未写；tenant=N/A平台；role=本地主进程；route=N/A目标未部署；auth=既有技能CLI，密钥不输出；external_ids=八个CI run逐个见当前候选清单`
 - 写入所有权：`owner=/root仅两自有工作树及八已授权IMP refs；other_tabs=原mdimp目录read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=两产品与八目标已固定，末尾独立局部复验完成，实际运行验收待准入`
 - 范围账本：`goal-core=49条完整极速与控制面治理；required-prerequisite=现有CDS修复集成,按CL-10v1.4核对默认权限,目标初始化与条件配置写入；environment-recovery=只读宿主诊断，不重建共享数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,他人目标关闭`
@@ -86,7 +86,7 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 - 当前阻塞或环境限制：新CDS修复分支发布授权与合格隔离宿主仍待落实；已有八push及共享自更新授权保持，不重复索取。当前官方CLI列表八目标均缺部署记录；Self checkout head=e4e0c8b65，不把checkout单独当运行证据。本机默认Colima状态报告错误且socket不可达；本次自有2GiB验收VM启动90秒仍无runtime/socket，已停止并核对磁盘/配置保留、默认VM及Docker context不变。当前A01精确初始化镜像经宿主现有Docker凭据只读manifest返回unauthorized，不能判缺镜像；准入证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/owned-runtime-recovery-v1/current-admission-checkpoint.json。历史共享宿主余量830MiB与满swap不作为当前容量事实。未知Daemon晚创建/重启对账与真实负载仍须验证。目标索引162条超过60且本目标未登记，只读报告保留，不猜改其他目标终态。
 - 涌现决定：N/A本批测试兼容修复无需新增终态机制条款；强验收门槛保持。
 - 下一动作与完成条件：落实新CDS分支发布与隔离宿主，先核实际镜像及依赖准入，再一/二/八完整十三角色灰度；末尾逐计划条目独立检查真实黄闪电、版本、公网延迟、失败/取消/重启恢复并取得双主题视觉。30分钟、48小时和一周观察实际完成后才能勾选。正式49当前未执行，不能以CI全绿收口。
-- 终止/接替结论：active
+- 终止/接替结论：blocked
 
 ## v1.25 实际路由与长日志反例恢复审计
 
