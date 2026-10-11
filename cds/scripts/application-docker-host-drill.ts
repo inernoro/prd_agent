@@ -40,6 +40,7 @@ async function main(): Promise<void> {
     const view = JSON.parse(await docker(['inspect', containerId]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); return view;
   };
   try {
+    report.stage = 'prepare-source-snapshot';
     report.primaryDaemon = JSON.parse(await docker(['info', '--format', '{{json .}}']));
     // 只存必要身份和资源，避免把宿主完整配置写入报告。
     report.primaryDaemon = { id: report.primaryDaemon.ID, architecture: report.primaryDaemon.Architecture, cpus: report.primaryDaemon.NCPU, memoryBytes: report.primaryDaemon.MemTotal };
@@ -61,11 +62,13 @@ async function main(): Promise<void> {
     await fs.writeFile(path.join(snapshot, 'owned-source.json'), JSON.stringify({ sourceHead, owner, hashes: report.snapshotHashes }) + '\n');
     const buildContext = path.join(root, 'build'); await fs.mkdir(buildContext);
     await fs.writeFile(path.join(buildContext, 'Dockerfile'), `FROM node:22-alpine AS node\nFROM docker:29-dind\nCOPY --from=node /usr/local/bin/node /usr/local/bin/node\nRUN apk add --no-cache libstdc++ git procps bash curl\nLABEL cds.acceptance.owner="${owner}" org.opencontainers.image.revision="${sourceHead}"\n`);
+    report.stage = 'owned-daemon-image-build';
     await docker(['build', '--quiet', '-t', tag, buildContext], 300_000);
     const image = JSON.parse(await docker(['image', 'inspect', tag]))[0]; assert.equal(image.Config.Labels['cds.acceptance.owner'], owner);
     imageId = image.Id; report.outerImage = { id: image.Id, revision: image.Config.Labels['org.opencontainers.image.revision'], baseImages: ['node:22-alpine', 'docker:29-dind'] };
     volume = `${owner}-data`; await docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, volume]);
-    containerId = await docker(['create', '--privileged', '--name', owner, '--label', `cds.acceptance.owner=${owner}`,
+    report.stage = 'owned-container-create';
+    containerId = await docker(['create', '--privileged', '--network', 'bridge', '--name', owner, '--label', `cds.acceptance.owner=${owner}`,
       '--cpus', '4', '--memory', '6g', '--pids-limit', '1024', '-e', 'DOCKER_TLS_CERTDIR=',
       '-e', 'GITHUB_ACTIONS=true', '-e', `GITHUB_RUN_ID=${process.env.GITHUB_RUN_ID}`,
       '--mount', `type=bind,src=${snapshot},dst=/owned/source,readonly`,
@@ -73,8 +76,8 @@ async function main(): Promise<void> {
       '--mount', `type=bind,src=${output},dst=/owned/output`, '-v', `${volume}:/var/lib/docker`,
       tag, 'dockerd', '--host=unix:///var/run/owned.sock', '--storage-driver=vfs', '--feature=containerd-snapshotter=false']);
     // 分开create/start，启动报错仍持有已验证的ID，最后可清理创建的容器和卷。
-    await ownedContainer(); await docker(['start', containerId]);
-    const outer = await ownedContainer(); assert.equal(outer.HostConfig.NetworkMode, 'default'); assert.equal(outer.HostConfig.PidMode, '');
+    await ownedContainer(); report.stage = 'owned-container-start-and-isolation'; await docker(['start', containerId]);
+    const outer = await ownedContainer(); assert.equal(outer.HostConfig.NetworkMode, 'bridge'); assert.equal(outer.HostConfig.PidMode, '');
     assert.equal(outer.Mounts.some((m: any) => /docker\.sock$/.test(m.Source)), false);
     report.outerRuntime = { containerId, networkMode: outer.HostConfig.NetworkMode, sharedPrimarySocket: false, sharedHostPid: false,
       cpuQuotaNano: outer.HostConfig.NanoCpus, memoryBytes: outer.HostConfig.Memory, pidsLimit: outer.HostConfig.PidsLimit };
