@@ -56,6 +56,8 @@ async function main(): Promise<void> {
     for (const name of ['src', 'dist', 'web/dist']) {
       const original = await hashes(path.resolve(name)), copied = await hashes(path.join(snapshot, name)); assert.deepEqual(copied, original);
     }
+    // 父快照只读；嵌套依赖挂载点必须在绑定父目录之前存在。
+    await fs.mkdir(path.join(snapshot, 'node_modules'));
     await fs.writeFile(path.join(snapshot, 'owned-source.json'), JSON.stringify({ sourceHead, owner, hashes: report.snapshotHashes }) + '\n');
     const buildContext = path.join(root, 'build'); await fs.mkdir(buildContext);
     await fs.writeFile(path.join(buildContext, 'Dockerfile'), `FROM node:22-alpine AS node\nFROM docker:29-dind\nCOPY --from=node /usr/local/bin/node /usr/local/bin/node\nRUN apk add --no-cache libstdc++ git procps bash curl\nLABEL cds.acceptance.owner="${owner}" org.opencontainers.image.revision="${sourceHead}"\n`);
@@ -63,13 +65,15 @@ async function main(): Promise<void> {
     const image = JSON.parse(await docker(['image', 'inspect', tag]))[0]; assert.equal(image.Config.Labels['cds.acceptance.owner'], owner);
     imageId = image.Id; report.outerImage = { id: image.Id, revision: image.Config.Labels['org.opencontainers.image.revision'], baseImages: ['node:22-alpine', 'docker:29-dind'] };
     volume = `${owner}-data`; await docker(['volume', 'create', '--label', `cds.acceptance.owner=${owner}`, volume]);
-    containerId = await docker(['run', '-d', '--privileged', '--name', owner, '--label', `cds.acceptance.owner=${owner}`,
+    containerId = await docker(['create', '--privileged', '--name', owner, '--label', `cds.acceptance.owner=${owner}`,
       '--cpus', '4', '--memory', '6g', '--pids-limit', '1024', '-e', 'DOCKER_TLS_CERTDIR=',
       '-e', 'GITHUB_ACTIONS=true', '-e', `GITHUB_RUN_ID=${process.env.GITHUB_RUN_ID}`,
       '--mount', `type=bind,src=${snapshot},dst=/owned/source,readonly`,
       '--mount', `type=bind,src=${path.resolve('node_modules')},dst=/owned/source/node_modules,readonly`,
       '--mount', `type=bind,src=${output},dst=/owned/output`, '-v', `${volume}:/var/lib/docker`,
       tag, 'dockerd', '--host=unix:///var/run/owned.sock', '--storage-driver=vfs', '--feature=containerd-snapshotter=false']);
+    // 分开create/start，启动报错仍持有已验证的ID，最后可清理创建的容器和卷。
+    await ownedContainer(); await docker(['start', containerId]);
     const outer = await ownedContainer(); assert.equal(outer.HostConfig.NetworkMode, 'default'); assert.equal(outer.HostConfig.PidMode, '');
     assert.equal(outer.Mounts.some((m: any) => /docker\.sock$/.test(m.Source)), false);
     report.outerRuntime = { containerId, networkMode: outer.HostConfig.NetworkMode, sharedPrimarySocket: false, sharedHostPid: false,
@@ -107,10 +111,12 @@ async function main(): Promise<void> {
       assert.equal((await docker(['ps', '-aq', '--no-trunc', '--filter', `id=${containerId}`])), ''); report.ownedContainerRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); } }
     if (volume) { try { const view = JSON.parse(await docker(['volume', 'inspect', volume]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner);
-      await docker(['volume', 'rm', volume]); report.ownedVolumeRemoved = true;
+      await docker(['volume', 'rm', volume]);
+      assert.equal(await docker(['volume', 'ls', '-q', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.ownedVolumeRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); } }
     if (imageId) { try { const view = JSON.parse(await docker(['image', 'inspect', imageId]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner);
-      await docker(['image', 'rm', tag]); report.ownedImageRemoved = true;
+      assert.deepEqual(view.RepoTags, [tag]); await docker(['image', 'rm', imageId]);
+      assert.equal(await docker(['image', 'ls', '-q', '--no-trunc', '--filter', `label=cds.acceptance.owner=${owner}`]), ''); report.ownedImageRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); } }
     await fs.rm(root, { recursive: true, force: true }); report.isolatedFilesRemoved = true;
     if (cleanupErrors.length) { report.cleanupErrors = cleanupErrors; report.verdict = 'failed'; process.exitCode = 1; }
