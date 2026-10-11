@@ -8,7 +8,7 @@ const ERRORS = new Map<string, number>([
   ['acceptance_scope_invalid', 400], ['acceptance_scope_mismatch', 409],
   ['acceptance_owner_required', 403], ['acceptance_branch_changed', 409],
   ['acceptance_resource_already_exists', 409], ['acceptance_resource_owned', 409],
-  ['acceptance_resource_unconfirmed', 409], ['acceptance_resource_changed', 409],
+  ['acceptance_failure_unconfirmed', 409], ['acceptance_resource_unconfirmed', 409], ['acceptance_resource_changed', 409],
   ['acceptance_run_recovery_required', 409], ['acceptance_run_conflict', 409],
   ['acceptance_run_stage', 409], ['acceptance_run_busy', 409],
   ['acceptance_run_capacity', 429], ['acceptance_operation_capacity', 429],
@@ -70,7 +70,7 @@ export function createAcceptanceResourceRunsRouter(deps: { stateService: StateSe
     if (deny(req, res, run.projectId)) return;
     res.json({ run });
   });
-  for (const action of ['register', 'finish', 'cleanup-evidence', 'release'] as const) {
+  for (const action of ['register', 'register-failed', 'finish', 'cleanup-evidence', 'release'] as const) {
     router.post(`/acceptance-resource-runs/:id/${action}`, json({ limit: '2kb' }), async (req, res) => {
       const id = req.params.id;
       const run = RUN_ID.test(id) ? service.get(id) : undefined;
@@ -80,7 +80,7 @@ export function createAcceptanceResourceRunsRouter(deps: { stateService: StateSe
         const ownerToken = field(req, 'ownerToken');
         if (action === 'cleanup-evidence') res.json(await service.requireCleanupEvidence(id, ownerToken));
         else if (action === 'release') res.json({ run: await service.release(id, ownerToken) });
-        else res.json({ run: action === 'register' ? await service.register(id, ownerToken) : await service.finish(id, ownerToken, field(req, 'reportId')) });
+        else res.json({ run: action === 'register' ? await service.register(id, ownerToken) : action === 'register-failed' ? await service.registerFailed(id,ownerToken) : await service.finish(id, ownerToken, field(req, 'reportId')) });
       } catch (error) { failure(res, error); }
     });
   }

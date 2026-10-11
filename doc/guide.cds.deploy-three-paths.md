@@ -501,7 +501,7 @@ configured 只证明原 Profile 可靠配置，不授予注册、验收结束或
 
 正常 active→registered 仍只接受原创建来源、完整精确身份及实际 running/readiness。失败创建不能伪造成正常 registered、业务验收通过或黄色闪电。另设原 owner 的显式 register-failed 操作：仅原创建 reference 已可靠确认、来源 deploymentRun 已可靠 failed/cancelled 且原执行真正结算后，才在独占整分支内复核原完整容器身份、指纹、精确镜像与无可写挂载。实际 stopped 或 running 均可接受为待清理的失败资源；缺创建 reference、来源仍在执行、未决 publication、实际 missing/未知、身份/配置/原报告漂移均保留待对账，不据名称收编或自动重试。
 
-失败登记使用独立 failed-registered 阶段与 resource.creationFailure：保存原来源终态和不可逆摘要，不覆盖原 creationIntent/reference/serviceDigest，不保存原异常/凭据。专用保存事务同样经 branch 身份 ACK 和原两道发布 ACK；通用 writer 不得首次发布 failed-registered。失败持有者在 registered 与 finished 阶段都继续占用原分支，阻断普通部署、配置或借新 begin 替代。显式原失败登记和原 finished release 可在既有独占内部 lease 下续接，不能越过已撤销但尚未结算的原执行、pending 或续约；进程重启缺执行结束对账证明仍须保留。
+失败登记使用独立 failed-registered 阶段与 resource.creationFailure：保存原来源终态和不可逆摘要，不覆盖原 creationIntent/reference/serviceDigest，不保存原异常/凭据。专用保存事务同样经 branch 身份 ACK 和原两道发布 ACK；通用 writer 不得首次发布 failed-registered。失败持有者在 registered 与 finished 阶段都继续占用原分支，阻断普通部署、配置或借新 begin 替代。显式原失败登记和原 finished release 可在既有独占内部 lease 下续接，不能越过已撤销但尚未结算的原执行、pending 或续约。当前进程仅在 exact 原执行 lease 真正 complete 后保留其 project/branch/run/SHA/operation 坐标，最多512项；不从 active 为空或终态元信息推断结算。重启或淘汰失去该证明时原 active 资源仍须对账，已经可靠 failed-registered 的资源按原失败摘要继续报告与收尾，不补造执行结束。
 
 报告仍由既有 producer 产生并绑定原 run/project/branch/SHA；失败资源只能归档 verdict=fail，finish 前后验报告正文、元信息、原 resource/config 与失败来源摘要。正常 finished/release 接续现有不可变 ID inspect→stop（如实际 running）→removeStopped→确认原 ID 消失→可靠 released/目标图定向移除链。不能删除数据库、已有项目网络或其他服务，也不因失败报告授予 by-name 删除。该阶段只覆盖已确认原 reference 的进程内失败资源；未确认 create、缺原能力、重启后未结算或实际缺失的资源不伪造闭合，另留对账缺口。
 

@@ -279,6 +279,7 @@ export class BranchOperationCoordinator {
   private generations = new Map<string, number>();
   private readonly pendingDispatches = new Map<string, { pending: PendingWebhookDeploy; phase: 'claiming' | 'ready' | 'sent' | 'accepted' }>();
   // Revocation removes route ownership, not the executor's outstanding awaits.
+  private readonly settledAcceptanceCreations = new Map<string, {projectId: string | null | undefined; branchId: string; acceptanceRunId: string | undefined; commitSha: string | null | undefined}>();
   private readonly unsettled = new Map<string, { lease: BranchOperationLease; branchId: string }>();
 
   constructor(private readonly events?: ServerEventLogSink | null,
@@ -429,6 +430,11 @@ export class BranchOperationCoordinator {
     const execution = this.unsettled.get(lease.operationId);
     if (!execution || execution.lease !== lease) return null;
     this.unsettled.delete(lease.operationId);
+    if (lease.request.kind === 'acceptance-create' && lease.request.source === 'acceptance-resource-deploy') {
+      const {projectId, branchId, acceptanceRunId, commitSha} = lease.request;
+      this.settledAcceptanceCreations.set(lease.operationId, {projectId, branchId, acceptanceRunId, commitSha});
+      while (this.settledAcceptanceCreations.size > 512) this.settledAcceptanceCreations.delete(this.settledAcceptanceCreations.keys().next().value!);
+    }
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
     if (activeEntry && active?.operationId === lease.operationId && active.generation === lease.generation && active.branchId === execution.branchId) {
@@ -573,6 +579,12 @@ export class BranchOperationCoordinator {
     return { status: 'rejected', operationId, generation, reason };
   }
 
+  /** Only the exact executor's completion grants this process-local proof; restart/eviction stays unknown. */
+  hasSettledAcceptanceCreation(operationId: string, scope: {projectId: string; branchId: string; acceptanceRunId: string; commitSha: string}): boolean {
+    const original = this.settledAcceptanceCreations.get(operationId);
+    return !!original && Object.entries(scope).every(([key,value]) => original[key as keyof typeof original] === value);
+  }
+
   clearForTest(): void {
     for (const controller of this.cancellation.values()) controller.abort('test cleanup');
     this.cancellation.clear();
@@ -582,6 +594,7 @@ export class BranchOperationCoordinator {
     this.reservedContinuations.clear();
     this.generations.clear();
     this.unsettled.clear();
+    this.settledAcceptanceCreations.clear();
   }
 
   private admissionRejection(request: BranchOperationRequest): BranchOperationDecision | null {

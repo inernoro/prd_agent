@@ -59,7 +59,7 @@ import type {
 } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { AcceptanceResourceRun } from './acceptance-resource-run.js';
-import { acceptanceResourceDigest, acceptanceResourceServiceDigest } from './acceptance-resource-run.js';
+import { acceptanceResourceDigest, acceptanceResourceServiceDigest, acceptanceFailureDeploymentDigest } from './acceptance-resource-run.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -1139,15 +1139,16 @@ export class StateService {
     const previous = this.state.acceptanceResourceRuns?.[row.id];
     if (previous?.creationIntent) {
       const identical = acceptanceResourceDigest({ ...row, seq: previous.seq }) === acceptanceResourceDigest(previous);
-      const finish = previous.stage === 'registered' && row.stage === 'finished' && !!row.terminal
+      const finish = ['registered','failed-registered'].includes(previous.stage) && row.stage === 'finished' && !!row.terminal
         && !!previous.creationIntent.reference && !!previous.resource && !row.releaseIntent
+        && (!previous.resource.creationFailure || row.terminal?.verdict === 'fail')
         && acceptanceResourceDigest({ ...row, seq: previous.seq, stage: previous.stage, terminal: previous.terminal }) === acceptanceResourceDigest(previous);
       const releaseProgress = previous.stage === 'finished' && row.stage === 'finished' && !!row.releaseIntent
         && (previous.releaseIntent || row.releaseIntent.phase === 'prepared')
         && acceptanceResourceDigest({ ...row, seq: previous.seq, releaseIntent: previous.releaseIntent }) === acceptanceResourceDigest(previous);
       if (!identical && !finish && !releaseProgress) throw new Error('acceptance_creation_intent_changed');
     }
-    if (row.stage === 'registered' && previous?.stage !== 'registered') throw new Error('acceptance_creation_transaction_required');
+    if (['registered','failed-registered'].includes(row.stage) && previous?.stage !== row.stage) throw new Error('acceptance_creation_transaction_required');
     if (previous && Object.prototype.hasOwnProperty.call(previous, 'releaseIntent')) {
       const phases = ['prepared', 'stopped', 'removed'];
       const oldPhase = phases.indexOf(previous.releaseIntent?.phase || '');
@@ -1240,7 +1241,8 @@ export class StateService {
     const previous = this.state.acceptanceResourceRuns?.[row.id], intent = previous?.creationIntent;
     const branch = this.state.branches[row.branchId], next = row.creationIntent;
     const capturing = previous?.stage === 'active' && row.stage === 'active' && !intent?.reference && !intent?.serviceDigest;
-    const registering = previous?.stage === 'active' && row.stage === 'registered' && !!intent?.reference;
+    const failed = row.stage === 'failed-registered' && !!row.resource?.creationFailure;
+    const registering = previous?.stage === 'active' && (row.stage === 'registered' || failed) && !!intent?.reference;
     const original = { ...row, seq: previous?.seq, stage: previous?.stage, creationIntent: intent, resource: previous?.resource };
     const reference = next?.reference;
     if (!previous || previous.seq !== expectedSeq || row.seq !== expectedSeq + 1 || previous.resource || previous.terminal || previous.releaseIntent
@@ -1267,11 +1269,15 @@ export class StateService {
         || service.deployedCommitSha !== previous.targetSha || service.deployedPrebuilt !== true || service.deployedMode !== 'express'
         || !deployment || this.state.deploymentRuns?.[intent.deploymentRunId!] !== deployment
         || deployment.projectId !== previous.projectId || deployment.branchId !== previous.branchId || deployment.commitSha !== previous.targetSha
-        || deployment.operationId !== intent.operationId || ['failed','cancelled'].includes(deployment.status)
+        || deployment.operationId !== intent.operationId || (!failed && ['failed','cancelled'].includes(deployment.status))
         || acceptanceResourceDigest(deployment.acceptanceOrigin) !== acceptanceResourceDigest({ version: 1, acceptanceRunId: previous.id,
           profileId: previous.profileId, targetSha: previous.targetSha, profileDigest: intent.profileDigest, operationId: intent.operationId })
         || (capturing && deployment.status !== 'building')
-        || (registering && (deployment.status !== 'running' || service.status !== 'running'
+        || (registering && ((failed ? !['failed','cancelled'].includes(deployment.status) || !deployment.finishedAt
+          || !Number.isFinite(Date.parse(deployment.finishedAt)) || row.resource!.creationFailure!.status !== deployment.status
+          || row.resource!.creationFailure!.deploymentDigest !== acceptanceFailureDeploymentDigest(deployment)
+          || Object.keys(row.resource!.creationFailure!).sort().join(',') !== 'deploymentDigest,status'
+          : deployment.status !== 'running' || service.status !== 'running' || !!row.resource?.creationFailure)
           || row.resource?.containerId !== reference.id || row.resource?.deploymentRunId !== deployment.id
           || row.resource?.configDigest !== acceptanceResourceDigest([profiles[0], null])))) throw new Error('acceptance_creation_changed');
     };

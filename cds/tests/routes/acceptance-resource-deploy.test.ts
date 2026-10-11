@@ -16,6 +16,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { OwnedContainerLifecycle } from '../../src/services/owned-container-lifecycle.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createAcceptanceResourceRunsRouter } from '../../src/routes/acceptance-resource-runs.js';
+import { createReportsRouter } from '../../src/routes/reports.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
 import { diskGuard } from '../../src/services/disk-guard.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
@@ -40,6 +41,7 @@ describe('guide2.98 original owned single-service HTTP deployment', () => {
     container = new ContainerService(shell, config); scopedKey = { projectId: 'p1' };
     const app = express(); app.use((req, _res, next) => { (req as any).cdsProjectKey = req.header('x-test-project') ? { projectId: req.header('x-test-project') } : scopedKey; next() });
     app.use('/api', createAcceptanceResourceRunsRouter({ stateService: state, release }));
+    app.use('/api', createReportsRouter({stateService: state}));
     app.use('/api', createBranchRouter({ stateService: state, worktreeService: new WorktreeService(shell, root), containerService: container,
       shell, config, branchOperationCoordinator: coordinator, deploymentRunService: runs }));
     server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
@@ -233,6 +235,117 @@ describe('guide2.98 original owned single-service HTTP deployment', () => {
     expect(shell.commands.some(c => c.startsWith('docker rm -f ') || c.startsWith('docker network rm '))).toBe(false);
     const reloaded = new StateService(path.join(root,'state.json')); reloaded.load(); await reloaded.flush(); expect(reloaded.getState().acceptanceResourceRuns![row.id]).toMatchObject({ stage: 'released', creationIntent: { reference: { id: cid } } });
   }, 30_000);
+  async function failAfterCapture(boundary: 'start' | 'readiness' = 'start') {
+    actualCli(); vi.spyOn(container, 'waitForContainerAlive').mockResolvedValue(undefined);
+    if (boundary === 'start') shell.addResponsePatternFirst(/^docker start /, () => ({stdout:'',stderr:'controlled start failure',exitCode:1}));
+    else vi.spyOn(container, 'waitForReadiness').mockResolvedValue(false);
+    const result=await post();expect(result.raw).not.toContain('"ok":true');
+    const row=kernel.get(owner.run.id)!;
+    expect(row.stage).toBe('active');expect(row.creationIntent!.reference!.id).toBe(cid);
+    expect(runs.get(row.creationIntent!.deploymentRunId!)!.status).toBe('failed');
+    expect((await post(undefined,{},'','register')).status).toBe(409);
+    expect(shell.commands.some(c=>c.startsWith('docker rm '))).toBe(false);
+    return row;
+  }
+  function archive(verdict='fail') {
+    return new Promise<{status:number;raw:string}>((resolve,reject)=>{
+      const data=JSON.stringify({projectId:'p1',branchId:'b1',commitSha:sha,acceptanceRunId:owner.run.id,
+        acceptanceOwnerToken:owner.ownerToken,title:'Controlled failure evidence',content:'Owned failed creation; local only.',format:'md',verdict});
+      const req=http.request({host:'127.0.0.1',port:(server.address() as any).port,path:'/api/reports',method:'POST',agent:false,
+        headers:{'content-type':'application/json','content-length':Buffer.byteLength(data)}},res=>{
+        let raw='';res.on('data',c=>raw+=c);res.on('end',()=>resolve({status:res.statusCode!,raw}));res.on('error',reject);
+      });req.setTimeout(5000,()=>req.destroy(Error('report budget')));req.on('error',reject);req.end(data);
+    });
+  }
+  it.each(['start','readiness'] as const)('explicit failed original %s creation archives fail and releases only original ID',async boundary=>{
+    const original=await failAfterCapture(boundary);
+    const result=await post(undefined,{},'','register-failed');expect(result.status,result.raw).toBe(200);
+    const row=JSON.parse(result.raw).run;expect(row.stage).toBe('failed-registered');expect(row.creationIntent).toEqual(original.creationIntent);
+    expect(row.resource.creationFailure).toMatchObject({status:'failed'});expect(row.resource.creationFailure.deploymentDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(coordinator.begin({projectId:'p1',branchId:'b1',kind:'deploy',trigger:'manual'}).status).toBe('rejected');
+    const report=await archive();expect(report.status,report.raw).toBe(201);const reportId=JSON.parse(report.raw).report.id;
+    const finished=await post({ownerToken:owner.ownerToken,reportId},{},'','finish');expect(finished.status,finished.raw).toBe(200);
+    expect(JSON.parse(finished.raw).run.terminal.verdict).toBe('fail');
+    expect(coordinator.begin({projectId:'p1',branchId:'b1',kind:'deploy',trigger:'manual'}).status).toBe('rejected');
+    const released=await post(undefined,{},'','release');expect(released.status,released.raw).toBe(200);
+    expect(JSON.parse(released.raw).run.stage).toBe('released');expect(state.getBranch('b1')!.services.init).toBeUndefined();
+    expect(shell.commands).toContain('docker rm '+cid);
+    expect(shell.commands.some(c=>c.startsWith('docker rm -f ')||c.startsWith('docker network rm '))).toBe(false);
+    const disk=new StateService(path.join(root,'state.json'));disk.load();await disk.flush();
+    expect(disk.getState().acceptanceResourceRuns![owner.run.id]).toMatchObject({stage:'released',resource:{creationFailure:{status:'failed'}}});
+  },30_000);
+  it.each(['pass','conditional'])('failed resource refuses %s report before producer/archive',async verdict=>{
+    await failAfterCapture();expect((await post(undefined,{},'','register-failed')).status).toBe(200);
+    const before=Object.keys(state.getState().acceptanceReports||{}).length;
+    const result=await archive(verdict);expect(result.status,result.raw).toBe(409);expect(result.raw).toContain('acceptance_report_mismatch');
+    expect(Object.keys(state.getState().acceptanceReports||{})).toHaveLength(before);
+    expect(kernel.get(owner.run.id)!.stage).toBe('failed-registered');
+    expect(shell.commands.some(c=>c.startsWith('docker rm '))).toBe(false);
+  });
+  it.each(['owner','project','reference','identity','source','unknown','restart'] as const)('failed registration holds original resource on %s mismatch',async kind=>{
+    await failAfterCapture();const row=state.getState().acceptanceResourceRuns![owner.run.id], branch=state.getBranch('b1')!;
+    if(kind==='reference') delete row.creationIntent!.reference;
+    if(kind==='identity') branch.services.init.containerId='d'.repeat(64);
+    if(kind==='source') state.getDeploymentRun(row.creationIntent!.deploymentRunId!)!.operationId='foreign';
+    if(kind==='unknown') shell.addResponsePatternFirst(/^docker inspect --format='/,()=>({stdout:'',stderr:'unknown',exitCode:1}));
+    if(kind==='restart') coordinator.clearForTest();
+    const result=await post(kind==='owner'?{ownerToken:'0'.repeat(64)}:undefined,kind==='project'?{'x-test-project':'foreign'}:{},'','register-failed');
+    expect(result.status,result.raw).toBe(kind==='owner'||kind==='project'?403:409);
+    expect(kernel.get(owner.run.id)!.stage).toBe('active');expect(shell.commands.some(c=>c.startsWith('docker rm '))).toBe(false);
+  });
+  it.each([1,2])('failed registration rechecks original identity after publication ACK %i',async ack=>{
+    await failAfterCapture();const flush=state.flush.bind(state);let injected=false;
+    vi.spyOn(state,'flush').mockImplementation(async()=>{
+      await flush();const disk=JSON.parse(fs.readFileSync(path.join(root,'state.json'),'utf8'));
+      const reached=ack===1?disk.acceptanceResourcePublications?.[owner.run.id]?.draft.stage==='failed-registered'
+        :disk.acceptanceResourceRuns?.[owner.run.id]?.stage==='failed-registered';
+      if(!injected&&reached){injected=true;state.getBranch('b1')!.services.init.containerId='d'.repeat(64);}
+    });
+    const result=await post(undefined,{},'','register-failed');expect(injected).toBe(true);expect(result.status,result.raw).toBe(409);
+    expect(kernel.get(owner.run.id)!.stage).toBe('active');expect(shell.commands.some(c=>c.startsWith('docker rm '))).toBe(false);
+  });
+  it('generic writer cannot publish a first failed registration',async()=>{
+    const row=await failAfterCapture();
+    await expect(state.writeAcceptanceResourceRunDurably({...state.getState().acceptanceResourceRuns![row.id],seq:row.seq+1,stage:'failed-registered'},row.seq,()=>{}))
+      .rejects.toThrow();expect(kernel.get(row.id)!.stage).toBe('active');
+  });
+  it('failed registration still refuses pass metadata forged outside the archive endpoint',async()=>{
+    await failAfterCapture();expect((await post(undefined,{},'','register-failed')).status).toBe(200);
+    const meta=await state.createAcceptanceReportAsync({projectId:'p1',branchId:'b1',commitSha:sha,acceptanceRunId:owner.run.id,
+      title:'Rejected pass',content:'controlled',format:'md',verdict:'pass'});
+    const result=await post({ownerToken:owner.ownerToken,reportId:meta.id},{},'','finish');expect(result.status,result.raw).toBe(409);
+    expect(kernel.get(owner.run.id)!.stage).toBe('failed-registered');expect(shell.commands.some(c=>c.startsWith('docker rm '))).toBe(false);
+  });
+  it('persisted failed registration finishes and releases via a new kernel without inventing executor settlement',async()=>{
+    await failAfterCapture();expect((await post(undefined,{},'','register-failed')).status).toBe(200);
+    const loaded=new StateService(path.join(root,'state.json'));loaded.load();await loaded.flush();
+    const freshCoordinator=new BranchOperationCoordinator(undefined,undefined,undefined,r=>acceptanceReleaseOperationAdmission(loaded,r));
+    const fresh=new AcceptanceResourceRunService(loaded,undefined,undefined,{coordinator:freshCoordinator,
+      lifecycle:new OwnedContainerLifecycle(shell,computeCdsInstanceId(root)),canExecute:()=>true});
+    const registered=fresh.get(owner.run.id)!;expect(registered.stage).toBe('failed-registered');
+    const meta=await fresh.createBoundReport({id:owner.run.id,ownerToken:owner.ownerToken,projectId:'p1',branchId:'b1',commitSha:sha,verdict:'fail'},async fence=>{
+      fence();return loaded.createAcceptanceReportAsync({projectId:'p1',branchId:'b1',commitSha:sha,acceptanceRunId:owner.run.id,
+        title:'Persisted failure',content:'controlled original evidence',format:'md',verdict:'fail'});
+    });
+    expect((await fresh.finish(owner.run.id,owner.ownerToken,meta.id)).terminal!.verdict).toBe('fail');
+    expect((await fresh.release(owner.run.id,owner.ownerToken)).stage).toBe('released');
+    expect(loaded.getBranch('b1')!.services.init).toBeUndefined();await loaded.flush();
+    const final=new StateService(path.join(root,'state.json'));final.load();await final.flush();expect(final.getState().acceptanceResourceRuns![owner.run.id].stage).toBe('released');
+    freshCoordinator.clearForTest();
+  });
+  it('failure registration cannot overtake revoked yet unsettled original executor',async()=>{
+    actualCli();vi.spyOn(container,'waitForContainerAlive').mockResolvedValue(undefined);
+    let enter!:()=>void,release!:()=>void;const entered=new Promise<void>(r=>enter=r),held=new Promise<void>(r=>release=r);
+    vi.spyOn(container,'waitForReadiness').mockImplementationOnce(async()=>{enter();await held;return false});
+    const pending=post();await entered;
+    try{
+      const row=kernel.get(owner.run.id)!;coordinator.cancelBranch('b1','controlled');
+      // Terminal metadata alone is insufficient while the actual awaited executor still runs.
+      state.getDeploymentRun(row.creationIntent!.deploymentRunId!)!.status='failed';state.getDeploymentRun(row.creationIntent!.deploymentRunId!)!.finishedAt=new Date().toISOString();await state.flush();
+      const result=await post(undefined,{},'','register-failed');expect(result.status,result.raw).toBe(409);
+      expect(kernel.get(owner.run.id)!.stage).toBe('active');expect(shell.commands.some(c=>c.startsWith('docker rm '))).toBe(false);
+    }finally{release();await pending;}
+  },30_000);
   it('binds the actual new server run before the first pull and returns its own ID', async () => {
     let observed: any;
     vi.spyOn(WorktreeService.prototype, 'pull').mockImplementationOnce(async () => {

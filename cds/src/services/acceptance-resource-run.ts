@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { BranchEntry, AcceptanceReportMeta, ServiceState } from '../types.js';
+import type { BranchEntry, AcceptanceReportMeta, ServiceState, DeploymentRun } from '../types.js';
 import type { StateService } from './state.js';
 import type { OwnedContainerLifecycle, OwnedContainerReference } from './owned-container-lifecycle.js';
 import type { BranchOperationCoordinator, BranchOperationLease } from './branch-operation-coordinator.js';
@@ -32,8 +32,8 @@ export interface AcceptanceResourceRun {
   profileId: string;
   ownerHash: string;
   startedAt: string;
-  stage: 'active' | 'registered' | 'finished' | 'released';
-  resource?: { configDigest: string; containerId: string; deploymentRunId: string };
+  stage: 'active' | 'registered' | 'failed-registered' | 'finished' | 'released';
+  resource?: { configDigest: string; containerId: string; deploymentRunId: string; creationFailure?: { status: 'failed' | 'cancelled'; deploymentDigest: string } };
   terminal?: { reportId: string; metaDigest: string; bodyDigest: string; verdict: NonNullable<AcceptanceReportMeta['verdict']>; finishedAt: string };
   creationIntent?: { version: 1; phase: 'configured' | 'deploying'; profileDigest: string; startedAt: string; deploymentRunId?: string; operationId?: string; reference?: OwnedContainerReference; serviceDigest?: string };
   releaseIntent?: AcceptanceResourceReleaseIntent;
@@ -59,6 +59,10 @@ const digest = acceptanceResourceDigest;
 export const acceptanceResourceServiceDigest = (service: Readonly<ServiceState>) => digest([
   service.profileId, service.containerId, service.containerName, service.hostPort,
   service.deployedCommitSha, service.deployedImage || null,
+]);
+/** Frozen source identity and terminal fact, excluding mutable diagnostics/events and credentials. */
+export const acceptanceFailureDeploymentDigest = (run: Readonly<DeploymentRun>) => digest([
+  run.id, run.projectId, run.branchId, run.commitSha, run.operationId, run.acceptanceOrigin, run.status, run.startedAt, run.finishedAt,
 ]);
 const bodyDigest = (value: string) => createHash('sha256').update(value).digest('hex');
 const branchIdentity = (b: BranchEntry) => digest([b.id, b.projectId, b.branch, b.createdAt, b.worktreePath]);
@@ -259,7 +263,8 @@ export class AcceptanceResourceRunService {
     return b;
   }
 
-  private resource(run: AcceptanceResourceRun): NonNullable<AcceptanceResourceRun['resource']> {
+  private resource(run: AcceptanceResourceRun, failedRegistration = false): NonNullable<AcceptanceResourceRun['resource']> {
+    const failure = failedRegistration || !!run.resource?.creationFailure;
     const b = this.branch(run);
     const profile = b.extraProfiles?.find(p => p.id === run.profileId);
     const service = b.services[run.profileId];
@@ -272,7 +277,7 @@ export class AcceptanceResourceRunService {
     if (!profile || profile.projectId !== run.projectId || env.IMP_HEALTH_RUN_ID !== run.isolationRunId || env.IMP_TARGET_SHA !== run.targetSha
       || !service || !CONTAINER.test(service.containerId || '') || service.deployedCommitSha !== run.targetSha
       || !deployment || deployment.projectId !== run.projectId || deployment.branchId !== run.branchId
-      || deployment.commitSha !== run.targetSha || deployment.status !== 'running' || deployment.startedAt < run.startedAt) throw new Error('acceptance_resource_unconfirmed');
+      || deployment.commitSha !== run.targetSha || (failure ? !['failed','cancelled'].includes(deployment.status) || !deployment.finishedAt || !Number.isFinite(Date.parse(deployment.finishedAt)) : deployment.status !== 'running') || deployment.startedAt < run.startedAt) throw new Error('acceptance_resource_unconfirmed');
     if (run.creationIntent) {
       const intent = run.creationIntent, reference = intent.reference!;
       if (digest(profile) !== intent.profileDigest || b.extraProfiles?.filter(p => p.id === run.profileId).length !== 1
@@ -282,9 +287,11 @@ export class AcceptanceResourceRunService {
         || reference.writableMounts.length || reference.owner.operationId !== intent.operationId
         || deployment.operationId !== intent.operationId || digest(deployment.acceptanceOrigin) !== digest({ version: 1,
           acceptanceRunId: run.id, profileId: run.profileId, targetSha: run.targetSha, profileDigest: intent.profileDigest, operationId: intent.operationId })
-        || (run.stage === 'active' && service.status !== 'running')) throw new Error('acceptance_resource_unconfirmed');
+        || (!failure && run.stage === 'active' && service.status !== 'running')) throw new Error('acceptance_resource_unconfirmed');
     }
-    return { configDigest: digest([profile, b.profileOverrides?.[run.profileId] || null]), containerId: service.containerId!, deploymentRunId: deployment.id };
+    if (failure && !run.creationIntent) throw new Error('acceptance_resource_unconfirmed');
+    return { configDigest: digest([profile, b.profileOverrides?.[run.profileId] || null]), containerId: service.containerId!, deploymentRunId: deployment.id,
+      ...(failure ? {creationFailure: {status: deployment.status as 'failed' | 'cancelled', deploymentDigest: acceptanceFailureDeploymentDigest(deployment)}} : {}) };
   }
 
   private sameResource(run: AcceptanceResourceRun): void {
@@ -322,20 +329,53 @@ export class AcceptanceResourceRunService {
     return view(row);
   }
 
+  /** Explicit failure-only registration of a saved original create; never converts it into a ready resource. */
+  async registerFailed(id: string, ownerToken: string): Promise<AcceptanceResourceView> {
+    return this.operation(id, async () => {
+      const run = this.owned(id, ownerToken); this.requireResolvedPublication(id);
+      if (run.stage !== 'active' || !run.creationIntent?.reference) throw new Error('acceptance_resource_unconfirmed');
+      const branch = this.branch(run), bindings = this.releaseBindings, runDigest = digest(run);
+      const resource = this.resource(run, true), intent = run.creationIntent;
+      if (!bindings || !bindings.canExecute(branch)) throw new Error('acceptance_creation_unavailable');
+      const scope = {projectId: run.projectId, branchId: run.branchId, acceptanceRunId: id, commitSha: run.targetSha};
+      if (!bindings.coordinator.hasSettledAcceptanceCreation(intent.operationId!,scope)) throw new Error('acceptance_failure_unconfirmed');
+      const decision = bindings.coordinator.begin({...scope, kind:'acceptance-release', trigger:'system',source:'acceptance-resource-release'});
+      if (decision.status !== 'started' || !decision.lease) throw new Error('acceptance_release_busy');
+      const lease = decision.lease; let completed = false;
+      const fence = () => {
+        lease.assertCurrent(); lease.signal?.throwIfAborted(); this.requireResolvedPublication(id);
+        if (!bindings.canExecute(branch) || this.owned(id,ownerToken) !== run || digest(run) !== runDigest || this.branch(run) !== branch
+          || !bindings.coordinator.hasSettledAcceptanceCreation(intent.operationId!,scope)) throw new Error('acceptance_failure_unconfirmed');
+        if (digest(this.resource(run,true)) !== digest(resource)) throw new Error('acceptance_resource_changed');
+      };
+      const verifyActual = async () => {
+        fence(); const actual = await bindings.lifecycle.releaseState(intent.reference!,fence,lease.signal); fence();
+        if (actual !== 'running' && actual !== 'stopped') throw new Error('acceptance_resource_unconfirmed');
+      };
+      try {
+        await verifyActual();
+        const row: AcceptanceResourceRun = {...run,seq:run.seq+1,stage:'failed-registered',resource};
+        await this.state.writeAcceptanceResourceCreationProgressDurably(row,run.seq,fence,verifyActual);
+        completed = true; return view(row);
+      } finally { bindings.coordinator.complete(lease,completed ? 'completed' : lease.signal?.aborted ? 'cancelled' : 'failed'); }
+    });
+  }
+
   private report(run: AcceptanceResourceRun, reportId: string): AcceptanceReportMeta {
     const meta = this.state.getAcceptanceReport(reportId);
     if (!meta || meta.acceptanceRunId !== run.id || meta.projectId !== run.projectId || meta.branchId !== run.branchId
-      || meta.commitSha !== run.targetSha || meta.createdAt < run.startedAt || !['pass', 'conditional', 'fail'].includes(meta.verdict || '')) throw new Error('acceptance_report_mismatch');
+      || meta.commitSha !== run.targetSha || meta.createdAt < run.startedAt || !['pass', 'conditional', 'fail'].includes(meta.verdict || '') || (!!run.resource?.creationFailure && meta.verdict !== 'fail')) throw new Error('acceptance_report_mismatch');
     return meta;
   }
 
   /** Bind an existing report producer; archiving does not publish a terminal receipt. */
-  async createBoundReport(input: { id: string; ownerToken: string; projectId: string; branchId: string; commitSha: string },
+  async createBoundReport(input: { id: string; ownerToken: string; projectId: string; branchId: string; commitSha: string; verdict?: string },
     create: (assertCurrent: () => void) => Promise<AcceptanceReportMeta>): Promise<AcceptanceReportMeta> {
     return this.operation(input.id, async () => {
       const run = this.owned(input.id, input.ownerToken);
       this.requireResolvedPublication(input.id);
-      if (run.stage !== 'registered') throw new Error('acceptance_run_stage');
+      if (!['registered','failed-registered'].includes(run.stage)) throw new Error('acceptance_run_stage');
+      if (run.resource?.creationFailure && input.verdict !== 'fail') throw new Error('acceptance_report_mismatch');
       if (run.projectId !== input.projectId || run.branchId !== input.branchId || run.targetSha !== input.commitSha) throw new Error('acceptance_report_mismatch');
       const branch = this.branch(run);
       const assertCurrent = () => {
@@ -362,7 +402,7 @@ export class AcceptanceResourceRunService {
   private async finishNow(id: string, ownerToken: string, reportId: string): Promise<AcceptanceResourceView> {
     const run = this.owned(id, ownerToken);
     this.requireResolvedPublication(id);
-    if (run.stage !== 'registered') throw new Error('acceptance_run_stage');
+    if (!['registered','failed-registered'].includes(run.stage)) throw new Error('acceptance_run_stage');
     const branch = this.branch(run);
     this.sameResource(run);
     const meta = this.report(run, reportId); const metaDigest = digest(meta);

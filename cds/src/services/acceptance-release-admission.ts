@@ -11,7 +11,7 @@ function pendingRows(state: Reader): readonly AcceptanceResourceRun[] {
 /** Unknown intent shape is occupied too. Neither a revoked lease nor a terminal report proves release. */
 export function acceptanceReleaseBlockReason(state: Reader, branchId: string): string | null {
   const canonical = Object.values(state.getState().acceptanceResourceRuns || {});
-  if ([...canonical, ...pendingRows(state)].some(row => row.branchId === branchId && row.stage === 'active'
+  if ([...canonical, ...pendingRows(state)].some(row => row.branchId === branchId && (row.stage === 'active' || (row.stage !== 'released' && !!row.resource?.creationFailure))
     && Object.prototype.hasOwnProperty.call(row, 'creationIntent'))) return 'acceptance_creation_reconciliation_required';
   return [...canonical.filter(row => row.stage !== 'released'), ...pendingRows(state)]
     .some(row => row.branchId === branchId && Object.prototype.hasOwnProperty.call(row, 'releaseIntent'))
@@ -23,8 +23,17 @@ export function acceptanceReleaseOperationAdmission(state: Reader, request: Bran
   if (!blocked) return null;
   if (blocked === 'acceptance_creation_reconciliation_required') {
     const holders = Object.values(state.getState().acceptanceResourceRuns || {}).filter(row => row.branchId === request.branchId
-      && row.stage === 'active' && Object.prototype.hasOwnProperty.call(row, 'creationIntent'));
+      && (row.stage === 'active' || (row.stage !== 'released' && !!row.resource?.creationFailure)) && Object.prototype.hasOwnProperty.call(row, 'creationIntent'));
     const row = holders[0];
+    if (request.kind === 'acceptance-release' && request.source === 'acceptance-resource-release' && request.profileId == null
+      && holders.length === 1 && !pendingRows(state).some(draft => draft.branchId === request.branchId)
+      && row?.id === request.acceptanceRunId && row.projectId === request.projectId && row.targetSha === request.commitSha
+      && row.creationIntent?.version === 1 && row.creationIntent.phase === 'deploying' && row.creationIntent.reference) {
+      const deployment = state.getState().deploymentRuns?.[row.creationIntent.deploymentRunId || ''];
+      if ((row.stage === 'active' && !row.resource && !row.terminal && !row.releaseIntent
+        && deployment && ['failed','cancelled'].includes(deployment.status))
+        || (row.stage === 'finished' && !!row.resource?.creationFailure && row.terminal?.verdict === 'fail')) return null;
+    }
     // Internal continuation only. The caller must still prove the original capability and actual lease.
     if (request.kind !== 'acceptance-create' || request.source !== 'acceptance-resource-deploy' || request.profileId != null
       || holders.length !== 1 || pendingRows(state).some(draft => draft.branchId === request.branchId)

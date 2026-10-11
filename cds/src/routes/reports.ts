@@ -638,7 +638,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       });
     };
     const meta = boundRequest ? await resourceRuns.createBoundReport({ id: rawRunId as string, ownerToken: rawOwnerToken as string,
-      projectId: projectId!, branchId: branchId!, commitSha: rawCommitSha as string }, createReport) : await createReport();
+      projectId: projectId!, branchId: branchId!, commitSha: rawCommitSha as string, verdict: normVerdict(rawVerdict) || undefined }, createReport) : await createReport();
     return res.status(201).json({ report: meta });
     } catch (err) {
       if (boundRequest) {
