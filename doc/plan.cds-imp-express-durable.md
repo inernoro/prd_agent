@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.57；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.58；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -528,3 +528,9 @@ expected result：损坏压缩与源中断明确失败，客户端断开只释�
 同批无正文反例补修：58ed原固定独立异常9c6/10→58ed10/10、正常72/72、并发4/4、terminal-once12/12局部绿且分列重叠；expanded-v2旧9c22/30→58ed24/30仍6红：两代理compressed HEAD错误502。同HEAD资格根因，Master为58ed回归、Forwarder旧9c已存在。初expanded-v1发送不带CL的HEAD payload被Node400正确拒绝为夹具错误，v2只req.end()并保原件。guide2.74在321271d4先固定RFC9110无正文合同；77f2554ef71b0c1e830586531004d81b649e8a42两入口共用method/status资格，HEAD/204/205不解压/不注入，保原状态及表示encoding、HEAD原representation length。主58ed actualHTTP40条10红/30绿→77f40/40（六HEAD+四no-content，同资格根）；3files130相关/defaultcore0。77固定全量675files9907green/6files19skip/1旧obsolete/139.01s；固定末尾初报原expanded-v2同期待58ed24/30→77f30/30，原异常10/10、正常72/72、并发4/4、once12/12均新源重跑且重叠不相加；另bodyless32原58ed14/32→77f32/32，含原六HEAD重叠与204/205、合法compressed空200控制。Master100ms断开仍close/active2，仅本地HTTP，最终固定manifest已主回读匹配（见本批最终回执）；正式49/视觉/八支仍未执行，P5-06仍todo，目标active。
 
 末尾77最终固定回执已主回读：19选定及完整369runtime Git源、24原件hash全匹配；manifest 9eaefa716b38b5ccf040893b6a6042fbd9cf72ec0c07eb242763210782506931；summary 4ad3eebcc621af2b78038974bd15cb703304f250a1b9cd43edda341ed51e2f0a。原expanded-v2 58ed24/30→77f30/30、bodyless同fixture58ed14/32→77f32/32；正常72/72、异常10/10、并发4/4、once12/12均77实际重跑，组重叠不求和。旧9c/58红及fixture错误完整保留；58定稿19+369/25raw另已主核验。首次<仍非完整HTML/权限，整体buffer和解压成本未治理，真实XXL/Gson/token/心跳/Cron/日志、网关退场、aux image-lifecycle/bootstrap receipt、Master/Daemon/八支/public/双主题/48h与周仍未执行。P5-06为代理前提partial-local、整项todo；41partial-local/8todo、formal49全not-executed/visual N/A，目标active。
+
+## v1.58 阶段耗时页面本地检查点
+
+guide2.75先于实现提交557e87bd0冻结页面显示合同；2efc实际BranchList详情抽屉部署账本消费原列表timingSummary，主体CI job启动前等待/执行、制品/容量，另五阶段native details。GitHub provider与CDS本地分列，闭合并集与work累计分列；缺测/非法值不补0，合法0、失败/取消/open/unknown/截断可见，不造总耗时或自行推开放段。CI完整SHA、当前repo/branch、clock/meaning/workflow/event与safe run/attempt匹配才给固定HTTPS来源和测量，不接rawurl；无新增fetch/timer/权限/命令。主旧77 ledger body加export-only seam实际8SSR全红（一个featureabsence），新fixture另提供当前repo/branch上下文后8绿；4files70相关/core0/web0/vite0；固定full676files9915green/6files19skip/1旧obsolete/135.79s。root hook缺node_modules假绿不计，初编辑脚本substring mismatch已按实际目标修正，非产品红。独立原STUI-L01..24保持期待映射；actual ownedHTTP Router/StateJSON到actual Ledger与Drawer局部44/44，稳定主题复跑46/46包含44及原39，不合计。旧77同summary/context两个显示谓词红为同一featureabsence；只在仓外bundle删Drawer context透传43/44精准红，主源未改。18选定Git源及612完整后端/前端runtime blob/SHA256、42原件hash已主回读一致。前三夹具loader/CSS/周边API结构错误原件保留，非产品红；原light截图捕获150ms过渡，保原图，350ms后三次100mscomputed颜色稳定再拍v2，两主题主尾均实际查看，只有local controlled视觉。无新bounded产品红，但不是24判据全部排列执行；完整BranchList打开手势、/branch-panel、线上登录/令牌/public/真实CI/deploy未执行。仅抽屉，独立/branch-panel未接；旧轮询慢响应并发/竞态未修，执行器/普通终态后cleanup/selfupdateCI仍缺。41partial-local/8todo，正式49未执行，正式视觉N/A，八支未push/deploy，无共享写或自更新。
+
+末尾固定回执：source manifest34bc35057241b83a6fcb90768b9c74eb8a2632ff3e7b6d10e393b35939876a8c；evidence summarydf42cc0af2745ca76c06d647f905095e158b87499e8b6fd06224ac716bff9f0f。主已验证18选定/612 runtime Git源和42独立原件；39/44/46包含关系分列，old77两个谓词与context负控制不新增bug数量。STUI24为映射分母，局部44/46为执行组；正式49仍未执行。稳定v2两主题截图为实际受控Drawer/自有API合成阶段事实，不是完整BranchList/线上视觉或性能。
