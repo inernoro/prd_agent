@@ -1428,6 +1428,7 @@ export interface DeploymentVersionProfile {
   artifactImage: string;
   artifactKind: 'prebuilt-image' | 'managed-image' | 'legacy-runtime';
   prebuiltCommitPolicy?: 'exact';
+  artifactSource?: string;
   reusable: boolean;
   reuseBlockedReason?: string;
   runtimeCommand?: string;

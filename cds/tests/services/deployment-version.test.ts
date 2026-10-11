@@ -54,6 +54,21 @@ describe('DeploymentVersionService', () => {
     expect(changed).not.toBe(a);
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
+  it('source changes affect the config identity', () => {
+    const service = new DeploymentVersionService(stateService);
+    const source = 'https://github.com/md-imp/mdimp'; const later = 'https://github.com/foreign/repo';
+    expect(service.computeConfigHash([profile({ artifactSource: source })], {})).not.toBe(service.computeConfigHash([profile()], {}));
+    expect(service.computeConfigHash([profile({ artifactSource: source })], {})).not.toBe(service.computeConfigHash([profile({ artifactSource: later })], {}));
+  });
+  it.each([undefined, 'https://github.com/md-imp/mdimp'])('version restore preserves declared or absent source %s', async expected => {
+      const service = new DeploymentVersionService(stateService);
+      const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'a'.repeat(40), configHash: 'source-' + expected,
+        profiles: [profile({ artifactSource: expected })], branch, createdByRunId: 'run' });
+      await stateService.flush();
+      const reloaded = new StateService(path.join(tmpDir, 'state.json')); reloaded.load();
+      const restored = new DeploymentVersionService(reloaded).materializeProfiles(reloaded.getDeploymentVersion(version.id)!, [profile({ artifactSource: 'https://github.com/foreign/repo' })])[0];
+      expect(restored.artifactSource).toBe(expected);
+  });
 
   it('includes replacement role, strategy, mount and exact policy in the frozen configuration', () => {
     const service = new DeploymentVersionService(stateService);

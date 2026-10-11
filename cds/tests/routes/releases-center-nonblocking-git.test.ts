@@ -33,6 +33,8 @@ describe('P2 release center HTTP history isolation', () => {
     service.onRunStarted = listener => { hook = listener; subscribe(listener); };
     const shell = new MockShellExecutor(); let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
+    let written!: () => void;
+    const writeCompleted = new Promise<void>(resolve => { written = resolve; });
     let observedOptions: any;
     shell.addResponsePattern(/^git .*$/, async (_match, options) => {
       observedOptions = options; await held;
@@ -43,6 +45,7 @@ describe('P2 release center HTTP history isolation', () => {
       const file = path.join(tmp, '.cds', 'release-commit-times.json');
       await fs.promises.mkdir(path.dirname(file), { recursive: true });
       await fs.promises.writeFile(file, options!.stdin!);
+      written();
       return { stdout: '', stderr: '', exitCode: 0 };
     });
     const app = express(); app.get('/probe', (_req, res) => res.json({ ok: true }));
@@ -61,7 +64,7 @@ describe('P2 release center HTTP history isolation', () => {
       expect(await get(server, '/probe')).toEqual({ status: 200, body: { ok: true } });
       expect(fs.existsSync(storePath)).toBe(false);
       release();
-      for (let i = 0; i < 50 && !fs.existsSync(storePath); i++) await new Promise(resolve => setTimeout(resolve, 5));
+      await writeCompleted;
       expect(JSON.parse(fs.readFileSync(storePath, 'utf8')).entries).toEqual([['p::' + sha,
         { at: '2026-01-02T03:04:05.000Z', subject: '真实元信息', author: '实际提交者' }]]);
     } finally {
