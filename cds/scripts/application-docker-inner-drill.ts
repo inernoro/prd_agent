@@ -30,8 +30,28 @@ async function availablePort(): Promise<number> {
 // this private Unix proxy. After client cancellation the same body is forwarded
 // to the real, initially-empty owned daemon. It is an injected delayed request,
 // not a claim that the daemon naturally reproduced the delay in this run.
+export function numericProbeExitCode(value: unknown): number | null {
+  return typeof value === 'string' && /^-?\d{1,10}$/.test(value) && Number.isSafeInteger(Number(value))
+    && Number(value) >= -2147483648 && Number(value) <= 2147483647 ? Number(value) : null;
+}
+// Keep function symbols only: raw goroutine dumps include arguments and host paths.
+export function removalStackSummary(text: string) {
+  const blocks = text.split(/\n\n/), matches: Array<{ state: string; functions: string[] }> = [];
+  for (const block of blocks) {
+    if (!/^goroutine \d+ \[[^\]]+\]:/m.test(block)) continue;
+    const functions = block.split('\n').map(line => line.match(/^((?:[A-Za-z0-9_-]+[./])+[A-Za-z0-9_-]+(?:\.\(\*?[A-Za-z0-9_]+\))?(?:\.[A-Za-z0-9_]+)*)\(/)?.[1])
+      .filter((name): name is string => Boolean(name) && /^(?:github\.com\/(?:docker\/docker|moby\/moby)\/|os\.|syscall\.|sync\.|internal\/poll\.)/.test(name!));
+    if (!functions.some(name => /(?:cleanupContainer|containerRm|ReleaseLayer|ReleaseRWLayer|RemoveAll|removeAll|graphdriver\/vfs|imageDeleteHelper)/.test(name))) continue;
+    const state = block.match(/^goroutine \d+ \[([^\]]+)\]:/m)?.[1] || 'unknown';
+    matches.push({ state: /^(?:IO wait|syscall|runnable|running|chan receive|select|semacquire|sync\.Mutex\.Lock)(?:, \d+ minutes)?$/.test(state) ? state : 'other',
+      functions: functions.slice(0, 24) });
+    if (matches.length >= 64) break;
+  }
+  return { matched: matches, truncated: matches.length >= 64, inputBytes: Buffer.byteLength(text) };
+}
 export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock',
-  cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect') {
+  cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect',
+  pendingWait?: (containerId: string, elapsedMs: number) => Promise<void>) {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
   const requestTimeline: any[] = []; let requestSequence = 0, traceEnabled = false, traceOverflow = 0;
   const classify = (url = '', method = '') => {
@@ -74,6 +94,22 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         headers: request.headers, timeout: 30_000 }, backend => {
         observe('response-headers', { status: backend.statusCode });
         backend.once('end', () => observe('response-ended'));
+        if (classify(request.url, request.method).kind === 'container-wait') {
+          let bytes = 0; const chunks: Buffer[] = []; const timers: ReturnType<typeof setTimeout>[] = [];
+          backend.on('data', chunk => { bytes += chunk.length; if (bytes <= 4096) chunks.push(chunk); });
+          backend.once('end', () => {
+            let exitCode: number | null = null, errorPresent = false;
+            try { const result = bytes <= 4096 ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+              exitCode = numericProbeExitCode(String(result?.StatusCode ?? '')); errorPresent = Boolean(result?.Error); } catch { /* Numeric evidence remains unknown. */ }
+            observe('wait-terminal', { exitCode, errorPresent, boundedBody: bytes <= 4096 });
+          });
+          const id = classify(request.url, request.method).containerId;
+          if (pendingWait && id && traceEnabled) for (const elapsedMs of [3000, 10_000]) timers.push(setTimeout(() => {
+            if (!backend.destroyed && !backend.complete) void pendingWait(id, elapsedMs).catch(() => observe('wait-diagnostic-failed'));
+          }, elapsedMs));
+          const clear = () => { for (const timer of timers) clearTimeout(timer); };
+          backend.once('end', clear); backend.once('close', clear); response.once('close', clear);
+        }
         const status = String(backend.statusCode || 0); row.replies[status] = (row.replies[status] || 0) + 1;
         if (!delayed) {
           response.writeHead(backend.statusCode || 502, backend.headers);
@@ -230,6 +266,7 @@ async function main(): Promise<void> {
       owner: event.Actor?.Attributes?.['cds.acceptance.owner'] || null,
       probeOperationId: event.Actor?.Attributes?.['cds.agent.probe.operation'] || null,
       probeKind: event.Actor?.Attributes?.['cds.agent.probe'] || null,
+      exitCode: numericProbeExitCode(event.Actor?.Attributes?.exitCode),
       instanceId: event.Actor?.Attributes?.['cds.instance'] || null })) });
     return report.namespaceEventSnapshots.at(-1).events as any[];
   };
@@ -299,7 +336,72 @@ async function main(): Promise<void> {
       try { await probe.connect(); return (await probe.db('admin').command({ hello: 1 })).isWritablePrimary ? true : undefined; }
       catch { return undefined; } finally { await probe.close(); } });
     await docker(['pull', capabilityImage], 600_000);
-    probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'), '/var/run/owned.sock', cancelBoundary);
+    const dockerVersions = JSON.parse(await docker(['version', '--format', '{{json .}}'], 5000));
+    report.ownedDockerVersions = { client: dockerVersions.Client?.Version, clientApi: dockerVersions.Client?.ApiVersion,
+      server: dockerVersions.Server?.Version, serverApi: dockerVersions.Server?.ApiVersion };
+    report.pendingWaitDiagnostics = [];
+    report.pendingWaitDiagnosticOverflow = 0;
+    const daemonRead = (endpoint: string, limit: number) => new Promise<{ status: number; text: string }>((resolve, reject) => {
+      const request = http.get({ socketPath: '/var/run/owned.sock', path: endpoint, timeout: 1000 }, response => {
+        const chunks: Buffer[] = []; let bytes = 0;
+        response.on('data', chunk => { bytes += chunk.length; if (bytes > limit) request.destroy(new Error('diagnostic byte limit')); else chunks.push(chunk); });
+        response.once('end', () => resolve({ status: response.statusCode || 0, text: Buffer.concat(chunks).toString('utf8') }));
+        response.once('error', reject);
+      });
+      request.once('timeout', () => request.destroy(new Error('diagnostic deadline'))); request.once('error', reject);
+    });
+    const counterRead = async (filename: string) => {
+      const handle = await fs.open(filename, 'r');
+      try { const buffer = Buffer.alloc(4096), { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        return Object.fromEntries(buffer.subarray(0, bytesRead).toString('utf8').split('\n')
+          .map(line => line.match(/^([A-Za-z_]+):?\s+(\d+)$/)).filter((line): line is RegExpMatchArray => Boolean(line))
+          .map(line => [line[1], line[2]]));
+      } finally { await handle.close(); }
+    };
+    const diagnosticTasks = new Set<Promise<void>>();
+    probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'), '/var/run/owned.sock', cancelBoundary,
+      async (containerId, scheduledAfterHeaderMs) => {
+        if (report.pendingWaitDiagnostics.length >= 16) { report.pendingWaitDiagnosticOverflow++; return; }
+        const record: any = { containerId, scheduledAfterHeaderMs, at: new Date().toISOString(), readOnly: true,
+          source: 'private-owned-daemon-unix-socket', status: 'pending' };
+        report.pendingWaitDiagnostics.push(record);
+        const task = (async () => {
+          const results = await Promise.allSettled([
+            daemonRead(`/containers/${containerId}/json`, 256 * 1024),
+            daemonRead('/debug/pprof/goroutine?debug=2', 1024 * 1024),
+            counterRead('/proc/1/io'), counterRead('/sys/fs/cgroup/cpu.stat'), counterRead('/sys/fs/cgroup/memory.events'),
+            fs.readFile('/proc/1/comm', 'utf8'),
+          ]);
+          const inspect = results[0];
+          if (inspect.status === 'fulfilled') {
+            record.inspectStatus = inspect.value.status;
+            if (inspect.value.status === 200) { try { const view = JSON.parse(inspect.value.text); const labels = view.Config?.Labels || {};
+              if (view.Id === containerId && ['runtime-validation', 'storage-validation'].includes(labels['cds.agent.probe'])
+                && /^[a-f0-9]{32}$/.test(labels['cds.agent.probe.operation']) && /^[a-f0-9]{12}$/.test(labels['cds.instance'])) {
+                record.probe = { operationId: labels['cds.agent.probe.operation'], instanceId: labels['cds.instance'], kind: labels['cds.agent.probe'],
+                  status: ['created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'].includes(view.State?.Status) ? view.State.Status : 'unknown',
+                  running: typeof view.State?.Running === 'boolean' ? view.State.Running : null, dead: typeof view.State?.Dead === 'boolean' ? view.State.Dead : null,
+                  exitCode: numericProbeExitCode(String(view.State?.ExitCode ?? '')) };
+              }
+            } catch { record.inspectParseFailed = true; } }
+          } else record.inspectUnavailable = true;
+          const stack = results[1];
+          if (stack.status === 'fulfilled') { record.stackStatus = stack.value.status;
+            if (stack.value.status === 200) record.removalStacks = removalStackSummary(stack.value.text); }
+          else record.stackUnavailable = true;
+          for (const [index, key] of [[2, 'daemonIo'], [3, 'outerCpu'], [4, 'outerMemoryEvents']] as const) {
+            const result = results[index]; record[key] = result.status === 'fulfilled' ? result.value : null;
+          }
+          record.daemonPid1Verified = results[5].status === 'fulfilled' && results[5].value.trim() === 'dockerd';
+          if (!record.daemonPid1Verified) record.daemonIo = null;
+          record.status = 'finished'; record.finishedAt = new Date().toISOString();
+        })();
+        diagnosticTasks.add(task); try { await task; } finally { diagnosticTasks.delete(task); }
+      });
+    // Only observer reads are awaited at outer cleanup; they cannot change the
+    // original command deadline, original stop verdict or container removal.
+    const originalClose = probeProxy.close;
+    probeProxy.close = async () => { await originalClose(); await Promise.allSettled([...diagnosticTasks]); };
     report.cancellationBoundary = cancelBoundary;
     // Check the exact pinned image through the same socket used by the original
     // app before fault injection. This does not replace its own safety probe.

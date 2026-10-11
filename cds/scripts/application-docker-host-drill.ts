@@ -89,7 +89,7 @@ async function main(): Promise<void> {
       try {
         const info = JSON.parse(await docker(['exec', containerId, 'docker', '--host', 'unix:///var/run/owned.sock', 'info', '--format', '{{json .}}'], 5000));
         assert.ok(info.ID); assert.notEqual(info.ID, report.primaryDaemon.id);
-        report.isolatedDaemon = { id: info.ID, architecture: info.Architecture, driver: info.Driver, cpus: info.NCPU, memoryBytes: info.MemTotal };
+        report.isolatedDaemon = { id: info.ID, serverVersion: info.ServerVersion, architecture: info.Architecture, driver: info.Driver, cpus: info.NCPU, memoryBytes: info.MemTotal };
         break;
       } catch (error) { if (performance.now() >= deadline) throw error; await sleep(250); }
     }

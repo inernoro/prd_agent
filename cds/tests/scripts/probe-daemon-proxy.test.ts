@@ -6,7 +6,7 @@ import net from 'node:net';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { createProbeDaemonProxy } from '../../scripts/application-docker-inner-drill.js';
+import { createProbeDaemonProxy, numericProbeExitCode, removalStackSummary } from '../../scripts/application-docker-inner-drill.js';
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-wire-'));
@@ -38,6 +38,34 @@ async function attach(socketPath: string) {
 }
 
 describe('owned Docker probe proxy wire conformance', () => {
+  it('keeps numerical exit evidence and removal symbols without retaining arbitrary event or stack contents', () => {
+    expect(numericProbeExitCode('0')).toBe(0); expect(numericProbeExitCode('137')).toBe(137);
+    for (const value of ['secret-value', '0 secret-value', '2147483648', '', null, 0]) expect(numericProbeExitCode(value)).toBeNull();
+    const result = removalStackSummary('goroutine 12 [syscall]:\nos.removeAll(0x123, "secret-value")\n\t/private/secret-value.go:12\ngithub.com/docker/docker/daemon.(*Daemon).cleanupContainer(0x123, 0x456)\n\t/owned/secret-value.go:5\n\ngoroutine 15 [chan receive]:\nmain.credentials("secret-value")\n');
+    expect(result.matched).toEqual([{ state: 'syscall', functions: ['os.removeAll', 'github.com/docker/docker/daemon.(*Daemon).cleanupContainer'] }]);
+    expect(JSON.stringify(result)).not.toContain('secret-value'); expect(JSON.stringify(result)).not.toContain('0x123');
+  });
+  it('forwards the exact wait result while recording only its numerical terminal outcome', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-wait-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const sockets = new Set<net.Socket>(), body = JSON.stringify({ StatusCode: 23, Error: { Message: 'secret-value' } });
+    const backend = http.createServer((_request, response) => { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(body); });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const samples: unknown[] = [], proxy = await createProbeDaemonProxy(proxyPath, backendPath, 'client-disconnect', async (...args) => { samples.push(args); });
+    proxy.enableTrace();
+    try {
+      const actual = await new Promise<string>((resolve, reject) => {
+        const request = http.request({ socketPath: proxyPath, method: 'POST', path: '/v1.53/containers/' + 'a'.repeat(64) + '/wait?condition=removed' }, response => {
+          let text = ''; response.on('data', chunk => { text += chunk; }); response.once('end', () => resolve(text)); response.once('error', reject);
+        }); request.once('error', reject); request.end();
+      });
+      expect(actual).toBe(body); expect(samples).toEqual([]);
+      expect(proxy.requestTimeline).toContainEqual(expect.objectContaining({ phase: 'wait-terminal', exitCode: 23, errorPresent: true, boundedBody: true }));
+      expect(JSON.stringify(proxy.requestTimeline)).not.toContain('secret-value');
+    } finally { await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  });
   it.each(['client-disconnect', 'daemon-created'] as const)('retains the original create body and cancellation order at %s boundary', async boundary => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-create-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
