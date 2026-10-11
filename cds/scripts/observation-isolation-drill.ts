@@ -28,7 +28,7 @@ import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts', 'scripts/observation-isolation-drill.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -81,6 +81,7 @@ async function main(): Promise<void> {
   const report: Record<string, any> = {
     schema: 1, startedAt: new Date().toISOString(), head: execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceHashes: Object.fromEntries(await Promise.all(sourcePaths.map(async file => [file, createHash('sha256').update(await fs.readFile(file)).digest('hex')]))),
+    compiledFactoryHashes: compiled ? Object.fromEntries(await Promise.all(['isolated-shell-executor', 'observation-supervisor-process', 'observation-executor-process', 'observation-process-launcher', 'observation-process-group', 'observation-process', 'shell-executor'].map(async name => [name, createHash('sha256').update(await fs.readFile(`dist/services/${name}.js`)).digest('hex')]))) : {},
     mode: compiled ? 'compiled' : 'source', scope: 'independent bounded observation processes and real owned Docker reads; no application deployment or public performance acceptance',
     actualDockerReadVerified: false, actualIndependentProcessesVerified: false, actualDeploymentVerified: false, performanceVerified: false,
     verdict: 'failed', checks: [], ownedContainerRemoved: false, isolatedFilesRemoved: false,
@@ -141,6 +142,54 @@ async function main(): Promise<void> {
     report.processIsolation = { masterPid: process.pid, masterRss, retainedStateBytes: masterState.length, warmStats, afterQuery: shell.getStats(), queryParentPid: parentPid };
     report.actualIndependentProcessesVerified = true;
     report.checks.push({ name: 'large-master-independent-query-parent-and-bounded-actor-memory', passed: true });
+
+    report.stage = 'compiled-default-factory-recovery';
+    report.factoryRecoveries = [];
+    for (const [lane, pool, healthy] of [['observation', shell, operationShell], ['operation', operationShell, shell]] as const) {
+      const before = pool.getStats();
+      assert.ok(before.factoryPid && before.supervisorPid && before.factoryPid !== before.supervisorPid);
+      const parentBefore = execFileSync('ps', ['-o', 'ppid=', '-p', String(before.factoryPid)], { encoding: 'utf8' }).trim();
+      assert.equal(Number(parentBefore), before.supervisorPid);
+      const executions = path.join(temp, `factory-${lane}-once`), childFile = path.join(temp, `factory-${lane}-child`);
+      let failure: string | undefined;
+      const request = pool.exec(`echo once >> ${shellQuoteArg(executions)}; sleep 30 & echo $! > ${shellQuoteArg(childFile)}; wait`,
+        { executionLane: lane, timeout: 15_000, beforeStart: () => {} }).catch(error => { failure = error.code; });
+      const startedDeadline = performance.now() + 5000;
+      let childPid = 0;
+      while (performance.now() < startedDeadline) {
+        try { childPid = Number(await fs.readFile(childFile, 'utf8')); if (childPid > 1) break; } catch { /* 等本次自有命令启动 */ }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.ok(childPid > 1);
+      const faultAt = performance.now(); process.kill(-before.factoryPid, 'SIGKILL');
+      const healthyResult = await healthy.exec('echo healthy', { executionLane: lane === 'observation' ? 'operation' : 'observation', beforeStart: () => {}, timeout: 5000 });
+      assert.equal(healthyResult.stdout.trim(), 'healthy');
+      await request; assert.equal(failure, 'unavailable');
+      const cleaned = [before.factoryPid, ...before.actors.map(actor => actor.pid), childPid].map(pid => {
+        let state = '';
+        try { state = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim(); }
+        catch (error: any) { assert.equal(error.status, 1); assert.equal(String(error.stdout || '').trim(), ''); }
+        assert.match(state, /^(Z.*)?$/); return { pid, state };
+      });
+      const recoverDeadline = performance.now() + 5000;
+      while ((pool.getStats().unavailable || !pool.getStats().factoryPid || pool.getStats().factoryPid === before.factoryPid) && performance.now() < recoverDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      const after = pool.getStats();
+      assert.equal(after.unavailable, false); assert.equal(after.supervisorPid, before.supervisorPid);
+      assert.ok(after.factoryPid && after.factoryPid !== before.factoryPid);
+      assert.equal(Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(after.factoryPid)], { encoding: 'utf8' }).trim()), before.supervisorPid);
+      const recovered = await pool.exec('echo recovered', { executionLane: lane, beforeStart: () => {}, timeout: 5000 });
+      assert.equal(recovered.stdout.trim(), 'recovered'); assert.equal((await fs.readFile(executions, 'utf8')).trim(), 'once');
+      for (const metric of [after.factoryMetrics, after.supervisorMetrics]) {
+        assert.ok(metric && metric.rss > 0 && metric.rss < masterRss && metric.heapLimit > 0 && metric.heapLimit <= 192 * 1024 * 1024);
+      }
+      assert.equal(after.maxQueued, before.maxQueued); assert.equal(after.maxBytes, before.maxBytes);
+      assert.equal(after.reservedCleanup, before.reservedCleanup); assert.equal(after.reservedCleanupBytes, before.reservedCleanupBytes);
+      report.factoryRecoveries.push({ lane, before, after, cleaned, healthyWhileRecovering: true, previousTaskExecutions: 1,
+        recoveryElapsedMs: performance.now() - faultAt, scope: 'actual compiled default pool; factory replacement from unchanged private supervisor, no replay or full RSS hard-limit acceptance' });
+    }
+    report.checks.push({ name: 'compiled-default-observation-and-operation-factory-recovery-after-confirmed-cleanup', passed: true });
 
     report.stage = 'compiled-owned-release-git-read';
     const commitClockModule = compiled ? await import(new URL('../dist/services/release-commit-clock.js', import.meta.url).href) as typeof import('../src/services/release-commit-clock.js') : { ReleaseCommitClock };
@@ -660,7 +709,7 @@ if(args.includes('-f')){process.stdout.write('x'.repeat(128*1024)+'\n');emit('ow
     if (logServer) { logServer.closeAllConnections(); await new Promise<void>(resolve => logServer!.close(() => resolve())); }
     try { await Promise.all([dockerEvents.stop(), infraEvents.stop(), userLogHub.close(), journalMonitor?.stop()]); }
     catch { report.verdict = 'failed'; process.exitCode = 1; }
-    const processRoots = [operationShell.getStats().factoryPid, ...operationShell.getStats().actors.map(actor => actor.pid), shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
+    const processRoots = [operationShell.getStats().supervisorPid, shell.getStats().supervisorPid, operationShell.getStats().factoryPid, ...operationShell.getStats().actors.map(actor => actor.pid), shell.getStats().factoryPid, ...shell.getStats().actors.map(actor => actor.pid), startupStreams.getStats().factoryPid, ...startupStreams.getStats().actors.map(actor => actor.pid), eventStreams.getStats().factoryPid, ...eventStreams.getStats().actors.map(actor => actor.pid), userLogStreams.getStats().factoryPid, ...userLogStreams.getStats().actors.map(actor => actor.pid), journalStreams.getStats().factoryPid, ...journalStreams.getStats().actors.map(actor => actor.pid)].filter((pid): pid is number => !!pid);
     try {
       await Promise.all([operationShell.close(), shell.close(), startupStreams.close(), eventStreams.close(), userLogStreams.close(), journalStreams.close()]);
       report.closedProcessStates = processRoots.map(pid => {

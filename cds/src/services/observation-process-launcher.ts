@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
-export function launchObservationProcess(kind: 'observation-process' | 'observation-executor-process', owner: string): ChildProcess {
+export function launchObservationProcess(kind: 'observation-process' | 'observation-executor-process' | 'observation-supervisor-process', owner: string): ChildProcess {
   if (!/^cds-observation-[a-f0-9]{32}$/.test(owner)) throw new Error('Invalid observation process owner');
   const compiled = new URL(`./${kind}.js`, import.meta.url);
   const script = existsSync(compiled)

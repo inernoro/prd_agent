@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import { getHeapStatistics } from 'node:v8';
 import { launchObservationProcess } from './observation-process-launcher.js';
 import { cleanObservationGroup } from './observation-process-group.js';
 
@@ -12,7 +13,10 @@ function startObservationExecutorProcess(): void {
   let closing = false;
   const owner = process.argv[1];
   if (!/^cds-observation-[a-f0-9]{32}$/.test(owner || '')) return;
-  const send = (message: object): void => { if (process.connected) process.send!(message); };
+  const send = (message: object): void => {
+    if (process.connected) process.send!({ ...message, ...('type' in message && ['ready', 'actor-ready', 'result', 'actor-exited'].includes(String(message.type))
+      ? { factoryMetrics: { rss: process.memoryUsage().rss, heapLimit: getHeapStatistics().heap_size_limit } } : {}) });
+  };
   const fatal = (): void => {
     if (closing) return;
     closing = true;

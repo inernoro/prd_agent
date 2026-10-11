@@ -246,6 +246,57 @@ describe('IsolatedShellExecutor 真实进程', () => {
     await expect(e.exec('echo no-retry', observation)).rejects.toMatchObject({ code: 'unavailable' });
   });
 
+  it.each(['observation', 'operation'] as const)('%s默认工厂失效后由预热监督进程恢复，新请求不重放旧任务', async (lane) => {
+    const e = executor({ isolatedLane: lane, concurrency: 2 }); await e.start();
+    const dir = await directory(), executions = path.join(dir, 'once.txt'), marker = path.join(dir, 'started.txt');
+    const stats = e.getStats(); const originalFactory = stats.factoryPid!, supervisor = stats.supervisorPid!;
+    expect(supervisor).toBeGreaterThan(1); expect(originalFactory).not.toBe(supervisor);
+    const failed = expect(e.exec(`echo once >> ${quote(executions)}; touch ${quote(marker)}; sleep 30`, {
+      executionLane: lane, timeout: 5000, beforeStart: () => {},
+    })).rejects.toMatchObject({ code: 'unavailable' });
+    await waitFor(async () => { try { await access(marker); return true; } catch { return false; } });
+    process.kill(-originalFactory, 'SIGKILL'); await failed;
+    await waitFor(() => !e.getStats().unavailable && !!e.getStats().factoryPid && e.getStats().factoryPid !== originalFactory);
+    const after = e.getStats(); expect(after.supervisorPid).toBe(supervisor);
+    const factoryParent = await new ShellExecutor().exec(`ps -o ppid= -p ${after.factoryPid}`);
+    expect(Number(factoryParent.stdout.trim())).toBe(supervisor);
+    expect((await e.exec('echo recovered', { executionLane: lane, beforeStart: () => {} })).stdout.trim()).toBe('recovered');
+    expect((await readFile(executions, 'utf8')).trim()).toBe('once');
+  });
+
+  it('默认工厂连续故障在原30秒窗口内最多创建三次，窗口后恢复', async () => {
+    const e = executor({ concurrency: 1 }); await e.start();
+    const supervisor = e.getStats().supervisorPid!;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const original = e.getStats().factoryPid!; process.kill(-original, 'SIGKILL');
+      await waitFor(() => !e.getStats().unavailable && !!e.getStats().factoryPid && e.getStats().factoryPid !== original);
+    }
+    process.kill(-e.getStats().factoryPid!, 'SIGKILL');
+    await waitFor(() => e.getStats().unavailable && !e.getStats().factoryPid);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    expect(e.getStats()).toMatchObject({ unavailable: true, supervisorPid: supervisor });
+    expect(e.getStats().factoryPid).toBeUndefined();
+    await expect(e.exec('echo during-backoff', observation)).rejects.toMatchObject({ code: 'unavailable' });
+    const end = performance.now() + 35_000;
+    while (e.getStats().unavailable && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 50));
+    expect(e.getStats()).toMatchObject({ unavailable: false, supervisorPid: supervisor });
+    expect((await e.exec('echo recovered-after-limit', observation)).stdout.trim()).toBe('recovered-after-limit');
+  }, 40_000);
+
+  it('监督进程自身故障明确停止，所属旧任务清理后不会从Master自动重放', async () => {
+    const e = executor({ concurrency: 1 }); await e.start();
+    const dir = await directory(), started = path.join(dir, 'started');
+    const previous = e.getStats();
+    const rejected = expect(e.exec(`touch ${quote(started)}; sleep 30`, observation)).rejects.toMatchObject({ code: 'unavailable' });
+    await waitFor(async () => { try { await access(started); return true; } catch { return false; } });
+    process.kill(-previous.supervisorPid!, 'SIGKILL'); await rejected;
+    await expect(e.exec('echo no-master-replay', observation)).rejects.toMatchObject({ code: 'unavailable' });
+    for (const pid of [previous.supervisorPid!, previous.factoryPid!, ...previous.actors.map(actor => actor.pid)]) {
+      const result = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);
+      expect(result.stdout.trim()).toMatch(/^(Z.*)?$/);
+    }
+  });
+
   it('独立命令关闭空闲观测池后仍执行清理回执，不提前以成功退出', async () => {
     const dir = await directory();
     const receipt = path.join(dir, 'closed.receipt');

@@ -29,7 +29,7 @@ const modules = async () => ({
 });
 const sourcePaths = ['src/routes/branches.ts', 'src/scheduler/executor-registry.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts',
   'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/deployment-intent.ts',
-  'src/services/deployment-run.ts', 'src/services/state.ts', 'src/services/container.ts', 'src/services/isolated-shell-executor.ts',
+  'src/services/deployment-run.ts', 'src/services/state.ts', 'src/services/container.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process.ts', 'src/services/observation-process-group.ts',
   'src/services/shell-executor.ts', 'src/executor/routes.ts', 'src/services/worktree.ts', 'src/services/deployment-version.ts', 'src/services/env-provenance.ts', 'scripts/artifact-admission-drill.ts'];
 
 async function acceptWorker(): Promise<void> {

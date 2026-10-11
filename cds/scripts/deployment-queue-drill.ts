@@ -13,7 +13,7 @@ const sourcePaths = ['src/routes/branches.ts', 'src/services/container.ts', 'src
   'src/services/deployment-input.ts', 'src/services/deployment-version.ts', 'src/services/artifact-admission.ts',
   'src/services/artifact-admission-wait.ts', 'src/services/worktree.ts', 'src/services/deploy-runtime.ts',
   'src/services/build-gate.ts', 'src/services/deploy-layer-runner.ts', 'src/services/env-provenance.ts',
-  'src/services/isolated-shell-executor.ts', 'src/services/shell-executor.ts', 'scripts/deployment-queue-drill.ts'];
+  'src/services/isolated-shell-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'scripts/deployment-queue-drill.ts'];
 const m = {
   router: await import(new URL('../dist/routes/branches.js', import.meta.url).href) as typeof import('../src/routes/branches.js'),
   container: await import(new URL('../dist/services/container.js', import.meta.url).href) as typeof import('../src/services/container.js'),

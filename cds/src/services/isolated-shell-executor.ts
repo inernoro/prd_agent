@@ -46,8 +46,14 @@ interface Job {
 export class IsolatedShellExecutor implements IShellExecutor {
   private factory?: ChildProcess;
   private factoryExit?: Promise<void>;
+  private factoryProcessPid?: number;
+  private factoryGeneration = 0;
+  private factoryMetrics?: { rss: number; heapLimit: number };
+  private supervisorMetrics?: { rss: number; heapLimit: number };
+  private readonly supervised: boolean;
   private ready = false;
   private unavailable = false;
+  private failed = false;
   private closed = false;
   private nextId = 0;
   private readonly owner = `cds-observation-${randomBytes(16).toString('hex')}`;
@@ -93,7 +99,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     if (!Number.isSafeInteger(this.reservedCleanupBytes) || (this.reservedCleanup > 0
       ? this.maxQueued <= this.reservedCleanup || this.reservedCleanupBytes < 1 || this.reservedCleanupBytes >= this.maxBytes
       : this.reservedCleanupBytes !== 0)) throw new Error('Invalid cleanup admission reservation');
-    this.processFactory = config.processFactory ?? (owner => launchObservationProcess('observation-executor-process', owner));
+    this.supervised = !config.processFactory;
+    this.processFactory = config.processFactory ?? (owner => launchObservationProcess('observation-supervisor-process', owner));
   }
   private executionError(code: FailureCode): ObservationExecutionError {
     return this.isolatedLane === 'operation' ? new OperationExecutionError(code) : new ObservationExecutionError(code);
@@ -169,17 +176,32 @@ export class IsolatedShellExecutor implements IShellExecutor {
     });
   }
 
-  getStats(): { active: number; activeCleanup: number; reservedCleanup: number; reservedCleanupBytes: number; maxQueued: number; maxBytes: number; queued: number; queuedCleanup: number; bytes: number; cleanupBytes: number; unavailable: boolean; factoryPid?: number; actors: Array<{ pid: number; rss?: number; heapLimit?: number }> } {
+  getStats(): { active: number; activeCleanup: number; reservedCleanup: number; reservedCleanupBytes: number; maxQueued: number; maxBytes: number; queued: number; queuedCleanup: number; bytes: number; cleanupBytes: number; unavailable: boolean; factoryPid?: number; supervisorPid?: number; factoryMetrics?: { rss: number; heapLimit: number }; supervisorMetrics?: { rss: number; heapLimit: number }; actors: Array<{ pid: number; rss?: number; heapLimit?: number }> } {
     return { active: this.active, activeCleanup: this.activeCleanup, reservedCleanup: this.reservedCleanup, reservedCleanupBytes: this.reservedCleanupBytes,
       maxQueued: this.maxQueued, maxBytes: this.maxBytes, queued: this.queue.length, queuedCleanup: this.queue.filter(job => job.cleanup).length,
-      bytes: this.bytes, cleanupBytes: this.cleanupBytes, unavailable: this.unavailable, factoryPid: this.factory?.pid,
-      actors: [...this.actors.values()].map(actor => ({ pid: actor.pid, ...actor.metrics })) };
+      bytes: this.bytes, cleanupBytes: this.cleanupBytes, unavailable: this.unavailable, factoryPid: this.supervised ? this.factoryProcessPid : this.factory?.pid, supervisorPid: this.supervised ? this.factory?.pid : undefined,
+      factoryMetrics: this.factoryMetrics, supervisorMetrics: this.supervisorMetrics, actors: [...this.actors.values()].map(actor => ({ pid: actor.pid, ...actor.metrics })) };
   }
 
   private onMessage(message: any): void {
+    if (this.supervised) {
+      if (message.type === 'factory-started') {
+        if (!Number.isSafeInteger(message.generation) || message.generation <= this.factoryGeneration || !Number.isSafeInteger(message.pid) || message.pid <= 1) return;
+        this.factoryGeneration = message.generation; this.factoryProcessPid = message.pid; this.supervisorMetrics = message.supervisorMetrics; this.factoryMetrics = undefined;
+        return;
+      }
+      if (message.generation !== this.factoryGeneration) return;
+      if (message.factoryMetrics) this.factoryMetrics = message.factoryMetrics;
+      if (message.type === 'factory-resetting') { this.ready = false; this.unavailable = true; return; }
+      if (message.type === 'factory-cleaned') {
+        this.actors.clear(); this.factoryProcessPid = undefined; this.factoryMetrics = undefined; this.supervisorMetrics = message.supervisorMetrics;
+        for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
+        return;
+      }
+    }
     if (message.type === 'actor' && Number.isInteger(message.pid) && message.pid > 1 && message.pid !== process.pid) {
       this.actors.set(message.index, { pid: message.pid });
-      if (!this.closed && !this.unavailable) this.send({ type: 'actor-registered', index: message.index, pid: message.pid });
+      if (!this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)) this.send({ type: 'actor-registered', index: message.index, pid: message.pid });
       return;
     }
     if (message.type === 'actor-exited') {
@@ -192,7 +214,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
       return;
     }
     if (message.type === 'fatal') { void this.failPool(); return; }
-    if (message.type === 'ready' && !this.closed && !this.unavailable) {
+    if (message.type === 'ready' && !this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)) {
+      this.unavailable = false;
       this.ready = true; clearTimeout(this.startTimer); this.startResolve?.(); this.drain(); return;
     }
     const job = this.jobs.get(message.id);
@@ -262,6 +285,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     this.stopping = (async () => {
       const groups = new Set([...this.actors.values()].map(actor => actor.pid));
       if (this.factory?.pid) groups.add(this.factory.pid);
+      if (this.factoryProcessPid) groups.add(this.factoryProcessPid);
       for (const pid of groups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* 下面确认清理 */ } }
       await this.factoryExit;
       // 创建回执尚未送达的启动进程不能承接任务；仍按私有归属找回并清理。
@@ -279,8 +303,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     return this.stopping;
   }
   private async failPool(): Promise<void> {
-    if (this.unavailable) return;
-    this.unavailable = true;
+    if (this.failed) return;
+    this.failed = true; this.unavailable = true;
     let code: FailureCode = 'unavailable';
     try { await this.stopPool(); } catch { code = 'cleanup'; }
     this.startReject?.(this.executionError(code));
