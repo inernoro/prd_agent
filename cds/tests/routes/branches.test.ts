@@ -23,6 +23,7 @@ import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
+import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -4147,6 +4148,80 @@ describe('Branch Routes', () => {
         expect(second.headers['x-cds-deployment-run-id']).toBe(original.headers['x-cds-deployment-run-id']);
         expect(actualRuns).toBe(1); expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
       } finally { release(); await first; setBuildGateHostLoadProvider(null); }
+    });
+
+    it.each(['/deploy', '/deploy/api'])('短SHA%s通过实际Git固定完整身份，模板与原等待记录不借旧CI或HEAD', async (endpoint) => {
+      const repo = path.join(tmpDir, 'identity-project'); fs.mkdirSync(repo);
+      const git = (...args: string[]) => execFileSync('/usr/bin/git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+      git('init', '-q'); git('config', 'user.name', 'Owned'); git('config', 'user.email', 'owned@example.test');
+      fs.writeFileSync(path.join(repo, 'owned.txt'), 'first'); git('add', '.'); git('commit', '-qm', '自有目标'); const target = git('rev-parse', 'HEAD');
+      fs.writeFileSync(path.join(repo, 'owned.txt'), 'second'); git('commit', '-qam', '自有后续'); const actualHead = git('rev-parse', 'HEAD');
+      stateService.addProject({ id: 'identity-project', slug: 'identity-project', name: 'Owned', repoPath: repo, cloneStatus: 'ready' } as any);
+      stateService.addBuildProfile({ id: 'api', projectId: 'identity-project', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
+      const id = 'identity-full'; stateService.addBranch({ id, projectId: 'identity-project', branch: 'owned-target', status: 'running', services: {},
+        worktreePath: repo, createdAt: new Date().toISOString(), githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40) });
+      const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
+      const reads = new IsolatedShellExecutor(operation); await Promise.all([reads.start(), operation.start()]);
+      Object.assign(mock, { execBackgroundObservation: reads.execBackgroundObservation.bind(reads) });
+      mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}${endpoint}`, { commitSha: target.slice(0, 7).toUpperCase() });
+        expect(response.status).toBe(200); await requestArtifactWaitRefresh(branchOperationCoordinator);
+        const run = deploymentRunService.get(String(response.headers['x-cds-deployment-run-id']))!;
+        expect(run).toMatchObject({ status: 'queued', commitSha: target });
+        expect(branchOperationCoordinator.getArtifactWaiters()[0]).toMatchObject({ pending: { request: { commitSha: target, commitPinned: true } },
+          input: { targetCommitSha: target, artifactAdmission: { targetCommitSha: target, reason: 'missing' } } });
+        expect(mock.commands.filter(command => command.startsWith('docker pull '))).toEqual([`docker pull 'ghcr.io/owned/api:sha-${target}'`]);
+        const repeated = await request(server, 'POST', `/api/branches/${id}${endpoint}`, { commitSha: target });
+        expect(repeated.headers['x-cds-deployment-run-id']).toBe(run.id); expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
+        expect(git('rev-parse', 'HEAD')).toBe(actualHead); expect(git('status', '--porcelain')).toBe('');
+      } finally { await Promise.all([reads.close(), operation.close()]); }
+    });
+
+    it.each(['/deploy', '/deploy/api'])('短SHA%s无法确认时明确未受理，不造永远无法恢复的等待，不触发部署', async (endpoint) => {
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
+      const id = 'identity-unknown'; stateService.addBranch({ id, projectId: 'default', branch: 'owned-target', status: 'running', services: {},
+        worktreePath: tmpDir, createdAt: new Date().toISOString(), githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40) });
+      Object.assign(mock, { execBackgroundObservation: async () => ({ stdout: '', stderr: 'ambiguous or unavailable', exitCode: 1 }) });
+      const before = mock.commands.length;
+      const response = await request(server, 'POST', `/api/branches/${id}${endpoint}`, { commitSha: 'abcdef1' });
+      expect(response.status).toBe(503); expect(response.body).toMatchObject({ error: 'target_identity_unavailable' });
+      expect(deploymentRunService.list({ branchId: id })).toEqual([]); expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]);
+      expect(mock.commands.slice(before)).toEqual([]); expect(stateService.getBranch(id)?.status).toBe('running');
+    });
+
+    it.each(['new-target', 'stop', 'owner', 'pause'])('短SHA解析期间%s变化使旧请求不能迟到受理或覆盖新目标', async (change) => {
+      const target = 'abcdef1234567890abcdef1234567890abcdef12', newer = 'b'.repeat(40);
+      stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
+        prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
+      const id = 'identity-inflight'; stateService.addBranch({ id, projectId: 'default', branch: 'owned-target', status: 'running', services: {},
+        worktreePath: tmpDir, createdAt: new Date().toISOString(), githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40) });
+      let release!: () => void, entered!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+      Object.assign(mock, { execBackgroundObservation: async (_command: string, options: any) => {
+        options?.beforeStart?.(); entered(); await gate; options?.onData?.(target, 'stdout'); return { stdout: '', stderr: '', exitCode: 0 };
+      } });
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      const pendingResponse = request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target.slice(0, 7) });
+      await started;
+      let newestRun: string | undefined;
+      if (change === 'new-target') {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: newer });
+        expect(response.status).toBe(200); newestRun = String(response.headers['x-cds-deployment-run-id']);
+      } else if (change === 'stop') {
+        expect((await request(server, 'POST', `/api/branches/${id}/stop`)).status).toBe(200);
+      } else if (change === 'owner') {
+        stateService.getBranch(id)!.projectId = 'different-owner';
+      } else stateService.getProject('default')!.paused = true;
+      release(); const rejected = await pendingResponse;
+      expect(rejected.status).toBe(change === 'pause' ? 423 : 409);
+      const runs = deploymentRunService.list({ branchId: id });
+      expect(runs).toHaveLength(change === 'new-target' ? 1 : 0);
+      if (newestRun) expect(deploymentRunService.get(newestRun)).toMatchObject({ commitSha: newer, status: 'queued' });
+      expect(mock.commands.some(command => /^docker run|git fetch|worktree add/.test(command))).toBe(false);
     });
 
     it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {

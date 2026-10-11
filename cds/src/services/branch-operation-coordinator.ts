@@ -288,11 +288,59 @@ export class BranchOperationCoordinator {
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
   private readonly pendingReplayClaims = new Map<string, { pending: PendingWebhookDeploy; expiresAt: number }>();
   private readonly deploymentInputs = new Map<string, DeploymentInputSnapshot>();
+  private readonly artifactTargetReads = new Map<string, { request: BranchOperationRequest; readers: Set<object> }>();
   private generations = new Map<string, number>();
 
   private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
 
   constructor(private readonly events?: ServerEventLogSink | null) {}
+
+  /** 受理前的只读身份解析有资格围栏，不持有执行lease或创建部署run。 */
+  beginArtifactTargetRead(request: BranchOperationRequest): { assertCurrent: () => void; release: () => void } {
+    if (!['deploy', 'deploy-profile'].includes(request.kind) || !/^[0-9a-f]{7,39}$/i.test(request.commitSha || '')) {
+      throw new Error('短提交解析仅支持明确的部署提交');
+    }
+    const key = this.operationKey(request);
+    const same = this.artifactTargetReads.get(key);
+    const equivalent = same?.request.commitSha?.toLowerCase() === request.commitSha?.toLowerCase();
+    for (const item of this.artifactTargetReads.values()) {
+      if (this.operationsConflict(request, item.request) && priorityOf(item.request) > priorityOf(request)
+        && !this.sameArtifactTarget(request, item.request)) {
+        throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-priority');
+      }
+    }
+    if ([...this.artifactTargetReads.values()].reduce((sum, item) => sum + item.readers.size, 0) >= 64) {
+      throw new Error('短提交解析请求已达容量上限');
+    }
+    const item = equivalent ? same! : { request: { ...request }, readers: new Set<object>() };
+    if (!equivalent) this.invalidateArtifactTargetReads(request);
+    const reader = {}; item.readers.add(reader); this.artifactTargetReads.set(key, item);
+    return {
+      assertCurrent: () => {
+        if (this.artifactTargetReads.get(key) !== item || !item.readers.has(reader)) {
+          throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-resolution');
+        }
+      },
+      release: () => {
+        item.readers.delete(reader);
+        if (!item.readers.size && this.artifactTargetReads.get(key) === item) this.artifactTargetReads.delete(key);
+      },
+    };
+  }
+
+  private sameArtifactTarget(a: BranchOperationRequest, b: BranchOperationRequest): boolean {
+    if (!a.commitSha || !b.commitSha) return false;
+    const left = a.commitSha.toLowerCase(), right = b.commitSha.toLowerCase();
+    return left.startsWith(right) || right.startsWith(left);
+  }
+
+  private invalidateArtifactTargetReads(request: BranchOperationRequest): void {
+    for (const [key, item] of this.artifactTargetReads) {
+      if (!this.operationsConflict(request, item.request)) continue;
+      if (['deploy', 'deploy-profile'].includes(request.kind) && this.sameArtifactTarget(request, item.request)) continue;
+      this.artifactTargetReads.delete(key);
+    }
+  }
 
   /** 首次受理保留私有输入；并入请求不能改写原目标，代次结束立即释放。 */
   rememberDeploymentInput(operationId: string, generation: number, input: DeploymentInputSnapshot): void {
@@ -356,7 +404,16 @@ export class BranchOperationCoordinator {
       return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
         reason: '本次指定版本或一次性选项不能作为产物等待恢复，请在产物齐备后重试' };
     }
+    const higherTargetRead = [...this.artifactTargetReads.values()].find(item => this.operationsConflict(request, item.request)
+      && priorityOf(item.request) > priorityOf(request) && !this.sameArtifactTarget(request, item.request));
+    if (higherTargetRead) {
+      const operationId = this.createOperationId(), generation = this.currentGeneration(request.branchId);
+      const reason = '较高优先级请求正在确认目标提交，请稍后重试';
+      this.record('branch.operation.rejected', request, operationId, generation, 'warn', { reason, phase: 'artifact-target-resolution' });
+      return { status: 'rejected', operationId, generation, reason };
+    }
     const decision = this.beginExecution(request);
+    if (decision.status !== 'rejected') this.invalidateArtifactTargetReads(request);
     if (!options.waitForArtifacts || decision.status !== 'started' || !decision.lease) return decision;
     const lease = decision.lease;
     const active = this.active.get(this.operationKey(lease.request));
@@ -575,6 +632,7 @@ export class BranchOperationCoordinator {
   }
 
   cancelBranch(branchId: string, reason: string): void {
+    for (const [key, item] of this.artifactTargetReads) if (item.request.branchId === branchId) this.artifactTargetReads.delete(key);
     for (const [key, claim] of this.pendingReplayClaims) {
       if (claim.pending.branchId !== branchId) continue;
       this.cancelPendingReplayClaim(key, reason);
@@ -595,6 +653,7 @@ export class BranchOperationCoordinator {
   }
 
   interruptAll(reason: string, source: string): void {
+    this.artifactTargetReads.clear();
     for (const active of this.active.values()) {
       this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
         reason,
@@ -683,6 +742,7 @@ export class BranchOperationCoordinator {
   }
 
   clearForTest(): void {
+    this.artifactTargetReads.clear();
     this.active.clear();
     this.pendingWebhookDeploys.clear();
     this.reservedContinuations.clear();

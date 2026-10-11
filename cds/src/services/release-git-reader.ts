@@ -7,6 +7,7 @@ const MAX_QUEUED_READS = 16;
 const MAX_INPUT_BYTES = 1024 * 1024;
 interface ReadJob {
   command: string; bytes: number; deadline: number;
+  assertCurrent?: () => void;
   resolve: (output: string) => void; reject: (error: Error) => void;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -24,25 +25,27 @@ function drain(shell: IShellExecutor, pool: ReadPool): void {
     pool.bytes -= job.bytes; job.reject(new Error('Release Git read deadline exceeded')); drain(shell, pool); return;
   }
   pool.active = true;
-  void readOutput(shell, job.command, timeout).then(job.resolve, error => job.reject(error)).finally(() => {
+  void readOutput(shell, job.command, timeout, job.assertCurrent).then(job.resolve, error => job.reject(error)).finally(() => {
     pool.active = false; pool.bytes -= job.bytes; drain(shell, pool);
   });
 }
-async function readOutput(shell: IShellExecutor, command: string, timeout: number): Promise<string> {
+async function readOutput(shell: IShellExecutor, command: string, timeout: number, assertCurrent?: () => void): Promise<string> {
+  assertCurrent?.();
   let output = ''; let bytes = 0;
   const result = await shell.execBackgroundObservation!(command, {
-    timeout, captureOutput: false,
+    timeout, captureOutput: false, beforeStart: assertCurrent,
     onData: (chunk, channel) => {
       bytes += Buffer.byteLength(chunk);
       if (bytes > 256 * 1024) throw new Error('Release Git output capacity exceeded');
       if (channel !== 'stderr') output += chunk;
     },
   });
+  assertCurrent?.();
   if (result.exitCode !== 0) throw new Error('Release Git read failed');
   return output;
 }
 /** 纯本地Git读取，复用既有非紧急隔离能力；缺能力明确不可用，不从Master创建命令。 */
-export function createReleaseGitRunner(shell?: IShellExecutor): ReleaseGitRunner {
+export function createReleaseGitRunner(shell?: IShellExecutor, assertCurrent?: () => void): ReleaseGitRunner {
   return async args => {
     if (!shell?.execBackgroundObservation) throw new Error('Release Git observation executor unavailable');
     const command = ['git', ...args].map(shellQuoteArg).join(' ');
@@ -54,7 +57,7 @@ export function createReleaseGitRunner(shell?: IShellExecutor): ReleaseGitRunner
     }
     const ownedPool = pool;
     return new Promise<string>((resolve, reject) => {
-      const job: ReadJob = { command, bytes, deadline: performance.now() + READ_TIMEOUT_MS, resolve, reject };
+      const job: ReadJob = { command, bytes, deadline: performance.now() + READ_TIMEOUT_MS, resolve, reject, assertCurrent };
       ownedPool.bytes += bytes; ownedPool.queue.push(job);
       job.timer = setTimeout(() => {
         const index = ownedPool.queue.indexOf(job);

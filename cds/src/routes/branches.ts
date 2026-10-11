@@ -18,6 +18,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
@@ -2957,6 +2958,47 @@ export function createBranchRouter(deps: RouterDeps): Router {
       continueWith: input.continueWith || null,
       pendingReplay: req.body?.pendingReplay || null,
     };
+  }
+
+  async function normalizeArtifactRequestTarget(req: Request, res: Response, entry: BranchEntry, profiles: BuildProfile[], profileId?: string): Promise<boolean> {
+    const requested = req.body?.commitSha;
+    if (typeof requested !== 'string' || !/^[0-9a-f]{7,39}$/i.test(requested) || req.body?.pendingReplay || req.body?.versionId) return true;
+    const required = profiles.filter(profile => !profileId || profile.id === profileId).map(profile => resolveEffectiveProfile(profile, entry))
+      .some(profile => profile.prebuiltImage && !profile.managedBuild && !profile.localArtifact);
+    if (!required) return true;
+    let ticket: ReturnType<BranchOperationCoordinator['beginArtifactTargetRead']> | undefined;
+    const projectId = entry.projectId || 'default', branchName = entry.branch;
+    const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+    const assertCurrent = () => {
+      ticket?.assertCurrent();
+      const current = stateService.getBranch(entry.id);
+      if (!current || (current.projectId || 'default') !== projectId || current.branch !== branchName
+        || !stateService.getProject(projectId)
+        || stateService.getProjectRepoRoot(current.projectId, config.repoRoot) !== repoRoot) {
+        throw new BranchOperationSupersededError('', entry.id, 'artifact-target-owner');
+      }
+    };
+    try {
+      if (!branchOperationCoordinator) throw new Error('目标解析资格能力不可用');
+      ticket = branchOperationCoordinator.beginArtifactTargetRead(buildBranchOperationRequest(req, entry, {
+        kind: profileId ? 'deploy-profile' : 'deploy', profileId, commitSha: requested, commitPinned: true, source: 'artifact-target-resolution',
+      }));
+      const full = await resolveArtifactCommitIdentity(shell, repoRoot, requested, assertCurrent);
+      assertCurrent();
+      const access = assertProjectAccess(req as any, projectId);
+      if (access) { res.status(access.status).json(access.body); return false; }
+      if (stateService.getProject(projectId)?.paused && req.query.force !== '1' && req.query.force !== 'true') {
+        res.status(423).json({ error: 'project_paused', message: '项目已暂停，部署尚未受理；恢复项目后再重试' }); return false;
+      }
+      req.body = { ...req.body, commitSha: full };
+      return true;
+    } catch (error) {
+      const superseded = error instanceof BranchOperationSupersededError;
+      res.status(superseded ? 409 : 503).json({ error: superseded ? 'target_request_superseded' : 'target_identity_unavailable',
+        message: superseded ? '新的部署或终止操作已取代本请求，尚未开始部署'
+          : '暂时无法确认短提交的完整身份，部署尚未受理；请使用完整提交号，或在项目仓库同步后重试' });
+      return false;
+    } finally { ticket?.release(); }
   }
 
   async function inspectArtifactInput(entry: BranchEntry, input: DeploymentInputSnapshot, profileId: string | null | undefined,
@@ -12700,7 +12742,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
     // branches default to 'default' (the legacy migration target).
     const requestedVersionId = typeof req.body?.versionId === 'string' ? req.body.versionId.trim() : '';
-    const requestedCommitForPlan = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+    let requestedCommitForPlan = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
       : undefined;
     const replayInput = branchOperationCoordinator?.getDeploymentInputForReplay(buildBranchOperationRequest(req, entry, {
@@ -12719,6 +12761,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         return;
       }
+    }
+    if (!replayInput && !requestedVersionId) {
+      if (!await normalizeArtifactRequestTarget(req, res, entry, managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry))) return;
+      requestedCommitForPlan = typeof req.body?.commitSha === 'string' ? req.body.commitSha : undefined;
     }
     const deploymentInput = replayInput || captureDeploymentInput(entry, managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry),
       getConfiguredDeploymentEnv(entry.projectId || 'default', entry.id), managedPlan, requestedCommitForPlan);
@@ -14599,6 +14645,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // P4 Part 17 (G2 fix): scope by the branch's project so a
     // single-service redeploy can't accidentally pick up a same-named
     // profile from a different project.
+    if (!await normalizeArtifactRequestTarget(req, res, entry, stateService.getEffectiveProfilesForBranch(entry), profileId)) return;
     const profileRequestedSha = typeof req.body?.commitSha === 'string' ? req.body.commitSha : undefined;
     const replayInput = branchOperationCoordinator?.getDeploymentInputForReplay(buildBranchOperationRequest(req, entry, {
       kind: 'deploy-profile', profileId, commitSha: profileRequestedSha, commitPinned: Boolean(profileRequestedSha),

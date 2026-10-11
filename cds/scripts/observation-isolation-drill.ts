@@ -1,6 +1,8 @@
 import express from 'express';
 import { AsyncStuckDeployReconciler } from '../src/services/async-stuck-deploy-reconciler.js';
 import { createReleaseGitRunner } from '../src/services/release-git-reader.js';
+import { resolveArtifactCommitIdentity } from '../src/services/artifact-commit-identity.js';
+import { BranchOperationCoordinator } from '../src/services/branch-operation-coordinator.js';
 import { createCdsSystemDiagnosticsRouter } from '../src/routes/cds-system-diagnostics.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -26,7 +28,7 @@ import { ReleaseCommitClock } from '../src/services/release-commit-clock.js';
 import { ReleaseCommitRailReader } from '../src/services/release-commit-rail.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, BuildProfile } from '../src/types.js';
 
-const sourcePaths = ['src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
+const sourcePaths = ['src/services/artifact-commit-identity.ts', 'src/services/artifact-admission.ts', 'src/services/artifact-admission-wait.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/deployment-input.ts', 'src/services/async-stuck-deploy-reconciler.ts', 'src/services/deploy-stuck-reconciler.ts', 'src/services/change-impact-analyzer.ts', 'src/routes/cds-system-diagnostics.ts', 'src/services/preview-instance.ts', 'src/services/release-git-reader.ts', 'src/services/release-commit-clock.ts', 'src/services/release-commit-rail.ts', 'src/routes/releases.ts', 'src/server.ts', 'src/services/system-log-monitor.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/docker-observation-event-stream.ts', 'src/services/container-log-stream-hub.ts', 'src/services/container-log-stream-response.ts', 'src/services/bounded-log-tail.ts', 'src/services/bounded-sse-writer.ts', 'src/routes/branches.ts', 'src/services/infra-lifecycle-watcher.ts', 'src/services/observation-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'src/services/janitor.ts', 'src/services/secure-database-cli.ts', 'src/services/container.ts', 'src/services/container-diagnostics.ts', 'src/index.ts', 'src/types.ts'];
 async function main(): Promise<void> {
   // 只允许本次 GitHub 隔离宿主，不能用于 SSH 或共享 CDS 宿主。
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -181,6 +183,24 @@ async function main(): Promise<void> {
       sharedRead: railRead === sharedRead, afterReads: shell.getStats(),
       scope: 'owned real local Git repository through compiled readers and existing process pool; not public release HTTP or complete synchronous filesystem removal' };
     report.checks.push({ name: 'compiled-owned-release-git-metadata-rail-and-unknown-contract', passed: true });
+
+    report.stage = 'compiled-owned-artifact-short-identity';
+    const identityModule = compiled ? await import(new URL('../dist/services/artifact-commit-identity.js', import.meta.url).href) as typeof import('../src/services/artifact-commit-identity.js') : { resolveArtifactCommitIdentity };
+    const coordinatorModule = compiled ? await import(new URL('../dist/services/branch-operation-coordinator.js', import.meta.url).href) as typeof import('../src/services/branch-operation-coordinator.js') : { BranchOperationCoordinator };
+    const targetCoordinator = new coordinatorModule.BranchOperationCoordinator();
+    const targetRequest = { projectId: owner, branchId: owner + '-target', kind: 'deploy' as const, trigger: 'manual' as const,
+      commitSha: firstCommit.slice(0, 7), commitPinned: true };
+    const targetRead = targetCoordinator.beginArtifactTargetRead(targetRequest);
+    const resolvedTarget = await identityModule.resolveArtifactCommitIdentity(shell, releaseRepo, targetRequest.commitSha.toUpperCase(), targetRead.assertCurrent);
+    assert.equal(resolvedTarget, firstCommit); assert.equal(await setupGit('rev-parse', 'HEAD'), latestCommit);
+    assert.equal(await setupGit('status', '--porcelain'), ''); targetRead.release();
+    const cancelledRead = targetCoordinator.beginArtifactTargetRead(targetRequest);
+    targetCoordinator.cancelBranch(targetRequest.branchId, '自有停止');
+    await assert.rejects(identityModule.resolveArtifactCommitIdentity(shell, releaseRepo, targetRequest.commitSha, cancelledRead.assertCurrent)); cancelledRead.release();
+    assert.equal(targetCoordinator.getActiveOperations().length, 0); assert.equal(operationShell.getStats().active, 0);
+    report.artifactShortIdentity = { requestedShort: targetRequest.commitSha, resolvedTarget, currentSourceHead: latestCommit,
+      sourceHeadUnchanged: true, cancelledReadRejected: true, scope: 'compiled helper and qualification with real owned Git through nonurgent process pool; full application deployment not verified' };
+    report.checks.push({ name: 'compiled-real-short-commit-identity-and-cancelled-read', passed: true });
 
     report.stage = 'compiled-owned-nonurgent-git-health-reservation';
     const gitGate = path.join(temp, 'nonurgent-release');
