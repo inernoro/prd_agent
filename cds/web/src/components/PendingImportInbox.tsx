@@ -16,13 +16,14 @@
  *   - 挂在 AppShell,任何页面可见(同 OperatorApprovalModal / GlobalUpdateBadge)
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Bot, Inbox, Loader2, X } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
+import { BoundedAuthorityReader } from '@/lib/bounded-authority-reader';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 interface PendingImportSummary {
@@ -61,49 +62,46 @@ export function PendingImportInbox({
   const [busy, setBusy] = useState<string | null>(null);
   const [flapDismissedAt, setFlapDismissedAt] = useState<string | null>(null);
 
-  const refreshSeq = useRef(0);
   // A POST may complete after unmount; its receipt must not revive this observer.
   const lifetime = useRef(0);
+  const reader = useMemo(() => new BoundedAuthorityReader(
+    async signal => {
+      const data = await apiRequest<PendingImportsResponse>('/api/pending-imports', { signal });
+      const list = (data.imports || []).filter(item => item.status === 'pending');
+      // Preserve the real compose review, with at most four detail reads per group.
+      const enriched = [...list];
+      let cursor = 0;
+      await Promise.all(Array.from({ length: Math.min(4, list.length) }, async () => {
+        while (cursor < list.length) {
+          signal.throwIfAborted();
+          const index = cursor++, item = list[index];
+          if (item.composeYaml) continue;
+          try {
+            const detail = await apiRequest<{ import?: PendingImport }>(
+              `/api/pending-imports/${encodeURIComponent(item.id)}`, { signal },
+            );
+            if (detail.import?.composeYaml) enriched[index] = { ...item, composeYaml: detail.import.composeYaml };
+          } catch (error) {
+            if (signal.aborted) throw error;
+            // Preserve the prior unavailable-detail behavior; never invent YAML.
+          }
+        }
+      }));
+      return enriched;
+    },
+    setPending,
+  ), []);
+  const refresh = useCallback(() => reader.refresh(), [reader]);
   useEffect(() => {
     lifetime.current++;
     return () => {
       lifetime.current++;
-      refreshSeq.current++;
     };
   }, []);
-  const refresh = useCallback(async () => {
-    const seq = ++refreshSeq.current;
-    try {
-      const data = await apiRequest<PendingImportsResponse>('/api/pending-imports');
-      if (seq !== refreshSeq.current) return;
-      const list = (data.imports || []).filter((i) => i.status === 'pending');
-      // Codex review(PR #684, P2):/api/pending-imports 列表端点刻意 strip 掉
-      // composeYaml(防列表行过大),导致 item.composeYaml 永远 undefined、抽屉里
-      // 的 YAML 折叠预览永远不渲染 —— 操作员在看不到原始配置的情况下就批准了 agent
-      // 提交的 profile/infra/env。这里对每条拉单条 detail(/pending-imports/:id 返回
-      // 完整 item 含 composeYaml)补齐,审批前必须能看到真实 YAML。
-      const enriched = await Promise.all(list.map(async (it) => {
-        if (it.composeYaml) return it;
-        try {
-          const detail = await apiRequest<{ import?: PendingImport }>(
-            `/api/pending-imports/${encodeURIComponent(it.id)}`,
-          );
-          return detail.import?.composeYaml ? { ...it, composeYaml: detail.import.composeYaml } : it;
-        } catch {
-          return it;
-        }
-      }));
-      if (seq === refreshSeq.current) setPending(enriched);
-    } catch {
-      // 静默 — degraded / 401 之类不该让这个组件爆错
-    }
-  }, []);
-
-  // 初始拉一次
   useEffect(() => {
-    void refresh();
-    return () => { refreshSeq.current++; };
-  }, [refresh, events.connectionEpoch]);
+    reader.start();
+    return () => reader.dispose();
+  }, [reader, events.connectionEpoch]);
 
   // 事件驱动:agent 提交新 import / approve / reject 后立即 refresh
   useEffect(() => {
@@ -121,12 +119,12 @@ export function PendingImportInbox({
         method: 'POST',
       });
       if (generation !== lifetime.current) return;
-      refreshSeq.current++;
+      reader.invalidate();
       setPending((prev) => prev.filter((i) => i.id !== importId));
     } finally {
       if (generation === lifetime.current) setBusy(null);
     }
-  }, [busy]);
+  }, [busy, reader]);
 
   const reject = useCallback(async (importId: string) => {
     if (busy) return;
@@ -138,12 +136,12 @@ export function PendingImportInbox({
         body: {},
       });
       if (generation !== lifetime.current) return;
-      refreshSeq.current++;
+      reader.invalidate();
       setPending((prev) => prev.filter((i) => i.id !== importId));
     } finally {
       if (generation === lifetime.current) setBusy(null);
     }
-  }, [busy]);
+  }, [busy, reader]);
 
   const flap = events.lastFlapEvent;
   const showFlap = flap && flap.ts !== flapDismissedAt;

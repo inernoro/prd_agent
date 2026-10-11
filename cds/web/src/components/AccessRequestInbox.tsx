@@ -13,7 +13,7 @@
  * 安全:操作员永远看不到授权密钥明文(批准后由发起方凭 pollToken 轮询取走一次)。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
+import { BoundedAuthorityReader } from '@/lib/bounded-authority-reader';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 interface AccessRequest {
@@ -50,31 +51,23 @@ export function AccessRequestInbox({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const refreshSeq = useRef(0);
   // A POST may complete after unmount; its receipt must not revive this observer.
   const lifetime = useRef(0);
+  const reader = useMemo(() => new BoundedAuthorityReader(
+    signal => apiRequest<AccessRequestsResponse>('/api/access-requests', { signal }),
+    data => setPending((data.requests || []).filter(item => item.status === 'pending')),
+  ), []);
+  const refresh = useCallback(() => reader.refresh(), [reader]);
   useEffect(() => {
     lifetime.current++;
     return () => {
       lifetime.current++;
-      refreshSeq.current++;
     };
   }, []);
-  const refresh = useCallback(async () => {
-    const seq = ++refreshSeq.current;
-    try {
-      const data = await apiRequest<AccessRequestsResponse>('/api/access-requests');
-      if (seq !== refreshSeq.current) return;
-      setPending((data.requests || []).filter((r) => r.status === 'pending'));
-    } catch {
-      // 静默 — degraded / 401 不该让这个组件爆错
-    }
-  }, []);
-
   useEffect(() => {
-    void refresh();
-    return () => { refreshSeq.current++; };
-  }, [refresh, events.connectionEpoch]);
+    reader.start();
+    return () => reader.dispose();
+  }, [reader, events.connectionEpoch]);
 
   // 事件驱动:agent 发起新申请 / 批准 / 拒绝后立即 refresh
   useEffect(() => {
@@ -88,12 +81,12 @@ export function AccessRequestInbox({
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST' });
       if (generation !== lifetime.current) return;
-      refreshSeq.current++;
+      reader.invalidate();
       setPending((prev) => prev.filter((r) => r.id !== reqId));
     } finally {
       if (generation === lifetime.current) setBusy(null);
     }
-  }, [busy]);
+  }, [busy, reader]);
 
   const reject = useCallback(async (reqId: string) => {
     if (busy) return;
@@ -102,12 +95,12 @@ export function AccessRequestInbox({
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/reject`, { method: 'POST', body: {} });
       if (generation !== lifetime.current) return;
-      refreshSeq.current++;
+      reader.invalidate();
       setPending((prev) => prev.filter((r) => r.id !== reqId));
     } finally {
       if (generation === lifetime.current) setBusy(null);
     }
-  }, [busy]);
+  }, [busy, reader]);
 
   const count = pending.length;
   useEffect(() => {

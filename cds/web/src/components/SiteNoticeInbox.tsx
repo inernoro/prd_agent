@@ -31,6 +31,7 @@ import { apiRequest, ApiError } from '@/lib/api';
 import { shouldDismissOnEscape, shouldDismissOnPointerDown } from '@/lib/outside-dismiss';
 import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
 import { useOverlayDock } from '@/lib/useOverlayDock';
+import { BoundedAuthorityReader } from '@/lib/bounded-authority-reader';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 type NoticeLevel = 'info' | 'warning' | 'danger';
@@ -184,23 +185,18 @@ export function SiteNoticeInbox(): JSX.Element {
     };
   }, [open]);
 
-  const refreshSeq = useRef(0);
-  const refresh = useCallback(async (): Promise<void> => {
-    const seq = ++refreshSeq.current;
-    try {
-      const res = await apiRequest<NoticesResponse>('/api/notices');
-      if (seq !== refreshSeq.current) return;
+  const reader = useMemo(() => new BoundedAuthorityReader(
+    signal => apiRequest<NoticesResponse>('/api/notices', { signal }),
+    res => {
       setNotices(Array.isArray(res?.notices) ? res.notices : []);
       if (res?.outbound) setOutbound(res.outbound);
-    } catch {
-      // 铃铛取不到账本不该炸掉整个 shell：保持上一次的展示，等下一次事件/打开时再拉。
-    }
-  }, []);
-
+    },
+  ), []);
+  const refresh = useCallback(() => reader.refresh(), [reader]);
   useEffect(() => {
-    void refresh();
-    return () => { refreshSeq.current++; };
-  }, [refresh, connectionEpoch]);
+    reader.start();
+    return () => reader.dispose();
+  }, [reader, connectionEpoch]);
 
   // 服务端记了新通知 → 实时增量刷新（不轮询）。
   useEffect(() => {

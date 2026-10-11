@@ -53,12 +53,15 @@ it.each(cases)('%s rereads its authoritative API on a new connection generation 
   initial.forEach(call => call.resolve(data('late-old'))); await tick();
   expect(JSON.stringify(runner.values)).toContain('new-current'); expect(JSON.stringify(runner.values)).not.toContain('late-old');
 });
-it.each(cases)('%s prevents a late earlier request from overwriting an event-triggered authoritative read', async (_name, Component, endpoint) => {
+it.each(cases)('%s drops a superseded response and then executes one authoritative followup', async (_name, Component, endpoint) => {
   render(Component); const initial = h.calls.filter(call => call.url.startsWith(endpoint)); const before = h.calls.length;
   h.events = { lastPendingImportEvent: { ts: 'new' }, lastAccessRequestEvent: { ts: 'new' }, lastOperatorRequestEvent: { ts: 'new' }, lastNoticeEvent: { ts: 'new' }, lastAgentActivityEvent: { ts: 'new', projectId: 'owned-project' } };
-  render(Component); const next = h.calls.slice(before).filter(call => call.url.startsWith(endpoint)); expect(next.length).toBeGreaterThan(0);
-  next.forEach(call => call.resolve(data('new-current'))); await tick(); initial.forEach(call => call.resolve(data('late-old'))); await tick();
+  render(Component); expect(h.calls).toHaveLength(before);
+  initial.forEach(call => call.resolve(data('late-old'))); await tick();
   expect(JSON.stringify(runner.values)).not.toContain('late-old');
+  const next = h.calls.slice(before).filter(call => call.url.startsWith(endpoint)); expect(next).toHaveLength(1);
+  next.forEach(call => call.resolve(data('new-current'))); await tick();
+  expect(JSON.stringify(runner.values)).toContain('new-current');
 });
 it.each(cases)('%s invalidates outstanding reads on unmount without manufacturing a terminal state', async (_name, Component, endpoint) => {
   render(Component); const requests = h.calls.filter(call => call.url.startsWith(endpoint));
@@ -97,4 +100,50 @@ it('operator cancels the delayed refresh and fences even an already queued timer
   h.calls.filter(call => call.options?.method === 'POST').forEach(call => call.resolve({ ok: true })); await job;
   expect(timers).toHaveLength(1); const before = h.calls.length; unmount(); timers.forEach(fn => fn());
   expect(cancelled.has(1)).toBe(true); expect(h.calls).toHaveLength(before); expect(runner.afterUnmount).toBe(0);
+});
+
+it.each(cases)('%s coalesces 100 held event reads into one active and one authoritative followup', async (_name, Component, endpoint) => {
+  render(Component);
+  for (let n = 0; n < 100; n++) {
+    h.events = { lastPendingImportEvent: { ts: String(n) }, lastAccessRequestEvent: { ts: String(n) }, lastOperatorRequestEvent: { ts: String(n) }, lastNoticeEvent: { ts: String(n) }, lastAgentActivityEvent: { ts: String(n), projectId: 'owned-project' } };
+    render(Component);
+  }
+  const active = h.calls.filter(call => call.url.startsWith(endpoint)); expect(active).toHaveLength(1);
+  active.forEach(call => call.resolve(data('superseded-read'))); await tick();
+  const followup = h.calls.filter(call => call.url.startsWith(endpoint)).slice(1); expect(followup).toHaveLength(1);
+  expect(JSON.stringify(runner.values)).not.toContain('superseded-read');
+  followup.forEach(call => call.resolve(data('current-authority'))); await tick();
+  expect(JSON.stringify(runner.values)).toContain('current-authority');
+  expect(h.calls.filter(call => call.url.startsWith(endpoint))).toHaveLength(2);
+});
+it.each(cases)('%s deadline releases ignored-abort reads without writing a late stale response', async (_name, Component, endpoint) => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    render(Component); const first = h.calls.filter(call => call.url.startsWith(endpoint));
+    h.events = { lastPendingImportEvent: { ts: 'timeout' }, lastAccessRequestEvent: { ts: 'timeout' }, lastOperatorRequestEvent: { ts: 'timeout' }, lastNoticeEvent: { ts: 'timeout' }, lastAgentActivityEvent: { ts: 'timeout', projectId: 'owned-project' } };
+    render(Component); await vi.advanceTimersByTimeAsync(5000); await tick();
+    const all = h.calls.filter(call => call.url.startsWith(endpoint)); expect(all).toHaveLength(2); expect(first[0].options.signal.aborted).toBe(true);
+    all[1].resolve(data('deadline-current')); await tick(); first[0].resolve(data('deadline-old')); await tick();
+    expect(JSON.stringify(runner.values)).toContain('deadline-current'); expect(JSON.stringify(runner.values)).not.toContain('deadline-old');
+    unmount(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it('import hydration keeps every YAML while limiting detail reads to four per observation', async () => {
+  render(PendingImportInbox); const list = h.calls.find(call => call.url === '/api/pending-imports')!;
+  list.resolve({ imports: Array.from({ length: 9 }, (_, n) => ({ id: 'detail-' + n, status: 'pending' })) }); await tick();
+  let resolved = 0, peak = 0;
+  while (resolved < 9) {
+    const active = h.calls.filter(call => call.url.startsWith('/api/pending-imports/')).slice(resolved);
+    expect(active.length).toBeGreaterThan(0); peak = Math.max(peak, active.length); expect(active.length).toBeLessThanOrEqual(4);
+    for (const call of active) call.resolve({ import: { composeYaml: 'yaml-for-' + call.url.split('/').at(-1) } });
+    resolved += active.length; await tick();
+  }
+  expect(peak).toBe(4);
+  for (let n = 0; n < 9; n++) expect(JSON.stringify(runner.values)).toContain('yaml-for-detail-' + n);
+});
+it('unmount aborts import hydration and starts no remaining details or state writes', async () => {
+  render(PendingImportInbox); h.calls[0].resolve({ imports: Array.from({ length: 9 }, (_, n) => ({ id: 'detail-' + n, status: 'pending' })) }); await tick();
+  const before = h.calls.length, details = h.calls.slice(1); expect(details).toHaveLength(4); unmount();
+  details.forEach(call => call.resolve({ import: { composeYaml: 'after-unmount' } })); await tick();
+  expect(h.calls).toHaveLength(before); expect(details.every(call => call.options.signal.aborted)).toBe(true); expect(runner.afterUnmount).toBe(0);
 });

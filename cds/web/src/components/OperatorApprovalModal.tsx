@@ -12,13 +12,14 @@
  *   - 显示 caller 来源 / op danger 等级 / args / 估时
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Bot, ShieldCheck, ShieldX, Wrench } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
+import { BoundedAuthorityReader } from '@/lib/bounded-authority-reader';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 interface PendingRequest {
@@ -46,44 +47,33 @@ export function OperatorApprovalModal(): JSX.Element | null {
   const [busy, setBusy] = useState(false);
 
   // 拿当前所有 pending request,选最新一条展示
-  const refreshSeq = useRef(0);
   // A POST may complete after unmount; its receipt must not revive this observer.
   const lifetime = useRef(0);
   const refreshTimer = useRef<number | null>(null);
+  const reader = useMemo(() => new BoundedAuthorityReader(
+    signal => apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests', { signal }),
+    data => setPending((data.pending || []).find(item => item.status === 'pending') ?? null),
+  ), []);
+  const refresh = useCallback(() => reader.refresh(), [reader]);
   useEffect(() => {
     lifetime.current++;
     return () => {
       lifetime.current++;
-      refreshSeq.current++;
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
     };
   }, []);
-  const refresh = useCallback(async () => {
-    const seq = ++refreshSeq.current;
-    try {
-      const data = await apiRequest<{ pending: PendingRequest[] }>('/api/cds-system/operator/requests');
-      if (seq !== refreshSeq.current) return;
-      const list = (data.pending || []).filter((r) => r.status === 'pending');
-      if (list.length > 0) setPending(list[0]);
-      else setPending(null);
-    } catch {
-      // 静默 — 服务不可达不应弹错
-    }
-  }, []);
-
-  // 初始进页面拉一次
   useEffect(() => {
-    void refresh();
-    return () => { refreshSeq.current++; };
-  }, [refresh, events.connectionEpoch]);
+    reader.start();
+    return () => reader.dispose();
+  }, [reader, events.connectionEpoch]);
 
   // 订阅 cds-events 总线:operator.request.* 事件一来立即 refresh(实时弹窗)。
   // Codex review(PR #684, P2):此前只盯 lastHeartbeatAt → 新审批请求最多隐身 25s。
   // 现在 useCdsEvents 单独路由 operator.request.* 到 lastOperatorRequestEvent,
   // 这里观察它即可秒级反应;heartbeat 仍保留作兜底刷新。
   useEffect(() => {
-    void refresh();
+    if (events.lastOperatorRequestEvent || events.lastHeartbeatAt) void refresh();
   }, [events.lastOperatorRequestEvent, events.lastHeartbeatAt, refresh]);
 
   const approve = useCallback(async (scope: 'once' | 'session') => {
@@ -96,7 +86,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
         body: { scope },
       });
       if (generation !== lifetime.current) return;
-      refreshSeq.current++;
+      reader.invalidate();
       setPending(null);
       // 给后端一点时间 publish completed,再 refresh
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
@@ -107,7 +97,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
     } finally {
       if (generation === lifetime.current) setBusy(false);
     }
-  }, [pending, busy, refresh]);
+  }, [pending, busy, refresh, reader]);
 
   const reject = useCallback(async () => {
     if (!pending || busy) return;
@@ -118,12 +108,12 @@ export function OperatorApprovalModal(): JSX.Element | null {
         method: 'POST',
       });
       if (generation !== lifetime.current) return;
-      refreshSeq.current++;
+      reader.invalidate();
       setPending(null);
     } finally {
       if (generation === lifetime.current) setBusy(false);
     }
-  }, [pending, busy]);
+  }, [pending, busy, reader]);
 
   if (!pending) return null;
   const meta = DANGER_META[pending.opDanger] ?? DANGER_META.safe;

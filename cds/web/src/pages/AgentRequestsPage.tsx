@@ -15,6 +15,7 @@ import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
 
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
+import { BoundedAuthorityReader } from '@/lib/bounded-authority-reader';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 interface AgentRequestItem {
@@ -84,38 +85,32 @@ export function AgentRequestsPage(): JSX.Element {
   const [fQ, setFQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [eventsBySession, setEventsBySession] = useState<Record<string, AgentEvent[] | 'loading' | 'error'>>({});
-  const fetchSeqRef = useRef(0);
   const { lastAgentActivityEvent, effectiveConnection, connectionEpoch } = useCdsEvents();
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!projectId) return;
-    const seq = ++fetchSeqRef.current;
-    if (!opts?.silent) setLoading(true);
-    try {
+  const reader = useMemo(() => new BoundedAuthorityReader(
+    async signal => {
       const params = new URLSearchParams();
       if (fUser) params.set('user', fUser);
       if (fApp) params.set('app', fApp);
       if (fStatus) params.set('status', fStatus);
       if (fQ.trim()) params.set('q', fQ.trim());
       params.set('limit', '200');
-      const resp = await apiRequest<AgentRequestsResp>(
-        `/api/projects/${encodeURIComponent(projectId)}/agent-requests?${params.toString()}`,
+      return apiRequest<AgentRequestsResp>(
+        `/api/projects/${encodeURIComponent(projectId)}/agent-requests?${params.toString()}`, { signal },
       );
-      if (seq !== fetchSeqRef.current) return;
-      setData(resp);
-      setError(null);
-    } catch (err) {
-      if (seq !== fetchSeqRef.current) return;
-      setError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      if (seq === fetchSeqRef.current) setLoading(false);
-    }
-  }, [projectId, fUser, fApp, fStatus, fQ]);
-
+    },
+    resp => { setData(resp); setError(null); setLoading(false); },
+    err => { setError(err instanceof ApiError ? err.message : String(err)); setLoading(false); },
+  ), [projectId, fUser, fApp, fStatus, fQ]);
+  const load = useCallback((opts?: { silent?: boolean }) => {
+    if (!projectId) return;
+    if (!opts?.silent) setLoading(true);
+    reader.refresh();
+  }, [projectId, reader]);
   useEffect(() => {
-    void load();
-    return () => { fetchSeqRef.current++; };
-  }, [load, connectionEpoch]);
+    if (projectId) { setLoading(true); reader.start(); }
+    return () => reader.dispose();
+  }, [reader, projectId, connectionEpoch]);
 
   // 兜底轮询 5s（SSE 丢事件时列表仍然活着）
   useEffect(() => {
