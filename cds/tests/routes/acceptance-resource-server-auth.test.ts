@@ -73,6 +73,15 @@ describe('Acceptance resource routes through actual server authentication and pa
     expect(malformed.status).toBe(400); expect(malformed.body).toEqual({ error: 'acceptance_payload_invalid' });
     expect(oversized.raw + malformed.raw).not.toMatch(/sensitive-capability|SyntaxError/);
   });
+  it('keeps report route aliases behind auth and the report parser budget', async () => {
+    const malformed = '{"acceptanceOwnerToken":"dummy-sensitive-capability",';
+    expect((await request('POST', '/api/Reports', undefined, malformed)).status).toBe(401);
+    const invalid = await request('POST', '/api/Reports', keys.p1, malformed);
+    expect(invalid.status).toBe(400); expect(invalid.body).toEqual({ error: 'report_payload_invalid' });
+    expect(invalid.raw).not.toMatch(/dummy-sensitive-capability|SyntaxError|node_modules/);
+    const valid = await request('POST', '/api/Reports', keys.p1, { title: 'owned report alias', format: 'md', content: 'x'.repeat(200 * 1024) });
+    expect(valid.status).toBe(201); expect(valid.body.report.projectId).toBe('p1');
+  });
   it('preserves the small authenticated parser on Express case-insensitive route aliases', async () => {
     const oversized = await request('POST', '/api/Acceptance-Resource-Runs', keys.p1,
       { ...input, ownerToken: 'sensitive-capability'.repeat(200) });

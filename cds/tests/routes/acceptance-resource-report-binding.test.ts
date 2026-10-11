@@ -38,7 +38,7 @@ describe('P5-05 real report producer binds registered resource ownership', () =>
       const req = http.request({ host: '127.0.0.1', port: (server.address() as any).port, path: '/api/reports', method: 'POST', agent: false,
         headers: { 'content-type': 'application/json', ...headers, 'content-length': Buffer.byteLength(payload) } }, res => {
         let raw = ''; res.setEncoding('utf8'); res.on('data', chunk => { raw += chunk; });
-        res.on('end', () => { resolve({ status: res.statusCode!, body: JSON.parse(raw), raw, headers: res.headers }); });
+        res.on('end', () => { let body: unknown; try { body = JSON.parse(raw); } catch { body = null; } resolve({ status: res.statusCode!, body, raw, headers: res.headers }); });
       });
       req.setTimeout(5000, () => req.destroy(new Error('owned report HTTP deadline'))); req.on('error', reject); req.end(payload);
     });
@@ -157,6 +157,14 @@ describe('P5-05 real report producer binds registered resource ownership', () =>
     const o = await owner(); fs.rmSync(path.join(dir, 'state.json')); fs.mkdirSync(path.join(dir, 'state.json'));
     const r = await post(o.body); fs.rmSync(path.join(dir, 'state.json'), { recursive: true }); state.save(); await state.flush();
     expect(r.status).toBe(500); expect(r.body).toEqual({ error: 'internal' }); expect(ledger.get(o.run.id)?.stage).toBe('registered');
+  });
+  it.each(['invalid', 'too-large'])('bounds %s report parser errors without reflecting credentials or stack', async kind => {
+    const raw = kind === 'invalid' ? '{"acceptanceOwnerToken":"dummy-sensitive-capability",' : JSON.stringify({ acceptanceOwnerToken: 'dummy-sensitive-capability', content: 'x'.repeat(13 * 1024 * 1024) });
+    const r = await post({}, {}, raw);
+    expect(r.status).toBe(kind === 'invalid' ? 400 : 413);
+    expect(r.body).toEqual({ error: kind === 'invalid' ? 'report_payload_invalid' : 'report_payload_too_large' });
+    expect(r.raw).not.toMatch(/dummy-sensitive-capability|SyntaxError|PayloadTooLargeError|private|node_modules/);
+    expect(r.headers['cache-control']).toBe('no-store'); expect(state.listAcceptanceReports()).toHaveLength(0);
   });
   it('shares eight-operation budget with receipt services and rejects same-run overlap without queueing', async () => {
     const owners = []; for (let i = 0; i < 9; i++) owners.push(await owner(i));

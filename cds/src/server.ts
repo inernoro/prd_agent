@@ -2007,7 +2007,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (isSealedStorageRequest(req)) return next();
-    if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (/^\/api\/reports(?:\/|$)/i.test(req.path)) return next();
     // Capability bodies are parsed after authentication with a small cap and bounded JSON errors.
     if (/^\/api\/acceptance-resource-runs(?:\/|$)/i.test(req.path)) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();

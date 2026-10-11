@@ -29,7 +29,7 @@
  * The raw HTML is therefore never executed in the CDS origin with session
  * access — only inside the no-same-origin sandbox the frontend builds.
  */
-import { Router, type Request, type Response, json as expressJson, text as expressText, raw as expressRaw } from 'express';
+import { Router, type Request, type Response, type NextFunction, json as expressJson, text as expressText, raw as expressRaw } from 'express';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
@@ -651,6 +651,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       }
       return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }
+  }, (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    // Parser failures occur before binding fields are available. Never echo their body/stack.
+    res.setHeader('Cache-Control', 'no-store');
+    const type = (error as { type?: unknown } | undefined)?.type;
+    if (type === 'entity.too.large') res.status(413).json({ error: 'report_payload_too_large' });
+    else if (type === 'entity.parse.failed') res.status(400).json({ error: 'report_payload_invalid' });
+    else res.status(500).json({ error: 'internal' });
   });
 
   // GET /api/reports?projectId= — list metadata (newest first).
