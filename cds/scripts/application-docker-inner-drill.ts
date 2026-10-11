@@ -507,9 +507,10 @@ async function main(): Promise<void> {
     report.publishedImages ||= []; report.publishedImages.push({ role, sha, reference, id: view.Id, repoDigests: JSON.parse(await docker(['image', 'inspect', reference]))[0].RepoDigests,
       os: view.Os, architecture: view.Architecture });
   };
-  const exerciseFiniteCoreCache = async () => {
-    // Separate component evidence only after original application assertions.
-    // The fixture cannot keep the original application's core image alive.
+  let finiteCache: { finish: () => Promise<void>; stop: () => void } | undefined;
+  const prepareFiniteCoreCache = async (applicationCoreImageId: string) => {
+    // Only this independent fixture's single lease overlaps application stop.
+    // Prune/release assertions still follow the original application assertions.
     const evidence: any = { startedAt: new Date().toISOString(), verdict: 'failed',
       genericFixtureOnly: true, originalApplicationCapabilityVerified: false,
       originalPruneEnabled: true, originalIdleMs: CORE_IMAGE_CACHE_IDLE_MS, events: [] };
@@ -541,63 +542,82 @@ async function main(): Promise<void> {
         assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner);
         return { reference, id: view.Id, size: view.Size };
       };
-      const active = await makeFixture('active'), unused = await makeFixture('unused');
-      assert.notEqual(active.id, unused.id); evidence.fixtureImages = { active, unused };
+      const active = await makeFixture('active');
+      assert.notEqual(active.id, applicationCoreImageId);
+      evidence.fixtureImages = { active };
+      evidence.originalApplicationCoreImageId = applicationCoreImageId;
+      evidence.fixtureDoesNotProtectApplicationCoreImage = true;
       const release = await cache.acquire(active.id, new AbortController().signal);
       const receipt = JSON.parse(await fs.readFile(path.join(cacheRoot, 'cache.json'), 'utf8'));
       assert.equal(receipt.daemonId, info.ID); assert.equal(receipt.entries.length, 1);
       assert.equal(receipt.entries[0].imageId, active.id); assert.equal(receipt.entries[0].size, active.size);
       assert.ok((await fs.stat(path.join(cacheRoot, 'cache.json'))).size <= 8192);
       evidence.receiptAtAcquisition = receipt;
+      evidence.originalExpiresAt = receipt.entries[0].expiresAt;
+      evidence.singleLeasePreparedBeforeApplicationShutdown = true;
       await checkpoint('finite-core-cache-acquired');
       const acquired = evidence.events.find((event: any) => event.action === 'agent.core-image-cache.acquired');
       assert.ok(acquired); evidence.ownedReference = acquired.details.cacheReference;
-      await docker(['image', 'rm', '--no-prune', active.reference]);
-      // Replacing a build tag leaves the old image genuinely dangling. Removing
-      // its sole tag with image rm would already delete it before prune.
-      const unusedContext = path.join(root, 'finite-cache-unused');
-      await fs.writeFile(path.join(unusedContext, 'marker'), `${source.owner}:unused:replacement`);
-      await docker(['build', '--network', 'none', '--quiet', '-t', unused.reference, unusedContext]);
-      const replacement = JSON.parse(await docker(['image', 'inspect', unused.reference]))[0];
-      assert.equal(replacement.Config.Labels['cds.acceptance.owner'], source.owner);
-      assert.notEqual(replacement.Id, unused.id);
-      evidence.unusedReplacement = { reference: unused.reference, id: replacement.Id, size: replacement.Size };
-      const dangling = JSON.parse(await docker(['image', 'inspect', unused.id]))[0];
-      assert.equal(dangling.Id, unused.id); assert.deepEqual(dangling.RepoTags || [], []);
-      assert.deepEqual(dangling.RepoDigests || [], []);
-      assert.equal(await docker(['ps', '-aq', '--filter', `ancestor=${unused.id}`]), '');
-      evidence.unusedBeforePrune = { at: new Date().toISOString(), imageId: dangling.Id,
-        repoTags: dangling.RepoTags || [], repoDigests: dangling.RepoDigests || [], referencedContainers: 0 };
-      const prune = createJanitorDockerAdapters(shell).dockerPrune;
-      const absentImage = async (reference: string) => {
-        try { await docker(['image', 'inspect', reference, '--format', '{{.Id}}']); return false; }
-        catch (error) { assert.match(String((error as any).stderr || ''), /No such (?:image|object)/i); return true; }
-      };
-      evidence.activePrune = await prune(); assert.deepEqual(evidence.activePrune.errors, []);
-      evidence.pruneFinishedAt = new Date().toISOString();
-      assert.equal(await docker(['image', 'inspect', active.id, '--format', '{{.Id}}']), active.id);
-      assert.equal(await absentImage(unused.id), true); evidence.unusedReclaimedWhileActiveProtected = true;
-      await checkpoint('finite-core-cache-original-active-prune-complete');
-      const waitStarted = performance.now();
-      await sleep(Math.max(0, receipt.entries[0].expiresAt - Date.now()) + 25);
-      evidence.expiryWaitMs = performance.now() - waitStarted; evidence.expiredAt = new Date().toISOString();
-      assert.ok(Date.now() >= receipt.entries[0].expiresAt);
-      await cache.reclaimExpired();
-      assert.equal(await docker(['image', 'inspect', evidence.ownedReference, '--format', '{{.Id}}']), active.id);
-      evidence.activeUserProtectedPastExpiry = true;
-      await checkpoint('finite-core-cache-original-idle-expiry-reached');
-      release(); await cache.reclaimExpired();
-      assert.equal(await absentImage(evidence.ownedReference), true);
-      await assert.rejects(fs.stat(cacheRoot), (error: any) => error.code === 'ENOENT');
-      evidence.afterReleasePrune = await prune(); assert.deepEqual(evidence.afterReleasePrune.errors, []);
-      assert.equal(await absentImage(active.id), true);
-      evidence.foreignReferencesAfter = {};
-      for (const reference of Object.keys(evidence.foreignReferencesBefore))
-        evidence.foreignReferencesAfter[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
-      assert.deepEqual(evidence.foreignReferencesAfter, evidence.foreignReferencesBefore);
-      evidence.ownedReferenceAndReceiptRemoved = true; evidence.verdict = 'passed';
-      await checkpoint('finite-core-cache-release-and-foreign-reference-checks-complete');
-    } finally { cache.stop(); evidence.finishedAt = new Date().toISOString(); }
+      return { stop: () => cache.stop(), finish: async () => {
+        try {
+          evidence.finalAssertionsStartedAt = new Date().toISOString();
+          assert.equal(evidence.events.filter((event: any) => event.action === 'agent.core-image-cache.acquired').length, 1);
+          assert.equal(evidence.events.some((event: any) => event.action === 'agent.core-image-cache.released'), false);
+          assert.deepEqual(JSON.parse(await fs.readFile(path.join(cacheRoot, 'cache.json'), 'utf8')), receipt);
+          // Create the unused fixture here so original application janitor work
+          // cannot reclaim it before the original explicit prune assertion.
+          const unused = await makeFixture('unused');
+          assert.notEqual(active.id, unused.id); evidence.fixtureImages.unused = unused;
+          await docker(['image', 'rm', '--no-prune', active.reference]);
+          // Replacing a build tag leaves the old image genuinely dangling. Removing
+          // its sole tag with image rm would already delete it before prune.
+          const unusedContext = path.join(root, 'finite-cache-unused');
+          await fs.writeFile(path.join(unusedContext, 'marker'), `${source.owner}:unused:replacement`);
+          await docker(['build', '--network', 'none', '--quiet', '-t', unused.reference, unusedContext]);
+          const replacement = JSON.parse(await docker(['image', 'inspect', unused.reference]))[0];
+          assert.equal(replacement.Config.Labels['cds.acceptance.owner'], source.owner);
+          assert.notEqual(replacement.Id, unused.id);
+          evidence.unusedReplacement = { reference: unused.reference, id: replacement.Id, size: replacement.Size };
+          const dangling = JSON.parse(await docker(['image', 'inspect', unused.id]))[0];
+          assert.equal(dangling.Id, unused.id); assert.deepEqual(dangling.RepoTags || [], []);
+          assert.deepEqual(dangling.RepoDigests || [], []);
+          assert.equal(await docker(['ps', '-aq', '--filter', `ancestor=${unused.id}`]), '');
+          evidence.unusedBeforePrune = { at: new Date().toISOString(), imageId: dangling.Id,
+            repoTags: dangling.RepoTags || [], repoDigests: dangling.RepoDigests || [], referencedContainers: 0 };
+          const prune = createJanitorDockerAdapters(shell).dockerPrune;
+          const absentImage = async (reference: string) => {
+            try { await docker(['image', 'inspect', reference, '--format', '{{.Id}}']); return false; }
+            catch (error) { assert.match(String((error as any).stderr || ''), /No such (?:image|object)/i); return true; }
+          };
+          evidence.activePrune = await prune(); assert.deepEqual(evidence.activePrune.errors, []);
+          evidence.pruneFinishedAt = new Date().toISOString();
+          assert.equal(await docker(['image', 'inspect', active.id, '--format', '{{.Id}}']), active.id);
+          assert.equal(await absentImage(unused.id), true); evidence.unusedReclaimedWhileActiveProtected = true;
+          await checkpoint('finite-core-cache-original-active-prune-complete');
+          const waitStarted = performance.now();
+          await sleep(Math.max(0, receipt.entries[0].expiresAt - Date.now()) + 25);
+          evidence.expiryWaitMs = performance.now() - waitStarted; evidence.expiredAt = new Date().toISOString();
+          assert.ok(Date.now() >= receipt.entries[0].expiresAt);
+          assert.equal(receipt.entries[0].expiresAt, evidence.originalExpiresAt);
+          assert.deepEqual(JSON.parse(await fs.readFile(path.join(cacheRoot, 'cache.json'), 'utf8')), receipt);
+          await cache.reclaimExpired();
+          assert.equal(await docker(['image', 'inspect', evidence.ownedReference, '--format', '{{.Id}}']), active.id);
+          evidence.activeUserProtectedPastExpiry = true;
+          await checkpoint('finite-core-cache-original-idle-expiry-reached');
+          release(); await cache.reclaimExpired();
+          assert.equal(await absentImage(evidence.ownedReference), true);
+          await assert.rejects(fs.stat(cacheRoot), (error: any) => error.code === 'ENOENT');
+          evidence.afterReleasePrune = await prune(); assert.deepEqual(evidence.afterReleasePrune.errors, []);
+          assert.equal(await absentImage(active.id), true);
+          evidence.foreignReferencesAfter = {};
+          for (const reference of Object.keys(evidence.foreignReferencesBefore))
+            evidence.foreignReferencesAfter[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
+          assert.deepEqual(evidence.foreignReferencesAfter, evidence.foreignReferencesBefore);
+          evidence.ownedReferenceAndReceiptRemoved = true; evidence.verdict = 'passed';
+          await checkpoint('finite-core-cache-release-and-foreign-reference-checks-complete');
+        } finally { cache.stop(); evidence.finishedAt = new Date().toISOString(); }
+      } };
+    } catch (error) { cache.stop(); evidence.preparationFailedAt = new Date().toISOString(); throw error; }
   };
   try {
     report.stage = 'owned-fixtures-ready';
@@ -1305,13 +1325,30 @@ async function main(): Promise<void> {
           const driverStoppedAt = new Date().toISOString(); await docker(['stop', '--time', '2', originalInfra.Id]);
           assert.equal((await ownedView(originalInfra.Id)).State.Running, false); assert.equal((await readInfra()).status, 'running');
           report.infraRecoveryDriverFault = { at: driverStoppedAt, containerId: originalInfra.Id, containerName: infra.containerName, controlledPrivateDriverStop: true };
+          report.infraRecoveryHttpAttempts = []; report.infraRecoveryHttpAttemptOverflow = 0;
           const recoveredInfra = await until(async () => {
             const view = await ownedView(originalInfra.Id); if (!view.State.Running) return undefined;
             const events = await context.readInfraEvents(projectId, infraId);
             const completed = events.find(event => event.action === 'infra.auto-restart.completed' && event.containerName === infra.containerName
               && event.at >= driverStoppedAt && event.command?.name === 'docker start' && event.command?.exitCode === 0);
             if (!completed) return undefined;
-            const response = await fetch(`http://127.0.0.1:${infra.hostPort}/`, { signal: AbortSignal.timeout(3000) }); if (response.status !== 200) return undefined;
+            let response: Response;
+            const attempt: any = { at: new Date().toISOString() };
+            try { response = await fetch(`http://127.0.0.1:${infra.hostPort}/`, { signal: AbortSignal.timeout(3000) });
+              attempt.status = response.status;
+            } catch (error) {
+              const cause = (error as any)?.cause?.code;
+              attempt.transportError = { name: error instanceof Error ? error.name : 'unknown',
+                code: typeof cause === 'string' && /^[A-Z0-9_]{1,40}$/.test(cause) ? cause : null };
+              if (report.infraRecoveryHttpAttempts.length < 64) report.infraRecoveryHttpAttempts.push(attempt);
+              else report.infraRecoveryHttpAttemptOverflow++;
+              // docker start completion precedes the original HTTP listener.
+              // Transport readiness remains inside the unchanged 90s window.
+              return undefined;
+            }
+            if (report.infraRecoveryHttpAttempts.length < 64) report.infraRecoveryHttpAttempts.push(attempt);
+            else report.infraRecoveryHttpAttemptOverflow++;
+            if (response.status !== 200) return undefined;
             const content: any = await response.json(); assert.equal(content.source, infraSha); assert.equal(content.runtime, infraSha); assert.equal(content.service, 'infra');
             assert.ok(Date.parse(view.State.StartedAt) > Date.parse(originalInfra.State.StartedAt));
             return { containerId: view.Id, startedAt: view.State.StartedAt, imageId: view.Image, completed, events, content };
@@ -1337,13 +1374,17 @@ async function main(): Promise<void> {
         context.report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.dockerExerciseReport = { file: 'docker-report.json', genericFixtureOnly: true, representativeBusinessCiVerified: false, shortReadSamples: report.readSamples.length };
         await checkpoint('original-infra-observation-and-recovery-complete');
+        assert.equal(finiteCache, undefined);
+        finiteCache = await prepareFiniteCoreCache(directImageId);
       } });
     report.stage = 'finite-core-image-cache';
     await checkpoint('original-application-shutdown-and-restart-complete');
-    await exerciseFiniteCoreCache();
+    assert.ok(finiteCache);
+    await finiteCache.finish();
     report.verdict = 'passed';
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }
   finally {
+    finiteCache?.stop();
     const cleanupErrors: string[] = [];
     if (probeProxy) {
       try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; report.proxyTraffic = probeProxy.traffic(); }
