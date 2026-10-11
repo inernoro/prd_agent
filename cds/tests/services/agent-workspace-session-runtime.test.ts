@@ -3139,6 +3139,72 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ))).toBe(true);
   });
 
+  it('binds runtime and storage probes to one unique, instance-owned capability generation', async () => {
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { instanceId: 'probe-owner', autoPullImage: false });
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: true });
+    const probes = shell.calls.filter(({ command }) => command.startsWith('docker run --rm') && command.includes('--entrypoint /bin/sh'));
+    expect(probes).toHaveLength(2);
+    const identities = probes.map(({ command }) => {
+      expect(command).toContain("--label 'cds.type=agent-session'");
+      expect(command).toContain("--label 'cds.instance=probe-owner'");
+      const operation = command.match(/--label 'cds.agent.probe.operation=([a-f0-9]{32})'/)?.[1];
+      const name = command.match(/--name '([^']+)'/)?.[1];
+      expect(operation).toMatch(/^[a-f0-9]{32}$/);
+      expect(name).toContain(operation);
+      expect(command).toContain(`cds.agent.session=capability-${operation}`);
+      return { operation, name };
+    });
+    expect(identities[0].operation).toBe(identities[1].operation);
+    expect(identities[0].name).not.toBe(identities[1].name);
+    expect(probes[0].command).toContain("--label 'cds.agent.probe=runtime-validation'");
+    expect(probes[1].command).toContain("--label 'cds.agent.probe=storage-validation'");
+    const volume = shell.calls.find(({ command }) => command.startsWith('docker volume create'))!;
+    expect(volume.command).toContain(`cds.agent.session=capability-${identities[0].operation}`);
+    expect(volume.command).toContain(`cds-od-storage-probe-${digest('probe-owner').slice(0, 8)}-${identities[0].operation}`);
+    // A second runtime for the same instance must not share a pending daemon allocation.
+    await expect(new AgentWorkspaceSessionRuntime(shell, { instanceId: 'probe-owner', autoPullImage: false }).capability(true)).resolves.toMatchObject({ available: true });
+    const secondProbe = shell.calls.filter(({ command }) => command.startsWith('docker run --rm') && command.includes('--entrypoint /bin/sh'))[2];
+    expect(secondProbe.command).not.toContain(`cds.agent.probe.operation=${identities[0].operation}`);
+  });
+
+  it('keeps a timed-out probe attributable for instance-scoped recovery without reclaiming foreign resources', async () => {
+    const calls: string[] = [];
+    const containers = new Map<string, string>([['foreign', 'other-owner'], ['legacy', '']]);
+    const shell: IShellExecutor = {
+      async exec(command) {
+        calls.push(command);
+        if (command.startsWith('docker version')) return result('27.0.0');
+        if (command.startsWith('docker image inspect')) return result('sha256:probe-image');
+        if (command.startsWith('docker run --rm')) {
+          const name = command.match(/--name '([^']+)'/)?.[1];
+          const owner = command.match(/--label 'cds.instance=([^']+)'/)?.[1];
+          if (name && owner) containers.set(name, owner);
+          throw new Error('CLI timed out after daemon accepted allocation');
+        }
+        if (command.startsWith('docker ps -aq')) {
+          expect(command).toContain("--filter 'label=cds.instance=probe-owner'");
+          expect(command).toContain("--filter 'label=cds.type=agent-session'");
+          return result([...containers].filter(([, owner]) => owner === 'probe-owner').map(([name]) => name).join('\n'));
+        }
+        if (command.startsWith('docker network ls -q') || command.startsWith('docker volume ls -q')) return result();
+        if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
+        if (command.startsWith('docker rm -f')) {
+          containers.delete(command.match(/'([^']+)'/)![1]);
+          return result('removed');
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const options = { instanceId: 'probe-owner', autoPullImage: false };
+    await expect(new AgentWorkspaceSessionRuntime(shell, options).capability(true)).resolves.toMatchObject({ available: false });
+    const probe = calls.find(command => command.startsWith('docker run --rm'))!;
+    expect(probe).toContain("--label 'cds.agent.probe=runtime-validation'");
+    expect(containers.size).toBe(3);
+    await new AgentWorkspaceSessionRuntime(shell, options).bootstrapAndVerify();
+    expect([...containers.keys()]).toEqual(['foreign', 'legacy']);
+  });
+
   it('returns a fail-closed cold snapshot without waiting for a slow Docker probe', async () => {
     const dockerVersion = deferred<ExecResult>();
     let dockerProbeStarted = false;

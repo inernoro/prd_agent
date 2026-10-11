@@ -11,7 +11,7 @@ import { runOrphanOwnershipProbe, type OwnershipCase } from './orphan-worktree-o
 
 const referenceHead = 'a64d9b2494c8a0e140dd678c9c4bd9b90e1935c4';
 const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
-// 保留旧历史范围/编译黄金；本批仅新增按需能力准备这一源，不能抵扣旧路径语义。
+// 保留旧历史范围/编译黄金；本批新增按需能力准备及探针归属这一源，不能抵扣旧路径语义。
 const currentSourceChanges = ['src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/branches.ts', 'src/server.ts', 'src/services/agent-workspace-session-runtime.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/internal-pending-replay-auth.ts'];
 const ownershipReferenceHead = '766a259d8383da5e60e426819a97a110bfedf275';
 const sources = ['src/services/janitor.ts', 'src/services/state.ts', 'src/services/orphan-worktree.ts',

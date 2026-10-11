@@ -1868,10 +1868,15 @@ export class AgentWorkspaceSessionRuntime {
       };
     }
 
+    // Allocate before the daemon request: CLI timeout cannot revoke a late create.
+    // The generation ties both validation containers and the storage volume to
+    // this instance's existing orphan recovery; it does not prove immediate cleanup.
+    const probeOperationId = crypto.randomUUID().replace(/-/g, '');
     let runtimeAvailable = this.runtimeValidationByImageId.get(imageId);
     if (runtimeAvailable === undefined) {
       const runtimeValidation = await this.shell.exec([
         'docker run --rm',
+        ...this.capabilityProbeOwnership('runtime-validation', probeOperationId),
         '--pull never',
         '--read-only',
         '--network none',
@@ -1897,7 +1902,7 @@ export class AgentWorkspaceSessionRuntime {
     }
 
     if (runtimeAvailable && !this.hardStoragePolicyValidated) {
-      this.hardStoragePolicyValidated = await this.probeHardStoragePolicy();
+      this.hardStoragePolicyValidated = await this.probeHardStoragePolicy(probeOperationId);
     }
 
     return {
@@ -1918,9 +1923,21 @@ export class AgentWorkspaceSessionRuntime {
     };
   }
 
-  private async probeHardStoragePolicy(): Promise<boolean> {
-    const volumeName = `cds-od-storage-probe-${this.instanceNameScope}`;
-    const sessionLabel = `capability-${this.instanceNameScope}`;
+  private capabilityProbeOwnership(kind: 'runtime-validation' | 'storage-validation', operationId: string): string[] {
+    return [
+      `--name ${shellQuote(`cds-od-probe-${this.instanceNameScope}-${operationId}-${kind}`)}`,
+      `--label ${shellQuote('cds.managed=true')}`,
+      `--label ${shellQuote('cds.type=agent-session')}`,
+      `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+      `--label ${shellQuote(`cds.agent.probe=${kind}`)}`,
+      `--label ${shellQuote(`cds.agent.probe.operation=${operationId}`)}`,
+      `--label ${shellQuote(`cds.agent.session=capability-${operationId}`)}`,
+    ];
+  }
+
+  private async probeHardStoragePolicy(probeOperationId: string): Promise<boolean> {
+    const volumeName = `cds-od-storage-probe-${this.instanceNameScope}-${probeOperationId}`;
+    const sessionLabel = `capability-${probeOperationId}`;
     let created = false;
     let verified = false;
     let removed = false;
@@ -1942,6 +1959,7 @@ export class AgentWorkspaceSessionRuntime {
       if (volume.exitCode === 0) {
         const validation = await this.shell.exec([
           'docker run --rm',
+          ...this.capabilityProbeOwnership('storage-validation', probeOperationId),
           '--pull never',
           '--network none',
           '--read-only',
