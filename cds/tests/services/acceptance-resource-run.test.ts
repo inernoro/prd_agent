@@ -73,6 +73,42 @@ describe('P5-05 creation ownership and terminal receipt kernel', () => {
     await expect(ledger.requireCleanupEvidence(owner.run.id, owner.ownerToken)).rejects.toThrow('terminal_receipt');
     expect(ledger.get(owner.run.id)?.stage).toBe('registered');
   });
+  function failedSuccessor() {
+    state.addDeploymentRun({ id: 'dr_failed_successor', projectId: 'p1', branchId: 'b1',
+      commitSha: 'c'.repeat(40), status: 'failed', startedAt: '2026-10-11T00:00:02.000Z', events: [], seq: 1 } as any);
+    expect(state.getBranch('b1')!.lastDeploymentRunId).toBe('dr_failed_successor');
+  }
+  it('archives and finishes the original resource after a failed successor advances the branch pointer', async () => {
+    const owner = await registered(); failedSuccessor();
+    let called = 0;
+    const meta = await ledger.createBoundReport({ id: owner.run.id, ownerToken: owner.ownerToken, ...input, commitSha: sha }, async assertCurrent => {
+      assertCurrent(); called++; return report(owner.run.id);
+    });
+    const finished = await ledger.finish(owner.run.id, owner.ownerToken, meta.id);
+    expect(called).toBe(1); expect(finished.terminal?.verdict).toBe('fail');
+    expect(finished.resource?.deploymentRunId).toBe('dr_owned');
+    expect(state.getBranch('b1')!.lastDeploymentRunId).toBe('dr_failed_successor');
+  });
+  it('retains exact cleanup prerequisites after a failed successor and actual JSON reload', async () => {
+    const owner = await registered(); const meta = await report(owner.run.id);
+    await ledger.finish(owner.run.id, owner.ownerToken, meta.id); failedSuccessor();
+    const restored = await reload(); const service = new AcceptanceResourceRunService(restored);
+    const evidence = await service.requireCleanupEvidence(owner.run.id, owner.ownerToken);
+    expect(evidence.resource?.deploymentRunId).toBe('dr_owned');
+    expect(evidence.terminal?.verdict).toBe('fail'); expect(evidence.daemonVerificationRequired).toBe(true);
+    expect(restored.getBranch('b1')!.lastDeploymentRunId).toBe('dr_failed_successor');
+  });
+  it.each(['missing-creation', 'creation-scope', 'creation-status', 'container-replaced', 'profile-changed'])('still rejects %s after a failed successor', async kind => {
+    const owner = await registered(); failedSuccessor();
+    if (kind === 'missing-creation') delete state.getState().deploymentRuns!['dr_owned'];
+    if (kind === 'creation-scope') state.getDeploymentRun('dr_owned')!.branchId = 'foreign';
+    if (kind === 'creation-status') state.getDeploymentRun('dr_owned')!.status = 'failed';
+    if (kind === 'container-replaced') state.getBranch('b1')!.services[input.profileId].containerId = 'd'.repeat(64);
+    if (kind === 'profile-changed') state.getBranch('b1')!.extraProfiles![0].env!.PRIVATE_VALUE = 'changed';
+    const create = vi.fn();
+    await expect(ledger.createBoundReport({ id: owner.run.id, ownerToken: owner.ownerToken, ...input, commitSha: sha }, create)).rejects.toThrow(/acceptance_resource_(unconfirmed|changed)/);
+    expect(create).not.toHaveBeenCalled(); expect(ledger.get(owner.run.id)?.stage).toBe('registered');
+  });
   it.each(['containerId', 'sha', 'env', 'deployment'])('refuses unconfirmed actual resource %s', async field => {
     const owner = await registered();
     const b = state.getBranch('b1')!;

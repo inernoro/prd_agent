@@ -141,7 +141,9 @@ export class AcceptanceResourceRunService {
     const profile = b.extraProfiles?.find(p => p.id === run.profileId);
     const service = b.services[run.profileId];
     const env = { ...profile?.env, ...b.profileOverrides?.[run.profileId]?.env };
-    const deploymentRunId = b.lastDeploymentRunId;
+    // Registration binds the successful creation. A later branch deployment can fail
+    // without replacing this exact resource or revoking its report/cleanup ownership.
+    const deploymentRunId = run.resource ? run.resource.deploymentRunId : b.lastDeploymentRunId;
     const deployment = deploymentRunId ? this.state.getDeploymentRun(deploymentRunId) : undefined;
     if (!profile || profile.projectId !== run.projectId || env.IMP_HEALTH_RUN_ID !== run.isolationRunId || env.IMP_TARGET_SHA !== run.targetSha
       || !service || !CONTAINER.test(service.containerId || '') || service.deployedCommitSha !== run.targetSha
