@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.53；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.54；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -20,7 +20,7 @@
 | P0-02 | 本地部分实现 | 正式未执行 | 对照《排查 CDS 持续 500 问题》的现有实现，标出已完成、需继承、仍待修复项，防止重复重构。 |
 | P0-03 | 本地部分实现 | 正式未执行 | 冻结至少八个验收分支及各自完整服务图；标准应用、常驻辅助服务、一次性初始化任务分别登记其实际生命周期。 |
 | P0-04 | 本地部分实现 | 正式未执行 | 建立阶段耗时：CI runner 等待、CI 构建、制品等待、容量等待、拉取、启动、就绪、切换、失败收尾。 |
-| P0-05 | 待办 | 正式未执行 | 保存模式覆盖、自动部署开关、路由、运行镜像与当前资源配置的可恢复快照。 |
+| P0-05 | 本地部分实现 | 正式未执行 | 保存模式覆盖、自动部署开关、路由、运行镜像与当前资源配置的可恢复快照。 |
 | P0-06 | 本地部分实现 | 正式未执行 | 核对 RabbitMQ/XXL-JOB/数据库隔离前提，设计无真实业务消费与定时作业副作用的验收环境。 |
 | P1-01 | 本地部分实现 | 正式未执行 | 自动、手动、单服务、整分支及集群执行器共用按精确目标 SHA 的制品检查。 |
 | P1-02 | 本地部分实现 | 正式未执行 | 校验实际拉取鉴权、manifest、目标架构与镜像集合；CI 成功标志不能替代实际镜像可用。 |
@@ -495,3 +495,9 @@ expected result：CI与部署阶段可归因且不拖慢交付，未知不伪造
 ## v1.53 CI开放状态真红修复检查点
 
 独立固定affc provider actual nativeHTTP 27/28发现queued job含旧完整started/completed时，outcome=open却汇总completed/observed且incomplete=false；主queued/in_progress两控制同1用例反例复红，属同一个开放状态根因。d48c9c15在汇总中任何open均保持open/incomplete，不计为已结束build，原业务/provider facts不改；8files354相关/显式core tsc0，固定full674files9866green/6files19skip/1旧obsolete，原affc9865与独立27/28留历史。固定d48独立实际重跑定稿：provider原27/28→28/28、actual Router/JSON原21/22→22/22两红同open根因；budget13/13、token nativeHTTP v2 6/6分列重叠不求和。主核验19固定Git源与29原件hash；manifest1dc6acd77eced879cb7267465d0c161d2c255fc0e9a6275324bf47d4a351ca72、summary5614a7896cdbe9e3a77d46bd3baef73305ca62bc700643019c4426333477b7da。token v1 5/6中oversized控制未到server且安全null，原件保留；v2只测试适配Connection:close，不改期待/no retry，不算v1产品红绿或生产socket根因闭合。原28设计行非全部执行，source/nonexact路由矩阵、写入EISDIR等剩余边界不继承通过。CI-L18/20 pending合并/joined caller原设计差异保留，不以N/A当pass；49正式全未执行，视觉N/A，目标active。
+
+## v1.54 项目恢复观察有界检查点
+
+guide2.71先冻结P0-05有限恢复观察；688a0d新增Unix独立只读脚本，只复用official auth/host helper，GET明确项目并禁止redirect/live/写请求，5秒绝对HTTP/两轮60秒/4MiB、配置500/分支20/各run200触顶拒绝。两轮白名单含模式覆盖、自动策略、资源、路由、服务实际记录和终态未released候选双图及创建/网络身份；API缺省/null/显式空分开，不猜实际极速，输出仓库外新文件0600独占且拒Git父目录。stable仅有限API观察，不是事务/Daemon/全备份/回滚；secret/commands/infra/DB/Version/复制集/pending完整性等省略。主feature缺模块一个前件，初次actual CLI误处理官方ok的SystemExit0修正，真实API发现合法null被拒修正，原件保留；23 Python局部、privacy/reservation各1 mutation红。688固定独立nativeHTTP发现缺省override物化{}并吞掉absent→{}漂移同一根因，主另确认nested500仍stable第二根因（三variant同根）；原两反例及独立旧红保留。1d1156只保原字段存在性及严格nested<500，主25 Python局部绿，独立30设计分母复验进行中，非25/30或formal49通过。旧draft共享IMP只读v2在46.94秒20GET里branches及preparing API失败，13Profile/9Branch有限事实，status=incomplete/0600；不归因已证明500或超时，不是新fixed运行证据，未重试/改shared。P0-05只能partial-local，完整保护配置与实际恢复仍缺；既有八push/selfupdate授权有效，未执行；formal49均not-executed/visual N/A，目标active。
+
+expected result：更新前有不泄密、不跨项目的恢复参考，缺失与漂移不能绿；current evidence：固定1d1156主25 Python局部、两个根因旧红，独立复验待返；visible result：线上只读采集incomplete/候选未部署/visual N/A；gap：完整保护配置、实际Daemon/Forwarder与回滚及原49条运行门槛；required action：固定源按原30设计复验，真红继续修，隔离准入后实际交付与视觉。
