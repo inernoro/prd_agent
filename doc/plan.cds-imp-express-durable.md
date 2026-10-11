@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.83；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.84；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -736,3 +736,7 @@ expected result：原创建证明不受后继失败遮蔽，实际release核原I
 v1.83：IMP957e六文件封闭旧按名称删除/仅redeploy flag判终结；authorizer/configurator实际入口在DB/HTTP前拒CDS_FINALIZE_RUNTIME=true，正常初始化保留。主原5红→35相关绿；scanner旧spawnSync哨兵随删除过期的夹具失败保原日志。独立creator18局部case映射原BRC01..08/24，设计89e34f7d先冻结，主41hash/16Git已核。固定957e独立同fixture旧d5bb6/10→10/10；包含helper2、actualCLI2、normal spawn4、normal CLI2，不相加。旧authorizer HTTP1/mysql1与configurator HTTP1→各HTTP0/mysql0有限拒绝，正常CLI仍触自有HTTP而非全禁；不证明实际DB成功。独立摘要65b3c90d已主核794hash/两epoch390Git各字节及blob一致。主全CDS命名脚本初162/163，固定d5bb open-platform9/10同一旧dev/static/node22检查与现有express合同冲突。IMP f0ae两文件读取现有SSOT/parseDeployModes/sha模板，检查唯一express/精确image/exact/prebuilt/port、拒command/fallback/source mode，保留域名/readiness/Vite/API/CI输入；主本文件19、相关68、完整CDS命名脚本172/172绿，独立固定f0ae最终摘要22ec89ec已核834hash/786Git；旧957e同validator17/20三false一旧合同root→f0ae20/20，legacy10/10实际重跑，分列不求和；v2无引号对象key SyntaxError是夹具，v3仅补引号，原件保留。主不可变收据33cfea9882a1cec988b539c2ded9fc44abbeaf9fae1521e1896448f88f9a3a71。CDS产品68e未改，前full10200与独立9/3/2/2是其固定历史。实际server条件创建/外部creator/bound report→finish→release整链仍缺；全列表PUT没有CAS不能冒充并发安全。正式49全部not-executed/visual N/A、45partial-local/4todo；八push+CI不继承新IMP修订，无八完整部署/Daemon/性能/双主题/48h。本批仅本地commit，无push/PR/shared写/selfupdate，目标active。
 
 expected result：容器初始化不能补认领/自删，既有开放平台检查与极速SSOT一致。current evidence：主172脚本绿；独立957e固定10/10，f0ae固定20/20及legacy10/10局部已核，分列不求和。visible result：未部署，正式视觉N/A。gap：条件创建与实际外部生命周期、真实Daemon、八全图/性能/恢复/48h。required action：回读固定独立字节与原件，然后先冻结server条件创建边界并实施；保留原正式门槛。
+
+## v1.84 条件配置创建局部检查点
+
+v1.84：guide2.95先提交4ad0b32；CDS805a86e7a776c1e42c1fb57fc5074cb743d9045d九文件新增原run条件配置追加（不是实际部署）。受限POST create-profile、原cap/project检查、acceptance-create独占，精确SHA唯一express；State first ACK只意图、second ACK profile+configured原子发布，目标冲突拒绝、当前其他配置保留，未知补偿publication hold禁止重试，普通写入/部署拒绝。主缺路由1红→24新用例绿；实际serverauth与相关11files310绿，显式core0；整表覆盖与丢未知hold变异各1红已还原。全量689files10226绿/6files19skip/1旧obsolete73.67s；root hook缺node_modules仍称通过不作验证。原件替换失误/ACK2一次超时/fixture缺sharedcoordinator503保留，最终固定产品全量绿。独立68e条件创建前件两nativeHTTP组各2/3（不相加）：全PUT并发覆盖及首次register last来源不足；主核410hash/376Git，summary cddb612b。固定805a独立子集已派发，尚未结论。configured拒绝登记不能关闭旧无intent initial-register来源根缺口；实际owned deployment可信绑定、IMP外部creator及archive→finish→release全链仍待。主固定源/日志receipt5d5690902f63b9c501d0cfa54ce78e9ed3748de4ef314b27e264d0a9599bab53。IMP产品f0ae未改，其172及独立20/10仅历史。正式49全not-executed/visual N/A，45partial-local/4todo；八push/CI不是八全图极速。无push/PR/shared写/selfupdate，active。
