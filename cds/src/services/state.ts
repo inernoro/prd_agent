@@ -57,6 +57,7 @@ import type {
   InfraMaintenanceJobKind,
 } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
+import type { AcceptanceResourceRun } from './acceptance-resource-run.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -1005,6 +1006,7 @@ export class StateService {
   private onSaveListeners: Array<() => void> = [];
   /** A terminal snapshot is written while API readers still see the active run. */
   private durableRunDrafts = new Map<string, DeploymentRun>();
+  private durableAcceptanceDrafts = new Map<string, AcceptanceResourceRun>();
 
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
@@ -1037,11 +1039,14 @@ export class StateService {
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
     const drafts = [...this.durableRunDrafts];
-    const snapshot = drafts.length ? { ...this.state,
+    let snapshot = drafts.length ? { ...this.state,
       deploymentRuns: { ...this.state.deploymentRuns, ...Object.fromEntries(drafts) } } : this.state;
+    if (this.durableAcceptanceDrafts.size) snapshot = { ...snapshot,
+      acceptanceResourceRuns: { ...snapshot.acceptanceResourceRuns, ...Object.fromEntries(this.durableAcceptanceDrafts) } };
     // Concurrent entity writes must preserve the staged terminal rows, including split-store hints.
-    const effectiveHints = hints && drafts.length
+    let effectiveHints = hints && drafts.length
       ? [...hints, ...drafts.map(([id]) => ({ kind: 'deploymentRuns' as const, id }))] : hints;
+    if (effectiveHints && this.durableAcceptanceDrafts.size) effectiveHints = [...effectiveHints, { kind: 'global' }];
     this.backingStore.save(snapshot, effectiveHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
@@ -1063,6 +1068,35 @@ export class StateService {
 
   getState(): Readonly<CdsState> {
     return this.state;
+  }
+
+  /** Durable publication of a bounded acceptance ownership row, including concurrent global writes. */
+  async writeAcceptanceResourceRunDurably(row: AcceptanceResourceRun, expectedSeq: number | undefined,
+    assertCurrent: () => void): Promise<void> {
+    const table = this.state.acceptanceResourceRuns || {};
+    const previous = table[row.id];
+    if (previous?.seq !== expectedSeq || this.durableAcceptanceDrafts.has(row.id)) throw new Error('acceptance_run_conflict');
+    if (!previous) {
+      const all = { ...table, ...Object.fromEntries(this.durableAcceptanceDrafts) };
+      if (Object.keys(all).length >= 512) throw new Error('acceptance_run_capacity');
+      if (Object.values(all).some(run => run.stage !== 'released' && run.branchId === row.branchId && run.profileId === row.profileId)) {
+        throw new Error('acceptance_resource_owned');
+      }
+    }
+    const draft = structuredClone(row);
+    this.durableAcceptanceDrafts.set(row.id, draft);
+    try {
+      this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
+      if (this.state.acceptanceResourceRuns?.[row.id] !== previous) throw new Error('acceptance_run_conflict');
+      this.state.acceptanceResourceRuns ??= {};
+      this.state.acceptanceResourceRuns[row.id] = draft;
+      this.durableAcceptanceDrafts.delete(row.id);
+      for (const fn of this.onSaveListeners) { try { fn(); } catch { /* observers cannot roll back durable publication */ } }
+    } catch (error) {
+      this.durableAcceptanceDrafts.delete(row.id);
+      this.save(HINT_GLOBAL);
+      throw error;
+    }
   }
 
   // ── Scheduled jobs ──
@@ -5702,6 +5736,7 @@ export class StateService {
    */
   createAcceptanceReport(input: {
     title: string;
+    acceptanceRunId?: string | null;
     format: 'html' | 'md';
     content: string;
     projectId?: string | null;
@@ -5816,6 +5851,7 @@ export class StateService {
     const folderId = folder && (folder.projectId || null) === (input.projectId ?? null) ? folder.id : null;
     return {
       id: crypto.randomUUID().replace(/-/g, ''),
+      ...(input.acceptanceRunId ? { acceptanceRunId: input.acceptanceRunId } : {}),
       title: input.title,
       format: input.format,
       projectId: input.projectId ?? null,

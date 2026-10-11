@@ -2621,6 +2621,8 @@ export interface CdsState {
    * iframe 渲染（不授予 same-origin），见 routes/reports.ts。
    */
   acceptanceReports?: AcceptanceReportMeta[];
+  /** Creation-time ownership of temporary acceptance resources; never inferred for legacy profiles. */
+  acceptanceResourceRuns?: Record<string, import('./services/acceptance-resource-run.js').AcceptanceResourceRun>;
   /** 验收报告文件夹（项目级分类，见 ReportFolder）。 */
   reportFolders?: ReportFolder[];
   /** WS3 MAP-KBTP peer-sync：本 CDS 实例的稳定 nodeId（首次用时生成）。 */
@@ -2853,6 +2855,8 @@ export interface PeerPairingCode {
 export interface AcceptanceReportMeta {
   /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
+  /** Explicit run binding; a deployment run is not an acceptance run. */
+  acceptanceRunId?: string | null;
   /**
    * 正文在对象存储里的键（2026-09-10）。
    *
