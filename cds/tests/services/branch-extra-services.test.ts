@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeBranchProfiles, isValidExtraProfileId } from '../../src/services/branch-extra-services.js';
+import { mergeBranchProfiles, isValidExtraProfileId, parseExtraDeploymentMetadata } from '../../src/services/branch-extra-services.js';
 import type { BuildProfile, BranchEntry } from '../../src/types.js';
 
 const p = (id: string, extra: Partial<BuildProfile> = {}): BuildProfile => ({
@@ -13,6 +13,36 @@ const p = (id: string, extra: Partial<BuildProfile> = {}): BuildProfile => ({
 });
 
 const branch = (extraProfiles?: BuildProfile[]): Pick<BranchEntry, 'extraProfiles'> => ({ extraProfiles });
+
+describe('bounded extra deployment metadata', () => {
+  it('legacy inputs remain empty and explicit metadata does not import runtime-owned qualifications', () => {
+    expect(parseExtraDeploymentMetadata({ preparedArtifactId: 'forged', localArtifact: true })).toEqual({});
+    expect(parseExtraDeploymentMetadata({})).toEqual({});
+  });
+  it('rejects oversized, malformed or unsafe scope/call projections rather than coercing them', () => {
+    for (const raw of [{ buildScope: Array(129).fill('src/**') }, { buildScope: ['x'.repeat(257)] },
+      { buildScope: [null] }, { buildScope: ['/absolute'] }, { buildScope: ['src/../outside'] },
+      { buildScope: ['src/$(cmd)'] }, { calls: ['x'.repeat(64)] }, { calls: Array(129).fill('api') }, { calls: {} }]) {
+      expect(() => parseExtraDeploymentMetadata(raw)).toThrow('extra_deployment_metadata_invalid');
+    }
+    expect(parseExtraDeploymentMetadata({ buildScope: ['src/**', '*.mjs'], calls: [] })).toEqual({ buildScope: ['src/**', '*.mjs'], calls: [] });
+  });
+  it('validates mode templates, port, count and unknown qualifications', () => {
+    const mode = { label: '极速版', prebuilt: true, commitPolicy: 'exact', dockerImage: 'ghcr.io/o/r:sha-${CDS_COMMIT_SHA}' };
+    expect(parseExtraDeploymentMetadata({ deployModes: { express: mode }, activeDeployMode: 'express' }).deployModes!.express.dockerImage).toBe(mode.dockerImage);
+    for (const delta of [{ dockerImage: 'ghcr.io/o/r:${OTHER}' }, { containerPort: 0 }, { containerPort: '80' },
+      { prebuilt: false }, { commitPolicy: 'fallback' }, { sourceFallbackProfile: {} }, { label: 'x'.repeat(129) }]) {
+      expect(() => parseExtraDeploymentMetadata({ deployModes: { express: { ...mode, ...delta } } })).toThrow();
+    }
+    expect(() => parseExtraDeploymentMetadata({ deployModes: Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`m${index}`, mode])) })).toThrow();
+    expect(() => parseExtraDeploymentMetadata({ deployModes: JSON.parse('{"__proto__":{"label":"x","prebuilt":true,"commitPolicy":"exact"}}') })).toThrow();
+  });
+  it('clears declared metadata explicitly without making omission a downgrade', () => {
+    const previous = p('api', { prebuiltImage: true, prebuiltCommitPolicy: 'exact', calls: ['other'] });
+    expect(parseExtraDeploymentMetadata({}, previous)).toEqual({ prebuiltImage: true, prebuiltCommitPolicy: 'exact', calls: ['other'] });
+    expect(parseExtraDeploymentMetadata({ prebuiltImage: false, prebuiltCommitPolicy: null, calls: null }, previous)).toEqual({ prebuiltImage: false });
+  });
+});
 
 describe('isValidExtraProfileId', () => {
   it('accepts normal ids', () => {

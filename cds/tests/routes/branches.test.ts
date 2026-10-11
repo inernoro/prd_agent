@@ -1813,6 +1813,42 @@ describe('Branch Routes', () => {
       stateService.addBranch({ id, projectId, branch: id, worktreePath: `/tmp/wt/${id}`, services: {}, status: 'idle', createdAt: new Date().toISOString() });
     }
 
+    const exactExtra = () => ({ ...extraSvc('rpc-extra'),
+      dockerImage: `ghcr.io/md-imp/mdimp/mdimp-worker-rpc:sha-${'a'.repeat(40)}`,
+      prebuiltCommitPolicy: 'exact', activeDeployMode: 'express',
+      artifactSource: 'https://github.com/md-imp/mdimp',
+      buildScope: ['deploy/cds/express/**'], calls: ['worker'], role: 'api',
+      deployModes: { express: { label: '极速版', dockerImage: `ghcr.io/md-imp/mdimp/mdimp-worker-rpc:sha-${'a'.repeat(40)}`, prebuilt: true, commitPolicy: 'exact', buildScope: ['deploy/cds/express/**'] } },
+    });
+    it('roundtrips exact auxiliary metadata through actual PUT/GET and State', async () => {
+      seedBranch('b1'); const profile = exactExtra();
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [profile] })).status).toBe(200);
+      const saved = (await request(server, 'GET', '/api/branches/b1/extra-services')).body.extraProfiles[0];
+      for (const key of ['prebuiltCommitPolicy', 'activeDeployMode', 'deployModes', 'buildScope', 'calls', 'role', 'artifactSource']) expect(saved[key]).toEqual((profile as any)[key]);
+      expect(stateService.getBranch('b1')!.extraProfiles![0]).toMatchObject(profile);
+    });
+    it('metadata omission preserves exact baseline while explicit optional clearing is supported', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [exactExtra()] });
+      const basic = { id: 'rpc-extra', dockerImage: exactExtra().dockerImage, containerPort: 80 };
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [basic] })).status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0]).toMatchObject({ prebuiltImage: true, prebuiltCommitPolicy: 'exact', activeDeployMode: 'express' });
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ ...basic, calls: [], buildScope: [], role: null, artifactSource: null }] })).status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0]).toMatchObject({ calls: [], buildScope: [] });
+      expect(stateService.getBranch('b1')!.extraProfiles![0].role).toBeUndefined();
+    });
+    it('rejects malformed express metadata without overwriting the saved profile', async () => {
+      seedBranch('b1'); await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [extraSvc('rpc-extra')] });
+      const before = JSON.stringify(stateService.getBranch('b1')!.extraProfiles);
+      for (const delta of [{ buildScope: ['../outside'] }, { calls: [null] }, { role: 'root' },
+        { artifactSource: 'https://github.com/owner/repo?secret=x' }, { prebuiltCommitPolicy: 'fallback' },
+        { activeDeployMode: 'dev' }, { prebuiltImage: false },
+        { deployModes: { express: { label: 'x', prebuilt: true, commitPolicy: 'exact', fallbackImage: 'nginx:latest' } } }]) {
+        expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [{ ...exactExtra(), ...delta }] })).status).toBe(400);
+        expect(JSON.stringify(stateService.getBranch('b1')!.extraProfiles)).toBe(before);
+      }
+    });
+
     it('GET returns [] for a branch with no extras', async () => {
       seedBranch('b1');
       const res = await request(server, 'GET', '/api/branches/b1/extra-services');

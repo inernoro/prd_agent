@@ -42,7 +42,7 @@ import {
   PREBUILT_DEFINITION_FIELDS,
   withoutSourceFallback,
 } from '../services/agent-prebuilt-gate.js';
-import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
+import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles, parseExtraDeploymentMetadata } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
 import { resolveInfraForDb } from '../services/replica-db-clone.js';
@@ -18026,6 +18026,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         subdomain = sd;
       }
       seen.add(id);
+      let deploymentMetadata: ReturnType<typeof parseExtraDeploymentMetadata>;
+      try {
+        deploymentMetadata = parseExtraDeploymentMetadata(raw, entry.extraProfiles?.find(profile => profile.id === id));
+      } catch {
+        res.status(400).json({ error: '额外服务部署元数据非法：须为有界预构建 exact 模式、合法 scope/calls/role/source' });
+        return;
+      }
       sanitized.push({
         id,
         name: String(raw?.name || id),
@@ -18050,7 +18057,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...(dependsOn ? { dependsOn } : {}),
         ...(readinessProbe ? { readinessProbe } : {}),
         ...(startupSignal ? { startupSignal } : {}),
-        ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
+        ...deploymentMetadata,
       } as BuildProfile);
     }
     // 破坏性移除回滚预备（Codex P2「Defer destructive extra-service saves until redeploy is accepted」）：

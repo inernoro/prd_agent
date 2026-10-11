@@ -26,7 +26,7 @@ export async function prepareExactPrebuiltArtifacts(
   if (host.exitCode !== 0 || !['amd64', 'arm64', 'arm', 'ppc64le', 's390x'].includes(hostArch)) throw new Error('artifact_host_architecture_unknown');
   const admitted = new Map<string, BuildProfile>();
   // 两个制品并行，独立于源码构建槽；同worker镜像只拉一次。
-  const prepared = new Map<string, Promise<{ id: string; image: string; ref: string }>>();
+  const prepared = new Map<string, Promise<{ id: string; image: string; ref: string; source: unknown }>>();
   let cursor = 0;
   const prepare = async (profile: BuildProfile) => {
     assertCurrent(`artifact-before-${profile.id}`);
@@ -49,7 +49,7 @@ export async function prepareExactPrebuiltArtifacts(
           assertCurrent(`artifact-after-pull-${profile.id}`);
           if (pull.exitCode !== 0) throw new Error(`artifact_pull_failed: ${profile.id}；目标制品不可拉取，请检查CI制品与registry权限`);
         }
-        const format = '{"architecture":{{json .Architecture}},"os":{{json .Os}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"id":{{json .Id}},"repoDigests":{{json .RepoDigests}}}';
+        const format = '{"architecture":{{json .Architecture}},"os":{{json .Os}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"source":{{json (index .Config.Labels "org.opencontainers.image.source")}},"id":{{json .Id}},"repoDigests":{{json .RepoDigests}}}';
         const inspect = await shell.exec(`docker image inspect --format ${quote(format)} ${quote(cachedId || image)}`, { timeout: 10_000, signal: options.signal, priority: 'delivery', schedulingGroup: profile.projectId });
         let metadata: Record<string, unknown> = {};
         try { metadata = JSON.parse(inspect.stdout.trim()); } catch { /* fail closed below */ }
@@ -60,11 +60,13 @@ export async function prepareExactPrebuiltArtifacts(
           ? metadata.repoDigests.find((ref: unknown): ref is string => typeof ref === 'string'
             && ref.startsWith(`${repository}@sha256:`) && /@sha256:[a-f0-9]{64}$/i.test(ref)) || image
           : image;
-        return { id: metadata.id, image, ref: registryRef };
+        return { id: metadata.id, image, ref: registryRef, source: metadata.source };
       })();
       prepared.set(key, ready);
     }
     const artifact = await ready;
+    // Check per-profile expectations even when the image pull/inspect promise was shared.
+    if (profile.artifactSource && artifact.source !== profile.artifactSource) throw new Error(`artifact_source_mismatch: ${profile.id}`);
     assertCurrent(`artifact-ready-${profile.id}`);
     admitted.set(profile.id, { ...profile, dockerImage: artifact.image,
       preparedArtifactId: artifact.id, preparedArtifactRef: artifact.ref, preparedCommitSha: commitSha.toLowerCase(),

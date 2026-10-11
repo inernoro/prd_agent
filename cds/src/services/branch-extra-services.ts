@@ -16,6 +16,75 @@ export function isValidExtraProfileId(id: string): boolean {
   return typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/.test(id);
 }
 
+type ExtraDeploymentMetadata = Pick<BuildProfile, 'prebuiltImage' | 'prebuiltCommitPolicy' | 'artifactSource' | 'activeDeployMode' | 'deployModes' | 'buildScope' | 'calls' | 'role'>;
+/** Bounded metadata projection for the existing extra-services API. No runtime-owned IDs. */
+export function parseExtraDeploymentMetadata(raw: Record<string, unknown>, previous?: BuildProfile): ExtraDeploymentMetadata {
+  const out: ExtraDeploymentMetadata = {};
+  const value = (key: keyof ExtraDeploymentMetadata): unknown => raw[key] === undefined ? previous?.[key] : raw[key];
+  const invalid = (): never => { throw new Error('extra_deployment_metadata_invalid'); };
+  const strings = (input: unknown, scope: boolean): string[] => {
+    if (!Array.isArray(input) || input.length > 128) return invalid();
+    return input.map(item => {
+      if (typeof item !== 'string' || !item || item.length > 256) return invalid();
+      if (scope ? (!/^[a-zA-Z0-9._/*?-]+$/.test(item) || item.startsWith('/') || item.split('/').includes('..')) : !isValidExtraProfileId(item)) return invalid();
+      return item;
+    });
+  };
+  const image = (input: unknown): string => {
+    if (typeof input !== 'string' || input.length > 512
+      || !/^[a-zA-Z0-9][a-zA-Z0-9._:/@-]*$/.test(input.replace(/\$\{CDS_COMMIT_SHA\}|\$\{CDS_BRANCH_SLUG\}/g, 'x'))) return invalid();
+    return input;
+  };
+  const prebuilt = value('prebuiltImage');
+  if (prebuilt !== undefined) {
+    if (typeof prebuilt !== 'boolean') return invalid();
+    out.prebuiltImage = prebuilt;
+  }
+  const policy = value('prebuiltCommitPolicy');
+  if (policy !== undefined && policy !== null) {
+    if (policy !== 'exact' || prebuilt !== true) return invalid();
+    out.prebuiltCommitPolicy = policy;
+  }
+  const source = value('artifactSource');
+  if (source !== undefined && source !== null) {
+    if (typeof source !== 'string' || !/^https:\/\/github\.com\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}\/[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$/.test(source)) return invalid();
+    out.artifactSource = source;
+  }
+  for (const key of ['buildScope', 'calls'] as const) {
+    const input = value(key);
+    if (input !== undefined && input !== null) out[key] = strings(input, key === 'buildScope');
+  }
+  const role = value('role');
+  if (role !== undefined && role !== null) {
+    if (role !== 'web' && role !== 'api' && role !== 'worker') return invalid();
+    out.role = role;
+  }
+  const modes = value('deployModes');
+  if (modes !== undefined && modes !== null) {
+    if (typeof modes !== 'object' || Array.isArray(modes) || Object.keys(modes).length > 16) return invalid();
+    out.deployModes = {};
+    for (const [id, input] of Object.entries(modes)) {
+      if (!isValidExtraProfileId(id) || ['__proto__', 'constructor', 'prototype'].includes(id)
+        || !input || typeof input !== 'object' || Array.isArray(input)) return invalid();
+      const mode = input as Record<string, unknown>;
+      if (Object.keys(mode).some(key => !['label', 'dockerImage', 'prebuilt', 'commitPolicy', 'buildScope', 'containerPort'].includes(key))
+        || mode.prebuilt !== true || mode.commitPolicy !== 'exact' || typeof mode.label !== 'string' || !mode.label || mode.label.length > 128) return invalid();
+      const port = mode.containerPort;
+      if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)) return invalid();
+      out.deployModes[id] = { label: mode.label, prebuilt: true, commitPolicy: 'exact',
+        ...(mode.dockerImage !== undefined ? { dockerImage: image(mode.dockerImage) } : {}),
+        ...(mode.buildScope !== undefined ? { buildScope: strings(mode.buildScope, true) } : {}),
+        ...(port !== undefined ? { containerPort: port as number } : {}) };
+    }
+  }
+  const active = value('activeDeployMode');
+  if (active !== undefined && active !== null) {
+    if (typeof active !== 'string' || !out.deployModes?.[active]) return invalid();
+    out.activeDeployMode = active;
+  }
+  return out;
+}
+
 /**
  * 服务命名子域 label 合法性:单 DNS label —— 全小写字母/数字/连字符,不以连字符开头/结尾,长度 1..40。
  *

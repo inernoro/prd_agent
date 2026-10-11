@@ -219,6 +219,8 @@ export interface BuildProfile {
   prebuiltImage?: boolean;
   /** 精确制品策略：准备齐备前不改变运行容器，不做源码/旧SHA回退。 */
   prebuiltCommitPolicy?: 'exact';
+  /** Optional expected OCI source; admission checks the actual inspected label. */
+  artifactSource?: string;
   /** 本次准入生成的不可变本地镜像身份，非外部配置。 */
   preparedArtifactId?: string;
   /** 已验明的可跨执行器拉取引用，与本机镜像ID分开保存。 */

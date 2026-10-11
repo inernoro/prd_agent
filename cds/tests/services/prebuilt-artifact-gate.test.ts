@@ -12,6 +12,24 @@ function shell() {
   return mock;
 }
 describe('P1 exact artifact admission', () => {
+  it('declared artifact source requires actual matching OCI source even for a shared prepared image', async () => {
+    for (const source of [undefined, 'https://github.com/foreign/repo', 'https://github.com/md-imp/mdimp']) {
+      const mock = shell();
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, source, id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
+      const input = [{ ...profile('rpc'), artifactSource: 'https://github.com/md-imp/mdimp' }];
+      if (source === 'https://github.com/md-imp/mdimp') expect((await prepareExactPrebuiltArtifacts(mock, input, sha))[0].preparedCommitSha).toBe(sha);
+      else await expect(prepareExactPrebuiltArtifacts(mock, input, sha)).rejects.toThrow('artifact_source_mismatch');
+    }
+  });
+  it('checks a conflicting source expectation after shared pull/inspect, instead of inheriting the first profile approval', async () => {
+    const mock = shell();
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify({ architecture: 'amd64', os: 'linux', revision: sha, source: 'https://github.com/md-imp/mdimp', id: `sha256:${'c'.repeat(64)}` }), stderr: '', exitCode: 0 }));
+    await expect(prepareExactPrebuiltArtifacts(mock, [
+      { ...profile('rpc'), artifactSource: 'https://github.com/md-imp/mdimp' },
+      { ...profile('rpc'), id: 'second-role', artifactSource: 'https://github.com/foreign/repo' },
+    ], sha)).rejects.toThrow('artifact_source_mismatch');
+    expect(mock.commands.filter(command => command.startsWith('docker pull'))).toHaveLength(1);
+  });
   it('checks the entire requested collection against the exact SHA without mutating profiles', async () => {
     const mock = shell(); const input = [profile('api'), profile('worker')];
     const ready = await prepareExactPrebuiltArtifacts(mock, input, sha);
