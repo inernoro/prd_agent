@@ -1,6 +1,6 @@
 # CDS 部署方式选择 · 指南
 
-> **版本**：v2.93 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
+> **版本**：v2.94 | **日期**：2026-10-11 | **状态**：现有接入已落地；候选治理实施中
 
 **一句话**：三种接入方式怎么选：普通项目走可视化托管，已有成熟编排走编排导入，批量操作走 Agent 接入。
 **谁该读**：第一次接入项目的人；纠结选哪条路的工程师。
@@ -437,6 +437,16 @@ IMP 现有 archive_report.py 的绑定调用必须显式接收验收 run ID、�
 安全收尾的先行执行边界：内部 acceptance-release 租约仅接已由服务端鉴权/归属核验的实际项目、分支、完整目标 SHA 与验收 run ID，source 固定 acceptance-resource-release、trigger 仅 manual/system、无 profileId。协调器的参数检查不授予项目权限或能力凭证权限。入场时同分支已有 active、取消但尚未结算的执行、已接受的 pending/dispatch 或 force-rebuild continuation 都明确拒绝，不抢占它们。收尾租约在途时同分支新的普通部署、webhook、停止/重置/删除等均明确拒绝，不伪装为合并、排队或已受理；不同分支保持原行为。取消只撤销写权，尚未结束的收尾执行仍阻止该分支新写入，直到原租约真实结算。该瞬时执行边界不是重启后的持久收尾恢复；未决 intent 的新进程阻断须另由生产账本接线，不能把协调器局部检查算完整 release。
 
 OwnedContainerLifecycle 的消失证明仅接受所请求的精确身份：exitCode=1、stdout 为空、stderr 仅一条标准 No such object/container 且身份逐字相同（可有标准 Error 前缀及行末换行）。exit0/124/130、Daemon 连接/权限错误、其他身份、额外混合错误或部分 stdout 均未知；不能因为任意错误文本含 no such 就允许 remove/confirmAbsent 返回成功。capture 的按名发现仍须在真正收尾时与登记的完整 64 位 ID 对照，删除和消失检查只用这个已确认 ID。现有候选 stop/start/remove 的强制语义保持，不自动授权临时验收资源强制删除或卷清理；正式 release 的实际 stop/删除/终结和原子图收尾仍需同任务后续实现。先红核对完整-ID标准缺失正控与 124/130/混合/错身份负控，以及租约取消未结算/高优先级来者/pending保护。上述临时执行说明在 P5-05 生产全链门禁与真实恢复报告接管后退场。
+
+完整收尾事务（实施前冻结）：POST `/:id/release` 沿用已鉴权的 acceptance-resource-runs 入口，先以原 run 项目检查访问权限，再检查能力凭证，原 run/分支/目标/报告/资源全部核对后取得前述 acceptance-release 租约。首次调用必须是 finished 且终结报告仍可读；已 released 的同 owner 重复调用只回原终态、不运行任何容器或配置命令，不删除之后出现的同名资源。未决 publication 仍拒绝；历史无创建归属不能通过这个接口补造。新增路由在生产装配、有限错误映射与实际 IMP 创建者接入完成前不声明可用。
+
+停止前可靠保存 version1 收尾意图，原公开阶段保留 finished；意图冻结原 resource/terminal、完整容器 reference（ID、name、image、owner、wasRunning、可写挂载目标与不可逆 fingerprint）和原服务身份摘要，以及 prepared/stopped/removed 阶段、开始时间。按名 capture 后必须与登记 ID 相等。任何可写挂载、protected/归属/运行配置未知都不自动删除，不能沿用候选 rm -f：只对原 ID stop，确认原配置与 stopped，再普通 rm 原 ID，按严格缺失判据证明消失，不删卷、不执行整分支重部署。每个外部等待后核原租约、能力归属、run seq、图与报告；取消或未知返回保留原意图与资源预留。阶段只记录已确认事实，不以客户端退出或超时推进。
+
+released 与目标 extraProfile、该 ID 的 profileOverride、该 ID 的 service 删除必须由专用可靠发布事务完成。最终提交仅接受已可靠记录 removed 的同一意图、原 resource/terminal/reference、连续 seq、原分支身份及原配置/服务身份摘要；普通 run 写入器不得单独发布 released。第一边界仍只保存写入意图和旧公开记录，目标图保持；第二提交快照同时包含 released 和上述三项的定向删除，ACK 后再在本进程公开。暂存补丁按每次当前快照构造，不能用过期整 Branch 覆盖其他 Profile、分支或并发字段；并发其他实体 save（含 split-store hints）同样携带全局记录与该分支补丁。ACK 等待中不得向公开内存或事件监听者提前暴露删除/成功。边界失败或后验漂移只撤销本次提交草稿，保留之前已落盘的 finished 收尾意图和当前真实图，不能把已停止/已删资源退回无归属可重建状态；第二边界崩溃后磁盘只能是未提交意图+旧图，或同一已提交 released+删除图，不能拆开。
+
+持久收尾意图同时进入普通部署和配置写入准入：本进程及新进程不允许普通整分支/单服务/停止/删除/复制配置、额外服务全列表更新或 override 修改绕过原意图重建或改挂该资源。公开 run/视图不返回凭据、ownerHash 或私有 Profile/env；未对账的意图保留且显示有限原因，不能默认清空或自动重放。只有原 owner 的显式 release 对账在独占原分支、原报告/配置及精确 ID 检查后继续，缺原 ID、同名后继、未知 Daemon 或图漂移保持待对账，不删除后继。创建者须实际 begin→创建→登记，报告 producer→finish→release 必须真接线；这些实际 API/准入/创建/Daemon/恢复缺口没有实现和证据时仍按同条 P5-05 保留，不由持久事务局部通过代替。
+
+本段先红覆盖专用事务缺失、普通 writer 发布 released 而图仍在、第一与第二 ACK 等待中的公开图/事件、并发同/异分支 save、split-store hints、磁盘失败与后验漂移保留原意图、两边界实际新进程回读、目标三项删而其他图不变、原 ID/配置/报告改变及普通入口绕过。先行本地事务可用 owned 文件/新进程验证；真实 Daemon stop/rm、生产鉴权与创建者、全部入口准入和正式视觉仍须另验。P5-05 完整自动发布/恢复门禁和真实报告接管后可删除本段临时实施细节，终态归属与原子性规则仍留在对应权威章节。
 
 收尾前再次核同一资源、运行身份和报告，之后仍须独占分支并实际 inspect/停止/删除原容器、核对消失、移除原 Profile 与 override，最后可靠保存 released。不能用 metadata running、终态部署或客户端声明替代这条链；删除数据库、停止其他服务或整分支冷启动不属于本收尾。缺历史创建归属的 bootstrap 保留待核对，不补造回执。本批先实现持久归属与终结核验内核，HTTP 鉴权/生产创建者接线及实际 Daemon 收尾仍须后续同条任务完成，不能把内核检查算 P5-05 完成。
 
