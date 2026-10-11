@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.85；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.86；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -744,3 +744,9 @@ v1.84：guide2.95先提交4ad0b32；CDS805a86e7a776c1e42c1fb57fc5074cb743d9045d�
 ## v1.85 独立真红与提案能力隔离修复
 
 v1.85 恢复审计：末尾固定805a actual ResourceRouter/nativeHTTP发现owner capability可经合法镜像路径或healthPath落到Profile/StateJSON，env同token拒绝正控正常，组1/3两false同一全提案字段隔离缺口，未运行Docker。主同判据image/path2红、envkey/value2绿，CDS3fddf35f2113b5ddb0689aeabeaa3b0acccc38e0两文件对最终有界Profile全部字符串/键包括派生scope检查原cap，27创建+5actualserverauth共32绿/core0；固定3fdd独立原fixture已请求仍待，不把主绿当独立关闭。未再跑全量，805a689files10226及310相关仅历史；各旧group不相加。主固定cap收据4d96ed28a889741e7c181e6d7bc4fd7705a5919ca7d69959f55a5c0b1a1279f9。条件配置仍只configured，old无intent initial-register last来源、实际owned deployment和IMP外部creator/full archive→finish→release仍待。IMP产品f0ae未改；正式49全not-executed/visual N/A，45partial-local/4todo，八push/CI不是完整实际交付。仅本地commit，未push/PR/shared写/selfupdate，active。
+
+## v1.86 原创建部署可信绑定实施检查点
+
+v1.86 恢复审计：固定3fdd独立原能力字段3/3及HTTP25、ACK8、fence10、admission19、capacity2、append1均真实再执行，各组重叠不相加；主递归1645hash/752Git对象匹配。guide2.96@50061ab先冻结原创建可信部署绑定，末尾18候选映射原BRC；CDS产品a7c62c98208a3f89a7b727f3052dd7142267abfa六文件实际内核State/DRService/Coordinator，唯一原configured的acceptance-resource-deploy内部续接、canonical lease及cap检查，原AR与新pending DR两ACK原子关联，每await后身份/配置/DR/lease复核，未知补偿占用，补偿显式deploymentRuns/branch hints。主旧源一缺前件红、23新绿、336相关/core0/full690files10252绿，6files19skip/1旧obsolete；移除origin overlay的原ACK2断言红，恢复23绿。独立a7c新18候选已请求待返，主绿不替代。仅可信绑定内核，actualHTTP部署/inspect/创建持久身份/注册与IMP外部creator未接；old无intent首次register last来源仍未闭。正式49全not-executed/visual N/A，45partial-local/4todo，八push/CI不是完整实际交付；仅本地commit，无push/PR/shared写/selfupdate，active。
+
+原49条acceptance/red/green/visual五字段原样冻结；新23内核用例不增加正式分母，不把pending公开前态当错误。主收据：/Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/trusted-binding-v186/main-a7c-product-receipt.json SHA256=9b9d0a9eed877b10c074268b1097e71abe067e129ee28b65d9a28f116ccf20e1。
