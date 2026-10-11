@@ -74,6 +74,52 @@ describe('owned Docker probe proxy wire conformance', () => {
     } finally { await proxy.close(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
   }, 10_000);
+  it.each(['release', 'deadline', 'close'] as const)('holds two exact original infra inspect bodies and releases on %s', async mode => {
+    const f = await fixture();
+    f.proxy.enableTrace();
+    // Use an original real Unix HTTP server rather than an in-memory reply.
+    const gate = f.proxy.holdInfraInspects('owned-infra');
+    const read = (name: string) => new Promise<{ status: number | null; body: string }>(resolve => {
+      const request = http.get({ socketPath: f.proxyPath, path: `/v1.53/containers/${name}/json` }, response => {
+        let body = ''; response.on('data', chunk => { body += chunk; }); response.once('end', () => resolve({ status: response.statusCode || null, body }));
+        response.once('error', () => resolve({ status: null, body: '' }));
+      }); request.once('error', () => resolve({ status: null, body: '' }));
+    });
+    try {
+      expect(await read('owned-infra-other')).toEqual({ status: 200, body: 'ordinary' });
+      let completed = 0; const pending = [read('owned-infra'), read('owned-infra')].map(reply => reply.then(value => { completed++; return value; }));
+      expect(await gate.caught).toHaveLength(2); expect(completed).toBe(0);
+      if (mode === 'release') { gate.release(); gate.release(); } else if (mode === 'close') await f.proxy.close();
+      const replies = await Promise.all(pending); if (mode !== 'close') expect(replies).toEqual([{ status: 200, body: 'ordinary' }, { status: 200, body: 'ordinary' }]);
+      expect(gate.expired()).toBe(mode === 'deadline');
+      expect(f.proxy.timeline.filter(event => event.phase === 'original-infra-inspect-reply-held')).toHaveLength(2);
+      expect(f.proxy.timeline.filter(event => event.phase === 'fixture-infra-inspect-released')).toHaveLength(1);
+    } finally { await f.close(); }
+  }, 7000);
+  const healthCliAvailable = (() => { try { execFileSync('docker', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+  it.runIf(healthCliAvailable).each(['disconnect', 'unavailable'] as const)('original Docker CLI applies its real retry/failure behavior to controlled %s', async mode => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-infra-cli-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const calls: string[] = [], sockets = new Set<net.Socket>();
+    const backend = http.createServer((request, response) => {
+      calls.push(request.url || '');
+      response.writeHead(200, { 'Content-Type': 'application/json', 'Api-Version': '1.45' });
+      response.end(request.url?.endsWith('/json') ? JSON.stringify({ Id: 'a'.repeat(64), Name: '/owned-infra', State: { Health: { Status: 'healthy' } } }) : 'OK');
+    });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const proxy = await createProbeDaemonProxy(proxyPath, backendPath), gate = proxy.holdInfraInspects('owned-infra', 1, mode);
+    try {
+      const command = promisify(execFile)('docker', ['--host', `unix://${proxyPath}`, 'inspect', '--format', '{{.State.Health.Status}}', 'owned-infra'],
+        { encoding: 'utf8', timeout: 5000, env: { ...process.env, DOCKER_API_VERSION: '1.45' } });
+      const result = command.then(value => ({ passed: true, stdout: value.stdout }), error => ({ passed: false, code: error.code, message: String(error.message) }));
+      expect(await gate.caught).toHaveLength(1); gate.release(); const observed = await result;
+      if (mode === 'unavailable') { expect(observed.passed).toBe(false); expect('code' in observed && observed.code).toBe(1); }
+      else { expect(observed.passed).toBe(true); expect('stdout' in observed && observed.stdout.trim()).toBe('healthy'); }
+      expect(calls.filter(url => url.endsWith('/containers/owned-infra/json'))).toHaveLength(mode === 'disconnect' ? 2 : 1);
+    } finally { gate.release(); await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  }, 10_000);
   it('keeps numerical exit evidence and removal symbols without retaining arbitrary event or stack contents', () => {
     expect(numericProbeExitCode('0')).toBe(0); expect(numericProbeExitCode('137')).toBe(137);
     for (const value of ['secret-value', '0 secret-value', '2147483648', '', null, 0]) expect(numericProbeExitCode(value)).toBeNull();

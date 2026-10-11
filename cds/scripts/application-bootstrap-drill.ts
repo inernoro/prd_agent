@@ -43,11 +43,12 @@ export interface ApplicationBootstrapContext {
   root: string; repo: string; runtime: string; port: number; configFile: string;
   report: any;
   request: (endpoint: string, method?: string, body?: unknown, authenticated?: boolean) => Promise<BootstrapRequestResult>;
-  requestRaw: (endpoint: string, body?: unknown, trigger?: 'manual' | 'webhook') => Promise<Response>;
+  requestRaw: (endpoint: string, body?: unknown, trigger?: 'manual' | 'webhook', method?: 'POST' | 'DELETE') => Promise<Response>;
   applicationPid: () => number | undefined;
   applicationProcessTree: () => ReturnType<typeof descendants>;
   readProbeEvents: () => Promise<any[]>;
   readDispatchEvents: (projectId: string, branchId: string) => Promise<any[]>;
+  readInfraEvents: (projectId: string, serviceId: string) => Promise<any[]>;
   restartForFailureRecovery: () => Promise<void>;
   stopForFailureRecovery: () => Promise<{ code: number | null; signal: string | null }>;
 }
@@ -164,8 +165,8 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       const text = await response.text(); let json: any; try { json = JSON.parse(text); } catch { /* HTML is retained only by MIME assertions. */ }
       return { status: response.status, json, cookie: response.headers.get('set-cookie')?.split(';')[0], mime: response.headers.get('content-type'), elapsedMs: performance.now() - began, text };
     };
-    const requestRaw = (endpoint: string, body?: unknown, trigger: 'manual' | 'webhook' = 'manual') => fetch(`http://127.0.0.1:${port}${endpoint}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie, 'X-CDS-Trigger': trigger },
+    const requestRaw = (endpoint: string, body?: unknown, trigger: 'manual' | 'webhook' = 'manual', method: 'POST' | 'DELETE' = 'POST') => fetch(`http://127.0.0.1:${port}${endpoint}`, {
+      method, headers: { 'Content-Type': 'application/json', Cookie: cookie, 'X-CDS-Trigger': trigger },
       body: body === undefined ? undefined : JSON.stringify(body), redirect: 'manual', signal: AbortSignal.timeout(180_000),
     });
     const ready = async () => waitFor(async () => { if (application!.exitCode !== null) throw new Error('完整index在就绪前退出');
@@ -191,13 +192,23 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
           'mergedCount', 'activeOperationId', 'activeKind', 'replayOf', 'continuedFromKind', 'continuedFromSource']
           .filter(key => Object.hasOwn(event.details || {}, key)).map(key => [key, event.details[key]])) }));
     };
+    const readInfraEvents = async (projectId: string, serviceId: string) => {
+      const events = await mongo!.db(dbName).collection('cds_server_events').find({ projectId, serviceId,
+        source: { $in: ['auto-restart', 'cds-container-service'] } }).sort({ ts: 1 }).limit(257).toArray();
+      assert.ok(events.length <= 256, '基础设施原事件超过固定上限，不能截断后签完整');
+      return events.map(event => ({ at: event.ts, source: event.source, action: event.action,
+        projectId: event.projectId, serviceId: event.serviceId, containerName: event.containerName,
+        command: event.command ? { name: event.command.name, exitCode: event.command.exitCode } : undefined,
+        details: Object.fromEntries(['attempt', 'maxRetries', 'softFailWindowMs'].filter(key => Object.hasOwn(event.details || {}, key))
+          .map(key => [key, event.details[key]])) }));
+    };
     // 失败仍须先保存真实退出前的收尾回执；不得把外层销毁自有daemon当作应用清理成功。
     captureProbeEvents = readProbeEvents;
     const context: ApplicationBootstrapContext = { root, repo, runtime, port, configFile, report, request, requestRaw,
       applicationPid: () => application?.pid,
       applicationProcessTree: () => application?.pid ? descendants(application.pid) : [],
       readProbeEvents,
-      readDispatchEvents,
+      readDispatchEvents, readInfraEvents,
       restartForFailureRecovery: async () => {
         assert.equal(application?.exitCode, 1); // A separate recovery after the original failed stop, never a replacement success assertion.
         start(); await ready();

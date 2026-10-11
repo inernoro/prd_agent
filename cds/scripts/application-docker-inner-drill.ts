@@ -99,6 +99,25 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     stopGate = gate;
     return { caught, release: gate.release, expired: () => gate.expired };
   };
+  type InfraInspectGate = { containerName: string; count: 1 | 2; mode: 'hold' | 'disconnect' | 'unavailable';
+    replies: Array<{ at: string; status: number; ordinal: number }>; sends: Array<() => void>; released: boolean; expired: boolean;
+    confirm: (values: Array<{ at: string; status: number; ordinal: number }>) => void;
+    timer?: ReturnType<typeof setTimeout>; release: () => void };
+  let infraGate: InfraInspectGate | undefined;
+  const holdInfraInspects = (containerName: string, count: 1 | 2 = 2, mode: 'hold' | 'disconnect' | 'unavailable' = 'hold') => {
+    assert.match(containerName, /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/); assert.ok(count === 1 || count === 2); assert.equal(infraGate, undefined);
+    assert.ok(mode === 'hold' || mode === 'disconnect' || mode === 'unavailable');
+    let confirm!: InfraInspectGate['confirm'];
+    const caught = new Promise<InfraInspectGate['replies']>(resolve => { confirm = resolve; });
+    const gate: InfraInspectGate = { containerName, count, mode, replies: [], sends: [], released: false, expired: false, confirm,
+      release: () => {
+        if (gate.released) return; gate.released = true; if (gate.timer) clearTimeout(gate.timer);
+        record('fixture-infra-inspect-released', { containerName, mode, replies: gate.replies.length, expired: gate.expired });
+        for (const send of gate.sends) send(); if (infraGate === gate) infraGate = undefined;
+      } };
+    infraGate = gate;
+    return { caught, release: gate.release, expired: () => gate.expired };
+  };
   const server = http.createServer((request, response) => {
     const observe = trace(request); observe('received');
     const kind = /\/images\/create(?:\?|$)/.test(request.url || '') ? 'image-pull'
@@ -139,6 +158,26 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
             // the exit body arrives deadlocks the CLI before ContainerStart.
             response.flushHeaders(); backend.pipe(response); backend.resume();
           };
+          const inspectTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/json$/)?.[1];
+          const observation = infraGate;
+          if (request.method === 'GET' && backend.statusCode === 200 && observation && !observation.released
+            && observation.replies.length < observation.count && decodeURIComponent(inspectTarget || '') === observation.containerName) {
+            backend.pause();
+            observation.sends.push(observation.mode === 'disconnect' ? () => { backend.destroy(); response.destroy(); }
+              : observation.mode === 'unavailable' ? () => {
+                // Explicit private proxy fault, never reported as a real daemon 503.
+                backend.destroy(); if (response.destroyed) return;
+                record('fixture-infra-inspect-unavailable', { containerName: observation.containerName, originalStatus: 200, injectedStatus: 503, origin: 'private-proxy' });
+                response.writeHead(503, { 'Content-Type': 'application/json' });
+                response.end(JSON.stringify({ message: 'controlled-private-observation-unavailable' }));
+              } : send);
+            const reply = { at: new Date().toISOString(), status: 200, ordinal: observation.replies.length + 1 };
+            observation.replies.push(reply); record('original-infra-inspect-reply-held', { containerName: observation.containerName, mode: observation.mode, ...reply });
+            if (!observation.timer) observation.timer = setTimeout(() => { observation.expired = true; observation.release(); }, 2500);
+            response.once('close', observation.release);
+            if (observation.replies.length === observation.count) observation.confirm([...observation.replies]);
+            return;
+          }
           const stopTarget = new URL(request.url || '/', 'http://owned').pathname.match(/\/containers\/([^/]+)\/stop$/)?.[1];
           const gate = stopGate;
           if (request.method === 'POST' && backend.statusCode === 204 && gate && !gate.claimed
@@ -218,10 +257,10 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve)); await fs.chmod(socketPath, 0o600);
   return { timeline, requestTimeline, traceOverflow: () => traceOverflow, enableTrace: () => { traceEnabled = true; },
-    holdNextStop,
+    holdNextStop, holdInfraInspects,
     traffic: () => [...traffic.values()], arm: () => { armed = true; traceEnabled = true; }, caught,
     settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
-    close: async () => { stopGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
+    close: async () => { infraGate?.release(); stopGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
@@ -876,6 +915,97 @@ async function main(): Promise<void> {
         } finally { stopReads = true; await sampler; report.readSamples = reads; }
         assert.ok(report.readSamples.length >= 3); assert.equal(report.readSamples.every((r: any) => r.status === 200 && !r.error), true, JSON.stringify(report.readSamples.filter((r: any) => r.status !== 200 || r.error)));
         report.checks.push({ name: 'original-list-task-and-full-health-short-window-requests-returned', passed: true });
+        report.stage = 'original-infra-observation-and-recovery';
+        const infraId = 'owned-observation', infraSha = report.project.sourceBackground;
+        const infraHealthPath = `/api/infra/${infraId}/health?project=${encodeURIComponent(projectId)}`;
+        let infraCreated = false; let infraScenarioFailure: unknown;
+        try {
+          const createdInfra = await request('/api/infra', 'POST', { id: infraId, projectId, dockerImage: `${registry}/owned-api:sha-${infraSha}`,
+            containerPort: 8080, volumes: [], restartPolicy: 'no', env: { SERVICE_NAME: 'infra', CDS_COMMIT_SHA: infraSha },
+            healthCheck: { command: `node -e "fetch('http://127.0.0.1:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"`, interval: 2, retries: 2 } });
+          assert.equal(createdInfra.status, 201, createdInfra.text); infraCreated = true;
+          const startedInfra = await request(`/api/infra/${infraId}/start?project=${encodeURIComponent(projectId)}`, 'POST');
+          assert.equal(startedInfra.status, 200, startedInfra.text); const infra = startedInfra.json.service;
+          assert.equal(infra.projectId, projectId); assert.equal(infra.status, 'running');
+          const originalInfra = await ownedView(infra.containerName); assert.equal(originalInfra.State.Running, true);
+          assert.equal(originalInfra.Config.Labels['org.opencontainers.image.revision'], infraSha);
+          assert.equal(originalInfra.HostConfig.RestartPolicy.Name, 'no');
+          const readInfra = async () => { const res = await request(`/api/infra?project=${encodeURIComponent(projectId)}`);
+            assert.equal(res.status, 200); return res.json.services.find((item: any) => item.id === infraId); };
+          await until(async () => { const res = await request(infraHealthPath); assert.equal(res.status, 200);
+            return res.json.health === 'healthy' ? true : undefined; }, 30_000);
+          const samples: any[] = [];
+          const ordinaryReads = async (phase: string) => {
+            for (const endpoint of ['/api/branches', runsPath, '/healthz']) {
+              const res = await request(endpoint); const row = { phase, endpoint, status: res.status, elapsedMs: res.elapsedMs };
+              samples.push(row); assert.equal(res.status, 200, res.text); assert.ok(res.elapsedMs <= 5000, JSON.stringify(row));
+            }
+          };
+          const queryGate = probeProxy!.holdInfraInspects(infra.containerName);
+          const replies = [request(infraHealthPath), request(infraHealthPath)];
+          void Promise.allSettled(replies);
+          try {
+            const held = await until(async () => Promise.race([queryGate.caught, Promise.resolve(undefined)]), 5000);
+            assert.equal(held.length, 2);
+            const tree = context.applicationProcessTree(), commands = new Map<number, string[]>();
+            for (const row of tree) { try { commands.set(row.pid, (await fs.readFile(`/proc/${row.pid}/cmdline`, 'utf8')).split('\0').filter(Boolean)); } catch { /* Gone rows stay unknown. */ } }
+            const expected = `docker inspect --format="{{.State.Health.Status}}" ${infra.containerName} 2>/dev/null || echo none`;
+            const activeQueries = tree.filter(row => commands.get(row.pid)?.some(arg => arg.includes(expected))).map(row => {
+              const actor = tree.find(candidate => candidate.pid === row.ppid); assert.ok(actor);
+              assert.ok(commands.get(actor.pid)?.some(arg => arg.includes('observation-process.js')));
+              const factory = tree.find(candidate => candidate.pid === actor.ppid); assert.ok(factory);
+              assert.ok(commands.get(factory.pid)?.some(arg => arg.includes('observation-executor-process.js')));
+              const factoryActors = tree.filter(candidate => candidate.ppid === factory.pid && commands.get(candidate.pid)?.some(arg => arg.includes('observation-process.js')));
+              assert.equal(factoryActors.length, 2);
+              return { shellPid: row.pid, actorPid: actor.pid, factoryPid: factory.pid, factoryActorCount: factoryActors.length };
+            });
+            assert.equal(activeQueries.length, 2); assert.equal(new Set(activeQueries.map(q => q.actorPid)).size, 2);
+            assert.equal(new Set(activeQueries.map(q => q.factoryPid)).size, 1);
+            report.infraObservationOccupied = { infraId, containerId: originalInfra.Id, containerName: infra.containerName, held, activeQueries };
+            await ordinaryReads('both-original-observation-actors-occupied'); assert.equal(queryGate.expired(), false);
+          } finally { queryGate.release(); }
+          for (const res of await Promise.all(replies)) { assert.equal(res.status, 200); assert.equal(res.json.health, 'healthy'); }
+          const faultGate = probeProxy!.holdInfraInspects(infra.containerName, 1, 'unavailable');
+          const failedRead = request(infraHealthPath); void failedRead.catch(() => {});
+          try { await until(async () => Promise.race([faultGate.caught, Promise.resolve(undefined)]), 5000); }
+          finally { faultGate.release(); }
+          const unknown = await failedRead; assert.equal(unknown.status, 200); assert.equal(unknown.json.health, 'none');
+          assert.equal((await readInfra()).status, 'running'); assert.equal((await ownedView(originalInfra.Id)).State.Running, true);
+          await ordinaryReads('controlled-proxy-503-original-query-explicit-unknown');
+          const recoveredRead = await request(infraHealthPath); assert.equal(recoveredRead.status, 200); assert.equal(recoveredRead.json.health, 'healthy');
+          report.infraObservationFailure = { status: unknown.status, health: unknown.json.health, faultOrigin: 'private-proxy', injectedStatus: 503, actualDaemonFailureVerified: false, statePreserved: true, recoveredHealth: recoveredRead.json.health };
+          report.infraReadSamples = samples;
+          const driverStoppedAt = new Date().toISOString(); await docker(['stop', '--time', '2', originalInfra.Id]);
+          assert.equal((await ownedView(originalInfra.Id)).State.Running, false); assert.equal((await readInfra()).status, 'running');
+          report.infraRecoveryDriverFault = { at: driverStoppedAt, containerId: originalInfra.Id, containerName: infra.containerName, controlledPrivateDriverStop: true };
+          const recoveredInfra = await until(async () => {
+            const view = await ownedView(originalInfra.Id); if (!view.State.Running) return undefined;
+            const events = await context.readInfraEvents(projectId, infraId);
+            const completed = events.find(event => event.action === 'infra.auto-restart.completed' && event.containerName === infra.containerName
+              && event.at >= driverStoppedAt && event.command?.name === 'docker start' && event.command?.exitCode === 0);
+            if (!completed) return undefined;
+            const response = await fetch(`http://127.0.0.1:${infra.hostPort}/`, { signal: AbortSignal.timeout(3000) }); if (response.status !== 200) return undefined;
+            const content: any = await response.json(); assert.equal(content.source, infraSha); assert.equal(content.runtime, infraSha); assert.equal(content.service, 'infra');
+            assert.ok(Date.parse(view.State.StartedAt) > Date.parse(originalInfra.State.StartedAt));
+            return { containerId: view.Id, startedAt: view.State.StartedAt, imageId: view.Image, completed, events, content };
+          }, 90_000);
+          report.infraOriginalRecovery = recoveredInfra;
+          report.infrastructureRecoveryVerified = true;
+          report.checks.push({ name: 'full-application-original-observation-occupancy-failure-and-infra-recovery-through-authenticated-entry', passed: true });
+        } catch (error) {
+          infraScenarioFailure = error; report.infraFailureDiagnostics = { at: new Date().toISOString(), originalFailure: String((error as Error).message).slice(0, 2000) };
+          try { report.infraFailureDiagnostics.events = await context.readInfraEvents(projectId, infraId); }
+          catch (diagnosticsError) { report.infraFailureDiagnostics.eventCaptureError = String(diagnosticsError).slice(0, 2000); }
+          try { const services = await request(`/api/infra?project=${encodeURIComponent(projectId)}`);
+            report.infraFailureDiagnostics.services = services.json.services.map((service: any) => ({
+              id: service.id, projectId: service.projectId, status: service.status, containerName: service.containerName, hostPort: service.hostPort })); }
+          catch (diagnosticsError) { report.infraFailureDiagnostics.stateCaptureError = String(diagnosticsError).slice(0, 2000); }
+          throw error;
+        } finally {
+          if (infraCreated) { try { const removed = await requestRaw(`/api/infra/${infraId}?project=${encodeURIComponent(projectId)}`, undefined, 'manual', 'DELETE');
+            const text = await removed.text(); report.fixtureInfraRemovedThroughOriginalApi = { status: removed.status }; assert.equal(removed.status, 200, text); }
+            catch (cleanupError) { report.fixtureInfraCleanupFailure = String(cleanupError).slice(0, 2000); if (!infraScenarioFailure) throw cleanupError; } }
+        }
         report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.dockerExerciseReport = { file: 'docker-report.json', genericFixtureOnly: true, representativeBusinessCiVerified: false, shortReadSamples: report.readSamples.length };
