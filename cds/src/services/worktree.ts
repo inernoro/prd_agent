@@ -375,7 +375,7 @@ export class WorktreeService {
       const log = await this.shell.exec(`git log --oneline -1 ${quote(sha)}`, { cwd: targetDir });
       return { head: log.stdout.trim() || sha, before: before.stdout.trim(), after: sha.slice(0, 7),
         afterFull: sha, updated: before.stdout.trim().toLowerCase() !== sha, sourcePath };
-    });
+    }, true);
   }
 
   async remove(repoRoot: string, targetDir: string): Promise<void> {

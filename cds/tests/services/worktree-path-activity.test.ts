@@ -5,6 +5,22 @@ import path from 'node:path';
 import { WorktreePathActivity } from '../../src/services/worktree-path-activity.js';
 
 describe('工作树活动归属', () => {
+  it('独立源码准备共享根归属，但任一准备未结束时禁止排他创建、更新和回收', () => {
+    const guard = new WorktreePathActivity();
+    const a = guard.tryAcquire(['/owned/root', '/owned/sources'], true);
+    const b = guard.tryAcquire(['/owned/root', '/owned/sources'], true);
+    expect(a).not.toBeNull(); expect(b).not.toBeNull();
+    expect(guard.tryAcquire(['/owned'])).toBeNull(); a!.release();
+    expect(guard.tryAcquire(['/owned/root'])).toBeNull(); b!.release();
+    const exclusive = guard.tryAcquire(['/owned/root']); expect(exclusive).not.toBeNull(); exclusive!.release();
+  });
+  it('共享准备遇未知清理也禁止新的共享准备，不能绕过未知占用', async () => {
+    const guard = new WorktreePathActivity();
+    const failure = Object.assign(new Error('owned cleanup not confirmed'), { code: 'cleanup' });
+    await expect(guard.run(['/owned/root'], async () => { throw failure; }, true)).rejects.toBe(failure);
+    expect(guard.tryAcquire(['/owned/root'], true)).toBeNull();
+    expect(guard.tryAcquire(['/owned/root'])).toBeNull();
+  });
   it('实际别名与真身/后代不能同时进入，失败退出后释放归属', async () => {
     const root = await realpath(await mkdtemp(path.join(tmpdir(), 'cds-worktree-activity-')));
     const real = path.join(root, 'real'), alias = path.join(root, 'alias');

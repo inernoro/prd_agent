@@ -15,7 +15,8 @@ const sources = ['src/services/janitor.ts', 'src/services/state.ts', 'src/servic
   'src/services/worktree.ts', 'src/infra/state-store/json-backing-store.ts', 'scripts/orphan-worktree-recheck-drill.ts',
   'scripts/orphan-worktree-recheck-probe.ts', 'tests/services/janitor-orphan-worktree-recheck.test.ts',
   'src/services/worktree-path-activity.ts', 'scripts/orphan-worktree-ownership-probe.ts',
-  'tests/services/janitor-orphan-worktree-ownership.test.ts', 'tests/services/worktree-path-activity.test.ts'];
+  'tests/services/janitor-orphan-worktree-ownership.test.ts', 'tests/services/worktree-path-activity.test.ts',
+  'tests/services/deployment-source-concurrent.test.ts'];
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 async function main() {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux');

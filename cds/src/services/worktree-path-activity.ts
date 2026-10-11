@@ -49,24 +49,28 @@ async function canonicalPath(p: string): Promise<string> {
 
 /** 同一控制进程全部WorktreeService实例共用；不冒称跨进程或外部手工写入互斥。 */
 export class WorktreePathActivity {
-  private readonly active = new Map<symbol, string[]>();
+  private readonly active = new Map<symbol, { paths: string[]; shared: boolean; uncertain: boolean }>();
   constructor(private readonly maxActive = 128) {
     if (!Number.isSafeInteger(maxActive) || maxActive < 1 || maxActive > 128) throw new Error('Invalid worktree activity capacity');
   }
-  tryAcquire(paths: readonly string[]): { extend(paths: readonly string[]): boolean; release(): void } | null {
+  tryAcquire(paths: readonly string[], shared = false): {
+    extend(paths: readonly string[]): boolean; markUncertain(): void; release(): void;
+  } | null {
     if (this.active.size >= this.maxActive) return null;
     const id = Symbol('owned-worktree');
     const extend = (more: readonly string[]): boolean => {
-      const next = [...new Set([...(this.active.get(id) ?? []), ...more.map(normalized)])];
+      const next = [...new Set([...(this.active.get(id)?.paths ?? []), ...more.map(normalized)])];
       if (next.length > 8 || next.some(p => Buffer.byteLength(p) > 8192)) return false;
-      if ([...this.active].some(([owner, held]) => owner !== id && held.some(a => next.some(b => related(a, b))))) return false;
-      this.active.set(id, next); return true;
+      if ([...this.active].some(([owner, held]) => owner !== id
+        && (!shared || !held.shared || held.uncertain) && held.paths.some(a => next.some(b => related(a, b))))) return false;
+      this.active.set(id, { paths: next, shared, uncertain: this.active.get(id)?.uncertain ?? false }); return true;
     };
     if (!extend(paths)) return null;
-    return { extend, release: () => { this.active.delete(id); } };
+    return { extend, markUncertain: () => { const held = this.active.get(id); if (held) held.uncertain = true; },
+      release: () => { this.active.delete(id); } };
   }
-  async run<T>(paths: readonly string[], operation: () => Promise<T>): Promise<T> {
-    const lease = this.tryAcquire(paths);
+  async run<T>(paths: readonly string[], operation: () => Promise<T>, shared = false): Promise<T> {
+    const lease = this.tryAcquire(paths, shared);
     if (!lease) throw new Error('工作目录正在创建或回收，请稍后重试。');
     let cleanupUnknown = false;
     try {
@@ -77,11 +81,12 @@ export class WorktreePathActivity {
       // 独立执行器只有归属清理确认后才给普通失败；cleanup表示旧进程可能仍写目录。
       // 无清理回执不能释放给创建或回收。本批只保留当前进程中的围栏，不冒称重启恢复。
       cleanupUnknown = (error as { code?: string } | null)?.code === 'cleanup';
+      if (cleanupUnknown) lease.markUncertain();
       throw error;
     } finally { if (!cleanupUnknown) lease.release(); }
   }
   getStats(): { active: number; paths: number } {
-    return { active: this.active.size, paths: [...this.active.values()].reduce((n, p) => n + p.length, 0) };
+    return { active: this.active.size, paths: [...this.active.values()].reduce((n, held) => n + held.paths.length, 0) };
   }
 }
 
