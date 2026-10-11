@@ -195,6 +195,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['replica-sets', '复制集成员、隔离库与执行计划', 'replica-sets.ts', 'project', 'project', 'destructive', 'direct', 'cds-deploy-pipeline', '', '加副本/调权重可逆；解散、隔离库、回切涉及数据库克隆与容器拆除，执行前必须锁定分支与服务'],
   ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
+  ['acceptance-resource-runs', '临时验收资源归属与终结前置证据', 'acceptance-resource-runs.ts', 'project', 'project', 'write', 'guided', 'cds', '', '先核项目权限再核所属 run 能力凭证；登记不创建资源，终结须真实报告，收尾证据不代表容器已删除'],
   ['scheduled-jobs', '定时任务与运行记录', 'scheduled-jobs.ts', 'project', 'project', 'write', 'direct', 'cds', 'schedule', '先 parse 和 test，默认不直接创建或执行危险命令'],
   ['snapshots', '配置快照、回滚与撤销', 'snapshots.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', '破坏性操作前建立快照，优先使用 undo 而不是再次修改'],
   ['storage-mode', '状态存储模式切换', 'storage-mode.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '切换前必须预检后端、迁移路径和回滚策略'],
