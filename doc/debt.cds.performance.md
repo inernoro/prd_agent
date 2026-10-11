@@ -1042,3 +1042,12 @@ b8eb两个完整原生场景均在auto-restart等待45秒失败，未进入probe
 私有Git夹具保留原仓库默认HEAD，仅创建并逐次推进普通pending-proof分支引用；每个新目标断言完整SHA和默认HEAD未变，避免把实验分支变成克隆默认分支而污染保护判据。正式Scheduler快照仍须断言未固定，不绕开保护。
 
 默认HEAD纠正后再次实际完整回归退出0，659文件9494项通过、6文件19项跳过（86.38秒）；演练类型检查退出0。私有Git实测新目标两次推进及真实克隆origin/HEAD保持原main，feature完整SHA与目标一致。首次误在仓库根调用tsc退出254已保留，改用cds演练项目后通过；不把命令上下文错误当代码失败。
+
+
+## v1.127 两原派发器实际组合证据
+
+固定6c73a9a8原生38167186430终态八项success、一项failure，两构建CI成功。两个完整场景均已把原routes及原index的started、原回环replay领取、同run/operation/generation、完整目标提交及最终三服务容器和HTTP版本绑定；源码区分routes含mergedCount、index不含。原认证scheduler/cool在普通私有分支实际执行，原scheduler-cooling租约期间目标合并，原完成后index实际派发；私有Scheduler通过原API恢复false。两份官方ZIP及362源、3脚本、361编译、134Web逐一匹配，实施对两派发限定自查通过，等待独立监理，不勾选完整T03/T09或A项。
+
+新增daemon-created取消场景整体passed，首次4301.387860ms/code0、原runtime和hard-storage联合恢复、随后738.537175ms/code0正常停机均成立。原client-disconnect延迟场景首次10172.016583ms/code1，整体failed；后续独立恢复与532.781193ms/code0不能覆盖首次失败。驾驶器stage仍保留最后exercise标签，实际失败边界以原应用graceful-shutdown-restart及首次回执为准，不能误记为派发失败或新唯一生产根因。原失败及interim/最终原件全部保留。
+
+源、默认期限/池/24actor、VFS与4CPU/6GiB/1024PID未变；用户入口受控调用不代表自然idle tick、真实GitHub事件或外部人员归因。缺产物等待/一次恢复及上述二issuer不抵扣完整业务CI、基础设施恢复、目标替换/服务范围/在途取消、公网30分钟或48小时。下一项仍原STG-02/03；下一项基础设施健康占用与原恢复规则已只读核对为未执行草案，需保存失败前状态，避免live读取先改状态污染恢复触发。第一阶段安全失败继续保留，不为已有有限通过无限增加组件实验，完整T14/T15不倒置为T09前置。只有T00完成，未上线，原生失败不藏为全绿，冻结蓝本及既有L3待决保持。
