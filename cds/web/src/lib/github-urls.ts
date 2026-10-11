@@ -14,3 +14,12 @@
 export function githubPullRequestUrl(repoFullName: string, prNumber: number): string {
   return `https://github.com/${repoFullName}/pull/${prNumber}`;
 }
+
+/** Exact provider attempt; reject unsafe identities instead of accepting provider hrefs. */
+export function githubWorkflowAttemptUrl(repoFullName: unknown, runId: unknown, attempt: unknown): string | null {
+  if (typeof repoFullName !== 'string' || !/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(repoFullName)
+    || repoFullName.split('/').some(part => part === '.' || part === '..')
+    || !Number.isSafeInteger(runId) || (runId as number) <= 0
+    || !Number.isSafeInteger(attempt) || (attempt as number) <= 0) return null;
+  return `https://github.com/${repoFullName}/actions/runs/${runId}/attempts/${attempt}`;
+}

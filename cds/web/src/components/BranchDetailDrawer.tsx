@@ -14,6 +14,7 @@ import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { BranchDrawerSkeleton } from '@/components/branch/BranchDrawerSkeleton';
 import { DRAWER_TAB_BUTTON_CLASS, DRAWER_TAB_NAV_CLASS, drawerTabs, type DrawerTab } from '@/components/branch/drawerTabs';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
+import { DeploymentTimingSummary } from '@/components/deployment/DeploymentTimingSummary';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
@@ -188,6 +189,7 @@ interface OperationLog {
 type DeploymentRunStatus = 'pending' | 'queued' | 'preparing' | 'building' | 'starting' | 'verifying' | 'running' | 'failed' | 'cancelled';
 
 interface DeploymentRunSummary {
+  timingSummary?: unknown;
   id: string;
   projectId: string;
   branchId: string;
@@ -2585,7 +2587,8 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
-                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
+                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId}
+                      expectedRepository={branch.githubRepoFullName} expectedBranch={branch.branch} />
                     {canManageConsole ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
@@ -3115,12 +3118,16 @@ function DeploymentVersionLedger({
   );
 }
 
-function DeploymentRunLedger({
+export function DeploymentRunLedger({
   runs,
   activeRunId,
+  expectedRepository,
+  expectedBranch,
 }: {
   runs: DeploymentRunSummary[];
   activeRunId?: string;
+  expectedRepository?: string;
+  expectedBranch?: string;
 }): JSX.Element | null {
   if (runs.length === 0) return null;
   const visible = runs.slice(0, 5);
@@ -3161,6 +3168,8 @@ function DeploymentRunLedger({
                   建议: {run.failure.suggestedAction}
                 </p>
               ) : null}
+              <DeploymentTimingSummary summary={run.timingSummary} commitSha={run.commitSha}
+                expectedRepository={expectedRepository} expectedBranch={expectedBranch} />
               {run.status === 'failed' ? <DeploymentRunDiagnosis runId={run.id} /> : null}
             </div>
           );
