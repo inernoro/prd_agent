@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.75；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.76；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -694,3 +694,7 @@ v1.74当前产品d17655f69060b4659785a2cb80700ed98c2d3f53：主进一步发现f7
 ## v1.75 报告生产绑定与持久边界
 
 v1.75当前产品c309a204238f30112f6ad19fa36f229a91ec5f2b：guide2.90/b382与2.91/302c先冻结报告producer严格绑定和元数据ACK。POST /api/reports JSON/multipart显式run/cap/实际项目分支/fullSHA/原verdict，权限先能力，不降级旧普通归档；复用同run/global8，归一化、archive、flush后核原Branch/记录/资源/metaDigest。归档不自动finish/released，孤立报告不授终态。主旧18红无unhandled为缺接线同根表现，global两期待码另纠正；新25/相关7files121绿/core0，去postarchive保护3红逐字恢复、元数据ACK4红→绿。最终默认full1failed+10054pass/6files19skip/1旧obsolete/66.71s：bug-report留存ECONNRESET，client connect0ms/error5ms且无server connection/request；定向34绿不闭根因，不重复full凑绿；中间无ACK full10051仅历史。precommit节点依赖缺但打印通过不是验证，实际tsc0另存。d176独立最终原f7a12/13→d17613/13同case期待；expanded18含13，protocol30/budget7/newOS3分列不求和；主核1626hash/746Git/740派生字节一致。BRP24 v2冻结后固定c309独立进行中，未继承HTTP旧绿。生产IMP报告调用方/资源creator/独占Daemon stop-delete消失核对/Profile收尾/released及原name-only红仍缺。八IMP实际push/CI成功只原八SHA、registry资格0，无八全图运行/CDSpush/PR/共享写/selfupdate/本SHA正式视觉。45partial-local/4todo，49formal全not-executed/visual N/A，goal active；既有八push/selfupdate授权保持，新CDS branch发布/隔离宿主前问待答。
+
+## v1.76 有限报告解析与真实鉴权别名恢复审计
+
+v1.76当前CDS产品79d937035eb5b3285ab2d105e34bf18d5be5783a：在guide2.91/302c原鉴权及有限错误合同下，主发现c309 report parser默认HTML而非有限JSON两反例同root，补POST同route error handler400/413/no-store/internal，不回原body/stack；实际Server /api/Reports未登录malformed应401却400为另一个root，已有reports bypass改有限case-insensitive exact-prefix，授权malformed有限JSON且200KiB合法report仍201。主27bound report/4actualServer/相关7files124绿/core0；默认full683files10058pass/6files19skip/1旧obsolete/69.45s exit0。中间parser-full10057在新增alias测试前采集，只历史，不算alias或最终SHA。旧c309 full1failed+10054pass的bug-report retention ECONNRESET及历史ECONNRESET/POST404根因未明；focused34与新full绿不关闭。末尾已在固定c309 actualServer独立确认default parser0/2（stack/source泄露）、production0/2（HTML仍不合格）以及alias400-vs401，同原期待；邻prefix ReportsElse探索另保原件，不扩大本报告闭合分母。c309原producer2/protocol31/await42/budget9均局部组待最终回执，不求和，不继承79正式通过。固定79独立原BRP24 v2复验进行中。生产IMP报告调用方/创建前run/实际register、独占Daemon/实际消失/Profile/released及原IMP按名清理红仍缺；无本SHA部署或视觉。45partial-local/4todo、formal49全not-executed/visual N/A，goal active；八原push/CI成功是原八SHA，registry资格0，无八全图/CDS push/PR/shared/selfupdate。新CDS发布与隔离宿主前问待答，既有八push/selfupdate授权有效。
