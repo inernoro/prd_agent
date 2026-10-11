@@ -314,7 +314,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     if (allowed.size === 0) return { dirs: out, unreadable }; // 拿不到项目清单就不对账
     let projects: fs.Dirent[];
     try {
-      projects = fs.readdirSync(base, { withFileTypes: true });
+      projects = await fs.promises.readdir(base, { withFileTypes: true });
     } catch (err) {
       // base 读不出来：可能真不存在（没什么可对账），也可能是 EACCES / IO / 挂载抖动。
       // 后者必须如实上报——把它当成「都空了」会让调用方摘掉墓碑（Codex 六轮 P2）。
@@ -323,10 +323,10 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     }
     let resolvedBase: string;
     try {
-      // macOS 的 os.tmpdir() 可能返回 /var/...，realpathSync() 却返回
+      // macOS 的 os.tmpdir() 可能返回 /var/...，realpath() 却返回
       // /private/var/...。安全边界必须在两边都规范化后比较，否则合法的桶内
       // 迁移别名会被误判成指向 base 之外，永远无法进入回收候选。
-      resolvedBase = fs.realpathSync(base);
+      resolvedBase = await fs.promises.realpath(base);
     } catch {
       unreadable.push(base);
       return { dirs: out, unreadable };
@@ -338,7 +338,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
       const projDir = path.posix.join(base, proj.name);
       let slugs: fs.Dirent[];
       try {
-        slugs = fs.readdirSync(projDir, { withFileTypes: true });
+        slugs = await fs.promises.readdir(projDir, { withFileTypes: true });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') unreadable.push(projDir);
         continue;
@@ -352,7 +352,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
         let realPath: string | undefined;
         if (slug.isSymbolicLink()) {
           try {
-            const resolved = fs.realpathSync(full);
+            const resolved = await fs.promises.realpath(full);
             // 只认解析后仍落在 base 之内的链接：指到 base 之外的一律不碰（不删别人的东西）
             if (resolved === resolvedBase || resolved.startsWith(`${resolvedBase}/`)) realPath = resolved;
             else continue;
@@ -374,9 +374,9 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
           continue;
         }
         try {
-          // lstat 兜底：断链的 statSync 会抛，用链接自身的 mtime 才拿得到年龄
+          // lstat兜底：断链按链接自身年龄；逐条异步读，避免整轮占住控制面。
           let mtimeMs: number;
-          try { mtimeMs = fs.statSync(full).mtimeMs; } catch { mtimeMs = fs.lstatSync(full).mtimeMs; }
+          try { mtimeMs = (await fs.promises.stat(full)).mtimeMs; } catch { mtimeMs = (await fs.promises.lstat(full)).mtimeMs; }
           out.push({ path: full, mtimeMs, ...(realPath ? { realPath } : {}) });
         } catch {
           // 连 lstat 都失败 → 给 NaN，纯函数据此判为过新并跳过
@@ -397,12 +397,12 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   },
   statDirMtimeMs: async (dir) => {
     try {
-      return fs.statSync(dir).mtimeMs;
+      return (await fs.promises.stat(dir)).mtimeMs;
     } catch {
-      // 断链的符号链接：statSync 会抛，但它**确实还在**，只是指向已删的真身。
+      // 断链的符号链接：stat会抛，但它**确实还在**，只是指向已删的真身。
       // 不用 lstat 兜底的话，临删复核会把它判成「目录已消失」而跳过 —— 于是
       // 成对回收失败留下的残骸永远删不掉（Codex 十一轮 P2）。
-      try { return fs.lstatSync(dir).mtimeMs; } catch { return null; }
+      try { return (await fs.promises.lstat(dir)).mtimeMs; } catch { return null; }
     }
   },
 };
@@ -622,17 +622,29 @@ export class JanitorService {
     // 先删残留目录再 `git worktree add`，`addBranch()` 落台账更在其后，于是存在一个
     // 「目录已是新 checkout、台账还没记上」的窗口；拿陈旧计划直接删，删掉的就是
     // 别人刚拉出来的工作树。删之前把台账与 mtime 都重新读一遍，任一变化即放弃本条。
-    const freshClaimed = claimedWorktreePaths(this.stateService.getAllBranches()).map(normalizeWorktreePath);
+    // 逐项读取，且在异步磁盘复核后再读取一次；前一项回收期间的新认领不能用旧快照覆盖。
+    const isClaimedNow = (dir: string, real?: string): boolean => {
+      const paths = [dir, ...(real ? [normalizeWorktreePath(real)] : [])];
+      return claimedWorktreePaths(this.stateService.getAllBranches()).map(normalizeWorktreePath)
+        .some(claimed => paths.some(candidate => claimed === candidate
+          || claimed.startsWith(`${candidate}/`) || candidate.startsWith(`${claimed}/`)));
+    };
     const plannedMtime = new Map(diskDirs.map((d) => [normalizeWorktreePath(d.path), d.mtimeMs]));
     const skippedByRecheck: string[] = [];
     for (const dir of plan.remove) {
-      if (freshClaimed.some((claimed) => claimed === dir || claimed.startsWith(`${dir}/`) || dir.startsWith(`${claimed}/`))) {
+      const real = realPathOf.get(dir);
+      if (isClaimedNow(dir, real)) {
         // 台账在本轮期间认领了它 —— 分支重建已完成
         plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
         skippedByRecheck.push(dir);
         continue;
       }
       const nowMtime = await this.orphanWorktreeFs.statDirMtimeMs(dir);
+      if (isClaimedNow(dir, real)) {
+        plan.keptReasons[dir] = '临删复核：磁盘检查期间台账已认领该目录或真身';
+        skippedByRecheck.push(dir);
+        continue;
+      }
       if (nowMtime === null) {
         plan.keptReasons[dir] = '临删复核：目录已消失（无需回收）';
         skippedByRecheck.push(dir);
@@ -651,7 +663,6 @@ export class JanitorService {
       // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
       // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
       // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
-      const real = realPathOf.get(dir);
       if (real) {
         // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
         const realErr = await this.orphanWorktreeFs.removeDir(real);
@@ -661,6 +672,11 @@ export class JanitorService {
           continue; // 别名必须留着，否则真身再也找不回来
         }
         removed.push(real);
+      }
+      if (isClaimedNow(dir, real)) {
+        plan.keptReasons[dir] = '临删复核：真身回收期间台账已认领，保留别名';
+        skippedByRecheck.push(dir);
+        continue;
       }
       const err = await this.orphanWorktreeFs.removeDir(dir);
       if (err) { failed.push({ path: dir, error: err }); continue; }
