@@ -199,11 +199,14 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       const events = await mongo!.db(dbName).collection('cds_server_events').find({ projectId, serviceId,
         source: { $in: ['auto-restart', 'cds-container-service'] } }).sort({ ts: 1 }).limit(257).toArray();
       assert.ok(events.length <= 256, '基础设施原事件超过固定上限，不能截断后签完整');
-      return events.map(event => ({ at: event.ts, source: event.source, action: event.action,
+      return events.map(event => {
+        assert.ok(event.ts instanceof Date && Number.isFinite(event.ts.getTime()), '原Mongo事件必须是有效BSON日期');
+        return { at: event.ts.toISOString(), source: event.source, action: event.action,
         projectId: event.projectId, serviceId: event.serviceId, containerName: event.containerName,
         command: event.command ? { name: event.command.name, exitCode: event.command.exitCode } : undefined,
         details: Object.fromEntries(['attempt', 'maxRetries', 'softFailWindowMs'].filter(key => Object.hasOwn(event.details || {}, key))
-          .map(key => [key, event.details[key]])) }));
+          .map(key => [key, event.details[key]])) };
+      });
     };
     // 失败仍须先保存真实退出前的收尾回执；不得把外层销毁自有daemon当作应用清理成功。
     captureProbeEvents = readProbeEvents;
