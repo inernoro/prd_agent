@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.64；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.65；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -585,3 +585,13 @@ v1.63：IMP无冲突merge最新origin/test43ec的64提交，merge48de；前置�
 ## v1.64 八候选刷新与独立局部回执
 
 v1.64：IMP2ef9独立局部最终回执已主核，固定old/new32选定Git源各一份及CDS559c env5共69检查；原31快照62字节复验，额外2个services.json为实际Git-show输入而非旧快照，49引用原件hash及18主补充冻结副本一致。独立protocol32/32、实际owned workflow steps9/9、boundary8/8分列重叠不求和；20design为15local-executed-bounded/4partial/1not-executed(IR14)，实际构建/CI/Admin仍缺。八owned候选按各自最新fetched source更新，A02/A05推进；传播14个极速相关路径，新增辅助产出链且保十应用镜像/十三角色。A07仅方案文档冲突，保其迁移/runtime资料并补当前exact/aux/黄蓝规则；完整Git tree在14范围外逐blob等同其自己最新source，迁移未改。8支CLI及六文件selected-source组各0：A01/A02/A05各75、其余各70，保源分支原检查差异，不凑同分母、不计实际八CI。八local ref已一次CAS更新且保旧候选父，尚未push/deploy；八push和CDS自更新既有授权持续，CDS新branch push补问待答。隔离宿主未qualified；42partial-local/7todo，formal49全not-executed/visual N/A，目标active。
+
+## v1.65 CloudBridge 外部密钥消费修复
+
+v1.65：旧八候选独立实际CDS559c环境解析15/24，九false同一真实根因：A03/A04/A07的公开CloudBridge参考密钥覆盖项目provided、分支override且在missing时伪造值。主先保新guard原用例红，IMP产品3fe769575dd0a2af12b42c91df928928ecb8349c检查实际服务绑定及其锚点，拒绝字面/default覆盖，允许外部引用或不覆盖；主38/38契约、六文件78/78。本地八候选增guard，两文件all8同步，仅三支另改公开anchor为外部注入；其他OP/private-network/通知/业务/SQL及A07历史方案保持，完整tree仍限定14路径。八CLI绿；A01/A02/A05各78、其余各73，组重叠不求和。一次CAS保上一候选父，无push/CI/deploy，新24原fixture独立复验待返。旧八独立契约每支18/18、来源semantic5/5与真红15/24分列；错误whole-compose字节期待及两夹具误读保留，不能消去实际密钥红。正式49全not-executed/visual N/A、42partial-local/7todo、目标active；CDS新branch push授权问题及隔离宿主仍待答，八IMP push与共享CDS自更新已有授权保持。
+
+八新固定候选：A01=1937e394958ff44a28e007459b5596a3b99ec345；A02=14e014536fed716242d64dd66dd0edffb6576085；A03=c54e87ed42de4bbe9e7574646033f731e133b582；A04=7a12f8b0df8aec6e075d1e2936e502f38b33ae2a；A05=2713a046b436b169364edc137ca2725ef4640d7a；A06=cfbb959b7ebefaae0de3b724354e5c952bacb6e7；A07=cc3296fda0148c5bd7a4b19fd92258290c549375；A08=cdf4cf87d7715fa899805523ffe8763569d8d3dd。
+
+证据：主准备、固定源快照与原始log位于`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-refresh-cloudbridge-3fe7695`；原guard红`/tmp/imp-cloudbridge-secret-verifier-red.log`，新38绿与相关78绿原log保留。八旧独立summary SHA256=abeda1eaba4995dcf2bc9763a8e410e157f6e23ec9a65c6471faaa8cbd03468e，actual resolver 15/24真红按原期待复验。准备脚本首次Git非-z中文路径读者错误，未更新refs，改-z后重跑；原错误/script保留，不算产品红。
+
+expected result：外部项目及分支凭据准确消费，missing不伪造；current evidence：主guard红绿和八固定selected-source绿，独立原fixture待返；visible result：未部署，无新视觉；gap：独立密钥复验、八次真实CI/部署、隔离/黄闪电/公网/恢复/48h及周；required action：先独立复验修复，再继续同49正式计划，不由静态守卫推导Spring启动/线上通过。
