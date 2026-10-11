@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.55；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.57；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -510,3 +510,21 @@ expected result：更新前有不泄密、不跨项目的恢复参考，缺失�
 expected result：父路径变更不得转写Git/新owner目录或伪报成功；current evidence：1d expanded真实6/7红，主同实际CLI红→529局部27绿，固定新源独立expanded7/7及FD/FS10/10（分列重叠）；visible result：未部署/visual N/A；gap：原30设计剩余、完整配置恢复及49条正式运行/八支/黄闪电/双主题/公网/48h/周门槛；required action：原目录反例已闭合，原30设计未覆盖项仍待验；按同编号继续实现，隔离准入后执行原已授权实际交付。
 
 末尾最终固定回执：529源manifest e3abfc0827f43194361e3d29dbdce6babb1306c4afd02e1f9344b8d0dd710ddf；summary a8010359f1e5d0cf0c7244adc404f2279f272ec8450e8b2aae1c395b4191844d，主回读9个固定Git源及全部原件hash一致。原expanded1d6/7→5297/7同期待闭合；另10 FD/FS控制重叠分列。旧1d native31/Router7仅历史，20个不变函数exact字节比较不是新重跑。完整配置/实际恢复与原30未覆盖项保留，正式49与visual/八分支未执行，目标active。
+
+
+## v1.56 Worker RPC 正文与编码完整性检查点
+
+P5-06局部前提：实际读取IMP a35的Worker RPC旧记录（2026-09-08 SHA30004历史）和main网关conf，XXL2.2 JSON误标text/html导致CDS widget污染/Gson失败，当前Master及Forwarder仍存在。guide2.72先冻结4KiB正文shape与压缩合同；9c672725两实际代理入口共用widget-response-shape，支持空/identity/gzip/br/deflate才候选，解码后4KiB BOM/空白首字符非<用原Buffer不注入，JSON内HTML不当页面；未知/叠加编码保持原字节和encoding头，identity保留，真正解码重算length。主实际HTTP旧22:12红/10绿，扩展旧24:14红/10绿，主要正文shape及编码两个根因，不计14独立bugs；修后26 actualHTTP、3files116相关/defaultcore tsc0。9c固定全量675files9893green/6files19skip/1旧obsolete/137.55s，仅历史。原24行是设计分母，独立执行组正常同fixture旧52930/72→9c72/72、并发0/4→4/4分列且重叠；异常两源均6/10，发现Master解压失败200空体及源断开未有界失败两根因，未因全量绿闭合。主回读19选定与369全runtime Git源、20原件hash一致；manifest bb115a486ba1cc2097f9010fec67e0a76b8a1fffc1384e3ea5960389bd1aeac8，summary f9efed068ee15379acb7c2396cde1f8219a1d38baefadf092088bca9210de9db。原fixture v1 selector字串计数18假红及巨量diff中断保留，v2改实际script标签/SHA256等价字节对比，两源同适配，非产品修复。两路径测试为actual producer/private Master proxyRequest及Forwarder本地HTTP，不是线上认证/真正XXL调度；不撤main旧网关/改Worker地址/Admin或角色分母。HTMLshape不是完整HTML解析/权限，既有全bodybuffer和解压成本未治理。P5-06仍todo（其RPC前提部分修复，但预构建辅助身份/实际分母与bootstrap终结receipt缺）；41partial-local/8todo、formal49全未执行/visual N/A。无push/PR/selfupdate/shared写或新共享API请求，既有八支push/selfupdate授权持续有效，active。
+
+expected result：误标HTML的RPC正文仍可解析，未知编码不丢表示头，正常页面保留widget；current evidence：主上述真实HTTP红绿/116/core0，独立与固定full待返；visible result：未部署/visual N/A；gap：真实XXL令牌/调度回调/日志、合法辅助制品与分母、初始化终结receipt及原49正式/八支/黄闪电/性能/双主题/恢复；required action：原独立判据固定复验，有红继续修，原网关实际验收后才退场，不凭局部HTTP缩分母。
+
+
+## v1.57 主代理错误与断开反例修复
+
+guide2.73在a63762ae先冻结损坏压缩、源中断与客户端断开一次收口；58ed93dde1f779211216c8ca5212b5780ad705f8修Master候选正文路径：source aborted/error与decoder error统一502无上游encoding，once守卫、只销毁本请求source/decoder；客户端close立即释放自己的读取并记499，观察结束不取消业务部署。非markup RPC只记bodyBytes，不新增正文日志；Forwarder不改已有错误语义。主同实际HTTP旧9c30条2红/28绿→58ed30/30，3files120相关/default-core tsc0；固定全量675files9897green/6files19skip/1旧obsolete/133.68s。新typing unpipe目标误用Readable造成TS2345，修为source.unpipe后显式core通过，原实现类型错误保留不算运行红。末尾初报原异常9c6/10→58ed10/10，正常72/72、并发4/4均新源实跑；同100ms Master upstreamClose false→true、active完成1→2仅本地观察，额外边界与固定证据定稿待返。旧9c原红/旧全量保留；全bodybuffer/解压成本未解决，shape不是完整HTML解析或安全边界。IMP产品a35未改、不撤旧main gateway/改Admin地址/启动真实调度、不缩13角色及合法辅助分母。P5-06仍todo：辅助不可变制品与真实运行归属、bootstrap所属正式run终结receipt仍缺。41partial-local/8todo；49formal not-executed/visual N/A；八支推送与共享自更新授权持续有效但未执行，未push/PR/shared写或新共享API，目标active。
+
+expected result：损坏压缩与源中断明确失败，客户端断开只释放自身观察；current evidence：主30 actualHTTP/120相关/core0/full9897，原独立同期待初报10/10、正常72/72、并发4/4，固定回执待返；visible result：未部署/visual N/A；gap：真实XXL/完整辅助制品与回收/49formal/八支/黄闪电/双主题/公网及恢复门槛；required action：固定证据回读后继续同编号剩余计划，隔离准入后依既有授权运行真实交付。
+
+同批无正文反例补修：58ed原固定独立异常9c6/10→58ed10/10、正常72/72、并发4/4、terminal-once12/12局部绿且分列重叠；expanded-v2旧9c22/30→58ed24/30仍6红：两代理compressed HEAD错误502。同HEAD资格根因，Master为58ed回归、Forwarder旧9c已存在。初expanded-v1发送不带CL的HEAD payload被Node400正确拒绝为夹具错误，v2只req.end()并保原件。guide2.74在321271d4先固定RFC9110无正文合同；77f2554ef71b0c1e830586531004d81b649e8a42两入口共用method/status资格，HEAD/204/205不解压/不注入，保原状态及表示encoding、HEAD原representation length。主58ed actualHTTP40条10红/30绿→77f40/40（六HEAD+四no-content，同资格根）；3files130相关/defaultcore0。77固定全量675files9907green/6files19skip/1旧obsolete/139.01s；固定末尾初报原expanded-v2同期待58ed24/30→77f30/30，原异常10/10、正常72/72、并发4/4、once12/12均新源重跑且重叠不相加；另bodyless32原58ed14/32→77f32/32，含原六HEAD重叠与204/205、合法compressed空200控制。Master100ms断开仍close/active2，仅本地HTTP，最终固定manifest已主回读匹配（见本批最终回执）；正式49/视觉/八支仍未执行，P5-06仍todo，目标active。
+
+末尾77最终固定回执已主回读：19选定及完整369runtime Git源、24原件hash全匹配；manifest 9eaefa716b38b5ccf040893b6a6042fbd9cf72ec0c07eb242763210782506931；summary 4ad3eebcc621af2b78038974bd15cb703304f250a1b9cd43edda341ed51e2f0a。原expanded-v2 58ed24/30→77f30/30、bodyless同fixture58ed14/32→77f32/32；正常72/72、异常10/10、并发4/4、once12/12均77实际重跑，组重叠不求和。旧9c/58红及fixture错误完整保留；58定稿19+369/25raw另已主核验。首次<仍非完整HTML/权限，整体buffer和解压成本未治理，真实XXL/Gson/token/心跳/Cron/日志、网关退场、aux image-lifecycle/bootstrap receipt、Master/Daemon/八支/public/双主题/48h与周仍未执行。P5-06为代理前提partial-local、整项todo；41partial-local/8todo、formal49全not-executed/visual N/A，目标active。
