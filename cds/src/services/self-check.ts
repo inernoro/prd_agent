@@ -113,7 +113,7 @@ export interface SelfCheckDeps {
   cycleHealth: () => { sinceLastCycleMs: number | null; stale: boolean; running: boolean; watchdogResets: number } | null;
   /** 进程启动时刻（毫秒）。拿不到传 null。 */
   processStartedAt: () => number | null;
-  diskUsage: () => { totalBytes: number; freeBytes: number } | null;
+  diskUsage: () => { totalBytes: number; freeBytes: number } | null | Promise<{ totalBytes: number; freeBytes: number } | null>;
   dockerPing: () => Promise<{ ok: boolean; ms: number; detail?: string }>;
   /** 最近一段时间主进程的请求统计。没有日志存储时返回 null。 */
   httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number } | null>;
@@ -211,6 +211,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   const checks: SelfCheckItem[] = [];
   const httpRead = boundedSelfRead(() => deps.httpStats(now - HALF_HOUR_MS), null);
   const dockerRead = boundedSelfRead(() => deps.dockerPing(), { ok: false, ms: 3000, detail: 'Docker 检查超时或读取失败' });
+  const diskRead = boundedSelfRead(() => deps.diskUsage(), null);
   const selfRead = boundedSelfRead(() => deps.selfStatus(), null);
 
   // ── 部署 ───────────────────────────────────────────────────────────
@@ -379,7 +380,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   ));
 
   // ── 宿主 ───────────────────────────────────────────────────────────
-  const disk = deps.diskUsage();
+  const disk = await diskRead;
   const usedPercent = disk ? Math.round(((disk.totalBytes - disk.freeBytes) / disk.totalBytes) * 100) : null;
   checks.push(monitored(
     {

@@ -2402,13 +2402,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //
   // 只罩**产出构建物**的三个入口；stop / restart / pull 不在其列：前两个是**释放**
   // 空间的自救动作，磁盘满时必须还能用。
-  router.use((req, res, next) => {
+  router.use(async (req, res, next) => {
     if (req.method !== 'POST') { next(); return; }
     if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(req.path)) {
       next();
       return;
     }
-    const blocked = diskGuard.blockReasonForDeploy();
+    const blocked = await diskGuard.blockReasonForDeploy();
     if (blocked) {
       res.status(507).json({ error: 'disk_low', message: blocked });
       return;
@@ -25768,17 +25768,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //
   // The janitor deletes branch-local containers/worktrees after the global
   // expiry window. The window is intentionally capped at 7 days.
-  router.get('/janitor/state', (_req, res) => {
-    if (!janitorService) {
-      res.json({
-        enabled: false,
-        config: null,
-        dryRun: { wouldRemove: [], wouldSkip: [] },
-        disk: null,
-      });
-      return;
-    }
-    res.json(janitorService.getSnapshot());
+  router.get('/janitor/state', async (_req, res, next) => {
+    try {
+      if (!janitorService) {
+        res.json({
+          enabled: false,
+          config: null,
+          dryRun: { wouldRemove: [], wouldSkip: [] },
+          disk: null,
+        });
+        return;
+      }
+      res.json(await janitorService.getSnapshot());
+    } catch (error) { next(error); }
   });
 
   // ── GET /api/cds-system/perf-health — 运维健康观测 ──
@@ -25864,39 +25866,41 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     });
   });
 
-  router.put('/janitor/config', (req, res) => {
-    if (!janitorService) {
-      res.status(503).json({ error: 'Janitor service not wired in' });
-      return;
-    }
-    const body = (req.body || {}) as {
-      enabled?: unknown;
-      worktreeTTLDays?: unknown;
-    };
-
-    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
-      res.status(400).json({ error: 'enabled 必须是 boolean' });
-      return;
-    }
-    if (body.worktreeTTLDays !== undefined) {
-      const v = body.worktreeTTLDays;
-      if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 7) {
-        res.status(400).json({ error: 'worktreeTTLDays 必须是 1 到 7 之间的整数（天）' });
+  router.put('/janitor/config', async (req, res, next) => {
+    try {
+      if (!janitorService) {
+        res.status(503).json({ error: 'Janitor service not wired in' });
         return;
       }
-    }
+      const body = (req.body || {}) as {
+        enabled?: unknown;
+        worktreeTTLDays?: unknown;
+      };
 
-    if (typeof body.enabled === 'boolean') {
-      stateService.setJanitorEnabledOverride(body.enabled);
-      janitorService.setEnabled(body.enabled);
-    }
-    if (typeof body.worktreeTTLDays === 'number') {
-      stateService.setJanitorWorktreeTTLOverride(body.worktreeTTLDays);
-      janitorService.setWorktreeTTLDays(body.worktreeTTLDays);
-    }
-    stateService.save();
+      if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+        res.status(400).json({ error: 'enabled 必须是 boolean' });
+        return;
+      }
+      if (body.worktreeTTLDays !== undefined) {
+        const v = body.worktreeTTLDays;
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 7) {
+          res.status(400).json({ error: 'worktreeTTLDays 必须是 1 到 7 之间的整数（天）' });
+          return;
+        }
+      }
 
-    res.json({ ...janitorService.getSnapshot(), source: 'ui-override' });
+      if (typeof body.enabled === 'boolean') {
+        stateService.setJanitorEnabledOverride(body.enabled);
+        janitorService.setEnabled(body.enabled);
+      }
+      if (typeof body.worktreeTTLDays === 'number') {
+        stateService.setJanitorWorktreeTTLOverride(body.worktreeTTLDays);
+        janitorService.setWorktreeTTLDays(body.worktreeTTLDays);
+      }
+      stateService.save();
+
+      res.json({ ...await janitorService.getSnapshot(), source: 'ui-override' });
+    } catch (error) { next(error); }
   });
 
   // P4 Part 18 (G10): POST /api/detect-stack — auto-detect stack.

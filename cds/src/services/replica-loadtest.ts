@@ -706,6 +706,8 @@ export interface ReplicaLoadTestServiceOptions {
   rootDomains?: string[];
   /** 磁盘刹车：返回非空即拒绝发起（freeze 档） */
   diskBlockReason?: () => string | null;
+  /** Fresh async admission for HTTP; never create a run before this resolves. */
+  diskAdmission?: () => Promise<string | null>;
   /** 测试注入点：替换真实 HTTP 执行 */
   requestFn?: LoadTestRequestFn;
   now?: () => number;
@@ -878,6 +880,18 @@ export class ReplicaLoadTestService {
   }
 
   /* ── 发起 / 查询 / 取消 ── */
+
+  async startWithDiskAdmission(branchId: string, profileId: string, input: LoadTestInput | undefined): Promise<LoadTestReport> {
+    const branch = this.requireBranch(branchId);
+    if (!this.opts.state.getEffectiveProfilesForBranch(branch).some(p => p.id === profileId)) {
+      throw new LoadTestError(404, `服务不存在: ${profileId}`);
+    }
+    const frozen = input ? { ...input, memberIds: input.memberIds ? [...input.memberIds] : undefined,
+      headers: input.headers ? { ...input.headers } : undefined } : undefined;
+    const blocked = await this.opts.diskAdmission?.();
+    if (blocked) throw new LoadTestError(507, `磁盘压力过大，暂不接受压测：${blocked}`);
+    return this.start(branchId, profileId, frozen);
+  }
 
   start(branchId: string, profileId: string, input: LoadTestInput | undefined): LoadTestReport {
     const branch = this.requireBranch(branchId);

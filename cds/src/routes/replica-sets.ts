@@ -157,12 +157,12 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
   //
   // 只罩**会让磁盘增长**的动作；revert-db / 删成员 / 解散 / 调权重 / 探测 / 审计
   // 一律放行——它们要么释放空间，要么是恢复期必须还能用的自救手段。
-  router.use((req, res, next) => {
+  router.use(async (req, res, next) => {
     if (req.method !== 'POST' || !requestGrowsDisk(req.path, req.body)) {
       next();
       return;
     }
-    const blocked = diskGuard.blockReasonForDeploy();
+    const blocked = await diskGuard.blockReasonForDeploy();
     if (!blocked) { next(); return; }
     res.status(507).json({ error: 'disk_low', message: blocked });
   });
@@ -399,7 +399,8 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
   const loadTests = deps.loadTestService ?? new ReplicaLoadTestService({
     state: deps.stateService,
     rootDomains: deps.rootDomains,
-    diskBlockReason: () => diskGuard.blockReasonForDeploy(),
+    diskBlockReason: () => diskGuard.cachedBlockReasonForDeploy(),
+    diskAdmission: () => diskGuard.blockReasonForDeploy(),
   });
 
   /**
@@ -428,13 +429,13 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     } catch (err) { respondError(res, err); }
   });
 
-  router.post('/branches/:branchId/replica-loadtests', (req, res) => {
+  router.post('/branches/:branchId/replica-loadtests', async (req, res) => {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     const profileId = typeof req.body?.profileId === 'string' ? req.body.profileId.trim() : '';
     if (!profileId) { res.status(400).json({ error: '缺少 profileId（要压哪个服务）' }); return; }
     try {
-      const run = withReap(() => loadTests.start(req.params.branchId, profileId, {
+      const run = await withReap(() => loadTests.startWithDiskAdmission(req.params.branchId, profileId, {
         memberIds: Array.isArray(req.body?.memberIds) ? req.body.memberIds.map(String) : undefined,
         concurrency: req.body?.concurrency,
         durationSec: req.body?.durationSec,

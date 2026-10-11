@@ -102,9 +102,11 @@ export function describeDiskTier(tier: DiskTier, usedPercent: number | null): st
  * 单例而非 DI，是因为读取方（部署路由、webhook 派发器）散布很广，
  * 且这是「只读一个瞬时事实」的场景，不值得为它穿一层依赖。
  */
-type DiskUsageReading = { totalBytes: number; freeBytes: number };
+export type DiskUsageReading = { totalBytes: number; freeBytes: number };
 /** 可返回单个挂载点，也可返回多个（如 worktree + docker 数据目录），取最紧张的一个。 */
-export type DiskUsageProbe = () => DiskUsageReading | DiskUsageReading[] | null;
+type DiskProbeResult = DiskUsageReading | Array<DiskUsageReading | null> | null;
+export type DiskUsageProbe = (signal: AbortSignal) => DiskProbeResult | Promise<DiskProbeResult>;
+export const DISK_PROBE_TIMEOUT_MS = 3_000;
 
 /** 读数被认为「新鲜」的时长；超过则在被问到时就地重测（见 blockReasonForDeploy）。 */
 export const DISK_READING_TTL_MS = 60_000;
@@ -115,6 +117,8 @@ class DiskGuardState {
   private updatedAt: string | null = null;
   private updatedAtMs = 0;
   private probe: DiskUsageProbe | null = null;
+  private epoch = 0;
+  private pending: Promise<DiskTier> | null = null;
 
   /**
    * 注册就地探测（Codex 第二十八轮 P1）。
@@ -124,51 +128,58 @@ class DiskGuardState {
    * 清理被关掉时根本没有周期 sweep。注册探测后，部署闸门在读数过期或缺失时会
    * 自己测一次——刹车不再依赖 janitor 的配置与节奏。
    */
-  setProbe(probe: DiskUsageProbe | null): void {
-    this.probe = probe;
+  setProbe(probe: DiskUsageProbe): void {
+    this.epoch++; this.pending = null; this.updatedAtMs = 0; this.probe = probe;
   }
 
-  /**
-   * 就地重测并刷新档位；无探测器或探测失败时保持现状（fail-open）。
-   *
-   * 探测器可以返回**多个挂载点**（Codex 第二十九轮 P2）：worktree 与 docker 数据目录
-   * 常常不在同一个文件系统上，而镜像层、容器可写层、state mongo 卷全都落在 docker
-   * 那一侧——2026-07-27 事故里撑爆的正是 containerd（159GB）。只量 worktree 会在
-   * docker 盘已经 95% 时报「一切正常」，闸门恰好在该拦的时候放行。取**最紧张的那个**。
-   */
-  refreshNow(thresholds?: DiskTierThresholds): DiskTier {
-    if (!this.probe) return this.tier;
-    try {
-      const raw = this.probe();
-      const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-      let worst: number | null = null;
-      for (const usage of list) {
-        if (!usage || !usage.totalBytes) continue;
-        const pct = Math.round(((usage.totalBytes - usage.freeBytes) / usage.totalBytes) * 100);
-        if (worst === null || pct > worst) worst = pct;
-      }
-      if (worst === null) return this.tier;
-      return this.update(worst, thresholds);
-    } catch {
-      return this.tier;
-    }
+  /** One bounded fresh read; old probe generations cannot write this state. */
+  refreshNow(thresholds?: DiskTierThresholds): Promise<DiskTier> {
+    if (!this.probe) return Promise.resolve(this.tier);
+    if (this.pending) return this.pending;
+    const probe = this.probe, epoch = this.epoch, controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const expired = new Promise<null>(resolve => {
+      timer = setTimeout(() => { controller.abort(); resolve(null); }, DISK_PROBE_TIMEOUT_MS);
+    });
+    let task!: Promise<DiskTier>;
+    task = (async () => {
+      try {
+        const raw = await Promise.race([Promise.resolve().then(() => probe(controller.signal)), expired]);
+        if (epoch !== this.epoch || controller.signal.aborted) return this.tier;
+        const readings = Array.isArray(raw) ? raw : raw ? [raw] : [];
+        let worst: number | null = null, incomplete = readings.length === 0;
+        for (const usage of readings) {
+          if (!usage || !Number.isFinite(usage.totalBytes) || usage.totalBytes <= 0
+            || !Number.isFinite(usage.freeBytes) || usage.freeBytes < 0 || usage.freeBytes > usage.totalBytes) {
+            incomplete = true; continue;
+          }
+          const pct = Math.round(((usage.totalBytes - usage.freeBytes) / usage.totalBytes) * 100);
+          worst = worst === null ? pct : Math.max(worst, pct);
+        }
+        if (worst === null) return this.tier;
+        if (incomplete && this.usedPercent !== null && worst <= this.usedPercent) {
+          this.updatedAtMs = 0; return this.tier;
+        }
+        this.apply(worst, thresholds);
+        if (incomplete) this.updatedAtMs = 0;
+        return this.tier;
+      } catch { return this.tier; }
+      finally { clearTimeout(timer!); if (this.pending === task) this.pending = null; }
+    })();
+    this.pending = task; return task;
   }
 
-  /**
-   * 有探测器就按探测器（多挂载点取最紧张者）刷新，没有才用调用方给的读数兜底。
-   *
-   * janitor 的 sweep 只量 worktree（它本来就是为 worktree TTL 设计的），若直接
-   * `update(worktree%)` 会把探测器算出的「worst-of 多文件系统」结果**覆盖掉**
-   * （Codex 第三十轮 P1）：docker 盘已经到冻结线、worktree 还很空时，每一轮 sweep
-   * 都会把闸门重新打开，直到 60s TTL 过期才恢复；同一轮的镜像回收也会按低压档位
-   * 执行，该抢救的时候反而回收得最少。
-   */
-  refreshOrUpdate(fallbackUsedPercent: number | null, thresholds?: DiskTierThresholds): DiskTier {
+  async refreshOrUpdate(fallbackPercent: number | null, thresholds?: DiskTierThresholds): Promise<DiskTier> {
     if (this.probe) return this.refreshNow(thresholds);
-    return this.update(fallbackUsedPercent, thresholds);
+    return this.update(fallbackPercent, thresholds);
   }
 
   update(usedPercent: number | null, thresholds?: DiskTierThresholds): DiskTier {
+    this.epoch++; this.pending = null;
+    return this.apply(usedPercent, thresholds);
+  }
+
+  private apply(usedPercent: number | null, thresholds?: DiskTierThresholds): DiskTier {
     this.usedPercent = typeof usedPercent === 'number' && Number.isFinite(usedPercent) ? usedPercent : null;
     this.tier = classifyDiskTier(this.usedPercent, thresholds);
     this.updatedAt = new Date().toISOString();
@@ -187,16 +198,22 @@ class DiskGuardState {
    * 档位还是初始的 'ok'，而那恰恰是「刚被磁盘满打死、正在恢复」的窗口；janitor
    * 被关掉时更是永远没有周期 sweep。刹车必须自带测量能力，不能依赖别人来喂。
    */
-  blockReasonForDeploy(): string | null {
-    if (this.probe && (this.updatedAtMs === 0 || Date.now() - this.updatedAtMs > DISK_READING_TTL_MS)) {
-      this.refreshNow();
+  cachedBlockReasonForDeploy(): string | null {
+    return shouldFreezeDeploys(this.tier) ? describeDiskTier(this.tier, this.usedPercent) : null;
+  }
+
+  async blockReasonForDeploy(): Promise<string | null> {
+    while (this.probe && (this.updatedAtMs === 0 || Date.now() - this.updatedAtMs > DISK_READING_TTL_MS)) {
+      const epoch = this.epoch;
+      await this.refreshNow();
+      if (epoch === this.epoch) break;
     }
-    if (!shouldFreezeDeploys(this.tier)) return null;
-    return describeDiskTier(this.tier, this.usedPercent);
+    return this.cachedBlockReasonForDeploy();
   }
 
   /** 测试用：复位。 */
   reset(): void {
+    this.epoch++; this.pending = null;
     this.tier = 'ok';
     this.usedPercent = null;
     this.updatedAt = null;

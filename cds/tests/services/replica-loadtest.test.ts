@@ -250,6 +250,23 @@ describe('SSRF 闸门：只许压本分支已发布的域名', () => {
 /* ────────────── 并发闸 / 取消 / 磁盘刹车 ────────────── */
 
 describe('压测并发闸与生命周期', () => {
+  it('异步准入未完成时不占槽、不发请求，冻结回复后明确507', async () => {
+    let finish!: (value: string | null) => void; let requests = 0;
+    const svc = mkService({ diskAdmission: () => new Promise(r => { finish = r; }), requestFn: async () => { requests++; return { status: 200 }; } });
+    const result = svc.startWithDiskAdmission('proj-main', 'api', { durationSec: 3 });
+    await Promise.resolve(); expect(svc.activeHolders()).toHaveLength(0); expect(svc.list('proj-main')).toHaveLength(0); expect(requests).toBe(0);
+    finish('宿主磁盘97%'); await expect(result).rejects.toMatchObject({ status: 507 });
+    expect(requests).toBe(0); expect(svc.list('proj-main')).toHaveLength(0);
+  });
+
+  it('等待期间服务消失时重新核对身份，不创建旧目标任务', async () => {
+    let finish!: (value: string | null) => void;
+    const svc = mkService({ diskAdmission: () => new Promise(r => { finish = r; }) });
+    const result = svc.startWithDiskAdmission('proj-main', 'api', { durationSec: 3 });
+    state.removeBranch('proj-main'); finish(null);
+    await expect(result).rejects.toMatchObject({ status: 404 }); expect(svc.activeHolders()).toHaveLength(0);
+  });
+
   it('磁盘冻结档拒绝发起（507），理由带原始档位说明', () => {
     const svc = mkService({ diskBlockReason: () => '宿主磁盘已用 97%，已冻结新的构建与部署派发' });
     try {

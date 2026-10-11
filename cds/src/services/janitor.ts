@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { readDiskUsage } from './disk-usage-worker.js';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import type { BranchEntry } from '../types.js';
@@ -465,34 +466,14 @@ export interface JanitorSnapshot {
 export type RemoveBranchFn = (slug: string) => Promise<void>;
 
 /** Callback: return disk usage info for `path`. Null = unavailable. */
-export type DiskUsageFn = (targetPath: string) => { totalBytes: number; freeBytes: number } | null;
+export type DiskUsageFn = (targetPath: string) => { totalBytes: number; freeBytes: number } | null | Promise<{ totalBytes: number; freeBytes: number } | null>;
 
-/** Isolate process.now() so tests can inject a deterministic clock. */
-export interface JanitorClock {
-  now(): number;
-}
-
+/** Isolate Date.now() so tests can inject a deterministic clock. */
+export interface JanitorClock { now(): number }
 export const systemJanitorClock: JanitorClock = { now: () => Date.now() };
 
-/**
- * Default disk usage implementation using `fs.statfsSync` (Node 18.15+).
- * Returns null on older Node or filesystem errors so the sweep still runs.
- */
-export function defaultDiskUsage(targetPath: string): { totalBytes: number; freeBytes: number } | null {
-  try {
-    // statfsSync is available in Node 18.15+ / 20+.
-    // We check for its presence at runtime since the types may vary.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const statfs = (fs as any).statfsSync;
-    if (typeof statfs !== 'function') return null;
-    const stat = statfs(targetPath);
-    const totalBytes = Number(stat.blocks) * Number(stat.bsize);
-    const freeBytes = Number(stat.bavail) * Number(stat.bsize);
-    if (!Number.isFinite(totalBytes) || totalBytes <= 0) return null;
-    return { totalBytes, freeBytes };
-  } catch {
-    return null;
-  }
+export async function defaultDiskUsage(targetPath: string): Promise<{ totalBytes: number; freeBytes: number } | null> {
+  return (await readDiskUsage([targetPath]))[0];
 }
 
 function branchExpiryAnchorMs(branch: BranchEntry): number {
@@ -870,7 +851,7 @@ export class JanitorService {
     // 1. Disk usage check (always, even when TTL cleanup disabled — cheap)
     let usedPercentForTier: number | null = null;
     try {
-      const usage = this.diskUsage(this.worktreeBase);
+      const usage = await this.diskUsage(this.worktreeBase);
       if (usage) {
         const usedBytes = usage.totalBytes - usage.freeBytes;
         const usedPercent = Math.round((usedBytes / usage.totalBytes) * 100);
@@ -891,7 +872,7 @@ export class JanitorService {
     // 有注册探测器时按它刷新（worst-of worktree + docker 数据目录），没有才用
     // 上面的 worktree 读数兜底——直接 update(worktree%) 会覆盖掉多文件系统结果
     //（Codex 第三十轮 P1）。
-    report.diskTier = diskGuard.refreshOrUpdate(usedPercentForTier);
+    report.diskTier = await diskGuard.refreshOrUpdate(usedPercentForTier);
     if (report.diskTier !== 'ok') {
       console.warn(`[janitor] ${describeDiskTier(report.diskTier, usedPercentForTier)}`);
     }
@@ -1091,9 +1072,9 @@ export class JanitorService {
     return { wouldRemove, wouldSkip };
   }
 
-  getSnapshot(): JanitorSnapshot {
+  async getSnapshot(): Promise<JanitorSnapshot> {
     let disk: JanitorSnapshot['disk'] = null;
-    const usage = this.diskUsage(this.worktreeBase);
+    const usage = await this.diskUsage(this.worktreeBase);
     if (usage) {
       const usedBytes = usage.totalBytes - usage.freeBytes;
       disk = {

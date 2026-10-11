@@ -302,7 +302,7 @@ describe('JanitorService', () => {
 
       await janitor.sweep();
 
-      const last = janitor.getSnapshot().lastSweep;
+      const last = (await janitor.getSnapshot()).lastSweep;
       expect(last!.skippedProtected).toBe(1);
       expect(last!.protectedTrunkBranches).toEqual(['acme3-main']);
       expect(last!.removedBranches).toBe(0);
@@ -539,7 +539,7 @@ describe('JanitorService', () => {
       setup({ enabled: false, dockerPrune: false, imageRetention: false });
       mockDiskState = { totalBytes: 100, freeBytes: 30 }; // 70% -> ok
       await janitor.sweep();
-      const last = janitor.getSnapshot().lastSweep;
+      const last = (await janitor.getSnapshot()).lastSweep;
       expect(last).not.toBeNull();
       expect(last!.diskTier).toBe('ok');
       expect(last!.removedBranches).toBe(0);
@@ -567,7 +567,7 @@ describe('JanitorService', () => {
       // 台账为空 = 无归属仓库，按安全边界一个都不删，也就没有失败可报
       const noCandidate = await failing.sweep();
       expect(noCandidate.imageRetention?.failed).toHaveLength(0);
-      expect(failing.getSnapshot().lastSweep!.imageRetention!.failureSamples).toBeUndefined();
+      expect((await failing.getSnapshot()).lastSweep!.imageRetention!.failureSamples).toBeUndefined();
 
       // 台账里放一代同仓库镜像：确立归属，宿主上那个台账外的镜像成为候选
       stateService.addBranch(makeBranch('b1', 1));
@@ -582,7 +582,7 @@ describe('JanitorService', () => {
       });
       const withCandidate = await failing.sweep();
       expect(withCandidate.imageRetention!.failed).toHaveLength(1);
-      const samples = failing.getSnapshot().lastSweep!.imageRetention!.failureSamples;
+      const samples = (await failing.getSnapshot()).lastSweep!.imageRetention!.failureSamples;
       expect(samples).toHaveLength(1);
       // 原因必须能定位到具体镜像与 docker 的原话，而不是一个孤零零的数字
       expect(samples![0]).toContain(img);
@@ -593,10 +593,10 @@ describe('JanitorService', () => {
   describe('回收结果可观测（2026-07-27 复盘）', () => {
     it('sweep 后快照带上本轮摘要——外部据此确认回收是否真的在跑', async () => {
       setup({ dockerPrune: false, imageRetention: false });
-      expect(janitor.getSnapshot().lastSweep).toBeNull();
+      expect((await janitor.getSnapshot()).lastSweep).toBeNull();
       mockDiskState = { totalBytes: 100, freeBytes: 12 }; // 88% -> reclaim
       await janitor.sweep();
-      const last = janitor.getSnapshot().lastSweep;
+      const last = (await janitor.getSnapshot()).lastSweep;
       expect(last).not.toBeNull();
       expect(last!.diskTier).toBe('reclaim');
       expect(last!.removedBranches).toBe(0);

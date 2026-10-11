@@ -69,7 +69,8 @@ import {
 } from './services/external-port-audit.js';
 import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
-import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { JanitorService } from './services/janitor.js';
+import { readDiskUsage } from './services/disk-usage-worker.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
@@ -178,11 +179,11 @@ const config = loadConfig(configPath);
  */
 async function diagnoseBootDisks(): Promise<string | null> {
   const readings: Array<{ label: string; usage: { totalBytes: number; freeBytes: number } | null }> = [
-    { label: config.repoRoot, usage: defaultDiskUsage(config.repoRoot) },
+    { label: config.repoRoot, usage: (await readDiskUsage([config.repoRoot], shell))[0] },
   ];
   try {
     const dockerRoot = await resolveDockerDataRoot(shell);
-    if (dockerRoot) readings.push({ label: `docker: ${dockerRoot}`, usage: defaultDiskUsage(dockerRoot) });
+    if (dockerRoot) readings.push({ label: `docker: ${dockerRoot}`, usage: (await readDiskUsage([dockerRoot], shell))[0] });
   } catch { /* docker 不可用就只量仓库盘，不能因为诊断本身抛错吞掉真正的启动错误 */ }
   return diagnoseDisksForBootFailure(readings);
 }
@@ -1451,7 +1452,7 @@ function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): No
       now: new Date(),
       backupCompletedAt: backup.localVerifiedAt,
       remoteBackupVerifiedAt: backup.remoteVerifiedAt,
-      disk: defaultDiskUsage(config.repoRoot),
+      disk: (await readDiskUsage([config.repoRoot], shell))[0],
       certificates,
       containers: infrastructureContainerHealth(expectedContainers, runningNames),
       exposureCriticalCount: lastInfraExposureReport?.criticalCount ?? null,
@@ -3343,20 +3344,20 @@ const janitorService = new JanitorService(
   // 被 janitor 删掉，两套保护看起来统一实则漏一半（Codex PR #1273 P1）。
   { ...config.janitor, pinnedBranches: config.scheduler?.pinnedBranches ?? [] },
   config.worktreeBase,
+  undefined,
+  async target => (await readDiskUsage([target], shell))[0],
 );
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
 // 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
 // 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
 // 文件系统上，而镜像层/容器可写层/state mongo 卷全落在 docker 那侧——2026-07-27
 // 撑爆的正是 containerd（159GB）。只量 worktree 会在 docker 盘 95% 时报「一切正常」。
-// Resolve once through the shared worker before admission; the synchronous disk probe reads only this cache.
+// Resolve visible targets once; actual statfs is isolated in the shared worker.
 const dockerDataRoot = await resolveDockerDataRoot(shell);
-diskGuard.setProbe(() => {
-  const readings = [defaultDiskUsage(config.worktreeBase)];
-  if (dockerDataRoot) readings.push(defaultDiskUsage(dockerDataRoot));
-  return readings.filter((r): r is { totalBytes: number; freeBytes: number } => !!r);
-});
-diskGuard.refreshNow();
+diskGuard.setProbe(signal => readDiskUsage(
+  [config.worktreeBase, ...(dockerDataRoot ? [dockerDataRoot] : [])], shell, signal,
+));
+await diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
@@ -6163,7 +6164,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       const ms = iso ? Date.parse(iso) : Number.NaN;
       return Number.isFinite(ms) ? ms : null;
     },
-    diskUsage: () => defaultDiskUsage(config.repoRoot),
+    diskUsage: async () => (await readDiskUsage([config.repoRoot], shell))[0],
     dockerPing: async () => {
       const startedAt = Date.now();
       try {

@@ -499,3 +499,25 @@ describe('自检依赖预算', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('异步磁盘自检', () => {
+  it('等待真实读取后报告97%，不把Promise当作盘空或NaN', async () => {
+    let finish!: (value: { totalBytes: number; freeBytes: number }) => void; let completed = false;
+    const result = buildSelfCheck(healthyDeps({ diskUsage: () => new Promise(r => { finish = r; }) })).then(doc => { completed = true; return doc; });
+    await Promise.resolve(); await Promise.resolve(); expect(completed).toBe(false);
+    finish({ totalBytes: 100, freeBytes: 3 });
+    const check = (await result).checks['host.disk-used-percent'];
+    expect(check.observedValue).toBe(97); expect(check.status).toBe('fail');
+  });
+  it('卡住的磁盘读取3秒后保留未知和fail，其余自检完成', async () => {
+    vi.useFakeTimers();
+    try {
+      const result = buildSelfCheck(healthyDeps({ diskUsage: () => new Promise(() => {}) }));
+      await vi.advanceTimersByTimeAsync(3001);
+      const doc = await result;
+      expect(doc.checks['host.disk-used-percent'].observedValue).toBeNull();
+      expect(doc.checks['host.disk-used-percent'].status).toBe('fail');
+      expect(doc.checks['deploy.stuck'].observedValue).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
