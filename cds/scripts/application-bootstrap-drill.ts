@@ -47,6 +47,8 @@ export interface ApplicationBootstrapContext {
   applicationPid: () => number | undefined;
   applicationProcessTree: () => ReturnType<typeof descendants>;
   readProbeEvents: () => Promise<any[]>;
+  restartForFailureRecovery: () => Promise<void>;
+  stopForFailureRecovery: () => Promise<{ code: number | null; signal: string | null }>;
 }
 export interface ApplicationBootstrapOptions {
   sourceHead?: string; mongoUri?: string; dockerHost?: string; output?: string;
@@ -54,6 +56,7 @@ export interface ApplicationBootstrapOptions {
   beforeShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
   afterFirstShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
   afterRestart?: (context: ApplicationBootstrapContext) => Promise<void>;
+  afterFailedShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
   dockerRequestProxy?: { socketPath: string; daemonId: string; owner: string };
 }
 export async function runApplicationBootstrap(options: ApplicationBootstrapOptions = {}): Promise<void> {
@@ -78,6 +81,7 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
   const env: NodeJS.ProcessEnv = {}; for (const key of ['PATH', 'LANG', 'LC_ALL', 'TZ']) if (process.env[key]) env[key] = process.env[key];
   let mongod: ChildProcess | undefined, application: ChildProcess | undefined, mongo: MongoClient | undefined;
   let captureProbeEvents: (() => Promise<any[]>) | undefined;
+  let failureRecoveryContext: ApplicationBootstrapContext | undefined;
   const knownPids = new Set<number>(), appLogs: string[] = []; let exitApp: Promise<{ code: number | null; signal: string | null }> | undefined;
   const dbName = `${owner}_state`, authDb = `${owner}_auth`, password = randomBytes(24).toString('hex');
   const secretValues = [password];
@@ -172,7 +176,7 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       (report.shutdownAttempts ??= []).push({ requestedAt, exitedAt: new Date().toISOString(), elapsedMs: performance.now() - began, ...ended });
       assert.equal(ended.code, 0); return ended;
     };
-    const readProbeEvents = async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: 'agent-workspace-capability' }).sort({ ts: 1 }).limit(128).toArray())
+    const readProbeEvents = async () => (await mongo!.db(dbName).collection('cds_server_events').find({ source: 'agent-workspace-capability' }).sort({ ts: -1 }).limit(512).toArray()).reverse()
       .map(event => ({ at: event.ts, action: event.action, operationId: event.operationId, containerName: event.containerName, details: event.details }));
     // 失败仍须先保存真实退出前的收尾回执；不得把外层销毁自有daemon当作应用清理成功。
     captureProbeEvents = readProbeEvents;
@@ -180,7 +184,14 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       applicationPid: () => application?.pid,
       applicationProcessTree: () => application?.pid ? descendants(application.pid) : [],
       readProbeEvents,
+      restartForFailureRecovery: async () => {
+        assert.equal(application?.exitCode, 1); // A separate recovery after the original failed stop, never a replacement success assertion.
+        start(); await ready();
+        for (const row of descendants(application!.pid!)) knownPids.add(row.pid);
+      },
+      stopForFailureRecovery: stop,
     };
+    failureRecoveryContext = context;
     report.stage = 'original-index-first-boot'; start(); const initial = await ready(); assert.equal(initial.json.needsBootstrap, true);
     const tree = descendants(application!.pid!); for (const row of tree) knownPids.add(row.pid);
     report.initialProcessTree = tree; report.initialTotalRssKiB = tree.reduce((sum, row) => sum + row.rssKiB, 0);
@@ -223,7 +234,18 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
     report.actualAuthRestartVerified = true; report.checks.push({ name: 'original-index-restart-retains-owner-and-original-session', passed: true });
     if (options.afterRestart) await options.afterRestart(context);
     report.finalShutdown = await stop(); application = undefined; report.verdict = 'passed';
-  } catch (error) { report.failure = { stage: report.stage, message: scrub(error instanceof Error ? error.message : String(error)) }; throw error; }
+  } catch (error) {
+    report.failure = { stage: report.stage, message: scrub(error instanceof Error ? error.message : String(error)) };
+    if (report.stage === 'graceful-shutdown-restart' && application?.exitCode === 1 && options.afterFailedShutdown && failureRecoveryContext) {
+      try {
+        report.probeEventsAtFailedShutdown = await failureRecoveryContext.readProbeEvents();
+        await options.afterFailedShutdown(failureRecoveryContext);
+        report.failureRecoveryVerified = true;
+      } catch (recoveryError) { report.failureRecoveryVerified = false;
+        report.failureRecoveryFailure = scrub(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)); }
+    }
+    throw error; // The original failed verdict, code-0 assertion and budgets remain authoritative.
+  }
   finally {
     if (application?.pid && application.exitCode === null) { for (const row of descendants(application.pid)) knownPids.add(row.pid);
       application.kill('SIGTERM'); await Promise.race([exitApp!, sleep(15_000)]); if (application.exitCode === null) application.kill('SIGKILL'); }

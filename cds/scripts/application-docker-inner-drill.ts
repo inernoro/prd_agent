@@ -291,6 +291,45 @@ async function main(): Promise<void> {
         assert.ok(report.normalCapabilityEvents.some((event: any) => event.details.probeKind === 'storage-validation'));
         report.checks.push({ name: 'actual-pinned-runtime-CLI-skill-and-hard-storage-validation-remain-available-after-restart', passed: true });
       },
+      afterFailedShutdown: async context => {
+        // Retain the original failed normal-stop verdict. This additional phase
+        // proves whether responsibility survives it; it cannot turn that stop green.
+        const originalStop = context.report.shutdownAttempts?.[0];
+        assert.equal(originalStop?.code, 1); assert.ok(originalStop.elapsedMs <= 15_000);
+        const originalRequest = probeProxy!.timeline.find(event => event.phase === 'original-create-received');
+        assert.ok(originalRequest);
+        report.failureRecovery = { verdict: 'failed', originalStop, originalNormalStopPassed: false,
+          operationId: originalRequest.operationId, instanceId: originalRequest.instanceId, restartRequestedAt: new Date().toISOString() };
+        report.probeEventsAtFailedShutdown = await context.readProbeEvents();
+        await context.restartForFailureRecovery();
+        const recoveryTree = context.applicationProcessTree(); report.failureRecovery.processTree = recoveryTree;
+        await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
+          assert.equal(response.status, 200); const item = response.json.items.find((item: any) => item.id === 'open-design');
+          return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000);
+        await probeProxy!.settle();
+        const reply = probeProxy!.timeline.find(event => event.phase === 'backend-create-replied');
+        assert.equal(reply?.status, 201); assert.match(reply!.containerId, /^[a-f0-9]{64}$/);
+        const rows = await auditNamespace('after-original-failed-stop-and-application-owned-recovery');
+        assert.equal(rows.some(row => row.id === reply!.containerId || row.matchesDefaultRuntimeValidation), false);
+        const allEvents = await context.readProbeEvents();
+        const recovered = allEvents.filter(event => event.operationId === originalRequest.operationId);
+        assert.ok(recovered.some(event => event.action === 'agent.probe.recovery.loaded'));
+        assert.ok(recovered.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.containerId === reply!.containerId));
+        const loadedAt = recovered.findIndex(event => event.action === 'agent.probe.recovery.loaded');
+        const removal = recovered.slice(loadedAt).find(event => event.action === 'agent.probe.cleanup.step.assigned' && event.details.cleanupStep === 'remove');
+        assert.ok(removal?.details.cleanupExecutorAssignment);
+        assert.ok(recoveryTree.some(row => row.pid === removal.details.cleanupExecutorAssignment.actorPid));
+        assert.ok(recoveryTree.some(row => row.pid === removal.details.cleanupExecutorAssignment.factoryPid));
+        const daemonEvents = await eventSnapshot('application-recovered-failed-probe-before-owned-harness-cleanup');
+        for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === reply!.containerId
+          && event.action === action && event.probeOperationId === originalRequest.operationId && event.instanceId === originalRequest.instanceId));
+        assert.ok(allEvents.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.probeKind === 'storage-validation'));
+        report.failureRecovery.events = recovered; report.failureRecovery.normalCapabilityEvents = allEvents.filter(event => event.action === 'agent.probe.cleanup.confirmed');
+        report.failureRecovery.shutdown = await context.stopForFailureRecovery(); // Original code0/15s, reused verbatim.
+        report.failureRecovery.verdict = 'passed'; report.failureRecovery.finishedAt = new Date().toISOString();
+        report.checks.push({ name: 'separate-failed-stop-owned-recovery-and-original-normal-capability-validation', passed: true,
+          originalNormalStopPassed: false });
+      },
       exercise: async (context: ApplicationBootstrapContext) => {
         const { request, requestRaw } = context;
         report.stage = 'real-project-create';

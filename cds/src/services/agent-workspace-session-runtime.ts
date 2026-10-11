@@ -1597,6 +1597,10 @@ export class AgentWorkspaceSessionRuntime {
   private bootstrapError: string | null = null;
   private readonly probeAbort = new AbortController();
   private readonly probeGenerations = new Map<string, CapabilityProbeGeneration>();
+  private probeRecoveryLoaded = false;
+  private probeRecoveryReceiptUnconfirmed = false;
+  private probeRecoveryTimer?: NodeJS.Timeout;
+  private probeRecoveryAttempts = 0;
   private readonly probeCleanupTimeoutMs: number;
   private readonly probeCleanupPollMs: number;
   private readonly probeEventLog?: ServerEventLogSink | null;
@@ -1658,6 +1662,7 @@ export class AgentWorkspaceSessionRuntime {
       })
       .finally(() => {
         this.bootstrapPreparation = null;
+        if (this.bootstrapError && this.probeGenerations.size > 0) this.scheduleProbeRecovery();
       });
     this.bootstrapPreparation = preparation;
     return preparation;
@@ -1686,6 +1691,10 @@ export class AgentWorkspaceSessionRuntime {
         'Agent workspace recovery cannot run while managed sessions are active',
       );
     }
+    await this.restoreProbeGenerations();
+    // An unacknowledged name is still an issued request. Do not erase its
+    // receipt directory merely because the first post-restart list is empty.
+    for (const generation of this.probeGenerations.values()) await this.cleanupProbeGeneration(generation);
     const failures: string[] = [];
     const removeLabeled = async (
       listCommand: string,
@@ -1901,7 +1910,7 @@ export class AgentWorkspaceSessionRuntime {
     // Allocate before the daemon request: CLI timeout cannot revoke a late create.
     // The generation ties both validation containers and the storage volume to
     // this instance's recovery and bounded cleanup; absence alone cannot revoke creation.
-    const generation = this.allocateProbeGeneration();
+    const generation = await this.allocateProbeGeneration();
     const probeOperationId = generation.id;
     try {
       let runtimeAvailable = this.runtimeValidationByImageId.get(imageId);
@@ -1987,13 +1996,15 @@ export class AgentWorkspaceSessionRuntime {
   async closeCapabilityProbes(): Promise<void> {
     if (this.closing) return this.closing;
     this.probeAbort.abort();
+    clearTimeout(this.probeRecoveryTimer); this.probeRecoveryTimer = undefined;
     this.closing = (async () => {
       let timer: NodeJS.Timeout | undefined;
       try {
         await Promise.race([
           (async () => {
-            await Promise.allSettled([this.capabilityRefresh, this.imagePreparation].filter(Boolean));
+            await Promise.allSettled([this.capabilityRefresh, this.imagePreparation, this.bootstrapPreparation].filter(Boolean));
             for (const generation of this.probeGenerations.values()) await this.cleanupProbeGeneration(generation);
+            if (this.probeRecoveryReceiptUnconfirmed) throw this.probeCleanupError();
           })(),
           new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(this.probeCleanupError()), 10_000); }),
         ]);
@@ -2006,13 +2017,98 @@ export class AgentWorkspaceSessionRuntime {
     return new AgentWorkspaceRuntimeError('workspace_probe_cleanup_unconfirmed', 'Agent capability probe resources have not been confirmed removed', true);
   }
 
-  private allocateProbeGeneration(): CapabilityProbeGeneration {
+  private async allocateProbeGeneration(): Promise<CapabilityProbeGeneration> {
     this.assertProbeOpen();
-    fs.mkdirSync(this.instanceRootDir, { recursive: true, mode: 0o700 });
+    await fs.promises.mkdir(this.instanceRootDir, { recursive: true, mode: 0o700 });
     const generation = { id: crypto.randomUUID().replace(/-/g, ''),
-      root: fs.mkdtempSync(path.join(this.instanceRootDir, 'capability-')), leases: [] as CapabilityProbeLease[] };
+      root: await fs.promises.mkdtemp(path.join(this.instanceRootDir, 'capability-')), leases: [] as CapabilityProbeLease[] };
+    if (this.probeAbort.signal.aborted) {
+      await fs.promises.rm(generation.root, { recursive: true, force: true });
+      this.assertProbeOpen();
+    }
     this.probeGenerations.set(generation.id, generation);
+    await this.persistProbeGeneration(generation);
     return generation;
+  }
+
+  private async persistProbeGeneration(generation: CapabilityProbeGeneration, mayIssue?: CapabilityProbeLease): Promise<void> {
+    const data = JSON.stringify({ schema: 1, instanceId: this.instanceId, operationId: generation.id,
+      leases: generation.leases.map(lease => ({ kind: lease.kind, name: lease.name, issued: lease === mayIssue || lease.issued,
+        guarded: lease.guarded, creationAcknowledged: lease.creationAcknowledged, containerId: lease.containerId,
+        cleaned: lease.cleaned })) });
+    if (Buffer.byteLength(data) > 8192) throw this.probeCleanupError();
+    const temporary = path.join(generation.root, `.probe-${crypto.randomUUID()}.tmp`);
+    try {
+      const descriptor = await fs.promises.open(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      try { await descriptor.writeFile(data); await descriptor.sync(); } finally { await descriptor.close(); }
+      await fs.promises.rename(temporary, path.join(generation.root, 'probe.json'));
+    } catch { throw this.probeCleanupError(); }
+    finally { try { await fs.promises.rm(temporary, { force: true }); } catch { /* A failed private write cannot authorize a daemon request. */ } }
+  }
+
+  private async restoreProbeGenerations(): Promise<void> {
+    if (this.probeRecoveryLoaded) return;
+    let directory: fs.Dir | undefined; let count = 0, recovered = 0;
+    try {
+      try { directory = await fs.promises.opendir(this.instanceRootDir); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { this.probeRecoveryLoaded = true; return; } throw error; }
+      for (let entry = await directory.read(); entry; entry = await directory.read()) {
+        if (++count > 512) throw this.probeCleanupError();
+        if (!entry.isDirectory() || entry.isSymbolicLink() || !/^capability-[a-zA-Z0-9_-]{1,32}$/.test(entry.name)) continue;
+        const root = path.join(this.instanceRootDir, entry.name), file = path.join(root, 'probe.json');
+        let descriptor: Awaited<ReturnType<typeof fs.promises.open>>;
+        try { descriptor = await fs.promises.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
+        let raw: any;
+        try {
+          if (++recovered > 16) throw this.probeCleanupError();
+          const stat = await descriptor.stat();
+          if (!stat.isFile() || stat.size > 8192 || stat.size === 0 || (process.platform !== 'win32'
+            && ((stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())))) throw this.probeCleanupError();
+          const data = Buffer.alloc(8193), read = await descriptor.read(data, 0, data.length, 0);
+          if (read.bytesRead > 8192) throw this.probeCleanupError();
+          raw = JSON.parse(data.subarray(0, read.bytesRead).toString('utf8'));
+        } finally { await descriptor.close(); }
+        if (raw.schema !== 1 || raw.instanceId !== this.instanceId || !/^[a-f0-9]{32}$/.test(raw.operationId)
+          || !Array.isArray(raw.leases) || raw.leases.length > 3) throw this.probeCleanupError();
+        const generation: CapabilityProbeGeneration = { id: raw.operationId, root, leases: [] };
+        const kinds = new Set<string>();
+        for (const record of raw.leases) {
+          if (!['runtime-validation', 'storage-validation', 'storage-volume'].includes(record.kind) || kinds.has(record.kind)) throw this.probeCleanupError();
+          kinds.add(record.kind);
+          const expectedName = record.kind === 'storage-volume' ? `cds-od-storage-probe-${this.instanceNameScope}-${generation.id}`
+            : `cds-od-probe-${this.instanceNameScope}-${generation.id}-${record.kind}`;
+          if (record.name !== expectedName || ['issued', 'guarded', 'creationAcknowledged', 'cleaned'].some(key => typeof record[key] !== 'boolean')
+            || (record.containerId !== undefined && !/^[a-f0-9]{64}$/.test(record.containerId))
+            || (record.creationAcknowledged && record.kind !== 'storage-volume' && !record.containerId)) throw this.probeCleanupError();
+          const lease: CapabilityProbeLease = { kind: record.kind, name: record.name, issued: record.issued, guarded: record.guarded,
+            creationAcknowledged: record.creationAcknowledged, containerId: record.containerId, cleaned: record.cleaned,
+            cidFile: record.kind === 'storage-volume' ? undefined : path.join(root, record.kind + '.cid') };
+          generation.leases.push(lease);
+        }
+        const current = this.probeGenerations.get(generation.id);
+        if (current && current.root !== root) throw this.probeCleanupError();
+        if (!current) {
+          this.probeGenerations.set(generation.id, generation);
+          for (const lease of generation.leases) this.probeEvent(generation, lease, 'agent.probe.recovery.loaded');
+        }
+      }
+      this.probeRecoveryLoaded = true;
+      this.probeRecoveryReceiptUnconfirmed = false;
+    } catch { this.probeRecoveryReceiptUnconfirmed = true; throw this.probeCleanupError(); }
+    finally { await directory?.close(); }
+  }
+
+  private scheduleProbeRecovery(): void {
+    if (this.probeAbort.signal.aborted || this.probeRecoveryTimer || this.probeGenerations.size === 0) return;
+    const exponent = Math.min(this.probeRecoveryAttempts++, 20);
+    const retryMs = Math.min(this.cleanupRetryMaxMs, this.cleanupRetryBaseMs * 2 ** exponent);
+    this.probeRecoveryTimer = setTimeout(() => {
+      this.probeRecoveryTimer = undefined;
+      if (this.probeAbort.signal.aborted) return;
+      void this.bootstrap(); // Deduplicated, bounded recovery; never prepares an unused image or allocates a new probe.
+    }, retryMs);
+    this.probeRecoveryTimer.unref();
   }
 
   private probeEvent(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, action: string, details: Record<string, unknown> = {}): void {
@@ -2032,7 +2128,12 @@ export class AgentWorkspaceSessionRuntime {
   private async executeProbeLease(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, command: string): Promise<ExecResult> {
     this.assertProbeOpen();
     this.probeEvent(generation, lease, 'agent.probe.registered');
-    const beforeStart = () => { this.assertProbeOpen(); lease.issued = true; this.probeEvent(generation, lease, 'agent.probe.execution.qualified'); };
+    // Persist may-issue responsibility before enqueueing. A crash in the queue
+    // remains unknown; the private synchronous beforeStart callback only qualifies execution.
+    await this.persistProbeGeneration(generation, lease);
+    this.assertProbeOpen();
+    const beforeStart = () => { this.assertProbeOpen(); lease.issued = true;
+      this.probeEvent(generation, lease, 'agent.probe.execution.qualified'); };
     if (!lease.guarded) lease.issued = true; // Legacy executor has no authoritative queue-start callback.
     try {
       const options = { timeout: 30_000, signal: this.probeAbort.signal, beforeStart,
@@ -2055,9 +2156,11 @@ export class AgentWorkspaceSessionRuntime {
         // by a second create; an absent unacknowledged name cannot prove cleanup.
         for (const lease of generation.leases.filter(lease => lease.kind !== 'storage-volume')) await this.cleanupProbeLease(generation, lease, deadline);
         for (const lease of generation.leases.filter(lease => lease.kind === 'storage-volume')) await this.cleanupProbeLease(generation, lease, deadline);
+        await fs.promises.rm(generation.root, { recursive: true, force: true });
         this.probeGenerations.delete(generation.id);
-        fs.rmSync(generation.root, { recursive: true, force: true });
+        if (this.probeGenerations.size === 0) this.probeRecoveryAttempts = 0;
       } catch {
+        try { await this.persistProbeGeneration(generation); } catch { /* Keep the earlier private receipt; never claim the request was revoked. */ }
         for (const lease of generation.leases.filter(lease => !lease.cleaned)) this.probeEvent(generation, lease, 'agent.probe.cleanup.unconfirmed');
         throw this.probeCleanupError();
       }
@@ -2068,22 +2171,34 @@ export class AgentWorkspaceSessionRuntime {
 
   private async cleanupProbeLease(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, deadline: number): Promise<void> {
     if (lease.cleaned) return;
-    if (!lease.issued && lease.guarded) { lease.cleaned = true; return; }
-    if (lease.cidFile && fs.existsSync(lease.cidFile)) {
-      const id = fs.readFileSync(lease.cidFile, 'utf8').trim();
+    if (!lease.issued) { lease.cleaned = true; return; }
+    let cid: string | undefined;
+    if (lease.cidFile) {
+      try {
+        const descriptor = await fs.promises.open(lease.cidFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        try {
+          const stat = await descriptor.stat();
+          if (!stat.isFile() || stat.size > 128) throw this.probeCleanupError();
+          const data = Buffer.alloc(129), read = await descriptor.read(data, 0, data.length, 0);
+          if (read.bytesRead > 128) throw this.probeCleanupError();
+          cid = data.subarray(0, read.bytesRead).toString('utf8');
+        } finally { await descriptor.close(); }
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw this.probeCleanupError(); }
+    }
+    if (cid !== undefined) {
+      const id = cid.trim();
       // Docker CLI reserves an empty CID file before ContainerCreate replies.
       // Cancellation can leave that reservation: it is not a creation receipt.
       if (id) {
         if (!/^[a-f0-9]{64}$/.test(id)) throw this.probeCleanupError();
         lease.containerId = id; lease.creationAcknowledged = true;
+        await this.persistProbeGeneration(generation);
         this.probeEvent(generation, lease, 'agent.probe.creation.acknowledged', { receipt: 'cidfile' });
       } else this.probeEvent(generation, lease, 'agent.probe.cidfile.pending');
     }
-    const options = () => { const remaining = deadline - Date.now(); if (remaining <= 0) throw this.probeCleanupError();
-      return { timeout: remaining, signal: AbortSignal.timeout(remaining), beforeStart: () => { if (Date.now() >= deadline) throw this.probeCleanupError(); } }; };
     while (!lease.creationAcknowledged) {
-      const view = await this.shell.exec(`${lease.kind === 'storage-volume' ? 'docker volume inspect' : 'docker inspect'} --format ${shellQuote('{{json .}}')} ${shellQuote(lease.name)}`,
-        { ...options(), executionLane: 'observation' });
+      const view = await this.execProbeCleanup(generation, lease, 'inspect',
+        `${lease.kind === 'storage-volume' ? 'docker volume inspect' : 'docker inspect'} --format ${shellQuote('{{json .}}')} ${shellQuote(lease.name)}`, deadline);
       if (view.exitCode === 0) {
         const resource = JSON.parse(view.stdout); const labels = lease.kind === 'storage-volume' ? resource.Labels : resource.Config?.Labels;
         if (labels?.['cds.instance'] !== this.instanceId || labels?.['cds.type'] !== 'agent-session'
@@ -2091,17 +2206,43 @@ export class AgentWorkspaceSessionRuntime {
         if (lease.kind === 'storage-volume') { if (resource.Name !== lease.name) throw this.probeCleanupError(); }
         else { if (!/^[a-f0-9]{64}$/.test(resource.Id) || resource.Name !== `/${lease.name}`) throw this.probeCleanupError(); lease.containerId = resource.Id; }
         lease.creationAcknowledged = true;
+        await this.persistProbeGeneration(generation);
         this.probeEvent(generation, lease, 'agent.probe.creation.acknowledged', { receipt: 'owned-inspect' });
       } else {
         await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
       }
     }
-    const removed = await this.shell.exec(lease.kind === 'storage-volume'
-      ? `docker volume rm ${shellQuote(lease.name)}` : `docker rm -f ${shellQuote(lease.containerId!)}`,
-    { ...options(), ...(lease.kind === 'storage-volume' ? {} : { executionPurpose: 'temporary-cleanup' as const }) });
+    const removed = await this.execProbeCleanup(generation, lease, 'remove', lease.kind === 'storage-volume'
+      ? `docker volume rm ${shellQuote(lease.name)}` : `docker rm -f ${shellQuote(lease.containerId!)}`, deadline);
     if (removed.exitCode !== 0 && !/No such (?:container|volume|object)/i.test(`${removed.stderr}\n${removed.stdout}`)) throw this.probeCleanupError();
     lease.cleaned = true;
+    await this.persistProbeGeneration(generation);
     this.probeEvent(generation, lease, 'agent.probe.cleanup.confirmed');
+  }
+
+  private async execProbeCleanup(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, step: 'inspect' | 'remove', command: string, deadline: number): Promise<ExecResult> {
+    const requestedAt = Date.now(), remaining = deadline - requestedAt;
+    if (remaining <= 0) throw this.probeCleanupError();
+    let assignment: ExecAssignment | undefined;
+    const detail = () => ({ cleanupStep: step, requestedAt, deadline, cleanupExecutorAssignment: assignment ?? null });
+    this.probeEvent(generation, lease, 'agent.probe.cleanup.step.requested', detail());
+    try {
+      const result = await this.shell.exec(command, { timeout: remaining, signal: AbortSignal.timeout(remaining),
+        ...(step === 'inspect' ? { executionLane: 'observation' as const } : lease.kind === 'storage-volume' ? {} : { executionPurpose: 'temporary-cleanup' as const }),
+        onAssigned: value => { assignment = value; this.probeEvent(generation, lease, 'agent.probe.cleanup.step.assigned', detail()); },
+        beforeStart: () => { if (Date.now() >= deadline) throw this.probeCleanupError();
+          this.probeEvent(generation, lease, 'agent.probe.cleanup.step.qualified', { ...detail(), startedAt: Date.now() }); } });
+      const diagnostic = `${result.stderr}\n${result.stdout}`;
+      const outcome = result.exitCode === 0 ? 'ok' : /No such (?:container|volume|object)/i.test(diagnostic) ? 'absent'
+        : /already in progress/i.test(diagnostic) ? 'removing' : 'failed';
+      this.probeEvent(generation, lease, 'agent.probe.cleanup.step.finished', { ...detail(), finishedAt: Date.now(), exitCode: result.exitCode, outcome });
+      return result;
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      this.probeEvent(generation, lease, 'agent.probe.cleanup.step.interrupted', { ...detail(), finishedAt: Date.now(),
+        outcome: ['deadline', 'cancelled', 'capacity', 'closed', 'unavailable'].includes(code ?? '') ? code : 'error' });
+      throw error;
+    }
   }
 
   private capabilityProbeOwnership(kind: 'runtime-validation' | 'storage-validation', operationId: string): string[] {

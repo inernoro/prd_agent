@@ -4,7 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AgentWorkspaceRuntimeError,
@@ -427,11 +427,20 @@ function buildPackage(
 
 describe('AgentWorkspaceSessionRuntime', () => {
   let rootDir = '';
+  let defaultRootDir = '';
+
+  beforeEach(() => {
+    rootDir = '';
+    defaultRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-runtime-test-'));
+    vi.stubEnv('CDS_AGENT_WORKSPACE_ROOT', defaultRootDir);
+  });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     if (rootDir) fs.rmSync(rootDir, { recursive: true, force: true });
+    fs.rmSync(defaultRootDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   it.each([[false, true], [true, true], [false, false]])('seeds complete edit resources before execution and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
@@ -3177,6 +3186,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
   it('keeps a timed-out probe attributable for instance-scoped recovery without reclaiming foreign resources', async () => {
     const calls: string[] = [];
+    let inspectVisible = false;
     const containers = new Map<string, string>([['foreign', 'other-owner'], ['legacy', '']]);
     const shell: IShellExecutor = {
       async exec(command) {
@@ -3189,7 +3199,14 @@ describe('AgentWorkspaceSessionRuntime', () => {
           if (name && owner) containers.set(name, owner);
           throw new Error('CLI timed out after daemon accepted allocation');
         }
-        if (command.startsWith('docker inspect')) return result('', 'No such object', 1);
+        if (command.startsWith('docker inspect')) {
+          const name = command.match(/'([^']+)'$/)![1];
+          if (!inspectVisible || !containers.has(name)) return result('', 'No such object', 1);
+          return result(JSON.stringify({ Id: digest(name), Name: '/' + name, Config: { Labels: {
+            'cds.instance': containers.get(name), 'cds.type': 'agent-session',
+            'cds.agent.probe.operation': name.match(/-([a-f0-9]{32})-runtime-validation$/)![1],
+          } } }));
+        }
         if (command.startsWith('docker ps -aq')) {
           expect(command).toContain("--filter 'label=cds.instance=probe-owner'");
           expect(command).toContain("--filter 'label=cds.type=agent-session'");
@@ -3198,7 +3215,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (command.startsWith('docker network ls -q') || command.startsWith('docker volume ls -q')) return result();
         if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
         if (command.startsWith('docker rm -f')) {
-          containers.delete(command.match(/'([^']+)'/)![1]);
+          const identifier = command.match(/'([^']+)'/)![1];
+          for (const name of containers.keys()) if (name === identifier || digest(name) === identifier) containers.delete(name);
           return result('removed');
         }
         throw new Error(`unexpected command: ${command}`);
@@ -3209,7 +3227,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const probe = calls.find(command => command.startsWith('docker run --rm'))!;
     expect(probe).toContain("--label 'cds.agent.probe=runtime-validation'");
     expect(containers.size).toBe(3);
-    await new AgentWorkspaceSessionRuntime(shell, options).bootstrapAndVerify();
+    inspectVisible = true;
+    // The 5ms fault budget above forces the initial unknown outcome. Recovery
+    // uses the unchanged production bound, including durable receipt I/O.
+    await new AgentWorkspaceSessionRuntime(shell, { instanceId: 'probe-owner', autoPullImage: false }).bootstrapAndVerify();
     expect([...containers.keys()]).toEqual(['foreign', 'legacy']);
   });
 
