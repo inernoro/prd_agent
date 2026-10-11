@@ -4990,6 +4990,8 @@ export interface ExecOptions {
 }
 
 export interface IShellExecutor {
+  /** 保证在归属操作进程实际派发前复核，且等待所属进程清理；普通shell不能冒充。 */
+  execOwnedOperation?(command: string, options: ExecOptions & { beforeStart: () => void }): Promise<ExecResult>;
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
   /** 非紧急纯读取：已有隔离操作池承接，不占健康池或保留清理槽；缺能力时调用方保持未知。 */
   execBackgroundObservation?(command: string, options?: ExecOptions): Promise<ExecResult>;

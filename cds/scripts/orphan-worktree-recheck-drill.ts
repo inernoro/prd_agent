@@ -35,8 +35,12 @@ async function main() {
     const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
     report.changedProductionSources = changed;
-    assert.deepEqual(changed, ['cds/src/services/janitor.ts', 'cds/src/services/orphan-worktree.ts',
-      'cds/src/services/worktree-path-activity.ts', 'cds/src/services/worktree.ts']);
+    assert.deepEqual(changed, ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts',
+      'cds/src/routes/legacy-cleanup.ts', 'cds/src/routes/remote-hosts.ts', 'cds/src/services/container.ts',
+      'cds/src/services/github-webhook-dispatcher.ts', 'cds/src/services/isolated-shell-executor.ts',
+      'cds/src/services/janitor.ts', 'cds/src/services/orphan-worktree.ts', 'cds/src/services/state.ts',
+      'cds/src/services/worktree-directory-removal-process.ts', 'cds/src/services/worktree-path-activity.ts',
+      'cds/src/services/worktree.ts', 'cds/src/types.ts']);
     const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
       ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
     report.referenceDependencyManifestsChanged = manifestsChanged;
@@ -46,7 +50,7 @@ async function main() {
     await fs.writeFile(path.join(referenceRuntime, 'package.json'), '{"type":"module"}\n', { mode: 0o600 });
     await fs.symlink(path.resolve('node_modules'), path.join(referenceRuntime, 'node_modules'), 'dir');
     report.referenceSourceHashes = {};
-    for (const name of ['janitor', 'worktree', 'orphan-worktree']) {
+    for (const name of ['janitor', 'worktree', 'orphan-worktree', 'state']) {
       const original = execFileSync('/usr/bin/git', ['show', `${referenceHead}:cds/src/services/${name}.ts`]);
       report.referenceSourceHashes[`src/services/${name}.ts`] = digest(original);
       const compiled = ts.transpileModule(original.toString('utf8'), { fileName: `${name}.ts`, reportDiagnostics: true,
@@ -94,7 +98,7 @@ async function main() {
     await fs.cp(path.resolve('dist'), ownershipReferenceRuntime, { recursive: true });
     await fs.writeFile(path.join(ownershipReferenceRuntime, 'package.json'), '{"type":"module"}\n', { mode: 0o600 });
     await fs.symlink(path.resolve('node_modules'), path.join(ownershipReferenceRuntime, 'node_modules'), 'dir');
-    for (const name of ['janitor', 'worktree', 'orphan-worktree']) {
+    for (const name of ['janitor', 'worktree', 'orphan-worktree', 'state']) {
       const original = execFileSync('/usr/bin/git', ['show', `${ownershipReferenceHead}:cds/src/services/${name}.ts`]);
       report.ownershipReferenceSourceHashes[`src/services/${name}.ts`] = digest(original);
       const compiled = ts.transpileModule(original.toString('utf8'), { fileName: `${name}.ts`, reportDiagnostics: true,

@@ -137,6 +137,11 @@ export class IsolatedShellExecutor implements IShellExecutor {
     return Promise.reject(this.executionError('unavailable'));
   }
 
+  execOwnedOperation(command: string, options: ExecOptions & { beforeStart: () => void }): Promise<ExecResult> {
+    if (this.isolatedLane === 'operation') return this.exec(command, { ...options, executionLane: 'operation' });
+    return this.operation.execOwnedOperation
+      ? this.operation.execOwnedOperation(command, options) : Promise.reject(this.executionError('unavailable'));
+  }
   exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     if ((options?.executionLane ?? 'operation') !== this.isolatedLane) return this.operation.exec(command, options);
     options ??= {};

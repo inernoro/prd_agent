@@ -1,6 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { worktreePathActivity } from './worktree-path-activity.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -1249,6 +1250,8 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
+    worktreePathActivity.assertClaimable([entry.worktreePath,
+      ...Object.values(entry.services || {}).map(s => s.sourceCheckoutPath).filter((p): p is string => !!p)]);
     // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
@@ -3559,6 +3562,7 @@ export class StateService {
   setBranchWorktreePath(branchId: string, worktreePath: string): void {
     const branch = this.state.branches[branchId];
     if (!branch) return;
+    worktreePathActivity.assertClaimable([worktreePath]);
     branch.worktreePath = worktreePath;
   }
 

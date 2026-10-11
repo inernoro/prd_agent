@@ -16,6 +16,7 @@ import { StateService } from '../services/state.js';
 import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
+import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
@@ -6298,7 +6299,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // own subdirectories instead of colliding.
       const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, effectiveProjectId, id);
       await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-      await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
       // 波3 配置树:分支从分支派生(快照拷贝语义,design.cds.config-tree)。
       // sourceBranchId 必须在建 worktree 之前校验,避免坏参数留下孤儿 worktree。
@@ -6353,7 +6353,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.derivedFromBranchName = sourceBranch.branch;
         entry.derivedAt = new Date().toISOString();
       }
-      stateService.addBranch(entry);
+      await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+        await worktreeService.create(branchRepoRoot, branch, worktreePath);
+        stateService.addBranch(entry);
+      });
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
       //
       // Bugbot fix(PR #521 第九轮 Bug 3)— 写回项目级 scope(撤回第八轮误改)。
@@ -22072,7 +22075,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
         const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainBranchId);
         await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-        await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
           id: mainBranchId,
@@ -22088,7 +22090,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           owner.defaultDeployModes,
           stateService.getBuildProfilesForProject(owner.id),
         );
-        stateService.addBranch(entry);
+        await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+          await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
+          stateService.addBranch(entry!);
+        });
         // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
         // 2026-04-27 (Codex P2): 不再 AND state.defaultBranch — 多项目环境下
         // state.defaultBranch 经常已经被另一个项目设过，这种检查会让新项目

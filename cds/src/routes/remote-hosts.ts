@@ -25,6 +25,7 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
@@ -2490,34 +2491,36 @@ async function reconcileCdsManagedRuntimeCapacity(
   };
   let branchChange: 'created' | 'updated' = 'created';
   let serviceChange: 'created' | 'updated' = 'created';
-  let managedBranch: BranchEntry;
-  if (branch) {
-    branch.services = branch.services || {};
-    serviceChange = branch.services[profileId] ? 'updated' : 'created';
-    branch.services[profileId] = serviceState;
-    branch.status = initialBranchStatus;
-    branch.worktreePath = worktreePath;
-    branch.lastAccessedAt = options.now;
-    branch.lastDeployAt = options.now;
-    branchChange = 'updated';
-    managedBranch = branch;
-  } else {
-    managedBranch = {
-      id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
-      projectId: project.id,
-      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
-      worktreePath,
-      status: initialBranchStatus,
-      services: {
-        [profileId]: serviceState,
-      },
-      createdAt: options.now,
-      lastAccessedAt: options.now,
-      lastDeployAt: options.now,
-      githubCommitSha: 'cds-managed-runtime',
-    };
-    stateService.addBranch(managedBranch);
-  }
+  const managedBranch = await worktreePathActivity.withClaim([worktreePath, ...(branch?.worktreePath ? [branch.worktreePath] : [])], async () => {
+    if (branch) {
+      branch.services = branch.services || {};
+      serviceChange = branch.services[profileId] ? 'updated' : 'created';
+      branch.services[profileId] = serviceState;
+      branch.status = initialBranchStatus;
+      stateService.setBranchWorktreePath(branch.id, worktreePath);
+      branch.lastAccessedAt = options.now;
+      branch.lastDeployAt = options.now;
+      branchChange = 'updated';
+      return branch;
+    } else {
+      const managedBranch: BranchEntry = {
+        id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
+        projectId: project.id,
+        branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+        worktreePath,
+        status: initialBranchStatus,
+        services: {
+          [profileId]: serviceState,
+        },
+        createdAt: options.now,
+        lastAccessedAt: options.now,
+        lastDeployAt: options.now,
+        githubCommitSha: 'cds-managed-runtime',
+      };
+      stateService.addBranch(managedBranch);
+      return managedBranch;
+    }
+  });
   stateService.save();
 
   let liveApply: Record<string, unknown> = {

@@ -16,7 +16,7 @@ const dirs: string[] = [];
 const executors: IsolatedShellExecutor[] = [];
 const initialEnv = Object.fromEntries(['PATH', 'CDS_JANITOR_QUERY_FAILURE', 'CDS_JANITOR_CONFLICT', 'CDS_JANITOR_INSPECT'].map(key => [key, process.env[key]]));
 interface Trace { args: string[]; ppid: number; }
-async function fixture() {
+async function fixture(ownedRemoval = false) {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-janitor-read-'));
   dirs.push(dir);
   const traceFile = path.join(dir, 'trace.jsonl');
@@ -42,7 +42,18 @@ else if(args[0]==='ps') {
   await writeFile(path.join(dir, 'docker'), script, { mode: 0o700 });
   process.env.PATH = `${dir}:${initialEnv.PATH || ''}`;
   const operation = { exec: vi.fn((...args: Parameters<ShellExecutor['exec']>) => new ShellExecutor().exec(...args)) };
-  const shell = new IsolatedShellExecutor(operation);
+  const owned = ownedRemoval ? new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2,
+    maxQueued: 4, maxBytes: 256 * 1024, reservedCleanup: 1, reservedCleanupBytes: 64 * 1024 }) : undefined;
+  if (owned) {
+    executors.push(owned); await owned.start();
+    const deadline = Date.now() + 5000;
+    while (owned.getStats().actors.filter(actor => actor.heapLimit !== undefined).length !== 2) {
+      if (Date.now() >= deadline) throw new Error('Owned fixture not ready within original startup budget');
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  }
+  const shell = new IsolatedShellExecutor({ ...operation,
+    ...(owned ? { execOwnedOperation: owned.execOwnedOperation.bind(owned) } : {}) });
   executors.push(shell);
   await shell.start();
   const adapters = process.env.CDS_JANITOR_REFERENCE === '1'
@@ -125,7 +136,7 @@ describe('Janitor 真实命令与观测隔离', () => {
     expect((await f.trace()).filter(item => item.args[0] === 'rmi')).toHaveLength(1);
   });
   it('批量 inspect 部分失败不删除未报告挂载的实际目录，完整重采后仍可回收', async () => {
-    const f = await fixture();
+    const f = await fixture(true);
     const root = path.join(f.dir, 'worktrees');
     const orphan = path.join(root, 'proj', 'omitted');
     const marker = path.join(orphan, 'must-survive');

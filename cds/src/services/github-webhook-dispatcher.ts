@@ -18,7 +18,8 @@
  */
 
 import type { StateService } from './state.js';
-import type { WorktreeService } from './worktree.js';
+import { WorktreeService } from './worktree.js';
+import { worktreePathActivity } from './worktree-path-activity.js';
 import type { IShellExecutor, CdsConfig, BranchEntry, Project } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import { branchEvents, nowIso } from './branch-events.js';
@@ -1688,26 +1689,29 @@ export class GitHubWebhookDispatcher {
         branchId,
       );
       await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-      try {
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-      } catch (err) {
-        // A push for a branch our local clone hasn't fetched yet can fail
-        // because `git worktree add` refuses unknown refs. Try a fetch and
-        // retry once; give up if that also fails.
-        await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-        void err;
-      }
-      entry = {
-        id: branchId,
-        projectId: project.id,
-        branch: branchName,
-        worktreePath,
-        services: {},
-        status: 'idle',
-        createdAt: new Date().toISOString(),
-      };
-      this.deps.stateService.addBranch(entry);
+      entry = await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+        try {
+          await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+        } catch (err) {
+          // A push for a branch our local clone hasn't fetched yet can fail
+          // because `git worktree add` refuses unknown refs. Try a fetch and
+          // retry once; give up if that also fails.
+          await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
+          await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+          void err;
+        }
+        const entry: BranchEntry = {
+          id: branchId,
+          projectId: project.id,
+          branch: branchName,
+          worktreePath,
+          services: {},
+          status: 'idle',
+          createdAt: new Date().toISOString(),
+        };
+        this.deps.stateService.addBranch(entry);
+        return entry;
+      });
       created = true;
     }
 

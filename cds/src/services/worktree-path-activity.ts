@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 export interface WorktreeDirectoryIdentity {
   entryPath: string;
@@ -49,34 +50,60 @@ async function canonicalPath(p: string): Promise<string> {
 
 /** 同一控制进程全部WorktreeService实例共用；不冒称跨进程或外部手工写入互斥。 */
 export class WorktreePathActivity {
-  private readonly active = new Map<symbol, { paths: string[]; shared: boolean; uncertain: boolean }>();
+  private readonly active = new Map<symbol, { paths: string[]; shared: boolean; uncertain: boolean;
+    purpose: 'operation' | 'claim' | 'destruction' }>();
+  private readonly claimOwner = new AsyncLocalStorage<symbol>();
   constructor(private readonly maxActive = 128) {
     if (!Number.isSafeInteger(maxActive) || maxActive < 1 || maxActive > 128) throw new Error('Invalid worktree activity capacity');
   }
   tryAcquire(paths: readonly string[], shared = false): {
-    extend(paths: readonly string[]): boolean; markUncertain(): void; release(): void;
+    owner: symbol; extend(paths: readonly string[]): boolean; markDestructive(): boolean;
+    markUncertain(): void; release(): void;
   } | null {
+    return this.acquire(paths, shared, 'operation');
+  }
+  private acquire(paths: readonly string[], shared: boolean, purpose: 'operation' | 'claim', parent?: symbol) {
     if (this.active.size >= this.maxActive) return null;
     const id = Symbol('owned-worktree');
+    const claim = parent && this.active.get(parent);
+    const authorizedParent = claim?.purpose === 'claim' && !claim.uncertain ? parent : undefined;
     const extend = (more: readonly string[]): boolean => {
       const next = [...new Set([...(this.active.get(id)?.paths ?? []), ...more.map(normalized)])];
       if (next.length > 8 || next.some(p => Buffer.byteLength(p) > 8192)) return false;
-      if ([...this.active].some(([owner, held]) => owner !== id
+      if ([...this.active].some(([owner, held]) => owner !== id && owner !== authorizedParent
         && (!shared || !held.shared || held.uncertain) && held.paths.some(a => next.some(b => related(a, b))))) return false;
-      this.active.set(id, { paths: next, shared, uncertain: this.active.get(id)?.uncertain ?? false }); return true;
+      this.active.set(id, { paths: next, shared, uncertain: this.active.get(id)?.uncertain ?? false,
+        purpose: this.active.get(id)?.purpose ?? purpose }); return true;
     };
     if (!extend(paths)) return null;
-    return { extend, markUncertain: () => { const held = this.active.get(id); if (held) held.uncertain = true; },
+    return { owner: id, extend, markDestructive: () => {
+      const held = this.active.get(id); if (!held || held.shared || held.uncertain || held.purpose === 'claim') return false;
+      held.purpose = 'destruction'; return true;
+    }, markUncertain: () => { const held = this.active.get(id); if (held) held.uncertain = true; },
       release: () => { this.active.delete(id); } };
   }
+  /** 派发前仍允许台账认领并跳过；删除授权后不能让同路径认领成功。 */
+  assertClaimable(paths: readonly string[]): void {
+    const claims = paths.filter(p => !!p).map(normalized);
+    if ([...this.active.values()].some(held => (held.purpose === 'destruction' || held.uncertain)
+      && held.paths.some(a => claims.some(b => related(a, b))))) throw new WorktreeClaimHeldError();
+  }
+  /** 真实创建至同步/异步台账受理共用一份占用；子操作仍单独互斥，不放行兄弟创建。 */
+  async withClaim<T>(paths: readonly string[], operation: () => Promise<T>): Promise<T> {
+    return this.execute(paths, operation, false, 'claim');
+  }
   async run<T>(paths: readonly string[], operation: () => Promise<T>, shared = false): Promise<T> {
-    const lease = this.tryAcquire(paths, shared);
+    return this.execute(paths, operation, shared, 'operation');
+  }
+  private async execute<T>(paths: readonly string[], operation: () => Promise<T>, shared: boolean,
+    purpose: 'operation' | 'claim'): Promise<T> {
+    const lease = this.acquire(paths, shared, purpose, purpose === 'operation' ? this.claimOwner.getStore() : undefined);
     if (!lease) throw new Error('工作目录正在创建或回收，请稍后重试。');
     let cleanupUnknown = false;
     try {
       const canonical = await Promise.all(paths.map(p => canonicalPath(normalized(p))));
       if (!lease.extend(canonical)) throw new Error('工作目录的实际归属正在处理中，请稍后重试。');
-      return await operation();
+      return await (purpose === 'claim' ? this.claimOwner.run(lease.owner, operation) : operation());
     } catch (error) {
       // 独立执行器只有归属清理确认后才给普通失败；cleanup表示旧进程可能仍写目录。
       // 无清理回执不能释放给创建或回收。本批只保留当前进程中的围栏，不冒称重启恢复。
@@ -88,6 +115,11 @@ export class WorktreePathActivity {
   getStats(): { active: number; paths: number } {
     return { active: this.active.size, paths: [...this.active.values()].reduce((n, held) => n + held.paths.length, 0) };
   }
+}
+
+export class WorktreeClaimHeldError extends Error {
+  readonly code = 'worktree-held';
+  constructor() { super('源码目录正在回收或清理尚未确认，请等待完成后重试。'); }
 }
 
 export const worktreePathActivity = new WorktreePathActivity();

@@ -15,6 +15,7 @@ on:
       - cds/scripts/artifact-admission-drill.ts
       - cds/scripts/deployment-queue-drill.ts
       - cds/scripts/orphan-worktree-recheck-drill.ts
+      - cds/scripts/filesystem-removal-drill.ts
       - cds/scripts/orphan-worktree-recheck-probe.ts
       - cds/scripts/orphan-worktree-ownership-probe.ts
       - cds/scripts/tsconfig.acceptance.json
@@ -107,6 +108,16 @@ jobs:
         run: pnpm -C cds exec tsx scripts/observation-isolation-drill.ts --compiled
       - name: Real private filesystem late claim comparison
         run: pnpm -C cds exec vitest run tests/services/janitor-orphan-worktree-recheck.test.ts tests/services/janitor-orphan-worktree-ownership.test.ts tests/services/worktree-path-activity.test.ts tests/services/deployment-source-concurrent.test.ts && pnpm -C cds exec tsx scripts/orphan-worktree-recheck-drill.ts
+      - name: Compiled owned filesystem removal and actual Git claim handoff
+        run: pnpm -C cds exec tsx scripts/filesystem-removal-drill.ts
+      - name: Preserve compiled filesystem removal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-filesystem-removal-${{ github.sha }}
+          path: cds/filesystem-removal-output/
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve private filesystem recheck evidence
         if: always()
         uses: actions/upload-artifact@v4

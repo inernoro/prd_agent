@@ -1,6 +1,7 @@
 import { WorktreeService } from './worktree.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import type { BranchEntry, IShellExecutor } from '../types.js';
 import { shellQuoteArg } from './secure-database-cli.js';
@@ -13,7 +14,7 @@ import {
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
 import { worktreePathActivity, readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity,
-  type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
+  WorktreeClaimHeldError, type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
 import {
   resolveBranchProtection,
   describeBranchProtectionReason,
@@ -274,6 +275,9 @@ export interface JanitorSweepReport {
 }
 
 /** 孤儿 worktree 对账所需的磁盘读写（注入点：测试里换成假实现，不碰磁盘）。 */
+export interface DirectoryRemovalOptions {
+  beforeStart: () => void; identity?: WorktreeDirectoryIdentity; entryOnly: boolean; allowedBase: string;
+}
 export interface OrphanWorktreeFs {
   /**
    * 枚举 `<base>/<projectId>/<slug>` 两层下的全部目录。
@@ -285,7 +289,7 @@ export interface OrphanWorktreeFs {
   /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
-  removeDir: (dir: string) => Promise<string | null>;
+  removeDir: (dir: string, options?: DirectoryRemovalOptions) => Promise<string | null>;
   /**
    * 单个目录的 mtime（毫秒）；不存在或读不出来返回 null。
    *
@@ -393,7 +397,8 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   },
   listMountedHostPaths: () => listMountedHostPaths(execDockerDetailed),
   readDirectoryIdentity: readWorktreeDirectoryIdentity,
-  removeDir: async (dir) => {
+  removeDir: async (dir, options) => {
+    options?.beforeStart();
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       return null;
@@ -460,7 +465,23 @@ export function createJanitorDockerAdapters(shell: IShellExecutor): {
       error: result.stderr.trim() || (result.exitCode !== 0 ? 'Docker 命令未成功，未确认操作结果。' : '') };
   };
   return { dockerPrune: createDockerPrune(run), imageDocker: createImageDocker(run),
-    orphanWorktreeFs: { ...defaultOrphanWorktreeFs, listMountedHostPaths: () => listMountedHostPaths(run) } };
+    orphanWorktreeFs: { ...defaultOrphanWorktreeFs, listMountedHostPaths: () => listMountedHostPaths(run),
+      removeDir: async (dir, options) => {
+        if (!options?.identity || !shell.execOwnedOperation) throw new WorktreeClaimHeldError();
+        const sourceRuntime = import.meta.url.endsWith('.ts');
+        const worker = fileURLToPath(new URL(sourceRuntime
+          ? './worktree-directory-removal-process.ts' : './worktree-directory-removal-process.js', import.meta.url));
+        const result = await shell.execOwnedOperation(`${shellQuoteArg(process.execPath)} --max-old-space-size=128 ${sourceRuntime ? '--import tsx ' : ''}${shellQuoteArg(worker)}`, {
+          cwd: fileURLToPath(new URL('../../', import.meta.url)),
+          executionLane: 'operation', timeout: 60_000, beforeStart: options.beforeStart,
+          stdin: JSON.stringify({ dir, allowedBase: options.allowedBase, identity: options.identity, entryOnly: options.entryOnly }),
+        });
+        if (result.exitCode !== 0) return '目录回收执行失败，已保留本轮回收记录。';
+        let status: unknown;
+        try { status = JSON.parse(result.stdout).status; } catch { return '目录回收回执未确认，请核对实际状态。'; }
+        if (status === 'held') throw new WorktreeClaimHeldError();
+        return status === 'removed' ? null : '目录回收回执未确认，请核对实际状态。';
+      } } };
 }
 
 /** Callback: 返回孤儿 infra 容器名列表(在 Docker 但不在 state 台账)。 */
@@ -645,6 +666,7 @@ export class JanitorService {
         plan.keptReasons[dir] = '临删复核：目录或关联路径正在创建、准备或回收';
         skippedByRecheck.push(dir); continue;
       }
+      let cleanupUnknown = false;
       try {
         const identity = plannedIdentity.get(dir);
         if (identity && !activity.extend([identity.entryPath, ...(identity.target ? [identity.target.path] : [])])) {
@@ -688,9 +710,17 @@ export class JanitorService {
         // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
         // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
         // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
+        const beforeStart = () => {
+          if (isClaimedNow(dir, real) || !activity.markDestructive()) throw new WorktreeClaimHeldError();
+        };
         if (real) {
           // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
-          const realErr = await this.orphanWorktreeFs.removeDir(real);
+          const realIdentity = identity?.target ? { entryPath: identity.target.path,
+            entry: { dev: identity.target.dev, ino: identity.target.ino,
+              ctimeNs: identity.target.ctimeNs, mtimeNs: identity.target.mtimeNs } } : undefined;
+          const realErr = await this.orphanWorktreeFs.removeDir(real, {
+            beforeStart, identity: realIdentity, entryOnly: false, allowedBase: this.worktreeBase,
+          });
           if (realErr) {
             failed.push({ path: real, error: realErr });
             plan.keptReasons[dir] = `真身回收失败，保留别名以便下轮重试（${real}）`;
@@ -706,10 +736,22 @@ export class JanitorService {
           skippedByRecheck.push(dir);
           continue;
         }
-        const err = await this.orphanWorktreeFs.removeDir(dir);
+        const err = await this.orphanWorktreeFs.removeDir(dir, {
+          beforeStart, identity, entryOnly: !!real, allowedBase: this.worktreeBase,
+        });
         if (err) { failed.push({ path: dir, error: err }); continue; }
         removed.push(dir);
-      } finally { activity.release(); }
+      } catch (error) {
+        const code = (error as { code?: string } | null)?.code;
+        if (code === 'worktree-held') {
+          plan.keptReasons[dir] = '删除派发复核：目录已认领、身份变化或归属未知，保留本轮';
+          skippedByRecheck.push(dir);
+        } else {
+          cleanupUnknown = code === 'cleanup';
+          if (cleanupUnknown) activity.markUncertain();
+          failed.push({ path: dir, error: cleanupUnknown ? '回收进程清理尚未确认，保留路径围栏' : '目录回收未完成，保留本轮记录' });
+        }
+      } finally { if (!cleanupUnknown) activity.release(); }
     }
     if (skippedByRecheck.length) {
       console.warn(`[janitor] 孤儿 worktree 临删复核拦下 ${skippedByRecheck.length} 个目录（疑似并发重建）`);

@@ -1,5 +1,19 @@
 {
   "extends": "../tsconfig.json",
-  "compilerOptions": { "rootDir": "..", "noEmit": true, "tsBuildInfoFile": "../dist/.acceptance.tsbuildinfo" },
-  "include": ["deployment-recovery-drill.ts", "replica-confirmation-drill.ts", "actual-stop-drill.ts", "observation-isolation-drill.ts", "artifact-admission-drill.ts", "json-write-overlap-drill.ts", "deployment-queue-drill.ts", "orphan-worktree-recheck-drill.ts"]
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../dist/.acceptance.tsbuildinfo"
+  },
+  "include": [
+    "deployment-recovery-drill.ts",
+    "replica-confirmation-drill.ts",
+    "actual-stop-drill.ts",
+    "observation-isolation-drill.ts",
+    "artifact-admission-drill.ts",
+    "json-write-overlap-drill.ts",
+    "deployment-queue-drill.ts",
+    "orphan-worktree-recheck-drill.ts",
+    "filesystem-removal-drill.ts"
+  ]
 }

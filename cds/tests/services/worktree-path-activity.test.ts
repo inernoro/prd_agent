@@ -5,6 +5,28 @@ import path from 'node:path';
 import { WorktreePathActivity } from '../../src/services/worktree-path-activity.js';
 
 describe('工作树活动归属', () => {
+  it('认领占用覆盖子操作返回后的受理窗口，兄弟子操作仍分别互斥', async () => {
+    const guard = new WorktreePathActivity();
+    await guard.withClaim(['/owned/new-branch'], async () => {
+      await guard.run(['/owned/new-branch'], async () => {
+        expect(guard.tryAcquire(['/owned/new-branch'])).toBeNull();
+        await expect(guard.run(['/owned/new-branch'], async () => {})).rejects.toThrow('正在');
+      });
+      expect(guard.tryAcquire(['/owned/new-branch'])).toBeNull();
+      expect(() => guard.assertClaimable(['/owned/new-branch'])).not.toThrow();
+      await Promise.all([guard.run(['/owned/new-branch'], async () => {}, true),
+        guard.run(['/owned/new-branch'], async () => {}, true)]);
+    });
+    expect(guard.getStats().active).toBe(0);
+  });
+  it('仅破坏性派发后拦台账认领；普通检查时允许新认领，互不相关路径不受影响', () => {
+    const guard = new WorktreePathActivity(), lease = guard.tryAcquire(['/owned/orphan'])!;
+    expect(() => guard.assertClaimable(['/owned/orphan'])).not.toThrow();
+    expect(lease.markDestructive()).toBe(true);
+    expect(() => guard.assertClaimable(['/owned/orphan'])).toThrow('回收');
+    expect(() => guard.assertClaimable(['/owned/another-project'])).not.toThrow();
+    lease.release(); expect(() => guard.assertClaimable(['/owned/orphan'])).not.toThrow();
+  });
   it('独立源码准备共享根归属，但任一准备未结束时禁止排他创建、更新和回收', () => {
     const guard = new WorktreePathActivity();
     const a = guard.tryAcquire(['/owned/root', '/owned/sources'], true);

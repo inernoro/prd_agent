@@ -9,6 +9,7 @@ import type { BuildProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
 import { WorktreeService } from '../services/worktree.js';
+import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
@@ -218,25 +219,28 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       if (!entry) {
         assertCurrent(); executionStarted = true;
         const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, resolvedProjectId, branchId);
-        if (!artifactOnly) {
-          sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${branchName} 创建工作树...` });
-          await shell.exec(`mkdir -p "${config.worktreeBase}/${resolvedProjectId}"`);
-          assertCurrent(); await worktreeService.create(config.repoRoot, branchName, worktreePath); assertCurrent();
-        }
+        entry = await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+          if (!artifactOnly) {
+            sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${branchName} 创建工作树...` });
+            await shell.exec(`mkdir -p "${config.worktreeBase}/${resolvedProjectId}"`);
+            assertCurrent(); await worktreeService.create(config.repoRoot, branchName, worktreePath); assertCurrent();
+          }
 
-        entry = {
-          id: branchId,
-          projectId: resolvedProjectId,
-          branch: branchName,
-          worktreePath,
-          services: {},
-          status: 'building',
-          createdAt: new Date().toISOString(),
-        };
-        assertCurrent();
-        stateService.addBranch(entry); currentEntry = entry; expectedProject = entry.projectId; expectedBranch = entry.branch;
-        stateService.save();
-        if (!artifactOnly) sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
+          const entry: BranchEntry = {
+            id: branchId,
+            projectId: resolvedProjectId,
+            branch: branchName,
+            worktreePath,
+            services: {},
+            status: 'building',
+            createdAt: new Date().toISOString(),
+          };
+          assertCurrent();
+          stateService.addBranch(entry); currentEntry = entry; expectedProject = entry.projectId; expectedBranch = entry.branch;
+          stateService.save();
+          if (!artifactOnly) sendEvent('step', { step: 'worktree', status: 'done', title: '工作树已创建' });
+          return entry;
+        });
       }
 
       // 进入部署窗口立即把 worker 分支态钉成 building（Bugbot「Executor deploy skips building status」）：

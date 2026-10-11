@@ -191,6 +191,11 @@ describe('IsolatedShellExecutor 真实进程', () => {
     await e.close();
     await Promise.all([active, queued]);
     const pid = Number((await readFile(pidFile, 'utf8')).trim());
+    try {
+      process.kill(pid, 0);
+      const diagnostic = await new ShellExecutor().exec(`ps -o pid=,ppid=,pgid=,stat= -p ${pid}`);
+      console.error(JSON.stringify({ closePidStillPresent: pid, processState: diagnostic.stdout.trim(), pool: e.getStats() }));
+    } catch {}
     expect(() => process.kill(pid, 0)).toThrow();
     await expect(access(path.join(dir, 'queued'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
