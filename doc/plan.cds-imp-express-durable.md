@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.61；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.62；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -563,3 +563,17 @@ expected result：已知不匹配版本不先创建成员再等待对账；curre
 末尾追加实际公共HTTP六场景同fixture：旧857 3/6→cf0 6/6，覆盖explicit/quick/legacy fallback范围错误拒绝、合法两路径与v1缺省控制；另复制旧857原生StateJSON后由cf0实际reconcile的存量恢复5/5，保原版本/旧services且重载error。两组与原boundaries/HTTP/protocol重叠，不相加；原v4新源12/13缺旧受理前件的false仍保留，不改期待凑绿。初新HTTP夹具直接在非main调用aux提案被合法拒绝，改为先合法main提案再按已授权编辑构造scope，原件保留不算产品红。此为本地受控runtime observer/StateJSON，不是实际容器成功或正式恢复通过。
 
 cf0独立最终回执已主逐字核对20CDS+3IMP选定与369runtime共392Git源/快照、32raw及2主补充，全匹配。最终manifest a7e058269acfd8531616b0fd8d8907cceaf649b705b24ac21ff483e105440bdb；summary db28d831ccc3456d2624e72ea5822bcbe3557ffb94d98039b4520791c347cabf；主回读回执 a7b3d8e614bcce4210097a8c65144960b1d2090d06508e31610af3018e265f67。固定原HTTP24/24、expanded32/32（包含24）、protocol41/41、compat7/7、原boundary12/12、freshHTTP旧3/6→新6/6及存量恢复5/5分列重叠，不求和；原v4 12/13缺旧接受前件false保持。三个局部范围问题已闭合，无新增当前有界产品红；30设计行仍非全排列执行，formal49/visual N/A与实际层缺口不变。
+
+
+## v1.62 独立分支页账本与安全行投影
+
+- guide2.80/b059先冻结同账本主区域接线、一次limit10列表、空/失败/lastgood及代次归属；e011抽取DeploymentRunLedger，Drawer原导出与诊断slot兼容，Page沿现有加载/刷新/SSE重同步读取列表，不增逐阶段/展开/CI/逐run诊断请求、新tab或轮询timer。旧cf0实际Page缺接线反例与Drawer控制分列。
+- e011首次full9957绿/1palette ratchet红：原取消状态slate硬编码移至新文件被新文件零中性色守卫拒绝。debaa只换既有theme tokens，未放宽守卫，57相关/core0/web0/build0；首次full9957绿/1bug-reports POST ECONNRESET，client-connect后1ms断开且无server request观测，agent:false，根因未明。原log保留，聚焦34绿、同源不改fixture/timeout的full-v2 9958绿，不能称持续500根因关闭。
+- 末尾debaa实际自有HTTP→完整Page原v5为19/21：两个false同一matching-scope malformed-row资格根，id数字使run.id.slice TypeError并出现页面异常。主同源helper与实际Page SSR也复红，同一根不重复计bug。guide2.81/516先固定最小安全显示字段，559c校验id/status/trigger/phase/eventCount/updatedAt及可选标识/失败/事件文本；坏行列表不可读并保同范围lastgood，不把旧timing缺测当坏行、不要求旧seq/startedAt补造。
+- 主559c相关7files58绿、webtypes0/build0；core源未变沿e011显式core0。固定full677files9959绿，6files19skip、1历史obsolete/67.13s。初SSR裸react-router解析失败无tests、改相对已装web依赖后旧cf0四featureabsence红；夹具错误原件保留。root hook缺node_modules却打印通过的输出不计验证。主20raw清单SHA256=51a796966c639ece5bb4ef0f7ad3377e6de99099b74dcac0f9b1afe77b7c3aa3。
+- 末尾559c实际Page原v5同fixture/期待21/21，旧debaa19/21保留；刷新/nativeSSE重同步、单列表、原tab/details、CI上下文、失败lastgood、跨scope迟到/卸载均在有界受控页面执行。e011/debaa共享STUI各46/46是重叠控制组，不与Page21相加，不代表32设计全排列。固定559c双主题图已主实际查看：light为浅底、dark为暗底，CI与CDS时钟、未采集/开放/失败事实分列；只为自有API合成阶段数据的本地视觉，不是线上黄闪电、真实性能或正式视觉通过。最终源/原件回执已主核，见下方定稿。
+- 本轮fetch确认CDS origin/main仍45533，IMP origin/test推进64提交至43ec86b5426654e59b149b66b39accbc135952f3，本地IMP产品仍cd96/HEADba041；未集成/传播最新test，不让旧IMP局部证据继承为新远端通过。旧八候选尚未传播新源且未push/deploy，无PR/shared写/selfupdate。42partial-local/7todo、49正式全部not-executed、formal visual N/A，目标active。
+
+expected result：完整详情页能查看同一run的真实摘要，坏行和旧响应不使页面失真或崩溃；current evidence：主58/full9959、独立实际Page21与受控双主题，最终回执已主核；visible result：本地页面可显示，未部署；gap：当前远端IMP集成、原IMP发布/XXL/身份红、执行器/终态收尾、隔离准入、八支实际交付、真实黄闪电/公网/恢复/48h与周；required action：核定局部回执后继续同编号任务，正式收口不降门槛。
+
+末尾559c定稿已主核：debaa/559c两固定版本各18selected+369runtime+244web为631校验行/615唯一源，Git blob及执行快照全匹配；54独立原件及20父补充逐字/hash匹配。source136b7bb0d75e46e4c35dc709fa78a060e8b1c17a9ac6b88f31f20919866d38ff，raw38192e35128ef81936bb8f5a037b77c24015706ca22c43284946e2e87d850bd4，summary46fd7ba1015f03294ae4441791d2b9b1990fd04840e226abb7803d40de9be2fb，父final-v2回读a8df0d7e43a83a56e9e4a6122499732d8f63f835d57992a462e9de4944eb0a42。原STUI559c共享46/46（包含44/39）与Page21重叠分列，不求和；原cf0 2/3一缺接线root、debaa19/21两false一坏行root与e011palette父来源均保留。主尾实际查看固定稳定两主题fullPage与ledger，仅受控局部视觉，正式49/visual N/A不变。首四代夹具的CSS bundler/heading selector/非法阶段enum/合法lastgood提示匹配及旧cf0依赖link错误全部保留并更正，不算产品根因；顶栏遮挡一段空卡与其他响应尺寸未作全量布局认证，无本批新有界产品红。
