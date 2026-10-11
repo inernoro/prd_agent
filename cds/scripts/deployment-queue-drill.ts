@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   const previousHost = process.env.DOCKER_HOST, previousContext = process.env.DOCKER_CONTEXT, previousIsolation = process.env.CDS_BRANCH_NETWORK_ISOLATION;
   process.env.DOCKER_HOST = 'unix:///var/run/docker.sock'; delete process.env.DOCKER_CONTEXT; process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
   const pool = new m.isolated.IsolatedShellExecutor(new m.shell.ShellExecutor(), { isolatedLane: 'operation', concurrency: 3, reservedCleanup: 1, maxQueued: 16, maxBytes: 2 * 1024 * 1024, reservedCleanupBytes: 64 * 1024 });
-  const commands: string[] = []; let held = false; let release!: () => void;
+  const commands: string[] = [], commandReceipts: unknown[] = []; let held = false; let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const shell: IShellExecutor = { exec: async (command: string, options?: ExecOptions) => {
     if (/^docker (?:system|container|image|network) prune\b/.test(command)) throw new Error('Global prune forbidden in owned queue drill');
@@ -57,7 +57,9 @@ async function main(): Promise<void> {
     if (/^git\b/.test(command)) assert.ok(!command.includes('--global'));
     commands.push(command);
     if (!held && /^docker run -d\b/.test(command)) { assert.ok(command.includes(owner)); held = true; await gate; }
-    return pool.exec(command, options);
+    const result = await pool.exec(command, options);
+    if (commandReceipts.length < 256) commandReceipts.push({ command, cwd: options?.cwd, exitCode: result.exitCode, stderrTail: result.exitCode ? result.stderr.slice(-1500) : undefined });
+    return result;
   } };
   const stateFile = path.join(temp, 'state.json'); const state = new m.state.StateService(stateFile); state.load();
   const coordinator = new m.coordinator.BranchOperationCoordinator(); const runs = new m.runs.DeploymentRunService(state);
@@ -87,8 +89,14 @@ async function main(): Promise<void> {
     state.addProject({ id: projectId, slug: owner.replaceAll('_', '-'), name: '隔离队列项目', kind: 'git', legacyFlag: true, dockerNetwork: network, createdAt: now, updatedAt: now });
     for (const role of ['api', 'web']) state.addBuildProfile({ id: role, projectId, name: role, dockerImage: imagePrefix + ':sha-${CDS_COMMIT_SHA}',
       prebuiltImage: true, localArtifact: true, workDir: '.', command: '', containerPort: 8080, env: { SERVICE_NAME: role }, readinessProbe: { timeoutSeconds: 30 } });
-    state.addBranch({ id: branchId, projectId, branch: 'owned-main', githubCommitSha: three, worktreePath: path.join(config.worktreeBase, branchId), status: 'idle', createdAt: now, services: {} }); await state.flush();
-    const app = express(); app.use(express.json()); app.use('/api', m.router.createBranchRouter({ stateService: state, worktreeService: new m.worktree.WorktreeService(shell),
+    const worktreeService = new m.worktree.WorktreeService(shell);
+    const branchWorktree = m.worktree.WorktreeService.worktreePathFor(config.worktreeBase, projectId, branchId);
+    await fs.mkdir(path.dirname(branchWorktree), { recursive: true });
+    await worktreeService.create(repo, 'owned-main', branchWorktree);
+    const initialGit = await shell.exec('git rev-parse HEAD', { cwd: branchWorktree }); assert.equal(initialGit.exitCode, 0); assert.equal(initialGit.stdout.trim(), three);
+    report.initialWorktree = { createdByOriginalService: true, canonicalProjectPath: true, head: initialGit.stdout.trim() };
+    state.addBranch({ id: branchId, projectId, branch: 'owned-main', githubCommitSha: three, worktreePath: branchWorktree, status: 'idle', createdAt: now, services: {} }); await state.flush();
+    const app = express(); app.use(express.json()); app.use('/api', m.router.createBranchRouter({ stateService: state, worktreeService,
       containerService: new m.container.ContainerService(shell, config), shell, config, branchOperationCoordinator: coordinator, deploymentRunService: runs, deploymentVersionService: new m.versions.DeploymentVersionService(state) }));
     server = await new Promise<http.Server>(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
     config.masterPort = (server.address() as { port: number }).port;
@@ -158,7 +166,7 @@ async function main(): Promise<void> {
     if (previousContext === undefined) delete process.env.DOCKER_CONTEXT; else process.env.DOCKER_CONTEXT = previousContext;
     if (previousIsolation === undefined) delete process.env.CDS_BRANCH_NETWORK_ISOLATION; else process.env.CDS_BRANCH_NETWORK_ISOLATION = previousIsolation;
     if (cleanupErrors.length) { report.cleanupErrors = cleanupErrors; report.verdict = 'failed'; process.exitCode = 1; }
-    report.commands = commands; report.finishedAt = new Date().toISOString(); await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
+    report.commands = commands; report.commandReceipts = commandReceipts; report.finishedAt = new Date().toISOString(); await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   }
 }
 await main();
