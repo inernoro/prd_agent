@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.66；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.67；日期：2026-10-11；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -605,3 +605,11 @@ v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24
 证据：准备/新固定全Git源/旧13期待红/16治理命令原件位于`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-runtime-roles-3fe7695`。密钥最终summary 5e5f4e30160a0845cf3e53a65a20c212dde5149c8e4270ed89f5aca45f0ef41c；source858309dd/raw4676a963/parent29dc8a56，主回读`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-refresh-cloudbridge-3fe7695/main-independent-secret-final-receipt.json`。只读线上/资源投影均在/tmp/cds-imp-v165-*，不打印凭据。
 
 expected result：每支同一提交验收映射保四worker，原CI治理门禁通过再推送；current evidence：新六本地CLI/tests/治理绿，独立role复验待返；visible result：未push/deploy，无新视觉；gap：真实CI、隔离完整部署、主分支依赖就绪、黄闪电/公网/恢复/48h与周；required action：完成adapter/独立role前置，执行已授权八推送并核真实CI，继续原正式49计划。
+
+## v1.67 八次真实推送与 CI 外部等待
+
+v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。
+
+固定run IDs：A01=38127424815；A02=38127425233；A03=38127424500；A04=38127424165；A05=38127424700；A06=38127424078；A07=38127424878；A08=38127424125。终态未齐，下一轮只查这些run，不重新push/re-run/建PR。实际CI观察原件在`/Users/inernoro/.codex/visualizations/2026/10/11/cds-imp-express-main/eight-runtime-roles-3fe7695`的ci-observation-01/02/03.json，真实push-receipt/push-raw与远端SHA投影已冻结；完整readonly原件按hash移入readonly-preflight。角色独立summary f585fcb3d0263c08c40cd7aa0eda1c46c3144a0cfbc47ae9f99afc1cd1374675，source12d24ebc/raw23392d5b/parentebaf9bd2；主最终回读main-independent-role-final-receipt.json。
+
+expected result：八push确实触发各精确SHA的完整镜像CI，分别判CI等待/构建/制品与CDS实际交付；current evidence：8remote refs已核、8实际run、2success/6pending且曾见runner排队；visible result：真实CI存在，CDS未部署，无本修订正式视觉；gap：其余CI终态、真实manifest与架构、隔离全图部署、黄闪电/公网/恢复/48h及周；required action：下轮先查记录CI IDs，再继续同49原计划，不将2CI成功或本地13roles称全部极速完成。

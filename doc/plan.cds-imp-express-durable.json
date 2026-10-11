@@ -1,6 +1,6 @@
 {
   "goal_id": "CDS-IMP-EXPRESS-DURABLE-20261010",
-  "plan_version": "1.66",
+  "plan_version": "1.67",
   "tasks": [
     {
       "id": "P0-01",
@@ -12,7 +12,7 @@
       "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     },
     {
       "id": "P0-02",
@@ -36,7 +36,7 @@
       "green_evidence": "doc/cds-imp-express-eight-candidates.json（8本地合同，非运行pass）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     },
     {
       "id": "P0-04",
@@ -437,7 +437,7 @@
       "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "继承完整Branch Image矩阵与OCI提交标签，守卫绿；本修订CI产物及新增辅助制品仍未验。 v1.59：新增aux CI/Bake/不可变源码链及本地验证见P5-06；actual CI/push/image仍未执行。"
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     },
     {
       "id": "P5-03",
@@ -497,7 +497,7 @@
       "green_evidence": "doc/cds-imp-express-eight-candidates.json（8本地合同，非运行pass）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     },
     {
       "id": "P6-01",
@@ -509,7 +509,7 @@
       "green_evidence": "/tmp/cds-pending-status-related.log；/tmp/cds-pending-status-tsc.log；/tmp/cds-pending-status-full.log（主本地；815独立局部25/25含原17）",
       "visual_evidence": "N/A",
       "independent_verdict": "partial-local",
-      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     },
     {
       "id": "P6-02",
@@ -520,7 +520,8 @@
       "red_evidence": "N/A",
       "green_evidence": "N/A",
       "visual_evidence": "N/A",
-      "independent_verdict": "not-verified"
+      "independent_verdict": "not-verified",
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     },
     {
       "id": "P6-03",
@@ -588,8 +589,8 @@
       "green_evidence": "/Users/inernoro/.codex/visualizations/2026/10/09/01a11f5a-c5bb-7bb0-8f76-25b20227266d/长效修复独立验收账本.md（局部章节，不是正式通过）",
       "visual_evidence": "N/A",
       "independent_verdict": "not-verified",
-      "local_evidence_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
+      "local_evidence_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
     }
   ],
-  "status_note": "v1.66：IMP产品仍3fe，CDS产品559c未变。密钥独立同expect 15/24→24/24，guard旧A01 1/4→八新各4/4、actualcontract各18/18、IR14实际配置factory/ownHTTP7/7有界，组重叠分列；主核65原件hash/17父副本/4722选定Git源与字节。八完整Git-root snapshot重放各ci.yml governance原16命令，前15全0；最后audit-skills缺PyYAML为本机依赖错误，BundledPython3.12.14/PyYAML6.0.2同命令A01/A02绿，但其他六真正red：历史runtime_contract仍排除imp-worker，遗漏已有四个角色。先保9!=13判据红，再传播最新test已有角色helper及其test两个路径，未改变服务/业务/迁移/原14路径，allowed从14扩大16属required-prerequisite。六新固定候选各三runtime tests/16治理命令0且Git clean，A01/A02同SHA只历史复用；六原CLI缺四角色红保留，独立新role纪元待返。2026-10-11实际只读共享CDS head e4e0c8b65及bundle同版；IMP有效push policy false/defaults13 express/running33，八push不会自动CDS部署。mycds16CPU/806MiB可用/swap8191全满，不qualified隔离宿主；XXL项目main存在但idle、app stopped，不证明Admin就绪。八push与CDS自更新既有授权保留，新CDSbranch push授权待答。42partial-local/7todo，formal49全not-executed/visual N/A，目标active。"
+  "status_note": "v1.67：八IMP候选已按既有授权真实一次atomic/expected-absent lease推送成功，远端8完整SHA逐条匹配；无PR/merge、无CDS平台branch push、无共享部署。独立role原13判据每支13/13、旧六CLI9→新13，原tests3补充且fulltree每支10/10，仅两helper/test路径，A01/A02同SHA；主核33hash引用/23父冻结副本/40选定源与八tree允许delta。原秘密24/24及mini7仅上一固定源局部历史，当前未声称重跑。八实际Branch Image已触发；第三观察2026-10-11T09:14:23.245448+00:00 A05/A07 success，其余六in_progress，当前无queued；首观察A06六job queued/runner未分配，次观察已运行，证实GitHub runner等待，未测其完整队列时钟，不声称零排队或CDS排队修复。全部八Verify express contract已成功；CI成功不替代registry manifest/arch/运行版本。当前3次查询窗口结束，下一轮按记录run ID先查，不重复push/re-run。有效CDS push=false及八entry不存在已只读核，push未自动部署；共享CDS仍e4e旧版，mycds806MiB/swapfull不qualified、XXL main app stopped。CDSbranch发布授权前一问题待答，原自更新授权持续。42partial-local/7todo、formal49全not-executed、official visual N/A，goal active/external-wait。"
 }
