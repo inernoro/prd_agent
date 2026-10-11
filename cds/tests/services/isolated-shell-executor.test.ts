@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import * as childProcess from 'node:child_process';
@@ -9,6 +10,7 @@ import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executo
 import { launchObservationProcess } from '../../src/services/observation-process-launcher.js';
 import { ContainerService } from '../../src/services/container.js';
 import { collectContainerDiagnostics } from '../../src/services/container-diagnostics.js';
+import { readReadyFixturePid } from '../helpers/process-pid-fixture.js';
 import type { CdsConfig } from '../../src/types.js';
 
 vi.mock('node:child_process', async (original) => {
@@ -186,18 +188,34 @@ describe('IsolatedShellExecutor 真实进程', () => {
     const dir = await directory();
     const pidFile = path.join(dir, 'active.pid');
     const active = expect(e.exec(`echo $$ > ${quote(pidFile)}; sleep 30`, observation)).rejects.toMatchObject({ code: 'closed' });
-    await waitFor(async () => { try { await access(pidFile); return true; } catch { return false; } });
+    let fixturePid: number | undefined;
+    await waitFor(async () => { fixturePid = await readReadyFixturePid(pidFile); return fixturePid !== undefined; });
+    const poolBefore = e.getStats();
+    const members = [fixturePid, poolBefore.supervisorPid, poolBefore.factoryPid, ...poolBefore.actors.map(a => a.pid)]
+      .filter((pid): pid is number => typeof pid === 'number' && pid > 1);
+    const processBeforePending = new ShellExecutor().exec(`ps -o pid=,ppid=,pgid=,lstart=,stat= -p ${members.join(',')}`);
     const queued = expect(e.exec(`touch ${quote(path.join(dir, 'queued'))}`, observation)).rejects.toMatchObject({ code: 'closed' });
     await e.close();
     await Promise.all([active, queued]);
-    const pid = Number((await readFile(pidFile, 'utf8')).trim());
-    try {
-      process.kill(pid, 0);
-      const diagnostic = await new ShellExecutor().exec(`ps -o pid=,ppid=,pgid=,stat= -p ${pid}`);
-      console.error(JSON.stringify({ closePidStillPresent: pid, processState: diagnostic.stdout.trim(), pool: e.getStats() }));
-    } catch {}
-    expect(() => process.kill(pid, 0)).toThrow();
+    const pidText = await readFile(pidFile, 'utf8');
+    const pid = Number(pidText.trim());
+    // 先在原断言时点冻结结果，不能让异步诊断等待掩盖刚关闭时的失败。
+    let originalFailure: unknown;
+    try { expect(() => process.kill(pid, 0)).toThrow(); } catch (error) { originalFailure = error; }
+    const processBefore = await processBeforePending;
+    const processAfter = originalFailure
+      ? await new ShellExecutor().exec(`ps -o pid=,ppid=,pgid=,lstart=,stat= -p ${[pid, ...members].filter(p => p && p > 1).join(',')}`) : undefined;
+    const receipt = { at: new Date().toISOString(), originalCloseAssertionPassed: !originalFailure,
+      pid, pidText, poolBefore, poolAfter: e.getStats(), processBefore: processBefore.stdout.trim(), processAfter: processAfter?.stdout.trim(),
+      queueDidNotExecute: await access(path.join(dir, 'queued')).then(() => false, () => true) };
+    const evidence = process.env.CDS_REGRESSION_EVIDENCE_DIR;
+    if (evidence && path.isAbsolute(evidence)) {
+      mkdirSync(evidence, { recursive: true, mode: 0o700 });
+      appendFileSync(path.join(evidence, `close-${process.pid}.jsonl`), JSON.stringify(receipt) + '\n', { mode: 0o600 });
+    }
+    if (originalFailure) console.error(JSON.stringify({ closePidStillPresent: true, ...receipt }));
     await expect(access(path.join(dir, 'queued'))).rejects.toMatchObject({ code: 'ENOENT' });
+    if (originalFailure) throw originalFailure;
   });
 
   it('独立进程启动失败会隔离故障，不泄露命令或回退主线程', async () => {
