@@ -1,3 +1,4 @@
+import { CiTimingCollector } from '../services/deployment-ci-timing.js';
 import { measureDeploymentStage } from '../services/deployment-stage-timing.js';
 import { singleServiceArtifactSet } from '../services/single-service-artifact-set.js';
 import { CandidateDeploymentService, type CandidateDeploymentOptions } from '../services/candidate-deployment.js';
@@ -2369,6 +2370,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+  const ciTimingCollector = githubApp && typeof githubApp.getCiTiming === 'function'
+    ? new CiTimingCollector((target, signal) => githubApp.getCiTiming(target, signal)) : undefined;
+  const captureExactCiTiming = (runId: string | undefined, lease: BranchOperationLease | null | undefined, entry: BranchEntry, headSha: string) => {
+    if (!ciTimingCollector || !deploymentRunService || !runId || !lease) return;
+    const projectId = entry.projectId || 'default', project = stateService.getProject(projectId);
+    if (!project?.githubRepoFullName || !project.githubInstallationId) return;
+    const target = { installationId: project.githubInstallationId, repository: project.githubRepoFullName, branch: entry.branch, headSha };
+    const current = () => lease.isCurrent() && stateService.getBranch(entry.id) === entry
+      && (entry.projectId || 'default') === projectId && entry.branch === target.branch && stateService.getProject(projectId) === project
+      && project.githubRepoFullName === target.repository && project.githubInstallationId === target.installationId;
+    ciTimingCollector.capture(target, deploymentRunService.createCiTimingPublisher(runId, lease.operationId, target, current));
+  };
+
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
   // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
@@ -13410,7 +13424,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const targetSha = await resolveExactArtifactTargetSha(shell,
           requestCommitSha || pulledSha || entry.githubCommitSha || '', entry.worktreePath);
         entry.deploymentTargetSha = targetSha;
+        deployedCommitSha = targetSha;
+        advanceDeploymentRun(deploymentRun?.id, 'building', { phase: 'build', commitSha: targetSha, message: '精确目标已冻结，准备完整制品' });
         stateService.save();
+        captureExactCiTiming(deploymentRun?.id, branchOperationLease, entry, targetSha);
         logEvent({ step: 'artifact-admission', status: 'running', title: '准备完整精确极速制品，保留现有服务', timestamp: new Date().toISOString() });
         const prepared = await measureDeploymentStage(deploymentTiming, 'artifact', 'exact-artifact', null, () => prepareExactPrebuiltArtifacts(shell,
           profiles.map(profile => selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry)), targetSha, {
@@ -14850,6 +14867,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         recordPreparedProfile();
         entry.deploymentTargetSha = targetSha;
         stateService.save();
+        captureExactCiTiming(deploymentRun?.id, branchOperationLease, entry, targetSha);
         // Resolve templates with this exact target, including first deployments with no cached CI SHA.
         // Other services are admitted as artifacts only; this endpoint does not implicitly redeploy them.
         const exactContext = { ...entry, ciTargetSha: targetSha, githubCommitSha: targetSha };

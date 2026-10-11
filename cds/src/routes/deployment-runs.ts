@@ -200,7 +200,7 @@ export function createDeploymentRunsRouter(deps: DeploymentRunsRouterDeps): Rout
       res.status(access.status).json(access.body);
       return;
     }
-    res.json(logPayloadForHumanView(req, { run: { ...run, timingSummary: summarizeDeploymentTiming(run.timing) } }));
+    res.json(logPayloadForHumanView(req, { run: { ...run, timingSummary: summarizeDeploymentTiming(run.timing, run.ciTiming) } }));
   });
 
   return router;
@@ -223,13 +223,13 @@ function resolveProjectFilter(
   return projectId;
 }
 
-function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events' | 'timing'> & {
+function toRunSummary(run: DeploymentRun): Omit<DeploymentRun, 'events' | 'timing' | 'ciTiming'> & {
   timingSummary: ReturnType<typeof summarizeDeploymentTiming>;
   eventCount: number;
   latestEvent?: DeploymentRun['events'][number];
 } {
-  const { events, timing, ...summary } = run;
-  return { ...summary, timingSummary: summarizeDeploymentTiming(timing), eventCount: events.length, latestEvent: events.at(-1) };
+  const { events, timing, ciTiming, ...summary } = run;
+  return { ...summary, timingSummary: summarizeDeploymentTiming(timing, ciTiming), eventCount: events.length, latestEvent: events.at(-1) };
 }
 
 function writeSse(res: Response, eventName: string, data: unknown, id?: number): void {

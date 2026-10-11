@@ -1,3 +1,4 @@
+import { summarizeCiTiming, type CiTimingRecord } from './deployment-ci-timing.js';
 import type { DeploymentRun } from '../types.js';
 
 export const DEPLOYMENT_TIMING_STAGES = ['ci-runner', 'ci-build', 'artifact', 'capacity', 'pull', 'startup', 'readiness', 'switch', 'cleanup'] as const;
@@ -50,8 +51,8 @@ export interface DeploymentStageSummary {
   cancelled: number;
 }
 /** Completed interval union is partial observed wall time, never whole delivery duration. */
-export function summarizeDeploymentTiming(record: DeploymentRun['timing']): {
-  version: 1; incomplete: boolean; truncated: boolean; stages: Record<DeploymentTimingStage, DeploymentStageSummary>;
+export function summarizeDeploymentTiming(record: DeploymentRun['timing'], ciRecord?: CiTimingRecord | null): {
+  version: 1; incomplete: boolean; truncated: boolean; ci: ReturnType<typeof summarizeCiTiming>; stages: Record<DeploymentTimingStage, DeploymentStageSummary>;
 } {
   const stages = Object.fromEntries(DEPLOYMENT_TIMING_STAGES.map(stage => [stage, {
     status: 'not-observed', completedWallMs: null, workMs: null, intervals: 0, open: 0, unknown: 0, completed: 0, failed: 0, cancelled: 0,
@@ -85,9 +86,12 @@ export function summarizeDeploymentTiming(record: DeploymentRun['timing']): {
       summary.completedWallMs = total + end - start;
     }
     summary.status = summary.intervals === 0 ? 'not-observed' : summary.open || summary.unknown || truncated ? 'incomplete' : 'observed';
-    if (summary.status !== 'observed') incomplete = true;
+    if (stage !== 'ci-runner' && stage !== 'ci-build' && summary.status !== 'observed') incomplete = true;
   }
-  return { version: 1, incomplete, truncated, stages };
+  const ci = summarizeCiTiming(ciRecord);
+  stages['ci-runner'] = ci.runner; stages['ci-build'] = ci.build;
+  incomplete ||= ci.incomplete || DEPLOYMENT_TIMING_STAGES.some(stage => stages[stage].status !== 'observed');
+  return { version: 1, incomplete, truncated: truncated || ci.truncated, ci, stages };
 }
 
 /** Optional observation preserves the exact work promise when no observer is installed. */

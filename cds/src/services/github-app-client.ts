@@ -1,3 +1,4 @@
+import { isCiTimingTarget, projectCiTiming, type CiTimingTarget, type CiTimingRecord } from './deployment-ci-timing.js';
 /**
  * GitHubAppClient — talks to GitHub as a GitHub App (not an OAuth App).
  *
@@ -27,12 +28,15 @@ export type FetchLike = (url: string, init?: {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  signal?: AbortSignal;
+  redirect?: 'error';
 }) => Promise<{
   ok: boolean;
   status: number;
   statusText: string;
   json: () => Promise<any>;
   text: () => Promise<string>;
+  body?: { getReader: () => { read: () => Promise<{ done: boolean; value?: Uint8Array }>; cancel: () => Promise<unknown>; releaseLock: () => void } } | null;
 }>;
 
 export interface GitHubAppClientOptions {
@@ -164,7 +168,8 @@ export class GitHubAppClient {
    * Mint (or reuse a cached) installation access token. Tokens live an hour
    * on GitHub's side; we refresh when <60s remain.
    */
-  async getInstallationToken(installationId: number): Promise<string> {
+  async getInstallationToken(installationId: number, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     const cached = this.tokenCache.get(installationId);
     if (cached && cached.expiresAtMs - Date.now() > 60_000) {
       return cached.token;
@@ -174,6 +179,8 @@ export class GitHubAppClient {
       `https://api.github.com/app/installations/${installationId}/access_tokens`,
       {
         method: 'POST',
+        signal,
+        redirect: signal ? 'error' : undefined,
         headers: {
           Authorization: `Bearer ${jwt}`,
           Accept: 'application/vnd.github+json',
@@ -183,18 +190,19 @@ export class GitHubAppClient {
       },
     );
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
+      const text = signal ? '' : await res.text().catch(() => '');
       throw new GitHubAppError(
         'installation_token_failed',
         `Failed to mint installation token (HTTP ${res.status}): ${text.slice(0, 200)}`,
         res.status,
       );
     }
-    const body = (await res.json()) as { token: string; expires_at: string };
+    const body = (signal ? await readCiJson(res, signal) : await res.json()) as { token: string; expires_at: string };
     const entry: TokenCacheEntry = {
       token: body.token,
       expiresAtMs: new Date(body.expires_at).getTime(),
     };
+    signal?.throwIfAborted();
     this.tokenCache.set(installationId, entry);
     return entry.token;
   }
@@ -409,6 +417,35 @@ export class GitHubAppClient {
     }
   }
 
+  /** Bounded provider facts only; missing Actions read permissions do not affect deployment. */
+  async getCiTiming(target: CiTimingTarget, signal: AbortSignal = AbortSignal.timeout(3000)): Promise<CiTimingRecord | null> {
+    if (!isCiTimingTarget(target)) return null;
+    const own = { ...target };
+    try {
+      const token = await this.getInstallationToken(own.installationId, signal);
+      signal.throwIfAborted();
+      const read = async (url: string): Promise<any> => {
+        signal.throwIfAborted();
+        const res = await this.fetchImpl(url, { method: 'GET', signal, redirect: 'error', headers: {
+          Authorization: `token ${token}`, Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'CDS-GitHubApp/1.0',
+        } });
+        if (!res.ok) throw new Error('ci_source_unavailable');
+        return readCiJson(res, signal);
+      };
+      const root = `https://api.github.com/repos/${own.repository}/actions`;
+      const query = new URLSearchParams({ head_sha: own.headSha, branch: own.branch, per_page: '20' });
+      const runs = await read(`${root}/workflows/branch-image.yml/runs?${query}`);
+      if (!Array.isArray(runs?.workflow_runs) || runs.workflow_runs.length > 20) return null;
+      const eligible = runs.workflow_runs.filter((candidate: unknown) => projectCiTiming(own, candidate, { total_count: 0, jobs: [] }));
+      if (!eligible.length || new Set(eligible.map((candidate: any) => candidate.id)).size !== eligible.length) return null;
+      eligible.sort((a: any, b: any) => b.id - a.id);
+      const run = eligible[0];
+      const jobs = await read(`${root}/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`);
+      return projectCiTiming(own, run, jobs);
+    } catch { return null; }
+  }
+
   /**
    * List every installation of this App. Used by the Settings UI so the
    * operator can associate a project with one of the App's install
@@ -549,4 +586,25 @@ function base64url(buf: Buffer): string {
 
 function base64urlJson(obj: unknown): string {
   return base64url(Buffer.from(JSON.stringify(obj), 'utf-8'));
+}
+
+async function readCiJson(res: Awaited<ReturnType<FetchLike>>, signal: AbortSignal): Promise<any> {
+  const max = 256 * 1024;
+  let text: string;
+  if (res.body) {
+    const reader = res.body.getReader(), chunks: Uint8Array[] = []; let bytes = 0;
+    try {
+      while (true) {
+        signal.throwIfAborted(); const next = await reader.read(); if (next.done) break;
+        bytes += next.value?.byteLength || 0;
+        if (bytes > max) { void reader.cancel().catch(() => {}); throw new Error('ci_source_oversized'); }
+        if (next.value) chunks.push(next.value);
+      }
+      text = Buffer.concat(chunks).toString('utf8');
+    } finally { reader.releaseLock(); }
+  } else {
+    // Injected legacy fetch fixtures have no stream. Native fetch always does.
+    text = await res.text(); if (Buffer.byteLength(text) > max) throw new Error('ci_source_oversized');
+  }
+  signal.throwIfAborted(); return JSON.parse(text);
 }

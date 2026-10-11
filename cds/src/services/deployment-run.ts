@@ -1,3 +1,4 @@
+import { sanitizeCiTiming, type CiTimingTarget, type CiTimingRecord } from './deployment-ci-timing.js';
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { isTimingBoundary, TIMING_INTERVAL_LIMIT, type DeploymentTimingObserver, type DeploymentTimingInterval } from './deployment-stage-timing.js';
@@ -232,6 +233,23 @@ export class DeploymentRunService {
       },
     };
     return observer;
+  }
+
+  createCiTimingPublisher(id: string, operationId: string, target: CiTimingTarget, isCurrent: () => boolean): (value: CiTimingRecord | null) => void {
+    const original = this.get(id), frozen = { ...target };
+    const scope = original && { projectId: original.projectId, branchId: original.branchId };
+    const boundAtStart = original?.operationId === operationId && original.commitSha === frozen.headSha && !TERMINAL_STATUSES.has(original.status);
+    let published = false;
+    return value => {
+      if (published || !value) return;
+      try {
+        if (!boundAtStart || !original || this.get(id) !== original || original.id !== id || original.operationId !== operationId
+          || !/^op_[a-zA-Z0-9_.-]{1,120}$/.test(operationId) || original.projectId !== scope?.projectId || original.branchId !== scope.branchId
+          || original.commitSha !== frozen.headSha || TERMINAL_STATUSES.has(original.status) || !isCurrent()) return;
+        const safe = sanitizeCiTiming(value, frozen); if (!safe) return;
+        this.stateService.updateDeploymentRun(id, run => { if (!run.ciTiming) run.ciTiming = safe; }); published = true;
+      } catch { /* Best effort immutable provider facts cannot change deploy result. */ }
+    };
   }
 
   list(filters: { projectId?: string; branchId?: string; status?: DeploymentRunStatus } = {}): DeploymentRun[] {

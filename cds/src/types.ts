@@ -1367,6 +1367,7 @@ export interface DeploymentRun {
   pendingOrigin?: { version: 1; operationId: string; generation: number; profileId: string | null };
   /** Explicit stage boundary observations; absent legacy data is not measured zero. */
   timing?: import('./services/deployment-stage-timing.js').DeploymentTimingRecord;
+  ciTiming?: import('./services/deployment-ci-timing.js').CiTimingRecord;
   startedAt: string;
   updatedAt: string;
   heartbeatAt?: string;
