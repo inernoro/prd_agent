@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.91；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.92；日期：2026-10-12；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -776,3 +776,7 @@ expected result：失败不伪ready/业务pass，原资源显式fail登记/报�
 ## v1.91 原宿主会话显式失败续接
 
 v1.91 原宿主会话失败续接：IMP合同v1.3先提交aa2341371，产品b66b6361fc536fa5b8bab780d7f2507facf14124新增冻结run/continueFailedCreation会话，仅内存保存原能力；原begin/configure确认、deploy/capture未确认后才允许一次显式GET原run→register-failed→fail报告→finish→原ID release/readback，catch零自动收尾，重复/并行/其他阶段拒绝。正常convenience和CLI兼容；CLI退出仍丢原能力，非跨进程恢复。原缺导出20红为一根；去非fail归档前guard两原expect真红已恢复。82host、16 CDS命名文件254（含82）绿，actualCDS Router/State/Container受控CLI/start-readiness两链2/2，非Daemon/Worker生产证据。v1两夹具共享failure值污染保原件，克隆夹具复绿，判据不降。主receipt789d28faec20e883cc6e1da0855f438b6c15425e0e64bdbf89467f58285ffcc8；末尾新session独立待发。CDS51fee固定末尾中间分组start/readiness20、新OS4、ACK11、terminal2，尚待最终packet与主核验；controls原11/12异Profile空begin201探索保留，后继create409零追加2/2另列，不改原expect或算新产品修复。IMP最新test49fa已合入产品1a38，历史0078验收不继承整个b66。独立初始化授权/配置宿主化、未知创建生产恢复、真实Daemon/八完整分支/实际黄闪电/公网/视觉/48h与周仍缺。formal49全部not-executed/visual N/A、45partial-local/4todo；无push/PR/shared写/selfupdate，目标active。
+
+## v1.92 固定失败资源独立复验
+
+v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc1180e0679c137ee62e7a0c199f084d7f1a217e30336f75789fb46d0de9b565。分列chain20/20、newOS4/4、ACK11/11、settlement5/5、negative3/3、normal跨仓10/10、terminal2/2（重叠不求和）；controls原11/12异Profile空begin201探索保留，后继create409/零追加2/2另列，不改期待、不称产品红绿。原ff0/2是一缺失败入口根。固定当前374 Git＋372新派生JS；旧ff374与IMP0078406源明确历史复核。主跨历史递归4746hashrefs及374/374/406精确Git零当前错误；历史067在途log1元数据差异、旧主key收据三个可变WT源路径已推进到b66，逐条0078 Git摘要匹配后归类历史坐标变化，原v1校验失败保留，不称整个深历史图全零差异。主v2回执SHA256 210cb9e0bdaad4a585a0ba6cbaf5f959ddecefd3c02b3d81b6dbc237c251bdfa。F21指针突变/F23完整预算本批未重跑只历史，正式49/visual仍not-executed/N/A。末尾已启动下一固定CDS51fee＋IMPb66宿主会话独立复验，当前未继承该批通过；主b66本地254脚本含82host、跨仓2链证据保持。生产初始化独立授权/配置宿主化、未知Daemon创建、八完整分支/黄闪电/公网/48h与周未完成；无push/PR/shared写/selfupdate，目标active。
