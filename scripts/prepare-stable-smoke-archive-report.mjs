@@ -49,8 +49,20 @@ function renderAcceptanceCases(manifest) {
   return lines.join('\n');
 }
 
+function isProductionReadOnlyZeroVisualReport(report, manifest) {
+  if (!Array.isArray(manifest) || manifest.length !== 0) return false;
+  return report.includes('## 逐模块视觉取证任务')
+    && report.includes('本轮无视觉取证任务')
+    && report.includes('正式环境单独运行仅执行只读健康检查');
+}
+
 export function prepareArchiveReport(report, manifest) {
   const normalizedReport = String(report).replace(/#fig-(\d{3})-[^)\s]+(?=\))/g, '#fig-$1');
+  // 正式环境单独运行只做只读健康检查，视觉合同明确为零槽位。
+  // 仅接受主管报告中的完整零视觉声明，避免把任意空清单当成合格报告。
+  if (isProductionReadOnlyZeroVisualReport(normalizedReport, manifest)) {
+    return normalizedReport;
+  }
   const start = normalizedReport.indexOf('## 视觉证据图片');
   const end = normalizedReport.indexOf('## 视觉测试方法', start);
   if (start < 0 || end < 0 || end <= start) {

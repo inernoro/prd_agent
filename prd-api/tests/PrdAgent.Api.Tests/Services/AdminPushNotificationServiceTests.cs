@@ -851,6 +851,37 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public void NotificationsController_StableSmoke_ShouldResolveDeploymentEnvironmentAlias()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME"] = " admin ",
+            })
+            .Build();
+
+        var target = NotificationsController.ResolveStableSmokeNotificationTarget(configuration);
+
+        Assert.Equal("admin", target);
+    }
+
+    [Fact]
+    public void NotificationsController_StableSmoke_ShouldPreferCanonicalConfigurationKey()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["StableSmokeAuthentication:NotificationTargetUsername"] = "reviewer",
+                ["STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME"] = "admin",
+            })
+            .Build();
+
+        var target = NotificationsController.ResolveStableSmokeNotificationTarget(configuration);
+
+        Assert.Equal("reviewer", target);
+    }
+
+    [Fact]
     public void NotificationsController_QuotaHistory_ShouldHideProviderDiagnostics()
     {
         var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification

@@ -2939,6 +2939,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return bucket[at] ?? item;
     });
   }, [canvas]);
+  const activeGenerationCount = useMemo(
+    () => canvas.filter((item) => item.status === 'running').length,
+    [canvas],
+  );
 
   /**
    * 叠放时只让最底下那块铺透明棋盘格。
@@ -6413,6 +6417,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
       const isG = e.key === 'g' || e.key === 'G' || e.code === 'KeyG';
       const isA = e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+      const isH = e.key === 'h' || e.key === 'H' || e.code === 'KeyH';
+      const isV = e.key === 'v' || e.key === 'V' || e.code === 'KeyV';
+
+      // 工具菜单已经把 H / V 展示给用户，因此这里必须实现同一份快捷键合同。
+      // 只在画板获得焦点或鼠标位于画板内时响应，避免抢占页面其它区域。
+      if (!isMod && !e.altKey && isH) {
+        e.preventDefault();
+        setActiveTool('hand');
+        return;
+      }
+
+      if (!isMod && !e.altKey && isV) {
+        e.preventDefault();
+        setActiveTool('select');
+        return;
+      }
 
       // Cmd/Ctrl+A: 全选画布元素（Figma 同款；没有它就没法「选几个一起编组/导出」）
       if (isMod && !e.shiftKey && !e.altKey && isA) {
@@ -6879,6 +6899,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               }
             }}
           >
+            {activeGenerationCount > 0 ? (
+              <div
+                role="status"
+                aria-live="polite"
+                aria-label="生成队列"
+                className="surface-popover pointer-events-none absolute right-4 top-4 z-[70] inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs text-token-primary shadow-lg"
+              >
+                <span className="font-semibold">生成队列</span>
+                <span>{activeGenerationCount} 项进行中</span>
+              </div>
+            ) : null}
             <div
               ref={worldRef}
               className="absolute inset-0"
@@ -8971,6 +9002,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
           <input
             ref={fileRef}
+            data-testid="visual-canvas-file-input"
             type="file"
             className="hidden"
             accept="image/*"

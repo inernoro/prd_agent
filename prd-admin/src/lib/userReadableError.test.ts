@@ -297,6 +297,13 @@ describe('toUserReadableErrorMessage', () => {
   });
 });
 
+describe('短视频错误契约', () => {
+  it('保留失效公开视频链接的具体检查和更换动作', () => {
+    const message = '当前短视频地址无法读取，请确认视频已经公开、没有过期并允许访问；检查完成后重新粘贴完整链接，如仍然失败请更换另一个公开视频链接后重试。';
+    expect(toUserReadableErrorMessage({ code: 'INVALID_FORMAT', message }, options)).toBe(message);
+  });
+});
+
 describe('GitHub 错误契约', () => {
   it.each([
     ['GITHUB_RATE_LIMITED', 'GitHub 调用频率已达上限，请在 16:20:00 后重试'],

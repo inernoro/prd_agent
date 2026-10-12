@@ -189,6 +189,9 @@ public static class SceneItemStatus
 
     /// <summary>失败</summary>
     public const string Error = "Error";
+
+    /// <summary>用户取消；已提交的上游任务完成对账后进入此状态</summary>
+    public const string Cancelled = "Cancelled";
 }
 
 /// <summary>
@@ -204,7 +207,7 @@ public class VideoGenScene
     /// <summary>视频生成 prompt（喂给 OpenRouter）</summary>
     public string Prompt { get; set; } = string.Empty;
 
-    /// <summary>分镜状态：Draft / Generating / Submitting / SubmittingClaimed / Polling / PollingClaimed / Rendering / Done / Error</summary>
+    /// <summary>分镜状态：Draft / Generating / Submitting / SubmittingClaimed / Polling / PollingClaimed / Rendering / Done / Error / Cancelled</summary>
     public string Status { get; set; } = SceneItemStatus.Draft;
 
     /// <summary>错误消息（失败时填）</summary>
@@ -279,6 +282,11 @@ public class VideoGenSceneVersion
 public class VideoGenRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
+    /// <summary>
+    /// 创建任务的部署作用域。CDS 各分支与 revision 共用 MongoDB 时，后台 Worker 只能领取
+    /// 与自身 <see cref="DeploymentScope.Current"/> 相同的任务，防止旧分支抢走新分支任务。
+    /// </summary>
+    public string? DeploymentSlug { get; set; }
     public string AppKey { get; set; } = "video-agent";
     public string? ProjectId { get; set; }
     public string Status { get; set; } = VideoGenRunStatus.Queued;
@@ -349,6 +357,15 @@ public class VideoGenRun
     public string CurrentPhase { get; set; } = "queued";
     public int PhaseProgress { get; set; }
 
+    /// <summary>无独立 scene lease 的长任务持有者标识，用于拆镜、直出与提示词改写 fencing。</summary>
+    public string? WorkerLeaseId { get; set; }
+
+    /// <summary>持有者租约到期时间；活跃 worker 周期续租，其他 revision 只接管已过期租约。</summary>
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
+
+    /// <summary>当前租约所保护的阶段，便于排障识别持有者。</summary>
+    public string? WorkerLeasePhase { get; set; }
+
     /// <summary>总时长（秒）</summary>
     public double TotalDurationSeconds { get; set; }
 
@@ -389,6 +406,8 @@ public sealed record DeleteVideoGenRunResult(
 public class VideoExportTask
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    /// <summary>创建导出任务的部署作用域；领取规则与 <see cref="VideoGenRun.DeploymentSlug"/> 一致。</summary>
+    public string? DeploymentSlug { get; set; }
     public string AppKey { get; set; } = "video-agent";
     public string OwnerAdminId { get; set; } = string.Empty;
     public string ProjectId { get; set; } = string.Empty;
@@ -397,10 +416,15 @@ public class VideoExportTask
     public string CurrentPhase { get; set; } = "queued";
     public int Progress { get; set; }
     public string? OutputUrl { get; set; }
+    public string? OutputSha256 { get; set; }
+    public double? TotalCost { get; set; }
+    public DateTime? RunReconciledAt { get; set; }
     public string? ErrorMessage { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+    public string? WorkerLeaseId { get; set; }
+    public DateTime? WorkerLeaseExpiresAt { get; set; }
 }
 
 [BsonIgnoreExtraElements]

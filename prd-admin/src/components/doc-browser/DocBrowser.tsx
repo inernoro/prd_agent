@@ -4436,6 +4436,7 @@ export function DocBrowser({
                 description="汇总文档，按结论与时间归档，支持全文搜索与标签筛选。"
                 onCreateDocument={onCreateDocument}
                 onUploadFile={onUploadFile}
+                onOpenVideoParser={onOpenVideoParser}
               />
             ) : (
               <div className="text-center">

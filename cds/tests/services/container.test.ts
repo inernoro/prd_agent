@@ -217,6 +217,48 @@ describe('ContainerService', () => {
       expect(runtime.deployedImage).toBe('node:20-alpine');
     });
 
+    it('runs a proven fallback through its immutable revision image and records that exact image', async () => {
+      const targetSha = 'a'.repeat(40);
+      const fallbackSha = 'b'.repeat(40);
+      const repository = 'ghcr.io/acme/api';
+      const fallbackImage = `${repository}:branch-main`;
+      const immutableImage = `${repository}:sha-${fallbackSha}`;
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker pull (.+)/, (match) => {
+        const image = match[1].replaceAll("'", '');
+        if (image.endsWith(`sha-${targetSha}`)) return { stdout: '', stderr: 'not found', exitCode: 1 };
+        return { stdout: 'pulled', stderr: '', exitCode: 0 };
+      });
+      mock.addResponsePattern(/docker image inspect --format/, () => ({ stdout: `${fallbackSha}\n`, stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'immutable-runtime', stderr: '', exitCode: 0 }));
+
+      const runtime = makeService();
+      await service.runService(
+        { ...makeEntry(), githubCommitSha: targetSha },
+        makeProfile({
+          dockerImage: `${repository}:sha-${targetSha}`,
+          command: '',
+          prebuiltImage: true,
+          fallbackImage,
+          buildScope: ['prd-api/**'],
+        }),
+        runtime,
+        undefined,
+        undefined,
+        {
+          isComponentUnchangedSince: async () => true,
+        },
+      );
+
+      expect(mock.commands).toContain(`docker pull '${immutableImage}'`);
+      const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
+      expect(runCommand).toContain(`'${immutableImage}'`);
+      expect(runCommand).not.toContain(fallbackImage);
+      expect(runtime.deployedImage).toBe(immutableImage);
+    });
+
     it('uses platform commit metadata instead of project env overrides', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

@@ -46,5 +46,14 @@ describe('头像持久化单次写入契约', () => {
   it('空描述时说明不能继续的原因和恢复动作', () => {
     expect(dialogSource).toContain('aria-describedby="avatar-ai-prompt-help"');
     expect(dialogSource).toContain('请先描述想怎么修改头像，输入后即可生成预览。');
+    expect(dialogSource).not.toContain('disabled={generating || uploading || !prompt.trim()}');
+    expect(dialogSource).toContain("setError('请描述想怎么修改头像')");
+  });
+
+  it('AI 编辑模式上传期间提供持续可见且可读的状态', () => {
+    expect(dialogSource).toContain('data-avatar-phase={avatarPhase}');
+    expect(dialogSource).toContain('data-testid="avatar-upload-status"');
+    expect(dialogSource).toContain('正在上传头像，请稍候');
+    expect(dialogSource).toContain('role="status"');
   });
 });

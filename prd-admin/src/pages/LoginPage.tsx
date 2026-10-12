@@ -705,9 +705,10 @@ function ErrorBar({ children }: { children: React.ReactNode }) {
 /* ──────────────────────────────────────────────────────────────────────────
  *  玻璃卡片外壳（遵循 R9）
  * ────────────────────────────────────────────────────────────────────────── */
-function GlassCard({ children }: { children: React.ReactNode }) {
+function GlassCard({ children, testId }: { children: React.ReactNode; testId?: string }) {
   return (
     <div
+      data-testid={testId}
       className="rounded-[22px] p-8"
       style={{
         background: 'var(--login-panel-bg)',
@@ -792,7 +793,7 @@ function LoginCard({
     }
   };
   return (
-    <GlassCard>
+    <GlassCard testId="login-card">
       {/* Brand row */}
       <Reveal delay={0}>
         <div className="flex items-center gap-4 mb-6">
@@ -1036,7 +1037,7 @@ function ResetCard({
   onBack,
 }: ResetCardProps) {
   return (
-    <GlassCard>
+    <GlassCard testId="reset-card">
       <Reveal delay={0}>
         <div className="flex items-center gap-4 mb-6">
           <MapMark className="w-14 h-14 rounded-[16px]" />

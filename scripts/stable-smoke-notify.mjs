@@ -40,6 +40,15 @@ export function buildNotificationPayload(options) {
 
 export function validateNotificationOptions(options) {
   const errors = [];
+  if (!options.baseUrl) {
+    errors.push('缺少通知地址');
+  } else {
+    try {
+      new URL(options.baseUrl);
+    } catch {
+      errors.push('通知地址不是有效 URL');
+    }
+  }
   if (!['fail', 'conditional', 'pass'].includes(options.verdict)) errors.push('verdict 必须是 pass、conditional 或 fail');
   if (!options.runId) errors.push('缺少 runId');
   if (!options.environment) errors.push('缺少 environment');

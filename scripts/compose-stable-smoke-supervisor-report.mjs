@@ -109,7 +109,7 @@ function countsFromExecutionSummary(executionSummary) {
   if (!fields.every((field) => Number.isInteger(Number(coverage[field])) && Number(coverage[field]) >= 0)) {
     return null;
   }
-  return [coverage.total, coverage.passed, coverage.failed, coverage.notRun].map(Number);
+  return [coverage.total, coverage.passed, coverage.failed, coverage.notRun, coverage.flaky || 0].map(Number);
 }
 
 function normalizedVerdict(value) {
@@ -164,11 +164,19 @@ function environmentCoverageFromLedger(sectionContent) {
 
 export function parseFunctionalExecutionCounts(functionalLead, executionSummary = null) {
   const authoritative = countsFromExecutionSummary(executionSummary);
-  const match = String(functionalLead || '').match(
+  const legacyMatch = String(functionalLead || '').match(
     /共\s*(\d+)\s*项，\s*(\d+)\s*项通过、\s*(\d+)\s*项不通过、\s*(\d+)\s*项未执行/,
   );
-  if (!authoritative && !match) return null;
-  const [planned, passed, failed, notRun] = authoritative || match.slice(1).map(Number);
+  const stableMatch = String(functionalLead || '').match(
+    /共\s*(\d+)\s*项，\s*(\d+)\s*项稳定通过、\s*(\d+)\s*项重试后通过、\s*(\d+)\s*项不通过、\s*(\d+)\s*项未执行/,
+  );
+  if (!authoritative && !legacyMatch && !stableMatch) return null;
+  const parsed = authoritative
+    ? null
+    : stableMatch
+      ? [Number(stableMatch[1]), Number(stableMatch[2]) + Number(stableMatch[3]), Number(stableMatch[4]), Number(stableMatch[5]), Number(stableMatch[3])]
+      : [...legacyMatch.slice(1).map(Number), 0];
+  const [planned, passed, failed, notRun, flaky = 0] = authoritative || parsed;
   const completed = passed + failed;
   return {
     planned,
@@ -176,6 +184,7 @@ export function parseFunctionalExecutionCounts(functionalLead, executionSummary 
     passed,
     failed,
     notRun,
+    flaky,
     completionRate: planned > 0 ? (completed / planned) * 100 : 0,
     executedPassRate: completed > 0 ? (passed / completed) * 100 : 0,
     balanced: passed + failed + notRun === planned,
@@ -224,6 +233,13 @@ function businessFailureDetails(failure) {
     expected: `完成“${failure.acceptanceItem}”并得到可回读的业务结果`,
     reproduction: failure.reproduction || '按验收方法进入目标业务并重复操作',
   };
+  if (/CDS .*网关|清理旅程首轮失败/.test(reason)) {
+    return {
+      actual: '网页托管两条清理旅程首轮分别遭遇 CDS 静态资源网关 502 与控制面网关 504；确定性重试通过，但首次尝试的残留仍不能证明为零',
+      expected: '同一固定提交下首轮完成网页托管旅程，全部测试资源清理回读为零，且不依赖重试',
+      reproduction: '在同一固定提交执行网页托管文件夹旅程和分享问答旅程；观察首轮静态资源与控制面请求，随后核对所有测试资源清理回读',
+    };
+  }
   if (/openrouter-image|多图逻辑模型|多图生成不可用/.test(reason)) {
     return {
       actual: '上传两至三张参考图并提交后，系统找不到可调用的多图模型，无法返回组合图片',
@@ -277,6 +293,7 @@ function businessFailureDetails(failure) {
 }
 
 function businessRecoveryAction(reason) {
+  if (/CDS .*网关|清理旅程首轮失败/.test(reason)) return 'CDS 与运行平台负责人排查静态资源 502 和控制面 504；同一固定提交下两条网页托管旅程首轮通过，相关用例无重试，清理回读残留为零后关闭';
   if (/openrouter-image|多图逻辑模型|多图生成不可用/.test(reason)) return '视觉创作与模型网关负责人补齐可用多图模型，交付一次双图生成成功记录，再按本组验收项复测并清理产物';
   if (/实时连接中断/.test(reason)) return '身份与权限、模型网关和视觉创作负责人共同修复中断恢复状态，交付断网后仍可等待或恢复的回读记录';
   if (/ASR 默认池|录音无法转写/.test(reason)) return '模型网关与录音转写负责人补齐语音识别成员，交付一条可打开且刷新仍存在的转录笔记后复测';
@@ -386,6 +403,7 @@ export function renderBusinessDecisionPage(
   const cdsCoverage = coverageByEnvironment.get('cds');
   const productionCoverage = coverageByEnvironment.get('production');
   const productionSafetyGate = executionSummary?.productionSafetyGate;
+  const visualScopeLabel = productionSafetyGate?.restricted === true ? 'CDS ' : '';
   const deadline = nextRetestDeadline(executionSummary?.runId);
   const visualGateDisallowsRelease = /结论\s*[：:]\s*不通过|\|\s*能否发布\s*\|\s*不可以\s*\|/.test(
     String(visualGateLeadContent || ''),
@@ -419,13 +437,14 @@ export function renderBusinessDecisionPage(
   const lines = [
     '## 结论与处理顺序',
     '',
-    `> 本轮计划 ${counts.planned} 项，已完成 ${counts.completed} 项；通过 ${counts.passed} 项、失败 ${counts.failed} 项、未执行 ${counts.notRun} 项。${releaseConclusion}`,
+    `> 本轮计划 ${counts.planned} 项，已完成 ${counts.completed} 项；稳定通过 ${counts.passed - counts.flaky} 项、重试后通过 ${counts.flaky} 项、失败 ${counts.failed} 项、未执行 ${counts.notRun} 项。${releaseConclusion}`,
     '',
     '| 指标 | 数量 | 给业务读者的解释 |',
     '|---|---:|---|',
     `| 计划测试 | ${counts.planned} | 本轮合同要求覆盖的环境与验收项 |`,
     `| 已完成 | ${counts.completed} | 已经得到明确通过或失败结果 |`,
     `| 通过 | ${counts.passed} | 真实业务断言成立 |`,
+    `| 重试后通过 | ${counts.flaky} | 首轮失败仍需定位，不能算稳定通过 |`,
     `| 失败 | ${counts.failed} | 真实业务断言不成立，需要处理后复测 |`,
       `| 功能未执行 | ${counts.notRun} | 因身份、模型、安全限制或步骤缺失没有运行，不能算通过 |`,
     `| 完成率 | ${pct(counts.completionRate)} | 已完成 ÷ 计划测试 |`,
@@ -456,8 +475,8 @@ export function renderBusinessDecisionPage(
       '| 视觉指标 | 数量 | 代表什么 |',
       '|---|---:|---|',
       `| 计划截图槽位 | ${visual.planned} | 视觉合同要求取证的页面状态 |`,
-      `| 已采集且可审核 | ${visual.reviewable} | 图片、路径、时间和方法字段齐全，不等于验收通过 |`,
-      `| 能直接证明通过 | ${visual.passed} | 截图确实呈现了目标状态 |`,
+      `| 已采集且可审核 | ${visual.reviewable} | ${visualScopeLabel}图片、路径、时间和方法字段齐全，不等于验收通过 |`,
+      `| 能直接证明通过 | ${visual.passed} | ${visualScopeLabel}截图呈现目标视觉状态，不替代功能、清理和正式环境写入验证 |`,
       `| 明确不通过 | ${visual.failed} | 截图直接呈现错误结果 |`,
       `| 不能证明业务结果 | ${inconclusiveVisualCount} | 只能证明页面可达，或需要运行态、外部模型、专项交互继续取证 |`,
       '',
@@ -526,7 +545,7 @@ function renderCombinedExecutiveSummary(
   overallVerdict = '',
   executionSummary = null,
 ) {
-  const functionalMatch = String(functionalLead).match(/共\s*(\d+)\s*项，(\d+)\s*项通过、(\d+)\s*项不通过、(\d+)\s*项未执行/);
+  const functionalCounts = parseFunctionalExecutionCounts(functionalLead, executionSummary);
   const gateTable = parseMarkdownTable(visualGateLeadContent);
   const rowValue = (name) => {
     if (!gateTable) return '未记录';
@@ -534,13 +553,13 @@ function renderCombinedExecutiveSummary(
     const resultIndex = gateTable.headers.indexOf('结果');
     return gateTable.rows.find((row) => row[projectIndex] === name)?.[resultIndex] || '未记录';
   };
-  const functionalSummary = functionalMatch
-    ? `${functionalMatch[2]}/${functionalMatch[1]} 通过，${functionalMatch[3]} 不通过，${functionalMatch[4]} 未执行`
+  const functionalSummary = functionalCounts
+    ? `${functionalCounts.passed - functionalCounts.flaky}/${functionalCounts.planned} 稳定通过，${functionalCounts.flaky} 重试后通过，${functionalCounts.failed} 不通过，${functionalCounts.notRun} 未执行`
     : '详见逐项功能账本';
   const visualStatus = rowValue('状态结果');
   const visualEvidence = rowValue('可审核证据');
-  const functionalPassed = functionalMatch
-    ? Number(functionalMatch[3]) === 0 && Number(functionalMatch[4]) === 0
+  const functionalPassed = functionalCounts
+    ? functionalCounts.failed === 0 && functionalCounts.notRun === 0 && functionalCounts.flaky === 0
     : !/不通过|部分通过/.test(functionalLead);
   const canRelease = functionalPassed
     && rowValue('能否发布') === '可以'
@@ -551,7 +570,8 @@ function renderCombinedExecutiveSummary(
   const environmentSummary = environmentCoverage.length > 0
     ? environmentCoverage.map((item) => {
       const name = item.environment === 'cds' ? 'CDS' : item.environment === 'production' ? '正式环境' : item.environment;
-      return `${name}完成 ${item.completed}/${item.planned}，通过 ${item.passed}，失败 ${item.failed}，未执行 ${item.notRun}`;
+      const flaky = Number(item.flaky || 0);
+      return `${name}完成 ${item.completed}/${item.planned}，稳定通过 ${item.passed - flaky}，重试后通过 ${flaky}，失败 ${item.failed}，未执行 ${item.notRun}`;
     }).join('；')
     : '本轮未提供可计算的双环境执行汇总';
   return [
@@ -743,7 +763,7 @@ function strictFunctionalStatus(row, headers) {
   return '未执行';
 }
 
-export function synthesizeReviewerOverview(functionalModuleContent, gateModuleContent) {
+export function synthesizeReviewerOverview(functionalModuleContent, gateModuleContent, executionSummary = null) {
   const functionalTable = parseMarkdownTable(functionalModuleContent);
   const gateTable = parseMarkdownTable(gateModuleContent);
   if (!gateTable) return '';
@@ -759,21 +779,54 @@ export function synthesizeReviewerOverview(functionalModuleContent, gateModuleCo
     ...gateRows.map((gateRow) => {
       const module = gateRow['模块'];
       const functionalRow = functionalRows.get(module);
-      const functionalStatus = functionalRow && functionalTable
+      const productionCoverage = executionSummary?.environmentCoverage?.find?.((item) => item.environment === 'production');
+      const productionReadOnly = module === '正式环境只读健康检查'
+        && gateRow['视觉结论'] === '不适用'
+        && executionSummary?.productionSafetyGate?.restricted === true
+        && productionCoverage;
+      const functionalStatus = productionReadOnly
+        ? productionCoverage.failed > 0
+          ? '不通过'
+          : productionCoverage.notRun > 0
+            ? '部分通过'
+            : productionCoverage.passed > 0 ? '通过' : '未执行'
+        : functionalRow && functionalTable
         ? strictFunctionalStatus(functionalRow, functionalTable.headers)
         : '未执行';
       const rawVisualStatus = gateRow['视觉结论'] || '未执行';
       const visualStatus = rawVisualStatus === '需干预' ? '部分通过' : rawVisualStatus;
-      const statuses = [functionalStatus, visualStatus];
+      const statuses = productionReadOnly ? [functionalStatus] : [functionalStatus, visualStatus];
       const severity = statuses.includes('不通过') ? 'P1' : statuses.some((status) => status !== '通过') ? 'P2' : '无';
       const intervention = severity === '无' ? '否' : '是';
       const screenshots = gateRow['查看全部截图'] || '[查看](#逐张视觉证据账本)';
       const method = gateRow['测试方法'] || '[查看](#视觉测试方法)';
+      if (productionReadOnly) {
+        return `| ${module} | ${gateRow['真实面包屑']} | ${functionalStatus} | ${functionalStatus} | ${visualStatus} | ${severity} | ${intervention} | 不适用 | 不适用 | 不适用 | [查看](#method-core-001) |`;
+      }
       return `| ${module} | ${gateRow['真实面包屑']} | ${functionalStatus} | ${functionalStatus} | ${visualStatus} | ${severity} | ${intervention} | [查看](#逐模块视觉取证任务) | ${screenshots} | [查看](#视觉异常证据索引) | ${method} |`;
     }),
     '',
   ];
   return lines.join('\n');
+}
+
+function ensureSupervisorNavigationTargets(markdown) {
+  let result = String(markdown);
+  const targets = [
+    ['关联测试方法', '本轮没有额外测试方法。'],
+    ['逐模块视觉取证任务', '本轮没有视觉取证任务。'],
+    ['视觉异常证据索引', '本轮没有可列出的视觉异常证据。'],
+  ];
+  for (const [target, emptyText] of targets) {
+    if (!result.includes(`](#${target})`) || result.includes(`<a id="${target}"></a>`)) continue;
+    const heading = `## ${target}`;
+    if (result.includes(heading)) {
+      result = result.replace(heading, `<a id="${target}"></a>\n${heading}`);
+    } else {
+      result = `${result.trim()}\n\n<a id="${target}"></a>\n${heading}\n\n${emptyText}\n`;
+    }
+  }
+  return result;
 }
 
 export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visualGateMarkdown = '', visualPlanMarkdown = '', technicalUrl = '', executionSummary = null) {
@@ -802,7 +855,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     : executionSummary;
   const reviewerOverview = visualOverview
     ? synchronizeVisualOverview(visualOverview.content, visualGateModules?.content)
-    : synthesizeReviewerOverview(functionalModules?.content || '', visualGateModules?.content || '');
+    : synthesizeReviewerOverview(functionalModules?.content || '', visualGateModules?.content || '', effectiveExecutionSummary);
   const authoritativeCounts = parseFunctionalExecutionCounts(functional.lead, effectiveExecutionSummary);
   if (effectiveExecutionSummary && authoritativeCounts && !authoritativeCounts.balanced) {
     throw new Error('执行汇总统计不守恒：通过 + 失败 + 未执行必须等于计划测试');
@@ -841,7 +894,10 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     .replace(/验收主管报告/g, '验收报告')
     .replace(/主管报告/g, '验收报告')
     .replace(/主管结论/g, '验收结论');
-  const output = [synchronizedLead, '', `Verdict: ${inferredVerdict}`, ''];
+  const runIdentity = effectiveExecutionSummary?.runId
+    ? `运行标识：${effectiveExecutionSummary.runId}；固定提交：${effectiveExecutionSummary.commit || '未记录'}。`
+    : '';
+  const output = [synchronizedLead, '', ...(runIdentity ? [runIdentity, ''] : []), `Verdict: ${inferredVerdict}`, ''];
   const businessDecisionPage = renderBusinessDecisionPage(
     synchronizedLead,
     functionalFailures?.content || '',
@@ -909,7 +965,7 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
   output.push(...visualPlanSections.flatMap((item) => [item.content, '']));
   if (!visualLedgerInserted) output.push(...visualGateLedger.flatMap((item) => [item.content, '']));
   if (!visualGateMarkdown) output.push(...visualSteps.flatMap((item) => [item.content, '']));
-  return output.join('\n')
+  let rendered = output.join('\n')
     .replace(/https:\/\/example\.invalid\/technical/g, technicalUrl || '#技术附录尚未归档')
     .replace(/\bcaseId\b/g, '验收项编号')
     .replace(/\bflaky\b/gi, '重试后通过')
@@ -931,6 +987,14 @@ export function composeSupervisorReport(functionalMarkdown, visualMarkdown, visu
     .replace(/\x1b\[[0-9;]*m/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim() + '\n';
+  const productionReadOnly = effectiveExecutionSummary?.productionSafetyGate?.restricted === true
+    && effectiveExecutionSummary?.environmentCoverage?.length === 1
+    && effectiveExecutionSummary.environmentCoverage[0]?.environment === 'production'
+    && effectiveExecutionSummary?.coverage?.visual?.verdict === '不适用';
+  if (productionReadOnly) {
+    rendered = rendered.replace(/\[([^\]]+)\]\(#[^)]+\)/g, '$1');
+  }
+  return ensureSupervisorNavigationTargets(rendered);
 }
 
 async function main() {

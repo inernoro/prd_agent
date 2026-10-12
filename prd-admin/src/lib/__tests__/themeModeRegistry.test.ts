@@ -138,6 +138,12 @@ describe('AppShell 之外的独立全屏页必须走共享 hook 落主题', () =
     expect(read('hooks/useApplyDocumentTheme.ts')).toContain('[mode, resolved, pathname]');
     expect(read('layouts/AppShell.tsx')).toContain('[mobileThemeMode, resolvedThemeMode, location.pathname]');
   });
+
+  it('录音作用域皮肤按全站协议识别无属性的默认深色', () => {
+    const palette = read('styles/recording-design-palette.css');
+    expect(palette).toContain(":root:not([data-theme='light']) .recording-design-palette");
+    expect(palette).not.toContain("[data-theme='dark'] .recording-design-palette");
+  });
 });
 
 describe('用户菜单里的外观三选项用的是菜单单选角色', () => {
