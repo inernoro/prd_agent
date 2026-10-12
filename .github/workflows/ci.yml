@@ -803,7 +803,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install isolated quality browser
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright-core install --with-deps chromium
 
       - name: Type check
         run: pnpm exec tsc --noEmit && pnpm run typecheck

@@ -35,7 +35,7 @@ WORKDIR /opt/map-design-runtime
 RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile \
-    && pnpm exec playwright install --with-deps chromium \
+    && pnpm exec playwright-core install --with-deps chromium \
     && chmod -R a+rX /opt/ms-playwright
 
 # 与 cds/open-design-runtime/Dockerfile 同一个钉住版本，并在构建时核对。

@@ -430,7 +430,7 @@ describe('wiring guards', () => {
 
   it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
     const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('pnpm exec playwright install --with-deps chromium');
+    expect(dockerfile).toContain('pnpm exec playwright-core install --with-deps chromium');
     expect(dockerfile).toContain('chown open-design:open-design');
     expect(dockerfile).toContain('/var/lib/map-design-runtime/browser-quality');
     expect(dockerfile).toContain('chmod 0711 /var/lib/map-design-runtime');
