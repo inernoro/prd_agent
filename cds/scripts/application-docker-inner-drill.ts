@@ -381,7 +381,15 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
   return { timeline, requestTimeline, traceOverflow: () => traceOverflow, enableTrace: () => { traceEnabled = true; },
     holdNextStop, holdNextAppStart, holdInfraInspects,
     traffic: () => [...traffic.values()], arm: () => { armed = true; traceEnabled = true; }, caught,
-    settle: () => captured ? Promise.race([settled, sleep(35_000).then(() => { throw new Error('注入的创建请求未获得终态'); })]) : Promise.resolve(),
+    settle: async () => {
+      if (!captured) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([settled, new Promise<void>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error('注入的创建请求未获得终态')), 35_000);
+        })]);
+      } finally { clearTimeout(timer); }
+    },
     close: async () => { infraGate?.release(); stopGate?.release(); startGate?.release(); for (const request of requests) request.destroy(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve())); },
   };

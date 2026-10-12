@@ -5,7 +5,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createProbeDaemonProxy, numericProbeExitCode, removalStackSummary, creationStackSummary } from '../../scripts/application-docker-inner-drill.js';
 
 async function fixture() {
@@ -38,6 +38,71 @@ async function attach(socketPath: string) {
 }
 
 describe('owned Docker probe proxy wire conformance', () => {
+  it('lets the driver process exit after an already settled create instead of retaining its deadline', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-settle-exit-'));
+    const moduleUrl = new URL('../../scripts/application-docker-inner-drill.ts', import.meta.url).href;
+    const source = `
+      import fs from 'node:fs/promises'; import path from 'node:path'; import http from 'node:http';
+      import { createProbeDaemonProxy } from ${JSON.stringify(moduleUrl)};
+      const root = process.argv[1], sockets = new Set();
+      const backendPath = path.join(root, 'backend.sock'), proxyPath = path.join(root, 'proxy.sock');
+      const backend = http.createServer((request, response) => {
+        request.resume(); request.once('end', () => {
+          response.writeHead(201, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ Id: 'c'.repeat(64) }));
+        });
+      });
+      backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+      await new Promise(resolve => backend.listen(backendPath, resolve));
+      const proxy = await createProbeDaemonProxy(proxyPath, backendPath, 'daemon-created'); proxy.arm();
+      const client = http.request({ socketPath: proxyPath, method: 'POST', path: '/v1.53/containers/create?name=owned-exit' }, response => response.resume());
+      client.on('error', () => {});
+      client.end(JSON.stringify({ Image: 'owned-exit', Cmd: ['true'], Entrypoint: [],
+        Labels: { 'cds.agent.probe': 'runtime-validation', 'cds.agent.probe.operation': 'd'.repeat(32), 'cds.instance': 'e'.repeat(12) },
+        HostConfig: { Memory: 134217728, NanoCpus: 250000000, PidsLimit: 64, ReadonlyRootfs: true, AutoRemove: true, NetworkMode: 'none' } }));
+      await proxy.caught; client.destroy(); await proxy.settle(); await proxy.close();
+      for (const socket of sockets) socket.destroy(); await new Promise(resolve => backend.close(resolve));
+      console.log(JSON.stringify({ reply: proxy.timeline.find(event => event.phase === 'backend-create-replied'),
+        resources: process.getActiveResourcesInfo() }));
+    `;
+    try {
+      const result = await promisify(execFile)(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source, root],
+        { timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 64 * 1024, encoding: 'utf8' });
+      const evidence = JSON.parse(result.stdout.trim());
+      expect(evidence.reply).toMatchObject({ status: 201, containerId: 'c'.repeat(64) });
+      expect(evidence.resources).not.toContain('Timeout');
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  }, 10_000);
+
+  it('still rejects an unfinished injected create at the original 35 second settlement deadline', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-settle-deadline-'));
+    const backendPath = path.join(root, 'backend.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const sockets = new Set<net.Socket>(); let received!: () => void;
+    const backendReceived = new Promise<void>(resolve => { received = resolve; });
+    const backend = http.createServer(request => { request.resume(); request.once('end', received); });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const proxy = await createProbeDaemonProxy(proxyPath, backendPath); proxy.arm();
+    const client = http.request({ socketPath: proxyPath, method: 'POST', path: '/v1.53/containers/create?name=owned-deadline' });
+    client.on('error', () => {});
+    try {
+      client.end(JSON.stringify({ Image: 'owned-deadline', Cmd: ['true'], Entrypoint: [],
+        Labels: { 'cds.agent.probe': 'runtime-validation', 'cds.agent.probe.operation': 'd'.repeat(32), 'cds.instance': 'e'.repeat(12) },
+        HostConfig: { Memory: 134217728, NanoCpus: 250000000, PidsLimit: 64, ReadonlyRootfs: true, AutoRemove: true, NetworkMode: 'none' } }));
+      await proxy.caught; client.destroy(); await backendReceived;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let complete = false;
+      const settled = proxy.settle().finally(() => { complete = true; });
+      const rejected = expect(settled).rejects.toThrow('注入的创建请求未获得终态');
+      await vi.advanceTimersByTimeAsync(34_999); expect(complete).toBe(false);
+      await vi.advanceTimersByTimeAsync(1); await rejected;
+      expect(complete).toBe(true); expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers(); client.destroy(); await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['release', 'deadline', 'close'] as const)('holds only the exact original successful stop reply until %s', async mode => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-stop-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
