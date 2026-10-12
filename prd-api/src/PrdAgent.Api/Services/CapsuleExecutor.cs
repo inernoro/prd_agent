@@ -14,6 +14,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
@@ -6172,7 +6174,8 @@ function safeChart(canvasId, config) {
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<StoredAsset, Task>? registerStoredAssetAsync = null)
     {
         var sb = new StringBuilder();
 
@@ -6239,8 +6242,38 @@ function safeChart(canvasId, config) {
         }
 
         // 上传到 COS
-        var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
-        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", cancellationToken, domain: "workflow-agent", type: "doc");
+        const string assetDomain = "workflow-agent";
+        const string assetType = "doc";
+        var assetStorage = sp.GetRequiredService<IAssetStorage>();
+        StoredAsset stored;
+        if (registerStoredAssetAsync == null)
+        {
+            stored = await assetStorage.SaveAsync(
+                videoBytes,
+                contentType ?? "video/mp4",
+                cancellationToken,
+                domain: assetDomain,
+                type: assetType);
+        }
+        else
+        {
+            var sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(videoBytes))
+                .ToLowerInvariant();
+            var db = sp.GetRequiredService<MongoDbContext>();
+            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                db,
+                VideoAssetMutationLease.ContentKey(assetDomain, assetType, sha256),
+                cancellationToken);
+            stored = await assetStorage.SaveAsync(
+                videoBytes,
+                contentType ?? "video/mp4",
+                cancellationToken,
+                domain: assetDomain,
+                type: assetType);
+            if (!string.Equals(stored.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("视频资产摘要校验失败");
+            await registerStoredAssetAsync(stored);
+        }
 
         sb.AppendLine($"[VideoDownloader] COS 上传成功: {stored.Url}");
         sb.AppendLine($"[VideoDownloader] SHA256: {stored.Sha256}, 大小: {stored.SizeBytes} bytes");

@@ -4791,15 +4791,20 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-002][VIDEO-009] 移动端拆镜刷新后恢复同一任务与进度', async ({ browser, request }, testInfo) => {
+  test('[VIDEO-002][VIDEO-009] 移动端拆镜刷新后恢复同一任务与进度', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动创建视频分镜任务');
+    test.setTimeout(300_000);
     const mobileContext = await browser.newContext({
       ...devices['iPhone 13'],
       baseURL: testInfo.project.use.baseURL,
       serviceWorkers: 'block',
     });
     const page = await mobileContext.newPage();
+    let token = '';
+    let runId = '';
+    let projectId = '';
     try {
-      await loginAndReadToken(page, request, '/video-agent');
+      token = await loginAndReadToken(page, request, '/video-agent');
       expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
       const studio = page.getByTestId('video-project-studio');
       await expect(studio).toBeVisible({ timeout: 30_000 });
@@ -4815,61 +4820,81 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '真实 iPhone 触控环境可新建视频项目、输入文稿并触达故事分镜操作，没有横向裁切。',
       });
 
-      const runId = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-controlled-mobile-storyboard`;
-      const projectId = `${runId}-project`;
-      const now = new Date().toISOString();
-      await installControlledVideoRun(page, runId, {
-        id: runId,
-        appKey: 'video-agent',
-        projectId,
-        status: 'Scripting',
-        mode: 'storyboard',
-        articleTitle: '移动端雨夜车站',
-        directPrompt: '',
-        articleMarkdown: '移动端雨夜车站故事，镜头从远景推进到手中的信件。',
-        generateAudio: false,
-        scenes: [],
-        exportRequested: false,
-        currentPhase: 'scripting',
-        phaseProgress: 46,
-        totalDurationSeconds: 0,
-        ownerAdminId: 'stable-smoke',
-        createdAt: now,
-        startedAt: now,
-        cancelRequested: false,
-      }, {
-        id: projectId,
-        appKey: 'video-agent',
-        ownerAdminId: 'stable-smoke',
-        title: '移动端雨夜车站',
-        status: 'Analyzing',
-        sourceMarkdown: '移动端雨夜车站故事，镜头从远景推进到手中的信件。',
-        defaultAspectRatio: '16:9',
-        defaultResolution: '720p',
-        defaultDuration: 5,
-        generateAudio: false,
-        assets: [],
-        timelineTracks: [],
-        createdAt: now,
-        updatedAt: now,
-      });
-      await page.goto(`/video-agent?run=${encodeURIComponent(runId)}`, { waitUntil: 'domcontentloaded' });
-      const progress = page.getByTestId('video-storyboard-progress');
-      await expect(progress).toBeVisible({ timeout: 30_000 });
-      await expect(progress.getByText('46%', { exact: true })).toBeVisible();
+      const createResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/video-agent/runs'
+      ), { timeout: 30_000 });
+      const storyboardAction = page.getByRole('button', { name: '生成故事分镜', exact: true });
+      await expect(storyboardAction).toBeEnabled({ timeout: 30_000 });
+      await storyboardAction.tap();
+      const createResponse = await createResponsePromise;
+      const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(createResponse.ok(), createBody.error?.message || '移动端提交故事分镜失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '移动端提交故事分镜失败').toBe(true);
+      runId = createBody.data.runId;
+
+      const beforeReload = await readEnvelope<{
+        id: string;
+        projectId?: string;
+        status: string;
+        currentPhase?: string;
+        phaseProgress: number;
+      }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
+      expect(beforeReload.id).toBe(runId);
+      projectId = beforeReload.projectId || '';
+      expect(projectId, '真实拆镜任务必须持久化关联项目').toBeTruthy();
+
+      const activeView = page.locator('[data-testid="video-storyboard-progress"], [data-testid="video-console"]').first();
+      await expect(activeView, '真实任务提交后必须展示拆镜进度或已恢复的分镜编辑器').toBeVisible({ timeout: 30_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-VIDEO-CREATION-14',
-        target: progress,
-        overviewJustification: '窄屏需要同时证明阶段名称、百分比、实时通道、步骤和停止操作持续可见且无遮挡。',
-        caption: '受控移动拆镜阶段持续显示 46% 进度、服务通道、当前步骤和停止操作，没有静止等待。',
+        target: activeView,
+        overviewJustification: '窄屏需要证明真实后端任务的拆镜阶段或完成后的分镜编辑器持续可见且无遮挡。',
+        caption: '真实移动拆镜任务已持久化，页面展示服务端进度或已完成的分镜编辑器，没有使用浏览器内伪造状态。',
       });
       await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       await expect(page).toHaveURL(new RegExp(`run=${encodeURIComponent(runId)}`));
-      const restoredProgress = page.getByTestId('video-storyboard-progress');
-      await expect(restoredProgress, '刷新后必须恢复同一视频任务').toBeVisible({ timeout: 30_000 });
-      await expect(restoredProgress.getByText('46%', { exact: true }), '刷新后必须恢复同一任务进度').toBeVisible();
+      const afterReload = await readEnvelope<{
+        id: string;
+        projectId?: string;
+        status: string;
+        currentPhase?: string;
+        phaseProgress: number;
+      }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
+      expect(afterReload.id, '刷新后必须回读同一真实任务').toBe(runId);
+      expect(afterReload.projectId, '刷新后不得切换到其他视频项目').toBe(projectId);
+      const restoredView = page.locator('[data-testid="video-storyboard-progress"], [data-testid="video-console"]').first();
+      await expect(restoredView, '刷新后必须从后端恢复同一视频任务').toBeVisible({ timeout: 30_000 });
     } finally {
+      if (runId && token) {
+        const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
+        if (current.ok()) {
+          let state = await current.json() as ApiEnvelope<{ status: string; projectId?: string }>;
+          projectId = state.data?.projectId || projectId;
+          if (!/Completed|Failed|Cancelled/i.test(state.data?.status || '')) {
+            await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
+            const cancelStartedAt = Date.now();
+            while (Date.now() - cancelStartedAt < 60_000) {
+              await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+              const refreshed = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
+              if (!refreshed.ok()) break;
+              state = await refreshed.json() as ApiEnvelope<{ status: string; projectId?: string }>;
+              projectId = state.data?.projectId || projectId;
+              if (/Completed|Failed|Cancelled/i.test(state.data?.status || '')) break;
+            }
+          }
+          const cleanup = await page.request.delete(
+            `/api/video-agent/runs/${encodeURIComponent(runId)}?deleteEmptyProject=true`,
+            { headers: authHeaders(token) },
+          );
+          expect(cleanup.ok(), await cleanup.text()).toBe(true);
+          expect((await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+          if (projectId) {
+            expect((await page.request.get(`/api/video-agent/projects/${encodeURIComponent(projectId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+          }
+        }
+      }
       await mobileContext.close();
     }
   });

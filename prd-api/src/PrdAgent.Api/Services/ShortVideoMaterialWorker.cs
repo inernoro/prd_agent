@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
@@ -459,29 +460,37 @@ public sealed class ShortVideoMaterialProcessor
         MarkStage(run, "source", "running", $"正在把视频文件保存到知识库「{store.Name}」");
         await SaveRunAsync(run, authorityToken);
 
-        var videoMaterial = await DownloadVideoMaterialAsync(parsed, authorityToken);
-        DocumentEntry sourceEntry;
+        DownloadedVideoMaterial? videoMaterial = null;
+        DocumentEntry? sourceEntry = null;
         try
         {
-            await EnsureRunActiveAsync(run, authorityToken);
-            sourceEntry = await CreateVideoEntryAsync(
-                store,
-                run.UserId,
-                userName,
-                title,
-                videoMaterial,
+            videoMaterial = await DownloadVideoMaterialAsync(
                 parsed,
-                run.VideoUrl,
-                run.Platform,
-                run,
-                now,
-                authorityToken);
+                authorityToken,
+                async storedVideo =>
+                {
+                    videoMaterial = storedVideo;
+                    await EnsureRunActiveAsync(run, authorityToken);
+                    sourceEntry = await CreateVideoEntryAsync(
+                        store,
+                        run.UserId,
+                        userName,
+                        title,
+                        storedVideo,
+                        parsed,
+                        run.VideoUrl,
+                        run.Platform,
+                        run,
+                        now,
+                        authorityToken);
+                });
         }
         catch
         {
             try
             {
-                await DeleteDownloadedVideoIfUnreferencedAsync(videoMaterial);
+                if (videoMaterial != null)
+                    await DeleteDownloadedVideoIfUnreferencedAsync(videoMaterial);
             }
             catch (Exception cleanupError)
             {
@@ -489,6 +498,8 @@ public sealed class ShortVideoMaterialProcessor
             }
             throw;
         }
+        if (videoMaterial == null || sourceEntry == null)
+            throw new InvalidOperationException("短视频下载产物未完成引用登记");
         run.SourceEntryId = sourceEntry.Id;
         run.SourceVideoUrl = videoMaterial.Url;
         if (run.Card != null)
@@ -637,7 +648,8 @@ public sealed class ShortVideoMaterialProcessor
 
     private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(
         ParsedShortVideoSource parsed,
-        CancellationToken authorityToken)
+        CancellationToken authorityToken,
+        Func<DownloadedVideoMaterial, Task>? registerStoredAssetAsync = null)
     {
         var videoUrl = RequireResolvedVideoUrl(parsed.VideoUrl);
 
@@ -658,7 +670,14 @@ public sealed class ShortVideoMaterialProcessor
             node,
             new Dictionary<string, string>(),
             new List<ExecutionArtifact>(),
-            authorityToken);
+            authorityToken,
+            registerStoredAssetAsync == null
+                ? null
+                : stored => registerStoredAssetAsync(new DownloadedVideoMaterial(
+                    stored.Url,
+                    stored.Mime,
+                    stored.SizeBytes,
+                    stored.Sha256)));
         return ExtractDownloadedVideo(result.Artifacts.FirstOrDefault()?.InlineContent);
     }
 
@@ -1004,6 +1023,10 @@ public sealed class ShortVideoMaterialProcessor
         if (assetStorage == null) return;
         foreach (var asset in assets)
         {
+            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                VideoAssetMutationLease.ContentKey("workflow-agent", "doc", asset.Sha256!),
+                CancellationToken.None);
             var stillReferenced = await _db.DocumentEntries.CountDocumentsAsync(
                 Builders<DocumentEntry>.Filter.Eq("Metadata.assetUrl", asset.Url),
                 cancellationToken: CancellationToken.None);
@@ -1021,6 +1044,10 @@ public sealed class ShortVideoMaterialProcessor
     private async Task DeleteDownloadedVideoIfUnreferencedAsync(DownloadedVideoMaterial video)
     {
         if (string.IsNullOrWhiteSpace(video.Sha256)) return;
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            VideoAssetMutationLease.ContentKey("workflow-agent", "doc", video.Sha256),
+            CancellationToken.None);
         var stillReferenced = await _db.DocumentEntries.CountDocumentsAsync(
             Builders<DocumentEntry>.Filter.Eq("Metadata.assetUrl", video.Url),
             cancellationToken: CancellationToken.None);

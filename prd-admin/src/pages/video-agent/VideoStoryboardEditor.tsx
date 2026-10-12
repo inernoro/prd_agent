@@ -84,6 +84,7 @@ const SCENE_STATUS_REGISTRY: Record<SceneItemStatus, { label: string; color: str
   Rendering: { label: '生成中', color: '#38bdf8' },
   Done: { label: '已就绪', color: '#34d399' },
   Error: { label: '需重试', color: '#fb7185' },
+  Cancelled: { label: '已取消', color: 'var(--text-muted)' },
 };
 
 const PHASE_LABELS: Record<string, string> = {

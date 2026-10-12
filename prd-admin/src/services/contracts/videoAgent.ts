@@ -146,7 +146,7 @@ export interface VideoProjectInput {
 }
 
 /** 单分镜状态 */
-export type SceneItemStatus = 'Draft' | 'Generating' | 'Submitting' | 'SubmittingClaimed' | 'Polling' | 'PollingClaimed' | 'Rendering' | 'Done' | 'Error';
+export type SceneItemStatus = 'Draft' | 'Generating' | 'Submitting' | 'SubmittingClaimed' | 'Polling' | 'PollingClaimed' | 'Rendering' | 'Done' | 'Error' | 'Cancelled';
 
 export interface VideoGenSceneVersion {
   id: string;

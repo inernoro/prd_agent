@@ -189,6 +189,9 @@ public static class SceneItemStatus
 
     /// <summary>失败</summary>
     public const string Error = "Error";
+
+    /// <summary>用户取消；已提交的上游任务完成对账后进入此状态</summary>
+    public const string Cancelled = "Cancelled";
 }
 
 /// <summary>
@@ -204,7 +207,7 @@ public class VideoGenScene
     /// <summary>视频生成 prompt（喂给 OpenRouter）</summary>
     public string Prompt { get; set; } = string.Empty;
 
-    /// <summary>分镜状态：Draft / Generating / Submitting / SubmittingClaimed / Polling / PollingClaimed / Rendering / Done / Error</summary>
+    /// <summary>分镜状态：Draft / Generating / Submitting / SubmittingClaimed / Polling / PollingClaimed / Rendering / Done / Error / Cancelled</summary>
     public string Status { get; set; } = SceneItemStatus.Draft;
 
     /// <summary>错误消息（失败时填）</summary>

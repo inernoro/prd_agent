@@ -52,6 +52,10 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("DeletionArtifacts", service);
         Assert.Contains("VideoAssetMutationLease.AcquireAsync", service);
         Assert.Contains("VideoAssetMutationLease.AcquireAsync", worker);
+        Assert.Contains("registerStoredAssetAsync", ReadRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs"));
+        Assert.Contains("VideoAssetMutationLease.ContentKey", ReadRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ShortVideoMaterialWorker.cs"));
         Assert.Contains("ResumePendingDeletionAsync", worker);
         Assert.Contains("DeletionCleanupAttemptedAt", worker);
         Assert.Contains("WatchRunCancellationAsync", worker);
@@ -91,4 +95,6 @@ public class GeneratedVideoCleanupContractTests
 
         throw new FileNotFoundException($"Cannot locate repository file: {relativePath}");
     }
+
+    private static string ReadRepoFile(string relativePath) => File.ReadAllText(LocateRepoFile(relativePath));
 }

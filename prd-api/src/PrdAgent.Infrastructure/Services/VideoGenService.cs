@@ -691,7 +691,9 @@ public class VideoGenService : IVideoGenService
                 x => x.Scenes,
                 sceneFb.In(x => x.Status,
                     [SceneItemStatus.Generating, SceneItemStatus.SubmittingClaimed,
-                     SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering]));
+                     SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering])
+                | (sceneFb.In(x => x.Status, [SceneItemStatus.Submitting, SceneItemStatus.Polling])
+                   & sceneFb.Regex(x => x.JobId, new MongoDB.Bson.BsonRegularExpression("^(?!claim:).+"))));
             var directCancellationState = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)
                                           | (fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
                                              & fb.Not(hasActiveScene));

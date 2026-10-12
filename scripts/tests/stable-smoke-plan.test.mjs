@@ -261,6 +261,21 @@ test('正式环境禁止项不得混入可被正式环境选中的组合用例',
   }
 });
 
+test('VIDEO-009 刷新恢复必须创建并回读真实后端任务', () => {
+  const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const testStart = source.indexOf("test('[VIDEO-002][VIDEO-009]");
+  const testEnd = source.indexOf('\n  test(', testStart + 1);
+  const block = source.slice(testStart, testEnd);
+
+  assert.ok(testStart >= 0, '缺少 VIDEO-009 稳定冒烟用例');
+  assert.doesNotMatch(block, /installControlledVideoRun|page\.route\(/,
+    '刷新恢复不得用浏览器拦截伪造任务、项目或固定进度');
+  assert.match(block, /POST'[\s\S]*?\/api\/video-agent\/runs/,
+    '刷新恢复必须从真实创建接口取得 runId');
+  assert.match(block, /page\.reload\([\s\S]*?\/api\/video-agent\/runs\/\$\{encodeURIComponent\(runId\)\}/,
+    '刷新后必须从未修改的真实接口回读同一 runId');
+});
+
 test('PR 变更模式同样遵守双环境矩阵策略', () => {
   const plan = buildPlan({
     catalog,

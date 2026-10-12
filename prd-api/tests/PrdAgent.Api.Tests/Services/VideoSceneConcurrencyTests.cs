@@ -145,6 +145,43 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task CancelRequestedRun_ShouldNotSubmitANewSceneJob()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancelled-before-scene-claim", test.OwnerId, SceneItemStatus.Submitting);
+        run.CancelRequested = true;
+        await test.SaveRunAsync(run);
+
+        var claim = await test.CreateWorker().ClaimEditingSceneRenderAsync(CancellationToken.None);
+
+        claim.ShouldBeNull();
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Scenes[0].Status.ShouldBe(SceneItemStatus.Submitting);
+        persisted.Scenes[0].JobId.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task CancelRequestedRun_WithExistingUpstreamJob_ShouldRemainClaimableForReconciliation()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancelled-existing-scene-job", test.OwnerId, SceneItemStatus.Polling);
+        run.CancelRequested = true;
+        run.Scenes[0].JobId = "upstream-job-to-reconcile";
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        await test.SaveRunAsync(run);
+
+        var claim = await test.CreateWorker().ClaimEditingSceneRenderAsync(CancellationToken.None);
+
+        claim.ShouldNotBeNull();
+        claim.ResumeExistingJob.ShouldBeTrue();
+        claim.Run.Id.ShouldBe(run.Id);
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Scenes[0].Status.ShouldBe(SceneItemStatus.PollingClaimed);
+        persisted.Scenes[0].JobId.ShouldBe("upstream-job-to-reconcile");
+        persisted.Scenes[0].RenderLeaseId.ShouldBe(claim.ClaimId);
+    }
+
+    [Fact]
     public async Task Worker_ShouldOnlyClaimRunsFromItsDeploymentScope()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
@@ -899,7 +936,8 @@ public class VideoSceneConcurrencyTests
 
         var persisted = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
         persisted.Status.ShouldBe(VideoGenRunStatus.Cancelled);
-        persisted.Scenes[0].Status.ShouldNotBe(SceneItemStatus.Done);
+        persisted.Scenes[0].Status.ShouldBe(SceneItemStatus.Cancelled);
+        persisted.Scenes[0].Cost.ShouldBe(0.5);
         persisted.Scenes[0].Versions.ShouldBeEmpty();
         test.AssetStorage.Verify(storage => storage.DeleteByShaAsync(
             sha,
@@ -924,20 +962,32 @@ public class VideoSceneConcurrencyTests
         var requested = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
         requested.Status.ShouldBe(VideoGenRunStatus.Editing);
         requested.CancelRequested.ShouldBeTrue();
+        test.VideoClient.Setup(client => client.GetStatusAsync(
+                It.IsAny<string>(),
+                "upstream-job-active",
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus
+            {
+                Status = "cancelled",
+                Cost = 0.19,
+            });
 
         var worker = test.CreateWorker();
         await worker.ProcessSceneRenderAsync(requested, 0, "lease:active", resumeExistingJob: true);
 
         var cancelled = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
         cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.Scenes[0].Status.ShouldBe(SceneItemStatus.Cancelled);
+        cancelled.Scenes[0].Cost.ShouldBe(0.19);
         test.VideoClient.Verify(client => client.SubmitAsync(
             It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
         test.VideoClient.Verify(client => client.GetStatusAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<string>(), "upstream-job-active", It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task CancelEditingRun_WhenStatusCallFails_ShouldStillReachCancelled()
+    public async Task CancelEditingRun_WhenStatusCallFails_ShouldRemainRecoverableForReconciliation()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
         var run = NewRun("cancel-during-status-failure", test.OwnerId, SceneItemStatus.PollingClaimed);
@@ -970,10 +1020,20 @@ public class VideoSceneConcurrencyTests
         releaseStatus.SetResult(true);
 
         await processing.WaitAsync(TimeSpan.FromSeconds(2));
-        var cancelled = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
-        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
-        cancelled.Scenes[0].Status.ShouldBe(SceneItemStatus.PollingClaimed);
-        cancelled.Scenes[0].ErrorMessage.ShouldBeNull();
+        var reconciling = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        reconciling.Status.ShouldBe(VideoGenRunStatus.Editing);
+        reconciling.CancelRequested.ShouldBeTrue();
+        reconciling.Scenes[0].Status.ShouldBe(SceneItemStatus.Polling);
+        reconciling.Scenes[0].JobId.ShouldBe("upstream-job-cancelled");
+        reconciling.Scenes[0].RenderLeaseId.ShouldBeNull();
+        reconciling.Scenes[0].ErrorMessage.ShouldBeNull();
+
+        (await test.CreateService().CancelRunAsync(run.Id, run.OwnerAdminId, run.AppKey)).ShouldBeTrue();
+        var repeated = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        repeated.Status.ShouldBe(VideoGenRunStatus.Editing);
+        repeated.CancelRequested.ShouldBeTrue();
+        repeated.Scenes[0].Status.ShouldBe(SceneItemStatus.Polling);
+        repeated.Scenes[0].JobId.ShouldBe("upstream-job-cancelled");
     }
 
     [Fact]
@@ -1005,6 +1065,17 @@ public class VideoSceneConcurrencyTests
                     OfferingId = "offering-after-cancel",
                 };
             });
+        test.VideoClient.Setup(client => client.GetStatusForOfferingAsync(
+                It.IsAny<string>(),
+                "upstream-job-after-cancel",
+                "resolved-video-model",
+                "offering-after-cancel",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus
+            {
+                Status = "cancelled",
+                Cost = 0.27,
+            });
 
         var worker = test.CreateWorker();
         var processing = worker.ProcessSceneRenderAsync(run, 0, "claim:active", resumeExistingJob: false);
@@ -1017,10 +1088,12 @@ public class VideoSceneConcurrencyTests
         await processing.WaitAsync(TimeSpan.FromSeconds(2));
         var cancelled = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
         cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
-        cancelled.Scenes[0].Status.ShouldBe(SceneItemStatus.PollingClaimed);
+        cancelled.Scenes[0].Status.ShouldBe(SceneItemStatus.Cancelled);
         cancelled.Scenes[0].JobId.ShouldBe("upstream-job-after-cancel");
         cancelled.Scenes[0].Model.ShouldBe("resolved-video-model");
         cancelled.Scenes[0].OfferingId.ShouldBe("offering-after-cancel");
+        cancelled.Scenes[0].Cost.ShouldBe(0.27);
+        cancelled.Scenes[0].RenderLeaseId.ShouldBeNull();
     }
 
     [Fact]
