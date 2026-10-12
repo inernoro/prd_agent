@@ -240,11 +240,12 @@ describe('owned Docker probe proxy wire conformance', () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-create-observer-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
     const id = 'c'.repeat(64), bodies: string[] = [], sockets = new Set<net.Socket>();
-    let reply!: () => void, sampled!: () => void;
+    let reply!: () => void, sampled!: () => void, received!: () => void;
     const sample = new Promise<void>(resolve => { sampled = resolve; });
+    const backendReceived = new Promise<void>(resolve => { received = resolve; });
     const backend = http.createServer((request, response) => {
       let body = ''; request.on('data', chunk => { body += chunk; }); request.once('end', () => {
-        bodies.push(body); reply = () => { response.writeHead(201, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ Id: id })); };
+        bodies.push(body); reply = () => { response.writeHead(201, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ Id: id })); }; received();
       });
     });
     backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
@@ -258,7 +259,7 @@ describe('owned Docker probe proxy wire conformance', () => {
     const client = http.request({ socketPath: proxyPath, method: 'POST', path: '/v1.53/containers/create?name=owned-create-fixture' });
     client.on('error', () => {});
     try {
-      client.end(body); await Promise.race([sample, new Promise((_, reject) => setTimeout(() => reject(new Error('creation observer did not run')), 1000))]);
+      client.end(body); await Promise.race([Promise.all([sample, backendReceived]), new Promise((_, reject) => setTimeout(() => reject(new Error('creation observer did not run')), 1000))]);
       expect(samples).toEqual([[expect.objectContaining({ containerName: 'owned-create-fixture', operationId: 'd'.repeat(32), instanceId: 'e'.repeat(12), forwardedAt: expect.any(String) }), 0]]);
       reply(); await proxy.caught; client.destroy(); await proxy.settle();
       expect(bodies).toEqual([body]); expect(proxy.timeline).toContainEqual(expect.objectContaining({ phase: 'backend-create-replied', status: 201, containerId: id }));
