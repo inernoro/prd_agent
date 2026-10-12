@@ -1599,8 +1599,8 @@ test('CDS 手动部署成功时不受陈旧 webhook 调度记录阻塞', () => {
   const branch = {
     status: 'running',
     commitSha: commit,
-    ciTargetSha: commit,
-    ciImageStatus: 'ready',
+    ciTargetSha: 'old123',
+    ciImageStatus: 'waiting',
     lastDeployDispatchCommitSha: 'old123',
     currentVersionId: 'dv-manual',
     lastDeploymentRunId: 'dr-manual',
@@ -1616,7 +1616,9 @@ test('CDS 手动部署成功时不受陈旧 webhook 调度记录阻塞', () => {
     },
   };
 
-  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  const completedManualDeployment = evaluateCdsReadiness(branch, commit);
+  assert.equal(completedManualDeployment.ready, true);
+  assert.deepEqual(completedManualDeployment.reasons, []);
   branch.latestDeploymentRun.status = 'building';
   const blocked = evaluateCdsReadiness(branch, commit);
   assert.equal(blocked.ready, false);
