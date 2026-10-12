@@ -26,6 +26,7 @@ on:
       - cds/tests/services/branch-operation-replay.test.ts
       - cds/tests/middleware/github-auth.test.ts
       - cds/tests/helpers/**
+      - cds/tests/scripts/probe-daemon-proxy.test.ts
       - cds/tests/routes/topology.test.ts
       - cds/tests/services/isolated-shell-executor.test.ts
       - cds/scripts/orphan-worktree-recheck-probe.ts
