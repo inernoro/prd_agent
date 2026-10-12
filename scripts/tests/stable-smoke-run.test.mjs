@@ -922,6 +922,7 @@ test('正式环境只读运行使用无截图归档合同且打开验证不要�
     false,
   );
   assert.equal(verifyArgs[3], '0');
+  assert.equal(verifyArgs.includes('--require-interactive-report'), false);
 });
 
 test('完整视觉归档显式传递标准日期，避免从运行标识误推紧凑日期', () => {
@@ -955,7 +956,7 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(verifyOpenSource, /requiredTexts\.every/);
   assert.match(verifyOpenSource, /const clickedTargets = new Set\(\)/);
   assert.match(verifyOpenSource, /reportBodyCount === 0 && internalLinkCount === 0/);
-  assert.match(verifyOpenSource, /ok: broken\.length === 0 && clickErrors\.length === 0/);
+  assert.ok(verifyOpenSource.includes('!requireInteractiveReport || reports.length > 0'));
   assert.match(verifyOpenSource, /for \(const candidate of page\.frames\(\)\)/);
   assert.match(verifyOpenSource, /if \(liveLinkFound\) continue/);
   assert.match(verifyOpenSource, /Array\.from\(document\.images\)\.every/);
@@ -1390,6 +1391,7 @@ test('人工提供的验收报告必须同时绑定当前 runId 与固定 commit
   );
   assert.deepEqual(args.slice(-2), ['stable-smoke-20260811-001', '1234567890abcdef']);
   assert.equal(args[3], '296');
+  assert.equal(args.includes('--require-interactive-report'), true);
 });
 
 test('超过时限但进程仍存活的互斥锁不得被第二轮删除', () => {

@@ -185,14 +185,15 @@ export function requireAuthoritativeCdsAddress(blockers = []) {
 
 export function buildReportVerificationArgs(reportUrl, runId, commit, screenshotCount, visualRequired = true) {
   if (!runId || !commit) throw new Error('验收报告验证缺少当前 runId 或固定 commit');
-  return [
+  const args = [
     '.claude/skills/create-visual-test-to-kb/scripts/verify-open.mjs',
     reportUrl,
     '核心业务稳定冒烟',
     String(visualRequired ? Math.max(1, screenshotCount || 0) : 0),
-    runId,
-    commit,
   ];
+  if (visualRequired) args.push('--require-interactive-report');
+  args.push(runId, commit);
+  return args;
 }
 
 export function validateEnvironmentConfig(name, values) {

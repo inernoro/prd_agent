@@ -1724,12 +1724,6 @@ public class VideoGenRunWorker : BackgroundService
                     return;
                 }
 
-                if (await IsRunCancellationRequestedAsync(run.Id))
-                {
-                    await CancelRunAsync(run);
-                    return;
-                }
-
                 var submitted = await _db.VideoGenRuns.UpdateOneAsync(
                     Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
                     & Builders<VideoGenRun>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
@@ -1751,6 +1745,14 @@ public class VideoGenRunWorker : BackgroundService
                 scene.OfferingId = submitResult.OfferingId;
                 actualDuration = submitResult.ActualDurationSeconds ?? actualDuration;
                 expectedJobId = submittedJobId;
+                // SubmitAsync 可能在用户请求取消后才返回成功。必须先把真实上游任务 ID
+                // 从本地 claim 替换为可恢复的 JobId，再收敛到 Cancelled；否则上游任务会
+                // 继续运行和计费，而系统只剩无法轮询的本地 claim。
+                if (await IsRunCancellationRequestedAsync(run.Id))
+                {
+                    await CancelRunAsync(run);
+                    return;
+                }
             }
             else
             {

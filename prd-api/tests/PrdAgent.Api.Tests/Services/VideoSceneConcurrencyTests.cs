@@ -977,6 +977,53 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task CancelDuringSceneSubmission_ShouldPersistUpstreamJobBeforeCancelling()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-during-submit", test.OwnerId, SceneItemStatus.SubmittingClaimed);
+        run.DeploymentSlug = DeploymentScope.Current;
+        run.Scenes[0].JobId = "claim:active";
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        run.Scenes[0].RenderLeaseId = "claim:active";
+        run.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(2);
+        await test.SaveRunAsync(run);
+
+        var submitStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSubmit = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        test.VideoClient.Setup(client => client.SubmitAsync(
+                It.IsAny<OpenRouterVideoSubmitRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                submitStarted.SetResult(true);
+                await releaseSubmit.Task;
+                return new OpenRouterVideoSubmitResult
+                {
+                    Success = true,
+                    JobId = "upstream-job-after-cancel",
+                    ActualModel = "resolved-video-model",
+                    OfferingId = "offering-after-cancel",
+                };
+            });
+
+        var worker = test.CreateWorker();
+        var processing = worker.ProcessSceneRenderAsync(run, 0, "claim:active", resumeExistingJob: false);
+        await submitStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<VideoGenRun>.Update.Set(item => item.CancelRequested, true));
+        releaseSubmit.SetResult(true);
+
+        await processing.WaitAsync(TimeSpan.FromSeconds(2));
+        var cancelled = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.Scenes[0].Status.ShouldBe(SceneItemStatus.PollingClaimed);
+        cancelled.Scenes[0].JobId.ShouldBe("upstream-job-after-cancel");
+        cancelled.Scenes[0].Model.ShouldBe("resolved-video-model");
+        cancelled.Scenes[0].OfferingId.ShouldBe("offering-after-cancel");
+    }
+
+    [Fact]
     public async Task ConcurrentBatchRequests_ShouldQueueEachEligibleSceneExactlyOnce()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

@@ -17,7 +17,9 @@ const { chromium } = loadPlaywright();
 const url = process.argv[2];
 const mustText = process.argv[3] || '';
 const minImg = parseInt(process.argv[4] || '1', 10);
-const requiredTexts = process.argv.slice(5).map((value) => value.trim()).filter(Boolean);
+const trailingArgs = process.argv.slice(5).map((value) => value.trim()).filter(Boolean);
+const requireInteractiveReport = trailingArgs.includes('--require-interactive-report');
+const requiredTexts = trailingArgs.filter((value) => value !== '--require-interactive-report');
 if (!url) { console.error('用法: node verify-open.mjs <shareUrl> "<必现文字>" [最少图片数]'); process.exit(64); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS || '3', 10) || 3);
@@ -207,7 +209,9 @@ async function auditInteractiveReports() {
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
     broken,
     clickErrors,
-    ok: broken.length === 0 && clickErrors.length === 0,
+    ok: broken.length === 0
+      && clickErrors.length === 0
+      && (!requireInteractiveReport || reports.length > 0),
   };
 }
 
@@ -247,7 +251,7 @@ try {
       const result = await runAttempt(attempt);
       attempts.push(result);
       console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
-      console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
+      console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  需交互报告=${requireInteractiveReport}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
       if (result.interaction.broken.length) {
         console.log(`  断链明细：${result.interaction.broken.map((item) => `${item.text || item.href} -> ${item.href}`).join(' | ')}`);
       }

@@ -4,3 +4,5 @@
 | fix | scripts | 修复稳定冒烟报告丢失非 Playwright 补充证据的统计不一致 |
 | security | e2e | 完整遮蔽包含引号或转义引号的稳定冒烟敏感诊断值 |
 | fix | scripts | 补齐 CDS 公网门禁对 Vite 相对懒加载资源的解析与验证 |
+| fix | prd-api | 取消发生在分镜提交期间时先持久化上游任务标识，避免遗留不可追踪任务 |
+| fix | stable-smoke | L2 视觉归档强制存在可交互报告正文，防止渲染退化后误判通过 |
