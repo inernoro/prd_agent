@@ -282,6 +282,21 @@ test('VIDEO-009 刷新恢复必须创建并回读真实后端任务', () => {
     '刷新后页面必须展示与服务端回读一致的真实进度');
 });
 
+test('VIDEO-005 取消验收必须等待上游作业真实提交', () => {
+  const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const testStart = source.indexOf("test('[VIDEO-005]");
+  const testEnd = source.indexOf('\n  test(', testStart + 1);
+  const block = source.slice(testStart, testEnd);
+
+  assert.ok(testStart >= 0, '缺少 VIDEO-005 稳定冒烟用例');
+  assert.match(block, /beforeCancel\.directVideoJobId/,
+    '取消前必须回读已持久化的上游作业 ID');
+  assert.match(block, /beforeCancel\.currentPhase === 'videogen-polling'/,
+    '取消前必须证明真实任务已进入上游轮询阶段');
+  assert.doesNotMatch(block, /toMatch\(\/Queued\|Scripting\|Rendering\/i\)/,
+    '不得将未提交上游作业的 Queued 或 Scripting 状态当作取消验收前置');
+});
+
 test('PR 变更模式同样遵守双环境矩阵策略', () => {
   const plan = buildPlan({
     catalog,

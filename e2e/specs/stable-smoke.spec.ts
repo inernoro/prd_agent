@@ -4454,19 +4454,39 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(createResponse.ok(), createBody.error?.message || '创建取消验收任务失败').toBe(true);
       expect(createBody.success, createBody.error?.message || '创建取消验收任务失败').toBe(true);
       runId = createBody.data.runId;
-      const beforeCancel = await readEnvelope<{
+      type CancellableVideoRun = {
         status: string;
+        currentPhase?: string;
+        directVideoJobId?: string;
+        errorMessage?: string;
         directVideoCost?: number;
         videoAssetUrl?: string;
         scenes: Array<{ cost?: number; videoUrl?: string; versions?: Array<{ id: string }> }>;
-      }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
-      expect(beforeCancel.status, '取消必须针对仍在执行的任务').toMatch(/Queued|Scripting|Rendering/i);
+      };
+      let beforeCancel = await readEnvelope<CancellableVideoRun>(
+        await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
+      );
+      await expect.poll(async () => {
+        beforeCancel = await readEnvelope<CancellableVideoRun>(
+          await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
+        );
+        if (/Failed|Cancelled|Completed/i.test(beforeCancel.status)) {
+          throw new Error(beforeCancel.errorMessage || `视频任务在上游作业提交前已终止：${beforeCancel.status}`);
+        }
+        return beforeCancel.status === 'Rendering'
+          && beforeCancel.currentPhase === 'videogen-polling'
+          && Boolean(beforeCancel.directVideoJobId);
+      }, {
+        message: '取消前必须证明上游视频作业已提交并进入轮询阶段',
+        timeout: 60_000,
+        intervals: [1_000, 2_000],
+      }).toBe(true);
 
       const cancelResponse = await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
       expect(cancelResponse.ok(), await cancelResponse.text()).toBe(true);
       let cancelled = beforeCancel;
       await expect.poll(async () => {
-        cancelled = await readEnvelope<typeof beforeCancel>(
+        cancelled = await readEnvelope<CancellableVideoRun>(
           await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
         );
         return cancelled.status;
@@ -4475,7 +4495,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const cancelledCost = (cancelled.directVideoCost ?? 0) + cancelled.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0);
 
       await new Promise((resolveWait) => setTimeout(resolveWait, 10_000));
-      const afterCancel = await readEnvelope<typeof beforeCancel>(
+      const afterCancel = await readEnvelope<CancellableVideoRun>(
         await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
       );
       const afterArtifacts = afterCancel.scenes.reduce((count, scene) => count + (scene.videoUrl ? 1 : 0) + (scene.versions?.length ?? 0), afterCancel.videoAssetUrl ? 1 : 0);
