@@ -1053,7 +1053,12 @@ public static class DesignArtifactWorkspaceContract
                 designDirection = run.DesignDirection?.PromptFingerprint,
                 designBrief = run.DesignBrief?.Fingerprint,
                 brandPackage = run.BrandPackage?.Fingerprint,
-                designContext = run.DesignContextProvenance == null ? null : new
+            }, JsonOptions);
+        if (run.DesignContextProvenance != null)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                inputRevision = HashBytes(semantic),
+                designContext = new
                 {
                     run.DesignContextProvenance.SchemaVersion,
                     run.DesignContextProvenance.Version,
