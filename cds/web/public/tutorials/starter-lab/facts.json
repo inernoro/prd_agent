@@ -36,15 +36,17 @@
     "reload"
   ],
   "publicApiAfterRedeploy": "Original task 1bbfd5b9-be8e-4c78-bfe5-9845ef203017 remains completed after express automatic deployment; new express task create/complete/reload passed",
-  "unverified": [
-    "first-page-approval-and-key-handover",
-    "ci-failure-injection",
-    "version-rollback-drill"
-  ],
   "animation": "HyperFrames 0.8.149",
   "recording": "81 seconds of actual browser frames; early source-mode run followed by final express deployment; waiting gaps removed; no voiceover",
   "ciWorkflowUrl": "https://github.com/inernoro/cds-small-steps-lab/actions/runs/38235051851",
   "deployedImage": "ghcr.io/inernoro/cds-small-steps-lab:sha-115a0f52290449174db469e3422fb99c10814449",
   "deploymentVersion": "dv_0c6528ecba119a3882b52eb6",
-  "recordingSha256": "4e6edc983acdcbb5697096471b74529e72809c7aa7863e1cab31bf3c8a31443d"
+  "recordingSha256": "4e6edc983acdcbb5697096471b74529e72809c7aa7863e1cab31bf3c8a31443d",
+  "followUp": "closure-facts.json",
+  "unverifiedAtOriginalRun": [
+    "first-page-approval-and-key-handover",
+    "ci-failure-injection",
+    "version-rollback-drill"
+  ],
+  "followUpNote": "首次授权、CI 失败与回滚已于 2026-10-13 在独立项目补验，原记录不改写历史。"
 }
