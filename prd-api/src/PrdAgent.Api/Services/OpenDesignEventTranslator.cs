@@ -42,12 +42,17 @@ internal sealed class OpenDesignEventTranslator
                     ReadPayloadInt(payloadJson, "attempt"));
                 return update == null
                     ? null
-                    : new DesignArtifactExecutorChunk("phase", update.Phase, Progress: update.Progress);
+                    : new DesignArtifactExecutorChunk(
+                        "phase",
+                        update.Phase,
+                        Progress: update.Progress,
+                        PhaseCode: update.PhaseCode);
             case TextDelta:
             case Thinking:
-                // 阶段的人话摘要与推理流都进「思考」栏：它们是过程说明，不是页面正文。
-                var text = ReadPayloadString(payloadJson, "text");
-                return string.IsNullOrEmpty(text) ? null : new DesignArtifactExecutorChunk("thinking", text);
+                // 原始 text_delta 的来源在不同传输面不稳定，可能包含工具参数、
+                // 工作区路径或模型隐式推理。普通用户流只认 status 白名单映射出的
+                // 稳定阶段码和成果语言；这两类原始事件直接丢弃，也不记入管理员日志。
+                return null;
             default:
                 return null;
         }

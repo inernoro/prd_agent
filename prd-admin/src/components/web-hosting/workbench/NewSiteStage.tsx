@@ -430,7 +430,6 @@ export default function NewSiteStage({
           provenance={runProvenanceText(run.runInfo)}
           steps={steps.length > 0 ? steps : [{ key: 'start', label: '正在提交资料', state: 'active' }]}
           activity={`${run.phase || '正在准备'}${run.lastEventAtMs ? ` · 最近一次回应 ${Math.max(0, Math.round((Date.now() - run.lastEventAtMs) / 1000))} 秒前` : ''}`}
-          thinking={run.thinking}
           onStop={() => void run.stop()}
           stopRequested={run.stopRequested}
           canStop={Boolean(run.activeRunId)}
@@ -441,7 +440,18 @@ export default function NewSiteStage({
         <AssistantBubble tone="warning">
           <p className="font-semibold">{run.notice.tone === 'error' ? '这次没有做成' : '说明'}</p>
           <p className="text-[12px] text-token-secondary">{run.notice.text}</p>
-          <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
+          {run.restartableRunId ? (
+            <button
+              type="button"
+              onClick={() => void run.restart()}
+              className="mt-1 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-medium text-token-primary focus-visible:outline-none focus-visible:ring-2"
+              style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)' }}
+            >
+              按原资料和要求重新开始
+            </button>
+          ) : (
+            <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
+          )}
         </AssistantBubble>
       )}
       <div ref={conversationEndRef} />

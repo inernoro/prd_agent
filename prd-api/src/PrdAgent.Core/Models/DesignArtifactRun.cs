@@ -150,9 +150,29 @@ public class DesignArtifactRun
 
     public string? LinkedRunId { get; set; }
 
+    /// <summary>服务重启后从哪条历史 Run 的冻结输入重开；历史 Run 本身不改写。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? RestartedFromRunId { get; set; }
+
+    /// <summary>重开幂等键的 SHA-256，不保存客户端原值。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? RestartIdempotencyKeyHash { get; set; }
+
     public int Progress { get; set; }
 
+    /// <summary>有限、稳定的用户可见阶段码；不保存执行器命令、路径或工具参数。</summary>
+    public string PhaseCode { get; set; } = DesignArtifactPhaseCodes.Queued;
+
     public string Phase { get; set; } = "任务已进入队列";
+
+    /// <summary>任务创建后第一次向用户提供可见状态的时间。</summary>
+    public DateTime? FirstVisibleFeedbackAt { get; set; }
+
+    /// <summary>第一个经过工作区凭证校验的真实页面预览时间。</summary>
+    public DateTime? FirstPreviewAt { get; set; }
+
+    /// <summary>最近一次有效阶段或预览更新时间，用于计算最大静止间隔。</summary>
+    public DateTime? LastProgressAt { get; set; }
 
     public string? Error { get; set; }
 
@@ -388,6 +408,30 @@ public static class DesignArtifactRuntimes
     public const string Codex = "codex";
     public const string Claude = "claude";
     public const string HtmlPptPipeline = "html-ppt-pipeline";
+}
+
+/// <summary>
+/// 普通用户可见的有限阶段集合。执行器原始事件必须先收敛到这些值，
+/// 禁止把命令、路径、工具参数或隐式推理当作阶段。
+/// </summary>
+public static class DesignArtifactPhaseCodes
+{
+    public const string Queued = "queued";
+    public const string WaitingCapacity = "waiting-capacity";
+    public const string ServiceRecovering = "service-recovering";
+    public const string PreparingWorkspace = "preparing-workspace";
+    public const string ReadingSources = "reading-sources";
+    public const string StartingDesign = "starting-design";
+    public const string ComposingPage = "composing-page";
+    public const string ReviewingPage = "reviewing-page";
+    public const string RepairingQuality = "repairing-quality";
+    public const string CollectingArtifact = "collecting-artifact";
+    public const string CommittingArtifact = "committing-artifact";
+    public const string SavingResult = "saving-result";
+    public const string Completed = "completed";
+    public const string Interrupted = "interrupted";
+    public const string Failed = "failed";
+    public const string Cancelled = "cancelled";
 }
 
 public static class DesignWorkspaceResultWriteStates

@@ -136,6 +136,8 @@ public sealed class DesignArtifactEventEnvelope
 
     public string? Phase { get; set; }
 
+    public string? PhaseCode { get; set; }
+
     public int? Progress { get; set; }
 
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;

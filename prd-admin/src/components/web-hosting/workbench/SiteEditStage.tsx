@@ -80,7 +80,7 @@ export default function SiteEditStage({
     prefillInstructionFromDraft: false,
   });
   const {
-    instruction, setInstruction, phase, elapsedSeconds, resolvedModel, thinking,
+    instruction, setInstruction, phase, elapsedSeconds, resolvedModel,
     previewHtml, previewUrl, previewedRevision, previewFromEvent, revisions, loadingHistory,
     generating, mutatingId, mutatingAction, recentKnowledge, selectedKnowledge, setSelectedKnowledge,
     loadingKnowledge, screenshots, runInfo, activeRunId,
@@ -291,6 +291,7 @@ export default function SiteEditStage({
 
   const recoveryLabel = runtimeRecoveryGate
     ? `正在回收运行环境，已检查 ${runtimeRecoveryGate.checks + 1} 次`
+    : recoveryNotice?.action === 'restart' ? '按原要求重新开始'
     : recoveryNotice?.action === 'publish' ? '重试发布'
       : recoveryNotice?.action === 'rollback' ? '重试换回'
         : recoveryNotice?.action === 'reject' ? '重试放弃草稿'
@@ -315,7 +316,6 @@ export default function SiteEditStage({
             provenance={runProvenanceText(runInfo)}
             steps={steps}
             activity={runningGenerationActivity(phase, elapsedSeconds)}
-            thinking={thinking}
             onStop={() => void stopGeneration()}
             stopRequested={stopRequested}
             canStop={Boolean(activeRunId)}

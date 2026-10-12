@@ -272,7 +272,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     yield return new DesignArtifactExecutorChunk(
                         "phase",
                         BusyPhase(submit.Slot, wait, UtcNow() - queuedSince),
-                        Progress: translator.Progress);
+                        Progress: translator.Progress,
+                        PhaseCode: DesignArtifactPhaseCodes.WaitingCapacity);
                     await Delay(wait, ct);
                     continue;
                 }
@@ -298,7 +299,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                             "engine_starting" or "engine_restarting" => $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
                             _ => $"设计执行服务暂时不能接单，约 {(int)wait.TotalSeconds} 秒后重试提交（同一任务重复提交不会重复生成）",
                         },
-                        Progress: translator.Progress);
+                        Progress: translator.Progress,
+                        PhaseCode: DesignArtifactPhaseCodes.ServiceRecovering);
                     await Delay(wait, ct);
                     continue;
                 }

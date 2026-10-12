@@ -1756,6 +1756,108 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(DesignArtifactLifecycleErrorCodes.Conflict, error.Code);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ActiveRun_ShouldStayUserScoped_AndIgnoreOlderInterruptedRun()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        await fixture.Db.DesignArtifactRuns.InsertManyAsync([
+            new DesignArtifactRun
+            {
+                Id = "owner-interrupted", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.Interrupted,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now.AddMinutes(-2), UpdatedAt = now.AddMinutes(-2),
+            },
+            new DesignArtifactRun
+            {
+                Id = "owner-done", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Done, PhaseCode = DesignArtifactPhaseCodes.Completed,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now.AddMinutes(-1), UpdatedAt = now.AddMinutes(-1),
+            },
+            new DesignArtifactRun
+            {
+                Id = "other-active", UserId = "other-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Running, PhaseCode = DesignArtifactPhaseCodes.ComposingPage,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now, UpdatedAt = now,
+            },
+        ]);
+
+        var ownerResult = Assert.IsType<OkObjectResult>(
+            await Controller(fixture, new InMemoryRunEventStore(), "owner-user").GetActiveRun(DesignArtifactOperations.Generate));
+        Assert.Equal(JsonValueKind.Null, Data(ownerResult).ValueKind);
+        var otherResult = Assert.IsType<OkObjectResult>(
+            await Controller(fixture, new InMemoryRunEventStore(), "other-user").GetActiveRun(DesignArtifactOperations.Generate));
+        Assert.Equal("other-active", Data(otherResult).GetProperty("runId").GetString());
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RestartRun_ShouldBeIdempotent_AndKeepInterruptedSourceUnchanged()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var source = new DesignArtifactRun
+        {
+            Id = "interrupted-source", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.Interrupted,
+            Phase = HostedSiteEditRunWorker.RestartInterruptedMessage,
+            Error = HostedSiteEditRunWorker.RestartInterruptedMessage,
+            Instruction = "生成产品发布页", Title = "产品发布页",
+            DeploymentSlug = DeploymentScope.Current,
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
+        var capability = new DesignArtifactProviderCapability(
+            DesignArtifactRuntimes.OpenDesign,
+            "OpenDesign",
+            DesignArtifactAdapterKinds.RemoteAgent,
+            DesignArtifactExecutionOwners.CdsRemoteAgent,
+            DesignArtifactIsolationModes.SessionContainer,
+            [DesignArtifactTypes.WebPage],
+            [DesignArtifactOperations.Generate, DesignArtifactOperations.Edit],
+            [DesignArtifactSourceSurfaces.WebHosting],
+            Configured: true,
+            Healthy: true,
+            Enabled: true,
+            Reason: null,
+            ConnectionId: "design-runtime");
+        var providers = new Mock<IDesignArtifactProviderCatalog>();
+        providers.Setup(item => item.FindAsync(source.UserId, DesignArtifactRuntimes.OpenDesign, CancellationToken.None))
+            .ReturnsAsync(capability);
+        var queue = new Mock<IRunQueue>();
+        var events = new InMemoryRunEventStore();
+        var controller = new DesignArtifactsController(
+            fixture.Db,
+            events,
+            queue.Object,
+            providers.Object,
+            Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(),
+            new ConfigurationBuilder().Build(),
+            Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", source.UserId)], "test")),
+            },
+        };
+
+        var request = new RestartDesignArtifactRunRequest { IdempotencyKey = "same-restart-key" };
+        var first = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
+        var second = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
+        var firstId = Data(first).GetProperty("runId").GetString();
+        Assert.Equal(firstId, Data(second).GetProperty("runId").GetString());
+        Assert.Equal(2, await fixture.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
+        var persistedSource = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == source.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Error, persistedSource.Status);
+        Assert.Equal(DesignArtifactPhaseCodes.Interrupted, persistedSource.PhaseCode);
+        var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
+        Assert.Equal(source.Id, restarted.RestartedFromRunId);
+        Assert.Equal(source.Instruction, restarted.Instruction);
+        queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, firstId!, CancellationToken.None), Times.Once);
+    }
+
     private static DesignArtifactsController Controller(
         LifecycleMongoFixture fixture,
         IRunEventStore events,
@@ -1781,6 +1883,10 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     private static JsonElement Data(OkObjectResult result)
+        => JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            .GetProperty("data");
+
+    private static JsonElement Data(AcceptedResult result)
         => JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
             .GetProperty("data");
 

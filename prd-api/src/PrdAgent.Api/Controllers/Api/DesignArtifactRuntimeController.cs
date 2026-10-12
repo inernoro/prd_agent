@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using MongoDB.Bson;
+using MongoDB.Driver;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -34,19 +37,22 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DesignArtifactRuntimeController> _logger;
+    private readonly MongoDbContext? _db;
 
     public DesignArtifactRuntimeController(
         IDesignArtifactWorkspaceBroker broker,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         ILogger<DesignArtifactRuntimeController> logger,
-        PrdAgent.Core.Interfaces.IRunEventStore? events = null)
+        PrdAgent.Core.Interfaces.IRunEventStore? events = null,
+        MongoDbContext? db = null)
     {
         _events = events;
         _broker = broker;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
+        _db = db;
     }
 
     [HttpGet("workspace/input")]
@@ -122,6 +128,32 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 new { html, revision },
                 PreviewEventTtl,
                 CancellationToken.None);
+            if (_db != null)
+            {
+                var now = DateTime.UtcNow;
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    item => item.Id == runId
+                            && item.Status != RunStatuses.Done
+                            && item.Status != RunStatuses.Error
+                            && item.Status != RunStatuses.Cancelled,
+                    Builders<DesignArtifactRun>.Update.Pipeline(new BsonDocument[]
+                    {
+                        new("$set", new BsonDocument
+                        {
+                            {
+                                nameof(DesignArtifactRun.FirstPreviewAt),
+                                new BsonDocument("$ifNull", new BsonArray
+                                {
+                                    $"${nameof(DesignArtifactRun.FirstPreviewAt)}",
+                                    now,
+                                })
+                            },
+                            { nameof(DesignArtifactRun.LastProgressAt), now },
+                            { nameof(DesignArtifactRun.UpdatedAt), now },
+                        }),
+                    }),
+                    cancellationToken: CancellationToken.None);
+            }
             return Ok(new { accepted = true, revision });
         }
         catch (JsonException)

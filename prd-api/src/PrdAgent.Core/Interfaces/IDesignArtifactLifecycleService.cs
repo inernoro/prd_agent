@@ -65,7 +65,8 @@ public sealed record AppendDesignArtifactEventRequest(
     string Type,
     string? Phase = null,
     int? Progress = null,
-    DesignArtifactLifecycleExpectation? Expected = null);
+    DesignArtifactLifecycleExpectation? Expected = null,
+    string? PhaseCode = null);
 
 public sealed record StartDesignArtifactSessionRequest(
     string RunId,

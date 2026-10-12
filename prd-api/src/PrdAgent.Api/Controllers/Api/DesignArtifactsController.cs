@@ -269,6 +269,7 @@ public sealed class DesignArtifactsController : ControllerBase
             ? DesignArtifactSourceSurfaces.KnowledgeBase
             : DesignArtifactSourceSurfaces.WebHosting;
         var runId = Guid.NewGuid().ToString("N");
+        var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
         try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
         catch (InvalidOperationException ex)
@@ -301,7 +302,12 @@ public sealed class DesignArtifactsController : ControllerBase
             UserSuppliedContentHash = System.Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
+            PhaseCode = DesignArtifactPhaseCodes.Queued,
             Phase = "网页生成任务已进入队列",
+            FirstVisibleFeedbackAt = createdAt,
+            LastProgressAt = createdAt,
+            CreatedAt = createdAt,
+            UpdatedAt = createdAt,
         };
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
@@ -322,7 +328,7 @@ public sealed class DesignArtifactsController : ControllerBase
                 RunKinds.DesignArtifact,
                 runId,
                 "phase",
-                new { progress = 2, message = run.Phase },
+                new { phaseCode = run.PhaseCode, progress = 2, message = run.Phase },
                 RunTtl,
                 CancellationToken.None);
         }
@@ -340,6 +346,159 @@ public sealed class DesignArtifactsController : ControllerBase
             _logger?.LogWarning(ex, "设计任务即时入队失败，等待 Mongo 恢复器重试 runId={RunId}", runId);
         }
         return Accepted(ApiResponse<object>.Ok(ToDto(run)));
+    }
+
+    /// <summary>
+    /// 从服务端发现当前用户的活动或可重开任务。浏览器存储只作加速，
+    /// 换标签页、设备或禁用 sessionStorage 也能找回同一条 Run。
+    /// </summary>
+    [HttpGet("runs/active")]
+    public async Task<IActionResult> GetActiveRun(
+        [FromQuery] string? operation = null,
+        [FromQuery] string? targetSiteId = null)
+    {
+        var userId = this.GetRequiredUserId();
+        var normalizedOperation = operation?.Trim().ToLowerInvariant();
+        if (normalizedOperation is not (null or DesignArtifactOperations.Generate or DesignArtifactOperations.Edit))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务类型只能是 generate 或 edit"));
+        var normalizedSiteId = TrimOptional(targetSiteId, 128);
+        if (normalizedOperation == DesignArtifactOperations.Edit && normalizedSiteId == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "查找修改任务时必须提供站点编号"));
+
+        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Runtime, DesignArtifactRuntimes.OpenDesign);
+        if (normalizedOperation != null)
+            filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, normalizedOperation);
+        if (normalizedSiteId != null)
+            filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.TargetSiteId, normalizedSiteId);
+        var candidates = await _db.DesignArtifactRuns.Find(filter)
+            .SortByDescending(item => item.CreatedAt)
+            .Limit(20)
+            .ToListAsync(CancellationToken.None);
+        var run = candidates.FirstOrDefault(item => item.Status is RunStatuses.Queued or RunStatuses.Running or RunStatuses.Committing);
+        if (run == null && candidates.FirstOrDefault() is { } latest && IsRestartableInterrupted(latest))
+            run = latest;
+        return Ok(ApiResponse<object?>.Ok(run == null ? null : ToDto(run)));
+    }
+
+    /// <summary>
+    /// 服务重启中断后以原 Run 的冻结输入创建新 Run。幂等键决定新 runId，
+    /// 重复点击只返回同一条新任务；原 Run 的中断原因保持不变。
+    /// </summary>
+    [HttpPost("runs/{runId}/restart")]
+    public async Task<IActionResult> RestartRun(
+        string runId,
+        [FromBody] RestartDesignArtifactRunRequest request)
+    {
+        var userId = this.GetRequiredUserId();
+        var source = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == userId,
+            CancellationToken.None);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+        if (!IsRestartableInterrupted(source))
+            return Conflict(ApiResponse<object>.Fail(
+                "DESIGN_ARTIFACT_NOT_RESTARTABLE",
+                "只有被服务重启中断的 OpenDesign 任务才能用冻结输入重开"));
+        var key = request.IdempotencyKey?.Trim() ?? string.Empty;
+        if (key.Length is < 8 or > 128 || key.Any(char.IsControl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "重开请求缺少有效的幂等键"));
+        var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant();
+        var deterministicId = Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes($"{source.Id}:{keyHash}")))
+            .ToLowerInvariant()[..32];
+        var existing = await _db.DesignArtifactRuns.Find(item => item.Id == deterministicId).FirstOrDefaultAsync(CancellationToken.None);
+        if (existing != null)
+        {
+            if (existing.UserId != userId || existing.RestartedFromRunId != source.Id
+                                          || existing.RestartIdempotencyKeyHash != keyHash)
+                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_CONFLICT", "重开请求冲突，请刷新后重试"));
+            return Accepted(ApiResponse<object>.Ok(ToDto(existing)));
+        }
+
+        var capability = await _providers.FindAsync(userId, DesignArtifactRuntimes.OpenDesign, CancellationToken.None);
+        if (capability == null || !capability.Enabled || !capability.Operations.Contains(source.Operation, StringComparer.Ordinal))
+            return Conflict(ApiResponse<object>.Fail(
+                "RUNTIME_NOT_READY",
+                capability?.Reason ?? "设计服务尚未恢复，冻结输入已保留，请稍后再重开"));
+
+        string? currentHtml = null;
+        if (source.Operation == DesignArtifactOperations.Edit)
+        {
+            if (string.IsNullOrWhiteSpace(source.TargetSiteId))
+                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", "原修改任务缺少目标站点，无法重开"));
+            try
+            {
+                currentHtml = (await _sites.GetEditableEntryHtmlAsync(
+                    source.TargetSiteId,
+                    userId,
+                    CancellationToken.None)).Html;
+            }
+            catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+            {
+                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", "原页面已不可用，无法按冻结要求重开"));
+            }
+            var currentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                    DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(currentHtml))))
+                .ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(source.VersionBoundary?.BaseContentHash)
+                || !string.Equals(source.VersionBoundary.BaseContentHash, currentHash, StringComparison.Ordinal))
+                return Conflict(ApiResponse<object>.Fail(
+                    "DESIGN_ARTIFACT_RESTART_INPUT_CHANGED",
+                    "原页面已发生变化，不能冒充上次冻结输入重开；请从当前页面重新发起修改"));
+        }
+
+        var now = DateTime.UtcNow;
+        var restarted = CloneForRestart(source, capability, deterministicId, keyHash, now);
+        WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(restarted, capability, currentHtml);
+        try
+        {
+            await _db.DesignArtifactRuns.InsertOneAsync(restarted, cancellationToken: CancellationToken.None);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            existing = await _db.DesignArtifactRuns.Find(item => item.Id == deterministicId).FirstOrDefaultAsync(CancellationToken.None);
+            if (existing == null || existing.UserId != userId || existing.RestartedFromRunId != source.Id
+                                 || existing.RestartIdempotencyKeyHash != keyHash)
+                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_CONFLICT", "重开请求冲突，请刷新后重试"));
+            return Accepted(ApiResponse<object>.Ok(ToDto(existing)));
+        }
+
+        var meta = new RunMeta
+        {
+            RunId = restarted.Id,
+            Kind = RunKinds.DesignArtifact,
+            Status = RunStatuses.Queued,
+            CreatedByUserId = userId,
+            CreatedAt = restarted.CreatedAt,
+            InputJson = JsonSerializer.Serialize(new { restartedFromRunId = source.Id }),
+        };
+        try
+        {
+            await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
+            await _events.AppendEventAsync(
+                RunKinds.DesignArtifact,
+                restarted.Id,
+                "phase",
+                new { phaseCode = restarted.PhaseCode, progress = restarted.Progress, message = restarted.Phase },
+                RunTtl,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "重开设计任务的 Redis 投影暂不可用 runId={RunId}", restarted.Id);
+        }
+        try
+        {
+            await _queue.EnqueueAsync(RunKinds.DesignArtifact, restarted.Id, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "重开设计任务即时入队失败，等待 Mongo 恢复器 runId={RunId}", restarted.Id);
+        }
+        return Accepted(ApiResponse<object>.Ok(ToDto(restarted)));
     }
 
     [HttpGet("runs/{runId}")]
@@ -748,6 +907,7 @@ public sealed class DesignArtifactsController : ControllerBase
                 {
                     await WriteEventAsync(null, "phase", JsonSerializer.Serialize(new
                     {
+                        phaseCode = snapshot.PhaseCode,
                         progress = snapshot.Progress,
                         message = snapshot.Phase,
                     }), ct);
@@ -852,7 +1012,11 @@ public sealed class DesignArtifactsController : ControllerBase
         uploadedSources = run.UploadedSources?.Select(x => new { x.AttachmentId, x.FileName, x.ContentHash }),
         run.Title,
         run.Progress,
+        run.PhaseCode,
         run.Phase,
+        run.FirstVisibleFeedbackAt,
+        run.FirstPreviewAt,
+        run.LastProgressAt,
         run.ArtifactSiteId,
         run.ArtifactRevisionId,
         run.ProducedArtifactSiteId,
@@ -862,6 +1026,7 @@ public sealed class DesignArtifactsController : ControllerBase
         run.DestinationTeamId,
         run.DestinationApplyError,
         run.LinkedRunId,
+        run.RestartedFromRunId,
         run.Error,
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
@@ -881,6 +1046,55 @@ public sealed class DesignArtifactsController : ControllerBase
         run.CreatedAt,
         run.UpdatedAt,
         run.CompletedAt,
+    };
+
+    private static bool IsRestartableInterrupted(DesignArtifactRun run) =>
+        run.Runtime == DesignArtifactRuntimes.OpenDesign
+        && run.Status == RunStatuses.Error
+        && (run.PhaseCode == DesignArtifactPhaseCodes.Interrupted
+            || run.LifecycleFailureCode == WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode
+            || string.Equals(run.Error, HostedSiteEditRunWorker.RestartInterruptedMessage, StringComparison.Ordinal));
+
+    private static DesignArtifactRun CloneForRestart(
+        DesignArtifactRun source,
+        DesignArtifactProviderCapability capability,
+        string runId,
+        string keyHash,
+        DateTime now) => new()
+    {
+        Id = runId,
+        DeploymentSlug = DeploymentScope.Current,
+        UserId = source.UserId,
+        Status = RunStatuses.Queued,
+        ArtifactType = source.ArtifactType,
+        Operation = source.Operation,
+        SourceSurface = source.SourceSurface,
+        Runtime = DesignArtifactRuntimes.OpenDesign,
+        DestinationTeamId = source.DestinationTeamId,
+        RuntimeConnectionId = capability.ConnectionId,
+        Instruction = source.Instruction,
+        InputAuthority = source.InputAuthority,
+        UserSuppliedContentHash = source.UserSuppliedContentHash,
+        Title = source.Title,
+        TargetSiteId = source.TargetSiteId,
+        LinkedRunId = source.Id,
+        RestartedFromRunId = source.Id,
+        RestartIdempotencyKeyHash = keyHash,
+        LlmRequestPolicy = source.LlmRequestPolicy,
+        KnowledgeReferences = source.KnowledgeReferences,
+        KnowledgeOriginals = source.KnowledgeOriginals,
+        DesignDirection = source.DesignDirection,
+        UploadedSources = source.UploadedSources,
+        ReferenceImages = source.ReferenceImages,
+        Progress = 2,
+        PhaseCode = DesignArtifactPhaseCodes.Queued,
+        Phase = source.Operation == DesignArtifactOperations.Edit
+            ? "已用上次冻结的要求重新创建修改任务"
+            : "已用上次冻结的资料与要求重新创建生成任务",
+        FirstVisibleFeedbackAt = now,
+        LastProgressAt = now,
+        CreatedAt = now,
+        UpdatedAt = now,
     };
 
     private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)
@@ -921,6 +1135,7 @@ public sealed class DesignArtifactsController : ControllerBase
         record.Sequence,
         record.Type,
         record.Phase,
+        record.PhaseCode,
         record.Progress,
         record.OccurredAt,
         record.Authoritative);
@@ -964,6 +1179,11 @@ public sealed class DesignArtifactsController : ControllerBase
         await Response.WriteAsync("\n", ct);
         await Response.Body.FlushAsync(ct);
     }
+}
+
+public sealed class RestartDesignArtifactRunRequest
+{
+    public string? IdempotencyKey { get; set; }
 }
 
 public sealed class CreateDesignArtifactRunRequest
@@ -1079,6 +1299,7 @@ public sealed record DesignArtifactPublicEvent(
     long Sequence,
     string Type,
     string? Phase,
+    string? PhaseCode,
     int? Progress,
     DateTime OccurredAt,
     bool Authoritative);

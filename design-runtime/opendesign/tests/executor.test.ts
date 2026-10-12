@@ -424,22 +424,51 @@ describe('live preview delivery', () => {
     let now = 1_000_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {
-      const push = (executor as any).createPreviewPusher(
+      const preview = (executor as any).createPreviewPusher(
         { previewUrl: 'https://map.example.test/api/design-artifacts/runtime/r1/workspace/preview', transfer: { transferToken: 't' } },
         now + 600_000,
         (stage: string) => stages.push(stage),
-      ) as () => Promise<void>;
-      await push();
+      ) as { poll: () => Promise<void>; close: () => void };
+      await preview.poll();
       now += 9_000;
       // 页面没有再变：修复前指纹在推送前就记下，这一轮会直接跳过，预览永远停在失败那一刻。
-      await push();
+      await preview.poll();
       now += 9_000;
-      await push();
+      await preview.poll();
+      preview.close();
     } finally {
       clock.mockRestore();
     }
     expect(posted.map((item) => item.revision)).toEqual([1, 2]);
     expect(posted.every((item) => item.html.includes('Stable page'))).toBe(true);
     expect(stages).toEqual(['open_design_preview_failed', 'open_design_preview_pushed']);
+  });
+
+  it('pushes file changes from fs.watch before polling and cleans the watcher on close', async () => {
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-preview-watch-'));
+    const posted: Array<{ revision: number; html: string }> = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      posted.push(JSON.parse(String(init.body)));
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    const executor = new DesignTaskExecutor({
+      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir },
+      daemon: { current: () => undefined } as any,
+      fetchImpl,
+      relayPort: 0,
+      llmgwBaseUrl: 'http://gateway/gw/v1',
+    });
+    const preview = (executor as any).createPreviewPusher(
+      { previewUrl: 'https://map.example.test/api/design-artifacts/runtime/r1/workspace/preview', transfer: { transferToken: 't' } },
+      Date.now() + 600_000,
+      () => undefined,
+    ) as { poll: () => Promise<void>; close: () => void };
+    fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><main>First page</main>');
+    await waitFor(() => posted.length === 1, 'watch preview push');
+    expect(posted[0].html).toContain('First page');
+    preview.close();
+    fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><main>Second page</main>');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(posted).toHaveLength(1);
   });
 });

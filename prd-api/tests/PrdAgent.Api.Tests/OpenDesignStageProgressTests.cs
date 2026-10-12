@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests;
@@ -126,6 +127,37 @@ public sealed class OpenDesignStageProgressTests
         Assert.Null(tracker.Observe("something_new_from_cds", 30, null));
         Assert.Null(tracker.Observe(null, null, null));
         Assert.Equal(18, tracker.Progress);
+    }
+
+    [Fact]
+    public void 真实阶段只输出有限稳定阶段码()
+    {
+        var updates = Replay(new OpenDesignStageProgress(editing: false, startProgress: 18), TypicalGenerate());
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            DesignArtifactPhaseCodes.PreparingWorkspace,
+            DesignArtifactPhaseCodes.ReadingSources,
+            DesignArtifactPhaseCodes.StartingDesign,
+            DesignArtifactPhaseCodes.ComposingPage,
+            DesignArtifactPhaseCodes.ReviewingPage,
+            DesignArtifactPhaseCodes.RepairingQuality,
+            DesignArtifactPhaseCodes.CollectingArtifact,
+            DesignArtifactPhaseCodes.CommittingArtifact,
+        };
+
+        Assert.All(updates, update => Assert.Contains(update.PhaseCode, allowed));
+        Assert.DoesNotContain(updates, update => string.IsNullOrWhiteSpace(update.PhaseCode));
+    }
+
+    [Fact]
+    public void 原始文本与隐式推理不进入用户可见分片()
+    {
+        var translator = new OpenDesignEventTranslator(editing: false, startProgress: 18);
+
+        Assert.Null(translator.ToChunk(OpenDesignEventTranslator.TextDelta,
+            "{\"text\":\"cat /workspace/index.html && print secret\"}"));
+        Assert.Null(translator.ToChunk(OpenDesignEventTranslator.Thinking,
+            "{\"text\":\"hidden chain of thought\"}"));
     }
 
     [Fact]

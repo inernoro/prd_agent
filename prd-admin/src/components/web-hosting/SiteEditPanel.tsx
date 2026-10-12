@@ -50,7 +50,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     progress,
     elapsedSeconds,
     resolvedModel,
-    thinking,
     previewHtml,
     previewUrl,
     previewedRevision,
@@ -194,6 +193,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
   const recoveryActionLabel = recoveryNotice?.action === 'history'
     ? '刷新版本记录'
+    : recoveryNotice?.action === 'restart'
+      ? '按原要求重新开始'
     : recoveryNotice?.action === 'preview'
       ? '重新预览'
       : recoveryNotice?.action === 'publish'
@@ -620,11 +621,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                   style={generating ? undefined : { width: `${progress}%` }}
                 />
               </div>
-              {thinking && generating && (
-                <div className="mt-2 rounded-lg bg-token-nested px-2.5 py-2 text-[10px] leading-relaxed text-token-muted">
-                  <span className="font-medium text-token-secondary">正在分析：</span>{thinking}
-                </div>
-              )}
             </div>
 
             {generating && !previewHtml && (

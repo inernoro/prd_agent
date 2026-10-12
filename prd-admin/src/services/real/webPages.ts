@@ -149,6 +149,11 @@ export interface DesignArtifactRunSummary {
   title?: string | null;
   progress: number;
   phase: string;
+  phaseCode?: string | null;
+  firstVisibleFeedbackAt?: string | null;
+  firstPreviewAt?: string | null;
+  lastProgressAt?: string | null;
+  restartedFromRunId?: string | null;
   artifactSiteId?: string | null;
   artifactRevisionId?: string | null;
   producedArtifactSiteId?: string | null;
@@ -1671,6 +1676,25 @@ export async function getDesignArtifactRun(
   runId: string,
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export async function getActiveDesignArtifactRun(input: {
+  operation: 'generate' | 'edit';
+  targetSiteId?: string;
+}): Promise<ApiResponse<DesignArtifactRunSummary | null>> {
+  const params = new URLSearchParams({ operation: input.operation });
+  if (input.targetSiteId) params.set('targetSiteId', input.targetSiteId);
+  return apiRequest(`${api.designArtifacts.activeRun()}?${params.toString()}`);
+}
+
+export async function restartDesignArtifactRun(
+  runId: string,
+  idempotencyKey: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.designArtifacts.restart(runId), {
+    method: 'POST',
+    body: { idempotencyKey },
+  });
 }
 
 export async function cancelDesignArtifactRun(

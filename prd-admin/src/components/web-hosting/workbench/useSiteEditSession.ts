@@ -7,6 +7,7 @@ import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
   createHostedSiteRevisionPreviewAccess,
+  getActiveDesignArtifactRun,
   getRevisionPrivateSources,
   cancelHostedSiteEditRun,
   getDesignRuntimeCapabilities,
@@ -15,6 +16,7 @@ import {
   previewHostedSiteRevision,
   publishHostedSiteRevision,
   rejectHostedSiteRevision,
+  restartDesignArtifactRun,
   rollbackHostedSiteRevision,
   streamHostedSiteEditRun,
   type HostedSite,
@@ -24,7 +26,6 @@ import {
 import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import {
   activeSiteEditRunStorageKey,
-  appendRunNarration,
   canPublishRevision,
   designPreviewEventDocument,
   isLatestPreviewRequest,
@@ -36,7 +37,11 @@ import {
   requiredWebPageRuntime,
   revisionLabel,
 } from '../siteEditPreview';
-import { GATEWAY_PLATFORM_FALLBACK, resolveRunModelBadge } from '../siteGenerateProgress';
+import {
+  GATEWAY_PLATFORM_FALLBACK,
+  resolveRunModelBadge,
+  visibleDesignPhase,
+} from '../siteGenerateProgress';
 import {
   MAX_EDIT_SCREENSHOTS,
   screenshotRuntimeSupported,
@@ -55,6 +60,7 @@ import {
 interface PhaseEvent {
   progress?: number;
   message?: string;
+  phaseCode?: string;
 }
 
 
@@ -77,7 +83,7 @@ export function handOffOrphanedEditRun(siteId: string, runId: string): void {
   orphanedEditRunListeners.forEach((listener) => listener(siteId, runId));
 }
 
-export type RecoveryAction = 'generate' | 'history' | 'preview' | 'publish' | 'rollback' | 'reject';
+export type RecoveryAction = 'generate' | 'restart' | 'history' | 'preview' | 'publish' | 'rollback' | 'reject';
 export type RevisionMutationAction = 'publish' | 'rollback' | 'reject';
 
 export interface RecoveryNotice {
@@ -88,6 +94,7 @@ export interface RecoveryNotice {
   rejectionReason?: string;
   idempotencyKey?: string;
   versionConflict?: boolean;
+  runId?: string;
 }
 
 export function createRevisionMutationIdempotencyKey(): string {
@@ -174,7 +181,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const [runStartedAtMs, setRunStartedAtMs] = useState<number | null>(null);
   const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
   const [resolvedModel, setResolvedModel] = useState<{ model: string; platform: string } | null>(null);
-  const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewExpiresAt, setPreviewExpiresAt] = useState<string | null>(null);
@@ -211,6 +217,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const abortRef = useRef<AbortController | null>(null);
   const capabilitiesRef = useRef<DesignRuntimeCapability[]>([]);
   const previewRequestRef = useRef(0);
+  const restartKeyRef = useRef<{ runId: string; key: string } | null>(null);
 
   useEffect(() => {
     capabilitiesRef.current = capabilities;
@@ -413,8 +420,10 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   }), [site.id]);
 
   useEffect(() => {
+    let active = true;
+    let storedRunId: string | null = null;
     try {
-      const storedRunId = sessionStorage.getItem(activeSiteEditRunStorageKey(site.id));
+      storedRunId = sessionStorage.getItem(activeSiteEditRunStorageKey(site.id));
       // 恢复出来的任务先同步标成忙：否则在第一次读进度返回前，用户能再发一条修改、
       // 别处交来的任务也能把它顶掉，原来那条就在后台隐身了（Codex P2）。
       if (storedRunId) {
@@ -423,10 +432,18 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       }
       setRecoveringRunId(storedRunId);
       setActiveRunId(storedRunId);
-    } catch {
-      setRecoveringRunId(null);
-      setActiveRunId(null);
+    } catch { /* 浏览器存储不可用时继续向服务端发现 */ }
+    if (!storedRunId) {
+      void getActiveDesignArtifactRun({ operation: 'edit', targetSiteId: site.id }).then((result) => {
+        if (!active || busyRef.current || !result.success || !result.data) return;
+        busyRef.current = true;
+        setGenerating(true);
+        setRecoveringRunId(result.data.runId);
+        setActiveRunId(result.data.runId);
+        try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), result.data.runId); } catch { /* 服务端恢复不依赖存储 */ }
+      });
     }
+    return () => { active = false; };
   }, [site.id]);
 
   useEffect(() => {
@@ -479,7 +496,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       if (status === 'cancelled') {
         clearRecovery();
         setGenerating(false);
-        setThinking('');
         setPreviewHtml('');
         setPreviewUrl(null);
         streamRef.current = '';
@@ -497,7 +513,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
         setRecoveryNotice({
           title: '页面修改未完成',
           detail: generationRecoveryDetail(detail),
-          action: 'generate',
+          action: result.data.phaseCode === 'interrupted' ? 'restart' : 'generate',
+          runId: result.data.phaseCode === 'interrupted' ? recoveringRunId : undefined,
         });
         return;
       }
@@ -555,7 +572,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     setResolvedModel(null);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
-    setThinking('');
     setPreviewHtml('');
     setPreviewFromEvent(false);
     previewRevisionRef.current = -1;
@@ -617,7 +633,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
 
           if (event.event === 'phase') {
             const item = data as PhaseEvent;
-            if (typeof item.message === 'string') setPhase(item.message);
+            const visible = visibleDesignPhase(item.phaseCode, item.message);
+            if (visible?.message) setPhase(visible.message);
             if (typeof item.progress === 'number') {
               setProgress(siteEditDisplayProgress('incomplete', item.progress));
             }
@@ -630,11 +647,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
               model: data.model,
               platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : GATEWAY_PLATFORM_FALLBACK,
             });
-            return;
-          }
-          if (event.event === 'thinking' && typeof data.text === 'string') {
-            const narration = data.text;
-            setThinking((prev) => appendRunNarration(prev, narration, 500));
             return;
           }
           if (event.event === 'preview' && typeof data.html === 'string' && data.html.trim()) {
@@ -686,7 +698,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
             setActiveRunId(null);
             setStopRequested(false);
             setGenerating(false);
-            setThinking('');
             setPreviewHtml('');
             setPreviewUrl(null);
             streamRef.current = '';
@@ -706,7 +717,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
             setRecoveryNotice({
               title: '页面修改未完成',
               detail: generationRecoveryDetail(message),
-              action: 'generate',
+              action: data.code === 'DESIGN_ARTIFACT_INTERRUPTED' ? 'restart' : 'generate',
+              runId: data.code === 'DESIGN_ARTIFACT_INTERRUPTED' ? created.data.runId : undefined,
             });
             toast.error('页面修改失败', message);
           }
@@ -748,7 +760,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       setRecoveringRunId(null);
       setGenerating(false);
       setStopRequested(false);
-      setThinking('');
       setPreviewHtml('');
       setPreviewUrl(null);
       streamRef.current = '';
@@ -877,11 +888,44 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     await loadHistory();
   };
 
+  const restartInterruptedRun = async (runId: string) => {
+    if (busyRef.current) return;
+    const current = restartKeyRef.current;
+    const key = current?.runId === runId ? current.key : createRevisionMutationIdempotencyKey();
+    restartKeyRef.current = { runId, key };
+    busyRef.current = true;
+    setGenerating(true);
+    setResolvedModel(null);
+    setRecoveryNotice(null);
+    setPhase('正在用上次冻结的页面和修改要求重开任务');
+    const result = await restartDesignArtifactRun(runId, key);
+    if (!result.success) {
+      busyRef.current = false;
+      setGenerating(false);
+      setRecoveryNotice({
+        title: '暂时无法重开修改任务',
+        detail: `${result.error?.message || '请稍后再试'}。线上版本没有变化，上次要求仍保留。`,
+        action: 'restart',
+        runId,
+      });
+      return;
+    }
+    restartKeyRef.current = null;
+    setActiveRunRuntime(result.data.runtime);
+    setRunInfo({ styleName: result.data.styleName, promptFingerprint: result.data.promptFingerprint });
+    setRunStartedAtMs(Date.parse(result.data.createdAt));
+    setActiveRunId(result.data.runId);
+    setRecoveringRunId(result.data.runId);
+    try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), result.data.runId); } catch { /* 服务端发现仍可恢复 */ }
+  };
+
 
   const retryRecovery = () => {
     if (!recoveryNotice) return;
     const revisionId = recoveryNotice.revisionId;
     if (recoveryNotice.action === 'generate') void generate();
+    else if (recoveryNotice.action === 'restart' && recoveryNotice.runId)
+      void restartInterruptedRun(recoveryNotice.runId);
     else if (recoveryNotice.action === 'history') void loadHistory();
     else if (recoveryNotice.action === 'preview' && revisionId) void openRevision(revisionId);
     else if (recoveryNotice.action === 'publish' && revisionId) void publish(revisionId);
@@ -901,7 +945,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     setProgress,
     elapsedSeconds,
     resolvedModel,
-    thinking,
     previewHtml,
     previewUrl,
     previewedRevision,

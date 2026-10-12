@@ -14,7 +14,8 @@ public interface IWebPageDesignArtifactLifecycleAdapter
         DesignArtifactLifecycleLeaseAuthority lease,
         int progress,
         string phase,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? phaseCode = null);
 
     Task CommitManifestAsync(
         string runId,
@@ -154,6 +155,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 Sequence = 1,
                 Type = DesignArtifactLifecycleEventTypes.Run,
                 Phase = run.Phase,
+                PhaseCode = run.PhaseCode,
                 Progress = run.Progress,
                 OccurredAt = now,
                 Authoritative = true,
@@ -161,6 +163,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         ];
         run.CreatedAt = now;
         run.UpdatedAt = now;
+        run.FirstVisibleFeedbackAt ??= now;
+        run.LastProgressAt ??= now;
     }
 
     public async Task AppendPhaseAsync(
@@ -168,7 +172,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         DesignArtifactLifecycleLeaseAuthority lease,
         int progress,
         string phase,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? phaseCode = null)
     {
         var current = await RequireCurrentAsync(runId);
         if (!IsManaged(current)) return;
@@ -179,7 +184,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 DesignArtifactLifecycleEventTypes.Phase,
                 phase,
                 progress,
-                Expected(current, lease)),
+                Expected(current, lease),
+                phaseCode),
             CancellationToken.None);
     }
 

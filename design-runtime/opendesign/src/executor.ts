@@ -126,6 +126,13 @@ interface PreparedWorkspace {
   inputFiles: Array<{ path: string; sha256: string; size: number }>;
 }
 
+interface PreviewPusher {
+  /** 定时轮询的完整性兜底。 */
+  poll: () => Promise<void>;
+  /** 任务结束时必须清理监听器与 debounce 计时器。 */
+  close: () => void;
+}
+
 export class DesignTaskExecutor {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
@@ -364,6 +371,7 @@ export class DesignTaskExecutor {
       qualityEvidence,
     );
     let activeRunId: string | undefined;
+    let previewPusher: PreviewPusher | undefined;
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
       const designDirection = collectDesignDirection(workspaceDir);
@@ -385,7 +393,7 @@ export class DesignTaskExecutor {
         systemPrompt,
         ...(designDirection ? { designSystemId: designDirection.designSystemId } : {}),
       });
-      const previewPusher = this.createPreviewPusher(task, executionDeadline, onStage);
+      previewPusher = this.createPreviewPusher(task, executionDeadline, onStage);
       onStage('open_design_run_starting', { projectId });
       const run = await client.odJson('/api/runs', {
         method: 'POST',
@@ -403,7 +411,7 @@ export class DesignTaskExecutor {
       }
       activeRunId = runId;
       let finalRunId = runId;
-      let runOutcome: OpenDesignRunOutcome = await client.waitForRun(runId, executionDeadline, signal, onStage, previewPusher);
+      let runOutcome: OpenDesignRunOutcome = await client.waitForRun(runId, executionDeadline, signal, onStage, previewPusher.poll);
       // 交付文件由 OpenDesign 指名，一轮里只有产出的那几次会带上它——终审与修复常报
       // no_artifact（它们没新建产物），那不等于上一轮指名的文件失效。所以只往前记，不清空。
       let deliverableEntryFile = runOutcome.deliverableEntryFile;
@@ -432,7 +440,7 @@ export class DesignTaskExecutor {
         }
         activeRunId = finalRunId;
         onStage('open_design_reviewing', { runId: finalRunId, pass: reviewPass + 1 });
-        runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher);
+        runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher.poll);
         deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
       }
       let collectedFiles: WorkspacePackageFile[] = [];
@@ -523,7 +531,7 @@ export class DesignTaskExecutor {
             runId: finalRunId,
             attempt: qualityRepairAttempt + 1,
           });
-          runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher);
+          runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher.poll);
           deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
         }
       }
@@ -613,6 +621,7 @@ export class DesignTaskExecutor {
         openDesignRunId: finalRunId,
       };
     } finally {
+      previewPusher?.close();
       if (activeRunId) await client.cancelRun(activeRunId);
       await relay.close().catch(() => undefined);
     }
@@ -796,7 +805,7 @@ export class DesignTaskExecutor {
     task: DesignTaskInput,
     executionDeadline: number,
     onStage: StageReporter,
-  ): () => Promise<void> {
+  ): PreviewPusher {
     const previewUrl = task.previewUrl;
     const indexPath = path.join(this.options.paths.workspaceDir, 'index.html');
     let lastCheckAt = 0;
@@ -804,10 +813,21 @@ export class DesignTaskExecutor {
     let revision = 0;
     let failureReported = false;
     let disabled = !previewUrl;
-    return async () => {
+    let closed = false;
+    let debounceTimer: NodeJS.Timeout | undefined;
+    let watcher: fs.FSWatcher | undefined;
+    let pushing = false;
+    let forcedAgain = false;
+    const push = async (force = false): Promise<void> => {
       if (disabled || !previewUrl) return;
       const now = Date.now();
-      if (now - lastCheckAt < PREVIEW_CHECK_INTERVAL_MS || remainingExecutionMs(executionDeadline) < 15_000) return;
+      if (!force && now - lastCheckAt < PREVIEW_CHECK_INTERVAL_MS) return;
+      if (remainingExecutionMs(executionDeadline) < 15_000) return;
+      if (pushing) {
+        forcedAgain = forcedAgain || force;
+        return;
+      }
+      pushing = true;
       lastCheckAt = now;
       try {
         let stat: fs.Stats;
@@ -817,12 +837,13 @@ export class DesignTaskExecutor {
           return;
         }
         if (!stat.isFile()) return;
-        // 与原 `stat -c "%Y:%s"` 同一口径：秒级修改时间 + 字节数。
-        const fingerprint = `${Math.floor(stat.mtimeMs / 1000)}:${stat.size}`;
-        if (fingerprint === lastFingerprint) return;
         if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
         const html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
         if (!html.trim()) return;
+        // 文件监听可能在同一毫秒内收到两版同字节数内容；只看 mtime/size 会吞掉真实变化。
+        // 以正文摘要作为修订判据，轮询与 watch 共用同一条完整性口径。
+        const fingerprint = sha256(Buffer.from(html, 'utf8'));
+        if (fingerprint === lastFingerprint) return;
         // 指纹只在对端确认收下之后才记：推送失败（超时 / 5xx）时下一轮要重推同一份内容，
         // 否则页面停止变化后预览永远卡在失败前那一版。修订号照常递增，保持单调。
         revision += 1;
@@ -853,7 +874,38 @@ export class DesignTaskExecutor {
             message: error instanceof Error ? error.message.slice(0, 200) : 'preview push failed',
           });
         }
+      } finally {
+        pushing = false;
+        if (forcedAgain && !closed) {
+          forcedAgain = false;
+          queueMicrotask(() => { void push(true); });
+        }
       }
+    };
+    if (!disabled) {
+      try {
+        watcher = fs.watch(this.options.paths.workspaceDir, { persistent: false }, (_event, filename) => {
+          if (closed || !filename || path.basename(filename.toString()) !== 'index.html') return;
+          if (debounceTimer) clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => { void push(true); }, 100);
+        });
+        watcher.on('error', () => {
+          watcher?.close();
+          watcher = undefined;
+          // 监听不可用时不停任务；waitForRun 仍会持续调 poll 作兜底。
+          onStage('open_design_preview_watch_unavailable');
+        });
+      } catch {
+        onStage('open_design_preview_watch_unavailable');
+      }
+    }
+    return {
+      poll: () => push(false),
+      close: () => {
+        closed = true;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        watcher?.close();
+      },
     };
   }
 }

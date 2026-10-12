@@ -121,7 +121,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         meta.StartedAt ??= DateTime.UtcNow;
         await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
         await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 8,
-            run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标");
+            run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标",
+            DesignArtifactPhaseCodes.ReadingSources);
 
         var sites = scope.ServiceProvider.GetRequiredService<IHostedSiteService>();
         var revisions = scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>();
@@ -170,7 +171,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 throw new InvalidOperationException("页面与知识正文过长，首版最多支持约 24 万字符，请减少引用或精简内容");
 
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 18,
-                run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级");
+                run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级",
+                DesignArtifactPhaseCodes.ReadingSources);
             executionCts.Token.ThrowIfCancellationRequested();
 
             var output = new StringBuilder();
@@ -232,9 +234,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     var calls = await ReadRuntimeModelCallCountAsync(db, runId, CancellationToken.None);
                     var phaseText = calls > 0 ? $"{chunk.Content} · 已调用模型 {calls} 次" : chunk.Content;
                     await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
-                        Math.Max(run.Progress, chunk.Progress.Value), phaseText);
+                        Math.Max(run.Progress, chunk.Progress.Value), phaseText,
+                        chunk.PhaseCode ?? DesignArtifactPhaseCodes.ComposingPage);
                     continue;
                 }
+
+                // OpenDesign 只允许有限阶段码和整页 preview 进入用户流；模型原文与隐式推理
+                // 即使未来执行器误产出，也只能留在运行时内部，不能由 MAP 二次透传。
+                if (run.Runtime == DesignArtifactRuntimes.OpenDesign && chunk.Type is "delta" or "thinking")
+                    continue;
 
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
@@ -243,7 +251,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     {
                         sawFirstText = true;
                         await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
-                            Math.Max(run.Progress, 36), "页面已经开始生成");
+                            Math.Max(run.Progress, 36), "页面已经开始生成",
+                            DesignArtifactPhaseCodes.ComposingPage);
                     }
                     await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
@@ -276,7 +285,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 qualityEvidence,
                 allowScriptedControls: verifiedFiles != null);
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 88,
-                run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
+                run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页",
+                DesignArtifactPhaseCodes.SavingResult);
             executionCts.Token.ThrowIfCancellationRequested();
 
             if (run.ContractVersion == DesignArtifactContractVersions.Current)
@@ -333,6 +343,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             run.Status = RunStatuses.Done;
             run.Progress = 100;
+            run.PhaseCode = DesignArtifactPhaseCodes.Completed;
             run.Phase = run.Operation == DesignArtifactOperations.Edit ? "草稿已生成" : "网页已生成并保存";
             run.CompletedAt = DateTime.UtcNow;
             run.UpdatedAt = DateTime.UtcNow;
@@ -547,12 +558,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
         RunProjection projection,
         int progress,
-        string message)
+        string message,
+        string phaseCode)
     {
+        var now = DateTime.UtcNow;
         run.Progress = progress;
+        run.PhaseCode = phaseCode;
         run.Phase = message;
         run.Status = RunStatuses.Running;
-        run.UpdatedAt = DateTime.UtcNow;
+        run.FirstVisibleFeedbackAt ??= now;
+        run.LastProgressAt = now;
+        run.UpdatedAt = now;
         if (run.ContractVersion == DesignArtifactContractVersions.Current)
         {
             await publicLifecycle.AppendPhaseAsync(
@@ -560,7 +576,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
                 progress,
                 message,
-                CancellationToken.None);
+                CancellationToken.None,
+                phaseCode);
         }
         else if (!await PersistPhaseAsync(
                      db,
@@ -569,7 +586,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                      progress,
                      message,
                      run.UpdatedAt,
-                     CancellationToken.None))
+                     CancellationToken.None,
+                     phaseCode))
         {
             throw new DesignArtifactRunLeaseLostException(run.Id);
         }
@@ -577,7 +595,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             RunKinds.DesignArtifact,
             run.Id,
             "phase",
-            new { progress, message },
+            new { phaseCode, progress, message },
             RunTtl,
             CancellationToken.None));
     }
@@ -1452,17 +1470,22 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         int progress,
         string phase,
         DateTime updatedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? phaseCode = null)
     {
+        var update = Builders<DesignArtifactRun>.Update
+            .Set(x => x.Progress, progress)
+            .Set(x => x.Phase, phase)
+            .Set(x => x.LastProgressAt, updatedAt)
+            .Max(x => x.UpdatedAt, updatedAt);
+        if (!string.IsNullOrWhiteSpace(phaseCode))
+            update = update.Set(x => x.PhaseCode, phaseCode);
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && x.Status == RunStatuses.Running
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > updatedAt),
-            Builders<DesignArtifactRun>.Update
-                .Set(x => x.Progress, progress)
-                .Set(x => x.Phase, phase)
-                .Max(x => x.UpdatedAt, updatedAt),
+            update,
             cancellationToken: ct);
         return write.ModifiedCount == 1;
     }
@@ -1694,7 +1717,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 Builders<DesignArtifactRun>.Update
                     .Set(x => x.Status, RunStatuses.Error)
                     .Set(x => x.Error, interruptedMessage)
+                    .Set(x => x.PhaseCode, DesignArtifactPhaseCodes.Interrupted)
                     .Set(x => x.Phase, interruptedMessage)
+                    .Set(x => x.LastProgressAt, now)
                     .Set(x => x.UpdatedAt, now)
                     .Set(x => x.CompletedAt, now)
                     .Set(x => x.LeaseExpiresAt, null)
@@ -1940,6 +1965,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         && item.ProducedArtifactRevisionId == null),
                 Builders<DesignArtifactRun>.Update
                     .Set(item => item.Status, RunStatuses.Cancelled)
+                    .Set(item => item.PhaseCode, DesignArtifactPhaseCodes.Cancelled)
                     .Set(item => item.Phase, "设计任务已取消")
                     .Set(item => item.Error, null)
                     .Set(item => item.CancelledAt, cancelledAt)

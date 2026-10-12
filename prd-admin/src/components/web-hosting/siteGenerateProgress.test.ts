@@ -46,8 +46,8 @@ describe('生成工作台的进度契约', () => {
   it('consumes the MAP phase, incremental content, and terminal site event', () => {
     expect(parseSiteGenerationProgressEvent({
       event: 'phase',
-      data: '{"progress":35,"message":"正在组织页面"}',
-    })).toEqual({ kind: 'phase', progress: 35, message: '正在组织页面' });
+      data: '{"phaseCode":"composing-page","progress":35,"message":"内部文案"}',
+    })).toEqual({ kind: 'phase', phaseCode: 'composing-page', progress: 35, message: '正在搭建页面' });
     expect(parseSiteGenerationProgressEvent({
       event: 'delta',
       data: '{"text":"<main>"}',
@@ -59,16 +59,36 @@ describe('生成工作台的进度契约', () => {
     expect(resolveGeneratedSiteId(run({ artifactSiteId: 'site-map' }))).toBe('site-map');
   });
 
+  it('拒绝未知阶段码与原始推理事件进入用户可见过程', () => {
+    expect(parseSiteGenerationProgressEvent({
+      event: 'phase',
+      data: '{"phaseCode":"shell-command","progress":30,"message":"cat /workspace/index.html"}',
+    })).toEqual({ kind: 'unknown' });
+    expect(parseSiteGenerationProgressEvent({
+      event: 'thinking',
+      data: '{"text":"hidden chain of thought"}',
+    })).toEqual({ kind: 'unknown' });
+  });
+
   it('recovers an OpenDesign terminal result from its produced artifact identity', () => {
     expect(resolveGeneratedSiteId(run({
       runtime: 'open-design',
       artifactSiteId: null,
       producedArtifactSiteId: 'site-open-design',
     }))).toBe('site-open-design');
-    expect(parseSiteGenerationProgressEvent({
-      event: 'thinking',
-      data: '{"text":"正在读取远程工作区"}',
-    })).toEqual({ kind: 'thinking', text: '正在读取远程工作区' });
+  });
+
+  it('discovers active runs from the server and offers frozen-input restart', () => {
+    const generation = generationRunSource();
+    const edit = readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
+    for (const source of [generation, edit]) {
+      expect(source).toContain('getActiveDesignArtifactRun');
+      expect(source).toContain('restartDesignArtifactRun');
+    }
+    expect(generation).toContain("getActiveDesignArtifactRun({ operation: 'generate' })");
+    expect(edit).toContain("getActiveDesignArtifactRun({ operation: 'edit', targetSiteId: site.id })");
+    expect(generation).not.toContain("item.kind === 'thinking'");
+    expect(edit).not.toContain("event.event === 'thinking'");
   });
 
   it('keeps recovery inside the workbench when the public stream ends or fails', () => {

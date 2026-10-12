@@ -1,7 +1,9 @@
 namespace PrdAgent.Api.Services;
 
+using PrdAgent.Core.Models;
+
 /// <summary>一次要写进 run 的进度与阶段文案。</summary>
-public sealed record OpenDesignProgressUpdate(int Progress, string Phase);
+public sealed record OpenDesignProgressUpdate(int Progress, string PhaseCode, string Phase);
 
 /// <summary>
 /// 把 CDS 转来的 OpenDesign 阶段事件（status 事件的 reason / elapsedSeconds / attempt）
@@ -93,7 +95,10 @@ public sealed class OpenDesignStageProgress
 
         var target = TargetProgress(_macro, runningTick ? elapsed : 0);
         _progress = Math.Min(MaxProgress, Math.Max(_progress, target));
-        return new OpenDesignProgressUpdate(_progress, PhaseText(_macro, runningTick ? elapsed : null));
+        return new OpenDesignProgressUpdate(
+            _progress,
+            PhaseCode(_macro),
+            PhaseText(_macro, runningTick ? elapsed : null));
     }
 
     private static Macro? MacroOf(string? reason) => reason switch
@@ -147,6 +152,19 @@ public sealed class OpenDesignStageProgress
             _ => "OpenDesign 设计中",
         };
     }
+
+    private static string PhaseCode(Macro macro) => macro switch
+    {
+        Macro.Preparing => DesignArtifactPhaseCodes.PreparingWorkspace,
+        Macro.Importing => DesignArtifactPhaseCodes.ReadingSources,
+        Macro.Starting => DesignArtifactPhaseCodes.StartingDesign,
+        Macro.Designing => DesignArtifactPhaseCodes.ComposingPage,
+        Macro.Reviewing => DesignArtifactPhaseCodes.ReviewingPage,
+        Macro.Repairing => DesignArtifactPhaseCodes.RepairingQuality,
+        Macro.Collecting => DesignArtifactPhaseCodes.CollectingArtifact,
+        Macro.Committing => DesignArtifactPhaseCodes.CommittingArtifact,
+        _ => DesignArtifactPhaseCodes.PreparingWorkspace,
+    };
 
     internal static string FormatElapsed(int seconds)
         => seconds < 60 ? $"{seconds} 秒" : $"{seconds / 60} 分 {seconds % 60:D2} 秒";

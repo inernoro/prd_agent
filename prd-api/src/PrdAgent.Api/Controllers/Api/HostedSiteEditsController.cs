@@ -185,6 +185,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
 
         var runId = Guid.NewGuid().ToString("N");
+        var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
         try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
         catch (InvalidOperationException ex)
@@ -219,7 +220,12 @@ public sealed class HostedSiteEditsController : ControllerBase
             UserSuppliedContentHash = System.Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
+            PhaseCode = DesignArtifactPhaseCodes.Queued,
             Phase = "修改任务已进入队列",
+            FirstVisibleFeedbackAt = createdAt,
+            LastProgressAt = createdAt,
+            CreatedAt = createdAt,
+            UpdatedAt = createdAt,
         };
         if (runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex)
         {
@@ -254,7 +260,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                 RunKinds.DesignArtifact,
                 runId,
                 "phase",
-                new { progress = 2, message = "修改任务已进入队列" },
+                new { phaseCode = run.PhaseCode, progress = 2, message = "修改任务已进入队列" },
                 RunTtl,
                 CancellationToken.None);
         }
@@ -428,6 +434,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                 {
                     await WriteEventAsync(null, "phase", JsonSerializer.Serialize(new
                     {
+                        phaseCode = snapshot.PhaseCode,
                         progress = snapshot.Progress,
                         message = snapshot.Phase,
                     }), ct);
@@ -829,7 +836,11 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.Runtime,
         run.Title,
         run.Progress,
+        run.PhaseCode,
         run.Phase,
+        run.FirstVisibleFeedbackAt,
+        run.FirstPreviewAt,
+        run.LastProgressAt,
         artifactSiteId = run.ArtifactSiteId ?? run.ProducedArtifactSiteId,
         artifactRevisionId = run.ArtifactRevisionId ?? run.ProducedArtifactRevisionId,
         run.LinkedRunId,

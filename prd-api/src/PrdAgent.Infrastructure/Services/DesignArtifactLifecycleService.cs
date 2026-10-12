@@ -64,6 +64,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             Sequence = 1,
             Type = DesignArtifactLifecycleEventTypes.Run,
             Phase = "设计任务已开始",
+            PhaseCode = DesignArtifactPhaseCodes.StartingDesign,
             Progress = 0,
             OccurredAt = now,
             Authoritative = true,
@@ -89,7 +90,10 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             ParentPlanRunId = parentPlanRunId,
             ParentPlanContentHash = parentPlanContentHash,
             Progress = 0,
+            PhaseCode = DesignArtifactPhaseCodes.StartingDesign,
             Phase = runEvent.Phase!,
+            FirstVisibleFeedbackAt = now,
+            LastProgressAt = now,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -115,6 +119,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (!AdapterEventTypes.Contains(type))
             throw Invalid("adapter 只能追加非权威阶段事件");
         var phase = Required(request.Phase, "phase", 200);
+        var phaseCode = SafeToken(request.PhaseCode ?? DesignArtifactPhaseCodes.ComposingPage, "phaseCode", 64);
         if (request.Progress is < 0 or > 99)
             throw Invalid("adapter 事件进度必须介于 0 到 99");
 
@@ -135,7 +140,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             var now = DateTime.UtcNow;
             var updates = new BsonDocument
             {
+                { nameof(DesignArtifactRun.PhaseCode), phaseCode },
                 { nameof(DesignArtifactRun.Phase), phase },
+                { nameof(DesignArtifactRun.LastProgressAt), now },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             };
             if (request.Progress.HasValue)
@@ -153,7 +160,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 phase,
                 request.Progress,
                 false,
-                incrementLifecycle: false);
+                incrementLifecycle: false,
+                phaseCode: phaseCode);
             if (updated != null)
                 return updated.LifecycleEvents[^1];
         }
@@ -184,7 +192,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 { nameof(DesignArtifactRun.LeaseOwnerId), leaseOwner },
                 { nameof(DesignArtifactRun.LeaseExpiresAt), request.LeaseExpiresAt },
                 { nameof(DesignArtifactRun.HeartbeatAt), now },
+                { nameof(DesignArtifactRun.PhaseCode), DesignArtifactPhaseCodes.StartingDesign },
                 { nameof(DesignArtifactRun.Phase), "设计任务执行中" },
+                { nameof(DesignArtifactRun.LastProgressAt), now },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             },
             DesignArtifactLifecycleEventTypes.Phase,
@@ -235,8 +245,10 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 { nameof(DesignArtifactRun.ManifestValidation), receipt.ToBsonDocument() },
                 { nameof(DesignArtifactRun.VersionBoundary), boundary.ToBsonDocument() },
                 { nameof(DesignArtifactRun.Status), RunStatuses.Committing },
+                { nameof(DesignArtifactRun.PhaseCode), DesignArtifactPhaseCodes.CommittingArtifact },
                 { nameof(DesignArtifactRun.Phase), "产物清单已提交" },
                 { nameof(DesignArtifactRun.Progress), Math.Max(current.Progress, 95) },
+                { nameof(DesignArtifactRun.LastProgressAt), now },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             },
             DesignArtifactLifecycleEventTypes.Manifest,
@@ -271,7 +283,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         {
             { nameof(DesignArtifactRun.Status), RunStatuses.Done },
             { nameof(DesignArtifactRun.Progress), 100 },
+            { nameof(DesignArtifactRun.PhaseCode), DesignArtifactPhaseCodes.Completed },
             { nameof(DesignArtifactRun.Phase), isPlanning ? "设计规划已完成" : "设计产物已完成" },
+            { nameof(DesignArtifactRun.LastProgressAt), now },
             { nameof(DesignArtifactRun.CompletedAt), now },
             { nameof(DesignArtifactRun.UpdatedAt), now },
         };
@@ -600,7 +614,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         string? phase,
         int? progress,
         bool authoritative,
-        bool incrementLifecycle = true)
+        bool incrementLifecycle = true,
+        string? phaseCode = null)
     {
         var nextSequence = new BsonDocument("$add", new BsonArray
         {
@@ -614,6 +629,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             { nameof(DesignArtifactEventEnvelope.Sequence), nextSequence },
             { nameof(DesignArtifactEventEnvelope.Type), eventType },
             { nameof(DesignArtifactEventEnvelope.Phase), phase == null ? BsonNull.Value : phase },
+            { nameof(DesignArtifactEventEnvelope.PhaseCode), phaseCode == null ? BsonNull.Value : phaseCode },
             { nameof(DesignArtifactEventEnvelope.Progress), progress.HasValue ? progress.Value : BsonNull.Value },
             { nameof(DesignArtifactEventEnvelope.OccurredAt), DateTime.UtcNow },
             { nameof(DesignArtifactEventEnvelope.Authoritative), authoritative },
