@@ -274,6 +274,12 @@ test('VIDEO-009 刷新恢复必须创建并回读真实后端任务', () => {
     '刷新恢复必须从真实创建接口取得 runId');
   assert.match(block, /page\.reload\([\s\S]*?\/api\/video-agent\/runs\/\$\{encodeURIComponent\(runId\)\}/,
     '刷新后必须从未修改的真实接口回读同一 runId');
+  assert.match(block, /beforeReload\.status[\s\S]*?toMatch\(\/Queued\|Scripting\/i\)/,
+    '刷新开始前必须证明真实任务仍在执行，禁止用已完成任务冒充恢复');
+  assert.match(block, /afterReload\.phaseProgress[\s\S]*?toBeGreaterThanOrEqual\(beforeReload\.phaseProgress\)/,
+    '刷新后必须比较真实持久化进度，禁止只读取不断言');
+  assert.match(block, /restoredView[\s\S]*?toHaveAttribute\('data-progress', String\(afterReload\.phaseProgress\)\)/,
+    '刷新后页面必须展示与服务端回读一致的真实进度');
 });
 
 test('PR 变更模式同样遵守双环境矩阵策略', () => {

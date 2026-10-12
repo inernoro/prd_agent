@@ -2012,8 +2012,6 @@ public class VideoGenRunWorker : BackgroundService
             & fb.Eq($"Scenes.{sceneIdx}.JobId", submittedJobId)
             & fb.Eq($"Scenes.{sceneIdx}.RenderLeaseId", claimId),
             Builders<VideoGenRun>.Update
-                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
-                .Set(x => x.EndedAt, DateTime.UtcNow)
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Cancelled)
                 .Set($"Scenes.{sceneIdx}.Cost", cost)
                 .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
@@ -2022,14 +2020,36 @@ public class VideoGenRunWorker : BackgroundService
             cancellationToken: CancellationToken.None);
         if (cancelled.ModifiedCount != 1) return;
 
-        await UpdateProjectAsync(run, VideoProjectStatus.Draft);
-        await PublishEventAsync(run.Id, "run.cancelled", new { });
+        var sceneFb = Builders<VideoGenScene>.Filter;
+        var hasActiveSubmittedScene = fb.ElemMatch(
+            x => x.Scenes,
+            sceneFb.In(x => x.Status,
+                [SceneItemStatus.SubmittingClaimed, SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering])
+            | (sceneFb.In(x => x.Status, [SceneItemStatus.Submitting, SceneItemStatus.Polling])
+               & sceneFb.Regex(x => x.JobId, new BsonRegularExpression("^(?!claim:).+"))));
+        var runCancelled = await _db.VideoGenRuns.UpdateOneAsync(
+            fb.Eq(x => x.Id, run.Id)
+            & fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current)
+            & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+            & fb.Eq(x => x.CancelRequested, true)
+            & fb.Not(hasActiveSubmittedScene),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                .Set(x => x.EndedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        if (runCancelled.ModifiedCount == 1)
+        {
+            await UpdateProjectAsync(run, VideoProjectStatus.Draft);
+            await PublishEventAsync(run.Id, "run.cancelled", new { });
+        }
         _logger.LogInformation(
-            "VideoGen 已在上游任务终止后完成取消对账: runId={RunId}, scene={SceneIndex}, jobId={JobId}, cost={Cost}",
+            "VideoGen 已完成单镜取消对账: runId={RunId}, scene={SceneIndex}, jobId={JobId}, cost={Cost}, runCancelled={RunCancelled}",
             run.Id,
             sceneIdx,
             submittedJobId,
-            cost);
+            cost,
+            runCancelled.ModifiedCount == 1);
     }
 
     private async Task ReleaseCancelledSceneForReconciliationAsync(

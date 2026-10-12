@@ -987,6 +987,57 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task CancelEditingRun_WithTwoActiveScenes_ShouldWaitForEveryUpstreamJob()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun(
+            "cancel-two-active",
+            test.OwnerId,
+            SceneItemStatus.PollingClaimed,
+            SceneItemStatus.PollingClaimed);
+        run.Scenes[0].JobId = "upstream-job-first";
+        run.Scenes[0].RenderLeaseId = "lease:first";
+        run.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1);
+        run.Scenes[1].JobId = "upstream-job-second";
+        run.Scenes[1].RenderLeaseId = "lease:second";
+        run.Scenes[1].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(1);
+        await test.SaveRunAsync(run);
+
+        (await test.CreateService().CancelRunAsync(run.Id, run.OwnerAdminId, run.AppKey)).ShouldBeTrue();
+        test.VideoClient.Setup(client => client.GetStatusAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus { Status = "cancelled", Cost = 0.13 });
+
+        var requested = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        await test.CreateWorker().ProcessSceneRenderAsync(
+            requested,
+            0,
+            "lease:first",
+            resumeExistingJob: true);
+
+        var afterFirst = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        afterFirst.Status.ShouldBe(VideoGenRunStatus.Editing);
+        afterFirst.CancelRequested.ShouldBeTrue();
+        afterFirst.Scenes[0].Status.ShouldBe(SceneItemStatus.Cancelled);
+        afterFirst.Scenes[0].Cost.ShouldBe(0.13);
+        afterFirst.Scenes[1].Status.ShouldBe(SceneItemStatus.PollingClaimed);
+
+        await test.CreateWorker().ProcessSceneRenderAsync(
+            afterFirst,
+            1,
+            "lease:second",
+            resumeExistingJob: true);
+
+        var cancelled = await test.Context.VideoGenRuns.Find(x => x.Id == run.Id).SingleAsync();
+        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.Scenes.ShouldAllBe(scene => scene.Status == SceneItemStatus.Cancelled);
+        cancelled.Scenes.ShouldAllBe(scene => scene.Cost == 0.13);
+    }
+
+    [Fact]
     public async Task CancelEditingRun_WhenStatusCallFails_ShouldRemainRecoverableForReconciliation()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

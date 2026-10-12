@@ -535,7 +535,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   }
 
   return (
-    <div className={`video-console video-workbench ${editMode ? 'is-editing' : ''}`} aria-label="视频制作控制台" data-testid="video-console">
+    <div
+      className={`video-console video-workbench ${editMode ? 'is-editing' : ''}`}
+      aria-label="视频制作控制台"
+      data-testid="video-console"
+      data-run-id={run.id}
+      data-run-status={run.status}
+      data-phase={run.currentPhase}
+      data-progress={run.phaseProgress ?? 0}
+    >
       <header className="video-workbench__header">
         <div className="video-workbench__project">
           {onBack && (
@@ -1111,7 +1119,15 @@ const StoryboardProgressView: React.FC<{
   ];
 
   return (
-    <div className="video-storyboard-progress" aria-live="polite" data-testid="video-storyboard-progress">
+    <div
+      className="video-storyboard-progress"
+      aria-live="polite"
+      data-testid="video-storyboard-progress"
+      data-run-id={run.id}
+      data-run-status={run.status}
+      data-phase={run.currentPhase}
+      data-progress={run.phaseProgress ?? 0}
+    >
       <header>
         <div>
           {onBack && <button onClick={onBack} aria-label="返回作品列表"><ArrowLeft size={18} /></button>}

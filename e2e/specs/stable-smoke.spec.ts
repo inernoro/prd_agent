@@ -4843,9 +4843,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(beforeReload.id).toBe(runId);
       projectId = beforeReload.projectId || '';
       expect(projectId, '真实拆镜任务必须持久化关联项目').toBeTruthy();
+      expect(beforeReload.status, '刷新开始前必须仍是服务端真实长任务，不能用已完成页面冒充进度恢复')
+        .toMatch(/Queued|Scripting/i);
 
       const activeView = page.locator('[data-testid="video-storyboard-progress"], [data-testid="video-console"]').first();
       await expect(activeView, '真实任务提交后必须展示拆镜进度或已恢复的分镜编辑器').toBeVisible({ timeout: 30_000 });
+      await expect(activeView).toHaveAttribute('data-run-id', runId);
+      await expect(activeView).toHaveAttribute('data-run-status', beforeReload.status);
+      await expect(activeView).toHaveAttribute('data-phase', beforeReload.currentPhase || '');
+      await expect(activeView).toHaveAttribute('data-progress', String(beforeReload.phaseProgress));
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-VIDEO-CREATION-14',
         target: activeView,
@@ -4864,8 +4870,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
       expect(afterReload.id, '刷新后必须回读同一真实任务').toBe(runId);
       expect(afterReload.projectId, '刷新后不得切换到其他视频项目').toBe(projectId);
+      expect(afterReload.phaseProgress, '刷新后服务端进度不得倒退').toBeGreaterThanOrEqual(beforeReload.phaseProgress);
       const restoredView = page.locator('[data-testid="video-storyboard-progress"], [data-testid="video-console"]').first();
       await expect(restoredView, '刷新后必须从后端恢复同一视频任务').toBeVisible({ timeout: 30_000 });
+      await expect(restoredView).toHaveAttribute('data-run-id', runId);
+      await expect(restoredView).toHaveAttribute('data-run-status', afterReload.status);
+      await expect(restoredView).toHaveAttribute('data-phase', afterReload.currentPhase || '');
+      await expect(restoredView).toHaveAttribute('data-progress', String(afterReload.phaseProgress));
     } finally {
       if (runId && token) {
         const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
