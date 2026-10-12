@@ -356,10 +356,10 @@ export function readPreviewMirror(repoRoot: string): PreviewMirrorFile | null {
   if (parsed?.version !== PREVIEW_MIRROR_VERSION || !Array.isArray(parsed.projects)) {
     throw new Error(`preview-mirror.json 版本不认识（version=${String(parsed?.version)}）`);
   }
-  const hadHistory = parsed.projects.some(project => project.identityHistory?.length);
+  const storedProjects = JSON.stringify(parsed.projects);
   parsed.projects = parsed.projects.map(project => redactProject(importLegacyProjectSlug(project),
     project.mirror || { capturedAt: parsed.capturedAt, source: 'parent-cds' }));
-  if (hadHistory) writePreviewMirror(repoRoot, parsed);
+  if (JSON.stringify(parsed.projects) !== storedProjects) writePreviewMirror(repoRoot, parsed);
   return parsed;
 }
 

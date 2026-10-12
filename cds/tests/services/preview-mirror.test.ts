@@ -188,6 +188,20 @@ describe('脱敏（不带凭据）', () => {
     expect(JSON.stringify(loaded)).not.toContain('/private/local-repository');
   });
 
+  it('无审计历史的旧镜像也回写仓库脱敏，重读文件不再带凭据', () => {
+    const mirror = buildPreviewMirror(parentState(), { nowMs: Date.now() });
+    const file = writePreviewMirror(tmp, mirror);
+    mirror.projects[0].gitRepoUrl = 'deploy-token@host:owner/repo.git';
+    delete mirror.projects[0].identityHistory;
+    fs.writeFileSync(file, JSON.stringify(mirror));
+    const loaded = readPreviewMirror(tmp)!;
+    expect(loaded.projects[0].gitRepoUrl).toBe('host:owner/repo.git');
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('deploy-token');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).projects).toEqual(loaded.projects);
+    expect(readPreviewMirror(tmp)).toEqual(loaded);
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('deploy-token');
+  });
+
   it('只有用户名段 / 只有密码段的 URL（amqp://user@host、redis://:pass@host）脱敏与自检认同一组形状，父实例不会因为自检误判而不写（2026-09-20 实机）', () => {
     const parent = parentState();
     const now = new Date().toISOString();
