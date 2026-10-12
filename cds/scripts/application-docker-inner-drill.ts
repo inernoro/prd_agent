@@ -680,6 +680,13 @@ async function main(): Promise<void> {
           .map(line => [line[1], line[2]]));
       } finally { await handle.close(); }
     };
+    const scalarRead = async (filename: string) => {
+      const handle = await fs.open(filename, 'r');
+      try { const buffer = Buffer.alloc(64), { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        const value = buffer.subarray(0, bytesRead).toString('utf8').trim();
+        return bytesRead < buffer.length && /^\d+$/.test(value) ? value : null;
+      } finally { await handle.close(); }
+    };
     const diagnosticTasks = new Set<Promise<void>>();
     probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'), '/var/run/owned.sock', cancelBoundary,
       async (containerId, scheduledAfterHeaderMs) => {
@@ -693,6 +700,8 @@ async function main(): Promise<void> {
             daemonRead('/debug/pprof/goroutine?debug=2', 1024 * 1024),
             counterRead('/proc/1/io'), counterRead('/sys/fs/cgroup/cpu.stat'), counterRead('/sys/fs/cgroup/memory.events'),
             fs.readFile('/proc/1/comm', 'utf8'),
+            counterRead('/sys/fs/cgroup/memory.stat'),
+            scalarRead('/sys/fs/cgroup/memory.current'),
           ]);
           const inspect = results[0];
           if (inspect.status === 'fulfilled') {
@@ -716,6 +725,8 @@ async function main(): Promise<void> {
           }
           record.daemonPid1Verified = results[5].status === 'fulfilled' && results[5].value.trim() === 'dockerd';
           if (!record.daemonPid1Verified) record.daemonIo = null;
+          record.outerMemoryStat = results[6].status === 'fulfilled' ? results[6].value : null;
+          record.outerMemoryCurrentBytes = results[7].status === 'fulfilled' ? results[7].value : null;
           record.status = 'finished'; record.finishedAt = new Date().toISOString();
         })();
         diagnosticTasks.add(task); try { await task; } finally { diagnosticTasks.delete(task); }
@@ -730,6 +741,8 @@ async function main(): Promise<void> {
             daemonRead('/debug/pprof/goroutine?debug=2', 1024 * 1024),
             counterRead('/proc/1/io'), counterRead('/sys/fs/cgroup/cpu.stat'), counterRead('/sys/fs/cgroup/memory.events'),
             fs.readFile('/proc/1/comm', 'utf8'),
+            counterRead('/sys/fs/cgroup/memory.stat'),
+            scalarRead('/sys/fs/cgroup/memory.current'),
           ]);
           const inspect = results[0];
           if (inspect.status === 'fulfilled') {
@@ -754,6 +767,8 @@ async function main(): Promise<void> {
           }
           record.daemonPid1Verified = results[5].status === 'fulfilled' && results[5].value.trim() === 'dockerd';
           if (!record.daemonPid1Verified) record.daemonIo = null;
+          record.outerMemoryStat = results[6].status === 'fulfilled' ? results[6].value : null;
+          record.outerMemoryCurrentBytes = results[7].status === 'fulfilled' ? results[7].value : null;
           record.status = 'finished'; record.finishedAt = new Date().toISOString();
         })();
         diagnosticTasks.add(task); try { await task; } finally { diagnosticTasks.delete(task); }
@@ -1488,6 +1503,10 @@ async function main(): Promise<void> {
     try { report.remainingNetworksBeforeOwnedDaemonRemoval = JSON.parse(await docker(['network', 'ls', '--format', '{{json .}}']).then(s => '[' + s.split('\n').filter(Boolean).join(',') + ']')); }
     catch (error) { cleanupErrors.push(String(error)); }
     if (cleanupErrors.length) { report.cleanupErrors = cleanupErrors; report.verdict = 'failed'; process.exitCode = 1; }
+    const activeResources = process.getActiveResourcesInfo();
+    report.innerDriverActiveResourcesAtFinalization = { at: new Date().toISOString(), pid: process.pid,
+      count: activeResources.length, kinds: Object.fromEntries([...new Set(activeResources)].slice(0, 32)
+        .map(kind => [kind, activeResources.filter(value => value === kind).length])) };
     report.finishedAt = new Date().toISOString(); await fs.writeFile('/owned/output/docker-report.json', JSON.stringify(report, null, 2) + '\n');
   }
   assert.equal(report.ownedContainersRemoved, true);
