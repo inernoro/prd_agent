@@ -654,6 +654,101 @@ public sealed class HostedSiteEditsControllerTests
         Assert.Equal(JsonSerializer.Serialize(edit.DesignBrief), JsonSerializer.Serialize(restarted.DesignBrief));
         Assert.Equal(JsonSerializer.Serialize(edit.BrandPackage), JsonSerializer.Serialize(restarted.BrandPackage));
         Assert.Equal(JsonSerializer.Serialize(edit.DesignContextProvenance), JsonSerializer.Serialize(restarted.DesignContextProvenance));
+
+        const string editRevisionId = "revision-after-restart";
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == restarted.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.Status, RunStatuses.Done)
+                .Set(item => item.ArtifactSiteId, "site-a")
+                .Set(item => item.ArtifactRevisionId, editRevisionId));
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = editRevisionId,
+            SiteId = "site-a",
+            CreatedByUserId = source.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.AiEdit,
+            SourceRunId = restarted.Id,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Html = "<!doctype html><html><body><h1>第一次修改</h1></body></html>",
+            PublishedContentVersion = DateTime.UtcNow,
+        });
+        editable.Site.PublishedRevisionId = editRevisionId;
+
+        Assert.IsType<AcceptedResult>(await editController.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "再调整一次页脚",
+        }));
+        var followUp = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.Instruction == "再调整一次页脚")
+            .SingleAsync();
+        Assert.Equal(JsonSerializer.Serialize(source.DesignBrief), JsonSerializer.Serialize(followUp.DesignBrief));
+        Assert.Equal(JsonSerializer.Serialize(source.BrandPackage), JsonSerializer.Serialize(followUp.BrandPackage));
+        Assert.Equal(restarted.Id, followUp.DesignContextProvenance?.SourceRunId);
+        Assert.Equal(source.DesignBrief!.Fingerprint, followUp.DesignContextProvenance?.ParentDesignBriefFingerprint);
+        Assert.Equal(source.BrandPackage!.Fingerprint, followUp.DesignContextProvenance?.ParentBrandPackageFingerprint);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_GeneratedBaselineWithoutPublishedPointer_ShouldInheritSiteSourceAcrossSharing()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        const string baselineId = "baseline_site-a_638958000000000000";
+        var source = FrozenGeneratedRun("generated-with-unpublished-baseline", "owner-user", baselineId);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
+        var editable = BuildEditableEntry("<!doctype html><html><body><h1>新生成页面</h1></body></html>");
+        editable.Site.SourceType = "design-agent";
+        editable.Site.SourceRef = source.Id;
+        editable.Site.PublishedRevisionId = null;
+        editable.Site.Visibility = "public";
+        editable.Site.PublishedAt = DateTime.UtcNow;
+        editable.Site.SharedTeamIds = ["team-a"];
+        await fixture.Db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink
+        {
+            SiteId = editable.Site.Id,
+            ShareType = "single",
+            Purpose = "share",
+            CreatedBy = source.UserId,
+            Visibility = "public",
+        });
+        Assert.Empty(await fixture.Db.HostedSiteRevisions.Find(_ => true).ToListAsync());
+
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", source.UserId, CancellationToken.None))
+            .ReturnsAsync(editable);
+        var settings = new Mock<IDesignGenerationSettingsService>(MockBehavior.Strict);
+        var controller = BuildController(
+            fixture.Db,
+            source.UserId,
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            EmptyKnowledge(source.UserId).Object,
+            new Mock<IRunQueue>().Object,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "只调整首屏标题",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.Operation == DesignArtifactOperations.Edit)
+            .SingleAsync();
+        Assert.Equal(JsonSerializer.Serialize(source.DesignDirection), JsonSerializer.Serialize(edit.DesignDirection));
+        Assert.Equal(JsonSerializer.Serialize(source.DesignBrief), JsonSerializer.Serialize(edit.DesignBrief));
+        Assert.Equal(JsonSerializer.Serialize(source.BrandPackage), JsonSerializer.Serialize(edit.BrandPackage));
+        Assert.Equal(DesignArtifactContextSources.InheritedSiteSourceRun, edit.DesignContextProvenance?.Source);
+        Assert.Equal(source.Id, edit.DesignContextProvenance?.SourceRunId);
+        Assert.Equal(baselineId, edit.DesignContextProvenance?.SourceRevisionId);
+        Assert.Equal(source.DesignBrief!.Fingerprint, edit.DesignContextProvenance?.ParentDesignBriefFingerprint);
+        Assert.Equal(source.BrandPackage!.Fingerprint, edit.DesignContextProvenance?.ParentBrandPackageFingerprint);
+        Assert.Equal("personal:brand-a", edit.BrandPackage?.Ref);
+        Assert.Equal("personal-style", edit.BrandPackage?.Source);
+        Assert.Equal("minimal", edit.BrandPackage?.DesignSystemId);
+        Assert.Equal(source.BrandPackage.TokenContext, edit.BrandPackage?.TokenContext);
+        settings.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -662,6 +757,8 @@ public sealed class HostedSiteEditsControllerTests
     {
         await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
         var editable = BuildEditableEntry("<!doctype html><html><body>旧站点</body></html>");
+        editable.Site.SourceType = "team-copy";
+        editable.Site.SourceRef = "site-original";
         var sites = new Mock<IHostedSiteService>();
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(editable);
@@ -708,7 +805,8 @@ public sealed class HostedSiteEditsControllerTests
             Html = "<!doctype html><html><body>他人页面</body></html>",
         });
         var editable = BuildEditableEntry("<!doctype html><html><body>团队可编辑页面</body></html>");
-        editable.Site.PublishedRevisionId = revisionId;
+        editable.Site.SourceType = "design-agent";
+        editable.Site.SourceRef = other.Id;
         var sites = new Mock<IHostedSiteService>();
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(editable);
@@ -732,6 +830,44 @@ public sealed class HostedSiteEditsControllerTests
         Assert.Null(edit.DesignContextProvenance?.SourceRunId);
         Assert.NotEqual(other.BrandPackage?.Fingerprint, edit.BrandPackage?.Fingerprint);
         Assert.Equal("editorial", edit.BrandPackage?.Ref);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task CreateRun_ShouldNotInheritSiteSourceAcrossDeployments()
+    {
+        await using var fixture = await HostedSiteEditMongoFixture.CreateAsync();
+        var otherDeployment = FrozenGeneratedRun("other-deployment-run", "owner-user", "baseline-other");
+        otherDeployment.DeploymentSlug = "another-deployment";
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(otherDeployment);
+        var editable = BuildEditableEntry("<!doctype html><html><body>当前环境页面</body></html>");
+        editable.Site.SourceType = "design-agent";
+        editable.Site.SourceRef = otherDeployment.Id;
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
+            .ReturnsAsync(editable);
+        var settings = FallbackSettings();
+        var controller = BuildController(
+            fixture.Db,
+            "owner-user",
+            sites.Object,
+            EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
+            EmptyKnowledge("owner-user").Object,
+            new Mock<IRunQueue>().Object,
+            generationSettings: settings.Object);
+
+        Assert.IsType<AcceptedResult>(await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整当前环境页面",
+        }));
+
+        var edit = await fixture.Db.DesignArtifactRuns
+            .Find(item => item.DeploymentSlug == DeploymentScope.Current)
+            .SingleAsync();
+        Assert.Equal(DesignArtifactContextSources.LegacyEditDeterministicFallback, edit.DesignContextProvenance?.Source);
+        Assert.Null(edit.DesignContextProvenance?.SourceRunId);
+        Assert.NotEqual(otherDeployment.BrandPackage?.Fingerprint, edit.BrandPackage?.Fingerprint);
+        settings.Verify(service => service.FreezeAsync(null, CancellationToken.None), Times.Once);
     }
 
     [Fact]

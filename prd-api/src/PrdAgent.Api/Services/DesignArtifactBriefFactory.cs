@@ -55,13 +55,14 @@ public static class DesignArtifactBriefFactory
     }
 
     /// <summary>
-    /// 修改任务沿用目标站点已发布版本的完整冻结上下文。修改指令仍保留在新 Run.Instruction，
-    /// 不参与重算品牌或原始简报；来源指纹用于审计继承链。
+    /// 修改任务沿用目标站点权威来源的完整冻结上下文。修改指令仍保留在新 Run.Instruction，
+    /// 不参与重算品牌或原始简报；来源类型、版本和父指纹用于审计继承链。
     /// </summary>
-    public static bool TryInheritPublishedContext(
+    public static bool TryInheritFrozenContext(
         DesignArtifactRun target,
         DesignArtifactRun source,
-        string sourceRevisionId)
+        string contextSource,
+        string? sourceRevisionId)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(source);
@@ -74,9 +75,9 @@ public static class DesignArtifactBriefFactory
         target.BrandPackage = Clone(source.BrandPackage)!;
         target.DesignContextProvenance = new DesignArtifactContextProvenance
         {
-            Source = DesignArtifactContextSources.InheritedSiteRevision,
+            Source = contextSource,
             SourceRunId = source.Id,
-            SourceRevisionId = sourceRevisionId,
+            SourceRevisionId = string.IsNullOrWhiteSpace(sourceRevisionId) ? null : sourceRevisionId.Trim(),
             ParentDesignBriefFingerprint = source.DesignBrief.Fingerprint,
             ParentBrandPackageFingerprint = source.BrandPackage.Fingerprint,
         };

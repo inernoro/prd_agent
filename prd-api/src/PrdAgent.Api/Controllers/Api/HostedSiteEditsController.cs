@@ -178,7 +178,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                     : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
         }
 
-        var inheritedContext = await FindOwnedPublishedContextAsync(editable, userId);
+        var inheritedContext = await FindOwnedFrozenContextAsync(editable, userId);
         if (inheritedContext == null && _generationSettings != null)
         {
             try
@@ -236,9 +236,10 @@ public sealed class HostedSiteEditsController : ControllerBase
         };
         if (inheritedContext is { } inherited)
         {
-            DesignArtifactBriefFactory.TryInheritPublishedContext(
+            DesignArtifactBriefFactory.TryInheritFrozenContext(
                 run,
                 inherited.Run,
+                inherited.ContextSource,
                 inherited.RevisionId);
         }
         else
@@ -299,34 +300,120 @@ public sealed class HostedSiteEditsController : ControllerBase
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
     }
 
-    private async Task<(DesignArtifactRun Run, string RevisionId)?> FindOwnedPublishedContextAsync(
+    private async Task<FrozenDesignContext?> FindOwnedFrozenContextAsync(
         HostedSiteEditableEntry editable,
         string userId)
     {
+        // 这个入口编辑的是当前线上站点，不接受任意 draft id。若站点已有精确发布指针，先沿当前版本取来源。
         var revisionId = editable.Site.PublishedRevisionId?.Trim();
-        if (string.IsNullOrWhiteSpace(revisionId)) return null;
+        if (!string.IsNullOrWhiteSpace(revisionId))
+        {
+            var currentRevision = await FindOwnedRevisionContextAsync(
+                editable.Site.Id,
+                revisionId,
+                userId);
+            if (currentRevision != null) return currentRevision;
+        }
 
-        var revision = await _db.HostedSiteRevisions.Find(item =>
-                item.Id == revisionId
-                && item.SiteId == editable.Site.Id
-                && item.Status == HostedSiteRevisionStatuses.Published
-                && item.CreatedByUserId == userId)
+        // 新生成站点在用户发布版本或创建分享链接之前，PublishedRevisionId 合法为空；生成 Worker 已把
+        // design-agent + runId 写进站点来源，这才是该状态下不可歧义的权威关联。team-copy 等其他来源
+        // 明确不沿原站继承，避免跨站点或跨用户拿上下文。
+        var sourceRunId = string.Equals(editable.Site.SourceType, "design-agent", StringComparison.Ordinal)
+            ? editable.Site.SourceRef?.Trim()
+            : null;
+        if (!string.IsNullOrWhiteSpace(sourceRunId))
+        {
+            var source = await FindOwnedSourceRunAsync(
+                sourceRunId,
+                editable.Site.Id,
+                userId,
+                requiredRevisionId: null,
+                requireGenerateOperation: true);
+            if (source != null)
+            {
+                var sourceRevisionId = source.ArtifactRevisionId ?? source.ProducedArtifactRevisionId;
+                return new FrozenDesignContext(
+                    source,
+                    DesignArtifactContextSources.InheritedSiteSourceRun,
+                    sourceRevisionId);
+            }
+        }
+
+        // 兼容生成链已经写入 baseline、但旧站点来源字段不完整的记录。baseline id 由站点和
+        // ContentVersion 确定，不查询“最近一次 run”，因此不会在并发任务之间猜错来源。
+        var baselineId = $"baseline_{editable.Site.Id}_{editable.ContentVersion.Ticks}";
+        var baselineContext = await FindOwnedRevisionContextAsync(
+            editable.Site.Id,
+            baselineId,
+            userId,
+            HostedSiteRevisionSources.Baseline);
+        return baselineContext;
+    }
+
+    private async Task<FrozenDesignContext?> FindOwnedRevisionContextAsync(
+        string siteId,
+        string revisionId,
+        string userId,
+        string? requiredSource = null)
+    {
+        var revisionFilter = Builders<HostedSiteRevision>.Filter.Eq(item => item.Id, revisionId)
+                             & Builders<HostedSiteRevision>.Filter.Eq(item => item.SiteId, siteId)
+                             & Builders<HostedSiteRevision>.Filter.Eq(item => item.Status, HostedSiteRevisionStatuses.Published)
+                             & Builders<HostedSiteRevision>.Filter.Eq(item => item.CreatedByUserId, userId);
+        if (!string.IsNullOrWhiteSpace(requiredSource))
+            revisionFilter &= Builders<HostedSiteRevision>.Filter.Eq(item => item.Source, requiredSource);
+
+        var revision = await _db.HostedSiteRevisions.Find(revisionFilter)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (revision == null || string.IsNullOrWhiteSpace(revision.SourceRunId)) return null;
 
-        var sourceRunId = revision.SourceRunId.Trim();
-        var source = await _db.DesignArtifactRuns.Find(item =>
-                item.DeploymentSlug == DeploymentScope.Current
-                && item.Id == sourceRunId
-                && item.UserId == userId
-                && item.ArtifactType == DesignArtifactTypes.WebPage
-                && ((item.ArtifactSiteId == editable.Site.Id && item.ArtifactRevisionId == revisionId)
-                    || (item.ProducedArtifactSiteId == editable.Site.Id
-                        && item.ProducedArtifactRevisionId == revisionId)))
+        var source = await FindOwnedSourceRunAsync(
+            revision.SourceRunId.Trim(),
+            siteId,
+            userId,
+            revisionId,
+            requireGenerateOperation: false);
+        return source == null
+            ? null
+            : new FrozenDesignContext(
+                source,
+                DesignArtifactContextSources.InheritedSiteRevision,
+                revisionId);
+    }
+
+    private async Task<DesignArtifactRun?> FindOwnedSourceRunAsync(
+        string runId,
+        string siteId,
+        string userId,
+        string? requiredRevisionId,
+        bool requireGenerateOperation)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.UserId, userId)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, RunStatuses.Done)
+                     & Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactType, DesignArtifactTypes.WebPage)
+                     & (Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactSiteId, siteId)
+                        | Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, siteId));
+        if (requireGenerateOperation)
+            filter &= Builders<DesignArtifactRun>.Filter.Eq(item => item.Operation, DesignArtifactOperations.Generate);
+        if (!string.IsNullOrWhiteSpace(requiredRevisionId))
+        {
+            filter &= Builders<DesignArtifactRun>.Filter.Or(
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, requiredRevisionId),
+                Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, requiredRevisionId));
+        }
+
+        var source = await _db.DesignArtifactRuns.Find(filter)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (source?.DesignBrief == null || source.BrandPackage == null) return null;
-        return (source, revisionId);
+        return source;
     }
+
+    private sealed record FrozenDesignContext(
+        DesignArtifactRun Run,
+        string ContextSource,
+        string? RevisionId);
 
     internal static string ValidateEditInputCompatibility(HostedSiteEditableEntry editable)
     {

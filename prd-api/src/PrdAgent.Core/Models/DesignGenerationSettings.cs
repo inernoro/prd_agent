@@ -170,6 +170,7 @@ public static class DesignArtifactContextSources
 {
     public const string DeterministicNewRun = "deterministic-new-run";
     public const string InheritedSiteRevision = "inherited-site-revision";
+    public const string InheritedSiteSourceRun = "inherited-site-source-run";
     public const string LegacyEditDeterministicFallback = "legacy-edit-deterministic-fallback";
 }
 
