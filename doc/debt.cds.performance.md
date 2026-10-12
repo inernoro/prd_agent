@@ -1172,3 +1172,18 @@ APP01/eab十种镜像缓存与五个原成功CI作业推送摘要全部匹配；
 自有internal网络/无发布端口、新凭据/新空卷的数据前提中，原项目MySQL8.0实际新应用用户连接及空schema0表、Redis PONG已通过；Rabbit原15秒客户端诊断超时保留，原ExecIDs空、无OOM后同预算复查通过，未重启。业务应用容器、迁移、分支缺产物等待后恢复和完整组合仍未执行。仅T00完成，候选未上线、原preview4，完整STG02/03/T09、双版本同负载30分钟、六方向/A01–A12/48小时及L3原待决继续开放。
 
 错误分类候选已完成实际复测：原13配置仅为一项Web设置尚未发布的私有仓库引用，原编译准入器真实拉取后waiting/missing、整轮artifacts空；发布同一原CI manifest后ready、13配置/十个固定产物/十次pull，四worker共用一次，revision/平台/私有仓库digest全部核对。不是完整分支恢复或业务运行，不能抵扣正式A05。类型、构建、默认659文件9510项通过/19跳过87.74秒、文档/diff退出0；原首停机失败和未上线继续保留。
+
+
+## 固定372b8范围闸首败及真实业务首次启动
+
+原生38187892216终态失败，两构建成功。观测作业的失败点经官方step和orphan原report确认：15项模块回归通过后，原源码准备阶段严格范围检查失败，原实际12项变更比旧11项列表多出已批准的artifact-admission产品修正。物理孤儿回收尚未执行，后续filesystem/default-regression/branch-claim三段及原件均未执行；不是新产品FS故障，不用无差别重跑覆盖。候选只给原orphan及branch-claim两处范围列表补该唯一已确认文件，保留全量精确断言、旧基线/黄金、全部原命令和预算；12项结构核对通过，新原生尚未执行。
+
+延迟完整case继续失败，原strict0保存首败；创建后取消仅检查点有首停机6716ms/code0及精确core清理，原600秒客户端SIGPIPE/killed，最后app与Docker详报均缺失、原strict1拒收。额外部分身份核对只能证明officialZIP与362源/三driver/361编译/134Web，不替代缺件或最终零盘点/整体通过。79件封存artifact-docker29-classification-candidate，清单24feb61030a82b92983db02e0cc68e7b057f80f72433fb3d7605f85b51238127；上一76a25完整创建后取消限定通过仍只绑定旧固定case，不抵扣此批失败。
+
+真实eab API原镜像、原Java入口和原数据库/鉴权闸门已实际运行。原源明确允许验收run-scoped四库，因此只在自有internal网络的新MySQL创建符合原名称规则的四空库，新用户授权，所有原鉴权和Flyway验证门保留。原迁移历史实际411条、失败0；首次应用仍因隔离配置缺少必填IMP_INDEX_SECRET退出1，/health未ready，未归OOM或项目构建失败。已从原IndexSecretProvider核对Base64且至少32字节合同，新增密钥只在内存生成、通过环境注入，不写任务文件或日志，不复制shared值；第二次同源镜像在原迁移历史上启动，健康仍在观察，不声称冷启动/业务通过。
+
+仅T00完成，未上线、正式A项/48小时/完整STG02/03/T09/双窗口及六方向继续未通过，原L3待决保持。
+
+范围维护候选校验最终类型0；首默认全量在原project-db-isolation出现socket hang up、一失败9509通过，原日志保留，未修改该旧模块或放宽参数。相同源码原模块25项复核全通过，再跑同默认659文件9510项通过、19跳过84.97秒，原obsolete提示保留；docs/diff0。不是声称修复连接问题或新原生已通过。
+
+真实API第二次原/health已200、UP并返回完整eab提交；主库411条successful history包含原基线记录，原日志此次新applied63，两口径不混同；KeyVault另1条迁移实际成功。原first缺IndexSecret退出1保留；新32字节Base64只在内存生成和环境注入、不写任务文件，原入口/DB与鉴权/Flyway门未变。27件首次真实API及两库证据封存business-application-runtime-candidate，清单28d3f7bef2b54590de7f953588670a3ae7be50b1b74593eeef2c1f8ba57e881e。只证明原API及两库，另外库、四worker/前端、完整分支待产物恢复及T09/正式项/48小时仍欠。
