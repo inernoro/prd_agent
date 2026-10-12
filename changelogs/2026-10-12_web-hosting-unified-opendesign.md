@@ -13,3 +13,7 @@
 | test | prd-admin | 覆盖正常、慢速、失败、恢复与重开状态映射 |
 | fix | prd-api | 保留 OpenDesign 最终受信 HTML 用于持久化，同时继续阻止模型原文与隐式推理进入用户事件流 |
 | fix | prd-admin | 修复服务重启后冻结输入恢复门不轮询，运行环境健康时恢复原要求重启动作 |
+| feat | prd-api | 为网页生成与修改冻结版本化设计简报和品牌上下文，并让重开任务沿用同一输入指纹 |
+| feat | design-runtime | 将冻结简报与品牌 token 映射到 OpenDesign 任务，按规划、成型、检查修正三步执行 |
+| test | prd-api | 覆盖生成、修改、个人风格品牌映射、旧任务兼容与冻结输入重开 |
+| test | design-runtime | 覆盖简报品牌协议边界、必需事实完整保留和无依据量化事实拒绝 |

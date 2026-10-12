@@ -1804,6 +1804,22 @@ public sealed class DesignArtifactLifecycleServiceTests
             Error = HostedSiteEditRunWorker.RestartInterruptedMessage,
             Instruction = "生成产品发布页", Title = "产品发布页",
             DeploymentSlug = DeploymentScope.Current,
+            DesignBrief = new DesignArtifactDesignBrief
+            {
+                Goal = "生成产品发布页",
+                Audience = "产品用户",
+                PrimaryMessage = "产品发布页",
+                PrimaryAction = "了解产品",
+                BrandKitRef = "minimal",
+                Fingerprint = "brief1234567",
+            },
+            BrandPackage = new DesignArtifactBrandPackage
+            {
+                Ref = "minimal",
+                Source = "design-style-preset",
+                DesignSystemId = "minimal",
+                Fingerprint = "brand1234567",
+            },
         };
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
         var capability = new DesignArtifactProviderCapability(
@@ -1855,6 +1871,8 @@ public sealed class DesignArtifactLifecycleServiceTests
         var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
         Assert.Equal(source.Id, restarted.RestartedFromRunId);
         Assert.Equal(source.Instruction, restarted.Instruction);
+        Assert.Equal(source.DesignBrief.Fingerprint, restarted.DesignBrief?.Fingerprint);
+        Assert.Equal(source.BrandPackage.Fingerprint, restarted.BrandPackage?.Fingerprint);
         queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, firstId!, CancellationToken.None), Times.Once);
     }
 

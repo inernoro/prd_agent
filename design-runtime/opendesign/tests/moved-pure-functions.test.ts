@@ -14,8 +14,15 @@ import {
   computePublicArtifactRevision,
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
-import { buildOpenDesignCodexConfig, composeOpenDesignPrompts, parseDesignDirection } from '../src/prompts.js';
 import {
+  buildOpenDesignCodexConfig,
+  composeOpenDesignPrompts,
+  parseBrandPackage,
+  parseDesignBrief,
+  parseDesignDirection,
+} from '../src/prompts.js';
+import {
+  assertRequiredFactualCoverage,
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
   createArtifactQualityGate,
@@ -31,6 +38,92 @@ function digest(value: Buffer | string): string {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+describe('frozen MAP design brief and brand package', () => {
+  const brief = {
+    schemaVersion: 'map-design-brief-v1',
+    version: 1,
+    goal: '介绍季度重点工作',
+    audience: '全体员工',
+    primaryMessage: '三项工作按期推进',
+    primaryAction: '查看工作安排',
+    requiredSections: ['工作总览', '里程碑'],
+    optionalSections: ['常见问题'],
+    tone: '专业克制',
+    visualIntent: '清晰的信息层级',
+    brandKitRef: 'personal:brand-1',
+    brandKitVersion: 1,
+    responsiveRequirements: ['桌面与 390px 移动视口均可读'],
+    factualCoverageRequirements: {
+      requiredCoveragePercent: 100,
+      unsupportedFactsAllowed: false,
+      requiredFacts: ['第一项工作在 2026-10 完成。', '固定声明不得改写。'],
+      sourceContentHashes: ['source-hash'],
+    },
+    fingerprint: 'brief1234567',
+  };
+  const brand = {
+    schemaVersion: 'map-brand-package-v1',
+    version: 1,
+    ref: 'personal:brand-1',
+    source: 'personal-style',
+    designSystemId: 'minimal',
+    logo: 'reference/screenshot-01.png',
+    approvedColors: ['#112233', '#ffffff', '#cc5500'],
+    fonts: ['Source Han Serif SC', 'Inter'],
+    fixedStatements: ['固定声明不得改写。'],
+    forbiddenStyles: ['高饱和霓虹渐变'],
+    examples: ['hosted-site:example'],
+    tokenContext: { '--fg': '#112233', '--accent': '#cc5500', '--font-display': 'Source Han Serif SC' },
+    fingerprint: 'brand1234567',
+  };
+
+  it('parses versioned context and maps only task overrides onto the OpenDesign system', () => {
+    const parsedBrief = parseDesignBrief(brief)!;
+    const parsedBrand = parseBrandPackage(brand)!;
+    const prompts = composeOpenDesignPrompts({
+      platformRules: ['platform'],
+      direction: {
+        styleId: 'personal:brand-1', styleName: '品牌风格', designSystemId: 'minimal', reviewMode: 'light',
+        prompts: { generate: '创作', edit: '修改', review: '检查' }, promptFingerprint: 'direction123',
+      },
+      brief: parsedBrief,
+      brand: parsedBrand,
+      editingExistingPage: false,
+      hasReferenceImages: true,
+    });
+
+    expect(parsedBrand.designSystemId).toBe('minimal');
+    expect(prompts.systemPrompt).toContain('reference/screenshot-01.png');
+    expect(prompts.systemPrompt).toContain('#cc5500');
+    expect(prompts.systemPrompt).toContain('Source Han Serif SC');
+    expect(prompts.systemPrompt).toContain('固定声明不得改写。');
+    expect(prompts.systemPrompt).toContain('OpenDesign remains the design-system authority for minimal');
+    expect(prompts.systemPrompt).not.toContain('tokens.css');
+  });
+
+  it('enforces every required fact and keeps unsupported measured facts at zero', () => {
+    const required = parseDesignBrief(brief)!.factualCoverageRequirements.requiredFacts;
+    const supported = '<html><body><p>第一项工作在 2026-10 完成。</p><p>固定声明不得改写。</p></body></html>';
+    expect(() => assertRequiredFactualCoverage(supported, required)).not.toThrow();
+    expect(() => assertRequiredFactualCoverage(
+      '<html><body><p>第一项工作在 2026-10 完成。</p></body></html>', required,
+    )).toThrow(AgentWorkspaceRuntimeError);
+    expect(() => createArtifactQualityGate('第一项工作在 2026-10 完成。')(supported)).not.toThrow();
+    expect(() => createArtifactQualityGate('第一项工作在 2026-10 完成。')(
+      '<html><body><p>第一项工作在 2026-11 完成。</p><p>固定声明不得改写。</p></body></html>',
+    )).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it('keeps legacy tasks optional and rejects malformed serialization boundaries', () => {
+    expect(parseDesignBrief(undefined)).toBeUndefined();
+    expect(parseBrandPackage(undefined)).toBeUndefined();
+    expect(() => parseDesignBrief({ ...brief, version: 2 })).toThrow(AgentWorkspaceRuntimeError);
+    expect(() => parseBrandPackage({ ...brand, logo: '../logo.png' })).toThrow(AgentWorkspaceRuntimeError);
+    expect(() => parseBrandPackage({ ...brand, tokenContext: { color: '#112233' } })).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+});
 
 describe('source-backed measured fact preservation', () => {
   const source = '共设24个阅读座位，其中6个靠窗座位；靠窗座位包含在24个总座位内，不能相加。邻里共读：每场最多12人。';

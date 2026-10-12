@@ -309,6 +309,7 @@ public sealed class DesignArtifactsController : ControllerBase
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
         };
+        DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
 
@@ -1009,6 +1010,23 @@ public sealed class DesignArtifactsController : ControllerBase
         designSystemId = run.DesignDirection?.DesignSystemId,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,
         reviewMode = run.DesignDirection?.ReviewMode,
+        designBrief = run.DesignBrief == null ? null : new
+        {
+            run.DesignBrief.SchemaVersion,
+            run.DesignBrief.Version,
+            run.DesignBrief.Fingerprint,
+            run.DesignBrief.BrandKitRef,
+            run.DesignBrief.BrandKitVersion,
+        },
+        brandPackage = run.BrandPackage == null ? null : new
+        {
+            run.BrandPackage.SchemaVersion,
+            run.BrandPackage.Version,
+            run.BrandPackage.Ref,
+            run.BrandPackage.Source,
+            run.BrandPackage.DesignSystemId,
+            run.BrandPackage.Fingerprint,
+        },
         uploadedSources = run.UploadedSources?.Select(x => new { x.AttachmentId, x.FileName, x.ContentHash }),
         run.Title,
         run.Progress,
@@ -1084,6 +1102,8 @@ public sealed class DesignArtifactsController : ControllerBase
         KnowledgeReferences = source.KnowledgeReferences,
         KnowledgeOriginals = source.KnowledgeOriginals,
         DesignDirection = source.DesignDirection,
+        DesignBrief = source.DesignBrief,
+        BrandPackage = source.BrandPackage,
         UploadedSources = source.UploadedSources,
         ReferenceImages = source.ReferenceImages,
         Progress = 2,

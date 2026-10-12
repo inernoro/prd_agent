@@ -45,8 +45,10 @@ public static class DesignGenerationDefaults
 - 如果本次指定了设计系统，严格使用它的配色、字体、间距与组件语言。
 不要反复列目录，不要逐个打开与任务无关的示例文件。
 
-二、怎么写（一次写成）
-想清楚信息结构后，直接把完整页面写入 /workspace/index.html。不要先写草稿再整页重写，也不要把页面只贴在回复里。
+二、怎么写（先规划、再成型、再检查修正）
+- 先按 task.json 的设计简报规划信息层级、必需事实、品牌约束与响应式结构；
+- 再把完整页面成型到 /workspace/index.html，不要把页面只贴在回复里；
+- 最后重读任务书、全部事实来源和成品，逐项检查并修正遗漏或不一致。
 
 三、视觉要求
 - 首屏一句话讲清这份内容最重要的结论，并配一组来自原文的关键数字；
@@ -62,6 +64,7 @@ public static class DesignGenerationDefaults
     public const string EditPrompt = """
 你在修改一张已经发布的网页。
 
+- 先规划本次修改影响的元素、事实与品牌约束，再做小范围修改，最后检查并修正；
 - 只改用户点名的部分；没点名的文字、数字、结构与样式逐字保留；
 - 用小范围的定点编辑，不要整页重写；
 - 如果附带了截图（/workspace/reference/ 下的图片），先看截图找到用户指出的位置，再到 index.html 里定位对应元素修改；截图只是视觉参考，不是事实来源；
@@ -271,6 +274,14 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             GeneratePrompt = generatePrompt,
             EditPrompt = settings.EditPrompt,
             ReviewPrompt = settings.ReviewPrompt,
+            BrandSource = "personal-style",
+            BrandColors = style.Swatches.Count > 0 ? style.Swatches.ToList() : DerivedSwatches(baseEntry),
+            BrandFonts = style.Fonts.Count > 0
+                ? style.Fonts.ToList()
+                : new List<string> { baseEntry.Fonts.Display, baseEntry.Fonts.Body },
+            BrandExamples = string.IsNullOrWhiteSpace(style.SourceSiteId)
+                ? new List<string>()
+                : new List<string> { $"hosted-site:{style.SourceSiteId}" },
         };
         direction.PromptFingerprint = Fingerprint(direction);
         return direction;
@@ -465,6 +476,9 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             GeneratePrompt = settings.GeneratePrompt,
             EditPrompt = settings.EditPrompt,
             ReviewPrompt = settings.ReviewPrompt,
+            BrandSource = "design-style-preset",
+            // 生效设置的色块已经从 OpenDesign 快照派生；字体没有任务级覆盖时继续使用设计系统自身 tokens。
+            BrandColors = style.Swatches.ToList(),
         };
         direction.PromptFingerprint = Fingerprint(direction);
         return direction;
@@ -490,6 +504,9 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             GeneratePrompt = settings.GeneratePrompt,
             EditPrompt = settings.EditPrompt,
             ReviewPrompt = settings.ReviewPrompt,
+            BrandSource = "design-system-catalog",
+            BrandColors = DerivedSwatches(entry),
+            BrandFonts = CatalogFonts(entry),
         };
         direction.PromptFingerprint = Fingerprint(direction);
         return direction;
@@ -505,7 +522,16 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             direction.ReviewMode,
             direction.GeneratePrompt,
             direction.EditPrompt,
-            direction.ReviewPrompt);
+            direction.ReviewPrompt,
+            direction.BrandSource,
+            string.Join('\u001e', direction.BrandColors),
+            string.Join('\u001e', direction.BrandFonts),
+            string.Join('\u001e', direction.BrandExamples));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant()[..12];
     }
+
+    private static List<string> CatalogFonts(DesignSystemEntry? system)
+        => system == null
+            ? new List<string>()
+            : new List<string> { system.Fonts.Display, system.Fonts.Body };
 }

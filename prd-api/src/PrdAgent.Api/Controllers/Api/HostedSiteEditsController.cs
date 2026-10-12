@@ -227,6 +227,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
         };
+        DesignArtifactBriefFactory.Freeze(run, editable.Html);
         if (runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex)
         {
             try
@@ -857,6 +858,23 @@ public sealed class HostedSiteEditsController : ControllerBase
         styleName = run.DesignDirection?.StyleName,
         promptFingerprint = run.DesignDirection?.PromptFingerprint,
         reviewMode = run.DesignDirection?.ReviewMode,
+        designBrief = run.DesignBrief == null ? null : new
+        {
+            run.DesignBrief.SchemaVersion,
+            run.DesignBrief.Version,
+            run.DesignBrief.Fingerprint,
+            run.DesignBrief.BrandKitRef,
+            run.DesignBrief.BrandKitVersion,
+        },
+        brandPackage = run.BrandPackage == null ? null : new
+        {
+            run.BrandPackage.SchemaVersion,
+            run.BrandPackage.Version,
+            run.BrandPackage.Ref,
+            run.BrandPackage.Source,
+            run.BrandPackage.DesignSystemId,
+            run.BrandPackage.Fingerprint,
+        },
         uploadedSources = run.UploadedSources?.Select(item => new { item.AttachmentId, item.FileName, item.ContentHash }),
         referenceImages = run.ReferenceImages?.Select(item => new { item.AttachmentId, item.FileName, item.MimeType, item.Size }),
         knowledgeReferences = run.KnowledgeReferences.Select(item => new

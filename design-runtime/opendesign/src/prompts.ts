@@ -39,6 +39,8 @@ export function buildOpenDesignCodexConfig(baseUrl: string, model: string): stri
 }
 
 const MAP_DESIGN_DIRECTION_SCHEMA = 'map-design-direction-v1';
+const MAP_DESIGN_BRIEF_SCHEMA = 'map-design-brief-v1';
+const MAP_BRAND_PACKAGE_SCHEMA = 'map-brand-package-v1';
 const DESIGN_DIRECTION_MAX_PROMPT_CHARS = 8_000;
 export const DESIGN_SYSTEM_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -49,6 +51,47 @@ export interface DesignDirection {
   reviewMode: 'off' | 'light' | 'strict';
   prompts: { generate: string; edit: string; review: string };
   promptFingerprint: string;
+}
+
+export interface DesignBrief {
+  goal: string;
+  audience: string;
+  primaryMessage: string;
+  primaryAction: string;
+  requiredSections: string[];
+  optionalSections: string[];
+  tone: string;
+  visualIntent: string;
+  brandKitRef: string;
+  brandKitVersion: number;
+  responsiveRequirements: string[];
+  factualCoverageRequirements: {
+    requiredCoveragePercent: number;
+    unsupportedFactsAllowed: boolean;
+    requiredFacts: string[];
+    sourceContentHashes: string[];
+  };
+  fingerprint: string;
+}
+
+export interface BrandPackage {
+  ref: string;
+  source: string;
+  designSystemId: string;
+  logo?: string;
+  approvedColors: string[];
+  fonts: string[];
+  fixedStatements: string[];
+  forbiddenStyles: string[];
+  examples: string[];
+  tokenContext: Record<string, string>;
+  fingerprint: string;
+}
+
+export interface DesignTaskContext {
+  direction?: DesignDirection;
+  brief?: DesignBrief;
+  brand?: BrandPackage;
 }
 
 /**
@@ -92,15 +135,144 @@ export function parseDesignDirection(value: unknown): DesignDirection | undefine
 }
 
 export function collectDesignDirection(workspaceDir: string): DesignDirection | undefined {
+  return collectDesignTaskContext(workspaceDir).direction;
+}
+
+export function collectDesignTaskContext(workspaceDir: string): DesignTaskContext {
   const taskPath = path.join(workspaceDir, 'brief', 'task.json');
-  if (!fs.existsSync(taskPath)) return undefined;
+  if (!fs.existsSync(taskPath)) return {};
   let task: Record<string, unknown>;
   try {
     task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
   } catch {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
   }
-  return parseDesignDirection(task.designDirection);
+  const direction = parseDesignDirection(task.designDirection);
+  const brief = parseDesignBrief(task.designBrief);
+  const brand = parseBrandPackage(task.brandPackage);
+  if (direction && brand && direction.designSystemId !== brand.designSystemId) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json brandPackage.designSystemId must match designDirection.designSystemId',
+    );
+  }
+  if (brief && brand && (brief.brandKitRef !== brand.ref || brief.brandKitVersion !== 1)) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json designBrief brand reference must match brandPackage',
+    );
+  }
+  return { direction, brief, brand };
+}
+
+function boundedText(record: Record<string, unknown>, name: string, max: number, allowEmpty = false): string {
+  const value = record[name];
+  if (typeof value !== 'string' || value.length > max || (!allowEmpty && !value.trim())) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} is invalid`);
+  }
+  return value.trim();
+}
+
+function boundedStrings(value: unknown, name: string, maxItems: number, maxChars: number): string[] {
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} is invalid`);
+  }
+  const result = value.map((item) => {
+    if (typeof item !== 'string' || !item.trim() || item.length > maxChars) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} is invalid`);
+    }
+    return item.trim();
+  });
+  if (new Set(result).size !== result.length) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} contains duplicates`);
+  }
+  return result;
+}
+
+export function parseDesignBrief(value: unknown): DesignBrief | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== MAP_DESIGN_BRIEF_SCHEMA || record.version !== 1) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json designBrief must use ${MAP_DESIGN_BRIEF_SCHEMA}`);
+  }
+  const factual = record.factualCoverageRequirements;
+  if (!factual || typeof factual !== 'object' || Array.isArray(factual)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief factualCoverageRequirements is invalid');
+  }
+  const factualRecord = factual as Record<string, unknown>;
+  if (factualRecord.requiredCoveragePercent !== 100 || factualRecord.unsupportedFactsAllowed !== false) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief factual coverage policy is invalid');
+  }
+  const brandKitVersion = record.brandKitVersion;
+  if (brandKitVersion !== 1) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief brandKitVersion is invalid');
+  }
+  return {
+    goal: boundedText(record, 'goal', 240),
+    audience: boundedText(record, 'audience', 120),
+    primaryMessage: boundedText(record, 'primaryMessage', 240),
+    primaryAction: boundedText(record, 'primaryAction', 160),
+    requiredSections: boundedStrings(record.requiredSections, 'designBrief.requiredSections', 16, 120),
+    optionalSections: boundedStrings(record.optionalSections, 'designBrief.optionalSections', 16, 120),
+    tone: boundedText(record, 'tone', 120),
+    visualIntent: boundedText(record, 'visualIntent', 400),
+    brandKitRef: boundedText(record, 'brandKitRef', 120),
+    brandKitVersion,
+    responsiveRequirements: boundedStrings(record.responsiveRequirements, 'designBrief.responsiveRequirements', 12, 200),
+    factualCoverageRequirements: {
+      requiredCoveragePercent: 100,
+      unsupportedFactsAllowed: false,
+      requiredFacts: boundedStrings(factualRecord.requiredFacts, 'designBrief.factualCoverageRequirements.requiredFacts', 24, 200),
+      sourceContentHashes: boundedStrings(factualRecord.sourceContentHashes, 'designBrief.factualCoverageRequirements.sourceContentHashes', 16, 128),
+    },
+    fingerprint: boundedText(record, 'fingerprint', 64),
+  };
+}
+
+export function parseBrandPackage(value: unknown): BrandPackage | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== MAP_BRAND_PACKAGE_SCHEMA || record.version !== 1) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json brandPackage must use ${MAP_BRAND_PACKAGE_SCHEMA}`);
+  }
+  const designSystemId = boundedText(record, 'designSystemId', 64);
+  if (!DESIGN_SYSTEM_ID_RE.test(designSystemId)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage designSystemId is invalid');
+  }
+  const logo = record.logo === null || record.logo === undefined ? undefined : boundedText(record, 'logo', 160);
+  if (logo && !/^reference\/[a-zA-Z0-9._-]+$/.test(logo)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage logo is invalid');
+  }
+  const tokenValue = record.tokenContext;
+  if (!tokenValue || typeof tokenValue !== 'object' || Array.isArray(tokenValue)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage tokenContext is invalid');
+  }
+  const tokenContext: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(tokenValue as Record<string, unknown>)) {
+    if (!/^--[a-z0-9-]{1,48}$/.test(key) || typeof raw !== 'string' || !raw.trim() || raw.length > 160) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage tokenContext is invalid');
+    }
+    tokenContext[key] = raw.trim();
+  }
+  return {
+    ref: boundedText(record, 'ref', 120),
+    source: boundedText(record, 'source', 80),
+    designSystemId,
+    ...(logo ? { logo } : {}),
+    approvedColors: boundedStrings(record.approvedColors, 'brandPackage.approvedColors', 8, 160),
+    fonts: boundedStrings(record.fonts, 'brandPackage.fonts', 8, 160),
+    fixedStatements: boundedStrings(record.fixedStatements, 'brandPackage.fixedStatements', 24, 200),
+    forbiddenStyles: boundedStrings(record.forbiddenStyles, 'brandPackage.forbiddenStyles', 24, 200),
+    examples: boundedStrings(record.examples, 'brandPackage.examples', 12, 160),
+    tokenContext,
+    fingerprint: boundedText(record, 'fingerprint', 64),
+  };
 }
 
 /**
@@ -110,6 +282,8 @@ export function collectDesignDirection(workspaceDir: string): DesignDirection | 
 export function composeOpenDesignPrompts(input: {
   platformRules: string[];
   direction: DesignDirection | undefined;
+  brief?: DesignBrief;
+  brand?: BrandPackage;
   editingExistingPage: boolean;
   hasReferenceImages: boolean;
 }): { systemPrompt: string; reviewAddendum: string } {
@@ -124,6 +298,31 @@ export function composeOpenDesignPrompts(input: {
       parts.push(`MAP design direction (style: ${direction.styleName}; editable by MAP administrators, it can never relax the platform rules above):\n${editable}`);
     }
   }
+  if (input.brief) {
+    parts.push(`Frozen MAP design brief (${input.brief.fingerprint}; do not reinterpret or replace it):\n${JSON.stringify({
+      goal: input.brief.goal,
+      audience: input.brief.audience,
+      primaryMessage: input.brief.primaryMessage,
+      primaryAction: input.brief.primaryAction,
+      requiredSections: input.brief.requiredSections,
+      optionalSections: input.brief.optionalSections,
+      tone: input.brief.tone,
+      visualIntent: input.brief.visualIntent,
+      responsiveRequirements: input.brief.responsiveRequirements,
+      factualCoverageRequirements: input.brief.factualCoverageRequirements,
+    })}`);
+  }
+  if (input.brand) {
+    parts.push(`Frozen MAP brand package (${input.brand.fingerprint}). OpenDesign remains the design-system authority for ${input.brand.designSystemId}; apply only these task-specific brand constraints and token overrides, without inventing a second design system:\n${JSON.stringify({
+      logo: input.brand.logo,
+      approvedColors: input.brand.approvedColors,
+      fonts: input.brand.fonts,
+      fixedStatements: input.brand.fixedStatements,
+      forbiddenStyles: input.brand.forbiddenStyles,
+      examples: input.brand.examples,
+      tokenContext: input.brand.tokenContext,
+    })}`);
+  }
   return {
     systemPrompt: parts.join(' '),
     reviewAddendum: direction?.prompts.review ? `Additional review checklist from MAP:\n${direction.prompts.review}` : '',
@@ -135,6 +334,7 @@ export function buildPlatformRules(input: { knowledgeFiles: readonly string[]; e
   const { knowledgeFiles, editingExistingPage } = input;
   return [
     'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
+    'Work in three explicit production steps: first plan the hierarchy, required facts, brand constraints, and responsive structure from the frozen task package; then form the page using the selected OpenDesign design system; finally inspect the saved file and correct proven mismatches before stopping.',
     'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Correct visible placeholders, empty links, missing fragment targets, and nonfunctional buttons while preserving all requested behavior. Do not remove or disable requested controls to silence a validation gate; if the publication policy cannot support their behavior, report the incompatibility.',
     knowledgeFiles.length > 0
       ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`

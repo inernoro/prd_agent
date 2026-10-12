@@ -43,11 +43,12 @@ import {
   buildPlatformRules,
   buildRepairMessage,
   buildReviewMessage,
-  collectDesignDirection,
+  collectDesignTaskContext,
   composeOpenDesignPrompts,
 } from './prompts.js';
 import {
   MAX_QUALITY_REPAIR_ATTEMPTS,
+  assertRequiredFactualCoverage,
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
   collectArtifactQualityEvidence,
@@ -374,12 +375,15 @@ export class DesignTaskExecutor {
     let previewPusher: PreviewPusher | undefined;
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
-      const designDirection = collectDesignDirection(workspaceDir);
+      const designContext = collectDesignTaskContext(workspaceDir);
+      const designDirection = designContext.direction;
       const hasReferenceImages = prepared.inputFiles.some((file) => file.path.startsWith('reference/'));
       const platformRules = buildPlatformRules({ knowledgeFiles, editingExistingPage });
       const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
         platformRules,
         direction: designDirection,
+        brief: designContext.brief,
+        brand: designContext.brand,
         editingExistingPage,
         hasReferenceImages,
       });
@@ -391,7 +395,9 @@ export class DesignTaskExecutor {
         model: model.model,
         message,
         systemPrompt,
-        ...(designDirection ? { designSystemId: designDirection.designSystemId } : {}),
+        ...(designContext.brand || designDirection
+          ? { designSystemId: designContext.brand?.designSystemId ?? designDirection!.designSystemId }
+          : {}),
       });
       previewPusher = this.createPreviewPusher(task, executionDeadline, onStage);
       onStage('open_design_run_starting', { projectId });
@@ -495,6 +501,10 @@ export class DesignTaskExecutor {
           hardenedHtml = checkArtifactQuality(
             outputHtml.toString('utf8'),
             collectedFiles.map((file) => file.path),
+          );
+          assertRequiredFactualCoverage(
+            hardenedHtml,
+            designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
           );
           break;
         } catch (error) {

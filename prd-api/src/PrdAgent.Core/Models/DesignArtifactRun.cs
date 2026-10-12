@@ -252,6 +252,14 @@ public class DesignArtifactRun
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactDesignDirection? DesignDirection { get; set; }
 
+    /// <summary>任务开始时确定性形成并冻结的设计简报。旧运行缺失时只读兼容，不补写。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactDesignBrief? DesignBrief { get; set; }
+
+    /// <summary>由既有设计方向、个人风格、资料与附件映射出的品牌包；不复制 OpenDesign 设计系统。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactBrandPackage? BrandPackage { get; set; }
+
     /// <summary>直接上传的文档（事实来源，与知识库引用并列；不写进站点的知识来源记录）。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public List<DesignUploadedSource>? UploadedSources { get; set; }

@@ -2635,10 +2635,12 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign could not prepare its session-scoped MAP model configuration',
       );
     }
-    const designDirection = collectDesignDirection(handle.workspaceDir);
+    const designContext = collectDesignTaskContext(handle.workspaceDir);
+    const designDirection = designContext.direction;
     const hasReferenceImages = handle.inputFiles.some((file) => file.path.startsWith('reference/'));
     const platformRules = [
       'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
+      'Work in three explicit production steps: first plan the hierarchy, required facts, brand constraints, and responsive structure from the frozen task package; then form the page using the selected OpenDesign design system; finally inspect the saved file and correct proven mismatches before stopping.',
       'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Correct visible placeholders, empty links, missing fragment targets, and nonfunctional buttons while preserving all requested behavior. Do not remove or disable requested controls to silence a validation gate; if the publication policy cannot support their behavior, report the incompatibility.',
       knowledgeFiles.length > 0
         ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
@@ -2658,6 +2660,8 @@ export class AgentWorkspaceSessionRuntime {
     const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
       platformRules,
       direction: designDirection,
+      brief: designContext.brief,
+      brand: designContext.brand,
       editingExistingPage,
       hasReferenceImages,
     });
@@ -2669,7 +2673,9 @@ export class AgentWorkspaceSessionRuntime {
       model: model.model,
       message,
       systemPrompt,
-      ...(designDirection ? { designSystemId: designDirection.designSystemId } : {}),
+      ...(designContext.brand || designDirection
+        ? { designSystemId: designContext.brand?.designSystemId ?? designDirection!.designSystemId }
+        : {}),
     });
     const previewPusher = this.createPreviewPusher(handle, transferToken, executionDeadline, onStage);
     onStage('open_design_run_starting', { projectId });
@@ -2787,6 +2793,10 @@ export class AgentWorkspaceSessionRuntime {
           hardenedHtml = checkArtifactQuality(
             outputHtml.toString('utf8'),
             collectedFiles.map((file) => file.path),
+          );
+          assertRequiredFactualCoverage(
+            hardenedHtml,
+            designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
           );
           break;
         } catch (error) {
@@ -4004,6 +4014,12 @@ const inertButtonLocationHint = (details: Record<string, unknown> | undefined): 
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
+  if (message === 'index.html omitted a required fact from the frozen design brief') {
+    return {
+      code: 'required_fact_missing',
+      instruction: 'Read designBrief.factualCoverageRequirements.requiredFacts in /workspace/brief/task.json and restore every required statement in visible page text exactly once or more. Do not invent surrounding claims.',
+    };
+  }
   if (message === 'index.html contains a measured claim with unresolved source context'
     || message === 'index.html dropped a retained source-backed measured claim') {
     const missing = message === 'index.html dropped a retained source-backed measured claim';
@@ -4152,6 +4168,27 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
     };
   }
   return undefined;
+}
+
+/** 冻结简报明确标为必需的事实必须全部出现在可见文本中；不把事实正文写进错误或日志。 */
+export function assertRequiredFactualCoverage(rawHtml: string, requiredFacts: readonly string[]): void {
+  if (requiredFacts.length === 0) return;
+  const visible = normalizeRequiredFactText(extractVisibleHtmlText(rawHtml));
+  for (let index = 0; index < requiredFacts.length; index += 1) {
+    const required = normalizeRequiredFactText(requiredFacts[index]);
+    if (required && !visible.includes(required)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html omitted a required fact from the frozen design brief',
+        false,
+        { requiredFactOrdinal: index + 1, requiredFactCount: requiredFacts.length },
+      );
+    }
+  }
+}
+
+function normalizeRequiredFactText(value: string): string {
+  return decodeHtmlText(value).replace(/\s+/g, ' ').trim();
 }
 
 /** Version 1 canonical bytes shared with HostedSiteRevisionRules.NormalizeGeneratedHtml. */
@@ -5134,6 +5171,8 @@ function collectArtifactQualityEvidence(workspaceDir: string, includeUserSupplie
 }
 
 const MAP_DESIGN_DIRECTION_SCHEMA = 'map-design-direction-v1';
+const MAP_DESIGN_BRIEF_SCHEMA = 'map-design-brief-v1';
+const MAP_BRAND_PACKAGE_SCHEMA = 'map-brand-package-v1';
 const DESIGN_DIRECTION_MAX_PROMPT_CHARS = 8_000;
 const DESIGN_SYSTEM_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -5144,6 +5183,47 @@ export interface DesignDirection {
   reviewMode: 'off' | 'light' | 'strict';
   prompts: { generate: string; edit: string; review: string };
   promptFingerprint: string;
+}
+
+export interface DesignBrief {
+  goal: string;
+  audience: string;
+  primaryMessage: string;
+  primaryAction: string;
+  requiredSections: string[];
+  optionalSections: string[];
+  tone: string;
+  visualIntent: string;
+  brandKitRef: string;
+  brandKitVersion: number;
+  responsiveRequirements: string[];
+  factualCoverageRequirements: {
+    requiredCoveragePercent: number;
+    unsupportedFactsAllowed: boolean;
+    requiredFacts: string[];
+    sourceContentHashes: string[];
+  };
+  fingerprint: string;
+}
+
+export interface BrandPackage {
+  ref: string;
+  source: string;
+  designSystemId: string;
+  logo?: string;
+  approvedColors: string[];
+  fonts: string[];
+  fixedStatements: string[];
+  forbiddenStyles: string[];
+  examples: string[];
+  tokenContext: Record<string, string>;
+  fingerprint: string;
+}
+
+interface DesignTaskContext {
+  direction?: DesignDirection;
+  brief?: DesignBrief;
+  brand?: BrandPackage;
 }
 
 /**
@@ -5186,16 +5266,140 @@ export function parseDesignDirection(value: unknown): DesignDirection | undefine
   };
 }
 
-function collectDesignDirection(workspaceDir: string): DesignDirection | undefined {
+function collectDesignTaskContext(workspaceDir: string): DesignTaskContext {
   const taskPath = path.join(workspaceDir, 'brief', 'task.json');
-  if (!fs.existsSync(taskPath)) return undefined;
+  if (!fs.existsSync(taskPath)) return {};
   let task: Record<string, unknown>;
   try {
     task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
   } catch {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
   }
-  return parseDesignDirection(task.designDirection);
+  const direction = parseDesignDirection(task.designDirection);
+  const brief = parseDesignBrief(task.designBrief);
+  const brand = parseBrandPackage(task.brandPackage);
+  if (direction && brand && direction.designSystemId !== brand.designSystemId) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json brandPackage.designSystemId must match designDirection.designSystemId',
+    );
+  }
+  if (brief && brand && (brief.brandKitRef !== brand.ref || brief.brandKitVersion !== 1)) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json designBrief brand reference must match brandPackage',
+    );
+  }
+  return { direction, brief, brand };
+}
+
+function boundedTaskText(record: Record<string, unknown>, name: string, max: number): string {
+  const value = record[name];
+  if (typeof value !== 'string' || value.length > max || !value.trim()) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} is invalid`);
+  }
+  return value.trim();
+}
+
+function boundedTaskStrings(value: unknown, name: string, maxItems: number, maxChars: number): string[] {
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} is invalid`);
+  }
+  const result = value.map((item) => {
+    if (typeof item !== 'string' || !item.trim() || item.length > maxChars) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} is invalid`);
+    }
+    return item.trim();
+  });
+  if (new Set(result).size !== result.length) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json ${name} contains duplicates`);
+  }
+  return result;
+}
+
+export function parseDesignBrief(value: unknown): DesignBrief | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== MAP_DESIGN_BRIEF_SCHEMA || record.version !== 1) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json designBrief must use ${MAP_DESIGN_BRIEF_SCHEMA}`);
+  }
+  const factual = record.factualCoverageRequirements;
+  if (!factual || typeof factual !== 'object' || Array.isArray(factual)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief factualCoverageRequirements is invalid');
+  }
+  const factualRecord = factual as Record<string, unknown>;
+  if (factualRecord.requiredCoveragePercent !== 100 || factualRecord.unsupportedFactsAllowed !== false) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief factual coverage policy is invalid');
+  }
+  if (record.brandKitVersion !== 1) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json designBrief brandKitVersion is invalid');
+  }
+  return {
+    goal: boundedTaskText(record, 'goal', 240),
+    audience: boundedTaskText(record, 'audience', 120),
+    primaryMessage: boundedTaskText(record, 'primaryMessage', 240),
+    primaryAction: boundedTaskText(record, 'primaryAction', 160),
+    requiredSections: boundedTaskStrings(record.requiredSections, 'designBrief.requiredSections', 16, 120),
+    optionalSections: boundedTaskStrings(record.optionalSections, 'designBrief.optionalSections', 16, 120),
+    tone: boundedTaskText(record, 'tone', 120),
+    visualIntent: boundedTaskText(record, 'visualIntent', 400),
+    brandKitRef: boundedTaskText(record, 'brandKitRef', 120),
+    brandKitVersion: 1,
+    responsiveRequirements: boundedTaskStrings(record.responsiveRequirements, 'designBrief.responsiveRequirements', 12, 200),
+    factualCoverageRequirements: {
+      requiredCoveragePercent: 100,
+      unsupportedFactsAllowed: false,
+      requiredFacts: boundedTaskStrings(factualRecord.requiredFacts, 'designBrief.factualCoverageRequirements.requiredFacts', 24, 200),
+      sourceContentHashes: boundedTaskStrings(factualRecord.sourceContentHashes, 'designBrief.factualCoverageRequirements.sourceContentHashes', 16, 128),
+    },
+    fingerprint: boundedTaskText(record, 'fingerprint', 64),
+  };
+}
+
+export function parseBrandPackage(value: unknown): BrandPackage | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== MAP_BRAND_PACKAGE_SCHEMA || record.version !== 1) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json brandPackage must use ${MAP_BRAND_PACKAGE_SCHEMA}`);
+  }
+  const designSystemId = boundedTaskText(record, 'designSystemId', 64);
+  if (!DESIGN_SYSTEM_ID_RE.test(designSystemId)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage designSystemId is invalid');
+  }
+  const logo = record.logo === null || record.logo === undefined ? undefined : boundedTaskText(record, 'logo', 160);
+  if (logo && !/^reference\/[a-zA-Z0-9._-]+$/.test(logo)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage logo is invalid');
+  }
+  const tokenValue = record.tokenContext;
+  if (!tokenValue || typeof tokenValue !== 'object' || Array.isArray(tokenValue)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage tokenContext is invalid');
+  }
+  const tokenContext: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(tokenValue as Record<string, unknown>)) {
+    if (!/^--[a-z0-9-]{1,48}$/.test(key) || typeof raw !== 'string' || !raw.trim() || raw.length > 160) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json brandPackage tokenContext is invalid');
+    }
+    tokenContext[key] = raw.trim();
+  }
+  return {
+    ref: boundedTaskText(record, 'ref', 120),
+    source: boundedTaskText(record, 'source', 80),
+    designSystemId,
+    ...(logo ? { logo } : {}),
+    approvedColors: boundedTaskStrings(record.approvedColors, 'brandPackage.approvedColors', 8, 160),
+    fonts: boundedTaskStrings(record.fonts, 'brandPackage.fonts', 8, 160),
+    fixedStatements: boundedTaskStrings(record.fixedStatements, 'brandPackage.fixedStatements', 24, 200),
+    forbiddenStyles: boundedTaskStrings(record.forbiddenStyles, 'brandPackage.forbiddenStyles', 24, 200),
+    examples: boundedTaskStrings(record.examples, 'brandPackage.examples', 12, 160),
+    tokenContext,
+    fingerprint: boundedTaskText(record, 'fingerprint', 64),
+  };
 }
 
 /**
@@ -5205,6 +5409,8 @@ function collectDesignDirection(workspaceDir: string): DesignDirection | undefin
 export function composeOpenDesignPrompts(input: {
   platformRules: string[];
   direction: DesignDirection | undefined;
+  brief?: DesignBrief;
+  brand?: BrandPackage;
   editingExistingPage: boolean;
   hasReferenceImages: boolean;
 }): { systemPrompt: string; reviewAddendum: string } {
@@ -5218,6 +5424,31 @@ export function composeOpenDesignPrompts(input: {
     if (editable) {
       parts.push(`MAP design direction (style: ${direction.styleName}; editable by MAP administrators, it can never relax the platform rules above):\n${editable}`);
     }
+  }
+  if (input.brief) {
+    parts.push(`Frozen MAP design brief (${input.brief.fingerprint}; do not reinterpret or replace it):\n${JSON.stringify({
+      goal: input.brief.goal,
+      audience: input.brief.audience,
+      primaryMessage: input.brief.primaryMessage,
+      primaryAction: input.brief.primaryAction,
+      requiredSections: input.brief.requiredSections,
+      optionalSections: input.brief.optionalSections,
+      tone: input.brief.tone,
+      visualIntent: input.brief.visualIntent,
+      responsiveRequirements: input.brief.responsiveRequirements,
+      factualCoverageRequirements: input.brief.factualCoverageRequirements,
+    })}`);
+  }
+  if (input.brand) {
+    parts.push(`Frozen MAP brand package (${input.brand.fingerprint}). OpenDesign remains the design-system authority for ${input.brand.designSystemId}; apply only these task-specific brand constraints and token overrides, without inventing a second design system:\n${JSON.stringify({
+      logo: input.brand.logo,
+      approvedColors: input.brand.approvedColors,
+      fonts: input.brand.fonts,
+      fixedStatements: input.brand.fixedStatements,
+      forbiddenStyles: input.brand.forbiddenStyles,
+      examples: input.brand.examples,
+      tokenContext: input.brand.tokenContext,
+    })}`);
   }
   return {
     systemPrompt: parts.join(' '),

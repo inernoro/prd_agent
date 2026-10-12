@@ -86,8 +86,69 @@ public sealed class DesignArtifactDesignDirection
 
     public string ReviewPrompt { get; set; } = string.Empty;
 
+    /// <summary>既有风格映射出的品牌来源类型：个人风格、预设或 OpenDesign 目录。</summary>
+    public string BrandSource { get; set; } = string.Empty;
+
+    /// <summary>品牌色覆盖；为空表示直接使用 OpenDesign 设计系统自身 tokens。</summary>
+    public List<string> BrandColors { get; set; } = new();
+
+    /// <summary>品牌字体覆盖；为空表示直接使用 OpenDesign 设计系统自身 tokens。</summary>
+    public List<string> BrandFonts { get; set; } = new();
+
+    /// <summary>既有个人风格来源站点等参考，不保存页面正文。</summary>
+    public List<string> BrandExamples { get; set; } = new();
+
     /// <summary>风格、自查强度与三段提示词的内容指纹（sha256 前 12 位），用来回答「这次用的是哪一版」。</summary>
     public string PromptFingerprint { get; set; } = string.Empty;
+}
+
+/// <summary>任务开始时冻结的版本化设计简报；所有字段均由服务器确定性形成，不额外调用模型。</summary>
+public sealed class DesignArtifactDesignBrief
+{
+    public string SchemaVersion { get; set; } = "map-design-brief-v1";
+    public int Version { get; set; } = 1;
+    public string Goal { get; set; } = string.Empty;
+    public string Audience { get; set; } = string.Empty;
+    public string PrimaryMessage { get; set; } = string.Empty;
+    public string PrimaryAction { get; set; } = string.Empty;
+    public List<string> RequiredSections { get; set; } = new();
+    public List<string> OptionalSections { get; set; } = new();
+    public string Tone { get; set; } = string.Empty;
+    public string VisualIntent { get; set; } = string.Empty;
+    public string BrandKitRef { get; set; } = string.Empty;
+    public int BrandKitVersion { get; set; } = 1;
+    public List<string> ResponsiveRequirements { get; set; } = new();
+    public DesignArtifactFactualCoverageRequirements FactualCoverageRequirements { get; set; } = new();
+    public string Fingerprint { get; set; } = string.Empty;
+}
+
+public sealed class DesignArtifactFactualCoverageRequirements
+{
+    public int RequiredCoveragePercent { get; set; } = 100;
+    public bool UnsupportedFactsAllowed { get; set; }
+    public List<string> RequiredFacts { get; set; } = new();
+    public List<string> SourceContentHashes { get; set; } = new();
+}
+
+/// <summary>
+/// 冻结品牌包。DesignSystemId 只引用 OpenDesign 的权威系统；TokenContext 仅表达当前任务的覆盖值，
+/// 不复制设计系统的 DESIGN.md、tokens.css 或组件定义。
+/// </summary>
+public sealed class DesignArtifactBrandPackage
+{
+    public string SchemaVersion { get; set; } = "map-brand-package-v1";
+    public int Version { get; set; } = 1;
+    public string Ref { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public string DesignSystemId { get; set; } = string.Empty;
+    public string? Logo { get; set; }
+    public List<string> ApprovedColors { get; set; } = new();
+    public List<string> Fonts { get; set; } = new();
+    public List<string> FixedStatements { get; set; } = new();
+    public List<string> ForbiddenStyles { get; set; } = new();
+    public List<string> Examples { get; set; } = new();
+    public Dictionary<string, string> TokenContext { get; set; } = new(StringComparer.Ordinal);
+    public string Fingerprint { get; set; } = string.Empty;
 }
 
 /// <summary>直接上传、作为事实来源的文档（附件的已提取正文）。</summary>

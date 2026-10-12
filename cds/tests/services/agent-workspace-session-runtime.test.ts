@@ -18,8 +18,11 @@ import {
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
   composeOpenDesignPrompts,
+  assertRequiredFactualCoverage,
   derivePreviewUrl,
   parseDesignDirection,
+  parseDesignBrief,
+  parseBrandPackage,
   summarizeOutputPreflightDiagnostic,
   summarizeRunEventStream,
   redactDigestLeaves,
@@ -4181,6 +4184,39 @@ describe('MAP design direction contract', () => {
     expect(direction.reviewMode).toBe('light');
     expect(direction.prompts.generate.length).toBeGreaterThan(0);
     expect(direction.promptFingerprint).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it('keeps the migrated runtime aligned on frozen brief, brand, and required facts', () => {
+    const brief = parseDesignBrief({
+      schemaVersion: 'map-design-brief-v1', version: 1, goal: '介绍产品', audience: '客户',
+      primaryMessage: '可靠交付', primaryAction: '预约咨询', requiredSections: ['核心能力'], optionalSections: [],
+      tone: '专业', visualIntent: '清晰', brandKitRef: 'minimal', brandKitVersion: 1,
+      responsiveRequirements: ['390px 可读'],
+      factualCoverageRequirements: {
+        requiredCoveragePercent: 100, unsupportedFactsAllowed: false,
+        requiredFacts: ['标准方案包含 3 个阶段。'], sourceContentHashes: ['source-hash'],
+      },
+      fingerprint: 'brief1234567',
+    })!;
+    const brand = parseBrandPackage({
+      schemaVersion: 'map-brand-package-v1', version: 1, ref: 'minimal', source: 'personal-style',
+      designSystemId: 'minimal', logo: 'reference/screenshot-01.png', approvedColors: ['#112233'],
+      fonts: ['Inter'], fixedStatements: ['固定声明。'], forbiddenStyles: [], examples: [],
+      tokenContext: { '--accent': '#112233' }, fingerprint: 'brand1234567',
+    })!;
+    const prompt = composeOpenDesignPrompts({
+      platformRules: ['platform'], direction: undefined, brief, brand,
+      editingExistingPage: false, hasReferenceImages: true,
+    });
+    expect(prompt.systemPrompt).toContain('reference/screenshot-01.png');
+    expect(prompt.systemPrompt).toContain('#112233');
+    expect(prompt.systemPrompt).toContain('固定声明。');
+    expect(() => assertRequiredFactualCoverage(
+      '<html><body>标准方案包含 3 个阶段。</body></html>', brief.factualCoverageRequirements.requiredFacts,
+    )).not.toThrow();
+    expect(() => assertRequiredFactualCoverage(
+      '<html><body>内容缺失</body></html>', brief.factualCoverageRequirements.requiredFacts,
+    )).toThrow(AgentWorkspaceRuntimeError);
   });
 
   it('derives the preview endpoint only from the MAP result endpoint shape', () => {

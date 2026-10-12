@@ -107,6 +107,12 @@ const inertButtonLocationHint = (details: Record<string, unknown> | undefined): 
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
+  if (message === 'index.html omitted a required fact from the frozen design brief') {
+    return {
+      code: 'required_fact_missing',
+      instruction: 'Read designBrief.factualCoverageRequirements.requiredFacts in /workspace/brief/task.json and restore every required statement in visible page text exactly once or more. Do not invent surrounding claims.',
+    };
+  }
   if (message === 'index.html contains a measured claim with unresolved source context'
     || message === 'index.html dropped a retained source-backed measured claim') {
     const missing = message === 'index.html dropped a retained source-backed measured claim';
@@ -255,6 +261,27 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
     };
   }
   return undefined;
+}
+
+/** 冻结简报明确标为必需的事实必须全部出现在可见文本中；不把事实正文写进错误或日志。 */
+export function assertRequiredFactualCoverage(rawHtml: string, requiredFacts: readonly string[]): void {
+  if (requiredFacts.length === 0) return;
+  const visible = normalizeFactText(extractVisibleHtmlText(rawHtml));
+  for (let index = 0; index < requiredFacts.length; index += 1) {
+    const required = normalizeFactText(requiredFacts[index]);
+    if (required && !visible.includes(required)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html omitted a required fact from the frozen design brief',
+        false,
+        { requiredFactOrdinal: index + 1, requiredFactCount: requiredFacts.length },
+      );
+    }
+  }
+}
+
+function normalizeFactText(value: string): string {
+  return decodeHtmlText(value).replace(/\s+/g, ' ').trim();
 }
 
 /** Version 1 canonical bytes shared with HostedSiteRevisionRules.NormalizeGeneratedHtml. */
