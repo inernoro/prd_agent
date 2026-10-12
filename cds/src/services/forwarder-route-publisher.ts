@@ -1,4 +1,3 @@
-import { projectHistoricalSlugs } from './preview-slug.js';
 /**
  * Forwarder 路由发布器（B'.2-forwarder MVP, 2026-05-08）
  *
@@ -31,9 +30,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
-import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
-import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
+import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases, projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import { isOperationalProbePrefix, pickApiConventionProfile, pickDefaultProfile, ROUTABLE_SERVICE_STATUSES } from './route-conventions.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
@@ -211,9 +209,8 @@ export class ForwarderRoutePublisher {
       }
 
       const project = projectById.get(branch.projectId);
-      const canonicalPreviewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug;
-      const previewSlugs = new Set([canonicalPreviewSlug, ...projectHistoricalSlugs(project).map((slug) =>
-        buildPreviewUrlForProject('', branch.branch, { ...project, slug }, branch.projectId).previewSlug)]);
+      const previewSlugs = projectBranchPreviewSlugs(branch, project);
+      const canonicalPreviewSlug = previewSlugs[0] || '';
       let idx = 0;
       for (const previewSlug of previewSlugs) {
         if (!previewSlug) continue;

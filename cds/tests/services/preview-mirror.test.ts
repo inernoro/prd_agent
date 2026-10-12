@@ -20,7 +20,8 @@ import {
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
 import { recordContainerSample, __resetContainerMetricsHistory } from '../../src/services/container-metrics-history.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../../src/types.js';
-import { projectHistoricalSlugs, projectResourceNamespace } from '../../src/services/preview-slug.js';
+import { computePreviewSlug, projectHistoricalSlugs, projectResourceNamespace } from '../../src/services/preview-slug.js';
+import { ForwarderRoutePublisher } from '../../src/services/forwarder-route-publisher.js';
 
 const SRC = path.resolve(__dirname, '../../src');
 let tmp: string;
@@ -216,6 +217,43 @@ describe('脱敏（不带凭据）', () => {
 });
 
 describe('只读 + 幂等（子实例播种）', () => {
+  it('镜像清理冲突的历史入口，保持完整播种、旧格式修复和重启幂等', async () => {
+    const parent = parentState();
+    parent.updateProject('map', { slug: 'shared-old' });
+    parent.updateProject('map', { slug: 'source-current' });
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const original = structuredClone(mirror);
+    const childFile = path.join(tmp, 'child-state.json');
+    const child = new StateService(childFile, tmp);
+    child.load();
+    const now = new Date().toISOString();
+    child.addProject({ id: PREVIEW_DEMO_PROJECT_ID, slug: 'shared-old', name: '本地项目', kind: 'git', createdAt: now, updatedAt: now } as Project);
+    child.addBuildProfile({ id: 'local-web', projectId: PREVIEW_DEMO_PROJECT_ID, name: 'web', containerPort: 3000 } as BuildProfile);
+    child.addBranch({ id: 'local-main', projectId: PREVIEW_DEMO_PROJECT_ID, branch: 'main', status: 'running', services: {
+      'local-web': { profileId: 'local-web', containerName: 'local-main-web', hostPort: 43001, status: 'running' },
+    }, createdAt: now, worktreePath: tmp } as BranchEntry);
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(true);
+    expect(child.getProject('map')?.slug).toBe('source-current');
+    expect(projectHistoricalSlugs(child.getProject('map'))).not.toContain('shared-old');
+    expect(projectHistoricalSlugs(child.getProject('map'))).toContain('map');
+    expect(child.getBuildProfiles().some(p => p.id === 'api')).toBe(true);
+    expect(child.getBranch('map-main')).toBeTruthy();
+    expect(child.getLogs('map-main')).toHaveLength(1);
+    const publisher = new ForwarderRoutePublisher({ state: child, outputPath: path.join(tmp, 'routes.json'), rootDomains: ['preview.test'] });
+    const localRoutes = publisher.buildRoutes().filter(r => r.host === `${computePreviewSlug('main', 'shared-old')}.preview.test`);
+    expect(localRoutes.length).toBeGreaterThan(0);
+    expect(new Set(localRoutes.map(r => r.upstreamPort))).toEqual(new Set([43001]));
+    expect(new Set(localRoutes.map(r => r.branchId))).toEqual(new Set(['local-main']));
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(false);
+    child.getProject('map')!.mirror!.routingIdentity = structuredClone(mirror.projects.find(p => p.id === 'map')!.mirror!.routingIdentity);
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(true);
+    expect(projectHistoricalSlugs(child.getProject('map'))).not.toContain('shared-old');
+    await child.flush();
+    const restarted = new StateService(childFile, tmp);
+    restarted.load();
+    expect(seedPreviewInstanceMirror(restarted, mirror)).toBe(false);
+    expect(mirror).toEqual(original);
+  });
   it('镜像项目避开本地历史 slug 及已占用的后缀，构建配置和分支完整播种', () => {
     const mirror = buildPreviewMirror(parentState(), { nowMs: Date.now() });
     const child = freshState('child-history-collision');

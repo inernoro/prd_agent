@@ -41,6 +41,7 @@ import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef, projectReservedIdentifiers, projectResourceNamespace } from '../services/preview-slug.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { occupiedHostOwners, projectBranchPublishedHosts } from '../services/preview-entrypoints.js';
 import { projectIdentityActorFromRequest, projectIdentityResponse, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -75,7 +76,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
-import { isHumanSystemOwner } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -2769,6 +2770,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
   router.get('/projects/:id/identity-history', (req, res) => {
+    if (!isAuthenticatedHuman(req) || isMachineCaller(req)) {
+      res.status(403).json({ error: 'human_required', message: '请使用已登录的人类账号查看项目设置记录。' }); return;
+    }
     const project = stateService.getProject(req.params.id);
     if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
     const mismatch = assertProjectAccess(req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }, project.id);
@@ -3503,6 +3507,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (collision) {
         res.status(409).json({ error: 'duplicate', field: 'slug', message: `项目 slug「${slug}」已被项目「${collision.name}」使用或保留，请换一个。` });
         return;
+      }
+      if (slug !== project.slug) {
+        const roots = config?.rootDomains || [];
+        const branches = stateService.getAllBranches();
+        for (const branch of branches.filter(entry => entry.projectId === project.id)) {
+          const profiles = stateService.getEffectiveProfilesForBranch(branch);
+          const before = new Set(projectBranchPublishedHosts(branch, project, profiles, roots));
+          const others = branches.filter(entry => entry.id !== branch.id);
+          const occupied = occupiedHostOwners(others, roots);
+          for (const other of others) {
+            for (const host of projectBranchPublishedHosts(other, stateService.getProject(other.projectId), stateService.getEffectiveProfilesForBranch(other), roots)) {
+              if (!occupied.has(host)) occupied.set(host, other.id);
+            }
+          }
+          const conflict = projectBranchPublishedHosts(branch, { ...project, slug }, profiles, roots)
+            .find(host => !before.has(host) && occupied.has(host));
+          if (conflict) {
+            res.status(409).json({ error: 'preview_host_conflict', field: 'slug',
+              message: '此项目 slug 会与已有分支入口冲突，设置没有保存。请换一个 slug。' });
+            return;
+          }
+        }
       }
     }
 

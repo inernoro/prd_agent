@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, InfraService, Project } from '../types.js';
 import type { PreviewMirrorFile } from './preview-mirror.js';
-import { projectReservedIdentifiers } from './preview-slug.js';
+import { projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
 
 export const PREVIEW_DEMO_PROJECT_ID = 'preview-demo';
 
@@ -83,6 +83,8 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   //    缺的永远补不上（Codex P2）
   const stampedProjects = state.getProjects().filter((p) => p.mirror);
   const stampedBranches = state.getAllBranches().filter((b) => b.mirror);
+  // 冲突清理后的投影既用于播种，也用于同采集时刻的幂等检查。
+  mirror = { ...mirror, projects: prepareMirrorProjects(state, mirror.projects) };
   if (mirrorFullySeeded(state, mirror, stampedProjects, stampedBranches)) return changed;
 
   // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志；部署 run 要单独删——
@@ -97,17 +99,9 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
 
   // 4. 按新镜像加。单条失败只记日志不中断：一条怪配置不该让整份镜像消失
   const warn = (what: string, err: unknown): void => console.warn(`  [preview-mirror] ${what}: ${(err as Error).message}`);
-  const reservedIdentifiers = new Set(state.getProjects().flatMap(projectReservedIdentifiers));
   for (const p of mirror.projects) {
     try {
-      let slug = p.slug;
-      let suffix = 1;
-      while (reservedIdentifiers.has(slug)) {
-        slug = `${p.slug}-mirror${suffix === 1 ? '' : `-${suffix}`}`;
-        suffix++;
-      }
-      state.addProject({ ...p, slug, legacyFlag: undefined } as Project);
-      for (const identifier of projectReservedIdentifiers(state.getProject(p.id)!)) reservedIdentifiers.add(identifier);
+      state.addProject(p);
     } catch (err) { warn(`项目 ${p.id}`, err); }
   }
   const projectIds = new Set(state.getProjects().filter((p) => p.mirror).map((p) => p.id));
@@ -157,6 +151,27 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   return true;
 }
 
+function prepareMirrorProjects(state: StateService, projects: Project[]): Project[] {
+  const reserved = new Set(state.getProjects().filter(p => !p.mirror).flatMap(projectReservedIdentifiers));
+  return projects.map(p => {
+    let slug = p.slug;
+    let suffix = 1;
+    while (reserved.has(slug)) {
+      slug = `${p.slug}-mirror${suffix === 1 ? '' : `-${suffix}`}`;
+      suffix++;
+    }
+    const prepared = { ...p, slug, legacyFlag: undefined, identityHistory: undefined };
+    if (p.mirror?.routingIdentity) {
+      prepared.mirror = { ...p.mirror, routingIdentity: {
+        ...p.mirror.routingIdentity,
+        historicalSlugs: projectHistoricalSlugs({ ...p, identityHistory: undefined }).filter(value => !reserved.has(value)),
+      } };
+    }
+    for (const identifier of projectReservedIdentifiers(prepared)) reserved.add(identifier);
+    return prepared;
+  });
+}
+
 /** 同一份镜像是否已经一条不缺地在库里：capturedAt 相同，且每个集合的条数都对得上。 */
 function mirrorFullySeeded(
   state: StateService,
@@ -171,7 +186,7 @@ function mirrorFullySeeded(
   // 同一采集时刻的旧镜像也要升级为不含父实例审计记录的路由投影。
   if (!stampedProjects.every(p => {
     const source = mirror.projects.find(candidate => candidate.id === p.id);
-    return p.gitRepoUrl === source?.gitRepoUrl &&
+    return p.slug === source?.slug && p.gitRepoUrl === source?.gitRepoUrl &&
       JSON.stringify(p.mirror?.routingIdentity) === JSON.stringify(source?.mirror?.routingIdentity);
   })) return false;
   const projectIds = new Set(stampedProjects.map((p) => p.id));

@@ -23,7 +23,9 @@ import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projec
 import { StateService } from '../../src/services/state.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
-import type { Project } from '../../src/types.js';
+import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -157,12 +159,17 @@ describe('Projects router (P4 Part 2)', () => {
     app.use((req, _res, next) => {
       const id = req.headers['x-test-project-key'];
       if (typeof id === 'string') (req as any).cdsProjectKey = { projectId: id, keyId: 'test' };
+      else if (req.headers['x-test-human'] !== 'none') {
+        const member = req.headers['x-test-human'] === 'member';
+        (req as any).cdsUser = { id: member ? 'member' : 'owner', isSystemOwner: !member, authProvider: 'local' };
+        if (req.headers['x-test-human'] !== 'unverified') (req as any).cdsSession = {};
+      }
       next();
     });
     const githubApp = {
       getInstallationToken: async () => 'github-app-installation-token',
     } as GitHubAppClient;
-    app.use('/api', createProjectsRouter({ stateService, shell, githubApp }));
+    app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: { rootDomains: ['preview.test', 'secondary.test'] } as CdsConfig }));
 
     server = app.listen(0);
   });
@@ -822,12 +829,62 @@ describe('Projects router (P4 Part 2)', () => {
       expect(new Set([...first.body.records, ...second.body.records].map((entry: any) => entry.id)).size).toBe(53);
       expect(created.body.project.identityHistory).toBeUndefined();
       const scoped = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': id });
-      expect(scoped.status).toBe(200);
-      expect(scoped.body.records).toHaveLength(50);
+      expect(scoped.status).toBe(403);
+      expect(scoped.body.records).toBeUndefined();
       const denied = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-project-key': 'other-project' });
       expect(denied.status).toBe(403);
       const invalid = await request(server, 'GET', `/api/projects/${id}/identity-history?before=missing`);
       expect(invalid.status).toBe(400);
+    });
+
+    it('requires verified human authentication and an active member project grant for history', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Audit', slug: 'audit-access' })).body.project.id;
+      const authCases: Array<Record<string, string>> = [
+        { 'x-test-human': 'none' }, { 'x-test-human': 'unverified' },
+        { authorization: 'Bearer machine-key' }, { 'x-ai-access-key': 'global-machine-key' },
+      ];
+      for (const headers of authCases) {
+        const response = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, headers);
+        expect(response.status).toBe(403);
+        expect(response.body.records).toBeUndefined();
+      }
+      expect((await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' })).status).toBe(403);
+      stateService.addPrincipal({ id: 'human:member', name: 'Member', kind: 'human', status: 'active', createdAt: new Date().toISOString() });
+      stateService.addProjectGrant({ id: 'audit-grant', projectId: id, principalId: 'human:member', origin: 'approved', grantedAt: new Date().toISOString() });
+      const granted = await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' });
+      expect(granted.status).toBe(200);
+      expect(granted.body.records).toHaveLength(1);
+      stateService.revokeProjectGrant('audit-grant');
+      expect((await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' })).status).toBe(403);
+    });
+
+    it.each(['alias', 'custom-domain', 'canonical', 'named-service', 'legacy-service', 'override-service'])('rejects a rename occupying another branch %s host before changing history', async (kind) => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const owner = (await request(server, 'POST', '/api/projects', { name: 'Owner', slug: 'host-owner' })).body.project.id;
+      const now = new Date().toISOString();
+      const named = ['named-service', 'legacy-service', 'override-service'].includes(kind);
+      const profiles = named ? [{ id: 'gateway', projectId: id, subdomain: kind === 'override-service' ? 'unused' : 'llmgw' } as BuildProfile] : [];
+      for (const profile of profiles) stateService.addBuildProfile(profile);
+      const branch = kind === 'canonical' ? 'main' : 'feature/demo';
+      stateService.addBranch({ id: 'rename-branch', projectId: id, branch, status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
+        ...(kind === 'override-service' ? { profileOverrides: { gateway: { subdomain: 'llmgw' } } } : {}),
+      } as BranchEntry);
+      const slug = kind === 'canonical' ? 'feature-host-owner' : 'after-rename';
+      const canonical = computePreviewSlug(branch, slug);
+      const host = named ? namedServiceLabel(canonical, kind === 'legacy-service' ? 'llmgw-web' : 'llmgw') : canonical;
+      // main + feature-host-owner 与 feature/main + host-owner 的主入口相同。
+      stateService.addBranch({ id: 'owner-branch', projectId: owner, branch: kind === 'canonical' ? 'feature/main' : 'main', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
+        ...(kind === 'alias' || named ? { subdomainAliases: [host] } : {}),
+        ...(kind === 'custom-domain' ? { customDomains: [`${host}.secondary.test`] } : {}),
+      } as BranchEntry);
+      const before = structuredClone(stateService.getProject(id)!);
+      const response = await request(server, 'PUT', `/api/projects/${id}`, { slug });
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('preview_host_conflict');
+      expect(stateService.getProject(id)!.slug).toBe(before.slug);
+      expect(stateService.getProject(id)!.identityHistory).toEqual(before.identityHistory);
+      const saved = await request(server, 'PUT', `/api/projects/${id}`, { slug: 'available-next' });
+      expect(saved.status).toBe(200);
     });
 
     it('does not acknowledge success when persistence fails', async () => {

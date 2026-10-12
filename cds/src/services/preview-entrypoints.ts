@@ -22,11 +22,11 @@
  */
 
 import crypto from 'node:crypto';
-import { DNS_LABEL_MAX_LENGTH } from './preview-slug.js';
+import { DNS_LABEL_MAX_LENGTH, projectHistoricalSlugs, type PreviewProjectIdentity } from './preview-slug.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { StateService } from './state.js';
-import type { BranchEntry } from '../types.js';
+import type { BranchEntry, BuildProfile } from '../types.js';
 import type { PublishedEntrypointsEnv } from './env-provenance.js';
 
 /** 容器 env 里承载「本分支主入口」的 key。 */
@@ -264,6 +264,26 @@ export function occupiedHostOwners(
     for (const domain of b.customDomains ?? []) claim(domain, b.id);
   }
   return owners;
+}
+
+/** 发布器与项目改名校验共用新旧入口的枚举口径。 */
+export function projectBranchPreviewSlugs(entry: Pick<BranchEntry, 'branch' | 'projectId'>, project: PreviewProjectIdentity | undefined): string[] {
+  return [...new Set([
+    buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug,
+    ...projectHistoricalSlugs(project).map(slug => buildPreviewUrlForProject('', entry.branch, { ...project, slug }, entry.projectId).previewSlug),
+  ].filter(Boolean))];
+}
+
+export function projectBranchPublishedHosts(entry: BranchEntry, project: PreviewProjectIdentity | undefined, profiles: BuildProfile[], roots: readonly string[]): string[] {
+  const labels = new Set<string>();
+  for (const slug of projectBranchPreviewSlugs(entry, project)) {
+    labels.add(slug);
+    for (const profile of profiles) {
+      const subdomain = resolveEffectiveProfile(profile, entry).subdomain;
+      if (subdomain) for (const label of publishedServiceLabels(slug, subdomain)) labels.add(label);
+    }
+  }
+  return [...labels].flatMap(label => roots.map(root => `${label}.${root}`.trim().toLowerCase()));
 }
 
 /**
