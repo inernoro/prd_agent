@@ -41,7 +41,7 @@ import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef, projectReservedIdentifiers, projectResourceNamespace } from '../services/preview-slug.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { occupiedHostOwners, projectBranchPublishedHosts } from '../services/preview-entrypoints.js';
+import { occupiedHostOwners, projectBranchPublishedHosts, projectBranchPublishedServiceHosts } from '../services/preview-entrypoints.js';
 import { projectIdentityActorFromRequest, projectIdentityResponse, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -3515,14 +3515,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           const profiles = stateService.getEffectiveProfilesForBranch(branch);
           const before = new Set(projectBranchPublishedHosts(branch, project, profiles, roots));
           const others = branches.filter(entry => entry.id !== branch.id);
-          const occupied = occupiedHostOwners(others, roots);
+          const occupied = occupiedHostOwners(branches, roots);
           for (const other of others) {
             for (const host of projectBranchPublishedHosts(other, stateService.getProject(other.projectId), stateService.getEffectiveProfilesForBranch(other), roots)) {
               if (!occupied.has(host)) occupied.set(host, other.id);
             }
           }
-          const conflict = projectBranchPublishedHosts(branch, { ...project, slug }, profiles, roots)
-            .find(host => !before.has(host) && occupied.has(host));
+          const nextProject = { ...project, slug };
+          const serviceHosts = new Set(projectBranchPublishedServiceHosts(branch, nextProject, profiles, roots));
+          const conflict = projectBranchPublishedHosts(branch, nextProject, profiles, roots)
+            .find(host => !before.has(host) && occupied.has(host) && (occupied.get(host) !== branch.id || serviceHosts.has(host)));
           if (conflict) {
             res.status(409).json({ error: 'preview_host_conflict', field: 'slug',
               message: '此项目 slug 会与已有分支入口冲突，设置没有保存。请换一个 slug。' });

@@ -894,6 +894,37 @@ describe('Projects router (P4 Part 2)', () => {
       expect(saved.status).toBe(200);
     });
 
+    it.each(['alias', 'domain'].flatMap(source => ['self-named', 'self-member', 'other-member'].map(kind => [source, kind])))('改名拒绝%s占用%s服务入口，状态不变', async (source, kind) => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const profile = { id: 'gateway', projectId: id, name: 'Gateway', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80, subdomain: 'llmgw' };
+      stateService.addBuildProfile(profile);
+      const slug = 'after-rename';
+      const canonical = computePreviewSlug('feature/demo', slug);
+      const label = kind === 'self-named' ? namedServiceLabel(canonical, 'llmgw') : `${canonical}-gateway-res-1`;
+      const now = new Date().toISOString();
+      const entry = { id: 'rename-branch', projectId: id, branch: 'feature/demo', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
+        replicaSets: { gateway: { profileId: 'gateway', enabled: true, primaryWeight: 100, members: [{ id: 'res-1', status: 'running', hostPort: 12001, weight: 100 }], createdAt: now, updatedAt: now } },
+      } as BranchEntry;
+      stateService.addBranch(entry);
+      const owner = kind.startsWith('self') ? entry : { id: 'owner-branch', projectId: id, branch: 'main', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir } as BranchEntry;
+      if (owner !== entry) stateService.addBranch(owner);
+      if (source === 'alias') owner.subdomainAliases = [label];
+      else owner.customDomains = [`${label}.preview.test`];
+      const before = structuredClone(stateService.getProject(id)!);
+      const response = await request(server, 'PUT', `/api/projects/${id}`, { slug });
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe('preview_host_conflict');
+      expect(stateService.getProject(id)).toEqual(before);
+      expect((await request(server, 'PUT', `/api/projects/${id}`, { slug: 'unoccupied-next' })).status).toBe(200);
+    });
+
+    it('同一上游的自有主入口别名不阻止项目改名', async () => {
+      const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
+      const canonical = computePreviewSlug('feature/demo', 'after-rename');
+      stateService.addBranch({ id: 'rename-branch', projectId: id, branch: 'feature/demo', status: 'idle', services: {}, createdAt: NOW, worktreePath: tmpDir, subdomainAliases: [canonical] } as BranchEntry);
+      expect((await request(server, 'PUT', `/api/projects/${id}`, { slug: 'after-rename' })).status).toBe(200);
+    });
+
     it('does not acknowledge success when persistence fails', async () => {
       const id = (await request(server, 'POST', '/api/projects', { name: 'Persistence', slug: 'persistence-test' })).body.project.id;
       const before = structuredClone(stateService.getProject(id)!);

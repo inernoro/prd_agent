@@ -47,6 +47,7 @@ import {
   publishedServiceLabels,
   occupiedHostOwners,
   projectBranchPreviewSlugs,
+  projectBranchPublishedServiceHosts,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
@@ -16194,18 +16195,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
     const project = stateService.getProject(entry.projectId);
-    const slugs = projectBranchPreviewSlugs(entry, project);
-    const hosts: string[] = [];
-    const seen = new Set<string>();
-    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
-      const sub = resolveEffectiveProfile(bp, entry).subdomain;
-      if (!sub || seen.has(sub)) continue;
-      seen.add(sub);
-      for (const slug of slugs) {
-        for (const label of publishedServiceLabels(slug, sub)) hosts.push(`${label}.${root}`.toLowerCase());
-      }
-    }
-    return hosts;
+    return projectBranchPublishedServiceHosts(entry, project, stateService.getEffectiveProfilesForBranch(entry), [root]);
   }
 
   const findPreviewHostCollisions = (

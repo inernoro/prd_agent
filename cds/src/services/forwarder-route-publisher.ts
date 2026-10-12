@@ -31,7 +31,7 @@ import path from 'node:path';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { resolveEffectiveProfile } from './container.js';
-import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases, projectBranchPreviewSlugs } from './preview-entrypoints.js';
+import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases, projectBranchPreviewSlugs, replicaMemberLabel } from './preview-entrypoints.js';
 import { isOperationalProbePrefix, pickApiConventionProfile, pickDefaultProfile, ROUTABLE_SERVICE_STATUSES } from './route-conventions.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
@@ -75,13 +75,7 @@ export interface ForwarderRoutePublisherOptions {
  * 已是合法 DNS 段的 id 原样保留（既有直达域名不变）。与前端 memberDirectUrl 同款
  * 算法，三处必须同步改。
  */
-export function dnsSafeProfile(id: string): string {
-  const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
-  if (cleaned === id) return cleaned;
-  let h = 5381;
-  for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
-  return `${cleaned}-${h.toString(36)}`;
-}
+export { dnsSafeProfile } from './preview-entrypoints.js';
 
 export class ForwarderRoutePublisher {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -454,7 +448,7 @@ export class ForwarderRoutePublisher {
         const emittedMemberHosts = new Set<string>();
         for (const [profileId, replica] of replicaByProfile) {
           for (const member of replica.members) {
-            const memberLabel = `${previewSlug}-${dnsSafeProfile(profileId)}-${member.id}`;
+            const memberLabel = replicaMemberLabel(previewSlug, profileId, member.id);
             if (emittedMemberHosts.has(memberLabel)) {
               this.opts.logger?.warn?.(
                 `[forwarder-publisher] 复制集成员直达子域撞名跳过 ${memberLabel}.*（profile id DNS 清洗后重合）；成员仍可经主入口 ?__rs=${profileId}:${member.id} 钉选直达`,
