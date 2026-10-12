@@ -132,9 +132,9 @@ function requiredEnv(name: string) {
   return value;
 }
 
-function aiAccessHeaders() {
+function agentApiKeyHeaders(apiKey: string) {
   return {
-    Authorization: `Bearer ${requiredEnv('STABLE_SMOKE_AI_ACCESS_KEY')}`,
+    Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
 }
@@ -1666,19 +1666,24 @@ async function uploadStableHostedSite(page: Page, title: string) {
   const openUpload = page.getByRole('button', { name: '上传网页', exact: false });
   await openUpload.waitFor({ state: 'visible', timeout: stableSmokeApiTimeoutMs });
   await openUpload.click({ timeout: stableSmokeApiTimeoutMs });
-  await page.locator('input[type="file"]').first().setInputFiles({
+  const uploadDialog = page.getByRole('dialog').filter({ hasText: '上传站点' }).last();
+  await expect(uploadDialog, '必须从新建上传对话框选择文件，不能命中卡片替换入口').toBeVisible({ timeout: stableSmokeApiTimeoutMs });
+  await uploadDialog.locator('input[type="file"]').setInputFiles({
     name: `${title}.html`, mimeType: 'text/html', buffer: Buffer.from(html, 'utf8'),
   });
   const uploaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/web-pages/upload'
     && response.request().method() === 'POST', { timeout: stableSmokeCleanupTimeoutMs });
-  const startUpload = page.getByRole('button', { name: '开始上传', exact: true });
+  const startUpload = uploadDialog.getByRole('button', { name: '开始上传', exact: true });
   await startUpload.waitFor({ state: 'visible', timeout: stableSmokeApiTimeoutMs });
   await startUpload.click({ timeout: stableSmokeApiTimeoutMs });
   const response = await uploaded;
   const body = await response.json() as ApiEnvelope<StableHostedSite>;
   expect(response.ok(), body.error?.message || '网页上传失败').toBe(true);
   expect(body.success).toBe(true);
-  await page.keyboard.press('Escape');
+  const completedDialog = page.getByRole('dialog').filter({ hasText: '上传完成' }).last();
+  await expect(completedDialog, '上传接口成功后必须进入可打开的完成态').toBeVisible({ timeout: stableSmokeApiTimeoutMs });
+  await completedDialog.getByRole('button', { name: '关闭', exact: true }).click({ timeout: stableSmokeApiTimeoutMs });
+  await expect(completedDialog, '上传完成态关闭后不得遮挡后续文件夹操作').toBeHidden({ timeout: stableSmokeApiTimeoutMs });
   return {
     site: body.data,
     marker,
@@ -3355,11 +3360,29 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const original = `${prefix}${selected}${suffix}`;
     const continuation = '续写段落只允许出现在原文末尾。';
     let workspaceId = '';
+    let apiKeyId = '';
+    let apiKey = '';
     try {
+      const issued = await readEnvelope<{ item: { id: string }; apiKey: string }>(await page.request.post(
+        '/api/agent-api-keys',
+        {
+          headers: authHeaders(token),
+          data: {
+            name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学续改临时钥匙`,
+            description: '稳定冒烟 LIT-003/LIT-004，用后立即删除',
+            scopes: ['literary-agent:use'],
+            scopeMode: 'manual',
+            ttlDays: 1,
+          },
+          timeout: stableSmokeApiTimeoutMs,
+        },
+      ));
+      apiKeyId = issued.item.id;
+      apiKey = issued.apiKey;
       const created = await readEnvelope<{ workspaceId: string }>(await page.request.post(
         '/api/open/literary/workspaces',
         {
-          headers: aiAccessHeaders(),
+          headers: agentApiKeyHeaders(apiKey),
           data: {
             title,
             content: original,
@@ -3372,53 +3395,66 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       const before = await readEnvelope<{ content: string; updatedAt: string }>(await page.request.get(
         `/api/open/literary/workspaces/${workspaceId}`,
-        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+        { headers: agentApiKeyHeaders(apiKey), timeout: stableSmokeApiTimeoutMs },
       ));
       expect(before.content).toBe(original);
 
       await readEnvelope(await page.request.post(`/api/open/literary/workspaces/${workspaceId}/content`, {
-        headers: aiAccessHeaders(),
+        headers: agentApiKeyHeaders(apiKey),
         data: { mode: 'append', content: continuation, expectedUpdatedAt: before.updatedAt },
         timeout: stableSmokeApiTimeoutMs,
       }));
       const continued = await readEnvelope<{ content: string; updatedAt: string }>(await page.request.get(
         `/api/open/literary/workspaces/${workspaceId}`,
-        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+        { headers: agentApiKeyHeaders(apiKey), timeout: stableSmokeApiTimeoutMs },
       ));
       expect(continued.content).toBe(`${original}\n\n${continuation}`);
       await page.waitForTimeout(1_000);
       const stopped = await readEnvelope<{ content: string; updatedAt: string }>(await page.request.get(
         `/api/open/literary/workspaces/${workspaceId}`,
-        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+        { headers: agentApiKeyHeaders(apiKey), timeout: stableSmokeApiTimeoutMs },
       ));
       expect(stopped.content, '续写请求完成后正文不得继续自行增长').toBe(continued.content);
 
       const expanded = '这段文字已展开为两句，并保留原来的叙事位置。第二句用于证明改写范围没有越界。';
       const rewritten = `${prefix}${expanded}${suffix}\n\n${continuation}`;
       await readEnvelope(await page.request.post(`/api/open/literary/workspaces/${workspaceId}/content`, {
-        headers: aiAccessHeaders(),
+        headers: agentApiKeyHeaders(apiKey),
         data: { mode: 'replace', content: rewritten, expectedUpdatedAt: stopped.updatedAt },
         timeout: stableSmokeApiTimeoutMs,
       }));
       const after = await readEnvelope<{ content: string }>(await page.request.get(
         `/api/open/literary/workspaces/${workspaceId}`,
-        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+        { headers: agentApiKeyHeaders(apiKey), timeout: stableSmokeApiTimeoutMs },
       ));
       expect(after.content.startsWith(prefix), '改写不得改变选中段落之前的正文').toBe(true);
       expect(after.content.endsWith(`${suffix}\n\n${continuation}`), '改写不得改变选中段落之后的正文').toBe(true);
       expect(after.content).toContain(expanded);
       expect(after.content).not.toContain(selected);
     } finally {
-      if (workspaceId) {
-        const deleted = await retryTransientTransport('清理文学续改工作区', () => page.request.delete(
-          `/api/literary-agent/workspaces/${workspaceId}`,
-          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
-        ));
-        expect(deleted.ok() || deleted.status() === 404, '文学续改工作区清理失败').toBe(true);
-        expect((await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, {
-          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-        })).status()).toBe(404);
-      }
+      const cleanup = await Promise.allSettled([
+        workspaceId ? (async () => {
+          const deleted = await retryTransientTransport('清理文学续改工作区', () => page.request.delete(
+            `/api/literary-agent/workspaces/${workspaceId}`,
+            { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+          ));
+          expect(deleted.ok() || deleted.status() === 404, '文学续改工作区清理失败').toBe(true);
+          expect((await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, {
+            headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+          })).status()).toBe(404);
+        })() : Promise.resolve(),
+        apiKeyId ? (async () => {
+          const deletedKey = await page.request.delete(`/api/agent-api-keys/${apiKeyId}`, {
+            headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+          });
+          expect(deletedKey.ok() || deletedKey.status() === 404, '文学续改临时钥匙清理失败').toBe(true);
+          const keys = await readEnvelope<{ items: Array<{ id: string }> }>(await page.request.get('/api/agent-api-keys', {
+            headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+          }));
+          expect(keys.items.some((item) => item.id === apiKeyId), '临时钥匙删除后不得残留').toBe(false);
+        })() : Promise.resolve(),
+      ]);
+      expect(cleanup.filter((result) => result.status === 'rejected'), '文学续改资源与临时钥匙必须全部清理').toEqual([]);
     }
   });
 
