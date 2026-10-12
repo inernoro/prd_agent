@@ -38,7 +38,7 @@ export function redactStableSmokeDiagnosticText(value) {
   // 先处理 JSON、对象转储等带引号的完整 header value。Cookie 经常包含多个
   // `name=value`，中间以分号和空格分隔，不能只遮掉第一个非空白 token。
   output = output.replace(
-    new RegExp(`(["']?(?:${headerPattern})["']?\\s*[:=]\\s*)(["'])([^\\r\\n]*?)\\2`, 'gi'),
+    new RegExp(`(["']?(?:${headerPattern})["']?\\s*[:=]\\s*)(["'])((?:\\\\.|(?!\\2)[^\\\\\\r\\n])*)\\2`, 'gi'),
     `$1$2${redacted}$2`,
   );
   // 再处理 curl/Playwright 日志里的原始 header 行，以及不带引号的对象值。
@@ -53,12 +53,14 @@ export function redactStableSmokeDiagnosticText(value) {
   );
   const valuePattern = sensitiveValueNames.map(escapeRegExp).join('|');
   output = output.replace(
-    new RegExp(`(["'](?:${valuePattern})["']\\s*:\\s*["'])([^"']+)(["'])`, 'gi'),
-    `$1${redacted}$3`,
+    new RegExp(`(["'](?:${valuePattern})["']\\s*:\\s*)(["'])((?:\\\\.|(?!\\2)[^\\\\\\r\\n])*)\\2`, 'gi'),
+    `$1$2${redacted}$2`,
   );
   output = output.replace(
-    /(["']code["']\s*:\s*["'])([^"']+)(["'])/gi,
-    (match, prefix, code, suffix) => (/^[A-Z][A-Z0-9_]{2,}$/.test(code) ? match : `${prefix}${redacted}${suffix}`),
+    /(["']code["']\s*:\s*)(["'])((?:\\.|(?!\2)[^\\\r\n])*)\2/gi,
+    (match, prefix, quote, code) => (/^[A-Z][A-Z0-9_]{2,}$/.test(code)
+      ? match
+      : `${prefix}${quote}${redacted}${quote}`),
   );
   output = output.replace(
     new RegExp(`(\\b(?:${valuePattern})\\b\\s*=\\s*)([^\\s&"'<>]+)`, 'gi'),

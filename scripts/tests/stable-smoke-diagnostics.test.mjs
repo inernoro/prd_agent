@@ -23,9 +23,12 @@ const secretSamples = [
   'X-Stable-Smoke-Nonce: one-time-nonce',
   'Cookie: theme=dark; session=private-cookie; csrf=private-csrf',
   '"set-cookie":"session=private-set-cookie; Path=/; HttpOnly", "status":401',
+  '"authorization":"Bearer pa\\\"ssHEADERSECRET"',
   '"accessToken":"short-lived-token"',
   '"refreshToken":"refresh-secret"',
   '"privateKey":"private-key-value"',
+  '"password":"pa\'ssSECRET"',
+  '"aiAccessKey":"key\\\"suffixSECRET"',
   '"code":"one-time-body-code"',
   'https://example.test/synthetic-login#code=one-time-code',
   '-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----',
@@ -37,7 +40,7 @@ test('稳定冒烟诊断脱敏保留端点与状态并移除全部凭据形态',
   assert.match(output, /POST \/api\/v1\/auth\/synthetic\/ticket/);
   assert.match(output, /HTTP 504/);
   assert.match(output, /\[REDACTED\]/);
-  for (const value of ['header.payload.signature', 'access-key-value', 'request-signature-value', 'one-time-nonce', 'private-cookie', 'private-csrf', 'private-set-cookie', 'short-lived-token', 'refresh-secret', 'private-key-value', 'one-time-body-code', 'one-time-code', 'private-material']) {
+  for (const value of ['header.payload.signature', 'access-key-value', 'request-signature-value', 'one-time-nonce', 'private-cookie', 'private-csrf', 'private-set-cookie', 'ssHEADERSECRET', 'short-lived-token', 'refresh-secret', 'private-key-value', "pa'ssSECRET", 'suffixSECRET', 'one-time-body-code', 'one-time-code', 'private-material']) {
     assert.doesNotMatch(output, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.equal(redactStableSmokeDiagnosticText('{"code":"AUTH_DENIED"}'), '{"code":"AUTH_DENIED"}');
@@ -67,7 +70,7 @@ test('产物树脱敏覆盖 JSON、Markdown 与日志且不改二进制文件', 
   try {
     writeFileSync(resolve(directory, 'results.json'), JSON.stringify({ error: secretSamples[0] }));
     writeFileSync(resolve(directory, 'error-context.md'), secretSamples[2]);
-    writeFileSync(resolve(directory, 'video.webm'), secretSamples[6]);
+    writeFileSync(resolve(directory, 'video.webm'), secretSamples[7]);
     const result = sanitizeStableSmokeArtifactTree(directory);
     assert.equal(result.scanned, 2);
     assert.equal(result.changed, 2);

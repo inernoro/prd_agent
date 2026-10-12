@@ -330,7 +330,7 @@ test('CDS 公网稳定门会验证入口、首屏资源和懒加载资源', asyn
       headers: { 'content-type': 'application/javascript' },
     });
     if (String(url).includes('/assets/index.js')) {
-      return new Response('const page = () => import("/assets/lazy-page.js");', {
+      return new Response('const page = () => import("./lazy-page.js");', {
         status: 200,
         headers: { 'content-type': 'application/javascript; charset=utf-8' },
       });
@@ -347,7 +347,8 @@ test('CDS 公网稳定门会验证入口、首屏资源和懒加载资源', asyn
   const result = await probeCdsPublicEntry('https://preview.example.test', fetchFn);
   assert.equal(result.entries, 3);
   assert.equal(result.assets, 3);
-  assert.ok(requested.some((url) => url.includes('/assets/lazy-page.js')));
+  assert.ok(requested.includes('https://preview.example.test/assets/lazy-page.js'));
+  assert.equal(requested.includes('https://preview.example.test/lazy-page.js'), false);
 });
 
 test('CDS 公网稳定门拒绝被入口 HTML 回退伪装成成功的静态资源', async () => {

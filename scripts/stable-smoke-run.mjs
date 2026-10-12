@@ -440,7 +440,9 @@ async function retryGatewayProbeOperation(operation, {
 }
 
 function publicAssetUrls(source, baseUrl) {
-  const matches = String(source || '').matchAll(/(?:["'`(])((?:\/?assets\/)[A-Za-z0-9._/-]+\.(?:css|js))(?:["'`)])/g);
+  const matches = String(source || '').matchAll(
+    /(?:["'`(])((?:(?:\.{1,2}\/)|\/?assets\/)[A-Za-z0-9._/-]+\.(?:css|js))(?:["'`)])/g,
+  );
   return [...new Set([...matches].map((match) => new URL(match[1], baseUrl).href))];
 }
 
@@ -499,8 +501,11 @@ export async function probeCdsPublicEntry(baseUrl, fetchFn = globalThis.fetch) {
   const assetResults = await mapWithConcurrency(entryAssets, 4, (url) => (
     fetchPublicAsset(url, fetchFn, { readBody: url.endsWith('.js') })
   ));
-  const scriptBodies = assetResults.map((result, index) => (entryAssets[index].endsWith('.js') ? result.body : ''));
-  const lazyAssets = [...new Set(scriptBodies.flatMap((body) => publicAssetUrls(body, origin)))]
+  const lazyAssets = [...new Set(assetResults.flatMap((result, index) => (
+    entryAssets[index].endsWith('.js')
+      ? publicAssetUrls(result.body, entryAssets[index])
+      : []
+  )))]
     .filter((url) => !entryAssets.includes(url));
   await mapWithConcurrency(lazyAssets, 8, (url) => fetchPublicAsset(url, fetchFn));
   return { entries: entryUrls.length, assets: entryAssets.length + lazyAssets.length };
