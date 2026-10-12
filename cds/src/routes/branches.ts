@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -45,6 +46,8 @@ import {
   namedServiceLabel,
   publishedServiceLabels,
   occupiedHostOwners,
+  projectBranchPreviewSlugs,
+  projectBranchPublishedServiceHosts,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
@@ -5954,7 +5957,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const slugified = StateService.slugify(branch);
       const id = targetProject.legacyFlag
         ? slugified
-        : `${targetProject.slug}-${slugified}`;
+        : `${projectResourceNamespace(targetProject)}-${slugified}`;
       // Collide on the computed id (same-project same-name in the current
       // formula) OR on the (projectId, branch) tuple — the latter catches
       // projects whose `legacyFlag` flipped after an existing branch was
@@ -16192,19 +16195,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
     const project = stateService.getProject(entry.projectId);
-    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    if (!slug) return [];
-    const hosts: string[] = [];
-    const seen = new Set<string>();
-    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
-      const sub = resolveEffectiveProfile(bp, entry).subdomain;
-      if (!sub || seen.has(sub)) continue;
-      seen.add(sub);
-      for (const label of publishedServiceLabels(slug, sub)) {
-        hosts.push(`${label}.${root}`.toLowerCase());
-      }
-    }
-    return hosts;
+    return projectBranchPublishedServiceHosts(entry, project, stateService.getEffectiveProfilesForBranch(entry), [root]);
   }
 
   const findPreviewHostCollisions = (
@@ -16220,12 +16211,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const other of stateService.getAllBranches()) {
       const projectId = other.projectId || 'default';
       const project = stateService.getProject(projectId);
-      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      const previewSlugs = projectBranchPreviewSlugs(other, project);
       for (const rawRoot of rootDomains) {
         const root = rawRoot.toLowerCase();
-        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
-        if (previewHost && candidates.has(previewHost)) {
-          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        for (const previewSlug of previewSlugs) {
+          const previewHost = `${previewSlug}.${root}`;
+          if (candidates.has(previewHost)) conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
         }
 
         for (const alias of stateService.getBranchSubdomainAliases(other.id)) {
@@ -20661,7 +20652,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // slug head prefixed so two projects can each own `mongodb`.
       const containerName = targetProject.legacyFlag
         ? `cds-infra-${body.id}`
-        : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
+        : `cds-infra-${projectResourceNamespace(targetProject).slice(0, 12)}-${body.id}`;
 
       // Bug Q: when caller omits `volumes`, auto-fill recommended data
       // dirs for known stateful images. Empty array passed explicitly is
@@ -21704,7 +21695,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // previously used the bare slugified branch as the entry id (and
       // looked up by it), which contradicts every other code path
       // (POST /api/branches, auto-build in index.ts, webhook dispatcher)
-      // that uses `${owner.slug}-${slugified}` for non-legacy projects.
+      // that keeps the original resource namespace for non-legacy projects.
       // After rename-default a re-run of init would miss the existing
       // `prd-agent-main` entry and try to create a duplicate `main`.
       //
@@ -21718,7 +21709,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         res.end();
         return;
       }
-      const mainBranchId = owner.legacyFlag ? mainSlug : `${owner.slug}-${mainSlug}`;
+      const mainBranchId = owner.legacyFlag ? mainSlug : `${projectResourceNamespace(owner)}-${mainSlug}`;
       let entry =
         stateService.getBranch(mainBranchId) ??
         stateService.findBranchByProjectAndName(owner.id, mainBranch);
@@ -21787,7 +21778,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               profileId: profile.id,
               // PR #498 round-3 review (Bugbot): container name must
               // track entry.id. After round-2 made mainBranchId
-              // `${owner.slug}-${mainSlug}` for non-legacy projects,
+              // `${projectResourceNamespace(owner)}-${mainSlug}` for non-legacy projects,
               // the hardcoded `cds-${mainSlug}-…` here became a
               // mismatch — same pattern index.ts:1105 already follows.
               containerName: `cds-${entry.id}-${profile.id}`,

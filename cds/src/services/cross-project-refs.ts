@@ -1,3 +1,4 @@
+import { projectHistoricalSlugs } from './preview-slug.js';
 /**
  * 跨项目引用变量（plan.cds.service-relations 第三批）。
  *
@@ -198,7 +199,7 @@ export function cdsRefResolverDepsFromState(
   previewHost?: string,
 ): CdsRefResolverDeps {
   const byIdOrSlug = (ref: string): Project | undefined =>
-    stateService.getProject(ref) ?? (stateService.getState().projects ?? []).find((p) => p.slug === ref || (p as { aliasSlug?: string }).aliasSlug === ref);
+    stateService.getProject(ref) ?? (stateService.getState().projects ?? []).find((p) => projectHistoricalSlugs(p).includes(ref));
   return {
     getProject: byIdOrSlug,
     getAllBranches: () => stateService.getAllBranches(),

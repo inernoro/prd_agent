@@ -18,9 +18,8 @@ describe('build-gate 全局构建并发闸', () => {
 
   beforeEach(() => {
     __resetBuildGateForTest();
-    // 并发语义用例固定在无负载压力下运行；负载用例自行注入高低样本。
-    // 读取执行机的真实 loadavg 会让相同 FIFO 断言随机器忙闲而死锁。
-    setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 1 }));
+    // 并发队列用例不应取决于运行测试的宿主负载；过载用例自行注入负载。
+    setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 4 }));
   });
   afterEach(() => {
     if (savedEnv === undefined) delete process.env.CDS_MAX_CONCURRENT_BUILDS;
