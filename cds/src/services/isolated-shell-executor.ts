@@ -6,11 +6,14 @@ import type { ExecOptions, ExecResult, IShellExecutor } from '../types.js';
 
 type FailureCode = 'capacity' | 'deadline' | 'cancelled' | 'unavailable' | 'closed' | 'callback' | 'cleanup';
 type PoolFailureReason = 'startup-deadline' | 'process-error' | 'process-exit' | 'ipc-send' | 'process-create' | 'factory-fatal';
+interface PoolFailure { reason: PoolFailureReason; phase: 'startup' | 'runtime'; at: string; elapsedMs: number; generation: number; supervisorPid?: number; factoryPid?: number; actors: number; actorPids: number[]; readyActors: number }
 interface PoolLifecycle {
   startedAt?: string;
   readyAt?: string;
   readyElapsedMs?: number;
-  failure?: { reason: PoolFailureReason; phase: 'startup' | 'runtime'; at: string; elapsedMs: number; generation: number; supervisorPid?: number; factoryPid?: number; actors: number; actorPids: number[]; readyActors: number };
+  readyGeneration?: number;
+  startupFailure?: PoolFailure;
+  failure?: PoolFailure;
 }
 const messages: Record<FailureCode, string> = {
   capacity: '状态查询繁忙，请稍后重试。', deadline: '状态查询超时，请稍后重试。',
@@ -78,6 +81,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private startTimer?: NodeJS.Timeout;
   private startedMonotonic = 0;
   private readonly lifecycle: PoolLifecycle = {};
+  private startupRestartPending = false;
+  private startupRestartCleanedGeneration?: number;
   private stopping?: Promise<void>;
   private closing?: Promise<void>;
   private readonly concurrency: number;
@@ -120,11 +125,12 @@ export class IsolatedShellExecutor implements IShellExecutor {
   start(): Promise<void> {
     if (this.closed) return Promise.reject(this.executionError('closed'));
     if (this.unavailable) return Promise.reject(this.executionError('unavailable'));
+    if (this.ready) return Promise.resolve();
     if (this.starting) return this.starting;
     this.startedMonotonic = performance.now();
     this.lifecycle.startedAt = new Date().toISOString();
     this.starting = new Promise((resolve, reject) => { this.startResolve = resolve; this.startReject = reject; });
-    this.startTimer = setTimeout(() => { void this.failPool('startup-deadline'); }, 5000);
+    this.startTimer = setTimeout(() => { void this.initialStartTimedOut(); }, 5000);
     try {
       const child = this.processFactory(this.owner);
       this.factory = child;
@@ -211,6 +217,10 @@ export class IsolatedShellExecutor implements IShellExecutor {
       if (message.factoryMetrics) this.factoryMetrics = message.factoryMetrics;
       if (message.type === 'factory-resetting') { this.ready = false; this.unavailable = true; return; }
       if (message.type === 'factory-cleaned') {
+        if (this.startupRestartPending) {
+          this.startupRestartPending = false;
+          this.startupRestartCleanedGeneration = message.generation;
+        }
         this.actors.clear(); this.factoryProcessPid = undefined; this.factoryMetrics = undefined; this.supervisorMetrics = message.supervisorMetrics;
         for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
         return;
@@ -231,11 +241,16 @@ export class IsolatedShellExecutor implements IShellExecutor {
       return;
     }
     if (message.type === 'fatal') { void this.failPool('factory-fatal'); return; }
-    if (message.type === 'ready' && !this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)) {
+    if (message.type === 'ready' && !this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)
+      && (!this.supervised || !this.startupRestartPending && (this.startupRestartCleanedGeneration === undefined || this.factoryGeneration > this.startupRestartCleanedGeneration))) {
+      const recoveredInitialStart = !!this.lifecycle.startupFailure && !this.lifecycle.readyAt;
       this.lifecycle.readyAt ??= new Date().toISOString();
       this.lifecycle.readyElapsedMs ??= Math.round(performance.now() - this.startedMonotonic);
+      this.lifecycle.readyGeneration ??= this.factoryGeneration;
       this.unavailable = false;
-      this.ready = true; clearTimeout(this.startTimer); this.startResolve?.(); this.drain(); return;
+      this.ready = true; clearTimeout(this.startTimer); this.startResolve?.(); this.drain();
+      if (recoveredInitialStart) console.log(`[execution-pool-recovered] ${JSON.stringify({ lifecycle: this.getLifecycle(), stats: this.getStats() })}`);
+      return;
     }
     const job = this.jobs.get(message.id);
     if (!job?.active) return;
@@ -327,8 +342,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     })();
     return this.stopping;
   }
-  private async failPool(reason: PoolFailureReason): Promise<void> {
-    if (this.failed) return;
+  private recordPoolFailure(reason: PoolFailureReason): void {
     // 清理前保存有限元数据，绝不记录命令、环境、输入或原始异常正文。
     this.lifecycle.failure = { reason, phase: this.lifecycle.readyAt ? 'runtime' : 'startup', at: new Date().toISOString(),
       elapsedMs: Math.round(performance.now() - this.startedMonotonic), generation: this.factoryGeneration,
@@ -336,6 +350,22 @@ export class IsolatedShellExecutor implements IShellExecutor {
       factoryPid: this.supervised ? this.factoryProcessPid : this.factory?.pid,
       actors: this.actors.size, actorPids: [...this.actors.values()].map(actor => actor.pid),
       readyActors: [...this.actors.values()].filter(actor => actor.metrics).length };
+    if (!this.lifecycle.readyAt) this.lifecycle.startupFailure ??= this.lifecycle.failure;
+  }
+  private async initialStartTimedOut(): Promise<void> {
+    if (!this.supervised) return this.failPool('startup-deadline');
+    if (this.closed || this.failed || this.ready) return;
+    // 原首次5秒照常失败；旧请求不重放。保留预热监督者清理旧代并按原恢复预算替换工厂。
+    this.recordPoolFailure('startup-deadline');
+    this.startupRestartPending = true;
+    this.ready = false; this.unavailable = true;
+    this.startReject?.(this.executionError('unavailable'));
+    for (const job of [...this.jobs.values()]) this.finish(job, undefined, 'unavailable');
+    this.send({ type: 'restart-after-startup-deadline' });
+  }
+  private async failPool(reason: PoolFailureReason): Promise<void> {
+    if (this.failed) return;
+    this.recordPoolFailure(reason);
     this.failed = true; this.unavailable = true;
     let code: FailureCode = 'unavailable';
     try { await this.stopPool(); } catch { code = 'cleanup'; }
@@ -343,7 +373,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
     for (const job of [...this.jobs.values()]) this.finish(job, undefined, code);
   }
   getLifecycle(): PoolLifecycle {
-    return { ...this.lifecycle, failure: this.lifecycle.failure ? { ...this.lifecycle.failure, actorPids: [...this.lifecycle.failure.actorPids] } : undefined };
+    const copy = (value?: PoolFailure): PoolFailure | undefined => value ? { ...value, actorPids: [...value.actorPids] } : undefined;
+    return { ...this.lifecycle, failure: copy(this.lifecycle.failure), startupFailure: copy(this.lifecycle.startupFailure) };
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;

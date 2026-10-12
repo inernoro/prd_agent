@@ -85,6 +85,44 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect(JSON.stringify(e.getLifecycle())).not.toContain('secret-provider-message');
   });
 
+  it.each(['observation', 'operation'] as const)('%s默认池首次5秒失败仍保留失败，由原监督进程清理后恢复新请求，不重放旧请求', async (lane) => {
+    const e = executor({ concurrency: 1, isolatedLane: lane });
+    const dir = await directory(), marker = path.join(dir, 'must-not-replay');
+    const startupFailed = expect(e.start()).rejects.toMatchObject({ code: 'unavailable' });
+    const channel = (e as unknown as { factory: childProcess.ChildProcess }).factory;
+    let paused = 0, lateReadyRejected = false;
+    channel.on('message', (message: any) => {
+      if (message.type === 'factory-started' && !paused) { paused = message.pid; process.kill(-paused, 'SIGSTOP'); }
+      if (message.type === 'factory-resetting' && paused && !lateReadyRejected) {
+        channel.emit('message', { type: 'ready', generation: message.generation });
+        lateReadyRejected = e.getStats().unavailable;
+      }
+    });
+    const oldBeforeStart = vi.fn();
+    const oldRequestFailed = expect(e.exec(`touch ${quote(marker)}`, { executionLane: lane, timeout: 20000, beforeStart: oldBeforeStart }))
+      .rejects.toMatchObject({ code: 'unavailable' });
+    await startupFailed; await oldRequestFailed;
+    expect(paused).toBeGreaterThan(1);
+    expect(e.getLifecycle().failure).toMatchObject({ reason: 'startup-deadline', phase: 'startup' });
+    const end = performance.now() + 6500;
+    while (e.getStats().unavailable && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 25));
+    expect(e.getStats().unavailable).toBe(false);
+    expect(e.getStats().supervisorPid).toBe(channel.pid);
+    expect(e.getStats().factoryPid).not.toBe(paused);
+    expect(lateReadyRejected).toBe(true);
+    expect(oldBeforeStart).not.toHaveBeenCalled();
+    await expect(access(marker)).rejects.toThrow();
+    const dead = await new ShellExecutor().exec(`ps -o stat= -p ${paused}`);
+    expect(dead.stdout.trim()).toMatch(/^(Z.*)?$/);
+    const spawnsBefore = vi.mocked(childProcess.spawn).mock.calls.length;
+    const newBeforeStart = vi.fn();
+    expect((await e.exec('printf recovered-after-initial-failure', { executionLane: lane, beforeStart: newBeforeStart })).stdout).toBe('recovered-after-initial-failure');
+    expect(newBeforeStart).toHaveBeenCalledTimes(1);
+    await e.start();
+    expect(vi.mocked(childProcess.spawn).mock.calls.length).toBe(spawnsBefore);
+    expect(e.getLifecycle().failure!.reason).toBe('startup-deadline');
+  }, 15000);
+
   it('在操作授权前回传真实actor、工厂代次和任务身份，取消队列不伪造身份', async () => {
     const e = executor({ isolatedLane: 'operation', concurrency: 2, reservedCleanup: 1 });
     await e.start();

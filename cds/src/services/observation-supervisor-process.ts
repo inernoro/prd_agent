@@ -73,6 +73,11 @@ function startSupervisor(): void {
       if (!Number.isSafeInteger(message.concurrency) || message.concurrency < 1 || message.concurrency > 16) { fail(); return; }
       concurrency = message.concurrency; launch(); return;
     }
+    if (message.type === 'restart-after-startup-deadline') {
+      if (child) void recover(child);
+      else if (!closing && !recovering) send({ type: 'factory-cleaned', generation, supervisorMetrics: metrics() });
+      return;
+    }
     if (closing || recovering || !child?.connected) return;
     child.send(message, error => { if (error && child) void recover(child); });
   });
