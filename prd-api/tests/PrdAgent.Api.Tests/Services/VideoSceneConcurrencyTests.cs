@@ -471,6 +471,40 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task Worker_ShouldRepairExportLinkBeforeClaimAfterCreateGap()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("export-create-gap-run", test.OwnerId, SceneItemStatus.Done);
+        run.Status = VideoGenRunStatus.Editing;
+        run.DeploymentSlug = DeploymentScope.Current;
+        run.LatestExportTaskId = null;
+        await test.SaveRunAsync(run);
+        var exportTask = new VideoExportTask
+        {
+            Id = "export-create-gap-task",
+            RunId = run.Id,
+            OwnerAdminId = test.OwnerId,
+            DeploymentSlug = DeploymentScope.Current,
+            Status = VideoExportTaskStatus.Queued,
+            Progress = 1,
+        };
+        await test.Context.VideoExportTasks.InsertOneAsync(exportTask);
+
+        var repaired = await test.CreateWorker().EnsureExportTaskRunLinkedAsync(
+            exportTask,
+            DeploymentScope.Current,
+            DeploymentScope.CurrentDurable,
+            CancellationToken.None);
+
+        repaired.ShouldNotBeNull();
+        repaired.Status.ShouldBe(VideoGenRunStatus.Rendering);
+        repaired.LatestExportTaskId.ShouldBe(exportTask.Id);
+        repaired.CurrentPhase.ShouldBe("export-queued");
+        (await test.Context.VideoExportTasks.Find(x => x.Id == exportTask.Id).SingleAsync())
+            .Status.ShouldBe(VideoExportTaskStatus.Queued);
+    }
+
+    [Fact]
     public async Task Worker_ShouldRecoverCompletedExportTaskIntoRenderingRun()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

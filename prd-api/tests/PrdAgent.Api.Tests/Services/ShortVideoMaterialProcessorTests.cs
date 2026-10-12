@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -88,5 +89,33 @@ public class ShortVideoMaterialProcessorTests
             ShortVideoMaterialProcessor.BuildVideoFileName("发布演示", "application/octet-stream"));
 
         ex.Message.ShouldContain("视频格式不受支持");
+    }
+
+    [Fact]
+    public void CleanupDecision_ShouldPreserveArtifactsWhenTerminalCommitSucceeded()
+    {
+        var authoritativeRun = new ShortVideoMaterialRun
+        {
+            Status = ShortVideoMaterialRunStatus.Done,
+            ProcessingToken = null,
+        };
+
+        ShortVideoMaterialProcessor.CanCleanupArtifactsAfterFailure(authoritativeRun, "lease-a")
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void CleanupDecision_ShouldOnlyAllowTheCurrentRunningLease()
+    {
+        var authoritativeRun = new ShortVideoMaterialRun
+        {
+            Status = ShortVideoMaterialRunStatus.Running,
+            ProcessingToken = "lease-b",
+        };
+
+        ShortVideoMaterialProcessor.CanCleanupArtifactsAfterFailure(authoritativeRun, "lease-a")
+            .ShouldBeFalse();
+        ShortVideoMaterialProcessor.CanCleanupArtifactsAfterFailure(authoritativeRun, "lease-b")
+            .ShouldBeTrue();
     }
 }

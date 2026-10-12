@@ -381,6 +381,9 @@ public sealed class ShortVideoMaterialProcessor
 
     public async Task ProcessAsync(string runId, CancellationToken authorityToken = default)
     {
+        var claimedRun = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId)
+            .FirstOrDefaultAsync(authorityToken);
+        var expectedProcessingToken = claimedRun?.ProcessingToken;
         try
         {
             await ProcessCoreAsync(runId, authorityToken);
@@ -389,14 +392,38 @@ public sealed class ShortVideoMaterialProcessor
         {
             try
             {
-                await CleanupRunArtifactsAsync(runId);
+                var authoritativeRun = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (CanCleanupArtifactsAfterFailure(authoritativeRun, expectedProcessingToken))
+                    await CleanupRunArtifactsAsync(runId);
+                else
+                    _logger.LogInformation(
+                        "短视频处理异常后的权威状态不允许清理产物 run={RunId}, status={Status}",
+                        runId,
+                        authoritativeRun?.Status ?? "missing");
             }
             catch (Exception cleanupError)
             {
-                _logger.LogError(cleanupError, "短视频处理失败后的产物清理失败 run={RunId}", runId);
+                // 终态提交结果不确定时宁可保留可回收产物，也不能误删已完成任务的引用。
+                _logger.LogError(cleanupError, "短视频处理失败后的权威核对或产物清理失败 run={RunId}", runId);
             }
             throw;
         }
+    }
+
+    internal static bool CanCleanupArtifactsAfterFailure(
+        ShortVideoMaterialRun? authoritativeRun,
+        string? expectedProcessingToken)
+    {
+        if (authoritativeRun == null || string.IsNullOrWhiteSpace(expectedProcessingToken)) return false;
+        if (authoritativeRun.Status == ShortVideoMaterialRunStatus.Done) return false;
+        if (authoritativeRun.Status == ShortVideoMaterialRunStatus.Running)
+            return string.Equals(
+                authoritativeRun.ProcessingToken,
+                expectedProcessingToken,
+                StringComparison.Ordinal);
+        return authoritativeRun.Status is ShortVideoMaterialRunStatus.Failed
+            or ShortVideoMaterialRunStatus.Cancelled;
     }
 
     private async Task ProcessCoreAsync(string runId, CancellationToken authorityToken)

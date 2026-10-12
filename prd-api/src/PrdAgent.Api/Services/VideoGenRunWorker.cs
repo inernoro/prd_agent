@@ -2372,8 +2372,38 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task<VideoExportTask?> ClaimExportTaskAsync(CancellationToken ct)
     {
+        var queuedTask = await _db.VideoExportTasks.Find(
+                Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
+                & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current))
+            .SortBy(x => x.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (queuedTask == null) return null;
+
+        // RequestExportAsync intentionally persists the durable task before updating the run.
+        // A process exit in that gap must be repaired before any worker can claim the task;
+        // otherwise progress writes are fenced out by LatestExportTaskId and the task loops forever.
+        var linkedRun = await EnsureExportTaskRunLinkedAsync(
+            queuedTask,
+            DeploymentScope.Current,
+            DeploymentScope.CurrentDurable,
+            ct);
+        if (linkedRun == null)
+        {
+            await _db.VideoExportTasks.UpdateOneAsync(
+                Builders<VideoExportTask>.Filter.Eq(x => x.Id, queuedTask.Id)
+                & Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
+                & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current),
+                Builders<VideoExportTask>.Update
+                    .Set(x => x.Status, VideoExportTaskStatus.Failed)
+                    .Set(x => x.ErrorMessage, "关联的视频生成任务状态已变化，请重新发起导出")
+                    .Set(x => x.EndedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+            return null;
+        }
+
         var leaseId = $"export:{Guid.NewGuid():N}";
-        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
+        var filter = Builders<VideoExportTask>.Filter.Eq(x => x.Id, queuedTask.Id)
+                     & Builders<VideoExportTask>.Filter.Eq(x => x.Status, VideoExportTaskStatus.Queued)
                      & Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current);
         return await _db.VideoExportTasks.FindOneAndUpdateAsync(
             filter,
@@ -2388,6 +2418,53 @@ public class VideoGenRunWorker : BackgroundService
             ct);
     }
 
+    internal async Task<VideoGenRun?> EnsureExportTaskRunLinkedAsync(
+        VideoExportTask task,
+        string? currentScope,
+        string? durableScope,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(currentScope) || string.IsNullOrWhiteSpace(durableScope))
+            return null;
+
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.Eq(x => x.Id, task.RunId)
+                     & fb.Eq(x => x.OwnerAdminId, task.OwnerAdminId)
+                     & VideoGenService.BuildBranchDeploymentFilter<VideoGenRun>(
+                         nameof(VideoGenRun.DeploymentSlug),
+                         currentScope,
+                         durableScope)
+                     & (fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                        | fb.Eq(x => x.Status, VideoGenRunStatus.Rendering))
+                     & (fb.Eq(x => x.LatestExportTaskId, null)
+                        | fb.Eq(x => x.LatestExportTaskId, task.Id));
+        var linkedRun = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            filter,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.DeploymentSlug, currentScope)
+                .Set(x => x.Status, VideoGenRunStatus.Rendering)
+                .Set(x => x.ExportRequested, false)
+                .Set(x => x.LatestExportTaskId, task.Id)
+                .Set(x => x.ExportErrorMessage, (string?)null)
+                .Set(x => x.CurrentPhase, "export-queued")
+                .Set(x => x.PhaseProgress, Math.Max(task.Progress, 1)),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (linkedRun == null) return null;
+
+        if (!string.IsNullOrWhiteSpace(linkedRun.ProjectId))
+        {
+            await _db.VideoProjects.UpdateOneAsync(
+                x => x.Id == linkedRun.ProjectId && x.OwnerAdminId == task.OwnerAdminId,
+                Builders<VideoProject>.Update
+                    .Set(x => x.LatestExportTaskId, task.Id)
+                    .Set(x => x.Status, VideoProjectStatus.Rendering)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        return linkedRun;
+    }
+
     internal async Task<bool> RecoverExportTaskRunAsync(
         VideoExportTask task,
         string? currentScope,
@@ -2399,16 +2476,8 @@ public class VideoGenRunWorker : BackgroundService
             || string.IsNullOrWhiteSpace(task.WorkerLeaseId))
             return false;
 
-        var runFilter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, task.RunId)
-                        & VideoGenService.BuildBranchDeploymentFilter<VideoGenRun>(
-                            nameof(VideoGenRun.DeploymentSlug),
-                            currentScope,
-                            durableScope);
-        var recoveredRun = await _db.VideoGenRuns.UpdateOneAsync(
-            runFilter,
-            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
-            cancellationToken: ct);
-        if (recoveredRun.MatchedCount != 1) return false;
+        if (await EnsureExportTaskRunLinkedAsync(task, currentScope, durableScope, ct) == null)
+            return false;
 
         // 只有仍由本次领取持有的任务才能退回队列。若 lease 已转移，run 已完成幂等对齐，
         // 新持有者可直接继续，旧持有者不再改写任务。
