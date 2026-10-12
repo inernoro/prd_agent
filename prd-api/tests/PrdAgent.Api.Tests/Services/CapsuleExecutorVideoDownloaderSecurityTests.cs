@@ -14,15 +14,40 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     [Fact]
     public void ResolveDownloadedVideoContentType_ShouldDetectMp4WhenServerReturnsOctetStream()
     {
-        var bytes = new byte[]
-        {
-            0, 0, 0, 24,
-            (byte)'f', (byte)'t', (byte)'y', (byte)'p',
-            (byte)'i', (byte)'s', (byte)'o', (byte)'m',
-        };
-
-        CapsuleExecutor.ResolveDownloadedVideoContentType(bytes, "application/octet-stream")
+        CapsuleExecutor.ResolveDownloadedVideoContentType(Mp4Bytes(), "application/octet-stream")
             .ShouldBe("video/mp4");
+    }
+
+    [Theory]
+    [InlineData("free")]
+    [InlineData("skip")]
+    [InlineData("wide")]
+    public void ResolveDownloadedVideoContentType_ShouldParseLeadingIsoBmffBoxes(string leadingBoxType)
+    {
+        var bytes = Box(leadingBoxType, new byte[12])
+            .Concat(Mp4Bytes())
+            .ToArray();
+
+        CapsuleExecutor.ResolveDownloadedVideoContentType(bytes, "video/mp4")
+            .ShouldBe("video/mp4");
+    }
+
+    [Theory]
+    [InlineData("avif", "mif1")]
+    [InlineData("heic", "mif1")]
+    [InlineData("M4A ", "isom")]
+    public void ResolveDownloadedVideoContentType_ShouldRejectNonVideoIsoBmffBrands(
+        string majorBrand,
+        string compatibleBrand)
+    {
+        var bytes = FtypBytes(majorBrand, compatibleBrand);
+
+        Should.Throw<InvalidOperationException>(() =>
+                CapsuleExecutor.ResolveDownloadedVideoContentType(bytes, "application/octet-stream"))
+            .Message.ShouldContain("无法识别的二进制格式");
+        Should.Throw<InvalidOperationException>(() =>
+                CapsuleExecutor.ResolveDownloadedVideoContentType(bytes, "video/mp4"))
+            .Message.ShouldContain("文件签名不是受支持的视频容器");
     }
 
     [Fact]
@@ -152,10 +177,29 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
         return services.BuildServiceProvider();
     }
 
-    private static byte[] Mp4Bytes() =>
-    [
-        0, 0, 0, 24,
-        (byte)'f', (byte)'t', (byte)'y', (byte)'p',
-        (byte)'i', (byte)'s', (byte)'o', (byte)'m',
-    ];
+    private static byte[] Mp4Bytes() => FtypBytes("isom", "mp42", "avc1");
+
+    private static byte[] FtypBytes(string majorBrand, params string[] compatibleBrands)
+    {
+        var payload = Encoding.ASCII.GetBytes(majorBrand)
+            .Concat(new byte[4])
+            .Concat(compatibleBrands.SelectMany(Encoding.ASCII.GetBytes))
+            .ToArray();
+        return Box("ftyp", payload);
+    }
+
+    private static byte[] Box(string type, byte[] payload)
+    {
+        var size = 8 + payload.Length;
+        return new byte[]
+        {
+            (byte)(size >> 24),
+            (byte)(size >> 16),
+            (byte)(size >> 8),
+            (byte)size,
+        }
+        .Concat(Encoding.ASCII.GetBytes(type))
+        .Concat(payload)
+        .ToArray();
+    }
 }
