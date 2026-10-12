@@ -34,11 +34,14 @@ function readJson(value: string): any {
   try { return JSON.parse(value); } catch { return undefined; }
 }
 
-function pullFailureReason(stdout: string, stderr: string): ArtifactWaitReason {
+function pullFailureReason(stdout: string, stderr: string, image: string): ArtifactWaitReason {
   const output = `${stderr}\n${stdout}`;
   // registry 明确拒绝与明确不存在分开；网络、超时、daemon等错误不得猜成镜像缺失。
   if (/unauthorized|authentication required|denied:|requested access.*denied|insufficient_scope/i.test(output)) return 'access-denied';
   if (/manifest unknown|manifest not found|name unknown|not found: manifest/i.test(output)) return 'missing';
+  // Docker29/containerd uses this exact resolution diagnostic. Only match
+  // the requested reference twice; unrelated "not found" stays unknown.
+  if (output.trim().endsWith(`failed to resolve reference "${image}": ${image}: not found`)) return 'missing';
   return 'verification-unavailable';
 }
 
@@ -81,7 +84,7 @@ export async function inspectDeploymentArtifacts(
     assertCurrent();
     const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
     if (!pull) { assertCurrent(); return waiting('verification-unavailable', profileIds); }
-    if (pull.exitCode) return waiting(pullFailureReason(pull.stdout, pull.stderr), profileIds);
+    if (pull.exitCode) return waiting(pullFailureReason(pull.stdout, pull.stderr, image), profileIds);
     const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
     if (!inspection || inspection.exitCode) { assertCurrent(); return waiting('verification-unavailable', profileIds); }
     const parsed = readJson(inspection.stdout);

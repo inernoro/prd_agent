@@ -48,6 +48,26 @@ describe('完整预构建产物准入', () => {
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], target)).toMatchObject({ state: 'waiting', reason });
   });
 
+  it('Docker29确认目标引用不存在时明确等待镜像，保留完整准入而不回退源码', async () => {
+    const realTarget = 'eab37570f6dc6dcc02902c4bddacb460c1744a27';
+    const requested = `127.0.0.1:55125/owned/mdimp-admin-api:sha-${realTarget}`;
+    const shell = fixture();
+    shell.addResponsePatternFirst(/docker pull/, () => ({ stdout: '',
+      stderr: `Error response from daemon: failed to resolve reference "${requested}": ${requested}: not found\n`, exitCode: 1 }));
+    expect(await inspectDeploymentArtifacts(shell, [{ ...profile('api'), dockerImage: requested }], realTarget))
+      .toMatchObject({ state: 'waiting', reason: 'missing', profileIds: ['api'], artifacts: [] });
+    expect(shell.commands.filter(command => command.startsWith('docker image inspect'))).toEqual([]);
+  });
+
+  it('Docker29错误中的不同引用不被猜成当前目标镜像缺失', async () => {
+    const other = `ghcr.io/owned/other:sha-${target}`;
+    const shell = fixture();
+    shell.addResponsePatternFirst(/docker pull/, () => ({ stdout: '',
+      stderr: `Error response from daemon: failed to resolve reference "${other}": ${other}: not found\n`, exitCode: 1 }));
+    expect(await inspectDeploymentArtifacts(shell, [profile('api')], target))
+      .toMatchObject({ state: 'waiting', reason: 'verification-unavailable', artifacts: [] });
+  });
+
   it.each([
     [{ Id: id, Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': 'a'.repeat(40) } } }, 'revision-mismatch'],
     [{ Id: id, Os: 'linux', Architecture: 'arm64', Config: { Labels: { 'org.opencontainers.image.revision': target } } }, 'platform-mismatch'],
