@@ -7858,24 +7858,35 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '先选 b.png、再按 Shift 选择 a.png，引用芯片按真实选择顺序排列。',
       });
       const composer = page.locator('[contenteditable="true"]').first();
-      const combinationPrompt = '参考 @img1 和 @img2 的颜色与构图，生成左右分区包装设计';
+      const combinationPrompt = '参考已选两张图片的颜色与构图，设计一款左右分区的礼盒包装';
       await composer.pressSequentially(combinationPrompt);
-      await expect(composer).toContainText('@img2');
+      await expect(chips).toHaveCount(2);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-07',
         target: composer,
-        caption: '组合描述与两张引用芯片同时保留，引用编号没有被纯文本编辑破坏。',
+        caption: '人类可读的组合描述与两张引用图片同时保留，图片名称和选择顺序清晰可辨。',
       });
-      const longCombinationPrompt = Array.from(
-        { length: 10 },
-        (_, index) => `第${index + 1}段要求 @img1 保留蓝色、@img2 保留黄色并调整留白`,
-      ).join('；');
-      await composer.pressSequentially(`；${longCombinationPrompt}`);
-      await expect(composer).toContainText('第10段要求');
+      const longCombinationPrompt = [
+        '以第一张图片的蓝色为主色，保留清爽、可信的品牌气质',
+        '用第二张图片的暖黄色做少量点缀，突出按钮和关键信息',
+        '礼盒正面采用左文右图布局，主标题放在左上方',
+        '两张图片都要保持原有比例，不要裁掉主体或拉伸变形',
+        '背景使用柔和的米白色，减少装饰元素并增加呼吸感',
+        '标题与说明文字保持清晰层级，远看也能快速识别品牌名称',
+        '边缘加入细致但克制的压纹效果，不要使用强烈高光',
+        '整体适合电商主图展示，也要兼顾线下货架的识别距离',
+        '保留足够的安全边距，避免文字和图片靠近裁切区域',
+        '右下角预留品牌标识和产品规格的位置',
+      ].join('；');
+      await composer.pressSequentially(`。${longCombinationPrompt}。`);
+      await expect(composer).toContainText('右下角预留品牌标识和产品规格的位置');
+      await expect(composer).not.toContainText('@img1');
+      await expect(composer).not.toContainText('@img2');
+      await expect(chips).toHaveCount(2);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-17',
         target: composer,
-        caption: '超长组合描述换行和滚动后，@img1、@img2 引用与发送操作仍完整。',
+        caption: '完整设计需求换行和滚动后仍可直接阅读，两张引用图片以文件名芯片展示，发送操作保持完整。',
       });
       // 真实生图和线路顺序由 MVIS-001/002/008/009/011 旅程单独验收；本用例只验证编辑器
       // 自身的引用顺序与删除持久化，防止上游额度故障把本地状态回归伪装成超时。
